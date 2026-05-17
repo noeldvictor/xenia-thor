@@ -10,6 +10,7 @@
 #include "xenia/cpu/backend/arm64/arm64_assembler.h"
 
 #include <array>
+#include <atomic>
 #include <string_view>
 #include <unordered_map>
 
@@ -28,6 +29,9 @@ namespace cpu {
 namespace backend {
 namespace arm64 {
 namespace {
+
+std::atomic<int> g_program_log_budget{160};
+std::atomic<int> g_program_log_suppression_budget{1};
 
 void LogHirLineByLine(const char* text) {
   const char* line_start = text;
@@ -191,6 +195,28 @@ std::unique_ptr<Arm64Function::Program> BuildInterpreterProgram(
 
 void LogInterpreterProgramDetails(GuestFunction* function,
                                   hir::HIRBuilder* builder) {
+  bool force_log =
+      function && (function->address() == 0x824669E0 ||
+                   function->address() == 0x826BFC78 ||
+                   function->address() == 0x826BFD0C);
+  bool should_log = force_log;
+  int log_budget = g_program_log_budget.load();
+  while (!should_log && log_budget > 0) {
+    if (g_program_log_budget.compare_exchange_strong(log_budget,
+                                                     log_budget - 1)) {
+      should_log = true;
+    }
+  }
+  if (!should_log) {
+    int suppression_budget = g_program_log_suppression_budget.load();
+    if (suppression_budget > 0 &&
+        g_program_log_suppression_budget.compare_exchange_strong(
+            suppression_budget, suppression_budget - 1)) {
+      XELOGI("ARM64 HIR interpreter program logging suppressed after budget");
+    }
+    return;
+  }
+
   std::array<uint32_t, hir::__OPCODE_MAX_VALUE> opcode_counts = {};
   uint32_t block_count = 0;
   uint32_t instr_count = 0;
@@ -216,10 +242,7 @@ void LogInterpreterProgramDetails(GuestFunction* function,
     XELOGI("ARM64 HIR opcode {:03}: {}", i, opcode_counts[i]);
   }
 
-  if (function &&
-      (function->address() == 0x824669E0 ||
-       function->address() == 0x826BFC78 ||
-       function->address() == 0x826BFD0C)) {
+  if (force_log) {
     StringBuffer hir_dump;
     builder->Dump(&hir_dump);
     XELOGI("ARM64 optimized HIR dump for guest function {:08X} begins",

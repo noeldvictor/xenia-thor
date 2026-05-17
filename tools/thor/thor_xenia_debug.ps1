@@ -39,6 +39,11 @@ function Invoke-AdbShellCommand {
     Invoke-Adb @("shell", $Command)
 }
 
+function Set-LastLaunchTarget {
+    param([string]$Value)
+    $Value | Out-File -Encoding utf8 $LastTargetPath
+}
+
 function Find-BlueDragonTarget {
     $findCommand = @"
 for root in /sdcard/roms/xbox360 /storage/*/roms/xbox360; do
@@ -57,6 +62,7 @@ done | head -20
 function Start-XeniaEmulator {
     param([string]$LaunchTarget)
     Invoke-Adb @("logcat", "-c")
+    Set-LastLaunchTarget $LaunchTarget
     $component = "$PackageName/$EmulatorActivity"
     $parts = @(
         "am start",
@@ -85,6 +91,7 @@ $EmulatorActivity = "jp.xenia.emulator.EmulatorActivity"
 $WindowDemoActivity = "jp.xenia.emulator.WindowDemoActivity"
 $BlueDragonDisc1 = "/storage/2664-21DE/roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso"
 $ApkPath = Join-Path $RepoRoot "android\android_studio_project\app\build\outputs\apk\github\debug\app-github-debug.apk"
+$LastTargetPath = Join-Path $OutDir "last-target.txt"
 
 switch ($Mode) {
     "DeviceInfo" {
@@ -120,12 +127,14 @@ done | head -50
     }
     "LaunchLauncher" {
         Invoke-Adb @("logcat", "-c")
+        Set-LastLaunchTarget "LauncherActivity"
         Invoke-Adb @("shell", "am", "start", "-n", "$PackageName/$LauncherActivity")
         Start-Sleep -Seconds 2
         Invoke-Adb @("shell", "pidof", $PackageName)
     }
     "LaunchWindowDemo" {
         Invoke-Adb @("logcat", "-c")
+        Set-LastLaunchTarget "WindowDemoActivity"
         Invoke-Adb @("shell", "am", "start", "-n", "$PackageName/$WindowDemoActivity")
         Start-Sleep -Seconds 5
         Invoke-Adb @("shell", "pidof", $PackageName)
@@ -169,17 +178,21 @@ done | head -50
         if (Test-Path $ApkPath) {
             $apkHash = (Get-FileHash -Algorithm SHA256 $ApkPath).Hash
         }
-        $pid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
+        $captureTarget = $Target
+        if (!$captureTarget -and (Test-Path $LastTargetPath)) {
+            $captureTarget = (Get-Content -Raw $LastTargetPath).Trim()
+        }
+        $packagePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
         $focused = (Invoke-AdbShellCommand "dumpsys activity activities | grep -E 'mFocusedApp|mResumedActivity|$PackageName' | head -40") -join "`n"
         @(
             "timestamp=$Stamp",
             "branch=$branch",
             "head=$head",
             "package=$PackageName",
-            "pid=$pid",
+            "pid=$packagePid",
             "apk=$ApkPath",
             "apk_sha256=$apkHash",
-            "target=$Target",
+            "target=$captureTarget",
             "",
             "activity:",
             $focused

@@ -25,6 +25,14 @@ Current Thor experiment docs:
 - [Android Thor Debug Automation](docs/porting/android-thor-debug-automation.md)
 - [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
 
+Current Thor status as of 2026-05-17:
+
+- Vulkan windowing and the Android emulator shell run on the AYN Thor Max.
+- Blue Dragon Disc 1 can launch into the Android emulator activity and execute
+  guest threads through a temporary ARM64 HIR interpreter scaffold.
+- It is not playable and not a compatibility claim. A real AArch64 JIT/emitter
+  is still required before "game running" means visible, usable gameplay.
+
 Xenia is an experimental emulator for the Xbox 360. For more information, see the
 [main Xenia wiki](https://github.com/xenia-project/xenia/wiki).
 

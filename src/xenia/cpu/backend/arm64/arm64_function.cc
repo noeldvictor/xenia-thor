@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "xenia/base/byte_order.h"
@@ -316,6 +317,128 @@ RuntimeValue CastValue(const RuntimeValue& source, TypeName target_type) {
   }
 }
 
+hir::RoundMode RoundModeFromPpcFpscr(uint32_t fpscr) {
+  switch (fpscr & 0x3) {
+    case 0:
+      return hir::ROUND_TO_NEAREST;
+    case 1:
+      return hir::ROUND_TO_ZERO;
+    case 2:
+      return hir::ROUND_TO_POSITIVE_INFINITY;
+    case 3:
+      return hir::ROUND_TO_MINUS_INFINITY;
+    default:
+      return hir::ROUND_TO_NEAREST;
+  }
+}
+
+long double ApplyRoundMode(hir::RoundMode round_mode, long double value) {
+  switch (round_mode) {
+    case hir::ROUND_TO_ZERO:
+      return std::trunc(value);
+    case hir::ROUND_TO_NEAREST:
+      return std::round(value);
+    case hir::ROUND_TO_MINUS_INFINITY:
+      return std::floor(value);
+    case hir::ROUND_TO_POSITIVE_INFINITY:
+      return std::ceil(value);
+    default:
+      return std::round(value);
+  }
+}
+
+std::pair<int64_t, int64_t> SignedIntegerRange(TypeName type) {
+  switch (type) {
+    case hir::INT8_TYPE:
+      return {std::numeric_limits<int8_t>::min(),
+              std::numeric_limits<int8_t>::max()};
+    case hir::INT16_TYPE:
+      return {std::numeric_limits<int16_t>::min(),
+              std::numeric_limits<int16_t>::max()};
+    case hir::INT32_TYPE:
+      return {std::numeric_limits<int32_t>::min(),
+              std::numeric_limits<int32_t>::max()};
+    case hir::INT64_TYPE:
+      return {std::numeric_limits<int64_t>::min(),
+              std::numeric_limits<int64_t>::max()};
+    default:
+      return {0, 0};
+  }
+}
+
+RuntimeValue ConvertValue(const RuntimeValue& source, TypeName target_type,
+                          hir::RoundMode round_mode) {
+  if (target_type <= hir::INT64_TYPE && source.type <= hir::INT64_TYPE) {
+    return MakeInteger(target_type, ReadInteger(source));
+  }
+
+  if (target_type <= hir::INT64_TYPE &&
+      (source.type == hir::FLOAT32_TYPE || source.type == hir::FLOAT64_TYPE)) {
+    long double input = source.type == hir::FLOAT32_TYPE
+                            ? static_cast<long double>(source.constant.f32)
+                            : static_cast<long double>(source.constant.f64);
+    if (std::isnan(input)) {
+      return MakeInteger(target_type, 0);
+    }
+    long double rounded = ApplyRoundMode(round_mode, input);
+    auto range = SignedIntegerRange(target_type);
+    long double min_value = static_cast<long double>(range.first);
+    long double max_value = static_cast<long double>(range.second);
+    if (rounded <= min_value) {
+      return MakeInteger(target_type, static_cast<uint64_t>(range.first));
+    }
+    if (rounded >= max_value) {
+      return MakeInteger(target_type, static_cast<uint64_t>(range.second));
+    }
+    return MakeInteger(target_type,
+                       static_cast<uint64_t>(static_cast<int64_t>(rounded)));
+  }
+
+  if (target_type == hir::FLOAT32_TYPE) {
+    if (source.type == hir::FLOAT64_TYPE) {
+      return MakeFloat32(static_cast<float>(source.constant.f64));
+    }
+    if (source.type <= hir::INT64_TYPE) {
+      return MakeFloat32(static_cast<float>(
+          SignExtendInteger(source.type, ReadInteger(source))));
+    }
+  }
+
+  if (target_type == hir::FLOAT64_TYPE) {
+    if (source.type == hir::FLOAT32_TYPE) {
+      return MakeFloat64(static_cast<double>(source.constant.f32));
+    }
+    if (source.type <= hir::INT64_TYPE) {
+      return MakeFloat64(static_cast<double>(
+          SignExtendInteger(source.type, ReadInteger(source))));
+    }
+  }
+
+  return CastValue(source, target_type);
+}
+
+RuntimeValue RoundRuntimeValue(const RuntimeValue& source,
+                               hir::RoundMode round_mode) {
+  switch (source.type) {
+    case hir::FLOAT32_TYPE:
+      return MakeFloat32(static_cast<float>(ApplyRoundMode(
+          round_mode, static_cast<long double>(source.constant.f32))));
+    case hir::FLOAT64_TYPE:
+      return MakeFloat64(static_cast<double>(ApplyRoundMode(
+          round_mode, static_cast<long double>(source.constant.f64))));
+    case hir::VEC128_TYPE: {
+      vec128_t output = source.constant.v128;
+      for (uint32_t i = 0; i < 4; ++i) {
+        output.f32[i] = static_cast<float>(ApplyRoundMode(
+            round_mode, static_cast<long double>(source.constant.v128.f32[i])));
+      }
+      return MakeVec128(output);
+    }
+    default:
+      return source;
+  }
+}
+
 RuntimeValue SignExtendValue(const RuntimeValue& source, TypeName target_type) {
   return MakeInteger(target_type,
                      static_cast<uint64_t>(
@@ -476,6 +599,36 @@ RuntimeValue DivValue(TypeName type, const RuntimeValue& lhs,
                          static_cast<uint64_t>(
                              SignExtendInteger(lhs.type, ReadInteger(lhs)) /
                              SignExtendInteger(rhs.type, divisor)));
+    }
+  }
+}
+
+RuntimeValue MinMaxValue(TypeName type, const RuntimeValue& lhs,
+                         const RuntimeValue& rhs, bool maximum) {
+  switch (type) {
+    case hir::FLOAT32_TYPE:
+      return MakeFloat32(maximum ? std::fmax(lhs.constant.f32, rhs.constant.f32)
+                                 : std::fmin(lhs.constant.f32, rhs.constant.f32));
+    case hir::FLOAT64_TYPE:
+      return MakeFloat64(maximum ? std::fmax(lhs.constant.f64, rhs.constant.f64)
+                                 : std::fmin(lhs.constant.f64, rhs.constant.f64));
+    case hir::VEC128_TYPE: {
+      vec128_t output = {};
+      for (uint32_t i = 0; i < 4; ++i) {
+        output.f32[i] =
+            maximum ? std::fmax(lhs.constant.v128.f32[i],
+                                rhs.constant.v128.f32[i])
+                    : std::fmin(lhs.constant.v128.f32[i],
+                                rhs.constant.v128.f32[i]);
+      }
+      return MakeVec128(output);
+    }
+    default: {
+      int64_t a = SignExtendInteger(lhs.type, ReadInteger(lhs));
+      int64_t b = SignExtendInteger(rhs.type, ReadInteger(rhs));
+      return MakeInteger(type, static_cast<uint64_t>(maximum
+                                                         ? std::max(a, b)
+                                                         : std::min(a, b)));
     }
   }
 }
@@ -729,6 +882,67 @@ RuntimeValue VectorCompareValue(hir::Opcode opcode, TypeName part_type,
       for (uint32_t i = 0; i < 4; ++i) {
         output.u32[i] =
             CompareFloat(a.f32[i], b.f32[i], opcode) ? 0xFFFFFFFFu : 0;
+      }
+      break;
+    default:
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
+RuntimeValue VectorMinMaxValue(TypeName part_type, uint32_t arithmetic_flags,
+                               const RuntimeValue& lhs,
+                               const RuntimeValue& rhs, bool maximum) {
+  vec128_t output = {};
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+
+  switch (part_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (is_unsigned) {
+          uint8_t av = GetVecU8(a, i);
+          uint8_t bv = GetVecU8(b, i);
+          SetVecU8(&output, i, maximum ? std::max(av, bv) : std::min(av, bv));
+        } else {
+          int8_t av = GetVecI8(a, i);
+          int8_t bv = GetVecI8(b, i);
+          SetVecU8(&output, i,
+                   static_cast<uint8_t>(maximum ? std::max(av, bv)
+                                                : std::min(av, bv)));
+        }
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        if (is_unsigned) {
+          uint16_t av = GetVecU16(a, i);
+          uint16_t bv = GetVecU16(b, i);
+          SetVecU16(&output, i,
+                    maximum ? std::max(av, bv) : std::min(av, bv));
+        } else {
+          int16_t av = GetVecI16(a, i);
+          int16_t bv = GetVecI16(b, i);
+          SetVecU16(&output, i,
+                    static_cast<uint16_t>(maximum ? std::max(av, bv)
+                                                  : std::min(av, bv)));
+        }
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (is_unsigned) {
+          output.u32[i] =
+              maximum ? std::max(a.u32[i], b.u32[i])
+                      : std::min(a.u32[i], b.u32[i]);
+        } else {
+          int32_t av = static_cast<int32_t>(a.u32[i]);
+          int32_t bv = static_cast<int32_t>(b.u32[i]);
+          output.u32[i] = static_cast<uint32_t>(maximum ? std::max(av, bv)
+                                                        : std::min(av, bv));
+        }
       }
       break;
     default:
@@ -1082,6 +1296,7 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
   uint32_t call_return_address = 0;
   uint32_t pc = program_->blocks.empty() ? 0 : program_->blocks[0].instruction_start;
   uint64_t step_count = 0;
+  hir::RoundMode dynamic_rounding_mode = hir::ROUND_TO_NEAREST;
   constexpr uint64_t kMaxInterpreterSteps = 50000000;
 
   auto jump_to_block = [&](uint32_t block_index) {
@@ -1347,19 +1562,20 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
 
       case hir::OPCODE_CONVERT: {
         auto src = read(instr.src1);
-        if (instr.dest_type <= hir::INT64_TYPE && src.type <= hir::INT64_TYPE) {
-          store_dest(MakeInteger(instr.dest_type, ReadInteger(src)));
-        } else if (instr.dest_type == hir::FLOAT32_TYPE &&
-                   src.type <= hir::INT64_TYPE) {
-          store_dest(MakeFloat32(static_cast<float>(
-              SignExtendInteger(src.type, ReadInteger(src)))));
-        } else if (instr.dest_type == hir::FLOAT64_TYPE &&
-                   src.type <= hir::INT64_TYPE) {
-          store_dest(MakeFloat64(static_cast<double>(
-              SignExtendInteger(src.type, ReadInteger(src)))));
-        } else {
-          store_dest(CastValue(src, instr.dest_type));
+        auto round_mode = static_cast<hir::RoundMode>(instr.flags);
+        if (round_mode == hir::ROUND_DYNAMIC) {
+          round_mode = dynamic_rounding_mode;
         }
+        store_dest(ConvertValue(src, instr.dest_type, round_mode));
+        break;
+      }
+
+      case hir::OPCODE_ROUND: {
+        auto round_mode = static_cast<hir::RoundMode>(instr.flags);
+        if (round_mode == hir::ROUND_DYNAMIC) {
+          round_mode = dynamic_rounding_mode;
+        }
+        store_dest(RoundRuntimeValue(read(instr.src1), round_mode));
         break;
       }
 
@@ -1594,6 +1810,25 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
                                       read(instr.src1), read(instr.src2)));
         break;
 
+      case hir::OPCODE_MAX:
+        store_dest(MinMaxValue(instr.dest_type, read(instr.src1),
+                               read(instr.src2), true));
+        break;
+      case hir::OPCODE_MIN:
+        store_dest(MinMaxValue(instr.dest_type, read(instr.src1),
+                               read(instr.src2), false));
+        break;
+      case hir::OPCODE_VECTOR_MAX:
+        store_dest(VectorMinMaxValue(static_cast<TypeName>(instr.flags >> 8),
+                                     instr.flags, read(instr.src1),
+                                     read(instr.src2), true));
+        break;
+      case hir::OPCODE_VECTOR_MIN:
+        store_dest(VectorMinMaxValue(static_cast<TypeName>(instr.flags >> 8),
+                                     instr.flags, read(instr.src1),
+                                     read(instr.src2), false));
+        break;
+
       case hir::OPCODE_ADD:
         store_dest(AddValue(instr.dest_type, read(instr.src1),
                             read(instr.src2)));
@@ -1729,6 +1964,11 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
 
       case hir::OPCODE_CNTLZ:
         store_dest(MakeInteger(instr.dest_type, CountLeadingZeros(read(instr.src1))));
+        break;
+
+      case hir::OPCODE_SET_ROUNDING_MODE:
+        dynamic_rounding_mode = RoundModeFromPpcFpscr(
+            static_cast<uint32_t>(ReadInteger(read(instr.src1))));
         break;
 
       case hir::OPCODE_CACHE_CONTROL:

@@ -54,14 +54,15 @@ Primary target:
   - `ndkVersion '25.0.8775105'`
   - `abiFilters 'arm64-v8a', 'x86_64'`
 - Premake defines Android platforms `Android-ARM64` and `Android-x86_64`.
-- The only functional CPU backend present is `src/xenia/cpu/backend/x64`.
-- `src/xenia/cpu/backend/arm64` is a scaffold only; it is not a working AArch64 JIT.
-- `src/xenia/emulator.cc` can select the ARM64 scaffold on `XE_ARCH_ARM64`, but initialization intentionally fails until the JIT exists.
+- The only production CPU backend present is `src/xenia/cpu/backend/x64`.
+- `src/xenia/cpu/backend/arm64` is an experimental scaffold with a slow HIR interpreter fallback for bring-up only; it is not a working AArch64 JIT.
+- `src/xenia/emulator.cc` can select the ARM64 scaffold on `XE_ARCH_ARM64` or via `cpu=arm64` launch arguments.
 - `src/xenia/cpu/cpu_flags.cc` advertises `any`, `x64`, and `arm64`.
 - `src/xenia/app/premake5.lua` includes `xenia_main.cc` for Android and skips the HID demo in the Android single-library bundle.
 - Android currently has Java/native shell pieces for windowed apps, a launcher, a game activity, a window demo, and the Vulkan trace viewer.
 - On 2026-05-17, `app-github-debug.apk` installed on ADB device `c3ca0370` and `WindowDemoActivity` rendered the Vulkan ImGui demo on Adreno 740.
 - On 2026-05-17, the launcher showed `LAUNCH GAME`, `GPU TRACE VIEWER`, and `WINDOW DEMO`; launching the emulator path reached the intended ARM64 JIT-not-implemented blocker rather than a Java/native crash.
+- On 2026-05-17, Blue Dragon Disc 1 launched into `EmulatorActivity` and executed guest XThreads through the ARM64 HIR interpreter scaffold. It is not playable or visibly rendering game frames; the current wall is interpreter speed and missing AArch64 JIT/emitter work.
 - Use `tools/thor/thor_build.ps1` to split build lanes:
   - `FullApk`: native core plus APK packaging.
   - `NativeCore`: C++/Vulkan/CPU backend library only.
@@ -85,7 +86,7 @@ Primary target:
 
 2. Make Android ARM64 build failures explicit.
    - Keep x64 backend code behind `XE_ARCH_AMD64` and architecture filters.
-- Keep ARM64 backend scaffolding honest: it may compile, but it must fail clearly at runtime until implemented.
+   - Keep ARM64 backend scaffolding honest: it may compile and interpret some guest code, but it must clearly identify itself as non-playable research scaffolding until the AArch64 JIT exists.
    - Do not fake guest execution by silently falling back to `NullBackend` for the emulator path.
 
 3. Bring up the native Android emulator app.
@@ -115,7 +116,7 @@ Primary target:
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
-- Keep the first Blue Dragon attempts honest: until ARM64 JIT exists, the expected result is the explicit AArch64 backend blocker.
+- Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.
 - For native Android crashes, analyze the unstripped `arm64-v8a/libxenia-app.so` from `android/android_studio_project/app/build/intermediates/ndkBuild/githubDebug/obj/local/arm64-v8a/`.
 - For guest-code static analysis, use Ghidra only on legally owned and locally extracted/decrypted code. Do not commit game binaries, extracted XEX files, ISO contents, keys, or private screenshots.
 - Ghidra tracks:
@@ -155,9 +156,17 @@ Primary target:
 - Future OSD data should come from native runtime events rather than static Java text: FPS, frame time, backend, title ID, shader compilation, thermal/performance warnings, and fatal setup errors.
 - Keep layout responsive for the Thor top screen in landscape first; avoid text overlap and verify screenshots on device after UI changes.
 
+## Current Blue Dragon / ARM64 State
+
+- Last validated Thor capture: `scratch\thor-debug\20260517-181152-*`.
+- Missing HIR blockers cleared in the latest slice: scalar/vector min/max, dynamic PPC rounding, `round`, and `set_rounding_mode`.
+- Current evidence: guest XThreads stay alive and consume CPU through the interpreter; one live log reported slow function `826E53A8` at 500000 interpreter steps.
+- Current blocker: real AArch64 JIT/emitter work. The interpreter is only a debug/correctness discovery tool.
+- The visible `AArch64 JIT pending` badge is static Java OSD text and should not be treated as the native failure message.
+
 ## Android ARM64 Risk Register
 
-- CPU backend: only an AArch64 scaffold exists; no instruction emitter, code cache, or guest execution exists yet.
+- CPU backend: only an AArch64 scaffold with slow interpreter fallback exists; no real instruction emitter exists yet.
 - JIT memory: Android executable memory and cache coherency must be tested on device.
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.
