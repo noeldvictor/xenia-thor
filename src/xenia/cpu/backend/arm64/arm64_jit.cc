@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -25,6 +26,7 @@
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
 #include "xenia/cpu/backend/arm64/arm64_code_cache.h"
 #include "xenia/cpu/processor.h"
+#include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/memory.h"
 
 #include "xbyak_aarch64/xbyak_aarch64.h"
@@ -497,6 +499,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     mov(x20, x1);  // ThreadState*
     mov(w22, w2);  // guest return address, reserved for call support
     mov(w23, uint64_t(0));  // guest call return address
+    ldr(x24, ptr(x19, static_cast<uint32_t>(
+                          offsetof(ppc::PPCContext, virtual_membase))));
 
     EmitAdjustSp(true);
     mov(x21, sp);
@@ -572,6 +576,30 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       default:
         break;
     }
+  }
+
+  void EmitComputeMemoryAddress(const XReg& dst, const XReg& guest_address) {
+    mov(w9, AsW(guest_address));
+    if (xe::memory::allocation_granularity() > 0x1000) {
+      lsr(w10, w9, 29);
+      cmp(w10, uint32_t(7));
+      cset(w10, EQ);
+      lsl(w10, w10, 12);
+      add(x9, x9, x10);
+    }
+    add(dst, x24, x9);
+  }
+
+  void EmitBranchIfKnownMmio(const XReg& guest_address,
+                             Xbyak_aarch64::Label& mmio_label) {
+    mov(w10, AsW(guest_address));
+    lsr(w10, w10, 16);
+    mov(w11, uint32_t(0x7FC8));
+    cmp(w10, w11);
+    b(EQ, mmio_label);
+    mov(w11, uint32_t(0x7FEA));
+    cmp(w10, w11);
+    b(EQ, mmio_label);
   }
 
   bool EmitLoadOperand(const Operand& operand, const XReg& dst,
@@ -715,11 +743,47 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       EmitSignExtend(x2, instr.src2.type);
       add(x1, x1, x2);
     }
+
+    Xbyak_aarch64::Label helper_path;
+    Xbyak_aarch64::Label done;
+    EmitBranchIfKnownMmio(x1, helper_path);
+
+    EmitComputeMemoryAddress(x17, x1);
+    switch (instr.dest_type) {
+      case hir::INT8_TYPE:
+        ldrb(w8, ptr(x17));
+        break;
+      case hir::INT16_TYPE:
+        ldrh(w8, ptr(x17));
+        if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
+          rev16(w8, w8);
+        }
+        break;
+      case hir::INT32_TYPE:
+        ldr(w8, ptr(x17));
+        if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
+          rev(w8, w8);
+        }
+        break;
+      case hir::INT64_TYPE:
+        ldr(x8, ptr(x17));
+        if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
+          rev(x8, x8);
+        }
+        break;
+      default:
+        return Fail(reject_reason, "unsupported memory load type");
+    }
+    b(done);
+
+    L(helper_path);
     mov(x0, x20);
     mov(w2, static_cast<uint64_t>(instr.dest_type));
     mov(w3, static_cast<uint64_t>(instr.flags));
     EmitCall(reinterpret_cast<void*>(&Arm64JitLoadInteger));
     mov(x8, x0);
+
+    L(done);
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
@@ -748,9 +812,54 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       }
       mov(w3, static_cast<uint64_t>(instr.src2.type));
     }
+
+    auto value_type = with_offset ? instr.src3.type : instr.src2.type;
+    Xbyak_aarch64::Label helper_path;
+    Xbyak_aarch64::Label done;
+    EmitBranchIfKnownMmio(x1, helper_path);
+
+    EmitComputeMemoryAddress(x17, x1);
+    mov(x8, x2);
+    if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
+      switch (value_type) {
+        case hir::INT16_TYPE:
+          rev16(w8, w8);
+          break;
+        case hir::INT32_TYPE:
+          rev(w8, w8);
+          break;
+        case hir::INT64_TYPE:
+          rev(x8, x8);
+          break;
+        case hir::INT8_TYPE:
+          break;
+        default:
+          return Fail(reject_reason, "unsupported swapped memory store type");
+      }
+    }
+    switch (value_type) {
+      case hir::INT8_TYPE:
+        strb(w8, ptr(x17));
+        break;
+      case hir::INT16_TYPE:
+        strh(w8, ptr(x17));
+        break;
+      case hir::INT32_TYPE:
+        str(w8, ptr(x17));
+        break;
+      case hir::INT64_TYPE:
+        str(x8, ptr(x17));
+        break;
+      default:
+        return Fail(reject_reason, "unsupported memory store type");
+    }
+    b(done);
+
+    L(helper_path);
     mov(x0, x20);
     mov(w4, static_cast<uint64_t>(instr.flags));
     EmitCall(reinterpret_cast<void*>(&Arm64JitStoreInteger));
+    L(done);
     return true;
   }
 
@@ -926,7 +1035,6 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         break;
       case hir::INT16_TYPE:
         rev16(w8, w8);
-        lsr(w8, w8, 16);
         break;
       case hir::INT32_TYPE:
         rev(w8, w8);

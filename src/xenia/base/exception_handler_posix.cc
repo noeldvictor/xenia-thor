@@ -140,6 +140,14 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
               instruction_is_store ? Exception::AccessViolationOperation::kWrite
                                    : Exception::AccessViolationOperation::kRead;
         } else {
+          uint32_t fault_instruction =
+              *reinterpret_cast<const uint32_t*>(mcontext.pc);
+          XELOGE(
+              "ARM64 SIGSEGV could not classify access: pc={:016X} "
+              "instruction={:08X} fault={:016X} esr_present={} esr={:016X}",
+              uint64_t(mcontext.pc), fault_instruction,
+              uint64_t(reinterpret_cast<uintptr_t>(signal_info->si_addr)),
+              mcontext_esr ? 1 : 0, mcontext_esr ? mcontext_esr->esr : 0);
           assert_always(
               "No ESR in the exception thread context, or it's not a Data "
               "Abort, and the faulting instruction is not a known load, "
