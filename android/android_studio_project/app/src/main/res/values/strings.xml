@@ -1,5 +1,18 @@
 <resources>
     <string name="app_name">Xenia</string>
+    <string name="activity_label_emulator">Launch Game</string>
     <string name="activity_label_gpu_trace_viewer">GPU Trace Viewer</string>
     <string name="activity_label_window_demo">Window Demo</string>
+    <string name="launcher_title">Xenia Thor</string>
+    <string name="launcher_subtitle">Android ARM64 / Vulkan</string>
+    <string name="launcher_status_vulkan">Vulkan</string>
+    <string name="launcher_status_arm64">ARM64</string>
+    <string name="launcher_status_unstable">Unstable</string>
+    <string name="launcher_game_detail">ISO / XEX</string>
+    <string name="launcher_trace_detail">Frame capture analysis</string>
+    <string name="launcher_demo_detail">Vulkan surface test</string>
+    <string name="osd_app_title">Xenia Thor</string>
+    <string name="osd_runtime_status">Vulkan / ARM64</string>
+    <string name="osd_jit_status">AArch64 JIT pending</string>
+    <string name="osd_default_title">Xbox 360 content</string>
 </resources>

@@ -12,6 +12,10 @@
 #include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/base/platform.h"
+#if XE_PLATFORM_ANDROID
+#include "xenia/base/filesystem.h"
+#endif  // XE_PLATFORM_ANDROID
 #include "xenia/vfs/devices/disc_image_entry.h"
 
 namespace xe {
@@ -28,7 +32,17 @@ DiscImageDevice::DiscImageDevice(const std::string_view mount_path,
 DiscImageDevice::~DiscImageDevice() = default;
 
 bool DiscImageDevice::Initialize() {
+#if XE_PLATFORM_ANDROID
+  const std::string host_path_utf8 = xe::path_to_utf8(host_path_);
+  if (xe::filesystem::IsAndroidContentUri(host_path_utf8)) {
+    mmap_ = MappedMemory::OpenForAndroidContentUri(host_path_utf8,
+                                                   MappedMemory::Mode::kRead);
+  } else {
+    mmap_ = MappedMemory::Open(host_path_, MappedMemory::Mode::kRead);
+  }
+#else
   mmap_ = MappedMemory::Open(host_path_, MappedMemory::Mode::kRead);
+#endif  // XE_PLATFORM_ANDROID
   if (!mmap_) {
     XELOGE("Disc image could not be mapped");
     return false;

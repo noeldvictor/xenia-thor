@@ -51,9 +51,12 @@
 #include "xenia/vfs/devices/stfs_container_device.h"
 #include "xenia/vfs/virtual_file_system.h"
 
+#if XE_ARCH_ARM64
+#include "xenia/cpu/backend/arm64/arm64_backend.h"
+#endif  // XE_ARCH_ARM64
 #if XE_ARCH_AMD64
 #include "xenia/cpu/backend/x64/x64_backend.h"
-#endif  // XE_ARCH
+#endif  // XE_ARCH_AMD64
 
 DECLARE_int32(user_language);
 
@@ -172,12 +175,19 @@ X_STATUS Emulator::Setup(
   if (cvars::cpu == "x64") {
     backend.reset(new xe::cpu::backend::x64::X64Backend());
   }
-#endif  // XE_ARCH
+#endif  // XE_ARCH_AMD64
+#if XE_ARCH_ARM64
+  if (cvars::cpu == "arm64") {
+    backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
+  }
+#endif  // XE_ARCH_ARM64
   if (cvars::cpu == "any") {
     if (!backend) {
 #if XE_ARCH_AMD64
       backend.reset(new xe::cpu::backend::x64::X64Backend());
-#endif  // XE_ARCH
+#elif XE_ARCH_ARM64
+      backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
+#endif  // XE_ARCH_AMD64 || XE_ARCH_ARM64
     }
   }
   if (!backend && !require_cpu_backend) {
@@ -730,6 +740,18 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                                   const std::string_view module_path) {
   // Making changes to the UI (setting the icon) and executing game config load
   // callbacks which expect to be called from the UI thread.
+  if (display_window_ && !display_window_->app_context().IsInUIThread()) {
+    X_STATUS result = X_STATUS_UNSUCCESSFUL;
+    auto path_copy = path;
+    auto module_path_copy = std::string(module_path);
+    if (!display_window_->app_context().CallInUIThreadSynchronous(
+            [this, &result, path_copy, module_path_copy]() {
+              result = CompleteLaunch(path_copy, module_path_copy);
+            })) {
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    return result;
+  }
   assert_true(display_window_->app_context().IsInUIThread());
 
   // Setup NullDevices for raw HDD partition accesses
@@ -823,6 +845,11 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     }
   }
 
+#if XE_PLATFORM_ANDROID
+  // The Android ARM64 bring-up currently needs to reach guest CPU translation
+  // before spending time in prelaunch GPU cache work.
+  XELOGW("Skipping blocking shader storage initialization on Android");
+#else
   // Initializing the shader storage in a blocking way so the user doesn't miss
   // the initial seconds - for instance, sound from an intro video may start
   // playing before the video can be seen if doing this in parallel with the
@@ -831,6 +858,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   graphics_system_->InitializeShaderStorage(cache_root_, title_id_.value(),
                                             true);
   on_shader_storage_initialization(false);
+#endif  // XE_PLATFORM_ANDROID
 
   auto main_thread = kernel_state_->LaunchModule(module);
   if (!main_thread) {

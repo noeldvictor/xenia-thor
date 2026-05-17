@@ -55,8 +55,11 @@ project("xenia-app")
     kind("SharedLib")
     links({
       "xenia-gpu-vulkan-trace-viewer",
-      "xenia-hid-demo",
       "xenia-ui-window-vulkan-demo",
+    })
+  filter({SINGLE_LIBRARY_FILTER, "platforms:not Android-*"})
+    links({
+      "xenia-hid-demo",
     })
   filter(NOT_SINGLE_LIBRARY_FILTER)
     kind("WindowedApp")
@@ -72,11 +75,14 @@ project("xenia-app")
       "xenia-cpu-backend-x64",
     })
 
-  -- TODO(Triang3l): The emulator itself on Android.
-  filter("platforms:not Android-*")
-    files({
-      "xenia_main.cc",
+  filter("architecture:ARM64")
+    links({
+      "xenia-cpu-backend-arm64",
     })
+
+  files({
+    "xenia_main.cc",
+  })
 
   filter("platforms:Windows")
     files({

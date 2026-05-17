@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="xenia_surface">#07100D</color>
+    <color name="xenia_surface_high">#101D18</color>
+    <color name="xenia_card">#14231E</color>
+    <color name="xenia_card_primary">#17392D</color>
+    <color name="xenia_green">#34E28A</color>
+    <color name="xenia_green_soft">#8BFFC4</color>
+    <color name="xenia_blue">#55C7FF</color>
+    <color name="xenia_text">#EFFEF5</color>
+    <color name="xenia_text_secondary">#9FB8AD</color>
+    <color name="xenia_warning">#FFD166</color>
+</resources>

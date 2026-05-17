@@ -6,6 +6,25 @@
 
 <h1 align="center">Xenia - Xbox 360 Emulator</h1>
 
+## Vibecoded Thor Fork Warning
+
+This `noeldvictor/xenia-thor` branch is a vibecoded AYN Thor Android ARM64
+experiment. It is **EXTREMELY UNSTABLE**. Expect broken builds, missing CPU
+backend work, hard crashes, incorrect emulation, incomplete Android UX, and
+rapidly changing debug scaffolding.
+
+Do not treat this fork as upstream Xenia, a compatibility build, or a stable
+release. It is currently for local research and legally owned test content only.
+Do not report bugs from this fork to the official Xenia project, the Xenia
+Discord, or unrelated open-source maintainers unless the issue is independently
+reproduced on an official upstream build. Keep the noise here.
+
+Current Thor experiment docs:
+
+- [Android ARM64 Thor Max Port Plan](docs/porting/android-arm64-thor-plan.md)
+- [Android Thor Debug Automation](docs/porting/android-thor-debug-automation.md)
+- [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
+
 Xenia is an experimental emulator for the Xbox 360. For more information, see the
 [main Xenia wiki](https://github.com/xenia-project/xenia/wiki).
 

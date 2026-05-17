@@ -15,17 +15,27 @@
 #include <thread>
 #include <vector>
 
-#include "xenia/app/discord/discord_presence.h"
+#if XE_PLATFORM_ANDROID
+#include <jni.h>
+#endif  // XE_PLATFORM_ANDROID
+
 #include "xenia/app/emulator_window.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/debugging.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
+#if XE_PLATFORM_ANDROID
+#include "xenia/base/main_android.h"
+#endif  // XE_PLATFORM_ANDROID
 #include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/threading.h"
 #include "xenia/config.h"
+#if !XE_PLATFORM_ANDROID
+#include "xenia/app/discord/discord_presence.h"
 #include "xenia/debug/ui/debug_window.h"
+#endif  // !XE_PLATFORM_ANDROID
 #include "xenia/emulator.h"
 #include "xenia/ui/file_picker.h"
 #include "xenia/ui/window.h"
@@ -100,10 +110,67 @@ DEFINE_transient_bool(portable, false,
 
 DECLARE_bool(debug);
 
-DEFINE_bool(discord, true, "Enable Discord rich presence", "General");
+DEFINE_bool(discord, !XE_PLATFORM_ANDROID, "Enable Discord rich presence",
+            "General");
 
 namespace xe {
 namespace app {
+
+#if XE_PLATFORM_ANDROID
+std::filesystem::path GetAndroidContextPath(const char* context_method_name) {
+  JNIEnv* jni_env = xe::GetAndroidThreadJniEnv();
+  jobject application_context = xe::GetAndroidApplicationContext();
+  if (!jni_env || !application_context) {
+    return {};
+  }
+
+  jclass context_class = jni_env->GetObjectClass(application_context);
+  if (!context_class) {
+    return {};
+  }
+  jmethodID get_file_method = jni_env->GetMethodID(
+      context_class, context_method_name, "()Ljava/io/File;");
+  jni_env->DeleteLocalRef(context_class);
+  if (!get_file_method) {
+    return {};
+  }
+
+  jobject file = jni_env->CallObjectMethod(application_context, get_file_method);
+  if (!file) {
+    return {};
+  }
+  jclass file_class = jni_env->GetObjectClass(file);
+  if (!file_class) {
+    jni_env->DeleteLocalRef(file);
+    return {};
+  }
+  jmethodID get_absolute_path =
+      jni_env->GetMethodID(file_class, "getAbsolutePath",
+                           "()Ljava/lang/String;");
+  jni_env->DeleteLocalRef(file_class);
+  if (!get_absolute_path) {
+    jni_env->DeleteLocalRef(file);
+    return {};
+  }
+
+  jstring path_string =
+      reinterpret_cast<jstring>(jni_env->CallObjectMethod(file,
+                                                          get_absolute_path));
+  jni_env->DeleteLocalRef(file);
+  if (!path_string) {
+    return {};
+  }
+  const char* path_utf = jni_env->GetStringUTFChars(path_string, nullptr);
+  if (!path_utf) {
+    jni_env->DeleteLocalRef(path_string);
+    return {};
+  }
+  std::filesystem::path path = xe::to_path(path_utf);
+  jni_env->ReleaseStringUTFChars(path_string, path_utf);
+  jni_env->DeleteLocalRef(path_string);
+  return path;
+}
+#endif  // XE_PLATFORM_ANDROID
 
 class EmulatorApp final : public xe::ui::WindowedApp {
  public:
@@ -196,6 +263,7 @@ class EmulatorApp final : public xe::ui::WindowedApp {
     }
   };
 
+#if !XE_PLATFORM_ANDROID
   class DebugWindowClosedListener final : public xe::ui::WindowListener {
    public:
     explicit DebugWindowClosedListener(EmulatorApp& emulator_app)
@@ -206,6 +274,7 @@ class EmulatorApp final : public xe::ui::WindowedApp {
    private:
     EmulatorApp& emulator_app_;
   };
+#endif  // !XE_PLATFORM_ANDROID
 
   explicit EmulatorApp(xe::ui::WindowedAppContext& app_context);
 
@@ -218,13 +287,17 @@ class EmulatorApp final : public xe::ui::WindowedApp {
   void EmulatorThread();
   void ShutdownEmulatorThreadFromUIThread();
 
+#if !XE_PLATFORM_ANDROID
   DebugWindowClosedListener debug_window_closed_listener_;
+#endif  // !XE_PLATFORM_ANDROID
 
   std::unique_ptr<Emulator> emulator_;
   std::unique_ptr<EmulatorWindow> emulator_window_;
 
+#if !XE_PLATFORM_ANDROID
   // Created on demand, used by the emulator.
   std::unique_ptr<xe::debug::ui::DebugWindow> debug_window_;
+#endif  // !XE_PLATFORM_ANDROID
 
   // Refreshing the emulator - placed after its dependencies.
   std::atomic<bool> emulator_thread_quit_requested_;
@@ -232,15 +305,21 @@ class EmulatorApp final : public xe::ui::WindowedApp {
   std::thread emulator_thread_;
 };
 
+#if !XE_PLATFORM_ANDROID
 void EmulatorApp::DebugWindowClosedListener::OnClosing(xe::ui::UIEvent& e) {
   EmulatorApp* emulator_app = &emulator_app_;
   emulator_app->emulator_->processor()->set_debug_listener(nullptr);
   emulator_app->debug_window_.reset();
 }
+#endif  // !XE_PLATFORM_ANDROID
 
 EmulatorApp::EmulatorApp(xe::ui::WindowedAppContext& app_context)
-    : xe::ui::WindowedApp(app_context, "xenia", "[Path to .iso/.xex]"),
-      debug_window_closed_listener_(*this) {
+    : xe::ui::WindowedApp(app_context, "xenia", "[Path to .iso/.xex]")
+#if !XE_PLATFORM_ANDROID
+      ,
+      debug_window_closed_listener_(*this)
+#endif  // !XE_PLATFORM_ANDROID
+{
   AddPositionalOption("target");
 }
 
@@ -414,18 +493,25 @@ bool EmulatorApp::OnInitialize() {
   // Figure out where internal files and content should go.
   std::filesystem::path storage_root = cvars::storage_root;
   if (storage_root.empty()) {
+#if XE_PLATFORM_ANDROID
+    storage_root = GetAndroidContextPath("getFilesDir");
+    if (storage_root.empty()) {
+      storage_root = xe::filesystem::GetExecutableFolder();
+    }
+#else
     storage_root = xe::filesystem::GetExecutableFolder();
+#endif  // XE_PLATFORM_ANDROID
     if (!cvars::portable &&
         !std::filesystem::exists(storage_root / "portable.txt")) {
+#if !XE_PLATFORM_ANDROID
       storage_root = xe::filesystem::GetUserFolder();
 #if defined(XE_PLATFORM_WIN32) || defined(XE_PLATFORM_GNU_LINUX)
       storage_root = storage_root / "Xenia";
 #else
-      // TODO(Triang3l): Point to the app's external storage "files" directory
-      // on Android.
 #warning Unhandled platform for the data root.
       storage_root = storage_root / "Xenia";
 #endif
+#endif  // !XE_PLATFORM_ANDROID
     }
   }
   storage_root = std::filesystem::absolute(storage_root);
@@ -448,7 +534,14 @@ bool EmulatorApp::OnInitialize() {
 
   std::filesystem::path cache_root = cvars::cache_root;
   if (cache_root.empty()) {
+#if XE_PLATFORM_ANDROID
+    cache_root = GetAndroidContextPath("getCacheDir");
+    if (cache_root.empty()) {
+      cache_root = storage_root / "cache";
+    }
+#else
     cache_root = storage_root / "cache";
+#endif  // XE_PLATFORM_ANDROID
     // TODO(Triang3l): Point to the app's external storage "cache" directory on
     // Android.
   } else {
@@ -461,10 +554,12 @@ bool EmulatorApp::OnInitialize() {
   cache_root = std::filesystem::absolute(cache_root);
   XELOGI("Cache root: {}", xe::path_to_utf8(cache_root));
 
+#if !XE_PLATFORM_ANDROID
   if (cvars::discord) {
     discord::DiscordPresence::Initialize();
     discord::DiscordPresence::NotPlaying();
   }
+#endif  // !XE_PLATFORM_ANDROID
 
   // Create the emulator but don't initialize so we can setup the window.
   emulator_ =
@@ -489,9 +584,11 @@ bool EmulatorApp::OnInitialize() {
 void EmulatorApp::OnDestroy() {
   ShutdownEmulatorThreadFromUIThread();
 
+#if !XE_PLATFORM_ANDROID
   if (cvars::discord) {
     discord::DiscordPresence::Shutdown();
   }
+#endif  // !XE_PLATFORM_ANDROID
 
   Profiler::Dump();
   // The profiler needs to shut down before the graphics context.
@@ -582,6 +679,7 @@ void EmulatorApp::EmulatorThread() {
     }
   }
 
+#if !XE_PLATFORM_ANDROID
   // Set a debug handler.
   // This will respond to debugging requests so we can open the debug UI.
   if (cvars::debug) {
@@ -600,12 +698,15 @@ void EmulatorApp::EmulatorThread() {
           return debug_window_.get();
         });
   }
+#endif  // !XE_PLATFORM_ANDROID
 
   emulator_->on_launch.AddListener([&](auto title_id, const auto& game_title) {
+#if !XE_PLATFORM_ANDROID
     if (cvars::discord) {
       discord::DiscordPresence::PlayingTitle(
           game_title.empty() ? "Unknown Title" : std::string(game_title));
     }
+#endif  // !XE_PLATFORM_ANDROID
     app_context().CallInUIThread([this]() { emulator_window_->UpdateTitle(); });
     emulator_thread_event_->Set();
   });
@@ -618,9 +719,11 @@ void EmulatorApp::EmulatorThread() {
       });
 
   emulator_->on_terminate.AddListener([]() {
+#if !XE_PLATFORM_ANDROID
     if (cvars::discord) {
       discord::DiscordPresence::NotPlaying();
     }
+#endif  // !XE_PLATFORM_ANDROID
   });
 
   // Enable emulator input now that the emulator is properly loaded.
@@ -635,7 +738,14 @@ void EmulatorApp::EmulatorThread() {
 
   if (!path.empty()) {
     // Normalize the path and make absolute.
-    auto abs_path = std::filesystem::absolute(path);
+    auto abs_path = path;
+#if XE_PLATFORM_ANDROID
+    if (!xe::filesystem::IsAndroidContentUri(xe::path_to_utf8(path))) {
+      abs_path = std::filesystem::absolute(path);
+    }
+#else
+    abs_path = std::filesystem::absolute(path);
+#endif  // XE_PLATFORM_ANDROID
     result = emulator_->LaunchPath(abs_path);
     if (XFAILED(result)) {
       xe::FatalError(fmt::format("Failed to launch target: {:08X}", result));
