@@ -24,6 +24,7 @@
 #include "xenia/base/math.h"
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
 #include "xenia/cpu/backend/arm64/arm64_code_cache.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/memory.h"
 
 #include "xbyak_aarch64/xbyak_aarch64.h"
@@ -210,6 +211,58 @@ void Arm64JitMemset(ThreadState* thread_state, uint64_t address,
 
 uint64_t Arm64JitLoadClock() { return Clock::QueryGuestTickCount(); }
 
+bool Arm64JitInvokeHostFunction(Function* function, ThreadState* thread_state) {
+  if (!function) {
+    return false;
+  }
+
+  if (function->behavior() == Function::Behavior::kBuiltin) {
+    return function->Call(thread_state, 0);
+  }
+
+  if (function->behavior() == Function::Behavior::kExtern) {
+    auto guest_function = static_cast<GuestFunction*>(function);
+    if (guest_function->extern_handler()) {
+      guest_function->extern_handler()(thread_state->context(),
+                                       thread_state->context()->kernel_state);
+      return true;
+    }
+    XELOGE("ARM64 JIT missing extern handler for {:08X} {}",
+           function->address(), function->name());
+    return false;
+  }
+
+  return false;
+}
+
+bool Arm64JitInvokeGuestFunction(Function* function, ThreadState* thread_state,
+                                 uint32_t return_address) {
+  if (!function) {
+    return false;
+  }
+  if (function->behavior() == Function::Behavior::kBuiltin ||
+      function->behavior() == Function::Behavior::kExtern) {
+    return Arm64JitInvokeHostFunction(function, thread_state);
+  }
+  auto resolved = thread_state->processor()->ResolveFunction(function->address());
+  if (!resolved) {
+    XELOGE("ARM64 JIT failed to resolve direct call target {:08X}",
+           function->address());
+    return false;
+  }
+  return resolved->Call(thread_state, return_address);
+}
+
+bool Arm64JitInvokeGuestAddress(ThreadState* thread_state, uint32_t address,
+                                uint32_t return_address) {
+  auto target = thread_state->processor()->ResolveFunction(address);
+  if (!target) {
+    XELOGE("ARM64 JIT failed to resolve call target {:08X}", address);
+    return false;
+  }
+  return Arm64JitInvokeGuestFunction(target, thread_state, return_address);
+}
+
 uint64_t Arm64JitDivInteger(uint64_t lhs, uint64_t rhs, uint32_t type,
                             uint32_t flags) {
   auto type_name = static_cast<hir::TypeName>(type);
@@ -298,6 +351,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       }
     }
 
+    mov(w0, 1);
     EmitEpilogue();
     ready(Xbyak_aarch64::CodeArray::PROTECT_RW);
     return true;
@@ -359,9 +413,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     } else {
       mov(x17, static_cast<uint64_t>(stack_size_));
       if (subtract) {
-        sub(sp, sp, x17);
+        sub(sp, sp, x17, Xbyak_aarch64::UXTX);
       } else {
-        add(sp, sp, x17);
+        add(sp, sp, x17, Xbyak_aarch64::UXTX);
       }
     }
   }
@@ -371,10 +425,12 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     mov(x29, sp);
     stp(x19, x20, Xbyak_aarch64::pre_ptr(sp, -16));
     stp(x21, x22, Xbyak_aarch64::pre_ptr(sp, -16));
+    stp(x23, x24, Xbyak_aarch64::pre_ptr(sp, -16));
 
     mov(x19, x0);  // PPCContext*
     mov(x20, x1);  // ThreadState*
     mov(w22, w2);  // guest return address, reserved for call support
+    mov(w23, uint64_t(0));  // guest call return address
 
     EmitAdjustSp(true);
     mov(x21, sp);
@@ -385,12 +441,17 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   void EmitEpilogue() {
     L(epilog_label_);
-    mov(w0, 1);
     EmitAdjustSp(false);
+    ldp(x23, x24, Xbyak_aarch64::post_ptr(sp, 16));
     ldp(x21, x22, Xbyak_aarch64::post_ptr(sp, 16));
     ldp(x19, x20, Xbyak_aarch64::post_ptr(sp, 16));
     ldp(x29, x30, Xbyak_aarch64::post_ptr(sp, 16));
     ret();
+  }
+
+  void EmitReturnTrue() {
+    mov(w0, 1);
+    b(epilog_label_);
   }
 
   void EmitAddOffset(const XReg& dst, const XReg& base, uint64_t offset) {
@@ -780,7 +841,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       return false;
     }
     if (negate) {
-      sub(x8, xzr, x8);
+      neg(x8, x8);
     } else {
       mvn(x8, x8);
     }
@@ -883,6 +944,108 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return true;
   }
 
+  void EmitCheckCallResult(uint16_t flags) {
+    if (flags & hir::CALL_TAIL) {
+      b(epilog_label_);
+      return;
+    }
+    Xbyak_aarch64::Label call_ok;
+    cbnz(w0, call_ok);
+    b(epilog_label_);
+    L(call_ok);
+  }
+
+  bool EmitSetReturnAddress(const Instruction& instr,
+                            std::string* reject_reason) {
+    if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
+      return false;
+    }
+    mov(w23, w8);
+    return true;
+  }
+
+  bool EmitDirectCall(const Instruction& instr, bool conditional,
+                      std::string* reject_reason) {
+    const Operand& symbol_operand = conditional ? instr.src2 : instr.src1;
+    if (symbol_operand.kind != Operand::Kind::kSymbol ||
+        !symbol_operand.symbol) {
+      return Fail(reject_reason, "direct call missing symbol");
+    }
+
+    Xbyak_aarch64::Label skip_call;
+    if (conditional) {
+      if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
+        return false;
+      }
+      cbz(x8, skip_call);
+    }
+
+    mov(x0, reinterpret_cast<uint64_t>(symbol_operand.symbol));
+    mov(x1, x20);
+    if (instr.flags & hir::CALL_TAIL) {
+      mov(w2, w22);
+    } else {
+      mov(w2, w23);
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitInvokeGuestFunction));
+    EmitCheckCallResult(instr.flags);
+
+    if (conditional) {
+      L(skip_call);
+    }
+    return true;
+  }
+
+  bool EmitExternCall(const Instruction& instr, std::string* reject_reason) {
+    if (instr.src1.kind != Operand::Kind::kSymbol || !instr.src1.symbol) {
+      return Fail(reject_reason, "extern call missing symbol");
+    }
+    mov(x0, reinterpret_cast<uint64_t>(instr.src1.symbol));
+    mov(x1, x20);
+    EmitCall(reinterpret_cast<void*>(&Arm64JitInvokeHostFunction));
+    EmitCheckCallResult(instr.flags);
+    return true;
+  }
+
+  bool EmitIndirectCall(const Instruction& instr, bool conditional,
+                        std::string* reject_reason) {
+    Xbyak_aarch64::Label skip_call;
+    const Operand& target_operand = conditional ? instr.src2 : instr.src1;
+    if (conditional) {
+      if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
+        return false;
+      }
+      cbz(x8, skip_call);
+    }
+
+    if (!EmitLoadOperand(target_operand, x8, reject_reason)) {
+      return false;
+    }
+
+    if (instr.flags & hir::CALL_POSSIBLE_RETURN) {
+      Xbyak_aarch64::Label not_return;
+      cmp(w8, w22);
+      b(NE, not_return);
+      EmitReturnTrue();
+      L(not_return);
+    }
+
+    mov(x0, x20);
+    mov(w1, w8);
+    if (instr.flags & hir::CALL_TAIL) {
+      mov(w2, w22);
+    } else {
+      mov(w2, w23);
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitInvokeGuestAddress));
+    EmitCheckCallResult(instr.flags);
+
+    if (conditional) {
+      L(skip_call);
+    }
+    return true;
+  }
+
   bool EmitInstruction(const Instruction& instr, std::string* reject_reason) {
     switch (instr.opcode) {
       case hir::OPCODE_COMMENT:
@@ -895,19 +1058,35 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       case hir::OPCODE_TRAP:
       case hir::OPCODE_DEBUG_BREAK_TRUE:
       case hir::OPCODE_TRAP_TRUE:
-      case hir::OPCODE_SET_RETURN_ADDRESS:
       case hir::OPCODE_SET_ROUNDING_MODE:
         return true;
 
+      case hir::OPCODE_SET_RETURN_ADDRESS:
+        return EmitSetReturnAddress(instr, reject_reason);
+      case hir::OPCODE_CALL:
+        return EmitDirectCall(instr, false, reject_reason);
+      case hir::OPCODE_CALL_TRUE:
+        return EmitDirectCall(instr, true, reject_reason);
+      case hir::OPCODE_CALL_INDIRECT:
+        return EmitIndirectCall(instr, false, reject_reason);
+      case hir::OPCODE_CALL_INDIRECT_TRUE:
+        return EmitIndirectCall(instr, true, reject_reason);
+      case hir::OPCODE_CALL_EXTERN:
+        return EmitExternCall(instr, reject_reason);
+
       case hir::OPCODE_RETURN:
-        b(epilog_label_);
+        EmitReturnTrue();
         return true;
-      case hir::OPCODE_RETURN_TRUE:
+      case hir::OPCODE_RETURN_TRUE: {
         if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
           return false;
         }
-        cbnz(x8, epilog_label_);
+        Xbyak_aarch64::Label no_return_label;
+        cbz(x8, no_return_label);
+        EmitReturnTrue();
+        L(no_return_label);
         return true;
+      }
       case hir::OPCODE_BRANCH:
         if (!CheckBlockIndex(instr.src1.block_index, reject_reason)) {
           return false;

@@ -1274,13 +1274,8 @@ void Arm64Function::SetupCompiledProgram(CompiledProgram compiled_program,
 bool Arm64Function::CallImpl(ThreadState* thread_state,
                              uint32_t return_address) {
   if (compiled_program_) {
-    if (compiled_program_(thread_state->context(), thread_state,
-                          return_address)) {
-      return true;
-    }
-    XELOGW(
-        "ARM64 JIT guest function {:08X} failed, falling back to interpreter",
-        address());
+    return compiled_program_(thread_state->context(), thread_state,
+                             return_address);
   }
 
   if (program_) {
