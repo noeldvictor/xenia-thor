@@ -211,6 +211,47 @@ void Arm64JitMemset(ThreadState* thread_state, uint64_t address,
 
 uint64_t Arm64JitLoadClock() { return Clock::QueryGuestTickCount(); }
 
+uint64_t Arm64JitRotateLeftInteger(uint64_t value, uint64_t amount,
+                                   uint32_t type) {
+  auto type_name = static_cast<hir::TypeName>(type);
+  switch (type_name) {
+    case hir::INT8_TYPE: {
+      amount &= 0x7;
+      if (!amount) {
+        return MaskInteger(type_name, value);
+      }
+      return xe::rotate_left(static_cast<uint8_t>(value),
+                             static_cast<uint8_t>(amount));
+    }
+    case hir::INT16_TYPE: {
+      amount &= 0xF;
+      if (!amount) {
+        return MaskInteger(type_name, value);
+      }
+      return xe::rotate_left(static_cast<uint16_t>(value),
+                             static_cast<uint8_t>(amount));
+    }
+    case hir::INT32_TYPE: {
+      amount &= 0x1F;
+      if (!amount) {
+        return MaskInteger(type_name, value);
+      }
+      return xe::rotate_left(static_cast<uint32_t>(value),
+                             static_cast<uint8_t>(amount));
+    }
+    case hir::INT64_TYPE: {
+      amount &= 0x3F;
+      if (!amount) {
+        return MaskInteger(type_name, value);
+      }
+      return xe::rotate_left(static_cast<uint64_t>(value),
+                             static_cast<uint8_t>(amount));
+    }
+    default:
+      return MaskInteger(type_name, value);
+  }
+}
+
 bool Arm64JitInvokeHostFunction(Function* function, ThreadState* thread_state) {
   if (!function) {
     return false;
@@ -874,6 +915,47 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
+  bool EmitRotateLeft(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckIntegerType(instr.dest_type, reject_reason, "rotate_left")) {
+      return false;
+    }
+    if (!CheckIntegerType(instr.src1.type, reject_reason, "rotate_left") ||
+        !CheckIntegerType(instr.src2.type, reject_reason, "rotate_left")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
+      return false;
+    }
+
+    if (instr.src2.kind == Operand::Kind::kConstant &&
+        (instr.dest_type == hir::INT32_TYPE ||
+         instr.dest_type == hir::INT64_TYPE)) {
+      if (instr.dest_type == hir::INT32_TYPE) {
+        uint32_t amount =
+            static_cast<uint32_t>(instr.src2.constant.u64) & 0x1F;
+        if (amount) {
+          ror(w8, w8, (32 - amount) & 0x1F);
+        }
+      } else {
+        uint32_t amount =
+            static_cast<uint32_t>(instr.src2.constant.u64) & 0x3F;
+        if (amount) {
+          ror(x8, x8, (64 - amount) & 0x3F);
+        }
+      }
+      return EmitStoreValue(instr, x8, reject_reason);
+    }
+
+    if (!EmitLoadOperand(instr.src2, x1, reject_reason)) {
+      return false;
+    }
+    mov(x0, x8);
+    mov(w2, static_cast<uint64_t>(instr.dest_type));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitRotateLeftInteger));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
   bool EmitCountLeadingZeros(const Instruction& instr,
                              std::string* reject_reason) {
     if (!CheckIntegerType(instr.dest_type, reject_reason, "cntlz")) {
@@ -1186,6 +1268,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       case hir::OPCODE_SHR:
       case hir::OPCODE_SHA:
         return EmitBinaryArithmetic(instr, instr.opcode, reject_reason);
+      case hir::OPCODE_ROTATE_LEFT:
+        return EmitRotateLeft(instr, reject_reason);
       case hir::OPCODE_ADD_CARRY:
         return EmitAddCarry(instr, reject_reason);
       case hir::OPCODE_DIV:
