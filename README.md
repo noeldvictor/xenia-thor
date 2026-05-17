@@ -1,100 +1,83 @@
-<p align="center">
-    <a href="https://github.com/xenia-project/xenia/tree/master/assets/icon">
-        <img height="120px" src="https://raw.githubusercontent.com/xenia-project/xenia/master/assets/icon/128.png" />
-    </a>
-</p>
+# xenia-thor
 
-<h1 align="center">Xenia - Xbox 360 Emulator</h1>
+`xenia-thor` is a personal, vibecoded, agentic-AI experiment around bringing a
+native Android ARM64 Xenia-derived research build to the AYN Thor Max.
 
-## Vibecoded Thor Fork Warning
+It is **EXTREMELY UNSTABLE**.
 
-This `noeldvictor/xenia-thor` branch is a vibecoded AYN Thor Android ARM64
-experiment. It is **EXTREMELY UNSTABLE**. Expect broken builds, missing CPU
-backend work, hard crashes, incorrect emulation, incomplete Android UX, and
-rapidly changing debug scaffolding.
+This is not an official Xenia build, not a compatibility fork, not a release
+channel, and not a supportable emulator for normal users. It is a messy local
+research playground for learning, debugging, automation, and riding the vibes
+while trying to make an Android ARM64 path move forward.
 
-Do not treat this fork as upstream Xenia, a compatibility build, or a stable
-release. It is currently for local research and legally owned test content only.
-Do not report bugs from this fork to the official Xenia project, the Xenia
-Discord, or unrelated open-source maintainers unless the issue is independently
-reproduced on an official upstream build. Keep the noise here.
+## No Support
 
-Current Thor experiment docs:
+There is no support promise here.
+
+- Do not ask the official Xenia project for help with this fork.
+- Do not report `xenia-thor` crashes to upstream Xenia, Xenia Discord, or other
+  emulator communities.
+- Do not treat any result here as a game compatibility claim.
+- Do not expect builds to work from commit to commit.
+- Do not use this as evidence that Xenia supports Android or AYN Thor.
+
+If something breaks here, it probably belongs here.
+
+## Thanks
+
+Huge thanks to the original Xenia developers and contributors. Their years of
+research, engineering, documentation, and open-source work made this experiment
+possible at all.
+
+Original project:
+
+- [xenia-project/xenia](https://github.com/xenia-project/xenia)
+- [xenia.jp](https://xenia.jp/)
+
+Please respect their time. This fork is not their responsibility.
+
+## Current Experiment
+
+Target device:
+
+- AYN Thor Max
+- Android ARM64
+- Vulkan on Adreno
+
+Current focus:
+
+- Android native shell and game picker flow.
+- Thor-specific ADB build, deploy, launch, and capture scripts.
+- ARM64 CPU backend/JIT research.
+- Vulkan bring-up and future RenderDoc/AGI lanes.
+- Blue Dragon Disc 1 as a legally owned local test case.
+
+Current state as of 2026-05-17:
+
+- The Android Vulkan window/demo path runs on the Thor.
+- The emulator activity can launch Blue Dragon Disc 1 from the SD card.
+- Guest threads can start through temporary ARM64 scaffolding.
+- It does not reach playable gameplay.
+- It is not a compatibility result.
+
+## Local Notes
+
+Useful repo docs for this fork:
 
 - [Android ARM64 Thor Max Port Plan](docs/porting/android-arm64-thor-plan.md)
 - [Android Thor Debug Automation](docs/porting/android-thor-debug-automation.md)
 - [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
+- [Thor Fast Dev Loop Options](docs/research/20260517-195019-thor-fast-dev-loop-options.md)
+- [ARM64 Port Tooling and Skills](docs/research/20260517-195621-arm64-port-tooling-skills.md)
 - [Xenia ARM64 / Android Fork Audit](docs/research/20260517-183520-xenia-arm64-fork-audit.md)
 
-Current Thor status as of 2026-05-17:
+Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 
-- Vulkan windowing and the Android emulator shell run on the AYN Thor Max.
-- Blue Dragon Disc 1 can launch into the Android emulator activity and execute
-  guest threads through a temporary ARM64 HIR interpreter scaffold.
-- It is not playable and not a compatibility claim. A real AArch64 JIT/emitter
-  is still required before "game running" means visible, usable gameplay.
+## Legal And Content Boundary
 
-Xenia is an experimental emulator for the Xbox 360. For more information, see the
-[main Xenia wiki](https://github.com/xenia-project/xenia/wiki).
+This fork is for emulator research and legally owned test content only. Do not
+use it for piracy, bypassing access controls, redistributing game content, or
+posting copyrighted assets.
 
-**Interested in supporting the core contributors?** Visit
-[Xenia Project on Patreon](https://www.patreon.com/xenia_project).
-
-Come chat with us about **emulator-related topics** on [Discord](https://discord.gg/Q9mxZf9).
-For developer chat join `#dev` but stay on topic. Lurking is not only fine, but encouraged!
-Please check the [FAQ](https://github.com/xenia-project/xenia/wiki/FAQ) page before asking questions.
-We've got jobs/lives/etc, so don't expect instant answers.
-
-Discussing illegal activities will get you banned.
-
-## Status
-
-Buildbot | Status | Releases
--------- | ------ | --------
-[Windows](https://ci.appveyor.com/project/benvanik/xenia/branch/master) | [![Build status](https://ci.appveyor.com/api/projects/status/ftqiy86kdfawyx3a/branch/master?svg=true)](https://ci.appveyor.com/project/benvanik/xenia/branch/master) | [Latest](https://github.com/xenia-project/release-builds-windows/releases/latest) ◦ [All](https://github.com/xenia-project/release-builds-windows/releases)
-[Linux](https://cloud.drone.io/xenia-project/xenia) | [![Build status](https://cloud.drone.io/api/badges/xenia-project/xenia/status.svg)](https://cloud.drone.io/xenia-project/xenia)
-
-Quite a few real games run. Quite a few don't.
-See the [Game compatibility list](https://github.com/xenia-project/game-compatibility/issues)
-for currently tracked games, and feel free to contribute your own updates,
-screenshots, and information there following the [existing conventions](https://github.com/xenia-project/game-compatibility/blob/master/README.md).
-
-## Disclaimer
-
-The goal of this project is to experiment, research, and educate on the topic
-of emulation of modern devices and operating systems. **It is not for enabling
-illegal activity**. All information is obtained via reverse engineering of
-legally purchased devices and games and information made public on the internet
-(you'd be surprised what's indexed on Google...).
-
-## Quickstart
-
-See the [Quickstart](https://github.com/xenia-project/xenia/wiki/Quickstart) page.
-
-## Building
-
-See [building.md](docs/building.md) for setup and information about the
-`xb` script. When writing code, check the [style guide](docs/style_guide.md)
-and be sure to run clang-format!
-
-## Contributors Wanted!
-
-Have some spare time, know advanced C++, and want to write an emulator?
-Contribute! There's a ton of work that needs to be done, a lot of which
-is wide open greenfield fun.
-
-**For general rules and guidelines please see [CONTRIBUTING.md](.github/CONTRIBUTING.md).**
-
-Fixes and optimizations are always welcome (please!), but in addition to
-that there are some major work areas still untouched:
-
-* Help work through [missing functionality/bugs in games](https://github.com/xenia-project/xenia/labels/compat)
-* Reduce the size of Xenia's [huge log files](https://github.com/xenia-project/xenia/issues/1526)
-* Skilled with Linux? A strong contributor is needed to [help with porting](https://github.com/xenia-project/xenia/labels/platform-linux)
-
-See more projects [good for contributors](https://github.com/xenia-project/xenia/labels/good%20first%20issue). It's a good idea to ask on Discord and check the issues page before beginning work on
-something.
-
-## FAQ
-
-See the [frequently asked questions](https://github.com/xenia-project/xenia/wiki/FAQ) page.
+Again: experimental fork, no support, no promises. Just agentic AI, Android
+ARM64 research, and vibes.
