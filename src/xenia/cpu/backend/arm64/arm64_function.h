@@ -13,6 +13,7 @@
 #include <memory>
 #include <vector>
 
+#include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/hir/opcodes.h"
 #include "xenia/cpu/hir/value.h"
@@ -25,6 +26,10 @@ namespace arm64 {
 
 class Arm64Function : public GuestFunction {
  public:
+  using CompiledProgram = bool (*)(ppc::PPCContext* context,
+                                   ThreadState* thread_state,
+                                   uint32_t return_address);
+
   struct Operand {
     enum class Kind {
       kNone,
@@ -64,6 +69,7 @@ class Arm64Function : public GuestFunction {
 
   struct Program {
     uint32_t max_value_ordinal = 0;
+    uint32_t local_count = 0;
     std::vector<hir::TypeName> value_types;
     std::vector<Block> blocks;
     std::vector<Instruction> instructions;
@@ -77,6 +83,8 @@ class Arm64Function : public GuestFunction {
 
   void Setup(uint8_t* machine_code, size_t machine_code_length);
   void SetupProgram(std::unique_ptr<Program> program);
+  void SetupCompiledProgram(CompiledProgram compiled_program,
+                            size_t machine_code_length);
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -86,6 +94,7 @@ class Arm64Function : public GuestFunction {
 
   uint8_t* machine_code_ = nullptr;
   size_t machine_code_length_ = 0;
+  CompiledProgram compiled_program_ = nullptr;
   std::unique_ptr<Program> program_;
 };
 

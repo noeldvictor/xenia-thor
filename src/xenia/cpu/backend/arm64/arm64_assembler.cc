@@ -18,6 +18,7 @@
 #include "xenia/base/string_buffer.h"
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
 #include "xenia/cpu/backend/arm64/arm64_function.h"
+#include "xenia/cpu/backend/arm64/arm64_jit.h"
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/hir/block.h"
 #include "xenia/cpu/hir/hir_builder.h"
@@ -121,6 +122,7 @@ std::unique_ptr<Arm64Function::Program> BuildInterpreterProgram(
     local_indices[local] = static_cast<uint32_t>(local_indices.size());
     RememberValueType(program.get(), local);
   }
+  program->local_count = static_cast<uint32_t>(local_indices.size());
 
   std::unordered_map<hir::Block*, uint32_t> block_indices;
   uint32_t block_index = 0;
@@ -281,7 +283,15 @@ bool Arm64Assembler::Assemble(GuestFunction* function,
   LogInterpreterProgramDetails(function, builder);
 
   function->set_debug_info(std::move(debug_info));
-  static_cast<Arm64Function*>(function)->SetupProgram(std::move(program));
+  auto arm64_function = static_cast<Arm64Function*>(function);
+  std::string jit_reject_reason;
+  if (!TryCompileArm64Program(arm64_backend_, arm64_function, *program,
+                              &jit_reject_reason) &&
+      !jit_reject_reason.empty()) {
+    XELOGI("ARM64 JIT fallback for guest {:08X}: {}", function->address(),
+           jit_reject_reason);
+  }
+  arm64_function->SetupProgram(std::move(program));
   return true;
 }
 

@@ -1264,8 +1264,25 @@ void Arm64Function::SetupProgram(std::unique_ptr<Program> program) {
   program_ = std::move(program);
 }
 
+void Arm64Function::SetupCompiledProgram(CompiledProgram compiled_program,
+                                         size_t machine_code_length) {
+  compiled_program_ = compiled_program;
+  machine_code_ = reinterpret_cast<uint8_t*>(compiled_program);
+  machine_code_length_ = machine_code_length;
+}
+
 bool Arm64Function::CallImpl(ThreadState* thread_state,
                              uint32_t return_address) {
+  if (compiled_program_) {
+    if (compiled_program_(thread_state->context(), thread_state,
+                          return_address)) {
+      return true;
+    }
+    XELOGW(
+        "ARM64 JIT guest function {:08X} failed, falling back to interpreter",
+        address());
+  }
+
   if (program_) {
     return ExecuteProgram(thread_state, return_address);
   }
@@ -1291,7 +1308,7 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
     values[i] = MakeZero(program_->value_types[i]);
   }
 
-  std::vector<RuntimeValue> locals(program_->max_value_ordinal + 1);
+  std::vector<RuntimeValue> locals(program_->local_count);
 
   uint32_t call_return_address = 0;
   uint32_t pc = program_->blocks.empty() ? 0 : program_->blocks[0].instruction_start;
