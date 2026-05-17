@@ -562,6 +562,11 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   auto code_base = code_cache->execute_base_address();
   auto code_end = code_base + code_cache->total_size();
 
+  if (!(ex->pc() >= code_base && ex->pc() < code_end)) {
+    // Didn't occur in guest code. Let it pass.
+    return false;
+  }
+
   if (!processor()->is_debugger_attached() && debugging::IsDebuggerAttached()) {
     // If Xenia's debugger isn't attached but another one is, pass it to that
     // debugger.
@@ -570,11 +575,6 @@ bool Emulator::ExceptionCallback(Exception* ex) {
     // Let the debugger handle this exception. It may decide to continue past it
     // (if it was a stepping breakpoint, etc).
     return processor()->OnUnhandledException(ex);
-  }
-
-  if (!(ex->pc() >= code_base && ex->pc() < code_end)) {
-    // Didn't occur in guest code. Let it pass.
-    return false;
   }
 
   // Within range. Pause the emulator and eat the exception.
