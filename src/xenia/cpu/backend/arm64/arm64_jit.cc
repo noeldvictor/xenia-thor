@@ -189,16 +189,41 @@ void WriteIntegerValue(void* address, hir::TypeName type, uint64_t value,
 uint64_t Arm64JitLoadInteger(ThreadState* thread_state, uint64_t address,
                              uint32_t type, uint32_t flags) {
   auto type_name = static_cast<hir::TypeName>(type);
-  auto host_address =
-      thread_state->memory()->TranslateVirtual(NormalizeGuestAddress(address));
+  auto guest_address = NormalizeGuestAddress(address);
+  if (type_name == hir::INT32_TYPE) {
+    if (auto range = thread_state->memory()->LookupVirtualMappedRange(
+            guest_address)) {
+      uint32_t value =
+          range->read(nullptr, range->callback_context, guest_address);
+      if (!(flags & hir::LOAD_STORE_BYTE_SWAP)) {
+        value = xe::byte_swap(value);
+      }
+      return value;
+    }
+  }
+
+  auto host_address = thread_state->memory()->TranslateVirtual(guest_address);
   return ReadIntegerValue(host_address, type_name, flags);
 }
 
 void Arm64JitStoreInteger(ThreadState* thread_state, uint64_t address,
                           uint64_t value, uint32_t type, uint32_t flags) {
   auto type_name = static_cast<hir::TypeName>(type);
-  auto host_address =
-      thread_state->memory()->TranslateVirtual(NormalizeGuestAddress(address));
+  auto guest_address = NormalizeGuestAddress(address);
+  if (type_name == hir::INT32_TYPE) {
+    if (auto range = thread_state->memory()->LookupVirtualMappedRange(
+            guest_address)) {
+      uint32_t register_value = static_cast<uint32_t>(value);
+      if (!(flags & hir::LOAD_STORE_BYTE_SWAP)) {
+        register_value = xe::byte_swap(register_value);
+      }
+      range->write(nullptr, range->callback_context, guest_address,
+                   register_value);
+      return;
+    }
+  }
+
+  auto host_address = thread_state->memory()->TranslateVirtual(guest_address);
   WriteIntegerValue(host_address, type_name, value, flags);
 }
 
