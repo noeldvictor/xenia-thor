@@ -7,7 +7,13 @@ project("xenia-cpu-backend-arm64")
   kind("StaticLib")
   language("C++")
   links({
+    "xbyak_aarch64",
     "xenia-base",
     "xenia-cpu",
+  })
+  includedirs({
+    project_root.."/third_party/xbyak_aarch64",
+    project_root.."/third_party/xbyak_aarch64/src",
+    project_root.."/third_party/xbyak_aarch64/xbyak_aarch64",
   })
   local_platform_files()

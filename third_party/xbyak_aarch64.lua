@@ -1,0 +1,20 @@
+group("third_party")
+project("xbyak_aarch64")
+  uuid("a1cf4a1d-1e2c-41d1-8c0b-8cd6df596d83")
+  kind("StaticLib")
+  language("C++")
+  includedirs({
+    "xbyak_aarch64",
+    "xbyak_aarch64/src",
+    "xbyak_aarch64/xbyak_aarch64",
+  })
+  files({
+    "xbyak_aarch64/src/xbyak_aarch64_impl.cpp",
+    "xbyak_aarch64/src/xbyak_aarch64_impl.h",
+    "xbyak_aarch64/src/util_impl.cpp",
+    "xbyak_aarch64/src/util_impl.h",
+    "xbyak_aarch64/src/util_impl_linux.h",
+    "xbyak_aarch64/src/util_impl_mac.h",
+    "xbyak_aarch64/src/util_impl_windows.h",
+    "xbyak_aarch64/xbyak_aarch64/*.h",
+  })
