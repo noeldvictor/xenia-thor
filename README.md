@@ -24,6 +24,7 @@ Current Thor experiment docs:
 - [Android ARM64 Thor Max Port Plan](docs/porting/android-arm64-thor-plan.md)
 - [Android Thor Debug Automation](docs/porting/android-thor-debug-automation.md)
 - [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
+- [Xenia ARM64 / Android Fork Audit](docs/research/20260517-183520-xenia-arm64-fork-audit.md)
 
 Current Thor status as of 2026-05-17:
 

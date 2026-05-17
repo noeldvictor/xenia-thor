@@ -164,6 +164,16 @@ Primary target:
 - Current blocker: real AArch64 JIT/emitter work. The interpreter is only a debug/correctness discovery tool.
 - The visible `AArch64 JIT pending` badge is static Java OSD text and should not be treated as the native failure message.
 
+## ARM64 Fork Audit Decision
+
+- Latest audit: `docs/research/20260517-183520-xenia-arm64-fork-audit.md`.
+- Primary AArch64 JIT source to study/port: `has207/xenia-edge`, branch `edge`, because it has the most current xbyak_aarch64 A64 backend shape, CMake wiring, POSIX code cache, and broad HIR opcode table coverage.
+- Primary Android app-side reference: `aenu1/ax360e`, branch `main`, because it shows a real Android package with nested Xenia Canary, A64 backend, Android CMake glue, SAF/document-file access, Android HID, Adreno options, and `libadrenotools`.
+- Secondary provenance and portability references: `wmarti/xenia-mac`, `Wunkolo/xenia`, and `joetheshmoe/xenia-winarm`.
+- Treat `edilsongg/xenia-arm64` and `fillips67fissile/xenia-arm64-backend` as Wunkolo duplicates unless a future diff proves unique work.
+- Do not import from `SbossTreeSitty`, `Xenia-creator2025/Xenia-emulator-android`, or the `ProyectoXenia` repos for JIT work.
+- Before copying any third-party code, verify the specific file license, preserve attribution, and keep this fork clearly marked as unofficial research.
+
 ## Android ARM64 Risk Register
 
 - CPU backend: only an AArch64 scaffold with slow interpreter fallback exists; no real instruction emitter exists yet.
