@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/graphics_system.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -16,6 +17,7 @@
 #include <utility>
 
 #include "xenia/base/byte_stream.h"
+#include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -35,6 +37,12 @@ DEFINE_bool(
 
 namespace xe {
 namespace gpu {
+
+namespace {
+
+std::atomic<int32_t> blue_dragon_wait_token_kick_log_count{0};
+
+}  // namespace
 
 // Nvidia Optimus/AMD PowerXpress support.
 // These exports force the process to trigger the discrete GPU in multi-GPU
@@ -194,6 +202,9 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
                   // Screen res - 1280x720
                   // maximum [width(0x0FFF), height(0x0FFF)]
       return 0x050002D0;
+    case 0x01C4:  // CP_RB_RPTR
+    case 0x01C5:  // CP_RB_WPTR
+      break;
     default:
       if (!register_file_.GetRegisterInfo(r)) {
         XELOGE("GPU: Read from unknown register ({:04X})", r);
@@ -258,6 +269,26 @@ void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
   uint64_t args[] = {source, interrupt_callback_data_};
   processor_->ExecuteInterrupt(thread->thread_state(), interrupt_callback_,
                                args, xe::countof(args));
+
+  if (cvars::gpu_blue_dragon_kick_wait_token && source == 1 &&
+      interrupt_callback_data_) {
+    uint32_t token_ptr = xe::load_and_swap<uint32_t>(
+        memory_->TranslateVirtual(interrupt_callback_data_ + 0x2A10));
+    if (token_ptr) {
+      auto token_host = memory_->TranslateVirtual(token_ptr);
+      uint32_t token = xe::load_and_swap<uint32_t>(token_host);
+      xe::store_and_swap<uint32_t>(token_host, token + 1);
+
+      int32_t log_index =
+          blue_dragon_wait_token_kick_log_count.fetch_add(1);
+      if (log_index < cvars::gpu_blue_dragon_kick_wait_token_budget) {
+        XELOGI(
+            "Blue Dragon wait token kick source {} user_data {:08X} "
+            "token_ptr {:08X} token {:08X}->{:08X}",
+            source, interrupt_callback_data_, token_ptr, token, token + 1);
+      }
+    }
+  }
 }
 
 void GraphicsSystem::MarkVblank() {

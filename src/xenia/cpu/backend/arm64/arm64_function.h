@@ -10,6 +10,7 @@
 #ifndef XENIA_CPU_BACKEND_ARM64_ARM64_FUNCTION_H_
 #define XENIA_CPU_BACKEND_ARM64_ARM64_FUNCTION_H_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -103,6 +104,7 @@ class Arm64Function : public GuestFunction {
   uint8_t* machine_code_ = nullptr;
   size_t machine_code_length_ = 0;
   CompiledProgram compiled_program_ = nullptr;
+  std::atomic<uint64_t> compiled_call_count_{0};
   std::unique_ptr<Program> program_;
   std::string jit_reject_reason_;
 };

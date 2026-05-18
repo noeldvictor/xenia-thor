@@ -9,8 +9,15 @@
 
 #include "xenia/cpu/ppc/ppc_translator.h"
 
+#include <charconv>
+#include <cctype>
+#include <limits>
+#include <string_view>
+#include <system_error>
+
 #include "xenia/base/assert.h"
 #include "xenia/base/byte_order.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/reset_scope.h"
@@ -30,6 +37,150 @@ namespace ppc {
 using xe::cpu::backend::Backend;
 using xe::cpu::compiler::Compiler;
 namespace passes = xe::cpu::compiler::passes;
+
+namespace {
+
+std::string_view Trim(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseAddress(std::string_view value, uint32_t* out_address) {
+  value = Trim(value);
+  if (value.empty()) {
+    return false;
+  }
+
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    if (value.size() >= 8) {
+      base = 16;
+    }
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint64_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size() ||
+      parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  *out_address = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool FunctionMatchesFilter(GuestFunction* function, std::string_view list) {
+  if (!function || list.empty()) {
+    return false;
+  }
+
+  uint32_t function_start = function->address();
+  uint32_t function_end = function->end_address();
+  if (function_end < function_start) {
+    function_end = function_start;
+  }
+
+  size_t token_start = 0;
+  while (token_start < list.size()) {
+    while (token_start < list.size() &&
+           (std::isspace(static_cast<unsigned char>(list[token_start])) ||
+            list[token_start] == ',' || list[token_start] == ';')) {
+      ++token_start;
+    }
+    if (token_start >= list.size()) {
+      break;
+    }
+
+    size_t token_end = token_start;
+    while (token_end < list.size() && list[token_end] != ',' &&
+           list[token_end] != ';' &&
+           !std::isspace(static_cast<unsigned char>(list[token_end]))) {
+      ++token_end;
+    }
+
+    std::string_view token =
+        Trim(list.substr(token_start, token_end - token_start));
+    size_t range_separator = token.find('-');
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (range_separator != std::string_view::npos) {
+      if (ParseAddress(token.substr(0, range_separator), &start) &&
+          ParseAddress(token.substr(range_separator + 1), &end)) {
+        if (start > end) {
+          std::swap(start, end);
+        }
+        if (start <= function_end && end >= function_start) {
+          return true;
+        }
+      }
+    } else if (ParseAddress(token, &start) && start >= function_start &&
+               start <= function_end) {
+      return true;
+    }
+
+    token_start = token_end;
+  }
+
+  return false;
+}
+
+void LogTextBlockLineByLine(uint32_t function_address, const char* label,
+                            const char* text) {
+  if (!text || !*text) {
+    return;
+  }
+
+  XELOGI("Filtered function dump {:08X} {} begins", function_address, label);
+  const char* line_start = text;
+  while (*line_start) {
+    const char* line_end = line_start;
+    while (*line_end && *line_end != '\n') {
+      ++line_end;
+    }
+    if (line_end != line_start) {
+      XELOGI("Filtered function dump {:08X} {}: {}", function_address, label,
+             std::string_view(line_start,
+                              static_cast<size_t>(line_end - line_start)));
+    }
+    line_start = *line_end == '\n' ? line_end + 1 : line_end;
+  }
+  XELOGI("Filtered function dump {:08X} {} ends", function_address, label);
+}
+
+void LogFilteredFunctionDebugInfo(GuestFunction* function,
+                                  FunctionDebugInfo* debug_info) {
+  if (!function || !debug_info) {
+    return;
+  }
+
+  const uint32_t address = function->address();
+  XELOGI("Filtered function dump {:08X}-{:08X} {}", address,
+         function->end_address(), function->name());
+  LogTextBlockLineByLine(address, "PPC", debug_info->source_disasm());
+  LogTextBlockLineByLine(address, "RawHIR", debug_info->raw_hir_disasm());
+  LogTextBlockLineByLine(address, "OptHIR", debug_info->hir_disasm());
+  LogTextBlockLineByLine(address, "MachineCode",
+                         debug_info->machine_code_disasm());
+}
+
+}  // namespace
 
 PPCTranslator::PPCTranslator(PPCFrontend* frontend) : frontend_(frontend) {
   Backend* backend = frontend->processor()->backend();
@@ -107,7 +258,9 @@ bool PPCTranslator::Translate(GuestFunction* function,
   xe::make_reset_scope(&string_buffer_);
 
   // NOTE: we only want to do this when required, as it's expensive to build.
-  if (cvars::disassemble_functions) {
+  bool filtered_disassembly =
+      FunctionMatchesFilter(function, cvars::disassemble_function_filter);
+  if (cvars::disassemble_functions || filtered_disassembly) {
     debug_info_flags |= DebugInfoFlags::kDebugInfoAllDisasm;
   }
   if (cvars::trace_functions) {
@@ -186,6 +339,10 @@ bool PPCTranslator::Translate(GuestFunction* function,
     builder_->Dump(&string_buffer_);
     debug_info->set_hir_disasm(xe_strdup(string_buffer_.buffer()));
     string_buffer_.Reset();
+  }
+
+  if (filtered_disassembly) {
+    LogFilteredFunctionDebugInfo(function, debug_info.get());
   }
 
   // Assemble to backend machine code.

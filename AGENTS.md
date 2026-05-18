@@ -127,6 +127,20 @@ Primary target:
     through the interpreter.
   - `-Arm64GuestStoreWatch "82785548"` to log ARM64 backend stores that touch
     a suspect guest global or range.
+- For focused guest-code and wait debugging, use:
+  - `-DisassembleFunctionFilter "8246DBB0,8246B408"` with
+    `-DisassembleFunctions true` to dump only matching guest functions.
+  - `-Arm64CompiledCallTraceFunctions "8246B408"` to sample a hot compiled
+    guest function.
+  - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
+    wait state.
+  - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel
+    wait/event proof.
+  - `-ClearMemoryPageState true` for Canary-style GPU shared-memory page-state
+    experiments.
+  - `-GpuInterruptOnRingIdle true` and `-GpuBlueDragonKickWaitToken true` only
+    for clearly documented Blue Dragon research runs; both are default-off
+    hacks, not compatibility fixes.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.
@@ -172,7 +186,7 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-115022-*`.
+  `scratch\thor-debug\20260518-132520-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -199,14 +213,25 @@ Primary target:
   - `arm64_mini_jit_max_stack_bytes`
   - `arm64_jit_code_cache_mode`
   - `arm64_jit_code_cache_mb`
-- Latest 90-second Blue Dragon capture has zero `ARM64 JIT fallback`,
-  unsupported opcode/type, Android crash, tombstone, or fatal-signal lines.
-- Current blocker: Blue Dragon still does not visibly reach title. The wall has
-  moved from first-order HIR mini-JIT coverage to post-pack-load progress:
-  guest CPU progress, render submission, Vulkan presentation, or Android OSD
-  masking.
+- The KTHREAD timer wall at guest function `8246B408` has been identified and
+  moved: `arm64_update_kthread_time` writes guest uptime to the current
+  KTHREAD `+0x58`, and the draw wait `global_tick` now advances.
+- The command processor now mirrors guest-visible ring pointers into
+  `CP_RB_RPTR` / `CP_RB_WPTR` (`0x01C4` / `0x01C5`). Blue Dragon's D3D dump now
+  shows matching drained ring pointers instead of a stale zero read pointer.
+- Current blocker: Blue Dragon still does not visibly reach title. The wall is
+  now the guest D3D watchdog path:
+  `The GPU is hung! D3D version is 3529.0 retail, kernel is 65535, frame is 0`.
+- Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
+  wait function `8246B408`; token-kick experiments prove token movement alone
+  does not satisfy the game.
+- Latest captures still show no `XE_SWAP` / first visible game frame proof.
 - The visible `AArch64 JIT pending` badge is static Java OSD text and should
   not be treated as the native failure message.
+- Strategy as of 2026-05-18: broaden ARM64 JIT/HIR coverage in batches and use
+  Thor/Blue Dragon as milestone checkpoints. Do not chase every title symptom
+  one-by-one on top of incomplete CPU/GPU emulation, and do not blindly port a
+  huge backend without device proof.
 
 ## ARM64 Fork Audit Decision
 

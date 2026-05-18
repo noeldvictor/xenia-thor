@@ -8,10 +8,17 @@
  */
 
 #include <algorithm>
+#include <atomic>
+#include <charconv>
+#include <cctype>
+#include <limits>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "xenia/base/atomic.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/mutex.h"
 #include "xenia/cpu/processor.h"
@@ -30,6 +37,290 @@
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+
+DEFINE_bool(
+    xboxkrnl_thread_wait_trace, false,
+    "Thor ARM64 bring-up: trace xboxkrnl wait/delay begin/end events.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_thread_wait_trace_budget, 240,
+    "Thor ARM64 bring-up: maximum xboxkrnl wait/delay trace lines to emit.",
+    "Kernel");
+DEFINE_string(
+    xboxkrnl_thread_wait_trace_guest_tids, "",
+    "Thor ARM64 bring-up: optional comma/semicolon/space separated guest "
+    "thread ids or inclusive ranges to trace for xboxkrnl wait/delay events.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_thread_wait_trace_after_ms, 0,
+    "Thor ARM64 bring-up: suppress xboxkrnl wait/delay trace lines until this "
+    "many host milliseconds after the first traced wait call.",
+    "Kernel");
+DEFINE_bool(
+    xboxkrnl_event_trace, false,
+    "Thor ARM64 bring-up: trace xboxkrnl event set/reset/pulse/clear calls.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_event_trace_budget, 160,
+    "Thor ARM64 bring-up: maximum xboxkrnl event trace lines to emit.",
+    "Kernel");
+DEFINE_string(
+    xboxkrnl_event_trace_objects, "",
+    "Thor ARM64 bring-up: optional comma/semicolon/space separated event "
+    "handles or guest object addresses to trace.",
+    "Kernel");
+
+namespace {
+
+std::atomic<int> g_thread_wait_trace_budget{0};
+std::atomic<uint32_t> g_thread_wait_trace_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+std::atomic<uint64_t> g_thread_wait_trace_first_host_ms{0};
+std::atomic<int> g_event_trace_budget{0};
+std::atomic<uint32_t> g_event_trace_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+
+std::string_view TrimTraceToken(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseTraceNumber(std::string_view value, uint32_t* out_value) {
+  value = TrimTraceToken(value);
+  if (value.empty()) {
+    return false;
+  }
+
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint32_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size()) {
+    return false;
+  }
+
+  *out_value = parsed;
+  return true;
+}
+
+bool TraceFilterMatches(uint32_t value, std::string_view filter) {
+  filter = TrimTraceToken(filter);
+  if (filter.empty()) {
+    return true;
+  }
+
+  size_t start = 0;
+  while (start < filter.size()) {
+    size_t end = filter.find_first_of(",; ", start);
+    if (end == std::string_view::npos) {
+      end = filter.size();
+    }
+    std::string_view token = TrimTraceToken(filter.substr(start, end - start));
+    if (!token.empty()) {
+      size_t dash = token.find('-');
+      uint32_t range_start = 0;
+      uint32_t range_end = 0;
+      if (dash != std::string_view::npos &&
+          ParseTraceNumber(token.substr(0, dash), &range_start) &&
+          ParseTraceNumber(token.substr(dash + 1), &range_end)) {
+        if (range_start <= value && value <= range_end) {
+          return true;
+        }
+      } else if (ParseTraceNumber(token, &range_start) &&
+                 range_start == value) {
+        return true;
+      }
+    }
+    start = end + 1;
+  }
+
+  return false;
+}
+
+void ConfigureThreadWaitTraceBudget() {
+  uint32_t budget = cvars::xboxkrnl_thread_wait_trace_budget;
+  uint32_t configured_budget =
+      g_thread_wait_trace_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_thread_wait_trace_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_thread_wait_trace_budget.store(clamped_budget,
+                                     std::memory_order_release);
+  }
+}
+
+bool ConsumeThreadWaitTraceBudget() {
+  int value = g_thread_wait_trace_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_thread_wait_trace_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ConfigureEventTraceBudget() {
+  uint32_t budget = cvars::xboxkrnl_event_trace_budget;
+  uint32_t configured_budget =
+      g_event_trace_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_event_trace_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_event_trace_budget.store(clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumeEventTraceBudget() {
+  int value = g_event_trace_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_event_trace_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const char* TraceObjectTypeName(XObject::Type type) {
+  switch (type) {
+    case XObject::Type::Event:
+      return "event";
+    case XObject::Type::File:
+      return "file";
+    case XObject::Type::Mutant:
+      return "mutant";
+    case XObject::Type::Semaphore:
+      return "semaphore";
+    case XObject::Type::Thread:
+      return "thread";
+    case XObject::Type::Timer:
+      return "timer";
+    default:
+      return "object";
+  }
+}
+
+void LogThreadWaitTrace(const char* api, const char* phase, XThread* thread,
+                        XObject* object, uint32_t object_ref, uint32_t count,
+                        uint32_t wait_type, uint32_t alertable,
+                        uint64_t timeout, X_STATUS status) {
+  if (!cvars::xboxkrnl_thread_wait_trace || !thread) {
+    return;
+  }
+
+  uint64_t now_ms = Clock::QueryHostUptimeMillis();
+  uint64_t first_ms =
+      g_thread_wait_trace_first_host_ms.load(std::memory_order_relaxed);
+  if (!first_ms &&
+      g_thread_wait_trace_first_host_ms.compare_exchange_strong(
+          first_ms, now_ms, std::memory_order_acq_rel)) {
+    first_ms = now_ms;
+  }
+  uint32_t after_ms = cvars::xboxkrnl_thread_wait_trace_after_ms;
+  if (after_ms && now_ms - first_ms < after_ms) {
+    return;
+  }
+
+  uint32_t thread_id = thread->thread_id();
+  if (!TraceFilterMatches(thread_id,
+                          cvars::xboxkrnl_thread_wait_trace_guest_tids)) {
+    return;
+  }
+
+  ConfigureThreadWaitTraceBudget();
+  if (!ConsumeThreadWaitTraceBudget()) {
+    return;
+  }
+
+  auto thread_state = thread->thread_state();
+  auto context = thread_state ? thread_state->context() : nullptr;
+  uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
+  uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
+  uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+  uint32_t object_handle = object ? object->handle() : object_ref;
+  uint32_t guest_object = object ? object->guest_object() : object_ref;
+
+  XELOGI(
+      "Xboxkrnl wait trace {} {} thid {:08X} handle {:08X} guest_object "
+      "{:08X} type {} count {} wait_type {} alertable {} timeout {:016X} "
+      "status {:08X} lr {:08X} ctr {:08X} r1 {:08X} name '{}'",
+      api, phase, thread_id, object_handle, guest_object,
+      object ? TraceObjectTypeName(object->type()) : "none", count, wait_type,
+      alertable, timeout, status, lr, ctr, r1, thread->thread_name());
+}
+
+void LogEventTrace(const char* api, XEvent* event, uint32_t object_ref,
+                   uint32_t increment, uint32_t wait, X_STATUS status,
+                   int32_t previous_state) {
+  if (!cvars::xboxkrnl_event_trace) {
+    return;
+  }
+
+  uint32_t object_handle = event ? event->handle() : object_ref;
+  uint32_t guest_object = event ? event->guest_object() : object_ref;
+  std::string_view object_filter = cvars::xboxkrnl_event_trace_objects;
+  if (!TraceFilterMatches(object_handle, object_filter) &&
+      !TraceFilterMatches(guest_object, object_filter)) {
+    return;
+  }
+
+  ConfigureEventTraceBudget();
+  if (!ConsumeEventTraceBudget()) {
+    return;
+  }
+
+  XThread* thread = XThread::GetCurrentThread();
+  auto thread_state = thread ? thread->thread_state() : nullptr;
+  auto context = thread_state ? thread_state->context() : nullptr;
+  uint32_t thread_id = thread ? thread->thread_id() : 0;
+  uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
+  uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
+  uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+
+  XELOGI(
+      "Xboxkrnl event trace {} thid {:08X} handle {:08X} guest_object "
+      "{:08X} increment {} wait {} status {:08X} previous {} lr {:08X} "
+      "ctr {:08X} r1 {:08X} thread '{}'",
+      api, thread_id, object_handle, guest_object, increment, wait, status,
+      previous_state, lr, ctr, r1, thread ? thread->thread_name() : "");
+}
+
+}  // namespace
 
 // r13 + 0x100: pointer to thread local state
 // Thread local state:
@@ -320,7 +611,12 @@ dword_result_t KeDelayExecutionThread_entry(dword_t processor_mode,
                                             dword_t alertable,
                                             lpqword_t interval_ptr) {
   XThread* thread = XThread::GetCurrentThread();
-  X_STATUS result = thread->Delay(processor_mode, alertable, *interval_ptr);
+  uint64_t interval = interval_ptr ? static_cast<uint64_t>(*interval_ptr) : 0u;
+  LogThreadWaitTrace("KeDelayExecutionThread", "begin", thread, nullptr, 0, 0,
+                     processor_mode, alertable, interval, 0);
+  X_STATUS result = thread->Delay(processor_mode, alertable, interval);
+  LogThreadWaitTrace("KeDelayExecutionThread", "end", thread, nullptr, 0, 0,
+                     processor_mode, alertable, interval, result);
 
   return result;
 }
@@ -410,7 +706,10 @@ uint32_t xeKeSetEvent(X_KEVENT* event_ptr, uint32_t increment, uint32_t wait) {
     return 0;
   }
 
-  return ev->Set(increment, !!wait);
+  int32_t previous_state = ev->Set(increment, !!wait);
+  LogEventTrace("KeSetEvent", ev.get(), ev->guest_object(), increment, wait,
+                X_STATUS_SUCCESS, previous_state);
+  return previous_state;
 }
 
 dword_result_t KeSetEvent_entry(pointer_t<X_KEVENT> event_ptr,
@@ -427,7 +726,10 @@ dword_result_t KePulseEvent_entry(pointer_t<X_KEVENT> event_ptr,
     return 0;
   }
 
-  return ev->Pulse(increment, !!wait);
+  int32_t previous_state = ev->Pulse(increment, !!wait);
+  LogEventTrace("KePulseEvent", ev.get(), ev->guest_object(), increment, wait,
+                X_STATUS_SUCCESS, previous_state);
+  return previous_state;
 }
 DECLARE_XBOXKRNL_EXPORT2(KePulseEvent, kThreading, kImplemented,
                          kHighFrequency);
@@ -439,7 +741,10 @@ dword_result_t KeResetEvent_entry(pointer_t<X_KEVENT> event_ptr) {
     return 0;
   }
 
-  return ev->Reset();
+  int32_t previous_state = ev->Reset();
+  LogEventTrace("KeResetEvent", ev.get(), ev->guest_object(), 0, 0,
+                X_STATUS_SUCCESS, previous_state);
+  return previous_state;
 }
 DECLARE_XBOXKRNL_EXPORT1(KeResetEvent, kThreading, kImplemented);
 
@@ -485,8 +790,11 @@ uint32_t xeNtSetEvent(uint32_t handle, xe::be<uint32_t>* previous_state_ptr) {
     if (previous_state_ptr) {
       *previous_state_ptr = static_cast<uint32_t>(was_signalled);
     }
+    LogEventTrace("NtSetEvent", ev.get(), handle, 0, 0, result,
+                  was_signalled);
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    LogEventTrace("NtSetEvent", nullptr, handle, 0, 0, result, 0);
   }
 
   return result;
@@ -507,8 +815,11 @@ dword_result_t NtPulseEvent_entry(dword_t handle,
     if (previous_state_ptr) {
       *previous_state_ptr = static_cast<uint32_t>(was_signalled);
     }
+    LogEventTrace("NtPulseEvent", ev.get(), handle, 0, 0, result,
+                  was_signalled);
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    LogEventTrace("NtPulseEvent", nullptr, handle, 0, 0, result, 0);
   }
 
   return result;
@@ -521,9 +832,12 @@ uint32_t xeNtClearEvent(uint32_t handle) {
 
   auto ev = kernel_state()->object_table()->LookupObject<XEvent>(handle);
   if (ev) {
-    ev->Reset();
+    int32_t previous_state = ev->Reset();
+    LogEventTrace("NtClearEvent", ev.get(), handle, 0, 0, result,
+                  previous_state);
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    LogEventTrace("NtClearEvent", nullptr, handle, 0, 0, result, 0);
   }
 
   return result;
@@ -787,8 +1101,15 @@ uint32_t xeKeWaitForSingleObject(void* object_ptr, uint32_t wait_reason,
     return X_STATUS_ABANDONED_WAIT_0;
   }
 
+  XThread* thread = XThread::GetCurrentThread();
+  LogThreadWaitTrace("KeWaitForSingleObject", "begin", thread, object.get(),
+                     object ? object->guest_object() : 0, 1, wait_reason,
+                     alertable, timeout_ptr ? *timeout_ptr : 0u, 0);
   X_STATUS result =
       object->Wait(wait_reason, processor_mode, alertable, timeout_ptr);
+  LogThreadWaitTrace("KeWaitForSingleObject", "end", thread, object.get(),
+                     object ? object->guest_object() : 0, 1, wait_reason,
+                     alertable, timeout_ptr ? *timeout_ptr : 0u, result);
 
   return result;
 }
@@ -813,12 +1134,23 @@ dword_result_t NtWaitForSingleObjectEx_entry(dword_t object_handle,
 
   auto object =
       kernel_state()->object_table()->LookupObject<XObject>(object_handle);
+  XThread* thread = XThread::GetCurrentThread();
   if (object) {
     uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
+    LogThreadWaitTrace("NtWaitForSingleObjectEx", "begin", thread,
+                       object.get(), object_handle, 1, wait_mode, alertable,
+                       timeout, 0);
     result =
         object->Wait(3, wait_mode, alertable, timeout_ptr ? &timeout : nullptr);
+    LogThreadWaitTrace("NtWaitForSingleObjectEx", "end", thread, object.get(),
+                       object_handle, 1, wait_mode, alertable, timeout,
+                       result);
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    LogThreadWaitTrace("NtWaitForSingleObjectEx", "invalid", thread, nullptr,
+                       object_handle, 1, wait_mode, alertable,
+                       timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u,
+                       result);
   }
 
   return result;
@@ -845,10 +1177,19 @@ dword_result_t KeWaitForMultipleObjects_entry(
   }
 
   uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
-  return XObject::WaitMultiple(uint32_t(objects.size()),
-                               reinterpret_cast<XObject**>(objects.data()),
-                               wait_type, wait_reason, processor_mode,
-                               alertable, timeout_ptr ? &timeout : nullptr);
+  XThread* thread = XThread::GetCurrentThread();
+  XObject* first_object = objects.empty() ? nullptr : objects.front().get();
+  uint32_t first_ref = count ? static_cast<uint32_t>(objects_ptr[0]) : 0;
+  LogThreadWaitTrace("KeWaitForMultipleObjects", "begin", thread, first_object,
+                     first_ref, count, wait_type, alertable, timeout, 0);
+  X_STATUS result =
+      XObject::WaitMultiple(uint32_t(objects.size()),
+                            reinterpret_cast<XObject**>(objects.data()),
+                            wait_type, wait_reason, processor_mode, alertable,
+                            timeout_ptr ? &timeout : nullptr);
+  LogThreadWaitTrace("KeWaitForMultipleObjects", "end", thread, first_object,
+                     first_ref, count, wait_type, alertable, timeout, result);
+  return result;
 }
 DECLARE_XBOXKRNL_EXPORT3(KeWaitForMultipleObjects, kThreading, kImplemented,
                          kBlocking, kHighFrequency);
@@ -870,9 +1211,19 @@ uint32_t xeNtWaitForMultipleObjectsEx(uint32_t count, xe::be<uint32_t>* handles,
     objects.push_back(std::move(object));
   }
 
-  return XObject::WaitMultiple(count,
-                               reinterpret_cast<XObject**>(objects.data()),
-                               wait_type, 6, wait_mode, alertable, timeout_ptr);
+  XThread* thread = XThread::GetCurrentThread();
+  XObject* first_object = objects.empty() ? nullptr : objects.front().get();
+  uint32_t first_ref = count ? static_cast<uint32_t>(handles[0]) : 0;
+  LogThreadWaitTrace("NtWaitForMultipleObjectsEx", "begin", thread,
+                     first_object, first_ref, count, wait_type, alertable,
+                     timeout_ptr ? *timeout_ptr : 0u, 0);
+  X_STATUS result =
+      XObject::WaitMultiple(count, reinterpret_cast<XObject**>(objects.data()),
+                            wait_type, 6, wait_mode, alertable, timeout_ptr);
+  LogThreadWaitTrace("NtWaitForMultipleObjectsEx", "end", thread, first_object,
+                     first_ref, count, wait_type, alertable,
+                     timeout_ptr ? *timeout_ptr : 0u, result);
+  return result;
 }
 
 dword_result_t NtWaitForMultipleObjectsEx_entry(
@@ -897,13 +1248,24 @@ dword_result_t NtSignalAndWaitForSingleObjectEx_entry(dword_t signal_handle,
       kernel_state()->object_table()->LookupObject<XObject>(signal_handle);
   auto wait_object =
       kernel_state()->object_table()->LookupObject<XObject>(wait_handle);
+  XThread* thread = XThread::GetCurrentThread();
   if (signal_object && wait_object) {
     uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
+    LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "begin", thread,
+                       wait_object.get(), wait_handle, 1, 0, alertable,
+                       timeout, 0);
     result =
         XObject::SignalAndWait(signal_object.get(), wait_object.get(), 3, 1,
                                alertable, timeout_ptr ? &timeout : nullptr);
+    LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "end", thread,
+                       wait_object.get(), wait_handle, 1, 0, alertable,
+                       timeout, result);
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "invalid", thread,
+                       nullptr, wait_handle, 1, 0, alertable,
+                       timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u,
+                       result);
   }
 
   return result;

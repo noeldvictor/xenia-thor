@@ -28,6 +28,21 @@ DEFINE_bool(
     "the real reason why they're invalid is found.",
     "GPU");
 
+DEFINE_bool(clear_memory_page_state, false,
+            "Refresh valid GPU-written shared-memory page state on frame close.",
+            "GPU");
+
+DEFINE_bool(gpu_interrupt_on_ring_idle, false,
+            "Experimental Android bring-up hack: dispatch a graphics interrupt "
+            "after the primary ring drains.",
+            "GPU");
+DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
+            "Experimental Blue Dragon Android bring-up hack: increment the "
+            "graphics wait token when a GPU interrupt is dispatched.",
+            "GPU");
+DEFINE_int32(gpu_blue_dragon_kick_wait_token_budget, 16,
+             "Maximum Blue Dragon wait-token kick log lines.", "GPU");
+
 DEFINE_bool(
     non_seamless_cube_map, true,
     "Disable filtering between cube map faces near edges where possible "

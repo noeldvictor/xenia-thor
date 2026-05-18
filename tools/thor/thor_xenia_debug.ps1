@@ -16,10 +16,28 @@ param(
     [string]$Target = "",
     [string]$Arm64MiniJit = "true",
     [string]$DisassembleFunctions = "false",
+    [string]$DisassembleFunctionFilter = "",
     [string]$MountCache = "false",
+    [string]$ClearMemoryPageState = "false",
+    [string]$GpuInterruptOnRingIdle = "false",
+    [string]$GpuBlueDragonKickWaitToken = "false",
+    [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
+    [string]$Arm64CompiledCallTraceInterval = "",
+    [string]$Arm64CompiledCallTraceMinCount = "",
+    [string]$Arm64CompiledCallTraceBudget = "",
+    [string]$Arm64CompiledCallTraceFunctions = "",
+    [string]$Arm64CompiledCallTraceGuestTids = "",
+    [string]$Arm64BlueDragonDrawWaitProbe = "false",
+    [string]$XboxkrnlThreadWaitTrace = "false",
+    [string]$XboxkrnlThreadWaitTraceBudget = "",
+    [string]$XboxkrnlThreadWaitTraceAfterMs = "",
+    [string]$XboxkrnlThreadWaitTraceGuestTids = "",
+    [string]$XboxkrnlEventTrace = "false",
+    [string]$XboxkrnlEventTraceBudget = "",
+    [string]$XboxkrnlEventTraceObjects = "",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -239,15 +257,63 @@ function Start-XeniaEmulator {
         "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
         "--ez disassemble_functions $(ConvertTo-BooleanText $DisassembleFunctions)",
         "--ez mount_cache $(ConvertTo-BooleanText $MountCache)",
+        "--ez clear_memory_page_state $(ConvertTo-BooleanText $ClearMemoryPageState)",
+        "--ez gpu_interrupt_on_ring_idle $(ConvertTo-BooleanText $GpuInterruptOnRingIdle)",
+        "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez discord false")
+    if ($GpuBlueDragonKickWaitTokenBudget) {
+        $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
+    }
     if ($Arm64MiniJitBlacklist) {
         $parts += "--es arm64_mini_jit_blacklist $(ConvertTo-AdbShellSingleQuote $Arm64MiniJitBlacklist)"
+    }
+    if ($DisassembleFunctionFilter) {
+        $parts += "--es disassemble_function_filter $(ConvertTo-AdbShellSingleQuote $DisassembleFunctionFilter)"
     }
     if ($Arm64ForceInterpreterRanges) {
         $parts += "--es arm64_force_interpreter_guest_ranges $(ConvertTo-AdbShellSingleQuote $Arm64ForceInterpreterRanges)"
     }
     if ($Arm64GuestStoreWatch) {
         $parts += "--es arm64_guest_store_watch $(ConvertTo-AdbShellSingleQuote $Arm64GuestStoreWatch)"
+    }
+    if ($Arm64CompiledCallTraceInterval) {
+        $parts += "--ei arm64_compiled_call_trace_interval $Arm64CompiledCallTraceInterval"
+    }
+    if ($Arm64CompiledCallTraceMinCount) {
+        $parts += "--ei arm64_compiled_call_trace_min_count $Arm64CompiledCallTraceMinCount"
+    }
+    if ($Arm64CompiledCallTraceBudget) {
+        $parts += "--ei arm64_compiled_call_trace_budget $Arm64CompiledCallTraceBudget"
+    }
+    if ($Arm64CompiledCallTraceFunctions) {
+        $parts += "--es arm64_compiled_call_trace_functions $(ConvertTo-AdbShellSingleQuote $Arm64CompiledCallTraceFunctions)"
+    }
+    if ($Arm64CompiledCallTraceGuestTids) {
+        $parts += "--es arm64_compiled_call_trace_guest_tids $(ConvertTo-AdbShellSingleQuote $Arm64CompiledCallTraceGuestTids)"
+    }
+    if ($Arm64BlueDragonDrawWaitProbe) {
+        $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
+    }
+    if ($XboxkrnlThreadWaitTrace) {
+        $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
+    }
+    if ($XboxkrnlThreadWaitTraceBudget) {
+        $parts += "--ei xboxkrnl_thread_wait_trace_budget $XboxkrnlThreadWaitTraceBudget"
+    }
+    if ($XboxkrnlThreadWaitTraceAfterMs) {
+        $parts += "--ei xboxkrnl_thread_wait_trace_after_ms $XboxkrnlThreadWaitTraceAfterMs"
+    }
+    if ($XboxkrnlThreadWaitTraceGuestTids) {
+        $parts += "--es xboxkrnl_thread_wait_trace_guest_tids $(ConvertTo-AdbShellSingleQuote $XboxkrnlThreadWaitTraceGuestTids)"
+    }
+    if ($XboxkrnlEventTrace) {
+        $parts += "--ez xboxkrnl_event_trace $(ConvertTo-BooleanText $XboxkrnlEventTrace)"
+    }
+    if ($XboxkrnlEventTraceBudget) {
+        $parts += "--ei xboxkrnl_event_trace_budget $XboxkrnlEventTraceBudget"
+    }
+    if ($XboxkrnlEventTraceObjects) {
+        $parts += "--es xboxkrnl_event_trace_objects $(ConvertTo-AdbShellSingleQuote $XboxkrnlEventTraceObjects)"
     }
     if ($LaunchTarget) {
         $parts += "--es target $(ConvertTo-AdbShellSingleQuote $LaunchTarget)"

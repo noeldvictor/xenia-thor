@@ -44,6 +44,41 @@ DEFINE_string(
     "ARM64 bring-up: comma/semicolon/space separated guest addresses or "
     "inclusive ranges to log when guest code stores through the ARM64 backend.",
     "CPU");
+DEFINE_uint32(
+    arm64_compiled_call_trace_interval, 0,
+    "ARM64 bring-up: when nonzero, log compiled mini-JIT guest functions every "
+    "N calls per function.",
+    "CPU");
+DEFINE_uint32(
+    arm64_compiled_call_trace_min_count, 0,
+    "ARM64 bring-up: skip compiled mini-JIT function call trace lines until "
+    "the per-function call count reaches this value.",
+    "CPU");
+DEFINE_uint32(
+    arm64_compiled_call_trace_budget, 320,
+    "ARM64 bring-up: maximum compiled mini-JIT function call trace lines to "
+    "emit for this process.",
+    "CPU");
+DEFINE_string(
+    arm64_compiled_call_trace_functions, "",
+    "ARM64 bring-up: optional comma/semicolon/space separated guest function "
+    "addresses or inclusive ranges to trace.",
+    "CPU");
+DEFINE_string(
+    arm64_compiled_call_trace_guest_tids, "",
+    "ARM64 bring-up: optional comma/semicolon/space separated guest thread ids "
+    "or inclusive ranges to trace.",
+    "CPU");
+DEFINE_bool(
+    arm64_blue_dragon_draw_wait_probe, false,
+    "ARM64 bring-up: log Blue Dragon's hot draw-thread wait fields when "
+    "compiled-call tracing reaches guest 8246B408.",
+    "CPU");
+DEFINE_bool(
+    arm64_update_kthread_time, true,
+    "ARM64 bring-up: refresh the current guest KTHREAD +0x58 time field on "
+    "guest function dispatch.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -90,6 +125,9 @@ void LogInterpreterInstructionWindow(
 std::atomic<int> g_call_trace_budget{120};
 std::atomic<int> g_entry_instruction_trace_budget{240};
 std::atomic<int> g_guest_store_watch_log_budget{240};
+std::atomic<int> g_compiled_call_trace_budget{0};
+std::atomic<uint32_t> g_compiled_call_trace_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
 
 struct RuntimeValue {
   TypeName type = hir::INT64_TYPE;
@@ -301,6 +339,147 @@ bool ConsumeLogBudget(std::atomic<int>* budget) {
     }
   }
   return false;
+}
+
+void ConfigureCompiledCallTraceBudget() {
+  uint32_t budget = cvars::arm64_compiled_call_trace_budget;
+  uint32_t configured_budget =
+      g_compiled_call_trace_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_compiled_call_trace_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_compiled_call_trace_budget.store(clamped_budget,
+                                       std::memory_order_release);
+  }
+}
+
+uint8_t ReadGuestU8(Memory* memory, uint32_t address) {
+  return *reinterpret_cast<uint8_t*>(
+      memory->TranslateVirtual(NormalizeGuestAddress(address)));
+}
+
+uint32_t ReadGuestU32(Memory* memory, uint32_t address) {
+  return xe::load_and_swap<uint32_t>(
+      memory->TranslateVirtual(NormalizeGuestAddress(address)));
+}
+
+void StoreGuestU32(Memory* memory, uint32_t address, uint32_t value) {
+  xe::store_and_swap<uint32_t>(
+      memory->TranslateVirtual(NormalizeGuestAddress(address)), value);
+}
+
+void UpdateGuestKThreadTime(ThreadState* thread_state) {
+  if (!cvars::arm64_update_kthread_time || !thread_state) {
+    return;
+  }
+
+  auto context = thread_state->context();
+  auto memory = thread_state->memory();
+  uint32_t r13 = static_cast<uint32_t>(context->r[13]);
+  if (!r13) {
+    return;
+  }
+
+  uint32_t kthread = ReadGuestU32(memory, r13 + 0x100);
+  if (!kthread) {
+    return;
+  }
+
+  StoreGuestU32(memory, kthread + 0x58, Clock::QueryGuestUptimeMillis());
+}
+
+void LogBlueDragonDrawWaitProbe(uint32_t function_address,
+                                ThreadState* thread_state,
+                                uint64_t call_count) {
+  if (!cvars::arm64_blue_dragon_draw_wait_probe ||
+      function_address != 0x8246B408 || !thread_state) {
+    return;
+  }
+
+  auto context = thread_state->context();
+  auto memory = thread_state->memory();
+  uint32_t wait_state = static_cast<uint32_t>(context->r[3]);
+  if (!wait_state) {
+    XELOGI("Blue Dragon draw wait probe count {} wait_state is null",
+           call_count);
+    return;
+  }
+
+  uint32_t object = ReadGuestU32(memory, wait_state);
+  uint32_t saved_token = ReadGuestU32(memory, wait_state + 0x8);
+  uint32_t saved_tick = ReadGuestU32(memory, wait_state + 0xC);
+  uint32_t r13 = static_cast<uint32_t>(context->r[13]);
+  uint32_t global = ReadGuestU32(memory, r13 + 0x100);
+  uint32_t global_tick_address = global + 0x58;
+  uint32_t global_current_address = global + 0x14C;
+  uint32_t global_tick = global ? ReadGuestU32(memory, global_tick_address) : 0;
+  uint32_t global_current =
+      global ? ReadGuestU32(memory, global_current_address) : 0;
+  uint8_t object_flags = object ? ReadGuestU8(memory, object + 0x2A39) : 0;
+  uint32_t token_ptr = object ? ReadGuestU32(memory, object + 0x2A10) : 0;
+  uint32_t object_token = token_ptr ? ReadGuestU32(memory, token_ptr) : 0;
+  uint32_t object_current = object ? ReadGuestU32(memory, object + 0x2A08) : 0;
+  uint32_t reset_gate = object ? ReadGuestU32(memory, object + 0x2A70) : 0;
+  uint32_t tick_delta = global_tick - saved_tick;
+
+  XELOGI(
+      "Blue Dragon draw wait probe count {} wait_state {:08X} object {:08X} "
+      "r13 {:08X} global {:08X} global_tick_addr {:08X} "
+      "global_current_addr {:08X} saved_token {:08X} object_token {:08X} "
+      "saved_tick {:08X} global_tick {:08X} delta {} global_current {:08X} "
+      "object_current {:08X} reset_gate {:08X} flags {:02X}",
+      call_count, wait_state, object, r13, global, global_tick_address,
+      global_current_address, saved_token, object_token, saved_tick,
+      global_tick, tick_delta, global_current, object_current, reset_gate,
+      object_flags);
+}
+
+void LogCompiledCallTrace(uint32_t function_address, ThreadState* thread_state,
+                          uint32_t return_address, uint64_t call_count) {
+  if (!thread_state) {
+    return;
+  }
+
+  if (!cvars::arm64_compiled_call_trace_functions.empty() &&
+      !GuestStoreWatchMatches(
+          function_address, 1, cvars::arm64_compiled_call_trace_functions)) {
+    return;
+  }
+
+  if (!cvars::arm64_compiled_call_trace_guest_tids.empty() &&
+      !GuestStoreWatchMatches(thread_state->thread_id(), 1,
+                              cvars::arm64_compiled_call_trace_guest_tids)) {
+    return;
+  }
+
+  ConfigureCompiledCallTraceBudget();
+  if (!ConsumeLogBudget(&g_compiled_call_trace_budget)) {
+    return;
+  }
+
+  LogBlueDragonDrawWaitProbe(function_address, thread_state, call_count);
+
+  auto context = thread_state->context();
+  XELOGI(
+      "ARM64 compiled call trace fn {:08X} count {} guest_tid {:08X} return "
+      "{:08X} lr {:08X} ctr {:08X} r1 {:08X} r3 {:08X} r4 {:08X} r5 {:08X} "
+      "r11 {:08X} r12 {:08X}",
+      function_address, call_count, thread_state->thread_id(), return_address,
+      static_cast<uint32_t>(context->lr),
+      static_cast<uint32_t>(context->ctr),
+      static_cast<uint32_t>(context->r[1]),
+      static_cast<uint32_t>(context->r[3]),
+      static_cast<uint32_t>(context->r[4]),
+      static_cast<uint32_t>(context->r[5]),
+      static_cast<uint32_t>(context->r[11]),
+      static_cast<uint32_t>(context->r[12]));
 }
 
 RuntimeValue ReadRawValue(const void* address, TypeName type) {
@@ -1814,7 +1993,19 @@ void Arm64Function::SetupCompiledProgram(CompiledProgram compiled_program,
 
 bool Arm64Function::CallImpl(ThreadState* thread_state,
                              uint32_t return_address) {
+  UpdateGuestKThreadTime(thread_state);
+
   if (compiled_program_) {
+    uint32_t trace_interval = cvars::arm64_compiled_call_trace_interval;
+    if (trace_interval) {
+      uint32_t trace_min_count = cvars::arm64_compiled_call_trace_min_count;
+      uint64_t call_count =
+          compiled_call_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (call_count >= trace_min_count && call_count % trace_interval == 0) {
+        LogCompiledCallTrace(address(), thread_state, return_address,
+                             call_count);
+      }
+    }
     return compiled_program_(thread_state->context(), thread_state,
                              return_address);
   }

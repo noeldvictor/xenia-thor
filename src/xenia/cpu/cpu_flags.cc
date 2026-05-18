@@ -19,6 +19,12 @@ DEFINE_string(
 
 DEFINE_bool(disassemble_functions, false,
             "Disassemble functions during generation.", "CPU");
+DEFINE_string(
+    disassemble_function_filter, "",
+    "Comma/semicolon/space separated guest function addresses or inclusive "
+    "ranges to disassemble during generation without enabling global "
+    "disassembly.",
+    "CPU");
 
 DEFINE_bool(trace_functions, false, "Generate tracing for function statistics.",
             "CPU");

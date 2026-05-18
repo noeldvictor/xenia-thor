@@ -19,6 +19,10 @@ DECLARE_path(dump_shaders);
 DECLARE_bool(vsync);
 
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
+DECLARE_bool(clear_memory_page_state);
+DECLARE_bool(gpu_interrupt_on_ring_idle);
+DECLARE_bool(gpu_blue_dragon_kick_wait_token);
+DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 
 DECLARE_bool(non_seamless_cube_map);
 

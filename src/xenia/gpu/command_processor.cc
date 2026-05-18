@@ -34,6 +34,13 @@ namespace gpu {
 
 using namespace xe::gpu::xenos;
 
+namespace {
+
+constexpr uint32_t kCpRbRptrRegister = 0x01C4;
+constexpr uint32_t kCpRbWptrRegister = 0x01C5;
+
+}  // namespace
+
 CommandProcessor::CommandProcessor(GraphicsSystem* graphics_system,
                                    kernel::KernelState* kernel_state)
     : memory_(graphics_system->memory()),
@@ -237,12 +244,18 @@ void CommandProcessor::WorkerThreadMain() {
 
     // Execute. Note that we handle wraparound transparently.
     read_ptr_index_ = ExecutePrimaryBuffer(read_ptr_index_, write_ptr_index);
+    const_cast<volatile uint32_t&>(
+        register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
 
     // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
     //     that many indices.
     if (read_ptr_writeback_ptr_) {
       xe::store_and_swap<uint32_t>(
           memory_->TranslatePhysical(read_ptr_writeback_ptr_), read_ptr_index_);
+    }
+
+    if (cvars::gpu_interrupt_on_ring_idle) {
+      graphics_system_->DispatchInterruptCallback(1, 2);
     }
 
     // FIXME: We're supposed to process the WAIT_UNTIL register at this point,
@@ -298,6 +311,10 @@ bool CommandProcessor::Restore(ByteStream* stream) {
   read_ptr_update_freq_ = stream->Read<uint32_t>();
   read_ptr_writeback_ptr_ = stream->Read<uint32_t>();
   write_ptr_index_.store(stream->Read<uint32_t>());
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbWptrRegister]) = write_ptr_index_.load();
 
   return true;
 }
@@ -310,6 +327,12 @@ void CommandProcessor::InitializeRingBuffer(uint32_t ptr, uint32_t size_log2) {
   read_ptr_index_ = 0;
   primary_buffer_ptr_ = ptr;
   primary_buffer_size_ = uint32_t(1) << (size_log2 + 3);
+  std::memset(kernel_state_->memory()->TranslatePhysical(primary_buffer_ptr_),
+              0, primary_buffer_size_);
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbWptrRegister]) = write_ptr_index_.load();
 }
 
 void CommandProcessor::EnableReadPointerWriteBack(uint32_t ptr,
@@ -325,6 +348,8 @@ void CommandProcessor::EnableReadPointerWriteBack(uint32_t ptr,
 
 void CommandProcessor::UpdateWritePointer(uint32_t value) {
   write_ptr_index_ = value;
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbWptrRegister]) = value;
   write_ptr_index_event_->Set();
 }
 

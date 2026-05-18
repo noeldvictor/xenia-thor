@@ -16,6 +16,7 @@ DECLARE_string(cpu);
 DECLARE_string(load_module_map);
 
 DECLARE_bool(disassemble_functions);
+DECLARE_string(disassemble_function_filter);
 
 DECLARE_bool(trace_functions);
 DECLARE_bool(trace_function_coverage);

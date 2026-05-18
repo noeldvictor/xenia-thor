@@ -2831,6 +2831,10 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
   }
 
   if (is_closing_frame) {
+    if (cvars::clear_memory_page_state) {
+      shared_memory_->SetSystemPageBlocksValidWithGpuDataWritten();
+    }
+
     // Close the capture after submitting.
     if (pix_capturing_) {
       IDXGraphicsAnalysis* graphics_analysis = provider.GetGraphicsAnalysis();
