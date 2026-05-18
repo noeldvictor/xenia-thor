@@ -42,3 +42,14 @@
 - `git diff --check` passed with only CRLF normalization warnings.
 - `tools/thor/thor_build.ps1 -Mode NativeCore -DeviceSerial c3ca0370`
   passed for `arm64-v8a` and `x86_64`.
+- `tools/thor/thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370`
+  passed and installed commit `9be7323b8` on Thor.
+- APK SHA-256:
+  `9434C3D97859FC61C2986D764378EB0EE6E945AECCE4BDAE646E9F01A1697954`.
+- Blue Dragon Disc 1 regression capture:
+  `scratch/thor-debug/20260518-145425-*`.
+  - The ARM64 backend initialized and guest mini-JIT compilation continued.
+  - No `Fatal signal`, tombstone, `SIGILL`, or native crash signature appeared
+    in the searched log output.
+  - The title still stops at the known D3D frame-0 watchdog with drained ring
+    pointers `CP_RB_RPTR/WPTR 0x1f/0x1f`, then `0x25/0x25`.

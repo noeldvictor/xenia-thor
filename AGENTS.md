@@ -305,6 +305,8 @@ Primary target:
     matching Xenia Edge A64 debug guard behavior.
   - This is debug hardening only; it is not the full Edge code-cache,
     indirection, unwind, or thunk import.
+  - Thor validation capture `scratch/thor-debug/20260518-145425-*` on commit
+    `9be7323b8` shows no new native crash and the same Blue Dragon D3D watchdog.
 
 ## Android ARM64 Risk Register
 
