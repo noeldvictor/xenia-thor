@@ -21,6 +21,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyBooleanExtra(intent, launchArguments, "arm64_enable_mini_jit");
+            copyStringExtra(intent, launchArguments, "arm64_mini_jit_blacklist");
+            copyStringExtra(
+                    intent, launchArguments, "arm64_force_interpreter_guest_ranges");
             if (intent.hasExtra("discord")) {
                 launchArguments.putBoolean(
                         "discord", intent.getBooleanExtra("discord", false));
@@ -42,6 +46,13 @@ public class EmulatorActivity extends WindowedAppActivity {
         final String value = intent.getStringExtra(name);
         if (value != null && !value.isEmpty()) {
             launchArguments.putString(name, value);
+        }
+    }
+
+    private static void copyBooleanExtra(
+            final Intent intent, final Bundle launchArguments, final String name) {
+        if (intent.hasExtra(name)) {
+            launchArguments.putBoolean(name, intent.getBooleanExtra(name, false));
         }
     }
 

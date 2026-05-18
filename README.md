@@ -69,6 +69,7 @@ Useful repo docs for this fork:
 - [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
 - [Thor Fast Dev Loop Options](docs/research/20260517-195019-thor-fast-dev-loop-options.md)
 - [ARM64 Port Tooling and Skills](docs/research/20260517-195621-arm64-port-tooling-skills.md)
+- [Faster ARM64 Port OODA Loop](docs/research/20260517-210216-faster-arm64-port-ooda-loop.md)
 - [Xenia ARM64 / Android Fork Audit](docs/research/20260517-183520-xenia-arm64-fork-audit.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.

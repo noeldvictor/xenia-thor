@@ -11,12 +11,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
+#include <cctype>
 #include <cstddef>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "xenia/base/byte_order.h"
@@ -33,6 +37,22 @@
 #include "xbyak_aarch64/xbyak_aarch64.h"
 
 DECLARE_bool(arm64_ignore_undefined_externs);
+
+DEFINE_bool(arm64_enable_mini_jit, true,
+            "ARM64 bring-up: attempt the tiny experimental AArch64 mini-JIT. "
+            "Disable to force the HIR interpreter without rebuilding.",
+            "CPU");
+DEFINE_string(
+    arm64_mini_jit_blacklist, "",
+    "ARM64 bring-up: comma/semicolon/space separated guest function start "
+    "addresses that should skip the tiny mini-JIT and run in the interpreter.",
+    "CPU");
+DEFINE_string(
+    arm64_force_interpreter_guest_ranges, "",
+    "ARM64 bring-up: comma/semicolon/space separated guest function addresses "
+    "or inclusive ranges, such as 826A0000-826AFFFF, that should run in the "
+    "interpreter.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -64,6 +84,95 @@ constexpr size_t kMaxCodeSize = 512 * 1024;
 
 std::atomic<int> g_jit_compile_log_budget{80};
 std::atomic<int> g_jit_reject_log_budget{80};
+
+std::string_view Trim(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseGuestAddress(std::string_view value, uint32_t* out_address) {
+  value = Trim(value);
+  if (value.empty()) {
+    return false;
+  }
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    if (value.size() >= 8) {
+      base = 16;
+    }
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint64_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size() ||
+      parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  *out_address = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool GuestAddressMatchesList(uint32_t address, std::string_view list) {
+  size_t token_start = 0;
+  while (token_start < list.size()) {
+    while (token_start < list.size() &&
+           (std::isspace(static_cast<unsigned char>(list[token_start])) ||
+            list[token_start] == ',' || list[token_start] == ';')) {
+      ++token_start;
+    }
+    if (token_start >= list.size()) {
+      break;
+    }
+
+    size_t token_end = token_start;
+    while (token_end < list.size() && list[token_end] != ',' &&
+           list[token_end] != ';' &&
+           !std::isspace(static_cast<unsigned char>(list[token_end]))) {
+      ++token_end;
+    }
+
+    std::string_view token =
+        Trim(list.substr(token_start, token_end - token_start));
+    size_t range_separator = token.find('-');
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (range_separator != std::string_view::npos) {
+      if (ParseGuestAddress(token.substr(0, range_separator), &start) &&
+          ParseGuestAddress(token.substr(range_separator + 1), &end)) {
+        if (start > end) {
+          std::swap(start, end);
+        }
+        if (address >= start && address <= end) {
+          return true;
+        }
+      }
+    } else if (ParseGuestAddress(token, &start) && address == start) {
+      return true;
+    }
+
+    token_start = token_end;
+  }
+
+  return false;
+}
 
 bool IsIntegerType(hir::TypeName type) { return type <= hir::INT64_TYPE; }
 
@@ -1472,6 +1581,16 @@ bool TryCompileArm64Program(Arm64Backend* backend, Arm64Function* function,
 #else
   if (!backend || !function || !backend->code_cache()) {
     return Reject(reject_reason, "missing ARM64 backend/code cache");
+  }
+  if (!cvars::arm64_enable_mini_jit) {
+    return false;
+  }
+  if (GuestAddressMatchesList(function->address(),
+                              cvars::arm64_mini_jit_blacklist) ||
+      GuestAddressMatchesList(function->address(),
+                              cvars::arm64_force_interpreter_guest_ranges)) {
+    return Reject(reject_reason,
+                  "guest function forced to interpreter by ARM64 cvar");
   }
 
   MiniArm64JitEmitter emitter;

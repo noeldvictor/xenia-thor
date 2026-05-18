@@ -68,6 +68,11 @@ Primary target:
   - `NativeCore`: C++/Vulkan/CPU backend library only.
   - `ApkShell`: Java/XML/resources/manifest package only, using the previous native library.
 - Use `tools/thor/thor_xenia_debug.ps1` for repeatable ADB install, launch, and capture.
+- `tools/thor/thor_xenia_debug.ps1` now retries flaky ADB transports for the
+  known Thor serial and records reconnect events in capture metadata.
+- Use `tools/arm64/hir_coverage_report.ps1` to summarize latest Thor logcats
+  into HIR opcode counts, unimplemented opcodes, mini-JIT fallback reasons,
+  slow interpreter functions, and guest crash PCs.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 
@@ -114,6 +119,11 @@ Primary target:
 - Prefer scripted Thor debug loops over manual clicking once a path is known:
   `FindContent`, `LaunchBlueDragon`, `LaunchEmulator`, `LaunchWindowDemo`, and `Capture`.
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
+- For ARM64 mini-JIT risk control, use:
+  - `-Arm64MiniJit false` to force interpreter from the Thor launch script.
+  - `-Arm64MiniJitBlacklist "826A23C8"` to blacklist exact guest functions.
+  - `-Arm64ForceInterpreterRanges "826A0000-826AFFFF"` to force a guest range
+    through the interpreter.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.

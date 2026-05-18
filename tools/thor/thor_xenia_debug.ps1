@@ -14,24 +14,185 @@ param(
     [string]$Mode = "DeviceInfo",
     [string]$OutDir = "",
     [string]$Target = "",
+    [string]$Arm64MiniJit = "true",
+    [string]$Arm64MiniJitBlacklist = "",
+    [string]$Arm64ForceInterpreterRanges = "",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
 
 $ErrorActionPreference = "Stop"
 
+$script:AdbEvents = New-Object System.Collections.Generic.List[string]
+$script:LastAdbExitCode = 0
+
+function Add-AdbEvent {
+    param([string]$Message)
+    $script:AdbEvents.Add("$(Get-Date -Format o) $Message")
+}
+
+function Invoke-AdbRaw {
+    param(
+        [string[]]$Arguments,
+        [switch]$UseSerial
+    )
+
+    $adbArguments = @()
+    if ($UseSerial -and $DeviceSerial) {
+        $adbArguments += @("-s", $DeviceSerial)
+    }
+    $adbArguments += $Arguments
+
+    $output = & adb @adbArguments 2>&1
+    $script:LastAdbExitCode = $LASTEXITCODE
+    return $output
+}
+
+function Get-AdbDeviceState {
+    if (!$DeviceSerial) {
+        return ""
+    }
+
+    $escapedSerial = [regex]::Escape($DeviceSerial)
+    $devices = Invoke-AdbRaw @("devices", "-l")
+    foreach ($line in $devices) {
+        if ($line -match "^\s*$escapedSerial\s+(\S+)") {
+            return $Matches[1]
+        }
+    }
+    return "missing"
+}
+
+function Wait-AdbDeviceState {
+    param(
+        [string]$ExpectedState = "device",
+        [int]$TimeoutSeconds = 20
+    )
+
+    if (!$DeviceSerial) {
+        return $true
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $state = Get-AdbDeviceState
+        if ($state -eq $ExpectedState) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+
+    return $false
+}
+
+function Repair-AdbDevice {
+    param([string]$Reason)
+
+    if (!$DeviceSerial) {
+        return
+    }
+
+    Add-AdbEvent "ADB repair requested: $Reason"
+    $state = Get-AdbDeviceState
+    Add-AdbEvent "ADB state before repair: $state"
+
+    if ($state -eq "unauthorized") {
+        throw "ADB device $DeviceSerial is unauthorized. Check the authorization prompt on the Thor."
+    }
+
+    if ($state -eq "offline") {
+        Invoke-AdbRaw @("reconnect", "offline") | Out-Null
+        if (Wait-AdbDeviceState -TimeoutSeconds 15) {
+            Add-AdbEvent "ADB recovered via reconnect offline"
+            return
+        }
+    }
+
+    Invoke-AdbRaw @("reconnect", "device") | Out-Null
+    if (Wait-AdbDeviceState -TimeoutSeconds 15) {
+        Add-AdbEvent "ADB recovered via reconnect device"
+        return
+    }
+
+    Invoke-AdbRaw @("kill-server") | Out-Null
+    Invoke-AdbRaw @("start-server") | Out-Null
+    if (Wait-AdbDeviceState -TimeoutSeconds 25) {
+        Add-AdbEvent "ADB recovered via kill-server/start-server"
+        return
+    }
+
+    $finalState = Get-AdbDeviceState
+    Add-AdbEvent "ADB repair failed, final state: $finalState"
+}
+
+function Test-AdbTransportFailure {
+    param([object[]]$Output)
+
+    $text = ($Output | Out-String)
+    return $text -match "(?i)(device .*offline|device .*not found|no devices/emulators found|more than one device/emulator|failed to get feature set|protocol fault)"
+}
+
+function Ensure-AdbDevice {
+    if (!$DeviceSerial) {
+        return
+    }
+
+    $state = Get-AdbDeviceState
+    if ($state -eq "device") {
+        return
+    }
+    Repair-AdbDevice "pre-command state was $state"
+}
+
 function Invoke-Adb {
     param([string[]]$Arguments)
-    if ($DeviceSerial) {
-        & adb -s $DeviceSerial @Arguments
-    } else {
-        & adb @Arguments
+
+    $command = if ($Arguments.Count -gt 0) { $Arguments[0] } else { "" }
+    $skipEnsure = $command -in @("devices", "help", "version", "kill-server", "start-server", "reconnect")
+    if (!$skipEnsure) {
+        Ensure-AdbDevice
     }
+
+    $output = Invoke-AdbRaw -UseSerial:$(!$skipEnsure) $Arguments
+    if (Test-AdbTransportFailure $output) {
+        Repair-AdbDevice "command failed: adb $($Arguments -join ' ')"
+        $output = Invoke-AdbRaw -UseSerial:$(!$skipEnsure) $Arguments
+    }
+    return $output
+}
+
+function Invoke-AdbExecOutToFile {
+    param(
+        [string]$Command,
+        [string]$OutputPath
+    )
+
+    Ensure-AdbDevice
+    $serialPart = ""
+    if ($DeviceSerial) {
+        $serialPart = "-s $DeviceSerial "
+    }
+
+    $cmdLine = "adb ${serialPart}exec-out $Command > `"$OutputPath`""
+    cmd /c $cmdLine
+    if ($LASTEXITCODE -ne 0) {
+        Repair-AdbDevice "exec-out failed: $Command"
+        cmd /c $cmdLine
+    }
+    $script:LastAdbExitCode = $LASTEXITCODE
 }
 
 function ConvertTo-AdbShellSingleQuote {
     param([string]$Value)
     return "'" + ($Value -replace "'", "'\\''") + "'"
+}
+
+function ConvertTo-BooleanText {
+    param([string]$Value)
+    if ($Value -match "^(?i:false|0|no|off)$") {
+        return "false"
+    }
+    return "true"
 }
 
 function Invoke-AdbShellCommand {
@@ -71,7 +232,14 @@ function Start-XeniaEmulator {
         "--es cpu arm64",
         "--es apu nop",
         "--es hid nop",
+        "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
         "--ez discord false")
+    if ($Arm64MiniJitBlacklist) {
+        $parts += "--es arm64_mini_jit_blacklist $(ConvertTo-AdbShellSingleQuote $Arm64MiniJitBlacklist)"
+    }
+    if ($Arm64ForceInterpreterRanges) {
+        $parts += "--es arm64_force_interpreter_guest_ranges $(ConvertTo-AdbShellSingleQuote $Arm64ForceInterpreterRanges)"
+    }
     if ($LaunchTarget) {
         $parts += "--es target $(ConvertTo-AdbShellSingleQuote $LaunchTarget)"
     }
@@ -182,22 +350,28 @@ done | head -50
         if (!$captureTarget -and (Test-Path $LastTargetPath)) {
             $captureTarget = (Get-Content -Raw $LastTargetPath).Trim()
         }
+        $deviceState = Get-AdbDeviceState
         $packagePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
         $focused = (Invoke-AdbShellCommand "dumpsys activity activities | grep -E 'mFocusedApp|mResumedActivity|$PackageName' | head -40") -join "`n"
         @(
             "timestamp=$Stamp",
             "branch=$branch",
             "head=$head",
+            "adb_serial=$DeviceSerial",
+            "adb_state=$deviceState",
             "package=$PackageName",
             "pid=$packagePid",
             "apk=$ApkPath",
             "apk_sha256=$apkHash",
             "target=$captureTarget",
             "",
+            "adb_events:",
+            ($script:AdbEvents -join "`n"),
+            "",
             "activity:",
             $focused
         ) | Out-File -Encoding utf8 $MetaPath
-        cmd /c "adb $(if ($DeviceSerial) { "-s $DeviceSerial " })exec-out screencap -p > `"$ScreenshotPath`""
+        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
         Write-Output "Log: $LogPath"
         if ($LogFilter) {
             Write-Output "Filtered log: $FilteredLogPath"
