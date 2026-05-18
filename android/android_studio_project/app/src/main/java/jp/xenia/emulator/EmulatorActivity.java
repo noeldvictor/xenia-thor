@@ -48,6 +48,8 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "vulkan_present_recent_resolve_on_swap");
             copyBooleanExtra(intent, launchArguments, "vulkan_debug_solid_guest_output");
             copyBooleanExtra(
+                    intent, launchArguments, "vulkan_force_signed_2101010_unorm_fallback");
+            copyBooleanExtra(
                     intent, launchArguments, "gpu_early_primary_read_pointer_writeback");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
             copyIntExtra(intent, launchArguments, "gpu_trace_packet_budget");

@@ -91,6 +91,13 @@ DEFINE_bool(vulkan_debug_solid_guest_output, false,
             "Fill the Vulkan guest output image with a solid debug color on "
             "swap. Research-only presenter proof; incorrect for gameplay.",
             "GPU");
+DEFINE_bool(
+    vulkan_force_signed_2101010_unorm_fallback, false,
+    "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
+    "sampling is unavailable, load signed 2_10_10_10 textures through the "
+    "unsigned UNORM host format. This is color-incorrect and only for "
+    "black-screen triage.",
+    "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

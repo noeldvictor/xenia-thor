@@ -38,6 +38,7 @@ DECLARE_bool(vulkan_trace_swap_shared_memory_checksum);
 DECLARE_int32(vulkan_trace_swap_shared_memory_checksum_budget);
 DECLARE_bool(vulkan_present_recent_resolve_on_swap);
 DECLARE_bool(vulkan_debug_solid_guest_output);
+DECLARE_bool(vulkan_force_signed_2101010_unorm_fallback);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 
 DECLARE_bool(non_seamless_cube_map);

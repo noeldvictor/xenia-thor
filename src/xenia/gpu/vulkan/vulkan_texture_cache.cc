@@ -1751,6 +1751,35 @@ bool VulkanTextureCache::Initialize() {
   VkFormatProperties format_properties;
   // TODO(Triang3l): k_2_10_10_10 signed -> filterable R16G16B16A16_SFLOAT
   // (enough storage precision, possibly unwanted filtering precision change).
+  // Research-only Thor bring-up: Adreno 740 exposes no sampled-image support
+  // for A2B10G10R10_SNORM. This fallback is intentionally approximate; it
+  // lets Blue Dragon black-screen triage proceed without adding new shader
+  // bytecode yet.
+  if (cvars::vulkan_force_signed_2101010_unorm_fallback) {
+    ifn.vkGetPhysicalDeviceFormatProperties(
+        physical_device, VK_FORMAT_A2B10G10R10_SNORM_PACK32,
+        &format_properties);
+    if ((format_properties.optimalTilingFeatures &
+         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0) {
+      HostFormatPair& host_format_2101010 =
+          host_formats_[uint32_t(xenos::TextureFormat::k_2_10_10_10)];
+      HostFormatPair& host_format_2101010_as_16 =
+          host_formats_[uint32_t(
+              xenos::TextureFormat::k_2_10_10_10_AS_16_16_16_16)];
+      assert_true(host_format_2101010.format_unsigned.format ==
+                  VK_FORMAT_A2B10G10R10_UNORM_PACK32);
+      assert_true(host_format_2101010.format_signed.format ==
+                  VK_FORMAT_A2B10G10R10_SNORM_PACK32);
+      host_format_2101010.format_signed = host_format_2101010.format_unsigned;
+      host_format_2101010.unsigned_signed_compatible = true;
+      host_format_2101010_as_16.format_signed =
+          host_format_2101010_as_16.format_unsigned;
+      host_format_2101010_as_16.unsigned_signed_compatible = true;
+      XELOGGPU(
+          "VulkanTextureCache: forcing signed 2_10_10_10 textures through "
+          "UNORM fallback because A2B10G10R10_SNORM is not sampleable");
+    }
+  }
   // k_Cr_Y1_Cb_Y0_REP, k_Y1_Cr_Y0_Cb_REP.
   HostFormatPair& host_format_gbgr =
       host_formats_[uint32_t(xenos::TextureFormat::k_Cr_Y1_Cb_Y0_REP)];

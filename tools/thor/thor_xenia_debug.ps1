@@ -37,6 +37,7 @@ param(
     [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
     [string]$VulkanPresentRecentResolveOnSwap = "false",
     [string]$VulkanDebugSolidGuestOutput = "false",
+    [string]$VulkanForceSigned2101010UnormFallback = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$GpuTracePacketBudget = "",
@@ -297,6 +298,7 @@ function Start-XeniaEmulator {
         "--ez vulkan_trace_swap_shared_memory_checksum $(ConvertTo-BooleanText $VulkanTraceSwapSharedMemoryChecksum)",
         "--ez vulkan_present_recent_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentRecentResolveOnSwap)",
         "--ez vulkan_debug_solid_guest_output $(ConvertTo-BooleanText $VulkanDebugSolidGuestOutput)",
+        "--ez vulkan_force_signed_2101010_unorm_fallback $(ConvertTo-BooleanText $VulkanForceSigned2101010UnormFallback)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
     if ($BreakOnDebugbreak -ne "") {
