@@ -54,6 +54,43 @@ DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_frontbuffer_checksum_budget, 24,
              "Maximum frontbuffer checksum trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_resolve, false,
+            "Trace Vulkan render target resolve/copy destinations. "
+            "Research-only Android black-screen probe.",
+            "GPU");
+DEFINE_int32(vulkan_trace_resolve_budget, 128,
+             "Maximum Vulkan resolve destination trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_resolve_checksum, false,
+            "Read back Vulkan resolve destinations and log a sparse checksum. "
+            "Research-only and very slow.",
+            "GPU");
+DEFINE_int32(vulkan_trace_resolve_checksum_budget, 24,
+             "Maximum Vulkan resolve readback checksum trace lines.", "GPU");
+DEFINE_bool(vulkan_readback_resolve, false,
+            "Read Vulkan render-to-texture resolve results back into CPU "
+            "guest memory. Very slow, for bring-up parity with D3D12 only.",
+            "GPU");
+DEFINE_bool(vulkan_trace_copy_state, false,
+            "Trace Vulkan copy-mode register state before render target "
+            "resolve. Research-only Android black-screen probe.",
+            "GPU");
+DEFINE_int32(vulkan_trace_copy_state_budget, 64,
+             "Maximum Vulkan copy-mode state trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_swap_shared_memory_checksum, false,
+            "Read back the Vulkan shared-memory frontbuffer used by swap and "
+            "log a sparse checksum. Research-only and very slow.",
+            "GPU");
+DEFINE_int32(vulkan_trace_swap_shared_memory_checksum_budget, 12,
+             "Maximum Vulkan swap shared-memory checksum trace lines.", "GPU");
+DEFINE_bool(vulkan_present_recent_resolve_on_swap, false,
+            "Present the most recent full-size Vulkan resolve instead of the "
+            "VdSwap frontbuffer. Research-only Blue Dragon black-screen "
+            "probe; incorrect for general compatibility.",
+            "GPU");
+DEFINE_bool(vulkan_debug_solid_guest_output, false,
+            "Fill the Vulkan guest output image with a solid debug color on "
+            "swap. Research-only presenter proof; incorrect for gameplay.",
+            "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

@@ -26,10 +26,21 @@ param(
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
+    [string]$VulkanTraceResolve = "false",
+    [string]$VulkanTraceResolveChecksum = "false",
+    [string]$VulkanReadbackResolve = "false",
+    [string]$VulkanTraceCopyState = "false",
+    [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
+    [string]$VulkanPresentRecentResolveOnSwap = "false",
+    [string]$VulkanDebugSolidGuestOutput = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$GpuTracePacketBudget = "",
     [string]$GpuTraceSwapFrontbufferChecksumBudget = "",
+    [string]$VulkanTraceResolveBudget = "",
+    [string]$VulkanTraceResolveChecksumBudget = "",
+    [string]$VulkanTraceCopyStateBudget = "",
+    [string]$VulkanTraceSwapSharedMemoryChecksumBudget = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
@@ -274,6 +285,13 @@ function Start-XeniaEmulator {
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
         "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
+        "--ez vulkan_trace_resolve $(ConvertTo-BooleanText $VulkanTraceResolve)",
+        "--ez vulkan_trace_resolve_checksum $(ConvertTo-BooleanText $VulkanTraceResolveChecksum)",
+        "--ez vulkan_readback_resolve $(ConvertTo-BooleanText $VulkanReadbackResolve)",
+        "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
+        "--ez vulkan_trace_swap_shared_memory_checksum $(ConvertTo-BooleanText $VulkanTraceSwapSharedMemoryChecksum)",
+        "--ez vulkan_present_recent_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentRecentResolveOnSwap)",
+        "--ez vulkan_debug_solid_guest_output $(ConvertTo-BooleanText $VulkanDebugSolidGuestOutput)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
     if ($BreakOnDebugbreak -ne "") {
@@ -287,6 +305,18 @@ function Start-XeniaEmulator {
     }
     if ($GpuTraceSwapFrontbufferChecksumBudget) {
         $parts += "--ei gpu_trace_swap_frontbuffer_checksum_budget $GpuTraceSwapFrontbufferChecksumBudget"
+    }
+    if ($VulkanTraceResolveBudget) {
+        $parts += "--ei vulkan_trace_resolve_budget $VulkanTraceResolveBudget"
+    }
+    if ($VulkanTraceResolveChecksumBudget) {
+        $parts += "--ei vulkan_trace_resolve_checksum_budget $VulkanTraceResolveChecksumBudget"
+    }
+    if ($VulkanTraceCopyStateBudget) {
+        $parts += "--ei vulkan_trace_copy_state_budget $VulkanTraceCopyStateBudget"
+    }
+    if ($VulkanTraceSwapSharedMemoryChecksumBudget) {
+        $parts += "--ei vulkan_trace_swap_shared_memory_checksum_budget $VulkanTraceSwapSharedMemoryChecksumBudget"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"

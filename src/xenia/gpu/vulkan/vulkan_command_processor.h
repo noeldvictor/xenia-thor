@@ -276,6 +276,20 @@ class VulkanCommandProcessor : public CommandProcessor {
   void InitializeTrace() override;
 
  private:
+  bool ReadbackSharedMemoryRange(uint32_t address, uint32_t length,
+                                 const char* label, bool log_checksum,
+                                 bool copy_to_guest);
+
+  struct PresentResolveCandidate {
+    uint32_t address = 0;
+    uint32_t length = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t pitch = 0;
+    xenos::TextureFormat format = xenos::TextureFormat::k_8_8_8_8;
+    uint64_t sequence = 0;
+  };
+
   struct CommandBuffer {
     VkCommandPool pool;
     VkCommandBuffer buffer;
@@ -731,6 +745,9 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   // Temporary storage for memexport stream constants used in the draw.
   std::vector<draw_util::MemExportRange> memexport_ranges_;
+
+  PresentResolveCandidate recent_present_resolve_candidate_;
+  uint64_t recent_present_resolve_sequence_ = 0;
 };
 
 }  // namespace vulkan

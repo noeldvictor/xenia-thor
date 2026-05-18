@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -25,6 +26,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/draw_util.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/spirv_shader_translator.h"
@@ -58,6 +60,46 @@ DEFINE_string(
 namespace xe {
 namespace gpu {
 namespace vulkan {
+
+namespace {
+
+std::atomic<int32_t> vulkan_resolve_trace_count{0};
+
+bool ShouldTraceVulkanResolve() {
+  if (!cvars::vulkan_trace_resolve) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_resolve_budget;
+  return budget < 0 || vulkan_resolve_trace_count.fetch_add(1) < budget;
+}
+
+const char* ResolveCopyShaderName(draw_util::ResolveCopyShaderIndex shader) {
+  switch (shader) {
+    case draw_util::ResolveCopyShaderIndex::kFast32bpp1x2xMSAA:
+      return "Fast32bpp1x2xMSAA";
+    case draw_util::ResolveCopyShaderIndex::kFast32bpp4xMSAA:
+      return "Fast32bpp4xMSAA";
+    case draw_util::ResolveCopyShaderIndex::kFast64bpp1x2xMSAA:
+      return "Fast64bpp1x2xMSAA";
+    case draw_util::ResolveCopyShaderIndex::kFast64bpp4xMSAA:
+      return "Fast64bpp4xMSAA";
+    case draw_util::ResolveCopyShaderIndex::kFull8bpp:
+      return "Full8bpp";
+    case draw_util::ResolveCopyShaderIndex::kFull16bpp:
+      return "Full16bpp";
+    case draw_util::ResolveCopyShaderIndex::kFull32bpp:
+      return "Full32bpp";
+    case draw_util::ResolveCopyShaderIndex::kFull64bpp:
+      return "Full64bpp";
+    case draw_util::ResolveCopyShaderIndex::kFull128bpp:
+      return "Full128bpp";
+    case draw_util::ResolveCopyShaderIndex::kUnknown:
+    default:
+      return "Unknown";
+  }
+}
+
+}  // namespace
 
 // Generated with `xb buildshaders`.
 namespace shaders {
@@ -1082,6 +1124,27 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
         draw_resolution_scale_x(), draw_resolution_scale_y(),
         copy_shader_constants, copy_group_count_x, copy_group_count_y);
     assert_true(copy_group_count_x && copy_group_count_y);
+    if (ShouldTraceVulkanResolve()) {
+      XELOGI(
+          "GPU resolve trace: vulkan copy dest_base={:08X} "
+          "extent_start={:08X} extent_length={:08X} raw_rb_dest={:08X} "
+          "coord={}x{} scaled={} shader={} groups={}x{} dest_format={} "
+          "dest_pitch={} dest_height={} clear_color={} clear_depth={}",
+          resolve_info.copy_dest_base, resolve_info.copy_dest_extent_start,
+          resolve_info.copy_dest_extent_length,
+          register_file()[XE_GPU_REG_RB_COPY_DEST_BASE],
+          resolve_info.coordinate_info.width_div_8
+              << xenos::kResolveAlignmentPixelsLog2,
+          resolve_info.height_div_8 << xenos::kResolveAlignmentPixelsLog2,
+          draw_resolution_scaled, ResolveCopyShaderName(copy_shader),
+          copy_group_count_x, copy_group_count_y,
+          uint32_t(resolve_info.copy_dest_info.copy_dest_format),
+          uint32_t(register_file().Get<reg::RB_COPY_DEST_PITCH>()
+                       .copy_dest_pitch),
+          uint32_t(register_file().Get<reg::RB_COPY_DEST_PITCH>()
+                       .copy_dest_height),
+          resolve_info.IsClearingColor(), resolve_info.IsClearingDepth());
+    }
     if (copy_shader != draw_util::ResolveCopyShaderIndex::kUnknown) {
       const draw_util::ResolveCopyShaderInfo& copy_shader_info =
           draw_util::resolve_copy_shader_info[size_t(copy_shader)];

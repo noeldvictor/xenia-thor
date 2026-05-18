@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -38,6 +39,57 @@
 namespace xe {
 namespace gpu {
 namespace vulkan {
+
+namespace {
+
+std::atomic<int32_t> vulkan_resolve_checksum_count{0};
+std::atomic<int32_t> vulkan_swap_shared_memory_checksum_count{0};
+std::atomic<int32_t> vulkan_copy_state_count{0};
+
+bool ShouldTraceVulkanResolveChecksum() {
+  if (!cvars::vulkan_trace_resolve_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_resolve_checksum_budget;
+  return budget < 0 || vulkan_resolve_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanSwapSharedMemoryChecksum() {
+  if (!cvars::vulkan_trace_swap_shared_memory_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_swap_shared_memory_checksum_budget;
+  return budget < 0 ||
+         vulkan_swap_shared_memory_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanCopyState() {
+  if (!cvars::vulkan_trace_copy_state) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_copy_state_budget;
+  return budget < 0 || vulkan_copy_state_count.fetch_add(1) < budget;
+}
+
+bool IsDebugPresentResolveCandidateFormat(xenos::TextureFormat format) {
+  switch (format) {
+    case xenos::TextureFormat::k_8_8_8_8:
+    case xenos::TextureFormat::k_8_8_8_8_AS_16_16_16_16:
+    case xenos::TextureFormat::k_2_10_10_10:
+    case xenos::TextureFormat::k_2_10_10_10_AS_16_16_16_16:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool IsPreferredDebugPresentResolveCandidateFormat(
+    xenos::TextureFormat format) {
+  return format == xenos::TextureFormat::k_2_10_10_10 ||
+         format == xenos::TextureFormat::k_2_10_10_10_AS_16_16_16_16;
+}
+
+}  // namespace
 
 // Generated with `xb buildshaders`.
 namespace shaders {
@@ -1232,12 +1284,150 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
   gamma_ramp_pwl_current_frame_ = UINT32_MAX;
 }
 
+bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
+                                                       uint32_t length,
+                                                       const char* label,
+                                                       bool log_checksum,
+                                                       bool copy_to_guest) {
+  if (!length) {
+    return true;
+  }
+
+  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  VkBuffer readback_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory readback_memory = VK_NULL_HANDLE;
+  uint32_t readback_memory_type = UINT32_MAX;
+  VkDeviceSize readback_memory_size = 0;
+  if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
+          vulkan_device, length, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          ui::vulkan::util::MemoryPurpose::kReadback, readback_buffer,
+          readback_memory, &readback_memory_type, &readback_memory_size)) {
+    XELOGE(
+        "GPU {} trace: failed to create Vulkan readback buffer for "
+        "address={:08X} length={:08X}",
+        label, address, length);
+    return false;
+  }
+
+  shared_memory_->Use(VulkanSharedMemory::Usage::kRead);
+  SubmitBarriers(true);
+  VkBufferCopy readback_region;
+  readback_region.srcOffset = address;
+  readback_region.dstOffset = 0;
+  readback_region.size = length;
+  deferred_command_buffer_.CmdVkCopyBuffer(shared_memory_->buffer(),
+                                           readback_buffer, 1,
+                                           &readback_region);
+  PushBufferMemoryBarrier(readback_buffer, 0, VK_WHOLE_SIZE,
+                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                          VK_PIPELINE_STAGE_HOST_BIT,
+                          VK_ACCESS_TRANSFER_WRITE_BIT,
+                          VK_ACCESS_HOST_READ_BIT);
+
+  bool succeeded = false;
+  if (AwaitAllQueueOperationsCompletion()) {
+    void* mapping = nullptr;
+    if (dfn.vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0,
+                        &mapping) == VK_SUCCESS) {
+      if (!(vulkan_device->memory_types().host_coherent &
+            (uint32_t(1) << readback_memory_type))) {
+        VkMappedMemoryRange mapped_range;
+        mapped_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        mapped_range.pNext = nullptr;
+        mapped_range.memory = readback_memory;
+        mapped_range.offset = 0;
+        mapped_range.size = readback_memory_size;
+        dfn.vkInvalidateMappedMemoryRanges(device, 1, &mapped_range);
+      }
+      const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mapping);
+      if (log_checksum) {
+        constexpr uint64_t kSampleStride = 4096;
+        uint64_t checksum = 1469598103934665603ull;
+        uint32_t samples = 0;
+        uint32_t nonzero_samples = 0;
+        uint64_t first_nonzero_offset = UINT64_MAX;
+        uint32_t first_nonzero_value = 0;
+        for (uint64_t offset = 0; offset + sizeof(uint32_t) <= length;
+             offset += kSampleStride) {
+          uint32_t word = 0;
+          std::memcpy(&word, bytes + offset, sizeof(word));
+          checksum ^= uint64_t(word) + (offset << 1);
+          checksum *= 1099511628211ull;
+          ++samples;
+          if (word) {
+            ++nonzero_samples;
+            if (first_nonzero_offset == UINT64_MAX) {
+              first_nonzero_offset = offset;
+              first_nonzero_value = word;
+            }
+          }
+        }
+        uint32_t first_words[8] = {};
+        uint32_t first_word_count =
+            uint32_t(std::min<uint32_t>(xe::countof(first_words), length / 4));
+        for (uint32_t i = 0; i < first_word_count; ++i) {
+          std::memcpy(&first_words[i], bytes + i * sizeof(uint32_t),
+                      sizeof(uint32_t));
+        }
+        XELOGI(
+            "GPU {} trace: shared-memory checksum address={:08X} "
+            "length={:08X} stride={} samples={} nonzero={} checksum={:016X} "
+            "first_nonzero={} first_nonzero_value={:08X} "
+            "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+            label, address, length, kSampleStride, samples, nonzero_samples,
+            checksum,
+            first_nonzero_offset == UINT64_MAX ? -1
+                                               : int64_t(first_nonzero_offset),
+            first_nonzero_value, first_words[0], first_words[1],
+            first_words[2], first_words[3], first_words[4], first_words[5],
+            first_words[6], first_words[7]);
+      }
+      if (copy_to_guest) {
+        std::memcpy(memory_->TranslatePhysical(address), mapping, length);
+      }
+      dfn.vkUnmapMemory(device, readback_memory);
+      succeeded = true;
+    } else {
+      XELOGE(
+          "GPU {} trace: failed to map Vulkan readback memory for "
+          "address={:08X} length={:08X}",
+          label, address, length);
+    }
+  } else {
+    XELOGE(
+        "GPU {} trace: failed to wait for Vulkan shared-memory readback "
+        "address={:08X} length={:08X}",
+        label, address, length);
+  }
+  dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
+  dfn.vkFreeMemory(device, readback_memory, nullptr);
+  return succeeded;
+}
+
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
   SCOPE_profile_cpu_f("gpu");
 
   if (cvars::gpu_trace_swap) {
+    static std::atomic<bool> logged_vulkan_swap_cvars{false};
+    if (!logged_vulkan_swap_cvars.exchange(true)) {
+      XELOGI(
+          "GPU swap trace: Vulkan debug cvars "
+          "swap_shared_memory_checksum={} swap_shared_memory_checksum_budget={} "
+          "trace_resolve={} trace_resolve_budget={} "
+          "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
+          "readback_resolve={}",
+          cvars::vulkan_trace_swap_shared_memory_checksum,
+          cvars::vulkan_trace_swap_shared_memory_checksum_budget,
+          cvars::vulkan_trace_resolve, cvars::vulkan_trace_resolve_budget,
+          cvars::vulkan_trace_resolve_checksum,
+          cvars::vulkan_trace_resolve_checksum_budget,
+          cvars::vulkan_readback_resolve);
+    }
     XELOGI(
         "GPU swap trace: Vulkan IssueSwap begin frontbuffer={:08X} "
         "guest_size={}x{} frame_current={} frame_completed={} submission={}",
@@ -1261,13 +1451,74 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     }
     return;
   }
+  if (ShouldTraceVulkanSwapSharedMemoryChecksum()) {
+    uint64_t frontbuffer_length =
+        uint64_t(frontbuffer_width) * uint64_t(frontbuffer_height) * 4;
+    if (frontbuffer_length <= UINT32_MAX) {
+      ReadbackSharedMemoryRange(frontbuffer_ptr, uint32_t(frontbuffer_length),
+                                "swap", true, false);
+      if (!BeginSubmission(true)) {
+        if (cvars::gpu_trace_swap) {
+          XELOGI(
+              "GPU swap trace: Vulkan IssueSwap skipped after shared-memory "
+              "readback, BeginSubmission failed");
+        }
+        return;
+      }
+    }
+  }
 
   // Obtaining the actual front buffer size to pass to RefreshGuestOutput,
   // resolution-scaled if it's a resolve destination, or not otherwise.
   uint32_t frontbuffer_width_scaled, frontbuffer_height_scaled;
   xenos::TextureFormat frontbuffer_format;
+  uint32_t original_swap_fetch[6] = {};
+  bool using_recent_resolve_for_swap = false;
+  const PresentResolveCandidate recent_resolve =
+      recent_present_resolve_candidate_;
+  if (cvars::vulkan_present_recent_resolve_on_swap &&
+      recent_resolve.address &&
+      recent_resolve.address != frontbuffer_ptr &&
+      recent_resolve.width && recent_resolve.height && recent_resolve.pitch) {
+    constexpr uint32_t kSwapFetchRegister =
+        XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
+    std::memcpy(original_swap_fetch, &register_file_->values[kSwapFetchRegister],
+                sizeof(original_swap_fetch));
+
+    xenos::xe_gpu_texture_fetch_t override_fetch =
+        register_file_->GetTextureFetch(0);
+    override_fetch.base_address = recent_resolve.address >> 12;
+    override_fetch.format = recent_resolve.format;
+    override_fetch.pitch = recent_resolve.pitch >> 5;
+    override_fetch.tiled = true;
+    override_fetch.size_2d.width = recent_resolve.width - 1;
+    override_fetch.size_2d.height = recent_resolve.height - 1;
+    override_fetch.dimension = xenos::DataDimension::k2DOrStacked;
+    override_fetch.mip_address = 0;
+    override_fetch.mip_min_level = 0;
+    override_fetch.mip_max_level = 0;
+    std::memcpy(&register_file_->values[kSwapFetchRegister], &override_fetch,
+                sizeof(override_fetch));
+    using_recent_resolve_for_swap = true;
+    if (cvars::gpu_trace_swap) {
+      XELOGI(
+          "GPU swap trace: Vulkan IssueSwap using recent resolve candidate "
+          "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
+          "instead of frontbuffer={:08X}",
+          recent_resolve.address, recent_resolve.length, recent_resolve.width,
+          recent_resolve.height, recent_resolve.pitch,
+          static_cast<uint32_t>(recent_resolve.format),
+          recent_resolve.sequence, frontbuffer_ptr);
+    }
+  }
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
       frontbuffer_width_scaled, frontbuffer_height_scaled, frontbuffer_format);
+  if (using_recent_resolve_for_swap) {
+    constexpr uint32_t kSwapFetchRegister =
+        XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
+    std::memcpy(&register_file_->values[kSwapFetchRegister],
+                original_swap_fetch, sizeof(original_swap_fetch));
+  }
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {
       XELOGI(
@@ -1534,6 +1785,43 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         render_pass_begin_info.pClearValues = nullptr;
         deferred_command_buffer_.CmdVkBeginRenderPass(
             &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+        if (cvars::vulkan_debug_solid_guest_output) {
+          VkClearAttachment solid_clear_attachment;
+          solid_clear_attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          solid_clear_attachment.colorAttachment = 0;
+          solid_clear_attachment.clearValue.color.float32[0] = 0.95f;
+          solid_clear_attachment.clearValue.color.float32[1] = 0.05f;
+          solid_clear_attachment.clearValue.color.float32[2] = 0.65f;
+          solid_clear_attachment.clearValue.color.float32[3] = 1.0f;
+          VkClearRect solid_clear_rect;
+          solid_clear_rect.rect.offset.x = 0;
+          solid_clear_rect.rect.offset.y = 0;
+          solid_clear_rect.rect.extent.width = frontbuffer_width_scaled;
+          solid_clear_rect.rect.extent.height = frontbuffer_height_scaled;
+          solid_clear_rect.baseArrayLayer = 0;
+          solid_clear_rect.layerCount = 1;
+          deferred_command_buffer_.CmdVkClearAttachments(
+              1, &solid_clear_attachment, 1, &solid_clear_rect);
+          deferred_command_buffer_.CmdVkEndRenderPass();
+          PushImageMemoryBarrier(
+              vulkan_context.image(),
+              ui::vulkan::util::InitializeSubresourceRange(),
+              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+              ui::vulkan::VulkanPresenter::kGuestOutputInternalStageMask,
+              VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+              ui::vulkan::VulkanPresenter::kGuestOutputInternalAccessMask,
+              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+              ui::vulkan::VulkanPresenter::kGuestOutputInternalLayout);
+          EndSubmission(true);
+          if (cvars::gpu_trace_swap) {
+            XELOGI(
+                "GPU swap trace: Vulkan guest output callback submitted solid "
+                "debug color submission={} frame_current={}",
+                GetCurrentSubmission(), frame_current_);
+          }
+          return true;
+        }
 
         VkViewport viewport;
         viewport.x = 0.0f;
@@ -2668,17 +2956,113 @@ bool VulkanCommandProcessor::IssueCopy() {
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
+  bool trace_copy_state = ShouldTraceVulkanCopyState();
+  if (trace_copy_state) {
+    const RegisterFile& regs = *register_file_;
+    auto rb_copy_control = regs.Get<reg::RB_COPY_CONTROL>();
+    auto rb_copy_dest_info = regs.Get<reg::RB_COPY_DEST_INFO>();
+    auto rb_copy_dest_pitch = regs.Get<reg::RB_COPY_DEST_PITCH>();
+    auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+    auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+    auto color0 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[0]);
+    auto color1 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[1]);
+    auto color2 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[2]);
+    auto color3 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[3]);
+    XELOGI(
+        "GPU copy trace: IssueCopy begin control={:08X} src={} sample={} "
+        "command={} color_clear={} depth_clear={} raw_dest_base={:08X} "
+        "dest_info={:08X} dest_format={} dest_pitch={} dest_height={} "
+        "surface={:08X} surface_pitch={} msaa={} color={:08X},{:08X},{:08X},"
+        "{:08X} depth={:08X}",
+        rb_copy_control.value, uint32_t(rb_copy_control.copy_src_select),
+        uint32_t(rb_copy_control.copy_sample_select),
+        uint32_t(rb_copy_control.copy_command),
+        uint32_t(rb_copy_control.color_clear_enable),
+        uint32_t(rb_copy_control.depth_clear_enable),
+        regs[XE_GPU_REG_RB_COPY_DEST_BASE], rb_copy_dest_info.value,
+        uint32_t(rb_copy_dest_info.copy_dest_format),
+        uint32_t(rb_copy_dest_pitch.copy_dest_pitch),
+        uint32_t(rb_copy_dest_pitch.copy_dest_height),
+        rb_surface_info.value, uint32_t(rb_surface_info.surface_pitch),
+        uint32_t(rb_surface_info.msaa_samples), color0.value, color1.value,
+        color2.value, color3.value, rb_depth_info.value);
+  }
+
   if (!BeginSubmission(true)) {
     return false;
   }
 
   uint32_t written_address, written_length;
-  if (!render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
-                                     written_address, written_length)) {
+  bool resolved = render_target_cache_->Resolve(
+      *memory_, *shared_memory_, *texture_cache_, written_address,
+      written_length);
+  if (trace_copy_state) {
+    XELOGI("GPU copy trace: IssueCopy resolve_result={} written={:08X}+{:08X}",
+           resolved, written_address, written_length);
+  }
+  if (!resolved) {
     return false;
   }
+  if (written_length) {
+    const RegisterFile& regs = *register_file_;
+    auto rb_copy_dest_info = regs.Get<reg::RB_COPY_DEST_INFO>();
+    auto rb_copy_dest_pitch = regs.Get<reg::RB_COPY_DEST_PITCH>();
+    xenos::TextureFormat dest_format = static_cast<xenos::TextureFormat>(
+        uint32_t(rb_copy_dest_info.copy_dest_format));
+    uint32_t dest_width = uint32_t(rb_copy_dest_pitch.copy_dest_pitch);
+    uint32_t dest_height = uint32_t(rb_copy_dest_pitch.copy_dest_height);
+    constexpr uint32_t kMinDebugPresentWidth = 1280;
+    constexpr uint32_t kMinDebugPresentHeight = 720;
+    constexpr uint32_t kMinDebugPresentBytes =
+        kMinDebugPresentWidth * kMinDebugPresentHeight * 4;
+    bool candidate_is_fullscreen =
+        dest_width >= kMinDebugPresentWidth &&
+        dest_height >= kMinDebugPresentHeight &&
+        written_length >= kMinDebugPresentBytes;
+    if (candidate_is_fullscreen &&
+        IsDebugPresentResolveCandidateFormat(dest_format)) {
+      bool candidate_is_preferred =
+          IsPreferredDebugPresentResolveCandidateFormat(dest_format);
+      bool previous_is_preferred =
+          IsPreferredDebugPresentResolveCandidateFormat(
+              recent_present_resolve_candidate_.format);
+      if (candidate_is_preferred || !previous_is_preferred ||
+          !recent_present_resolve_candidate_.address) {
+        recent_present_resolve_candidate_.address = written_address;
+        recent_present_resolve_candidate_.length = written_length;
+        recent_present_resolve_candidate_.width = dest_width;
+        recent_present_resolve_candidate_.height = dest_height;
+        recent_present_resolve_candidate_.pitch = dest_width;
+        recent_present_resolve_candidate_.format = dest_format;
+        recent_present_resolve_candidate_.sequence =
+            ++recent_present_resolve_sequence_;
+        if (cvars::vulkan_present_recent_resolve_on_swap &&
+            trace_copy_state) {
+          XELOGI(
+              "GPU copy trace: recent present resolve candidate "
+              "source={:08X}+{:08X} size={}x{} pitch={} format={} "
+              "preferred={} sequence={}",
+              written_address, written_length, dest_width, dest_height,
+              dest_width, static_cast<uint32_t>(dest_format),
+              candidate_is_preferred,
+              recent_present_resolve_candidate_.sequence);
+        }
+      }
+    }
+  }
 
-  // TODO(Triang3l): CPU readback.
+  bool trace_checksum = ShouldTraceVulkanResolveChecksum();
+  bool readback_resolve =
+      cvars::vulkan_readback_resolve &&
+      !texture_cache_->IsDrawResolutionScaled() && written_length;
+  if ((trace_checksum || readback_resolve) && written_length) {
+    ReadbackSharedMemoryRange(written_address, written_length, "resolve",
+                              trace_checksum, readback_resolve);
+  }
 
   return true;
 }

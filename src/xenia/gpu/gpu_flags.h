@@ -27,6 +27,17 @@ DECLARE_bool(gpu_trace_swap);
 DECLARE_int32(gpu_trace_packet_budget);
 DECLARE_bool(gpu_trace_swap_frontbuffer_checksum);
 DECLARE_int32(gpu_trace_swap_frontbuffer_checksum_budget);
+DECLARE_bool(vulkan_trace_resolve);
+DECLARE_int32(vulkan_trace_resolve_budget);
+DECLARE_bool(vulkan_trace_resolve_checksum);
+DECLARE_int32(vulkan_trace_resolve_checksum_budget);
+DECLARE_bool(vulkan_readback_resolve);
+DECLARE_bool(vulkan_trace_copy_state);
+DECLARE_int32(vulkan_trace_copy_state_budget);
+DECLARE_bool(vulkan_trace_swap_shared_memory_checksum);
+DECLARE_int32(vulkan_trace_swap_shared_memory_checksum_budget);
+DECLARE_bool(vulkan_present_recent_resolve_on_swap);
+DECLARE_bool(vulkan_debug_solid_guest_output);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 
 DECLARE_bool(non_seamless_cube_map);

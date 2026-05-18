@@ -33,12 +33,28 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_resolve");
+            copyBooleanExtra(
+                    intent, launchArguments, "vulkan_trace_resolve_checksum");
+            copyBooleanExtra(intent, launchArguments, "vulkan_readback_resolve");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_copy_state");
+            copyBooleanExtra(
+                    intent, launchArguments, "vulkan_trace_swap_shared_memory_checksum");
+            copyBooleanExtra(
+                    intent, launchArguments, "vulkan_present_recent_resolve_on_swap");
+            copyBooleanExtra(intent, launchArguments, "vulkan_debug_solid_guest_output");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_early_primary_read_pointer_writeback");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
             copyIntExtra(intent, launchArguments, "gpu_trace_packet_budget");
             copyIntExtra(
                     intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum_budget");
+            copyIntExtra(intent, launchArguments, "vulkan_trace_resolve_budget");
+            copyIntExtra(
+                    intent, launchArguments, "vulkan_trace_resolve_checksum_budget");
+            copyIntExtra(intent, launchArguments, "vulkan_trace_copy_state_budget");
+            copyIntExtra(
+                    intent, launchArguments, "vulkan_trace_swap_shared_memory_checksum_budget");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_min_count");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_budget");
