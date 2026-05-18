@@ -55,6 +55,8 @@ namespace backend {
 namespace arm64 {
 namespace {
 
+constexpr uint32_t kArm64Brk0 = 0xD4200000u;
+
 void* AllocateCodeMemory(size_t size) {
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
   void* result = mmap(nullptr, size, PROT_READ | PROT_WRITE,
@@ -88,6 +90,14 @@ void FlushHostInstructionCache(void* address, size_t size) {
   auto start = reinterpret_cast<char*>(address);
   __builtin___clear_cache(start, start + size);
 #endif
+}
+
+void FillUnwrittenCodeWithBreakpoints(void* address, size_t size) {
+  // Xenia Edge's A64 cache fills unwritten code with BRK #0. Keep the same
+  // guard behavior here so bad jumps trap instead of executing zeroed memory.
+  auto* instruction = reinterpret_cast<uint32_t*>(address);
+  auto instruction_count = size / sizeof(uint32_t);
+  std::fill_n(instruction, instruction_count, kArm64Brk0);
 }
 
 }  // namespace
@@ -127,6 +137,7 @@ bool Arm64CodeCache::Initialize() {
            generated_code_size_);
     return false;
   }
+  FillUnwrittenCodeWithBreakpoints(generated_code_base_, generated_code_size_);
 
   if (code_cache_mode_ == CodeCacheMode::kRwxDebug) {
     if (!xe::memory::Protect(generated_code_base_, generated_code_size_,

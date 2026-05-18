@@ -299,6 +299,12 @@ Primary target:
     reducing the 52 helper-call sites in the mini-JIT.
   - Do not wholesale-copy aX360e SAF/audio/HID/AdrenoTools or the full Edge
     emitter until each batch has a clear build boundary and attribution note.
+- Second Edge import slice:
+  `docs/research/20260518-145131-arm64-code-cache-edge-brk-fill.md`.
+  - The ARM64 code cache fills unwritten generated-code memory with `BRK #0`,
+    matching Xenia Edge A64 debug guard behavior.
+  - This is debug hardening only; it is not the full Edge code-cache,
+    indirection, unwind, or thunk import.
 
 ## Android ARM64 Risk Register
 
