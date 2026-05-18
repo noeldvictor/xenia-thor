@@ -21,7 +21,6 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
-            copyBooleanExtra(intent, launchArguments, "arm64_enable_mini_jit");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyBooleanExtra(intent, launchArguments, "mount_cache");
@@ -31,16 +30,6 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
-            copyStringExtra(intent, launchArguments, "arm64_mini_jit_blacklist");
-            copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
-            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
-            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_min_count");
-            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_budget");
-            copyStringExtra(
-                    intent, launchArguments, "arm64_compiled_call_trace_functions");
-            copyStringExtra(
-                    intent, launchArguments, "arm64_compiled_call_trace_guest_tids");
-            copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_budget");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_after_ms");
@@ -49,8 +38,6 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_event_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_event_trace_budget");
             copyStringExtra(intent, launchArguments, "xboxkrnl_event_trace_objects");
-            copyStringExtra(
-                    intent, launchArguments, "arm64_force_interpreter_guest_ranges");
             if (intent.hasExtra("discord")) {
                 launchArguments.putBoolean(
                         "discord", intent.getBooleanExtra("discord", false));
@@ -102,14 +89,10 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
 
         String target = null;
-        boolean miniJit = true;
         if (launchArguments != null) {
             target = launchArguments.getString("target");
-            miniJit = launchArguments.getBoolean("arm64_enable_mini_jit", true);
         }
-        warningView.setText(miniJit
-                ? R.string.osd_jit_research_active
-                : R.string.osd_interpreter_status);
+        warningView.setText(R.string.osd_a64_research_active);
         if (target == null || target.isEmpty()) {
             titleView.setText(R.string.osd_default_title);
             subtitleView.setText(R.string.osd_app_title);

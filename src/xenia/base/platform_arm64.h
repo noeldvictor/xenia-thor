@@ -7,27 +7,23 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_CPU_BACKEND_ARM64_ARM64_JIT_H_
-#define XENIA_CPU_BACKEND_ARM64_ARM64_JIT_H_
-
-#include <string>
-
-#include "xenia/cpu/backend/arm64/arm64_function.h"
+#ifndef XENIA_BASE_PLATFORM_ARM64_H_
+#define XENIA_BASE_PLATFORM_ARM64_H_
+#include <cstdint>
 
 namespace xe {
-namespace cpu {
-namespace backend {
 namespace arm64 {
+enum A64FeatureFlags : uint64_t {
+  kA64EmitLSE = 1 << 0,
+  kA64FZFlushesInputs = 1 << 1,
+};
 
-class Arm64Backend;
-
-bool TryCompileArm64Program(Arm64Backend* backend, Arm64Function* function,
-                            const Arm64Function::Program& program,
-                            std::string* reject_reason);
+XE_NOALIAS
+uint64_t GetFeatureFlags();
+XE_COLD
+void InitFeatureFlags();
 
 }  // namespace arm64
-}  // namespace backend
-}  // namespace cpu
 }  // namespace xe
 
-#endif  // XENIA_CPU_BACKEND_ARM64_ARM64_JIT_H_
+#endif  // XENIA_BASE_PLATFORM_ARM64_H_

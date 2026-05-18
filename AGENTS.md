@@ -54,8 +54,13 @@ Primary target:
   - `ndkVersion '25.0.8775105'`
   - `abiFilters 'arm64-v8a', 'x86_64'`
 - Premake defines Android platforms `Android-ARM64` and `Android-x86_64`.
-- The only production CPU backend present is `src/xenia/cpu/backend/x64`.
-- `src/xenia/cpu/backend/arm64` is an experimental scaffold with a tiny helper-backed AArch64 mini-JIT plus interpreter fallback for bring-up only; it is not a compatibility-grade backend.
+- The production desktop CPU backend remains `src/xenia/cpu/backend/x64`.
+- The Android ARM64 CPU path is now a hard aX360e/Edge-style A64 backend
+  import under `src/xenia/cpu/backend/a64`, exposed through the
+  `src/xenia/cpu/backend/arm64` compatibility wrapper.
+- The previous helper-backed ARM64 mini-JIT scaffold was removed on
+  2026-05-18. Do not spend new work on mini-JIT helper patches unless the user
+  explicitly asks to resurrect that path for comparison.
 - `src/xenia/emulator.cc` can select the ARM64 scaffold on `XE_ARCH_ARM64` or via `cpu=arm64` launch arguments.
 - `src/xenia/cpu/cpu_flags.cc` advertises `any`, `x64`, and `arm64`.
 - `src/xenia/app/premake5.lua` includes `xenia_main.cc` for Android and skips the HID demo in the Android single-library bundle.
@@ -71,16 +76,17 @@ Primary target:
 - `tools/thor/thor_xenia_debug.ps1` now retries flaky ADB transports for the
   known Thor serial and records reconnect events in capture metadata.
 - Use `tools/arm64/hir_coverage_report.ps1` to summarize latest Thor logcats
-  into HIR opcode counts, unimplemented opcodes, mini-JIT fallback reasons,
-  slow interpreter functions, guest crash PCs, ARM64 guest-store watch hits,
-  and PPC global-reference scanner hits.
+  into HIR opcode counts, unimplemented opcodes, legacy mini-JIT fallback
+  reasons from older captures, slow interpreter functions, guest crash PCs,
+  ARM64 guest-store watch hits, and PPC global-reference scanner hits.
 - Use `tools/arm64/arm64_jit_gap_report.ps1` to compare HIR opcodes against
-  ARM64 mini-JIT and interpreter switch coverage, then attach recent Thor log
-  watchdog/fallback signals to a dated Markdown report.
+  the legacy ARM64 mini-JIT and interpreter switch coverage when reviewing
+  pre-swap captures, then attach recent Thor log watchdog/fallback signals to a
+  dated Markdown report.
 - Use `tools/arm64/arm64_conversion_audit.ps1` before broad ARM64 backend work
   or after suspicious Thor runs. It summarizes x64-vs-ARM64 backend services,
-  HIR switch coverage, helper-heavy mini-JIT surface, reject/error signals, and
-  recent Thor evidence into a dated Markdown report.
+  HIR switch coverage, legacy helper-heavy mini-JIT surface, reject/error
+  signals, and recent Thor evidence into a dated Markdown report.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 
@@ -99,7 +105,9 @@ Primary target:
 
 2. Make Android ARM64 build failures explicit.
    - Keep x64 backend code behind `XE_ARCH_AMD64` and architecture filters.
-   - Keep ARM64 backend scaffolding honest: it may compile and interpret some guest code, but it must clearly identify itself as non-playable research scaffolding until the AArch64 JIT exists.
+  - Keep the imported A64 backend honest: it now compiles as an Android native
+    backend, but it is still non-playable research until device logs prove a
+    retail game reaches title.
    - Do not fake guest execution by silently falling back to `NullBackend` for the emulator path.
 
 3. Bring up the native Android emulator app.
@@ -127,13 +135,16 @@ Primary target:
 - Prefer scripted Thor debug loops over manual clicking once a path is known:
   `FindContent`, `LaunchBlueDragon`, `LaunchEmulator`, `LaunchWindowDemo`, and `Capture`.
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
-- For ARM64 mini-JIT risk control, use:
-  - `-Arm64MiniJit false` to force interpreter from the Thor launch script.
-  - `-Arm64MiniJitBlacklist "826A23C8"` to blacklist exact guest functions.
-  - `-Arm64ForceInterpreterRanges "826A0000-826AFFFF"` to force a guest range
-    through the interpreter.
-  - `-Arm64GuestStoreWatch "82785548"` to log ARM64 backend stores that touch
-    a suspect guest global or range.
+- Legacy ARM64 mini-JIT flags (`-Arm64MiniJit`, `-Arm64MiniJitBlacklist`,
+  `-Arm64ForceInterpreterRanges`, and `-Arm64GuestStoreWatch`) belong to the
+  removed scaffold path. Do not rely on them for current aX360e A64 backend
+  runs.
+- For current A64 backend bring-up, prefer:
+  - `-MmapAddressHigh 8` for the aX360e-style fixed high memory/code-cache
+    layout on Thor.
+  - `a64_max_stackpoints` and
+    `a64_enable_host_guest_stack_synchronization` only when debugging the
+    imported A64 stackpoint path.
 - For focused guest-code and wait debugging, use:
   - `-DisassembleFunctionFilter "8246DBB0,8246B408"` with
     `-DisassembleFunctions true` to dump only matching guest functions.
@@ -209,27 +220,14 @@ Primary target:
   `826A2550@826A2598->82785548`, Blue Dragon created draw and sound threads,
   and no guest crash PC appeared in the 10:09, 10:11, 11:08, or 11:13
   captures.
-- ARM64 mini-JIT scalar bring-up now covers raw float32/float64 load/store,
-  context/local/memory slots, casts, converts, float add/sub/mul/div,
-  mul-add/mul-sub, neg/abs/sqrt, float compares, `IS_NAN`, MMIO load/store,
-  and `ATOMIC_COMPARE_EXCHANGE`.
-- ARM64 mini-JIT vec128 bring-up now has a 16-byte aligned slot-layout table,
-  local type tracking, helper-backed vec128 local/context/memory load-store,
-  constant vector operands, vector shifts, unpack, pack, insert, extract,
-  splat, permute, swizzle, dot3/dot4, vector conversions, vector compare,
-  vector min/max, vector add/sub, vector average, vec128 select, vec128 unary
-  operations, and vec128 mul-add/sub.
-- As of `docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md`,
-  all 113 HIR opcodes have ARM64 mini-JIT switch coverage and interpreter
-  switch coverage. This does not mean the backend is fast or fully correct; it
-  means the current blocker is no longer a missing switch-case surface.
-- ARM64 mini-JIT research cvars currently include:
-  - `arm64_enable_mini_jit`
-  - `arm64_mini_jit_blacklist`
-  - `arm64_force_interpreter_guest_ranges`
-  - `arm64_mini_jit_max_stack_bytes`
-  - `arm64_jit_code_cache_mode`
-  - `arm64_jit_code_cache_mb`
+- The former ARM64 mini-JIT coverage work was useful for finding missing HIR
+  surfaces, but it has been superseded by the donor A64 backend import.
+- As of `docs/research/20260518-164150-ax360e-a64-hard-swap.md`, the active
+  ARM64 backend is the copied aX360e/Edge A64 backend with local compatibility
+  shims for logging, HIR helpers/opcodes, cvars, Capstone naming, POSIX unwind
+  placement, and disabled info-cache MMIO recording.
+- Native core validation for that hard swap passed on 2026-05-18 for both
+  Android `arm64-v8a` and `x86_64`.
 - The KTHREAD timer wall at guest function `8246B408` has been identified and
   moved: `arm64_update_kthread_time` writes guest uptime to the current
   KTHREAD `+0x58`, and the draw wait `global_tick` now advances.
@@ -245,8 +243,7 @@ Primary target:
 - Runtime swap tracing reaches engine and ring initialization, but does not show
   runtime `GPU swap trace: VdSwap`, PM4 `XE_SWAP`, or Vulkan `IssueSwap`.
   `VdSwap` in import/symbol listings is not runtime call proof.
-- The visible OSD badge now reports `AArch64 mini-JIT research` instead of the
-  stale `AArch64 JIT pending` text.
+- The visible OSD badge now reports `aX360e A64 backend research`.
 - Strategy as of 2026-05-18 14:12 EDT: stop using Thor as the only unit test.
   Run a broad x64-to-ARM64 conversion pass first, then use Thor/Blue Dragon as
   milestone evidence.
@@ -274,8 +271,9 @@ Primary target:
   `aenu1/ax360e` is the strongest Android ARM64/Vulkan evidence, and
   XeniOS/xenia-mac are Apple ARM64 evidence. None is a proven drop-in path for
   Blue Dragon on Thor.
-- Keep the helper-backed ARM64 mini-JIT as a bring-up scaffold and interpreter
-  fallback, but start reshaping toward a real AArch64 emitter backbone now.
+- The helper-backed ARM64 mini-JIT scaffold has been removed from the active
+  backend. Use the donor A64 backend as the only forward ARM64 path unless a
+  future comparison explicitly needs old-history archaeology.
 - Prioritize correctness coverage and differential tests first; add native
   hot-path lowering where CPU slowness alone could cause watchdogs.
 - Primary AArch64 JIT source to study/port: `has207/xenia-edge`, branch `edge`, because it has the most current xbyak_aarch64 A64 backend shape, CMake wiring, POSIX code cache, and broad HIR opcode table coverage.
@@ -295,8 +293,7 @@ Primary target:
     shows no native crash, but still hits the frame-0 D3D watchdog with drained
     ring pointers. Do not claim game progress from this slice.
   - Next backend parity gaps are Edge-style host-to-guest/guest-to-host/resolve
-    thunks, code-cache indirection/commit metadata, data/unwind placement, and
-    reducing the 52 helper-call sites in the mini-JIT.
+    thunks, code-cache indirection/commit metadata, and data/unwind placement.
   - Do not wholesale-copy aX360e SAF/audio/HID/AdrenoTools or the full Edge
     emitter until each batch has a clear build boundary and attribution note.
 - Second Edge import slice:
@@ -313,8 +310,7 @@ Primary target:
     indirection table metadata, `CommitExecutableRange`, `AddIndirection64`,
     `PlaceData`, unwind placeholder metadata, and generated-code commit marks.
   - The conversion audit's backend/code-cache capability-name gaps are closed,
-    but the 52 helper-call mini-JIT surface is still the real performance and
-    correctness backlog.
+    but this was later superseded by the hard donor A64 backend swap.
   - Thor validation capture `scratch/thor-debug/20260518-152107-*` shows the
     indirection table allocated on device with no new native crash, and Blue
     Dragon still stops at the known D3D frame-0 watchdog. Do not claim title
@@ -373,11 +369,27 @@ Primary target:
     same Blue Dragon D3D frame-0 watchdog.
   - Do not enable full stackpoint synchronization or switch thunks to `x19`
     backend context until the real A64 function prolog/epilog path lands.
+- Hard aX360e A64 backend swap:
+  `docs/research/20260518-164150-ax360e-a64-hard-swap.md`.
+  - Removed the active helper-backed `arm64` mini-JIT implementation files.
+  - Imported the donor A64 backend to `src/xenia/cpu/backend/a64` and kept
+    `src/xenia/cpu/backend/arm64/arm64_backend.h` as a wrapper alias.
+  - Added donor `CodeCacheBase`, ARM64 platform feature helpers, and HIR
+    compatibility helpers/opcodes needed by the donor emitter.
+  - Current quick shims: donor tracer logging maps to this fork's logging API;
+    donor `DEFINE_int64` cvars use supported cvar types; Capstone AArch64 maps
+    to this tree's ARM64 naming; POSIX unwind uses the reserved unwind buffer;
+    the donor XexModule info-cache MMIO recorder is stubbed until imported.
+  - Native core build passes for Android `arm64-v8a` and `x86_64`.
+  - Next proof needed: FullDeploy to Thor, launch Blue Dragon with
+    `-MmapAddressHigh 8`, then capture logcat/screenshot and fix the first
+    runtime crash or missing sequence.
 
 ## Android ARM64 Risk Register
 
-- CPU backend: the AArch64 path now has a tiny helper-backed mini-JIT, but much
-  of it is correctness-first helper calls rather than optimized native code.
+- CPU backend: the active AArch64 path is now a donor aX360e/Edge A64 backend
+  import. It builds, but runtime correctness on Thor is unproven after the hard
+  swap.
 - JIT memory: Android executable memory and cache coherency must be tested on device.
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.

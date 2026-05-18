@@ -59,6 +59,10 @@ class Instr {
   void MoveBefore(Instr* other);
   void Replace(const OpcodeInfo* new_opcode, uint16_t new_flags);
   void Remove();
+
+  const OpcodeInfo* GetOpcodeInfo() const { return opcode; }
+  Opcode GetOpcodeNum() const { return opcode->num; }
+  uint32_t GuestAddressFor() const;
 };
 
 }  // namespace hir

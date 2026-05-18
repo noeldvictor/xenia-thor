@@ -7,38 +7,54 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_CPU_BACKEND_ARM64_ARM64_ASSEMBLER_H_
-#define XENIA_CPU_BACKEND_ARM64_ARM64_ASSEMBLER_H_
+#ifndef XENIA_CPU_BACKEND_A64_A64_ASSEMBLER_H_
+#define XENIA_CPU_BACKEND_A64_A64_ASSEMBLER_H_
 
 #include <memory>
+#include <vector>
 
+#include "xenia/base/string_buffer.h"
+#include "xenia/cpu/backend/a64/a64_emitter.h"
 #include "xenia/cpu/backend/assembler.h"
+#include "xenia/cpu/function.h"
 
 namespace xe {
 namespace cpu {
 namespace backend {
-namespace arm64 {
+namespace a64 {
 
-class Arm64Backend;
+class A64Backend;
 
-class Arm64Assembler : public Assembler {
+class A64Assembler : public Assembler {
  public:
-  explicit Arm64Assembler(Arm64Backend* backend);
-  ~Arm64Assembler() override;
+  explicit A64Assembler(A64Backend* backend);
+  ~A64Assembler() override;
 
   bool Initialize() override;
+
+  void Reset() override;
 
   bool Assemble(GuestFunction* function, hir::HIRBuilder* builder,
                 uint32_t debug_info_flags,
                 std::unique_ptr<FunctionDebugInfo> debug_info) override;
 
  private:
-  Arm64Backend* arm64_backend_ = nullptr;
+  void DumpMachineCode(void* machine_code, size_t code_size,
+                       const std::vector<SourceMapEntry>& source_map,
+                       StringBuffer* str);
+
+ private:
+  A64Backend* a64_backend_;
+  std::unique_ptr<A64Emitter> emitter_;
+  XbyakA64Allocator allocator_;
+  uintptr_t capstone_handle_ = 0;
+
+  StringBuffer string_buffer_;
 };
 
-}  // namespace arm64
+}  // namespace a64
 }  // namespace backend
 }  // namespace cpu
 }  // namespace xe
 
-#endif  // XENIA_CPU_BACKEND_ARM64_ARM64_ASSEMBLER_H_
+#endif  // XENIA_CPU_BACKEND_A64_A64_ASSEMBLER_H_

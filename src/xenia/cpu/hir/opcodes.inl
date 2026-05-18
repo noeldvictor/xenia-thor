@@ -220,6 +220,12 @@ DEFINE_OPCODE(
     0)
 
 DEFINE_OPCODE(
+    OPCODE_DELAY_EXECUTION,
+    "delay_execution",
+    OPCODE_SIG_X,
+    0)
+
+DEFINE_OPCODE(
     OPCODE_LOAD_MMIO,
     "load_mmio",
     OPCODE_SIG_V_O_O,
@@ -673,3 +679,57 @@ DEFINE_OPCODE(
     "set_rounding_mode",
     OPCODE_SIG_X_V,
     0)
+
+DEFINE_OPCODE(
+    OPCODE_VECTOR_DENORMFLUSH,
+    "vector_denormflush",
+    OPCODE_SIG_V_V,
+    0)
+
+DEFINE_OPCODE(
+    OPCODE_TO_SINGLE,
+    "to_single",
+    OPCODE_SIG_V_V,
+    0)
+
+DEFINE_OPCODE(
+    OPCODE_SET_NJM,
+    "set_njm",
+    OPCODE_SIG_X_V,
+    0)
+
+DEFINE_OPCODE(
+    OPCODE_LVL,
+    "loadv_left",
+    OPCODE_SIG_V_V,
+    OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_LVR,
+    "loadv_right",
+    OPCODE_SIG_V_V,
+    OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_STVL,
+    "storev_left",
+    OPCODE_SIG_X_V_V,
+    OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_STVR,
+    "storev_right",
+    OPCODE_SIG_X_V_V,
+    OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_RESERVED_LOAD,
+    "reserved_load",
+    OPCODE_SIG_V_V,
+    OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_RESERVED_STORE,
+    "reserved_store",
+    OPCODE_SIG_V_V_V,
+    OPCODE_FLAG_MEMORY)

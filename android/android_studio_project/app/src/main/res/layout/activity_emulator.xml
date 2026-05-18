@@ -83,7 +83,7 @@
         android:letterSpacing="0"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
-        android:text="@string/osd_jit_research_active"
+        android:text="@string/osd_a64_research_active"
         android:textColor="@color/xenia_warning"
         android:textSize="13sp" />
 </FrameLayout>

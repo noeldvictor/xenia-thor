@@ -77,6 +77,24 @@
 #include <x86intrin.h>
 #endif  // XE_PLATFORM_WIN32
 
+#if XE_COMPILER_MSVC
+#define XE_NOINLINE __declspec(noinline)
+#define XE_COLD
+#define XE_NOALIAS __declspec(noalias)
+#elif XE_COMPILER_CLANG || XE_COMPILER_GNUC
+#define XE_NOINLINE __attribute__((noinline))
+#define XE_COLD __attribute__((cold))
+#define XE_NOALIAS
+#else
+#define XE_NOINLINE
+#define XE_COLD
+#define XE_NOALIAS
+#endif
+
+#if XE_ARCH_ARM64
+#include "xenia/base/platform_arm64.h"
+#endif  // XE_ARCH_ARM64
+
 #if XE_PLATFORM_MAC
 #include <libkern/OSByteOrder.h>
 #endif  // XE_PLATFORM_MAC

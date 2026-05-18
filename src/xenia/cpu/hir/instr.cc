@@ -115,6 +115,17 @@ void Instr::Remove() {
   }
 }
 
+uint32_t Instr::GuestAddressFor() const {
+  const Instr* srch = prev;
+  while (srch) {
+    if (srch->GetOpcodeNum() == OPCODE_SOURCE_OFFSET) {
+      return static_cast<uint32_t>(srch->src1.offset);
+    }
+    srch = srch->prev;
+  }
+  return 0;
+}
+
 }  // namespace hir
 }  // namespace cpu
 }  // namespace xe

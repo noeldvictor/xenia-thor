@@ -56,21 +56,21 @@ Current state as of 2026-05-18:
 
 - The Android Vulkan window/demo path runs on the Thor.
 - The emulator activity can launch Blue Dragon Disc 1 from the SD card.
-- Guest threads can start through temporary ARM64 scaffolding and a tiny
-  experimental helper-backed AArch64 mini-JIT.
+- The earlier helper-backed ARM64 mini-JIT scaffold has been removed.
+- The active ARM64 CPU path is now a hard aX360e/Edge-style A64 backend import.
 - Blue Dragon can progress through sound-bank initialization and later pack-file
   loading without the earlier null-thunk crash.
 - A KTHREAD timer issue was fixed enough for the Blue Dragon draw wait loop to
   move past a zero-uptime stall.
 - GPU ring read/write pointers are now mirrored into guest-visible CP registers;
   the game's D3D dump now sees drained matching ring pointers.
-- The ARM64 mini-JIT and interpreter switch tables now cover all 113 HIR
-  opcodes, which is useful bring-up coverage, not a compatibility claim.
+- The donor A64 backend now compiles into the Android native core for
+  `arm64-v8a` and `x86_64`, which is build progress, not a compatibility
+  claim.
 - It still does not reach title or playable gameplay.
-- The current research wall is the game's D3D watchdog:
-  `The GPU is hung! ... frame is 0`.
-- The next main lane is GPU/D3D completion and guest-visible swap/present
-  behavior, while continuing to harden ARM64 correctness with Thor captures.
+- The next main lane is running this imported A64 backend on Thor, capturing the
+  first Blue Dragon runtime failure, and fixing real donor-backend integration
+  bugs instead of polishing the removed mini-JIT scaffold.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -88,6 +88,7 @@ Useful repo docs for this fork:
 - [Blue Dragon ARM64 Vec128 Fallback-Zero Capture](docs/research/20260518-115238-blue-dragon-arm64-vec128-mini-jit-fallback-zero.md)
 - [Blue Dragon KTHREAD Timer And GPU Watchdog](docs/research/20260518-133100-blue-dragon-kthread-gpu-watchdog.md)
 - [ARM64 JIT Gap Device Checkpoint](docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md)
+- [aX360e A64 Hard Swap](docs/research/20260518-164150-ax360e-a64-hard-swap.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

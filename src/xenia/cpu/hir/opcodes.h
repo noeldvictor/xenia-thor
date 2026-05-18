@@ -280,6 +280,16 @@ enum Opcode {
   OPCODE_ATOMIC_EXCHANGE,
   OPCODE_ATOMIC_COMPARE_EXCHANGE,
   OPCODE_SET_ROUNDING_MODE,
+  OPCODE_VECTOR_DENORMFLUSH,
+  OPCODE_TO_SINGLE,
+  OPCODE_SET_NJM,
+  OPCODE_LVL,
+  OPCODE_LVR,
+  OPCODE_STVL,
+  OPCODE_STVR,
+  OPCODE_DELAY_EXECUTION,
+  OPCODE_RESERVED_LOAD,
+  OPCODE_RESERVED_STORE,
   __OPCODE_MAX_VALUE,  // Keep at end.
 };
 
@@ -348,6 +358,16 @@ enum OpcodeSignature {
 #define GET_OPCODE_SIG_TYPE_SRC2(sig) (OpcodeSignatureType)((sig >> 6) & 0x7)
 #define GET_OPCODE_SIG_TYPE_SRC3(sig) (OpcodeSignatureType)((sig >> 9) & 0x7)
 
+static inline void UnpackOpcodeSig(uint32_t sig, OpcodeSignatureType& dest,
+                                   OpcodeSignatureType& src1,
+                                   OpcodeSignatureType& src2,
+                                   OpcodeSignatureType& src3) {
+  dest = GET_OPCODE_SIG_TYPE_DEST(sig);
+  src1 = GET_OPCODE_SIG_TYPE_SRC1(sig);
+  src2 = GET_OPCODE_SIG_TYPE_SRC2(sig);
+  src3 = GET_OPCODE_SIG_TYPE_SRC3(sig);
+}
+
 typedef struct {
   uint32_t flags;
   uint32_t signature;
@@ -358,6 +378,10 @@ typedef struct {
 #define DEFINE_OPCODE(num, name, sig, flags) extern const OpcodeInfo num##_info;
 #include "xenia/cpu/hir/opcodes.inl"
 #undef DEFINE_OPCODE
+
+static inline const char* GetOpcodeName(const OpcodeInfo* info) {
+  return info ? info->name : "invalid opcode";
+}
 
 }  // namespace hir
 }  // namespace cpu
