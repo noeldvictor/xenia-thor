@@ -101,6 +101,10 @@ static bool ShouldTraceBlueDragonFilePath(const std::string_view path) {
          path.find("!necessity") != std::string_view::npos;
 }
 
+static bool ShouldTraceBlueDragonReadPath(const std::string_view path) {
+  return path.find("!necessity") != std::string_view::npos;
+}
+
 dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
                                   pointer_t<X_OBJECT_ATTRIBUTES> object_attrs,
                                   pointer_t<X_IO_STATUS_BLOCK> io_status_block,
@@ -234,10 +238,23 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
     if (true || file->is_synchronous()) {
       // Synchronous.
       uint32_t bytes_read = 0;
+      const uint64_t requested_offset =
+          byte_offset_ptr ? static_cast<uint64_t>(*byte_offset_ptr)
+                          : uint64_t(-1);
+      const uint64_t position_before = file->position();
       result = file->Read(
-          buffer.guest_address(), buffer_length,
-          byte_offset_ptr ? static_cast<uint64_t>(*byte_offset_ptr) : -1,
-          &bytes_read, apc_context);
+          buffer.guest_address(), buffer_length, requested_offset, &bytes_read,
+          apc_context);
+      if (ShouldTraceBlueDragonReadPath(file->entry()->absolute_path())) {
+        XELOGI(
+            "NtReadFile trace: path='{}' handle={:08X} request={} "
+            "requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} buffer={:08X} position_after={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(buffer_length), requested_offset, position_before,
+            bytes_read, uint32_t(result), uint32_t(buffer.guest_address()),
+            file->position());
+      }
       if (io_status_block) {
         io_status_block->status = result;
         io_status_block->information = bytes_read;
@@ -317,10 +334,23 @@ dword_result_t NtReadFileScatter_entry(
     if (true || file->is_synchronous()) {
       // Synchronous.
       uint32_t bytes_read = 0;
+      const uint64_t requested_offset =
+          byte_offset_ptr ? static_cast<uint64_t>(*byte_offset_ptr)
+                          : uint64_t(-1);
+      const uint64_t position_before = file->position();
       result = file->ReadScatter(
-          segment_array.guest_address(), length,
-          byte_offset_ptr ? static_cast<uint64_t>(*byte_offset_ptr) : -1,
-          &bytes_read, apc_context);
+          segment_array.guest_address(), length, requested_offset, &bytes_read,
+          apc_context);
+      if (ShouldTraceBlueDragonReadPath(file->entry()->absolute_path())) {
+        XELOGI(
+            "NtReadFileScatter trace: path='{}' handle={:08X} request={} "
+            "requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} segments={:08X} position_after={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(length), requested_offset, position_before, bytes_read,
+            uint32_t(result), uint32_t(segment_array.guest_address()),
+            file->position());
+      }
       if (io_status_block) {
         io_status_block->status = result;
         io_status_block->information = bytes_read;

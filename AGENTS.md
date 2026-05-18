@@ -171,11 +171,22 @@ Primary target:
 
 ## Current Blue Dragon / ARM64 State
 
-- Last validated Thor capture: `scratch\thor-debug\20260517-181152-*`.
-- Missing HIR blockers cleared in the latest slice: scalar/vector min/max, dynamic PPC rounding, `round`, and `set_rounding_mode`.
-- Current evidence: guest XThreads stay alive and consume CPU through the interpreter; one live log reported slow function `826E53A8` at 500000 interpreter steps.
-- Current blocker: real AArch64 JIT/emitter work. The interpreter is only a debug/correctness discovery tool.
-- The visible `AArch64 JIT pending` badge is static Java OSD text and should not be treated as the native failure message.
+- Latest validated Thor captures:
+  `scratch\thor-debug\20260518-100921-*` and
+  `scratch\thor-debug\20260518-101159-*`.
+- The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
+  `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
+  with `apu=nop`.
+- `NopAudioSystem` now creates a silent driver instead of returning
+  `X_STATUS_NOT_IMPLEMENTED`, allowing the guest XACT/sound-bank path to
+  initialize far enough to write `0x82785548`.
+- Post-fix evidence: the store watch hit
+  `826A2550@826A2598->82785548`, Blue Dragon created draw and sound threads,
+  and no guest crash PC appeared in the 10:09 or 10:11 captures.
+- Current blocker: real AArch64 JIT/emitter coverage for hot interpreter
+  functions such as `82393310`, `82393640`, `823F2568`, and `822B54C0`.
+- The visible `AArch64 JIT pending` badge is static Java OSD text and should
+  not be treated as the native failure message.
 
 ## ARM64 Fork Audit Decision
 
@@ -195,7 +206,9 @@ Primary target:
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.
 - Input: Android currently falls back to nop HID for emulator app paths; real controls need mapping.
-- Audio: Android currently excludes SDL audio and falls back to nop audio unless an Android audio path is added.
+- Audio: Android currently uses silent nop audio for bring-up. This is enough
+  to satisfy early XACT driver registration, but not a real Android audio
+  backend.
 - UI/app flow: Android launcher has a first-pass game file picker, but user experience, permissions, errors, and direct path handling still need hardening.
 - Build dependencies: submodules are not initialized after a fresh clone.
 

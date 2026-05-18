@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <string>
 #include <string_view>
 
 #include "config.h"
@@ -553,6 +554,58 @@ bool TryLogGuestWord(Memory* memory, uint32_t address, const char* label,
   return true;
 }
 
+bool TryReadGuestByte(Memory* memory, uint32_t address, uint8_t* out_value) {
+  if (!memory || !out_value) {
+    return false;
+  }
+
+  const auto heap = memory->LookupHeap(address);
+  uint32_t protect = 0;
+  if (!heap || !heap->QueryProtect(address, &protect) ||
+      !(protect & kMemoryProtectRead)) {
+    return false;
+  }
+
+  *out_value = *reinterpret_cast<uint8_t*>(memory->TranslateVirtual(address));
+  return true;
+}
+
+void LogGuestAsciiString(Memory* memory, uint32_t address, const char* label,
+                         size_t max_length = 96) {
+  std::string value;
+  value.reserve(max_length);
+  bool unreadable = false;
+  for (size_t i = 0; i < max_length; ++i) {
+    uint8_t c = 0;
+    if (!TryReadGuestByte(memory, address + uint32_t(i), &c)) {
+      unreadable = true;
+      break;
+    }
+    if (!c) {
+      break;
+    }
+    value.push_back(c >= 0x20 && c < 0x7F ? char(c) : '.');
+  }
+
+  if (unreadable && value.empty()) {
+    XELOGE("Crash probe {} 0x{:08X}: unreadable", label, address);
+    return;
+  }
+  XELOGE("Crash probe {} 0x{:08X}: \"{}\"{}", label, address, value,
+         unreadable ? " (truncated by unreadable page)" : "");
+}
+
+void LogGuestWordRange(Memory* memory, uint32_t address, const char* label,
+                       uint32_t byte_count = 0x30) {
+  XELOGE("Crash probe {} words at 0x{:08X}:", label, address);
+  for (uint32_t offset = 0; offset < byte_count; offset += 4) {
+    uint32_t value = 0;
+    TryLogGuestWord(memory, address + offset,
+                    fmt::format("{}+0x{:02X}", label, offset).c_str(),
+                    &value);
+  }
+}
+
 void LogBlueDragonThunkProbe(Memory* memory, uint32_t guest_pc) {
   if (guest_pc < 0x826A23C8 || guest_pc > 0x826A23F4) {
     return;
@@ -573,6 +626,39 @@ void LogBlueDragonThunkProbe(Memory* memory, uint32_t guest_pc) {
   }
   TryLogGuestWord(memory, vtable_ptr + 0x14,
                   "Blue Dragon thunk vtable[0x14]");
+}
+
+void LogBlueDragonCallerProbe(Memory* memory, uint32_t guest_pc, uint64_t r4,
+                              uint64_t r5, uint64_t r8, uint64_t r31) {
+  if (guest_pc < 0x826A23C8 || guest_pc > 0x826A23F4) {
+    return;
+  }
+
+  XELOGE("Blue Dragon caller probe for null thunk:");
+  LogGuestAsciiString(memory, 0x8206CED8, "BD caller string 0x8206CED8");
+  LogGuestAsciiString(memory, 0x8206CF0C, "BD caller string 0x8206CF0C");
+  LogGuestAsciiString(memory, 0x8206C154, "BD caller string 0x8206C154");
+  LogGuestAsciiString(memory, 0x8206CF40, "BD caller string 0x8206CF40");
+  LogGuestAsciiString(memory, 0x82069E30, "BD caller string 0x82069E30");
+  LogGuestAsciiString(memory, 0x8206CF78, "BD caller string 0x8206CF78");
+
+  const uint32_t object_ptr = uint32_t(r4);
+  const uint32_t selector_or_id = uint32_t(r5);
+  const uint32_t caller_arg4 = uint32_t(r8);
+  const uint32_t state_ptr = uint32_t(r31);
+  XELOGE(
+      "Blue Dragon thunk call args: object=0x{:08X} selector=0x{:08X} "
+      "arg4=0x{:08X} state=0x{:08X}",
+      object_ptr, selector_or_id, caller_arg4, state_ptr);
+  if (object_ptr) {
+    LogGuestWordRange(memory, object_ptr, "BD thunk object", 0x30);
+  }
+  if (caller_arg4) {
+    LogGuestWordRange(memory, caller_arg4, "BD thunk arg4", 0x20);
+  }
+  if (state_ptr) {
+    LogGuestWordRange(memory, state_ptr, "BD caller state", 0x50);
+  }
 }
 
 void LogGuestStackWords(Memory* memory, uint64_t stack_pointer) {
@@ -1168,6 +1254,8 @@ bool Emulator::ExceptionCallback(Exception* ex) {
                        guest_pc);
   }
   LogBlueDragonThunkProbe(memory_.get(), guest_pc);
+  LogBlueDragonCallerProbe(memory_.get(), guest_pc, context->r[4],
+                           context->r[5], context->r[8], context->r[31]);
   XELOGE("Special registers: LR=0x{:016X} CTR=0x{:016X} CR=0x{:08X}",
          context->lr, context->ctr, uint32_t(context->cr()));
   LogTranslatedPpcGlobalReferenceSearch(processor(), 0x82785548);
