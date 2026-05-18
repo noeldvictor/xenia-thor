@@ -167,6 +167,7 @@ class CommandProcessor {
   virtual void ReturnFromWait();
 
   uint32_t ExecutePrimaryBuffer(uint32_t start_index, uint32_t end_index);
+  void UpdatePrimaryReadPointer(uint32_t read_index, const char* reason);
   virtual void OnPrimaryBufferEnd() {}
   void ExecuteIndirectBuffer(uint32_t ptr, uint32_t length);
   bool ExecutePacket(RingBuffer* reader);

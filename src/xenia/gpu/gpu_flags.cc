@@ -46,6 +46,13 @@ DEFINE_bool(gpu_trace_swap, false,
             "Trace guest video swap setup, PM4 XE_SWAP packets, and host "
             "present/swap paths.",
             "GPU");
+DEFINE_int32(gpu_trace_packet_budget, 128,
+             "Maximum packet-level GPU swap trace lines.", "GPU");
+DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
+            "Experimental Android bring-up: update the primary ring read "
+            "pointer before executing long indirect buffers, matching hardware "
+            "read-pointer progress more closely for guest watchdogs.",
+            "GPU");
 
 DEFINE_bool(
     non_seamless_cube_map, true,

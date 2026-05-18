@@ -10,6 +10,7 @@
 #include "xenia/gpu/command_processor.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
@@ -38,6 +39,86 @@ namespace {
 
 constexpr uint32_t kCpRbRptrRegister = 0x01C4;
 constexpr uint32_t kCpRbWptrRegister = 0x01C5;
+
+std::atomic<int32_t> gpu_packet_trace_count{0};
+
+bool ShouldTraceGpuPacket() {
+  return cvars::gpu_trace_swap &&
+         gpu_packet_trace_count.fetch_add(1) < cvars::gpu_trace_packet_budget;
+}
+
+const char* Type3OpcodeName(uint32_t opcode) {
+  switch (opcode) {
+    case PM4_ME_INIT:
+      return "PM4_ME_INIT";
+    case PM4_NOP:
+      return "PM4_NOP";
+    case PM4_INTERRUPT:
+      return "PM4_INTERRUPT";
+    case PM4_XE_SWAP:
+      return "PM4_XE_SWAP";
+    case PM4_INDIRECT_BUFFER:
+      return "PM4_INDIRECT_BUFFER";
+    case PM4_INDIRECT_BUFFER_PFD:
+      return "PM4_INDIRECT_BUFFER_PFD";
+    case PM4_WAIT_REG_MEM:
+      return "PM4_WAIT_REG_MEM";
+    case PM4_REG_RMW:
+      return "PM4_REG_RMW";
+    case PM4_REG_TO_MEM:
+      return "PM4_REG_TO_MEM";
+    case PM4_MEM_WRITE:
+      return "PM4_MEM_WRITE";
+    case PM4_COND_WRITE:
+      return "PM4_COND_WRITE";
+    case PM4_EVENT_WRITE:
+      return "PM4_EVENT_WRITE";
+    case PM4_EVENT_WRITE_SHD:
+      return "PM4_EVENT_WRITE_SHD";
+    case PM4_EVENT_WRITE_EXT:
+      return "PM4_EVENT_WRITE_EXT";
+    case PM4_EVENT_WRITE_ZPD:
+      return "PM4_EVENT_WRITE_ZPD";
+    case PM4_DRAW_INDX:
+      return "PM4_DRAW_INDX";
+    case PM4_DRAW_INDX_2:
+      return "PM4_DRAW_INDX_2";
+    case PM4_SET_CONSTANT:
+      return "PM4_SET_CONSTANT";
+    case PM4_SET_CONSTANT2:
+      return "PM4_SET_CONSTANT2";
+    case PM4_LOAD_ALU_CONSTANT:
+      return "PM4_LOAD_ALU_CONSTANT";
+    case PM4_SET_SHADER_CONSTANTS:
+      return "PM4_SET_SHADER_CONSTANTS";
+    case PM4_IM_LOAD:
+      return "PM4_IM_LOAD";
+    case PM4_IM_LOAD_IMMEDIATE:
+      return "PM4_IM_LOAD_IMMEDIATE";
+    case PM4_INVALIDATE_STATE:
+      return "PM4_INVALIDATE_STATE";
+    case PM4_VIZ_QUERY:
+      return "PM4_VIZ_QUERY";
+    case PM4_SET_BIN_MASK_LO:
+      return "PM4_SET_BIN_MASK_LO";
+    case PM4_SET_BIN_MASK_HI:
+      return "PM4_SET_BIN_MASK_HI";
+    case PM4_SET_BIN_SELECT_LO:
+      return "PM4_SET_BIN_SELECT_LO";
+    case PM4_SET_BIN_SELECT_HI:
+      return "PM4_SET_BIN_SELECT_HI";
+    case PM4_SET_BIN_MASK:
+      return "PM4_SET_BIN_MASK";
+    case PM4_SET_BIN_SELECT:
+      return "PM4_SET_BIN_SELECT";
+    case PM4_CONTEXT_UPDATE:
+      return "PM4_CONTEXT_UPDATE";
+    case PM4_WAIT_FOR_IDLE:
+      return "PM4_WAIT_FOR_IDLE";
+    default:
+      return "PM4_UNKNOWN";
+  }
+}
 
 }  // namespace
 
@@ -243,16 +324,20 @@ void CommandProcessor::WorkerThreadMain() {
     assert_true(read_ptr_index_ != write_ptr_index);
 
     // Execute. Note that we handle wraparound transparently.
-    read_ptr_index_ = ExecutePrimaryBuffer(read_ptr_index_, write_ptr_index);
-    const_cast<volatile uint32_t&>(
-        register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
-
-    // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
-    //     that many indices.
-    if (read_ptr_writeback_ptr_) {
-      xe::store_and_swap<uint32_t>(
-          memory_->TranslatePhysical(read_ptr_writeback_ptr_), read_ptr_index_);
+    if (cvars::gpu_trace_swap) {
+      XELOGI(
+          "GPU swap trace: CommandProcessor ExecutePrimaryBuffer begin "
+          "read_ptr={:08X} write_ptr={:08X} primary_ptr={:08X}",
+          read_ptr_index_, write_ptr_index, primary_buffer_ptr_);
     }
+    read_ptr_index_ = ExecutePrimaryBuffer(read_ptr_index_, write_ptr_index);
+    if (cvars::gpu_trace_swap) {
+      XELOGI(
+          "GPU swap trace: CommandProcessor ExecutePrimaryBuffer end "
+          "read_ptr={:08X} write_ptr={:08X}",
+          read_ptr_index_, write_ptr_index);
+    }
+    UpdatePrimaryReadPointer(read_ptr_index_, "primary_buffer_end");
 
     if (cvars::gpu_interrupt_on_ring_idle) {
       graphics_system_->DispatchInterruptCallback(1, 2);
@@ -327,6 +412,13 @@ void CommandProcessor::InitializeRingBuffer(uint32_t ptr, uint32_t size_log2) {
   read_ptr_index_ = 0;
   primary_buffer_ptr_ = ptr;
   primary_buffer_size_ = uint32_t(1) << (size_log2 + 3);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: CommandProcessor InitializeRingBuffer ptr={:08X} "
+        "size_log2={} primary_size={} current_wptr={:08X}",
+        primary_buffer_ptr_, size_log2, primary_buffer_size_,
+        write_ptr_index_.load());
+  }
   std::memset(kernel_state_->memory()->TranslatePhysical(primary_buffer_ptr_),
               0, primary_buffer_size_);
   const_cast<volatile uint32_t&>(
@@ -344,9 +436,23 @@ void CommandProcessor::EnableReadPointerWriteBack(uint32_t ptr,
   // block_size = RB_BLKSZ, log2 of number of quadwords read between updates of
   //              the read pointer.
   read_ptr_update_freq_ = uint32_t(1) << block_size_log2 >> 2;
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: CommandProcessor EnableReadPointerWriteBack "
+        "ptr={:08X} block_size_log2={} update_freq={}",
+        read_ptr_writeback_ptr_, block_size_log2, read_ptr_update_freq_);
+  }
 }
 
 void CommandProcessor::UpdateWritePointer(uint32_t value) {
+  uint32_t old_value = write_ptr_index_.load();
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: CommandProcessor UpdateWritePointer {:08X}->{:08X} "
+        "read_ptr={:08X} primary_ptr={:08X} primary_size={}",
+        old_value, value, read_ptr_index_, primary_buffer_ptr_,
+        primary_buffer_size_);
+  }
   write_ptr_index_ = value;
   const_cast<volatile uint32_t&>(
       register_file_->values[kCpRbWptrRegister]) = value;
@@ -597,6 +703,26 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index,
   return write_index;
 }
 
+void CommandProcessor::UpdatePrimaryReadPointer(uint32_t read_index,
+                                                const char* reason) {
+  read_ptr_index_ = read_index;
+  const_cast<volatile uint32_t&>(
+      register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
+
+  // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
+  //     that many indices.
+  if (read_ptr_writeback_ptr_) {
+    xe::store_and_swap<uint32_t>(
+        memory_->TranslatePhysical(read_ptr_writeback_ptr_), read_ptr_index_);
+  }
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: CommandProcessor read pointer writeback "
+        "read_ptr={:08X} ptr={:08X} reason={}",
+        read_ptr_index_, read_ptr_writeback_ptr_, reason ? reason : "");
+  }
+}
+
 void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
   SCOPE_profile_cpu_f("gpu");
 
@@ -633,6 +759,13 @@ void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
 bool CommandProcessor::ExecutePacket(RingBuffer* reader) {
   const uint32_t packet = reader->ReadAndSwap<uint32_t>();
   const uint32_t packet_type = packet >> 30;
+  const uint32_t packet_ptr = uint32_t(reader->read_ptr() - 4);
+  if (packet_type != 3 && ShouldTraceGpuPacket()) {
+    XELOGI(
+        "GPU swap trace: PM4 packet ptr={:08X} type={} word={:08X} "
+        "remaining_bytes={}",
+        packet_ptr, packet_type, packet, reader->read_count());
+  }
   if (packet == 0) {
     trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 1);
     trace_writer_.WritePacketEnd();
@@ -712,6 +845,13 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
   uint32_t opcode = (packet >> 8) & 0x7F;
   uint32_t count = ((packet >> 16) & 0x3FFF) + 1;
   auto data_start_offset = reader->read_offset();
+  if (ShouldTraceGpuPacket()) {
+    XELOGI(
+        "GPU swap trace: PM4 packet ptr={:08X} type=3 opcode={}({:02X}) "
+        "count={} predicated={} word={:08X} remaining_bytes={}",
+        uint32_t(reader->read_ptr() - 4), Type3OpcodeName(opcode), opcode,
+        count, (packet & 1) != 0, packet, reader->read_count());
+  }
 
   if (reader->read_count() < count * sizeof(uint32_t)) {
     XELOGE(
@@ -980,6 +1120,11 @@ bool CommandProcessor::ExecutePacketType3_INDIRECT_BUFFER(RingBuffer* reader,
   uint32_t list_length = reader->ReadAndSwap<uint32_t>();
   assert_zero(list_length & ~0xFFFFF);
   list_length &= 0xFFFFF;
+  if (cvars::gpu_early_primary_read_pointer_writeback &&
+      reader->buffer() == memory_->TranslatePhysical(primary_buffer_ptr_)) {
+    UpdatePrimaryReadPointer(uint32_t(reader->read_offset() / sizeof(uint32_t)),
+                             "before_indirect_buffer");
+  }
   ExecuteIndirectBuffer(GpuToCpu(list_ptr), list_length);
   return true;
 }
@@ -1006,6 +1151,8 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(RingBuffer* reader,
                 : register_file_->values[poll_reg_addr];
 
   bool matched = false;
+  uint32_t wait_loops = 0;
+  uint32_t last_value = 0;
   do {
     uint32_t value = value_ref;
     if (is_memory) {
@@ -1019,6 +1166,7 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(RingBuffer* reader,
         value = value_ref;
       }
     }
+    last_value = value;
     switch (wait_info & 0x7) {
       case 0x0:  // Never.
         matched = false;
@@ -1046,6 +1194,7 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(RingBuffer* reader,
         break;
     }
     if (!matched) {
+      ++wait_loops;
       // Wait.
       if (wait >= 0x100) {
         PrepareForWait();
@@ -1067,6 +1216,14 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(RingBuffer* reader,
       }
     }
   } while (!matched);
+
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: WAIT_REG_MEM info={:08X} poll={:08X} ref={:08X} "
+        "mask={:08X} wait={:08X} memory={} final={:08X} loops={}",
+        wait_info, poll_reg_addr, ref, mask, wait, is_memory, last_value,
+        wait_loops);
+  }
 
   return true;
 }
@@ -1245,6 +1402,12 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_SHD(RingBuffer* reader,
   data_value = GpuSwap(data_value, endianness);
   xe::store(memory_->TranslatePhysical(address), data_value);
   trace_writer_.WriteMemoryWrite(CpuToGpu(address), 4);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: EVENT_WRITE_SHD initiator={:08X} address={:08X} "
+        "value={:08X} stored={:08X} endian={}",
+        initiator, address, value, data_value, uint32_t(endianness));
+  }
   return true;
 }
 

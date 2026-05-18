@@ -391,6 +391,7 @@ class CodeCacheBase : public CodeCache {
       old_commit_mark = generated_code_commit_mark_;
       if (high_mark <= old_commit_mark) break;
       new_commit_mark = old_commit_mark + 16_MiB;
+#if XE_PLATFORM_WIN32
       if (generated_code_execute_base_ == generated_code_write_base_) {
         xe::memory::AllocFixed(generated_code_execute_base_, new_commit_mark,
                                xe::memory::AllocationType::kCommit,
@@ -403,6 +404,12 @@ class CodeCacheBase : public CodeCache {
                                xe::memory::AllocationType::kCommit,
                                xe::memory::PageAccess::kReadWrite);
       }
+#else
+      // POSIX mmap doesn't have Windows-style reserve / commit semantics, and
+      // the full code-cache file view is already mapped in Initialize(). Calling
+      // AllocFixed here would replace earlier generated code with a new
+      // anonymous mapping when the cache grows.
+#endif
     } while (generated_code_commit_mark_.compare_exchange_weak(
         old_commit_mark, new_commit_mark));
   }

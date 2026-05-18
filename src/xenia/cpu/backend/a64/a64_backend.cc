@@ -46,6 +46,42 @@ DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
             "impact, but fixes crashes in games that use setjmp/longjmp.",
             "a64");
 
+DEFINE_uint32(
+    arm64_compiled_call_trace_interval, 0,
+    "Thor ARM64 bring-up: log every Nth A64 guest function entry after "
+    "filtering. 0 disables function-entry trace generation.",
+    "a64");
+DEFINE_uint32(
+    arm64_compiled_call_trace_min_count, 0,
+    "Thor ARM64 bring-up: suppress A64 guest function-entry trace lines until "
+    "a function has been entered this many times.",
+    "a64");
+DEFINE_uint32(
+    arm64_compiled_call_trace_budget, 0,
+    "Thor ARM64 bring-up: maximum A64 guest function-entry trace lines to "
+    "emit.",
+    "a64");
+DEFINE_string(
+    arm64_compiled_call_trace_functions, "",
+    "Thor ARM64 bring-up: optional comma/semicolon/space separated guest "
+    "function addresses or inclusive ranges to trace.",
+    "a64");
+DEFINE_string(
+    arm64_compiled_call_trace_guest_tids, "",
+    "Thor ARM64 bring-up: optional comma/semicolon/space separated guest "
+    "thread ids or inclusive ranges to trace.",
+    "a64");
+DEFINE_uint32(
+    arm64_compiled_call_trace_after_ms, 0,
+    "Thor ARM64 bring-up: suppress A64 guest function-entry trace lines until "
+    "this many host milliseconds after the first traced function entry.",
+    "a64");
+DEFINE_bool(
+    arm64_blue_dragon_draw_wait_probe, false,
+    "Thor ARM64 bring-up: update current KTHREAD+0x58 at Blue Dragon's known "
+    "draw-thread wait timeout load site. Research-only title probe.",
+    "a64");
+
 namespace xe {
 namespace cpu {
 namespace backend {
@@ -684,6 +720,15 @@ uint64_t A64Backend::CalculateNextHostInstruction(ThreadDebugInfo* thread_info,
 
 // ARM64 BRK #0 encoding (4 bytes, fixed-width instruction).
 static constexpr uint32_t kArm64Brk0 = 0xD4200000;
+static constexpr uint32_t kArm64BrkMask = 0xFFE0001F;
+
+static bool IsArm64Brk(uint32_t instruction) {
+  return (instruction & kArm64BrkMask) == kArm64Brk0;
+}
+
+static uint32_t Arm64BrkImmediate(uint32_t instruction) {
+  return (instruction >> 5) & 0xFFFF;
+}
 
 void A64Backend::InstallBreakpoint(Breakpoint* breakpoint) {
   breakpoint->ForEachHostAddress([breakpoint](uint64_t host_address) {
@@ -885,9 +930,26 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
     return false;
   }
 
-  // Verify it's our BRK #0 instruction.
   auto instruction_bytes =
       xe::load<uint32_t>(reinterpret_cast<void*>(ex->pc()));
+  if (IsArm64Brk(instruction_bytes) && instruction_bytes != kArm64Brk0) {
+    auto code_cache = processor()->backend()->code_cache();
+    auto code_base = code_cache->execute_base_address();
+    auto code_end = code_base + code_cache->total_size();
+    uint64_t code_offset =
+        ex->pc() >= code_base && ex->pc() < code_end ? ex->pc() - code_base
+                                                     : UINT64_MAX;
+    auto host_context = ex->thread_context();
+    XELOGE(
+        "A64 backend trap: BRK #{:04X} pc={:016X} code_offset={:X} "
+        "x16_guest_target={:08X} x20_context={:016X} x30_lr={:016X}",
+        Arm64BrkImmediate(instruction_bytes), ex->pc(), code_offset,
+        uint32_t(host_context->x[16]), host_context->x[20],
+        host_context->x[30]);
+    return false;
+  }
+
+  // Verify it's our BRK #0 instruction.
   if (instruction_bytes != kArm64Brk0) {
     return false;
   }

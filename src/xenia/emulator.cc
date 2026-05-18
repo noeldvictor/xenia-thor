@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -1232,7 +1233,45 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   assert_not_null(current_thread);
 
   auto guest_function = code_cache->LookupFunction(ex->pc());
-  assert_not_null(guest_function);
+  if (!guest_function) {
+    const uintptr_t code_offset = ex->pc() - code_base;
+    XELOGE("==== CRASH DUMP ====");
+    XELOGE("Thread ID (Host: 0x{:08X} / Guest: 0x{:08X})",
+           current_thread->thread()->system_id(), current_thread->thread_id());
+    XELOGE("Thread Handle: 0x{:08X}", current_thread->handle());
+    XELOGE(
+        "Host PC: 0x{:016X} (code cache +0x{:X}, no mapped guest function)",
+        ex->pc(), code_offset);
+    XELOGE("Exception code: {} fault=0x{:016X}",
+           static_cast<uint32_t>(ex->code()), ex->fault_address());
+#if XE_ARCH_ARM64
+    auto host_context = ex->thread_context();
+    uint32_t instruction =
+        xe::load<uint32_t>(reinterpret_cast<void*>(ex->pc()));
+    XELOGE(
+        "A64 host context: insn=0x{:08X} x0=0x{:016X} x1=0x{:016X} "
+        "x2=0x{:016X} x8=0x{:016X} x9=0x{:016X} x16=0x{:016X}",
+        instruction, host_context->x[0], host_context->x[1],
+        host_context->x[2], host_context->x[8], host_context->x[9],
+        host_context->x[16]);
+    XELOGE(
+        "A64 host context: x19=0x{:016X} x20=0x{:016X} x21=0x{:016X} "
+        "x29=0x{:016X} x30=0x{:016X} sp=0x{:016X}",
+        host_context->x[19], host_context->x[20], host_context->x[21],
+        host_context->x[29], host_context->x[30], host_context->sp);
+#endif
+    auto context = current_thread->thread_state()->context();
+    if (context) {
+      XELOGE("Guest registers: LR=0x{:016X} CTR=0x{:016X} r1=0x{:016X}",
+             context->lr, context->ctr, context->r[1]);
+      XELOGE(
+          "Guest args/state: r3=0x{:016X} r4=0x{:016X} r5=0x{:016X} "
+          "r8=0x{:016X} r13=0x{:016X} r31=0x{:016X}",
+          context->r[3], context->r[4], context->r[5], context->r[8],
+          context->r[13], context->r[31]);
+    }
+    std::abort();
+  }
 
   auto context = current_thread->thread_state()->context();
 

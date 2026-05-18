@@ -13,6 +13,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -591,6 +592,10 @@ dword_result_t MmGetPhysicalAddress_entry(dword_t base_address) {
   assert_true(physical_address != UINT32_MAX);
   if (physical_address == UINT32_MAX) {
     physical_address = 0;
+  }
+  if (cvars::gpu_trace_swap) {
+    XELOGI("GPU swap trace: MmGetPhysicalAddress base={:08X} -> {:08X}",
+           uint32_t(base_address), physical_address);
   }
   return physical_address;
 }

@@ -9,8 +9,18 @@
 
 #include "xenia/cpu/backend/a64/a64_emitter.h"
 
+#include <algorithm>
+#include <atomic>
+#include <charconv>
+#include <cctype>
 #include <cstring>
+#include <limits>
+#include <mutex>
+#include <string_view>
+#include <system_error>
+#include <unordered_map>
 
+#include "xenia/base/clock.h"
 #include "xenia/base/debugging.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -28,12 +38,197 @@
 
 DECLARE_uint32(a64_max_stackpoints);
 DECLARE_bool(a64_enable_host_guest_stack_synchronization);
+DECLARE_uint32(arm64_compiled_call_trace_interval);
+DECLARE_uint32(arm64_compiled_call_trace_min_count);
+DECLARE_uint32(arm64_compiled_call_trace_budget);
+DECLARE_string(arm64_compiled_call_trace_functions);
+DECLARE_string(arm64_compiled_call_trace_guest_tids);
+DECLARE_uint32(arm64_compiled_call_trace_after_ms);
 
 namespace {
+std::atomic<int> g_a64_call_trace_budget{0};
+std::atomic<uint32_t> g_a64_call_trace_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+std::atomic<uint64_t> g_a64_call_trace_first_host_ms{0};
+std::mutex g_a64_call_trace_counts_mutex;
+std::unordered_map<uint64_t, uint64_t> g_a64_call_trace_counts;
+
+std::string_view TrimTraceToken(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseTraceNumber(std::string_view value, uint32_t* out_value) {
+  value = TrimTraceToken(value);
+  if (value.empty()) {
+    return false;
+  }
+
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    if (value.size() >= 8) {
+      base = 16;
+    }
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint32_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size()) {
+    return false;
+  }
+
+  *out_value = parsed;
+  return true;
+}
+
+bool TraceFilterMatches(uint32_t value, std::string_view filter) {
+  filter = TrimTraceToken(filter);
+  if (filter.empty()) {
+    return true;
+  }
+
+  size_t start = 0;
+  while (start < filter.size()) {
+    size_t end = filter.find_first_of(",; ", start);
+    if (end == std::string_view::npos) {
+      end = filter.size();
+    }
+    std::string_view token = TrimTraceToken(filter.substr(start, end - start));
+    if (!token.empty()) {
+      size_t dash = token.find('-');
+      uint32_t range_start = 0;
+      uint32_t range_end = 0;
+      if (dash != std::string_view::npos &&
+          ParseTraceNumber(token.substr(0, dash), &range_start) &&
+          ParseTraceNumber(token.substr(dash + 1), &range_end)) {
+        if (range_start > range_end) {
+          std::swap(range_start, range_end);
+        }
+        if (range_start <= value && value <= range_end) {
+          return true;
+        }
+      } else if (ParseTraceNumber(token, &range_start) &&
+                 range_start == value) {
+        return true;
+      }
+    }
+    start = end + 1;
+  }
+
+  return false;
+}
+
+void ConfigureA64CallTraceBudget() {
+  uint32_t budget = cvars::arm64_compiled_call_trace_budget;
+  uint32_t configured_budget =
+      g_a64_call_trace_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_a64_call_trace_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_a64_call_trace_budget.store(clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumeA64CallTraceBudget() {
+  int value = g_a64_call_trace_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_a64_call_trace_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool A64CallTraceRequested() {
+  return cvars::arm64_compiled_call_trace_interval != 0 &&
+         cvars::arm64_compiled_call_trace_budget != 0;
+}
+
 void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
   auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
-  XELOGI("a64 call {:08X} t{}", static_cast<uint32_t>(function_address),
-         ctx->thread_id);
+  if (!ctx || !A64CallTraceRequested()) {
+    return;
+  }
+
+  uint32_t function_u32 = static_cast<uint32_t>(function_address);
+  if (!TraceFilterMatches(
+          ctx->thread_id, cvars::arm64_compiled_call_trace_guest_tids) ||
+      !TraceFilterMatches(
+          function_u32, cvars::arm64_compiled_call_trace_functions)) {
+    return;
+  }
+
+  uint64_t now_ms = xe::Clock::QueryHostUptimeMillis();
+  uint64_t first_ms =
+      g_a64_call_trace_first_host_ms.load(std::memory_order_relaxed);
+  if (!first_ms &&
+      g_a64_call_trace_first_host_ms.compare_exchange_strong(
+          first_ms, now_ms, std::memory_order_acq_rel)) {
+    first_ms = now_ms;
+  }
+  uint32_t after_ms = cvars::arm64_compiled_call_trace_after_ms;
+  if (after_ms && now_ms - first_ms < after_ms) {
+    return;
+  }
+
+  uint64_t count = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_a64_call_trace_counts_mutex);
+    count = ++g_a64_call_trace_counts[function_u32];
+  }
+
+  uint32_t min_count = cvars::arm64_compiled_call_trace_min_count;
+  if (min_count && count < min_count) {
+    return;
+  }
+
+  uint32_t interval = cvars::arm64_compiled_call_trace_interval;
+  if (interval > 1 && count % interval != 0 &&
+      cvars::arm64_compiled_call_trace_functions.empty()) {
+    return;
+  }
+
+  ConfigureA64CallTraceBudget();
+  if (!ConsumeA64CallTraceBudget()) {
+    return;
+  }
+
+  XELOGI(
+      "A64 call trace thid {:08X} fn {:08X} count {} lr {:08X} ctr {:08X} "
+      "r1 {:08X} r3 {:08X} r10 {:08X} r11 {:08X} r13 {:08X} r29 {:08X} "
+      "r30 {:08X} r31 {:08X}",
+      ctx->thread_id, function_u32, count, static_cast<uint32_t>(ctx->lr),
+      static_cast<uint32_t>(ctx->ctr), static_cast<uint32_t>(ctx->r[1]),
+      static_cast<uint32_t>(ctx->r[3]), static_cast<uint32_t>(ctx->r[10]),
+      static_cast<uint32_t>(ctx->r[11]), static_cast<uint32_t>(ctx->r[13]),
+      static_cast<uint32_t>(ctx->r[29]), static_cast<uint32_t>(ctx->r[30]),
+      static_cast<uint32_t>(ctx->r[31]));
 }
 }  // namespace
 
@@ -177,6 +372,10 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
                           A64BackendContext, current_stackpoint_depth))));
     str(w16, ptr(sp, static_cast<uint32_t>(
                          StackLayout::GUEST_SAVED_STACKPOINT_DEPTH)));
+  }
+  if (A64CallTraceRequested()) {
+    mov(x1, static_cast<uint64_t>(current_guest_function_));
+    CallNativeSafe(reinterpret_cast<void*>(&TraceFunctionEntry));
   }
 
   // ========================================================================

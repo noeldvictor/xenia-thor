@@ -20,18 +20,23 @@ param(
     [string]$MountCache = "false",
     [string]$MmapAddressHigh = "",
     [string]$ClearMemoryPageState = "false",
+    [string]$EmitInlineMmioChecks = "false",
     [string]$GpuInterruptOnRingIdle = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
+    [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
+    [string]$GpuTracePacketBudget = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
+    [string]$Arm64GuestStoreWatchBudget = "",
     [string]$Arm64CompiledCallTraceInterval = "",
     [string]$Arm64CompiledCallTraceMinCount = "",
     [string]$Arm64CompiledCallTraceBudget = "",
     [string]$Arm64CompiledCallTraceFunctions = "",
     [string]$Arm64CompiledCallTraceGuestTids = "",
+    [string]$Arm64CompiledCallTraceAfterMs = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
@@ -40,6 +45,7 @@ param(
     [string]$XboxkrnlEventTrace = "false",
     [string]$XboxkrnlEventTraceBudget = "",
     [string]$XboxkrnlEventTraceObjects = "",
+    [string]$XboxkrnlIgnoreGuestDebugBreakpoints = "false",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -260,12 +266,17 @@ function Start-XeniaEmulator {
         "--ez disassemble_functions $(ConvertTo-BooleanText $DisassembleFunctions)",
         "--ez mount_cache $(ConvertTo-BooleanText $MountCache)",
         "--ez clear_memory_page_state $(ConvertTo-BooleanText $ClearMemoryPageState)",
+        "--ez emit_inline_mmio_checks $(ConvertTo-BooleanText $EmitInlineMmioChecks)",
         "--ez gpu_interrupt_on_ring_idle $(ConvertTo-BooleanText $GpuInterruptOnRingIdle)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
+        "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
+    }
+    if ($GpuTracePacketBudget) {
+        $parts += "--ei gpu_trace_packet_budget $GpuTracePacketBudget"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"
@@ -282,6 +293,9 @@ function Start-XeniaEmulator {
     if ($Arm64GuestStoreWatch) {
         $parts += "--es arm64_guest_store_watch $(ConvertTo-AdbShellSingleQuote $Arm64GuestStoreWatch)"
     }
+    if ($Arm64GuestStoreWatchBudget) {
+        $parts += "--ei arm64_guest_store_watch_budget $Arm64GuestStoreWatchBudget"
+    }
     if ($Arm64CompiledCallTraceInterval) {
         $parts += "--ei arm64_compiled_call_trace_interval $Arm64CompiledCallTraceInterval"
     }
@@ -296,6 +310,9 @@ function Start-XeniaEmulator {
     }
     if ($Arm64CompiledCallTraceGuestTids) {
         $parts += "--es arm64_compiled_call_trace_guest_tids $(ConvertTo-AdbShellSingleQuote $Arm64CompiledCallTraceGuestTids)"
+    }
+    if ($Arm64CompiledCallTraceAfterMs) {
+        $parts += "--ei arm64_compiled_call_trace_after_ms $Arm64CompiledCallTraceAfterMs"
     }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
@@ -320,6 +337,9 @@ function Start-XeniaEmulator {
     }
     if ($XboxkrnlEventTraceObjects) {
         $parts += "--es xboxkrnl_event_trace_objects $(ConvertTo-AdbShellSingleQuote $XboxkrnlEventTraceObjects)"
+    }
+    if ($XboxkrnlIgnoreGuestDebugBreakpoints) {
+        $parts += "--ez xboxkrnl_ignore_guest_debug_breakpoints $(ConvertTo-BooleanText $XboxkrnlIgnoreGuestDebugBreakpoints)"
     }
     if ($LaunchTarget) {
         $parts += "--es target $(ConvertTo-AdbShellSingleQuote $LaunchTarget)"

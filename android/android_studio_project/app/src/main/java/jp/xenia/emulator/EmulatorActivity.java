@@ -26,10 +26,23 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "mount_cache");
             copyIntExtra(intent, launchArguments, "mmap_address_high");
             copyBooleanExtra(intent, launchArguments, "clear_memory_page_state");
+            copyBooleanExtra(intent, launchArguments, "emit_inline_mmio_checks");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
+            copyBooleanExtra(
+                    intent, launchArguments, "gpu_early_primary_read_pointer_writeback");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
+            copyIntExtra(intent, launchArguments, "gpu_trace_packet_budget");
+            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
+            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_min_count");
+            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_budget");
+            copyStringExtra(intent, launchArguments, "arm64_compiled_call_trace_functions");
+            copyStringExtra(intent, launchArguments, "arm64_compiled_call_trace_guest_tids");
+            copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_after_ms");
+            copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
+            copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
+            copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_budget");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_after_ms");
@@ -38,6 +51,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_event_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_event_trace_budget");
             copyStringExtra(intent, launchArguments, "xboxkrnl_event_trace_objects");
+            copyBooleanExtra(
+                    intent, launchArguments, "xboxkrnl_ignore_guest_debug_breakpoints");
             if (intent.hasExtra("discord")) {
                 launchArguments.putBoolean(
                         "discord", intent.getBooleanExtra("discord", false));

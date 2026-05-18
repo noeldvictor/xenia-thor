@@ -8,6 +8,7 @@
  */
 
 #include "xenia/base/debugging.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -15,11 +16,22 @@
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
+DEFINE_bool(xboxkrnl_ignore_guest_debug_breakpoints, false,
+            "Experimental Android bring-up: log and ignore guest "
+            "DbgBreakPoint calls instead of trapping the host process.",
+            "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
-void DbgBreakPoint_entry() { xe::debugging::Break(); }
+void DbgBreakPoint_entry() {
+  if (cvars::xboxkrnl_ignore_guest_debug_breakpoints) {
+    XELOGW("DbgBreakPoint suppressed by xboxkrnl_ignore_guest_debug_breakpoints");
+    return;
+  }
+  xe::debugging::Break();
+}
 DECLARE_XBOXKRNL_EXPORT2(DbgBreakPoint, kDebug, kStub, kImportant);
 
 // https://msdn.microsoft.com/en-us/library/xcb2z8hs.aspx

@@ -9,6 +9,11 @@
 
 #include "xenia/cpu/backend/a64/a64_sequences.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+
+#include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/memory.h"
@@ -27,6 +32,12 @@ DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
             "a64");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline A64 MMIO checks for memory accesses.", "a64");
+DEFINE_string(arm64_guest_store_watch, "",
+              "Comma-separated guest address/range watch list for A64 stores.",
+              "a64");
+DEFINE_int32(arm64_guest_store_watch_budget, 128,
+             "Maximum A64 guest store watch log lines.", "a64");
+DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 
 namespace xe {
 namespace cpu {
@@ -35,10 +46,128 @@ namespace a64 {
 
 volatile int anchor_memory = 0;
 
+namespace {
+
+std::atomic<int32_t> guest_store_watch_log_count{0};
+
+void SkipStoreWatchDelimiters(const char*& p) {
+  while (*p == ' ' || *p == '\t' || *p == ',' || *p == ';') {
+    ++p;
+  }
+}
+
+bool ParseStoreWatchHex(const char*& p, uint32_t* out_value) {
+  SkipStoreWatchDelimiters(p);
+  if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    p += 2;
+  }
+  char* end = nullptr;
+  unsigned long value = std::strtoul(p, &end, 16);
+  if (end == p) {
+    return false;
+  }
+  *out_value = static_cast<uint32_t>(value);
+  p = end;
+  return true;
+}
+
+bool StoreWatchMatches(uint32_t guest_address, uint32_t size) {
+  if (cvars::arm64_guest_store_watch.empty()) {
+    return false;
+  }
+  uint32_t store_end = guest_address + std::max<uint32_t>(size, 1) - 1;
+  const char* p = cvars::arm64_guest_store_watch.c_str();
+  while (*p) {
+    uint32_t start = 0;
+    if (!ParseStoreWatchHex(p, &start)) {
+      break;
+    }
+    uint32_t end = start;
+    if (*p == '-' || *p == ':') {
+      ++p;
+      if (!ParseStoreWatchHex(p, &end)) {
+        end = start;
+      }
+    } else if (*p == '+') {
+      ++p;
+      uint32_t length = 0;
+      if (ParseStoreWatchHex(p, &length) && length != 0) {
+        end = start + length - 1;
+      }
+    }
+    if (guest_address <= end && store_end >= start) {
+      return true;
+    }
+    SkipStoreWatchDelimiters(p);
+  }
+  return false;
+}
+
+void TraceGuestStoreWatch(void* raw_context, uint32_t guest_pc,
+                          uint32_t guest_address, uint32_t size) {
+  if (!StoreWatchMatches(guest_address, size)) {
+    return;
+  }
+  int32_t log_index = guest_store_watch_log_count.fetch_add(1);
+  if (log_index >= cvars::arm64_guest_store_watch_budget) {
+    return;
+  }
+  auto ctx = reinterpret_cast<ppc::PPCContext*>(raw_context);
+  uint32_t raw_value = 0;
+  uint32_t swapped_value = 0;
+  if (ctx && size == 4) {
+    raw_value =
+        *reinterpret_cast<uint32_t*>(ctx->virtual_membase + guest_address);
+    swapped_value = xe::byte_swap(raw_value);
+  }
+  XELOGI(
+      "ARM64 guest memory watch hit: fn 00000000 guest {:08X} range {:08X} "
+      "size {} op STORE thid {:08X} raw {:08X} be {:08X}",
+      guest_pc, guest_address, size, ctx ? ctx->thread_id : 0, raw_value,
+      swapped_value);
+}
+
+void EmitGuestStoreWatch(A64Emitter& e, const hir::Instr* instr,
+                         const XReg& guest_address, uint32_t size) {
+  if (cvars::arm64_guest_store_watch.empty()) {
+    return;
+  }
+  e.mov(e.w2, WReg(guest_address.getIdx()));
+  e.mov(e.w1, static_cast<uint64_t>(instr->GuestAddressFor()));
+  e.mov(e.w3, size);
+  e.CallNativeSafe(reinterpret_cast<void*>(&TraceGuestStoreWatch));
+}
+
+}  // namespace
+
 static bool IsPossibleMMIOInstruction(A64Emitter& e, const hir::Instr* i) {
   (void)e;
   (void)i;
   return false;
+}
+
+static void UpdateCurrentThreadKernelTime(void* raw_context) {
+  auto ctx = reinterpret_cast<ppc::PPCContext*>(raw_context);
+  if (!ctx || !ctx->processor) {
+    return;
+  }
+  auto memory = ctx->processor->memory();
+  uint32_t pcr_address = static_cast<uint32_t>(ctx->r[13]);
+  auto pcr = memory->TranslateVirtual(pcr_address);
+  if (!pcr) {
+    return;
+  }
+  uint32_t current_thread = xe::load_and_swap<uint32_t>(pcr + 0x100);
+  auto thread = memory->TranslateVirtual(current_thread);
+  if (!thread) {
+    return;
+  }
+  xe::store_and_swap<uint32_t>(thread + 0x58, Clock::QueryGuestUptimeMillis());
+}
+
+static bool ShouldUpdateBlueDragonDrawWaitKernelTime(const hir::Instr* instr) {
+  return cvars::arm64_blue_dragon_draw_wait_probe &&
+         instr->GuestAddressFor() == 0x8246B474;
 }
 
 // ============================================================================
@@ -344,7 +473,7 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
       e.mov(e.w0, 0x7FFFFFFFu);
       e.cmp(e.w17, e.w0);
       e.b(HI, normal_access);
-      // MMIO path — copy value to w2 before w1 in case src2 is in w1
+      // MMIO path: copy value to w2 before w1 in case src2 is in w1.
       void* mmio_fn = (void*)&MMIOAwareStore<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         mmio_fn = (void*)&MMIOAwareStore<uint32_t, true>;
@@ -379,6 +508,7 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
             e.str(i.src2, ptr(e.GetMembaseReg(), addr));
           }
         }
+        EmitGuestStoreWatch(e, i.instr, addr, 4);
       }
       e.L(done);
     } else {
@@ -401,6 +531,7 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
           e.str(i.src2, ptr(e.GetMembaseReg(), addr));
         }
       }
+      EmitGuestStoreWatch(e, i.instr, addr, 4);
     }
   }
 };
@@ -542,6 +673,9 @@ struct LOAD_OFFSET_I16
 struct LOAD_OFFSET_I32
     : Sequence<LOAD_OFFSET_I32, I<OPCODE_LOAD_OFFSET, I32Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (ShouldUpdateBlueDragonDrawWaitKernelTime(i.instr)) {
+      e.CallNativeSafe(reinterpret_cast<void*>(&UpdateCurrentThreadKernelTime));
+    }
     if (IsPossibleMMIOInstruction(e, i.instr)) {
       void* mmio_fn = (void*)&MMIOAwareLoad<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
@@ -721,7 +855,7 @@ struct STORE_OFFSET_I32
       e.mov(e.w0, 0x7FFFFFFFu);
       e.cmp(e.w17, e.w0);
       e.b(HI, normal_access);
-      // MMIO path — copy value to w2 before w1 in case src3 is in w1
+      // MMIO path: copy value to w2 before w1 in case src3 is in w1.
       void* mmio_fn = (void*)&MMIOAwareStore<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         mmio_fn = (void*)&MMIOAwareStore<uint32_t, true>;
@@ -757,6 +891,7 @@ struct STORE_OFFSET_I32
           }
         }
       }
+      EmitGuestStoreWatch(e, i.instr, e.x0, 4);
       e.L(done);
     } else {
       AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
@@ -778,6 +913,7 @@ struct STORE_OFFSET_I32
           e.str(i.src3, ptr(e.GetMembaseReg(), e.x0));
         }
       }
+      EmitGuestStoreWatch(e, i.instr, e.x0, 4);
     }
   }
 };
@@ -822,6 +958,9 @@ struct MEMSET_I64
     // memset(membase + guest_addr, 0, length)
     // Only used by dcbz/dcbz128: constant zero value, constant aligned size.
     auto addr = ComputeMemoryAddress(e, i.src1);
+    EmitGuestStoreWatch(e, i.instr, addr,
+                        static_cast<uint32_t>(i.src3.constant()));
+    addr = ComputeMemoryAddress(e, i.src1);
     e.add(e.x0, e.GetMembaseReg(), addr);
     const uint64_t len = i.src3.constant();
     uint64_t off = 0;
@@ -1009,7 +1148,7 @@ struct RESERVED_LOAD_I32
     : Sequence<RESERVED_LOAD_I32, I<OPCODE_RESERVED_LOAD, I32Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto addr = ComputeMemoryAddress(e, i.src1);
-    // Save guest address before load — dest may alias addr register.
+    // Save guest address before load; dest may alias addr register.
     e.mov(e.w0, WReg(addr.getIdx()));
     // Load the value (may clobber addr if dest == addr).
     e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
@@ -1034,7 +1173,7 @@ struct RESERVED_LOAD_I64
     : Sequence<RESERVED_LOAD_I64, I<OPCODE_RESERVED_LOAD, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto addr = ComputeMemoryAddress(e, i.src1);
-    // Save guest address before load — dest may alias addr register.
+    // Save guest address before load; dest may alias addr register.
     e.mov(e.w0, WReg(addr.getIdx()));
     // Load the value (may clobber addr if dest == addr).
     e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));

@@ -178,8 +178,9 @@ void CloseFileMappingHandle(FileMappingHandle handle,
 void* MapFileView(FileMappingHandle handle, void* base_address, size_t length,
                   PageAccess access, size_t file_offset) {
   uint32_t prot = ToPosixProtectFlags(access);
-  return mmap64(base_address, length, prot, MAP_PRIVATE | MAP_ANONYMOUS, handle,
-                file_offset);
+  void* result =
+      mmap64(base_address, length, prot, MAP_SHARED, handle, file_offset);
+  return result == MAP_FAILED ? nullptr : result;
 }
 
 bool UnmapFileView(FileMappingHandle handle, void* base_address,

@@ -20,6 +20,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/threading.h"
 #include "xenia/cpu/mmio_handler.h"
 
@@ -919,9 +920,18 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
     auto alloc_type = (allocation_type & kMemoryAllocationCommit)
                           ? xe::memory::AllocationType::kCommit
                           : xe::memory::AllocationType::kReserve;
-    void* result = xe::memory::AllocFixed(
-        TranslateRelative(start_page_number * page_size_),
-        page_count * page_size_, alloc_type, ToPageAccess(protect));
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+    void* result = TranslateRelative(start_page_number * page_size_);
+    if (!xe::memory::Protect(result, page_count * page_size_,
+                             ToPageAccess(protect), nullptr)) {
+      result = nullptr;
+    }
+#else
+    void* result =
+        xe::memory::AllocFixed(TranslateRelative(start_page_number * page_size_),
+                               page_count * page_size_, alloc_type,
+                               ToPageAccess(protect));
+#endif
     if (!result) {
       XELOGE("BaseHeap::AllocFixed failed to alloc range from host");
       return false;
@@ -1067,9 +1077,18 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
     auto alloc_type = (allocation_type & kMemoryAllocationCommit)
                           ? xe::memory::AllocationType::kCommit
                           : xe::memory::AllocationType::kReserve;
-    void* result = xe::memory::AllocFixed(
-        TranslateRelative(start_page_number * page_size_),
-        page_count * page_size_, alloc_type, ToPageAccess(protect));
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+    void* result = TranslateRelative(start_page_number * page_size_);
+    if (!xe::memory::Protect(result, page_count * page_size_,
+                             ToPageAccess(protect), nullptr)) {
+      result = nullptr;
+    }
+#else
+    void* result =
+        xe::memory::AllocFixed(TranslateRelative(start_page_number * page_size_),
+                               page_count * page_size_, alloc_type,
+                               ToPageAccess(protect));
+#endif
     if (!result) {
       XELOGE("BaseHeap::Alloc failed to alloc range from host");
       return false;

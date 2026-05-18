@@ -172,9 +172,23 @@ Primary target:
   - Native ARM64: `libxenia-app.so`, JNI bridge, Vulkan path, ARM64 backend, crashes, and symbolized stack traces.
   - Guest PPC: Xbox 360/Xenon PowerPC disassembly, XEX metadata, entry points, import thunks, and functions implicated by Xenia logs.
 - Create or update local Codex skills when a debug loop repeats. Validate skill folders with `quick_validate.py` and keep skill bodies concise.
-- Current local skills to use:
+- Current global skills to use:
   - `$ayn-thor-xenia-debug` for build/install/ADB capture loops.
   - `$xenia-ghidra-android-debug` for Ghidra native/guest analysis planning and headless imports.
+- Current repo-only skills live under `.agents/skills/` and should be read when
+  their topic is active:
+  - `.agents/skills/xenia-thor-war-room/SKILL.md` is the default coordinator
+    for broad Blue Dragon/Thor bring-up, unclear crashes, black screens, and
+    multi-subsystem triage.
+  - `.agents/skills/xbox360-xenon-ppc-architect/SKILL.md` is the guest expert
+    for Xenon PowerPC, VMX128, XEX imports, kernel shims, D3D watchdogs, and
+    Ghidra guest PPC analysis.
+  - `.agents/skills/aarch64-snapdragon-jit-port/SKILL.md` is the host CPU
+    expert for x64-to-AArch64 parity, aX360e/xenia-edge donor adaptation,
+    Android code cache, thunks, signal recovery, and Snapdragon constraints.
+  - `.agents/skills/xenia-vulkan-adreno-renderdoc/SKILL.md` is the GPU expert
+    for Xenos PM4, ring pointers, writebacks, `VdSwap`, `PM4_XE_SWAP`, Vulkan
+    `IssueSwap`, Adreno 740, RenderDoc, and black-frame debugging.
 
 ## RenderDoc Rules
 
@@ -235,14 +249,16 @@ Primary target:
   `CP_RB_RPTR` / `CP_RB_WPTR` (`0x01C4` / `0x01C5`). Blue Dragon's D3D dump now
   shows matching drained ring pointers instead of a stale zero read pointer.
 - Current blocker: Blue Dragon still does not visibly reach title. The wall is
-  now the guest D3D watchdog path:
-  `The GPU is hung! D3D version is 3529.0 retail, kernel is 65535, frame is 0`.
+  now the guest D3D watchdog path after real GPU work:
+  `The GPU is hung! D3D version is 3529.0 retail, kernel is 65535`.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
-- Runtime swap tracing reaches engine and ring initialization, but does not show
-  runtime `GPU swap trace: VdSwap`, PM4 `XE_SWAP`, or Vulkan `IssueSwap`.
-  `VdSwap` in import/symbol listings is not runtime call proof.
+- Runtime swap tracing now shows real PM4 packets, `DRAW_INDX_2`, texture
+  creation/loading, and runtime `GPU swap trace: VdSwap` calls. The next proof
+  target is still `PM4_XE_SWAP` / Vulkan `IssueSwap` / visible presenter output.
+  `VdSwap` in import/symbol listings is not runtime call proof; only explicit
+  `GPU swap trace:` runtime lines count.
 - The visible OSD badge now reports `aX360e A64 backend research`.
 - Strategy as of 2026-05-18 14:12 EDT: stop using Thor as the only unit test.
   Run a broad x64-to-ARM64 conversion pass first, then use Thor/Blue Dragon as
