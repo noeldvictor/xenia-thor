@@ -249,6 +249,31 @@ static uint64_t UndefinedCallExtern(void* raw_context, uint64_t function_ptr) {
   return 0;
 }
 
+static uint64_t TrapDebugPrint(void* raw_context, uint64_t address) {
+  (void)address;
+  auto context = reinterpret_cast<ppc::PPCContext*>(raw_context);
+  if (!context || !context->virtual_membase) {
+    return 0;
+  }
+
+  uint32_t str_ptr = static_cast<uint32_t>(context->r[3]);
+  auto str =
+      reinterpret_cast<const char*>(context->virtual_membase + str_ptr);
+  XELOGD("(DebugPrint) {}", str ? str : "");
+  return 0;
+}
+
+static uint64_t TrapDebugBreak(void* raw_context, uint64_t address) {
+  (void)address;
+  auto context = reinterpret_cast<ppc::PPCContext*>(raw_context);
+  uint32_t thread_id = context ? context->thread_id : 0;
+  XELOGE("tw/td forced trap hit on A64 thid {:08X}", thread_id);
+  if (cvars::break_on_debugbreak) {
+    xe::debugging::Break();
+  }
+  return 0;
+}
+
 static constexpr size_t kMaxCodeSize = 1_MiB;
 
 // Register maps:
@@ -519,9 +544,34 @@ void A64Emitter::MarkSourceOffset(const hir::Instr* i) {
   entry->code_offset = static_cast<uint32_t>(getSize());
 }
 
-void A64Emitter::DebugBreak() { brk(0xF000); }
+void A64Emitter::DebugBreak() {
+  if (!cvars::break_on_debugbreak) {
+    return;
+  }
+  brk(0xF000);
+}
 
-void A64Emitter::Trap(uint16_t trap_type) { brk(trap_type); }
+void A64Emitter::Trap(uint16_t trap_type) {
+  switch (trap_type) {
+    case 20:
+    case 26:
+      // 0x0FE00014 is a debug print trap where r3 points at the buffer.
+      mov(x1, uint64_t{0});
+      CallNativeSafe(reinterpret_cast<void*>(&TrapDebugPrint));
+      break;
+    case 0:
+    case 22:
+      mov(x1, uint64_t{0});
+      CallNativeSafe(reinterpret_cast<void*>(&TrapDebugBreak));
+      break;
+    case 25:
+      break;
+    default:
+      XELOGW("A64: Unknown trap type {}", trap_type);
+      DebugBreak();
+      break;
+  }
+}
 
 void A64Emitter::UnimplementedInstr(const hir::Instr* i) {
   XELOGE("A64: Unimplemented HIR instruction: {}",

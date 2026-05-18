@@ -434,6 +434,8 @@ void VdSwap_entry(
     return;
   }
   gpu_fetch.base_address = frontbuffer_physical_address >> 12;
+  uint32_t buffer_physical_address =
+      kernel_memory()->GetPhysicalAddress(buffer_ptr.guest_address());
 
   auto texture_format = gpu::xenos::TextureFormat(texture_format_ptr.value());
   auto color_space = *color_space_ptr;
@@ -445,11 +447,12 @@ void VdSwap_entry(
   assert_true(*height == 1 + gpu_fetch.size_2d.height);
   if (cvars::gpu_trace_swap) {
     XELOGI(
-        "GPU swap trace: VdSwap buffer={:08X} fetch={:08X} syswb={:08X} "
+        "GPU swap trace: VdSwap buffer={:08X} buffer_pa={:08X} fetch={:08X} syswb={:08X} "
         "sysbuf={:08X} sysid={:08X} front_va={:08X} front_pa={:08X} "
         "format={} color_space={} size={}x{} fetch_dwords={:08X},{:08X},"
         "{:08X},{:08X},{:08X},{:08X}",
-        buffer_ptr.guest_address(), fetch_ptr.guest_address(),
+        buffer_ptr.guest_address(), buffer_physical_address,
+        fetch_ptr.guest_address(),
         unk2.guest_address(), unk3.guest_address(), unk4.guest_address(),
         frontbuffer_virtual_address, frontbuffer_physical_address,
         static_cast<uint32_t>(texture_format), color_space, width.value(),
@@ -488,6 +491,15 @@ void VdSwap_entry(
   // Fill the rest of the buffer with NOP packets.
   for (uint32_t i = offset; i < 64; i++) {
     dwords[i] = xenos::MakePacketType2();
+  }
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdSwap commands buffer={:08X} pa={:08X} "
+        "dwords={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},"
+        "{:08X},{:08X},{:08X},{:08X}",
+        buffer_ptr.guest_address(), buffer_physical_address, dwords[0],
+        dwords[1], dwords[2], dwords[3], dwords[4], dwords[5], dwords[6],
+        dwords[7], dwords[8], dwords[9], dwords[10], dwords[11]);
   }
 }
 DECLARE_XBOXKRNL_EXPORT2(VdSwap, kVideo, kImplemented, kImportant);

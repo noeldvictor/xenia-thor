@@ -21,6 +21,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyBooleanExtra(intent, launchArguments, "break_on_debugbreak");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyBooleanExtra(intent, launchArguments, "mount_cache");

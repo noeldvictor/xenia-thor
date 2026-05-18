@@ -727,6 +727,18 @@ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
   SCOPE_profile_cpu_f("gpu");
 
   trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
+  if (cvars::gpu_trace_swap) {
+    uint32_t* dwords =
+        reinterpret_cast<uint32_t*>(memory_->TranslatePhysical(ptr));
+    uint32_t dword_0 = count > 0 ? xe::byte_swap(dwords[0]) : 0;
+    uint32_t dword_1 = count > 1 ? xe::byte_swap(dwords[1]) : 0;
+    uint32_t dword_2 = count > 2 ? xe::byte_swap(dwords[2]) : 0;
+    uint32_t dword_3 = count > 3 ? xe::byte_swap(dwords[3]) : 0;
+    XELOGI(
+        "GPU swap trace: ExecuteIndirectBuffer begin ptr={:08X} "
+        "count={} first={:08X},{:08X},{:08X},{:08X}",
+        ptr, count, dword_0, dword_1, dword_2, dword_3);
+  }
 
   // Execute commands!
   RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
@@ -741,6 +753,10 @@ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
   } while (reader.read_count());
 
   trace_writer_.WriteIndirectBufferEnd();
+  if (cvars::gpu_trace_swap) {
+    XELOGI("GPU swap trace: ExecuteIndirectBuffer end ptr={:08X} count={}",
+           ptr, count);
+  }
 }
 
 void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
@@ -1116,12 +1132,21 @@ bool CommandProcessor::ExecutePacketType3_INDIRECT_BUFFER(RingBuffer* reader,
                                                           uint32_t packet,
                                                           uint32_t count) {
   // indirect buffer dispatch
-  uint32_t list_ptr = CpuToGpu(reader->ReadAndSwap<uint32_t>());
+  uint32_t raw_list_ptr = reader->ReadAndSwap<uint32_t>();
+  uint32_t list_ptr = CpuToGpu(raw_list_ptr);
   uint32_t list_length = reader->ReadAndSwap<uint32_t>();
   assert_zero(list_length & ~0xFFFFF);
   list_length &= 0xFFFFF;
-  if (cvars::gpu_early_primary_read_pointer_writeback &&
-      reader->buffer() == memory_->TranslatePhysical(primary_buffer_ptr_)) {
+  bool primary_reader =
+      reader->buffer() == memory_->TranslatePhysical(primary_buffer_ptr_);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: INDIRECT_BUFFER raw={:08X} gpu={:08X} cpu={:08X} "
+        "length={} primary={} read_offset={:08X}",
+        raw_list_ptr, list_ptr, GpuToCpu(list_ptr), list_length,
+        primary_reader, uint32_t(reader->read_offset()));
+  }
+  if (cvars::gpu_early_primary_read_pointer_writeback && primary_reader) {
     UpdatePrimaryReadPointer(uint32_t(reader->read_offset() / sizeof(uint32_t)),
                              "before_indirect_buffer");
   }

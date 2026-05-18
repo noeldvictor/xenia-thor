@@ -15,6 +15,7 @@ param(
     [string]$OutDir = "",
     [string]$Target = "",
     [string]$Arm64MiniJit = "true",
+    [string]$BreakOnDebugbreak = "",
     [string]$DisassembleFunctions = "false",
     [string]$DisassembleFunctionFilter = "",
     [string]$MountCache = "false",
@@ -272,6 +273,9 @@ function Start-XeniaEmulator {
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
+    if ($BreakOnDebugbreak -ne "") {
+        $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
+    }
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
     }
