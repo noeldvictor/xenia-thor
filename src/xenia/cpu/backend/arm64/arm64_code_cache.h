@@ -52,6 +52,11 @@ class Arm64CodeCache : public CodeCache {
   void* LookupUnwindInfo(uint64_t host_pc) override { return nullptr; }
 
  private:
+  enum class CodeCacheMode {
+    kWxFlip,
+    kRwxDebug,
+  };
+
   struct CodeRange {
     uintptr_t start = 0;
     uintptr_t end = 0;
@@ -67,6 +72,7 @@ class Arm64CodeCache : public CodeCache {
   uint8_t* generated_code_base_ = nullptr;
   size_t generated_code_size_ = 16 * 1024 * 1024;
   size_t generated_code_offset_ = 0;
+  CodeCacheMode code_cache_mode_ = CodeCacheMode::kWxFlip;
   bool executable_ = false;
 
   xe::global_critical_region global_critical_region_;

@@ -19,6 +19,7 @@
 
 #include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
 #include "xenia/cpu/mmio_handler.h"
@@ -26,6 +27,12 @@
 #include "xenia/cpu/symbol.h"
 #include "xenia/memory.h"
 #include "third_party/half/include/half.hpp"
+
+DEFINE_bool(
+    arm64_ignore_undefined_externs, true,
+    "ARM64 bring-up: log undefined extern calls and continue, matching the "
+    "x64 default. Disable to fail fast on missing kernel exports.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -1180,7 +1187,18 @@ bool InvokeHostFunction(Function* function, ThreadState* thread_state) {
   }
 
   if (function->behavior() == Function::Behavior::kBuiltin) {
-    return function->Call(thread_state, 0);
+    auto builtin_function = static_cast<BuiltinFunction*>(function);
+    if (builtin_function->handler()) {
+      return function->Call(thread_state, 0);
+    }
+    if (cvars::arm64_ignore_undefined_externs) {
+      XELOGE("ARM64 interpreter undefined builtin call to {:08X} {} ignored",
+             function->address(), function->name());
+      return true;
+    }
+    XELOGE("ARM64 interpreter missing builtin handler for {:08X} {}",
+           function->address(), function->name());
+    return false;
   }
 
   if (function->behavior() == Function::Behavior::kExtern) {
@@ -1188,6 +1206,11 @@ bool InvokeHostFunction(Function* function, ThreadState* thread_state) {
     if (guest_function->extern_handler()) {
       guest_function->extern_handler()(thread_state->context(),
                                        thread_state->context()->kernel_state);
+      return true;
+    }
+    if (cvars::arm64_ignore_undefined_externs) {
+      XELOGE("ARM64 interpreter undefined extern call to {:08X} {} ignored",
+             function->address(), function->name());
       return true;
     }
     XELOGE("ARM64 interpreter missing extern handler for {:08X} {}",

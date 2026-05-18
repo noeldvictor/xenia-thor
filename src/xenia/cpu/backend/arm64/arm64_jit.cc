@@ -21,6 +21,7 @@
 
 #include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
@@ -30,6 +31,8 @@
 #include "xenia/memory.h"
 
 #include "xbyak_aarch64/xbyak_aarch64.h"
+
+DECLARE_bool(arm64_ignore_undefined_externs);
 
 namespace xe {
 namespace cpu {
@@ -285,7 +288,18 @@ bool Arm64JitInvokeHostFunction(Function* function, ThreadState* thread_state) {
   }
 
   if (function->behavior() == Function::Behavior::kBuiltin) {
-    return function->Call(thread_state, 0);
+    auto builtin_function = static_cast<BuiltinFunction*>(function);
+    if (builtin_function->handler()) {
+      return function->Call(thread_state, 0);
+    }
+    if (cvars::arm64_ignore_undefined_externs) {
+      XELOGE("ARM64 JIT undefined builtin call to {:08X} {} ignored",
+             function->address(), function->name());
+      return true;
+    }
+    XELOGE("ARM64 JIT missing builtin handler for {:08X} {}",
+           function->address(), function->name());
+    return false;
   }
 
   if (function->behavior() == Function::Behavior::kExtern) {
@@ -293,6 +307,11 @@ bool Arm64JitInvokeHostFunction(Function* function, ThreadState* thread_state) {
     if (guest_function->extern_handler()) {
       guest_function->extern_handler()(thread_state->context(),
                                        thread_state->context()->kernel_state);
+      return true;
+    }
+    if (cvars::arm64_ignore_undefined_externs) {
+      XELOGE("ARM64 JIT undefined extern call to {:08X} {} ignored",
+             function->address(), function->name());
       return true;
     }
     XELOGE("ARM64 JIT missing extern handler for {:08X} {}",

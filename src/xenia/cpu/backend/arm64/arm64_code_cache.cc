@@ -21,11 +21,26 @@
 #endif
 
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/platform.h"
 #include "xenia/cpu/function.h"
+
+#if XE_PLATFORM_ANDROID
+#define XENIA_ARM64_DEFAULT_CODE_CACHE_MODE "rwx_debug"
+#else
+#define XENIA_ARM64_DEFAULT_CODE_CACHE_MODE "wx_flip"
+#endif
+
+DEFINE_string(
+    arm64_jit_code_cache_mode, XENIA_ARM64_DEFAULT_CODE_CACHE_MODE,
+    "ARM64 JIT code cache permission mode. Values: wx_flip, rwx_debug. "
+    "rwx_debug is a research-only Android bring-up mode that avoids toggling "
+    "execute permission while other guest threads may be running generated "
+    "code.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -84,6 +99,17 @@ bool Arm64CodeCache::Initialize() {
   file_name_ = "xenia_arm64_code_cache_" +
                std::to_string(Clock::QueryHostTickCount());
 
+  if (cvars::arm64_jit_code_cache_mode == "rwx_debug") {
+    code_cache_mode_ = CodeCacheMode::kRwxDebug;
+  } else if (cvars::arm64_jit_code_cache_mode == "wx_flip") {
+    code_cache_mode_ = CodeCacheMode::kWxFlip;
+  } else {
+    XELOGW(
+        "Unknown ARM64 JIT code cache mode '{}', falling back to wx_flip",
+        cvars::arm64_jit_code_cache_mode);
+    code_cache_mode_ = CodeCacheMode::kWxFlip;
+  }
+
   generated_code_base_ =
       reinterpret_cast<uint8_t*>(AllocateCodeMemory(generated_code_size_));
   if (!generated_code_base_) {
@@ -92,15 +118,30 @@ bool Arm64CodeCache::Initialize() {
     return false;
   }
 
+  if (code_cache_mode_ == CodeCacheMode::kRwxDebug) {
+    if (!xe::memory::Protect(generated_code_base_, generated_code_size_,
+                             xe::memory::PageAccess::kExecuteReadWrite)) {
+      XELOGE("ARM64 code cache failed to switch to RWX debug pages");
+      return false;
+    }
+    executable_ = true;
+  }
+
   code_ranges_.reserve(100000);
-  XELOGI("ARM64 code cache allocated {} bytes at {:016X}",
+  XELOGI("ARM64 code cache allocated {} bytes at {:016X} mode={}",
          generated_code_size_,
          static_cast<uint64_t>(
-             reinterpret_cast<uintptr_t>(generated_code_base_)));
+             reinterpret_cast<uintptr_t>(generated_code_base_)),
+         code_cache_mode_ == CodeCacheMode::kRwxDebug ? "rwx_debug"
+                                                      : "wx_flip");
   return true;
 }
 
 bool Arm64CodeCache::SetWritable() {
+  if (code_cache_mode_ == CodeCacheMode::kRwxDebug) {
+    return true;
+  }
+
   if (!generated_code_base_ || !executable_) {
     executable_ = false;
     return true;
@@ -116,6 +157,11 @@ bool Arm64CodeCache::SetWritable() {
 }
 
 bool Arm64CodeCache::SetExecutable() {
+  if (code_cache_mode_ == CodeCacheMode::kRwxDebug) {
+    executable_ = true;
+    return true;
+  }
+
   if (!generated_code_base_ || executable_) {
     executable_ = true;
     return true;
