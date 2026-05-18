@@ -457,8 +457,11 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
     ui::Window* window) {
   std::vector<std::unique_ptr<hid::InputDriver>> drivers;
   if (cvars::hid.compare("nop") == 0) {
-    drivers.emplace_back(
-        xe::hid::nop::Create(window, EmulatorWindow::kZOrderHidInput));
+    auto driver =
+        xe::hid::nop::Create(window, EmulatorWindow::kZOrderHidInput);
+    if (XSUCCEEDED(driver->Setup())) {
+      drivers.emplace_back(std::move(driver));
+    }
   } else {
     Factory<hid::InputDriver, ui::Window*, size_t> factory;
 #if XE_PLATFORM_WIN32

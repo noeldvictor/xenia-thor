@@ -11,3 +11,20 @@
 
 DEFINE_bool(guide_button, false, "Forward guide button presses to guest.",
             "HID");
+DEFINE_bool(hid_nop_connected, false,
+            "Make the nop HID driver report a connected research controller.",
+            "HID");
+DEFINE_string(
+    hid_nop_buttons, "",
+    "Comma-separated research buttons held by the nop HID driver. Supported: "
+    "a,b,x,y,start,back,du,dd,dl,dr,lb,rb.",
+    "HID");
+DEFINE_int32(
+    hid_nop_buttons_delay_ms, 0,
+    "Research delay before the nop HID driver reports hid_nop_buttons.",
+    "HID");
+DEFINE_int32(
+    hid_nop_buttons_hold_ms, -1,
+    "Research hold duration for hid_nop_buttons after delay, or negative to "
+    "hold indefinitely.",
+    "HID");

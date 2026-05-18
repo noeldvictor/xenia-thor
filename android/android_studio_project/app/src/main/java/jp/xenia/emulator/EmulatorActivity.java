@@ -21,6 +21,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyBooleanExtra(intent, launchArguments, "hid_nop_connected");
+            copyStringExtra(intent, launchArguments, "hid_nop_buttons");
+            copyIntExtra(intent, launchArguments, "hid_nop_buttons_delay_ms");
+            copyIntExtra(intent, launchArguments, "hid_nop_buttons_hold_ms");
             copyBooleanExtra(intent, launchArguments, "break_on_debugbreak");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");

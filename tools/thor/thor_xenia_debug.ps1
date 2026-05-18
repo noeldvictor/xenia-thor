@@ -15,6 +15,10 @@ param(
     [string]$OutDir = "",
     [string]$Target = "",
     [string]$Arm64MiniJit = "true",
+    [string]$HidNopConnected = "false",
+    [string]$HidNopButtons = "",
+    [string]$HidNopButtonsDelayMs = "",
+    [string]$HidNopButtonsHoldMs = "",
     [string]$BreakOnDebugbreak = "",
     [string]$DisassembleFunctions = "false",
     [string]$DisassembleFunctionFilter = "",
@@ -277,6 +281,7 @@ function Start-XeniaEmulator {
         "--es apu nop",
         "--es hid nop",
         "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
+        "--ez hid_nop_connected $(ConvertTo-BooleanText $HidNopConnected)",
         "--ez disassemble_functions $(ConvertTo-BooleanText $DisassembleFunctions)",
         "--ez mount_cache $(ConvertTo-BooleanText $MountCache)",
         "--ez clear_memory_page_state $(ConvertTo-BooleanText $ClearMemoryPageState)",
@@ -326,6 +331,15 @@ function Start-XeniaEmulator {
     }
     if ($DisassembleFunctionFilter) {
         $parts += "--es disassemble_function_filter $(ConvertTo-AdbShellSingleQuote $DisassembleFunctionFilter)"
+    }
+    if ($HidNopButtons) {
+        $parts += "--es hid_nop_buttons $(ConvertTo-AdbShellSingleQuote $HidNopButtons)"
+    }
+    if ($HidNopButtonsDelayMs) {
+        $parts += "--ei hid_nop_buttons_delay_ms $HidNopButtonsDelayMs"
+    }
+    if ($HidNopButtonsHoldMs) {
+        $parts += "--ei hid_nop_buttons_hold_ms $HidNopButtonsHoldMs"
     }
     if ($Arm64ForceInterpreterRanges) {
         $parts += "--es arm64_force_interpreter_guest_ranges $(ConvertTo-AdbShellSingleQuote $Arm64ForceInterpreterRanges)"
