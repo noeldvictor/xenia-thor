@@ -307,6 +307,18 @@ Primary target:
     indirection, unwind, or thunk import.
   - Thor validation capture `scratch/thor-debug/20260518-145425-*` on commit
     `9be7323b8` shows no new native crash and the same Blue Dragon D3D watchdog.
+- Third Edge-shaped backend slice:
+  `docs/research/20260518-151702-arm64-thunk-cache-scaffold.md`.
+  - ARM64 now has x64/Edge-shaped thunk slots, a resolve helper, sparse encoded
+    indirection table metadata, `CommitExecutableRange`, `AddIndirection64`,
+    `PlaceData`, unwind placeholder metadata, and generated-code commit marks.
+  - The conversion audit's backend/code-cache capability-name gaps are closed,
+    but the 52 helper-call mini-JIT surface is still the real performance and
+    correctness backlog.
+  - Thor validation capture `scratch/thor-debug/20260518-152107-*` shows the
+    indirection table allocated on device with no new native crash, and Blue
+    Dragon still stops at the known D3D frame-0 watchdog. Do not claim title
+    progress from this slice.
 
 ## Android ARM64 Risk Register
 

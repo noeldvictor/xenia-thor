@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 #include <sys/mman.h>
@@ -71,7 +72,36 @@ void* AllocateCodeMemory(size_t size) {
 #endif
 }
 
+void* ReserveIndirectionTableMemory(size_t size) {
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_NORESERVE
+  flags |= MAP_NORESERVE;
+#endif
+  void* result = mmap(nullptr, size, PROT_NONE, flags, -1, 0);
+  return result == MAP_FAILED ? nullptr : result;
+#elif XE_PLATFORM_WIN32
+  return xe::memory::AllocFixed(nullptr, size,
+                                xe::memory::AllocationType::kReserve,
+                                xe::memory::PageAccess::kNoAccess);
+#else
+  return nullptr;
+#endif
+}
+
 void FreeCodeMemory(void* address, size_t size) {
+  if (!address) {
+    return;
+  }
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+  munmap(address, size);
+#elif XE_PLATFORM_WIN32
+  xe::memory::DeallocFixed(address, 0,
+                           xe::memory::DeallocationType::kRelease);
+#endif
+}
+
+void FreeIndirectionTableMemory(void* address, size_t size) {
   if (!address) {
     return;
   }
@@ -105,6 +135,7 @@ void FillUnwrittenCodeWithBreakpoints(void* address, size_t size) {
 Arm64CodeCache::Arm64CodeCache() = default;
 
 Arm64CodeCache::~Arm64CodeCache() {
+  FreeIndirectionTableMemory(indirection_table_base_, kIndirectionTableSize);
   FreeCodeMemory(generated_code_base_, generated_code_size_);
 }
 
@@ -130,6 +161,20 @@ bool Arm64CodeCache::Initialize() {
     code_cache_mode_ = CodeCacheMode::kWxFlip;
   }
 
+  indirection_table_base_ =
+      reinterpret_cast<uint8_t*>(ReserveIndirectionTableMemory(
+          kIndirectionTableSize));
+  if (!indirection_table_base_) {
+    XELOGE("ARM64 code cache failed to reserve indirection table");
+    return false;
+  }
+  indirection_table_base_bias_ =
+      reinterpret_cast<uintptr_t>(indirection_table_base_) -
+      static_cast<uintptr_t>(kIndirectionTableBase);
+  external_indirection_targets_ =
+      std::make_unique<uint64_t[]>(kIndirectionExternalCapacity);
+  external_indirection_target_count_.store(0, std::memory_order_relaxed);
+
   generated_code_base_ =
       reinterpret_cast<uint8_t*>(AllocateCodeMemory(generated_code_size_));
   if (!generated_code_base_) {
@@ -149,13 +194,94 @@ bool Arm64CodeCache::Initialize() {
   }
 
   code_ranges_.reserve(100000);
-  XELOGI("ARM64 code cache allocated {} bytes at {:016X} mode={}",
+  XELOGI(
+      "ARM64 code cache allocated {} bytes at {:016X} mode={} "
+      "indirection={:016X}",
          generated_code_size_,
          static_cast<uint64_t>(
              reinterpret_cast<uintptr_t>(generated_code_base_)),
          code_cache_mode_ == CodeCacheMode::kRwxDebug ? "rwx_debug"
-                                                      : "wx_flip");
+                                                      : "wx_flip",
+         static_cast<uint64_t>(
+             reinterpret_cast<uintptr_t>(indirection_table_base_)));
   return true;
+}
+
+void Arm64CodeCache::set_indirection_default_64(uint64_t default_value) {
+  indirection_default_value_ = EncodeIndirectionTarget(default_value);
+}
+
+void Arm64CodeCache::AddIndirection(uint32_t guest_address,
+                                    uint32_t host_address) {
+  AddIndirection64(guest_address, static_cast<uint64_t>(host_address));
+}
+
+void Arm64CodeCache::AddIndirection64(uint32_t guest_address,
+                                      uint64_t host_address) {
+  if (!indirection_table_base_ || guest_address < kIndirectionTableBase) {
+    return;
+  }
+
+  uint64_t guest_delta = guest_address - kIndirectionTableBase;
+  size_t slot_offset = static_cast<size_t>((guest_delta / 4) * 4);
+  if (slot_offset + sizeof(uint32_t) > kIndirectionTableSize) {
+    return;
+  }
+
+  if (!CommitIndirectionTableRange(slot_offset, sizeof(uint32_t))) {
+    return;
+  }
+
+  auto* slot =
+      reinterpret_cast<uint32_t*>(indirection_table_base_ + slot_offset);
+  *slot = EncodeIndirectionTarget(host_address);
+}
+
+uint32_t Arm64CodeCache::LookupIndirection(uint32_t guest_address) const {
+  if (!indirection_table_base_ || guest_address < kIndirectionTableBase) {
+    return indirection_default_value_;
+  }
+  uint64_t guest_delta = guest_address - kIndirectionTableBase;
+  size_t slot_offset = static_cast<size_t>((guest_delta / 4) * 4);
+  if (slot_offset + sizeof(uint32_t) > kIndirectionTableSize) {
+    return indirection_default_value_;
+  }
+  if (!IsIndirectionTableRangeCommitted(slot_offset, sizeof(uint32_t))) {
+    return indirection_default_value_;
+  }
+  return *reinterpret_cast<const uint32_t*>(indirection_table_base_ +
+                                            slot_offset);
+}
+
+void Arm64CodeCache::CommitExecutableRange(uint32_t guest_low,
+                                           uint32_t guest_high) {
+  if (!indirection_table_base_ || guest_high <= kIndirectionTableBase ||
+      guest_high <= guest_low) {
+    return;
+  }
+
+  guest_low = std::max<uint32_t>(guest_low, kIndirectionTableBase);
+  size_t start_offset = static_cast<size_t>(guest_low - kIndirectionTableBase);
+  size_t end_offset = static_cast<size_t>(guest_high - kIndirectionTableBase);
+  start_offset = (start_offset / sizeof(uint32_t)) * sizeof(uint32_t);
+  end_offset = xe::round_up(end_offset, sizeof(uint32_t));
+  if (end_offset > kIndirectionTableSize) {
+    XELOGE("ARM64 CommitExecutableRange {:08X}-{:08X} exceeds table",
+           guest_low, guest_high);
+    end_offset = kIndirectionTableSize;
+  }
+  if (end_offset <= start_offset) {
+    return;
+  }
+
+  size_t size = end_offset - start_offset;
+  if (!CommitIndirectionTableRange(start_offset, size)) {
+    return;
+  }
+
+  auto* slot =
+      reinterpret_cast<uint32_t*>(indirection_table_base_ + start_offset);
+  std::fill_n(slot, size / sizeof(uint32_t), indirection_default_value_);
 }
 
 bool Arm64CodeCache::SetWritable() {
@@ -232,9 +358,71 @@ bool Arm64CodeCache::PlaceGuestCode(uint32_t guest_address,
   code_ranges_.push_back({start, start + code_size, function});
 
   generated_code_offset_ += xe::round_up(code_size, size_t(16));
+  EnsureGeneratedCodeCommitMark(generated_code_offset_);
   *code_address_out = code_address;
 
-  return SetExecutable();
+  bool executable = SetExecutable();
+  if (executable && guest_address) {
+    AddIndirection64(guest_address, reinterpret_cast<uint64_t>(code_address));
+  }
+  return executable;
+}
+
+void Arm64CodeCache::PlaceHostCode(
+    uint32_t guest_address, void* machine_code,
+    const Arm64EmitFunctionInfo& func_info, void*& code_execute_address_out,
+    void*& code_write_address_out) {
+  PlaceGuestCode(guest_address, machine_code, func_info, nullptr,
+                 code_execute_address_out, code_write_address_out);
+}
+
+void Arm64CodeCache::PlaceGuestCode(
+    uint32_t guest_address, void* machine_code,
+    const Arm64EmitFunctionInfo& func_info, GuestFunction* function,
+    void*& code_execute_address_out, void*& code_write_address_out) {
+  void* code_address = nullptr;
+  if (!PlaceGuestCode(guest_address, machine_code, func_info.code_size.total,
+                      function, &code_address)) {
+    code_execute_address_out = nullptr;
+    code_write_address_out = nullptr;
+    return;
+  }
+  code_execute_address_out = code_address;
+  code_write_address_out = code_address;
+}
+
+uint32_t Arm64CodeCache::PlaceData(const void* data, size_t length) {
+  if (!data || !length) {
+    return 0;
+  }
+
+  auto global_lock = global_critical_region_.Acquire();
+
+  if (!SetWritable()) {
+    return 0;
+  }
+
+  generated_code_offset_ = xe::round_up(generated_code_offset_, size_t(16));
+  if (generated_code_offset_ + length > generated_code_size_) {
+    XELOGE("ARM64 code cache exhausted while placing data");
+    return 0;
+  }
+
+  uint8_t* data_address = generated_code_base_ + generated_code_offset_;
+  std::memcpy(data_address, data, length);
+  generated_code_offset_ += xe::round_up(length, size_t(16));
+  EnsureGeneratedCodeCommitMark(generated_code_offset_);
+  if (!SetExecutable()) {
+    return 0;
+  }
+
+  auto address = reinterpret_cast<uintptr_t>(data_address);
+  if (address > std::numeric_limits<uint32_t>::max()) {
+    XELOGW("ARM64 PlaceData address {:016X} does not fit in 32 bits",
+           static_cast<uint64_t>(address));
+    return 0;
+  }
+  return static_cast<uint32_t>(address);
 }
 
 bool Arm64CodeCache::RunSmokeTest() {
@@ -270,6 +458,87 @@ GuestFunction* Arm64CodeCache::LookupFunction(uint64_t host_pc) {
     }
   }
   return nullptr;
+}
+
+bool Arm64CodeCache::CommitIndirectionTableRange(size_t start_offset,
+                                                 size_t size) {
+  if (!indirection_table_base_ || start_offset >= kIndirectionTableSize ||
+      !size) {
+    return false;
+  }
+
+  size_t table_end = std::min(kIndirectionTableSize, start_offset + size);
+  size_t page_size = xe::memory::page_size();
+  size_t page_start = (start_offset / page_size) * page_size;
+  size_t page_end = xe::round_up(table_end, page_size);
+  size_t page_size_to_commit = page_end - page_start;
+  void* page_address = indirection_table_base_ + page_start;
+
+  bool committed = false;
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+  committed =
+      mprotect(page_address, page_size_to_commit, PROT_READ | PROT_WRITE) == 0;
+  if (!committed) {
+    XELOGE("ARM64 indirection table mprotect failed at {:016X}",
+           static_cast<uint64_t>(reinterpret_cast<uintptr_t>(page_address)));
+  }
+#elif XE_PLATFORM_WIN32
+  committed = xe::memory::AllocFixed(page_address, page_size_to_commit,
+                                     xe::memory::AllocationType::kCommit,
+                                     xe::memory::PageAccess::kReadWrite) !=
+              nullptr;
+#else
+  committed = false;
+#endif
+  if (committed) {
+    committed_indirection_ranges_.emplace_back(page_start, page_end);
+  }
+  return committed;
+}
+
+bool Arm64CodeCache::IsIndirectionTableRangeCommitted(size_t start_offset,
+                                                      size_t size) const {
+  size_t end_offset = start_offset + size;
+  for (const auto& range : committed_indirection_ranges_) {
+    if (start_offset >= range.first && end_offset <= range.second) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint32_t Arm64CodeCache::EncodeIndirectionTarget(uint64_t host_address) {
+  auto code_base = execute_base_address();
+  auto code_end = code_base + generated_code_size_;
+  if (host_address >= code_base && host_address < code_end) {
+    return static_cast<uint32_t>(host_address - code_base);
+  }
+
+  std::lock_guard<std::mutex> lock(external_indirection_mutex_);
+  uint32_t current_count =
+      external_indirection_target_count_.load(std::memory_order_relaxed);
+  for (uint32_t i = 0; i < current_count; ++i) {
+    if (external_indirection_targets_[i] == host_address) {
+      return kIndirectionExternalTag | i;
+    }
+  }
+  if (current_count >= kIndirectionExternalCapacity) {
+    XELOGE("ARM64 external indirection table overflow");
+    return indirection_default_value_;
+  }
+  external_indirection_targets_[current_count] = host_address;
+  external_indirection_target_count_.store(current_count + 1,
+                                           std::memory_order_release);
+  return kIndirectionExternalTag | current_count;
+}
+
+void Arm64CodeCache::EnsureGeneratedCodeCommitMark(size_t high_mark) {
+  size_t old_mark = generated_code_commit_mark_.load(std::memory_order_relaxed);
+  while (high_mark > old_mark &&
+         !generated_code_commit_mark_.compare_exchange_weak(
+             old_mark, high_mark, std::memory_order_release,
+             std::memory_order_relaxed)) {
+  }
 }
 
 }  // namespace arm64

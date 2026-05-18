@@ -25,12 +25,28 @@ namespace arm64 {
 
 class Arm64CodeCache;
 
+typedef void* (*HostToGuestThunk)(void* target, void* arg0, void* arg1);
+typedef void* (*GuestToHostThunk)(void* target, void* arg0, void* arg1);
+typedef void (*ResolveFunctionThunk)();
+
 class Arm64Backend : public Backend {
  public:
+  static constexpr uint32_t kForceReturnAddress = 0x9FFF0000u;
+
   explicit Arm64Backend();
   ~Arm64Backend() override;
 
   Arm64CodeCache* code_cache() const { return code_cache_.get(); }
+  uintptr_t emitter_data() const { return emitter_data_; }
+  HostToGuestThunk host_to_guest_thunk() const {
+    return host_to_guest_thunk_;
+  }
+  GuestToHostThunk guest_to_host_thunk() const {
+    return guest_to_host_thunk_;
+  }
+  ResolveFunctionThunk resolve_function_thunk() const {
+    return resolve_function_thunk_;
+  }
 
   bool Initialize(Processor* processor) override;
 
@@ -52,7 +68,13 @@ class Arm64Backend : public Backend {
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
   bool ExceptionCallback(Exception* ex);
 
+  uintptr_t capstone_handle_ = 0;
   std::unique_ptr<Arm64CodeCache> code_cache_;
+  uintptr_t emitter_data_ = 0;
+
+  HostToGuestThunk host_to_guest_thunk_ = nullptr;
+  GuestToHostThunk guest_to_host_thunk_ = nullptr;
+  ResolveFunctionThunk resolve_function_thunk_ = nullptr;
 };
 
 }  // namespace arm64

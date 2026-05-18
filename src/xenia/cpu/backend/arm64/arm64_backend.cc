@@ -25,7 +25,9 @@
 #include "xenia/cpu/backend/assembler.h"
 #include "xenia/cpu/breakpoint.h"
 #include "xenia/cpu/function.h"
+#include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/processor.h"
+#include "xenia/cpu/thread_state.h"
 
 namespace xe {
 namespace cpu {
@@ -61,6 +63,23 @@ bool PatchArm64Instruction(void* ptr, uint32_t instruction) {
 }
 
 }  // namespace
+
+uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
+  auto* guest_context = reinterpret_cast<ppc::PPCContext*>(raw_context);
+  if (!guest_context || !guest_context->thread_state || !target_address) {
+    return 0;
+  }
+
+  auto* thread_state = guest_context->thread_state;
+  auto* function = thread_state->processor()->ResolveFunction(
+      static_cast<uint32_t>(target_address));
+  if (!function || !function->is_guest()) {
+    return 0;
+  }
+
+  auto* guest_function = static_cast<GuestFunction*>(function);
+  return reinterpret_cast<uint64_t>(guest_function->machine_code());
+}
 
 Arm64Backend::Arm64Backend() = default;
 
@@ -108,8 +127,7 @@ bool Arm64Backend::Initialize(Processor* processor) {
 
 void Arm64Backend::CommitExecutableRange(uint32_t guest_low,
                                          uint32_t guest_high) {
-  (void)guest_low;
-  (void)guest_high;
+  code_cache_->CommitExecutableRange(guest_low, guest_high);
 }
 
 std::unique_ptr<Assembler> Arm64Backend::CreateAssembler() {
