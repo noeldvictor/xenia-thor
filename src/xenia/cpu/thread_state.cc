@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/thread_state.h"
 
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 
@@ -24,6 +25,29 @@ namespace cpu {
 
 thread_local ThreadState* thread_state_ = nullptr;
 
+namespace {
+
+struct PackedContext {
+  uint8_t backend_data[256];
+  ppc::PPCContext ctx;
+};
+
+static_assert(offsetof(PackedContext, ctx) == 256,
+              "Backend context prefix must stay adjacent to PPCContext.");
+
+ppc::PPCContext* AllocateContext() {
+  auto* packed_context = memory::AlignedAlloc<PackedContext>(64);
+  return packed_context ? &packed_context->ctx : nullptr;
+}
+
+void FreeContext(ppc::PPCContext* context) {
+  auto* packed_context = reinterpret_cast<PackedContext*>(
+      reinterpret_cast<uint8_t*>(context) - offsetof(PackedContext, ctx));
+  memory::AlignedFree(packed_context);
+}
+
+}  // namespace
+
 ThreadState::ThreadState(Processor* processor, uint32_t thread_id,
                          uint32_t stack_base, uint32_t pcr_address)
     : processor_(processor),
@@ -38,9 +62,11 @@ ThreadState::ThreadState(Processor* processor, uint32_t thread_id,
   backend_data_ = processor->backend()->AllocThreadData();
 
   // Allocate with 64b alignment.
-  context_ = memory::AlignedAlloc<ppc::PPCContext>(64);
+  context_ = AllocateContext();
+  assert_not_null(context_);
   assert_true(((uint64_t)context_ & 0x3F) == 0);
   std::memset(context_, 0, sizeof(ppc::PPCContext));
+  processor->backend()->InitializeBackendContext(context_);
 
   // Stash pointers to common structures that callbacks may need.
   context_->global_mutex = &xe::global_critical_region::mutex();
@@ -52,6 +78,7 @@ ThreadState::ThreadState(Processor* processor, uint32_t thread_id,
 
   // Set initial registers.
   context_->r[1] = stack_base;
+  context_->r[2] = 0x20000000;
   context_->r[13] = pcr_address;
 }
 
@@ -63,7 +90,10 @@ ThreadState::~ThreadState() {
     thread_state_ = nullptr;
   }
 
-  memory::AlignedFree(context_);
+  if (context_) {
+    processor_->backend()->DeinitializeBackendContext(context_);
+    FreeContext(context_);
+  }
 }
 
 void ThreadState::Bind(ThreadState* thread_state) {

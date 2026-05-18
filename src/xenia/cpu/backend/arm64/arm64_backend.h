@@ -12,6 +12,7 @@
 
 #include <memory>
 
+#include "xenia/base/bit_map.h"
 #include "xenia/cpu/backend/backend.h"
 
 namespace xe {
@@ -28,6 +29,13 @@ class Arm64CodeCache;
 typedef void* (*HostToGuestThunk)(void* target, void* arg0, void* arg1);
 typedef void* (*GuestToHostThunk)(void* target, void* arg0, void* arg1);
 typedef void (*ResolveFunctionThunk)();
+
+static constexpr uint32_t GUEST_TRAMPOLINE_BASE = 0x80000000u;
+static constexpr uint32_t GUEST_TRAMPOLINE_END = 0x80040000u;
+static constexpr uint32_t GUEST_TRAMPOLINE_MIN_LEN = 8u;
+static constexpr uint32_t MAX_GUEST_TRAMPOLINES =
+    (GUEST_TRAMPOLINE_END - GUEST_TRAMPOLINE_BASE) /
+    GUEST_TRAMPOLINE_MIN_LEN;
 
 class Arm64Backend : public Backend {
  public:
@@ -63,6 +71,10 @@ class Arm64Backend : public Backend {
   void InstallBreakpoint(Breakpoint* breakpoint) override;
   void InstallBreakpoint(Breakpoint* breakpoint, Function* fn) override;
   void UninstallBreakpoint(Breakpoint* breakpoint) override;
+  uint32_t CreateGuestTrampoline(GuestTrampolineProc proc, void* userdata1,
+                                 void* userdata2,
+                                 bool long_term = false) override;
+  void FreeGuestTrampoline(uint32_t trampoline_addr) override;
 
  private:
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
@@ -75,6 +87,9 @@ class Arm64Backend : public Backend {
   HostToGuestThunk host_to_guest_thunk_ = nullptr;
   GuestToHostThunk guest_to_host_thunk_ = nullptr;
   ResolveFunctionThunk resolve_function_thunk_ = nullptr;
+
+  BitMap guest_trampoline_address_bitmap_;
+  uint8_t* guest_trampoline_memory_ = nullptr;
 };
 
 }  // namespace arm64

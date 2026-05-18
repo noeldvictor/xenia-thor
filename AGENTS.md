@@ -345,6 +345,22 @@ Primary target:
     Thor with no new native crash.
   - Blue Dragon still stops at the known D3D frame-0 watchdog; do not claim
     title progress from this slice.
+- Second concrete aX360e/Edge runtime import:
+  `docs/research/20260518-155736-ax360e-guest-trampolines.md`.
+  - Added aX360e `BitMap::AcquireFromBack`, backend context lifecycle hooks,
+    `GuestTrampolineGroup`, `CreateGuestTrampoline`, and `FreeGuestTrampoline`.
+  - Thread contexts now reserve a 256-byte backend prefix before `PPCContext`,
+    matching the A64 backend family assumption.
+  - ARM64 now allocates an executable guest trampoline host pool, emits the
+    aX360e/Edge `movz/movk` + `br x9` trampoline sequence, flushes instruction
+    cache, and publishes 64-bit trampoline targets through the ARM64
+    indirection table.
+  - Validation capture `scratch/thor-debug/20260518-155837-*` proves the
+    trampoline pool on Thor:
+    `trampolines=000000775BD04000-000000775BF24000`, with no new native crash.
+  - This slice does not wire kernel/runtime callback paths to backend-created
+    trampolines yet. Blue Dragon still stops at the known D3D frame-0 watchdog;
+    do not claim title progress from this slice.
 
 ## Android ARM64 Risk Register
 

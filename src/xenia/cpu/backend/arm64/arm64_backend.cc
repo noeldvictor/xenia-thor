@@ -11,8 +11,13 @@
 
 #include <cstring>
 
-#include "xbyak_aarch64/xbyak_aarch64.h"
 #include "xenia/base/platform.h"
+
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+#include <sys/mman.h>
+#endif
+
+#include "xbyak_aarch64/xbyak_aarch64.h"
 #if XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
 #endif
@@ -41,6 +46,63 @@ namespace {
 
 constexpr uint32_t kArm64Brk0 = 0xD4200000u;
 constexpr size_t kArm64ThunkCodeSize = 4096;
+constexpr size_t kGuestTrampolineSize = 68;
+
+void EncodeMovImm64(uint32_t* out, uint32_t reg, uint64_t imm) {
+  out[0] = 0xD2800000 | (static_cast<uint32_t>(imm & 0xFFFF) << 5) | reg;
+  out[1] =
+      0xF2A00000 | (static_cast<uint32_t>((imm >> 16) & 0xFFFF) << 5) | reg;
+  out[2] =
+      0xF2C00000 | (static_cast<uint32_t>((imm >> 32) & 0xFFFF) << 5) | reg;
+  out[3] =
+      0xF2E00000 | (static_cast<uint32_t>((imm >> 48) & 0xFFFF) << 5) | reg;
+}
+
+void BuildGuestTrampoline(uint8_t* buffer, void* proc, void* userdata1,
+                          void* userdata2, void* guest_to_host_thunk) {
+  auto* code = reinterpret_cast<uint32_t*>(buffer);
+  EncodeMovImm64(&code[0], 0, reinterpret_cast<uint64_t>(proc));
+  EncodeMovImm64(&code[4], 1, reinterpret_cast<uint64_t>(userdata1));
+  EncodeMovImm64(&code[8], 2, reinterpret_cast<uint64_t>(userdata2));
+  EncodeMovImm64(&code[12], 9,
+                 reinterpret_cast<uint64_t>(guest_to_host_thunk));
+  code[16] = 0xD61F0120;  // br x9
+}
+
+void* AllocateGuestTrampolineMemory(size_t size) {
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+  void* result = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return result == MAP_FAILED ? nullptr : result;
+#elif XE_PLATFORM_WIN32
+  return xe::memory::AllocFixed(
+      nullptr, size, xe::memory::AllocationType::kReserveCommit,
+      xe::memory::PageAccess::kExecuteReadWrite);
+#else
+  return nullptr;
+#endif
+}
+
+void FreeGuestTrampolineMemory(void* address, size_t size) {
+  if (!address) {
+    return;
+  }
+#if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
+  munmap(address, size);
+#elif XE_PLATFORM_WIN32
+  xe::memory::DeallocFixed(address, 0,
+                           xe::memory::DeallocationType::kRelease);
+#endif
+}
+
+void FlushInstructionRange(void* address, size_t size) {
+#if XE_PLATFORM_WIN32
+  ::FlushInstructionCache(::GetCurrentProcess(), address, size);
+#else
+  auto* start = reinterpret_cast<char*>(address);
+  __builtin___clear_cache(start, start + size);
+#endif
+}
 
 bool PatchArm64Instruction(void* ptr, uint32_t instruction) {
   xe::memory::PageAccess old_access = xe::memory::PageAccess::kNoAccess;
@@ -172,6 +234,9 @@ Arm64Backend::Arm64Backend() = default;
 
 Arm64Backend::~Arm64Backend() {
   ExceptionHandler::Uninstall(&ExceptionCallbackThunk, this);
+  FreeGuestTrampolineMemory(
+      guest_trampoline_memory_,
+      kGuestTrampolineSize * static_cast<size_t>(MAX_GUEST_TRAMPOLINES));
 }
 
 bool Arm64Backend::Initialize(Processor* processor) {
@@ -218,14 +283,29 @@ bool Arm64Backend::Initialize(Processor* processor) {
   }
   code_cache_->set_indirection_default_64(
       reinterpret_cast<uint64_t>(resolve_function_thunk_));
+  guest_trampoline_memory_ = reinterpret_cast<uint8_t*>(
+      AllocateGuestTrampolineMemory(kGuestTrampolineSize *
+                                    static_cast<size_t>(MAX_GUEST_TRAMPOLINES)));
+  if (!guest_trampoline_memory_) {
+    XELOGE("ARM64 backend failed to allocate guest trampoline memory");
+    return false;
+  }
+  guest_trampoline_address_bitmap_.Resize(MAX_GUEST_TRAMPOLINES);
+  code_cache_->CommitExecutableRange(GUEST_TRAMPOLINE_BASE,
+                                     GUEST_TRAMPOLINE_END);
   code_cache_->CommitExecutableRange(kForceReturnAddress, 0x9FFFFFFF);
   XELOGI(
       "ARM64 transition thunks generated host_to_guest={:016X} "
-      "guest_to_host={:016X} resolve={:016X}",
+      "guest_to_host={:016X} resolve={:016X} trampolines={:016X}-{:016X}",
       static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_to_guest_thunk_)),
       static_cast<uint64_t>(reinterpret_cast<uintptr_t>(guest_to_host_thunk_)),
       static_cast<uint64_t>(
-          reinterpret_cast<uintptr_t>(resolve_function_thunk_)));
+          reinterpret_cast<uintptr_t>(resolve_function_thunk_)),
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+          guest_trampoline_memory_)),
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+          guest_trampoline_memory_ + (kGuestTrampolineSize *
+                                      MAX_GUEST_TRAMPOLINES))));
 
   ExceptionHandler::Install(&ExceptionCallbackThunk, this);
 
@@ -294,6 +374,46 @@ void Arm64Backend::UninstallBreakpoint(Breakpoint* breakpoint) {
     PatchArm64Instruction(ptr, static_cast<uint32_t>(pair.second));
   }
   breakpoint->backend_data().clear();
+}
+
+uint32_t Arm64Backend::CreateGuestTrampoline(GuestTrampolineProc proc,
+                                             void* userdata1, void* userdata2,
+                                             bool long_term) {
+  if (!guest_trampoline_memory_ || !guest_to_host_thunk_) {
+    XELOGE("ARM64 guest trampoline requested before backend is ready");
+    return 0;
+  }
+
+  size_t index = long_term ? guest_trampoline_address_bitmap_.AcquireFromBack()
+                           : guest_trampoline_address_bitmap_.Acquire();
+  if (index == static_cast<size_t>(-1)) {
+    XELOGE("ARM64 guest trampoline pool exhausted");
+    return 0;
+  }
+
+  uint8_t* write_pos = guest_trampoline_memory_ + kGuestTrampolineSize * index;
+  BuildGuestTrampoline(write_pos, reinterpret_cast<void*>(proc), userdata1,
+                       userdata2,
+                       reinterpret_cast<void*>(guest_to_host_thunk_));
+  FlushInstructionRange(write_pos, kGuestTrampolineSize);
+
+  uint32_t indirection_guest_addr =
+      GUEST_TRAMPOLINE_BASE +
+      static_cast<uint32_t>(index) * GUEST_TRAMPOLINE_MIN_LEN;
+  code_cache()->AddIndirection64(
+      indirection_guest_addr,
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(write_pos)));
+  return indirection_guest_addr;
+}
+
+void Arm64Backend::FreeGuestTrampoline(uint32_t trampoline_addr) {
+  if (trampoline_addr < GUEST_TRAMPOLINE_BASE ||
+      trampoline_addr >= GUEST_TRAMPOLINE_END) {
+    return;
+  }
+  size_t index =
+      (trampoline_addr - GUEST_TRAMPOLINE_BASE) / GUEST_TRAMPOLINE_MIN_LEN;
+  guest_trampoline_address_bitmap_.Release(index);
 }
 
 bool Arm64Backend::ExceptionCallbackThunk(Exception* ex, void* data) {
