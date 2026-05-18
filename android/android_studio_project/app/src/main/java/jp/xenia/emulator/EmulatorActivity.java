@@ -32,9 +32,13 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(
+                    intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum");
+            copyBooleanExtra(
                     intent, launchArguments, "gpu_early_primary_read_pointer_writeback");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
             copyIntExtra(intent, launchArguments, "gpu_trace_packet_budget");
+            copyIntExtra(
+                    intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum_budget");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_min_count");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_budget");

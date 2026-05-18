@@ -25,6 +25,8 @@ DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_bool(gpu_trace_swap);
 DECLARE_int32(gpu_trace_packet_budget);
+DECLARE_bool(gpu_trace_swap_frontbuffer_checksum);
+DECLARE_int32(gpu_trace_swap_frontbuffer_checksum_budget);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 
 DECLARE_bool(non_seamless_cube_map);

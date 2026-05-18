@@ -41,10 +41,85 @@ constexpr uint32_t kCpRbRptrRegister = 0x01C4;
 constexpr uint32_t kCpRbWptrRegister = 0x01C5;
 
 std::atomic<int32_t> gpu_packet_trace_count{0};
+std::atomic<int32_t> gpu_swap_frontbuffer_checksum_count{0};
 
 bool ShouldTraceGpuPacket() {
   return cvars::gpu_trace_swap &&
          gpu_packet_trace_count.fetch_add(1) < cvars::gpu_trace_packet_budget;
+}
+
+bool ShouldTraceSwapFrontbufferChecksum() {
+  if (!cvars::gpu_trace_swap_frontbuffer_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::gpu_trace_swap_frontbuffer_checksum_budget;
+  return budget < 0 ||
+         gpu_swap_frontbuffer_checksum_count.fetch_add(1) < budget;
+}
+
+void TraceSwapFrontbufferChecksum(Memory* memory, uint32_t frontbuffer_ptr,
+                                  uint32_t frontbuffer_width,
+                                  uint32_t frontbuffer_height) {
+  if (!ShouldTraceSwapFrontbufferChecksum()) {
+    return;
+  }
+  if (!memory || !frontbuffer_ptr || !frontbuffer_width ||
+      !frontbuffer_height) {
+    XELOGI(
+        "GPU swap trace: frontbuffer checksum skipped pa={:08X} size={}x{}",
+        frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
+    return;
+  }
+
+  uint64_t byte_count =
+      uint64_t(frontbuffer_width) * uint64_t(frontbuffer_height) * 4;
+  if (!byte_count) {
+    return;
+  }
+  const uint8_t* bytes =
+      memory->TranslatePhysical<const uint8_t*>(frontbuffer_ptr);
+  constexpr uint64_t kSampleStride = 4096;
+  uint64_t checksum = 1469598103934665603ull;
+  uint32_t samples = 0;
+  uint32_t nonzero_samples = 0;
+  uint64_t first_nonzero_offset = UINT64_MAX;
+  uint32_t first_nonzero_value = 0;
+  for (uint64_t offset = 0; offset + sizeof(uint32_t) <= byte_count;
+       offset += kSampleStride) {
+    uint32_t word = 0;
+    std::memcpy(&word, bytes + offset, sizeof(word));
+    checksum ^= uint64_t(word) + (offset << 1);
+    checksum *= 1099511628211ull;
+    ++samples;
+    if (word) {
+      ++nonzero_samples;
+      if (first_nonzero_offset == UINT64_MAX) {
+        first_nonzero_offset = offset;
+        first_nonzero_value = word;
+      }
+    }
+  }
+
+  uint32_t first_words[8] = {};
+  uint32_t first_word_count =
+      uint32_t(std::min<uint64_t>(xe::countof(first_words), byte_count / 4));
+  for (uint32_t i = 0; i < first_word_count; ++i) {
+    std::memcpy(&first_words[i], bytes + i * sizeof(uint32_t),
+                sizeof(uint32_t));
+  }
+
+  XELOGI(
+      "GPU swap trace: frontbuffer checksum pa={:08X} size={}x{} bytes={} "
+      "stride={} samples={} nonzero={} checksum={:016X} first_nonzero={} "
+      "first_nonzero_value={:08X} first={:08X},{:08X},{:08X},{:08X},"
+      "{:08X},{:08X},{:08X},{:08X}",
+      frontbuffer_ptr, frontbuffer_width, frontbuffer_height, byte_count,
+      kSampleStride, samples, nonzero_samples, checksum,
+      first_nonzero_offset == UINT64_MAX ? -1
+                                         : int64_t(first_nonzero_offset),
+      first_nonzero_value, first_words[0], first_words[1], first_words[2],
+      first_words[3], first_words[4], first_words[5], first_words[6],
+      first_words[7]);
 }
 
 const char* Type3OpcodeName(uint32_t opcode) {
@@ -1121,6 +1196,8 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
         magic, frontbuffer_ptr, frontbuffer_width, frontbuffer_height, count,
         uint32_t(reader->read_ptr()), uint32_t(reader->read_offset()));
   }
+  TraceSwapFrontbufferChecksum(memory_, frontbuffer_ptr, frontbuffer_width,
+                               frontbuffer_height);
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
 

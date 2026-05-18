@@ -48,6 +48,12 @@ DEFINE_bool(gpu_trace_swap, false,
             "GPU");
 DEFINE_int32(gpu_trace_packet_budget, 128,
              "Maximum packet-level GPU swap trace lines.", "GPU");
+DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
+            "Trace a sparse CPU-side checksum of the physical frontbuffer "
+            "passed to XE_SWAP. Research-only black-screen probe.",
+            "GPU");
+DEFINE_int32(gpu_trace_swap_frontbuffer_checksum_budget, 24,
+             "Maximum frontbuffer checksum trace lines.", "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

@@ -25,9 +25,11 @@ param(
     [string]$GpuInterruptOnRingIdle = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
+    [string]$GpuTraceSwapFrontbufferChecksum = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$GpuTracePacketBudget = "",
+    [string]$GpuTraceSwapFrontbufferChecksumBudget = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
@@ -271,6 +273,7 @@ function Start-XeniaEmulator {
         "--ez gpu_interrupt_on_ring_idle $(ConvertTo-BooleanText $GpuInterruptOnRingIdle)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
+        "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
     if ($BreakOnDebugbreak -ne "") {
@@ -281,6 +284,9 @@ function Start-XeniaEmulator {
     }
     if ($GpuTracePacketBudget) {
         $parts += "--ei gpu_trace_packet_budget $GpuTracePacketBudget"
+    }
+    if ($GpuTraceSwapFrontbufferChecksumBudget) {
+        $parts += "--ei gpu_trace_swap_frontbuffer_checksum_budget $GpuTraceSwapFrontbufferChecksumBudget"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"
