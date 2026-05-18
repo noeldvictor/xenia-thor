@@ -361,6 +361,18 @@ Primary target:
   - This slice does not wire kernel/runtime callback paths to backend-created
     trampolines yet. Blue Dragon still stops at the known D3D frame-0 watchdog;
     do not claim title progress from this slice.
+- Third concrete aX360e/Edge runtime import:
+  `docs/research/20260518-160807-ax360e-arm64-backend-context.md`.
+  - Added `Arm64ReserveHelper`, `Arm64BackendStackpoint`,
+    `Arm64BackendContext`, `Clock::GetGuestTickCountPointer`, and ARM64
+    backend context lifecycle methods.
+  - `Arm64Backend::SetGuestRoundingMode` now caches FPCR state and writes host
+    FPCR only on ARM64 builds, while still updating PPC `fpscr` state.
+  - Validation captures `scratch/thor-debug/20260518-160908-*` and
+    `scratch/thor-debug/20260518-160947-*` show no new native crash and the
+    same Blue Dragon D3D frame-0 watchdog.
+  - Do not enable full stackpoint synchronization or switch thunks to `x19`
+    backend context until the real A64 function prolog/epilog path lands.
 
 ## Android ARM64 Risk Register
 

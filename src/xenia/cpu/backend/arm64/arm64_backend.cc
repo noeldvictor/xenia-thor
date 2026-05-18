@@ -16,12 +16,16 @@
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 #include <sys/mman.h>
 #endif
+#if XE_ARCH_ARM64 && XE_COMPILER_MSVC
+#include <intrin.h>
+#endif
 
 #include "xbyak_aarch64/xbyak_aarch64.h"
 #if XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
 #endif
 #include "xenia/base/assert.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
@@ -414,6 +418,63 @@ void Arm64Backend::FreeGuestTrampoline(uint32_t trampoline_addr) {
   size_t index =
       (trampoline_addr - GUEST_TRAMPOLINE_BASE) / GUEST_TRAMPOLINE_MIN_LEN;
   guest_trampoline_address_bitmap_.Release(index);
+}
+
+void Arm64Backend::InitializeBackendContext(void* ctx) {
+  auto* arm64_context = BackendContextForGuestContext(ctx);
+  std::memset(arm64_context, 0, sizeof(Arm64BackendContext));
+  arm64_context->reserve_helper = &reserve_helper_;
+  arm64_context->constant_0x1000 = 0x1000;
+  arm64_context->fpcr_fpu = kDefaultFpuFpcr;
+  arm64_context->fpcr_vmx = kDefaultVmxFpcr;
+  arm64_context->flags = 1u << kArm64BackendNJMOn;
+  arm64_context->guest_tick_count = Clock::GetGuestTickCountPointer();
+  SetGuestRoundingMode(ctx, 0);
+}
+
+void Arm64Backend::DeinitializeBackendContext(void* ctx) {
+  auto* arm64_context = BackendContextForGuestContext(ctx);
+  delete[] arm64_context->stackpoints;
+  arm64_context->stackpoints = nullptr;
+}
+
+void Arm64Backend::PrepareForReentry(void* ctx) {
+  auto* arm64_context = BackendContextForGuestContext(ctx);
+  arm64_context->current_stackpoint_depth = 0;
+}
+
+void Arm64Backend::SetGuestRoundingMode(void* ctx, unsigned int mode) {
+  static constexpr uint32_t fpcr_table[8] = {
+      (0b00u << 22),              // nearest, IEEE
+      (0b11u << 22),              // toward zero, IEEE
+      (0b01u << 22),              // toward +inf, IEEE
+      (0b10u << 22),              // toward -inf, IEEE
+      (0b00u << 22) | (1u << 24), // nearest, flush-to-zero
+      (0b11u << 22) | (1u << 24), // toward zero, flush-to-zero
+      (0b01u << 22) | (1u << 24), // toward +inf, flush-to-zero
+      (0b10u << 22) | (1u << 24), // toward -inf, flush-to-zero
+  };
+
+  auto* arm64_context = BackendContextForGuestContext(ctx);
+  uint32_t control = mode & 7;
+  uint32_t fpcr_value = fpcr_table[control];
+#if XE_ARCH_ARM64
+#if XE_COMPILER_MSVC
+  _WriteStatusReg(0x5A20, static_cast<uint64_t>(fpcr_value));
+#else
+  __asm__ volatile("msr fpcr, %0" : : "r"(static_cast<uint64_t>(fpcr_value)));
+#endif
+#endif
+  arm64_context->fpcr_fpu = fpcr_value;
+  if (control & 0b100u) {
+    arm64_context->flags |= 1u << kArm64BackendNonIEEEMode;
+  } else {
+    arm64_context->flags &= ~(1u << kArm64BackendNonIEEEMode);
+  }
+
+  auto* ppc_context = reinterpret_cast<ppc::PPCContext*>(ctx);
+  ppc_context->fpscr.bits.rn = control;
+  ppc_context->fpscr.bits.ni = control >> 2;
 }
 
 bool Arm64Backend::ExceptionCallbackThunk(Exception* ex, void* data) {

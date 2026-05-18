@@ -37,6 +37,52 @@ static constexpr uint32_t MAX_GUEST_TRAMPOLINES =
     (GUEST_TRAMPOLINE_END - GUEST_TRAMPOLINE_BASE) /
     GUEST_TRAMPOLINE_MIN_LEN;
 
+static constexpr uint32_t kArm64ReserveBlockShift = 16;
+static constexpr uint64_t kArm64ReserveNumEntries =
+    (1024ull * 1024ull * 1024ull * 4ull) >> kArm64ReserveBlockShift;
+
+struct Arm64ReserveHelper {
+  uint64_t blocks[kArm64ReserveNumEntries / 64] = {};
+};
+
+struct Arm64BackendStackpoint {
+  uint64_t host_stack = 0;
+  uint32_t guest_stack = 0;
+  uint32_t guest_return_address = 0;
+};
+
+enum : uint32_t {
+  kArm64BackendFPCRModeBit = 0,
+  kArm64BackendHasReserveBit = 1,
+  kArm64BackendNJMOn = 2,
+  kArm64BackendNonIEEEMode = 3,
+};
+
+struct Arm64BackendContext {
+  alignas(16) uint8_t helper_scratch_v128s[4][16] = {};
+  union {
+    uint64_t helper_scratch_u64s[8];
+    uint32_t helper_scratch_u32s[16];
+  };
+  Arm64ReserveHelper* reserve_helper = nullptr;
+  uint64_t cached_reserve_value = 0;
+  uint64_t* guest_tick_count = nullptr;
+  Arm64BackendStackpoint* stackpoints = nullptr;
+  uint64_t cached_reserve_offset = 0;
+  uint32_t cached_reserve_bit = 0;
+  uint32_t current_stackpoint_depth = 0;
+  uint32_t fpcr_fpu = 0;
+  uint32_t fpcr_vmx = 0;
+  uint32_t flags = 0;
+  uint32_t constant_0x1000 = 0;
+};
+
+static_assert(sizeof(Arm64BackendContext) <= 256,
+              "ThreadState reserves 256 bytes before PPCContext.");
+
+constexpr uint32_t kDefaultFpuFpcr = 0;
+constexpr uint32_t kDefaultVmxFpcr = 1u << 24;
+
 class Arm64Backend : public Backend {
  public:
   static constexpr uint32_t kForceReturnAddress = 0x9FFF0000u;
@@ -75,6 +121,15 @@ class Arm64Backend : public Backend {
                                  void* userdata2,
                                  bool long_term = false) override;
   void FreeGuestTrampoline(uint32_t trampoline_addr) override;
+  void InitializeBackendContext(void* ctx) override;
+  void DeinitializeBackendContext(void* ctx) override;
+  void PrepareForReentry(void* ctx) override;
+  void SetGuestRoundingMode(void* ctx, unsigned int mode) override;
+
+  Arm64BackendContext* BackendContextForGuestContext(void* ctx) {
+    return reinterpret_cast<Arm64BackendContext*>(
+        reinterpret_cast<uint8_t*>(ctx) - sizeof(Arm64BackendContext));
+  }
 
  private:
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
@@ -90,6 +145,7 @@ class Arm64Backend : public Backend {
 
   BitMap guest_trampoline_address_bitmap_;
   uint8_t* guest_trampoline_memory_ = nullptr;
+  alignas(64) Arm64ReserveHelper reserve_helper_;
 };
 
 }  // namespace arm64

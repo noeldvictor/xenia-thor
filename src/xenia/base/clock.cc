@@ -159,6 +159,8 @@ uint64_t Clock::QueryGuestTickCount() {
   return guest_tick_count;
 }
 
+uint64_t* Clock::GetGuestTickCountPointer() { return &last_guest_tick_count_; }
+
 uint64_t Clock::QueryGuestSystemTime() {
   if (cvars::clock_no_scaling) {
     return Clock::QueryHostSystemTime();
