@@ -52,12 +52,17 @@ Current focus:
 - Vulkan bring-up and future RenderDoc/AGI lanes.
 - Blue Dragon Disc 1 as a legally owned local test case.
 
-Current state as of 2026-05-17:
+Current state as of 2026-05-18:
 
 - The Android Vulkan window/demo path runs on the Thor.
 - The emulator activity can launch Blue Dragon Disc 1 from the SD card.
-- Guest threads can start through temporary ARM64 scaffolding.
-- It does not reach playable gameplay.
+- Guest threads can start through temporary ARM64 scaffolding and a tiny
+  experimental AArch64 mini-JIT for some scalar HIR paths.
+- Blue Dragon can progress through sound-bank initialization and later pack-file
+  loading without the earlier null-thunk crash.
+- It still does not reach title or playable gameplay.
+- The current research wall is vec128/vector mini-JIT support, not a supportable
+  compatibility result.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -71,6 +76,7 @@ Useful repo docs for this fork:
 - [ARM64 Port Tooling and Skills](docs/research/20260517-195621-arm64-port-tooling-skills.md)
 - [Faster ARM64 Port OODA Loop](docs/research/20260517-210216-faster-arm64-port-ooda-loop.md)
 - [Xenia ARM64 / Android Fork Audit](docs/research/20260517-183520-xenia-arm64-fork-audit.md)
+- [Blue Dragon ARM64 Mini-JIT Vector Wall](docs/research/20260518-111343-blue-dragon-arm64-mini-jit-vector-wall.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

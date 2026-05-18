@@ -53,6 +53,40 @@ namespace {
 
 using hir::TypeName;
 
+const char* HirOpcodeName(hir::Opcode opcode) {
+  switch (opcode) {
+#define DEFINE_OPCODE(num, name, sig, flags) \
+    case hir::num:                           \
+      return name;
+#include "xenia/cpu/hir/opcodes.inl"
+#undef DEFINE_OPCODE
+    default:
+      return "unknown";
+  }
+}
+
+void LogInterpreterInstructionWindow(
+    uint32_t function_address, const Arm64Function::Program& program,
+    uint32_t pc, uint64_t step_count, const char* reason) {
+  if (program.instructions.empty()) {
+    return;
+  }
+
+  const uint32_t start = pc > 3 ? pc - 3 : 0;
+  const uint32_t end = std::min<uint32_t>(
+      static_cast<uint32_t>(program.instructions.size()), pc + 4);
+  for (uint32_t i = start; i < end; ++i) {
+    const auto& window_instr = program.instructions[i];
+    XELOGW(
+        "ARM64 interpreter {} window {:08X}: step {}, pc {}{}, block {}, "
+        "guest {:08X}, opcode {} ({})",
+        reason, function_address, step_count, i, i == pc ? " *" : "",
+        window_instr.block_index, window_instr.source_offset,
+        static_cast<uint32_t>(window_instr.opcode),
+        HirOpcodeName(window_instr.opcode));
+  }
+}
+
 std::atomic<int> g_call_trace_budget{120};
 std::atomic<int> g_entry_instruction_trace_budget{240};
 std::atomic<int> g_guest_store_watch_log_budget{240};
@@ -1836,9 +1870,12 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
       auto context = thread_state->context();
       XELOGE(
           "ARM64 interpreter step limit hit in {:08X}: pc {}, block {}, guest "
-          "{:08X}, lr {:08X}, ctr {:08X}, r1 {:08X}, r3 {:08X}, r4 {:08X}, "
-          "r5 {:08X}, r11 {:08X}, r12 {:08X}",
+          "{:08X}, opcode {} ({}), lr {:08X}, ctr {:08X}, r1 {:08X}, r3 "
+          "{:08X}, r4 {:08X}, r5 {:08X}, r11 {:08X}, r12 {:08X}, jit "
+          "reject '{}'",
           address(), pc, stuck_instr.block_index, stuck_instr.source_offset,
+          static_cast<uint32_t>(stuck_instr.opcode),
+          HirOpcodeName(stuck_instr.opcode),
           static_cast<uint32_t>(context->lr),
           static_cast<uint32_t>(context->ctr),
           static_cast<uint32_t>(context->r[1]),
@@ -1846,24 +1883,34 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
           static_cast<uint32_t>(context->r[4]),
           static_cast<uint32_t>(context->r[5]),
           static_cast<uint32_t>(context->r[11]),
-          static_cast<uint32_t>(context->r[12]));
+          static_cast<uint32_t>(context->r[12]),
+          jit_reject_reason_.empty() ? "none" : jit_reject_reason_.c_str());
+      LogInterpreterInstructionWindow(address(), *program_, pc, step_count,
+                                      "step-limit");
       return false;
     }
+
+    const auto& instr = program_->instructions[pc];
 
     if (step_count == 500000 || step_count == 5000000 ||
         step_count == 25000000) {
       auto context = thread_state->context();
       XELOGW(
-          "ARM64 interpreter slow function {:08X}: step {}, pc {}, lr {:08X}, "
-          "ctr {:08X}, r3 {:08X}, r4 {:08X}, r5 {:08X}",
-          address(), step_count, pc, static_cast<uint32_t>(context->lr),
+          "ARM64 interpreter slow function {:08X}: step {}, pc {}, block {}, "
+          "guest {:08X}, opcode {} ({}), lr {:08X}, ctr {:08X}, r3 {:08X}, "
+          "r4 {:08X}, r5 {:08X}, jit reject '{}'",
+          address(), step_count, pc, instr.block_index, instr.source_offset,
+          static_cast<uint32_t>(instr.opcode), HirOpcodeName(instr.opcode),
+          static_cast<uint32_t>(context->lr),
           static_cast<uint32_t>(context->ctr),
           static_cast<uint32_t>(context->r[3]),
           static_cast<uint32_t>(context->r[4]),
-          static_cast<uint32_t>(context->r[5]));
+          static_cast<uint32_t>(context->r[5]),
+          jit_reject_reason_.empty() ? "none" : jit_reject_reason_.c_str());
+      LogInterpreterInstructionWindow(address(), *program_, pc, step_count,
+                                      "slow");
     }
 
-    const auto& instr = program_->instructions[pc];
     bool advance_pc = true;
 
     if (address() == 0x824669E0) {

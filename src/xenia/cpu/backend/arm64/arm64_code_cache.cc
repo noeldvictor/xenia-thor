@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/backend/arm64/arm64_code_cache.h"
 
+#include <algorithm>
 #include <cstring>
 
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
@@ -41,6 +42,12 @@ DEFINE_string(
     "execute permission while other guest threads may be running generated "
     "code.",
     "CPU");
+DEFINE_uint32(arm64_jit_code_cache_mb, 128,
+              "ARM64 JIT generated code cache size in MiB. This is oversized "
+              "for research bring-up so helper-heavy mini-JIT output can keep "
+              "running long captures without falling back due to cache "
+              "exhaustion.",
+              "CPU");
 
 namespace xe {
 namespace cpu {
@@ -98,6 +105,9 @@ std::unique_ptr<Arm64CodeCache> Arm64CodeCache::Create() {
 bool Arm64CodeCache::Initialize() {
   file_name_ = "xenia_arm64_code_cache_" +
                std::to_string(Clock::QueryHostTickCount());
+  generated_code_size_ =
+      size_t(std::max<uint32_t>(1, cvars::arm64_jit_code_cache_mb)) * 1024 *
+      1024;
 
   if (cvars::arm64_jit_code_cache_mode == "rwx_debug") {
     code_cache_mode_ = CodeCacheMode::kRwxDebug;

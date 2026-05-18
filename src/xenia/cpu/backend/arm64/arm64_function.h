@@ -12,6 +12,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "xenia/cpu/ppc/ppc_context.h"
@@ -86,6 +88,10 @@ class Arm64Function : public GuestFunction {
   void SetupProgram(std::unique_ptr<Program> program);
   void SetupCompiledProgram(CompiledProgram compiled_program,
                             size_t machine_code_length);
+  void set_jit_reject_reason(std::string reason) {
+    jit_reject_reason_ = std::move(reason);
+  }
+  const std::string& jit_reject_reason() const { return jit_reject_reason_; }
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -97,6 +103,7 @@ class Arm64Function : public GuestFunction {
   size_t machine_code_length_ = 0;
   CompiledProgram compiled_program_ = nullptr;
   std::unique_ptr<Program> program_;
+  std::string jit_reject_reason_;
 };
 
 void LogArm64GuestStoreWatch(ThreadState* thread_state,

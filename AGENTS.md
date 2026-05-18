@@ -172,8 +172,8 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-100921-*` and
-  `scratch\thor-debug\20260518-101159-*`.
+  `scratch\thor-debug\20260518-110845-*` and
+  `scratch\thor-debug\20260518-111309-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -182,9 +182,25 @@ Primary target:
   initialize far enough to write `0x82785548`.
 - Post-fix evidence: the store watch hit
   `826A2550@826A2598->82785548`, Blue Dragon created draw and sound threads,
-  and no guest crash PC appeared in the 10:09 or 10:11 captures.
-- Current blocker: real AArch64 JIT/emitter coverage for hot interpreter
-  functions such as `82393310`, `82393640`, `823F2568`, and `822B54C0`.
+  and no guest crash PC appeared in the 10:09, 10:11, 11:08, or 11:13
+  captures.
+- ARM64 mini-JIT scalar bring-up now covers raw float32/float64 load/store,
+  context/local/memory slots, casts, converts, float add/sub/mul/div,
+  mul-add/mul-sub, neg/abs/sqrt, float compares, `IS_NAN`, MMIO load/store,
+  and `ATOMIC_COMPARE_EXCHANGE`.
+- ARM64 mini-JIT research cvars currently include:
+  - `arm64_enable_mini_jit`
+  - `arm64_mini_jit_blacklist`
+  - `arm64_force_interpreter_guest_ranges`
+  - `arm64_mini_jit_max_stack_bytes`
+  - `arm64_jit_code_cache_mode`
+  - `arm64_jit_code_cache_mb`
+- Latest fallback table is now dominated by vector state:
+  `VEC128_TYPE` load/store/context, `OPCODE_LOAD_VECTOR_SHL`,
+  `OPCODE_LOAD_VECTOR_SHR`, and `OPCODE_UNPACK`.
+- Current blocker: the mini-JIT stack/local model only has 64-bit scalar slots.
+  It needs a real slot-layout table with 16-byte aligned vec128 slots before
+  vector-heavy Blue Dragon functions can be compiled safely.
 - The visible `AArch64 JIT pending` badge is static Java OSD text and should
   not be treated as the native failure message.
 

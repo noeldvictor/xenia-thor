@@ -13,6 +13,7 @@
 #include <atomic>
 #include <charconv>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -21,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "xenia/base/byte_order.h"
@@ -30,6 +32,7 @@
 #include "xenia/base/math.h"
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
 #include "xenia/cpu/backend/arm64/arm64_code_cache.h"
+#include "xenia/cpu/mmio_handler.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/memory.h"
@@ -54,6 +57,10 @@ DEFINE_string(
     "or inclusive ranges, such as 826A0000-826AFFFF, that should run in the "
     "interpreter.",
     "CPU");
+DEFINE_uint32(arm64_mini_jit_max_stack_bytes, 256 * 1024,
+              "ARM64 bring-up: maximum temporary stack frame size accepted by "
+              "the tiny experimental AArch64 mini-JIT.",
+              "CPU");
 
 namespace xe {
 namespace cpu {
@@ -80,11 +87,9 @@ using Xbyak_aarch64::XReg;
 using Xbyak_aarch64::ptr;
 
 constexpr size_t kSlotSize = sizeof(uint64_t);
-constexpr size_t kMaxStackBytes = 16 * 1024;
-constexpr size_t kMaxCodeSize = 512 * 1024;
+constexpr size_t kMaxCodeSize = 2 * 1024 * 1024;
 
 std::atomic<int> g_jit_compile_log_budget{80};
-std::atomic<int> g_jit_reject_log_budget{80};
 
 std::string_view Trim(std::string_view value) {
   while (!value.empty() &&
@@ -177,6 +182,32 @@ bool GuestAddressMatchesList(uint32_t address, std::string_view list) {
 
 bool IsIntegerType(hir::TypeName type) { return type <= hir::INT64_TYPE; }
 
+bool IsRawSlotType(hir::TypeName type) {
+  return IsIntegerType(type) || type == hir::FLOAT32_TYPE ||
+         type == hir::FLOAT64_TYPE;
+}
+
+const char* HirTypeName(hir::TypeName type) {
+  switch (type) {
+    case hir::INT8_TYPE:
+      return "int8";
+    case hir::INT16_TYPE:
+      return "int16";
+    case hir::INT32_TYPE:
+      return "int32";
+    case hir::INT64_TYPE:
+      return "int64";
+    case hir::FLOAT32_TYPE:
+      return "float32";
+    case hir::FLOAT64_TYPE:
+      return "float64";
+    case hir::VEC128_TYPE:
+      return "vec128";
+    default:
+      return "unknown";
+  }
+}
+
 uint64_t IntegerMask(hir::TypeName type) {
   switch (type) {
     case hir::INT8_TYPE:
@@ -192,8 +223,19 @@ uint64_t IntegerMask(hir::TypeName type) {
   }
 }
 
+uint64_t RawSlotMask(hir::TypeName type) {
+  if (type == hir::FLOAT32_TYPE) {
+    return 0xFFFFFFFFu;
+  }
+  return IntegerMask(type);
+}
+
 uint64_t MaskInteger(hir::TypeName type, uint64_t value) {
   return value & IntegerMask(type);
+}
+
+uint64_t MaskRawSlot(hir::TypeName type, uint64_t value) {
+  return value & RawSlotMask(type);
 }
 
 int64_t SignExtendInteger(hir::TypeName type, uint64_t value) {
@@ -208,6 +250,367 @@ int64_t SignExtendInteger(hir::TypeName type, uint64_t value) {
       return static_cast<int64_t>(value);
     default:
       return static_cast<int64_t>(value);
+  }
+}
+
+long double ApplyRoundMode(hir::RoundMode round_mode, long double value) {
+  switch (round_mode) {
+    case hir::ROUND_TO_ZERO:
+      return std::trunc(value);
+    case hir::ROUND_TO_NEAREST:
+    case hir::ROUND_DYNAMIC:
+      return std::round(value);
+    case hir::ROUND_TO_MINUS_INFINITY:
+      return std::floor(value);
+    case hir::ROUND_TO_POSITIVE_INFINITY:
+      return std::ceil(value);
+    default:
+      return std::round(value);
+  }
+}
+
+std::pair<int64_t, int64_t> SignedIntegerRange(hir::TypeName type) {
+  switch (type) {
+    case hir::INT8_TYPE:
+      return {std::numeric_limits<int8_t>::min(),
+              std::numeric_limits<int8_t>::max()};
+    case hir::INT16_TYPE:
+      return {std::numeric_limits<int16_t>::min(),
+              std::numeric_limits<int16_t>::max()};
+    case hir::INT32_TYPE:
+      return {std::numeric_limits<int32_t>::min(),
+              std::numeric_limits<int32_t>::max()};
+    case hir::INT64_TYPE:
+      return {std::numeric_limits<int64_t>::min(),
+              std::numeric_limits<int64_t>::max()};
+    default:
+      return {0, 0};
+  }
+}
+
+float FloatFromBits(uint32_t bits) {
+  float value = 0.0f;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+double DoubleFromBits(uint64_t bits) {
+  double value = 0.0;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+uint32_t FloatBits(float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+uint64_t DoubleBits(double value) {
+  uint64_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+extern "C" uint64_t Arm64JitConvertRaw(uint64_t raw_value,
+                                        uint32_t source_type_value,
+                                        uint32_t target_type_value,
+                                        uint32_t round_mode_value) {
+  auto source_type = static_cast<hir::TypeName>(source_type_value);
+  auto target_type = static_cast<hir::TypeName>(target_type_value);
+  auto round_mode = static_cast<hir::RoundMode>(round_mode_value);
+
+  if (target_type <= hir::INT64_TYPE && source_type <= hir::INT64_TYPE) {
+    return MaskInteger(target_type, raw_value);
+  }
+
+  if (target_type <= hir::INT64_TYPE &&
+      (source_type == hir::FLOAT32_TYPE || source_type == hir::FLOAT64_TYPE)) {
+    long double input =
+        source_type == hir::FLOAT32_TYPE
+            ? static_cast<long double>(
+                  FloatFromBits(static_cast<uint32_t>(raw_value)))
+            : static_cast<long double>(DoubleFromBits(raw_value));
+    if (std::isnan(input)) {
+      return 0;
+    }
+    long double rounded = ApplyRoundMode(round_mode, input);
+    auto range = SignedIntegerRange(target_type);
+    long double min_value = static_cast<long double>(range.first);
+    long double max_value = static_cast<long double>(range.second);
+    if (rounded <= min_value) {
+      return MaskInteger(target_type, static_cast<uint64_t>(range.first));
+    }
+    if (rounded >= max_value) {
+      return MaskInteger(target_type, static_cast<uint64_t>(range.second));
+    }
+    return MaskInteger(
+        target_type,
+        static_cast<uint64_t>(static_cast<int64_t>(rounded)));
+  }
+
+  if (target_type == hir::FLOAT32_TYPE) {
+    if (source_type == hir::FLOAT64_TYPE) {
+      return FloatBits(static_cast<float>(DoubleFromBits(raw_value)));
+    }
+    if (source_type <= hir::INT64_TYPE) {
+      return FloatBits(
+          static_cast<float>(SignExtendInteger(source_type, raw_value)));
+    }
+  }
+
+  if (target_type == hir::FLOAT64_TYPE) {
+    if (source_type == hir::FLOAT32_TYPE) {
+      return DoubleBits(static_cast<double>(
+          FloatFromBits(static_cast<uint32_t>(raw_value))));
+    }
+    if (source_type <= hir::INT64_TYPE) {
+      return DoubleBits(
+          static_cast<double>(SignExtendInteger(source_type, raw_value)));
+    }
+  }
+
+  return MaskRawSlot(target_type, raw_value);
+}
+
+extern "C" uint64_t Arm64JitCastRaw(uint64_t raw_value,
+                                     uint32_t source_type_value,
+                                     uint32_t target_type_value) {
+  auto source_type = static_cast<hir::TypeName>(source_type_value);
+  auto target_type = static_cast<hir::TypeName>(target_type_value);
+
+  if (target_type <= hir::INT64_TYPE) {
+    return MaskInteger(target_type, raw_value);
+  }
+
+  if (target_type == hir::FLOAT32_TYPE) {
+    if (source_type == hir::FLOAT64_TYPE) {
+      return FloatBits(static_cast<float>(DoubleFromBits(raw_value)));
+    }
+    if (source_type <= hir::INT64_TYPE) {
+      return FloatBits(static_cast<float>(MaskInteger(source_type, raw_value)));
+    }
+    return MaskRawSlot(target_type, raw_value);
+  }
+
+  if (target_type == hir::FLOAT64_TYPE) {
+    if (source_type == hir::FLOAT32_TYPE) {
+      return DoubleBits(static_cast<double>(
+          FloatFromBits(static_cast<uint32_t>(raw_value))));
+    }
+    if (source_type <= hir::INT64_TYPE) {
+      return DoubleBits(
+          static_cast<double>(MaskInteger(source_type, raw_value)));
+    }
+    return MaskRawSlot(target_type, raw_value);
+  }
+
+  return MaskRawSlot(target_type, raw_value);
+}
+
+extern "C" uint64_t Arm64JitFloatBinaryRaw(uint64_t lhs_raw,
+                                            uint64_t rhs_raw,
+                                            uint32_t type_value,
+                                            uint32_t opcode_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  if (type == hir::FLOAT32_TYPE) {
+    float lhs = FloatFromBits(static_cast<uint32_t>(lhs_raw));
+    float rhs = FloatFromBits(static_cast<uint32_t>(rhs_raw));
+    float result = 0.0f;
+    switch (opcode) {
+      case hir::OPCODE_ADD:
+        result = lhs + rhs;
+        break;
+      case hir::OPCODE_SUB:
+        result = lhs - rhs;
+        break;
+      case hir::OPCODE_MUL:
+        result = lhs * rhs;
+        break;
+      case hir::OPCODE_DIV:
+        result = lhs / rhs;
+        break;
+      default:
+        break;
+    }
+    return FloatBits(result);
+  }
+
+  if (type == hir::FLOAT64_TYPE) {
+    double lhs = DoubleFromBits(lhs_raw);
+    double rhs = DoubleFromBits(rhs_raw);
+    double result = 0.0;
+    switch (opcode) {
+      case hir::OPCODE_ADD:
+        result = lhs + rhs;
+        break;
+      case hir::OPCODE_SUB:
+        result = lhs - rhs;
+        break;
+      case hir::OPCODE_MUL:
+        result = lhs * rhs;
+        break;
+      case hir::OPCODE_DIV:
+        result = lhs / rhs;
+        break;
+      default:
+        break;
+    }
+    return DoubleBits(result);
+  }
+
+  return 0;
+}
+
+extern "C" uint64_t Arm64JitFloatTernaryRaw(uint64_t lhs_raw,
+                                             uint64_t rhs_raw,
+                                             uint64_t third_raw,
+                                             uint32_t type_value,
+                                             uint32_t opcode_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  if (type == hir::FLOAT32_TYPE) {
+    float lhs = FloatFromBits(static_cast<uint32_t>(lhs_raw));
+    float rhs = FloatFromBits(static_cast<uint32_t>(rhs_raw));
+    float third = FloatFromBits(static_cast<uint32_t>(third_raw));
+    float product = lhs * rhs;
+    switch (opcode) {
+      case hir::OPCODE_MUL_ADD:
+        return FloatBits(product + third);
+      case hir::OPCODE_MUL_SUB:
+        return FloatBits(product - third);
+      default:
+        return 0;
+    }
+  }
+
+  if (type == hir::FLOAT64_TYPE) {
+    double lhs = DoubleFromBits(lhs_raw);
+    double rhs = DoubleFromBits(rhs_raw);
+    double third = DoubleFromBits(third_raw);
+    double product = lhs * rhs;
+    switch (opcode) {
+      case hir::OPCODE_MUL_ADD:
+        return DoubleBits(product + third);
+      case hir::OPCODE_MUL_SUB:
+        return DoubleBits(product - third);
+      default:
+        return 0;
+    }
+  }
+
+  return 0;
+}
+
+extern "C" uint64_t Arm64JitUnaryRaw(uint64_t raw_value,
+                                      uint32_t type_value,
+                                      uint32_t opcode_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  switch (opcode) {
+    case hir::OPCODE_NEG:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(-FloatFromBits(static_cast<uint32_t>(raw_value)));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(-DoubleFromBits(raw_value));
+      }
+      if (IsIntegerType(type)) {
+        return MaskInteger(
+            type,
+            static_cast<uint64_t>(-SignExtendInteger(type, raw_value)));
+      }
+      break;
+    case hir::OPCODE_ABS:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(std::fabs(FloatFromBits(
+            static_cast<uint32_t>(raw_value))));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(std::fabs(DoubleFromBits(raw_value)));
+      }
+      if (IsIntegerType(type)) {
+        int64_t signed_value = SignExtendInteger(type, raw_value);
+        return MaskInteger(
+            type,
+            signed_value < 0
+                ? (~static_cast<uint64_t>(signed_value) + 1)
+                : static_cast<uint64_t>(signed_value));
+      }
+      break;
+    case hir::OPCODE_SQRT:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(std::sqrt(FloatFromBits(
+            static_cast<uint32_t>(raw_value))));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(std::sqrt(DoubleFromBits(raw_value)));
+      }
+      break;
+    default:
+      break;
+  }
+
+  return MaskRawSlot(type, raw_value);
+}
+
+extern "C" uint64_t Arm64JitIsNanRaw(uint64_t raw_value,
+                                      uint32_t type_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  switch (type) {
+    case hir::FLOAT32_TYPE:
+      return std::isnan(FloatFromBits(static_cast<uint32_t>(raw_value))) ? 1
+                                                                         : 0;
+    case hir::FLOAT64_TYPE:
+      return std::isnan(DoubleFromBits(raw_value)) ? 1 : 0;
+    default:
+      return 0;
+  }
+}
+
+extern "C" uint64_t Arm64JitCompareFloatRaw(uint64_t lhs_raw,
+                                             uint64_t rhs_raw,
+                                             uint32_t type_value,
+                                             uint32_t opcode_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+  long double lhs = 0.0;
+  long double rhs = 0.0;
+  if (type == hir::FLOAT32_TYPE) {
+    lhs = static_cast<long double>(FloatFromBits(
+        static_cast<uint32_t>(lhs_raw)));
+    rhs = static_cast<long double>(FloatFromBits(
+        static_cast<uint32_t>(rhs_raw)));
+  } else if (type == hir::FLOAT64_TYPE) {
+    lhs = static_cast<long double>(DoubleFromBits(lhs_raw));
+    rhs = static_cast<long double>(DoubleFromBits(rhs_raw));
+  } else {
+    return 0;
+  }
+
+  switch (opcode) {
+    case hir::OPCODE_COMPARE_EQ:
+      return lhs == rhs ? 1 : 0;
+    case hir::OPCODE_COMPARE_NE:
+      return lhs != rhs ? 1 : 0;
+    case hir::OPCODE_COMPARE_SLT:
+    case hir::OPCODE_COMPARE_ULT:
+      return lhs < rhs ? 1 : 0;
+    case hir::OPCODE_COMPARE_SLE:
+    case hir::OPCODE_COMPARE_ULE:
+      return lhs <= rhs ? 1 : 0;
+    case hir::OPCODE_COMPARE_SGT:
+    case hir::OPCODE_COMPARE_UGT:
+      return lhs > rhs ? 1 : 0;
+    case hir::OPCODE_COMPARE_SGE:
+    case hir::OPCODE_COMPARE_UGE:
+      return lhs >= rhs ? 1 : 0;
+    default:
+      return 0;
   }
 }
 
@@ -340,6 +743,79 @@ void Arm64JitStoreInteger(ThreadState* thread_state, uint64_t address,
 
   auto host_address = thread_state->memory()->TranslateVirtual(guest_address);
   WriteIntegerValue(host_address, type_name, value, flags);
+}
+
+uint64_t Arm64JitLoadMmio(ppc::PPCContext* context,
+                          xe::cpu::MMIORange* mmio_range,
+                          uint32_t read_address) {
+  if (!mmio_range || !mmio_range->read) {
+    XELOGE("ARM64 JIT invalid MMIO load at {:08X}", read_address);
+    return 0;
+  }
+  uint32_t value = mmio_range->read(context, mmio_range->callback_context,
+                                    read_address);
+  return xe::byte_swap(value);
+}
+
+void Arm64JitStoreMmio(ppc::PPCContext* context,
+                       xe::cpu::MMIORange* mmio_range,
+                       uint32_t write_address, uint32_t value) {
+  if (!mmio_range || !mmio_range->write) {
+    XELOGE("ARM64 JIT invalid MMIO store at {:08X}", write_address);
+    return;
+  }
+  mmio_range->write(context, mmio_range->callback_context, write_address,
+                    xe::byte_swap(value));
+}
+
+uint64_t Arm64JitAtomicCompareExchange(ThreadState* thread_state,
+                                       uint64_t address,
+                                       uint64_t expected_value,
+                                       uint64_t new_value, uint32_t type) {
+  auto type_name = static_cast<hir::TypeName>(type);
+  auto host_address = thread_state->memory()->TranslateVirtual(
+      NormalizeGuestAddress(address));
+
+  switch (type_name) {
+    case hir::INT8_TYPE: {
+      auto expected = static_cast<uint8_t>(expected_value);
+      auto desired = static_cast<uint8_t>(new_value);
+      return reinterpret_cast<std::atomic<uint8_t>*>(host_address)
+                 ->compare_exchange_strong(expected, desired)
+                 ? 1
+                 : 0;
+    }
+    case hir::INT16_TYPE: {
+      auto expected = static_cast<uint16_t>(expected_value);
+      auto desired = static_cast<uint16_t>(new_value);
+      return reinterpret_cast<std::atomic<uint16_t>*>(host_address)
+                 ->compare_exchange_strong(expected, desired)
+                 ? 1
+                 : 0;
+    }
+    case hir::INT32_TYPE: {
+      auto expected = static_cast<uint32_t>(expected_value);
+      auto desired = static_cast<uint32_t>(new_value);
+      return reinterpret_cast<std::atomic<uint32_t>*>(host_address)
+                 ->compare_exchange_strong(expected, desired)
+                 ? 1
+                 : 0;
+    }
+    case hir::INT64_TYPE: {
+      auto expected = static_cast<uint64_t>(expected_value);
+      auto desired = static_cast<uint64_t>(new_value);
+      return reinterpret_cast<std::atomic<uint64_t>*>(host_address)
+                 ->compare_exchange_strong(expected, desired)
+                 ? 1
+                 : 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+void Arm64JitClearStackSlots(void* stack_slots, uint64_t byte_count) {
+  std::memset(stack_slots, 0, static_cast<size_t>(byte_count));
 }
 
 void Arm64JitMemset(ThreadState* thread_state, uint64_t address,
@@ -506,7 +982,7 @@ bool ConsumeLogBudget(std::atomic<int>* budget) {
 }
 
 bool Reject(std::string* reject_reason, const std::string& reason) {
-  if (reject_reason && ConsumeLogBudget(&g_jit_reject_log_budget)) {
+  if (reject_reason) {
     *reject_reason = reason;
   }
   return false;
@@ -522,7 +998,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     program_ = &program;
     slot_count_ = program.value_types.size() + program.local_count;
     stack_size_ = xe::round_up(slot_count_ * kSlotSize, size_t(16));
-    if (stack_size_ > kMaxStackBytes) {
+    const size_t max_stack_bytes =
+        static_cast<size_t>(cvars::arm64_mini_jit_max_stack_bytes);
+    if (max_stack_bytes && stack_size_ > max_stack_bytes) {
       return Fail(reject_reason, "stack frame too large for mini JIT");
     }
     if (program.blocks.empty()) {
@@ -581,8 +1059,19 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   bool CheckIntegerType(hir::TypeName type, std::string* reject_reason,
                         const char* opcode_name) {
     if (!IsIntegerType(type)) {
-      return Fail(reject_reason,
-                  std::string(opcode_name) + " has non-integer type");
+      return Fail(reject_reason, std::string(opcode_name) +
+                                     " has non-integer type " +
+                                     HirTypeName(type));
+    }
+    return true;
+  }
+
+  bool CheckRawSlotType(hir::TypeName type, std::string* reject_reason,
+                        const char* opcode_name) {
+    if (!IsRawSlotType(type)) {
+      return Fail(reject_reason, std::string(opcode_name) +
+                                     " has unsupported slot type " +
+                                     HirTypeName(type));
     }
     return true;
   }
@@ -651,9 +1140,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
     EmitAdjustSp(true);
     mov(x21, sp);
-    for (size_t slot = 0; slot < slot_count_; ++slot) {
-      str(xzr, ptr(x21, static_cast<uint32_t>(slot * kSlotSize)));
-    }
+    mov(x0, x21);
+    mov(x1, static_cast<uint64_t>(stack_size_));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitClearStackSlots));
   }
 
   void EmitEpilogue() {
@@ -691,6 +1180,26 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     blr(x17);
   }
 
+  void EmitLoadStackSlot(const XReg& dst, uint32_t offset) {
+    if (offset <= 32760) {
+      ldr(dst, ptr(x21, offset));
+      return;
+    }
+    mov(x16, static_cast<uint64_t>(offset));
+    add(x16, x21, x16);
+    ldr(dst, ptr(x16));
+  }
+
+  void EmitStoreStackSlot(uint32_t offset, const XReg& src) {
+    if (offset <= 32760) {
+      str(src, ptr(x21, offset));
+      return;
+    }
+    mov(x16, static_cast<uint64_t>(offset));
+    add(x16, x21, x16);
+    str(src, ptr(x16));
+  }
+
   void EmitGuestStoreWatch(const Instruction& instr, hir::TypeName value_type) {
     if (cvars::arm64_guest_store_watch.empty()) {
       return;
@@ -722,9 +1231,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         and_(reg, reg, uint64_t(0xFFFF));
         break;
       case hir::INT32_TYPE:
+      case hir::FLOAT32_TYPE:
         mov(AsW(reg), AsW(reg));
         break;
       case hir::INT64_TYPE:
+      case hir::FLOAT64_TYPE:
       default:
         break;
     }
@@ -781,10 +1292,13 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         if (operand.value_ordinal >= program_->value_types.size()) {
           return Fail(reject_reason, "value operand out of range");
         }
-        ldr(dst, ptr(x21, SlotOffsetForValue(operand.value_ordinal)));
+        EmitLoadStackSlot(dst, SlotOffsetForValue(operand.value_ordinal));
         return true;
       case Operand::Kind::kConstant:
-        mov(dst, MaskInteger(operand.type, operand.constant.u64));
+        if (!IsRawSlotType(operand.type)) {
+          return Fail(reject_reason, "unsupported constant slot type");
+        }
+        mov(dst, MaskRawSlot(operand.type, operand.constant.u64));
         return true;
       case Operand::Kind::kOffset:
         mov(dst, operand.offset);
@@ -799,11 +1313,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     if (!CheckDest(instr, reject_reason)) {
       return false;
     }
-    if (!CheckIntegerType(instr.dest_type, reject_reason, "store")) {
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "store")) {
       return false;
     }
     EmitMaskValue(src, instr.dest_type);
-    str(src, ptr(x21, SlotOffsetForValue(instr.dest_ordinal)));
+    EmitStoreStackSlot(SlotOffsetForValue(instr.dest_ordinal), src);
     return true;
   }
 
@@ -815,11 +1329,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         instr.src1.offset >= program_->local_count) {
       return Fail(reject_reason, "local load out of range");
     }
-    if (!CheckIntegerType(instr.dest_type, reject_reason, "load_local")) {
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_local")) {
       return false;
     }
-    ldr(x8, ptr(x21, SlotOffsetForLocal(static_cast<uint32_t>(
-                         instr.src1.offset))));
+    EmitLoadStackSlot(x8, SlotOffsetForLocal(static_cast<uint32_t>(
+                              instr.src1.offset)));
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
@@ -828,15 +1342,16 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         instr.src1.offset >= program_->local_count) {
       return Fail(reject_reason, "local store out of range");
     }
-    if (!CheckIntegerType(instr.src2.type, reject_reason, "store_local")) {
+    if (!CheckRawSlotType(instr.src2.type, reject_reason, "store_local")) {
       return false;
     }
     if (!EmitLoadOperand(instr.src2, x8, reject_reason)) {
       return false;
     }
     EmitMaskValue(x8, instr.src2.type);
-    str(x8, ptr(x21, SlotOffsetForLocal(static_cast<uint32_t>(
-                         instr.src1.offset))));
+    EmitStoreStackSlot(SlotOffsetForLocal(static_cast<uint32_t>(
+                           instr.src1.offset)),
+                       x8);
     return true;
   }
 
@@ -844,7 +1359,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     if (!CheckDest(instr, reject_reason)) {
       return false;
     }
-    if (!CheckIntegerType(instr.dest_type, reject_reason, "load_context")) {
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_context")) {
       return false;
     }
     EmitAddOffset(x17, x19, instr.src1.offset);
@@ -856,9 +1371,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         ldrh(w8, ptr(x17));
         break;
       case hir::INT32_TYPE:
+      case hir::FLOAT32_TYPE:
         ldr(w8, ptr(x17));
         break;
       case hir::INT64_TYPE:
+      case hir::FLOAT64_TYPE:
         ldr(x8, ptr(x17));
         break;
       default:
@@ -868,7 +1385,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitStoreContext(const Instruction& instr, std::string* reject_reason) {
-    if (!CheckIntegerType(instr.src2.type, reject_reason, "store_context")) {
+    if (!CheckRawSlotType(instr.src2.type, reject_reason, "store_context")) {
       return false;
     }
     if (!EmitLoadOperand(instr.src2, x8, reject_reason)) {
@@ -883,9 +1400,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         strh(w8, ptr(x17));
         break;
       case hir::INT32_TYPE:
+      case hir::FLOAT32_TYPE:
         str(w8, ptr(x17));
         break;
       case hir::INT64_TYPE:
+      case hir::FLOAT64_TYPE:
         str(x8, ptr(x17));
         break;
       default:
@@ -894,12 +1413,42 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return true;
   }
 
+  bool EmitLoadMmio(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::INT32_TYPE) {
+      return Fail(reject_reason, "load_mmio has unsupported type " +
+                                     std::string(HirTypeName(instr.dest_type)));
+    }
+    mov(x0, x19);
+    mov(x1, instr.src1.offset);
+    mov(w2, static_cast<uint64_t>(instr.src2.offset));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitLoadMmio));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitStoreMmio(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckIntegerType(instr.src3.type, reject_reason, "store_mmio")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src3, x3, reject_reason)) {
+      return false;
+    }
+    mov(x0, x19);
+    mov(x1, instr.src1.offset);
+    mov(w2, static_cast<uint64_t>(instr.src2.offset));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitStoreMmio));
+    return true;
+  }
+
   bool EmitLoadMemory(const Instruction& instr, bool with_offset,
                       std::string* reject_reason) {
     if (!CheckDest(instr, reject_reason)) {
       return false;
     }
-    if (!CheckIntegerType(instr.dest_type, reject_reason, "load_memory")) {
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_memory")) {
       return false;
     }
     if (!EmitLoadOperand(instr.src1, x1, reject_reason)) {
@@ -929,12 +1478,14 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         }
         break;
       case hir::INT32_TYPE:
+      case hir::FLOAT32_TYPE:
         ldr(w8, ptr(x17));
         if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
           rev(w8, w8);
         }
         break;
       case hir::INT64_TYPE:
+      case hir::FLOAT64_TYPE:
         ldr(x8, ptr(x17));
         if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
           rev(x8, x8);
@@ -958,7 +1509,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitStoreMemory(const Instruction& instr, bool with_offset,
                        std::string* reject_reason) {
-    if (!CheckIntegerType(with_offset ? instr.src3.type : instr.src2.type,
+    if (!CheckRawSlotType(with_offset ? instr.src3.type : instr.src2.type,
                           reject_reason, "store_memory")) {
       return false;
     }
@@ -994,9 +1545,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
           rev16(w8, w8);
           break;
         case hir::INT32_TYPE:
+        case hir::FLOAT32_TYPE:
           rev(w8, w8);
           break;
         case hir::INT64_TYPE:
+        case hir::FLOAT64_TYPE:
           rev(x8, x8);
           break;
         case hir::INT8_TYPE:
@@ -1015,9 +1568,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         strh(w8, ptr(x17));
         break;
       case hir::INT32_TYPE:
+      case hir::FLOAT32_TYPE:
         str(w8, ptr(x17));
         break;
       case hir::INT64_TYPE:
+      case hir::FLOAT64_TYPE:
         str(x8, ptr(x17));
         break;
       default:
@@ -1035,11 +1590,32 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitUnaryAssign(const Instruction& instr, bool sign_extend,
                        std::string* reject_reason) {
-    if (!CheckIntegerType(instr.dest_type, reject_reason, "assign")) {
-      return false;
-    }
-    if (!CheckIntegerType(instr.src1.type, reject_reason, "assign")) {
-      return false;
+    const bool is_raw_copy_opcode =
+        instr.opcode == hir::OPCODE_ASSIGN ||
+        instr.opcode == hir::OPCODE_CAST ||
+        instr.opcode == hir::OPCODE_TRUNCATE;
+    if (is_raw_copy_opcode && !sign_extend) {
+      if (!IsRawSlotType(instr.dest_type) || !IsRawSlotType(instr.src1.type)) {
+        return Fail(reject_reason,
+                    "assign has unsupported slot type src " +
+                        std::string(HirTypeName(instr.src1.type)) + " dst " +
+                        HirTypeName(instr.dest_type));
+      }
+      if (instr.dest_type != instr.src1.type) {
+        if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+          return false;
+        }
+        mov(w1, static_cast<uint64_t>(instr.src1.type));
+        mov(w2, static_cast<uint64_t>(instr.dest_type));
+        EmitCall(reinterpret_cast<void*>(&Arm64JitCastRaw));
+        mov(x8, x0);
+        return EmitStoreValue(instr, x8, reject_reason);
+      }
+    } else {
+      if (!CheckIntegerType(instr.dest_type, reject_reason, "assign") ||
+          !CheckIntegerType(instr.src1.type, reject_reason, "assign")) {
+        return false;
+      }
     }
     if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
       return false;
@@ -1050,10 +1626,42 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
+  bool EmitConvert(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "convert") ||
+        !CheckRawSlotType(instr.src1.type, reject_reason, "convert")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.src1.type));
+    mov(w2, static_cast<uint64_t>(instr.dest_type));
+    mov(w3, static_cast<uint64_t>(instr.flags));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitConvertRaw));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
   bool EmitCompare(const Instruction& instr, Cond cond, bool sign_extend,
                    std::string* reject_reason) {
     if (!CheckIntegerType(instr.dest_type, reject_reason, "compare")) {
       return false;
+    }
+    if ((instr.src1.type == hir::FLOAT32_TYPE ||
+         instr.src1.type == hir::FLOAT64_TYPE) &&
+        instr.src2.type == instr.src1.type) {
+      if (!EmitLoadOperand(instr.src1, x0, reject_reason) ||
+          !EmitLoadOperand(instr.src2, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(instr.src1.type));
+      mov(w3, static_cast<uint64_t>(instr.opcode));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitCompareFloatRaw));
+      mov(x8, x0);
+      return EmitStoreValue(instr, x8, reject_reason);
     }
     if (!CheckIntegerType(instr.src1.type, reject_reason, "compare") ||
         !CheckIntegerType(instr.src2.type, reject_reason, "compare")) {
@@ -1072,8 +1680,44 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
+  bool EmitIsNan(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (!CheckIntegerType(instr.dest_type, reject_reason, "is_nan") ||
+        !CheckRawSlotType(instr.src1.type, reject_reason, "is_nan")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.src1.type));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitIsNanRaw));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
   bool EmitBinaryArithmetic(const Instruction& instr, hir::Opcode opcode,
                             std::string* reject_reason) {
+    if ((instr.dest_type == hir::FLOAT32_TYPE ||
+         instr.dest_type == hir::FLOAT64_TYPE) &&
+        instr.src1.type == instr.dest_type &&
+        instr.src2.type == instr.dest_type) {
+      if (opcode != hir::OPCODE_ADD && opcode != hir::OPCODE_SUB &&
+          opcode != hir::OPCODE_MUL) {
+        return Fail(reject_reason, "unsupported float binary opcode");
+      }
+      if (!EmitLoadOperand(instr.src1, x0, reject_reason) ||
+          !EmitLoadOperand(instr.src2, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(instr.dest_type));
+      mov(w3, static_cast<uint64_t>(opcode));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitFloatBinaryRaw));
+      mov(x8, x0);
+      return EmitStoreValue(instr, x8, reject_reason);
+    }
+
     if (!CheckIntegerType(instr.dest_type, reject_reason, "binary")) {
       return false;
     }
@@ -1146,6 +1790,22 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitDivOrMulHigh(const Instruction& instr, bool high,
                         std::string* reject_reason) {
+    if (!high &&
+        (instr.dest_type == hir::FLOAT32_TYPE ||
+         instr.dest_type == hir::FLOAT64_TYPE) &&
+        instr.src1.type == instr.dest_type &&
+        instr.src2.type == instr.dest_type) {
+      if (!EmitLoadOperand(instr.src1, x0, reject_reason) ||
+          !EmitLoadOperand(instr.src2, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(instr.dest_type));
+      mov(w3, static_cast<uint64_t>(hir::OPCODE_DIV));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitFloatBinaryRaw));
+      mov(x8, x0);
+      return EmitStoreValue(instr, x8, reject_reason);
+    }
+
     if (!CheckIntegerType(instr.dest_type, reject_reason, "div/mul_hi")) {
       return false;
     }
@@ -1157,6 +1817,28 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     mov(w3, static_cast<uint64_t>(instr.flags));
     EmitCall(high ? reinterpret_cast<void*>(&Arm64JitMulHighInteger)
                   : reinterpret_cast<void*>(&Arm64JitDivInteger));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitMulAddSub(const Instruction& instr, std::string* reject_reason) {
+    if ((instr.dest_type != hir::FLOAT32_TYPE &&
+         instr.dest_type != hir::FLOAT64_TYPE) ||
+        instr.src1.type != instr.dest_type ||
+        instr.src2.type != instr.dest_type ||
+        instr.src3.type != instr.dest_type) {
+      return Fail(reject_reason,
+                  "mul_add/sub has unsupported slot type " +
+                      std::string(HirTypeName(instr.dest_type)));
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason) ||
+        !EmitLoadOperand(instr.src2, x1, reject_reason) ||
+        !EmitLoadOperand(instr.src3, x2, reject_reason)) {
+      return false;
+    }
+    mov(w3, static_cast<uint64_t>(instr.dest_type));
+    mov(w4, static_cast<uint64_t>(instr.opcode));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitFloatTernaryRaw));
     mov(x8, x0);
     return EmitStoreValue(instr, x8, reject_reason);
   }
@@ -1179,6 +1861,18 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitNotNeg(const Instruction& instr, bool negate,
                   std::string* reject_reason) {
+    if (negate && (instr.dest_type == hir::FLOAT32_TYPE ||
+                   instr.dest_type == hir::FLOAT64_TYPE) &&
+        instr.src1.type == instr.dest_type) {
+      if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+        return false;
+      }
+      mov(w1, static_cast<uint64_t>(instr.dest_type));
+      mov(w2, static_cast<uint64_t>(hir::OPCODE_NEG));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitUnaryRaw));
+      mov(x8, x0);
+      return EmitStoreValue(instr, x8, reject_reason);
+    }
     if (!CheckIntegerType(instr.dest_type, reject_reason, "not/neg")) {
       return false;
     }
@@ -1190,6 +1884,39 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     } else {
       mvn(x8, x8);
     }
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitAbs(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "abs") ||
+        !CheckRawSlotType(instr.src1.type, reject_reason, "abs")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.dest_type));
+    mov(w2, static_cast<uint64_t>(hir::OPCODE_ABS));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitUnaryRaw));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitSqrt(const Instruction& instr, std::string* reject_reason) {
+    if ((instr.dest_type != hir::FLOAT32_TYPE &&
+         instr.dest_type != hir::FLOAT64_TYPE) ||
+        instr.src1.type != instr.dest_type) {
+      return Fail(reject_reason,
+                  "sqrt has unsupported slot type " +
+                      std::string(HirTypeName(instr.dest_type)));
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.dest_type));
+    mov(w2, static_cast<uint64_t>(hir::OPCODE_SQRT));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitUnaryRaw));
+    mov(x8, x0);
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
@@ -1327,6 +2054,38 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     mov(x0, x20);
     EmitCall(reinterpret_cast<void*>(&Arm64JitMemset));
     return true;
+  }
+
+  bool EmitAtomicCompareExchange(const Instruction& instr,
+                                 std::string* reject_reason) {
+    if (!CheckIntegerType(instr.dest_type, reject_reason,
+                          "atomic_compare_exchange") ||
+        !CheckIntegerType(instr.src2.type, reject_reason,
+                          "atomic_compare_exchange") ||
+        !CheckIntegerType(instr.src3.type, reject_reason,
+                          "atomic_compare_exchange")) {
+      return false;
+    }
+
+    if (!EmitLoadOperand(instr.src3, x3, reject_reason)) {
+      return false;
+    }
+    if (instr.src3.type != instr.src2.type) {
+      mov(x0, x3);
+      mov(w1, static_cast<uint64_t>(instr.src3.type));
+      mov(w2, static_cast<uint64_t>(instr.src2.type));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitCastRaw));
+      mov(x3, x0);
+    }
+    if (!EmitLoadOperand(instr.src1, x1, reject_reason) ||
+        !EmitLoadOperand(instr.src2, x2, reject_reason)) {
+      return false;
+    }
+    mov(x0, x20);
+    mov(w4, static_cast<uint64_t>(instr.src2.type));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitAtomicCompareExchange));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
   }
 
   void EmitCheckCallResult(uint16_t flags) {
@@ -1500,6 +2259,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitUnaryAssign(instr, false, reject_reason);
       case hir::OPCODE_SIGN_EXTEND:
         return EmitUnaryAssign(instr, true, reject_reason);
+      case hir::OPCODE_CONVERT:
+        return EmitConvert(instr, reject_reason);
 
       case hir::OPCODE_LOAD_LOCAL:
         return EmitLoadLocal(instr, reject_reason);
@@ -1509,6 +2270,10 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitLoadContext(instr, reject_reason);
       case hir::OPCODE_STORE_CONTEXT:
         return EmitStoreContext(instr, reject_reason);
+      case hir::OPCODE_LOAD_MMIO:
+        return EmitLoadMmio(instr, reject_reason);
+      case hir::OPCODE_STORE_MMIO:
+        return EmitStoreMmio(instr, reject_reason);
       case hir::OPCODE_LOAD:
         return EmitLoadMemory(instr, false, reject_reason);
       case hir::OPCODE_LOAD_OFFSET:
@@ -1519,6 +2284,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitStoreMemory(instr, true, reject_reason);
       case hir::OPCODE_MEMSET:
         return EmitMemorySet(instr, reject_reason);
+      case hir::OPCODE_ATOMIC_COMPARE_EXCHANGE:
+        return EmitAtomicCompareExchange(instr, reject_reason);
 
       case hir::OPCODE_LOAD_CLOCK:
         if (!CheckDest(instr, reject_reason)) {
@@ -1538,6 +2305,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         cmp(x8, uint32_t(0));
         cset(w8, instr.opcode == hir::OPCODE_IS_TRUE ? NE : EQ);
         return EmitStoreValue(instr, x8, reject_reason);
+      case hir::OPCODE_IS_NAN:
+        return EmitIsNan(instr, reject_reason);
 
       case hir::OPCODE_COMPARE_EQ:
         return EmitCompare(instr, EQ, false, reject_reason);
@@ -1579,6 +2348,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitDivOrMulHigh(instr, false, reject_reason);
       case hir::OPCODE_MUL_HI:
         return EmitDivOrMulHigh(instr, true, reject_reason);
+      case hir::OPCODE_MUL_ADD:
+      case hir::OPCODE_MUL_SUB:
+        return EmitMulAddSub(instr, reject_reason);
       case hir::OPCODE_MAX:
         return EmitMinMax(instr, true, reject_reason);
       case hir::OPCODE_MIN:
@@ -1587,6 +2359,10 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitNotNeg(instr, false, reject_reason);
       case hir::OPCODE_NEG:
         return EmitNotNeg(instr, true, reject_reason);
+      case hir::OPCODE_ABS:
+        return EmitAbs(instr, reject_reason);
+      case hir::OPCODE_SQRT:
+        return EmitSqrt(instr, reject_reason);
       case hir::OPCODE_BYTE_SWAP:
         return EmitByteSwap(instr, reject_reason);
       case hir::OPCODE_CNTLZ:

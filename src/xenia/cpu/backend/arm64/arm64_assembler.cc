@@ -33,6 +33,17 @@ namespace {
 
 std::atomic<int> g_program_log_budget{160};
 std::atomic<int> g_program_log_suppression_budget{1};
+std::atomic<int> g_jit_fallback_log_budget{512};
+
+bool ConsumeLogBudget(std::atomic<int>* budget) {
+  int value = budget->load();
+  while (value > 0) {
+    if (budget->compare_exchange_strong(value, value - 1)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 void LogHirLineByLine(const char* text) {
   const char* line_start = text;
@@ -285,9 +296,11 @@ bool Arm64Assembler::Assemble(GuestFunction* function,
   function->set_debug_info(std::move(debug_info));
   auto arm64_function = static_cast<Arm64Function*>(function);
   std::string jit_reject_reason;
-  if (!TryCompileArm64Program(arm64_backend_, arm64_function, *program,
-                              &jit_reject_reason) &&
-      !jit_reject_reason.empty()) {
+  const bool jit_compiled = TryCompileArm64Program(
+      arm64_backend_, arm64_function, *program, &jit_reject_reason);
+  arm64_function->set_jit_reject_reason(jit_reject_reason);
+  if (!jit_compiled && !jit_reject_reason.empty() &&
+      ConsumeLogBudget(&g_jit_fallback_log_budget)) {
     XELOGI("ARM64 JIT fallback for guest {:08X}: {}", function->address(),
            jit_reject_reason);
   }
