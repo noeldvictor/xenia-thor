@@ -55,7 +55,7 @@ Primary target:
   - `abiFilters 'arm64-v8a', 'x86_64'`
 - Premake defines Android platforms `Android-ARM64` and `Android-x86_64`.
 - The only production CPU backend present is `src/xenia/cpu/backend/x64`.
-- `src/xenia/cpu/backend/arm64` is an experimental scaffold with a slow HIR interpreter fallback for bring-up only; it is not a working AArch64 JIT.
+- `src/xenia/cpu/backend/arm64` is an experimental scaffold with a tiny helper-backed AArch64 mini-JIT plus interpreter fallback for bring-up only; it is not a compatibility-grade backend.
 - `src/xenia/emulator.cc` can select the ARM64 scaffold on `XE_ARCH_ARM64` or via `cpu=arm64` launch arguments.
 - `src/xenia/cpu/cpu_flags.cc` advertises `any`, `x64`, and `arm64`.
 - `src/xenia/app/premake5.lua` includes `xenia_main.cc` for Android and skips the HID demo in the Android single-library bundle.
@@ -74,6 +74,9 @@ Primary target:
   into HIR opcode counts, unimplemented opcodes, mini-JIT fallback reasons,
   slow interpreter functions, guest crash PCs, ARM64 guest-store watch hits,
   and PPC global-reference scanner hits.
+- Use `tools/arm64/arm64_jit_gap_report.ps1` to compare HIR opcodes against
+  ARM64 mini-JIT and interpreter switch coverage, then attach recent Thor log
+  watchdog/fallback signals to a dated Markdown report.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 
@@ -186,7 +189,8 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-132520-*`.
+  `scratch\thor-debug\20260518-134558-*` and
+  `scratch\thor-debug\20260518-134757-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -203,9 +207,14 @@ Primary target:
   and `ATOMIC_COMPARE_EXCHANGE`.
 - ARM64 mini-JIT vec128 bring-up now has a 16-byte aligned slot-layout table,
   local type tracking, helper-backed vec128 local/context/memory load-store,
-  constant vector operands, vector shifts, unpack, extract, splat, permute,
-  swizzle, dot3/dot4, vector conversions, vector compare, vector add/sub,
-  vec128 select, vec128 unary operations, and vec128 mul-add/sub.
+  constant vector operands, vector shifts, unpack, pack, insert, extract,
+  splat, permute, swizzle, dot3/dot4, vector conversions, vector compare,
+  vector min/max, vector add/sub, vector average, vec128 select, vec128 unary
+  operations, and vec128 mul-add/sub.
+- As of `docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md`,
+  all 113 HIR opcodes have ARM64 mini-JIT switch coverage and interpreter
+  switch coverage. This does not mean the backend is fast or fully correct; it
+  means the current blocker is no longer a missing switch-case surface.
 - ARM64 mini-JIT research cvars currently include:
   - `arm64_enable_mini_jit`
   - `arm64_mini_jit_blacklist`
@@ -225,13 +234,14 @@ Primary target:
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
-- Latest captures still show no `XE_SWAP` / first visible game frame proof.
+- Latest captures show `VdSwap` is present in guest symbol traces, but still no
+  `XE_SWAP` / first visible game frame proof.
 - The visible `AArch64 JIT pending` badge is static Java OSD text and should
   not be treated as the native failure message.
-- Strategy as of 2026-05-18: broaden ARM64 JIT/HIR coverage in batches and use
-  Thor/Blue Dragon as milestone checkpoints. Do not chase every title symptom
-  one-by-one on top of incomplete CPU/GPU emulation, and do not blindly port a
-  huge backend without device proof.
+- Strategy as of 2026-05-18 13:48 EDT: ARM64 switch-case coverage is now broad
+  enough for milestone testing. Next loops should target GPU/D3D completion,
+  guest-visible swap/present contracts, and correctness/performance evidence
+  from Thor logs instead of adding more missing-op stubs.
 
 ## ARM64 Fork Audit Decision
 
@@ -246,7 +256,8 @@ Primary target:
 
 ## Android ARM64 Risk Register
 
-- CPU backend: only an AArch64 scaffold with slow interpreter fallback exists; no real instruction emitter exists yet.
+- CPU backend: the AArch64 path now has a tiny helper-backed mini-JIT, but much
+  of it is correctness-first helper calls rather than optimized native code.
 - JIT memory: Android executable memory and cache coherency must be tested on device.
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.

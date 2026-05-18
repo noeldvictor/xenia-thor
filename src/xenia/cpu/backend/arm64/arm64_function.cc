@@ -810,6 +810,12 @@ uint32_t FloatBits(float value) {
   return bits;
 }
 
+float FloatFromBits(uint32_t bits) {
+  float value = 0.0f;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
 int32_t SignExtendBits(uint32_t value, uint32_t bit_count) {
   uint32_t shift = 32 - bit_count;
   return static_cast<int32_t>(value << shift) >> shift;
@@ -1613,6 +1619,32 @@ RuntimeValue LoadVectorShiftValue(uint32_t shift, bool left) {
   return MakeVec128(output);
 }
 
+RuntimeValue InsertValue(const RuntimeValue& source,
+                         const RuntimeValue& index_value,
+                         const RuntimeValue& part) {
+  vec128_t output = source.constant.v128;
+  uint32_t index = static_cast<uint32_t>(ReadInteger(index_value));
+
+  switch (part.type) {
+    case hir::INT8_TYPE:
+      SetVecU8(&output, index & 0xF,
+               static_cast<uint8_t>(ReadInteger(part)));
+      break;
+    case hir::INT16_TYPE:
+      SetVecU16(&output, index & 0x7,
+                static_cast<uint16_t>(ReadInteger(part)));
+      break;
+    case hir::INT32_TYPE:
+    case hir::FLOAT32_TYPE:
+      output.u32[index & 0x3] = static_cast<uint32_t>(part.constant.u64);
+      break;
+    default:
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
 RuntimeValue ExtractValue(TypeName type, const RuntimeValue& source,
                           const RuntimeValue& index_value) {
   uint32_t index = static_cast<uint32_t>(ReadInteger(index_value));
@@ -1717,6 +1749,158 @@ RuntimeValue SwizzleValue(const RuntimeValue& source, uint32_t swizzle_mask) {
   return MakeVec128(output);
 }
 
+uint32_t ClampPackedFloatBits(uint32_t bits, uint32_t min_bits,
+                              uint32_t max_bits) {
+  float value = FloatFromBits(bits);
+  float min_value = FloatFromBits(min_bits);
+  float max_value = FloatFromBits(max_bits);
+  if (std::isnan(value) || value <= min_value) {
+    return min_bits;
+  }
+  if (value >= max_value) {
+    return max_bits;
+  }
+  return FloatBits(value);
+}
+
+uint32_t ClampPackedComponent(uint32_t bits, uint32_t min_bits,
+                              uint32_t max_bits, uint32_t mask) {
+  return ClampPackedFloatBits(bits, min_bits, max_bits) & mask;
+}
+
+uint8_t Pack8From16(uint16_t raw, uint32_t flags) {
+  bool in_unsigned = hir::IsPackInUnsigned(flags);
+  bool out_unsigned = hir::IsPackOutUnsigned(flags);
+  bool saturate = hir::IsPackOutSaturate(flags);
+  if (in_unsigned) {
+    uint32_t value = raw;
+    if (saturate) {
+      value = std::min(value, out_unsigned ? 255u : 127u);
+    }
+    return static_cast<uint8_t>(value);
+  }
+
+  int32_t value = static_cast<int16_t>(raw);
+  if (saturate) {
+    value = out_unsigned ? std::clamp(value, 0, 255)
+                         : std::clamp(value, -128, 127);
+  }
+  return static_cast<uint8_t>(value);
+}
+
+uint16_t Pack16From32(uint32_t raw, uint32_t flags) {
+  bool in_unsigned = hir::IsPackInUnsigned(flags);
+  bool out_unsigned = hir::IsPackOutUnsigned(flags);
+  bool saturate = hir::IsPackOutSaturate(flags);
+  if (in_unsigned) {
+    uint64_t value = raw;
+    if (saturate) {
+      value = std::min<uint64_t>(value, out_unsigned ? 65535u : 32767u);
+    }
+    return static_cast<uint16_t>(value);
+  }
+
+  int64_t value = static_cast<int32_t>(raw);
+  if (saturate) {
+    value = out_unsigned ? std::clamp<int64_t>(value, 0, 65535)
+                         : std::clamp<int64_t>(value, -32768, 32767);
+  }
+  return static_cast<uint16_t>(value);
+}
+
+RuntimeValue PackValue(const RuntimeValue& lhs, const RuntimeValue& rhs,
+                       uint32_t flags) {
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+  vec128_t output = {};
+
+  switch (flags & hir::PACK_TYPE_MODE) {
+    case hir::PACK_TYPE_D3DCOLOR: {
+      uint32_t x = ClampPackedComponent(a.u32[0], 0x40400000u, 0x404000FFu,
+                                        0xFFu);
+      uint32_t y = ClampPackedComponent(a.u32[1], 0x40400000u, 0x404000FFu,
+                                        0xFFu);
+      uint32_t z = ClampPackedComponent(a.u32[2], 0x40400000u, 0x404000FFu,
+                                        0xFFu);
+      uint32_t w = ClampPackedComponent(a.u32[3], 0x40400000u, 0x404000FFu,
+                                        0xFFu);
+      output.u32[3] = (w << 24) | (x << 16) | (y << 8) | z;
+      break;
+    }
+    case hir::PACK_TYPE_FLOAT16_2: {
+      uint16_t x =
+          half_float::detail::float2half<std::round_toward_zero>(a.f32[0]);
+      uint16_t y =
+          half_float::detail::float2half<std::round_toward_zero>(a.f32[1]);
+      output.u32[3] = (uint32_t(x) << 16) | y;
+      break;
+    }
+    case hir::PACK_TYPE_FLOAT16_4:
+      for (uint32_t i = 0; i < 4; ++i) {
+        SetVecU16(&output, 4 + i,
+                  half_float::detail::float2half<std::round_toward_zero>(
+                      a.f32[i]));
+      }
+      break;
+    case hir::PACK_TYPE_SHORT_2: {
+      uint32_t x = ClampPackedComponent(a.u32[0], 0x403F8001u, 0x40407FFFu,
+                                        0xFFFFu);
+      uint32_t y = ClampPackedComponent(a.u32[1], 0x403F8001u, 0x40407FFFu,
+                                        0xFFFFu);
+      output.u32[3] = (x << 16) | y;
+      break;
+    }
+    case hir::PACK_TYPE_SHORT_4:
+      for (uint32_t i = 0; i < 4; ++i) {
+        SetVecU16(&output, 4 + i,
+                  static_cast<uint16_t>(ClampPackedComponent(
+                      a.u32[i], 0x403F8001u, 0x40407FFFu, 0xFFFFu)));
+      }
+      break;
+    case hir::PACK_TYPE_UINT_2101010: {
+      uint32_t x = ClampPackedComponent(a.u32[0], 0x403FFE01u, 0x404001FFu,
+                                        0x3FFu);
+      uint32_t y = ClampPackedComponent(a.u32[1], 0x403FFE01u, 0x404001FFu,
+                                        0x3FFu);
+      uint32_t z = ClampPackedComponent(a.u32[2], 0x403FFE01u, 0x404001FFu,
+                                        0x3FFu);
+      uint32_t w = ClampPackedComponent(a.u32[3], 0x40400000u, 0x40400003u,
+                                        0x3u);
+      output.u32[3] = x | (y << 10) | (z << 20) | (w << 30);
+      break;
+    }
+    case hir::PACK_TYPE_ULONG_4202020: {
+      uint64_t x = ClampPackedComponent(a.u32[0], 0x40380001u, 0x4047FFFFu,
+                                        0xFFFFFu);
+      uint64_t y = ClampPackedComponent(a.u32[1], 0x40380001u, 0x4047FFFFu,
+                                        0xFFFFFu);
+      uint64_t z = ClampPackedComponent(a.u32[2], 0x40380001u, 0x4047FFFFu,
+                                        0xFFFFFu);
+      uint64_t w = ClampPackedComponent(a.u32[3], 0x40400000u, 0x4040000Fu,
+                                        0xFu);
+      output.u64[1] = x | (y << 20) | (z << 40) | (w << 60);
+      break;
+    }
+    case hir::PACK_TYPE_8_IN_16:
+      for (uint32_t i = 0; i < 8; ++i) {
+        SetVecU8(&output, i, Pack8From16(GetVecU16(a, i), flags));
+        SetVecU8(&output, i + 8, Pack8From16(GetVecU16(b, i), flags));
+      }
+      break;
+    case hir::PACK_TYPE_16_IN_32:
+      for (uint32_t i = 0; i < 4; ++i) {
+        SetVecU16(&output, i, Pack16From32(a.u32[i], flags));
+        SetVecU16(&output, i + 4, Pack16From32(b.u32[i], flags));
+      }
+      break;
+    default:
+      XELOGE("ARM64 interpreter unsupported pack flags {:04X}", flags);
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
 RuntimeValue UnpackValue(const RuntimeValue& source, uint32_t flags) {
   const auto& input = source.constant.v128;
   vec128_t output = {};
@@ -1768,6 +1952,24 @@ RuntimeValue UnpackValue(const RuntimeValue& source, uint32_t flags) {
       output.u32[2] =
           0x40400000u + SignExtendBits((packed >> 20) & 0x3FFu, 10);
       output.u32[3] = 0x3F800000u + ((packed >> 30) & 0x3u);
+      return MakeVec128(output);
+    }
+    case hir::PACK_TYPE_ULONG_4202020: {
+      uint64_t packed = input.u64[1];
+      output.u32[0] =
+          0x40400000u +
+          SignExtendBits(static_cast<uint32_t>((packed >> 0) & 0xFFFFFu),
+                         20);
+      output.u32[1] =
+          0x40400000u +
+          SignExtendBits(static_cast<uint32_t>((packed >> 20) & 0xFFFFFu),
+                         20);
+      output.u32[2] =
+          0x40400000u +
+          SignExtendBits(static_cast<uint32_t>((packed >> 40) & 0xFFFFFu),
+                         20);
+      output.u32[3] =
+          0x3F800000u + static_cast<uint32_t>((packed >> 60) & 0xFu);
       return MakeVec128(output);
     }
     case hir::PACK_TYPE_8_IN_16: {
@@ -2591,6 +2793,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
                                       static_cast<TypeName>(instr.flags),
                                       read(instr.src1), read(instr.src2)));
         break;
+      case hir::OPCODE_DID_SATURATE:
+        store_dest(MakeInteger(instr.dest_type, 0));
+        break;
 
       case hir::OPCODE_MAX:
         store_dest(MinMaxValue(instr.dest_type, read(instr.src1),
@@ -2710,6 +2915,10 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         store_dest(ExtractValue(instr.dest_type, read(instr.src1),
                                 read(instr.src2)));
         break;
+      case hir::OPCODE_INSERT:
+        store_dest(InsertValue(read(instr.src1), read(instr.src2),
+                               read(instr.src3)));
+        break;
       case hir::OPCODE_SPLAT:
         store_dest(SplatValue(read(instr.src1)));
         break;
@@ -2720,6 +2929,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         break;
       case hir::OPCODE_UNPACK:
         store_dest(UnpackValue(read(instr.src1), instr.flags));
+        break;
+      case hir::OPCODE_PACK:
+        store_dest(PackValue(read(instr.src1), read(instr.src2), instr.flags));
         break;
 
       case hir::OPCODE_SHL:

@@ -57,19 +57,20 @@ Current state as of 2026-05-18:
 - The Android Vulkan window/demo path runs on the Thor.
 - The emulator activity can launch Blue Dragon Disc 1 from the SD card.
 - Guest threads can start through temporary ARM64 scaffolding and a tiny
-  experimental AArch64 mini-JIT for scalar and early vec128 HIR paths.
+  experimental helper-backed AArch64 mini-JIT.
 - Blue Dragon can progress through sound-bank initialization and later pack-file
   loading without the earlier null-thunk crash.
 - A KTHREAD timer issue was fixed enough for the Blue Dragon draw wait loop to
   move past a zero-uptime stall.
 - GPU ring read/write pointers are now mirrored into guest-visible CP registers;
   the game's D3D dump now sees drained matching ring pointers.
+- The ARM64 mini-JIT and interpreter switch tables now cover all 113 HIR
+  opcodes, which is useful bring-up coverage, not a compatibility claim.
 - It still does not reach title or playable gameplay.
 - The current research wall is the game's D3D watchdog:
   `The GPU is hung! ... frame is 0`.
-- The next main lane is broader ARM64 JIT/HIR coverage in batches, with Thor
-  Blue Dragon runs used as checkpoints instead of debugging every symptom one
-  at a time.
+- The next main lane is GPU/D3D completion and guest-visible swap/present
+  behavior, while continuing to harden ARM64 correctness with Thor captures.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -86,6 +87,7 @@ Useful repo docs for this fork:
 - [Blue Dragon ARM64 Mini-JIT Vector Wall](docs/research/20260518-111343-blue-dragon-arm64-mini-jit-vector-wall.md)
 - [Blue Dragon ARM64 Vec128 Fallback-Zero Capture](docs/research/20260518-115238-blue-dragon-arm64-vec128-mini-jit-fallback-zero.md)
 - [Blue Dragon KTHREAD Timer And GPU Watchdog](docs/research/20260518-133100-blue-dragon-kthread-gpu-watchdog.md)
+- [ARM64 JIT Gap Device Checkpoint](docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 
