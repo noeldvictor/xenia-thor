@@ -268,6 +268,16 @@ Primary target:
 ## ARM64 Fork Audit Decision
 
 - Latest audit: `docs/research/20260517-183520-xenia-arm64-fork-audit.md`.
+- Current working-fork reality check:
+  `docs/research/20260518-142302-arm64-xenia-working-forks.md`.
+- Some ARM64 Xenia-derived projects appear to work in limited senses:
+  `aenu1/ax360e` is the strongest Android ARM64/Vulkan evidence, and
+  XeniOS/xenia-mac are Apple ARM64 evidence. None is a proven drop-in path for
+  Blue Dragon on Thor.
+- Keep the helper-backed ARM64 mini-JIT as a bring-up scaffold and interpreter
+  fallback, but start reshaping toward a real AArch64 emitter backbone now.
+- Prioritize correctness coverage and differential tests first; add native
+  hot-path lowering where CPU slowness alone could cause watchdogs.
 - Primary AArch64 JIT source to study/port: `has207/xenia-edge`, branch `edge`, because it has the most current xbyak_aarch64 A64 backend shape, CMake wiring, POSIX code cache, and broad HIR opcode table coverage.
 - Primary Android app-side reference: `aenu1/ax360e`, branch `main`, because it shows a real Android package with nested Xenia Canary, A64 backend, Android CMake glue, SAF/document-file access, Android HID, Adreno options, and `libadrenotools`.
 - AArch64 assembler dependency: `third_party/xbyak_aarch64` is pinned to Fujitsu `xbyak_aarch64` commit `59c6a7e7368cd2dbb07c46abe83239ace4d58849`, matching the `has207/xenia-edge` submodule gitlink observed during the audit. License: Apache-2.0.
