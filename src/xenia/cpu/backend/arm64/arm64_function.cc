@@ -21,6 +21,7 @@
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/cpu/mmio_handler.h"
 #include "xenia/cpu/processor.h"
@@ -786,6 +787,16 @@ RuntimeValue MulSubValue(TypeName type, const RuntimeValue& lhs,
   return SubValue(type, MulValue(type, lhs, rhs), subtrahend);
 }
 
+RuntimeValue DotProduct3Value(const RuntimeValue& lhs,
+                              const RuntimeValue& rhs) {
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+  float result =
+      (a.f32[0] * b.f32[0] + a.f32[1] * b.f32[1]) +
+      (a.f32[2] * b.f32[2] + 0.0f);
+  return MakeFloat32(result);
+}
+
 RuntimeValue DotProduct4Value(const RuntimeValue& lhs,
                               const RuntimeValue& rhs) {
   float result = 0.0f;
@@ -953,6 +964,296 @@ RuntimeValue VectorMinMaxValue(TypeName part_type, uint32_t arithmetic_flags,
       }
       break;
     default:
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
+RuntimeValue VectorAddSubValue(TypeName part_type, uint32_t arithmetic_flags,
+                               const RuntimeValue& lhs,
+                               const RuntimeValue& rhs, bool subtract) {
+  vec128_t output = {};
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+  bool saturate = (arithmetic_flags & hir::ARITHMETIC_SATURATE) != 0;
+
+  switch (part_type) {
+    case hir::FLOAT32_TYPE:
+      if (saturate) {
+        XELOGW("ARM64 interpreter ignoring saturate flag for vector f32 add/sub");
+      }
+      for (uint32_t i = 0; i < 4; ++i) {
+        output.f32[i] = subtract ? a.f32[i] - b.f32[i] : a.f32[i] + b.f32[i];
+      }
+      break;
+    case hir::FLOAT64_TYPE:
+      if (saturate) {
+        XELOGW("ARM64 interpreter ignoring saturate flag for vector f64 add/sub");
+      }
+      for (uint32_t i = 0; i < 2; ++i) {
+        output.f64[i] = subtract ? a.f64[i] - b.f64[i] : a.f64[i] + b.f64[i];
+      }
+      break;
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (saturate) {
+          SetVecU8(&output, i,
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(GetVecU8(a, i), GetVecU8(b, i))
+                              : xe::sat_add(GetVecU8(a, i), GetVecU8(b, i)))
+                  : static_cast<uint8_t>(
+                        subtract ? xe::sat_sub(GetVecI8(a, i), GetVecI8(b, i))
+                                 : xe::sat_add(GetVecI8(a, i), GetVecI8(b, i))));
+        } else {
+          uint8_t av = GetVecU8(a, i);
+          uint8_t bv = GetVecU8(b, i);
+          SetVecU8(&output, i,
+                   subtract ? static_cast<uint8_t>(av - bv)
+                            : static_cast<uint8_t>(av + bv));
+        }
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        if (saturate) {
+          SetVecU16(&output, i,
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(GetVecU16(a, i), GetVecU16(b, i))
+                              : xe::sat_add(GetVecU16(a, i), GetVecU16(b, i)))
+                  : static_cast<uint16_t>(
+                        subtract ? xe::sat_sub(GetVecI16(a, i), GetVecI16(b, i))
+                                 : xe::sat_add(GetVecI16(a, i), GetVecI16(b, i))));
+        } else {
+          uint16_t av = GetVecU16(a, i);
+          uint16_t bv = GetVecU16(b, i);
+          SetVecU16(&output, i,
+                    subtract ? static_cast<uint16_t>(av - bv)
+                             : static_cast<uint16_t>(av + bv));
+        }
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (saturate) {
+          output.u32[i] =
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(a.u32[i], b.u32[i])
+                              : xe::sat_add(a.u32[i], b.u32[i]))
+                  : static_cast<uint32_t>(
+                        subtract ? xe::sat_sub(a.i32[i], b.i32[i])
+                                 : xe::sat_add(a.i32[i], b.i32[i]));
+        } else {
+          output.u32[i] = subtract ? a.u32[i] - b.u32[i] : a.u32[i] + b.u32[i];
+        }
+      }
+      break;
+    case hir::INT64_TYPE:
+      for (uint32_t i = 0; i < 2; ++i) {
+        if (saturate) {
+          output.u64[i] =
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(a.u64[i], b.u64[i])
+                              : xe::sat_add(a.u64[i], b.u64[i]))
+                  : static_cast<uint64_t>(
+                        subtract ? xe::sat_sub(a.i64[i], b.i64[i])
+                                 : xe::sat_add(a.i64[i], b.i64[i]));
+        } else {
+          output.u64[i] = subtract ? a.u64[i] - b.u64[i] : a.u64[i] + b.u64[i];
+        }
+      }
+      break;
+    default:
+      XELOGE("ARM64 interpreter unsupported vector add/sub part type {}",
+             static_cast<uint32_t>(part_type));
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
+RuntimeValue VectorConvertI2FValue(uint32_t arithmetic_flags,
+                                   const RuntimeValue& source) {
+  vec128_t output = {};
+  const auto& input = source.constant.v128;
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+  for (uint32_t i = 0; i < 4; ++i) {
+    output.f32[i] =
+        is_unsigned ? static_cast<float>(input.u32[i])
+                    : static_cast<float>(static_cast<int32_t>(input.u32[i]));
+  }
+  return MakeVec128(output);
+}
+
+RuntimeValue VectorConvertF2IValue(uint32_t arithmetic_flags,
+                                   const RuntimeValue& source) {
+  vec128_t output = {};
+  const auto& input = source.constant.v128;
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+  for (uint32_t i = 0; i < 4; ++i) {
+    double value = input.f32[i];
+    if (is_unsigned) {
+      if (std::isnan(value) || value <= 0.0) {
+        output.u32[i] = 0;
+      } else if (value >=
+                 static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+        output.u32[i] = std::numeric_limits<uint32_t>::max();
+      } else {
+        output.u32[i] = static_cast<uint32_t>(value);
+      }
+    } else {
+      if (std::isnan(value)) {
+        output.i32[i] = 0;
+      } else if (value >=
+                 static_cast<double>(std::numeric_limits<int32_t>::max())) {
+        output.i32[i] = std::numeric_limits<int32_t>::max();
+      } else if (value <=
+                 static_cast<double>(std::numeric_limits<int32_t>::min())) {
+        output.i32[i] = std::numeric_limits<int32_t>::min();
+      } else {
+        output.i32[i] = static_cast<int32_t>(value);
+      }
+    }
+  }
+  return MakeVec128(output);
+}
+
+uint8_t RotateLeftMasked(uint8_t value, uint32_t shift) {
+  shift &= 0x7;
+  return shift ? xe::rotate_left<uint8_t>(value, static_cast<uint8_t>(shift))
+               : value;
+}
+
+uint16_t RotateLeftMasked(uint16_t value, uint32_t shift) {
+  shift &= 0xF;
+  return shift ? xe::rotate_left<uint16_t>(value, static_cast<uint8_t>(shift))
+               : value;
+}
+
+uint32_t RotateLeftMasked(uint32_t value, uint32_t shift) {
+  shift &= 0x1F;
+  return shift ? xe::rotate_left<uint32_t>(value, static_cast<uint8_t>(shift))
+               : value;
+}
+
+RuntimeValue VectorShiftValue(hir::Opcode opcode, TypeName part_type,
+                              const RuntimeValue& lhs,
+                              const RuntimeValue& rhs) {
+  vec128_t output = {};
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+
+  switch (part_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        uint32_t shift = GetVecU8(b, i) & 0x7;
+        uint8_t result = 0;
+        if (opcode == hir::OPCODE_VECTOR_SHL) {
+          result = static_cast<uint8_t>(GetVecU8(a, i) << shift);
+        } else if (opcode == hir::OPCODE_VECTOR_SHR) {
+          result = static_cast<uint8_t>(GetVecU8(a, i) >> shift);
+        } else if (opcode == hir::OPCODE_VECTOR_SHA) {
+          result = static_cast<uint8_t>(GetVecI8(a, i) >> shift);
+        } else {
+          result = RotateLeftMasked(GetVecU8(a, i), shift);
+        }
+        SetVecU8(&output, i, result);
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        uint32_t shift = GetVecU16(b, i) & 0xF;
+        uint16_t result = 0;
+        if (opcode == hir::OPCODE_VECTOR_SHL) {
+          result = static_cast<uint16_t>(GetVecU16(a, i) << shift);
+        } else if (opcode == hir::OPCODE_VECTOR_SHR) {
+          result = static_cast<uint16_t>(GetVecU16(a, i) >> shift);
+        } else if (opcode == hir::OPCODE_VECTOR_SHA) {
+          result = static_cast<uint16_t>(GetVecI16(a, i) >> shift);
+        } else {
+          result = RotateLeftMasked(GetVecU16(a, i), shift);
+        }
+        SetVecU16(&output, i, result);
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        uint32_t shift = b.u32[i] & 0x1F;
+        if (opcode == hir::OPCODE_VECTOR_SHL) {
+          output.u32[i] = a.u32[i] << shift;
+        } else if (opcode == hir::OPCODE_VECTOR_SHR) {
+          output.u32[i] = a.u32[i] >> shift;
+        } else if (opcode == hir::OPCODE_VECTOR_SHA) {
+          output.u32[i] =
+              static_cast<uint32_t>(static_cast<int32_t>(a.u32[i]) >> shift);
+        } else {
+          output.u32[i] = RotateLeftMasked(a.u32[i], shift);
+        }
+      }
+      break;
+    default:
+      XELOGE("ARM64 interpreter unsupported vector shift part type {}",
+             static_cast<uint32_t>(part_type));
+      break;
+  }
+
+  return MakeVec128(output);
+}
+
+RuntimeValue VectorAverageValue(TypeName part_type, uint32_t arithmetic_flags,
+                                const RuntimeValue& lhs,
+                                const RuntimeValue& rhs) {
+  vec128_t output = {};
+  const auto& a = lhs.constant.v128;
+  const auto& b = rhs.constant.v128;
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+
+  switch (part_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (is_unsigned) {
+          SetVecU8(&output, i,
+                   static_cast<uint8_t>((uint16_t(GetVecU8(a, i)) +
+                                         uint16_t(GetVecU8(b, i)) + 1) >>
+                                        1));
+        } else {
+          SetVecU8(&output, i,
+                   static_cast<uint8_t>((int16_t(GetVecI8(a, i)) +
+                                         int16_t(GetVecI8(b, i)) + 1) >>
+                                        1));
+        }
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        if (is_unsigned) {
+          SetVecU16(&output, i,
+                    static_cast<uint16_t>((uint32_t(GetVecU16(a, i)) +
+                                           uint32_t(GetVecU16(b, i)) + 1) >>
+                                          1));
+        } else {
+          SetVecU16(&output, i,
+                    static_cast<uint16_t>((int32_t(GetVecI16(a, i)) +
+                                           int32_t(GetVecI16(b, i)) + 1) >>
+                                          1));
+        }
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (is_unsigned) {
+          output.u32[i] =
+              static_cast<uint32_t>((uint64_t(a.u32[i]) + b.u32[i] + 1) >> 1);
+        } else {
+          output.i32[i] =
+              static_cast<int32_t>((int64_t(a.i32[i]) + b.i32[i] + 1) >> 1);
+        }
+      }
+      break;
+    default:
+      XELOGE("ARM64 interpreter unsupported vector average part type {}",
+             static_cast<uint32_t>(part_type));
       break;
   }
 
@@ -1614,6 +1915,14 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         break;
       }
 
+      case hir::OPCODE_VECTOR_CONVERT_I2F:
+        store_dest(VectorConvertI2FValue(instr.flags, read(instr.src1)));
+        break;
+
+      case hir::OPCODE_VECTOR_CONVERT_F2I:
+        store_dest(VectorConvertF2IValue(instr.flags, read(instr.src1)));
+        break;
+
       case hir::OPCODE_LOAD_CLOCK:
         store_dest(MakeInteger(hir::INT64_TYPE, Clock::QueryGuestTickCount()));
         break;
@@ -1873,9 +2182,19 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
                                                     ReadInteger(read(instr.src2)) +
                                                     (IsTrue(read(instr.src3)) ? 1 : 0)));
         break;
+      case hir::OPCODE_VECTOR_ADD:
+        store_dest(VectorAddSubValue(static_cast<TypeName>(instr.flags & 0xFF),
+                                     instr.flags >> 8, read(instr.src1),
+                                     read(instr.src2), false));
+        break;
       case hir::OPCODE_SUB:
         store_dest(SubValue(instr.dest_type, read(instr.src1),
                             read(instr.src2)));
+        break;
+      case hir::OPCODE_VECTOR_SUB:
+        store_dest(VectorAddSubValue(static_cast<TypeName>(instr.flags & 0xFF),
+                                     instr.flags >> 8, read(instr.src1),
+                                     read(instr.src2), true));
         break;
       case hir::OPCODE_MUL:
         store_dest(MulValue(instr.dest_type, read(instr.src1),
@@ -1917,6 +2236,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
       case hir::OPCODE_MUL_SUB:
         store_dest(MulSubValue(instr.dest_type, read(instr.src1),
                                read(instr.src2), read(instr.src3)));
+        break;
+      case hir::OPCODE_DOT_PRODUCT_3:
+        store_dest(DotProduct3Value(read(instr.src1), read(instr.src2)));
         break;
       case hir::OPCODE_DOT_PRODUCT_4:
         store_dest(DotProduct4Value(read(instr.src1), read(instr.src2)));
@@ -1967,10 +2289,20 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
                                ReadInteger(read(instr.src1)) <<
                                    (ReadInteger(read(instr.src2)) & 0x3F)));
         break;
+      case hir::OPCODE_VECTOR_SHL:
+        store_dest(VectorShiftValue(instr.opcode,
+                                    static_cast<TypeName>(instr.flags),
+                                    read(instr.src1), read(instr.src2)));
+        break;
       case hir::OPCODE_SHR:
         store_dest(MakeInteger(instr.dest_type,
                                ReadInteger(read(instr.src1)) >>
                                    (ReadInteger(read(instr.src2)) & 0x3F)));
+        break;
+      case hir::OPCODE_VECTOR_SHR:
+        store_dest(VectorShiftValue(instr.opcode,
+                                    static_cast<TypeName>(instr.flags),
+                                    read(instr.src1), read(instr.src2)));
         break;
       case hir::OPCODE_SHA:
         store_dest(MakeInteger(
@@ -1979,6 +2311,11 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
                 SignExtendInteger(read(instr.src1).type,
                                   ReadInteger(read(instr.src1))) >>
                 (ReadInteger(read(instr.src2)) & 0x3F))));
+        break;
+      case hir::OPCODE_VECTOR_SHA:
+        store_dest(VectorShiftValue(instr.opcode,
+                                    static_cast<TypeName>(instr.flags),
+                                    read(instr.src1), read(instr.src2)));
         break;
       case hir::OPCODE_ROTATE_LEFT: {
         auto value = ReadInteger(read(instr.src1));
@@ -1992,6 +2329,16 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         store_dest(MakeInteger(instr.dest_type, rotated));
         break;
       }
+      case hir::OPCODE_VECTOR_ROTATE_LEFT:
+        store_dest(VectorShiftValue(instr.opcode,
+                                    static_cast<TypeName>(instr.flags),
+                                    read(instr.src1), read(instr.src2)));
+        break;
+      case hir::OPCODE_VECTOR_AVERAGE:
+        store_dest(VectorAverageValue(static_cast<TypeName>(instr.flags & 0xFF),
+                                      instr.flags >> 8, read(instr.src1),
+                                      read(instr.src2)));
+        break;
 
       case hir::OPCODE_BYTE_SWAP:
         store_dest(ByteSwapValue(read(instr.src1)));

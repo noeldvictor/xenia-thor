@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/kernel/kernel_state.h"
@@ -17,9 +18,31 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/xbox.h"
 
+DEFINE_bool(
+    xboxkrnl_tolerate_debug_memory, true,
+    "Research bring-up: log nonzero DebugMemory flags in Nt*VirtualMemory "
+    "calls and handle them as normal guest memory instead of asserting.",
+    "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+namespace {
+
+bool CheckDebugMemoryArgument(const char* export_name, uint32_t debug_memory) {
+  if (!debug_memory) {
+    return true;
+  }
+  if (cvars::xboxkrnl_tolerate_debug_memory) {
+    XELOGW("{} received DebugMemory={} - treating as guest memory",
+           export_name, debug_memory);
+    return true;
+  }
+  XELOGE("{} received unsupported DebugMemory={}", export_name, debug_memory);
+  return false;
+}
+
+}  // namespace
 
 uint32_t ToXdkProtectFlags(uint32_t protect) {
   uint32_t result = 0;
@@ -73,7 +96,10 @@ dword_result_t NtAllocateVirtualMemory_entry(lpdword_t base_addr_ptr,
   assert_not_null(region_size_ptr);
 
   // Set to TRUE when allocation is from devkit memory area.
-  assert_true(debug_memory == 0);
+  if (!CheckDebugMemoryArgument("NtAllocateVirtualMemory",
+                                debug_memory.value())) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
 
   // This allocates memory from the kernel heap, which is initialized on startup
   // and shared by both the kernel implementation and user code.
@@ -196,7 +222,10 @@ dword_result_t NtProtectVirtualMemory_entry(lpdword_t base_addr_ptr,
                                             lpdword_t old_protect,
                                             dword_t debug_memory) {
   // Set to TRUE when this memory refers to devkit memory area.
-  assert_true(debug_memory == 0);
+  if (!CheckDebugMemoryArgument("NtProtectVirtualMemory",
+                                debug_memory.value())) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
 
   // Must request a size.
   if (!base_addr_ptr || !region_size_ptr || !*region_size_ptr) {
@@ -255,7 +284,9 @@ dword_result_t NtFreeVirtualMemory_entry(lpdword_t base_addr_ptr,
   // _In_     BOOLEAN DebugMemory
 
   // Set to TRUE when freeing external devkit memory.
-  assert_true(debug_memory == 0);
+  if (!CheckDebugMemoryArgument("NtFreeVirtualMemory", debug_memory.value())) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
 
   if (!base_addr_value) {
     return X_STATUS_MEMORY_NOT_ALLOCATED;
