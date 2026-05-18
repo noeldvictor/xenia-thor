@@ -10,6 +10,7 @@
 #ifndef XENIA_CPU_BACKEND_ARM64_ARM64_FUNCTION_H_
 #define XENIA_CPU_BACKEND_ARM64_ARM64_FUNCTION_H_
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -97,6 +98,16 @@ class Arm64Function : public GuestFunction {
   CompiledProgram compiled_program_ = nullptr;
   std::unique_ptr<Program> program_;
 };
+
+void LogArm64GuestStoreWatch(ThreadState* thread_state,
+                             uint32_t function_address,
+                             uint32_t source_offset, uint64_t address,
+                             hir::TypeName type, uint64_t value);
+void LogArm64GuestMemoryRangeWatch(ThreadState* thread_state,
+                                   uint32_t function_address,
+                                   uint32_t source_offset, uint64_t address,
+                                   uint64_t size, const char* operation,
+                                   uint64_t value);
 
 }  // namespace arm64
 }  // namespace backend

@@ -37,6 +37,7 @@
 #include "xbyak_aarch64/xbyak_aarch64.h"
 
 DECLARE_bool(arm64_ignore_undefined_externs);
+DECLARE_string(arm64_guest_store_watch);
 
 DEFINE_bool(arm64_enable_mini_jit, true,
             "ARM64 bring-up: attempt the tiny experimental AArch64 mini-JIT. "
@@ -343,6 +344,8 @@ void Arm64JitStoreInteger(ThreadState* thread_state, uint64_t address,
 
 void Arm64JitMemset(ThreadState* thread_state, uint64_t address,
                    uint64_t fill_value, uint64_t length) {
+  LogArm64GuestMemoryRangeWatch(thread_state, 0, 0, address, length,
+                                "jit_memset", fill_value);
   std::memset(thread_state->memory()->TranslateVirtual(
                   NormalizeGuestAddress(address)),
               static_cast<uint8_t>(fill_value), static_cast<size_t>(length));
@@ -688,6 +691,28 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     blr(x17);
   }
 
+  void EmitGuestStoreWatch(const Instruction& instr, hir::TypeName value_type) {
+    if (cvars::arm64_guest_store_watch.empty()) {
+      return;
+    }
+
+    sub(sp, sp, uint32_t(16));
+    str(x1, ptr(sp));
+    str(x8, ptr(sp, uint32_t(8)));
+
+    mov(x0, x20);
+    mov(w1, function_ ? function_->address() : uint64_t(0));
+    mov(w2, instr.source_offset);
+    ldr(x3, ptr(sp));
+    mov(w4, static_cast<uint64_t>(value_type));
+    ldr(x5, ptr(sp, uint32_t(8)));
+    EmitCall(reinterpret_cast<void*>(&LogArm64GuestStoreWatch));
+
+    ldr(x1, ptr(sp));
+    ldr(x8, ptr(sp, uint32_t(8)));
+    add(sp, sp, uint32_t(16));
+  }
+
   void EmitMaskValue(const XReg& reg, hir::TypeName type) {
     switch (type) {
       case hir::INT8_TYPE:
@@ -962,7 +987,6 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     Xbyak_aarch64::Label done;
     EmitBranchIfKnownMmio(x1, helper_path);
 
-    EmitComputeMemoryAddress(x17, x1);
     mov(x8, x2);
     if (instr.flags & hir::LOAD_STORE_BYTE_SWAP) {
       switch (value_type) {
@@ -981,6 +1005,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
           return Fail(reject_reason, "unsupported swapped memory store type");
       }
     }
+    EmitGuestStoreWatch(instr, value_type);
+    EmitComputeMemoryAddress(x17, x1);
     switch (value_type) {
       case hir::INT8_TYPE:
         strb(w8, ptr(x17));

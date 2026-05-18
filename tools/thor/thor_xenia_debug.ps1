@@ -19,6 +19,7 @@ param(
     [string]$MountCache = "false",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
+    [string]$Arm64GuestStoreWatch = "",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -244,6 +245,9 @@ function Start-XeniaEmulator {
     }
     if ($Arm64ForceInterpreterRanges) {
         $parts += "--es arm64_force_interpreter_guest_ranges $(ConvertTo-AdbShellSingleQuote $Arm64ForceInterpreterRanges)"
+    }
+    if ($Arm64GuestStoreWatch) {
+        $parts += "--es arm64_guest_store_watch $(ConvertTo-AdbShellSingleQuote $Arm64GuestStoreWatch)"
     }
     if ($LaunchTarget) {
         $parts += "--es target $(ConvertTo-AdbShellSingleQuote $LaunchTarget)"

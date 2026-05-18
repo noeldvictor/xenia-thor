@@ -11,9 +11,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -34,6 +39,11 @@ DEFINE_bool(
     "ARM64 bring-up: log undefined extern calls and continue, matching the "
     "x64 default. Disable to fail fast on missing kernel exports.",
     "CPU");
+DEFINE_string(
+    arm64_guest_store_watch, "",
+    "ARM64 bring-up: comma/semicolon/space separated guest addresses or "
+    "inclusive ranges to log when guest code stores through the ARM64 backend.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -45,6 +55,7 @@ using hir::TypeName;
 
 std::atomic<int> g_call_trace_budget{120};
 std::atomic<int> g_entry_instruction_trace_budget{240};
+std::atomic<int> g_guest_store_watch_log_budget{240};
 
 struct RuntimeValue {
   TypeName type = hir::INT64_TYPE;
@@ -148,6 +159,114 @@ uint32_t NormalizeGuestAddress(uint64_t address) {
     guest_address += 0x1000;
   }
   return guest_address;
+}
+
+std::string_view Trim(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseGuestAddress(std::string_view value, uint32_t* out_address) {
+  value = Trim(value);
+  if (value.empty()) {
+    return false;
+  }
+
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    if (value.size() >= 8) {
+      base = 16;
+    }
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint64_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size() ||
+      parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  *out_address = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool GuestStoreWatchMatches(uint32_t address, size_t size,
+                            std::string_view list) {
+  size = std::max<size_t>(size, 1);
+  uint32_t store_end = address + static_cast<uint32_t>(size - 1);
+  if (store_end < address) {
+    store_end = std::numeric_limits<uint32_t>::max();
+  }
+
+  size_t token_start = 0;
+  while (token_start < list.size()) {
+    while (token_start < list.size() &&
+           (std::isspace(static_cast<unsigned char>(list[token_start])) ||
+            list[token_start] == ',' || list[token_start] == ';')) {
+      ++token_start;
+    }
+    if (token_start >= list.size()) {
+      break;
+    }
+
+    size_t token_end = token_start;
+    while (token_end < list.size() && list[token_end] != ',' &&
+           list[token_end] != ';' &&
+           !std::isspace(static_cast<unsigned char>(list[token_end]))) {
+      ++token_end;
+    }
+
+    std::string_view token =
+        Trim(list.substr(token_start, token_end - token_start));
+    size_t range_separator = token.find('-');
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (range_separator != std::string_view::npos) {
+      if (ParseGuestAddress(token.substr(0, range_separator), &start) &&
+          ParseGuestAddress(token.substr(range_separator + 1), &end)) {
+        if (start > end) {
+          std::swap(start, end);
+        }
+        if (start <= store_end && end >= address) {
+          return true;
+        }
+      }
+    } else if (ParseGuestAddress(token, &start) && start >= address &&
+               start <= store_end) {
+      return true;
+    }
+
+    token_start = token_end;
+  }
+
+  return false;
+}
+
+bool ConsumeLogBudget(std::atomic<int>* budget) {
+  int value = budget->load();
+  while (value > 0) {
+    if (budget->compare_exchange_strong(value, value - 1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 RuntimeValue ReadRawValue(const void* address, TypeName type) {
@@ -1574,6 +1693,70 @@ bool InvokeResolvedGuestAddress(ThreadState* thread_state, uint32_t address,
 
 }  // namespace
 
+void LogArm64GuestStoreWatch(ThreadState* thread_state,
+                             uint32_t function_address,
+                             uint32_t source_offset, uint64_t address,
+                             hir::TypeName type, uint64_t value) {
+  if (cvars::arm64_guest_store_watch.empty()) {
+    return;
+  }
+
+  uint32_t guest_address = NormalizeGuestAddress(address);
+  if (!GuestStoreWatchMatches(guest_address, TypeSize(type),
+                              cvars::arm64_guest_store_watch)) {
+    return;
+  }
+  if (!ConsumeLogBudget(&g_guest_store_watch_log_budget)) {
+    return;
+  }
+
+  ppc::PPCContext* context = thread_state ? thread_state->context() : nullptr;
+  XELOGW(
+      "ARM64 guest store watch hit: fn {:08X} guest {:08X} store {:08X} "
+      "size {} type {} value {:016X} lr {:08X} ctr {:08X} r1 {:08X} r11 "
+      "{:08X}",
+      function_address, source_offset, guest_address, TypeSize(type),
+      static_cast<uint32_t>(type), value,
+      context ? static_cast<uint32_t>(context->lr) : 0,
+      context ? static_cast<uint32_t>(context->ctr) : 0,
+      context ? static_cast<uint32_t>(context->r[1]) : 0,
+      context ? static_cast<uint32_t>(context->r[11]) : 0);
+}
+
+void LogArm64GuestMemoryRangeWatch(ThreadState* thread_state,
+                                   uint32_t function_address,
+                                   uint32_t source_offset, uint64_t address,
+                                   uint64_t size, const char* operation,
+                                   uint64_t value) {
+  if (cvars::arm64_guest_store_watch.empty() || !size) {
+    return;
+  }
+
+  uint32_t guest_address = NormalizeGuestAddress(address);
+  size_t watch_size = size > std::numeric_limits<size_t>::max()
+                          ? std::numeric_limits<size_t>::max()
+                          : static_cast<size_t>(size);
+  if (!GuestStoreWatchMatches(guest_address, watch_size,
+                              cvars::arm64_guest_store_watch)) {
+    return;
+  }
+  if (!ConsumeLogBudget(&g_guest_store_watch_log_budget)) {
+    return;
+  }
+
+  ppc::PPCContext* context = thread_state ? thread_state->context() : nullptr;
+  XELOGW(
+      "ARM64 guest memory watch hit: fn {:08X} guest {:08X} range {:08X} "
+      "size {} op {} value {:016X} lr {:08X} ctr {:08X} r1 {:08X} r11 "
+      "{:08X}",
+      function_address, source_offset, guest_address, watch_size,
+      operation ? operation : "unknown", value,
+      context ? static_cast<uint32_t>(context->lr) : 0,
+      context ? static_cast<uint32_t>(context->ctr) : 0,
+      context ? static_cast<uint32_t>(context->r[1]) : 0,
+      context ? static_cast<uint32_t>(context->r[11]) : 0);
+}
+
 Arm64Function::Arm64Function(Module* module, uint32_t address)
     : GuestFunction(module, address) {}
 
@@ -1708,8 +1891,10 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
           type);
     };
     auto write_memory = [&](uint64_t address_value, const RuntimeValue& value) {
-      WriteRawValue(thread_state->memory()->TranslateVirtual(
-                        NormalizeGuestAddress(address_value)),
+      auto guest_address = NormalizeGuestAddress(address_value);
+      LogArm64GuestStoreWatch(thread_state, address(), instr.source_offset,
+                              guest_address, value.type, ReadInteger(value));
+      WriteRawValue(thread_state->memory()->TranslateVirtual(guest_address),
                     value);
     };
 
@@ -2037,6 +2222,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         auto address_value = ReadInteger(read(instr.src1));
         auto fill_value = static_cast<uint8_t>(ReadInteger(read(instr.src2)));
         auto length = static_cast<size_t>(ReadInteger(read(instr.src3)));
+        LogArm64GuestMemoryRangeWatch(thread_state, address(),
+                                      instr.source_offset, address_value,
+                                      length, "memset", fill_value);
         std::memset(thread_state->memory()->TranslateVirtual(
                         NormalizeGuestAddress(address_value)),
                     fill_value, length);
@@ -2045,6 +2233,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
       case hir::OPCODE_ATOMIC_EXCHANGE: {
         auto address_value = ReadInteger(read(instr.src1));
         auto new_value = read(instr.src2);
+        LogArm64GuestStoreWatch(thread_state, address(), instr.source_offset,
+                                address_value, new_value.type,
+                                ReadInteger(new_value));
         store_dest(AtomicExchangeRawValue(
             thread_state->memory()->TranslateVirtual(
                 NormalizeGuestAddress(address_value)),
@@ -2055,6 +2246,9 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
         auto address_value = ReadInteger(read(instr.src1));
         auto expected = read(instr.src2);
         auto new_value = CastValue(read(instr.src3), expected.type);
+        LogArm64GuestStoreWatch(thread_state, address(), instr.source_offset,
+                                address_value, new_value.type,
+                                ReadInteger(new_value));
         store_dest(MakeInteger(
             instr.dest_type,
             AtomicCompareExchangeRawValue(

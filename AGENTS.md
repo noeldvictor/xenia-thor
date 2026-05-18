@@ -124,6 +124,8 @@ Primary target:
   - `-Arm64MiniJitBlacklist "826A23C8"` to blacklist exact guest functions.
   - `-Arm64ForceInterpreterRanges "826A0000-826AFFFF"` to force a guest range
     through the interpreter.
+  - `-Arm64GuestStoreWatch "82785548"` to log ARM64 backend stores that touch
+    a suspect guest global or range.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.

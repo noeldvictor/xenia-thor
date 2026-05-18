@@ -25,6 +25,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyBooleanExtra(intent, launchArguments, "mount_cache");
             copyStringExtra(intent, launchArguments, "arm64_mini_jit_blacklist");
+            copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyStringExtra(
                     intent, launchArguments, "arm64_force_interpreter_guest_ranges");
             if (intent.hasExtra("discord")) {

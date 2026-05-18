@@ -136,6 +136,102 @@ void LogPpcDisasmWindow(const char* source_disasm, uint32_t guest_pc) {
   }
 }
 
+void LogPpcDisasmSearchLine(cpu::GuestFunction* function,
+                            std::string_view line,
+                            std::string_view needle) {
+  XELOGE("PPC search '{}': fn 0x{:08X}-0x{:08X}: {}", needle,
+         function->address(), function->end_address(), line);
+}
+
+void LogTranslatedPpcDisasmSearch(cpu::Processor* processor,
+                                  std::string_view needle,
+                                  size_t max_matches = 80) {
+  if (!processor || needle.empty()) {
+    return;
+  }
+
+  size_t match_count = 0;
+  for (auto module : processor->GetModules()) {
+    if (!module) {
+      continue;
+    }
+    module->ForEachFunction([&](cpu::Function* function) {
+      if (match_count >= max_matches || !function || !function->is_guest()) {
+        return;
+      }
+      auto guest_function = static_cast<cpu::GuestFunction*>(function);
+      if (!guest_function->debug_info() ||
+          !guest_function->debug_info()->source_disasm()) {
+        return;
+      }
+
+      std::string_view text(guest_function->debug_info()->source_disasm());
+      size_t start = 0;
+      while (start <= text.size() && match_count < max_matches) {
+        size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) {
+          end = text.size();
+        }
+        std::string_view line = text.substr(start, end - start);
+        if (line.find(needle) != std::string_view::npos) {
+          LogPpcDisasmSearchLine(guest_function, line, needle);
+          ++match_count;
+        }
+        if (end == text.size()) {
+          break;
+        }
+        start = end + 1;
+      }
+    });
+  }
+
+  if (!match_count) {
+    XELOGE("PPC search '{}': no translated disassembly lines matched", needle);
+  } else if (match_count >= max_matches) {
+    XELOGE("PPC search '{}': stopped after {} matches", needle, match_count);
+  }
+}
+
+void LogResolvedPpcDisasmWindow(cpu::Processor* processor, uint32_t address,
+                                const char* label) {
+  if (!processor || !address) {
+    return;
+  }
+
+  auto functions = processor->FindFunctionsWithAddress(address);
+  if (functions.empty()) {
+    auto function = processor->QueryFunction(address);
+    if (!function) {
+      function = processor->ResolveFunction(address);
+    }
+    if (function) {
+      functions.push_back(function);
+    }
+  }
+
+  if (functions.empty()) {
+    XELOGE("{} PPC disassembly: no translated function contains 0x{:08X}",
+           label, address);
+    return;
+  }
+
+  for (auto function : functions) {
+    if (!function || !function->is_guest()) {
+      continue;
+    }
+    auto guest_function = static_cast<cpu::GuestFunction*>(function);
+    XELOGE("{} function: 0x{:08X}-0x{:08X}", label,
+           guest_function->address(), guest_function->end_address());
+    if (guest_function->debug_info()) {
+      LogPpcDisasmWindow(guest_function->debug_info()->source_disasm(),
+                         address);
+    } else {
+      XELOGE("{} PPC disassembly: debug info unavailable for 0x{:08X}", label,
+             address);
+    }
+  }
+}
+
 bool TryLogGuestWord(Memory* memory, uint32_t address, const char* label,
                      uint32_t* out_value = nullptr) {
   if (!memory) {
@@ -204,6 +300,38 @@ void LogGuestStackWords(Memory* memory, uint64_t stack_pointer) {
     const uint32_t value =
         xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
     XELOGE("  [0x{:08X}] 0x{:08X}", address, value);
+  }
+}
+
+bool LooksLikeGuestCodeAddress(uint32_t value) {
+  return value >= 0x82000000 && value < 0x83000000;
+}
+
+void LogGuestStackCodeWindows(cpu::Processor* processor, Memory* memory,
+                              uint64_t stack_pointer) {
+  if (!processor || !memory) {
+    return;
+  }
+  const uint32_t stack_address = uint32_t(stack_pointer);
+  if (!stack_address) {
+    return;
+  }
+
+  for (uint32_t offset = 0; offset < 0x40; offset += 4) {
+    const uint32_t address = stack_address + offset;
+    const auto heap = memory->LookupHeap(address);
+    uint32_t protect = 0;
+    if (!heap || !heap->QueryProtect(address, &protect) ||
+        !(protect & kMemoryProtectRead)) {
+      continue;
+    }
+
+    const uint32_t value =
+        xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+    if (LooksLikeGuestCodeAddress(value)) {
+      std::string label = fmt::format("Stack return [0x{:08X}]", address);
+      LogResolvedPpcDisasmWindow(processor, value, label.c_str());
+    }
   }
 }
 
@@ -744,7 +872,11 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   LogBlueDragonThunkProbe(memory_.get(), guest_pc);
   XELOGE("Special registers: LR=0x{:016X} CTR=0x{:016X} CR=0x{:08X}",
          context->lr, context->ctr, uint32_t(context->cr()));
+  LogTranslatedPpcDisasmSearch(processor(), "0x5548(");
+  LogResolvedPpcDisasmWindow(processor(), uint32_t(context->lr), "LR");
+  LogResolvedPpcDisasmWindow(processor(), uint32_t(context->ctr), "CTR");
   LogGuestStackWords(memory_.get(), context->r[1]);
+  LogGuestStackCodeWindows(processor(), memory_.get(), context->r[1]);
   XELOGE("Registers:");
   for (int i = 0; i < 32; i++) {
     XELOGE(" r{:<3} = {:016X}", i, context->r[i]);

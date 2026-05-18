@@ -112,6 +112,7 @@ $jitFallbackFunctions = @{}
 $compiledFunctions = @{}
 $slowFunctions = @{}
 $guestCrashPcs = @{}
+$guestStoreWatchHits = @{}
 
 foreach ($path in $LogPath) {
     if (!(Test-Path $path)) {
@@ -149,6 +150,14 @@ foreach ($path in $LogPath) {
             $line -match "!\>\s+\S+\s+PC:\s+0x([0-9A-Fa-f]{8})") {
             Add-Count $guestCrashPcs $Matches[1].ToUpperInvariant()
         }
+
+        if ($line -match "ARM64 guest store watch hit: fn\s+([0-9A-Fa-f]{8})\s+guest\s+([0-9A-Fa-f]{8})\s+store\s+([0-9A-Fa-f]{8})") {
+            Add-Count $guestStoreWatchHits "$($Matches[1].ToUpperInvariant())@$($Matches[2].ToUpperInvariant())->$($Matches[3].ToUpperInvariant())"
+        }
+
+        if ($line -match "ARM64 guest memory watch hit: fn\s+([0-9A-Fa-f]{8})\s+guest\s+([0-9A-Fa-f]{8})\s+range\s+([0-9A-Fa-f]{8})\s+size\s+(\d+)\s+op\s+(\S+)") {
+            Add-Count $guestStoreWatchHits "$($Matches[1].ToUpperInvariant())@$($Matches[2].ToUpperInvariant())->$($Matches[3].ToUpperInvariant())/$($Matches[5])/$($Matches[4])"
+        }
     }
 }
 
@@ -171,6 +180,7 @@ Add-MarkdownCountTable $lines "Mini-JIT Fallback Functions" $jitFallbackFunction
 Add-MarkdownCountTable $lines "Compiled Mini-JIT Functions" $compiledFunctions $opcodeNames
 Add-MarkdownCountTable $lines "Slow Interpreter Functions" $slowFunctions $opcodeNames
 Add-MarkdownCountTable $lines "Guest Crash PCs" $guestCrashPcs $opcodeNames
+Add-MarkdownCountTable $lines "Guest Store Watch Hits" $guestStoreWatchHits $opcodeNames
 
 $report = $lines -join [Environment]::NewLine
 if ($OutPath) {
