@@ -1845,6 +1845,12 @@ bool Arm64Function::ExecuteProgram(ThreadState* thread_state,
   }
 
   std::vector<RuntimeValue> locals(program_->local_count);
+  for (size_t i = 0; i < locals.size(); ++i) {
+    auto local_type = i < program_->local_types.size()
+                          ? program_->local_types[i]
+                          : hir::INT64_TYPE;
+    locals[i] = MakeZero(local_type);
+  }
 
   uint32_t call_return_address = 0;
   uint32_t pc = program_->blocks.empty() ? 0 : program_->blocks[0].instruction_start;

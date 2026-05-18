@@ -130,10 +130,12 @@ std::unique_ptr<Arm64Function::Program> BuildInterpreterProgram(
 
   std::unordered_map<const hir::Value*, uint32_t> local_indices;
   for (auto local : builder->locals()) {
-    local_indices[local] = static_cast<uint32_t>(local_indices.size());
+    uint32_t local_index = static_cast<uint32_t>(local_indices.size());
+    local_indices[local] = local_index;
+    program->local_types.push_back(local->type);
     RememberValueType(program.get(), local);
   }
-  program->local_count = static_cast<uint32_t>(local_indices.size());
+  program->local_count = static_cast<uint32_t>(program->local_types.size());
 
   std::unordered_map<hir::Block*, uint32_t> block_indices;
   uint32_t block_index = 0;

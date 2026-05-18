@@ -172,8 +172,7 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-110845-*` and
-  `scratch\thor-debug\20260518-111309-*`.
+  `scratch\thor-debug\20260518-115022-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -188,6 +187,11 @@ Primary target:
   context/local/memory slots, casts, converts, float add/sub/mul/div,
   mul-add/mul-sub, neg/abs/sqrt, float compares, `IS_NAN`, MMIO load/store,
   and `ATOMIC_COMPARE_EXCHANGE`.
+- ARM64 mini-JIT vec128 bring-up now has a 16-byte aligned slot-layout table,
+  local type tracking, helper-backed vec128 local/context/memory load-store,
+  constant vector operands, vector shifts, unpack, extract, splat, permute,
+  swizzle, dot3/dot4, vector conversions, vector compare, vector add/sub,
+  vec128 select, vec128 unary operations, and vec128 mul-add/sub.
 - ARM64 mini-JIT research cvars currently include:
   - `arm64_enable_mini_jit`
   - `arm64_mini_jit_blacklist`
@@ -195,12 +199,12 @@ Primary target:
   - `arm64_mini_jit_max_stack_bytes`
   - `arm64_jit_code_cache_mode`
   - `arm64_jit_code_cache_mb`
-- Latest fallback table is now dominated by vector state:
-  `VEC128_TYPE` load/store/context, `OPCODE_LOAD_VECTOR_SHL`,
-  `OPCODE_LOAD_VECTOR_SHR`, and `OPCODE_UNPACK`.
-- Current blocker: the mini-JIT stack/local model only has 64-bit scalar slots.
-  It needs a real slot-layout table with 16-byte aligned vec128 slots before
-  vector-heavy Blue Dragon functions can be compiled safely.
+- Latest 90-second Blue Dragon capture has zero `ARM64 JIT fallback`,
+  unsupported opcode/type, Android crash, tombstone, or fatal-signal lines.
+- Current blocker: Blue Dragon still does not visibly reach title. The wall has
+  moved from first-order HIR mini-JIT coverage to post-pack-load progress:
+  guest CPU progress, render submission, Vulkan presentation, or Android OSD
+  masking.
 - The visible `AArch64 JIT pending` badge is static Java OSD text and should
   not be treated as the native failure message.
 

@@ -74,6 +74,7 @@ class Arm64Function : public GuestFunction {
     uint32_t max_value_ordinal = 0;
     uint32_t local_count = 0;
     std::vector<hir::TypeName> value_types;
+    std::vector<hir::TypeName> local_types;
     std::vector<Block> blocks;
     std::vector<Instruction> instructions;
   };

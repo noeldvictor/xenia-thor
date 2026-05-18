@@ -36,6 +36,7 @@
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/memory.h"
+#include "third_party/half/include/half.hpp"
 
 #include "xbyak_aarch64/xbyak_aarch64.h"
 
@@ -86,7 +87,6 @@ using Xbyak_aarch64::WReg;
 using Xbyak_aarch64::XReg;
 using Xbyak_aarch64::ptr;
 
-constexpr size_t kSlotSize = sizeof(uint64_t);
 constexpr size_t kMaxCodeSize = 2 * 1024 * 1024;
 
 std::atomic<int> g_jit_compile_log_budget{80};
@@ -185,6 +185,35 @@ bool IsIntegerType(hir::TypeName type) { return type <= hir::INT64_TYPE; }
 bool IsRawSlotType(hir::TypeName type) {
   return IsIntegerType(type) || type == hir::FLOAT32_TYPE ||
          type == hir::FLOAT64_TYPE;
+}
+
+bool IsMiniJitSlotType(hir::TypeName type) {
+  return IsRawSlotType(type) || type == hir::VEC128_TYPE;
+}
+
+uint32_t MiniJitSlotSize(hir::TypeName type) {
+  return type == hir::VEC128_TYPE ? 16 : 8;
+}
+
+uint32_t MiniJitSlotAlign(hir::TypeName type) {
+  return type == hir::VEC128_TYPE ? 16 : 8;
+}
+
+size_t EstimateMiniJitStackSize(const Program& program) {
+  uint32_t offset = 0;
+  auto append = [&](hir::TypeName type) {
+    offset = static_cast<uint32_t>(
+        xe::round_up(offset, MiniJitSlotAlign(type)));
+    offset += MiniJitSlotSize(type);
+  };
+  for (auto type : program.value_types) {
+    append(type);
+  }
+  for (uint32_t i = 0; i < program.local_count; ++i) {
+    append(i < program.local_types.size() ? program.local_types[i]
+                                          : hir::INT64_TYPE);
+  }
+  return xe::round_up(static_cast<size_t>(offset), size_t(16));
 }
 
 const char* HirTypeName(hir::TypeName type) {
@@ -312,6 +341,35 @@ uint64_t DoubleBits(double value) {
   return bits;
 }
 
+int32_t SignExtendBits(uint32_t value, uint32_t bit_count) {
+  uint32_t shift = 32 - bit_count;
+  return static_cast<int32_t>(value << shift) >> shift;
+}
+
+uint8_t GetVecU8(const vec128_t& value, uint32_t index) {
+  return value.u8[index ^ 0x3];
+}
+
+int8_t GetVecI8(const vec128_t& value, uint32_t index) {
+  return static_cast<int8_t>(GetVecU8(value, index));
+}
+
+uint16_t GetVecU16(const vec128_t& value, uint32_t index) {
+  return value.u16[index ^ 0x1];
+}
+
+int16_t GetVecI16(const vec128_t& value, uint32_t index) {
+  return static_cast<int16_t>(GetVecU16(value, index));
+}
+
+void SetVecU8(vec128_t* value, uint32_t index, uint8_t part) {
+  value->u8[index ^ 0x3] = part;
+}
+
+void SetVecU16(vec128_t* value, uint32_t index, uint16_t part) {
+  value->u16[index ^ 0x1] = part;
+}
+
 extern "C" uint64_t Arm64JitConvertRaw(uint64_t raw_value,
                                         uint32_t source_type_value,
                                         uint32_t target_type_value,
@@ -371,6 +429,25 @@ extern "C" uint64_t Arm64JitConvertRaw(uint64_t raw_value,
   }
 
   return MaskRawSlot(target_type, raw_value);
+}
+
+extern "C" uint64_t Arm64JitRoundRaw(uint64_t raw_value,
+                                      uint32_t type_value,
+                                      uint32_t round_mode_value) {
+  auto type = static_cast<hir::TypeName>(type_value);
+  auto round_mode = static_cast<hir::RoundMode>(round_mode_value);
+  switch (type) {
+    case hir::FLOAT32_TYPE:
+      return FloatBits(static_cast<float>(ApplyRoundMode(
+          round_mode,
+          static_cast<long double>(FloatFromBits(
+              static_cast<uint32_t>(raw_value))))));
+    case hir::FLOAT64_TYPE:
+      return DoubleBits(static_cast<double>(ApplyRoundMode(
+          round_mode, static_cast<long double>(DoubleFromBits(raw_value)))));
+    default:
+      return MaskRawSlot(type, raw_value);
+  }
 }
 
 extern "C" uint64_t Arm64JitCastRaw(uint64_t raw_value,
@@ -549,6 +626,42 @@ extern "C" uint64_t Arm64JitUnaryRaw(uint64_t raw_value,
       }
       if (type == hir::FLOAT64_TYPE) {
         return DoubleBits(std::sqrt(DoubleFromBits(raw_value)));
+      }
+      break;
+    case hir::OPCODE_RSQRT:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(1.0f / std::sqrt(FloatFromBits(
+                                     static_cast<uint32_t>(raw_value))));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(1.0 / std::sqrt(DoubleFromBits(raw_value)));
+      }
+      break;
+    case hir::OPCODE_RECIP:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(1.0f / FloatFromBits(
+                                    static_cast<uint32_t>(raw_value)));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(1.0 / DoubleFromBits(raw_value));
+      }
+      break;
+    case hir::OPCODE_POW2:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(std::exp2(FloatFromBits(
+            static_cast<uint32_t>(raw_value))));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(std::exp2(DoubleFromBits(raw_value)));
+      }
+      break;
+    case hir::OPCODE_LOG2:
+      if (type == hir::FLOAT32_TYPE) {
+        return FloatBits(std::log2(FloatFromBits(
+            static_cast<uint32_t>(raw_value))));
+      }
+      if (type == hir::FLOAT64_TYPE) {
+        return DoubleBits(std::log2(DoubleFromBits(raw_value)));
       }
       break;
     default:
@@ -818,6 +931,638 @@ void Arm64JitClearStackSlots(void* stack_slots, uint64_t byte_count) {
   std::memset(stack_slots, 0, static_cast<size_t>(byte_count));
 }
 
+void Arm64JitCopy16(void* dst, const void* src) {
+  std::memcpy(dst, src, sizeof(vec128_t));
+}
+
+void Arm64JitLoadVectorShift(uint64_t shift_value, uint32_t left,
+                             void* dst) {
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  uint32_t shift = static_cast<uint32_t>(shift_value) & 0xF;
+  for (uint32_t i = 0; i < 16; ++i) {
+    SetVecU8(output, i,
+             static_cast<uint8_t>(left ? (i + shift) : (i + 16 - shift)));
+  }
+}
+
+void Arm64JitUnpackVec128(void* dst, const void* src, uint32_t flags) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+
+  switch (flags & hir::PACK_TYPE_MODE) {
+    case hir::PACK_TYPE_D3DCOLOR: {
+      uint32_t packed = input.u32[3];
+      output->u32[0] = 0x3F800000u | ((packed >> 16) & 0xFFu);
+      output->u32[1] = 0x3F800000u | ((packed >> 8) & 0xFFu);
+      output->u32[2] = 0x3F800000u | (packed & 0xFFu);
+      output->u32[3] = 0x3F800000u | ((packed >> 24) & 0xFFu);
+      break;
+    }
+    case hir::PACK_TYPE_FLOAT16_2:
+      output->u32[0] = FloatBits(half_float::detail::half2float(
+          static_cast<uint16_t>(input.u32[3] >> 16)));
+      output->u32[1] = FloatBits(half_float::detail::half2float(
+          static_cast<uint16_t>(input.u32[3])));
+      output->u32[2] = 0;
+      output->u32[3] = 0x3F800000u;
+      break;
+    case hir::PACK_TYPE_FLOAT16_4:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->u32[i] = FloatBits(
+            half_float::detail::half2float(GetVecU16(input, 4 + i)));
+      }
+      break;
+    case hir::PACK_TYPE_SHORT_2: {
+      uint32_t packed = input.u32[3];
+      output->u32[0] =
+          0x40400000u + static_cast<int32_t>(static_cast<int16_t>(packed >> 16));
+      output->u32[1] =
+          0x40400000u + static_cast<int32_t>(static_cast<int16_t>(packed));
+      output->u32[2] = 0;
+      output->u32[3] = 0x3F800000u;
+      break;
+    }
+    case hir::PACK_TYPE_SHORT_4:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->u32[i] =
+            0x40400000u + static_cast<int32_t>(GetVecI16(input, 4 + i));
+      }
+      break;
+    case hir::PACK_TYPE_UINT_2101010: {
+      uint32_t packed = input.u32[3];
+      output->u32[0] =
+          0x40400000u + SignExtendBits((packed >> 0) & 0x3FFu, 10);
+      output->u32[1] =
+          0x40400000u + SignExtendBits((packed >> 10) & 0x3FFu, 10);
+      output->u32[2] =
+          0x40400000u + SignExtendBits((packed >> 20) & 0x3FFu, 10);
+      output->u32[3] = 0x3F800000u + ((packed >> 30) & 0x3u);
+      break;
+    }
+    case hir::PACK_TYPE_8_IN_16: {
+      uint32_t base = hir::IsPackToHi(flags) ? 0 : 8;
+      for (uint32_t i = 0; i < 8; ++i) {
+        SetVecU16(output, i, static_cast<uint16_t>(
+                                 static_cast<int16_t>(GetVecI8(input, base + i))));
+      }
+      break;
+    }
+    case hir::PACK_TYPE_16_IN_32: {
+      uint32_t base = hir::IsPackToHi(flags) ? 0 : 4;
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->i32[i] = static_cast<int32_t>(GetVecI16(input, base + i));
+      }
+      break;
+    }
+    default:
+      XELOGE("ARM64 JIT unsupported unpack flags {:04X}", flags);
+      break;
+  }
+}
+
+void Arm64JitVec128Binary(void* dst, const void* lhs_src,
+                          const void* rhs_src, uint32_t opcode_value) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  switch (opcode) {
+    case hir::OPCODE_ADD:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] + rhs.f32[i];
+      }
+      break;
+    case hir::OPCODE_SUB:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] - rhs.f32[i];
+      }
+      break;
+    case hir::OPCODE_MUL:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] * rhs.f32[i];
+      }
+      break;
+    case hir::OPCODE_DIV:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] / rhs.f32[i];
+      }
+      break;
+    case hir::OPCODE_AND:
+      output->low = lhs.low & rhs.low;
+      output->high = lhs.high & rhs.high;
+      break;
+    case hir::OPCODE_AND_NOT:
+      output->low = lhs.low & ~rhs.low;
+      output->high = lhs.high & ~rhs.high;
+      break;
+    case hir::OPCODE_OR:
+      output->low = lhs.low | rhs.low;
+      output->high = lhs.high | rhs.high;
+      break;
+    case hir::OPCODE_XOR:
+      output->low = lhs.low ^ rhs.low;
+      output->high = lhs.high ^ rhs.high;
+      break;
+    default:
+      break;
+  }
+}
+
+void Arm64JitVec128Ternary(void* dst, const void* lhs_src,
+                           const void* rhs_src, const void* third_src,
+                           uint32_t opcode_value) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  const auto& third = *reinterpret_cast<const vec128_t*>(third_src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  switch (opcode) {
+    case hir::OPCODE_MUL_ADD:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] * rhs.f32[i] + third.f32[i];
+      }
+      break;
+    case hir::OPCODE_MUL_SUB:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = lhs.f32[i] * rhs.f32[i] - third.f32[i];
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void Arm64JitVectorConvertVec128(void* dst, const void* src,
+                                 uint32_t arithmetic_flags,
+                                 uint32_t opcode_value) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+
+  switch (opcode) {
+    case hir::OPCODE_VECTOR_CONVERT_I2F:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] =
+            is_unsigned
+                ? static_cast<float>(input.u32[i])
+                : static_cast<float>(static_cast<int32_t>(input.u32[i]));
+      }
+      break;
+    case hir::OPCODE_VECTOR_CONVERT_F2I:
+      for (uint32_t i = 0; i < 4; ++i) {
+        double value = input.f32[i];
+        if (is_unsigned) {
+          if (std::isnan(value) || value <= 0.0) {
+            output->u32[i] = 0;
+          } else if (value >=
+                     static_cast<double>(
+                         std::numeric_limits<uint32_t>::max())) {
+            output->u32[i] = std::numeric_limits<uint32_t>::max();
+          } else {
+            output->u32[i] = static_cast<uint32_t>(value);
+          }
+        } else {
+          if (std::isnan(value)) {
+            output->i32[i] = 0;
+          } else if (value >=
+                     static_cast<double>(
+                         std::numeric_limits<int32_t>::max())) {
+            output->i32[i] = std::numeric_limits<int32_t>::max();
+          } else if (value <=
+                     static_cast<double>(
+                         std::numeric_limits<int32_t>::min())) {
+            output->i32[i] = std::numeric_limits<int32_t>::min();
+          } else {
+            output->i32[i] = static_cast<int32_t>(value);
+          }
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void Arm64JitRoundVec128(void* dst, const void* src,
+                         uint32_t round_mode_value) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = input;
+  auto round_mode = static_cast<hir::RoundMode>(round_mode_value);
+  for (uint32_t i = 0; i < 4; ++i) {
+    output->f32[i] = static_cast<float>(ApplyRoundMode(
+        round_mode, static_cast<long double>(input.f32[i])));
+  }
+}
+
+void Arm64JitVec128Unary(void* dst, const void* src,
+                         uint32_t opcode_value) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  switch (opcode) {
+    case hir::OPCODE_NOT:
+      output->low = ~input.low;
+      output->high = ~input.high;
+      break;
+    case hir::OPCODE_NEG:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = -input.f32[i];
+      }
+      break;
+    case hir::OPCODE_ABS:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = std::fabs(input.f32[i]);
+      }
+      break;
+    case hir::OPCODE_SQRT:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = std::sqrt(input.f32[i]);
+      }
+      break;
+    case hir::OPCODE_RSQRT:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = 1.0f / std::sqrt(input.f32[i]);
+      }
+      break;
+    case hir::OPCODE_RECIP:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = 1.0f / input.f32[i];
+      }
+      break;
+    case hir::OPCODE_POW2:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = std::exp2(input.f32[i]);
+      }
+      break;
+    case hir::OPCODE_LOG2:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] = std::log2(input.f32[i]);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+bool Arm64JitCompareSigned(int64_t lhs, int64_t rhs, hir::Opcode opcode) {
+  switch (opcode) {
+    case hir::OPCODE_VECTOR_COMPARE_EQ:
+      return lhs == rhs;
+    case hir::OPCODE_VECTOR_COMPARE_SGT:
+      return lhs > rhs;
+    case hir::OPCODE_VECTOR_COMPARE_SGE:
+      return lhs >= rhs;
+    default:
+      return false;
+  }
+}
+
+bool Arm64JitCompareUnsigned(uint64_t lhs, uint64_t rhs,
+                             hir::Opcode opcode) {
+  switch (opcode) {
+    case hir::OPCODE_VECTOR_COMPARE_EQ:
+      return lhs == rhs;
+    case hir::OPCODE_VECTOR_COMPARE_UGT:
+      return lhs > rhs;
+    case hir::OPCODE_VECTOR_COMPARE_UGE:
+      return lhs >= rhs;
+    default:
+      return false;
+  }
+}
+
+bool Arm64JitCompareFloat(float lhs, float rhs, hir::Opcode opcode) {
+  switch (opcode) {
+    case hir::OPCODE_VECTOR_COMPARE_EQ:
+      return lhs == rhs;
+    case hir::OPCODE_VECTOR_COMPARE_SGT:
+    case hir::OPCODE_VECTOR_COMPARE_UGT:
+      return lhs > rhs;
+    case hir::OPCODE_VECTOR_COMPARE_SGE:
+    case hir::OPCODE_VECTOR_COMPARE_UGE:
+      return lhs >= rhs;
+    default:
+      return false;
+  }
+}
+
+void Arm64JitVectorCompareVec128(void* dst, const void* lhs_src,
+                                 const void* rhs_src,
+                                 uint32_t part_type_value,
+                                 uint32_t opcode_value) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto part_type = static_cast<hir::TypeName>(part_type_value);
+  auto opcode = static_cast<hir::Opcode>(opcode_value);
+
+  switch (part_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        bool result =
+            opcode == hir::OPCODE_VECTOR_COMPARE_EQ
+                ? GetVecU8(lhs, i) == GetVecU8(rhs, i)
+                : opcode == hir::OPCODE_VECTOR_COMPARE_UGT ||
+                          opcode == hir::OPCODE_VECTOR_COMPARE_UGE
+                      ? Arm64JitCompareUnsigned(GetVecU8(lhs, i),
+                                                GetVecU8(rhs, i), opcode)
+                      : Arm64JitCompareSigned(GetVecI8(lhs, i),
+                                              GetVecI8(rhs, i), opcode);
+        SetVecU8(output, i, result ? 0xFF : 0x00);
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        bool result =
+            opcode == hir::OPCODE_VECTOR_COMPARE_EQ
+                ? GetVecU16(lhs, i) == GetVecU16(rhs, i)
+                : opcode == hir::OPCODE_VECTOR_COMPARE_UGT ||
+                          opcode == hir::OPCODE_VECTOR_COMPARE_UGE
+                      ? Arm64JitCompareUnsigned(GetVecU16(lhs, i),
+                                                GetVecU16(rhs, i), opcode)
+                      : Arm64JitCompareSigned(GetVecI16(lhs, i),
+                                              GetVecI16(rhs, i), opcode);
+        SetVecU16(output, i, result ? 0xFFFF : 0x0000);
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        bool result =
+            opcode == hir::OPCODE_VECTOR_COMPARE_EQ
+                ? lhs.u32[i] == rhs.u32[i]
+                : opcode == hir::OPCODE_VECTOR_COMPARE_UGT ||
+                          opcode == hir::OPCODE_VECTOR_COMPARE_UGE
+                      ? Arm64JitCompareUnsigned(lhs.u32[i], rhs.u32[i],
+                                                opcode)
+                      : Arm64JitCompareSigned(
+                            static_cast<int32_t>(lhs.u32[i]),
+                            static_cast<int32_t>(rhs.u32[i]), opcode);
+        output->u32[i] = result ? 0xFFFFFFFFu : 0;
+      }
+      break;
+    case hir::FLOAT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->u32[i] =
+            Arm64JitCompareFloat(lhs.f32[i], rhs.f32[i], opcode)
+                ? 0xFFFFFFFFu
+                : 0;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void Arm64JitVectorAddSubVec128(void* dst, const void* lhs_src,
+                                const void* rhs_src,
+                                uint32_t part_type_value,
+                                uint32_t arithmetic_flags, uint32_t subtract) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  auto part_type = static_cast<hir::TypeName>(part_type_value);
+  bool is_unsigned = (arithmetic_flags & hir::ARITHMETIC_UNSIGNED) != 0;
+  bool saturate = (arithmetic_flags & hir::ARITHMETIC_SATURATE) != 0;
+
+  switch (part_type) {
+    case hir::FLOAT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->f32[i] =
+            subtract ? lhs.f32[i] - rhs.f32[i] : lhs.f32[i] + rhs.f32[i];
+      }
+      break;
+    case hir::FLOAT64_TYPE:
+      for (uint32_t i = 0; i < 2; ++i) {
+        output->f64[i] =
+            subtract ? lhs.f64[i] - rhs.f64[i] : lhs.f64[i] + rhs.f64[i];
+      }
+      break;
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (saturate) {
+          SetVecU8(
+              output, i,
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(GetVecU8(lhs, i),
+                                            GetVecU8(rhs, i))
+                              : xe::sat_add(GetVecU8(lhs, i),
+                                            GetVecU8(rhs, i)))
+                  : static_cast<uint8_t>(
+                        subtract ? xe::sat_sub(GetVecI8(lhs, i),
+                                               GetVecI8(rhs, i))
+                                 : xe::sat_add(GetVecI8(lhs, i),
+                                               GetVecI8(rhs, i))));
+        } else {
+          SetVecU8(output, i,
+                   subtract ? static_cast<uint8_t>(GetVecU8(lhs, i) -
+                                                   GetVecU8(rhs, i))
+                            : static_cast<uint8_t>(GetVecU8(lhs, i) +
+                                                   GetVecU8(rhs, i)));
+        }
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        if (saturate) {
+          SetVecU16(
+              output, i,
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(GetVecU16(lhs, i),
+                                            GetVecU16(rhs, i))
+                              : xe::sat_add(GetVecU16(lhs, i),
+                                            GetVecU16(rhs, i)))
+                  : static_cast<uint16_t>(
+                        subtract ? xe::sat_sub(GetVecI16(lhs, i),
+                                               GetVecI16(rhs, i))
+                                 : xe::sat_add(GetVecI16(lhs, i),
+                                               GetVecI16(rhs, i))));
+        } else {
+          SetVecU16(output, i,
+                    subtract ? static_cast<uint16_t>(GetVecU16(lhs, i) -
+                                                     GetVecU16(rhs, i))
+                             : static_cast<uint16_t>(GetVecU16(lhs, i) +
+                                                     GetVecU16(rhs, i)));
+        }
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (saturate) {
+          output->u32[i] =
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(lhs.u32[i], rhs.u32[i])
+                              : xe::sat_add(lhs.u32[i], rhs.u32[i]))
+                  : static_cast<uint32_t>(
+                        subtract ? xe::sat_sub(lhs.i32[i], rhs.i32[i])
+                                 : xe::sat_add(lhs.i32[i], rhs.i32[i]));
+        } else {
+          output->u32[i] =
+              subtract ? lhs.u32[i] - rhs.u32[i] : lhs.u32[i] + rhs.u32[i];
+        }
+      }
+      break;
+    case hir::INT64_TYPE:
+      for (uint32_t i = 0; i < 2; ++i) {
+        if (saturate) {
+          output->u64[i] =
+              is_unsigned
+                  ? (subtract ? xe::sat_sub(lhs.u64[i], rhs.u64[i])
+                              : xe::sat_add(lhs.u64[i], rhs.u64[i]))
+                  : static_cast<uint64_t>(
+                        subtract ? xe::sat_sub(lhs.i64[i], rhs.i64[i])
+                                 : xe::sat_add(lhs.i64[i], rhs.i64[i]));
+        } else {
+          output->u64[i] =
+              subtract ? lhs.u64[i] - rhs.u64[i] : lhs.u64[i] + rhs.u64[i];
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void Arm64JitSplatVec128(void* dst, uint64_t source_raw,
+                         uint32_t source_type_value) {
+  auto source_type = static_cast<hir::TypeName>(source_type_value);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+
+  switch (source_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        SetVecU8(output, i, static_cast<uint8_t>(source_raw));
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        SetVecU16(output, i, static_cast<uint16_t>(source_raw));
+      }
+      break;
+    case hir::INT32_TYPE:
+    case hir::FLOAT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        output->u32[i] = static_cast<uint32_t>(source_raw);
+      }
+      break;
+    case hir::INT64_TYPE:
+    case hir::FLOAT64_TYPE:
+      output->u64[0] = source_raw;
+      output->u64[1] = source_raw;
+      break;
+    default:
+      break;
+  }
+}
+
+uint64_t Arm64JitExtractVec128(const void* src, uint64_t index_value,
+                               uint32_t dest_type_value) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto dest_type = static_cast<hir::TypeName>(dest_type_value);
+  uint32_t index = static_cast<uint32_t>(index_value);
+  switch (dest_type) {
+    case hir::INT8_TYPE:
+      return GetVecU8(input, index & 0xF);
+    case hir::INT16_TYPE:
+      return GetVecU16(input, index & 0x7);
+    case hir::INT32_TYPE:
+      return input.u32[index & 0x3];
+    case hir::FLOAT32_TYPE:
+      return input.u32[index & 0x3];
+    default:
+      return 0;
+  }
+}
+
+void Arm64JitSwizzleVec128(void* dst, const void* src,
+                           uint32_t swizzle_mask) {
+  const auto& input = *reinterpret_cast<const vec128_t*>(src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+  for (uint32_t i = 0; i < 4; ++i) {
+    output->u32[i] = input.u32[(swizzle_mask >> (i * 2)) & 0x3];
+  }
+}
+
+void Arm64JitPermuteVec128(void* dst, uint32_t part_type_value,
+                           uint32_t control_type_value, uint64_t control_raw,
+                           const void* control_vec_src, const void* a_src,
+                           const void* b_src) {
+  auto part_type = static_cast<hir::TypeName>(part_type_value);
+  auto control_type = static_cast<hir::TypeName>(control_type_value);
+  const auto& a = *reinterpret_cast<const vec128_t*>(a_src);
+  const auto& b = *reinterpret_cast<const vec128_t*>(b_src);
+  auto* output = reinterpret_cast<vec128_t*>(dst);
+  *output = {};
+
+  if (control_type != hir::VEC128_TYPE) {
+    uint32_t mask = static_cast<uint32_t>(control_raw);
+    for (uint32_t i = 0; i < 4; ++i) {
+      uint32_t index = (mask >> (i * 8)) & 0x3;
+      bool select_b = ((mask >> (i * 8 + 2)) & 0x1) != 0;
+      output->u32[i] = (select_b ? b : a).u32[index];
+    }
+    return;
+  }
+
+  const auto& c = *reinterpret_cast<const vec128_t*>(control_vec_src);
+  switch (part_type) {
+    case hir::INT8_TYPE:
+      for (uint32_t i = 0; i < 16; ++i) {
+        uint8_t index = GetVecU8(c, i) & 0x1F;
+        SetVecU8(output, i, GetVecU8(index > 15 ? b : a, index & 0xF));
+      }
+      break;
+    case hir::INT16_TYPE:
+      for (uint32_t i = 0; i < 8; ++i) {
+        uint16_t index = GetVecU16(c, i) & 0xF;
+        SetVecU16(output, i, GetVecU16(index > 7 ? b : a, index & 0x7));
+      }
+      break;
+    case hir::INT32_TYPE:
+      for (uint32_t i = 0; i < 4; ++i) {
+        uint32_t index = c.u32[i] & 0x7;
+        output->u32[i] = (index > 3 ? b : a).u32[index & 0x3];
+      }
+      break;
+    default:
+      XELOGE("ARM64 JIT unsupported permute part type {}",
+             static_cast<uint32_t>(part_type));
+      break;
+  }
+}
+
+uint64_t Arm64JitDotProduct3Vec128(const void* lhs_src, const void* rhs_src) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  float result = (lhs.f32[0] * rhs.f32[0] + lhs.f32[1] * rhs.f32[1]) +
+                 (lhs.f32[2] * rhs.f32[2] + 0.0f);
+  return FloatBits(result);
+}
+
+uint64_t Arm64JitDotProduct4Vec128(const void* lhs_src, const void* rhs_src) {
+  const auto& lhs = *reinterpret_cast<const vec128_t*>(lhs_src);
+  const auto& rhs = *reinterpret_cast<const vec128_t*>(rhs_src);
+  float result = 0.0f;
+  for (uint32_t i = 0; i < 4; ++i) {
+    result += lhs.f32[i] * rhs.f32[i];
+  }
+  return FloatBits(result);
+}
+
 void Arm64JitMemset(ThreadState* thread_state, uint64_t address,
                    uint64_t fill_value, uint64_t length) {
   LogArm64GuestMemoryRangeWatch(thread_state, 0, 0, address, length,
@@ -996,8 +1741,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
             std::string* reject_reason) {
     function_ = function;
     program_ = &program;
-    slot_count_ = program.value_types.size() + program.local_count;
-    stack_size_ = xe::round_up(slot_count_ * kSlotSize, size_t(16));
+    if (!BuildStackLayout(reject_reason)) {
+      return false;
+    }
     const size_t max_stack_bytes =
         static_cast<size_t>(cvars::arm64_mini_jit_max_stack_bytes);
     if (max_stack_bytes && stack_size_ > max_stack_bytes) {
@@ -1038,6 +1784,12 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
  private:
+  struct StackSlot {
+    uint32_t offset = 0;
+    uint32_t size = 0;
+    hir::TypeName type = hir::INT64_TYPE;
+  };
+
   bool Fail(std::string* reject_reason, const std::string& reason) {
     if (reject_reason) {
       *reject_reason = reason;
@@ -1045,13 +1797,52 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return false;
   }
 
+  bool BuildStackLayout(std::string* reject_reason) {
+    value_slots_.clear();
+    local_slots_.clear();
+    value_slots_.reserve(program_->value_types.size());
+    local_slots_.reserve(program_->local_count);
+
+    uint32_t offset = 0;
+    auto append_slot = [&](hir::TypeName type,
+                           std::vector<StackSlot>* slots) -> bool {
+      if (!IsMiniJitSlotType(type)) {
+        return false;
+      }
+      uint32_t align = MiniJitSlotAlign(type);
+      offset = static_cast<uint32_t>(xe::round_up(offset, align));
+      uint32_t size = MiniJitSlotSize(type);
+      slots->push_back({offset, size, type});
+      offset += size;
+      return true;
+    };
+
+    for (auto type : program_->value_types) {
+      if (!append_slot(type, &value_slots_)) {
+        return Fail(reject_reason, "program has unsupported value slot type " +
+                                       std::string(HirTypeName(type)));
+      }
+    }
+
+    for (uint32_t i = 0; i < program_->local_count; ++i) {
+      auto type = i < program_->local_types.size() ? program_->local_types[i]
+                                                   : hir::INT64_TYPE;
+      if (!append_slot(type, &local_slots_)) {
+        return Fail(reject_reason, "program has unsupported local slot type " +
+                                       std::string(HirTypeName(type)));
+      }
+    }
+
+    stack_size_ = xe::round_up(static_cast<size_t>(offset), size_t(16));
+    return true;
+  }
+
   uint32_t SlotOffsetForValue(uint32_t ordinal) const {
-    return ordinal * static_cast<uint32_t>(kSlotSize);
+    return value_slots_[ordinal].offset;
   }
 
   uint32_t SlotOffsetForLocal(uint32_t local_index) const {
-    return static_cast<uint32_t>((program_->value_types.size() + local_index) *
-                                 kSlotSize);
+    return local_slots_[local_index].offset;
   }
 
   WReg AsW(const XReg& reg) const { return WReg(reg.getIdx()); }
@@ -1200,6 +1991,65 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     str(src, ptr(x16));
   }
 
+  void EmitStackSlotAddress(const XReg& dst, uint32_t offset) {
+    if (!offset) {
+      if (dst.getIdx() != x21.getIdx()) {
+        mov(dst, x21);
+      }
+      return;
+    }
+    if (offset <= 4095) {
+      add(dst, x21, offset);
+      return;
+    }
+    mov(dst, static_cast<uint64_t>(offset));
+    add(dst, x21, dst);
+  }
+
+  bool EmitLoadVec128OperandAddress(const Operand& operand, const XReg& dst,
+                                    std::string* reject_reason) {
+    if (operand.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "vec128 operand has non-vector type");
+    }
+    if (operand.kind == Operand::Kind::kValue &&
+        operand.value_ordinal < value_slots_.size()) {
+      EmitStackSlotAddress(dst, SlotOffsetForValue(operand.value_ordinal));
+      return true;
+    }
+    if (operand.kind == Operand::Kind::kConstant) {
+      mov(dst, reinterpret_cast<uint64_t>(&operand.constant.v128));
+      return true;
+    }
+    return Fail(reject_reason, "unsupported vec128 operand kind");
+  }
+
+  bool EmitCopyVec128ToDest(const Instruction& instr, const XReg& src_address,
+                            std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "vec128 copy has non-vector destination");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (src_address.getIdx() != x1.getIdx()) {
+      mov(x1, src_address);
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitCopy16));
+    return true;
+  }
+
+  void EmitCopyVec128Addresses(const XReg& dst_address,
+                               const XReg& src_address) {
+    if (dst_address.getIdx() != x0.getIdx()) {
+      mov(x0, dst_address);
+    }
+    if (src_address.getIdx() != x1.getIdx()) {
+      mov(x1, src_address);
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitCopy16));
+  }
+
   void EmitGuestStoreWatch(const Instruction& instr, hir::TypeName value_type) {
     if (cvars::arm64_guest_store_watch.empty()) {
       return;
@@ -1329,6 +2179,11 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         instr.src1.offset >= program_->local_count) {
       return Fail(reject_reason, "local load out of range");
     }
+    if (instr.dest_type == hir::VEC128_TYPE) {
+      EmitStackSlotAddress(x1, SlotOffsetForLocal(static_cast<uint32_t>(
+                                   instr.src1.offset)));
+      return EmitCopyVec128ToDest(instr, x1, reject_reason);
+    }
     if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_local")) {
       return false;
     }
@@ -1341,6 +2196,15 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     if (instr.src1.kind != Operand::Kind::kOffset ||
         instr.src1.offset >= program_->local_count) {
       return Fail(reject_reason, "local store out of range");
+    }
+    if (instr.src2.type == hir::VEC128_TYPE) {
+      if (!EmitLoadVec128OperandAddress(instr.src2, x1, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForLocal(static_cast<uint32_t>(
+                                   instr.src1.offset)));
+      EmitCopyVec128Addresses(x0, x1);
+      return true;
     }
     if (!CheckRawSlotType(instr.src2.type, reject_reason, "store_local")) {
       return false;
@@ -1358,6 +2222,10 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   bool EmitLoadContext(const Instruction& instr, std::string* reject_reason) {
     if (!CheckDest(instr, reject_reason)) {
       return false;
+    }
+    if (instr.dest_type == hir::VEC128_TYPE) {
+      EmitAddOffset(x1, x19, instr.src1.offset);
+      return EmitCopyVec128ToDest(instr, x1, reject_reason);
     }
     if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_context")) {
       return false;
@@ -1385,6 +2253,14 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitStoreContext(const Instruction& instr, std::string* reject_reason) {
+    if (instr.src2.type == hir::VEC128_TYPE) {
+      if (!EmitLoadVec128OperandAddress(instr.src2, x1, reject_reason)) {
+        return false;
+      }
+      EmitAddOffset(x0, x19, instr.src1.offset);
+      EmitCopyVec128Addresses(x0, x1);
+      return true;
+    }
     if (!CheckRawSlotType(instr.src2.type, reject_reason, "store_context")) {
       return false;
     }
@@ -1448,6 +2324,20 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     if (!CheckDest(instr, reject_reason)) {
       return false;
     }
+    if (instr.dest_type == hir::VEC128_TYPE) {
+      if (!EmitLoadOperand(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      if (with_offset) {
+        if (!EmitLoadOperand(instr.src2, x2, reject_reason)) {
+          return false;
+        }
+        EmitSignExtend(x2, instr.src2.type);
+        add(x1, x1, x2);
+      }
+      EmitComputeMemoryAddress(x1, x1);
+      return EmitCopyVec128ToDest(instr, x1, reject_reason);
+    }
     if (!CheckRawSlotType(instr.dest_type, reject_reason, "load_memory")) {
       return false;
     }
@@ -1509,6 +2399,26 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitStoreMemory(const Instruction& instr, bool with_offset,
                        std::string* reject_reason) {
+    auto value_type = with_offset ? instr.src3.type : instr.src2.type;
+    if (value_type == hir::VEC128_TYPE) {
+      if (!EmitLoadOperand(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      if (with_offset) {
+        if (!EmitLoadOperand(instr.src2, x2, reject_reason)) {
+          return false;
+        }
+        EmitSignExtend(x2, instr.src2.type);
+        add(x1, x1, x2);
+      }
+      EmitComputeMemoryAddress(x0, x1);
+      if (!EmitLoadVec128OperandAddress(with_offset ? instr.src3 : instr.src2,
+                                        x1, reject_reason)) {
+        return false;
+      }
+      EmitCopyVec128Addresses(x0, x1);
+      return true;
+    }
     if (!CheckRawSlotType(with_offset ? instr.src3.type : instr.src2.type,
                           reject_reason, "store_memory")) {
       return false;
@@ -1533,7 +2443,6 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       mov(w3, static_cast<uint64_t>(instr.src2.type));
     }
 
-    auto value_type = with_offset ? instr.src3.type : instr.src2.type;
     Xbyak_aarch64::Label helper_path;
     Xbyak_aarch64::Label done;
     EmitBranchIfKnownMmio(x1, helper_path);
@@ -1590,6 +2499,13 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitUnaryAssign(const Instruction& instr, bool sign_extend,
                        std::string* reject_reason) {
+    if (!sign_extend && instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      return EmitCopyVec128ToDest(instr, x1, reject_reason);
+    }
     const bool is_raw_copy_opcode =
         instr.opcode == hir::OPCODE_ASSIGN ||
         instr.opcode == hir::OPCODE_CAST ||
@@ -1643,6 +2559,73 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     EmitCall(reinterpret_cast<void*>(&Arm64JitConvertRaw));
     mov(x8, x0);
     return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitRound(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(instr.flags));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitRoundVec128));
+      return true;
+    }
+    if (!CheckRawSlotType(instr.dest_type, reject_reason, "round") ||
+        !CheckRawSlotType(instr.src1.type, reject_reason, "round")) {
+      return false;
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.dest_type));
+    mov(w2, static_cast<uint64_t>(instr.flags));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitRoundRaw));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitVectorConvert(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "vector_convert has non-vector slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+      return false;
+    }
+    mov(w2, static_cast<uint64_t>(instr.flags));
+    mov(w3, static_cast<uint64_t>(instr.opcode));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitVectorConvertVec128));
+    return true;
+  }
+
+  bool EmitVectorCompare(const Instruction& instr,
+                         std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE ||
+        instr.src2.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "vector_compare has non-vector slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason) ||
+        !EmitLoadVec128OperandAddress(instr.src2, x2, reject_reason)) {
+      return false;
+    }
+    mov(w3, static_cast<uint64_t>(instr.flags));
+    mov(w4, static_cast<uint64_t>(instr.opcode));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitVectorCompareVec128));
+    return true;
   }
 
   bool EmitCompare(const Instruction& instr, Cond cond, bool sign_extend,
@@ -1699,6 +2682,22 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitBinaryArithmetic(const Instruction& instr, hir::Opcode opcode,
                             std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE &&
+        instr.src2.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason) ||
+          !EmitLoadVec128OperandAddress(instr.src2, x2, reject_reason)) {
+        return false;
+      }
+      mov(w3, static_cast<uint64_t>(opcode));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Binary));
+      return true;
+    }
+
     if ((instr.dest_type == hir::FLOAT32_TYPE ||
          instr.dest_type == hir::FLOAT64_TYPE) &&
         instr.src1.type == instr.dest_type &&
@@ -1772,6 +2771,28 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
+  bool EmitVectorAddSub(const Instruction& instr, bool subtract,
+                        std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE ||
+        instr.src2.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "vector_add/sub has non-vector slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason) ||
+        !EmitLoadVec128OperandAddress(instr.src2, x2, reject_reason)) {
+      return false;
+    }
+    mov(w3, static_cast<uint64_t>(instr.flags & 0xFF));
+    mov(w4, static_cast<uint64_t>(instr.flags >> 8));
+    mov(w5, subtract ? uint64_t(1) : uint64_t(0));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitVectorAddSubVec128));
+    return true;
+  }
+
   bool EmitAddCarry(const Instruction& instr, std::string* reject_reason) {
     if (!CheckIntegerType(instr.dest_type, reject_reason, "add_carry")) {
       return false;
@@ -1822,6 +2843,24 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitMulAddSub(const Instruction& instr, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE &&
+        instr.src2.type == hir::VEC128_TYPE &&
+        instr.src3.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason) ||
+          !EmitLoadVec128OperandAddress(instr.src2, x2, reject_reason) ||
+          !EmitLoadVec128OperandAddress(instr.src3, x3, reject_reason)) {
+        return false;
+      }
+      mov(w4, static_cast<uint64_t>(instr.opcode));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Ternary));
+      return true;
+    }
+
     if ((instr.dest_type != hir::FLOAT32_TYPE &&
          instr.dest_type != hir::FLOAT64_TYPE) ||
         instr.src1.type != instr.dest_type ||
@@ -1861,6 +2900,20 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
 
   bool EmitNotNeg(const Instruction& instr, bool negate,
                   std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(negate ? hir::OPCODE_NEG
+                                           : hir::OPCODE_NOT));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Unary));
+      return true;
+    }
     if (negate && (instr.dest_type == hir::FLOAT32_TYPE ||
                    instr.dest_type == hir::FLOAT64_TYPE) &&
         instr.src1.type == instr.dest_type) {
@@ -1888,6 +2941,19 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitAbs(const Instruction& instr, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(hir::OPCODE_ABS));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Unary));
+      return true;
+    }
     if (!CheckRawSlotType(instr.dest_type, reject_reason, "abs") ||
         !CheckRawSlotType(instr.src1.type, reject_reason, "abs")) {
       return false;
@@ -1903,6 +2969,19 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitSqrt(const Instruction& instr, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(hir::OPCODE_SQRT));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Unary));
+      return true;
+    }
     if ((instr.dest_type != hir::FLOAT32_TYPE &&
          instr.dest_type != hir::FLOAT64_TYPE) ||
         instr.src1.type != instr.dest_type) {
@@ -1920,7 +2999,198 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
     return EmitStoreValue(instr, x8, reject_reason);
   }
 
+  bool EmitFloatOrVecUnary(const Instruction& instr, hir::Opcode opcode,
+                           const char* name, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      mov(w2, static_cast<uint64_t>(opcode));
+      EmitCall(reinterpret_cast<void*>(&Arm64JitVec128Unary));
+      return true;
+    }
+    if ((instr.dest_type != hir::FLOAT32_TYPE &&
+         instr.dest_type != hir::FLOAT64_TYPE) ||
+        instr.src1.type != instr.dest_type) {
+      return Fail(reject_reason, std::string(name) +
+                                     " has unsupported slot type " +
+                                     HirTypeName(instr.dest_type));
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, static_cast<uint64_t>(instr.dest_type));
+    mov(w2, static_cast<uint64_t>(opcode));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitUnaryRaw));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitLoadVectorShift(const Instruction& instr, bool left,
+                           std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "load_vector_shift has non-vector dest");
+    }
+    if (!EmitLoadOperand(instr.src1, x0, reject_reason)) {
+      return false;
+    }
+    mov(w1, left ? uint64_t(1) : uint64_t(0));
+    EmitStackSlotAddress(x2, SlotOffsetForValue(instr.dest_ordinal));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitLoadVectorShift));
+    return true;
+  }
+
+  bool EmitUnpack(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "unpack has non-vector slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+      return false;
+    }
+    mov(w2, static_cast<uint64_t>(instr.flags));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitUnpackVec128));
+    return true;
+  }
+
+  bool EmitSplat(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        !IsRawSlotType(instr.src1.type)) {
+      return Fail(reject_reason, "splat has unsupported slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadOperand(instr.src1, x1, reject_reason)) {
+      return false;
+    }
+    mov(w2, static_cast<uint64_t>(instr.src1.type));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitSplatVec128));
+    return true;
+  }
+
+  bool EmitExtract(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.src1.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "extract has non-vector source");
+    }
+    if (!EmitLoadVec128OperandAddress(instr.src1, x0, reject_reason) ||
+        !EmitLoadOperand(instr.src2, x1, reject_reason)) {
+      return false;
+    }
+    mov(w2, static_cast<uint64_t>(instr.dest_type));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitExtractVec128));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitSwizzle(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "swizzle has non-vector slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+      return false;
+    }
+    mov(w2, static_cast<uint64_t>(instr.src2.offset));
+    EmitCall(reinterpret_cast<void*>(&Arm64JitSwizzleVec128));
+    return true;
+  }
+
+  bool EmitPermute(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::VEC128_TYPE ||
+        instr.src2.type != hir::VEC128_TYPE ||
+        instr.src3.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "permute has unsupported slot type");
+    }
+    EmitStackSlotAddress(x0, SlotOffsetForValue(instr.dest_ordinal));
+    mov(w1, static_cast<uint64_t>(instr.flags));
+    mov(w2, static_cast<uint64_t>(instr.src1.type));
+    if (instr.src1.type == hir::VEC128_TYPE) {
+      mov(x3, uint64_t(0));
+      if (!EmitLoadVec128OperandAddress(instr.src1, x4, reject_reason)) {
+        return false;
+      }
+    } else {
+      if (!EmitLoadOperand(instr.src1, x3, reject_reason)) {
+        return false;
+      }
+      mov(x4, uint64_t(0));
+    }
+    if (!EmitLoadVec128OperandAddress(instr.src2, x5, reject_reason) ||
+        !EmitLoadVec128OperandAddress(instr.src3, x6, reject_reason)) {
+      return false;
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitPermuteVec128));
+    return true;
+  }
+
+  bool EmitDotProduct3(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::FLOAT32_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE ||
+        instr.src2.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "dot_product_3 has unsupported slot type");
+    }
+    if (!EmitLoadVec128OperandAddress(instr.src1, x0, reject_reason) ||
+        !EmitLoadVec128OperandAddress(instr.src2, x1, reject_reason)) {
+      return false;
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitDotProduct3Vec128));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
+  bool EmitDotProduct4(const Instruction& instr, std::string* reject_reason) {
+    if (!CheckDest(instr, reject_reason)) {
+      return false;
+    }
+    if (instr.dest_type != hir::FLOAT32_TYPE ||
+        instr.src1.type != hir::VEC128_TYPE ||
+        instr.src2.type != hir::VEC128_TYPE) {
+      return Fail(reject_reason, "dot_product_4 has unsupported slot type");
+    }
+    if (!EmitLoadVec128OperandAddress(instr.src1, x0, reject_reason) ||
+        !EmitLoadVec128OperandAddress(instr.src2, x1, reject_reason)) {
+      return false;
+    }
+    EmitCall(reinterpret_cast<void*>(&Arm64JitDotProduct4Vec128));
+    mov(x8, x0);
+    return EmitStoreValue(instr, x8, reject_reason);
+  }
+
   bool EmitByteSwap(const Instruction& instr, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src1.type == hir::VEC128_TYPE) {
+      if (!EmitLoadVec128OperandAddress(instr.src1, x1, reject_reason)) {
+        return false;
+      }
+      return EmitCopyVec128ToDest(instr, x1, reject_reason);
+    }
     if (!CheckIntegerType(instr.dest_type, reject_reason, "byte_swap")) {
       return false;
     }
@@ -2018,6 +3288,32 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   bool EmitSelect(const Instruction& instr, std::string* reject_reason) {
+    if (instr.dest_type == hir::VEC128_TYPE &&
+        instr.src2.type == hir::VEC128_TYPE &&
+        instr.src3.type == hir::VEC128_TYPE) {
+      if (!CheckDest(instr, reject_reason)) {
+        return false;
+      }
+      if (!EmitLoadOperand(instr.src1, x8, reject_reason)) {
+        return false;
+      }
+      Xbyak_aarch64::Label use_false;
+      Xbyak_aarch64::Label done;
+      cbz(x8, use_false);
+      if (!EmitLoadVec128OperandAddress(instr.src2, x1, reject_reason) ||
+          !EmitCopyVec128ToDest(instr, x1, reject_reason)) {
+        return false;
+      }
+      b(done);
+      L(use_false);
+      if (!EmitLoadVec128OperandAddress(instr.src3, x1, reject_reason) ||
+          !EmitCopyVec128ToDest(instr, x1, reject_reason)) {
+        return false;
+      }
+      L(done);
+      return true;
+    }
+
     if (!CheckIntegerType(instr.dest_type, reject_reason, "select")) {
       return false;
     }
@@ -2261,6 +3557,15 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitUnaryAssign(instr, true, reject_reason);
       case hir::OPCODE_CONVERT:
         return EmitConvert(instr, reject_reason);
+      case hir::OPCODE_ROUND:
+        return EmitRound(instr, reject_reason);
+      case hir::OPCODE_VECTOR_CONVERT_I2F:
+      case hir::OPCODE_VECTOR_CONVERT_F2I:
+        return EmitVectorConvert(instr, reject_reason);
+      case hir::OPCODE_LOAD_VECTOR_SHL:
+        return EmitLoadVectorShift(instr, true, reject_reason);
+      case hir::OPCODE_LOAD_VECTOR_SHR:
+        return EmitLoadVectorShift(instr, false, reject_reason);
 
       case hir::OPCODE_LOAD_LOCAL:
         return EmitLoadLocal(instr, reject_reason);
@@ -2328,6 +3633,12 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitCompare(instr, HI, false, reject_reason);
       case hir::OPCODE_COMPARE_UGE:
         return EmitCompare(instr, HS, false, reject_reason);
+      case hir::OPCODE_VECTOR_COMPARE_EQ:
+      case hir::OPCODE_VECTOR_COMPARE_SGT:
+      case hir::OPCODE_VECTOR_COMPARE_SGE:
+      case hir::OPCODE_VECTOR_COMPARE_UGT:
+      case hir::OPCODE_VECTOR_COMPARE_UGE:
+        return EmitVectorCompare(instr, reject_reason);
 
       case hir::OPCODE_ADD:
       case hir::OPCODE_SUB:
@@ -2340,6 +3651,10 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       case hir::OPCODE_SHR:
       case hir::OPCODE_SHA:
         return EmitBinaryArithmetic(instr, instr.opcode, reject_reason);
+      case hir::OPCODE_VECTOR_ADD:
+        return EmitVectorAddSub(instr, false, reject_reason);
+      case hir::OPCODE_VECTOR_SUB:
+        return EmitVectorAddSub(instr, true, reject_reason);
       case hir::OPCODE_ROTATE_LEFT:
         return EmitRotateLeft(instr, reject_reason);
       case hir::OPCODE_ADD_CARRY:
@@ -2363,10 +3678,36 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         return EmitAbs(instr, reject_reason);
       case hir::OPCODE_SQRT:
         return EmitSqrt(instr, reject_reason);
+      case hir::OPCODE_RSQRT:
+        return EmitFloatOrVecUnary(instr, hir::OPCODE_RSQRT, "rsqrt",
+                                   reject_reason);
+      case hir::OPCODE_RECIP:
+        return EmitFloatOrVecUnary(instr, hir::OPCODE_RECIP, "recip",
+                                   reject_reason);
+      case hir::OPCODE_POW2:
+        return EmitFloatOrVecUnary(instr, hir::OPCODE_POW2, "pow2",
+                                   reject_reason);
+      case hir::OPCODE_LOG2:
+        return EmitFloatOrVecUnary(instr, hir::OPCODE_LOG2, "log2",
+                                   reject_reason);
       case hir::OPCODE_BYTE_SWAP:
         return EmitByteSwap(instr, reject_reason);
       case hir::OPCODE_CNTLZ:
         return EmitCountLeadingZeros(instr, reject_reason);
+      case hir::OPCODE_DOT_PRODUCT_3:
+        return EmitDotProduct3(instr, reject_reason);
+      case hir::OPCODE_DOT_PRODUCT_4:
+        return EmitDotProduct4(instr, reject_reason);
+      case hir::OPCODE_EXTRACT:
+        return EmitExtract(instr, reject_reason);
+      case hir::OPCODE_SPLAT:
+        return EmitSplat(instr, reject_reason);
+      case hir::OPCODE_PERMUTE:
+        return EmitPermute(instr, reject_reason);
+      case hir::OPCODE_SWIZZLE:
+        return EmitSwizzle(instr, reject_reason);
+      case hir::OPCODE_UNPACK:
+        return EmitUnpack(instr, reject_reason);
 
       default:
         return Fail(reject_reason,
@@ -2378,8 +3719,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   const Program* program_ = nullptr;
   Arm64Function* function_ = nullptr;
   uint32_t last_source_offset_ = 0;
-  size_t slot_count_ = 0;
   size_t stack_size_ = 0;
+  std::vector<StackSlot> value_slots_;
+  std::vector<StackSlot> local_slots_;
   std::vector<std::unique_ptr<Xbyak_aarch64::Label>> block_labels_;
   Xbyak_aarch64::Label epilog_label_;
 };
@@ -2445,9 +3787,7 @@ bool TryCompileArm64Program(Arm64Backend* backend, Arm64Function* function,
         "ARM64 mini JIT compiled guest {:08X}: {} instructions, {} bytes, {} "
         "stack bytes",
         function->address(), program.instructions.size(), emitter.getSize(),
-        xe::round_up((program.value_types.size() + program.local_count) *
-                         kSlotSize,
-                     size_t(16)));
+        EstimateMiniJitStackSize(program));
   }
   return true;
 #endif
