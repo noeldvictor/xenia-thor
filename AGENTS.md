@@ -285,6 +285,20 @@ Primary target:
 - Treat `edilsongg/xenia-arm64` and `fillips67fissile/xenia-arm64-backend` as Wunkolo duplicates unless a future diff proves unique work.
 - Do not import from `SbossTreeSitty`, `Xenia-creator2025/Xenia-emulator-android`, or the `ProyectoXenia` repos for JIT work.
 - Before copying any third-party code, verify the specific file license, preserve attribution, and keep this fork clearly marked as unofficial research.
+- First import slice: `docs/research/20260518-143943-arm64-upstream-import-slice.md`.
+  - Adapted Xenia Edge A64 `BRK #0` breakpoint / illegal-instruction handler
+    behavior into the current `arm64` backend.
+  - Adapted aX360e Android build hardening: frame pointers, unwind tables,
+    16 KiB max page-size linker option, and disabled native heap pointer
+    tagging.
+  - Post-import Blue Dragon regression capture `scratch/thor-debug/20260518-144723-*`
+    shows no native crash, but still hits the frame-0 D3D watchdog with drained
+    ring pointers. Do not claim game progress from this slice.
+  - Next backend parity gaps are Edge-style host-to-guest/guest-to-host/resolve
+    thunks, code-cache indirection/commit metadata, data/unwind placement, and
+    reducing the 52 helper-call sites in the mini-JIT.
+  - Do not wholesale-copy aX360e SAF/audio/HID/AdrenoTools or the full Edge
+    emitter until each batch has a clear build boundary and attribution note.
 
 ## Android ARM64 Risk Register
 

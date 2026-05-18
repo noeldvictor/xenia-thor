@@ -141,6 +141,16 @@ filter("platforms:Android-*")
   systemversion("24")
   cppstl("c++")
   staticruntime("On")
+  -- Imported from the aX360e Android build shape: keep native frames and
+  -- unwind tables available for ARM64 JIT/debug crash triage, and make the
+  -- linked shared object compatible with Android 16 KiB page devices.
+  buildoptions({
+    "-fno-omit-frame-pointer",
+    "-funwind-tables",
+  })
+  linkoptions({
+    "-Wl,-z,max-page-size=16384",
+  })
   -- Hidden visibility is needed to prevent dynamic relocations in FFmpeg
   -- AArch64 Neon libavcodec assembly with PIC (accesses extern lookup tables
   -- using `adrp` and `add`, without the Global Object Table, expecting that all
