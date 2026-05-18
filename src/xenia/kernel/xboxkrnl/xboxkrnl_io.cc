@@ -95,6 +95,12 @@ static bool IsValidPath(const std::string_view s, bool is_pattern) {
   return true;
 }
 
+static bool ShouldTraceBlueDragonFilePath(const std::string_view path) {
+  return path.find("\\pack") != std::string_view::npos ||
+         path.find("\\!necessity") != std::string_view::npos ||
+         path.find("!necessity") != std::string_view::npos;
+}
+
 dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
                                   pointer_t<X_OBJECT_ATTRIBUTES> object_attrs,
                                   pointer_t<X_IO_STATUS_BLOCK> io_status_block,
@@ -169,6 +175,19 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
 
     // Handle ref is incremented, so return that.
     handle = file->handle();
+    if (ShouldTraceBlueDragonFilePath(target_path)) {
+      XELOGI(
+          "NtCreateFile success: path='{}' root={:08X} root_entry='{}' "
+          "desired={:08X} disposition={} options={:08X} directory={} "
+          "non_directory={} action={} handle={:08X}",
+          target_path, uint32_t(object_attrs->root_directory),
+          root_entry ? root_entry->absolute_path() : "",
+          uint32_t(desired_access), uint32_t(creation_disposition),
+          uint32_t(create_options),
+          (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
+          (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0,
+          uint32_t(file_action), uint32_t(handle));
+    }
   }
 
   if (io_status_block) {

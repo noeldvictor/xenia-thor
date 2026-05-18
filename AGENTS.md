@@ -72,7 +72,8 @@ Primary target:
   known Thor serial and records reconnect events in capture metadata.
 - Use `tools/arm64/hir_coverage_report.ps1` to summarize latest Thor logcats
   into HIR opcode counts, unimplemented opcodes, mini-JIT fallback reasons,
-  slow interpreter functions, and guest crash PCs.
+  slow interpreter functions, guest crash PCs, ARM64 guest-store watch hits,
+  and PPC global-reference scanner hits.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 

@@ -10,7 +10,9 @@
 #include "xenia/emulator.h"
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
+#include <string_view>
 
 #include "config.h"
 #include "third_party/fmt/include/fmt/format.h"
@@ -101,6 +103,358 @@ bool TryParsePpcDisasmAddress(std::string_view line, uint32_t* out_address) {
   return true;
 }
 
+bool TryParsePpcDisasmCodeLine(std::string_view line, uint32_t* out_address,
+                               uint32_t* out_code) {
+  if (!TryParsePpcDisasmAddress(line, out_address)) {
+    return false;
+  }
+
+  size_t code_start = 8;
+  while (code_start < line.size() && line[code_start] == ' ') {
+    ++code_start;
+  }
+  if (code_start + 8 > line.size()) {
+    return false;
+  }
+
+  uint32_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    char c = line[code_start + i];
+    uint32_t digit = 0;
+    if (c >= '0' && c <= '9') {
+      digit = uint32_t(c - '0');
+    } else if (c >= 'A' && c <= 'F') {
+      digit = uint32_t(c - 'A' + 10);
+    } else if (c >= 'a' && c <= 'f') {
+      digit = uint32_t(c - 'a' + 10);
+    } else {
+      return false;
+    }
+    value = (value << 4) | digit;
+  }
+
+  *out_code = value;
+  return true;
+}
+
+int32_t PpcSimm16(uint32_t code) { return static_cast<int16_t>(code); }
+
+struct KnownPpcRegister {
+  bool known = false;
+  uint32_t value = 0;
+};
+
+using KnownPpcRegisters = std::array<KnownPpcRegister, 32>;
+
+void ResetKnownPpcRegisters(KnownPpcRegisters* registers) {
+  for (auto& reg : *registers) {
+    reg = {};
+  }
+}
+
+void SetKnownPpcRegister(KnownPpcRegisters* registers, uint32_t reg,
+                         uint32_t value) {
+  if (reg < registers->size()) {
+    (*registers)[reg] = {true, value};
+  }
+}
+
+void InvalidateKnownPpcRegister(KnownPpcRegisters* registers, uint32_t reg) {
+  if (reg < registers->size()) {
+    (*registers)[reg] = {};
+  }
+}
+
+bool TryGetPpcBaseRegister(const KnownPpcRegisters& registers, uint32_t reg,
+                           uint32_t* out_value) {
+  if (reg == 0) {
+    *out_value = 0;
+    return true;
+  }
+  if (reg < registers.size() && registers[reg].known) {
+    *out_value = registers[reg].value;
+    return true;
+  }
+  return false;
+}
+
+struct PpcMemoryOpInfo {
+  const char* name = nullptr;
+  bool store = false;
+  bool update = false;
+};
+
+bool GetPpcDFormMemoryOpInfo(uint32_t opcode, PpcMemoryOpInfo* out_info) {
+  switch (opcode) {
+    case 32:
+      *out_info = {"lwz", false, false};
+      return true;
+    case 33:
+      *out_info = {"lwzu", false, true};
+      return true;
+    case 34:
+      *out_info = {"lbz", false, false};
+      return true;
+    case 35:
+      *out_info = {"lbzu", false, true};
+      return true;
+    case 36:
+      *out_info = {"stw", true, false};
+      return true;
+    case 37:
+      *out_info = {"stwu", true, true};
+      return true;
+    case 38:
+      *out_info = {"stb", true, false};
+      return true;
+    case 39:
+      *out_info = {"stbu", true, true};
+      return true;
+    case 40:
+      *out_info = {"lhz", false, false};
+      return true;
+    case 41:
+      *out_info = {"lhzu", false, true};
+      return true;
+    case 42:
+      *out_info = {"lha", false, false};
+      return true;
+    case 43:
+      *out_info = {"lhau", false, true};
+      return true;
+    case 44:
+      *out_info = {"sth", true, false};
+      return true;
+    case 45:
+      *out_info = {"sthu", true, true};
+      return true;
+    case 46:
+      *out_info = {"lmw", false, false};
+      return true;
+    case 47:
+      *out_info = {"stmw", true, false};
+      return true;
+    case 48:
+      *out_info = {"lfs", false, false};
+      return true;
+    case 49:
+      *out_info = {"lfsu", false, true};
+      return true;
+    case 50:
+      *out_info = {"lfd", false, false};
+      return true;
+    case 51:
+      *out_info = {"lfdu", false, true};
+      return true;
+    case 52:
+      *out_info = {"stfs", true, false};
+      return true;
+    case 53:
+      *out_info = {"stfsu", true, true};
+      return true;
+    case 54:
+      *out_info = {"stfd", true, false};
+      return true;
+    case 55:
+      *out_info = {"stfdu", true, true};
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool GetPpcDSFormMemoryOpInfo(uint32_t opcode, uint32_t code,
+                              PpcMemoryOpInfo* out_info,
+                              int32_t* out_displacement) {
+  if (opcode != 58 && opcode != 62) {
+    return false;
+  }
+
+  const uint32_t xo = code & 0x3;
+  *out_displacement = static_cast<int16_t>(code & 0xFFFC);
+  if (opcode == 58) {
+    switch (xo) {
+      case 0:
+        *out_info = {"ld", false, false};
+        return true;
+      case 1:
+        *out_info = {"ldu", false, true};
+        return true;
+      case 2:
+        *out_info = {"lwa", false, false};
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  switch (xo) {
+    case 0:
+      *out_info = {"std", true, false};
+      return true;
+    case 1:
+      *out_info = {"stdu", true, true};
+      return true;
+    default:
+      return false;
+  }
+}
+
+void LogPpcGlobalReference(cpu::GuestFunction* function, uint32_t target,
+                           uint32_t address, std::string_view line,
+                           const PpcMemoryOpInfo& op_info) {
+  XELOGE("PPC global ref 0x{:08X}: {} {} fn 0x{:08X}-0x{:08X} at 0x{:08X}: {}",
+         target, op_info.store ? "store" : "load", op_info.name,
+         function->address(), function->end_address(), address, line);
+}
+
+void ScanPpcGlobalReferencesInFunction(cpu::GuestFunction* function,
+                                       uint32_t target,
+                                       size_t max_matches,
+                                       size_t* match_count,
+                                       size_t* store_count,
+                                       size_t* load_count) {
+  if (!function || !function->debug_info() ||
+      !function->debug_info()->source_disasm()) {
+    return;
+  }
+
+  KnownPpcRegisters registers = {};
+  std::string_view text(function->debug_info()->source_disasm());
+  size_t start = 0;
+  while (start <= text.size() && *match_count < max_matches) {
+    size_t end = text.find('\n', start);
+    if (end == std::string_view::npos) {
+      end = text.size();
+    }
+    std::string_view line = text.substr(start, end - start);
+
+    uint32_t address = 0;
+    uint32_t code = 0;
+    if (!TryParsePpcDisasmCodeLine(line, &address, &code)) {
+      if (line.find("loc_") != std::string_view::npos) {
+        ResetKnownPpcRegisters(&registers);
+      }
+      if (end == text.size()) {
+        break;
+      }
+      start = end + 1;
+      continue;
+    }
+
+    const uint32_t opcode = code >> 26;
+    const uint32_t rt = (code >> 21) & 0x1F;
+    const uint32_t ra = (code >> 16) & 0x1F;
+    const uint32_t rb = (code >> 11) & 0x1F;
+
+    if (opcode == 15) {
+      uint32_t base = 0;
+      if (TryGetPpcBaseRegister(registers, ra, &base)) {
+        SetKnownPpcRegister(
+            &registers, rt,
+            base + (static_cast<uint32_t>(PpcSimm16(code)) << 16));
+      } else {
+        InvalidateKnownPpcRegister(&registers, rt);
+      }
+    } else if (opcode == 14) {
+      uint32_t base = 0;
+      if (TryGetPpcBaseRegister(registers, ra, &base)) {
+        SetKnownPpcRegister(&registers, rt,
+                            base + static_cast<uint32_t>(PpcSimm16(code)));
+      } else {
+        InvalidateKnownPpcRegister(&registers, rt);
+      }
+    } else if (opcode == 24) {
+      const uint32_t rs = rt;
+      if (rs < registers.size() && registers[rs].known) {
+        SetKnownPpcRegister(&registers, ra,
+                            registers[rs].value | (code & 0xFFFF));
+      } else {
+        InvalidateKnownPpcRegister(&registers, ra);
+      }
+    } else if (opcode == 31 && ((code >> 1) & 0x3FF) == 444) {
+      const uint32_t rs = rt;
+      if (rs < registers.size() && rb < registers.size() &&
+          registers[rs].known && registers[rb].known) {
+        SetKnownPpcRegister(&registers, ra,
+                            registers[rs].value | registers[rb].value);
+      } else {
+        InvalidateKnownPpcRegister(&registers, ra);
+      }
+    } else {
+      PpcMemoryOpInfo op_info = {};
+      int32_t displacement = PpcSimm16(code);
+      bool is_memory_op = GetPpcDFormMemoryOpInfo(opcode, &op_info);
+      if (!is_memory_op) {
+        is_memory_op =
+            GetPpcDSFormMemoryOpInfo(opcode, code, &op_info, &displacement);
+      }
+
+      if (is_memory_op) {
+        uint32_t base = 0;
+        if (TryGetPpcBaseRegister(registers, ra, &base)) {
+          const uint32_t effective_address =
+              base + static_cast<uint32_t>(displacement);
+          if (effective_address == target) {
+            LogPpcGlobalReference(function, target, address, line, op_info);
+            ++*match_count;
+            if (op_info.store) {
+              ++*store_count;
+            } else {
+              ++*load_count;
+            }
+          }
+        }
+        if (!op_info.store) {
+          InvalidateKnownPpcRegister(&registers, rt);
+        }
+        if (op_info.update) {
+          InvalidateKnownPpcRegister(&registers, ra);
+        }
+      }
+    }
+
+    if (end == text.size()) {
+      break;
+    }
+    start = end + 1;
+  }
+}
+
+void LogTranslatedPpcGlobalReferenceSearch(cpu::Processor* processor,
+                                           uint32_t target,
+                                           size_t max_matches = 80) {
+  if (!processor) {
+    return;
+  }
+
+  size_t match_count = 0;
+  size_t store_count = 0;
+  size_t load_count = 0;
+  for (auto module : processor->GetModules()) {
+    if (!module || match_count >= max_matches) {
+      continue;
+    }
+    module->ForEachFunction([&](cpu::Function* function) {
+      if (match_count >= max_matches || !function || !function->is_guest()) {
+        return;
+      }
+      ScanPpcGlobalReferencesInFunction(
+          static_cast<cpu::GuestFunction*>(function), target, max_matches,
+          &match_count, &store_count, &load_count);
+    });
+  }
+
+  XELOGE(
+      "PPC global ref search 0x{:08X}: {} translated direct refs, {} loads, "
+      "{} stores",
+      target, match_count, load_count, store_count);
+  if (match_count >= max_matches) {
+    XELOGE("PPC global ref search 0x{:08X}: stopped after {} matches", target,
+           match_count);
+  }
+}
+
 void LogPpcDisasmWindow(const char* source_disasm, uint32_t guest_pc) {
   if (!source_disasm) {
     return;
@@ -133,62 +487,6 @@ void LogPpcDisasmWindow(const char* source_disasm, uint32_t guest_pc) {
 
   if (!emitted_line) {
     XELOGE("No PPC disassembly lines were available for crash window.");
-  }
-}
-
-void LogPpcDisasmSearchLine(cpu::GuestFunction* function,
-                            std::string_view line,
-                            std::string_view needle) {
-  XELOGE("PPC search '{}': fn 0x{:08X}-0x{:08X}: {}", needle,
-         function->address(), function->end_address(), line);
-}
-
-void LogTranslatedPpcDisasmSearch(cpu::Processor* processor,
-                                  std::string_view needle,
-                                  size_t max_matches = 80) {
-  if (!processor || needle.empty()) {
-    return;
-  }
-
-  size_t match_count = 0;
-  for (auto module : processor->GetModules()) {
-    if (!module) {
-      continue;
-    }
-    module->ForEachFunction([&](cpu::Function* function) {
-      if (match_count >= max_matches || !function || !function->is_guest()) {
-        return;
-      }
-      auto guest_function = static_cast<cpu::GuestFunction*>(function);
-      if (!guest_function->debug_info() ||
-          !guest_function->debug_info()->source_disasm()) {
-        return;
-      }
-
-      std::string_view text(guest_function->debug_info()->source_disasm());
-      size_t start = 0;
-      while (start <= text.size() && match_count < max_matches) {
-        size_t end = text.find('\n', start);
-        if (end == std::string_view::npos) {
-          end = text.size();
-        }
-        std::string_view line = text.substr(start, end - start);
-        if (line.find(needle) != std::string_view::npos) {
-          LogPpcDisasmSearchLine(guest_function, line, needle);
-          ++match_count;
-        }
-        if (end == text.size()) {
-          break;
-        }
-        start = end + 1;
-      }
-    });
-  }
-
-  if (!match_count) {
-    XELOGE("PPC search '{}': no translated disassembly lines matched", needle);
-  } else if (match_count >= max_matches) {
-    XELOGE("PPC search '{}': stopped after {} matches", needle, match_count);
   }
 }
 
@@ -872,7 +1170,7 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   LogBlueDragonThunkProbe(memory_.get(), guest_pc);
   XELOGE("Special registers: LR=0x{:016X} CTR=0x{:016X} CR=0x{:08X}",
          context->lr, context->ctr, uint32_t(context->cr()));
-  LogTranslatedPpcDisasmSearch(processor(), "0x5548(");
+  LogTranslatedPpcGlobalReferenceSearch(processor(), 0x82785548);
   LogResolvedPpcDisasmWindow(processor(), uint32_t(context->lr), "LR");
   LogResolvedPpcDisasmWindow(processor(), uint32_t(context->ctr), "CTR");
   LogGuestStackWords(memory_.get(), context->r[1]);

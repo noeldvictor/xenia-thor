@@ -113,6 +113,7 @@ $compiledFunctions = @{}
 $slowFunctions = @{}
 $guestCrashPcs = @{}
 $guestStoreWatchHits = @{}
+$ppcGlobalRefs = @{}
 
 foreach ($path in $LogPath) {
     if (!(Test-Path $path)) {
@@ -158,6 +159,10 @@ foreach ($path in $LogPath) {
         if ($line -match "ARM64 guest memory watch hit: fn\s+([0-9A-Fa-f]{8})\s+guest\s+([0-9A-Fa-f]{8})\s+range\s+([0-9A-Fa-f]{8})\s+size\s+(\d+)\s+op\s+(\S+)") {
             Add-Count $guestStoreWatchHits "$($Matches[1].ToUpperInvariant())@$($Matches[2].ToUpperInvariant())->$($Matches[3].ToUpperInvariant())/$($Matches[5])/$($Matches[4])"
         }
+
+        if ($line -match "PPC global ref 0x([0-9A-Fa-f]{8}):\s+(\S+)\s+(\S+)\s+fn\s+0x([0-9A-Fa-f]{8})-0x([0-9A-Fa-f]{8})\s+at\s+0x([0-9A-Fa-f]{8})") {
+            Add-Count $ppcGlobalRefs "$($Matches[1].ToUpperInvariant())/$($Matches[2])/$($Matches[3])/$($Matches[4].ToUpperInvariant())-$($Matches[5].ToUpperInvariant())@$($Matches[6].ToUpperInvariant())"
+        }
     }
 }
 
@@ -181,6 +186,7 @@ Add-MarkdownCountTable $lines "Compiled Mini-JIT Functions" $compiledFunctions $
 Add-MarkdownCountTable $lines "Slow Interpreter Functions" $slowFunctions $opcodeNames
 Add-MarkdownCountTable $lines "Guest Crash PCs" $guestCrashPcs $opcodeNames
 Add-MarkdownCountTable $lines "Guest Store Watch Hits" $guestStoreWatchHits $opcodeNames
+Add-MarkdownCountTable $lines "PPC Global References" $ppcGlobalRefs $opcodeNames
 
 $report = $lines -join [Environment]::NewLine
 if ($OutPath) {
