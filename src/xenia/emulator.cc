@@ -74,6 +74,141 @@ namespace xe {
 
 using namespace xe::literals;
 
+namespace {
+
+bool TryParsePpcDisasmAddress(std::string_view line, uint32_t* out_address) {
+  if (line.size() < 8) {
+    return false;
+  }
+
+  uint32_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    char c = line[i];
+    uint32_t digit = 0;
+    if (c >= '0' && c <= '9') {
+      digit = uint32_t(c - '0');
+    } else if (c >= 'A' && c <= 'F') {
+      digit = uint32_t(c - 'A' + 10);
+    } else if (c >= 'a' && c <= 'f') {
+      digit = uint32_t(c - 'a' + 10);
+    } else {
+      return false;
+    }
+    value = (value << 4) | digit;
+  }
+
+  *out_address = value;
+  return true;
+}
+
+void LogPpcDisasmWindow(const char* source_disasm, uint32_t guest_pc) {
+  if (!source_disasm) {
+    return;
+  }
+
+  const uint32_t window_start = guest_pc > 0x80 ? guest_pc - 0x80 : 0;
+  const uint32_t window_end = guest_pc + 0x80;
+  std::string_view text(source_disasm);
+  XELOGE("PPC disassembly window around 0x{:08X}:", guest_pc);
+
+  size_t start = 0;
+  bool emitted_line = false;
+  while (start <= text.size()) {
+    size_t end = text.find('\n', start);
+    if (end == std::string_view::npos) {
+      end = text.size();
+    }
+    std::string_view line = text.substr(start, end - start);
+    uint32_t line_address = 0;
+    if (TryParsePpcDisasmAddress(line, &line_address) &&
+        line_address >= window_start && line_address <= window_end) {
+      XELOGE("{}", line);
+      emitted_line = true;
+    }
+    if (end == text.size()) {
+      break;
+    }
+    start = end + 1;
+  }
+
+  if (!emitted_line) {
+    XELOGE("No PPC disassembly lines were available for crash window.");
+  }
+}
+
+bool TryLogGuestWord(Memory* memory, uint32_t address, const char* label,
+                     uint32_t* out_value = nullptr) {
+  if (!memory) {
+    return false;
+  }
+
+  const auto heap = memory->LookupHeap(address);
+  uint32_t protect = 0;
+  if (!heap || !heap->QueryProtect(address, &protect) ||
+      !(protect & kMemoryProtectRead)) {
+    XELOGE("Crash probe {} 0x{:08X}: unreadable", label, address);
+    return false;
+  }
+
+  const uint32_t value =
+      xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+  XELOGE("Crash probe {} 0x{:08X}: 0x{:08X}", label, address, value);
+  if (out_value) {
+    *out_value = value;
+  }
+  return true;
+}
+
+void LogBlueDragonThunkProbe(Memory* memory, uint32_t guest_pc) {
+  if (guest_pc < 0x826A23C8 || guest_pc > 0x826A23F4) {
+    return;
+  }
+
+  uint32_t object_ptr = 0;
+  if (!TryLogGuestWord(memory, 0x82785548, "Blue Dragon thunk global",
+                       &object_ptr) ||
+      !object_ptr) {
+    return;
+  }
+
+  uint32_t vtable_ptr = 0;
+  if (!TryLogGuestWord(memory, object_ptr, "Blue Dragon thunk object.vtable",
+                       &vtable_ptr) ||
+      !vtable_ptr) {
+    return;
+  }
+  TryLogGuestWord(memory, vtable_ptr + 0x14,
+                  "Blue Dragon thunk vtable[0x14]");
+}
+
+void LogGuestStackWords(Memory* memory, uint64_t stack_pointer) {
+  if (!memory) {
+    return;
+  }
+  const uint32_t stack_address = uint32_t(stack_pointer);
+  if (!stack_address) {
+    return;
+  }
+
+  XELOGE("Stack words near r1=0x{:08X}:", stack_address);
+  for (uint32_t offset = 0; offset < 0x40; offset += 4) {
+    const uint32_t address = stack_address + offset;
+    const auto heap = memory->LookupHeap(address);
+    uint32_t protect = 0;
+    if (!heap || !heap->QueryProtect(address, &protect) ||
+        !(protect & kMemoryProtectRead)) {
+      XELOGE("  [0x{:08X}] unreadable", address);
+      continue;
+    }
+
+    const uint32_t value =
+        xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+    XELOGE("  [0x{:08X}] 0x{:08X}", address, value);
+  }
+}
+
+}  // namespace
+
 Emulator::GameConfigLoadCallback::GameConfigLoadCallback(Emulator& emulator)
     : emulator_(emulator) {
   emulator_.AddGameConfigLoadCallback(this);
@@ -593,8 +728,23 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   XELOGE("Thread ID (Host: 0x{:08X} / Guest: 0x{:08X})",
          current_thread->thread()->system_id(), current_thread->thread_id());
   XELOGE("Thread Handle: 0x{:08X}", current_thread->handle());
-  XELOGE("PC: 0x{:08X}",
-         guest_function->MapMachineCodeToGuestAddress(ex->pc()));
+  const uint32_t guest_pc =
+      guest_function->MapMachineCodeToGuestAddress(ex->pc());
+  const uintptr_t code_offset =
+      ex->pc() - reinterpret_cast<uintptr_t>(guest_function->machine_code());
+  XELOGE("PC: 0x{:08X}", guest_pc);
+  XELOGE("Host PC: 0x{:016X} (function code +0x{:X})", ex->pc(),
+         code_offset);
+  XELOGE("Function: 0x{:08X}-0x{:08X}", guest_function->address(),
+         guest_function->end_address());
+  if (guest_function->debug_info()) {
+    LogPpcDisasmWindow(guest_function->debug_info()->source_disasm(),
+                       guest_pc);
+  }
+  LogBlueDragonThunkProbe(memory_.get(), guest_pc);
+  XELOGE("Special registers: LR=0x{:016X} CTR=0x{:016X} CR=0x{:08X}",
+         context->lr, context->ctr, uint32_t(context->cr()));
+  LogGuestStackWords(memory_.get(), context->r[1]);
   XELOGE("Registers:");
   for (int i = 0; i < 32; i++) {
     XELOGE(" r{:<3} = {:016X}", i, context->r[i]);

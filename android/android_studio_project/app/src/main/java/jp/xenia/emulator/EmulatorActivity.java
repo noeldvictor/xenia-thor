@@ -22,6 +22,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
             copyBooleanExtra(intent, launchArguments, "arm64_enable_mini_jit");
+            copyBooleanExtra(intent, launchArguments, "disassemble_functions");
+            copyBooleanExtra(intent, launchArguments, "mount_cache");
             copyStringExtra(intent, launchArguments, "arm64_mini_jit_blacklist");
             copyStringExtra(
                     intent, launchArguments, "arm64_force_interpreter_guest_ranges");

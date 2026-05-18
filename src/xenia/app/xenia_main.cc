@@ -638,8 +638,9 @@ void EmulatorApp::EmulatorThread() {
   }
 
   if (cvars::mount_cache) {
-    auto cache0_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE0", "cache0", false);
+    const auto cache_root = emulator_->cache_root();
+    auto cache0_device = std::make_unique<xe::vfs::HostPathDevice>(
+        "\\CACHE0", cache_root / "cache0", false);
     if (!cache0_device->Initialize()) {
       XELOGE("Unable to scan cache0 path");
     } else {
@@ -650,8 +651,8 @@ void EmulatorApp::EmulatorThread() {
       }
     }
 
-    auto cache1_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE1", "cache1", false);
+    auto cache1_device = std::make_unique<xe::vfs::HostPathDevice>(
+        "\\CACHE1", cache_root / "cache1", false);
     if (!cache1_device->Initialize()) {
       XELOGE("Unable to scan cache1 path");
     } else {
@@ -666,8 +667,8 @@ void EmulatorApp::EmulatorThread() {
     // NOTE: this must be registered _after_ the cache0/cache1 devices, due to
     // substring/start_with logic inside VirtualFileSystem::ResolvePath, else
     // accesses to those devices will go here instead
-    auto cache_device =
-        std::make_unique<xe::vfs::HostPathDevice>("\\CACHE", "cache", false);
+    auto cache_device = std::make_unique<xe::vfs::HostPathDevice>(
+        "\\CACHE", cache_root / "cache", false);
     if (!cache_device->Initialize()) {
       XELOGE("Unable to scan cache path");
     } else {

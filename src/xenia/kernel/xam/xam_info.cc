@@ -321,6 +321,25 @@ void XamLoaderTerminateTitle_entry() {
 }
 DECLARE_XAM_EXPORT1(XamLoaderTerminateTitle, kNone, kSketchy);
 
+dword_result_t XamLoaderGetDvdTrayState_entry() {
+  // Research stub: report a closed tray so multidisc-capable titles don't
+  // stall in early boot waiting for dashboard media state.
+  return 0;
+}
+DECLARE_XAM_EXPORT2(XamLoaderGetDvdTrayState, kNone, kStub, kSketchy);
+
+dword_result_t XamSwapDisc_entry(dword_t r3, dword_t r4, dword_t r5,
+                                 dword_t r6, dword_t r7, dword_t r8,
+                                 dword_t r9, dword_t r10) {
+  XELOGD(
+      "XamSwapDisc research stub: r3={:08X} r4={:08X} r5={:08X} r6={:08X} "
+      "r7={:08X} r8={:08X} r9={:08X} r10={:08X}",
+      uint32_t(r3), uint32_t(r4), uint32_t(r5), uint32_t(r6), uint32_t(r7),
+      uint32_t(r8), uint32_t(r9), uint32_t(r10));
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT2(XamSwapDisc, kNone, kStub, kSketchy);
+
 dword_result_t XamAlloc_entry(dword_t unk, dword_t size, lpdword_t out_ptr) {
   assert_true(unk == 0);
 

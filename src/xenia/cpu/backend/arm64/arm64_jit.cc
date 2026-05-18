@@ -513,7 +513,9 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
  public:
   MiniArm64JitEmitter() : CodeGenerator(kMaxCodeSize) {}
 
-  bool Emit(const Program& program, std::string* reject_reason) {
+  bool Emit(Arm64Function* function, const Program& program,
+            std::string* reject_reason) {
+    function_ = function;
     program_ = &program;
     slot_count_ = program.value_types.size() + program.local_count;
     stack_size_ = xe::round_up(slot_count_ * kSlotSize, size_t(16));
@@ -541,6 +543,7 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
         if (i >= program.instructions.size()) {
           return Fail(reject_reason, "instruction index out of range");
         }
+        EmitSourceMapForInstruction(program.instructions[i], i);
         if (!EmitInstruction(program.instructions[i], reject_reason)) {
           return false;
         }
@@ -594,6 +597,19 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
       return Fail(reject_reason, "branch target out of range");
     }
     return true;
+  }
+
+  void EmitSourceMapForInstruction(const Instruction& instr,
+                                   uint32_t instruction_index) {
+    if (!function_ || !instr.source_offset ||
+        instr.source_offset == last_source_offset_) {
+      return;
+    }
+    last_source_offset_ = instr.source_offset;
+    function_->source_map().push_back(
+        {instr.source_offset,
+         (instr.block_index << 16) | (instruction_index & 0xFFFF),
+         static_cast<uint32_t>(getSize())});
   }
 
   void EmitAdjustSp(bool subtract) {
@@ -1558,6 +1574,8 @@ class MiniArm64JitEmitter : public Xbyak_aarch64::CodeGenerator {
   }
 
   const Program* program_ = nullptr;
+  Arm64Function* function_ = nullptr;
+  uint32_t last_source_offset_ = 0;
   size_t slot_count_ = 0;
   size_t stack_size_ = 0;
   std::vector<std::unique_ptr<Xbyak_aarch64::Label>> block_labels_;
@@ -1596,7 +1614,9 @@ bool TryCompileArm64Program(Arm64Backend* backend, Arm64Function* function,
   MiniArm64JitEmitter emitter;
   std::string local_reject_reason;
   try {
-    if (!emitter.Emit(program, &local_reject_reason)) {
+    function->source_map().clear();
+    if (!emitter.Emit(function, program, &local_reject_reason)) {
+      function->source_map().clear();
       return Reject(reject_reason, local_reject_reason);
     }
   } catch (const Xbyak_aarch64::Error& e) {

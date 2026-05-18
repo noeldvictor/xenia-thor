@@ -15,6 +15,8 @@ param(
     [string]$OutDir = "",
     [string]$Target = "",
     [string]$Arm64MiniJit = "true",
+    [string]$DisassembleFunctions = "false",
+    [string]$MountCache = "false",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
@@ -222,6 +224,7 @@ done | head -20
 
 function Start-XeniaEmulator {
     param([string]$LaunchTarget)
+    Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
     Invoke-Adb @("logcat", "-c")
     Set-LastLaunchTarget $LaunchTarget
     $component = "$PackageName/$EmulatorActivity"
@@ -233,6 +236,8 @@ function Start-XeniaEmulator {
         "--es apu nop",
         "--es hid nop",
         "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
+        "--ez disassemble_functions $(ConvertTo-BooleanText $DisassembleFunctions)",
+        "--ez mount_cache $(ConvertTo-BooleanText $MountCache)",
         "--ez discord false")
     if ($Arm64MiniJitBlacklist) {
         $parts += "--es arm64_mini_jit_blacklist $(ConvertTo-AdbShellSingleQuote $Arm64MiniJitBlacklist)"

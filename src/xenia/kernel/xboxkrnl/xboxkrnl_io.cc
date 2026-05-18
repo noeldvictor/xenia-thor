@@ -145,6 +145,18 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
       (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
       (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0, &vfs_file,
       &file_action);
+  if (XFAILED(result)) {
+    XELOGW(
+        "NtCreateFile failed: path='{}' root={:08X} root_entry='{}' "
+        "desired={:08X} disposition={} options={:08X} directory={} "
+        "non_directory={} status={:08X}",
+        target_path, uint32_t(object_attrs->root_directory),
+        root_entry ? root_entry->absolute_path() : "", uint32_t(desired_access),
+        uint32_t(creation_disposition), uint32_t(create_options),
+        (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
+        (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0,
+        uint32_t(result));
+  }
   object_ref<XFile> file = nullptr;
 
   X_HANDLE handle = X_INVALID_HANDLE_VALUE;
@@ -711,6 +723,28 @@ dword_result_t NtDeviceIoControlFile_entry(
 }
 DECLARE_XBOXKRNL_EXPORT1(NtDeviceIoControlFile, kFileSystem, kStub);
 
+dword_result_t IoDismountVolume_entry(dword_t device_object) {
+  XELOGD("IoDismountVolume research stub: device={:08X}",
+         uint32_t(device_object));
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT2(IoDismountVolume, kFileSystem, kStub, kSketchy);
+
+dword_result_t IoDismountVolumeByFileHandle_entry(dword_t file_handle) {
+  XELOGD("IoDismountVolumeByFileHandle research stub: handle={:08X}",
+         uint32_t(file_handle));
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT2(IoDismountVolumeByFileHandle, kFileSystem, kStub,
+                         kSketchy);
+
+dword_result_t IoDismountVolumeByName_entry(pointer_t<X_ANSI_STRING> name) {
+  auto path = name ? util::TranslateAnsiString(kernel_memory(), name) : "";
+  XELOGD("IoDismountVolumeByName research stub: {}", path);
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT2(IoDismountVolumeByName, kFileSystem, kStub, kSketchy);
+
 dword_result_t IoCreateDevice_entry(dword_t device_struct, dword_t r4,
                                     dword_t r5, dword_t r6, dword_t r7,
                                     lpdword_t out_struct) {
@@ -733,6 +767,30 @@ dword_result_t IoCreateDevice_entry(dword_t device_struct, dword_t r4,
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(IoCreateDevice, kFileSystem, kStub);
+
+dword_result_t StfsCreateDevice_entry(dword_t r3, dword_t r4, dword_t r5,
+                                      dword_t r6, dword_t r7, dword_t r8,
+                                      dword_t r9, dword_t r10) {
+  XELOGD(
+      "StfsCreateDevice research stub: r3={:08X} r4={:08X} r5={:08X} "
+      "r6={:08X} r7={:08X} r8={:08X} r9={:08X} r10={:08X}",
+      uint32_t(r3), uint32_t(r4), uint32_t(r5), uint32_t(r6), uint32_t(r7),
+      uint32_t(r8), uint32_t(r9), uint32_t(r10));
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT2(StfsCreateDevice, kFileSystem, kStub, kSketchy);
+
+dword_result_t StfsControlDevice_entry(dword_t r3, dword_t r4, dword_t r5,
+                                       dword_t r6, dword_t r7, dword_t r8,
+                                       dword_t r9, dword_t r10) {
+  XELOGD(
+      "StfsControlDevice research stub: r3={:08X} r4={:08X} r5={:08X} "
+      "r6={:08X} r7={:08X} r8={:08X} r9={:08X} r10={:08X}",
+      uint32_t(r3), uint32_t(r4), uint32_t(r5), uint32_t(r6), uint32_t(r7),
+      uint32_t(r8), uint32_t(r9), uint32_t(r10));
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT2(StfsControlDevice, kFileSystem, kStub, kSketchy);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

@@ -145,7 +145,8 @@ foreach ($path in $LogPath) {
             Add-Count $slowFunctions $Matches[1].ToUpperInvariant()
         }
 
-        if ($line -match "guest PC\s+(?:to\s+)?(?:0x)?([0-9A-Fa-f]{8})") {
+        if ($line -match "guest PC\s+(?:to\s+)?(?:0x)?([0-9A-Fa-f]{8})" -or
+            $line -match "!\>\s+\S+\s+PC:\s+0x([0-9A-Fa-f]{8})") {
             Add-Count $guestCrashPcs $Matches[1].ToUpperInvariant()
         }
     }
