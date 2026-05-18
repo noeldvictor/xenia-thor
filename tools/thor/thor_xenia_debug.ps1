@@ -18,6 +18,7 @@ param(
     [string]$DisassembleFunctions = "false",
     [string]$DisassembleFunctionFilter = "",
     [string]$MountCache = "false",
+    [string]$MmapAddressHigh = "",
     [string]$ClearMemoryPageState = "false",
     [string]$GpuInterruptOnRingIdle = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
@@ -265,6 +266,9 @@ function Start-XeniaEmulator {
         "--ez discord false")
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
+    }
+    if ($MmapAddressHigh) {
+        $parts += "--ei mmap_address_high $MmapAddressHigh"
     }
     if ($Arm64MiniJitBlacklist) {
         $parts += "--es arm64_mini_jit_blacklist $(ConvertTo-AdbShellSingleQuote $Arm64MiniJitBlacklist)"

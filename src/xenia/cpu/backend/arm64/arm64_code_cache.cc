@@ -49,6 +49,7 @@ DEFINE_uint32(arm64_jit_code_cache_mb, 128,
               "running long captures without falling back due to cache "
               "exhaustion.",
               "CPU");
+DECLARE_uint32(mmap_address_high);
 
 namespace xe {
 namespace cpu {
@@ -57,14 +58,42 @@ namespace arm64 {
 namespace {
 
 constexpr uint32_t kArm64Brk0 = 0xD4200000u;
+constexpr uintptr_t kAx360eCodeCacheBaseLow = 0xA0000000u;
 
-void* AllocateCodeMemory(size_t size) {
+uintptr_t GetAx360eCodeCacheHighBias() {
+  if (!cvars::mmap_address_high || cvars::mmap_address_high > 124) {
+    return 0;
+  }
+  return uint64_t(cvars::mmap_address_high + 2) << 32;
+}
+
+void* AllocateCodeMemory(size_t size, void* desired_base) {
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
-  void* result = mmap(nullptr, size, PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_FIXED_NOREPLACE
+  if (desired_base) {
+    void* fixed_result =
+        mmap(desired_base, size, PROT_READ | PROT_WRITE,
+             flags | MAP_FIXED_NOREPLACE, -1, 0);
+    if (fixed_result == desired_base) {
+      return fixed_result;
+    }
+    if (fixed_result != MAP_FAILED) {
+      munmap(fixed_result, size);
+    }
+  }
+#endif
+  void* result =
+      mmap(desired_base, size, PROT_READ | PROT_WRITE, flags, -1, 0);
+  if (desired_base && result != desired_base) {
+    if (result != MAP_FAILED) {
+      munmap(result, size);
+    }
+    return nullptr;
+  }
   return result == MAP_FAILED ? nullptr : result;
 #elif XE_PLATFORM_WIN32
-  return xe::memory::AllocFixed(nullptr, size,
+  return xe::memory::AllocFixed(desired_base, size,
                                 xe::memory::AllocationType::kReserveCommit,
                                 xe::memory::PageAccess::kReadWrite);
 #else
@@ -72,16 +101,35 @@ void* AllocateCodeMemory(size_t size) {
 #endif
 }
 
-void* ReserveIndirectionTableMemory(size_t size) {
+void* ReserveIndirectionTableMemory(size_t size, void* desired_base) {
 #if XE_PLATFORM_LINUX || XE_PLATFORM_MAC
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 #ifdef MAP_NORESERVE
   flags |= MAP_NORESERVE;
 #endif
-  void* result = mmap(nullptr, size, PROT_NONE, flags, -1, 0);
+#ifdef MAP_FIXED_NOREPLACE
+  if (desired_base) {
+    void* fixed_result =
+        mmap(desired_base, size, PROT_NONE, flags | MAP_FIXED_NOREPLACE, -1,
+             0);
+    if (fixed_result == desired_base) {
+      return fixed_result;
+    }
+    if (fixed_result != MAP_FAILED) {
+      munmap(fixed_result, size);
+    }
+  }
+#endif
+  void* result = mmap(desired_base, size, PROT_NONE, flags, -1, 0);
+  if (desired_base && result != desired_base) {
+    if (result != MAP_FAILED) {
+      munmap(result, size);
+    }
+    return nullptr;
+  }
   return result == MAP_FAILED ? nullptr : result;
 #elif XE_PLATFORM_WIN32
-  return xe::memory::AllocFixed(nullptr, size,
+  return xe::memory::AllocFixed(desired_base, size,
                                 xe::memory::AllocationType::kReserve,
                                 xe::memory::PageAccess::kNoAccess);
 #else
@@ -161,9 +209,24 @@ bool Arm64CodeCache::Initialize() {
     code_cache_mode_ = CodeCacheMode::kWxFlip;
   }
 
+  uintptr_t ax360e_high_bias = GetAx360eCodeCacheHighBias();
+  void* fixed_indirection_base =
+      ax360e_high_bias ? reinterpret_cast<void*>(
+                             ax360e_high_bias | kIndirectionTableBase)
+                       : nullptr;
   indirection_table_base_ =
       reinterpret_cast<uint8_t*>(ReserveIndirectionTableMemory(
-          kIndirectionTableSize));
+          kIndirectionTableSize, fixed_indirection_base));
+  if (!indirection_table_base_ && fixed_indirection_base) {
+    XELOGW(
+        "ARM64 code cache failed to reserve aX360e-style indirection table "
+        "at {:016X}; falling back to dynamic reservation",
+        static_cast<uint64_t>(
+            reinterpret_cast<uintptr_t>(fixed_indirection_base)));
+    indirection_table_base_ =
+        reinterpret_cast<uint8_t*>(ReserveIndirectionTableMemory(
+            kIndirectionTableSize, nullptr));
+  }
   if (!indirection_table_base_) {
     XELOGE("ARM64 code cache failed to reserve indirection table");
     return false;
@@ -175,8 +238,21 @@ bool Arm64CodeCache::Initialize() {
       std::make_unique<uint64_t[]>(kIndirectionExternalCapacity);
   external_indirection_target_count_.store(0, std::memory_order_relaxed);
 
-  generated_code_base_ =
-      reinterpret_cast<uint8_t*>(AllocateCodeMemory(generated_code_size_));
+  void* fixed_code_base =
+      ax360e_high_bias
+          ? reinterpret_cast<void*>(ax360e_high_bias | kAx360eCodeCacheBaseLow)
+          : nullptr;
+  generated_code_base_ = reinterpret_cast<uint8_t*>(
+      AllocateCodeMemory(generated_code_size_, fixed_code_base));
+  if (!generated_code_base_ && fixed_code_base) {
+    XELOGW(
+        "ARM64 code cache failed to allocate aX360e-style code base at "
+        "{:016X}; falling back to dynamic allocation",
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fixed_code_base)));
+    generated_code_base_ =
+        reinterpret_cast<uint8_t*>(AllocateCodeMemory(generated_code_size_,
+                                                      nullptr));
+  }
   if (!generated_code_base_) {
     XELOGE("ARM64 code cache failed to allocate {} bytes",
            generated_code_size_);

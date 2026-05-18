@@ -25,6 +25,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyBooleanExtra(intent, launchArguments, "mount_cache");
+            copyIntExtra(intent, launchArguments, "mmap_address_high");
             copyBooleanExtra(intent, launchArguments, "clear_memory_page_state");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");

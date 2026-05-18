@@ -332,6 +332,19 @@ Primary target:
     generated thunks on device with no new native crash, and Blue Dragon still
     stops at the known D3D frame-0 watchdog. Do not claim title progress from
     this slice.
+- First concrete aX360e memory-layout import:
+  `docs/research/20260518-154350-ax360e-fixed-high-memory-layout.md`.
+  - Added opt-in `mmap_address_high`, default `0`, to try aX360e-style fixed
+    guest memory at `mmap_address_high << 32`.
+  - When set, ARM64 code cache tries the matching high window:
+    indirection at `((mmap_address_high + 2) << 32) | 0x80000000` and code at
+    `((mmap_address_high + 2) << 32) | 0xA0000000`.
+  - Use `tools/thor/thor_xenia_debug.ps1 -MmapAddressHigh 8` for Thor
+    experiments. Validation capture `scratch/thor-debug/20260518-154338-*`
+    proves fixed guest memory, fixed code cache, and fixed thunk addresses on
+    Thor with no new native crash.
+  - Blue Dragon still stops at the known D3D frame-0 watchdog; do not claim
+    title progress from this slice.
 
 ## Android ARM64 Risk Register
 

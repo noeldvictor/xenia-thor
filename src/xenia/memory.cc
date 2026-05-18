@@ -32,6 +32,12 @@ DEFINE_bool(protect_on_release, false,
             "Protect released memory to prevent accesses.", "Memory");
 DEFINE_bool(scribble_heap, false,
             "Scribble 0xCD into all allocated heap memory.", "Memory");
+DEFINE_uint32(
+    mmap_address_high, 0,
+    "ARM64/Android research: optionally try to map guest memory at "
+    "mmap_address_high << 32. 0 keeps the normal search path; 1-124 mirrors "
+    "the aX360e fixed high-memory layout.",
+    "Memory");
 
 namespace xe {
 uint32_t get_page_count(uint32_t value, uint32_t page_size) {
@@ -139,10 +145,39 @@ bool Memory::Initialize() {
     return false;
   }
 
-  // Attempt to create our views. This may fail at the first address
-  // we pick, so try a few times.
+  // Attempt the aX360e-style fixed high mapping first when requested. This
+  // keeps ARM64 guest memory, code cache, and indirection tables in predictable
+  // high 32-bit windows for future native AArch64 emitter work.
   mapping_base_ = 0;
+  if (cvars::mmap_address_high) {
+    if (cvars::mmap_address_high >= 1 && cvars::mmap_address_high <= 124) {
+      auto mapping_base = reinterpret_cast<uint8_t*>(
+          uint64_t(cvars::mmap_address_high) << 32);
+      if (!MapViews(mapping_base)) {
+        mapping_base_ = mapping_base;
+        XELOGI("Mapped guest memory at fixed high base {:016X}",
+               static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                   mapping_base_)));
+      } else {
+        XELOGW(
+            "Requested mmap_address_high={} failed; falling back to normal "
+            "guest memory search",
+            cvars::mmap_address_high);
+      }
+    } else {
+      XELOGW(
+          "Ignoring mmap_address_high={} outside supported aX360e-style "
+          "range 1-124",
+          cvars::mmap_address_high);
+    }
+  }
+
+  // Normal fallback search. This may fail at the first address we pick, so try
+  // a few times.
   for (size_t n = 32; n < 64; n++) {
+    if (mapping_base_) {
+      break;
+    }
     auto mapping_base = reinterpret_cast<uint8_t*>(1ull << n);
     if (!MapViews(mapping_base)) {
       mapping_base_ = mapping_base;
