@@ -13,6 +13,7 @@
     <string name="launcher_demo_detail">Vulkan surface test</string>
     <string name="osd_app_title">Xenia Thor</string>
     <string name="osd_runtime_status">Vulkan / ARM64</string>
-    <string name="osd_jit_status">AArch64 JIT pending</string>
+    <string name="osd_jit_research_active">AArch64 mini-JIT research</string>
+    <string name="osd_interpreter_status">Interpreter fallback</string>
     <string name="osd_default_title">Xbox 360 content</string>
 </resources>

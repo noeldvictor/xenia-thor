@@ -42,6 +42,10 @@ DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "GPU");
 DEFINE_int32(gpu_blue_dragon_kick_wait_token_budget, 16,
              "Maximum Blue Dragon wait-token kick log lines.", "GPU");
+DEFINE_bool(gpu_trace_swap, false,
+            "Trace guest video swap setup, PM4 XE_SWAP packets, and host "
+            "present/swap paths.",
+            "GPU");
 
 DEFINE_bool(
     non_seamless_cube_map, true,

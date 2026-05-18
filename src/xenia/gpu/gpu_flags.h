@@ -23,6 +23,7 @@ DECLARE_bool(clear_memory_page_state);
 DECLARE_bool(gpu_interrupt_on_ring_idle);
 DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
+DECLARE_bool(gpu_trace_swap);
 
 DECLARE_bool(non_seamless_cube_map);
 

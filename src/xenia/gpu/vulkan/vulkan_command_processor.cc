@@ -1237,13 +1237,28 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_height) {
   SCOPE_profile_cpu_f("gpu");
 
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: Vulkan IssueSwap begin frontbuffer={:08X} "
+        "guest_size={}x{} frame_current={} frame_completed={} submission={}",
+        frontbuffer_ptr, frontbuffer_width, frontbuffer_height, frame_current_,
+        frame_completed_, GetCurrentSubmission());
+  }
+
   ui::Presenter* presenter = graphics_system_->presenter();
   if (!presenter) {
+    if (cvars::gpu_trace_swap) {
+      XELOGI("GPU swap trace: Vulkan IssueSwap skipped, no presenter");
+    }
     return;
   }
 
   // In case the swap command is the only one in the frame.
   if (!BeginSubmission(true)) {
+    if (cvars::gpu_trace_swap) {
+      XELOGI(
+          "GPU swap trace: Vulkan IssueSwap skipped, BeginSubmission failed");
+    }
     return;
   }
 
@@ -1254,7 +1269,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
       frontbuffer_width_scaled, frontbuffer_height_scaled, frontbuffer_format);
   if (swap_texture_view == VK_NULL_HANDLE) {
+    if (cvars::gpu_trace_swap) {
+      XELOGI(
+          "GPU swap trace: Vulkan IssueSwap skipped, RequestSwapTexture "
+          "returned null for frontbuffer={:08X}",
+          frontbuffer_ptr);
+    }
     return;
+  }
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: Vulkan IssueSwap texture view={} scaled_size={}x{} "
+        "format={}",
+        reinterpret_cast<uint64_t>(swap_texture_view), frontbuffer_width_scaled,
+        frontbuffer_height_scaled, static_cast<uint32_t>(frontbuffer_format));
   }
 
   presenter->RefreshGuestOutput(
@@ -1264,6 +1292,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           ui::Presenter::GuestOutputRefreshContext& context) -> bool {
         // In case the swap command is the only one in the frame.
         if (!BeginSubmission(true)) {
+          if (cvars::gpu_trace_swap) {
+            XELOGI(
+                "GPU swap trace: Vulkan guest output callback skipped, "
+                "BeginSubmission failed");
+          }
           return false;
         }
 
@@ -1271,6 +1304,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             ui::vulkan::VulkanPresenter::VulkanGuestOutputRefreshContext&>(
             context);
         uint64_t guest_output_image_version = vulkan_context.image_version();
+        if (cvars::gpu_trace_swap) {
+          XELOGI(
+              "GPU swap trace: Vulkan guest output callback image_version={} "
+              "image_ever_written={} scaled_size={}x{} format={}",
+              guest_output_image_version,
+              vulkan_context.image_ever_written_previously(),
+              frontbuffer_width_scaled, frontbuffer_height_scaled,
+              static_cast<uint32_t>(frontbuffer_format));
+        }
 
         const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
         const ui::vulkan::VulkanDevice::Functions& dfn =
@@ -1440,6 +1482,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   device, &swap_framebuffer_create_info, nullptr,
                   &new_swap_framebuffer.framebuffer) != VK_SUCCESS) {
             XELOGE("Failed to create the Vulkan framebuffer for presentation");
+            if (cvars::gpu_trace_swap) {
+              XELOGI(
+                  "GPU swap trace: Vulkan guest output callback failed to "
+                  "create framebuffer for image_version={}",
+                  guest_output_image_version);
+            }
             return false;
           }
           new_swap_framebuffer.version = guest_output_image_version;
@@ -1562,12 +1610,24 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         // presenter so it can submit its own commands for displaying it to the
         // queue, and also need to submit the release barrier.
         EndSubmission(true);
+        if (cvars::gpu_trace_swap) {
+          XELOGI(
+              "GPU swap trace: Vulkan guest output callback submitted "
+              "submission={} frame_current={}",
+              GetCurrentSubmission(), frame_current_);
+        }
         return true;
       });
 
   // End the frame even if did not present for any reason (the image refresher
   // was not called), to prevent leaking per-frame resources.
   EndSubmission(true);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: Vulkan IssueSwap end frame_current={} "
+        "frame_completed={} submission={}",
+        frame_current_, frame_completed_, GetCurrentSubmission());
+  }
 }
 
 bool VulkanCommandProcessor::PushBufferMemoryBarrier(

@@ -77,6 +77,10 @@ Primary target:
 - Use `tools/arm64/arm64_jit_gap_report.ps1` to compare HIR opcodes against
   ARM64 mini-JIT and interpreter switch coverage, then attach recent Thor log
   watchdog/fallback signals to a dated Markdown report.
+- Use `tools/arm64/arm64_conversion_audit.ps1` before broad ARM64 backend work
+  or after suspicious Thor runs. It summarizes x64-vs-ARM64 backend services,
+  HIR switch coverage, helper-heavy mini-JIT surface, reject/error signals, and
+  recent Thor evidence into a dated Markdown report.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 
@@ -144,6 +148,10 @@ Primary target:
   - `-GpuInterruptOnRingIdle true` and `-GpuBlueDragonKickWaitToken true` only
     for clearly documented Blue Dragon research runs; both are default-off
     hacks, not compatibility fixes.
+  - `-GpuTraceSwap true` to trace guest video setup, runtime `VdSwap`, PM4
+    `XE_SWAP`, and Vulkan `IssueSwap` proof. Import/symbol lines mentioning
+    `VdSwap` are not runtime call proof; use the explicit `GPU swap trace:`
+    lines for runtime evidence.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.
@@ -189,8 +197,8 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-134558-*` and
-  `scratch\thor-debug\20260518-134757-*`.
+  `scratch\thor-debug\20260518-135816-*` and
+  `scratch\thor-debug\20260518-140109-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -234,14 +242,28 @@ Primary target:
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
-- Latest captures show `VdSwap` is present in guest symbol traces, but still no
-  `XE_SWAP` / first visible game frame proof.
-- The visible `AArch64 JIT pending` badge is static Java OSD text and should
-  not be treated as the native failure message.
-- Strategy as of 2026-05-18 13:48 EDT: ARM64 switch-case coverage is now broad
-  enough for milestone testing. Next loops should target GPU/D3D completion,
-  guest-visible swap/present contracts, and correctness/performance evidence
-  from Thor logs instead of adding more missing-op stubs.
+- Runtime swap tracing reaches engine and ring initialization, but does not show
+  runtime `GPU swap trace: VdSwap`, PM4 `XE_SWAP`, or Vulkan `IssueSwap`.
+  `VdSwap` in import/symbol listings is not runtime call proof.
+- The visible OSD badge now reports `AArch64 mini-JIT research` instead of the
+  stale `AArch64 JIT pending` text.
+- Strategy as of 2026-05-18 14:12 EDT: stop using Thor as the only unit test.
+  Run a broad x64-to-ARM64 conversion pass first, then use Thor/Blue Dragon as
+  milestone evidence.
+
+## ARM64 Conversion Audit Loop
+
+- Do not interpret "all HIR opcodes have a case label" as "the backend is
+  ported." It only proves switch coverage.
+- Before more game-specific fixes, batch the x64-to-ARM64 conversion work:
+  host-to-guest and guest-to-host thunks, resolve thunk, breakpoint support,
+  exception/signal recovery, code-cache indirection and metadata, source maps,
+  unwind info where available, native scalar/control/memory lowering, native
+  vector/pack/unpack lowering, and differential tests.
+- Use Thor runs as milestone checkpoints after broad backend batches, not as
+  the only unit test.
+- Current conversion audit:
+  `docs/research/20260518-140436-arm64-x64-conversion-audit.md`.
 
 ## ARM64 Fork Audit Decision
 

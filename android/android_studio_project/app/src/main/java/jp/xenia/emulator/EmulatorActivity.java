@@ -28,6 +28,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "clear_memory_page_state");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
+            copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
             copyStringExtra(intent, launchArguments, "arm64_mini_jit_blacklist");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
@@ -94,14 +95,20 @@ public class EmulatorActivity extends WindowedAppActivity {
     private void updateOsd(final Bundle launchArguments) {
         final TextView titleView = findViewById(R.id.emulator_osd_title);
         final TextView subtitleView = findViewById(R.id.emulator_osd_subtitle);
-        if (titleView == null || subtitleView == null) {
+        final TextView warningView = findViewById(R.id.emulator_osd_warning);
+        if (titleView == null || subtitleView == null || warningView == null) {
             return;
         }
 
         String target = null;
+        boolean miniJit = true;
         if (launchArguments != null) {
             target = launchArguments.getString("target");
+            miniJit = launchArguments.getBoolean("arm64_enable_mini_jit", true);
         }
+        warningView.setText(miniJit
+                ? R.string.osd_jit_research_active
+                : R.string.osd_interpreter_status);
         if (target == null || target.isEmpty()) {
             titleView.setText(R.string.osd_default_title);
             subtitleView.setText(R.string.osd_app_title);

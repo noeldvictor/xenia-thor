@@ -11,6 +11,7 @@
 
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/gpu/texture_info.h"
 #include "xenia/gpu/xenos.h"
@@ -198,6 +199,13 @@ dword_result_t VdInitializeEngines_entry(unknown_t unk0, function_t callback,
   // r5 = function arg
   // r6 = PFP Microcode
   // r7 = ME Microcode
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdInitializeEngines unk0={:08X} callback={:08X} "
+        "arg={:08X} pfp={:08X} me={:08X}",
+        uint32_t(unk0), callback.value(), arg.guest_address(),
+        pfp_ptr.guest_address(), me_ptr.guest_address());
+  }
   return 1;
 }
 DECLARE_XBOXKRNL_EXPORT1(VdInitializeEngines, kVideo, kStub);
@@ -236,6 +244,10 @@ void VdInitializeRingBuffer_entry(lpvoid_t ptr, int_t size_log2) {
   // r3 = result of MmGetPhysicalAddress
   // r4 = log2(size)
   // Buffer pointers are from MmAllocatePhysicalMemory with WRITE_COMBINE.
+  if (cvars::gpu_trace_swap) {
+    XELOGI("GPU swap trace: VdInitializeRingBuffer ptr={:08X} size_log2={}",
+           ptr.guest_address(), int32_t(size_log2));
+  }
   auto graphics_system = kernel_state()->emulator()->graphics_system();
   graphics_system->InitializeRingBuffer(ptr, size_log2);
 }
@@ -244,6 +256,12 @@ DECLARE_XBOXKRNL_EXPORT1(VdInitializeRingBuffer, kVideo, kImplemented);
 void VdEnableRingBufferRPtrWriteBack_entry(lpvoid_t ptr,
                                            int_t block_size_log2) {
   // r4 = log2(block size), 6, usually --- <=19
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdEnableRingBufferRPtrWriteBack ptr={:08X} "
+        "block_size_log2={}",
+        ptr.guest_address(), int32_t(block_size_log2));
+  }
   auto graphics_system = kernel_state()->emulator()->graphics_system();
   graphics_system->EnableReadPointerWriteBack(ptr, block_size_log2);
 }
@@ -253,11 +271,23 @@ void VdGetSystemCommandBuffer_entry(lpunknown_t p0_ptr, lpunknown_t p1_ptr) {
   p0_ptr.Zero(0x94);
   xe::store_and_swap<uint32_t>(p0_ptr, 0xBEEF0000);
   xe::store_and_swap<uint32_t>(p1_ptr, 0xBEEF0001);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdGetSystemCommandBuffer p0={:08X}->BEEF0000 "
+        "p1={:08X}->BEEF0001",
+        p0_ptr.guest_address(), p1_ptr.guest_address());
+  }
 }
 DECLARE_XBOXKRNL_EXPORT1(VdGetSystemCommandBuffer, kVideo, kStub);
 
 void VdSetSystemCommandBufferGpuIdentifierAddress_entry(lpunknown_t unk) {
   // r3 = 0x2B10(d3d?) + 8
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdSetSystemCommandBufferGpuIdentifierAddress "
+        "addr={:08X}",
+        unk.guest_address());
+  }
 }
 DECLARE_XBOXKRNL_EXPORT1(VdSetSystemCommandBufferGpuIdentifierAddress, kVideo,
                          kStub);
@@ -285,6 +315,19 @@ dword_result_t VdInitializeScalerCommandBuffer_entry(
   // We could fake the commands here, but I'm not sure the game checks for
   // anything but success (non-zero ret).
   // For now, we just fill it with NOPs.
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdInitializeScalerCommandBuffer src_xy={:08X} "
+        "src_wh={:08X} out_xy={:08X} out_wh={:08X} front_wh={:08X} "
+        "vfilter={} hfilter={} vparams={:08X} hparams={:08X} unk9={:08X} "
+        "dest={:08X} dest_count={}",
+        uint32_t(scaler_source_xy), uint32_t(scaler_source_wh),
+        uint32_t(scaled_output_xy), uint32_t(scaled_output_wh),
+        uint32_t(front_buffer_wh), uint32_t(vertical_filter_type),
+        uint32_t(horizontal_filter_type), vertical_filter_params.guest_address(),
+        horizontal_filter_params.guest_address(), unk9.guest_address(),
+        dest_ptr.guest_address(), uint32_t(dest_count));
+  }
   auto dest = dest_ptr.as_array<uint32_t>();
   for (size_t i = 0; i < dest_count; ++i) {
     dest[i] = 0x80000000;
@@ -400,6 +443,20 @@ void VdSwap_entry(
   assert_true(color_space == 0);  // RGB(0)
   assert_true(*width == 1 + gpu_fetch.size_2d.width);
   assert_true(*height == 1 + gpu_fetch.size_2d.height);
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: VdSwap buffer={:08X} fetch={:08X} syswb={:08X} "
+        "sysbuf={:08X} sysid={:08X} front_va={:08X} front_pa={:08X} "
+        "format={} color_space={} size={}x{} fetch_dwords={:08X},{:08X},"
+        "{:08X},{:08X},{:08X},{:08X}",
+        buffer_ptr.guest_address(), fetch_ptr.guest_address(),
+        unk2.guest_address(), unk3.guest_address(), unk4.guest_address(),
+        frontbuffer_virtual_address, frontbuffer_physical_address,
+        static_cast<uint32_t>(texture_format), color_space, width.value(),
+        height.value(), gpu_fetch.dword_0, gpu_fetch.dword_1,
+        gpu_fetch.dword_2, gpu_fetch.dword_3, gpu_fetch.dword_4,
+        gpu_fetch.dword_5);
+  }
 
   // The caller seems to reserve 64 words (256b) in the primary ringbuffer
   // for this method to do what it needs. We just zero them out and send a

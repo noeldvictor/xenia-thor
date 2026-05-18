@@ -21,6 +21,7 @@ param(
     [string]$ClearMemoryPageState = "false",
     [string]$GpuInterruptOnRingIdle = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
+    [string]$GpuTraceSwap = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
@@ -260,6 +261,7 @@ function Start-XeniaEmulator {
         "--ez clear_memory_page_state $(ConvertTo-BooleanText $ClearMemoryPageState)",
         "--ez gpu_interrupt_on_ring_idle $(ConvertTo-BooleanText $GpuInterruptOnRingIdle)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
+        "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
         "--ez discord false")
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"

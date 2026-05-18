@@ -958,6 +958,13 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   uint32_t frontbuffer_width = reader->ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_height = reader->ReadAndSwap<uint32_t>();
   reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+  if (cvars::gpu_trace_swap) {
+    XELOGI(
+        "GPU swap trace: XE_SWAP packet magic={:08X} frontbuffer={:08X} "
+        "size={}x{} count={} read_ptr={:08X} read_offset={:08X}",
+        magic, frontbuffer_ptr, frontbuffer_width, frontbuffer_height, count,
+        uint32_t(reader->read_ptr()), uint32_t(reader->read_offset()));
+  }
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
 

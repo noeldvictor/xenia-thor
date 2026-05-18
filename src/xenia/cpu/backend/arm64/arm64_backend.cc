@@ -57,8 +57,9 @@ bool Arm64Backend::Initialize(Processor* processor) {
   }
 
   XELOGI(
-      "ARM64 CPU backend initialized with executable code cache. Guest HIR "
-      "lowering is the next required piece.");
+      "ARM64 CPU backend initialized with executable code cache. This is a "
+      "research mini-JIT plus interpreter fallback, not a converted x64-grade "
+      "backend.");
   return true;
 }
 
