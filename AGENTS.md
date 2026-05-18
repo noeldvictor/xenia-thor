@@ -319,6 +319,19 @@ Primary target:
     indirection table allocated on device with no new native crash, and Blue
     Dragon still stops at the known D3D frame-0 watchdog. Do not claim title
     progress from this slice.
+- Fourth Edge-shaped backend slice:
+  `docs/research/20260518-152759-arm64-generated-transition-thunks.md`.
+  - ARM64 now generates host-to-guest, guest-to-host, and resolve thunks with
+    `xbyak_aarch64`, places them in the ARM64 code cache, sets the default
+    indirection target to the resolve thunk, commits the force-return range,
+    and logs generated thunk addresses at startup.
+  - This is not yet the full Edge A64 ABI. Backend context, stackpoint/vector
+    save details, unwind data, exception recovery, and native emitter call
+    routing are still incomplete.
+  - Thor validation capture `scratch/thor-debug/20260518-152749-*` shows the
+    generated thunks on device with no new native crash, and Blue Dragon still
+    stops at the known D3D frame-0 watchdog. Do not claim title progress from
+    this slice.
 
 ## Android ARM64 Risk Register
 

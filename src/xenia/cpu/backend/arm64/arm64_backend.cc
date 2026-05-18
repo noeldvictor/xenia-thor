@@ -11,6 +11,7 @@
 
 #include <cstring>
 
+#include "xbyak_aarch64/xbyak_aarch64.h"
 #include "xenia/base/platform.h"
 #if XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
@@ -33,9 +34,13 @@ namespace xe {
 namespace cpu {
 namespace backend {
 namespace arm64 {
+
+uint64_t ResolveFunction(void* raw_context, uint64_t target_address);
+
 namespace {
 
 constexpr uint32_t kArm64Brk0 = 0xD4200000u;
+constexpr size_t kArm64ThunkCodeSize = 4096;
 
 bool PatchArm64Instruction(void* ptr, uint32_t instruction) {
   xe::memory::PageAccess old_access = xe::memory::PageAccess::kNoAccess;
@@ -61,6 +66,88 @@ bool PatchArm64Instruction(void* ptr, uint32_t instruction) {
   }
   return true;
 }
+
+class Arm64ThunkEmitter : public Xbyak_aarch64::CodeGenerator {
+ public:
+  explicit Arm64ThunkEmitter(Arm64Backend* backend)
+      : CodeGenerator(kArm64ThunkCodeSize), backend_(backend) {}
+
+  HostToGuestThunk EmitHostToGuestThunk() {
+    using namespace Xbyak_aarch64;
+
+    stp(x19, x20, pre_ptr(sp, -16));
+    stp(x21, x30, pre_ptr(sp, -16));
+
+    mov(x20, x1);
+    ldr(x21, ptr(x20, static_cast<uint32_t>(
+                          offsetof(ppc::PPCContext, virtual_membase))));
+    mov(x9, x0);
+    mov(x0, x2);
+    blr(x9);
+
+    ldp(x21, x30, post_ptr(sp, 16));
+    ldp(x19, x20, post_ptr(sp, 16));
+    ret();
+
+    return reinterpret_cast<HostToGuestThunk>(EmplaceThunk(32));
+  }
+
+  GuestToHostThunk EmitGuestToHostThunk() {
+    using namespace Xbyak_aarch64;
+
+    stp(x29, x30, pre_ptr(sp, -16));
+    mov(x9, x0);
+    mov(x0, x20);
+    blr(x9);
+    ldp(x29, x30, post_ptr(sp, 16));
+    ret();
+
+    return reinterpret_cast<GuestToHostThunk>(EmplaceThunk(16));
+  }
+
+  ResolveFunctionThunk EmitResolveFunctionThunk() {
+    using namespace Xbyak_aarch64;
+
+    Label failed;
+    stp(x29, x30, pre_ptr(sp, -16));
+    stp(x0, x19, pre_ptr(sp, -16));
+
+    mov(x0, x20);
+    mov(x1, x16);
+    mov(x9, reinterpret_cast<uint64_t>(&ResolveFunction));
+    blr(x9);
+    mov(x9, x0);
+
+    ldp(x0, x19, post_ptr(sp, 16));
+    ldp(x29, x30, post_ptr(sp, 16));
+
+    cbz(x9, failed);
+    br(x9);
+    L(failed);
+    brk(0xF000);
+
+    return reinterpret_cast<ResolveFunctionThunk>(EmplaceThunk(32));
+  }
+
+ private:
+  void* EmplaceThunk(size_t stack_size) {
+    ready(Xbyak_aarch64::CodeArray::PROTECT_RW);
+
+    Arm64EmitFunctionInfo func_info = {};
+    func_info.code_size.total = getSize();
+    func_info.code_size.body = getSize();
+    func_info.stack_size = stack_size;
+
+    void* code_execute_address = nullptr;
+    void* code_write_address = nullptr;
+    backend_->code_cache()->PlaceHostCode(
+        0, const_cast<void*>(static_cast<const void*>(getCode())), func_info,
+        code_execute_address, code_write_address);
+    return code_execute_address;
+  }
+
+  Arm64Backend* backend_ = nullptr;
+};
 
 }  // namespace
 
@@ -115,6 +202,30 @@ bool Arm64Backend::Initialize(Processor* processor) {
   if (!code_cache_->RunSmokeTest()) {
     return false;
   }
+
+  {
+    Arm64ThunkEmitter host_to_guest_emitter(this);
+    host_to_guest_thunk_ = host_to_guest_emitter.EmitHostToGuestThunk();
+    Arm64ThunkEmitter guest_to_host_emitter(this);
+    guest_to_host_thunk_ = guest_to_host_emitter.EmitGuestToHostThunk();
+    Arm64ThunkEmitter resolve_emitter(this);
+    resolve_function_thunk_ = resolve_emitter.EmitResolveFunctionThunk();
+  }
+  if (!host_to_guest_thunk_ || !guest_to_host_thunk_ ||
+      !resolve_function_thunk_) {
+    XELOGE("ARM64 backend failed to generate transition thunks");
+    return false;
+  }
+  code_cache_->set_indirection_default_64(
+      reinterpret_cast<uint64_t>(resolve_function_thunk_));
+  code_cache_->CommitExecutableRange(kForceReturnAddress, 0x9FFFFFFF);
+  XELOGI(
+      "ARM64 transition thunks generated host_to_guest={:016X} "
+      "guest_to_host={:016X} resolve={:016X}",
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_to_guest_thunk_)),
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(guest_to_host_thunk_)),
+      static_cast<uint64_t>(
+          reinterpret_cast<uintptr_t>(resolve_function_thunk_)));
 
   ExceptionHandler::Install(&ExceptionCallbackThunk, this);
 
