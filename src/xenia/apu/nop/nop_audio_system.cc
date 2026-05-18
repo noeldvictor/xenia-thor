@@ -9,10 +9,13 @@
 
 #include "xenia/apu/nop/nop_audio_system.h"
 
+#include <chrono>
+
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/apu_flags.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/threading.h"
 
 namespace xe {
 namespace apu {
@@ -28,6 +31,7 @@ class NopAudioDriver final : public AudioDriver {
   void SubmitFrame(uint32_t samples_ptr) override {
     (void)samples_ptr;
     if (semaphore_) {
+      xe::threading::Sleep(std::chrono::milliseconds(5));
       semaphore_->Release(1, nullptr);
     }
   }

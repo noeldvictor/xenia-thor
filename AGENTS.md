@@ -206,9 +206,9 @@ Primary target:
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.
 - Input: Android currently falls back to nop HID for emulator app paths; real controls need mapping.
-- Audio: Android currently uses silent nop audio for bring-up. This is enough
-  to satisfy early XACT driver registration, but not a real Android audio
-  backend.
+- Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
+  is enough to satisfy early XACT driver registration, but not a real Android
+  audio backend.
 - UI/app flow: Android launcher has a first-pass game file picker, but user experience, permissions, errors, and direct path handling still need hardening.
 - Build dependencies: submodules are not initialized after a fresh clone.
 

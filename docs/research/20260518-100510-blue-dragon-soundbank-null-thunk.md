@@ -48,8 +48,9 @@ guest audio/XACT initialization path to fail and leave the global at
 
 ## Fix Tested
 
-Added a real silent `NopAudioDriver` that accepts submitted frames, releases the
-audio semaphore, and returns `X_STATUS_SUCCESS` from `NopAudioSystem`.
+Added a real silent `NopAudioDriver` that accepts submitted frames, paces the
+audio semaphore release with a short 5 ms sleep, and returns
+`X_STATUS_SUCCESS` from `NopAudioSystem`.
 
 Validation capture:
 
