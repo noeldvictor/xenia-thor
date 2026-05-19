@@ -21,6 +21,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyStringExtra(intent, launchArguments, "render_target_path_vulkan");
             copyDoubleExtra(intent, launchArguments, "time_scalar");
             copyBooleanExtra(intent, launchArguments, "hid_nop_connected");
             copyStringExtra(intent, launchArguments, "hid_nop_buttons");
@@ -44,6 +45,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_resolve");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_resolve_checksum");
+            copyBooleanExtra(
+                    intent, launchArguments, "vulkan_trace_edram_checksum");
             copyBooleanExtra(intent, launchArguments, "vulkan_readback_resolve");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_copy_state");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_state");
@@ -71,6 +74,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "vulkan_trace_resolve_budget");
             copyIntExtra(
                     intent, launchArguments, "vulkan_trace_resolve_checksum_budget");
+            copyIntExtra(
+                    intent, launchArguments, "vulkan_trace_edram_checksum_budget");
             copyIntExtra(intent, launchArguments, "vulkan_trace_copy_state_budget");
             copyIntExtra(intent, launchArguments, "vulkan_trace_draw_state_budget");
             copyIntExtra(

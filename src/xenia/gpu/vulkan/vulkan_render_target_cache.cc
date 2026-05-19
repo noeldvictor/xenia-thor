@@ -64,6 +64,7 @@ namespace vulkan {
 namespace {
 
 std::atomic<int32_t> vulkan_resolve_trace_count{0};
+std::atomic<int32_t> vulkan_edram_checksum_trace_count{0};
 
 bool ShouldTraceVulkanResolve() {
   if (!cvars::vulkan_trace_resolve) {
@@ -71,6 +72,15 @@ bool ShouldTraceVulkanResolve() {
   }
   int32_t budget = cvars::vulkan_trace_resolve_budget;
   return budget < 0 || vulkan_resolve_trace_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanEdramChecksum() {
+  if (!cvars::vulkan_trace_edram_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_edram_checksum_budget;
+  return budget < 0 ||
+         vulkan_edram_checksum_trace_count.fetch_add(1) < budget;
 }
 
 const char* ResolveCopyShaderName(draw_util::ResolveCopyShaderIndex shader) {
@@ -259,7 +269,8 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
 
-  if (cvars::render_target_path_vulkan == "fsi") {
+  bool fsi_requested = cvars::render_target_path_vulkan == "fsi";
+  if (fsi_requested) {
     path_ = Path::kPixelShaderInterlock;
   } else {
     path_ = Path::kHostRenderTargets;
@@ -286,16 +297,34 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
     // between, for instance, the ability to vfetch and memexport in fragment
     // shaders, and the usage of fragment shader interlock, prefer the former
     // for simplicity.
-    if (!(device_properties.fragmentShaderSampleInterlock ||
-          device_properties.fragmentShaderPixelInterlock) ||
-        !device_properties.fragmentStoresAndAtomics ||
-        !device_properties.sampleRateShading ||
-        !device_properties.standardSampleLocations ||
-        shared_memory_binding_count >=
-            device_properties.maxPerStageDescriptorStorageBuffers) {
+    bool fsi_features_supported =
+        (device_properties.fragmentShaderSampleInterlock ||
+         device_properties.fragmentShaderPixelInterlock) &&
+        device_properties.fragmentStoresAndAtomics &&
+        device_properties.sampleRateShading &&
+        device_properties.standardSampleLocations &&
+        shared_memory_binding_count <
+            device_properties.maxPerStageDescriptorStorageBuffers;
+    if (!fsi_features_supported) {
+      XELOGW(
+          "VulkanRenderTargetCache: falling back from requested FSI render "
+          "target path: sample_interlock={} pixel_interlock={} "
+          "fragment_stores_atomics={} sample_rate_shading={} "
+          "standard_sample_locations={} shared_memory_bindings={} "
+          "max_storage_buffers={}",
+          device_properties.fragmentShaderSampleInterlock,
+          device_properties.fragmentShaderPixelInterlock,
+          device_properties.fragmentStoresAndAtomics,
+          device_properties.sampleRateShading,
+          device_properties.standardSampleLocations, shared_memory_binding_count,
+          device_properties.maxPerStageDescriptorStorageBuffers);
       path_ = Path::kHostRenderTargets;
     }
   }
+  XELOGI(
+      "VulkanRenderTargetCache: render_target_path_vulkan='{}' selected={}",
+      cvars::render_target_path_vulkan,
+      path_ == Path::kPixelShaderInterlock ? "fsi" : "fbo");
 
   // Format support.
   constexpr VkFormatFeatureFlags kUsedDepthFormatFeatures =
@@ -1116,6 +1145,11 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
       resolve_info.GetCopyEdramTileSpan(dump_base, dump_row_length_used,
                                         dump_rows, dump_pitch);
       DumpRenderTargets(dump_base, dump_row_length_used, dump_rows, dump_pitch);
+      if (ShouldTraceVulkanEdramChecksum() &&
+          !ReadbackEdramBufferRange(dump_base, dump_row_length_used, dump_rows,
+                                    dump_pitch, resolve_info)) {
+        return false;
+      }
     }
 
     draw_util::ResolveCopyShaderConstants copy_shader_constants;
@@ -6110,6 +6144,184 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     }
     MarkEdramBufferModified();
   }
+}
+
+bool VulkanRenderTargetCache::ReadbackEdramBufferRange(
+    uint32_t base_tiles, uint32_t row_length_used, uint32_t rows,
+    uint32_t pitch_tiles, const draw_util::ResolveInfo& resolve_info) {
+  if (!rows || !row_length_used) {
+    return true;
+  }
+
+  const uint32_t tile_byte_size =
+      xenos::kEdramTileWidthSamples * xenos::kEdramTileHeightSamples *
+      uint32_t(sizeof(uint32_t)) * draw_resolution_scale_x() *
+      draw_resolution_scale_y();
+  const uint64_t edram_byte_size =
+      uint64_t(xenos::kEdramSizeBytes) * draw_resolution_scale_x() *
+      draw_resolution_scale_y();
+  const uint64_t base_tile = base_tiles % xenos::kEdramTileCount;
+  uint64_t span_tiles =
+      uint64_t(rows - 1) * pitch_tiles + uint64_t(row_length_used);
+  if (!span_tiles) {
+    return true;
+  }
+  uint64_t byte_offset = base_tile * tile_byte_size;
+  if (byte_offset >= edram_byte_size) {
+    return true;
+  }
+  uint64_t byte_length = span_tiles * tile_byte_size;
+  byte_length = std::min(byte_length, edram_byte_size - byte_offset);
+  if (!byte_length) {
+    return true;
+  }
+
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  VkBuffer readback_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory readback_memory = VK_NULL_HANDLE;
+  uint32_t readback_memory_type = UINT32_MAX;
+  VkDeviceSize readback_memory_size = 0;
+  if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
+          vulkan_device, VkDeviceSize(byte_length),
+          VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          ui::vulkan::util::MemoryPurpose::kReadback, readback_buffer,
+          readback_memory, &readback_memory_type, &readback_memory_size)) {
+    XELOGE(
+        "GPU resolve trace: failed to create EDRAM readback buffer "
+        "base_tiles={} rows={} row_length={} pitch={}",
+        base_tiles, rows, row_length_used, pitch_tiles);
+    return true;
+  }
+
+  UseEdramBuffer(EdramBufferUsage::kTransferRead);
+  command_processor_.SubmitBarriers(true);
+  VkBufferCopy readback_region;
+  readback_region.srcOffset = VkDeviceSize(byte_offset);
+  readback_region.dstOffset = 0;
+  readback_region.size = VkDeviceSize(byte_length);
+  command_processor_.deferred_command_buffer().CmdVkCopyBuffer(
+      edram_buffer_, readback_buffer, 1, &readback_region);
+  command_processor_.PushBufferMemoryBarrier(
+      readback_buffer, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_HOST_READ_BIT);
+
+  bool succeeded = false;
+  if (command_processor_.AwaitAllQueueOperationsCompletion()) {
+    void* mapping = nullptr;
+    if (dfn.vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0,
+                        &mapping) == VK_SUCCESS) {
+      if (!(vulkan_device->memory_types().host_coherent &
+            (uint32_t(1) << readback_memory_type))) {
+        VkMappedMemoryRange mapped_range;
+        mapped_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        mapped_range.pNext = nullptr;
+        mapped_range.memory = readback_memory;
+        mapped_range.offset = 0;
+        mapped_range.size = readback_memory_size;
+        dfn.vkInvalidateMappedMemoryRanges(device, 1, &mapped_range);
+      }
+
+      const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mapping);
+      constexpr uint64_t kSampleStride = 2048;
+      uint64_t checksum = 1469598103934665603ull;
+      uint32_t samples = 0;
+      uint32_t nonzero_samples = 0;
+      uint32_t varying_samples = 0;
+      uint32_t first_sample_value = 0;
+      uint32_t first_sample_matches = 0;
+      uint64_t first_nonzero_offset = UINT64_MAX;
+      uint32_t first_nonzero_value = 0;
+      uint32_t previous_word = 0;
+      bool have_previous_word = false;
+      bool have_first_sample = false;
+      for (uint64_t offset = 0; offset + sizeof(uint32_t) <= byte_length;
+           offset += kSampleStride) {
+        uint32_t word = 0;
+        std::memcpy(&word, bytes + offset, sizeof(word));
+        checksum ^= uint64_t(word) + (offset << 1);
+        checksum *= 1099511628211ull;
+        ++samples;
+        if (!have_first_sample) {
+          first_sample_value = word;
+          have_first_sample = true;
+        }
+        if (word == first_sample_value) {
+          ++first_sample_matches;
+        }
+        if (have_previous_word && word != previous_word) {
+          ++varying_samples;
+        }
+        previous_word = word;
+        have_previous_word = true;
+        if (word) {
+          ++nonzero_samples;
+          if (first_nonzero_offset == UINT64_MAX) {
+            first_nonzero_offset = offset;
+            first_nonzero_value = word;
+          }
+        }
+      }
+      bool repeated_first_sample =
+          samples >= 16 &&
+          uint64_t(first_sample_matches) * 100 >= uint64_t(samples) * 90;
+      bool low_variation =
+          samples >= 16 &&
+          uint64_t(varying_samples) * 100 <= uint64_t(samples) * 6;
+      bool clear_like = repeated_first_sample || low_variation;
+      uint32_t first_words[8] = {};
+      uint32_t first_word_count = uint32_t(
+          std::min<uint64_t>(xe::countof(first_words), byte_length / 4));
+      for (uint32_t i = 0; i < first_word_count; ++i) {
+        std::memcpy(&first_words[i], bytes + i * sizeof(uint32_t),
+                    sizeof(uint32_t));
+      }
+      XELOGI(
+          "GPU resolve trace: edram checksum stage=after_dump "
+          "base_tiles={} row_length={} rows={} pitch={} byte_offset={:08X} "
+          "byte_length={:08X} dest_base={:08X} dest_length={:08X} "
+          "dest_format={} samples={} nonzero={} varying={} clear_like={} "
+          "low_variation={} first_sample={:08X} first_sample_matches={} "
+          "checksum={:016X} first_nonzero={} first_nonzero_value={:08X} "
+          "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+          base_tiles, row_length_used, rows, pitch_tiles, uint32_t(byte_offset),
+          uint32_t(byte_length), resolve_info.copy_dest_extent_start,
+          resolve_info.copy_dest_extent_length,
+          uint32_t(resolve_info.copy_dest_info.copy_dest_format), samples,
+          nonzero_samples, varying_samples, clear_like, low_variation,
+          first_sample_value, first_sample_matches, checksum,
+          first_nonzero_offset == UINT64_MAX ? -1
+                                             : int64_t(first_nonzero_offset),
+          first_nonzero_value, first_words[0], first_words[1], first_words[2],
+          first_words[3], first_words[4], first_words[5], first_words[6],
+          first_words[7]);
+      dfn.vkUnmapMemory(device, readback_memory);
+      succeeded = true;
+    } else {
+      XELOGE(
+          "GPU resolve trace: failed to map EDRAM readback memory "
+          "base_tiles={} byte_length={:08X}",
+          base_tiles, uint32_t(byte_length));
+    }
+  } else {
+    XELOGE(
+        "GPU resolve trace: failed to wait for EDRAM readback "
+        "base_tiles={} byte_length={:08X}",
+        base_tiles, uint32_t(byte_length));
+  }
+
+  dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
+  dfn.vkFreeMemory(device, readback_memory, nullptr);
+
+  if (!command_processor_.submission_open() &&
+      !command_processor_.BeginSubmission(false)) {
+    return false;
+  }
+  return succeeded;
 }
 
 }  // namespace vulkan

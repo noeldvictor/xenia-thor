@@ -85,6 +85,12 @@ DEFINE_bool(vulkan_trace_resolve_checksum, false,
             "GPU");
 DEFINE_int32(vulkan_trace_resolve_checksum_budget, 24,
              "Maximum Vulkan resolve readback checksum trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_edram_checksum, false,
+            "Read back the Vulkan EDRAM dump range before shared-memory "
+            "resolve and log a sparse checksum. Research-only and very slow.",
+            "GPU");
+DEFINE_int32(vulkan_trace_edram_checksum_budget, 12,
+             "Maximum Vulkan EDRAM readback checksum trace lines.", "GPU");
 DEFINE_bool(vulkan_readback_resolve, false,
             "Read Vulkan render-to-texture resolve results back into CPU "
             "guest memory. Very slow, for bring-up parity with D3D12 only.",

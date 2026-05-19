@@ -36,6 +36,8 @@ DECLARE_bool(vulkan_trace_resolve);
 DECLARE_int32(vulkan_trace_resolve_budget);
 DECLARE_bool(vulkan_trace_resolve_checksum);
 DECLARE_int32(vulkan_trace_resolve_checksum_budget);
+DECLARE_bool(vulkan_trace_edram_checksum);
+DECLARE_int32(vulkan_trace_edram_checksum_budget);
 DECLARE_bool(vulkan_readback_resolve);
 DECLARE_bool(vulkan_trace_copy_state);
 DECLARE_int32(vulkan_trace_copy_state_budget);

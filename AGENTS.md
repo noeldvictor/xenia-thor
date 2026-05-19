@@ -473,6 +473,19 @@ Primary target:
   - Next GPU lane: instrument the Vulkan render-target dump / resolve boundary
     so we can prove whether host render targets are already flat, or whether
     pixels are lost while dumping EDRAM or copying to shared memory.
+- Blue Dragon EDRAM dump and FSI probe:
+  `docs/research/20260518-231925-blue-dragon-edram-dump-and-fsi-probe.md`.
+  - `vulkan_trace_edram_checksum=true` can read back the host-render-target
+    EDRAM dump span before the shared-memory resolve copy, then reopen the
+    Vulkan submission for the normal resolve.
+  - Latest evidence shows EDRAM-after-dump is already zero or near-uniform for
+    the Blue Dragon present candidates, and the later shared-memory resolve
+    preserves that flat content.
+  - The AYN Thor Adreno driver does not expose fragment shader sample or pixel
+    interlock, so `render_target_path_vulkan=fsi` falls back to `fbo`.
+  - The next lane is host render-target image / draw-output correctness:
+    prove whether the RT image itself is flat before dump, or whether the dump
+    shader / format path reads it incorrectly.
 
 ## Android ARM64 Risk Register
 

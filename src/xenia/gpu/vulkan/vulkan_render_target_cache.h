@@ -859,7 +859,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // Writes contents of host render targets within rectangles from
   // ResolveInfo::GetCopyEdramTileSpan to edram_buffer_.
   void DumpRenderTargets(uint32_t dump_base, uint32_t dump_row_length_used,
-                         uint32_t dump_rows, uint32_t dump_pitch);
+                          uint32_t dump_rows, uint32_t dump_pitch);
+  bool ReadbackEdramBufferRange(uint32_t base_tiles, uint32_t row_length_used,
+                                uint32_t rows, uint32_t pitch_tiles,
+                                const draw_util::ResolveInfo& resolve_info);
 
   bool gamma_render_target_as_unorm16_ = false;
 

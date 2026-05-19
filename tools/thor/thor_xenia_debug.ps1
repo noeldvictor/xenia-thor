@@ -21,6 +21,7 @@ param(
     [string]$HidNopButtons = "",
     [string]$HidNopButtonsDelayMs = "",
     [string]$HidNopButtonsHoldMs = "",
+    [string]$RenderTargetPathVulkan = "",
     [string]$BreakOnDebugbreak = "",
     [string]$DisassembleFunctions = "false",
     [string]$DisassembleFunctionFilter = "",
@@ -37,6 +38,7 @@ param(
     [string]$GpuTraceSwapRenderTargets = "false",
     [string]$VulkanTraceResolve = "false",
     [string]$VulkanTraceResolveChecksum = "false",
+    [string]$VulkanTraceEdramChecksum = "false",
     [string]$VulkanReadbackResolve = "false",
     [string]$VulkanTraceCopyState = "false",
     [string]$VulkanTraceDrawState = "false",
@@ -55,6 +57,7 @@ param(
     [string]$GpuTraceSwapRenderTargetsBudget = "",
     [string]$VulkanTraceResolveBudget = "",
     [string]$VulkanTraceResolveChecksumBudget = "",
+    [string]$VulkanTraceEdramChecksumBudget = "",
     [string]$VulkanTraceCopyStateBudget = "",
     [string]$VulkanTraceDrawStateBudget = "",
     [string]$VulkanTraceSwapSharedMemoryChecksumBudget = "",
@@ -336,6 +339,7 @@ function Start-XeniaEmulator {
         "--ez gpu_trace_swap_render_targets $(ConvertTo-BooleanText $GpuTraceSwapRenderTargets)",
         "--ez vulkan_trace_resolve $(ConvertTo-BooleanText $VulkanTraceResolve)",
         "--ez vulkan_trace_resolve_checksum $(ConvertTo-BooleanText $VulkanTraceResolveChecksum)",
+        "--ez vulkan_trace_edram_checksum $(ConvertTo-BooleanText $VulkanTraceEdramChecksum)",
         "--ez vulkan_readback_resolve $(ConvertTo-BooleanText $VulkanReadbackResolve)",
         "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
         "--ez vulkan_trace_draw_state $(ConvertTo-BooleanText $VulkanTraceDrawState)",
@@ -350,6 +354,9 @@ function Start-XeniaEmulator {
         "--ez discord false")
     if ($TimeScalar) {
         $parts += "--es time_scalar $(ConvertTo-AdbShellSingleQuote $TimeScalar)"
+    }
+    if ($RenderTargetPathVulkan) {
+        $parts += "--es render_target_path_vulkan $(ConvertTo-AdbShellSingleQuote $RenderTargetPathVulkan)"
     }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
@@ -374,6 +381,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanTraceResolveChecksumBudget) {
         $parts += "--ei vulkan_trace_resolve_checksum_budget $VulkanTraceResolveChecksumBudget"
+    }
+    if ($VulkanTraceEdramChecksumBudget) {
+        $parts += "--ei vulkan_trace_edram_checksum_budget $VulkanTraceEdramChecksumBudget"
     }
     if ($VulkanTraceCopyStateBudget) {
         $parts += "--ei vulkan_trace_copy_state_budget $VulkanTraceCopyStateBudget"

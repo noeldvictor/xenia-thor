@@ -276,6 +276,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   void InitializeTrace() override;
 
  private:
+  friend class VulkanRenderTargetCache;
+
   struct SharedMemoryReadbackStats {
     uint32_t samples = 0;
     uint32_t nonzero_samples = 0;
