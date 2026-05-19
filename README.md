@@ -73,9 +73,12 @@ Current state as of 2026-05-19:
   This is title-screen progress, not a compatibility claim.
 - Sequenced nop HID pulses can press START, select English on the language
   screen, and reach the opening scene.
+- It is currently extremely slow. Early evidence points to CPU/JIT/audio/debug
+  overhead as the main speed wall, not an Adreno device-lost failure.
 - It still is not playable gameplay.
 - The next main lane is real Android controller mapping, longer scripted input,
-  and reducing remaining research-only Vulkan fallback knobs.
+  trace-off speed profiling, and reducing remaining research-only Vulkan
+  fallback knobs.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -98,6 +101,7 @@ Useful repo docs for this fork:
 - [Blue Dragon Dword3 Texture Exponent Title Fix](docs/research/20260519-133516-blue-dragon-dword3-title-fix.md)
 - [Codex Hooks For The Blue Dragon Loop](docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md)
 - [Blue Dragon Nop HID Sequence](docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md)
+- [Blue Dragon Performance Triage](docs/research/20260519-151305-blue-dragon-performance-triage.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

@@ -309,7 +309,9 @@ Primary target:
   English on the language screen, and reach Blue Dragon's opening scene in
   `scratch\thor-debug\20260519-144529-*`.
 - Current blocker: real Android controller mapping, longer scripted input, and
-  reducing the remaining research-only Vulkan fallback knobs.
+  performance. The latest thread sample shows the main guest CPU thread and XMA
+  decoder as the top consumers, with GPU command work below them. Treat the
+  current speed wall as CPU/JIT/audio/debug-overhead first, GPU second.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
@@ -658,6 +660,13 @@ Primary target:
     language selection.
   - This is scripted research input only; it is not real Android controller
     mapping yet.
+- Blue Dragon performance triage:
+  `docs/research/20260519-151305-blue-dragon-performance-triage.md`.
+  - Trace-heavy proof runs are not speed samples.
+  - Trace-off run `scratch\thor-debug\20260519-150821-*` stayed alive in the
+    opening sequence.
+  - Live `top -H` showed main guest CPU and XMA decoder ahead of GPU command
+    thread CPU use.
 
 ## Codex Hooks / Automation
 
