@@ -75,6 +75,15 @@ Primary target:
 - Use `tools/thor/thor_xenia_debug.ps1` for repeatable ADB install, launch, and capture.
 - `tools/thor/thor_xenia_debug.ps1` now retries flaky ADB transports for the
   known Thor serial and records reconnect events in capture metadata.
+- `tools/thor/thor_xenia_debug.ps1 -Mode LaunchBlueDragonLiveCapture` launches
+  Blue Dragon, keeps live logcat open during the run, writes filtered logcat,
+  metadata, and a PNG screenshot, and is preferred over dump-afterward logcat
+  for early GPU/presenter probes.
+- As of 2026-05-18, Blue Dragon's VdSwap frontbuffers `1CA1C000` and
+  `1CDB4000` are still all-zero on Thor, but forced-presenting resolve
+  candidate `1C340000` as 640x360 format 7 produces a visible dark-blue guest
+  surface. This is not title, gameplay, or compatibility; use it only as a
+  debug checkpoint for render-source selection.
 - Use `tools/arm64/hir_coverage_report.ps1` to summarize latest Thor logcats
   into HIR opcode counts, unimplemented opcodes, legacy mini-JIT fallback
   reasons from older captures, slow interpreter functions, guest crash PCs,
@@ -133,7 +142,8 @@ Primary target:
   - C++/Vulkan/ARM64 backend changes: `thor_build.ps1 -Mode NativeCore`.
   - Release-to-device validation: `thor_build.ps1 -Mode FullDeploy`.
 - Prefer scripted Thor debug loops over manual clicking once a path is known:
-  `FindContent`, `LaunchBlueDragon`, `LaunchEmulator`, `LaunchWindowDemo`, and `Capture`.
+  `FindContent`, `LaunchBlueDragon`, `LaunchBlueDragonLiveCapture`,
+  `LaunchEmulator`, `LaunchWindowDemo`, and `Capture`.
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
 - Legacy ARM64 mini-JIT flags (`-Arm64MiniJit`, `-Arm64MiniJitBlacklist`,
   `-Arm64ForceInterpreterRanges`, and `-Arm64GuestStoreWatch`) belong to the
@@ -163,6 +173,10 @@ Primary target:
     `XE_SWAP`, and Vulkan `IssueSwap` proof. Import/symbol lines mentioning
     `VdSwap` are not runtime call proof; use the explicit `GPU swap trace:`
     lines for runtime evidence.
+  - `-VulkanPresentForcedResolveOnSwap true` plus
+    `-VulkanPresentForcedResolveAddress`, width, height, pitch, and format to
+    force-present a specific resolve source. This is a research-only probe for
+    Blue Dragon black/blue frames, not a compatibility fix.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.

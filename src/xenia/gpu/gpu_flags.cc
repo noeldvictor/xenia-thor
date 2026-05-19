@@ -54,6 +54,12 @@ DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_frontbuffer_checksum_budget, 24,
              "Maximum frontbuffer checksum trace lines.", "GPU");
+DEFINE_bool(gpu_trace_swap_render_targets, false,
+            "Trace active guest render-target registers at PM4_XE_SWAP. "
+            "Research-only black-screen probe.",
+            "GPU");
+DEFINE_int32(gpu_trace_swap_render_targets_budget, 24,
+             "Maximum active render-target swap trace groups.", "GPU");
 DEFINE_bool(vulkan_trace_resolve, false,
             "Trace Vulkan render target resolve/copy destinations. "
             "Research-only Android black-screen probe.",
@@ -87,6 +93,28 @@ DEFINE_bool(vulkan_present_recent_resolve_on_swap, false,
             "VdSwap frontbuffer. Research-only Blue Dragon black-screen "
             "probe; incorrect for general compatibility.",
             "GPU");
+DEFINE_bool(vulkan_present_forced_resolve_on_swap, false,
+            "Present a manually specified Vulkan resolve source instead of "
+            "the VdSwap frontbuffer. Research-only Android black-screen "
+            "probe; incorrect for general compatibility.",
+            "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_address, 0,
+              "Guest physical address to force-present when "
+              "vulkan_present_forced_resolve_on_swap is enabled.",
+              "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_length, 0,
+              "Optional byte length of the forced present resolve source.",
+              "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_width, 0,
+              "Width of the forced present resolve source.", "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_height, 0,
+              "Height of the forced present resolve source.", "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_pitch, 0,
+              "Pitch in pixels of the forced present resolve source.", "GPU");
+DEFINE_uint32(vulkan_present_forced_resolve_format, 0,
+              "Xenos texture format enum of the forced present resolve "
+              "source.",
+              "GPU");
 DEFINE_bool(vulkan_debug_solid_guest_output, false,
             "Fill the Vulkan guest output image with a solid debug color on "
             "swap. Research-only presenter proof; incorrect for gameplay.",

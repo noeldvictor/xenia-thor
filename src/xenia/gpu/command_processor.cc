@@ -42,6 +42,8 @@ constexpr uint32_t kCpRbWptrRegister = 0x01C5;
 
 std::atomic<int32_t> gpu_packet_trace_count{0};
 std::atomic<int32_t> gpu_swap_frontbuffer_checksum_count{0};
+std::atomic<int32_t> gpu_swap_render_targets_trace_count{0};
+std::atomic<bool> gpu_swap_probe_cvars_logged{false};
 
 bool ShouldTraceGpuPacket() {
   return cvars::gpu_trace_swap &&
@@ -55,6 +57,78 @@ bool ShouldTraceSwapFrontbufferChecksum() {
   int32_t budget = cvars::gpu_trace_swap_frontbuffer_checksum_budget;
   return budget < 0 ||
          gpu_swap_frontbuffer_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceSwapRenderTargets() {
+  if (!cvars::gpu_trace_swap_render_targets) {
+    return false;
+  }
+  int32_t budget = cvars::gpu_trace_swap_render_targets_budget;
+  return budget < 0 ||
+         gpu_swap_render_targets_trace_count.fetch_add(1) < budget;
+}
+
+void TraceSwapRenderTargets(const RegisterFile* regs, uint32_t frontbuffer_ptr,
+                            uint32_t frontbuffer_width,
+                            uint32_t frontbuffer_height) {
+  if (!ShouldTraceSwapRenderTargets() || !regs) {
+    return;
+  }
+
+  auto rb_surface_info = regs->Get<reg::RB_SURFACE_INFO>();
+  auto rb_modecontrol = regs->Get<reg::RB_MODECONTROL>();
+  auto rb_colorcontrol = regs->Get<reg::RB_COLORCONTROL>();
+  auto rb_depth_info = regs->Get<reg::RB_DEPTH_INFO>();
+  auto rb_copy_control = regs->Get<reg::RB_COPY_CONTROL>();
+  uint32_t rb_copy_dest_base = (*regs)[XE_GPU_REG_RB_COPY_DEST_BASE];
+  auto rb_copy_dest_pitch = regs->Get<reg::RB_COPY_DEST_PITCH>();
+  uint32_t rb_color_mask = (*regs)[XE_GPU_REG_RB_COLOR_MASK];
+
+  XELOGI(
+      "GPU swap RT trace: frontbuffer={:08X} size={}x{} rb_surface={:08X} "
+      "surface_pitch={} msaa={} rb_mode={:08X} edram_mode={} "
+      "rb_colorcontrol={:08X} rb_color_mask={:04X} depth_info={:08X} "
+      "depth_base={} depth_base_bit11={} depth_format={} copy_control={:08X} "
+      "copy_src={} copy_command={} copy_dest_base={:08X} copy_dest_pitch={:08X}",
+      frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
+      rb_surface_info.value, rb_surface_info.surface_pitch,
+      uint32_t(rb_surface_info.msaa_samples), rb_modecontrol.value,
+      uint32_t(rb_modecontrol.edram_mode), rb_colorcontrol.value,
+      rb_color_mask & 0xFFFF, rb_depth_info.value, rb_depth_info.depth_base,
+      rb_depth_info.depth_base_bit_11, uint32_t(rb_depth_info.depth_format),
+      rb_copy_control.value, rb_copy_control.copy_src_select,
+      uint32_t(rb_copy_control.copy_command), rb_copy_dest_base,
+      rb_copy_dest_pitch.value);
+
+  for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+    auto color_info = regs->Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[i]);
+    uint32_t write_mask = (rb_color_mask >> (i * 4)) & 0xF;
+    XELOGI(
+        "GPU swap RT trace: color{} info={:08X} base_tiles={} "
+        "base_bit11={} format={}({}) exp_bias={} write_mask={:X} "
+        "pitch_pixels={} approx_edram_byte_offset={:08X}",
+        i, color_info.value, color_info.color_base,
+        color_info.color_base_bit_11, uint32_t(color_info.color_format),
+        xenos::GetColorRenderTargetFormatName(color_info.color_format),
+        color_info.color_exp_bias, write_mask, rb_surface_info.surface_pitch,
+        color_info.color_base * xenos::kEdramTileWidthSamples *
+            xenos::kEdramTileHeightSamples * uint32_t(sizeof(uint32_t)));
+  }
+}
+
+void TraceSwapProbeCvarsOnce() {
+  bool expected = false;
+  if (!gpu_swap_probe_cvars_logged.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  XELOGI(
+      "GPU swap probe cvars: gpu_trace_swap={} frontbuffer_checksum={} "
+      "frontbuffer_budget={} render_targets={} render_targets_budget={}",
+      cvars::gpu_trace_swap, cvars::gpu_trace_swap_frontbuffer_checksum,
+      cvars::gpu_trace_swap_frontbuffer_checksum_budget,
+      cvars::gpu_trace_swap_render_targets,
+      cvars::gpu_trace_swap_render_targets_budget);
 }
 
 void TraceSwapFrontbufferChecksum(Memory* memory, uint32_t frontbuffer_ptr,
@@ -1196,8 +1270,11 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
         magic, frontbuffer_ptr, frontbuffer_width, frontbuffer_height, count,
         uint32_t(reader->read_ptr()), uint32_t(reader->read_offset()));
   }
+  TraceSwapProbeCvarsOnce();
   TraceSwapFrontbufferChecksum(memory_, frontbuffer_ptr, frontbuffer_width,
                                frontbuffer_height);
+  TraceSwapRenderTargets(register_file_, frontbuffer_ptr, frontbuffer_width,
+                         frontbuffer_height);
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
 

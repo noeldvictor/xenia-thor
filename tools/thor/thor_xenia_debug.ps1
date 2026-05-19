@@ -9,6 +9,7 @@ param(
         "LaunchWindowDemo",
         "LaunchEmulator",
         "LaunchBlueDragon",
+        "LaunchBlueDragonLiveCapture",
         "StopNoise",
         "Capture")]
     [string]$Mode = "DeviceInfo",
@@ -30,22 +31,31 @@ param(
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
+    [string]$GpuTraceSwapRenderTargets = "false",
     [string]$VulkanTraceResolve = "false",
     [string]$VulkanTraceResolveChecksum = "false",
     [string]$VulkanReadbackResolve = "false",
     [string]$VulkanTraceCopyState = "false",
     [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
     [string]$VulkanPresentRecentResolveOnSwap = "false",
+    [string]$VulkanPresentForcedResolveOnSwap = "false",
     [string]$VulkanDebugSolidGuestOutput = "false",
     [string]$VulkanForceSigned2101010UnormFallback = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$GpuTracePacketBudget = "",
     [string]$GpuTraceSwapFrontbufferChecksumBudget = "",
+    [string]$GpuTraceSwapRenderTargetsBudget = "",
     [string]$VulkanTraceResolveBudget = "",
     [string]$VulkanTraceResolveChecksumBudget = "",
     [string]$VulkanTraceCopyStateBudget = "",
     [string]$VulkanTraceSwapSharedMemoryChecksumBudget = "",
+    [string]$VulkanPresentForcedResolveAddress = "",
+    [string]$VulkanPresentForcedResolveLength = "",
+    [string]$VulkanPresentForcedResolveWidth = "",
+    [string]$VulkanPresentForcedResolveHeight = "",
+    [string]$VulkanPresentForcedResolvePitch = "",
+    [string]$VulkanPresentForcedResolveFormat = "",
     [string]$Arm64MiniJitBlacklist = "",
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
@@ -65,6 +75,7 @@ param(
     [string]$XboxkrnlEventTraceBudget = "",
     [string]$XboxkrnlEventTraceObjects = "",
     [string]$XboxkrnlIgnoreGuestDebugBreakpoints = "false",
+    [int]$LiveCaptureSeconds = 75,
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -243,6 +254,15 @@ function ConvertTo-BooleanText {
     return "true"
 }
 
+function ConvertTo-AdbIntText {
+    param([string]$Value)
+    $trimmed = $Value.Trim()
+    if ($trimmed -match "^(?i)0x([0-9a-f]+)$") {
+        return [Convert]::ToUInt32($Matches[1], 16).ToString()
+    }
+    return $trimmed
+}
+
 function Invoke-AdbShellCommand {
     param([string]$Command)
     Invoke-Adb @("shell", $Command)
@@ -269,9 +289,17 @@ done | head -20
 }
 
 function Start-XeniaEmulator {
-    param([string]$LaunchTarget)
-    Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
-    Invoke-Adb @("logcat", "-c")
+    param(
+        [string]$LaunchTarget,
+        [switch]$SkipForceStop,
+        [switch]$SkipLogcatClear
+    )
+    if (!$SkipForceStop) {
+        Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+    }
+    if (!$SkipLogcatClear) {
+        Invoke-Adb @("logcat", "-c")
+    }
     Set-LastLaunchTarget $LaunchTarget
     $component = "$PackageName/$EmulatorActivity"
     $parts = @(
@@ -291,12 +319,14 @@ function Start-XeniaEmulator {
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
         "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
+        "--ez gpu_trace_swap_render_targets $(ConvertTo-BooleanText $GpuTraceSwapRenderTargets)",
         "--ez vulkan_trace_resolve $(ConvertTo-BooleanText $VulkanTraceResolve)",
         "--ez vulkan_trace_resolve_checksum $(ConvertTo-BooleanText $VulkanTraceResolveChecksum)",
         "--ez vulkan_readback_resolve $(ConvertTo-BooleanText $VulkanReadbackResolve)",
         "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
         "--ez vulkan_trace_swap_shared_memory_checksum $(ConvertTo-BooleanText $VulkanTraceSwapSharedMemoryChecksum)",
         "--ez vulkan_present_recent_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentRecentResolveOnSwap)",
+        "--ez vulkan_present_forced_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentForcedResolveOnSwap)",
         "--ez vulkan_debug_solid_guest_output $(ConvertTo-BooleanText $VulkanDebugSolidGuestOutput)",
         "--ez vulkan_force_signed_2101010_unorm_fallback $(ConvertTo-BooleanText $VulkanForceSigned2101010UnormFallback)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
@@ -313,6 +343,9 @@ function Start-XeniaEmulator {
     if ($GpuTraceSwapFrontbufferChecksumBudget) {
         $parts += "--ei gpu_trace_swap_frontbuffer_checksum_budget $GpuTraceSwapFrontbufferChecksumBudget"
     }
+    if ($GpuTraceSwapRenderTargetsBudget) {
+        $parts += "--ei gpu_trace_swap_render_targets_budget $GpuTraceSwapRenderTargetsBudget"
+    }
     if ($VulkanTraceResolveBudget) {
         $parts += "--ei vulkan_trace_resolve_budget $VulkanTraceResolveBudget"
     }
@@ -324,6 +357,24 @@ function Start-XeniaEmulator {
     }
     if ($VulkanTraceSwapSharedMemoryChecksumBudget) {
         $parts += "--ei vulkan_trace_swap_shared_memory_checksum_budget $VulkanTraceSwapSharedMemoryChecksumBudget"
+    }
+    if ($VulkanPresentForcedResolveAddress) {
+        $parts += "--ei vulkan_present_forced_resolve_address $(ConvertTo-AdbIntText $VulkanPresentForcedResolveAddress)"
+    }
+    if ($VulkanPresentForcedResolveLength) {
+        $parts += "--ei vulkan_present_forced_resolve_length $(ConvertTo-AdbIntText $VulkanPresentForcedResolveLength)"
+    }
+    if ($VulkanPresentForcedResolveWidth) {
+        $parts += "--ei vulkan_present_forced_resolve_width $(ConvertTo-AdbIntText $VulkanPresentForcedResolveWidth)"
+    }
+    if ($VulkanPresentForcedResolveHeight) {
+        $parts += "--ei vulkan_present_forced_resolve_height $(ConvertTo-AdbIntText $VulkanPresentForcedResolveHeight)"
+    }
+    if ($VulkanPresentForcedResolvePitch) {
+        $parts += "--ei vulkan_present_forced_resolve_pitch $(ConvertTo-AdbIntText $VulkanPresentForcedResolvePitch)"
+    }
+    if ($VulkanPresentForcedResolveFormat) {
+        $parts += "--ei vulkan_present_forced_resolve_format $(ConvertTo-AdbIntText $VulkanPresentForcedResolveFormat)"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"
@@ -405,6 +456,80 @@ function Start-XeniaEmulator {
     Invoke-Adb @("shell", "pidof", $PackageName)
 }
 
+function Resolve-BlueDragonLaunchTarget {
+    $launchTarget = $Target
+    if (!$launchTarget) {
+        $launchTarget = Find-BlueDragonTarget
+    }
+    if (!$launchTarget) {
+        $launchTarget = $BlueDragonDisc1
+    }
+    return $launchTarget
+}
+
+function Write-CaptureMetadata {
+    param(
+        [string]$Stamp,
+        [string]$MetaPath,
+        [string]$CaptureTarget
+    )
+
+    $branch = (& git -C $RepoRoot branch --show-current) 2>$null
+    $head = (& git -C $RepoRoot rev-parse --short HEAD) 2>$null
+    $apkHash = ""
+    if (Test-Path $ApkPath) {
+        $apkHash = (Get-FileHash -Algorithm SHA256 $ApkPath).Hash
+    }
+    if (!$CaptureTarget -and (Test-Path $LastTargetPath)) {
+        $CaptureTarget = (Get-Content -Raw $LastTargetPath).Trim()
+    }
+    $deviceState = Get-AdbDeviceState
+    $packagePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
+    $focused = (Invoke-AdbShellCommand "dumpsys activity activities | grep -E 'mFocusedApp|mResumedActivity|$PackageName' | head -40") -join "`n"
+    @(
+        "timestamp=$Stamp",
+        "branch=$branch",
+        "head=$head",
+        "adb_serial=$DeviceSerial",
+        "adb_state=$deviceState",
+        "package=$PackageName",
+        "pid=$packagePid",
+        "apk=$ApkPath",
+        "apk_sha256=$apkHash",
+        "target=$CaptureTarget",
+        "live_capture_seconds=$LiveCaptureSeconds",
+        "",
+        "adb_events:",
+        ($script:AdbEvents -join "`n"),
+        "",
+        "activity:",
+        $focused
+    ) | Out-File -Encoding utf8 $MetaPath
+}
+
+function Write-FilteredLog {
+    param(
+        [string]$LogPath,
+        [string]$FilteredLogPath
+    )
+
+    if (!$LogFilter -or !(Test-Path $LogPath)) {
+        return
+    }
+    Get-Content -Path $LogPath |
+        Select-String -Pattern $LogFilter |
+        Out-File -Encoding utf8 $FilteredLogPath
+}
+
+function Stop-LiveLogcat {
+    param([object]$Process)
+
+    if ($Process -and !$Process.HasExited) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $Process.Id -Timeout 5 -ErrorAction SilentlyContinue
+    }
+}
+
 if (!$OutDir) {
     $OutDir = Join-Path $RepoRoot "scratch\thor-debug"
 }
@@ -468,15 +593,46 @@ done | head -50
         Start-XeniaEmulator $Target
     }
     "LaunchBlueDragon" {
-        $launchTarget = $Target
-        if (!$launchTarget) {
-            $launchTarget = Find-BlueDragonTarget
-        }
-        if (!$launchTarget) {
-            $launchTarget = $BlueDragonDisc1
-        }
+        $launchTarget = Resolve-BlueDragonLaunchTarget
         Write-Output "Launching target: $launchTarget"
         Start-XeniaEmulator $launchTarget
+    }
+    "LaunchBlueDragonLiveCapture" {
+        $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $LogPath = Join-Path $OutDir "$Stamp-live-logcat.txt"
+        $LogErrorPath = Join-Path $OutDir "$Stamp-live-logcat.err.txt"
+        $FilteredLogPath = Join-Path $OutDir "$Stamp-live-logcat-filtered.txt"
+        $MetaPath = Join-Path $OutDir "$Stamp-meta.txt"
+        $ScreenshotPath = Join-Path $OutDir "$Stamp-screenshot.png"
+        $launchTarget = Resolve-BlueDragonLaunchTarget
+        Write-Output "Launching target: $launchTarget"
+        Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+        Invoke-Adb @("logcat", "-c") | Out-Null
+
+        $adbPath = (Get-Command adb).Source
+        $adbArguments = @()
+        if ($DeviceSerial) {
+            $adbArguments += @("-s", $DeviceSerial)
+        }
+        $adbArguments += @("logcat", "-v", "time")
+        $logcatProcess = Start-Process -FilePath $adbPath -ArgumentList $adbArguments `
+            -RedirectStandardOutput $LogPath -RedirectStandardError $LogErrorPath `
+            -WindowStyle Hidden -PassThru
+        try {
+            Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+            Start-Sleep -Seconds $LiveCaptureSeconds
+        } finally {
+            Stop-LiveLogcat $logcatProcess
+        }
+
+        Write-FilteredLog $LogPath $FilteredLogPath
+        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        Write-Output "Log: $LogPath"
+        Write-Output "Filtered log: $FilteredLogPath"
+        Write-Output "Log errors: $LogErrorPath"
+        Write-Output "Meta: $MetaPath"
+        Write-Output "Screenshot: $ScreenshotPath"
     }
     "StopNoise" {
         foreach ($package in $NoisePackages) {
@@ -493,41 +649,9 @@ done | head -50
         $ScreenshotPath = Join-Path $OutDir "$Stamp-screenshot.png"
         $logcat = Invoke-Adb @("logcat", "-d", "-v", "time")
         $logcat | Out-File -Encoding utf8 $LogPath
-        if ($LogFilter) {
-            $logcat | Select-String -Pattern $LogFilter |
-                Out-File -Encoding utf8 $FilteredLogPath
-        }
-        $branch = (& git -C $RepoRoot branch --show-current) 2>$null
-        $head = (& git -C $RepoRoot rev-parse --short HEAD) 2>$null
-        $apkHash = ""
-        if (Test-Path $ApkPath) {
-            $apkHash = (Get-FileHash -Algorithm SHA256 $ApkPath).Hash
-        }
         $captureTarget = $Target
-        if (!$captureTarget -and (Test-Path $LastTargetPath)) {
-            $captureTarget = (Get-Content -Raw $LastTargetPath).Trim()
-        }
-        $deviceState = Get-AdbDeviceState
-        $packagePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
-        $focused = (Invoke-AdbShellCommand "dumpsys activity activities | grep -E 'mFocusedApp|mResumedActivity|$PackageName' | head -40") -join "`n"
-        @(
-            "timestamp=$Stamp",
-            "branch=$branch",
-            "head=$head",
-            "adb_serial=$DeviceSerial",
-            "adb_state=$deviceState",
-            "package=$PackageName",
-            "pid=$packagePid",
-            "apk=$ApkPath",
-            "apk_sha256=$apkHash",
-            "target=$captureTarget",
-            "",
-            "adb_events:",
-            ($script:AdbEvents -join "`n"),
-            "",
-            "activity:",
-            $focused
-        ) | Out-File -Encoding utf8 $MetaPath
+        Write-FilteredLog $LogPath $FilteredLogPath
+        Write-CaptureMetadata $Stamp $MetaPath $captureTarget
         Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
         Write-Output "Log: $LogPath"
         if ($LogFilter) {

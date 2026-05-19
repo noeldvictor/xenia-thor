@@ -67,10 +67,13 @@ Current state as of 2026-05-18:
 - The donor A64 backend now compiles into the Android native core for
   `arm64-v8a` and `x86_64`, which is build progress, not a compatibility
   claim.
+- Blue Dragon's real VdSwap frontbuffers are still black/zero, but a forced
+  Vulkan present of resolve candidate `1C340000` now shows a uniform dark-blue
+  guest surface on Thor. That is a debug checkpoint, not title screen progress.
 - It still does not reach title or playable gameplay.
-- The next main lane is running this imported A64 backend on Thor, capturing the
-  first Blue Dragon runtime failure, and fixing real donor-backend integration
-  bugs instead of polishing the removed mini-JIT scaffold.
+- The next main lane is selecting the correct visible render source and fixing
+  the render/guest progress path that leaves Blue Dragon stuck on a flat
+  dark-blue surface instead of reaching title.
 - It is not a compatibility result.
 
 ## Local Notes

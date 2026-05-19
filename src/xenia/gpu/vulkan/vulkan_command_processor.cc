@@ -1420,13 +1420,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "swap_shared_memory_checksum={} swap_shared_memory_checksum_budget={} "
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
-          "readback_resolve={}",
+          "readback_resolve={} recent_present={} forced_present={} "
+          "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
           cvars::vulkan_trace_resolve, cvars::vulkan_trace_resolve_budget,
           cvars::vulkan_trace_resolve_checksum,
           cvars::vulkan_trace_resolve_checksum_budget,
-          cvars::vulkan_readback_resolve);
+          cvars::vulkan_readback_resolve,
+          cvars::vulkan_present_recent_resolve_on_swap,
+          cvars::vulkan_present_forced_resolve_on_swap,
+          cvars::vulkan_present_forced_resolve_address,
+          cvars::vulkan_present_forced_resolve_length,
+          cvars::vulkan_present_forced_resolve_width,
+          cvars::vulkan_present_forced_resolve_height,
+          cvars::vulkan_present_forced_resolve_pitch,
+          cvars::vulkan_present_forced_resolve_format);
     }
     XELOGI(
         "GPU swap trace: Vulkan IssueSwap begin frontbuffer={:08X} "
@@ -1473,13 +1482,42 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   uint32_t frontbuffer_width_scaled, frontbuffer_height_scaled;
   xenos::TextureFormat frontbuffer_format;
   uint32_t original_swap_fetch[6] = {};
-  bool using_recent_resolve_for_swap = false;
-  const PresentResolveCandidate recent_resolve =
-      recent_present_resolve_candidate_;
-  if (cvars::vulkan_present_recent_resolve_on_swap &&
-      recent_resolve.address &&
-      recent_resolve.address != frontbuffer_ptr &&
-      recent_resolve.width && recent_resolve.height && recent_resolve.pitch) {
+  bool using_resolve_override_for_swap = false;
+  bool using_forced_resolve_for_swap = false;
+  PresentResolveCandidate swap_resolve_override;
+  if (cvars::vulkan_present_forced_resolve_on_swap &&
+      cvars::vulkan_present_forced_resolve_address &&
+      cvars::vulkan_present_forced_resolve_width &&
+      cvars::vulkan_present_forced_resolve_height &&
+      cvars::vulkan_present_forced_resolve_pitch) {
+    swap_resolve_override.address =
+        cvars::vulkan_present_forced_resolve_address;
+    swap_resolve_override.length =
+        cvars::vulkan_present_forced_resolve_length;
+    if (!swap_resolve_override.length) {
+      uint64_t forced_length =
+          uint64_t(cvars::vulkan_present_forced_resolve_width) *
+          uint64_t(cvars::vulkan_present_forced_resolve_height) * 4;
+      swap_resolve_override.length =
+          forced_length <= UINT32_MAX ? uint32_t(forced_length) : 0;
+    }
+    swap_resolve_override.width =
+        cvars::vulkan_present_forced_resolve_width;
+    swap_resolve_override.height =
+        cvars::vulkan_present_forced_resolve_height;
+    swap_resolve_override.pitch =
+        cvars::vulkan_present_forced_resolve_pitch;
+    swap_resolve_override.format = static_cast<xenos::TextureFormat>(
+        cvars::vulkan_present_forced_resolve_format);
+    using_forced_resolve_for_swap = true;
+  } else if (cvars::vulkan_present_recent_resolve_on_swap) {
+    swap_resolve_override = recent_present_resolve_candidate_;
+  }
+  if (swap_resolve_override.address &&
+      (using_forced_resolve_for_swap ||
+       swap_resolve_override.address != frontbuffer_ptr) &&
+      swap_resolve_override.width && swap_resolve_override.height &&
+      swap_resolve_override.pitch) {
     constexpr uint32_t kSwapFetchRegister =
         XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
     std::memcpy(original_swap_fetch, &register_file_->values[kSwapFetchRegister],
@@ -1487,33 +1525,35 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
 
     xenos::xe_gpu_texture_fetch_t override_fetch =
         register_file_->GetTextureFetch(0);
-    override_fetch.base_address = recent_resolve.address >> 12;
-    override_fetch.format = recent_resolve.format;
-    override_fetch.pitch = recent_resolve.pitch >> 5;
+    override_fetch.base_address = swap_resolve_override.address >> 12;
+    override_fetch.format = swap_resolve_override.format;
+    override_fetch.pitch = swap_resolve_override.pitch >> 5;
     override_fetch.tiled = true;
-    override_fetch.size_2d.width = recent_resolve.width - 1;
-    override_fetch.size_2d.height = recent_resolve.height - 1;
+    override_fetch.size_2d.width = swap_resolve_override.width - 1;
+    override_fetch.size_2d.height = swap_resolve_override.height - 1;
     override_fetch.dimension = xenos::DataDimension::k2DOrStacked;
     override_fetch.mip_address = 0;
     override_fetch.mip_min_level = 0;
     override_fetch.mip_max_level = 0;
     std::memcpy(&register_file_->values[kSwapFetchRegister], &override_fetch,
                 sizeof(override_fetch));
-    using_recent_resolve_for_swap = true;
+    using_resolve_override_for_swap = true;
     if (cvars::gpu_trace_swap) {
       XELOGI(
-          "GPU swap trace: Vulkan IssueSwap using recent resolve candidate "
+          "GPU swap trace: Vulkan IssueSwap using {} resolve source "
           "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
           "instead of frontbuffer={:08X}",
-          recent_resolve.address, recent_resolve.length, recent_resolve.width,
-          recent_resolve.height, recent_resolve.pitch,
-          static_cast<uint32_t>(recent_resolve.format),
-          recent_resolve.sequence, frontbuffer_ptr);
+          using_forced_resolve_for_swap ? "forced" : "recent",
+          swap_resolve_override.address, swap_resolve_override.length,
+          swap_resolve_override.width, swap_resolve_override.height,
+          swap_resolve_override.pitch,
+          static_cast<uint32_t>(swap_resolve_override.format),
+          swap_resolve_override.sequence, frontbuffer_ptr);
     }
   }
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
       frontbuffer_width_scaled, frontbuffer_height_scaled, frontbuffer_format);
-  if (using_recent_resolve_for_swap) {
+  if (using_resolve_override_for_swap) {
     constexpr uint32_t kSwapFetchRegister =
         XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
     std::memcpy(&register_file_->values[kSwapFetchRegister],
