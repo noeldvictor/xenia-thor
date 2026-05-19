@@ -21,6 +21,7 @@ param(
     [string]$HidNopButtons = "",
     [string]$HidNopButtonsDelayMs = "",
     [string]$HidNopButtonsHoldMs = "",
+    [string]$DumpShaders = "",
     [string]$RenderTargetPathVulkan = "",
     [string]$BreakOnDebugbreak = "",
     [string]$DisassembleFunctions = "false",
@@ -103,6 +104,7 @@ $ErrorActionPreference = "Stop"
 
 $script:AdbEvents = New-Object System.Collections.Generic.List[string]
 $script:LastAdbExitCode = 0
+$script:ActiveDumpShadersPath = ""
 
 function Add-AdbEvent {
     param([string]$Message)
@@ -287,6 +289,64 @@ function Invoke-AdbShellCommand {
     Invoke-Adb @("shell", $Command)
 }
 
+function Set-ActiveShaderDumpPath {
+    param([string]$Stamp = "")
+
+    $script:ActiveDumpShadersPath = ""
+    if (!$DumpShaders) {
+        return
+    }
+
+    if ($DumpShaders -eq "auto") {
+        if (!$Stamp) {
+            $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        }
+        $script:ActiveDumpShadersPath = "/sdcard/Android/data/$PackageName/files/shader-dumps/$Stamp"
+    } else {
+        $script:ActiveDumpShadersPath = $DumpShaders
+    }
+
+    Invoke-Adb @("shell", "rm", "-rf", $script:ActiveDumpShadersPath) | Out-Null
+    Invoke-Adb @("shell", "mkdir", "-p", $script:ActiveDumpShadersPath) | Out-Null
+    Add-AdbEvent "shader dump path: $script:ActiveDumpShadersPath"
+}
+
+function Pull-ActiveShaderDumps {
+    param(
+        [string]$Stamp,
+        [string]$OutDir
+    )
+
+    if (!$script:ActiveDumpShadersPath) {
+        return ""
+    }
+
+    $localDumpPath = Join-Path $OutDir "$Stamp-shader-dumps"
+    if (Test-Path $localDumpPath) {
+        Remove-Item -LiteralPath $localDumpPath -Recurse -Force
+    }
+
+    Ensure-AdbDevice
+    $adbArguments = @()
+    if ($DeviceSerial) {
+        $adbArguments += @("-s", $DeviceSerial)
+    }
+    $adbArguments += @("pull", $script:ActiveDumpShadersPath, $localDumpPath)
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $pullOutput = & adb @adbArguments 2>&1
+        $script:LastAdbExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($script:LastAdbExitCode -ne 0) {
+        throw "adb pull shader dumps failed: $($pullOutput -join "`n")"
+    }
+    Add-AdbEvent "shader dumps pulled to: $localDumpPath"
+    return $localDumpPath
+}
+
 function Set-LastLaunchTarget {
     param([string]$Value)
     $Value | Out-File -Encoding utf8 $LastTargetPath
@@ -313,6 +373,9 @@ function Start-XeniaEmulator {
         [switch]$SkipForceStop,
         [switch]$SkipLogcatClear
     )
+    if ($DumpShaders -and !$script:ActiveDumpShadersPath) {
+        Set-ActiveShaderDumpPath
+    }
     if (!$SkipForceStop) {
         Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
     }
@@ -363,6 +426,9 @@ function Start-XeniaEmulator {
     }
     if ($RenderTargetPathVulkan) {
         $parts += "--es render_target_path_vulkan $(ConvertTo-AdbShellSingleQuote $RenderTargetPathVulkan)"
+    }
+    if ($script:ActiveDumpShadersPath) {
+        $parts += "--es dump_shaders $(ConvertTo-AdbShellSingleQuote $script:ActiveDumpShadersPath)"
     }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
@@ -558,6 +624,7 @@ function Write-CaptureMetadata {
         "apk_sha256=$apkHash",
         "target=$CaptureTarget",
         "live_capture_seconds=$LiveCaptureSeconds",
+        "shader_dump_device_path=$script:ActiveDumpShadersPath",
         "",
         "adb_events:",
         ($script:AdbEvents -join "`n"),
@@ -668,6 +735,7 @@ done | head -50
         Write-Output "Launching target: $launchTarget"
         Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
         Invoke-Adb @("logcat", "-c") | Out-Null
+        Set-ActiveShaderDumpPath $Stamp
 
         $adbPath = (Get-Command adb).Source
         $adbArguments = @()
@@ -686,6 +754,7 @@ done | head -50
         }
 
         Write-FilteredLog $LogPath $FilteredLogPath
+        $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
         Write-CaptureMetadata $Stamp $MetaPath $launchTarget
         Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
         Write-Output "Log: $LogPath"
@@ -693,6 +762,9 @@ done | head -50
         Write-Output "Log errors: $LogErrorPath"
         Write-Output "Meta: $MetaPath"
         Write-Output "Screenshot: $ScreenshotPath"
+        if ($ShaderDumpPath) {
+            Write-Output "Shader dumps: $ShaderDumpPath"
+        }
     }
     "StopNoise" {
         foreach ($package in $NoisePackages) {

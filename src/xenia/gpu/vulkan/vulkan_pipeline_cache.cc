@@ -373,6 +373,17 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(
     return false;
   }
 
+  if (!cvars::dump_shaders.empty()) {
+    const bool edram_fragment_shader_interlock =
+        render_target_cache_.GetPath() ==
+        RenderTargetCache::Path::kPixelShaderInterlock;
+    translation.Dump(cvars::dump_shaders,
+                     (shader.type() == xenos::ShaderType::kPixel)
+                         ? (edram_fragment_shader_interlock ? "vulkan_fsi"
+                                                            : "vulkan")
+                         : "vulkan");
+  }
+
   // TODO(Triang3l): Log that the shader has been successfully translated in
   // common code.
 

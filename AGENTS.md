@@ -533,6 +533,20 @@ Primary target:
   - Next GPU lane: dump and inspect Xenos microcode / translated SPIR-V for the
     visible fullscreen shader hashes to see which fetches and constants really
     drive exported color.
+- Blue Dragon shader-dump and presenter proof:
+  `docs/research/20260519-001514-blue-dragon-shader-dump-presenter-proof.md`.
+  - `dump_shaders` is now routeable from ADB extras, and
+    `tools/thor/thor_xenia_debug.ps1 -DumpShaders auto` creates/pulls a
+    timestamped shader dump directory alongside the capture.
+  - Vulkan now dumps translated SPIR-V binaries when `dump_shaders` is enabled;
+    Xenos ucode binary/text dumps are produced by the existing shader-analysis
+    path.
+  - The `0ABADD9DA4373CBA` composite shader's non-clear DXT fetch 7 is gated
+    out in the observed draw by `c26.x = 2.0`, so the final chain is mostly
+    sampling already-flat render targets.
+  - `vulkan_debug_solid_guest_output=true` produces a visible magenta frame on
+    Thor, proving the Android/Vulkan presenter is alive. The black-frame wall is
+    upstream of presentation.
 
 ## Android ARM64 Risk Register
 

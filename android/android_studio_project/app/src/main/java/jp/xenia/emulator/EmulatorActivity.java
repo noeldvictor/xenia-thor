@@ -21,6 +21,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyStringExtra(intent, launchArguments, "dump_shaders");
             copyStringExtra(intent, launchArguments, "render_target_path_vulkan");
             copyDoubleExtra(intent, launchArguments, "time_scalar");
             copyBooleanExtra(intent, launchArguments, "hid_nop_connected");
