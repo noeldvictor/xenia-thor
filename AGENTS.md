@@ -522,6 +522,17 @@ Primary target:
     data, but the resolved output remains clear-like.
   - Next GPU lane: trace shader constants and shader-source semantics for the
     visible fullscreen pixel shader family before changing render-target code.
+- Blue Dragon shader-constant proof:
+  `docs/research/20260519-000221-blue-dragon-shader-constant-trace.md`.
+  - `vulkan_trace_shader_constants=true` is routed through Android and the Thor
+    script and logs active pixel shader constant maps and values.
+  - The visible fullscreen pixel shaders have present, finite-looking constants
+    where expected; they do not depend on bool or loop constants.
+  - This moves the immediate wall past descriptor setup, source-memory readback,
+    and gross constant upload.
+  - Next GPU lane: dump and inspect Xenos microcode / translated SPIR-V for the
+    visible fullscreen shader hashes to see which fetches and constants really
+    drive exported color.
 
 ## Android ARM64 Risk Register
 

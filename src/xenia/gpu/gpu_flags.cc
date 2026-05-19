@@ -107,6 +107,12 @@ DEFINE_bool(vulkan_trace_draw_state, false,
             "GPU");
 DEFINE_int32(vulkan_trace_draw_state_budget, 128,
              "Maximum Vulkan draw-state trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_shader_constants, false,
+            "Trace active pixel shader constant maps and values around Vulkan "
+            "draws. Research-only Android GPU bring-up probe.",
+            "GPU");
+DEFINE_int32(vulkan_trace_shader_constants_budget, 32,
+             "Maximum active pixel shader constant trace groups.", "GPU");
 DEFINE_bool(vulkan_trace_texture_source_checksum, false,
             "Read back active texture source ranges from Vulkan shared memory "
             "and log sparse checksums. Research-only and very slow.",

@@ -298,6 +298,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool TraceTextureSourceChecksums(uint32_t used_texture_mask,
                                    const char* stage_label,
                                    uint64_t shader_hash);
+  void TraceShaderConstants(const VulkanShader& shader, const char* stage_label,
+                            bool is_pixel_shader);
 
   struct PresentResolveCandidate {
     uint32_t address = 0;

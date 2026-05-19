@@ -46,6 +46,7 @@ std::atomic<int32_t> vulkan_resolve_checksum_count{0};
 std::atomic<int32_t> vulkan_swap_shared_memory_checksum_count{0};
 std::atomic<int32_t> vulkan_copy_state_count{0};
 std::atomic<int32_t> vulkan_draw_state_count{0};
+std::atomic<int32_t> vulkan_shader_constants_count{0};
 std::atomic<int32_t> vulkan_texture_source_checksum_count{0};
 
 bool ShouldTraceVulkanResolveChecksum() {
@@ -88,6 +89,14 @@ bool ShouldTraceVulkanTextureSourceChecksum() {
   int32_t budget = cvars::vulkan_trace_texture_source_checksum_budget;
   return budget < 0 ||
          vulkan_texture_source_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanShaderConstants() {
+  if (!cvars::vulkan_trace_shader_constants) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_shader_constants_budget;
+  return budget < 0 || vulkan_shader_constants_count.fetch_add(1) < budget;
 }
 
 bool IsDebugPresentResolveCandidateFormat(xenos::TextureFormat format) {
@@ -1538,6 +1547,91 @@ bool VulkanCommandProcessor::TraceTextureSourceChecksums(
   return true;
 }
 
+void VulkanCommandProcessor::TraceShaderConstants(
+    const VulkanShader& shader, const char* stage_label, bool is_pixel_shader) {
+  if (!ShouldTraceVulkanShaderConstants()) {
+    return;
+  }
+
+  constexpr uint32_t kMaxFloatConstantsLogged = 32;
+  const RegisterFile& regs = *register_file_;
+  const Shader::ConstantRegisterMap& map = shader.constant_register_map();
+  XELOGI(
+      "GPU shader-constant trace: stage={} shader={:016X} "
+      "float_count={} float_dynamic={} "
+      "float_bitmap={:016X},{:016X},{:016X},{:016X} "
+      "loop_bitmap={:08X} "
+      "bool_bitmap={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+      stage_label, shader.ucode_data_hash(), map.float_count,
+      map.float_dynamic_addressing, map.float_bitmap[0], map.float_bitmap[1],
+      map.float_bitmap[2], map.float_bitmap[3], map.loop_bitmap,
+      map.bool_bitmap[0], map.bool_bitmap[1], map.bool_bitmap[2],
+      map.bool_bitmap[3], map.bool_bitmap[4], map.bool_bitmap[5],
+      map.bool_bitmap[6], map.bool_bitmap[7]);
+
+  uint32_t float_base_register =
+      is_pixel_shader ? XE_GPU_REG_SHADER_CONSTANT_256_X
+                      : XE_GPU_REG_SHADER_CONSTANT_000_X;
+  uint32_t guest_constant_base = is_pixel_shader ? 256 : 0;
+  uint32_t float_constants_logged = 0;
+  for (uint32_t i = 0; i < 4; ++i) {
+    uint64_t float_constant_map_entry = map.float_bitmap[i];
+    uint32_t float_constant_index;
+    while (xe::bit_scan_forward(float_constant_map_entry,
+                                &float_constant_index)) {
+      float_constant_map_entry &= ~(1ull << float_constant_index);
+      uint32_t storage_index = (i << 6) + float_constant_index;
+      const uint32_t* raw =
+          &regs[float_base_register + (i << 8) + (float_constant_index << 2)];
+      float values[4];
+      std::memcpy(values, raw, sizeof(values));
+      XELOGI(
+          "GPU shader-constant trace: stage={} shader={:016X} "
+          "float storage={} guest_c={} raw={:08X},{:08X},{:08X},{:08X} "
+          "value={},{},{},{}",
+          stage_label, shader.ucode_data_hash(), storage_index,
+          guest_constant_base + storage_index, raw[0], raw[1], raw[2], raw[3],
+          values[0], values[1], values[2], values[3]);
+      ++float_constants_logged;
+      if (float_constants_logged >= kMaxFloatConstantsLogged) {
+        XELOGI(
+            "GPU shader-constant trace: stage={} shader={:016X} "
+            "float logging capped shown={} total={}",
+            stage_label, shader.ucode_data_hash(), float_constants_logged,
+            map.float_count);
+        i = 4;
+        break;
+      }
+    }
+  }
+
+  uint32_t loop_constants_remaining = map.loop_bitmap;
+  uint32_t loop_index;
+  while (xe::bit_scan_forward(loop_constants_remaining, &loop_index)) {
+    loop_constants_remaining &= ~(uint32_t(1) << loop_index);
+    xenos::LoopConstant loop_constant;
+    loop_constant.value = regs[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 + loop_index];
+    XELOGI(
+        "GPU shader-constant trace: stage={} shader={:016X} "
+        "loop index={} raw={:08X} count={} start={} step={}",
+        stage_label, shader.ucode_data_hash(), loop_index, loop_constant.value,
+        loop_constant.count, loop_constant.start, loop_constant.step);
+  }
+
+  for (uint32_t bool_block = 0; bool_block < 8; ++bool_block) {
+    uint32_t used_bools = map.bool_bitmap[bool_block];
+    if (!used_bools) {
+      continue;
+    }
+    uint32_t values =
+        regs[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031 + bool_block];
+    XELOGI(
+        "GPU shader-constant trace: stage={} shader={:016X} "
+        "bool block={} used={:08X} values={:08X}",
+        stage_label, shader.ucode_data_hash(), bool_block, used_bools, values);
+  }
+}
+
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
@@ -1551,6 +1645,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "swap_shared_memory_checksum={} swap_shared_memory_checksum_budget={} "
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
+          "shader_constants={} shader_constants_budget={} "
           "texture_source_checksum={} texture_source_checksum_budget={} "
           "readback_resolve={} recent_present={} scored_present={} "
           "scored_min={}x{} scored_budget={} scored_required_format={} "
@@ -1561,6 +1656,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_trace_resolve, cvars::vulkan_trace_resolve_budget,
           cvars::vulkan_trace_resolve_checksum,
           cvars::vulkan_trace_resolve_checksum_budget,
+          cvars::vulkan_trace_shader_constants,
+          cvars::vulkan_trace_shader_constants_budget,
           cvars::vulkan_trace_texture_source_checksum,
           cvars::vulkan_trace_texture_source_checksum_budget,
           cvars::vulkan_readback_resolve,
@@ -3136,6 +3233,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (used_texture_mask_pixel) {
       texture_cache_->TraceActiveTextureState(used_texture_mask_pixel, "pixel");
     }
+  }
+  if (pixel_shader && normalized_color_mask &&
+      cvars::vulkan_trace_shader_constants) {
+    TraceShaderConstants(*pixel_shader, "pixel", true);
   }
 
   // Whether to load the guest 32-bit (usually big-endian) vertex index
