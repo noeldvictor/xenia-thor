@@ -16,10 +16,12 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
 
+#include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/debugging.h"
 #include "xenia/base/logging.h"
@@ -31,6 +33,7 @@
 #include "xenia/cpu/backend/a64/a64_sequences.h"
 #include "xenia/cpu/backend/a64/a64_stack_layout.h"
 #include "xenia/cpu/cpu_flags.h"
+#include "xenia/cpu/function.h"
 #include "xenia/cpu/hir/hir_builder.h"
 #include "xenia/cpu/hir/label.h"
 #include "xenia/cpu/ppc/ppc_context.h"
@@ -170,6 +173,33 @@ bool A64CallTraceRequested() {
          cvars::arm64_compiled_call_trace_budget != 0;
 }
 
+std::string DescribeTraceFunction(xe::cpu::Processor* processor,
+                                  uint32_t address) {
+  if (!processor || !address) {
+    return {};
+  }
+
+  xe::cpu::Function* function = processor->QueryFunction(address);
+  if (!function) {
+    auto functions = processor->FindFunctionsWithAddress(address);
+    if (!functions.empty()) {
+      function = functions.front();
+    }
+  }
+  if (!function) {
+    return {};
+  }
+
+  std::string description = function->name();
+  if (description.empty()) {
+    description = fmt::format("sub_{:08X}", function->address());
+  }
+  if (address != function->address()) {
+    description += fmt::format("+{:X}", address - function->address());
+  }
+  return description;
+}
+
 void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
   auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
   if (!ctx || !A64CallTraceRequested()) {
@@ -219,16 +249,21 @@ void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
     return;
   }
 
+  uint32_t lr = static_cast<uint32_t>(ctx->lr);
+  uint32_t ctr = static_cast<uint32_t>(ctx->ctr);
+  std::string fn_name = DescribeTraceFunction(ctx->processor, function_u32);
+  std::string lr_name = DescribeTraceFunction(ctx->processor, lr);
+  std::string ctr_name = DescribeTraceFunction(ctx->processor, ctr);
+
   XELOGI(
-      "A64 call trace thid {:08X} fn {:08X} count {} lr {:08X} ctr {:08X} "
-      "r1 {:08X} r3 {:08X} r10 {:08X} r11 {:08X} r13 {:08X} r29 {:08X} "
-      "r30 {:08X} r31 {:08X}",
-      ctx->thread_id, function_u32, count, static_cast<uint32_t>(ctx->lr),
-      static_cast<uint32_t>(ctx->ctr), static_cast<uint32_t>(ctx->r[1]),
-      static_cast<uint32_t>(ctx->r[3]), static_cast<uint32_t>(ctx->r[10]),
-      static_cast<uint32_t>(ctx->r[11]), static_cast<uint32_t>(ctx->r[13]),
-      static_cast<uint32_t>(ctx->r[29]), static_cast<uint32_t>(ctx->r[30]),
-      static_cast<uint32_t>(ctx->r[31]));
+      "A64 call trace thid {:08X} fn {:08X} '{}' count {} lr {:08X} '{}' "
+      "ctr {:08X} '{}' r1 {:08X} r3 {:08X} r10 {:08X} r11 {:08X} r13 {:08X} "
+      "r29 {:08X} r30 {:08X} r31 {:08X}",
+      ctx->thread_id, function_u32, fn_name, count, lr, lr_name, ctr, ctr_name,
+      static_cast<uint32_t>(ctx->r[1]), static_cast<uint32_t>(ctx->r[3]),
+      static_cast<uint32_t>(ctx->r[10]), static_cast<uint32_t>(ctx->r[11]),
+      static_cast<uint32_t>(ctx->r[13]), static_cast<uint32_t>(ctx->r[29]),
+      static_cast<uint32_t>(ctx->r[30]), static_cast<uint32_t>(ctx->r[31]));
 }
 }  // namespace
 

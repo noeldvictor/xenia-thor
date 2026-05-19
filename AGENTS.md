@@ -186,11 +186,19 @@ Primary target:
     `-VulkanPresentForcedResolveAddress`, width, height, pitch, and format to
     force-present a specific resolve source. This is a research-only probe for
     Blue Dragon black/blue frames, not a compatibility fix.
-  - `-VulkanPresentScoredResolveOnSwap true` to use slow resolve readback stats
-    for picking a non-clear present candidate. Pair with `-TimeScalar 0.5` and
-    keep `-VulkanPresentScoredResolveBudget` small enough for a Thor run.
-    Candidate `size` is visible surface size and `pitch` is memory pitch; Blue
-    Dragon has an 80x45 resolve with pitch 96, so do not collapse those fields.
+- `-VulkanPresentScoredResolveOnSwap true` to use slow resolve readback stats
+  for picking a non-clear present candidate. Pair with `-TimeScalar 0.5` and
+  keep `-VulkanPresentScoredResolveBudget` small enough for a Thor run.
+  Candidate `size` is visible surface size and `pitch` is memory pitch; Blue
+  Dragon has an 80x45 resolve with pitch 96, so do not collapse those fields.
+- For Blue Dragon black-screen runs, first prove the split:
+  `-GpuTraceSwapFrontbufferChecksum true -VulkanTraceCopyState true
+  -VulkanTraceResolveChecksum true`. If `1CA1C000` / `1CDB4000` frontbuffers
+  are zero while `IssueCopy` emits nonzero resolves, focus on resolve content,
+  format, and render-target causality rather than Android presenter bring-up.
+- Known diagnostic forced-present probe: `1D88F000+00385000`, `720x720`, pitch
+  `1280`, format `6` can turn the surface white on Thor. It is proof the
+  presenter can show resolve memory, not proof the game reached title.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.
@@ -250,8 +258,8 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-135816-*` and
-  `scratch\thor-debug\20260518-140109-*`.
+  `scratch\thor-debug\20260518-220838-*` and
+  `scratch\thor-debug\20260518-221334-*`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -276,17 +284,22 @@ Primary target:
 - The command processor now mirrors guest-visible ring pointers into
   `CP_RB_RPTR` / `CP_RB_WPTR` (`0x01C4` / `0x01C5`). Blue Dragon's D3D dump now
   shows matching drained ring pointers instead of a stale zero read pointer.
-- Current blocker: Blue Dragon still does not visibly reach title. The wall is
-  now the guest D3D watchdog path after real GPU work:
-  `The GPU is hung! D3D version is 3529.0 retail, kernel is 65535`.
+- Current blocker: Blue Dragon still does not visibly reach title. The latest
+  long run stayed alive for 180 seconds with thousands of `VdSwap` / `XE_SWAP`
+  lines, no fatal/AndroidRuntime/GPU-hung lines, and no ARM64 fallback lines.
+  The official `VdSwap` frontbuffers `1CA1C000` / `1CDB4000` are zero at swap,
+  while Vulkan `IssueCopy` produces nonzero resolve candidates.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
 - Runtime swap tracing now shows real PM4 packets, `DRAW_INDX_2`, texture
-  creation/loading, and runtime `GPU swap trace: VdSwap` calls. The next proof
-  target is still `PM4_XE_SWAP` / Vulkan `IssueSwap` / visible presenter output.
-  `VdSwap` in import/symbol listings is not runtime call proof; only explicit
-  `GPU swap trace:` runtime lines count.
+  creation/loading, runtime `GPU swap trace: VdSwap` calls, `PM4_XE_SWAP`, and
+  Vulkan `IssueSwap`. `VdSwap` in import/symbol listings is not runtime call
+  proof; only explicit `GPU swap trace:` runtime lines count.
+- Forced-presenting a known format-6 resolve can visibly change the Android
+  surface, so the presenter is not the current wall. Next probes should link
+  render target state, resolve output, candidate format, and official
+  frontbuffer clearing/population.
 - The visible OSD badge now reports `aX360e A64 backend research`.
 - Strategy as of 2026-05-18 14:12 EDT: stop using Thor as the only unit test.
   Run a broad x64-to-ARM64 conversion pass first, then use Thor/Blue Dragon as
