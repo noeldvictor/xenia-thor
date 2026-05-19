@@ -84,6 +84,33 @@ Visual result:
 - Blue Dragon Disc 1 reaches the visible `press START` title prompt on AYN Thor
   with Android OSD hidden.
 
+## Post-Push Reproduction
+
+After committing and pushing `d9576ec4c`, the same APK SHA reproduced the title
+screen from current `master`.
+
+Build/deploy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy
+```
+
+Capture:
+
+- `scratch/thor-debug/20260519-141908-screenshot.png`
+- `scratch/thor-debug/20260519-141908-meta.txt`
+- `scratch/thor-debug/20260519-141908-live-logcat-filtered.txt`
+
+Metadata:
+
+- `head=d9576ec4c`
+- `apk_sha256=09F480292F913D6132F3A288C7FCAB758E02FF6BAD519B1DF089BB3EF40B1224`
+- `disable_fetch_exp_adjust=false`
+- `force_signed_2101010_unorm=true`
+- Android process `5368` stayed alive after the 75 second capture.
+- Filtered log search found no `AndroidRuntime`, `FATAL EXCEPTION`, native fatal
+  signal, `VK_ERROR_DEVICE_LOST`, or GPU-hung lines.
+
 ## Status
 
 This is a real title-screen progress fix, not a compatibility or playability

@@ -271,9 +271,9 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260519-132943-*` reached the Blue Dragon title prompt
+  `scratch\thor-debug\20260519-141908-*` reached the Blue Dragon title prompt
   with Android OSD hidden, `vulkan_debug_texture_fetch_disable_exp_adjust=false`,
-  and APK SHA-256
+  commit `d9576ec4c`, and APK SHA-256
   `09F480292F913D6132F3A288C7FCAB758E02FF6BAD519B1DF089BB3EF40B1224`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
@@ -642,7 +642,8 @@ Primary target:
     adjustment. That word carries LOD/gradient exponent bias in the same bit
     range.
   - The title path now reads result exponent adjustment from dword 3.
-  - Validated title capture: `scratch\thor-debug\20260519-132943-*`.
+  - Validated title captures: `scratch\thor-debug\20260519-132943-*` and
+    post-push `scratch\thor-debug\20260519-141908-*`.
   - Validated cvar state: `disable_fetch_exp_adjust=false`,
     `force_signed_2101010_unorm=true`.
 
