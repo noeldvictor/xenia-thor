@@ -107,6 +107,12 @@ DEFINE_bool(
     "function body with a narrow hand-emitted A64 path. Research-only and "
     "title-specific.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_draw_wait_fastpath_host_counter_time, false,
+    "Thor ARM64 bring-up: in the Blue Dragon draw-wait fastpath, derive "
+    "KTHREAD+0x58 from CNTVCT_EL0/CNTFRQ_EL0 instead of a native clock call. "
+    "Research-only and title-specific.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
@@ -982,6 +988,7 @@ void A64Backend::InitializeBackendContext(void* ctx) {
   a64_ctx->fpcr_vmx = DEFAULT_VMX_FPCR;
   a64_ctx->flags = (1U << kA64BackendNJMOn);  // NJM on by default
   a64_ctx->guest_tick_count = Clock::GetGuestTickCountPointer();
+  a64_ctx->host_uptime_millis_base = Clock::QueryHostUptimeMillis();
 
   // Allocate stackpoints for longjmp detection.
   if (cvars::a64_enable_host_guest_stack_synchronization) {

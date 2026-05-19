@@ -117,6 +117,7 @@ param(
     [string]$Arm64BlueDragonDrawWaitProbeStride = "",
     [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
     [string]$Arm64BlueDragonDrawWaitFastpath = "false",
+    [string]$Arm64BlueDragonDrawWaitFastpathHostCounterTime = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -653,6 +654,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonDrawWaitFastpath) {
         $parts += "--ez arm64_blue_dragon_draw_wait_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitFastpath)"
     }
+    if ($Arm64BlueDragonDrawWaitFastpathHostCounterTime) {
+        $parts += "--ez arm64_blue_dragon_draw_wait_fastpath_host_counter_time $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitFastpathHostCounterTime)"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -737,6 +741,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
         "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
         "arm64_blue_dragon_draw_wait_fastpath=$Arm64BlueDragonDrawWaitFastpath",
+        "arm64_blue_dragon_draw_wait_fastpath_host_counter_time=$Arm64BlueDragonDrawWaitFastpathHostCounterTime",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

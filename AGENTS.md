@@ -908,6 +908,21 @@ required.
   - The useful fastpath currently moves the bottleneck into guest-to-host clock
     updates. Next work should make guest uptime cheap in generated A64 or move
     the update closer to the original PPC load-site semantics.
+- Blue Dragon host-counter time fastpath:
+  `docs/research/20260519-193313-blue-dragon-host-counter-time.md`.
+  - `arm64_blue_dragon_draw_wait_fastpath_host_counter_time` is routed through
+    Android and the Thor script, default-off.
+  - It reads `CNTVCT_EL0` / `CNTFRQ_EL0` in generated A64, subtracts
+    `A64BackendContext::host_uptime_millis_base`, and writes the result to
+    `KTHREAD+0x58` without a native clock thunk.
+  - Best proof so far:
+    `scratch\thor-debug\20260519-192732-*` plus follow-up screenshot
+    `scratch\thor-debug\20260519-193236-screenshot.png` reached rendered
+    Blue Dragon opening/game content on AYN Thor.
+  - Current Blue Dragon command should include
+    `-Arm64BlueDragonDrawWaitFastpath true -Arm64BlueDragonDrawWaitFastpathHostCounterTime true -Arm64BlueDragonDrawWaitProbe true -MountCache true`.
+  - The remaining wall is still `8246B408`, now as generated A64 busy-wait
+    cost rather than per-entry native clock thunk cost.
 
 ## Codex Hooks / Automation
 

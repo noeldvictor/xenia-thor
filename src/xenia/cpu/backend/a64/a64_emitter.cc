@@ -50,6 +50,7 @@ DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
+DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -934,7 +935,11 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
   uint32_t inline_step = update_kernel_time
                              ? cvars::arm64_blue_dragon_draw_wait_inline_tick_step
                              : 0;
-  if (update_kernel_time && inline_step == 0) {
+  const bool host_counter_time =
+      update_kernel_time &&
+      cvars::arm64_blue_dragon_draw_wait_fastpath_host_counter_time &&
+      inline_step == 0;
+  if (update_kernel_time && inline_step == 0 && !host_counter_time) {
     uint32_t stride =
         std::max<uint32_t>(cvars::arm64_blue_dragon_draw_wait_probe_stride, 1);
     Xbyak_aarch64::Label* skip_update = nullptr;
@@ -979,6 +984,30 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
   rev(w13, w13);
   cbz(w13, return_zero);
   AddGuestAddressToMembase(w13, x13);  // x13 = current KTHREAD host pointer.
+
+  if (host_counter_time) {
+    auto& non_negative_time = NewCachedLabel();
+    auto& have_time = NewCachedLabel();
+    // CNTVCT_EL0 / CNTFRQ_EL0 gives host milliseconds without a native thunk.
+    // Subtract the per-context base so the value matches guest uptime shape.
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    mov(x11, uint64_t{1000});
+    mul(x17, x17, x11);
+    mrs(x11, 3, 3, 14, 0, 0);  // CNTFRQ_EL0.
+    udiv(x17, x17, x11);
+    ldr(x11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      host_uptime_millis_base))));
+    cmp(x17, x11);
+    b(HS, non_negative_time);
+    mov(x17, uint64_t{0});
+    b(have_time);
+    L(non_negative_time);
+    sub(x17, x17, x11);
+    L(have_time);
+    rev(w11, w17);
+    str(w11, ptr(x13, 0x58));
+  }
 
   ldr(w17, ptr(x13, 0x58));
   rev(w17, w17);

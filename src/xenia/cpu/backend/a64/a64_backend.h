@@ -81,6 +81,7 @@ struct A64BackendContext {
   ReserveHelper* reserve_helper_;
   uint64_t cached_reserve_value_;
   uint64_t* guest_tick_count;
+  uint64_t host_uptime_millis_base;
   A64BackendStackpoint* stackpoints;
   uint64_t cached_reserve_offset;
   uint32_t cached_reserve_bit;
