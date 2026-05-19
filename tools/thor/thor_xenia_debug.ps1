@@ -10,6 +10,7 @@ param(
         "LaunchEmulator",
         "LaunchBlueDragon",
         "LaunchBlueDragonLiveCapture",
+        "LaunchBlueDragonSpeedCapture",
         "StopNoise",
         "Capture")]
     [string]$Mode = "DeviceInfo",
@@ -17,6 +18,9 @@ param(
     [string]$Target = "",
     [string]$TimeScalar = "",
     [string]$Arm64MiniJit = "true",
+    [string]$LogLevel = "",
+    [string]$XmaTraceContextState = "false",
+    [string]$XmaFastSilence = "false",
     [string]$HidNopConnected = "false",
     [string]$HidNopButtons = "",
     [string]$HidNopButtonSequence = "",
@@ -37,6 +41,7 @@ param(
     [string]$GpuTraceInterrupts = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
+    [string]$GpuTraceTextureCacheActions = "false",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
     [string]$GpuTraceSwapRenderTargets = "false",
     [string]$VulkanTraceResolve = "false",
@@ -46,6 +51,7 @@ param(
     [string]$VulkanTraceCopyState = "false",
     [string]$VulkanTraceDrawState = "false",
     [string]$VulkanTraceDrawShaderFilter = "",
+    [string]$VulkanTracePipelineCreation = "false",
     [string]$VulkanTraceShaderConstants = "false",
     [string]$VulkanTraceShaderConstantsShaderFilter = "",
     [string]$VulkanTraceTextureSourceChecksum = "false",
@@ -110,6 +116,8 @@ param(
     [string]$XboxkrnlEventTraceObjects = "",
     [string]$XboxkrnlIgnoreGuestDebugBreakpoints = "false",
     [int]$LiveCaptureSeconds = 75,
+    [string]$PerfSampleSeconds = "60,120",
+    [int]$PerfTopThreadCount = 80,
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -404,6 +412,8 @@ function Start-XeniaEmulator {
         "--es gpu vulkan",
         "--es cpu arm64",
         "--es apu nop",
+        "--ez xma_trace_context_state $(ConvertTo-BooleanText $XmaTraceContextState)",
+        "--ez xma_fast_silence $(ConvertTo-BooleanText $XmaFastSilence)",
         "--es hid nop",
         "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
         "--ez hid_nop_connected $(ConvertTo-BooleanText $HidNopConnected)",
@@ -417,6 +427,7 @@ function Start-XeniaEmulator {
         "--ez gpu_trace_interrupts $(ConvertTo-BooleanText $GpuTraceInterrupts)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
+        "--ez gpu_trace_texture_cache_actions $(ConvertTo-BooleanText $GpuTraceTextureCacheActions)",
         "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
         "--ez gpu_trace_swap_render_targets $(ConvertTo-BooleanText $GpuTraceSwapRenderTargets)",
         "--ez vulkan_trace_resolve $(ConvertTo-BooleanText $VulkanTraceResolve)",
@@ -425,6 +436,7 @@ function Start-XeniaEmulator {
         "--ez vulkan_readback_resolve $(ConvertTo-BooleanText $VulkanReadbackResolve)",
         "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
         "--ez vulkan_trace_draw_state $(ConvertTo-BooleanText $VulkanTraceDrawState)",
+        "--ez vulkan_trace_pipeline_creation $(ConvertTo-BooleanText $VulkanTracePipelineCreation)",
         "--ez vulkan_trace_shader_constants $(ConvertTo-BooleanText $VulkanTraceShaderConstants)",
         "--ez vulkan_trace_texture_source_checksum $(ConvertTo-BooleanText $VulkanTraceTextureSourceChecksum)",
         "--ez vulkan_trace_vertex_fetch_checksum $(ConvertTo-BooleanText $VulkanTraceVertexFetchChecksum)",
@@ -441,6 +453,9 @@ function Start-XeniaEmulator {
         "--ez discord false")
     if ($TimeScalar) {
         $parts += "--es time_scalar $(ConvertTo-AdbShellSingleQuote $TimeScalar)"
+    }
+    if ($LogLevel) {
+        $parts += "--ei log_level $(ConvertTo-AdbIntText $LogLevel)"
     }
     if ($RenderTargetPathVulkan) {
         $parts += "--es render_target_path_vulkan $(ConvertTo-AdbShellSingleQuote $RenderTargetPathVulkan)"
@@ -705,6 +720,193 @@ function Stop-LiveLogcat {
     }
 }
 
+function Add-PerfSection {
+    param(
+        [string]$Path,
+        [string]$Title,
+        [object[]]$Lines
+    )
+
+    "" | Out-File -Encoding utf8 -Append $Path
+    "## $Title" | Out-File -Encoding utf8 -Append $Path
+    if ($Lines -and $Lines.Count -gt 0) {
+        $Lines | Out-File -Encoding utf8 -Append $Path
+    } else {
+        "(no output)" | Out-File -Encoding utf8 -Append $Path
+    }
+}
+
+function Get-PerfSampleSecondValues {
+    param(
+        [string]$Value,
+        [int]$MaxSeconds
+    )
+
+    $samples = @()
+    foreach ($rawSample in ($Value -split ",")) {
+        $trimmed = $rawSample.Trim()
+        if (!$trimmed) {
+            continue
+        }
+        [int]$parsed = 0
+        if ([int]::TryParse($trimmed, [ref]$parsed) -and $parsed -gt 0 -and $parsed -le $MaxSeconds) {
+            $samples += $parsed
+        }
+    }
+    return $samples | Sort-Object -Unique
+}
+
+function Write-PerfSnapshot {
+    param(
+        [string]$Stamp,
+        [string]$Label,
+        [string]$OutDir
+    )
+
+    $path = Join-Path $OutDir "$Stamp-perf-$Label.txt"
+    $pidLine = ((Invoke-Adb @("shell", "pidof", $PackageName)) -join " ").Trim()
+    $packagePid = ""
+    if ($pidLine) {
+        $packagePid = ($pidLine -split "\s+" | Where-Object { $_ } | Select-Object -First 1)
+    }
+
+    @(
+        "timestamp=$(Get-Date -Format o)",
+        "label=$Label",
+        "package=$PackageName",
+        "pid=$pidLine",
+        "perf_top_thread_count=$PerfTopThreadCount"
+    ) | Out-File -Encoding utf8 $path
+
+    if (!$packagePid) {
+        Add-PerfSection $path "process" @("process_not_running=true")
+        return $path
+    }
+
+    Add-PerfSection $path "top_threads" `
+        (Invoke-AdbShellCommand "top -H -b -n 1 -p $packagePid | head -$PerfTopThreadCount")
+    Add-PerfSection $path "cpuinfo" `
+        (Invoke-AdbShellCommand "dumpsys cpuinfo | grep -E 'TOTAL|$PackageName|surfaceflinger|composer|android.hardware.graphics' | head -80")
+    Add-PerfSection $path "proc_status" `
+        (Invoke-AdbShellCommand "cat /proc/$packagePid/status 2>/dev/null | head -100")
+    Add-PerfSection $path "thread_names" `
+        (Invoke-AdbShellCommand "for t in /proc/$packagePid/task/*/comm; do cat `$t 2>/dev/null; done | sort | uniq -c | sort -nr | head -80")
+    Add-PerfSection $path "meminfo" `
+        (Invoke-AdbShellCommand "dumpsys meminfo $packagePid 2>/dev/null | head -120")
+    Add-PerfSection $path "surfaceflinger_layers" `
+        (Invoke-AdbShellCommand "dumpsys SurfaceFlinger --list 2>/dev/null | grep -i -E 'xenia|emulator|$PackageName' | head -80")
+    Add-PerfSection $path "gfxinfo" `
+        (Invoke-AdbShellCommand "dumpsys gfxinfo $PackageName 2>/dev/null | head -120")
+    Add-PerfSection $path "thermal" `
+        (Invoke-AdbShellCommand "dumpsys thermalservice 2>/dev/null | head -120")
+    return $path
+}
+
+function Use-BlueDragonSpeedDefaults {
+    $script:HideAndroidOsd = "true"
+    $script:HidNopConnected = "true"
+    if (!$script:HidNopButtonSequence) {
+        $script:HidNopButtonSequence = "start@45000:3000;a@68000:3000;a@86000:3000;a@106000:3000"
+    }
+
+    $script:DumpShaders = ""
+    $script:RenderTargetPathVulkan = ""
+    $script:BreakOnDebugbreak = "false"
+    $script:DisassembleFunctions = "false"
+    $script:XmaTraceContextState = "false"
+    $script:MountCache = "false"
+    $script:ClearMemoryPageState = "false"
+    $script:LogLevel = "0"
+    $script:VulkanForceSigned2101010UnormFallback = "true"
+    $script:VulkanForce2101010Rgba8Fallback = "false"
+
+    foreach ($name in @(
+        "EmitInlineMmioChecks",
+        "GpuInterruptOnRingIdle",
+        "GpuInterruptOnSwap",
+        "GpuTraceInterrupts",
+        "GpuBlueDragonKickWaitToken",
+        "GpuTraceSwap",
+        "GpuTraceTextureCacheActions",
+        "GpuTraceSwapFrontbufferChecksum",
+        "GpuTraceSwapRenderTargets",
+        "VulkanTraceResolve",
+        "VulkanTraceResolveChecksum",
+        "VulkanTraceEdramChecksum",
+        "VulkanReadbackResolve",
+        "VulkanTraceCopyState",
+        "VulkanTraceDrawState",
+        "VulkanTracePipelineCreation",
+        "VulkanTraceShaderConstants",
+        "VulkanTraceTextureSourceChecksum",
+        "VulkanTraceVertexFetchChecksum",
+        "VulkanTraceSwapSharedMemoryChecksum",
+        "VulkanPresentRecentResolveOnSwap",
+        "VulkanPresentScoredResolveOnSwap",
+        "VulkanPresentScoredResolveRejectClearLike",
+        "VulkanPresentForcedResolveOnSwap",
+        "VulkanDebugSolidGuestOutput",
+        "VulkanDebugTextureFetchDisableExpAdjust",
+        "GpuEarlyPrimaryReadPointerWriteback",
+        "Arm64BlueDragonDrawWaitProbe",
+        "XboxkrnlThreadWaitTrace",
+        "XboxkrnlEventTrace"
+    )) {
+        Set-Variable -Name $name -Scope Script -Value "false"
+    }
+
+    foreach ($name in @(
+        "GpuBlueDragonKickWaitTokenBudget",
+        "GpuTraceInterruptsBudget",
+        "GpuTracePacketBudget",
+        "GpuTraceSwapFrontbufferChecksumBudget",
+        "GpuTraceSwapRenderTargetsBudget",
+        "VulkanTraceResolveBudget",
+        "VulkanTraceResolveChecksumBudget",
+        "VulkanTraceEdramChecksumBudget",
+        "VulkanTraceCopyStateBudget",
+        "VulkanTraceDrawStateBudget",
+        "VulkanTraceShaderConstantsBudget",
+        "VulkanTraceTextureSourceChecksumBudget",
+        "VulkanTraceVertexFetchChecksumBudget",
+        "VulkanTraceSwapSharedMemoryChecksumBudget",
+        "VulkanTraceDrawShaderFilter",
+        "VulkanTraceShaderConstantsShaderFilter",
+        "VulkanTraceTextureSourceShaderFilter",
+        "VulkanTraceVertexFetchShaderFilter",
+        "VulkanDebugPixelShaderOutputFilter",
+        "VulkanDebugPixelShaderOutputMode",
+        "VulkanDebugPixelShaderOutputSecondaryFilter",
+        "VulkanDebugPixelShaderOutputSecondaryMode",
+        "VulkanPresentScoredResolveMinWidth",
+        "VulkanPresentScoredResolveMinHeight",
+        "VulkanPresentScoredResolveBudget",
+        "VulkanPresentScoredResolveRequiredFormat",
+        "VulkanPresentForcedResolveAddress",
+        "VulkanPresentForcedResolveLength",
+        "VulkanPresentForcedResolveWidth",
+        "VulkanPresentForcedResolveHeight",
+        "VulkanPresentForcedResolvePitch",
+        "VulkanPresentForcedResolveFormat",
+        "Arm64ForceInterpreterRanges",
+        "Arm64GuestStoreWatch",
+        "Arm64GuestStoreWatchBudget",
+        "Arm64CompiledCallTraceInterval",
+        "Arm64CompiledCallTraceMinCount",
+        "Arm64CompiledCallTraceBudget",
+        "Arm64CompiledCallTraceFunctions",
+        "Arm64CompiledCallTraceGuestTids",
+        "Arm64CompiledCallTraceAfterMs",
+        "XboxkrnlThreadWaitTraceBudget",
+        "XboxkrnlThreadWaitTraceAfterMs",
+        "XboxkrnlThreadWaitTraceGuestTids",
+        "XboxkrnlEventTraceBudget",
+        "XboxkrnlEventTraceObjects"
+    )) {
+        Set-Variable -Name $name -Scope Script -Value ""
+    }
+}
+
 if (!$OutDir) {
     $OutDir = Join-Path $RepoRoot "scratch\thor-debug"
 }
@@ -812,6 +1014,49 @@ done | head -50
         Write-Output "Screenshot: $ScreenshotPath"
         if ($ShaderDumpPath) {
             Write-Output "Shader dumps: $ShaderDumpPath"
+        }
+    }
+    "LaunchBlueDragonSpeedCapture" {
+        $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $LogPath = Join-Path $OutDir "$Stamp-speed-logcat.txt"
+        $FilteredLogPath = Join-Path $OutDir "$Stamp-speed-logcat-filtered.txt"
+        $MetaPath = Join-Path $OutDir "$Stamp-meta.txt"
+        $ScreenshotPath = Join-Path $OutDir "$Stamp-screenshot.png"
+        $launchTarget = Resolve-BlueDragonLaunchTarget
+        $sampleSeconds = @(Get-PerfSampleSecondValues $PerfSampleSeconds $LiveCaptureSeconds)
+        $perfPaths = @()
+        $elapsedSeconds = 0
+
+        Use-BlueDragonSpeedDefaults
+        Write-Output "Launching target: $launchTarget"
+        Write-Output "Speed sample seconds: $($sampleSeconds -join ',')"
+        Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+        Invoke-Adb @("logcat", "-c") | Out-Null
+        Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+
+        foreach ($sampleSecond in $sampleSeconds) {
+            if ($sampleSecond -gt $elapsedSeconds) {
+                Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
+                $elapsedSeconds = $sampleSecond
+            }
+            $perfPaths += Write-PerfSnapshot $Stamp "${sampleSecond}s" $OutDir
+        }
+        if ($LiveCaptureSeconds -gt $elapsedSeconds) {
+            Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
+        }
+        $perfPaths += Write-PerfSnapshot $Stamp "final" $OutDir
+
+        $logcat = Invoke-Adb @("logcat", "-d", "-v", "time")
+        $logcat | Out-File -Encoding utf8 $LogPath
+        Write-FilteredLog $LogPath $FilteredLogPath
+        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        Write-Output "Log: $LogPath"
+        Write-Output "Filtered log: $FilteredLogPath"
+        Write-Output "Meta: $MetaPath"
+        Write-Output "Screenshot: $ScreenshotPath"
+        foreach ($perfPath in $perfPaths) {
+            Write-Output "Perf: $perfPath"
         }
     }
     "StopNoise" {

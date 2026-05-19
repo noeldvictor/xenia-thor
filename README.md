@@ -75,9 +75,15 @@ Current state as of 2026-05-19:
   screen, and reach the opening scene.
 - It is currently extremely slow. Early evidence points to CPU/JIT/audio/debug
   overhead as the main speed wall, not an Adreno device-lost failure.
+- A quiet speed-capture lane now exists for Blue Dragon on Thor; it removes the
+  old XMA/GPU log spam from speed samples and captures timed CPU/thread
+  snapshots. It still points at the main guest CPU/A64 backend as the real
+  bottleneck.
+- An opt-in XMA fast-silence experiment can reach the opening scene, but it is
+  not an audio correctness fix and does not make the game playable.
 - It still is not playable gameplay.
 - The next main lane is real Android controller mapping, longer scripted input,
-  trace-off speed profiling, and reducing remaining research-only Vulkan
+  A64 backend hot-path profiling, and reducing remaining research-only Vulkan
   fallback knobs.
 - It is not a compatibility result.
 
@@ -102,6 +108,7 @@ Useful repo docs for this fork:
 - [Codex Hooks For The Blue Dragon Loop](docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md)
 - [Blue Dragon Nop HID Sequence](docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md)
 - [Blue Dragon Performance Triage](docs/research/20260519-151305-blue-dragon-performance-triage.md)
+- [Blue Dragon Quiet Speed Lane](docs/research/20260519-154636-blue-dragon-speed-lane.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include "xenia/base/assert.h"
@@ -396,6 +397,10 @@ const char* TextureCache::TextureKey::GetLogDimensionName(
 }
 
 void TextureCache::TextureKey::LogAction(const char* action) const {
+  if (!cvars::gpu_trace_texture_cache_actions &&
+      std::strcmp(action, "Failed to create") != 0) {
+    return;
+  }
   XELOGGPU(
       "{} {} {}{}x{}x{} {} {} texture with {} {}packed mip level{}, "
       "base at 0x{:08X} (pitch {}), mips at 0x{:08X}",
@@ -407,6 +412,9 @@ void TextureCache::TextureKey::LogAction(const char* action) const {
 }
 
 void TextureCache::Texture::LogAction(const char* action) const {
+  if (!cvars::gpu_trace_texture_cache_actions) {
+    return;
+  }
   XELOGGPU(
       "{} {} {}{}x{}x{} {} {} texture with {} {}packed mip level{}, "
       "base at 0x{:08X} (pitch {}, size 0x{:08X}), mips at 0x{:08X} (size "

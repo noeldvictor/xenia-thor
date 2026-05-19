@@ -16,6 +16,9 @@ function Invoke-Adb {
     } else {
         & adb @Arguments
     }
+    if ($LASTEXITCODE -ne 0) {
+        throw "adb failed with exit code $($LASTEXITCODE): $($Arguments -join ' ')"
+    }
 }
 
 function Get-VariantParts {
@@ -69,6 +72,9 @@ function Invoke-Gradle {
         Push-Location (Join-Path $MappedRepo "android\android_studio_project")
         try {
             & .\gradlew.bat @GradleArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "Gradle failed with exit code $($LASTEXITCODE): $($GradleArgs -join ' ')"
+            }
         } finally {
             Pop-Location
         }

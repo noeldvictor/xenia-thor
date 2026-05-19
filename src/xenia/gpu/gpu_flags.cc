@@ -61,6 +61,9 @@ DEFINE_bool(gpu_trace_swap, false,
             "GPU");
 DEFINE_int32(gpu_trace_packet_budget, 128,
              "Maximum packet-level GPU swap trace lines.", "GPU");
+DEFINE_bool(gpu_trace_texture_cache_actions, false,
+            "Trace texture cache create/load actions. Very noisy in games.",
+            "GPU");
 DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
             "Trace a sparse CPU-side checksum of the physical frontbuffer "
             "passed to XE_SWAP. Research-only black-screen probe.",
@@ -111,6 +114,9 @@ DEFINE_string(vulkan_trace_draw_shader_filter, "",
               "Comma-separated vertex or pixel shader ucode hashes to include "
               "in vulkan_trace_draw_state; empty traces all.",
               "GPU");
+DEFINE_bool(vulkan_trace_pipeline_creation, false,
+            "Trace Vulkan graphics pipeline creation. Noisy during bring-up.",
+            "GPU");
 DEFINE_bool(vulkan_trace_shader_constants, false,
             "Trace active pixel shader constant maps and values around Vulkan "
             "draws. Research-only Android GPU bring-up probe.",

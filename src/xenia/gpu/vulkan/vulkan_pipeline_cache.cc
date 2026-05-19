@@ -1791,13 +1791,15 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   // unsupported behavior that may be dangerous/crashing because pipelines can
   // be created from the disk storage.
 
-  if (creation_arguments.pixel_shader) {
-    XELOGGPU("Creating graphics pipeline state with VS {:016X}, PS {:016X}",
-             creation_arguments.vertex_shader->shader().ucode_data_hash(),
-             creation_arguments.pixel_shader->shader().ucode_data_hash());
-  } else {
-    XELOGGPU("Creating graphics pipeline state with VS {:016X}",
-             creation_arguments.vertex_shader->shader().ucode_data_hash());
+  if (cvars::vulkan_trace_pipeline_creation) {
+    if (creation_arguments.pixel_shader) {
+      XELOGGPU("Creating graphics pipeline state with VS {:016X}, PS {:016X}",
+               creation_arguments.vertex_shader->shader().ucode_data_hash(),
+               creation_arguments.pixel_shader->shader().ucode_data_hash());
+    } else {
+      XELOGGPU("Creating graphics pipeline state with VS {:016X}",
+               creation_arguments.vertex_shader->shader().ucode_data_hash());
+    }
   }
 
   const PipelineDescription& description = creation_arguments.pipeline->first;

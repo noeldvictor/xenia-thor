@@ -21,6 +21,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "gpu");
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
+            copyIntExtra(intent, launchArguments, "log_level");
+            copyBooleanExtra(intent, launchArguments, "xma_trace_context_state");
+            copyBooleanExtra(intent, launchArguments, "xma_fast_silence");
             copyStringExtra(intent, launchArguments, "hid");
             copyStringExtra(intent, launchArguments, "dump_shaders");
             copyStringExtra(intent, launchArguments, "render_target_path_vulkan");
@@ -43,6 +46,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
+            copyBooleanExtra(intent, launchArguments, "gpu_trace_texture_cache_actions");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap_render_targets");
@@ -56,6 +60,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_state");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_draw_shader_filter");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_pipeline_creation");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");

@@ -72,6 +72,8 @@ Primary target:
   - `FullApk`: native core plus APK packaging.
   - `NativeCore`: C++/Vulkan/CPU backend library only.
   - `ApkShell`: Java/XML/resources/manifest package only, using the previous native library.
+  - Nonzero Gradle or ADB exits must stop the script; do not trust an install
+    after a failed native build.
 - Use `tools/thor/thor_xenia_debug.ps1` for repeatable ADB install, launch, and capture.
 - `tools/thor/thor_xenia_debug.ps1` now retries flaky ADB transports for the
   known Thor serial and records reconnect events in capture metadata.
@@ -79,6 +81,10 @@ Primary target:
   Blue Dragon, keeps live logcat open during the run, writes filtered logcat,
   metadata, and a PNG screenshot, and is preferred over dump-afterward logcat
   for early GPU/presenter probes.
+- `tools/thor/thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture` is the
+  preferred speed lane. It runs Blue Dragon with the known nop HID sequence,
+  disables trace-heavy flags, uses error-only Xenia logging, avoids live logcat,
+  writes timed perf snapshots, then captures logcat, metadata, and a screenshot.
 - As of 2026-05-18, Blue Dragon's VdSwap frontbuffers `1CA1C000` and
   `1CDB4000` are still all-zero on Thor, but forced-presenting resolve
   candidate `1C340000` as 640x360 format 7 produces a visible dark-blue guest
@@ -143,7 +149,8 @@ Primary target:
   - Release-to-device validation: `thor_build.ps1 -Mode FullDeploy`.
 - Prefer scripted Thor debug loops over manual clicking once a path is known:
   `FindContent`, `LaunchBlueDragon`, `LaunchBlueDragonLiveCapture`,
-  `LaunchEmulator`, `LaunchWindowDemo`, and `Capture`.
+  `LaunchBlueDragonSpeedCapture`, `LaunchEmulator`, `LaunchWindowDemo`, and
+  `Capture`.
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
 - Legacy ARM64 mini-JIT flags (`-Arm64MiniJit`, `-Arm64MiniJitBlacklist`,
   `-Arm64ForceInterpreterRanges`, and `-Arm64GuestStoreWatch`) belong to the
@@ -166,6 +173,14 @@ Primary target:
     wait/event proof.
   - `-ClearMemoryPageState true` for Canary-style GPU shared-memory page-state
     experiments.
+  - `-LogLevel 0` for speed captures where only Xenia errors should hit
+    logcat; restore higher logging only for focused trace runs.
+  - `-XmaTraceContextState true`, `-GpuTraceTextureCacheActions true`, and
+    `-VulkanTracePipelineCreation true` only when those noisy subsystems are
+    the target of the run.
+  - `-XmaFastSilence true` is a bring-up-only audio shortcut. It may help
+    compare XMA cost, but it is not an audio correctness path or compatibility
+    fix.
   - `-GpuInterruptOnRingIdle true` and `-GpuBlueDragonKickWaitToken true` only
     for clearly documented Blue Dragon research runs; both are default-off
     hacks, not compatibility fixes.

@@ -15,6 +15,7 @@
 #include "xenia/apu/xma_decoder.h"
 #include "xenia/apu/xma_helpers.h"
 #include "xenia/base/bit_stream.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
@@ -33,6 +34,13 @@ extern "C" {
 
 // Credits for most of this code goes to:
 // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
+
+DEFINE_bool(xma_trace_context_state, false,
+            "Trace high-frequency XMA context state transitions.", "APU");
+DEFINE_bool(xma_fast_silence, false,
+            "Experimental bring-up path that advances XMA contexts with silent "
+            "output instead of FFmpeg decoding.",
+            "APU");
 
 namespace xe {
 namespace apu {
@@ -100,7 +108,11 @@ bool XmaContext::Work() {
 
   auto context_ptr = memory()->TranslateVirtual(guest_ptr());
   XMA_CONTEXT_DATA data(context_ptr);
-  Decode(&data);
+  if (cvars::xma_fast_silence) {
+    FastSilence(&data);
+  } else {
+    Decode(&data);
+  }
   data.Store(context_ptr);
   return true;
 }
@@ -111,11 +123,13 @@ void XmaContext::Enable() {
   auto context_ptr = memory()->TranslateVirtual(guest_ptr());
   XMA_CONTEXT_DATA data(context_ptr);
 
-  XELOGAPU("XmaContext: kicking context {} (buffer {} {}/{} bits)", id(),
-           data.current_buffer, data.input_buffer_read_offset,
-           (data.current_buffer == 0 ? data.input_buffer_0_packet_count
-                                     : data.input_buffer_1_packet_count) *
-               kBitsPerPacket);
+  if (cvars::xma_trace_context_state) {
+    XELOGAPU("XmaContext: kicking context {} (buffer {} {}/{} bits)", id(),
+             data.current_buffer, data.input_buffer_read_offset,
+             (data.current_buffer == 0 ? data.input_buffer_0_packet_count
+                                       : data.input_buffer_1_packet_count) *
+                 kBitsPerPacket);
+  }
 
   data.Store(context_ptr);
 
@@ -135,7 +149,9 @@ bool XmaContext::Block(bool poll) {
 
 void XmaContext::Clear() {
   std::lock_guard<std::mutex> lock(lock_);
-  XELOGAPU("XmaContext: reset context {}", id());
+  if (cvars::xma_trace_context_state) {
+    XELOGAPU("XmaContext: reset context {}", id());
+  }
 
   auto context_ptr = memory()->TranslateVirtual(guest_ptr());
   XMA_CONTEXT_DATA data(context_ptr);
@@ -152,7 +168,9 @@ void XmaContext::Clear() {
 
 void XmaContext::Disable() {
   std::lock_guard<std::mutex> lock(lock_);
-  XELOGAPU("XmaContext: disabling context {}", id());
+  if (cvars::xma_trace_context_state) {
+    XELOGAPU("XmaContext: disabling context {}", id());
+  }
   set_is_enabled(false);
 }
 
@@ -275,6 +293,62 @@ bool XmaContext::ValidFrameOffset(uint8_t* block, size_t size_bytes,
   return false;
 }
 
+void XmaContext::FastSilence(XMA_CONTEXT_DATA* data) {
+  SCOPE_profile_cpu_f("apu");
+
+  if (!data->output_buffer_valid) {
+    return;
+  }
+
+  if (!data->input_buffer_0_valid && !data->input_buffer_1_valid) {
+    data->output_buffer_valid = 0;
+    return;
+  }
+
+  uint32_t output_capacity =
+      data->output_buffer_block_count * kBytesPerSubframeChannel;
+  if (output_capacity && data->output_buffer_ptr) {
+    uint8_t* output_buffer = memory()->TranslatePhysical(data->output_buffer_ptr);
+    uint32_t output_read_offset =
+        data->output_buffer_read_offset * kBytesPerSubframeChannel;
+    uint32_t output_write_offset =
+        data->output_buffer_write_offset * kBytesPerSubframeChannel;
+    RingBuffer output_rb(output_buffer, output_capacity);
+    output_rb.set_read_offset(output_read_offset);
+    output_rb.set_write_offset(output_write_offset);
+
+    size_t frame_bytes = kBytesPerFrameChannel << data->is_stereo;
+    size_t silence_bytes = output_rb.write_count();
+    silence_bytes -= silence_bytes % frame_bytes;
+    silence_bytes = std::min(silence_bytes, frame_bytes);
+    if (silence_bytes) {
+      std::array<uint8_t, kBytesPerFrameChannel * 2> silence = {};
+      output_rb.Write(silence.data(), silence_bytes);
+      data->output_buffer_write_offset =
+          uint32_t(output_rb.write_offset() / kBytesPerSubframeChannel);
+    }
+  }
+
+  uint32_t current_input_packet_count =
+      data->current_buffer ? data->input_buffer_1_packet_count
+                           : data->input_buffer_0_packet_count;
+  const uint32_t fast_silence_consume_bits = kBytesPerPacket * 8;
+  uint32_t current_input_bits =
+      current_input_packet_count * fast_silence_consume_bits;
+  if (!current_input_bits ||
+      data->input_buffer_read_offset >= current_input_bits) {
+    SwapInputBuffer(data);
+    return;
+  }
+
+  uint32_t remaining_bits = current_input_bits - data->input_buffer_read_offset;
+  data->input_buffer_read_offset +=
+      std::min<uint32_t>(remaining_bits, fast_silence_consume_bits);
+  if (data->input_buffer_read_offset >= current_input_bits) {
+    SwapInputBuffer(data);
+  }
+}
+
 static void dump_raw(AVFrame* frame, int id) {
   FILE* outfile = fopen(fmt::format("out{}.raw", id).c_str(), "ab");
   if (!outfile) {
@@ -342,9 +416,11 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
                      : nullptr;
   uint8_t* current_input_buffer = data->current_buffer ? in1 : in0;
 
-  XELOGAPU("Processing context {} (offset {}, buffer {}, ptr {:p})", id(),
-           data->input_buffer_read_offset, data->current_buffer,
-           current_input_buffer);
+  if (cvars::xma_trace_context_state) {
+    XELOGAPU("Processing context {} (offset {}, buffer {}, ptr {:p})", id(),
+             data->input_buffer_read_offset, data->current_buffer,
+             current_input_buffer);
+  }
 
   size_t input_buffer_0_size =
       data->input_buffer_0_packet_count * kBytesPerPacket;
@@ -497,8 +573,10 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
 
       if (!ValidFrameOffset(current_input_buffer, current_input_size,
                             data->input_buffer_read_offset)) {
-        XELOGAPU("XmaContext {}: Invalid read offset {}!", id(),
-                 data->input_buffer_read_offset);
+        if (cvars::xma_trace_context_state) {
+          XELOGAPU("XmaContext {}: Invalid read offset {}!", id(),
+                   data->input_buffer_read_offset);
+        }
         SwapInputBuffer(data);
         return;
       }

@@ -1271,7 +1271,9 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
                                                   uint32_t count) {
   SCOPE_profile_cpu_f("gpu");
 
-  XELOGI("XE_SWAP");
+  if (cvars::gpu_trace_swap) {
+    XELOGI("XE_SWAP");
+  }
 
   Profiler::Flip();
 
