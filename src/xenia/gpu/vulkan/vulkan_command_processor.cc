@@ -13,8 +13,10 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -48,6 +50,7 @@ std::atomic<int32_t> vulkan_copy_state_count{0};
 std::atomic<int32_t> vulkan_draw_state_count{0};
 std::atomic<int32_t> vulkan_shader_constants_count{0};
 std::atomic<int32_t> vulkan_texture_source_checksum_count{0};
+std::atomic<int32_t> vulkan_vertex_fetch_checksum_count{0};
 
 bool ShouldTraceVulkanResolveChecksum() {
   if (!cvars::vulkan_trace_resolve_checksum) {
@@ -89,6 +92,43 @@ bool ShouldTraceVulkanTextureSourceChecksum() {
   int32_t budget = cvars::vulkan_trace_texture_source_checksum_budget;
   return budget < 0 ||
          vulkan_texture_source_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanVertexFetchChecksum() {
+  if (!cvars::vulkan_trace_vertex_fetch_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_vertex_fetch_checksum_budget;
+  return budget < 0 ||
+         vulkan_vertex_fetch_checksum_count.fetch_add(1) < budget;
+}
+
+bool TraceHashMatchesFilter(uint64_t hash, const std::string& filter) {
+  if (filter.empty()) {
+    return true;
+  }
+  const char* cursor = filter.c_str();
+  while (*cursor) {
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == ',') {
+      ++cursor;
+    }
+    if (!*cursor) {
+      break;
+    }
+    char* end = nullptr;
+    uint64_t value = std::strtoull(cursor, &end, 16);
+    if (end == cursor) {
+      while (*cursor && *cursor != ',') {
+        ++cursor;
+      }
+      continue;
+    }
+    if (value == hash) {
+      return true;
+    }
+    cursor = end;
+  }
+  return false;
 }
 
 bool ShouldTraceVulkanShaderConstants() {
@@ -1632,6 +1672,115 @@ void VulkanCommandProcessor::TraceShaderConstants(
   }
 }
 
+void VulkanCommandProcessor::TraceVertexFetchSources(
+    const VulkanShader& shader, uint32_t host_draw_vertex_count) {
+  if (!cvars::vulkan_trace_vertex_fetch_checksum || !memory_) {
+    return;
+  }
+  if (!TraceHashMatchesFilter(
+          shader.ucode_data_hash(),
+          cvars::vulkan_trace_vertex_fetch_shader_filter)) {
+    return;
+  }
+
+  const RegisterFile& regs = *register_file_;
+  for (const Shader::VertexBinding& binding : shader.vertex_bindings()) {
+    if (!ShouldTraceVulkanVertexFetchChecksum()) {
+      break;
+    }
+
+    xenos::xe_gpu_vertex_fetch_t vfetch_constant =
+        regs.GetVertexFetch(binding.fetch_constant);
+    uint32_t address = vfetch_constant.address << 2;
+    uint32_t length = vfetch_constant.size << 2;
+    const uint8_t* bytes =
+        length ? memory_->TranslatePhysical<const uint8_t*>(address) : nullptr;
+
+    constexpr uint32_t kSampleStride = 64;
+    uint64_t checksum = 1469598103934665603ull;
+    uint32_t samples = 0;
+    uint32_t nonzero_samples = 0;
+    uint32_t first_words_raw[8] = {};
+    uint32_t first_words_be[8] = {};
+    if (bytes) {
+      for (uint32_t offset = 0; offset + sizeof(uint32_t) <= length;
+           offset += kSampleStride) {
+        uint32_t raw_word = 0;
+        std::memcpy(&raw_word, bytes + offset, sizeof(raw_word));
+        uint32_t be_word = xe::byte_swap(raw_word);
+        checksum ^= uint64_t(be_word) + (uint64_t(offset) << 1);
+        checksum *= 1099511628211ull;
+        ++samples;
+        if (raw_word) {
+          ++nonzero_samples;
+        }
+      }
+      uint32_t first_word_count = uint32_t(std::min<uint32_t>(
+          xe::countof(first_words_raw), length / sizeof(uint32_t)));
+      for (uint32_t i = 0; i < first_word_count; ++i) {
+        std::memcpy(&first_words_raw[i], bytes + i * sizeof(uint32_t),
+                    sizeof(uint32_t));
+        first_words_be[i] = xe::byte_swap(first_words_raw[i]);
+      }
+    }
+
+    XELOGI(
+        "GPU vertex-source trace: shader={:016X} fetch={} binding={} "
+        "address={:08X} length={:08X} endian={} stride_words={} "
+        "host_vertices={} attr_count={} samples={} nonzero={} "
+        "checksum={:016X} first_raw={:08X},{:08X},{:08X},{:08X},"
+        "{:08X},{:08X},{:08X},{:08X} first_be={:08X},{:08X},{:08X},"
+        "{:08X},{:08X},{:08X},{:08X},{:08X}",
+        shader.ucode_data_hash(), binding.fetch_constant,
+        binding.binding_index, address, length,
+        static_cast<uint32_t>(vfetch_constant.endian), binding.stride_words,
+        host_draw_vertex_count, binding.attributes.size(), samples,
+        nonzero_samples, checksum, first_words_raw[0], first_words_raw[1],
+        first_words_raw[2], first_words_raw[3], first_words_raw[4],
+        first_words_raw[5], first_words_raw[6], first_words_raw[7],
+        first_words_be[0], first_words_be[1], first_words_be[2],
+        first_words_be[3], first_words_be[4], first_words_be[5],
+        first_words_be[6], first_words_be[7]);
+
+    for (size_t attr_index = 0; attr_index < binding.attributes.size();
+         ++attr_index) {
+      const ParsedVertexFetchInstruction& fetch_instr =
+          binding.attributes[attr_index].fetch_instr;
+      uint32_t raw_values[4] = {};
+      uint32_t be_values[4] = {};
+      uint32_t vertices_to_log =
+          std::min<uint32_t>(4, std::max<uint32_t>(1, host_draw_vertex_count));
+      for (uint32_t vertex = 0; vertex < vertices_to_log; ++vertex) {
+        int64_t sample_offset =
+            int64_t(vertex) * int64_t(binding.stride_words) * 4 +
+            int64_t(fetch_instr.attributes.offset) * 4;
+        if (bytes && sample_offset >= 0 &&
+            uint64_t(sample_offset) + sizeof(uint32_t) <= length) {
+          std::memcpy(&raw_values[vertex], bytes + sample_offset,
+                      sizeof(uint32_t));
+          be_values[vertex] = xe::byte_swap(raw_values[vertex]);
+        }
+      }
+      XELOGI(
+          "GPU vertex-source trace: attr shader={:016X} fetch={} attr={} "
+          "opcode={} mini={} result_target={} result_index={} "
+          "write_mask={:X} data_format={} offset={} instr_stride={} "
+          "signed={} integer={} raw_v0_v3={:08X},{:08X},{:08X},{:08X} "
+          "be_v0_v3={:08X},{:08X},{:08X},{:08X}",
+          shader.ucode_data_hash(), binding.fetch_constant, attr_index,
+          fetch_instr.opcode_name ? fetch_instr.opcode_name : "?",
+          fetch_instr.is_mini_fetch,
+          static_cast<uint32_t>(fetch_instr.result.storage_target),
+          fetch_instr.result.storage_index, fetch_instr.result.GetUsedWriteMask(),
+          static_cast<uint32_t>(fetch_instr.attributes.data_format),
+          fetch_instr.attributes.offset, fetch_instr.attributes.stride,
+          fetch_instr.attributes.is_signed, fetch_instr.attributes.is_integer,
+          raw_values[0], raw_values[1], raw_values[2], raw_values[3],
+          be_values[0], be_values[1], be_values[2], be_values[3]);
+    }
+  }
+}
+
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
@@ -1647,6 +1796,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
           "shader_constants={} shader_constants_budget={} "
           "texture_source_checksum={} texture_source_checksum_budget={} "
+          "vertex_fetch_checksum={} vertex_fetch_checksum_budget={} "
+          "vertex_fetch_filter={} "
           "readback_resolve={} recent_present={} scored_present={} "
           "scored_min={}x{} scored_budget={} scored_required_format={} "
           "scored_reject_clear_like={} forced_present={} "
@@ -1660,6 +1811,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_trace_shader_constants_budget,
           cvars::vulkan_trace_texture_source_checksum,
           cvars::vulkan_trace_texture_source_checksum_budget,
+          cvars::vulkan_trace_vertex_fetch_checksum,
+          cvars::vulkan_trace_vertex_fetch_checksum_budget,
+          cvars::vulkan_trace_vertex_fetch_shader_filter,
           cvars::vulkan_readback_resolve,
           cvars::vulkan_present_recent_resolve_on_swap,
           cvars::vulkan_present_scored_resolve_on_swap,
@@ -3305,6 +3459,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
     vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
                                                   << (vfetch_index & 63);
+  }
+  if (cvars::vulkan_trace_vertex_fetch_checksum) {
+    TraceVertexFetchSources(*vertex_shader,
+                            primitive_processing_result.host_draw_vertex_count);
   }
 
   // Synchronize the memory pages backing memory scatter export streams, and

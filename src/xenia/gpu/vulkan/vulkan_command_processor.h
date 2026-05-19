@@ -300,6 +300,8 @@ class VulkanCommandProcessor : public CommandProcessor {
                                    uint64_t shader_hash);
   void TraceShaderConstants(const VulkanShader& shader, const char* stage_label,
                             bool is_pixel_shader);
+  void TraceVertexFetchSources(const VulkanShader& shader,
+                               uint32_t host_draw_vertex_count);
 
   struct PresentResolveCandidate {
     uint32_t address = 0;

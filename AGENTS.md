@@ -196,6 +196,12 @@ Primary target:
   -VulkanTraceResolveChecksum true`. If `1CA1C000` / `1CDB4000` frontbuffers
   are zero while `IssueCopy` emits nonzero resolves, focus on resolve content,
   format, and render-target causality rather than Android presenter bring-up.
+- To inspect final fullscreen vertex data without burning the trace budget on
+  setup draws, use:
+  `-VulkanTraceVertexFetchChecksum true -VulkanTraceVertexFetchShaderFilter 5CF1EE2E3C82546B -VulkanTraceVertexFetchChecksumBudget 24`.
+  This is a slow research-only trace. The 2026-05-19 Blue Dragon run ruled out
+  bad final-blit vertex position, UV, or color data as the immediate black
+  frame cause.
 - Known diagnostic forced-present probe: `1D88F000+00385000`, `720x720`, pitch
   `1280`, format `6` can turn the surface white on Thor. It is proof the
   presenter can show resolve memory, not proof the game reached title.
@@ -547,6 +553,18 @@ Primary target:
   - `vulkan_debug_solid_guest_output=true` produces a visible magenta frame on
     Thor, proving the Android/Vulkan presenter is alive. The black-frame wall is
     upstream of presentation.
+- Blue Dragon targeted vertex-fetch proof:
+  `docs/research/20260519-003650-blue-dragon-targeted-vertex-fetch-trace.md`.
+  - `vulkan_trace_vertex_fetch_checksum=true` is routed through Android and the
+    Thor script, with `vulkan_trace_vertex_fetch_shader_filter` for
+    shader-hash-focused captures.
+  - The final `5CF1EE2E3C82546B` / `9567C79307ACC6F5` fullscreen blit has sane
+    position and UV attributes, and its vertex color multiplier is not zero.
+  - The 1280x720 source feeding that final pass is already zero or clear-like
+    before the blit resolves to `1D14C000` and the official frontbuffers.
+  - The next GPU lane should add targeted shader filters for upstream
+    draw-state and texture-source probes, then chase the render passes that
+    populate `1DC14000` and related scored-present candidates.
 
 ## Android ARM64 Risk Register
 

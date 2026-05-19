@@ -119,6 +119,16 @@ DEFINE_bool(vulkan_trace_texture_source_checksum, false,
             "GPU");
 DEFINE_int32(vulkan_trace_texture_source_checksum_budget, 24,
              "Maximum active texture source checksum readbacks.", "GPU");
+DEFINE_bool(vulkan_trace_vertex_fetch_checksum, false,
+            "Trace active vertex fetch buffers and sparse CPU-side checksums. "
+            "Research-only Android black-screen probe.",
+            "GPU");
+DEFINE_int32(vulkan_trace_vertex_fetch_checksum_budget, 24,
+             "Maximum active vertex fetch trace groups.", "GPU");
+DEFINE_string(vulkan_trace_vertex_fetch_shader_filter, "",
+              "Comma-separated vertex shader ucode hashes to include in "
+              "vulkan_trace_vertex_fetch_checksum; empty traces all.",
+              "GPU");
 DEFINE_bool(vulkan_trace_swap_shared_memory_checksum, false,
             "Read back the Vulkan shared-memory frontbuffer used by swap and "
             "log a sparse checksum. Research-only and very slow.",

@@ -45,6 +45,8 @@ param(
     [string]$VulkanTraceDrawState = "false",
     [string]$VulkanTraceShaderConstants = "false",
     [string]$VulkanTraceTextureSourceChecksum = "false",
+    [string]$VulkanTraceVertexFetchChecksum = "false",
+    [string]$VulkanTraceVertexFetchShaderFilter = "",
     [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
     [string]$VulkanPresentRecentResolveOnSwap = "false",
     [string]$VulkanPresentScoredResolveOnSwap = "false",
@@ -65,6 +67,7 @@ param(
     [string]$VulkanTraceDrawStateBudget = "",
     [string]$VulkanTraceShaderConstantsBudget = "",
     [string]$VulkanTraceTextureSourceChecksumBudget = "",
+    [string]$VulkanTraceVertexFetchChecksumBudget = "",
     [string]$VulkanTraceSwapSharedMemoryChecksumBudget = "",
     [string]$VulkanPresentScoredResolveMinWidth = "",
     [string]$VulkanPresentScoredResolveMinHeight = "",
@@ -412,6 +415,7 @@ function Start-XeniaEmulator {
         "--ez vulkan_trace_draw_state $(ConvertTo-BooleanText $VulkanTraceDrawState)",
         "--ez vulkan_trace_shader_constants $(ConvertTo-BooleanText $VulkanTraceShaderConstants)",
         "--ez vulkan_trace_texture_source_checksum $(ConvertTo-BooleanText $VulkanTraceTextureSourceChecksum)",
+        "--ez vulkan_trace_vertex_fetch_checksum $(ConvertTo-BooleanText $VulkanTraceVertexFetchChecksum)",
         "--ez vulkan_trace_swap_shared_memory_checksum $(ConvertTo-BooleanText $VulkanTraceSwapSharedMemoryChecksum)",
         "--ez vulkan_present_recent_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentRecentResolveOnSwap)",
         "--ez vulkan_present_scored_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentScoredResolveOnSwap)",
@@ -429,6 +433,9 @@ function Start-XeniaEmulator {
     }
     if ($script:ActiveDumpShadersPath) {
         $parts += "--es dump_shaders $(ConvertTo-AdbShellSingleQuote $script:ActiveDumpShadersPath)"
+    }
+    if ($VulkanTraceVertexFetchShaderFilter) {
+        $parts += "--es vulkan_trace_vertex_fetch_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceVertexFetchShaderFilter)"
     }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
@@ -468,6 +475,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanTraceTextureSourceChecksumBudget) {
         $parts += "--ei vulkan_trace_texture_source_checksum_budget $VulkanTraceTextureSourceChecksumBudget"
+    }
+    if ($VulkanTraceVertexFetchChecksumBudget) {
+        $parts += "--ei vulkan_trace_vertex_fetch_checksum_budget $VulkanTraceVertexFetchChecksumBudget"
     }
     if ($VulkanTraceSwapSharedMemoryChecksumBudget) {
         $parts += "--ei vulkan_trace_swap_shared_memory_checksum_budget $VulkanTraceSwapSharedMemoryChecksumBudget"
