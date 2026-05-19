@@ -587,6 +587,89 @@ void VulkanTextureCache::RequestTextures(uint32_t used_texture_mask) {
   }
 }
 
+void VulkanTextureCache::TraceActiveTextureState(
+    uint32_t used_texture_mask, const char* stage_label) const {
+  const auto& regs = register_file();
+  uint32_t textures_remaining = used_texture_mask;
+  uint32_t index;
+  while (xe::bit_scan_forward(textures_remaining, &index)) {
+    textures_remaining &= ~(uint32_t(1) << index);
+    xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(index);
+
+    uint32_t fetch_width = 1;
+    uint32_t fetch_height = 1;
+    uint32_t fetch_depth_or_array = 1;
+    switch (fetch.dimension) {
+      case xenos::DataDimension::k1D:
+        fetch_width = fetch.size_1d.width + 1;
+        break;
+      case xenos::DataDimension::k2DOrStacked:
+      case xenos::DataDimension::kCube:
+        fetch_width = fetch.size_2d.width + 1;
+        fetch_height = fetch.size_2d.height + 1;
+        fetch_depth_or_array =
+            fetch.dimension == xenos::DataDimension::kCube
+                ? 6
+                : (fetch.stacked ? fetch.size_2d.stack_depth + 1 : 1);
+        break;
+      case xenos::DataDimension::k3D:
+        fetch_width = fetch.size_3d.width + 1;
+        fetch_height = fetch.size_3d.height + 1;
+        fetch_depth_or_array = fetch.size_3d.depth + 1;
+        break;
+      default:
+        break;
+    }
+
+    const TextureBinding* binding = GetValidTextureBinding(index);
+    XELOGI(
+        "GPU texture trace: stage={} fetch={} valid={} type={} "
+        "base={:08X} mip={:08X} dim={} fmt={} size={}x{}x{} pitch={} "
+        "tiled={} endian={} num_format={} swizzle={:03X} "
+        "signs={}/{}/{}/{} clamp={}/{}/{} filter={}/{}/{} mips={}..{} "
+        "dwords={:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+        stage_label, index, binding != nullptr, uint32_t(fetch.type),
+        fetch.base_address << 12, fetch.mip_address << 12,
+        uint32_t(fetch.dimension), uint32_t(fetch.format), fetch_width,
+        fetch_height, fetch_depth_or_array, fetch.pitch << 5, fetch.tiled != 0,
+        uint32_t(fetch.endianness), fetch.num_format, fetch.swizzle,
+        uint32_t(fetch.sign_x), uint32_t(fetch.sign_y),
+        uint32_t(fetch.sign_z), uint32_t(fetch.sign_w),
+        uint32_t(fetch.clamp_x), uint32_t(fetch.clamp_y),
+        uint32_t(fetch.clamp_z), uint32_t(fetch.mag_filter),
+        uint32_t(fetch.min_filter), uint32_t(fetch.mip_filter),
+        fetch.mip_min_level, fetch.mip_max_level, fetch.dword_0,
+        fetch.dword_1, fetch.dword_2, fetch.dword_3, fetch.dword_4,
+        fetch.dword_5);
+    if (!binding) {
+      continue;
+    }
+
+    const Texture* texture_unsigned = binding->texture;
+    const Texture* texture_signed = binding->texture_signed;
+    XELOGI(
+        "GPU texture trace: stage={} fetch={} key_base={:08X} "
+        "key_mip={:08X} key_dim={} key_fmt={} key_size={}x{}x{} "
+        "key_pitch={} tiled={} packed_mips={} mip_max={} scaled={} "
+        "host_swizzle={:03X} swizzled_signs={:02X} has_unsigned={} "
+        "has_signed={} unsigned_base_size={} unsigned_mips_size={} "
+        "unsigned_host_mem={} signed_host_mem={}",
+        stage_label, index, binding->key.base_page << 12,
+        binding->key.mip_page << 12, uint32_t(binding->key.dimension),
+        uint32_t(binding->key.format), binding->key.GetWidth(),
+        binding->key.GetHeight(), binding->key.GetDepthOrArraySize(),
+        binding->key.pitch << 5, binding->key.tiled != 0,
+        binding->key.packed_mips != 0, binding->key.mip_max_level,
+        binding->key.scaled_resolve != 0, binding->host_swizzle,
+        binding->swizzled_signs, texture_unsigned != nullptr,
+        texture_signed != nullptr,
+        texture_unsigned ? texture_unsigned->GetGuestBaseSize() : 0,
+        texture_unsigned ? texture_unsigned->GetGuestMipsSize() : 0,
+        texture_unsigned ? texture_unsigned->GetHostMemoryUsage() : 0,
+        texture_signed ? texture_signed->GetHostMemoryUsage() : 0);
+  }
+}
+
 VkImageView VulkanTextureCache::GetActiveBindingOrNullImageView(
     uint32_t fetch_constant_index, xenos::FetchOpDimension dimension,
     bool is_signed) const {

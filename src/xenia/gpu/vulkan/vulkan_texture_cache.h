@@ -90,6 +90,9 @@ class VulkanTextureCache final : public TextureCache {
   // preceding host GPU work.
   void RequestTextures(uint32_t used_texture_mask) override;
 
+  void TraceActiveTextureState(uint32_t used_texture_mask,
+                               const char* stage_label) const;
+
   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
                                               xenos::FetchOpDimension dimension,
                                               bool is_signed) const;

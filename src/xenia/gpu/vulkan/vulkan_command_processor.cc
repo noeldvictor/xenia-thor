@@ -2858,11 +2858,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Update the textures before most other work in the submission because
   // samplers depend on this (and in case of sampler overflow in a submission,
   // submissions must be split) - may perform dispatches and copying.
+  uint32_t used_texture_mask_vertex =
+      vertex_shader->GetUsedTextureMaskAfterTranslation();
+  uint32_t used_texture_mask_pixel =
+      pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation()
+                              : 0;
   uint32_t used_texture_mask =
-      vertex_shader->GetUsedTextureMaskAfterTranslation() |
-      (pixel_shader != nullptr
-           ? pixel_shader->GetUsedTextureMaskAfterTranslation()
-           : 0);
+      used_texture_mask_vertex | used_texture_mask_pixel;
   texture_cache_->RequestTextures(used_texture_mask);
 
   // Update the graphics pipeline, and if the new graphics pipeline has a
@@ -2969,7 +2971,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         "host_vs_type={} edram_mode={} rb_mode={:08X} raster={} pixel={} "
         "ps_writes={:X} ps_depth={} ps_kills={} vs_memexport={:02X} "
         "ps_memexport={:02X} normalized_color_mask={:04X} "
-        "used_textures={:08X} vs_hash={:016X} ps_hash={:016X} "
+        "used_textures={:08X} vs_textures={:08X} ps_textures={:08X} "
+        "vs_hash={:016X} ps_hash={:016X} "
         "viewport={}x{}+{},{} z={}..{} surface={:08X} pitch={} msaa={} "
         "colorcontrol={:08X} color_mask={:04X} depthcontrol={:08X} "
         "depth_info={:08X}",
@@ -2986,7 +2989,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         pixel_shader ? pixel_shader->kills_pixels() : false,
         vertex_shader->memexport_eM_written(),
         pixel_shader ? pixel_shader->memexport_eM_written() : 0,
-        normalized_color_mask, used_texture_mask,
+        normalized_color_mask, used_texture_mask, used_texture_mask_vertex,
+        used_texture_mask_pixel,
         vertex_shader->ucode_data_hash(),
         pixel_shader ? pixel_shader->ucode_data_hash() : 0,
         viewport_info.xy_extent[0], viewport_info.xy_extent[1],
@@ -3035,6 +3039,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         uint32_t(normalized_depth_control.zfunc),
         normalized_depth_control.stencil_enable != 0,
         rb_colorcontrol.alpha_test_enable != 0);
+    if (used_texture_mask_vertex) {
+      texture_cache_->TraceActiveTextureState(used_texture_mask_vertex,
+                                              "vertex");
+    }
+    if (used_texture_mask_pixel) {
+      texture_cache_->TraceActiveTextureState(used_texture_mask_pixel, "pixel");
+    }
   }
 
   // Whether to load the guest 32-bit (usually big-endian) vertex index

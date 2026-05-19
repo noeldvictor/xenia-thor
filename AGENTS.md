@@ -497,6 +497,20 @@ Primary target:
   - Next GPU lane: trace texture inputs and shader bindings for the textured
     passes, especially `used_textures=0000007F` on the 1280x720 pass and
     `used_textures=00000001` on the downscale/composite passes.
+- Blue Dragon texture-input proof:
+  `docs/research/20260518-234356-blue-dragon-texture-input-trace.md`.
+  - The visible 1280x720 fullscreen draw reaches `pixel=true`, writes all color
+    channels, and uses pixel texture mask `0000007F`; all seven traced fetches
+    have valid Vulkan texture bindings and loaded unsigned texture objects.
+  - Downscale/composite draws also have valid pixel texture bindings; no traced
+    used fetch reports `valid=false`, `has_unsigned=false`, or `scaled=true`.
+  - The resolved output is still flat or clear-like, so the wall moved from
+    texture descriptor plumbing to source texture population, pixel shader
+    translation/constants, or the earlier render pass that produces the sampled
+    sources.
+  - Next GPU lane: split source data from shader output with active-texture
+    source checksums and a targeted shader/constant trace for the visible
+    fullscreen pixel shader hashes.
 
 ## Android ARM64 Risk Register
 
