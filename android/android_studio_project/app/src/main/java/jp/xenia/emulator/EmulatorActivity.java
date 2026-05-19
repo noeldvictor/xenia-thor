@@ -46,12 +46,15 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "vulkan_trace_resolve_checksum");
             copyBooleanExtra(intent, launchArguments, "vulkan_readback_resolve");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_copy_state");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_state");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_swap_shared_memory_checksum");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_present_recent_resolve_on_swap");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_present_scored_resolve_on_swap");
+            copyBooleanExtra(
+                    intent, launchArguments, "vulkan_present_scored_resolve_reject_clear_like");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_present_forced_resolve_on_swap");
             copyBooleanExtra(intent, launchArguments, "vulkan_debug_solid_guest_output");
@@ -69,6 +72,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(
                     intent, launchArguments, "vulkan_trace_resolve_checksum_budget");
             copyIntExtra(intent, launchArguments, "vulkan_trace_copy_state_budget");
+            copyIntExtra(intent, launchArguments, "vulkan_trace_draw_state_budget");
             copyIntExtra(
                     intent, launchArguments, "vulkan_trace_swap_shared_memory_checksum_budget");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_min_width");

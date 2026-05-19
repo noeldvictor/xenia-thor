@@ -45,6 +45,7 @@ namespace {
 std::atomic<int32_t> vulkan_resolve_checksum_count{0};
 std::atomic<int32_t> vulkan_swap_shared_memory_checksum_count{0};
 std::atomic<int32_t> vulkan_copy_state_count{0};
+std::atomic<int32_t> vulkan_draw_state_count{0};
 
 bool ShouldTraceVulkanResolveChecksum() {
   if (!cvars::vulkan_trace_resolve_checksum) {
@@ -69,6 +70,14 @@ bool ShouldTraceVulkanCopyState() {
   }
   int32_t budget = cvars::vulkan_trace_copy_state_budget;
   return budget < 0 || vulkan_copy_state_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanDrawState() {
+  if (!cvars::vulkan_trace_draw_state) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_draw_state_budget;
+  return budget < 0 || vulkan_draw_state_count.fetch_add(1) < budget;
 }
 
 bool IsDebugPresentResolveCandidateFormat(xenos::TextureFormat format) {
@@ -1354,10 +1363,13 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         uint32_t samples = 0;
         uint32_t nonzero_samples = 0;
         uint32_t varying_samples = 0;
+        uint32_t first_sample_value = 0;
+        uint32_t first_sample_matches = 0;
         uint64_t first_nonzero_offset = UINT64_MAX;
         uint32_t first_nonzero_value = 0;
         uint32_t previous_word = 0;
         bool have_previous_word = false;
+        bool have_first_sample = false;
         for (uint64_t offset = 0; offset + sizeof(uint32_t) <= length;
              offset += kSampleStride) {
           uint32_t word = 0;
@@ -1365,6 +1377,13 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
           checksum ^= uint64_t(word) + (offset << 1);
           checksum *= 1099511628211ull;
           ++samples;
+          if (!have_first_sample) {
+            first_sample_value = word;
+            have_first_sample = true;
+          }
+          if (word == first_sample_value) {
+            ++first_sample_matches;
+          }
           if (have_previous_word && word != previous_word) {
             ++varying_samples;
           }
@@ -1380,11 +1399,22 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         }
         uint32_t score =
             nonzero_samples ? (nonzero_samples + varying_samples * 16) : 0;
+        bool repeated_first_sample =
+            samples >= 16 &&
+            uint64_t(first_sample_matches) * 100 >= uint64_t(samples) * 90;
+        bool low_variation =
+            samples >= 16 &&
+            uint64_t(varying_samples) * 100 <= uint64_t(samples) * 6;
+        bool clear_like = repeated_first_sample || low_variation;
         if (stats) {
           stats->samples = samples;
           stats->nonzero_samples = nonzero_samples;
           stats->varying_samples = varying_samples;
+          stats->first_sample_value = first_sample_value;
+          stats->first_sample_matches = first_sample_matches;
           stats->first_nonzero_value = first_nonzero_value;
+          stats->low_variation = low_variation;
+          stats->clear_like = clear_like;
           stats->checksum = checksum;
           stats->score = score;
         }
@@ -1398,11 +1428,14 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         XELOGI(
             "GPU {} trace: shared-memory checksum address={:08X} "
             "length={:08X} stride={} samples={} nonzero={} varying={} "
-            "score={} checksum={:016X} "
+            "score={} clear_like={} low_variation={} first_sample={:08X} "
+            "first_sample_matches={} checksum={:016X} "
             "first_nonzero={} first_nonzero_value={:08X} "
             "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
             label, address, length, kSampleStride, samples, nonzero_samples,
-            varying_samples, score, checksum,
+            varying_samples, score, clear_like, low_variation,
+            first_sample_value,
+            first_sample_matches, checksum,
             first_nonzero_offset == UINT64_MAX ? -1
                                                : int64_t(first_nonzero_offset),
             first_nonzero_value, first_words[0], first_words[1],
@@ -1446,7 +1479,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
           "readback_resolve={} recent_present={} scored_present={} "
           "scored_min={}x{} scored_budget={} scored_required_format={} "
-          "forced_present={} "
+          "scored_reject_clear_like={} forced_present={} "
           "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
@@ -1460,6 +1493,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_present_scored_resolve_min_height,
           cvars::vulkan_present_scored_resolve_budget,
           cvars::vulkan_present_scored_resolve_required_format,
+          cvars::vulkan_present_scored_resolve_reject_clear_like,
           cvars::vulkan_present_forced_resolve_on_swap,
           cvars::vulkan_present_forced_resolve_address,
           cvars::vulkan_present_forced_resolve_length,
@@ -1577,7 +1611,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       XELOGI(
           "GPU swap trace: Vulkan IssueSwap using {} resolve source "
           "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
-          "score={} nonzero={} varying={} instead of frontbuffer={:08X}",
+          "score={} nonzero={} varying={} first_sample={:08X} "
+          "first_sample_matches={} first_nonzero={:08X} low_variation={} "
+          "clear_like={} instead of frontbuffer={:08X}",
           using_forced_resolve_for_swap
               ? "forced"
               : (using_scored_resolve_for_swap ? "scored" : "recent"),
@@ -1587,7 +1623,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           static_cast<uint32_t>(swap_resolve_override.format),
           swap_resolve_override.sequence, swap_resolve_override.score,
           swap_resolve_override.nonzero_samples,
-          swap_resolve_override.varying_samples, frontbuffer_ptr);
+          swap_resolve_override.varying_samples,
+          swap_resolve_override.first_sample_value,
+          swap_resolve_override.first_sample_matches,
+          swap_resolve_override.first_nonzero_value,
+          swap_resolve_override.low_variation,
+          swap_resolve_override.clear_like, frontbuffer_ptr);
     }
   }
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
@@ -2570,6 +2611,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
   const RegisterFile& regs = *register_file_;
+  bool trace_draw_state = ShouldTraceVulkanDrawState();
 
   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
   if (edram_mode == xenos::EdramMode::kCopy) {
@@ -2586,6 +2628,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   auto vertex_shader = static_cast<VulkanShader*>(active_vertex_shader());
   if (!vertex_shader) {
     // Always need a vertex shader.
+    if (trace_draw_state) {
+      XELOGI(
+          "GPU draw trace: skipped no vertex shader prim={} index_count={} "
+          "edram_mode={}",
+          uint32_t(prim_type), index_count, uint32_t(edram_mode));
+    }
     return false;
   }
   pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
@@ -2621,6 +2669,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // cache.
     if (memexport_ranges_.empty()) {
       // This draw has no effect.
+      if (trace_draw_state) {
+        XELOGI(
+            "GPU draw trace: skipped no rasterization/no memexport prim={} "
+            "index_count={} edram_mode={} vs_hash={:016X}",
+            uint32_t(prim_type), index_count, uint32_t(edram_mode),
+            vertex_shader->ucode_data_hash());
+      }
       return true;
     }
   }
@@ -2660,6 +2715,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
     if (!primitive_processing_result.host_draw_vertex_count) {
       // Nothing to draw.
+      if (trace_draw_state) {
+        XELOGI(
+            "GPU draw trace: skipped empty processed draw prim={} "
+            "index_count={} edram_mode={} vs_hash={:016X}",
+            uint32_t(prim_type), index_count, uint32_t(edram_mode),
+            vertex_shader->ucode_data_hash());
+      }
       return true;
     }
     // TODO(Triang3l): Tessellation, geometry-type-specific vertex shader,
@@ -2875,6 +2937,67 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                      normalized_depth_control);
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (trace_draw_state) {
+    auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+    auto rb_modecontrol = regs.Get<reg::RB_MODECONTROL>();
+    auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
+    auto rb_color_mask = regs.Get<reg::RB_COLOR_MASK>();
+    auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+    auto color0 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[0]);
+    auto color1 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[1]);
+    auto color2 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[2]);
+    auto color3 = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[3]);
+    uint32_t ps_writes =
+        pixel_shader ? pixel_shader->writes_color_targets() : 0;
+    XELOGI(
+        "GPU draw trace: prim={} index_count={} host_vertices={} "
+        "host_prim={} index_type={} guest_index_base={:08X} "
+        "host_vs_type={} edram_mode={} rb_mode={:08X} raster={} pixel={} "
+        "ps_writes={:X} ps_depth={} ps_kills={} vs_memexport={:02X} "
+        "ps_memexport={:02X} normalized_color_mask={:04X} "
+        "used_textures={:08X} vs_hash={:016X} ps_hash={:016X} "
+        "viewport={}x{}+{},{} z={}..{} surface={:08X} pitch={} msaa={} "
+        "colorcontrol={:08X} color_mask={:04X} depthcontrol={:08X} "
+        "depth_info={:08X}",
+        uint32_t(prim_type), index_count,
+        primitive_processing_result.host_draw_vertex_count,
+        uint32_t(primitive_processing_result.host_primitive_type),
+        uint32_t(primitive_processing_result.index_buffer_type),
+        primitive_processing_result.guest_index_base,
+        static_cast<uint32_t>(
+            primitive_processing_result.host_vertex_shader_type),
+        uint32_t(edram_mode), rb_modecontrol.value, is_rasterization_done,
+        pixel_shader != nullptr, ps_writes,
+        pixel_shader ? pixel_shader->writes_depth() : false,
+        pixel_shader ? pixel_shader->kills_pixels() : false,
+        vertex_shader->memexport_eM_written(),
+        pixel_shader ? pixel_shader->memexport_eM_written() : 0,
+        normalized_color_mask, used_texture_mask,
+        vertex_shader->ucode_data_hash(),
+        pixel_shader ? pixel_shader->ucode_data_hash() : 0,
+        viewport_info.xy_extent[0], viewport_info.xy_extent[1],
+        viewport_info.xy_offset[0], viewport_info.xy_offset[1],
+        viewport_info.z_min, viewport_info.z_max, rb_surface_info.value,
+        uint32_t(rb_surface_info.surface_pitch),
+        uint32_t(rb_surface_info.msaa_samples), rb_colorcontrol.value,
+        rb_color_mask.value & 0xFFFF, normalized_depth_control.value,
+        rb_depth_info.value);
+    XELOGI(
+        "GPU draw trace: rt color0={:08X} fmt={} mask={:X} base={} "
+        "color1={:08X} fmt={} mask={:X} base={} "
+        "color2={:08X} fmt={} mask={:X} base={} "
+        "color3={:08X} fmt={} mask={:X} base={}",
+        color0.value, uint32_t(color0.color_format), rb_color_mask.value & 0xF,
+        color0.color_base, color1.value, uint32_t(color1.color_format),
+        (rb_color_mask.value >> 4) & 0xF, color1.color_base, color2.value,
+        uint32_t(color2.color_format), (rb_color_mask.value >> 8) & 0xF,
+        color2.color_base, color3.value, uint32_t(color3.color_format),
+        (rb_color_mask.value >> 12) & 0xF, color3.color_base);
+  }
 
   // Whether to load the guest 32-bit (usually big-endian) vertex index
   // indirectly in the vertex shader if full 32-bit indices are not supported by
@@ -3042,6 +3165,8 @@ bool VulkanCommandProcessor::IssueCopy() {
     auto rb_copy_dest_info = regs.Get<reg::RB_COPY_DEST_INFO>();
     auto rb_copy_dest_pitch = regs.Get<reg::RB_COPY_DEST_PITCH>();
     auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+    auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
+    auto rb_color_mask = regs.Get<reg::RB_COLOR_MASK>();
     auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
     auto color0 = regs.Get<reg::RB_COLOR_INFO>(
         reg::RB_COLOR_INFO::rt_register_indices[0]);
@@ -3056,7 +3181,7 @@ bool VulkanCommandProcessor::IssueCopy() {
         "command={} color_clear={} depth_clear={} raw_dest_base={:08X} "
         "dest_info={:08X} dest_format={} dest_pitch={} dest_height={} "
         "surface={:08X} surface_pitch={} msaa={} color={:08X},{:08X},{:08X},"
-        "{:08X} depth={:08X}",
+        "{:08X} depth={:08X} colorcontrol={:08X} color_mask={:04X}",
         rb_copy_control.value, uint32_t(rb_copy_control.copy_src_select),
         uint32_t(rb_copy_control.copy_sample_select),
         uint32_t(rb_copy_control.copy_command),
@@ -3068,7 +3193,30 @@ bool VulkanCommandProcessor::IssueCopy() {
         uint32_t(rb_copy_dest_pitch.copy_dest_height),
         rb_surface_info.value, uint32_t(rb_surface_info.surface_pitch),
         uint32_t(rb_surface_info.msaa_samples), color0.value, color1.value,
-        color2.value, color3.value, rb_depth_info.value);
+        color2.value, color3.value, rb_depth_info.value,
+        rb_colorcontrol.value, rb_color_mask.value & 0xFFFF);
+    uint32_t copy_src = uint32_t(rb_copy_control.copy_src_select);
+    if (copy_src < xenos::kMaxColorRenderTargets) {
+      auto src_color = regs.Get<reg::RB_COLOR_INFO>(
+          reg::RB_COLOR_INFO::rt_register_indices[copy_src]);
+      uint32_t src_write_mask = (rb_color_mask.value >> (copy_src * 4)) & 0xF;
+      XELOGI(
+          "GPU copy trace: IssueCopy source color{} base_tiles={} bit11={} "
+          "format={}({}) exp_bias={} write_mask={:X} "
+          "approx_edram_byte_offset={:08X}",
+          copy_src, src_color.color_base, src_color.color_base_bit_11,
+          uint32_t(src_color.color_format),
+          xenos::GetColorRenderTargetFormatName(src_color.color_format),
+          src_color.color_exp_bias, src_write_mask,
+          src_color.color_base * xenos::kEdramTileWidthSamples *
+              xenos::kEdramTileHeightSamples * uint32_t(sizeof(uint32_t)));
+    } else {
+      XELOGI(
+          "GPU copy trace: IssueCopy source depth-like src={} depth_base={} "
+          "depth_base_bit11={} depth_format={} depth_info={:08X}",
+          copy_src, rb_depth_info.depth_base, rb_depth_info.depth_base_bit_11,
+          uint32_t(rb_depth_info.depth_format), rb_depth_info.value);
+    }
   }
 
   if (!BeginSubmission(true)) {
@@ -3177,7 +3325,9 @@ bool VulkanCommandProcessor::IssueCopy() {
       constexpr uint32_t kScoredPresentResolveMinScore = 64;
       bool useful_scored_candidate =
           scored_stats.score >= kScoredPresentResolveMinScore &&
-          scored_stats.varying_samples;
+          scored_stats.varying_samples &&
+          (!cvars::vulkan_present_scored_resolve_reject_clear_like ||
+           !scored_stats.clear_like);
       if (!useful_scored_candidate &&
           scored_present_resolve_candidate_.address == written_address) {
         PresentResolveCandidate restored_candidate =
@@ -3186,9 +3336,14 @@ bool VulkanCommandProcessor::IssueCopy() {
           XELOGI(
               "GPU copy trace: clearing stale scored present resolve "
               "candidate source={:08X}+{:08X} score={} nonzero={} "
-              "varying={} checksum={:016X} restoring={:08X}",
+              "varying={} first_sample={:08X} first_sample_matches={} "
+              "low_variation={} clear_like={} checksum={:016X} "
+              "restoring={:08X}",
               written_address, written_length, scored_stats.score,
               scored_stats.nonzero_samples, scored_stats.varying_samples,
+              scored_stats.first_sample_value,
+              scored_stats.first_sample_matches, scored_stats.low_variation,
+              scored_stats.clear_like,
               scored_stats.checksum, restored_candidate.address);
         }
         scored_present_resolve_candidate_ = restored_candidate;
@@ -3215,17 +3370,31 @@ bool VulkanCommandProcessor::IssueCopy() {
           scored_stats.nonzero_samples;
       scored_present_resolve_candidate_.varying_samples =
           scored_stats.varying_samples;
+      scored_present_resolve_candidate_.first_sample_value =
+          scored_stats.first_sample_value;
+      scored_present_resolve_candidate_.first_sample_matches =
+          scored_stats.first_sample_matches;
+      scored_present_resolve_candidate_.first_nonzero_value =
+          scored_stats.first_nonzero_value;
+      scored_present_resolve_candidate_.low_variation =
+          scored_stats.low_variation;
+      scored_present_resolve_candidate_.clear_like = scored_stats.clear_like;
       scored_present_resolve_candidate_.checksum = scored_stats.checksum;
       if (cvars::gpu_trace_swap || cvars::vulkan_trace_copy_state) {
         XELOGI(
             "GPU copy trace: scored present resolve candidate "
             "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
-            "score={} samples={} nonzero={} varying={} checksum={:016X}",
+            "score={} samples={} nonzero={} varying={} first_sample={:08X} "
+            "first_sample_matches={} first_nonzero={:08X} low_variation={} "
+            "clear_like={} checksum={:016X}",
             written_address, written_length, dest_width, dest_height,
             dest_pitch, static_cast<uint32_t>(dest_format),
             scored_present_resolve_candidate_.sequence, scored_stats.score,
             scored_stats.samples, scored_stats.nonzero_samples,
-            scored_stats.varying_samples, scored_stats.checksum);
+            scored_stats.varying_samples, scored_stats.first_sample_value,
+            scored_stats.first_sample_matches, scored_stats.first_nonzero_value,
+            scored_stats.low_variation, scored_stats.clear_like,
+            scored_stats.checksum);
       }
     }
   }

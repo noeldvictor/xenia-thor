@@ -95,6 +95,12 @@ DEFINE_bool(vulkan_trace_copy_state, false,
             "GPU");
 DEFINE_int32(vulkan_trace_copy_state_budget, 64,
              "Maximum Vulkan copy-mode state trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_draw_state, false,
+            "Trace Vulkan draw shader, render-target, and color-mask state for "
+            "Android GPU bring-up.",
+            "GPU");
+DEFINE_int32(vulkan_trace_draw_state_budget, 128,
+             "Maximum Vulkan draw-state trace lines.", "GPU");
 DEFINE_bool(vulkan_trace_swap_shared_memory_checksum, false,
             "Read back the Vulkan shared-memory frontbuffer used by swap and "
             "log a sparse checksum. Research-only and very slow.",
@@ -126,6 +132,11 @@ DEFINE_int32(vulkan_present_scored_resolve_required_format, -1,
              "Optional Xenos texture format enum required by the "
              "scored-present probe; negative accepts all supported formats.",
              "GPU");
+DEFINE_bool(vulkan_present_scored_resolve_reject_clear_like, false,
+            "Reject near-uniform sampled resolve candidates in the "
+            "scored-present probe. Research-only Blue Dragon source-content "
+            "triage knob.",
+            "GPU");
 DEFINE_bool(vulkan_present_forced_resolve_on_swap, false,
             "Present a manually specified Vulkan resolve source instead of "
             "the VdSwap frontbuffer. Research-only Android black-screen "

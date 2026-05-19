@@ -458,6 +458,21 @@ Primary target:
     compatibility fix. The next GPU work should correlate render-target
     state, clear/mask state, draws, resolves, and candidate content before
     sweeping more addresses.
+- Blue Dragon draw/resolve proof:
+  `docs/research/20260518-230320-blue-dragon-draw-state-flat-resolves.md`.
+  - `vulkan_present_scored_resolve_reject_clear_like=true` now rejects repeated
+    or low-variation resolve candidates instead of selecting white or dark
+    clear-like surfaces.
+  - With clear-like rejection enabled, all sampled scored present candidates in
+    the latest 800-sample Thor run were rejected as clear-like. That means
+    source selection is not the immediate wall.
+  - `vulkan_trace_draw_state=true` proves real Vulkan draw calls execute with
+    rasterization, pixel shaders, color writes, and `normalized_color_mask=000F`.
+  - Resolved shared-memory output after those draws remains zero or flat /
+    clear-like, while official `VdSwap` frontbuffers remain zero.
+  - Next GPU lane: instrument the Vulkan render-target dump / resolve boundary
+    so we can prove whether host render targets are already flat, or whether
+    pixels are lost while dumping EDRAM or copying to shared memory.
 
 ## Android ARM64 Risk Register
 

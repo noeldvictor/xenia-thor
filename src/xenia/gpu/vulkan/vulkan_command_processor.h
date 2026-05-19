@@ -280,7 +280,11 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t samples = 0;
     uint32_t nonzero_samples = 0;
     uint32_t varying_samples = 0;
+    uint32_t first_sample_value = 0;
+    uint32_t first_sample_matches = 0;
     uint32_t first_nonzero_value = 0;
+    bool low_variation = false;
+    bool clear_like = false;
     uint64_t checksum = 0;
     uint32_t score = 0;
   };
@@ -301,6 +305,11 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t score = 0;
     uint32_t nonzero_samples = 0;
     uint32_t varying_samples = 0;
+    uint32_t first_sample_value = 0;
+    uint32_t first_sample_matches = 0;
+    uint32_t first_nonzero_value = 0;
+    bool low_variation = false;
+    bool clear_like = false;
     uint64_t checksum = 0;
   };
 
