@@ -106,6 +106,22 @@ DEFINE_bool(vulkan_present_recent_resolve_on_swap, false,
             "VdSwap frontbuffer. Research-only Blue Dragon black-screen "
             "probe; incorrect for general compatibility.",
             "GPU");
+DEFINE_bool(vulkan_present_scored_resolve_on_swap, false,
+            "Present the latest useful scored Vulkan resolve candidate instead "
+            "of the VdSwap frontbuffer. Uses slow readback stats to avoid "
+            "clear or black candidates. Research-only Android black-screen "
+            "probe.",
+            "GPU");
+DEFINE_int32(vulkan_present_scored_resolve_min_width, 320,
+             "Minimum resolve width considered by the scored-present probe.",
+             "GPU");
+DEFINE_int32(vulkan_present_scored_resolve_min_height, 180,
+             "Minimum resolve height considered by the scored-present probe.",
+             "GPU");
+DEFINE_int32(vulkan_present_scored_resolve_budget, 64,
+             "Maximum resolve readbacks for the scored-present probe; "
+             "negative means unlimited.",
+             "GPU");
 DEFINE_bool(vulkan_present_forced_resolve_on_swap, false,
             "Present a manually specified Vulkan resolve source instead of "
             "the VdSwap frontbuffer. Research-only Android black-screen "

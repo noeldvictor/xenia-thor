@@ -1288,7 +1288,12 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
                                                        uint32_t length,
                                                        const char* label,
                                                        bool log_checksum,
-                                                       bool copy_to_guest) {
+                                                       bool copy_to_guest,
+                                                       SharedMemoryReadbackStats*
+                                                           stats) {
+  if (stats) {
+    *stats = SharedMemoryReadbackStats();
+  }
   if (!length) {
     return true;
   }
@@ -1343,13 +1348,16 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         dfn.vkInvalidateMappedMemoryRanges(device, 1, &mapped_range);
       }
       const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mapping);
-      if (log_checksum) {
-        constexpr uint64_t kSampleStride = 4096;
+      if (log_checksum || stats) {
+        constexpr uint64_t kSampleStride = 2048;
         uint64_t checksum = 1469598103934665603ull;
         uint32_t samples = 0;
         uint32_t nonzero_samples = 0;
+        uint32_t varying_samples = 0;
         uint64_t first_nonzero_offset = UINT64_MAX;
         uint32_t first_nonzero_value = 0;
+        uint32_t previous_word = 0;
+        bool have_previous_word = false;
         for (uint64_t offset = 0; offset + sizeof(uint32_t) <= length;
              offset += kSampleStride) {
           uint32_t word = 0;
@@ -1357,6 +1365,11 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
           checksum ^= uint64_t(word) + (offset << 1);
           checksum *= 1099511628211ull;
           ++samples;
+          if (have_previous_word && word != previous_word) {
+            ++varying_samples;
+          }
+          previous_word = word;
+          have_previous_word = true;
           if (word) {
             ++nonzero_samples;
             if (first_nonzero_offset == UINT64_MAX) {
@@ -1364,6 +1377,16 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
               first_nonzero_value = word;
             }
           }
+        }
+        uint32_t score =
+            nonzero_samples ? (nonzero_samples + varying_samples * 16) : 0;
+        if (stats) {
+          stats->samples = samples;
+          stats->nonzero_samples = nonzero_samples;
+          stats->varying_samples = varying_samples;
+          stats->first_nonzero_value = first_nonzero_value;
+          stats->checksum = checksum;
+          stats->score = score;
         }
         uint32_t first_words[8] = {};
         uint32_t first_word_count =
@@ -1374,11 +1397,12 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         }
         XELOGI(
             "GPU {} trace: shared-memory checksum address={:08X} "
-            "length={:08X} stride={} samples={} nonzero={} checksum={:016X} "
+            "length={:08X} stride={} samples={} nonzero={} varying={} "
+            "score={} checksum={:016X} "
             "first_nonzero={} first_nonzero_value={:08X} "
             "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
             label, address, length, kSampleStride, samples, nonzero_samples,
-            checksum,
+            varying_samples, score, checksum,
             first_nonzero_offset == UINT64_MAX ? -1
                                                : int64_t(first_nonzero_offset),
             first_nonzero_value, first_words[0], first_words[1],
@@ -1420,7 +1444,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "swap_shared_memory_checksum={} swap_shared_memory_checksum_budget={} "
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
-          "readback_resolve={} recent_present={} forced_present={} "
+          "readback_resolve={} recent_present={} scored_present={} "
+          "scored_min={}x{} scored_budget={} forced_present={} "
           "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
@@ -1429,6 +1454,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_trace_resolve_checksum_budget,
           cvars::vulkan_readback_resolve,
           cvars::vulkan_present_recent_resolve_on_swap,
+          cvars::vulkan_present_scored_resolve_on_swap,
+          cvars::vulkan_present_scored_resolve_min_width,
+          cvars::vulkan_present_scored_resolve_min_height,
+          cvars::vulkan_present_scored_resolve_budget,
           cvars::vulkan_present_forced_resolve_on_swap,
           cvars::vulkan_present_forced_resolve_address,
           cvars::vulkan_present_forced_resolve_length,
@@ -1484,6 +1513,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   uint32_t original_swap_fetch[6] = {};
   bool using_resolve_override_for_swap = false;
   bool using_forced_resolve_for_swap = false;
+  bool using_scored_resolve_for_swap = false;
   PresentResolveCandidate swap_resolve_override;
   if (cvars::vulkan_present_forced_resolve_on_swap &&
       cvars::vulkan_present_forced_resolve_address &&
@@ -1510,6 +1540,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     swap_resolve_override.format = static_cast<xenos::TextureFormat>(
         cvars::vulkan_present_forced_resolve_format);
     using_forced_resolve_for_swap = true;
+  } else if (cvars::vulkan_present_scored_resolve_on_swap) {
+    swap_resolve_override = scored_present_resolve_candidate_;
+    using_scored_resolve_for_swap = true;
   } else if (cvars::vulkan_present_recent_resolve_on_swap) {
     swap_resolve_override = recent_present_resolve_candidate_;
   }
@@ -1542,13 +1575,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       XELOGI(
           "GPU swap trace: Vulkan IssueSwap using {} resolve source "
           "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
-          "instead of frontbuffer={:08X}",
-          using_forced_resolve_for_swap ? "forced" : "recent",
+          "score={} nonzero={} varying={} instead of frontbuffer={:08X}",
+          using_forced_resolve_for_swap
+              ? "forced"
+              : (using_scored_resolve_for_swap ? "scored" : "recent"),
           swap_resolve_override.address, swap_resolve_override.length,
           swap_resolve_override.width, swap_resolve_override.height,
           swap_resolve_override.pitch,
           static_cast<uint32_t>(swap_resolve_override.format),
-          swap_resolve_override.sequence, frontbuffer_ptr);
+          swap_resolve_override.sequence, swap_resolve_override.score,
+          swap_resolve_override.nonzero_samples,
+          swap_resolve_override.varying_samples, frontbuffer_ptr);
     }
   }
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
@@ -3047,14 +3084,23 @@ bool VulkanCommandProcessor::IssueCopy() {
   if (!resolved) {
     return false;
   }
+  xenos::TextureFormat dest_format = xenos::TextureFormat::k_8_8_8_8;
+  uint32_t dest_width = 0;
+  uint32_t dest_pitch = 0;
+  uint32_t dest_height = 0;
   if (written_length) {
     const RegisterFile& regs = *register_file_;
     auto rb_copy_dest_info = regs.Get<reg::RB_COPY_DEST_INFO>();
     auto rb_copy_dest_pitch = regs.Get<reg::RB_COPY_DEST_PITCH>();
-    xenos::TextureFormat dest_format = static_cast<xenos::TextureFormat>(
+    auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+    dest_format = static_cast<xenos::TextureFormat>(
         uint32_t(rb_copy_dest_info.copy_dest_format));
-    uint32_t dest_width = uint32_t(rb_copy_dest_pitch.copy_dest_pitch);
-    uint32_t dest_height = uint32_t(rb_copy_dest_pitch.copy_dest_height);
+    dest_width = uint32_t(rb_surface_info.surface_pitch);
+    dest_pitch = uint32_t(rb_copy_dest_pitch.copy_dest_pitch);
+    if (!dest_width) {
+      dest_width = dest_pitch;
+    }
+    dest_height = uint32_t(rb_copy_dest_pitch.copy_dest_height);
     constexpr uint32_t kMinDebugPresentWidth = 1280;
     constexpr uint32_t kMinDebugPresentHeight = 720;
     constexpr uint32_t kMinDebugPresentBytes =
@@ -3076,7 +3122,7 @@ bool VulkanCommandProcessor::IssueCopy() {
         recent_present_resolve_candidate_.length = written_length;
         recent_present_resolve_candidate_.width = dest_width;
         recent_present_resolve_candidate_.height = dest_height;
-        recent_present_resolve_candidate_.pitch = dest_width;
+        recent_present_resolve_candidate_.pitch = dest_pitch;
         recent_present_resolve_candidate_.format = dest_format;
         recent_present_resolve_candidate_.sequence =
             ++recent_present_resolve_sequence_;
@@ -3087,7 +3133,7 @@ bool VulkanCommandProcessor::IssueCopy() {
               "source={:08X}+{:08X} size={}x{} pitch={} format={} "
               "preferred={} sequence={}",
               written_address, written_length, dest_width, dest_height,
-              dest_width, static_cast<uint32_t>(dest_format),
+              dest_pitch, static_cast<uint32_t>(dest_format),
               candidate_is_preferred,
               recent_present_resolve_candidate_.sequence);
         }
@@ -3096,12 +3142,84 @@ bool VulkanCommandProcessor::IssueCopy() {
   }
 
   bool trace_checksum = ShouldTraceVulkanResolveChecksum();
+  bool scored_candidate = false;
+  int32_t scored_budget = cvars::vulkan_present_scored_resolve_budget;
+  if (cvars::vulkan_present_scored_resolve_on_swap && written_length &&
+      IsDebugPresentResolveCandidateFormat(dest_format) &&
+      dest_width >= uint32_t(std::max<int32_t>(
+                        1, cvars::vulkan_present_scored_resolve_min_width)) &&
+      dest_height >= uint32_t(std::max<int32_t>(
+                         1, cvars::vulkan_present_scored_resolve_min_height)) &&
+      (scored_budget < 0 ||
+       scored_present_resolve_readback_count_ < scored_budget)) {
+    scored_candidate = true;
+    ++scored_present_resolve_readback_count_;
+  }
   bool readback_resolve =
       cvars::vulkan_readback_resolve &&
       !texture_cache_->IsDrawResolutionScaled() && written_length;
-  if ((trace_checksum || readback_resolve) && written_length) {
-    ReadbackSharedMemoryRange(written_address, written_length, "resolve",
-                              trace_checksum, readback_resolve);
+  if ((trace_checksum || readback_resolve || scored_candidate) &&
+      written_length) {
+    SharedMemoryReadbackStats scored_stats;
+    bool readback_ok = ReadbackSharedMemoryRange(
+        written_address, written_length, "resolve",
+        trace_checksum || scored_candidate, readback_resolve,
+        scored_candidate ? &scored_stats : nullptr);
+    if (scored_candidate && readback_ok) {
+      constexpr uint32_t kScoredPresentResolveMinScore = 64;
+      bool useful_scored_candidate =
+          scored_stats.score >= kScoredPresentResolveMinScore &&
+          scored_stats.varying_samples;
+      if (!useful_scored_candidate &&
+          scored_present_resolve_candidate_.address == written_address) {
+        PresentResolveCandidate restored_candidate =
+            scored_present_resolve_fallback_candidate_;
+        if (cvars::gpu_trace_swap || cvars::vulkan_trace_copy_state) {
+          XELOGI(
+              "GPU copy trace: clearing stale scored present resolve "
+              "candidate source={:08X}+{:08X} score={} nonzero={} "
+              "varying={} checksum={:016X} restoring={:08X}",
+              written_address, written_length, scored_stats.score,
+              scored_stats.nonzero_samples, scored_stats.varying_samples,
+              scored_stats.checksum, restored_candidate.address);
+        }
+        scored_present_resolve_candidate_ = restored_candidate;
+        scored_present_resolve_fallback_candidate_ = PresentResolveCandidate();
+      }
+      if (!useful_scored_candidate) {
+        return true;
+      }
+      if (scored_present_resolve_candidate_.address &&
+          scored_present_resolve_candidate_.address != written_address) {
+        scored_present_resolve_fallback_candidate_ =
+            scored_present_resolve_candidate_;
+      }
+      scored_present_resolve_candidate_.address = written_address;
+      scored_present_resolve_candidate_.length = written_length;
+      scored_present_resolve_candidate_.width = dest_width;
+      scored_present_resolve_candidate_.height = dest_height;
+      scored_present_resolve_candidate_.pitch = dest_pitch;
+      scored_present_resolve_candidate_.format = dest_format;
+      scored_present_resolve_candidate_.sequence =
+          ++scored_present_resolve_sequence_;
+      scored_present_resolve_candidate_.score = scored_stats.score;
+      scored_present_resolve_candidate_.nonzero_samples =
+          scored_stats.nonzero_samples;
+      scored_present_resolve_candidate_.varying_samples =
+          scored_stats.varying_samples;
+      scored_present_resolve_candidate_.checksum = scored_stats.checksum;
+      if (cvars::gpu_trace_swap || cvars::vulkan_trace_copy_state) {
+        XELOGI(
+            "GPU copy trace: scored present resolve candidate "
+            "source={:08X}+{:08X} size={}x{} pitch={} format={} sequence={} "
+            "score={} samples={} nonzero={} varying={} checksum={:016X}",
+            written_address, written_length, dest_width, dest_height,
+            dest_pitch, static_cast<uint32_t>(dest_format),
+            scored_present_resolve_candidate_.sequence, scored_stats.score,
+            scored_stats.samples, scored_stats.nonzero_samples,
+            scored_stats.varying_samples, scored_stats.checksum);
+      }
+    }
   }
 
   return true;

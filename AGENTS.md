@@ -186,6 +186,11 @@ Primary target:
     `-VulkanPresentForcedResolveAddress`, width, height, pitch, and format to
     force-present a specific resolve source. This is a research-only probe for
     Blue Dragon black/blue frames, not a compatibility fix.
+  - `-VulkanPresentScoredResolveOnSwap true` to use slow resolve readback stats
+    for picking a non-clear present candidate. Pair with `-TimeScalar 0.5` and
+    keep `-VulkanPresentScoredResolveBudget` small enough for a Thor run.
+    Candidate `size` is visible surface size and `pitch` is memory pitch; Blue
+    Dragon has an 80x45 resolve with pitch 96, so do not collapse those fields.
 - Use `StopNoise` before game runs if another emulator or graphics app is stealing focus or polluting logcat.
 - Use the default Blue Dragon path only for the user's local Thor SD card. Do not assume other machines or devices have the same mount UUID.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.

@@ -276,9 +276,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   void InitializeTrace() override;
 
  private:
+  struct SharedMemoryReadbackStats {
+    uint32_t samples = 0;
+    uint32_t nonzero_samples = 0;
+    uint32_t varying_samples = 0;
+    uint32_t first_nonzero_value = 0;
+    uint64_t checksum = 0;
+    uint32_t score = 0;
+  };
+
   bool ReadbackSharedMemoryRange(uint32_t address, uint32_t length,
                                  const char* label, bool log_checksum,
-                                 bool copy_to_guest);
+                                 bool copy_to_guest,
+                                 SharedMemoryReadbackStats* stats = nullptr);
 
   struct PresentResolveCandidate {
     uint32_t address = 0;
@@ -288,6 +298,10 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t pitch = 0;
     xenos::TextureFormat format = xenos::TextureFormat::k_8_8_8_8;
     uint64_t sequence = 0;
+    uint32_t score = 0;
+    uint32_t nonzero_samples = 0;
+    uint32_t varying_samples = 0;
+    uint64_t checksum = 0;
   };
 
   struct CommandBuffer {
@@ -747,7 +761,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::vector<draw_util::MemExportRange> memexport_ranges_;
 
   PresentResolveCandidate recent_present_resolve_candidate_;
+  PresentResolveCandidate scored_present_resolve_candidate_;
+  PresentResolveCandidate scored_present_resolve_fallback_candidate_;
   uint64_t recent_present_resolve_sequence_ = 0;
+  uint64_t scored_present_resolve_sequence_ = 0;
+  int32_t scored_present_resolve_readback_count_ = 0;
 };
 
 }  // namespace vulkan
