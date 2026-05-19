@@ -104,6 +104,11 @@ Primary target:
   signals, and recent Thor evidence into a dated Markdown report.
 - Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
+- Current translation strategy digest:
+  `docs/research/20260519-153016-xbox360-thormax-translation-report.md`.
+  It says Blue Dragon performance work should treat CPU/A64 dispatch, helper
+  fallbacks, XMA/audio cost, and debug overhead as the first wall; GPU/Adreno
+  deep dives should stay narrow until evidence points back to rendering.
 
 ## Current Porting Priorities
 
@@ -120,9 +125,9 @@ Primary target:
 
 2. Make Android ARM64 build failures explicit.
    - Keep x64 backend code behind `XE_ARCH_AMD64` and architecture filters.
-  - Keep the imported A64 backend honest: it now compiles as an Android native
-    backend, but it is still non-playable research until device logs prove a
-    retail game reaches title.
+   - Keep the imported A64 backend honest: it now compiles as an Android native
+     backend, but it is still non-playable research until device logs prove a
+     retail game reaches title.
    - Do not fake guest execution by silently falling back to `NullBackend` for the emulator path.
 
 3. Bring up the native Android emulator app.
@@ -135,11 +140,48 @@ Primary target:
    - Mirror x64 backend structure only where it maps cleanly.
    - Decide on an AArch64 code emitter library through a dated research note before vendoring anything.
    - Validate instruction cache flushing, executable memory policy, signal/exception handling, and breakpoint behavior on Android.
+   - Treat the target design as PPC/HIR to AArch64 DBT with code cache, direct
+     block chaining, fast indirect branch lookup, pinned guest context and
+     memory base, endian-aware memory lowering, and VMX128-to-NEON lowering.
+   - Measure helper fallbacks, guest-to-host transitions, thunk entries,
+     code-cache lookups, direct links, indirect branch misses, recompiles, and
+     top guest PCs before guessing at hot fixes.
+   - Do not judge speed with broad debug tracing, disassembly dumps, shader
+     dumps, or compiled-call tracing enabled.
+   - Do not treat VMX128 as "just NEON"; lane order, saturation, NaNs,
+     denormals, and Xenos packed formats are correctness traps.
 
 5. Optimize for Thor Max early.
    - Treat Adreno 740 / Vulkan driver behavior as a real target, not an afterthought.
    - Track CPU, GPU, thermal, fan, battery, and frame pacing observations in worklogs.
    - Preserve correctness before speed; every speed experiment needs a comparable baseline.
+   - Keep trace-heavy correctness runs and trace-off speed runs separate. Mixing
+     them gives bad answers.
+
+## Translation Strategy From 2026-05-19 Report
+
+- Highest-value current order:
+  1. Keep the quiet Blue Dragon speed lane canonical, with strict metadata.
+  2. Add A64 block dispatch, helper fallback, transition, and code-cache
+     profiling that is cheap enough to leave on in speed captures.
+  3. Keep XMA/audio shortcuts as explicit bring-up probes, not correctness
+     fixes.
+  4. Narrow the signed `2_10_10_10` / Adreno format fallback work only where
+     Blue Dragon evidence points.
+  5. Add real Android input mapping and repeatable menu/opening scripts.
+- CPU work should improve the DBT spine before title-specific hacks:
+  direct block chaining, indirect branch lookup, endian load/store fusion,
+  common branch/condition lowering, VMX128 inline lowering, and reduced
+  guest-to-host transitions.
+- GPU work should be command-stream, shader-microcode, EDRAM/resolve, and
+  format-specific. Do not rely on optional Vulkan formats without probing
+  Adreno support, and do not treat EDRAM as normal host images.
+- System work should keep kernel/XAM/thread/timer/storage/input/audio HLE
+  visible and measurable because Blue Dragon can be CPU-ready while blocked by
+  device-service behavior.
+- Hot trace stitching, background optimization, pipeline-cache tuning, AGI, and
+  RenderDoc are useful later, but the report ranks them below CPU/A64 and audio
+  cost until the speed lane shows those are no longer the dominant wall.
 
 ## Debug Automation Rules
 
@@ -152,6 +194,12 @@ Primary target:
   `LaunchBlueDragonSpeedCapture`, `LaunchEmulator`, `LaunchWindowDemo`, and
   `Capture`.
 - Always clear logcat before a launch and capture a full log, filtered log, screenshot, metadata file, APK hash, branch, commit, process id, focused activity, and target path.
+- For every speed note, record build hash, APK hash, cvars, run duration,
+  thermal/fan/battery if available, screenshot path, process id, thread sample,
+  and whether the run was trace-off or trace-heavy.
+- Do not enable broad shader dumps, checksums, live logcat, broad GPU packet
+  traces, disassembly dumps, or compiled-call tracing in the speed lane unless
+  the research note explicitly says the speed result is invalid for comparison.
 - Legacy ARM64 mini-JIT flags (`-Arm64MiniJit`, `-Arm64MiniJitBlacklist`,
   `-Arm64ForceInterpreterRanges`, and `-Arm64GuestStoreWatch`) belong to the
   removed scaffold path. Do not rely on them for current aX360e A64 backend
@@ -352,6 +400,10 @@ Primary target:
   exception/signal recovery, code-cache indirection and metadata, source maps,
   unwind info where available, native scalar/control/memory lowering, native
   vector/pack/unpack lowering, and differential tests.
+- After the 2026-05-19 translation report, broad ARM64 passes should include
+  cheap runtime counters before more one-off Thor fixes: guest function/block
+  entries, helper calls by opcode/category, guest-to-host transitions,
+  code-cache lookup/link/miss/recompile stats, and top Blue Dragon guest PCs.
 - Use Thor runs as milestone checkpoints after broad backend batches, not as
   the only unit test.
 - Current conversion audit:
@@ -682,6 +734,18 @@ Primary target:
     opening sequence.
   - Live `top -H` showed main guest CPU and XMA decoder ahead of GPU command
     thread CPU use.
+- Xbox 360 to Thor Max translation report:
+  `docs/research/20260519-153016-xbox360-thormax-translation-report.md`.
+  - Blue Dragon title/language/opening proof is real progress, but not a
+    compatibility claim.
+  - The immediate speed wall is CPU/A64 dispatch, helper fallbacks,
+    guest-to-host transitions, XMA/audio cost, and debug overhead first; GPU is
+    second unless a focused capture proves otherwise.
+  - Next probes should produce cheap counters for guest functions/blocks,
+    helper categories, code-cache links/misses, indirect branches, recompiles,
+    and top guest PCs in trace-off runs.
+  - Use `apu=nop` or `xma_fast_silence` only as comparison lanes, never as the
+    main correctness path.
 
 ## Codex Hooks / Automation
 
