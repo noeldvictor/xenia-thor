@@ -602,6 +602,25 @@ Primary target:
     shader's ability to export nonzero color.
   - Next GPU lane: tag copy/resolve trace lines with recent draw sequence and
     shader hashes, then identify the exact writer that clears `1DC14000`.
+- Blue Dragon post-`0ABADD9DA4373CBA` shader-chain proof:
+  `docs/research/20260519-014135-blue-dragon-post-abadd-shader-chain.md`.
+  - Vulkan copy trace lines now include copy sequence, recent draw sequence,
+    recent vertex shader hash, and recent pixel shader hash.
+  - Forced `0ABADD9DA4373CBA` writes `1DC14000` nonzero, but the following
+    `57B736C8B5D4E953` pass writes it back to zero.
+  - Forced `57B736C8B5D4E953` writes `1DC14000` nonzero and shows a visible
+    debug frame, but the following `B02CC5F55AD0D140` pass writes it back to
+    zero.
+  - Forced `B02CC5F55AD0D140` writes `1DC14000` nonzero; the final
+    `9567C79307ACC6F5` pass samples it, resolves `1D14C000` nonzero, and then
+    writes an official frontbuffer nonzero.
+  - The older generic frontbuffer checksum reads CPU guest memory and can be
+    misleading for Vulkan shared-memory state. Prefer Vulkan resolve,
+    texture-source, copy-state, and swap shared-memory checksums for present
+    proof.
+  - The current GPU wall is the unforced `B02CC5F55AD0D140` shader pass or its
+    texture/constant/boolean state, especially format 7 `2_10_10_10`, DXT
+    input, branch booleans, log/exp/NaN handling, and export clamping.
 
 ## Android ARM64 Risk Register
 

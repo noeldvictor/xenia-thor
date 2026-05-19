@@ -3590,6 +3590,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
   }
 
+  trace_last_draw_sequence_ = ++trace_draw_sequence_;
+  trace_last_draw_vs_hash_ = vertex_shader_hash;
+  trace_last_draw_ps_hash_ = pixel_shader_hash;
+
   // Invalidate textures in memexported memory and watch for changes.
   for (const draw_util::MemExportRange& memexport_range : memexport_ranges_) {
     shared_memory_->RangeWrittenByGpu(memexport_range.base_address_dwords << 2,
@@ -3604,6 +3608,7 @@ bool VulkanCommandProcessor::IssueCopy() {
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
+  uint64_t copy_sequence = ++trace_copy_sequence_;
   bool trace_copy_state = ShouldTraceVulkanCopyState();
   if (trace_copy_state) {
     const RegisterFile& regs = *register_file_;
@@ -3623,12 +3628,16 @@ bool VulkanCommandProcessor::IssueCopy() {
     auto color3 = regs.Get<reg::RB_COLOR_INFO>(
         reg::RB_COLOR_INFO::rt_register_indices[3]);
     XELOGI(
-        "GPU copy trace: IssueCopy begin control={:08X} src={} sample={} "
-        "command={} color_clear={} depth_clear={} raw_dest_base={:08X} "
+        "GPU copy trace: IssueCopy begin copy_seq={} last_draw_seq={} "
+        "last_vs_hash={:016X} last_ps_hash={:016X} "
+        "control={:08X} src={} sample={} command={} color_clear={} "
+        "depth_clear={} raw_dest_base={:08X} "
         "dest_info={:08X} dest_format={} dest_pitch={} dest_height={} "
         "surface={:08X} surface_pitch={} msaa={} color={:08X},{:08X},{:08X},"
         "{:08X} depth={:08X} colorcontrol={:08X} color_mask={:04X}",
-        rb_copy_control.value, uint32_t(rb_copy_control.copy_src_select),
+        copy_sequence, trace_last_draw_sequence_, trace_last_draw_vs_hash_,
+        trace_last_draw_ps_hash_, rb_copy_control.value,
+        uint32_t(rb_copy_control.copy_src_select),
         uint32_t(rb_copy_control.copy_sample_select),
         uint32_t(rb_copy_control.copy_command),
         uint32_t(rb_copy_control.color_clear_enable),
@@ -3674,8 +3683,13 @@ bool VulkanCommandProcessor::IssueCopy() {
       *memory_, *shared_memory_, *texture_cache_, written_address,
       written_length);
   if (trace_copy_state) {
-    XELOGI("GPU copy trace: IssueCopy resolve_result={} written={:08X}+{:08X}",
-           resolved, written_address, written_length);
+    XELOGI(
+        "GPU copy trace: IssueCopy resolve_result={} copy_seq={} "
+        "last_draw_seq={} last_vs_hash={:016X} last_ps_hash={:016X} "
+        "written={:08X}+{:08X}",
+        resolved, copy_sequence, trace_last_draw_sequence_,
+        trace_last_draw_vs_hash_, trace_last_draw_ps_hash_, written_address,
+        written_length);
   }
   if (!resolved) {
     return false;

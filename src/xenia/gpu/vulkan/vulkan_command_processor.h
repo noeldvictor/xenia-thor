@@ -322,6 +322,12 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint64_t checksum = 0;
   };
 
+  uint64_t trace_draw_sequence_ = 0;
+  uint64_t trace_copy_sequence_ = 0;
+  uint64_t trace_last_draw_sequence_ = 0;
+  uint64_t trace_last_draw_vs_hash_ = 0;
+  uint64_t trace_last_draw_ps_hash_ = 0;
+
   struct CommandBuffer {
     VkCommandPool pool;
     VkCommandBuffer buffer;
