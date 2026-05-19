@@ -134,6 +134,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "arm64_compiled_call_trace_functions");
             copyStringExtra(intent, launchArguments, "arm64_compiled_call_trace_guest_tids");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_after_ms");
+            copyIntExtra(intent, launchArguments, "arm64_speed_profile_interval_ms");
+            copyIntExtra(intent, launchArguments, "arm64_speed_profile_top_functions");
+            copyIntExtra(intent, launchArguments, "arm64_speed_profile_min_delta");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");

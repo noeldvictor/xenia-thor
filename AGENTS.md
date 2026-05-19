@@ -215,6 +215,11 @@ Primary target:
     `-DisassembleFunctions true` to dump only matching guest functions.
   - `-Arm64CompiledCallTraceFunctions "8246B408"` to sample a hot compiled
     guest function.
+  - `-Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 16`
+    to enable the low-noise A64 speed profiler in a speed capture. This emits
+    periodic summaries for function-entry deltas, direct/indirect guest calls,
+    guest-to-host transitions, runtime resolves, and top guest PCs. It is
+    default-off and preferred before noisy compiled-call tracing.
   - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
     wait state.
   - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel
@@ -746,6 +751,21 @@ Primary target:
     and top guest PCs in trace-off runs.
   - Use `apu=nop` or `xma_fast_silence` only as comparison lanes, never as the
     main correctness path.
+- A64 speed profile counters:
+  `docs/research/20260519-162000-a64-speed-profile-counters.md`.
+  - New default-off cvars:
+    `arm64_speed_profile_interval_ms`,
+    `arm64_speed_profile_top_functions`, and
+    `arm64_speed_profile_min_delta`.
+  - First profiled Blue Dragon run
+    `scratch\thor-debug\20260519-161600-*` built, deployed, stayed alive, and
+    produced top-function summaries without fatal, device-lost, GPU-hung, or
+    AndroidRuntime crash lines.
+  - Final interval was dominated by direct guest calls and top deltas in
+    `__savegprlr_29`, `__restgprlr_29`, `8248B040`, and known draw-wait
+    function `8246B408`. Next CPU optimization should inspect whether the A64
+    backend can safely inline/special-case the PPC save/restore compiler
+    helpers.
 
 ## Codex Hooks / Automation
 

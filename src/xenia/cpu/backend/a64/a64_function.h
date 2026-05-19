@@ -20,6 +20,8 @@ namespace cpu {
 namespace backend {
 namespace a64 {
 
+class A64Backend;
+
 class A64Function : public GuestFunction {
  public:
   A64Function(Module* module, uint32_t address);
@@ -33,6 +35,8 @@ class A64Function : public GuestFunction {
   }
 
   void Setup(uint8_t* machine_code, size_t machine_code_length);
+  void MarkProfileRegistered(A64Backend* backend);
+  std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -40,6 +44,8 @@ class A64Function : public GuestFunction {
  private:
   std::atomic<uint8_t*> machine_code_{nullptr};
   std::atomic<size_t> machine_code_length_{0};
+  std::atomic<uint64_t> profile_entry_count_{0};
+  std::atomic<A64Backend*> profile_registered_backend_{nullptr};
 };
 
 }  // namespace a64

@@ -10,7 +10,10 @@
 #ifndef XENIA_CPU_BACKEND_A64_A64_BACKEND_H_
 #define XENIA_CPU_BACKEND_A64_A64_BACKEND_H_
 
+#include <atomic>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 #include "xenia/base/bit_map.h"
 #include "xenia/base/cvar.h"
@@ -18,6 +21,9 @@
 
 namespace xe {
 class Exception;
+namespace threading {
+class HighResolutionTimer;
+}  // namespace threading
 }  // namespace xe
 
 namespace xe {
@@ -26,6 +32,7 @@ namespace backend {
 namespace a64 {
 
 class A64CodeCache;
+class A64Function;
 
 typedef void* (*HostToGuestThunk)(void* target, void* arg0, void* arg1);
 typedef void* (*GuestToHostThunk)(void* target, void* arg0, void* arg1);
@@ -109,6 +116,22 @@ class A64Backend : public Backend {
   void* synchronize_guest_and_host_stack_helper() const {
     return synchronize_guest_and_host_stack_helper_;
   }
+  bool speed_profile_enabled() const;
+  std::atomic<uint64_t>* speed_profile_host_to_guest_entries() {
+    return &speed_profile_host_to_guest_entries_;
+  }
+  std::atomic<uint64_t>* speed_profile_guest_to_host_calls() {
+    return &speed_profile_guest_to_host_calls_;
+  }
+  std::atomic<uint64_t>* speed_profile_direct_guest_calls() {
+    return &speed_profile_direct_guest_calls_;
+  }
+  std::atomic<uint64_t>* speed_profile_indirect_guest_calls() {
+    return &speed_profile_indirect_guest_calls_;
+  }
+  std::atomic<uint64_t>* speed_profile_extern_calls() {
+    return &speed_profile_extern_calls_;
+  }
 
   bool Initialize(Processor* processor) override;
 
@@ -141,10 +164,20 @@ class A64Backend : public Backend {
   bool PopulatePseudoStacktrace(GuestPseudoStackTrace* st) override;
 
   void RecordMMIOExceptionForGuestInstruction(void* host_address);
+  void RecordResolveFunction(bool success);
+  void RegisterProfiledFunction(A64Function* function);
+  void UnregisterProfiledFunction(A64Function* function);
 
  private:
+  struct ProfiledFunctionEntry {
+    A64Function* function = nullptr;
+    uint64_t last_entry_count = 0;
+  };
+
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
   bool ExceptionCallback(Exception* ex);
+  void StartSpeedProfiler();
+  void LogSpeedProfile();
 
   uintptr_t capstone_handle_ = 0;
 
@@ -165,6 +198,24 @@ class A64Backend : public Backend {
   alignas(64) ReserveHelper reserve_helper_;
   BitMap guest_trampoline_address_bitmap_;
   uint8_t* guest_trampoline_memory_ = nullptr;
+
+  std::mutex speed_profile_mutex_;
+  std::vector<ProfiledFunctionEntry> speed_profile_functions_;
+  std::unique_ptr<xe::threading::HighResolutionTimer> speed_profile_timer_;
+  std::atomic<uint64_t> speed_profile_host_to_guest_entries_{0};
+  std::atomic<uint64_t> speed_profile_guest_to_host_calls_{0};
+  std::atomic<uint64_t> speed_profile_direct_guest_calls_{0};
+  std::atomic<uint64_t> speed_profile_indirect_guest_calls_{0};
+  std::atomic<uint64_t> speed_profile_extern_calls_{0};
+  std::atomic<uint64_t> speed_profile_resolve_calls_{0};
+  std::atomic<uint64_t> speed_profile_resolve_misses_{0};
+  uint64_t last_speed_profile_host_to_guest_entries_ = 0;
+  uint64_t last_speed_profile_guest_to_host_calls_ = 0;
+  uint64_t last_speed_profile_direct_guest_calls_ = 0;
+  uint64_t last_speed_profile_indirect_guest_calls_ = 0;
+  uint64_t last_speed_profile_extern_calls_ = 0;
+  uint64_t last_speed_profile_resolve_calls_ = 0;
+  uint64_t last_speed_profile_resolve_misses_ = 0;
 };
 
 }  // namespace a64

@@ -106,6 +106,9 @@ param(
     [string]$Arm64CompiledCallTraceFunctions = "",
     [string]$Arm64CompiledCallTraceGuestTids = "",
     [string]$Arm64CompiledCallTraceAfterMs = "",
+    [string]$Arm64SpeedProfileIntervalMs = "",
+    [string]$Arm64SpeedProfileTopFunctions = "",
+    [string]$Arm64SpeedProfileMinDelta = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
@@ -610,6 +613,15 @@ function Start-XeniaEmulator {
     if ($Arm64CompiledCallTraceAfterMs) {
         $parts += "--ei arm64_compiled_call_trace_after_ms $Arm64CompiledCallTraceAfterMs"
     }
+    if ($Arm64SpeedProfileIntervalMs) {
+        $parts += "--ei arm64_speed_profile_interval_ms $Arm64SpeedProfileIntervalMs"
+    }
+    if ($Arm64SpeedProfileTopFunctions) {
+        $parts += "--ei arm64_speed_profile_top_functions $Arm64SpeedProfileTopFunctions"
+    }
+    if ($Arm64SpeedProfileMinDelta) {
+        $parts += "--ei arm64_speed_profile_min_delta $Arm64SpeedProfileMinDelta"
+    }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
@@ -688,6 +700,9 @@ function Write-CaptureMetadata {
         "target=$CaptureTarget",
         "live_capture_seconds=$LiveCaptureSeconds",
         "shader_dump_device_path=$script:ActiveDumpShadersPath",
+        "arm64_speed_profile_interval_ms=$Arm64SpeedProfileIntervalMs",
+        "arm64_speed_profile_top_functions=$Arm64SpeedProfileTopFunctions",
+        "arm64_speed_profile_min_delta=$Arm64SpeedProfileMinDelta",
         "",
         "adb_events:",
         ($script:AdbEvents -join "`n"),
@@ -817,6 +832,9 @@ function Use-BlueDragonSpeedDefaults {
     $script:MountCache = "false"
     $script:ClearMemoryPageState = "false"
     $script:LogLevel = "0"
+    if ($script:Arm64SpeedProfileIntervalMs) {
+        $script:LogLevel = "1"
+    }
     $script:VulkanForceSigned2101010UnormFallback = "true"
     $script:VulkanForce2101010Rgba8Fallback = "false"
 
@@ -1030,6 +1048,9 @@ done | head -50
         Use-BlueDragonSpeedDefaults
         Write-Output "Launching target: $launchTarget"
         Write-Output "Speed sample seconds: $($sampleSeconds -join ',')"
+        if ($Arm64SpeedProfileIntervalMs) {
+            Write-Output "A64 speed profile interval: ${Arm64SpeedProfileIntervalMs}ms"
+        }
         Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
         Invoke-Adb @("logcat", "-c") | Out-Null
         Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear

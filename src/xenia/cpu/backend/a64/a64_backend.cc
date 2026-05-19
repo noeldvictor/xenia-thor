@@ -9,14 +9,23 @@
 
 #include "xenia/cpu/backend/a64/a64_backend.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "xenia/base/clock.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/platform.h"
+#include "xenia/base/threading.h"
+#include "third_party/fmt/include/fmt/format.h"
 #if XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
 #endif
@@ -80,6 +89,21 @@ DEFINE_bool(
     arm64_blue_dragon_draw_wait_probe, false,
     "Thor ARM64 bring-up: update current KTHREAD+0x58 at Blue Dragon's known "
     "draw-thread wait timeout load site. Research-only title probe.",
+    "a64");
+DEFINE_uint32(
+    arm64_speed_profile_interval_ms, 0,
+    "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
+    "0 disables inline counters and periodic top-function reports.",
+    "a64");
+DEFINE_uint32(
+    arm64_speed_profile_top_functions, 12,
+    "Thor ARM64 speed lane: number of functions to print in each profile "
+    "summary.",
+    "a64");
+DEFINE_uint32(
+    arm64_speed_profile_min_delta, 1,
+    "Thor ARM64 speed lane: minimum entry-count delta before a function can "
+    "appear in the periodic top-function report.",
     "a64");
 
 namespace xe {
@@ -156,6 +180,10 @@ HostToGuestThunk A64HelperEmitter::EmitHostToGuestThunk() {
   stp(Xbyak_aarch64::QReg(14), Xbyak_aarch64::QReg(15), ptr(sp, 0xC0));
 
   code_offsets.body = getSize();
+
+  if (backend()->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend()->speed_profile_host_to_guest_entries());
+  }
 
   // Set up guest execution state.
   // x20 = context (PPCContext*)
@@ -285,6 +313,10 @@ GuestToHostThunk A64HelperEmitter::EmitGuestToHostThunk() {
   stp(x29, x30, ptr(sp, 0x1C0));
 
   code_offsets.body = getSize();
+
+  if (backend()->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend()->speed_profile_guest_to_host_calls());
+  }
 
   // Call host function.
   // AAPCS64: x0=first arg. We set x0=context (from x20).
@@ -523,10 +555,13 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
   auto guest_context = reinterpret_cast<ppc::PPCContext*>(raw_context);
   auto thread_state = guest_context->thread_state;
   assert_not_zero(target_address);
+  auto backend =
+      reinterpret_cast<A64Backend*>(thread_state->processor()->backend());
 
   auto fn = thread_state->processor()->ResolveFunction(
       static_cast<uint32_t>(target_address));
   if (!fn) {
+    backend->RecordResolveFunction(false);
     // Unresolvable — return 0 which will fault.
     return 0;
   }
@@ -534,14 +569,165 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
   auto guest_fn = static_cast<GuestFunction*>(fn);
   auto code = guest_fn->machine_code();
   if (!code) {
+    backend->RecordResolveFunction(false);
     return 0;
   }
+  backend->RecordResolveFunction(true);
   return reinterpret_cast<uint64_t>(code);
 }
 
 // ==========================================================================
 // A64Backend
 // ==========================================================================
+
+bool A64Backend::speed_profile_enabled() const {
+  return cvars::arm64_speed_profile_interval_ms != 0;
+}
+
+void A64Backend::RecordResolveFunction(bool success) {
+  if (!speed_profile_enabled()) {
+    return;
+  }
+  speed_profile_resolve_calls_.fetch_add(1, std::memory_order_relaxed);
+  if (!success) {
+    speed_profile_resolve_misses_.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+void A64Backend::RegisterProfiledFunction(A64Function* function) {
+  if (!speed_profile_enabled() || !function) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(speed_profile_mutex_);
+  auto it = std::find_if(
+      speed_profile_functions_.begin(), speed_profile_functions_.end(),
+      [function](const ProfiledFunctionEntry& entry) {
+        return entry.function == function;
+      });
+  if (it == speed_profile_functions_.end()) {
+    speed_profile_functions_.push_back({function, 0});
+  }
+}
+
+void A64Backend::UnregisterProfiledFunction(A64Function* function) {
+  if (!function) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(speed_profile_mutex_);
+  speed_profile_functions_.erase(
+      std::remove_if(
+          speed_profile_functions_.begin(), speed_profile_functions_.end(),
+          [function](const ProfiledFunctionEntry& entry) {
+            return entry.function == function;
+          }),
+      speed_profile_functions_.end());
+}
+
+void A64Backend::StartSpeedProfiler() {
+  if (!speed_profile_enabled() || speed_profile_timer_) {
+    return;
+  }
+
+  uint32_t interval_ms = cvars::arm64_speed_profile_interval_ms;
+  uint32_t top_functions = cvars::arm64_speed_profile_top_functions;
+  uint32_t min_delta = cvars::arm64_speed_profile_min_delta;
+  XELOGW(
+      "A64 speed profile enabled: interval_ms={} top_functions={} "
+      "min_delta={}",
+      interval_ms, top_functions, min_delta);
+  speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
+      std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });
+}
+
+void A64Backend::LogSpeedProfile() {
+  if (!speed_profile_enabled()) {
+    return;
+  }
+
+  struct FunctionSample {
+    uint32_t address = 0;
+    std::string name;
+    uint64_t total = 0;
+    uint64_t delta = 0;
+    size_t code_size = 0;
+  };
+
+  std::vector<FunctionSample> samples;
+  uint64_t entry_delta_total = 0;
+  size_t function_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(speed_profile_mutex_);
+    function_count = speed_profile_functions_.size();
+    samples.reserve(function_count);
+    for (auto& entry : speed_profile_functions_) {
+      A64Function* function = entry.function;
+      if (!function) {
+        continue;
+      }
+      uint64_t total =
+          function->profile_entry_count()->load(std::memory_order_relaxed);
+      uint64_t delta = total - entry.last_entry_count;
+      entry.last_entry_count = total;
+      entry_delta_total += delta;
+      if (delta < cvars::arm64_speed_profile_min_delta) {
+        continue;
+      }
+      std::string name = function->name();
+      if (name.empty()) {
+        name = fmt::format("sub_{:08X}", function->address());
+      }
+      samples.push_back({function->address(), std::move(name), total, delta,
+                         function->machine_code_length()});
+    }
+  }
+
+  std::sort(samples.begin(), samples.end(),
+            [](const FunctionSample& a, const FunctionSample& b) {
+              return a.delta > b.delta;
+            });
+
+  auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
+    uint64_t total = counter.load(std::memory_order_relaxed);
+    uint64_t delta = total - last;
+    last = total;
+    return std::pair<uint64_t, uint64_t>{total, delta};
+  };
+  auto h2g = load_delta(speed_profile_host_to_guest_entries_,
+                        last_speed_profile_host_to_guest_entries_);
+  auto g2h = load_delta(speed_profile_guest_to_host_calls_,
+                        last_speed_profile_guest_to_host_calls_);
+  auto direct = load_delta(speed_profile_direct_guest_calls_,
+                           last_speed_profile_direct_guest_calls_);
+  auto indirect = load_delta(speed_profile_indirect_guest_calls_,
+                             last_speed_profile_indirect_guest_calls_);
+  auto extern_calls =
+      load_delta(speed_profile_extern_calls_, last_speed_profile_extern_calls_);
+  auto resolves =
+      load_delta(speed_profile_resolve_calls_, last_speed_profile_resolve_calls_);
+  auto resolve_misses = load_delta(speed_profile_resolve_misses_,
+                                   last_speed_profile_resolve_misses_);
+
+  XELOGW(
+      "A64 speed profile summary: funcs={} entry_delta={} h2g={}/{} "
+      "g2h={}/{} direct={}/{} indirect={}/{} extern={}/{} resolves={}/{} "
+      "resolve_misses={}/{}",
+      function_count, entry_delta_total, h2g.second, h2g.first, g2h.second,
+      g2h.first, direct.second, direct.first, indirect.second, indirect.first,
+      extern_calls.second, extern_calls.first, resolves.second, resolves.first,
+      resolve_misses.second, resolve_misses.first);
+
+  size_t top_count = std::min<size_t>(
+      samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < top_count; ++i) {
+    const auto& sample = samples[i];
+    XELOGW("A64 speed profile top {:02}: fn {:08X} '{}' delta={} total={} "
+           "code_size={}",
+           i + 1, sample.address, sample.name, sample.delta, sample.total,
+           sample.code_size);
+  }
+}
 
 // ARM64 guest trampoline template.
 // Loads proc, userdata1, userdata2 into x0-x2, then jumps to guest_to_host
@@ -622,6 +808,7 @@ A64Backend::A64Backend() {
 }
 
 A64Backend::~A64Backend() {
+  speed_profile_timer_.reset();
   ExceptionHandler::Uninstall(&ExceptionCallbackThunk, this);
   if (guest_trampoline_memory_) {
     memory::DeallocFixed(guest_trampoline_memory_,
@@ -694,6 +881,7 @@ bool A64Backend::Initialize(Processor* processor) {
 
   // Register exception handler for MMIO access from JIT code.
   ExceptionHandler::Install(ExceptionCallbackThunk, this);
+  StartSpeedProfiler();
 
   return true;
 }

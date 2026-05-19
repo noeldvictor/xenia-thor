@@ -23,12 +23,21 @@ A64Function::A64Function(Module* module, uint32_t address)
     : GuestFunction(module, address) {}
 
 A64Function::~A64Function() {
+  auto backend =
+      profile_registered_backend_.exchange(nullptr, std::memory_order_acq_rel);
+  if (backend) {
+    backend->UnregisterProfiledFunction(this);
+  }
   // machine_code_ is freed by code cache.
 }
 
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_length_.store(machine_code_length, std::memory_order_relaxed);
   machine_code_.store(machine_code, std::memory_order_release);
+}
+
+void A64Function::MarkProfileRegistered(A64Backend* backend) {
+  profile_registered_backend_.store(backend, std::memory_order_release);
 }
 
 bool A64Function::CallImpl(ThreadState* thread_state, uint32_t return_address) {

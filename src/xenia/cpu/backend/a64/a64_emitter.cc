@@ -348,6 +348,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   trace_data_ = &function->trace_data();
 
   current_guest_function_ = function->address();
+  current_guest_function_entry_count_ =
+      static_cast<A64Function*>(function)->profile_entry_count();
 
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
@@ -369,6 +371,20 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   source_map_arena_.CloneContents(out_source_map);
 
   return *out_code_address != nullptr;
+}
+
+void A64Emitter::EmitAtomicIncrement64(std::atomic<uint64_t>* counter) {
+  if (!counter) {
+    return;
+  }
+
+  mov(x9, reinterpret_cast<uint64_t>(counter));
+  auto& retry = NewCachedLabel();
+  L(retry);
+  ldxr(x10, ptr(x9));
+  add(x10, x10, uint32_t{1});
+  stxr(w11, x10, ptr(x9));
+  cbnz(w11, retry);
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
@@ -436,6 +452,9 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   if (A64CallTraceRequested()) {
     mov(x1, static_cast<uint64_t>(current_guest_function_));
     CallNativeSafe(reinterpret_cast<void*>(&TraceFunctionEntry));
+  }
+  if (backend_->speed_profile_enabled()) {
+    EmitAtomicIncrement64(current_guest_function_entry_count_);
   }
 
   // ========================================================================
@@ -618,6 +637,9 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
   ForgetFpcrMode();
   auto fn = static_cast<A64Function*>(function);
+  if (backend_->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend_->speed_profile_direct_guest_calls());
+  }
 
   if (fn->machine_code()) {
     // Direct call — function is already compiled.
@@ -688,6 +710,9 @@ void A64Emitter::CallIndirect(const hir::Instr* instr, int reg_index) {
     cmp(target_w, w0);
     b(EQ, epilog_label());
   }
+  if (backend_->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend_->speed_profile_indirect_guest_calls());
+  }
 
   // Load host code address from indirection table.
   if (code_cache_->has_indirection_table()) {
@@ -729,6 +754,9 @@ void A64Emitter::CallIndirect(const hir::Instr* instr, int reg_index) {
 
 void A64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
   ForgetFpcrMode();
+  if (backend_->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend_->speed_profile_extern_calls());
+  }
   bool undefined = true;
   if (function->behavior() == Function::Behavior::kBuiltin) {
     auto builtin_function = static_cast<const BuiltinFunction*>(function);

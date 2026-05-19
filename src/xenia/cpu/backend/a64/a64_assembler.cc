@@ -90,8 +90,12 @@ bool A64Assembler::Assemble(GuestFunction* function, HIRBuilder* builder,
   }
 
   function->set_debug_info(std::move(debug_info));
-  static_cast<A64Function*>(function)->Setup(
-      reinterpret_cast<uint8_t*>(machine_code), code_size);
+  auto a64_function = static_cast<A64Function*>(function);
+  a64_function->Setup(reinterpret_cast<uint8_t*>(machine_code), code_size);
+  if (a64_backend_->speed_profile_enabled()) {
+    a64_backend_->RegisterProfiledFunction(a64_function);
+    a64_function->MarkProfileRegistered(a64_backend_);
+  }
 
   // Install into indirection table.
   uint64_t host_address = reinterpret_cast<uint64_t>(machine_code);
