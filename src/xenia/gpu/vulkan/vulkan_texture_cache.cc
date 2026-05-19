@@ -670,6 +670,45 @@ void VulkanTextureCache::TraceActiveTextureState(
   }
 }
 
+void VulkanTextureCache::CollectActiveTextureSourceRanges(
+    uint32_t used_texture_mask,
+    std::vector<ActiveTextureSourceRange>& ranges_out) const {
+  uint32_t textures_remaining = used_texture_mask;
+  uint32_t index;
+  while (xe::bit_scan_forward(textures_remaining, &index)) {
+    textures_remaining &= ~(uint32_t(1) << index);
+    const TextureBinding* binding = GetValidTextureBinding(index);
+    if (!binding) {
+      continue;
+    }
+
+    const Texture* texture_unsigned = binding->texture;
+    const Texture* texture_signed = binding->texture_signed;
+    const Texture* texture = texture_unsigned ? texture_unsigned : texture_signed;
+    if (!texture) {
+      continue;
+    }
+
+    ActiveTextureSourceRange& range = ranges_out.emplace_back();
+    range.fetch_index = index;
+    range.base_address = binding->key.base_page << 12;
+    range.base_length = texture->GetGuestBaseSize();
+    range.mip_address = binding->key.mip_page << 12;
+    range.mip_length = texture->GetGuestMipsSize();
+    range.dimension = binding->key.dimension;
+    range.format = binding->key.format;
+    range.width = binding->key.GetWidth();
+    range.height = binding->key.GetHeight();
+    range.depth_or_array_size = binding->key.GetDepthOrArraySize();
+    range.pitch = binding->key.pitch << 5;
+    range.tiled = binding->key.tiled != 0;
+    range.packed_mips = binding->key.packed_mips != 0;
+    range.scaled = binding->key.scaled_resolve != 0;
+    range.has_unsigned = texture_unsigned != nullptr;
+    range.has_signed = texture_signed != nullptr;
+  }
+}
+
 VkImageView VulkanTextureCache::GetActiveBindingOrNullImageView(
     uint32_t fetch_constant_index, xenos::FetchOpDimension dimension,
     bool is_signed) const {

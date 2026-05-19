@@ -107,6 +107,12 @@ DEFINE_bool(vulkan_trace_draw_state, false,
             "GPU");
 DEFINE_int32(vulkan_trace_draw_state_budget, 128,
              "Maximum Vulkan draw-state trace lines.", "GPU");
+DEFINE_bool(vulkan_trace_texture_source_checksum, false,
+            "Read back active texture source ranges from Vulkan shared memory "
+            "and log sparse checksums. Research-only and very slow.",
+            "GPU");
+DEFINE_int32(vulkan_trace_texture_source_checksum_budget, 24,
+             "Maximum active texture source checksum readbacks.", "GPU");
 DEFINE_bool(vulkan_trace_swap_shared_memory_checksum, false,
             "Read back the Vulkan shared-memory frontbuffer used by swap and "
             "log a sparse checksum. Research-only and very slow.",

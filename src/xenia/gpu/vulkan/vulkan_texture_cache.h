@@ -14,6 +14,7 @@
 #include <memory>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "xenia/base/hash.h"
 #include "xenia/gpu/texture_cache.h"
@@ -92,6 +93,29 @@ class VulkanTextureCache final : public TextureCache {
 
   void TraceActiveTextureState(uint32_t used_texture_mask,
                                const char* stage_label) const;
+
+  struct ActiveTextureSourceRange {
+    uint32_t fetch_index = 0;
+    uint32_t base_address = 0;
+    uint32_t base_length = 0;
+    uint32_t mip_address = 0;
+    uint32_t mip_length = 0;
+    xenos::DataDimension dimension = xenos::DataDimension::k1D;
+    xenos::TextureFormat format = xenos::TextureFormat::k_1_REVERSE;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t depth_or_array_size = 0;
+    uint32_t pitch = 0;
+    bool tiled = false;
+    bool packed_mips = false;
+    bool scaled = false;
+    bool has_unsigned = false;
+    bool has_signed = false;
+  };
+
+  void CollectActiveTextureSourceRanges(
+      uint32_t used_texture_mask,
+      std::vector<ActiveTextureSourceRange>& ranges_out) const;
 
   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
                                               xenos::FetchOpDimension dimension,

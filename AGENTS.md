@@ -511,6 +511,17 @@ Primary target:
   - Next GPU lane: split source data from shader output with active-texture
     source checksums and a targeted shader/constant trace for the visible
     fullscreen pixel shader hashes.
+- Blue Dragon texture-source checksum proof:
+  `docs/research/20260518-235501-blue-dragon-texture-source-checksum.md`.
+  - `vulkan_trace_texture_source_checksum=true` is routed through Android and
+    the Thor script and can read back active pixel texture source ranges before
+    a draw samples them.
+  - The visible fullscreen shaders have valid source ranges, but the large
+    render-chain sources are already flat or clear-like before the draw.
+  - The later `used_textures=000001FF` shader sees non-clear packed DXT source
+    data, but the resolved output remains clear-like.
+  - Next GPU lane: trace shader constants and shader-source semantics for the
+    visible fullscreen pixel shader family before changing render-target code.
 
 ## Android ARM64 Risk Register
 

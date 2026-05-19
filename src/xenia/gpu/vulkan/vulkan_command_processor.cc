@@ -46,6 +46,7 @@ std::atomic<int32_t> vulkan_resolve_checksum_count{0};
 std::atomic<int32_t> vulkan_swap_shared_memory_checksum_count{0};
 std::atomic<int32_t> vulkan_copy_state_count{0};
 std::atomic<int32_t> vulkan_draw_state_count{0};
+std::atomic<int32_t> vulkan_texture_source_checksum_count{0};
 
 bool ShouldTraceVulkanResolveChecksum() {
   if (!cvars::vulkan_trace_resolve_checksum) {
@@ -78,6 +79,15 @@ bool ShouldTraceVulkanDrawState() {
   }
   int32_t budget = cvars::vulkan_trace_draw_state_budget;
   return budget < 0 || vulkan_draw_state_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanTextureSourceChecksum() {
+  if (!cvars::vulkan_trace_texture_source_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_texture_source_checksum_budget;
+  return budget < 0 ||
+         vulkan_texture_source_checksum_count.fetch_add(1) < budget;
 }
 
 bool IsDebugPresentResolveCandidateFormat(xenos::TextureFormat format) {
@@ -1464,6 +1474,70 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
   return succeeded;
 }
 
+bool VulkanCommandProcessor::TraceTextureSourceChecksums(
+    uint32_t used_texture_mask, const char* stage_label, uint64_t shader_hash) {
+  if (!cvars::vulkan_trace_texture_source_checksum || !used_texture_mask) {
+    return true;
+  }
+
+  std::vector<VulkanTextureCache::ActiveTextureSourceRange> source_ranges;
+  texture_cache_->CollectActiveTextureSourceRanges(used_texture_mask,
+                                                   source_ranges);
+  for (const VulkanTextureCache::ActiveTextureSourceRange& source :
+       source_ranges) {
+    if (!source.base_length) {
+      continue;
+    }
+    if (!ShouldTraceVulkanTextureSourceChecksum()) {
+      break;
+    }
+    XELOGI(
+        "GPU texture-source trace: stage={} fetch={} shader={:016X} "
+        "kind=base address={:08X} length={:08X} dim={} fmt={} "
+        "size={}x{}x{} pitch={} tiled={} packed_mips={} scaled={} "
+        "has_unsigned={} has_signed={}",
+        stage_label, source.fetch_index, shader_hash, source.base_address,
+        source.base_length, uint32_t(source.dimension),
+        uint32_t(source.format), source.width, source.height,
+        source.depth_or_array_size, source.pitch, source.tiled,
+        source.packed_mips, source.scaled, source.has_unsigned,
+        source.has_signed);
+    ReadbackSharedMemoryRange(source.base_address, source.base_length,
+                              "texture-source", true, false, nullptr);
+    if (!BeginSubmission(true)) {
+      XELOGE(
+          "GPU texture-source trace: failed to reopen submission after "
+          "base readback stage={} fetch={} address={:08X}",
+          stage_label, source.fetch_index, source.base_address);
+      return false;
+    }
+
+    if (source.mip_length && ShouldTraceVulkanTextureSourceChecksum()) {
+      XELOGI(
+          "GPU texture-source trace: stage={} fetch={} shader={:016X} "
+          "kind=mips address={:08X} length={:08X} dim={} fmt={} "
+          "size={}x{}x{} pitch={} tiled={} packed_mips={} scaled={} "
+          "has_unsigned={} has_signed={}",
+          stage_label, source.fetch_index, shader_hash, source.mip_address,
+          source.mip_length, uint32_t(source.dimension),
+          uint32_t(source.format), source.width, source.height,
+          source.depth_or_array_size, source.pitch, source.tiled,
+          source.packed_mips, source.scaled, source.has_unsigned,
+          source.has_signed);
+      ReadbackSharedMemoryRange(source.mip_address, source.mip_length,
+                                "texture-source", true, false, nullptr);
+      if (!BeginSubmission(true)) {
+        XELOGE(
+            "GPU texture-source trace: failed to reopen submission after "
+            "mip readback stage={} fetch={} address={:08X}",
+            stage_label, source.fetch_index, source.mip_address);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
@@ -1477,6 +1551,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "swap_shared_memory_checksum={} swap_shared_memory_checksum_budget={} "
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
+          "texture_source_checksum={} texture_source_checksum_budget={} "
           "readback_resolve={} recent_present={} scored_present={} "
           "scored_min={}x{} scored_budget={} scored_required_format={} "
           "scored_reject_clear_like={} forced_present={} "
@@ -1486,6 +1561,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_trace_resolve, cvars::vulkan_trace_resolve_budget,
           cvars::vulkan_trace_resolve_checksum,
           cvars::vulkan_trace_resolve_checksum_budget,
+          cvars::vulkan_trace_texture_source_checksum,
+          cvars::vulkan_trace_texture_source_checksum_budget,
           cvars::vulkan_readback_resolve,
           cvars::vulkan_present_recent_resolve_on_swap,
           cvars::vulkan_present_scored_resolve_on_swap,
@@ -2835,15 +2912,40 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       pixel_shader ? draw_util::GetNormalizedColorMask(
                          regs, pixel_shader->writes_color_targets())
                    : 0;
+
+  // Update the textures before render-target setup and most other work in the
+  // submission because samplers depend on this, and debug source readbacks can
+  // deliberately split the submission.
+  uint32_t used_texture_mask_vertex =
+      vertex_shader->GetUsedTextureMaskAfterTranslation();
+  uint32_t used_texture_mask_pixel =
+      pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation()
+                              : 0;
+  uint32_t used_texture_mask =
+      used_texture_mask_vertex | used_texture_mask_pixel;
+  texture_cache_->RequestTextures(used_texture_mask);
+  if (pixel_shader && normalized_color_mask &&
+      cvars::vulkan_trace_texture_source_checksum) {
+    if (used_texture_mask_vertex &&
+        !TraceTextureSourceChecksums(used_texture_mask_vertex, "vertex",
+                                     vertex_shader->ucode_data_hash())) {
+      return false;
+    }
+    if (used_texture_mask_pixel &&
+        !TraceTextureSourceChecksums(used_texture_mask_pixel, "pixel",
+                                     pixel_shader->ucode_data_hash())) {
+      return false;
+    }
+  }
+
   if (!render_target_cache_->Update(is_rasterization_done,
                                     normalized_depth_control,
                                     normalized_color_mask, *vertex_shader)) {
     return false;
   }
 
-  // Create the pipeline (for this, need the render pass from the render target
-  // cache), translating the shaders - doing this now to obtain the used
-  // textures.
+  // Create the pipeline using the render pass selected by the render target
+  // cache.
   VkPipeline pipeline;
   const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
   if (!pipeline_cache_->ConfigurePipeline(
@@ -2854,18 +2956,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           pipeline_layout_provider)) {
     return false;
   }
-
-  // Update the textures before most other work in the submission because
-  // samplers depend on this (and in case of sampler overflow in a submission,
-  // submissions must be split) - may perform dispatches and copying.
-  uint32_t used_texture_mask_vertex =
-      vertex_shader->GetUsedTextureMaskAfterTranslation();
-  uint32_t used_texture_mask_pixel =
-      pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation()
-                              : 0;
-  uint32_t used_texture_mask =
-      used_texture_mask_vertex | used_texture_mask_pixel;
-  texture_cache_->RequestTextures(used_texture_mask);
 
   // Update the graphics pipeline, and if the new graphics pipeline has a
   // different layout, invalidate incompatible descriptor sets before updating

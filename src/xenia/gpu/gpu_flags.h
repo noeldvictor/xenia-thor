@@ -43,6 +43,8 @@ DECLARE_bool(vulkan_trace_copy_state);
 DECLARE_int32(vulkan_trace_copy_state_budget);
 DECLARE_bool(vulkan_trace_draw_state);
 DECLARE_int32(vulkan_trace_draw_state_budget);
+DECLARE_bool(vulkan_trace_texture_source_checksum);
+DECLARE_int32(vulkan_trace_texture_source_checksum_budget);
 DECLARE_bool(vulkan_trace_swap_shared_memory_checksum);
 DECLARE_int32(vulkan_trace_swap_shared_memory_checksum_budget);
 DECLARE_bool(vulkan_present_recent_resolve_on_swap);

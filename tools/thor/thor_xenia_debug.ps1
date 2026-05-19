@@ -42,6 +42,7 @@ param(
     [string]$VulkanReadbackResolve = "false",
     [string]$VulkanTraceCopyState = "false",
     [string]$VulkanTraceDrawState = "false",
+    [string]$VulkanTraceTextureSourceChecksum = "false",
     [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
     [string]$VulkanPresentRecentResolveOnSwap = "false",
     [string]$VulkanPresentScoredResolveOnSwap = "false",
@@ -60,6 +61,7 @@ param(
     [string]$VulkanTraceEdramChecksumBudget = "",
     [string]$VulkanTraceCopyStateBudget = "",
     [string]$VulkanTraceDrawStateBudget = "",
+    [string]$VulkanTraceTextureSourceChecksumBudget = "",
     [string]$VulkanTraceSwapSharedMemoryChecksumBudget = "",
     [string]$VulkanPresentScoredResolveMinWidth = "",
     [string]$VulkanPresentScoredResolveMinHeight = "",
@@ -343,6 +345,7 @@ function Start-XeniaEmulator {
         "--ez vulkan_readback_resolve $(ConvertTo-BooleanText $VulkanReadbackResolve)",
         "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
         "--ez vulkan_trace_draw_state $(ConvertTo-BooleanText $VulkanTraceDrawState)",
+        "--ez vulkan_trace_texture_source_checksum $(ConvertTo-BooleanText $VulkanTraceTextureSourceChecksum)",
         "--ez vulkan_trace_swap_shared_memory_checksum $(ConvertTo-BooleanText $VulkanTraceSwapSharedMemoryChecksum)",
         "--ez vulkan_present_recent_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentRecentResolveOnSwap)",
         "--ez vulkan_present_scored_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentScoredResolveOnSwap)",
@@ -390,6 +393,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanTraceDrawStateBudget) {
         $parts += "--ei vulkan_trace_draw_state_budget $VulkanTraceDrawStateBudget"
+    }
+    if ($VulkanTraceTextureSourceChecksumBudget) {
+        $parts += "--ei vulkan_trace_texture_source_checksum_budget $VulkanTraceTextureSourceChecksumBudget"
     }
     if ($VulkanTraceSwapSharedMemoryChecksumBudget) {
         $parts += "--ei vulkan_trace_swap_shared_memory_checksum_budget $VulkanTraceSwapSharedMemoryChecksumBudget"

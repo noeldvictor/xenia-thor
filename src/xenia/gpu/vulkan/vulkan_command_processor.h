@@ -295,6 +295,9 @@ class VulkanCommandProcessor : public CommandProcessor {
                                  const char* label, bool log_checksum,
                                  bool copy_to_guest,
                                  SharedMemoryReadbackStats* stats = nullptr);
+  bool TraceTextureSourceChecksums(uint32_t used_texture_mask,
+                                   const char* stage_label,
+                                   uint64_t shader_hash);
 
   struct PresentResolveCandidate {
     uint32_t address = 0;
