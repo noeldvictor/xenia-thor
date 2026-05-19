@@ -29,6 +29,9 @@ official upstream build.
   debug automation, and device capture slices.
 - Keep each commit tied to a dated worklog entry. Research-driven changes must
   also have a dated research note.
+- New Codex skills for this project must be repo-local under `.agents/skills/`.
+  Do not create or update global skills for xenia-thor unless the user explicitly
+  reverses this rule.
 
 Primary target:
 
@@ -146,7 +149,10 @@ required.
   or after suspicious Thor runs. It summarizes x64-vs-ARM64 backend services,
   HIR switch coverage, legacy helper-heavy mini-JIT surface, reject/error
   signals, and recent Thor evidence into a dated Markdown report.
-- Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports once `GHIDRA_HOME`, `-GhidraHome`, or `-AnalyzeHeadless` points to a real Ghidra install.
+- Use `tools/thor/ghidra_headless_import.ps1` for repeatable Ghidra headless imports. Local Ghidra was found at:
+  `C:\Users\leanerdesigner\Documents\SteamPortableTools\toolchains\ghidra_12.0.4_PUBLIC`.
+  The script auto-detects that path, but `GHIDRA_HOME`, `-GhidraHome`, and
+  `-AnalyzeHeadless` still override it.
 - Use `tools/thor/thor_renderdoc.ps1` for Android Vulkan layer setup, RenderDoc status, cleanup, and capture pulling.
 - Current translation strategy digest:
   `docs/research/20260519-153016-xbox360-thormax-translation-report.md`.
@@ -336,15 +342,18 @@ required.
 - Keep Blue Dragon attempts honest: until ARM64 JIT exists, guest code may execute slowly in the interpreter scaffold, but the expected result is still not a playable game.
 - For native Android crashes, analyze the unstripped `arm64-v8a/libxenia-app.so` from `android/android_studio_project/app/build/intermediates/ndkBuild/githubDebug/obj/local/arm64-v8a/`.
 - For guest-code static analysis, use Ghidra only on legally owned and locally extracted/decrypted code. Do not commit game binaries, extracted XEX files, ISO contents, keys, or private screenshots.
+- Keep Ghidra projects, extracted guest code, generated JIT blobs, and temporary
+  analysis products under ignored `scratch\ghidra\`:
+  `native`, `guest`, `generated-jit`, `reports`, and `scripts`.
 - Ghidra tracks:
   - Native ARM64: `libxenia-app.so`, JNI bridge, Vulkan path, ARM64 backend, crashes, and symbolized stack traces.
   - Guest PPC: Xbox 360/Xenon PowerPC disassembly, XEX metadata, entry points, import thunks, and functions implicated by Xenia logs.
-- Create or update local Codex skills when a debug loop repeats. Validate skill
-  folders with `quick_validate.py` when available; otherwise do a basic
+- Use Ghidra as an OODA accelerator, not as a whole-disc guessing machine:
+  runtime capture -> address queue -> smallest Ghidra import -> inferred
+  function/import/global/timer purpose -> one next experiment.
+- Create or update repo-local Codex skills when a debug loop repeats. Validate
+  skill folders with `quick_validate.py` when available; otherwise do a basic
   frontmatter/readability check and keep skill bodies concise.
-- Current global skills to use:
-  - `$ayn-thor-xenia-debug` for build/install/ADB capture loops.
-  - `$xenia-ghidra-android-debug` for Ghidra native/guest analysis planning and headless imports.
 - Current repo-only skills live under `.agents/skills/` and should be read when
   their topic is active:
   - `.agents/skills/xenia-thor-war-room/SKILL.md` is the default coordinator
@@ -369,6 +378,9 @@ required.
   - `.agents/skills/xenia-blue-dragon-route-capture/SKILL.md` is the route and
     proof expert for loading Blue Dragon Disc 1, using nop HID START/A
     sequences, labeling title/opening progress, and capturing screenshots/logs.
+  - `.agents/skills/xenia-ghidra-ooda-loop/SKILL.md` is the repo-local static
+    analysis coordinator for mapping Thor runtime evidence to Ghidra/native
+    ARM64/guest PPC/generated-JIT queues and dated triage reports.
 
 ## Agent Skill Donor Audit
 

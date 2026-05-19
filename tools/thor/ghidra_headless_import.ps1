@@ -21,6 +21,18 @@ if (!$AnalyzeHeadless) {
         $AnalyzeHeadless = Join-Path $GhidraHome "support\analyzeHeadless.bat"
     } elseif ($env:GHIDRA_HOME) {
         $AnalyzeHeadless = Join-Path $env:GHIDRA_HOME "support\analyzeHeadless.bat"
+    } else {
+        $knownGhidraHomes = @(
+            "C:\Users\leanerdesigner\Documents\SteamPortableTools\toolchains\ghidra_12.0.4_PUBLIC"
+        )
+        foreach ($knownGhidraHome in $knownGhidraHomes) {
+            $candidate = Join-Path $knownGhidraHome "support\analyzeHeadless.bat"
+            if (Test-Path $candidate) {
+                $GhidraHome = $knownGhidraHome
+                $AnalyzeHeadless = $candidate
+                break
+            }
+        }
     }
 }
 
@@ -35,6 +47,14 @@ if (!$ImportPath) {
 if (!(Test-Path $ImportPath)) {
     throw "Import path not found: $ImportPath"
 }
+
+Write-Output "Using analyzeHeadless: $AnalyzeHeadless"
+if ($GhidraHome) {
+    Write-Output "Using Ghidra home: $GhidraHome"
+}
+Write-Output "Project dir: $ProjectDir"
+Write-Output "Project name: $ProjectName"
+Write-Output "Import path: $ImportPath"
 
 $arguments = @(
     $ProjectDir,

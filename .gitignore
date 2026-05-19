@@ -82,7 +82,9 @@ node_modules/
 node_modules/**/build/
 node_modules/.bin/
 
-# coverage/etc
+# Local scratch, capture, Ghidra, and extracted-analysis artifacts.
+# Never commit game files, extracted XEX files, Ghidra projects, screenshots,
+# device captures, or generated static-analysis work products from here.
 /scratch/
 
 /build/
