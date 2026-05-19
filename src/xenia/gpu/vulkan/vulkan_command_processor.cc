@@ -1445,7 +1445,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
           "readback_resolve={} recent_present={} scored_present={} "
-          "scored_min={}x{} scored_budget={} forced_present={} "
+          "scored_min={}x{} scored_budget={} scored_required_format={} "
+          "forced_present={} "
           "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
@@ -1458,6 +1459,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_present_scored_resolve_min_width,
           cvars::vulkan_present_scored_resolve_min_height,
           cvars::vulkan_present_scored_resolve_budget,
+          cvars::vulkan_present_scored_resolve_required_format,
           cvars::vulkan_present_forced_resolve_on_swap,
           cvars::vulkan_present_forced_resolve_address,
           cvars::vulkan_present_forced_resolve_length,
@@ -3144,8 +3146,14 @@ bool VulkanCommandProcessor::IssueCopy() {
   bool trace_checksum = ShouldTraceVulkanResolveChecksum();
   bool scored_candidate = false;
   int32_t scored_budget = cvars::vulkan_present_scored_resolve_budget;
+  int32_t required_scored_format =
+      cvars::vulkan_present_scored_resolve_required_format;
+  bool scored_format_allowed =
+      required_scored_format < 0 ||
+      int32_t(dest_format) == required_scored_format;
   if (cvars::vulkan_present_scored_resolve_on_swap && written_length &&
       IsDebugPresentResolveCandidateFormat(dest_format) &&
+      scored_format_allowed &&
       dest_width >= uint32_t(std::max<int32_t>(
                         1, cvars::vulkan_present_scored_resolve_min_width)) &&
       dest_height >= uint32_t(std::max<int32_t>(

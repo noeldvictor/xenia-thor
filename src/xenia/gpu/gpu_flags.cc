@@ -122,6 +122,10 @@ DEFINE_int32(vulkan_present_scored_resolve_budget, 64,
              "Maximum resolve readbacks for the scored-present probe; "
              "negative means unlimited.",
              "GPU");
+DEFINE_int32(vulkan_present_scored_resolve_required_format, -1,
+             "Optional Xenos texture format enum required by the "
+             "scored-present probe; negative accepts all supported formats.",
+             "GPU");
 DEFINE_bool(vulkan_present_forced_resolve_on_swap, false,
             "Present a manually specified Vulkan resolve source instead of "
             "the VdSwap frontbuffer. Research-only Android black-screen "

@@ -441,6 +441,23 @@ Primary target:
   - Next proof needed: FullDeploy to Thor, launch Blue Dragon with
     `-MmapAddressHigh 8`, then capture logcat/screenshot and fix the first
     runtime crash or missing sequence.
+- Blue Dragon current GPU wall:
+  `docs/research/20260518-223723-blue-dragon-format-six-present-probe.md`.
+  - Blue Dragon now runs long Thor captures with thousands of `VdSwap` /
+    `XE_SWAP` events and no native fatal, AndroidRuntime crash, GPU hang, or
+    ARM64 fallback lines in the latest runs.
+  - The official `VdSwap` frontbuffers `1CA1C000` and `1CDB4000` are still
+    zero at swap in checksum probes.
+  - Forced and scored presentation prove Android/Vulkan can display guest
+    resolve memory, so the remaining wall is not the APK surface or Vulkan
+    presenter.
+  - `-VulkanPresentScoredResolveRequiredFormat 6` follows dynamic format-6
+    resolves and currently presents a white clear-like `720x720` source
+    (`1D88F000+00385000`, first sampled value `00FFFFFF`).
+  - Use the required-format knob only as a comparison probe. It is not a
+    compatibility fix. The next GPU work should correlate render-target
+    state, clear/mask state, draws, resolves, and candidate content before
+    sweeping more addresses.
 
 ## Android ARM64 Risk Register
 

@@ -58,6 +58,7 @@ param(
     [string]$VulkanPresentScoredResolveMinWidth = "",
     [string]$VulkanPresentScoredResolveMinHeight = "",
     [string]$VulkanPresentScoredResolveBudget = "",
+    [string]$VulkanPresentScoredResolveRequiredFormat = "",
     [string]$VulkanPresentForcedResolveAddress = "",
     [string]$VulkanPresentForcedResolveLength = "",
     [string]$VulkanPresentForcedResolveWidth = "",
@@ -383,6 +384,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanPresentScoredResolveBudget) {
         $parts += "--ei vulkan_present_scored_resolve_budget $(ConvertTo-AdbIntText $VulkanPresentScoredResolveBudget)"
+    }
+    if ($VulkanPresentScoredResolveRequiredFormat) {
+        $parts += "--ei vulkan_present_scored_resolve_required_format $(ConvertTo-AdbIntText $VulkanPresentScoredResolveRequiredFormat)"
     }
     if ($VulkanPresentForcedResolveAddress) {
         $parts += "--ei vulkan_present_forced_resolve_address $(ConvertTo-AdbIntText $VulkanPresentForcedResolveAddress)"

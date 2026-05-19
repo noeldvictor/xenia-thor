@@ -46,6 +46,7 @@ DECLARE_bool(vulkan_present_scored_resolve_on_swap);
 DECLARE_int32(vulkan_present_scored_resolve_min_width);
 DECLARE_int32(vulkan_present_scored_resolve_min_height);
 DECLARE_int32(vulkan_present_scored_resolve_budget);
+DECLARE_int32(vulkan_present_scored_resolve_required_format);
 DECLARE_bool(vulkan_present_forced_resolve_on_swap);
 DECLARE_uint32(vulkan_present_forced_resolve_address);
 DECLARE_uint32(vulkan_present_forced_resolve_length);

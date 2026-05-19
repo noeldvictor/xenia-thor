@@ -74,6 +74,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_min_width");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_min_height");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_budget");
+            copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_required_format");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_address");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_length");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_width");
