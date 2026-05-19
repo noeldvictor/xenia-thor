@@ -38,6 +38,8 @@ DEFINE_string(arm64_guest_store_watch, "",
 DEFINE_int32(arm64_guest_store_watch_budget, 128,
              "Maximum A64 guest store watch log lines.", "a64");
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 
 namespace xe {
 namespace cpu {
@@ -168,6 +170,64 @@ static void UpdateCurrentThreadKernelTime(void* raw_context) {
 static bool ShouldUpdateBlueDragonDrawWaitKernelTime(const hir::Instr* instr) {
   return cvars::arm64_blue_dragon_draw_wait_probe &&
          instr->GuestAddressFor() == 0x8246B474;
+}
+
+static void EmitBlueDragonDrawWaitKernelTimeUpdateBody(A64Emitter& e) {
+  uint32_t inline_step =
+      cvars::arm64_blue_dragon_draw_wait_inline_tick_step;
+  if (inline_step != 0) {
+    auto& done = e.NewCachedLabel();
+    inline_step = std::min<uint32_t>(inline_step, 0xFFFFu);
+
+    e.ldr(e.x16,
+          ptr(e.GetContextReg(),
+              static_cast<uint32_t>(offsetof(ppc::PPCContext, r) +
+                                    sizeof(uint64_t) * 13)));
+    e.cbz(e.x16, done);
+    e.add(e.x16, e.GetMembaseReg(), e.x16);
+    e.ldr(e.w17, ptr(e.x16, 0x100));
+    e.rev(e.w17, e.w17);
+    e.cbz(e.w17, done);
+
+    e.add(e.x16, e.GetMembaseReg(), e.x17);
+    e.ldr(e.w17, ptr(e.x16, 0x58));
+    e.rev(e.w17, e.w17);
+    if (inline_step <= 4095) {
+      e.add(e.w17, e.w17, inline_step);
+    } else {
+      e.mov(e.w0, inline_step);
+      e.add(e.w17, e.w17, e.w0);
+    }
+    e.rev(e.w17, e.w17);
+    e.str(e.w17, ptr(e.x16, 0x58));
+    e.L(done);
+    return;
+  }
+
+  e.CallNativeSafe(reinterpret_cast<void*>(&UpdateCurrentThreadKernelTime));
+}
+
+static void EmitBlueDragonDrawWaitKernelTimeUpdate(A64Emitter& e) {
+  uint32_t stride = std::max<uint32_t>(
+      cvars::arm64_blue_dragon_draw_wait_probe_stride, 1);
+  if (stride > 1 && (stride & (stride - 1)) == 0) {
+    auto& skip_update = e.NewCachedLabel();
+    auto bctx = e.GetBackendCtxReg();
+    e.ldr(e.w17, ptr(bctx, static_cast<uint32_t>(offsetof(
+                                A64BackendContext,
+                                blue_dragon_draw_wait_probe_counter))));
+    e.add(e.w17, e.w17, 1);
+    e.str(e.w17, ptr(bctx, static_cast<uint32_t>(offsetof(
+                                A64BackendContext,
+                                blue_dragon_draw_wait_probe_counter))));
+    e.and_(e.w17, e.w17, stride - 1);
+    e.cbnz(e.w17, skip_update);
+    EmitBlueDragonDrawWaitKernelTimeUpdateBody(e);
+    e.L(skip_update);
+    return;
+  }
+
+  EmitBlueDragonDrawWaitKernelTimeUpdateBody(e);
 }
 
 // ============================================================================
@@ -674,7 +734,7 @@ struct LOAD_OFFSET_I32
     : Sequence<LOAD_OFFSET_I32, I<OPCODE_LOAD_OFFSET, I32Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     if (ShouldUpdateBlueDragonDrawWaitKernelTime(i.instr)) {
-      e.CallNativeSafe(reinterpret_cast<void*>(&UpdateCurrentThreadKernelTime));
+      EmitBlueDragonDrawWaitKernelTimeUpdate(e);
     }
     if (IsPossibleMMIOInstruction(e, i.instr)) {
       void* mmio_fn = (void*)&MMIOAwareLoad<uint32_t, false>;

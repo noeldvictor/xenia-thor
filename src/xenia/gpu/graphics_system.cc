@@ -45,6 +45,19 @@ std::atomic<int32_t> blue_dragon_wait_token_kick_log_count{0};
 std::atomic<int32_t> gpu_interrupt_trace_count{0};
 std::atomic<int32_t> gpu_source0_interrupt_trace_count{0};
 std::atomic<int32_t> gpu_mark_vblank_trace_count{0};
+std::atomic<int32_t> gpu_unknown_register_read_log_count{0};
+std::atomic<int32_t> gpu_unknown_register_write_log_count{0};
+
+bool ShouldLogUnknownGpuRegister(std::atomic<int32_t>& counter) {
+  int32_t budget = cvars::gpu_unknown_register_log_budget;
+  if (budget < 0) {
+    return true;
+  }
+  if (budget == 0) {
+    return false;
+  }
+  return counter.fetch_add(1) < budget;
+}
 
 bool ShouldTraceGpuInterrupt(uint32_t source) {
   if (!cvars::gpu_trace_interrupts) {
@@ -238,7 +251,8 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
     case 0x01C5:  // CP_RB_WPTR
       break;
     default:
-      if (!register_file_.GetRegisterInfo(r)) {
+      if (!register_file_.GetRegisterInfo(r) &&
+          ShouldLogUnknownGpuRegister(gpu_unknown_register_read_log_count)) {
         XELOGE("GPU: Read from unknown register ({:04X})", r);
       }
   }
@@ -257,7 +271,9 @@ void GraphicsSystem::WriteRegister(uint32_t addr, uint32_t value) {
     case 0x1844:  // AVIVO_D1GRPH_PRIMARY_SURFACE_ADDRESS
       break;
     default:
-      XELOGW("Unknown GPU register {:04X} write: {:08X}", r, value);
+      if (ShouldLogUnknownGpuRegister(gpu_unknown_register_write_log_count)) {
+        XELOGW("Unknown GPU register {:04X} write: {:08X}", r, value);
+      }
       break;
   }
 

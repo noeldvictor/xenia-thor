@@ -44,7 +44,19 @@ std::atomic<int32_t> gpu_packet_trace_count{0};
 std::atomic<int32_t> gpu_interrupt_packet_trace_count{0};
 std::atomic<int32_t> gpu_swap_frontbuffer_checksum_count{0};
 std::atomic<int32_t> gpu_swap_render_targets_trace_count{0};
+std::atomic<int32_t> gpu_unknown_register_write_log_count{0};
 std::atomic<bool> gpu_swap_probe_cvars_logged{false};
+
+bool ShouldLogUnknownGpuRegister(std::atomic<int32_t>& counter) {
+  int32_t budget = cvars::gpu_unknown_register_log_budget;
+  if (budget < 0) {
+    return true;
+  }
+  if (budget == 0) {
+    return false;
+  }
+  return counter.fetch_add(1) < budget;
+}
 
 bool ShouldTraceGpuPacket() {
   return cvars::gpu_trace_swap &&
@@ -632,7 +644,8 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
 
   // Volatile for the WAIT_REG_MEM loop.
   const_cast<volatile uint32_t&>(regs.values[index]) = value;
-  if (!regs.GetRegisterInfo(index)) {
+  if (!regs.GetRegisterInfo(index) &&
+      ShouldLogUnknownGpuRegister(gpu_unknown_register_write_log_count)) {
     XELOGW("GPU: Write to unknown register ({:04X} = {:08X})", index, value);
   }
 

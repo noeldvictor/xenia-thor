@@ -29,6 +29,7 @@ DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_bool(gpu_trace_swap);
 DECLARE_int32(gpu_trace_packet_budget);
 DECLARE_bool(gpu_trace_texture_cache_actions);
+DECLARE_int32(gpu_unknown_register_log_budget);
 DECLARE_bool(gpu_trace_swap_frontbuffer_checksum);
 DECLARE_int32(gpu_trace_swap_frontbuffer_checksum_budget);
 DECLARE_bool(gpu_trace_swap_render_targets);

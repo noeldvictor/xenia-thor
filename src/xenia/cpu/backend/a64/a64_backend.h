@@ -91,6 +91,7 @@ struct A64BackendContext {
   // bit 1 = got reserve
   unsigned int flags;
   unsigned int Ox1000;  // constant 0x1000
+  uint32_t blue_dragon_draw_wait_probe_counter;
 };
 
 // Default FPCR for FPU mode (round to nearest, no flush to zero).

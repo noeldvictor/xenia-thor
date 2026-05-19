@@ -42,6 +42,8 @@ param(
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
     [string]$GpuTraceTextureCacheActions = "false",
+    [string]$GpuUnknownRegisterLogBudget = "",
+    [string]$XboxkrnlNtCreateFileFailLogBudget = "",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
     [string]$GpuTraceSwapRenderTargets = "false",
     [string]$VulkanTraceResolve = "false",
@@ -112,6 +114,8 @@ param(
     [string]$A64InlineGprLrHelpers = "",
     [string]$A64InlinePpcThreadFieldLeafHelpers = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
+    [string]$Arm64BlueDragonDrawWaitProbeStride = "",
+    [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -492,6 +496,12 @@ function Start-XeniaEmulator {
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
     }
+    if ($GpuUnknownRegisterLogBudget) {
+        $parts += "--ei gpu_unknown_register_log_budget $GpuUnknownRegisterLogBudget"
+    }
+    if ($XboxkrnlNtCreateFileFailLogBudget) {
+        $parts += "--ei xboxkrnl_nt_create_file_fail_log_budget $XboxkrnlNtCreateFileFailLogBudget"
+    }
     if ($GpuTraceInterruptsBudget) {
         $parts += "--ei gpu_trace_interrupts_budget $GpuTraceInterruptsBudget"
     }
@@ -633,6 +643,12 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
+    if ($Arm64BlueDragonDrawWaitProbeStride) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_probe_stride $Arm64BlueDragonDrawWaitProbeStride"
+    }
+    if ($Arm64BlueDragonDrawWaitInlineTickStep) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_inline_tick_step $Arm64BlueDragonDrawWaitInlineTickStep"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -713,6 +729,18 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_min_delta=$Arm64SpeedProfileMinDelta",
         "a64_inline_gprlr_helpers=$A64InlineGprLrHelpers",
         "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
+        "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
+        "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
+        "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
+        "xma_fast_silence=$XmaFastSilence",
+        "log_level=$LogLevel",
+        "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
+        "xboxkrnl_nt_create_file_fail_log_budget=$XboxkrnlNtCreateFileFailLogBudget",
+        "hide_android_osd=$HideAndroidOsd",
+        "hid_nop_connected=$HidNopConnected",
+        "hid_nop_button_sequence=$HidNopButtonSequence",
+        "vulkan_force_signed_2101010_unorm_fallback=$VulkanForceSigned2101010UnormFallback",
+        "vulkan_force_2101010_rgba8_fallback=$VulkanForce2101010Rgba8Fallback",
         "",
         "adb_events:",
         ($script:AdbEvents -join "`n"),
@@ -839,7 +867,6 @@ function Use-BlueDragonSpeedDefaults {
     $script:BreakOnDebugbreak = "false"
     $script:DisassembleFunctions = "false"
     $script:XmaTraceContextState = "false"
-    $script:MountCache = "false"
     $script:ClearMemoryPageState = "false"
     $script:LogLevel = "0"
     if ($script:Arm64SpeedProfileIntervalMs) {
@@ -847,6 +874,12 @@ function Use-BlueDragonSpeedDefaults {
     }
     $script:VulkanForceSigned2101010UnormFallback = "true"
     $script:VulkanForce2101010Rgba8Fallback = "false"
+    if (!$script:GpuUnknownRegisterLogBudget) {
+        $script:GpuUnknownRegisterLogBudget = "0"
+    }
+    if (!$script:XboxkrnlNtCreateFileFailLogBudget) {
+        $script:XboxkrnlNtCreateFileFailLogBudget = "0"
+    }
 
     foreach ($name in @(
         "EmitInlineMmioChecks",
@@ -876,7 +909,6 @@ function Use-BlueDragonSpeedDefaults {
         "VulkanDebugSolidGuestOutput",
         "VulkanDebugTextureFetchDisableExpAdjust",
         "GpuEarlyPrimaryReadPointerWriteback",
-        "Arm64BlueDragonDrawWaitProbe",
         "XboxkrnlThreadWaitTrace",
         "XboxkrnlEventTrace"
     )) {

@@ -91,6 +91,17 @@ DEFINE_bool(
     "draw-thread wait timeout load site. Research-only title probe.",
     "a64");
 DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_probe_stride, 1,
+    "Thor ARM64 bring-up: only call the Blue Dragon draw-wait KTHREAD+0x58 "
+    "host updater every power-of-two N wait-loop hits. 1 updates every hit.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_inline_tick_step, 0,
+    "Thor ARM64 bring-up: if non-zero, update Blue Dragon's draw-wait "
+    "KTHREAD+0x58 inline by this many milliseconds instead of calling the "
+    "host clock updater. Research-only wait accelerator.",
+    "a64");
+DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
     "0 disables inline counters and periodic top-function reports.",

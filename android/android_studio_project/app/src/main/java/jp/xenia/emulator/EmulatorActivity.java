@@ -47,6 +47,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_texture_cache_actions");
+            copyIntExtra(intent, launchArguments, "gpu_unknown_register_log_budget");
+            copyIntExtra(
+                    intent, launchArguments, "xboxkrnl_nt_create_file_fail_log_budget");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap_render_targets");
@@ -141,6 +144,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "a64_inline_ppc_thread_field_leaf_helpers");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_blue_dragon_draw_wait_probe_stride");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_blue_dragon_draw_wait_inline_tick_step");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");

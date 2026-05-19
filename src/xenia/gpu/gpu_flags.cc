@@ -64,6 +64,10 @@ DEFINE_int32(gpu_trace_packet_budget, 128,
 DEFINE_bool(gpu_trace_texture_cache_actions, false,
             "Trace texture cache create/load actions. Very noisy in games.",
             "GPU");
+DEFINE_int32(gpu_unknown_register_log_budget, 128,
+             "Maximum unknown GPU register read/write log lines per source; "
+             "negative means unlimited, zero suppresses them.",
+             "GPU");
 DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
             "Trace a sparse CPU-side checksum of the physical frontbuffer "
             "passed to XE_SWAP. Research-only black-screen probe.",

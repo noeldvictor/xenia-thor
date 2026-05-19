@@ -875,6 +875,26 @@ required.
     `__savegprlr_*` / `__restgprlr_*` from the top profile.
   - Next speed work should inspect `8246B408` / `8248B040` and consider FPR/VMX
     helper-family inlining.
+- Blue Dragon speed-loop noise budget:
+  `docs/research/20260519-184650-blue-dragon-speed-loop-noise-budget.md`.
+  - Current fast-lane command should explicitly include
+    `-A64InlinePpcThreadFieldLeafHelpers true -Arm64BlueDragonDrawWaitProbe true`
+    when comparing Blue Dragon opening-scene speed.
+  - `arm64_blue_dragon_draw_wait_probe_stride` exists and defaults to `1`.
+    Larger power-of-two strides are an A/B probe; stride `4096` was not a speed
+    win in the first Thor run.
+  - `arm64_blue_dragon_draw_wait_inline_tick_step` exists as a research-only
+    wait accelerator, but step `1` was not a speed win. Keep it off unless that
+    exact variable is under test.
+  - `gpu_unknown_register_log_budget` and
+    `xboxkrnl_nt_create_file_fail_log_budget` are routed through Android and
+    the Thor script. Blue Dragon speed defaults set both to `0` so warning logs
+    do not drown profiler captures.
+  - `MountCache true` is now testable because speed defaults no longer force it
+    off, but the first 110s A/B did not improve the current Blue Dragon route.
+  - Latest quiet validation `scratch\thor-debug\20260519-184120-*` reached the
+    opening scene with zero unknown-register lines, zero `NtCreateFile failed`
+    lines, and `8246B408` still dominating the final A64 speed profile.
 
 ## Codex Hooks / Automation
 

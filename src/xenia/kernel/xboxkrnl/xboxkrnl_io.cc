@@ -7,6 +7,10 @@
  ******************************************************************************
  */
 
+#include <atomic>
+#include <limits>
+
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/mutex.h"
@@ -26,6 +30,37 @@
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+
+DEFINE_int32(
+    xboxkrnl_nt_create_file_fail_log_budget, 512,
+    "Maximum NtCreateFile failure log lines to emit; negative means unlimited, "
+    "zero suppresses them.",
+    "Kernel");
+
+namespace {
+
+std::atomic<int32_t> nt_create_file_fail_log_count{0};
+std::atomic<int32_t> nt_create_file_fail_log_configured_budget{
+    std::numeric_limits<int32_t>::min()};
+
+bool ShouldLogNtCreateFileFailure() {
+  int32_t budget = cvars::xboxkrnl_nt_create_file_fail_log_budget;
+  if (budget < 0) {
+    return true;
+  }
+  int32_t configured_budget = nt_create_file_fail_log_configured_budget.load();
+  if (configured_budget != budget &&
+      nt_create_file_fail_log_configured_budget.compare_exchange_strong(
+          configured_budget, budget)) {
+    nt_create_file_fail_log_count.store(0);
+  }
+  if (budget == 0) {
+    return false;
+  }
+  return nt_create_file_fail_log_count.fetch_add(1) < budget;
+}
+
+}  // namespace
 
 struct CreateOptions {
   // https://processhacker.sourceforge.io/doc/ntioapi_8h.html
@@ -155,7 +190,7 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
       (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
       (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0, &vfs_file,
       &file_action);
-  if (XFAILED(result)) {
+  if (XFAILED(result) && ShouldLogNtCreateFileFailure()) {
     XELOGW(
         "NtCreateFile failed: path='{}' root={:08X} root_entry='{}' "
         "desired={:08X} disposition={} options={:08X} directory={} "
