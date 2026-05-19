@@ -7,6 +7,8 @@ description: Port and debug Xenia's x64/Edge/aX360e CPU backend behavior to Andr
 
 Use this skill for the host CPU backend lane. The goal is not merely to make
 the donor A64 backend compile; it must become correct and fast enough on Thor.
+AYN Thor Max ARM64 is the priority; Windows/x64 is a parity reference only when
+it answers a specific backend semantics question.
 
 ## Strategy
 
@@ -25,6 +27,7 @@ an archaeology comparison.
 git status --short --branch
 rg -n "Fatal signal|SIGILL|SIGSEGV|SIGTRAP|A64 backend trap|no mapped guest function|Host PC|Guest registers|unimplemented|assertion" scratch\thor-debug\*-logcat.txt
 powershell -ExecutionPolicy Bypass -File tools\arm64\arm64_conversion_audit.ps1 -LatestLogs 8
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 100 -PerfSampleSeconds "45,90" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1
 ```
 
 For code changes, inspect the matching x64 implementation first:
@@ -48,6 +51,18 @@ For code changes, inspect the matching x64 implementation first:
 - Atomics, reservations, memory ordering, endian loads/stores, and MMIO checks.
 - HIR scalar, vector, pack/unpack, compare, branch, and call lowering parity.
 
+## Current Speed Signals
+
+- Use `.agents/skills/xenia-a64-speed-hotpath/SKILL.md` for profiled speed
+  runs before guessing at hot A64 changes.
+- Treat `__savegprlr_*` and `__restgprlr_*` dominating the A64 speed profile as
+  a call/ABI helper overhead problem until guest PPC evidence proves otherwise.
+- Treat high direct-call and entry deltas as a dispatch/direct-linking problem
+  before jumping to GPU work.
+- Treat high extern or XMA thread cost as HLE/audio cost to measure with
+  explicit A/B probes.
+- Do not use trace-heavy GPU or disassembly runs for speed claims.
+
 ## Donor Import Rules
 
 - Before copying code, identify source repo, branch/commit, file paths, and
@@ -70,9 +85,10 @@ For code changes, inspect the matching x64 implementation first:
 
 1. `tools\thor\thor_build.ps1 -Mode NativeCore -DeviceSerial c3ca0370`
 2. `tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370`
-3. Blue Dragon launch with focused A64/GPU flags.
-4. Log search for native signals and unmapped code-cache PCs.
-5. Compare against the previous capture and update the worklog.
+3. Blue Dragon launch with focused A64 flags or the canonical speed profile.
+4. Log search for native signals, unmapped code-cache PCs, and A64 profile
+   counters.
+5. Compare against the previous Thor capture and update the worklog.
 
 ## Output
 

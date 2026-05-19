@@ -30,6 +30,9 @@ Primary target:
 - User milestone: Vulkan game running on Thor Max, with Blue Dragon as the likely first legally owned test title.
 - First known legal Blue Dragon target on the Thor SD card:
   `/storage/2664-21DE/roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso`.
+- Priority is ARM64 on AYN Thor Max. Windows/x64 is useful as a control or
+  semantics reference, but do not default to Windows-first workflows unless the
+  exact question needs it.
 
 ## Hard Documentation Rules
 
@@ -185,6 +188,9 @@ Primary target:
 
 ## Debug Automation Rules
 
+- Before a risky cvar, backend shortcut, GPU hack, timing tweak, or
+  title-specific probe, run the repo experiment gate:
+  `.agents/skills/xenia-thor-experiment-gate/SKILL.md`.
 - Keep APK shell rebuilds and native core rebuilds separate:
   - UI/manifest/resource changes: `thor_build.ps1 -Mode ApkShell`.
   - C++/Vulkan/ARM64 backend changes: `thor_build.ps1 -Mode NativeCore`.
@@ -288,7 +294,9 @@ Primary target:
 - Ghidra tracks:
   - Native ARM64: `libxenia-app.so`, JNI bridge, Vulkan path, ARM64 backend, crashes, and symbolized stack traces.
   - Guest PPC: Xbox 360/Xenon PowerPC disassembly, XEX metadata, entry points, import thunks, and functions implicated by Xenia logs.
-- Create or update local Codex skills when a debug loop repeats. Validate skill folders with `quick_validate.py` and keep skill bodies concise.
+- Create or update local Codex skills when a debug loop repeats. Validate skill
+  folders with `quick_validate.py` when available; otherwise do a basic
+  frontmatter/readability check and keep skill bodies concise.
 - Current global skills to use:
   - `$ayn-thor-xenia-debug` for build/install/ADB capture loops.
   - `$xenia-ghidra-android-debug` for Ghidra native/guest analysis planning and headless imports.
@@ -306,6 +314,33 @@ Primary target:
   - `.agents/skills/xenia-vulkan-adreno-renderdoc/SKILL.md` is the GPU expert
     for Xenos PM4, ring pointers, writebacks, `VdSwap`, `PM4_XE_SWAP`, Vulkan
     `IssueSwap`, Adreno 740, RenderDoc, and black-frame debugging.
+  - `.agents/skills/xenia-a64-speed-hotpath/SKILL.md` is the speed expert for
+    Thor ARM64 2-FPS runs, A64 speed-profile counters, hot guest PCs,
+    helper/prologue churn, guest-to-host transitions, direct/indirect call
+    overhead, XMA/audio cost, and Snapdragon profiling.
+  - `.agents/skills/xenia-thor-experiment-gate/SKILL.md` is the one-variable
+    gate for risky ARM64, GPU, audio, input, timing, debug-prop, or
+    title-specific experiments.
+  - `.agents/skills/xenia-blue-dragon-route-capture/SKILL.md` is the route and
+    proof expert for loading Blue Dragon Disc 1, using nop HID START/A
+    sequences, labeling title/opening progress, and capturing screenshots/logs.
+
+## Agent Skill Donor Audit
+
+- On 2026-05-19, the Thor agent-skill layout was compared against:
+  - `https://github.com/noeldvictor/Vita3K-Thor/tree/master/.agents/skills`
+    at commit `4059339e7434f9f3866696ebc14ac024febdb4b8`.
+  - `https://github.com/noeldvictor/rpcsx-ui-android-thor/tree/master/.agents/skills`
+    at commit `71e6a963fed5267cc263215521462420cfefba00`.
+- Useful ideas adapted for xenia-thor:
+  - experiment gate before risky probes;
+  - durable worklog/research ledger instead of chat memory;
+  - Android/Thor route and screenshot proof;
+  - hotpath profiler lane tied to runtime evidence;
+  - ADB safety and capture metadata discipline.
+- Do not blindly copy donor skill text or scripts. Synthesize Xenia-specific
+  workflows, preserve source attribution in dated research notes, and keep
+  Xenia's priority different: AYN Thor ARM64 first, Windows only as a control.
 
 ## RenderDoc Rules
 

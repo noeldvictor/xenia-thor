@@ -12,6 +12,9 @@ writeback waits, or black output after Vulkan setup.
 
 RenderDoc is a GPU frame tool, not proof that guest CPU execution is correct.
 Only use it after normal logcat proves a meaningful guest GPU frame path.
+For this fork, AYN Thor Adreno proof matters more than Windows renderer proof,
+but CPU/A64 speed evidence still outranks GPU deep dives when the profile says
+the guest CPU is the wall.
 
 ## Normal Evidence Search
 
@@ -43,6 +46,9 @@ Classify:
 - `src/xenia/kernel/xboxkrnl/xboxkrnl_video.cc`
 
 ## Thor GPU Run
+
+Run `.agents/skills/xenia-thor-experiment-gate/SKILL.md` first for risky GPU
+toggles so the probe has one primary variable and a rollback story.
 
 Start with:
 

@@ -7,6 +7,8 @@ description: Analyze Xbox 360 Xenon PowerPC guest behavior in xenia-thor, includ
 
 Use this skill when the blocker looks guest-side rather than host-codegen-side.
 The job is to explain what the Xbox 360 program thinks is happening.
+For this fork, guest analysis starts from AYN Thor ARM64 runtime evidence unless
+Windows is needed as a narrow semantics control.
 
 ## Scope
 
@@ -32,11 +34,14 @@ Classify the signal:
 - import/export issue: inspect the matching shim in `src/xenia/kernel`.
 - wait loop: inspect guest wait addresses, event handles, and token memory.
 - guest function hot spot: use targeted disassembly or Ghidra, not broad dumps.
+- A64 speed-profile top PC: explain the guest loop or helper before changing
+  the A64 backend.
 
 ## Files To Inspect
 
 - `docs/cpu.md`
 - `docs/kernel.md`
+- `.agents/skills/xenia-a64-speed-hotpath/SKILL.md`
 - `src/xenia/cpu/ppc/`
 - `src/xenia/cpu/hir/`
 - `src/xenia/kernel/xboxkrnl/`
