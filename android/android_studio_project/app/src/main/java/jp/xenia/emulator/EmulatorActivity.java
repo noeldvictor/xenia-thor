@@ -75,6 +75,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_present_forced_resolve_on_swap");
             copyBooleanExtra(intent, launchArguments, "vulkan_debug_solid_guest_output");
+            copyStringExtra(
+                    intent, launchArguments, "vulkan_debug_pixel_shader_output_filter");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_force_signed_2101010_unorm_fallback");
             copyBooleanExtra(
@@ -109,6 +111,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_height");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_pitch");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_format");
+            copyIntExtra(intent, launchArguments, "vulkan_debug_pixel_shader_output_mode");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_min_count");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_budget");

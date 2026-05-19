@@ -56,6 +56,8 @@ param(
     [string]$VulkanPresentScoredResolveRejectClearLike = "false",
     [string]$VulkanPresentForcedResolveOnSwap = "false",
     [string]$VulkanDebugSolidGuestOutput = "false",
+    [string]$VulkanDebugPixelShaderOutputFilter = "",
+    [string]$VulkanDebugPixelShaderOutputMode = "",
     [string]$VulkanForceSigned2101010UnormFallback = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
@@ -449,6 +451,9 @@ function Start-XeniaEmulator {
     if ($VulkanTraceVertexFetchShaderFilter) {
         $parts += "--es vulkan_trace_vertex_fetch_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceVertexFetchShaderFilter)"
     }
+    if ($VulkanDebugPixelShaderOutputFilter) {
+        $parts += "--es vulkan_debug_pixel_shader_output_filter $(ConvertTo-AdbShellSingleQuote $VulkanDebugPixelShaderOutputFilter)"
+    }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
     }
@@ -523,6 +528,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanPresentForcedResolveFormat) {
         $parts += "--ei vulkan_present_forced_resolve_format $(ConvertTo-AdbIntText $VulkanPresentForcedResolveFormat)"
+    }
+    if ($VulkanDebugPixelShaderOutputMode) {
+        $parts += "--ei vulkan_debug_pixel_shader_output_mode $(ConvertTo-AdbIntText $VulkanDebugPixelShaderOutputMode)"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"

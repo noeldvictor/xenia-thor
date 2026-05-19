@@ -586,6 +586,22 @@ Primary target:
   - Blue Dragon also successfully opens `D:\pack\!necessity.ipk`, then probes
     missing loose `D:\!necessity\font\...` paths and uses `cache:\pack`; audit
     VFS/cache behavior before assuming a pure shader translator bug.
+- Blue Dragon pixel-output override proof:
+  `docs/research/20260519-012358-blue-dragon-pixel-output-override-probe.md`.
+  - `vulkan_debug_pixel_shader_output_filter` and
+    `vulkan_debug_pixel_shader_output_mode` are routed through Android and the
+    Thor script for research-only shader export overrides.
+  - Forcing `0ABADD9DA4373CBA` to magenta makes the `1DC14000` resolve
+    nonzero (`first_sample=FF03F0FF`), proving that shader/color export can
+    write the target.
+  - A following copy/draw/resolve sequence to `raw_dest_base=1DC14000` turns the
+    target back to zero before `9567C79307ACC6F5` samples it for the final
+    blit.
+  - The current GPU wall is therefore the post-`0ABADD9DA4373CBA` zeroing
+    writer, not Android presentation, final-blit vertex data, or the targeted
+    shader's ability to export nonzero color.
+  - Next GPU lane: tag copy/resolve trace lines with recent draw sequence and
+    shader hashes, then identify the exact writer that clears `1DC14000`.
 
 ## Android ARM64 Risk Register
 

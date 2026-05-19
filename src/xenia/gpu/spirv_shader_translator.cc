@@ -10,8 +10,10 @@
 #include "xenia/gpu/spirv_shader_translator.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -22,10 +24,54 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/base/string_buffer.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_shader.h"
 
 namespace xe {
 namespace gpu {
+
+namespace {
+
+bool VulkanDebugShaderHashMatchesFilter(uint64_t hash,
+                                        const std::string& filter) {
+  if (!hash || filter.empty()) {
+    return false;
+  }
+
+  size_t start = 0;
+  while (start < filter.size()) {
+    size_t end = filter.find(',', start);
+    if (end == std::string::npos) {
+      end = filter.size();
+    }
+    while (start < end &&
+           std::isspace(static_cast<unsigned char>(filter[start]))) {
+      ++start;
+    }
+    size_t trimmed_end = end;
+    while (trimmed_end > start &&
+           std::isspace(static_cast<unsigned char>(filter[trimmed_end - 1]))) {
+      --trimmed_end;
+    }
+    if (trimmed_end > start) {
+      std::string token = filter.substr(start, trimmed_end - start);
+      const char* token_text = token.c_str();
+      if (token.size() > 2 && token[0] == '0' &&
+          (token[1] == 'x' || token[1] == 'X')) {
+        token_text += 2;
+      }
+      char* parse_end = nullptr;
+      uint64_t value = std::strtoull(token_text, &parse_end, 16);
+      if (parse_end != token_text && *parse_end == '\0' && value == hash) {
+        return true;
+      }
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+}  // namespace
 
 SpirvShaderTranslator::Features::Features(bool all)
     : spirv_version(all ? spv::Spv_1_5 : spv::Spv_1_0),
@@ -2858,6 +2904,32 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     value_to_store = builder_->createCompositeInsert(
         builder_->createUnaryOp(spv::OpBitcast, type_float_, point_size),
         value_to_store, type_float3_, 0);
+  }
+
+  if (result.storage_target == InstructionStorageTarget::kColor &&
+      cvars::vulkan_debug_pixel_shader_output_mode &&
+      VulkanDebugShaderHashMatchesFilter(
+          current_shader().ucode_data_hash(),
+          cvars::vulkan_debug_pixel_shader_output_filter)) {
+    switch (cvars::vulkan_debug_pixel_shader_output_mode) {
+      case 1:
+        id_vector_temp_util_.clear();
+        id_vector_temp_util_.push_back(const_float_1_);
+        id_vector_temp_util_.push_back(const_float_0_);
+        id_vector_temp_util_.push_back(const_float_1_);
+        id_vector_temp_util_.push_back(const_float_1_);
+        value_to_store =
+            builder_->makeCompositeConstant(type_float4_, id_vector_temp_util_);
+        break;
+      case 2:
+        if (target_num_components >= 4) {
+          value_to_store = builder_->createCompositeInsert(
+              const_float_1_, value_to_store, target_type, 3);
+        }
+        break;
+      default:
+        break;
+    }
   }
 
   builder_->createStore(value_to_store, target_pointer);

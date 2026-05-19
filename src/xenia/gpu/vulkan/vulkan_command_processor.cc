@@ -1837,6 +1837,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "readback_resolve={} recent_present={} scored_present={} "
           "scored_min={}x{} scored_budget={} scored_required_format={} "
           "scored_reject_clear_like={} forced_present={} "
+          "debug_ps_output_filter={} debug_ps_output_mode={} "
           "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
@@ -1863,6 +1864,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_present_scored_resolve_required_format,
           cvars::vulkan_present_scored_resolve_reject_clear_like,
           cvars::vulkan_present_forced_resolve_on_swap,
+          cvars::vulkan_debug_pixel_shader_output_filter,
+          cvars::vulkan_debug_pixel_shader_output_mode,
           cvars::vulkan_present_forced_resolve_address,
           cvars::vulkan_present_forced_resolve_length,
           cvars::vulkan_present_forced_resolve_width,

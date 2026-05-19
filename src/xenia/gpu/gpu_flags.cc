@@ -203,6 +203,16 @@ DEFINE_bool(vulkan_debug_solid_guest_output, false,
             "Fill the Vulkan guest output image with a solid debug color on "
             "swap. Research-only presenter proof; incorrect for gameplay.",
             "GPU");
+DEFINE_string(vulkan_debug_pixel_shader_output_filter, "",
+              "Comma-separated pixel shader ucode hashes whose color exports "
+              "may be overridden by vulkan_debug_pixel_shader_output_mode. "
+              "Research-only shader-output triage.",
+              "GPU");
+DEFINE_int32(vulkan_debug_pixel_shader_output_mode, 0,
+             "Research-only shader-output override for hashes in "
+             "vulkan_debug_pixel_shader_output_filter: 0 disables, 1 forces "
+             "magenta RGBA, 2 keeps RGB and forces alpha to 1.",
+             "GPU");
 DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
