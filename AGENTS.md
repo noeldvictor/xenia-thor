@@ -271,8 +271,10 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260519-022127-*` reached the Blue Dragon title prompt
-  with the temporary exponent-adjust research knob.
+  `scratch\thor-debug\20260519-132943-*` reached the Blue Dragon title prompt
+  with Android OSD hidden, `vulkan_debug_texture_fetch_disable_exp_adjust=false`,
+  and APK SHA-256
+  `09F480292F913D6132F3A288C7FCAB758E02FF6BAD519B1DF089BB3EF40B1224`.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -298,12 +300,13 @@ Primary target:
   `CP_RB_RPTR` / `CP_RB_WPTR` (`0x01C4` / `0x01C5`). Blue Dragon's D3D dump now
   shows matching drained ring pointers instead of a stale zero read pointer.
 - Current milestone: Blue Dragon reaches the `press START` title prompt on Thor
-  with `vulkan_debug_texture_fetch_disable_exp_adjust=true` and
-  `vulkan_force_signed_2101010_unorm_fallback=true`. This is a research-only
-  proof, not compatibility.
-- Current blocker: replace the coarse exponent-adjust bypass with a targeted
-  `2_10_10_10_FLOAT` / 7e3-aware texture decode path for resolved render-chain
-  data, then test title without the bypass.
+  with `vulkan_debug_texture_fetch_disable_exp_adjust=false` after the SPIR-V
+  texture fetch translator was fixed to read result exponent adjustment from
+  fetch constant dword 3, not dword 4. `vulkan_force_signed_2101010_unorm_fallback=true`
+  is still part of the validated run. This is title-screen progress, not
+  compatibility.
+- Current blocker: press START / menu progression, usable Android input, and
+  reducing the remaining research-only Vulkan fallback knobs.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
@@ -631,9 +634,30 @@ Primary target:
     `2_10_10_10` fallback.
   - `vulkan_debug_texture_fetch_disable_exp_adjust=true` reached the visible
     `press START` title prompt in `scratch\thor-debug\20260519-022127-*`.
-  - Keep this cvar default-off and research-only. The next real fix is a
-    targeted 7e3-aware decode for `2_10_10_10_FLOAT` render-chain data on
-    Android/Adreno.
+  - Keep this cvar default-off and research-only. This proof was superseded by
+    the dword3 result exponent fix below.
+- Blue Dragon dword3 result exponent fix:
+  `docs/research/20260519-133516-blue-dragon-dword3-title-fix.md`.
+  - The SPIR-V translator was using fetch constant dword 4 for result exponent
+    adjustment. That word carries LOD/gradient exponent bias in the same bit
+    range.
+  - The title path now reads result exponent adjustment from dword 3.
+  - Validated title capture: `scratch\thor-debug\20260519-132943-*`.
+  - Validated cvar state: `disable_fetch_exp_adjust=false`,
+    `force_signed_2101010_unorm=true`.
+
+## Codex Hooks / Automation
+
+- Research note: `docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md`.
+- Project hooks live in `.codex/hooks.json` and must be reviewed/trusted by the
+  Codex environment before they run.
+- `.codex/hooks/blue_dragon_stop.ps1` is passive by default. It only
+  auto-continues when `scratch\thor-debug\continue-until-blue-dragon-title.flag`
+  exists and stops once `scratch\thor-debug\latest-title-proof.json` exists.
+- The Blue Dragon Stop hook is bounded to 12 attempts so ADB/device/build
+  failures become a blocker report instead of an endless loop.
+- Prefer a Codex thread automation only for scheduled later wakeups; use the
+  project Stop hook for active-session bounded continuation.
 
 ## Android ARM64 Risk Register
 

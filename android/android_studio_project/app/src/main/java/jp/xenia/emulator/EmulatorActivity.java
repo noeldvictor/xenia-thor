@@ -3,6 +3,7 @@ package jp.xenia.emulator;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.TextView;
 
 public class EmulatorActivity extends WindowedAppActivity {
@@ -28,6 +29,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "hid_nop_buttons");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_delay_ms");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_hold_ms");
+            copyBooleanExtra(intent, launchArguments, "android_hide_osd");
             copyBooleanExtra(intent, launchArguments, "break_on_debugbreak");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
@@ -204,9 +206,20 @@ public class EmulatorActivity extends WindowedAppActivity {
     }
 
     private void updateOsd(final Bundle launchArguments) {
+        final View topBar = findViewById(R.id.emulator_osd_top_bar);
         final TextView titleView = findViewById(R.id.emulator_osd_title);
         final TextView subtitleView = findViewById(R.id.emulator_osd_subtitle);
         final TextView warningView = findViewById(R.id.emulator_osd_warning);
+        if (launchArguments != null
+                && launchArguments.getBoolean("android_hide_osd", false)) {
+            if (topBar != null) {
+                topBar.setVisibility(View.GONE);
+            }
+            if (warningView != null) {
+                warningView.setVisibility(View.GONE);
+            }
+            return;
+        }
         if (titleView == null || subtitleView == null || warningView == null) {
             return;
         }
