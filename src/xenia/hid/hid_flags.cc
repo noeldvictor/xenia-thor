@@ -19,6 +19,11 @@ DEFINE_string(
     "Comma-separated research buttons held by the nop HID driver. Supported: "
     "a,b,x,y,start,back,du,dd,dl,dr,lb,rb.",
     "HID");
+DEFINE_string(
+    hid_nop_button_sequence, "",
+    "Semicolon-separated research nop HID pulses in the form "
+    "buttons@delay_ms:hold_ms, for example start@45000:3000;a@70000:3000.",
+    "HID");
 DEFINE_int32(
     hid_nop_buttons_delay_ms, 0,
     "Research delay before the nop HID driver reports hid_nop_buttons.",

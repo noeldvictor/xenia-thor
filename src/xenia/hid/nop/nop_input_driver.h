@@ -11,6 +11,7 @@
 #define XENIA_HID_NOP_NOP_INPUT_DRIVER_H_
 
 #include <chrono>
+#include <string>
 
 #include "xenia/hid/input_driver.h"
 
@@ -33,6 +34,7 @@ class NopInputDriver final : public InputDriver {
                         X_INPUT_KEYSTROKE* out_keystroke) override;
 
  private:
+  static uint16_t GetButtonsFromString(std::string buttons);
   static uint16_t GetConfiguredButtons();
   uint16_t GetActiveButtons() const;
   bool IsResearchControllerConnected() const;

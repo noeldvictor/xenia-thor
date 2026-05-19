@@ -15,6 +15,7 @@
 DECLARE_bool(guide_button);
 DECLARE_bool(hid_nop_connected);
 DECLARE_string(hid_nop_buttons);
+DECLARE_string(hid_nop_button_sequence);
 DECLARE_int32(hid_nop_buttons_delay_ms);
 DECLARE_int32(hid_nop_buttons_hold_ms);
 

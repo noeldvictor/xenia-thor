@@ -19,6 +19,7 @@ param(
     [string]$Arm64MiniJit = "true",
     [string]$HidNopConnected = "false",
     [string]$HidNopButtons = "",
+    [string]$HidNopButtonSequence = "",
     [string]$HidNopButtonsDelayMs = "",
     [string]$HidNopButtonsHoldMs = "",
     [string]$HideAndroidOsd = "false",
@@ -557,6 +558,9 @@ function Start-XeniaEmulator {
     }
     if ($HidNopButtons) {
         $parts += "--es hid_nop_buttons $(ConvertTo-AdbShellSingleQuote $HidNopButtons)"
+    }
+    if ($HidNopButtonSequence) {
+        $parts += "--es hid_nop_button_sequence $(ConvertTo-AdbShellSingleQuote $HidNopButtonSequence)"
     }
     if ($HidNopButtonsDelayMs) {
         $parts += "--ei hid_nop_buttons_delay_ms $HidNopButtonsDelayMs"

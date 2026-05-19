@@ -71,9 +71,11 @@ Current state as of 2026-05-19:
   `vulkan_debug_texture_fetch_disable_exp_adjust=false` after fixing the SPIR-V
   texture fetch result exponent source from fetch constant dword 4 to dword 3.
   This is title-screen progress, not a compatibility claim.
+- Sequenced nop HID pulses can press START, select English on the language
+  screen, and reach the opening scene.
 - It still is not playable gameplay.
-- The next main lane is pressing START / reaching menu flow, wiring usable
-  Android input, and reducing remaining research-only Vulkan fallback knobs.
+- The next main lane is real Android controller mapping, longer scripted input,
+  and reducing remaining research-only Vulkan fallback knobs.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -95,6 +97,7 @@ Useful repo docs for this fork:
 - [Blue Dragon Title Exp-Adjust Probe](docs/research/20260519-022333-blue-dragon-title-exp-adjust-probe.md)
 - [Blue Dragon Dword3 Texture Exponent Title Fix](docs/research/20260519-133516-blue-dragon-dword3-title-fix.md)
 - [Codex Hooks For The Blue Dragon Loop](docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md)
+- [Blue Dragon Nop HID Sequence](docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

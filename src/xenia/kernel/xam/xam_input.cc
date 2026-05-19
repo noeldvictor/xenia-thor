@@ -102,7 +102,7 @@ dword_result_t XamInputGetState_entry(dword_t user_index, dword_t flags,
   }
 
   auto input_system = kernel_state()->emulator()->input_system();
-  return input_system->GetState(user_index, input_state);
+  return input_system->GetState(actual_user_index, input_state);
 }
 DECLARE_XAM_EXPORT2(XamInputGetState, kInput, kImplemented, kHighFrequency);
 
@@ -120,7 +120,7 @@ dword_result_t XamInputSetState_entry(dword_t user_index, dword_t unk,
   }
 
   auto input_system = kernel_state()->emulator()->input_system();
-  return input_system->SetState(user_index, vibration);
+  return input_system->SetState(actual_user_index, vibration);
 }
 DECLARE_XAM_EXPORT1(XamInputSetState, kInput, kImplemented);
 
@@ -147,7 +147,7 @@ dword_result_t XamInputGetKeystroke_entry(
   }
 
   auto input_system = kernel_state()->emulator()->input_system();
-  return input_system->GetKeystroke(user_index, flags, keystroke);
+  return input_system->GetKeystroke(actual_user_index, flags, keystroke);
 }
 DECLARE_XAM_EXPORT1(XamInputGetKeystroke, kInput, kImplemented);
 

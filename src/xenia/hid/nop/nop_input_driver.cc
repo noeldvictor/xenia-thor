@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -22,6 +23,33 @@
 namespace xe {
 namespace hid {
 namespace nop {
+namespace {
+
+std::string TrimString(std::string value) {
+  value.erase(value.begin(),
+              std::find_if(value.begin(), value.end(), [](unsigned char c) {
+                return !std::isspace(c);
+              }));
+  value.erase(std::find_if(value.rbegin(), value.rend(),
+                           [](unsigned char c) { return !std::isspace(c); })
+                  .base(),
+              value.end());
+  return value;
+}
+
+int32_t ParseIntOrDefault(const std::string& value, int32_t default_value) {
+  if (value.empty()) {
+    return default_value;
+  }
+  char* end = nullptr;
+  const long parsed = std::strtol(value.c_str(), &end, 10);
+  if (end == value.c_str()) {
+    return default_value;
+  }
+  return int32_t(parsed);
+}
+
+}  // namespace
 
 NopInputDriver::NopInputDriver(xe::ui::Window* window, size_t window_z_order)
     : InputDriver(window, window_z_order),
@@ -35,11 +63,12 @@ X_STATUS NopInputDriver::Setup() {
 }
 
 bool NopInputDriver::IsResearchControllerConnected() const {
-  return cvars::hid_nop_connected || !cvars::hid_nop_buttons.empty();
+  return cvars::hid_nop_connected || !cvars::hid_nop_buttons.empty() ||
+         !cvars::hid_nop_button_sequence.empty();
 }
 
-uint16_t NopInputDriver::GetConfiguredButtons() {
-  std::string buttons = cvars::hid_nop_buttons;
+uint16_t NopInputDriver::GetButtonsFromString(std::string buttons) {
+  std::replace(buttons.begin(), buttons.end(), '+', ',');
   std::transform(buttons.begin(), buttons.end(), buttons.begin(),
                  [](unsigned char c) { return char(std::tolower(c)); });
 
@@ -88,24 +117,88 @@ uint16_t NopInputDriver::GetConfiguredButtons() {
   return result;
 }
 
+uint16_t NopInputDriver::GetConfiguredButtons() {
+  uint16_t result = GetButtonsFromString(cvars::hid_nop_buttons);
+
+  std::string sequence = cvars::hid_nop_button_sequence;
+  size_t entry_start = 0;
+  while (entry_start <= sequence.size()) {
+    size_t entry_end = sequence.find_first_of(";|", entry_start);
+    if (entry_end == std::string::npos) {
+      entry_end = sequence.size();
+    }
+    std::string entry =
+        TrimString(sequence.substr(entry_start, entry_end - entry_start));
+    const size_t at = entry.find('@');
+    if (at != std::string::npos) {
+      entry.resize(at);
+    }
+    result |= GetButtonsFromString(entry);
+
+    if (entry_end == sequence.size()) {
+      break;
+    }
+    entry_start = entry_end + 1;
+  }
+
+  return result;
+}
+
 uint16_t NopInputDriver::GetActiveButtons() const {
-  if (cvars::hid_nop_buttons.empty()) {
+  if (cvars::hid_nop_buttons.empty() &&
+      cvars::hid_nop_button_sequence.empty()) {
     return 0;
   }
 
-  const int32_t delay_ms = std::max(0, cvars::hid_nop_buttons_delay_ms);
-  const int32_t hold_ms = cvars::hid_nop_buttons_hold_ms;
+  uint16_t active_buttons = 0;
   const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() -
                               button_schedule_start_time_)
                               .count();
-  if (elapsed_ms < delay_ms) {
-    return 0;
+
+  if (!cvars::hid_nop_buttons.empty()) {
+    const int32_t delay_ms = std::max(0, cvars::hid_nop_buttons_delay_ms);
+    const int32_t hold_ms = cvars::hid_nop_buttons_hold_ms;
+    if (elapsed_ms >= delay_ms &&
+        (hold_ms < 0 || elapsed_ms < int64_t(delay_ms) + hold_ms)) {
+      active_buttons |= GetButtonsFromString(cvars::hid_nop_buttons);
+    }
   }
-  if (hold_ms >= 0 && elapsed_ms >= int64_t(delay_ms) + hold_ms) {
-    return 0;
+
+  std::string sequence = cvars::hid_nop_button_sequence;
+  size_t entry_start = 0;
+  while (entry_start <= sequence.size()) {
+    size_t entry_end = sequence.find_first_of(";|", entry_start);
+    if (entry_end == std::string::npos) {
+      entry_end = sequence.size();
+    }
+    std::string entry =
+        TrimString(sequence.substr(entry_start, entry_end - entry_start));
+    const size_t at = entry.find('@');
+    if (at != std::string::npos) {
+      const std::string buttons = entry.substr(0, at);
+      const std::string timing = entry.substr(at + 1);
+      const size_t colon = timing.find(':');
+      const int32_t delay_ms = std::max(
+          0, ParseIntOrDefault(
+                 TrimString(timing.substr(0, colon)), 0));
+      const int32_t hold_ms =
+          colon == std::string::npos
+              ? std::max(1, cvars::hid_nop_buttons_hold_ms)
+              : ParseIntOrDefault(TrimString(timing.substr(colon + 1)), 1000);
+      if (elapsed_ms >= delay_ms &&
+          (hold_ms < 0 || elapsed_ms < int64_t(delay_ms) + hold_ms)) {
+        active_buttons |= GetButtonsFromString(buttons);
+      }
+    }
+
+    if (entry_end == sequence.size()) {
+      break;
+    }
+    entry_start = entry_end + 1;
   }
-  return GetConfiguredButtons();
+
+  return active_buttons;
 }
 
 void NopInputDriver::LogResearchControllerOnce(uint32_t user_index,
@@ -116,9 +209,10 @@ void NopInputDriver::LogResearchControllerOnce(uint32_t user_index,
   research_logged_ = true;
   XELOGI(
       "Nop HID research controller active via {}: user={} connected={} "
-      "buttons='{}' delay_ms={} hold_ms={}",
+      "buttons='{}' sequence='{}' delay_ms={} hold_ms={}",
       source, user_index, cvars::hid_nop_connected, cvars::hid_nop_buttons,
-      cvars::hid_nop_buttons_delay_ms, cvars::hid_nop_buttons_hold_ms);
+      cvars::hid_nop_button_sequence, cvars::hid_nop_buttons_delay_ms,
+      cvars::hid_nop_buttons_hold_ms);
 }
 
 X_RESULT NopInputDriver::GetCapabilities(uint32_t user_index, uint32_t flags,

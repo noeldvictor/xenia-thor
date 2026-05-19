@@ -305,7 +305,10 @@ Primary target:
   fetch constant dword 3, not dword 4. `vulkan_force_signed_2101010_unorm_fallback=true`
   is still part of the validated run. This is title-screen progress, not
   compatibility.
-- Current blocker: press START / menu progression, usable Android input, and
+- Current milestone extension: sequenced nop HID pulses can press START, select
+  English on the language screen, and reach Blue Dragon's opening scene in
+  `scratch\thor-debug\20260519-144529-*`.
+- Current blocker: real Android controller mapping, longer scripted input, and
   reducing the remaining research-only Vulkan fallback knobs.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
@@ -646,6 +649,15 @@ Primary target:
     post-push `scratch\thor-debug\20260519-141908-*`.
   - Validated cvar state: `disable_fetch_exp_adjust=false`,
     `force_signed_2101010_unorm=true`.
+- Blue Dragon nop HID sequence proof:
+  `docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md`.
+  - `hid_nop_button_sequence` supports entries like
+    `start@45000:3000;a@68000:3000`.
+  - `scratch\thor-debug\20260519-144021-*` reached the language menu.
+  - `scratch\thor-debug\20260519-144529-*` reached the opening scene after
+    language selection.
+  - This is scripted research input only; it is not real Android controller
+    mapping yet.
 
 ## Codex Hooks / Automation
 

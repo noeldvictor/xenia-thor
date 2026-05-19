@@ -27,6 +27,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyDoubleExtra(intent, launchArguments, "time_scalar");
             copyBooleanExtra(intent, launchArguments, "hid_nop_connected");
             copyStringExtra(intent, launchArguments, "hid_nop_buttons");
+            copyStringExtra(intent, launchArguments, "hid_nop_button_sequence");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_delay_ms");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_hold_ms");
             copyBooleanExtra(intent, launchArguments, "android_hide_osd");
