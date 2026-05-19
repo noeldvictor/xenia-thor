@@ -2943,6 +2943,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
     auto rb_color_mask = regs.Get<reg::RB_COLOR_MASK>();
     auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+    auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+    auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
+    auto pa_cl_vte_cntl = regs.Get<reg::PA_CL_VTE_CNTL>();
+    auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
+    auto pa_sc_window_scissor_tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
+    auto pa_sc_window_scissor_br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
+    auto pa_sc_screen_scissor_tl = regs.Get<reg::PA_SC_SCREEN_SCISSOR_TL>();
+    auto pa_sc_screen_scissor_br = regs.Get<reg::PA_SC_SCREEN_SCISSOR_BR>();
+    draw_util::Scissor draw_scissor;
+    draw_util::GetScissor(regs, draw_scissor);
     auto color0 = regs.Get<reg::RB_COLOR_INFO>(
         reg::RB_COLOR_INFO::rt_register_indices[0]);
     auto color1 = regs.Get<reg::RB_COLOR_INFO>(
@@ -2997,6 +3007,34 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         uint32_t(color2.color_format), (rb_color_mask.value >> 8) & 0xF,
         color2.color_base, color3.value, uint32_t(color3.color_format),
         (rb_color_mask.value >> 12) & 0xF, color3.color_base);
+    XELOGI(
+        "GPU draw trace: raster viewport={}x{}+{},{} z={}..{} "
+        "scissor={}x{}+{},{} window_tl={},{} window_br={},{} "
+        "screen_tl={},{} screen_br={},{} window_offset={},{} "
+        "clip={:08X} vte={:08X} su_sc={:08X} cull_front={} cull_back={} "
+        "clip_disable={} dx_clip={} vtx_window_offset={} z_enable={} "
+        "z_write={} zfunc={} stencil={} alpha_test={}",
+        viewport_info.xy_extent[0], viewport_info.xy_extent[1],
+        viewport_info.xy_offset[0], viewport_info.xy_offset[1],
+        viewport_info.z_min, viewport_info.z_max, draw_scissor.extent[0],
+        draw_scissor.extent[1], draw_scissor.offset[0],
+        draw_scissor.offset[1], pa_sc_window_scissor_tl.tl_x,
+        pa_sc_window_scissor_tl.tl_y, pa_sc_window_scissor_br.br_x,
+        pa_sc_window_scissor_br.br_y, pa_sc_screen_scissor_tl.tl_x,
+        pa_sc_screen_scissor_tl.tl_y, pa_sc_screen_scissor_br.br_x,
+        pa_sc_screen_scissor_br.br_y,
+        int32_t(pa_sc_window_offset.window_x_offset),
+        int32_t(pa_sc_window_offset.window_y_offset), pa_cl_clip_cntl.value,
+        pa_cl_vte_cntl.value, pa_su_sc_mode_cntl.value,
+        pa_su_sc_mode_cntl.cull_front != 0,
+        pa_su_sc_mode_cntl.cull_back != 0, pa_cl_clip_cntl.clip_disable != 0,
+        pa_cl_clip_cntl.dx_clip_space_def != 0,
+        pa_su_sc_mode_cntl.vtx_window_offset_enable != 0,
+        normalized_depth_control.z_enable != 0,
+        normalized_depth_control.z_write_enable != 0,
+        uint32_t(normalized_depth_control.zfunc),
+        normalized_depth_control.stencil_enable != 0,
+        rb_colorcontrol.alpha_test_enable != 0);
   }
 
   // Whether to load the guest 32-bit (usually big-endian) vertex index

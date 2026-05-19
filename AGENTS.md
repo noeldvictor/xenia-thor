@@ -486,6 +486,17 @@ Primary target:
   - The next lane is host render-target image / draw-output correctness:
     prove whether the RT image itself is flat before dump, or whether the dump
     shader / format path reads it incorrectly.
+- Blue Dragon raster/dump-state proof:
+  `docs/research/20260518-233120-blue-dragon-raster-dump-state.md`.
+  - The visible fullscreen/composite draw family has sane scissor rectangles
+    for 640x360, 320x180, 160x90, 80x45, and 1280x720 passes.
+  - Those textured draws are not obviously depth-killed; they reach
+    `pixel=true`, `ps_writes=1`, and `normalized_color_mask=000F`.
+  - Dump routing matches the expected render-target keys, formats, rectangles,
+    and dispatch sizes, but EDRAM/shared-memory samples remain flat.
+  - Next GPU lane: trace texture inputs and shader bindings for the textured
+    passes, especially `used_textures=0000007F` on the 1280x720 pass and
+    `used_textures=00000001` on the downscale/composite passes.
 
 ## Android ARM64 Risk Register
 

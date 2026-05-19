@@ -65,6 +65,7 @@ namespace {
 
 std::atomic<int32_t> vulkan_resolve_trace_count{0};
 std::atomic<int32_t> vulkan_edram_checksum_trace_count{0};
+std::atomic<int32_t> vulkan_dump_state_trace_count{0};
 
 bool ShouldTraceVulkanResolve() {
   if (!cvars::vulkan_trace_resolve) {
@@ -81,6 +82,14 @@ bool ShouldTraceVulkanEdramChecksum() {
   int32_t budget = cvars::vulkan_trace_edram_checksum_budget;
   return budget < 0 ||
          vulkan_edram_checksum_trace_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanDumpState() {
+  if (!cvars::vulkan_trace_copy_state) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_copy_state_budget;
+  return budget < 0 || vulkan_dump_state_trace_count.fetch_add(1) < budget;
 }
 
 const char* ResolveCopyShaderName(draw_util::ResolveCopyShaderIndex shader) {
@@ -6005,6 +6014,13 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   if (dump_rectangles_.empty()) {
     return;
   }
+  if (ShouldTraceVulkanDumpState()) {
+    XELOGI(
+        "GPU resolve trace: dump begin base={} row_length_used={} rows={} "
+        "pitch={} rectangles={}",
+        dump_base, dump_row_length_used, dump_rows, dump_pitch,
+        dump_rectangles_.size());
+  }
 
   // Clear previously set temporary indices.
   for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
@@ -6069,6 +6085,19 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     if (!pipeline) {
       continue;
     }
+    if (ShouldTraceVulkanDumpState()) {
+      XELOGI(
+          "GPU resolve trace: dump rt key={:08X} base={} pitch={} width={} "
+          "msaa={} is_depth={} fmt={} resource_format={} row_first={} "
+          "rows={} row_first_start={} row_last_end={} pipeline_key={:08X} "
+          "separate_transfer_view={}",
+          rt_key.key, rt_key.base_tiles, rt_key.GetPitchTiles(),
+          rt_key.GetWidth(), UINT32_C(1) << uint32_t(rt_key.msaa_samples),
+          rt_key.is_depth != 0, rt_key.GetFormatName(),
+          rt_key.resource_format, rectangle.row_first, rectangle.rows,
+          rectangle.row_first_start, rectangle.row_last_end, pipeline_key.key,
+          vulkan_rt.view_color_transfer_separate() != VK_NULL_HANDLE);
+    }
     command_processor_.BindExternalComputePipeline(pipeline);
 
     VkPipelineLayout pipeline_layout = rt_key.is_depth
@@ -6130,17 +6159,28 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
             &last_offsets);
       }
       command_processor_.SubmitBarriers(true);
-      command_buffer.CmdVkDispatch(
+      uint32_t group_count_x =
           (draw_resolution_scale_x() *
                (xenos::kEdramTileWidthSamples >> uint32_t(rt_key.Is64bpp())) *
                dispatch.width_tiles +
            (kDumpSamplesPerGroupX - 1)) /
-              kDumpSamplesPerGroupX,
+          kDumpSamplesPerGroupX;
+      uint32_t group_count_y =
           (draw_resolution_scale_y() * xenos::kEdramTileHeightSamples *
                dispatch.height_tiles +
            (kDumpSamplesPerGroupY - 1)) /
-              kDumpSamplesPerGroupY,
-          1);
+          kDumpSamplesPerGroupY;
+      if (ShouldTraceVulkanDumpState()) {
+        XELOGI(
+            "GPU resolve trace: dump dispatch rt={:08X} dest_first_tile={} "
+            "source_base_tiles={} offset={} width_tiles={} height_tiles={} "
+            "dest_pitch={} source_pitch={} groups={}x{}",
+            rt_key.key, offsets.dispatch_first_tile, offsets.source_base_tiles,
+            dispatch.offset, dispatch.width_tiles, dispatch.height_tiles,
+            pitches.dest_pitch, pitches.source_pitch, group_count_x,
+            group_count_y);
+      }
+      command_buffer.CmdVkDispatch(group_count_x, group_count_y, 1);
     }
     MarkEdramBufferModified();
   }
