@@ -47,6 +47,10 @@ DECLARE_uint32(arm64_compiled_call_trace_budget);
 DECLARE_string(arm64_compiled_call_trace_functions);
 DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
+DEFINE_bool(a64_inline_gprlr_helpers, true,
+            "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
+            "A64 backend.",
+            "a64");
 
 namespace {
 std::atomic<int> g_a64_call_trace_budget{0};
@@ -264,6 +268,40 @@ void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
       static_cast<uint32_t>(ctx->r[10]), static_cast<uint32_t>(ctx->r[11]),
       static_cast<uint32_t>(ctx->r[13]), static_cast<uint32_t>(ctx->r[29]),
       static_cast<uint32_t>(ctx->r[30]), static_cast<uint32_t>(ctx->r[31]));
+}
+
+bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
+                      int* first_gpr) {
+  if (!function || !is_save || !first_gpr) {
+    return false;
+  }
+
+  const std::string& name = function->name();
+  constexpr std::string_view kSavePrefix = "__savegprlr_";
+  constexpr std::string_view kRestPrefix = "__restgprlr_";
+  std::string_view suffix;
+  if (function->behavior() == xe::cpu::Function::Behavior::kProlog &&
+      name.rfind(kSavePrefix, 0) == 0) {
+    *is_save = true;
+    suffix = std::string_view(name).substr(kSavePrefix.size());
+  } else if (function->behavior() ==
+                 xe::cpu::Function::Behavior::kEpilogReturn &&
+             name.rfind(kRestPrefix, 0) == 0) {
+    *is_save = false;
+    suffix = std::string_view(name).substr(kRestPrefix.size());
+  } else {
+    return false;
+  }
+
+  int parsed = 0;
+  auto result =
+      std::from_chars(suffix.data(), suffix.data() + suffix.size(), parsed);
+  if (result.ec != std::errc() || result.ptr != suffix.data() + suffix.size() ||
+      parsed < 14 || parsed > 31) {
+    return false;
+  }
+  *first_gpr = parsed;
+  return true;
 }
 }  // namespace
 
@@ -633,8 +671,115 @@ void A64Emitter::UnimplementedInstr(const hir::Instr* i) {
   DebugBreak();
 }
 
+bool A64Emitter::TryEmitGprLrHelperCall(const hir::Instr* instr,
+                                        GuestFunction* function) {
+  if (!cvars::a64_inline_gprlr_helpers) {
+    return false;
+  }
+
+  bool is_save = false;
+  int first_gpr = 0;
+  if (!ParseGprLrHelper(function, &is_save, &first_gpr)) {
+    return false;
+  }
+
+  const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
+  if (is_save && is_tail_call) {
+    return false;
+  }
+  if (!is_save && !is_tail_call) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  const int32_t first_stack_offset = -8 * (33 - first_gpr);
+  const uint32_t base_subtract =
+      static_cast<uint32_t>(-first_stack_offset);
+
+  ldr(w9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[1]))));
+  add(x9, GetMembaseReg(), x9);
+  if (base_subtract) {
+    sub(x9, x9, base_subtract);
+  }
+
+  for (int gpr = first_gpr; gpr <= 31; ++gpr) {
+    const uint32_t slot_offset =
+        static_cast<uint32_t>((-8 * (33 - gpr)) - first_stack_offset);
+    const auto context_offset =
+        static_cast<int32_t>(offsetof(ppc::PPCContext, r) +
+                             sizeof(uint64_t) * static_cast<size_t>(gpr));
+    if (is_save) {
+      ldr(x10, ptr(GetContextReg(), context_offset));
+      rev(x10, x10);
+      str(x10, ptr(x9, slot_offset));
+    } else {
+      ldr(x10, ptr(x9, slot_offset));
+      rev(x10, x10);
+      str(x10, ptr(GetContextReg(), context_offset));
+    }
+  }
+
+  const uint32_t lr_slot_offset =
+      static_cast<uint32_t>(-8 - first_stack_offset);
+  if (is_save) {
+    ldr(w10, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[12]))));
+    rev(w10, w10);
+    str(w10, ptr(x9, lr_slot_offset));
+  } else {
+    ldr(w10, ptr(x9, lr_slot_offset));
+    rev(w10, w10);
+    str(x10, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[12]))));
+    str(x10, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, lr))));
+    mov(w16, w10);
+    ldr(w11, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+    cmp(w16, w11);
+    auto& tail_jump = NewCachedLabel();
+    b(NE, tail_jump);
+    b(epilog_label());
+
+    L(tail_jump);
+    if (backend_->speed_profile_enabled()) {
+      EmitAtomicIncrement64(backend_->speed_profile_indirect_guest_calls());
+    }
+    if (code_cache_->has_indirection_table()) {
+      mov(x0, A64CodeCache::execute_address_high());
+      orr(x16, x16, x0);
+      ldr(w9, ptr(x16, static_cast<uint32_t>(0)));
+      orr(x9, x9, x0);
+    } else {
+      mov(x0, x20);
+      mov(x1, x16);
+      mov(x9, reinterpret_cast<uint64_t>(&ResolveFunction));
+      blr(x9);
+      mov(x9, x0);
+    }
+
+    PopStackpoint();
+    ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+    ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
+    if (stack_size() <= 4095) {
+      add(sp, sp, static_cast<uint32_t>(stack_size()));
+    } else {
+      mov(x17, static_cast<uint64_t>(stack_size()));
+      add(sp, sp, x17, UXTX);
+    }
+    br(x9);
+  }
+
+  return true;
+}
+
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
+  if (TryEmitGprLrHelperCall(instr, function)) {
+    return;
+  }
+
   ForgetFpcrMode();
   auto fn = static_cast<A64Function*>(function);
   if (backend_->speed_profile_enabled()) {

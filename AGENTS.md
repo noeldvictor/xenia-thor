@@ -801,6 +801,23 @@ Primary target:
     function `8246B408`. Next CPU optimization should inspect whether the A64
     backend can safely inline/special-case the PPC save/restore compiler
     helpers.
+- A64 GPR/LR helper inline:
+  `docs/research/20260519-170744-a64-gprlr-helper-inline.md`.
+  - `a64_inline_gprlr_helpers` is routed through Android and the Thor script
+    and is default-on in the A64 backend.
+  - `__savegprlr_*` is inlined as big-endian guest stack stores for GPRs plus
+    the 32-bit LR slot from `r12`.
+  - `__restgprlr_*` is inlined as big-endian guest stack loads, but must compare
+    the restored LR to the current guest return address. Equal LR returns
+    through the current epilog; mismatch LR falls back to the normal A64
+    tail-jump/code-cache path.
+  - The naive "always epilog" restore shortcut is wrong; it stayed alive but
+    blocked the visible Blue Dragon route in `scratch\thor-debug\20260519-170818-*`.
+  - Corrected validation `scratch\thor-debug\20260519-171625-*` reached the
+    visible opening scene, had no crash/device-loss markers, and removed
+    `__savegprlr_*` / `__restgprlr_*` from the top profile.
+  - Next speed work should inspect `8246B408` / `8248B040` and consider FPR/VMX
+    helper-family inlining.
 
 ## Codex Hooks / Automation
 

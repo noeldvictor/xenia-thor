@@ -116,6 +116,8 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void Trap(uint16_t trap_type = 0);
   void UnimplementedInstr(const hir::Instr* i);
 
+  bool TryEmitGprLrHelperCall(const hir::Instr* instr,
+                              GuestFunction* function);
   void Call(const hir::Instr* instr, GuestFunction* function);
   void CallIndirect(const hir::Instr* instr, int reg_index);
   void CallExtern(const hir::Instr* instr, const Function* function);

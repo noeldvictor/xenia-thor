@@ -79,6 +79,9 @@ Current state as of 2026-05-19:
   old XMA/GPU log spam from speed samples and captures timed CPU/thread
   snapshots. It still points at the main guest CPU/A64 backend as the real
   bottleneck.
+- The A64 backend now inlines PPC `__savegprlr_*` / `__restgprlr_*` compiler
+  helpers with a runtime LR mismatch fallback. This removes those helpers from
+  the Blue Dragon top profile, but the game is still far too slow.
 - An opt-in XMA fast-silence experiment can reach the opening scene, but it is
   not an audio correctness fix and does not make the game playable.
 - It still is not playable gameplay.
@@ -109,6 +112,8 @@ Useful repo docs for this fork:
 - [Blue Dragon Nop HID Sequence](docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md)
 - [Blue Dragon Performance Triage](docs/research/20260519-151305-blue-dragon-performance-triage.md)
 - [Blue Dragon Quiet Speed Lane](docs/research/20260519-154636-blue-dragon-speed-lane.md)
+- [A64 Speed Profile Counters](docs/research/20260519-162000-a64-speed-profile-counters.md)
+- [A64 GPR/LR Helper Inline](docs/research/20260519-170744-a64-gprlr-helper-inline.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 
