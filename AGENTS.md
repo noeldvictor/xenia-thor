@@ -169,6 +169,15 @@ Primary target:
   - `-GpuInterruptOnRingIdle true` and `-GpuBlueDragonKickWaitToken true` only
     for clearly documented Blue Dragon research runs; both are default-off
     hacks, not compatibility fixes.
+  - `-GpuTraceInterrupts true` to trace `VdSetGraphicsInterruptCallback`,
+    `PM4_INTERRUPT`, VBlank, source-1 dispatch begin/end, and Blue Dragon token
+    memory without forcing a compatibility behavior.
+  - `-GpuInterruptOnSwap true` only as a narrow research experiment that
+    dispatches source-1 after `PM4_XE_SWAP`; it is safer to test than the broad
+    ring-idle interrupt, but still not a compatibility fix.
+  - `-TimeScalar 0.25` or similar only as a temporary watchdog/timing probe; it
+    slows guest time so the Thor can reveal whether Blue Dragon is failing due
+    to slow first-frame GPU/CPU progress rather than a missing completion event.
   - `-GpuTraceSwap true` to trace guest video setup, runtime `VdSwap`, PM4
     `XE_SWAP`, and Vulkan `IssueSwap` proof. Import/symbol lines mentioning
     `VdSwap` are not runtime call proof; use the explicit `GPU swap trace:`

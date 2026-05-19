@@ -15,6 +15,7 @@ param(
     [string]$Mode = "DeviceInfo",
     [string]$OutDir = "",
     [string]$Target = "",
+    [string]$TimeScalar = "",
     [string]$Arm64MiniJit = "true",
     [string]$HidNopConnected = "false",
     [string]$HidNopButtons = "",
@@ -28,6 +29,8 @@ param(
     [string]$ClearMemoryPageState = "false",
     [string]$EmitInlineMmioChecks = "false",
     [string]$GpuInterruptOnRingIdle = "false",
+    [string]$GpuInterruptOnSwap = "false",
+    [string]$GpuTraceInterrupts = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
@@ -43,6 +46,7 @@ param(
     [string]$VulkanForceSigned2101010UnormFallback = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
+    [string]$GpuTraceInterruptsBudget = "",
     [string]$GpuTracePacketBudget = "",
     [string]$GpuTraceSwapFrontbufferChecksumBudget = "",
     [string]$GpuTraceSwapRenderTargetsBudget = "",
@@ -316,6 +320,8 @@ function Start-XeniaEmulator {
         "--ez clear_memory_page_state $(ConvertTo-BooleanText $ClearMemoryPageState)",
         "--ez emit_inline_mmio_checks $(ConvertTo-BooleanText $EmitInlineMmioChecks)",
         "--ez gpu_interrupt_on_ring_idle $(ConvertTo-BooleanText $GpuInterruptOnRingIdle)",
+        "--ez gpu_interrupt_on_swap $(ConvertTo-BooleanText $GpuInterruptOnSwap)",
+        "--ez gpu_trace_interrupts $(ConvertTo-BooleanText $GpuTraceInterrupts)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
         "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
@@ -331,11 +337,17 @@ function Start-XeniaEmulator {
         "--ez vulkan_force_signed_2101010_unorm_fallback $(ConvertTo-BooleanText $VulkanForceSigned2101010UnormFallback)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
+    if ($TimeScalar) {
+        $parts += "--es time_scalar $(ConvertTo-AdbShellSingleQuote $TimeScalar)"
+    }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
     }
     if ($GpuBlueDragonKickWaitTokenBudget) {
         $parts += "--ei gpu_blue_dragon_kick_wait_token_budget $GpuBlueDragonKickWaitTokenBudget"
+    }
+    if ($GpuTraceInterruptsBudget) {
+        $parts += "--ei gpu_trace_interrupts_budget $GpuTraceInterruptsBudget"
     }
     if ($GpuTracePacketBudget) {
         $parts += "--ei gpu_trace_packet_budget $GpuTracePacketBudget"

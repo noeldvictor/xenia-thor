@@ -21,6 +21,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyStringExtra(intent, launchArguments, "hid");
+            copyDoubleExtra(intent, launchArguments, "time_scalar");
             copyBooleanExtra(intent, launchArguments, "hid_nop_connected");
             copyStringExtra(intent, launchArguments, "hid_nop_buttons");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_delay_ms");
@@ -33,6 +34,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "clear_memory_page_state");
             copyBooleanExtra(intent, launchArguments, "emit_inline_mmio_checks");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
+            copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
+            copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(
@@ -55,6 +58,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "gpu_early_primary_read_pointer_writeback");
             copyIntExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token_budget");
+            copyIntExtra(intent, launchArguments, "gpu_trace_interrupts_budget");
             copyIntExtra(intent, launchArguments, "gpu_trace_packet_budget");
             copyIntExtra(
                     intent, launchArguments, "gpu_trace_swap_frontbuffer_checksum_budget");
@@ -125,6 +129,28 @@ public class EmulatorActivity extends WindowedAppActivity {
             final Intent intent, final Bundle launchArguments, final String name) {
         if (intent.hasExtra(name)) {
             launchArguments.putInt(name, intent.getIntExtra(name, 0));
+        }
+    }
+
+    private static void copyDoubleExtra(
+            final Intent intent, final Bundle launchArguments, final String name) {
+        if (!intent.hasExtra(name)) {
+            return;
+        }
+        final Bundle extras = intent.getExtras();
+        if (extras == null) {
+            return;
+        }
+        final Object value = extras.get(name);
+        if (value instanceof Number) {
+            launchArguments.putDouble(name, ((Number) value).doubleValue());
+            return;
+        }
+        if (value instanceof String) {
+            try {
+                launchArguments.putDouble(name, Double.parseDouble((String) value));
+            } catch (final NumberFormatException ignored) {
+            }
         }
     }
 

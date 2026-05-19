@@ -36,6 +36,19 @@ DEFINE_bool(gpu_interrupt_on_ring_idle, false,
             "Experimental Android bring-up hack: dispatch a graphics interrupt "
             "after the primary ring drains.",
             "GPU");
+DEFINE_bool(gpu_interrupt_on_swap, false,
+            "Experimental Android bring-up hack: dispatch a source-1 graphics "
+            "interrupt after PM4_XE_SWAP completes. Default-off Blue Dragon "
+            "watchdog probe.",
+            "GPU");
+DEFINE_bool(gpu_trace_interrupts, false,
+            "Trace GPU interrupt callback setup, PM4_INTERRUPT packets, "
+            "VBlank interrupts, and source-1 dispatch chronology. "
+            "Research-only Android watchdog probe.",
+            "GPU");
+DEFINE_int32(gpu_trace_interrupts_budget, 256,
+             "Maximum GPU interrupt trace lines; negative means unlimited.",
+             "GPU");
 DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "Experimental Blue Dragon Android bring-up hack: increment the "
             "graphics wait token when a GPU interrupt is dispatched.",

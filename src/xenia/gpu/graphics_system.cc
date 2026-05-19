@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/graphics_system.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -41,6 +42,37 @@ namespace gpu {
 namespace {
 
 std::atomic<int32_t> blue_dragon_wait_token_kick_log_count{0};
+std::atomic<int32_t> gpu_interrupt_trace_count{0};
+std::atomic<int32_t> gpu_source0_interrupt_trace_count{0};
+std::atomic<int32_t> gpu_mark_vblank_trace_count{0};
+
+bool ShouldTraceGpuInterrupt(uint32_t source) {
+  if (!cvars::gpu_trace_interrupts) {
+    return false;
+  }
+  int32_t budget = cvars::gpu_trace_interrupts_budget;
+  if (source == 0) {
+    int32_t source0_budget = budget < 0 ? 64 : std::min<int32_t>(budget, 64);
+    return gpu_source0_interrupt_trace_count.fetch_add(1) < source0_budget;
+  }
+  return budget < 0 || gpu_interrupt_trace_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceMarkVblank() {
+  if (!cvars::gpu_trace_interrupts) {
+    return false;
+  }
+  int32_t budget = cvars::gpu_trace_interrupts_budget;
+  int32_t vblank_budget = budget < 0 ? 32 : std::min<int32_t>(budget, 32);
+  return gpu_mark_vblank_trace_count.fetch_add(1) < vblank_budget;
+}
+
+uint32_t MaybeReadGuestU32(Memory* memory, uint32_t address) {
+  if (!memory || !address || address >= 0xF0000000) {
+    return 0;
+  }
+  return xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+}
 
 }  // namespace
 
@@ -247,6 +279,11 @@ void GraphicsSystem::SetInterruptCallback(uint32_t callback,
   interrupt_callback_ = callback;
   interrupt_callback_data_ = user_data;
   XELOGGPU("SetInterruptCallback({:08X}, {:08X})", callback, user_data);
+  if (cvars::gpu_trace_interrupts) {
+    XELOGI(
+        "GPU interrupt trace: callback set callback={:08X} user_data={:08X}",
+        callback, user_data);
+  }
 }
 
 void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
@@ -266,9 +303,39 @@ void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
   // XELOGGPU("Dispatching GPU interrupt at {:08X} w/ mode {} on cpu {}",
   //          interrupt_callback_, source, cpu);
 
+  bool trace_interrupt = ShouldTraceGpuInterrupt(source);
+  uint32_t token_ptr_before = 0;
+  uint32_t token_before = 0;
+  if (trace_interrupt) {
+    token_ptr_before = interrupt_callback_data_
+                           ? MaybeReadGuestU32(memory_,
+                                               interrupt_callback_data_ + 0x2A10)
+                           : 0;
+    token_before = MaybeReadGuestU32(memory_, token_ptr_before);
+    XELOGI(
+        "GPU interrupt trace: dispatch begin source={} cpu={} callback={:08X} "
+        "user_data={:08X} thread_id={:08X} thread='{}' kthread={:08X} "
+        "guest_ms={} host_ms={} token_ptr={:08X} token={:08X}",
+        source, cpu, interrupt_callback_, interrupt_callback_data_,
+        thread->thread_id(), thread->name(), thread->guest_object(),
+        Clock::QueryGuestUptimeMillis(), Clock::QueryHostUptimeMillis(),
+        token_ptr_before, token_before);
+  }
+
   uint64_t args[] = {source, interrupt_callback_data_};
   processor_->ExecuteInterrupt(thread->thread_state(), interrupt_callback_,
                                args, xe::countof(args));
+
+  if (trace_interrupt) {
+    uint32_t token_after = MaybeReadGuestU32(memory_, token_ptr_before);
+    XELOGI(
+        "GPU interrupt trace: dispatch end source={} cpu={} callback={:08X} "
+        "thread_id={:08X} guest_ms={} host_ms={} token_ptr={:08X} "
+        "token={:08X}->{:08X}",
+        source, cpu, interrupt_callback_, thread->thread_id(),
+        Clock::QueryGuestUptimeMillis(), Clock::QueryHostUptimeMillis(),
+        token_ptr_before, token_before, token_after);
+  }
 
   if (cvars::gpu_blue_dragon_kick_wait_token && source == 1 &&
       interrupt_callback_data_) {
@@ -295,7 +362,14 @@ void GraphicsSystem::MarkVblank() {
   SCOPE_profile_cpu_f("gpu");
 
   // Increment vblank counter (so the game sees us making progress).
+  uint32_t counter_before = command_processor_->counter();
   command_processor_->increment_counter();
+  if (ShouldTraceMarkVblank()) {
+    XELOGI(
+        "GPU interrupt trace: MarkVblank counter {:08X}->{:08X} "
+        "dispatching source=0",
+        counter_before, command_processor_->counter());
+  }
 
   // TODO(benvanik): we shouldn't need to do the dispatch here, but there's
   //     something wrong and the CP will block waiting for code that

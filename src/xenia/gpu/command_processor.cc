@@ -41,6 +41,7 @@ constexpr uint32_t kCpRbRptrRegister = 0x01C4;
 constexpr uint32_t kCpRbWptrRegister = 0x01C5;
 
 std::atomic<int32_t> gpu_packet_trace_count{0};
+std::atomic<int32_t> gpu_interrupt_packet_trace_count{0};
 std::atomic<int32_t> gpu_swap_frontbuffer_checksum_count{0};
 std::atomic<int32_t> gpu_swap_render_targets_trace_count{0};
 std::atomic<bool> gpu_swap_probe_cvars_logged{false};
@@ -48,6 +49,14 @@ std::atomic<bool> gpu_swap_probe_cvars_logged{false};
 bool ShouldTraceGpuPacket() {
   return cvars::gpu_trace_swap &&
          gpu_packet_trace_count.fetch_add(1) < cvars::gpu_trace_packet_budget;
+}
+
+bool ShouldTraceGpuInterruptPacket() {
+  if (!cvars::gpu_trace_interrupts) {
+    return false;
+  }
+  int32_t budget = cvars::gpu_trace_interrupts_budget;
+  return budget < 0 || gpu_interrupt_packet_trace_count.fetch_add(1) < budget;
 }
 
 bool ShouldTraceSwapFrontbufferChecksum() {
@@ -489,6 +498,12 @@ void CommandProcessor::WorkerThreadMain() {
     UpdatePrimaryReadPointer(read_ptr_index_, "primary_buffer_end");
 
     if (cvars::gpu_interrupt_on_ring_idle) {
+      if (ShouldTraceGpuInterruptPacket()) {
+        XELOGI(
+            "GPU interrupt trace: ring-idle source=1 dispatch "
+            "read_ptr={:08X} write_ptr={:08X} primary_ptr={:08X}",
+            read_ptr_index_, write_ptr_index, primary_buffer_ptr_);
+      }
       graphics_system_->DispatchInterruptCallback(1, 2);
     }
 
@@ -1234,6 +1249,15 @@ bool CommandProcessor::ExecutePacketType3_INTERRUPT(RingBuffer* reader,
 
   // generate interrupt from the command stream
   uint32_t cpu_mask = reader->ReadAndSwap<uint32_t>();
+  if (ShouldTraceGpuInterruptPacket()) {
+    XELOGI(
+        "GPU interrupt trace: PM4_INTERRUPT cpu_mask={:08X} count={} "
+        "read_ptr={:08X} read_offset={:08X} counter={:08X} "
+        "rb_rptr={:08X} rb_wptr={:08X}",
+        cpu_mask, count, read_ptr_index_, uint32_t(reader->read_offset()),
+        counter_, uint32_t(register_file_->values[kCpRbRptrRegister]),
+        uint32_t(register_file_->values[kCpRbWptrRegister]));
+  }
   for (int n = 0; n < 6; n++) {
     if (cpu_mask & (1 << n)) {
       graphics_system_->DispatchInterruptCallback(1, n);
@@ -1279,6 +1303,18 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
 
   ++counter_;
+  if (ShouldTraceGpuInterruptPacket()) {
+    XELOGI(
+        "GPU interrupt trace: XE_SWAP complete frontbuffer={:08X} size={}x{} "
+        "counter={:08X} read_ptr={:08X} read_offset={:08X} "
+        "swap_interrupt={}",
+        frontbuffer_ptr, frontbuffer_width, frontbuffer_height, counter_,
+        read_ptr_index_, uint32_t(reader->read_offset()),
+        cvars::gpu_interrupt_on_swap);
+  }
+  if (cvars::gpu_interrupt_on_swap) {
+    graphics_system_->DispatchInterruptCallback(1, 2);
+  }
   return true;
 }
 
