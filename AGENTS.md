@@ -895,6 +895,19 @@ required.
   - Latest quiet validation `scratch\thor-debug\20260519-184120-*` reached the
     opening scene with zero unknown-register lines, zero `NtCreateFile failed`
     lines, and `8246B408` still dominating the final A64 speed profile.
+- Blue Dragon draw-wait fastpath:
+  `docs/research/20260519-192038-blue-dragon-draw-wait-fastpath.md`.
+  - `arm64_blue_dragon_draw_wait_fastpath` is routed through Android and
+    `tools/thor/thor_xenia_debug.ps1`, but is default-off and title-specific.
+  - The direct body for `8246B408` compiles to about `448` bytes versus the
+    generic `1632`-byte body and can reach the visible opening scene when paired
+    with the real KTHREAD clock probe.
+  - `-Arm64BlueDragonDrawWaitInlineTickStep 1` and
+    `-Arm64BlueDragonDrawWaitProbeStride 4096` both parked on black-screen
+    routes, so do not treat either as a speed default.
+  - The useful fastpath currently moves the bottleneck into guest-to-host clock
+    updates. Next work should make guest uptime cheap in generated A64 or move
+    the update closer to the original PPC load-site semantics.
 
 ## Codex Hooks / Automation
 

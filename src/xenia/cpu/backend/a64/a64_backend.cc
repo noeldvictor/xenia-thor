@@ -101,6 +101,12 @@ DEFINE_uint32(
     "KTHREAD+0x58 inline by this many milliseconds instead of calling the "
     "host clock updater. Research-only wait accelerator.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_draw_wait_fastpath, false,
+    "Thor ARM64 bring-up: replace Blue Dragon's known 8246B408 draw-wait "
+    "function body with a narrow hand-emitted A64 path. Research-only and "
+    "title-specific.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "

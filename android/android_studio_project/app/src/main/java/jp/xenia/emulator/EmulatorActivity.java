@@ -148,6 +148,8 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "arm64_blue_dragon_draw_wait_probe_stride");
             copyIntExtra(
                     intent, launchArguments, "arm64_blue_dragon_draw_wait_inline_tick_step");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_blue_dragon_draw_wait_fastpath");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");

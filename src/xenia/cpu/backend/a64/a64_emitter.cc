@@ -48,6 +48,10 @@ DECLARE_uint32(arm64_compiled_call_trace_budget);
 DECLARE_string(arm64_compiled_call_trace_functions);
 DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
+DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
+DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
             "A64 backend.",
@@ -274,6 +278,26 @@ void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
       static_cast<uint32_t>(ctx->r[10]), static_cast<uint32_t>(ctx->r[11]),
       static_cast<uint32_t>(ctx->r[13]), static_cast<uint32_t>(ctx->r[29]),
       static_cast<uint32_t>(ctx->r[30]), static_cast<uint32_t>(ctx->r[31]));
+}
+
+void UpdateBlueDragonDrawWaitKernelTimeForFastpath(void* raw_context) {
+  auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  if (!ctx || !ctx->processor) {
+    return;
+  }
+  auto memory = ctx->processor->memory();
+  uint32_t pcr_address = static_cast<uint32_t>(ctx->r[13]);
+  auto pcr = memory->TranslateVirtual(pcr_address);
+  if (!pcr) {
+    return;
+  }
+  uint32_t current_thread = xe::load_and_swap<uint32_t>(pcr + 0x100);
+  auto thread = memory->TranslateVirtual(current_thread);
+  if (!thread) {
+    return;
+  }
+  xe::store_and_swap<uint32_t>(thread + 0x58,
+                               xe::Clock::QueryGuestUptimeMillis());
 }
 
 bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
@@ -560,6 +584,9 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   label_cache_.push_back(epilog_label_ptr);
   epilog_label_ = epilog_label_ptr;
 
+  if (TryEmitBlueDragonDrawWaitFunctionBody()) {
+    b(*epilog_label_);
+  } else {
   // Walk HIR blocks and emit ARM64 instructions.
   auto block = builder->first_block();
   synchronize_stack_on_next_instruction_ = false;
@@ -599,6 +626,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     }
 
     block = block->next;
+  }
   }
 
   // ========================================================================
@@ -880,6 +908,142 @@ bool A64Emitter::TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
   str(x11, ptr(GetContextReg(),
                static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
 
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
+  if (!cvars::arm64_blue_dragon_draw_wait_fastpath ||
+      current_guest_function_ != 0x8246B408) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  auto& return_zero = NewCachedLabel();
+  auto& return_one = NewCachedLabel();
+  auto& done = NewCachedLabel();
+  auto& no_token_change = NewCachedLabel();
+  auto& no_owner_refresh = NewCachedLabel();
+
+  // Hand-emits Blue Dragon's draw wait predicate:
+  // token progress or current-KTHREAD ownership refreshes wait_state+0xC;
+  // elapsed < 5000 ms returns 1, otherwise returns 0. This intentionally skips
+  // the timeout helper side effect and is guarded by a title-specific cvar.
+  const bool update_kernel_time =
+      cvars::arm64_blue_dragon_draw_wait_probe;
+  uint32_t inline_step = update_kernel_time
+                             ? cvars::arm64_blue_dragon_draw_wait_inline_tick_step
+                             : 0;
+  if (update_kernel_time && inline_step == 0) {
+    uint32_t stride =
+        std::max<uint32_t>(cvars::arm64_blue_dragon_draw_wait_probe_stride, 1);
+    Xbyak_aarch64::Label* skip_update = nullptr;
+    if (stride > 1 && (stride & (stride - 1)) == 0) {
+      skip_update = &NewCachedLabel();
+      ldr(w17, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                           A64BackendContext,
+                                           blue_dragon_draw_wait_probe_counter))));
+      add(w17, w17, 1);
+      str(w17, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                           A64BackendContext,
+                                           blue_dragon_draw_wait_probe_counter))));
+      and_(w17, w17, stride - 1);
+      cbnz(w17, *skip_update);
+    }
+    CallNativeSafe(
+        reinterpret_cast<void*>(&UpdateBlueDragonDrawWaitKernelTimeForFastpath));
+    if (skip_update) {
+      L(*skip_update);
+    }
+  }
+
+  ldr(w9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+  cbz(w9, return_zero);
+  AddGuestAddressToMembase(w9, x9);  // x9 = wait state host pointer.
+
+  ldr(w10, ptr(x9, 0));
+  rev(w10, w10);
+  cbz(w10, return_zero);
+  AddGuestAddressToMembase(w10, x10);  // x10 = draw object host pointer.
+
+  add(x12, x10, 2, 12);
+  ldrb(w11, ptr(x12, 0xA39));
+  tbnz(w11, 1, return_zero);
+
+  ldr(w13, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[13]))));
+  cbz(w13, return_zero);
+  AddGuestAddressToMembase(w13, x13);
+  ldr(w13, ptr(x13, 0x100));
+  rev(w13, w13);
+  cbz(w13, return_zero);
+  AddGuestAddressToMembase(w13, x13);  // x13 = current KTHREAD host pointer.
+
+  ldr(w17, ptr(x13, 0x58));
+  rev(w17, w17);
+  if (inline_step != 0) {
+    inline_step = std::min<uint32_t>(inline_step, 0xFFFFu);
+    if (inline_step <= 4095) {
+      add(w17, w17, inline_step);
+    } else {
+      mov(w11, inline_step);
+      add(w17, w17, w11);
+    }
+    rev(w11, w17);
+    str(w11, ptr(x13, 0x58));
+  }
+
+  ldr(w14, ptr(x10, 0x2A10));
+  rev(w14, w14);
+  cbz(w14, return_zero);
+  AddGuestAddressToMembase(w14, x14);
+  ldr(w15, ptr(x9, 0x8));
+  rev(w15, w15);
+  ldr(w16, ptr(x14, 0));
+  rev(w16, w16);
+  cmp(w15, w16);
+  b(EQ, no_token_change);
+  mov(w11, w17);
+  rev(w11, w11);
+  str(w11, ptr(x9, 0xC));
+  mov(w11, w16);
+  rev(w11, w11);
+  str(w11, ptr(x9, 0x8));
+  L(no_token_change);
+
+  ldr(w11, ptr(x13, 0x14C));
+  rev(w11, w11);
+  ldr(w15, ptr(x10, 0x2A08));
+  rev(w15, w15);
+  cmp(w15, w11);
+  b(NE, no_owner_refresh);
+  ldr(w15, ptr(x10, 0x2A70));
+  rev(w15, w15);
+  cbz(w15, no_owner_refresh);
+  mov(w11, w17);
+  rev(w11, w11);
+  str(w11, ptr(x9, 0xC));
+  L(no_owner_refresh);
+
+  ldr(w10, ptr(x9, 0xC));
+  rev(w10, w10);
+  sub(w10, w17, w10);
+  mov(w11, uint32_t{0x1388});
+  cmp(w10, w11);
+  b(LO, return_one);
+
+  L(return_zero);
+  str(xzr, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+  b(done);
+
+  L(return_one);
+  mov(w9, uint32_t{1});
+  str(x9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+
+  L(done);
   return true;
 }
 
