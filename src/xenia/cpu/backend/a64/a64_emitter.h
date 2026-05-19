@@ -118,6 +118,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
 
   bool TryEmitGprLrHelperCall(const hir::Instr* instr,
                               GuestFunction* function);
+  bool TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
+                                           GuestFunction* function);
+  void AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
+                                Xbyak_aarch64::XReg host_reg);
   void Call(const hir::Instr* instr, GuestFunction* function);
   void CallIndirect(const hir::Instr* instr, int reg_index);
   void CallExtern(const hir::Instr* instr, const Function* function);

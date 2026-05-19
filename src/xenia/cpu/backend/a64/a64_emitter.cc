@@ -26,6 +26,7 @@
 #include "xenia/base/debugging.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_code_cache.h"
@@ -51,6 +52,11 @@ DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
             "A64 backend.",
             "a64");
+DEFINE_bool(
+    a64_inline_ppc_thread_field_leaf_helpers, true,
+    "Inline tiny PPC leaf helpers matching "
+    "`lwz r11,D(r13); lwz r3,D(r11); blr` in the A64 backend.",
+    "a64");
 
 namespace {
 std::atomic<int> g_a64_call_trace_budget{0};
@@ -301,6 +307,55 @@ bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
     return false;
   }
   *first_gpr = parsed;
+  return true;
+}
+
+bool DecodePpcLwz(uint32_t instr, uint32_t* dest_reg, uint32_t* base_reg,
+                  int32_t* offset) {
+  if (!dest_reg || !base_reg || !offset || (instr >> 26) != 32) {
+    return false;
+  }
+  *dest_reg = (instr >> 21) & 0x1F;
+  *base_reg = (instr >> 16) & 0x1F;
+  *offset = static_cast<int16_t>(instr & 0xFFFF);
+  return true;
+}
+
+bool IsScaledU32LoadOffset(int32_t offset) {
+  return offset >= 0 && offset <= 16380 && (offset & 3) == 0;
+}
+
+bool ParsePpcThreadFieldLeafHelper(xe::Memory* memory,
+                                   const xe::cpu::GuestFunction* function,
+                                   int32_t* thread_offset,
+                                   int32_t* field_offset) {
+  if (!memory || !function || !thread_offset || !field_offset ||
+      function->behavior() != xe::cpu::Function::Behavior::kDefault) {
+    return false;
+  }
+
+  const uint32_t address = function->address();
+  const uint8_t* code = memory->TranslateVirtual<const uint8_t*>(address);
+  const uint32_t instr0 = xe::load_and_swap<uint32_t>(code + 0);
+  const uint32_t instr1 = xe::load_and_swap<uint32_t>(code + 4);
+  const uint32_t instr2 = xe::load_and_swap<uint32_t>(code + 8);
+
+  uint32_t dest0 = 0;
+  uint32_t base0 = 0;
+  int32_t offset0 = 0;
+  uint32_t dest1 = 0;
+  uint32_t base1 = 0;
+  int32_t offset1 = 0;
+  if (!DecodePpcLwz(instr0, &dest0, &base0, &offset0) ||
+      !DecodePpcLwz(instr1, &dest1, &base1, &offset1) ||
+      instr2 != 0x4E800020 || dest0 != 11 || base0 != 13 || dest1 != 3 ||
+      base1 != 11 || !IsScaledU32LoadOffset(offset0) ||
+      !IsScaledU32LoadOffset(offset1)) {
+    return false;
+  }
+
+  *thread_offset = offset0;
+  *field_offset = offset1;
   return true;
 }
 }  // namespace
@@ -774,9 +829,66 @@ bool A64Emitter::TryEmitGprLrHelperCall(const hir::Instr* instr,
   return true;
 }
 
+void A64Emitter::AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
+                                          Xbyak_aarch64::XReg host_reg) {
+  mov(WReg(host_reg.getIdx()), guest_reg);
+  if (xe::memory::allocation_granularity() > 0x1000) {
+    mov(w12, 0xE0000000u);
+    cmp(WReg(host_reg.getIdx()), w12);
+    auto& skip_offset = NewCachedLabel();
+    b(LO, skip_offset);
+    add(WReg(host_reg.getIdx()), WReg(host_reg.getIdx()), 1, 12);
+    L(skip_offset);
+  }
+  add(host_reg, GetMembaseReg(), host_reg);
+}
+
+bool A64Emitter::TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
+                                                     GuestFunction* function) {
+  if (!cvars::a64_inline_ppc_thread_field_leaf_helpers ||
+      (instr->flags & hir::CALL_TAIL) != 0) {
+    return false;
+  }
+
+  int32_t thread_offset = 0;
+  int32_t field_offset = 0;
+  if (!ParsePpcThreadFieldLeafHelper(processor_->memory(), function,
+                                     &thread_offset, &field_offset)) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  // Inline:
+  //   lwz r11, D(r13)
+  //   lwz r3, D(r11)
+  //   blr
+  //
+  // Store r11 as well as r3 so the volatile-register side effect matches the
+  // guest helper for debug traces and any non-ABI caller oddities.
+  ldr(w9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[13]))));
+  AddGuestAddressToMembase(w9, x9);
+  ldr(w10, ptr(x9, static_cast<uint32_t>(thread_offset)));
+  rev(w10, w10);
+  str(x10, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[11]))));
+
+  AddGuestAddressToMembase(w10, x10);
+  ldr(w11, ptr(x10, static_cast<uint32_t>(field_offset)));
+  rev(w11, w11);
+  str(x11, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+
+  return true;
+}
+
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
   if (TryEmitGprLrHelperCall(instr, function)) {
+    return;
+  }
+  if (TryEmitPpcThreadFieldLeafHelperCall(instr, function)) {
     return;
   }
 

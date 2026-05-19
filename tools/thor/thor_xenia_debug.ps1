@@ -110,6 +110,7 @@ param(
     [string]$Arm64SpeedProfileTopFunctions = "",
     [string]$Arm64SpeedProfileMinDelta = "",
     [string]$A64InlineGprLrHelpers = "",
+    [string]$A64InlinePpcThreadFieldLeafHelpers = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
@@ -626,6 +627,9 @@ function Start-XeniaEmulator {
     if ($A64InlineGprLrHelpers) {
         $parts += "--ez a64_inline_gprlr_helpers $(ConvertTo-BooleanText $A64InlineGprLrHelpers)"
     }
+    if ($A64InlinePpcThreadFieldLeafHelpers) {
+        $parts += "--ez a64_inline_ppc_thread_field_leaf_helpers $(ConvertTo-BooleanText $A64InlinePpcThreadFieldLeafHelpers)"
+    }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
@@ -708,6 +712,7 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_top_functions=$Arm64SpeedProfileTopFunctions",
         "arm64_speed_profile_min_delta=$Arm64SpeedProfileMinDelta",
         "a64_inline_gprlr_helpers=$A64InlineGprLrHelpers",
+        "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
         "",
         "adb_events:",
         ($script:AdbEvents -join "`n"),

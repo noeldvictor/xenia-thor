@@ -10,6 +10,17 @@ ARM64 backend questions to upstream Xenia, the Xenia Discord, or unrelated
 open-source maintainers unless the problem is independently reproduced on an
 official upstream build.
 
+## Communication Style
+
+- Be concise and direct. Prefer short, concrete status, findings, and next
+  actions over broad narration.
+- Avoid AI-slop language: no filler praise, vague hype, fake certainty,
+  inflated metaphors, or generic "game changer" phrasing.
+- Write like an engineer leaving useful notes for the next run: what changed,
+  what proved it, what is still unknown, and what to try next.
+- Keep speculation clearly labeled, and tie technical claims to logs, captures,
+  source references, or dated research notes.
+
 ## Branch And Commit Rules
 
 - Work on `master` only unless the user explicitly changes this policy.
@@ -256,6 +267,10 @@ required.
     periodic summaries for function-entry deltas, direct/indirect guest calls,
     guest-to-host transitions, runtime resolves, and top guest PCs. It is
     default-off and preferred before noisy compiled-call tracing.
+  - `-A64InlinePpcThreadFieldLeafHelpers false` to roll back the A64 inline
+    for tiny PPC leaf helpers matching `lwz r11,D(r13); lwz r3,D(r11); blr`.
+    Blue Dragon's hot draw-wait route calls one of these helpers at
+    `8248B040`; keep the inline pattern-based rather than address-only.
   - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
     wait state.
   - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel
