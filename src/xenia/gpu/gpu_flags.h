@@ -72,7 +72,11 @@ DECLARE_uint32(vulkan_present_forced_resolve_format);
 DECLARE_bool(vulkan_debug_solid_guest_output);
 DECLARE_string(vulkan_debug_pixel_shader_output_filter);
 DECLARE_int32(vulkan_debug_pixel_shader_output_mode);
+DECLARE_string(vulkan_debug_pixel_shader_output_secondary_filter);
+DECLARE_int32(vulkan_debug_pixel_shader_output_secondary_mode);
+DECLARE_bool(vulkan_force_2101010_rgba8_fallback);
 DECLARE_bool(vulkan_force_signed_2101010_unorm_fallback);
+DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 
 DECLARE_bool(non_seamless_cube_map);

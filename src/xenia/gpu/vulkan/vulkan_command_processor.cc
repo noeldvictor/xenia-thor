@@ -1838,6 +1838,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "scored_min={}x{} scored_budget={} scored_required_format={} "
           "scored_reject_clear_like={} forced_present={} "
           "debug_ps_output_filter={} debug_ps_output_mode={} "
+          "debug_ps_output_secondary_filter={} "
+          "debug_ps_output_secondary_mode={} "
+          "force_2101010_rgba8={} force_signed_2101010_unorm={} "
+          "disable_fetch_exp_adjust={} "
           "forced_source={:08X}+{:08X} size={}x{} pitch={} format={}",
           cvars::vulkan_trace_swap_shared_memory_checksum,
           cvars::vulkan_trace_swap_shared_memory_checksum_budget,
@@ -1866,6 +1870,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_present_forced_resolve_on_swap,
           cvars::vulkan_debug_pixel_shader_output_filter,
           cvars::vulkan_debug_pixel_shader_output_mode,
+          cvars::vulkan_debug_pixel_shader_output_secondary_filter,
+          cvars::vulkan_debug_pixel_shader_output_secondary_mode,
+          cvars::vulkan_force_2101010_rgba8_fallback,
+          cvars::vulkan_force_signed_2101010_unorm_fallback,
+          cvars::vulkan_debug_texture_fetch_disable_exp_adjust,
           cvars::vulkan_present_forced_resolve_address,
           cvars::vulkan_present_forced_resolve_length,
           cvars::vulkan_present_forced_resolve_width,

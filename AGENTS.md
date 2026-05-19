@@ -271,8 +271,8 @@ Primary target:
 ## Current Blue Dragon / ARM64 State
 
 - Latest validated Thor captures:
-  `scratch\thor-debug\20260518-220838-*` and
-  `scratch\thor-debug\20260518-221334-*`.
+  `scratch\thor-debug\20260519-022127-*` reached the Blue Dragon title prompt
+  with the temporary exponent-adjust research knob.
 - The previous `0x826A23E8` Blue Dragon null-thunk crash was traced to
   `Sound::SOUNDBANK::Load XACTCreateSoundBank()` while Android was running
   with `apu=nop`.
@@ -297,11 +297,13 @@ Primary target:
 - The command processor now mirrors guest-visible ring pointers into
   `CP_RB_RPTR` / `CP_RB_WPTR` (`0x01C4` / `0x01C5`). Blue Dragon's D3D dump now
   shows matching drained ring pointers instead of a stale zero read pointer.
-- Current blocker: Blue Dragon still does not visibly reach title. The latest
-  long run stayed alive for 180 seconds with thousands of `VdSwap` / `XE_SWAP`
-  lines, no fatal/AndroidRuntime/GPU-hung lines, and no ARM64 fallback lines.
-  The official `VdSwap` frontbuffers `1CA1C000` / `1CDB4000` are zero at swap,
-  while Vulkan `IssueCopy` produces nonzero resolve candidates.
+- Current milestone: Blue Dragon reaches the `press START` title prompt on Thor
+  with `vulkan_debug_texture_fetch_disable_exp_adjust=true` and
+  `vulkan_force_signed_2101010_unorm_fallback=true`. This is a research-only
+  proof, not compatibility.
+- Current blocker: replace the coarse exponent-adjust bypass with a targeted
+  `2_10_10_10_FLOAT` / 7e3-aware texture decode path for resolved render-chain
+  data, then test title without the bypass.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.
@@ -621,6 +623,17 @@ Primary target:
   - The current GPU wall is the unforced `B02CC5F55AD0D140` shader pass or its
     texture/constant/boolean state, especially format 7 `2_10_10_10`, DXT
     input, branch booleans, log/exp/NaN handling, and export clamping.
+- Blue Dragon title exp-adjust proof:
+  `docs/research/20260519-022333-blue-dragon-title-exp-adjust-probe.md`.
+  - B02 raw unsigned sample output is nonzero, but the post-processed fetch
+    output is black because the active fetch path applies a `-16` result
+    exponent adjustment to values already normalized by the temporary
+    `2_10_10_10` fallback.
+  - `vulkan_debug_texture_fetch_disable_exp_adjust=true` reached the visible
+    `press START` title prompt in `scratch\thor-debug\20260519-022127-*`.
+  - Keep this cvar default-off and research-only. The next real fix is a
+    targeted 7e3-aware decode for `2_10_10_10_FLOAT` render-chain data on
+    Android/Adreno.
 
 ## Android ARM64 Risk Register
 

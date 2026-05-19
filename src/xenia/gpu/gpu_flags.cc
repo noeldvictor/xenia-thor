@@ -211,8 +211,27 @@ DEFINE_string(vulkan_debug_pixel_shader_output_filter, "",
 DEFINE_int32(vulkan_debug_pixel_shader_output_mode, 0,
              "Research-only shader-output override for hashes in "
              "vulkan_debug_pixel_shader_output_filter: 0 disables, 1 forces "
-             "magenta RGBA, 2 keeps RGB and forces alpha to 1.",
+             "magenta RGBA, 2 keeps RGB and forces alpha to 1, 10 exports "
+             "the last post-processed texture fetch observed by the shader, "
+             "11-14 smear individual XYZW fetch components, 15 exports a "
+             "fetch nonzero predicate, 20 exports final fetch coordinates, 30 "
+             "exports raw unsigned sample, 31 exports raw signed sample.",
              "GPU");
+DEFINE_string(
+    vulkan_debug_pixel_shader_output_secondary_filter, "",
+    "Second comma-separated pixel shader ucode hash filter for "
+    "vulkan_debug_pixel_shader_output_secondary_mode. Lets one shader be "
+    "forced while another shader is probed in the same research run.",
+    "GPU");
+DEFINE_int32(vulkan_debug_pixel_shader_output_secondary_mode, 0,
+             "Research-only secondary shader-output override: same modes as "
+             "vulkan_debug_pixel_shader_output_mode.",
+             "GPU");
+DEFINE_bool(vulkan_force_2101010_rgba8_fallback, false,
+            "Research-only Android/Adreno probe: load 2_10_10_10 textures as "
+            "raw R8G8B8A8 host textures. This is color-incorrect and only for "
+            "isolating A2B10G10R10 sampling/upload failures.",
+            "GPU");
 DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
@@ -220,6 +239,11 @@ DEFINE_bool(
     "unsigned UNORM host format. This is color-incorrect and only for "
     "black-screen triage.",
     "GPU");
+DEFINE_bool(vulkan_debug_texture_fetch_disable_exp_adjust, false,
+            "Research-only shader probe: force texture fetch result exponent "
+            "adjustment to 1.0. This is incorrect for gameplay and isolates "
+            "2_10_10_10_FLOAT resolve/fetch fallback darkening.",
+            "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

@@ -71,6 +71,32 @@ bool VulkanDebugShaderHashMatchesFilter(uint64_t hash,
   return false;
 }
 
+int32_t GetVulkanDebugPixelShaderOutputModeForHash(uint64_t hash) {
+  if (cvars::vulkan_debug_pixel_shader_output_mode &&
+      VulkanDebugShaderHashMatchesFilter(
+          hash, cvars::vulkan_debug_pixel_shader_output_filter)) {
+    return cvars::vulkan_debug_pixel_shader_output_mode;
+  }
+  if (cvars::vulkan_debug_pixel_shader_output_secondary_mode &&
+      VulkanDebugShaderHashMatchesFilter(
+          hash, cvars::vulkan_debug_pixel_shader_output_secondary_filter)) {
+    return cvars::vulkan_debug_pixel_shader_output_secondary_mode;
+  }
+  return 0;
+}
+
+bool VulkanDebugPixelShaderOutputModeNeedsLastTextureFetch(int32_t mode) {
+  return mode >= 10 && mode <= 15;
+}
+
+bool VulkanDebugPixelShaderOutputModeNeedsLastTextureCoordinates(int32_t mode) {
+  return mode == 20;
+}
+
+bool VulkanDebugPixelShaderOutputModeNeedsLastRawTextureFetch(int32_t mode) {
+  return mode == 30 || mode == 31;
+}
+
 }  // namespace
 
 SpirvShaderTranslator::Features::Features(bool all)
@@ -175,6 +201,10 @@ void SpirvShaderTranslator::Reset() {
 
   main_interface_.clear();
   var_main_registers_ = spv::NoResult;
+  var_main_debug_tfetch_last_ = spv::NoResult;
+  var_main_debug_tfetch_last_coords_ = spv::NoResult;
+  var_main_debug_tfetch_last_raw_unsigned_ = spv::NoResult;
+  var_main_debug_tfetch_last_raw_signed_ = spv::NoResult;
   var_main_memexport_address_ = spv::NoResult;
   for (size_t memexport_eM_index = 0;
        memexport_eM_index < xe::countof(var_main_memexport_data_);
@@ -571,6 +601,32 @@ void SpirvShaderTranslator::StartTranslation() {
     var_main_tfetch_gradients_v_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_float3_,
         "xe_var_tfetch_gradients_v", const_float3_0_);
+    int32_t debug_pixel_shader_output_mode =
+        is_pixel_shader()
+            ? GetVulkanDebugPixelShaderOutputModeForHash(
+                  current_shader().ucode_data_hash())
+            : 0;
+    if (VulkanDebugPixelShaderOutputModeNeedsLastTextureFetch(
+            debug_pixel_shader_output_mode)) {
+      var_main_debug_tfetch_last_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_float4_,
+          "xe_var_debug_tfetch_last", const_float4_0_);
+    }
+    if (VulkanDebugPixelShaderOutputModeNeedsLastTextureCoordinates(
+            debug_pixel_shader_output_mode)) {
+      var_main_debug_tfetch_last_coords_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_float4_,
+          "xe_var_debug_tfetch_last_coords", const_float4_0_);
+    }
+    if (VulkanDebugPixelShaderOutputModeNeedsLastRawTextureFetch(
+            debug_pixel_shader_output_mode)) {
+      var_main_debug_tfetch_last_raw_unsigned_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_float4_,
+          "xe_var_debug_tfetch_last_raw_unsigned", const_float4_0_);
+      var_main_debug_tfetch_last_raw_signed_ = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassFunction, type_float4_,
+          "xe_var_debug_tfetch_last_raw_signed", const_float4_0_);
+    }
     if (register_count()) {
       spv::Id type_register_array = builder_->makeArrayType(
           type_float4_, builder_->makeUintConstant(register_count()), 0);
@@ -2906,12 +2962,24 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
         value_to_store, type_float3_, 0);
   }
 
-  if (result.storage_target == InstructionStorageTarget::kColor &&
-      cvars::vulkan_debug_pixel_shader_output_mode &&
-      VulkanDebugShaderHashMatchesFilter(
-          current_shader().ucode_data_hash(),
-          cvars::vulkan_debug_pixel_shader_output_filter)) {
-    switch (cvars::vulkan_debug_pixel_shader_output_mode) {
+  if (result.storage_target == InstructionStorageTarget::kColor) {
+    auto make_debug_color = [&](spv::Id x, spv::Id y, spv::Id z, spv::Id w) {
+      id_vector_temp_util_.clear();
+      id_vector_temp_util_.push_back(x);
+      id_vector_temp_util_.push_back(y);
+      id_vector_temp_util_.push_back(z);
+      id_vector_temp_util_.push_back(w);
+      return builder_->createCompositeConstruct(type_float4_,
+                                                id_vector_temp_util_);
+    };
+    auto make_debug_sentinel_color = [&]() {
+      return make_debug_color(const_float_1_, const_float_1_, const_float_0_,
+                              const_float_1_);
+    };
+    int32_t debug_pixel_shader_output_mode =
+        GetVulkanDebugPixelShaderOutputModeForHash(
+            current_shader().ucode_data_hash());
+    switch (debug_pixel_shader_output_mode) {
       case 1:
         id_vector_temp_util_.clear();
         id_vector_temp_util_.push_back(const_float_1_);
@@ -2925,6 +2993,85 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
         if (target_num_components >= 4) {
           value_to_store = builder_->createCompositeInsert(
               const_float_1_, value_to_store, target_type, 3);
+        }
+        break;
+      case 10:
+        if (var_main_debug_tfetch_last_ != spv::NoResult) {
+          value_to_store =
+              builder_->createLoad(var_main_debug_tfetch_last_,
+                                   spv::NoPrecision);
+        } else {
+          value_to_store = make_debug_sentinel_color();
+        }
+        break;
+      case 11:
+      case 12:
+      case 13:
+      case 14:
+        if (var_main_debug_tfetch_last_ != spv::NoResult) {
+          spv::Id debug_fetch =
+              builder_->createLoad(var_main_debug_tfetch_last_,
+                                   spv::NoPrecision);
+          spv::Id component = builder_->createCompositeExtract(
+              debug_fetch, type_float_, debug_pixel_shader_output_mode - 11);
+          value_to_store =
+              make_debug_color(component, component, component, const_float_1_);
+        } else {
+          value_to_store = make_debug_sentinel_color();
+        }
+        break;
+      case 15:
+        if (var_main_debug_tfetch_last_ != spv::NoResult) {
+          spv::Id debug_fetch =
+              builder_->createLoad(var_main_debug_tfetch_last_,
+                                   spv::NoPrecision);
+          spv::Id epsilon = builder_->makeFloatConstant(1.0f / 65536.0f);
+          spv::Id any_nonzero = builder_->makeBoolConstant(false);
+          for (uint32_t i = 0; i < 4; ++i) {
+            spv::Id component =
+                builder_->createCompositeExtract(debug_fetch, type_float_, i);
+            spv::Id abs_component = builder_->createUnaryBuiltinCall(
+                type_float_, ext_inst_glsl_std_450_, GLSLstd450FAbs,
+                component);
+            spv::Id component_nonzero = builder_->createBinOp(
+                spv::OpFOrdGreaterThan, type_bool_, abs_component, epsilon);
+            any_nonzero = builder_->createBinOp(spv::OpLogicalOr, type_bool_,
+                                                any_nonzero, component_nonzero);
+          }
+          spv::Id component = builder_->createTriOp(
+              spv::OpSelect, type_float_, any_nonzero, const_float_1_,
+              const_float_0_);
+          value_to_store =
+              make_debug_color(component, component, component, const_float_1_);
+        } else {
+          value_to_store = make_debug_sentinel_color();
+        }
+        break;
+      case 20:
+        if (var_main_debug_tfetch_last_coords_ != spv::NoResult) {
+          value_to_store =
+              builder_->createLoad(var_main_debug_tfetch_last_coords_,
+                                   spv::NoPrecision);
+        } else {
+          value_to_store = make_debug_sentinel_color();
+        }
+        break;
+      case 30:
+        if (var_main_debug_tfetch_last_raw_unsigned_ != spv::NoResult) {
+          value_to_store =
+              builder_->createLoad(var_main_debug_tfetch_last_raw_unsigned_,
+                                   spv::NoPrecision);
+        } else {
+          value_to_store = make_debug_sentinel_color();
+        }
+        break;
+      case 31:
+        if (var_main_debug_tfetch_last_raw_signed_ != spv::NoResult) {
+          value_to_store =
+              builder_->createLoad(var_main_debug_tfetch_last_raw_signed_,
+                                   spv::NoPrecision);
+        } else {
+          value_to_store = make_debug_sentinel_color();
         }
         break;
       default:

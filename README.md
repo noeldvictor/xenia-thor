@@ -52,7 +52,7 @@ Current focus:
 - Vulkan bring-up and future RenderDoc/AGI lanes.
 - Blue Dragon Disc 1 as a legally owned local test case.
 
-Current state as of 2026-05-18:
+Current state as of 2026-05-19:
 
 - The Android Vulkan window/demo path runs on the Thor.
 - The emulator activity can launch Blue Dragon Disc 1 from the SD card.
@@ -67,13 +67,13 @@ Current state as of 2026-05-18:
 - The donor A64 backend now compiles into the Android native core for
   `arm64-v8a` and `x86_64`, which is build progress, not a compatibility
   claim.
-- Blue Dragon's real VdSwap frontbuffers are still black/zero, but a forced
-  Vulkan present of resolve candidate `1C340000` now shows a uniform dark-blue
-  guest surface on Thor. That is a debug checkpoint, not title screen progress.
-- It still does not reach title or playable gameplay.
-- The next main lane is selecting the correct visible render source and fixing
-  the render/guest progress path that leaves Blue Dragon stuck on a flat
-  dark-blue surface instead of reaching title.
+- Blue Dragon reaches the visible `press START` title prompt on Thor with the
+  temporary research cvar `vulkan_debug_texture_fetch_disable_exp_adjust=true`.
+  This is a proof of the render-chain issue, not a compatibility claim.
+- It still is not playable gameplay.
+- The next main lane is replacing the coarse exponent-adjust bypass with a
+  targeted `2_10_10_10_FLOAT` / 7e3-aware texture decode path for resolved
+  render-chain data on Android/Adreno.
 - It is not a compatibility result.
 
 ## Local Notes
@@ -92,6 +92,7 @@ Useful repo docs for this fork:
 - [Blue Dragon KTHREAD Timer And GPU Watchdog](docs/research/20260518-133100-blue-dragon-kthread-gpu-watchdog.md)
 - [ARM64 JIT Gap Device Checkpoint](docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md)
 - [aX360e A64 Hard Swap](docs/research/20260518-164150-ax360e-a64-hard-swap.md)
+- [Blue Dragon Title Exp-Adjust Probe](docs/research/20260519-022333-blue-dragon-title-exp-adjust-probe.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 

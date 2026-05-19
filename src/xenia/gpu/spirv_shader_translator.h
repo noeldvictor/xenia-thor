@@ -913,6 +913,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id var_main_tfetch_gradients_v_;
   // float4[register_count()].
   spv::Id var_main_registers_;
+  // PS debug only - float4.
+  spv::Id var_main_debug_tfetch_last_;
+  spv::Id var_main_debug_tfetch_last_coords_;
+  spv::Id var_main_debug_tfetch_last_raw_unsigned_;
+  spv::Id var_main_debug_tfetch_last_raw_signed_;
   // Memory export variables are created only when needed.
   // float4.
   spv::Id var_main_memexport_address_;

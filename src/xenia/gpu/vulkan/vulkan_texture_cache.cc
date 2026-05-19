@@ -1871,13 +1871,31 @@ bool VulkanTextureCache::Initialize() {
                                           VK_FORMAT_R16G16B16A16_SNORM,
                                           &r16g16b16a16_snorm_properties);
   VkFormatProperties format_properties;
+  if (cvars::vulkan_force_2101010_rgba8_fallback) {
+    HostFormatPair& host_format_2101010 =
+        host_formats_[uint32_t(xenos::TextureFormat::k_2_10_10_10)];
+    HostFormatPair& host_format_2101010_as_16 =
+        host_formats_[uint32_t(
+            xenos::TextureFormat::k_2_10_10_10_AS_16_16_16_16)];
+    host_format_2101010.format_unsigned.load_shader = kLoadShaderIndex32bpb;
+    host_format_2101010.format_unsigned.format = VK_FORMAT_R8G8B8A8_UNORM;
+    host_format_2101010.format_unsigned.block_compressed = false;
+    host_format_2101010.format_signed = host_format_2101010.format_unsigned;
+    host_format_2101010.unsigned_signed_compatible = true;
+    host_format_2101010.swizzle = xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA;
+    host_format_2101010_as_16 = host_format_2101010;
+    XELOGGPU(
+        "VulkanTextureCache: forcing 2_10_10_10 textures through raw RGBA8 "
+        "fallback for Adreno texture-sampling triage");
+  }
   // TODO(Triang3l): k_2_10_10_10 signed -> filterable R16G16B16A16_SFLOAT
   // (enough storage precision, possibly unwanted filtering precision change).
   // Research-only Thor bring-up: Adreno 740 exposes no sampled-image support
   // for A2B10G10R10_SNORM. This fallback is intentionally approximate; it
   // lets Blue Dragon black-screen triage proceed without adding new shader
   // bytecode yet.
-  if (cvars::vulkan_force_signed_2101010_unorm_fallback) {
+  if (!cvars::vulkan_force_2101010_rgba8_fallback &&
+      cvars::vulkan_force_signed_2101010_unorm_fallback) {
     ifn.vkGetPhysicalDeviceFormatProperties(
         physical_device, VK_FORMAT_A2B10G10R10_SNORM_PACK32,
         &format_properties);

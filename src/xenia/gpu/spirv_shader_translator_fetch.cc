@@ -19,6 +19,7 @@
 #include "third_party/glslang/SPIRV/GLSL.std.450.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
+#include "xenia/gpu/gpu_flags.h"
 
 namespace xe {
 namespace gpu {
@@ -1359,6 +1360,18 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                                spv::NoPrecision);
       uint32_t swizzled_signs_word_offset = 8 * (fetch_constant_index & 3);
 
+      if (var_main_debug_tfetch_last_coords_ != spv::NoResult &&
+          instr.opcode == ucode::FetchOpcode::kTextureFetch) {
+        id_vector_temp_.clear();
+        id_vector_temp_.push_back(coordinates[0]);
+        id_vector_temp_.push_back(coordinates[1]);
+        id_vector_temp_.push_back(coordinates[2]);
+        id_vector_temp_.push_back(const_float_1_);
+        builder_->createStore(
+            builder_->createCompositeConstruct(type_float4_, id_vector_temp_),
+            var_main_debug_tfetch_last_coords_);
+      }
+
       spv::Builder::TextureParameters texture_parameters = {};
 
       if (instr.opcode == ucode::FetchOpcode::kGetTextureComputedLod) {
@@ -1988,6 +2001,14 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                         is_any_signed, sample_result_unsigned,
                         sample_result_signed);
         }
+        if (var_main_debug_tfetch_last_raw_unsigned_ != spv::NoResult) {
+          builder_->createStore(sample_result_unsigned,
+                                var_main_debug_tfetch_last_raw_unsigned_);
+        }
+        if (var_main_debug_tfetch_last_raw_signed_ != spv::NoResult) {
+          builder_->createStore(sample_result_signed,
+                                var_main_debug_tfetch_last_raw_signed_);
+        }
 
         // Swizzle the result components manually if needed, to `result`.
         // Because the same host format component may be replicated into
@@ -2199,13 +2220,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
 
         // Apply the exponent bias from the bits 13:18 of the fetch constant
         // word 4.
-        spv::Id result_exponent_bias = builder_->createBinBuiltinCall(
-            type_float_, ext_inst_glsl_std_450_, GLSLstd450Ldexp,
-            const_float_1_,
-            builder_->createTriOp(spv::OpBitFieldSExtract, type_int_,
-                                  fetch_constant_word_4_signed,
-                                  builder_->makeUintConstant(13),
-                                  builder_->makeUintConstant(6)));
+        spv::Id result_exponent_bias =
+            cvars::vulkan_debug_texture_fetch_disable_exp_adjust
+                ? const_float_1_
+                : builder_->createBinBuiltinCall(
+                      type_float_, ext_inst_glsl_std_450_, GLSLstd450Ldexp,
+                      const_float_1_,
+                      builder_->createTriOp(spv::OpBitFieldSExtract, type_int_,
+                                            fetch_constant_word_4_signed,
+                                            builder_->makeUintConstant(13),
+                                            builder_->makeUintConstant(6)));
         {
           uint32_t result_remaining_components = used_result_nonzero_components;
           uint32_t result_component_index;
@@ -2239,6 +2263,17 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
     uint32_t result_component_index;
     xe::bit_scan_forward(used_result_components, &result_component_index);
     result_vector = result[result_component_index];
+  }
+  if (var_main_debug_tfetch_last_ != spv::NoResult &&
+      instr.opcode == ucode::FetchOpcode::kTextureFetch) {
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(result[0]);
+    id_vector_temp_.push_back(result[1]);
+    id_vector_temp_.push_back(result[2]);
+    id_vector_temp_.push_back(result[3]);
+    builder_->createStore(
+        builder_->createCompositeConstruct(type_float4_, id_vector_temp_),
+        var_main_debug_tfetch_last_);
   }
   StoreResult(instr.result, result_vector);
 }

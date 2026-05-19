@@ -58,7 +58,11 @@ param(
     [string]$VulkanDebugSolidGuestOutput = "false",
     [string]$VulkanDebugPixelShaderOutputFilter = "",
     [string]$VulkanDebugPixelShaderOutputMode = "",
+    [string]$VulkanDebugPixelShaderOutputSecondaryFilter = "",
+    [string]$VulkanDebugPixelShaderOutputSecondaryMode = "",
+    [string]$VulkanForce2101010Rgba8Fallback = "false",
     [string]$VulkanForceSigned2101010UnormFallback = "false",
+    [string]$VulkanDebugTextureFetchDisableExpAdjust = "false",
     [string]$GpuEarlyPrimaryReadPointerWriteback = "false",
     [string]$GpuBlueDragonKickWaitTokenBudget = "",
     [string]$GpuTraceInterruptsBudget = "",
@@ -427,7 +431,9 @@ function Start-XeniaEmulator {
         "--ez vulkan_present_scored_resolve_reject_clear_like $(ConvertTo-BooleanText $VulkanPresentScoredResolveRejectClearLike)",
         "--ez vulkan_present_forced_resolve_on_swap $(ConvertTo-BooleanText $VulkanPresentForcedResolveOnSwap)",
         "--ez vulkan_debug_solid_guest_output $(ConvertTo-BooleanText $VulkanDebugSolidGuestOutput)",
+        "--ez vulkan_force_2101010_rgba8_fallback $(ConvertTo-BooleanText $VulkanForce2101010Rgba8Fallback)",
         "--ez vulkan_force_signed_2101010_unorm_fallback $(ConvertTo-BooleanText $VulkanForceSigned2101010UnormFallback)",
+        "--ez vulkan_debug_texture_fetch_disable_exp_adjust $(ConvertTo-BooleanText $VulkanDebugTextureFetchDisableExpAdjust)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
     if ($TimeScalar) {
@@ -453,6 +459,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanDebugPixelShaderOutputFilter) {
         $parts += "--es vulkan_debug_pixel_shader_output_filter $(ConvertTo-AdbShellSingleQuote $VulkanDebugPixelShaderOutputFilter)"
+    }
+    if ($VulkanDebugPixelShaderOutputSecondaryFilter) {
+        $parts += "--es vulkan_debug_pixel_shader_output_secondary_filter $(ConvertTo-AdbShellSingleQuote $VulkanDebugPixelShaderOutputSecondaryFilter)"
     }
     if ($BreakOnDebugbreak -ne "") {
         $parts += "--ez break_on_debugbreak $(ConvertTo-BooleanText $BreakOnDebugbreak)"
@@ -531,6 +540,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanDebugPixelShaderOutputMode) {
         $parts += "--ei vulkan_debug_pixel_shader_output_mode $(ConvertTo-AdbIntText $VulkanDebugPixelShaderOutputMode)"
+    }
+    if ($VulkanDebugPixelShaderOutputSecondaryMode) {
+        $parts += "--ei vulkan_debug_pixel_shader_output_secondary_mode $(ConvertTo-AdbIntText $VulkanDebugPixelShaderOutputSecondaryMode)"
     }
     if ($MmapAddressHigh) {
         $parts += "--ei mmap_address_high $MmapAddressHigh"
