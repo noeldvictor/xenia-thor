@@ -107,18 +107,30 @@ DEFINE_bool(vulkan_trace_draw_state, false,
             "GPU");
 DEFINE_int32(vulkan_trace_draw_state_budget, 128,
              "Maximum Vulkan draw-state trace lines.", "GPU");
+DEFINE_string(vulkan_trace_draw_shader_filter, "",
+              "Comma-separated vertex or pixel shader ucode hashes to include "
+              "in vulkan_trace_draw_state; empty traces all.",
+              "GPU");
 DEFINE_bool(vulkan_trace_shader_constants, false,
             "Trace active pixel shader constant maps and values around Vulkan "
             "draws. Research-only Android GPU bring-up probe.",
             "GPU");
 DEFINE_int32(vulkan_trace_shader_constants_budget, 32,
              "Maximum active pixel shader constant trace groups.", "GPU");
+DEFINE_string(vulkan_trace_shader_constants_shader_filter, "",
+              "Comma-separated shader ucode hashes to include in "
+              "vulkan_trace_shader_constants; empty traces all.",
+              "GPU");
 DEFINE_bool(vulkan_trace_texture_source_checksum, false,
             "Read back active texture source ranges from Vulkan shared memory "
             "and log sparse checksums. Research-only and very slow.",
             "GPU");
 DEFINE_int32(vulkan_trace_texture_source_checksum_budget, 24,
              "Maximum active texture source checksum readbacks.", "GPU");
+DEFINE_string(vulkan_trace_texture_source_shader_filter, "",
+              "Comma-separated shader ucode hashes to include in "
+              "vulkan_trace_texture_source_checksum; empty traces all.",
+              "GPU");
 DEFINE_bool(vulkan_trace_vertex_fetch_checksum, false,
             "Trace active vertex fetch buffers and sparse CPU-side checksums. "
             "Research-only Android black-screen probe.",

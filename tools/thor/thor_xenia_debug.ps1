@@ -43,8 +43,11 @@ param(
     [string]$VulkanReadbackResolve = "false",
     [string]$VulkanTraceCopyState = "false",
     [string]$VulkanTraceDrawState = "false",
+    [string]$VulkanTraceDrawShaderFilter = "",
     [string]$VulkanTraceShaderConstants = "false",
+    [string]$VulkanTraceShaderConstantsShaderFilter = "",
     [string]$VulkanTraceTextureSourceChecksum = "false",
+    [string]$VulkanTraceTextureSourceShaderFilter = "",
     [string]$VulkanTraceVertexFetchChecksum = "false",
     [string]$VulkanTraceVertexFetchShaderFilter = "",
     [string]$VulkanTraceSwapSharedMemoryChecksum = "false",
@@ -433,6 +436,15 @@ function Start-XeniaEmulator {
     }
     if ($script:ActiveDumpShadersPath) {
         $parts += "--es dump_shaders $(ConvertTo-AdbShellSingleQuote $script:ActiveDumpShadersPath)"
+    }
+    if ($VulkanTraceDrawShaderFilter) {
+        $parts += "--es vulkan_trace_draw_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceDrawShaderFilter)"
+    }
+    if ($VulkanTraceShaderConstantsShaderFilter) {
+        $parts += "--es vulkan_trace_shader_constants_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceShaderConstantsShaderFilter)"
+    }
+    if ($VulkanTraceTextureSourceShaderFilter) {
+        $parts += "--es vulkan_trace_texture_source_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceTextureSourceShaderFilter)"
     }
     if ($VulkanTraceVertexFetchShaderFilter) {
         $parts += "--es vulkan_trace_vertex_fetch_shader_filter $(ConvertTo-AdbShellSingleQuote $VulkanTraceVertexFetchShaderFilter)"

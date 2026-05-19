@@ -51,9 +51,15 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_readback_resolve");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_copy_state");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_state");
+            copyStringExtra(
+                    intent, launchArguments, "vulkan_trace_draw_shader_filter");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
+            copyStringExtra(
+                    intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_texture_source_checksum");
+            copyStringExtra(
+                    intent, launchArguments, "vulkan_trace_texture_source_shader_filter");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_vertex_fetch_checksum");
             copyStringExtra(

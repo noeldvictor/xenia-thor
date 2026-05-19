@@ -85,24 +85,6 @@ bool ShouldTraceVulkanDrawState() {
   return budget < 0 || vulkan_draw_state_count.fetch_add(1) < budget;
 }
 
-bool ShouldTraceVulkanTextureSourceChecksum() {
-  if (!cvars::vulkan_trace_texture_source_checksum) {
-    return false;
-  }
-  int32_t budget = cvars::vulkan_trace_texture_source_checksum_budget;
-  return budget < 0 ||
-         vulkan_texture_source_checksum_count.fetch_add(1) < budget;
-}
-
-bool ShouldTraceVulkanVertexFetchChecksum() {
-  if (!cvars::vulkan_trace_vertex_fetch_checksum) {
-    return false;
-  }
-  int32_t budget = cvars::vulkan_trace_vertex_fetch_checksum_budget;
-  return budget < 0 ||
-         vulkan_vertex_fetch_checksum_count.fetch_add(1) < budget;
-}
-
 bool TraceHashMatchesFilter(uint64_t hash, const std::string& filter) {
   if (filter.empty()) {
     return true;
@@ -129,6 +111,48 @@ bool TraceHashMatchesFilter(uint64_t hash, const std::string& filter) {
     cursor = end;
   }
   return false;
+}
+
+bool TraceHashPairMatchesFilter(uint64_t vertex_shader_hash,
+                                uint64_t pixel_shader_hash,
+                                const std::string& filter) {
+  if (filter.empty()) {
+    return true;
+  }
+  return (vertex_shader_hash &&
+          TraceHashMatchesFilter(vertex_shader_hash, filter)) ||
+         (pixel_shader_hash &&
+          TraceHashMatchesFilter(pixel_shader_hash, filter));
+}
+
+bool ShouldTraceVulkanDrawStateForShaders(uint64_t vertex_shader_hash,
+                                          uint64_t pixel_shader_hash) {
+  if (!cvars::vulkan_trace_draw_state) {
+    return false;
+  }
+  if (!TraceHashPairMatchesFilter(vertex_shader_hash, pixel_shader_hash,
+                                  cvars::vulkan_trace_draw_shader_filter)) {
+    return false;
+  }
+  return ShouldTraceVulkanDrawState();
+}
+
+bool ShouldTraceVulkanTextureSourceChecksum() {
+  if (!cvars::vulkan_trace_texture_source_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_texture_source_checksum_budget;
+  return budget < 0 ||
+         vulkan_texture_source_checksum_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceVulkanVertexFetchChecksum() {
+  if (!cvars::vulkan_trace_vertex_fetch_checksum) {
+    return false;
+  }
+  int32_t budget = cvars::vulkan_trace_vertex_fetch_checksum_budget;
+  return budget < 0 ||
+         vulkan_vertex_fetch_checksum_count.fetch_add(1) < budget;
 }
 
 bool ShouldTraceVulkanShaderConstants() {
@@ -1528,6 +1552,10 @@ bool VulkanCommandProcessor::TraceTextureSourceChecksums(
   if (!cvars::vulkan_trace_texture_source_checksum || !used_texture_mask) {
     return true;
   }
+  if (!TraceHashMatchesFilter(
+          shader_hash, cvars::vulkan_trace_texture_source_shader_filter)) {
+    return true;
+  }
 
   std::vector<VulkanTextureCache::ActiveTextureSourceRange> source_ranges;
   texture_cache_->CollectActiveTextureSourceRanges(used_texture_mask,
@@ -1589,6 +1617,11 @@ bool VulkanCommandProcessor::TraceTextureSourceChecksums(
 
 void VulkanCommandProcessor::TraceShaderConstants(
     const VulkanShader& shader, const char* stage_label, bool is_pixel_shader) {
+  if (!TraceHashMatchesFilter(
+          shader.ucode_data_hash(),
+          cvars::vulkan_trace_shader_constants_shader_filter)) {
+    return;
+  }
   if (!ShouldTraceVulkanShaderConstants()) {
     return;
   }
@@ -1795,7 +1828,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "trace_resolve={} trace_resolve_budget={} "
           "trace_resolve_checksum={} trace_resolve_checksum_budget={} "
           "shader_constants={} shader_constants_budget={} "
+          "shader_constants_filter={} "
           "texture_source_checksum={} texture_source_checksum_budget={} "
+          "texture_source_filter={} "
+          "draw_state={} draw_state_budget={} draw_state_filter={} "
           "vertex_fetch_checksum={} vertex_fetch_checksum_budget={} "
           "vertex_fetch_filter={} "
           "readback_resolve={} recent_present={} scored_present={} "
@@ -1809,8 +1845,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           cvars::vulkan_trace_resolve_checksum_budget,
           cvars::vulkan_trace_shader_constants,
           cvars::vulkan_trace_shader_constants_budget,
+          cvars::vulkan_trace_shader_constants_shader_filter,
           cvars::vulkan_trace_texture_source_checksum,
           cvars::vulkan_trace_texture_source_checksum_budget,
+          cvars::vulkan_trace_texture_source_shader_filter,
+          cvars::vulkan_trace_draw_state, cvars::vulkan_trace_draw_state_budget,
+          cvars::vulkan_trace_draw_shader_filter,
           cvars::vulkan_trace_vertex_fetch_checksum,
           cvars::vulkan_trace_vertex_fetch_checksum_budget,
           cvars::vulkan_trace_vertex_fetch_shader_filter,
@@ -2939,7 +2979,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
   const RegisterFile& regs = *register_file_;
-  bool trace_draw_state = ShouldTraceVulkanDrawState();
 
   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
   if (edram_mode == xenos::EdramMode::kCopy) {
@@ -2956,7 +2995,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   auto vertex_shader = static_cast<VulkanShader*>(active_vertex_shader());
   if (!vertex_shader) {
     // Always need a vertex shader.
-    if (trace_draw_state) {
+    if (ShouldTraceVulkanDrawStateForShaders(0, 0)) {
       XELOGI(
           "GPU draw trace: skipped no vertex shader prim={} index_count={} "
           "edram_mode={}",
@@ -2965,6 +3004,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     return false;
   }
   pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
+  uint64_t vertex_shader_hash = vertex_shader->ucode_data_hash();
   // TODO(Triang3l): If the shader uses memory export, but
   // vertexPipelineStoresAndAtomics is not supported, convert the vertex shader
   // to a compute shader and dispatch it after the draw if the draw doesn't use
@@ -2997,7 +3037,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // cache.
     if (memexport_ranges_.empty()) {
       // This draw has no effect.
-      if (trace_draw_state) {
+      if (ShouldTraceVulkanDrawStateForShaders(vertex_shader_hash, 0)) {
         XELOGI(
             "GPU draw trace: skipped no rasterization/no memexport prim={} "
             "index_count={} edram_mode={} vs_hash={:016X}",
@@ -3011,6 +3051,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       device_properties.fragmentStoresAndAtomics) {
     draw_util::AddMemExportRanges(regs, *pixel_shader, memexport_ranges_);
   }
+  uint64_t pixel_shader_hash =
+      pixel_shader ? pixel_shader->ucode_data_hash() : 0;
+  bool trace_draw_state =
+      ShouldTraceVulkanDrawStateForShaders(vertex_shader_hash,
+                                           pixel_shader_hash);
 
   uint32_t ps_param_gen_pos = UINT32_MAX;
   uint32_t interpolator_mask =

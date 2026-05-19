@@ -202,6 +202,13 @@ Primary target:
   This is a slow research-only trace. The 2026-05-19 Blue Dragon run ruled out
   bad final-blit vertex position, UV, or color data as the immediate black
   frame cause.
+- For upstream Blue Dragon render-chain probes, use shader-hash filters so
+  draw-state, constants, and texture-source budgets land on the suspected
+  passes:
+  `-VulkanTraceDrawShaderFilter`, `-VulkanTraceShaderConstantsShaderFilter`,
+  and `-VulkanTraceTextureSourceShaderFilter`. Current useful pixel hashes are
+  `05775DE8A2B0B3F5`, `0ABADD9DA4373CBA`, `2A0674C564A8A8C5`,
+  `57B736C8B5D4E953`, `B02CC5F55AD0D140`, and `9567C79307ACC6F5`.
 - Known diagnostic forced-present probe: `1D88F000+00385000`, `720x720`, pitch
   `1280`, format `6` can turn the surface white on Thor. It is proof the
   presenter can show resolve memory, not proof the game reached title.
@@ -562,9 +569,23 @@ Primary target:
     position and UV attributes, and its vertex color multiplier is not zero.
   - The 1280x720 source feeding that final pass is already zero or clear-like
     before the blit resolves to `1D14C000` and the official frontbuffers.
-  - The next GPU lane should add targeted shader filters for upstream
-    draw-state and texture-source probes, then chase the render passes that
-    populate `1DC14000` and related scored-present candidates.
+  - The next GPU lane added targeted shader filters for upstream draw-state,
+    shader-constant, and texture-source probes.
+- Blue Dragon targeted shader-filter proof:
+  `docs/research/20260519-005540-blue-dragon-targeted-shader-filter-trace.md`.
+  - `vulkan_trace_draw_shader_filter`,
+    `vulkan_trace_shader_constants_shader_filter`, and
+    `vulkan_trace_texture_source_shader_filter` are routed through Android and
+    the Thor script.
+  - `05775DE8A2B0B3F5` writes nonzero clear-like `1DC14000` content, then
+    `0ABADD9DA4373CBA` samples that source and resolves `1DC14000` back to
+    zero.
+  - Later post passes and the final `9567C79307ACC6F5` blit sample already-zero
+    inputs, so the first concrete zeroing point is upstream of final blit and
+    presentation.
+  - Blue Dragon also successfully opens `D:\pack\!necessity.ipk`, then probes
+    missing loose `D:\!necessity\font\...` paths and uses `cache:\pack`; audit
+    VFS/cache behavior before assuming a pure shader translator bug.
 
 ## Android ARM64 Risk Register
 
