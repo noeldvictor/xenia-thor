@@ -34,6 +34,36 @@ Primary target:
   semantics reference, but do not default to Windows-first workflows unless the
   exact question needs it.
 
+## Thor Max Translation Model
+
+Use this mental model when planning work: this fork is not trying to be a
+cycle-accurate Xbox 360 hardware clone on Android. The practical path is
+translation plus HLE:
+
+1. Xbox 360 PowerPC guest code -> AArch64 JIT/DBT code cache on Snapdragon.
+2. Xenos GPU packets, shaders, resolves, and EDRAM behavior -> Vulkan/SPIR-V
+   work on Adreno 740.
+3. Xbox kernel, XAM, files, input, audio, timers, threads, events, and devices
+   -> high-level emulation with correctness probes where games depend on exact
+   behavior.
+
+Thor Max is a good research target because it has Snapdragon 8 Gen 2-class
+CPU cores, Adreno 740, Vulkan 1.3 support, 16 GB RAM in the Max models, active
+cooling, Android developer access, microSD content storage, and real handheld
+controls. Treat the hardware headroom as real but not automatically fungible:
+raw CPU/GPU/RAM ratios can be far above Xbox 360-era hardware, but the effective
+speed depends on A64 codegen quality, endian-aware memory lowering, VMX128/FP
+lowering, guest/host transition cost, kernel timing, Xenos-to-Vulkan translation,
+shader compilation, EDRAM/resolve emulation, synchronization, and Adreno driver
+behavior.
+
+Use "about 20x more powerful" as an intuition for why this is a plausible
+translation-based research target, not as a performance promise. Validate every
+claim with Thor speed captures, screenshots, APK hashes, cvars, and worklog
+notes. Prefer translation/HLE hot-path fixes over exact-cycle hardware modeling
+unless a concrete game-correctness bug proves that the lower-level detail is
+required.
+
 ## Hard Documentation Rules
 
 - Every research note must be a Markdown file in `docs/research/` with this filename shape:
