@@ -201,6 +201,12 @@ fatal markers and shrank `8272A3A4` from `12432` to `12332` bytes and
 `8272A8E8` from `5552` to `5520`. See
 `docs/research/20260520-163450-a64-compare-store-context-peephole.md`.
 
+Do not re-add the uncommitted `COMPARE_UGT x, 0` plus `COMPARE_EQ x, 0`
+context-store pair peephole without an audit counter first. The local
+`scratch\thor-debug\20260520-163945-*` proof reached the Voice Language menu,
+but clean hot function sizes stayed at `8272A3A4=12332` and `8272A8E8=5520`.
+See `docs/research/20260520-164105-a64-ugt-eq-context-pair-nohit.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

@@ -1298,6 +1298,14 @@ required.
   menu, had no searched fatal markers, and shrank `8272A3A4 12432 -> 12332`
   and `8272A8E8 5552 -> 5520`. Keep this as a proven generic cleanup, but the
   route remains CPU/A64 and XMA heavy rather than playable-speed.
+- Rejected UGT/EQ context-pair peephole:
+  `docs/research/20260520-164105-a64-ugt-eq-context-pair-nohit.md`.
+  A local uncommitted matcher tried to share one compare between adjacent
+  `COMPARE_UGT x, 0` and `COMPARE_EQ x, 0` context stores. It built and
+  reached the Blue Dragon Voice Language menu in
+  `scratch/thor-debug/20260520-163945-*`, but clean hot function sizes stayed
+  unchanged (`8272A3A4 12332`, `8272A8E8 5520`), so the code was reverted
+  before commit. Add an audit counter before revisiting this exact shape.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
