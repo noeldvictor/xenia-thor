@@ -132,6 +132,12 @@ DEFINE_uint32(
     "title-specific.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_draw_wait_inline_in_caller, false,
+    "Thor ARM64 speed lane: inline Blue Dragon's known 8246B408 draw-wait "
+    "fastpath at the hot 8246E618 caller call site. Research-only and "
+    "title-specific.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_draw_wait_caller_profile, false,
     "Thor ARM64 speed lane: sample guest LR callers entering Blue Dragon's "
     "known 8246B408 draw-wait function. Research-only and title-specific.",

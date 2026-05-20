@@ -169,6 +169,8 @@ public class EmulatorActivity extends WindowedAppActivity {
                     launchArguments,
                     "arm64_blue_dragon_draw_wait_fastpath_timeout_ms");
             copyBooleanExtra(
+                    intent, launchArguments, "arm64_blue_dragon_draw_wait_inline_in_caller");
+            copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_draw_wait_caller_profile");
             copyIntExtra(
                     intent,

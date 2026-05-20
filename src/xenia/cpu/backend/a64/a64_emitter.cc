@@ -56,6 +56,7 @@ DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_yield_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_sleep_us);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_timeout_ms);
+DECLARE_bool(arm64_blue_dragon_draw_wait_inline_in_caller);
 DECLARE_bool(arm64_blue_dragon_draw_wait_caller_profile);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
@@ -1150,6 +1151,21 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
     return false;
   }
 
+  return EmitBlueDragonDrawWaitFastpathBody();
+}
+
+bool A64Emitter::TryEmitBlueDragonDrawWaitInlineCall(GuestFunction* function) {
+  if (!cvars::arm64_blue_dragon_draw_wait_fastpath ||
+      !cvars::arm64_blue_dragon_draw_wait_inline_in_caller ||
+      current_guest_function_ != 0x8246E618 || !function ||
+      function->address() != 0x8246B408) {
+    return false;
+  }
+
+  return EmitBlueDragonDrawWaitFastpathBody();
+}
+
+bool A64Emitter::EmitBlueDragonDrawWaitFastpathBody() {
   ForgetFpcrMode();
 
   auto& return_zero = NewCachedLabel();
@@ -1371,6 +1387,9 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     return;
   }
   if (TryEmitPpcThreadFieldLeafHelperCall(instr, function)) {
+    return;
+  }
+  if (TryEmitBlueDragonDrawWaitInlineCall(function)) {
     return;
   }
 

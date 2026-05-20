@@ -124,6 +124,7 @@ param(
     [string]$Arm64BlueDragonDrawWaitFastpathNativeYieldStride = "",
     [string]$Arm64BlueDragonDrawWaitFastpathNativeSleepUs = "",
     [string]$Arm64BlueDragonDrawWaitFastpathTimeoutMs = "",
+    [string]$Arm64BlueDragonDrawWaitInlineInCaller = "false",
     [string]$Arm64BlueDragonDrawWaitCallerProfile = "false",
     [string]$Arm64BlueDragonDrawWaitCallerProfileStride = "",
     [string]$Arm64BlueDragonDrawWaitCallerProfileBudget = "",
@@ -691,6 +692,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonDrawWaitFastpathTimeoutMs) {
         $parts += "--ei arm64_blue_dragon_draw_wait_fastpath_timeout_ms $Arm64BlueDragonDrawWaitFastpathTimeoutMs"
     }
+    if ($Arm64BlueDragonDrawWaitInlineInCaller) {
+        $parts += "--ez arm64_blue_dragon_draw_wait_inline_in_caller $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitInlineInCaller)"
+    }
     if ($Arm64BlueDragonDrawWaitCallerProfile) {
         $parts += "--ez arm64_blue_dragon_draw_wait_caller_profile $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitCallerProfile)"
     }
@@ -801,6 +805,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_fastpath_native_yield_stride=$Arm64BlueDragonDrawWaitFastpathNativeYieldStride",
         "arm64_blue_dragon_draw_wait_fastpath_native_sleep_us=$Arm64BlueDragonDrawWaitFastpathNativeSleepUs",
         "arm64_blue_dragon_draw_wait_fastpath_timeout_ms=$Arm64BlueDragonDrawWaitFastpathTimeoutMs",
+        "arm64_blue_dragon_draw_wait_inline_in_caller=$Arm64BlueDragonDrawWaitInlineInCaller",
         "arm64_blue_dragon_draw_wait_caller_profile=$Arm64BlueDragonDrawWaitCallerProfile",
         "arm64_blue_dragon_draw_wait_caller_profile_stride=$Arm64BlueDragonDrawWaitCallerProfileStride",
         "arm64_blue_dragon_draw_wait_caller_profile_budget=$Arm64BlueDragonDrawWaitCallerProfileBudget",

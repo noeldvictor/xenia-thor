@@ -985,6 +985,24 @@ required.
   - Next speed target is the caller loop or its producer progress path, not
     only the already-shortened `8246B408` callee. Inspect `8246B258` and
     `8246B288` before replacing the whole caller body.
+- Blue Dragon inline draw-wait at hot caller:
+  `docs/research/20260519-213330-blue-dragon-inline-draw-wait-caller.md`.
+  - `arm64_blue_dragon_draw_wait_inline_in_caller` is routed through Android and
+    `tools/thor/thor_xenia_debug.ps1` as
+    `-Arm64BlueDragonDrawWaitInlineInCaller true|false`; keep it default-off.
+  - It requires the base `8246B408` fastpath, only fires inside current guest
+    function `8246E618`, and only inlines direct call target `8246B408`.
+  - This is safer than replacing all of `8246E618` because setup `8246B258` is
+    tiny but cleanup `8246B288` performs timing/stat accounting and may call a
+    callback at `[object+0x330C]`.
+  - Inline speed capture `scratch\thor-debug\20260519-212544-*` reached the
+    loading spinner and removed `8246B408` from top profile entries, exposing
+    hot functions `827294CC`, `8272A3A4`, `8272A8E8`, `826C5620`, `826BF770`,
+    and critical-section / IRQL helpers.
+  - Live route follow-up `scratch\thor-debug\20260519-213255-*` reached the
+    Microsoft Game Studios opening scene with inline-in-caller enabled, but this
+    is not yet a proven speed win. Use same-route A/B before making it a
+    default.
 
 ## Codex Hooks / Automation
 
