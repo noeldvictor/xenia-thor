@@ -711,11 +711,24 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
 
   current_guest_function_ = function->address();
   auto a64_function = static_cast<A64Function*>(function);
+  current_a64_function_ = nullptr;
   current_guest_function_entry_count_ = a64_function->profile_entry_count();
   current_guest_function_body_ticks_ =
       backend_->BodyTimeProfileEnabledForFunction(a64_function)
           ? a64_function->profile_body_ticks()
           : nullptr;
+  if (backend_->BlockProfileEnabledForFunction(a64_function)) {
+    size_t block_count = 0;
+    for (auto block = builder->first_block(); block; block = block->next) {
+      if (block->ordinal == UINT16_MAX) {
+        continue;
+      }
+      block_count =
+          std::max(block_count, static_cast<size_t>(block->ordinal) + 1);
+    }
+    a64_function->SetupProfileBlockCounts(block_count);
+    current_a64_function_ = a64_function;
+  }
 
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
@@ -787,6 +800,37 @@ void A64Emitter::MaybeEmitBodyTimeProfileEnd() {
   ldr(x11, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
   sub(x17, x17, x11);
   EmitAtomicAdd64(current_guest_function_body_ticks_, x17);
+}
+
+uint32_t A64Emitter::FindBlockGuestAddress(const hir::Block* block) const {
+  if (!block) {
+    return 0;
+  }
+  for (const hir::Instr* instr = block->instr_head; instr; instr = instr->next) {
+    if (instr->GetOpcodeNum() == hir::OPCODE_SOURCE_OFFSET) {
+      return static_cast<uint32_t>(instr->src1.offset);
+    }
+    uint32_t address = instr->GuestAddressFor();
+    if (address) {
+      return address;
+    }
+  }
+  return 0;
+}
+
+void A64Emitter::MaybeEmitBlockProfileEntry(const hir::Block* block) {
+  if (!current_a64_function_ || !block || block->ordinal == UINT16_MAX) {
+    return;
+  }
+  auto* counter =
+      current_a64_function_->profile_block_count(static_cast<size_t>(
+          block->ordinal));
+  if (!counter) {
+    return;
+  }
+  current_a64_function_->set_profile_block_address(
+      static_cast<size_t>(block->ordinal), FindBlockGuestAddress(block));
+  EmitAtomicIncrement64(counter);
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
@@ -899,6 +943,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
       L(GetLabel(label->id));
       label = label->next;
     }
+    MaybeEmitBlockProfileEntry(block);
 
     // Process each instruction in the block.
     const hir::Instr* instr = block->instr_head;
@@ -996,6 +1041,7 @@ void* A64Emitter::Emplace(const EmitFunctionInfo& func_info,
   // the codegen state for the next function.
   reset();
   tail_code_.clear();
+  current_a64_function_ = nullptr;
 
   // Clean up cached labels.
   for (auto* cached_label : label_cache_) {

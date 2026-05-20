@@ -40,6 +40,7 @@ namespace a64 {
 using namespace arm64;
 class A64Backend;
 class A64CodeCache;
+class A64Function;
 
 enum class FPCRMode : uint32_t { Unknown, Fpu, Vmx };
 
@@ -143,6 +144,8 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
                        const Xbyak_aarch64::XReg& value_reg);
   void MaybeEmitBodyTimeProfileStart();
   void MaybeEmitBodyTimeProfileEnd();
+  uint32_t FindBlockGuestAddress(const hir::Block* block) const;
+  void MaybeEmitBlockProfileEntry(const hir::Block* block);
 
   // Backend context register = x19.
   // Points to A64BackendContext (immediately before PPCContext in memory).
@@ -193,6 +196,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   XexModule* guest_module_ = nullptr;
   uint64_t feature_flags_ = 0;
   uint32_t current_guest_function_ = 0;
+  A64Function* current_a64_function_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_entry_count_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_body_ticks_ = nullptr;
   size_t body_time_start_stack_offset_ = 0;

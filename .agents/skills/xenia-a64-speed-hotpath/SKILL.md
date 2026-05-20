@@ -50,6 +50,21 @@ This is especially useful for Blue Dragon where `827294CC`, `826C5620`, and
 powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 95 -PerfSampleSeconds "70" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4,8272A8E8,826C5620,827294CC,826BF770"
 ```
 
+## Block Profiler Lane
+
+Use block counters only after body time identifies one concrete function. The
+filter is exact-start scoped for single addresses, so `8272A3A4` should only
+instrument the function whose start address is `8272A3A4`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 45 -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4" -Arm64SpeedProfileBlockFilter "8272A3A4"
+```
+
+Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
+interval, then return to a clean speed capture before judging progress. The
+first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,
+`8272A3F4`, `8272A474`, `8272A548`, and `8272A424`.
+
 ## Classification
 
 Read the final speed-profile interval first.

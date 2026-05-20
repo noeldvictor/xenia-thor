@@ -11,6 +11,7 @@
 #define XENIA_CPU_BACKEND_A64_A64_FUNCTION_H_
 
 #include <atomic>
+#include <memory>
 
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/thread_state.h"
@@ -38,6 +39,11 @@ class A64Function : public GuestFunction {
   void MarkProfileRegistered(A64Backend* backend);
   std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
   std::atomic<uint64_t>* profile_body_ticks() { return &profile_body_ticks_; }
+  void SetupProfileBlockCounts(size_t count);
+  size_t profile_block_count_count() const { return profile_block_count_count_; }
+  std::atomic<uint64_t>* profile_block_count(size_t ordinal);
+  uint32_t profile_block_address(size_t ordinal) const;
+  void set_profile_block_address(size_t ordinal, uint32_t address);
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -47,6 +53,9 @@ class A64Function : public GuestFunction {
   std::atomic<size_t> machine_code_length_{0};
   std::atomic<uint64_t> profile_entry_count_{0};
   std::atomic<uint64_t> profile_body_ticks_{0};
+  std::unique_ptr<std::atomic<uint64_t>[]> profile_block_counts_;
+  std::unique_ptr<uint32_t[]> profile_block_addresses_;
+  size_t profile_block_count_count_ = 0;
   std::atomic<A64Backend*> profile_registered_backend_{nullptr};
 };
 

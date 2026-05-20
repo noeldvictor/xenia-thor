@@ -135,6 +135,7 @@ param(
     [string]$Arm64BlueDragonStricmpReturnProfileBudget = "",
     [string]$Arm64BlueDragonJumpTableFastpath = "false",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
+    [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -762,6 +763,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
+    if ($Arm64SpeedProfileBlockFilter) {
+        $parts += "--es arm64_speed_profile_block_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBlockFilter)"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -881,6 +885,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_stricmp_return_profile_budget=$Arm64BlueDragonStricmpReturnProfileBudget",
         "arm64_blue_dragon_jump_table_fastpath=$Arm64BlueDragonJumpTableFastpath",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
+        "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
@@ -1346,6 +1351,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileBodyTimeFilter) {
             Write-Output "A64 body-time filter: $Arm64SpeedProfileBodyTimeFilter"
+        }
+        if ($Arm64SpeedProfileBlockFilter) {
+            Write-Output "A64 block filter: $Arm64SpeedProfileBlockFilter"
         }
         Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
         Invoke-Adb @("logcat", "-c") | Out-Null

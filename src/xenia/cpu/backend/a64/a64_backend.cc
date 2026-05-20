@@ -212,6 +212,13 @@ DEFINE_string(
     "function addresses or inclusive ranges for CNTVCT body-time profiling. "
     "Requires arm64_speed_profile_interval_ms.",
     "a64");
+DEFINE_string(
+    arm64_speed_profile_block_filter, "",
+    "Thor ARM64 speed lane: optional comma/semicolon/space separated guest "
+    "function start addresses or inclusive start-address ranges for "
+    "selected-function block-entry profiling. Requires "
+    "arm64_speed_profile_interval_ms.",
+    "a64");
 
 namespace xe {
 namespace cpu {
@@ -313,6 +320,56 @@ bool FunctionMatchesAddressFilter(A64Function* function,
       }
     } else if (ParseAddressToken(token, &start) && start >= function_start &&
                start <= function_end) {
+      return true;
+    }
+
+    token_start = token_end;
+  }
+
+  return false;
+}
+
+bool FunctionStartMatchesAddressFilter(A64Function* function,
+                                       std::string_view filter) {
+  if (!function || filter.empty()) {
+    return false;
+  }
+
+  uint32_t function_start = function->address();
+  size_t token_start = 0;
+  while (token_start < filter.size()) {
+    while (token_start < filter.size() &&
+           (std::isspace(static_cast<unsigned char>(filter[token_start])) ||
+            filter[token_start] == ',' || filter[token_start] == ';')) {
+      ++token_start;
+    }
+    if (token_start >= filter.size()) {
+      break;
+    }
+
+    size_t token_end = token_start;
+    while (token_end < filter.size() && filter[token_end] != ',' &&
+           filter[token_end] != ';' &&
+           !std::isspace(static_cast<unsigned char>(filter[token_end]))) {
+      ++token_end;
+    }
+
+    std::string_view token =
+        TrimAddressToken(filter.substr(token_start, token_end - token_start));
+    size_t range_separator = token.find('-');
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (range_separator != std::string_view::npos) {
+      if (ParseAddressToken(token.substr(0, range_separator), &start) &&
+          ParseAddressToken(token.substr(range_separator + 1), &end)) {
+        if (start > end) {
+          std::swap(start, end);
+        }
+        if (function_start >= start && function_start <= end) {
+          return true;
+        }
+      }
+    } else if (ParseAddressToken(token, &start) && function_start == start) {
       return true;
     }
 
@@ -807,6 +864,15 @@ bool A64Backend::BodyTimeProfileEnabledForFunction(
       function, cvars::arm64_speed_profile_body_time_filter);
 }
 
+bool A64Backend::BlockProfileEnabledForFunction(A64Function* function) const {
+  if (!speed_profile_enabled() ||
+      cvars::arm64_speed_profile_block_filter.empty()) {
+    return false;
+  }
+  return FunctionStartMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_block_filter);
+}
+
 void A64Backend::RecordResolveFunction(bool success) {
   if (!speed_profile_enabled()) {
     return;
@@ -879,9 +945,18 @@ void A64Backend::LogSpeedProfile() {
     uint64_t body_ticks_per_entry = 0;
     size_t code_size = 0;
   };
+  struct BlockSample {
+    uint32_t function_address = 0;
+    uint32_t block_address = 0;
+    uint16_t block_ordinal = 0;
+    std::string function_name;
+    uint64_t total = 0;
+    uint64_t delta = 0;
+  };
 
   std::vector<FunctionSample> samples;
   std::vector<FunctionSample> body_samples;
+  std::vector<BlockSample> block_samples;
   uint64_t entry_delta_total = 0;
   size_t function_count = 0;
   {
@@ -911,7 +986,7 @@ void A64Backend::LogSpeedProfile() {
       }
       uint64_t body_ticks_per_entry = delta ? body_delta / delta : 0;
       FunctionSample sample = {function->address(),
-                               std::move(name),
+                               name,
                                total,
                                delta,
                                body_total,
@@ -924,6 +999,29 @@ void A64Backend::LogSpeedProfile() {
       if (body_delta != 0) {
         body_samples.push_back(std::move(sample));
       }
+
+      size_t block_count = function->profile_block_count_count();
+      if (block_count != 0) {
+        if (entry.last_block_counts.size() != block_count) {
+          entry.last_block_counts.assign(block_count, 0);
+        }
+        for (size_t i = 0; i < block_count; ++i) {
+          auto* block_counter = function->profile_block_count(i);
+          if (!block_counter) {
+            continue;
+          }
+          uint64_t block_total =
+              block_counter->load(std::memory_order_relaxed);
+          uint64_t block_delta = block_total - entry.last_block_counts[i];
+          entry.last_block_counts[i] = block_total;
+          if (block_delta < cvars::arm64_speed_profile_min_delta) {
+            continue;
+          }
+          block_samples.push_back(
+              {function->address(), function->profile_block_address(i),
+               static_cast<uint16_t>(i), name, block_total, block_delta});
+        }
+      }
     }
   }
 
@@ -934,6 +1032,10 @@ void A64Backend::LogSpeedProfile() {
   std::sort(body_samples.begin(), body_samples.end(),
             [](const FunctionSample& a, const FunctionSample& b) {
               return a.body_ticks_delta > b.body_ticks_delta;
+            });
+  std::sort(block_samples.begin(), block_samples.end(),
+            [](const BlockSample& a, const BlockSample& b) {
+              return a.delta > b.delta;
             });
 
   auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
@@ -987,6 +1089,18 @@ void A64Backend::LogSpeedProfile() {
         i + 1, sample.address, sample.name, sample.body_ticks_delta,
         sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry,
         sample.code_size);
+  }
+
+  size_t block_top_count = std::min<size_t>(
+      block_samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < block_top_count; ++i) {
+    const auto& sample = block_samples[i];
+    XELOGW(
+        "A64 speed profile block top {:02}: fn {:08X} '{}' block={} "
+        "guest={:08X} delta={} total={}",
+        i + 1, sample.function_address, sample.function_name,
+        sample.block_ordinal, sample.block_address, sample.delta,
+        sample.total);
   }
 }
 

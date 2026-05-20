@@ -277,6 +277,12 @@ required.
     with the speed profiler to measure filtered generated-code body time using
     CNTVCT. Use this when entry counts are misleading after helper fastpaths.
     Body-time rows are sorted by elapsed guest body ticks, not call count.
+  - `-Arm64SpeedProfileBlockFilter "8272A3A4"` with the speed profiler to add
+    per-HIR-block entry counters inside a selected guest function. The block
+    filter is exact-start scoped for single addresses. This is trace-heavy and
+    useful for short OODA captures only; do not compare its speed to a clean
+    speed lane. First `8272A3A4` results put hot blocks at `8272A8B4`,
+    `8272AA50`, `8272A3F4`, `8272A474`, `8272A548`, and `8272A424`.
   - `-A64InlinePpcThreadFieldLeafHelpers false` to roll back the A64 inline
     for tiny PPC leaf helpers matching `lwz r11,D(r13); lwz r3,D(r11); blr`.
     Blue Dragon's hot draw-wait route calls one of these helpers at

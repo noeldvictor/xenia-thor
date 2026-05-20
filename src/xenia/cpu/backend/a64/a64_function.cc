@@ -40,6 +40,43 @@ void A64Function::MarkProfileRegistered(A64Backend* backend) {
   profile_registered_backend_.store(backend, std::memory_order_release);
 }
 
+void A64Function::SetupProfileBlockCounts(size_t count) {
+  if (count == profile_block_count_count_ && profile_block_counts_ &&
+      profile_block_addresses_) {
+    return;
+  }
+
+  profile_block_counts_ = std::make_unique<std::atomic<uint64_t>[]>(count);
+  profile_block_addresses_ = std::make_unique<uint32_t[]>(count);
+  profile_block_count_count_ = count;
+  for (size_t i = 0; i < count; ++i) {
+    profile_block_counts_[i].store(0, std::memory_order_relaxed);
+    profile_block_addresses_[i] = 0;
+  }
+}
+
+std::atomic<uint64_t>* A64Function::profile_block_count(size_t ordinal) {
+  if (!profile_block_counts_ || ordinal >= profile_block_count_count_) {
+    return nullptr;
+  }
+  return &profile_block_counts_[ordinal];
+}
+
+uint32_t A64Function::profile_block_address(size_t ordinal) const {
+  if (!profile_block_addresses_ || ordinal >= profile_block_count_count_) {
+    return 0;
+  }
+  return profile_block_addresses_[ordinal];
+}
+
+void A64Function::set_profile_block_address(size_t ordinal, uint32_t address) {
+  if (!profile_block_addresses_ || ordinal >= profile_block_count_count_ ||
+      !address) {
+    return;
+  }
+  profile_block_addresses_[ordinal] = address;
+}
+
 bool A64Function::CallImpl(ThreadState* thread_state, uint32_t return_address) {
   auto backend =
       reinterpret_cast<A64Backend*>(thread_state->processor()->backend());
