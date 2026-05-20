@@ -226,6 +226,11 @@ DEFINE_bool(
     "Thor ARM64 speed lane: log each guest thread's last A64 function and "
     "PPC context registers on every speed-profile interval.",
     "a64");
+DEFINE_bool(
+    arm64_speed_profile_thread_snapshot_on_idle, false,
+    "Thor ARM64 speed lane: after A64 counters have been active, log one "
+    "guest thread snapshot when a later profile interval goes idle.",
+    "a64");
 
 namespace xe {
 namespace cpu {
@@ -1090,6 +1095,21 @@ void A64Backend::LogSpeedProfile() {
       extern_calls.second, extern_calls.first, resolves.second, resolves.first,
       resolve_misses.second, resolve_misses.first);
 
+  const bool interval_had_activity =
+      entry_delta_total || h2g.second || g2h.second || direct.second ||
+      indirect.second || extern_calls.second || resolves.second ||
+      resolve_misses.second;
+  bool idle_snapshot_requested = false;
+  if (interval_had_activity) {
+    speed_profile_seen_activity_ = true;
+    speed_profile_idle_snapshot_emitted_ = false;
+  } else if (cvars::arm64_speed_profile_thread_snapshot_on_idle &&
+             speed_profile_seen_activity_ &&
+             !speed_profile_idle_snapshot_emitted_) {
+    idle_snapshot_requested = true;
+    speed_profile_idle_snapshot_emitted_ = true;
+  }
+
   size_t top_count = std::min<size_t>(
       samples.size(), cvars::arm64_speed_profile_top_functions);
   for (size_t i = 0; i < top_count; ++i) {
@@ -1125,7 +1145,13 @@ void A64Backend::LogSpeedProfile() {
         sample.total);
   }
 
-  if (cvars::arm64_speed_profile_thread_snapshot && processor()) {
+  const bool should_log_thread_snapshot =
+      cvars::arm64_speed_profile_thread_snapshot || idle_snapshot_requested;
+  if (should_log_thread_snapshot && processor()) {
+    if (idle_snapshot_requested) {
+      XELOGW("A64 idle thread snapshot trigger: counters went flat after "
+             "previous activity");
+    }
     bool acquired_thread_debug_lock = false;
     std::vector<ThreadDebugInfo*> thread_infos;
     for (uint32_t attempt = 0; attempt < 20; ++attempt) {

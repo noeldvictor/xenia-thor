@@ -138,6 +138,7 @@ param(
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
+    [string]$Arm64SpeedProfileThreadSnapshotOnIdle = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -772,6 +773,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileThreadSnapshot) {
         $parts += "--ez arm64_speed_profile_thread_snapshot $(ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshot)"
     }
+    if ($Arm64SpeedProfileThreadSnapshotOnIdle) {
+        $parts += "--ez arm64_speed_profile_thread_snapshot_on_idle $(ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshotOnIdle)"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -894,6 +898,7 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
+        "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

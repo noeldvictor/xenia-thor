@@ -226,6 +226,8 @@ class A64Backend : public Backend {
   uint64_t last_speed_profile_extern_calls_ = 0;
   uint64_t last_speed_profile_resolve_calls_ = 0;
   uint64_t last_speed_profile_resolve_misses_ = 0;
+  bool speed_profile_seen_activity_ = false;
+  bool speed_profile_idle_snapshot_emitted_ = false;
 };
 
 }  // namespace a64

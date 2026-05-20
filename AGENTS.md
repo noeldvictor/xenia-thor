@@ -1135,6 +1135,11 @@ required.
     behavior is final-only; timed screenshots are available via
     `-TitleScreenshotSeconds` but can perturb timing, so use them only when the
     experiment explicitly needs multi-frame proof.
+  - `arm64_speed_profile_thread_snapshot_on_idle` is the lower-impact black-idle
+    probe. It waits until A64 counters have shown activity, then logs one
+    thread snapshot only if a later speed-profile interval goes flat. Prefer it
+    over always-on snapshots when trying to reproduce the no-title black-idle
+    path without changing early timing.
 
 ## Codex Hooks / Automation
 
