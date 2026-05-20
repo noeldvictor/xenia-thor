@@ -123,6 +123,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   bool TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
                                            GuestFunction* function);
   bool TryEmitBlueDragonDrawWaitFunctionBody();
+  void MaybeEmitBlueDragonDrawWaitCallerProfile();
   void AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
                                 Xbyak_aarch64::XReg host_reg);
   void Call(const hir::Instr* instr, GuestFunction* function);

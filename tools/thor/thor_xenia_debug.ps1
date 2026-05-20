@@ -124,6 +124,9 @@ param(
     [string]$Arm64BlueDragonDrawWaitFastpathNativeYieldStride = "",
     [string]$Arm64BlueDragonDrawWaitFastpathNativeSleepUs = "",
     [string]$Arm64BlueDragonDrawWaitFastpathTimeoutMs = "",
+    [string]$Arm64BlueDragonDrawWaitCallerProfile = "false",
+    [string]$Arm64BlueDragonDrawWaitCallerProfileStride = "",
+    [string]$Arm64BlueDragonDrawWaitCallerProfileBudget = "",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -688,6 +691,15 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonDrawWaitFastpathTimeoutMs) {
         $parts += "--ei arm64_blue_dragon_draw_wait_fastpath_timeout_ms $Arm64BlueDragonDrawWaitFastpathTimeoutMs"
     }
+    if ($Arm64BlueDragonDrawWaitCallerProfile) {
+        $parts += "--ez arm64_blue_dragon_draw_wait_caller_profile $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitCallerProfile)"
+    }
+    if ($Arm64BlueDragonDrawWaitCallerProfileStride) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_caller_profile_stride $Arm64BlueDragonDrawWaitCallerProfileStride"
+    }
+    if ($Arm64BlueDragonDrawWaitCallerProfileBudget) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_caller_profile_budget $Arm64BlueDragonDrawWaitCallerProfileBudget"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -789,6 +801,9 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_fastpath_native_yield_stride=$Arm64BlueDragonDrawWaitFastpathNativeYieldStride",
         "arm64_blue_dragon_draw_wait_fastpath_native_sleep_us=$Arm64BlueDragonDrawWaitFastpathNativeSleepUs",
         "arm64_blue_dragon_draw_wait_fastpath_timeout_ms=$Arm64BlueDragonDrawWaitFastpathTimeoutMs",
+        "arm64_blue_dragon_draw_wait_caller_profile=$Arm64BlueDragonDrawWaitCallerProfile",
+        "arm64_blue_dragon_draw_wait_caller_profile_stride=$Arm64BlueDragonDrawWaitCallerProfileStride",
+        "arm64_blue_dragon_draw_wait_caller_profile_budget=$Arm64BlueDragonDrawWaitCallerProfileBudget",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

@@ -94,6 +94,7 @@ struct A64BackendContext {
   unsigned int Ox1000;  // constant 0x1000
   uint32_t blue_dragon_draw_wait_probe_counter;
   uint32_t blue_dragon_draw_wait_yield_counter;
+  uint32_t blue_dragon_draw_wait_caller_profile_counter;
 };
 
 // Default FPCR for FPU mode (round to nearest, no flush to zero).

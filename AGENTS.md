@@ -968,6 +968,23 @@ required.
   - The remaining wall is still CPU/A64 around `8246B408`; do not pivot to
     broad GPU work until speed captures show GPU Commands or GPU VSync as the
     top wall.
+- Blue Dragon draw-wait caller sampler:
+  `docs/research/20260519-211650-blue-dragon-draw-wait-caller.md`.
+  - The sampler switches are routed through Android and the Thor script:
+    `-Arm64BlueDragonDrawWaitCallerProfile true`,
+    `-Arm64BlueDragonDrawWaitCallerProfileStride N`, and
+    `-Arm64BlueDragonDrawWaitCallerProfileBudget N`.
+  - Keep this sampler default-off and use it only in narrow evidence captures;
+    broad compiled-call tracing was too invasive for this hot wait route.
+  - Capture `scratch\thor-debug\20260519-210937-*` found all 80 sampled
+    `8246B408` callers at LR `8246E6A4`, resolved as `sub_8246E618+8C`.
+  - Focused dump `scratch\thor-debug\20260519-211237-*` reached the Blue Dragon
+    title / press START state and showed `8246E618` as a caller loop:
+    setup `8246B258`, repeated `8246B408(wait_state)`, progress checks through
+    `[r31+0x2A10]`, `[r31+0x2A1C]`, and `r30`, then cleanup `8246B288`.
+  - Next speed target is the caller loop or its producer progress path, not
+    only the already-shortened `8246B408` callee. Inspect `8246B258` and
+    `8246B288` before replacing the whole caller body.
 
 ## Codex Hooks / Automation
 

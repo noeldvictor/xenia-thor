@@ -131,6 +131,21 @@ DEFINE_uint32(
     "fastpath. 5000 matches the observed guest predicate. Research-only and "
     "title-specific.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_draw_wait_caller_profile, false,
+    "Thor ARM64 speed lane: sample guest LR callers entering Blue Dragon's "
+    "known 8246B408 draw-wait function. Research-only and title-specific.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_caller_profile_stride, 65536,
+    "Thor ARM64 speed lane: sample every N entries to Blue Dragon's 8246B408 "
+    "draw-wait function when caller profiling is enabled.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_caller_profile_budget, 64,
+    "Thor ARM64 speed lane: maximum Blue Dragon draw-wait caller sample lines "
+    "to emit per process.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "

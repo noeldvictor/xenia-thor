@@ -56,6 +56,9 @@ DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_yield_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_sleep_us);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_timeout_ms);
+DECLARE_bool(arm64_blue_dragon_draw_wait_caller_profile);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -83,6 +86,12 @@ std::atomic<uint32_t> g_a64_call_trace_configured_budget{
 std::atomic<uint64_t> g_a64_call_trace_first_host_ms{0};
 std::mutex g_a64_call_trace_counts_mutex;
 std::unordered_map<uint64_t, uint64_t> g_a64_call_trace_counts;
+std::atomic<int> g_blue_dragon_draw_wait_caller_profile_budget{0};
+std::atomic<uint32_t> g_blue_dragon_draw_wait_caller_profile_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+std::mutex g_blue_dragon_draw_wait_caller_profile_counts_mutex;
+std::unordered_map<uint32_t, uint64_t>
+    g_blue_dragon_draw_wait_caller_profile_counts;
 
 std::string_view TrimTraceToken(std::string_view value) {
   while (!value.empty() &&
@@ -189,6 +198,39 @@ bool ConsumeA64CallTraceBudget() {
   int value = g_a64_call_trace_budget.load(std::memory_order_relaxed);
   while (value > 0) {
     if (g_a64_call_trace_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ConfigureBlueDragonDrawWaitCallerProfileBudget() {
+  uint32_t budget = cvars::arm64_blue_dragon_draw_wait_caller_profile_budget;
+  uint32_t configured_budget =
+      g_blue_dragon_draw_wait_caller_profile_configured_budget.load(
+          std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_blue_dragon_draw_wait_caller_profile_configured_budget
+          .compare_exchange_strong(configured_budget, budget,
+                                   std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_blue_dragon_draw_wait_caller_profile_budget.store(
+        clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumeBlueDragonDrawWaitCallerProfileBudget() {
+  int value = g_blue_dragon_draw_wait_caller_profile_budget.load(
+      std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_blue_dragon_draw_wait_caller_profile_budget.compare_exchange_strong(
             value, value - 1, std::memory_order_acq_rel)) {
       return true;
     }
@@ -323,6 +365,36 @@ void YieldBlueDragonDrawWaitFastpath(void* raw_context) {
     return;
   }
   xe::threading::MaybeYield();
+}
+
+void RecordBlueDragonDrawWaitCallerProfile(void* raw_context) {
+  auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  if (!ctx || !cvars::arm64_blue_dragon_draw_wait_caller_profile) {
+    return;
+  }
+
+  ConfigureBlueDragonDrawWaitCallerProfileBudget();
+  if (!ConsumeBlueDragonDrawWaitCallerProfileBudget()) {
+    return;
+  }
+
+  uint32_t lr = static_cast<uint32_t>(ctx->lr);
+  uint64_t samples_for_lr = 0;
+  {
+    std::lock_guard<std::mutex> lock(
+        g_blue_dragon_draw_wait_caller_profile_counts_mutex);
+    samples_for_lr = ++g_blue_dragon_draw_wait_caller_profile_counts[lr];
+  }
+
+  std::string lr_name = DescribeTraceFunction(ctx->processor, lr);
+  XELOGW(
+      "A64 Blue Dragon draw-wait caller sample thid {:08X} lr {:08X} '{}' "
+      "samples_for_lr={} r1 {:08X} r3 {:08X} r29 {:08X} r30 {:08X} "
+      "r31 {:08X}",
+      ctx->thread_id, lr, lr_name, samples_for_lr,
+      static_cast<uint32_t>(ctx->r[1]), static_cast<uint32_t>(ctx->r[3]),
+      static_cast<uint32_t>(ctx->r[29]), static_cast<uint32_t>(ctx->r[30]),
+      static_cast<uint32_t>(ctx->r[31]));
 }
 
 bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
@@ -655,6 +727,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   if (backend_->speed_profile_enabled()) {
     EmitAtomicIncrement64(current_guest_function_entry_count_);
   }
+  MaybeEmitBlueDragonDrawWaitCallerProfile();
 
   // ========================================================================
   // BODY
@@ -1257,6 +1330,36 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
 
   L(done);
   return true;
+}
+
+void A64Emitter::MaybeEmitBlueDragonDrawWaitCallerProfile() {
+  if (!cvars::arm64_blue_dragon_draw_wait_caller_profile ||
+      current_guest_function_ != 0x8246B408) {
+    return;
+  }
+
+  uint32_t stride = std::max<uint32_t>(
+      cvars::arm64_blue_dragon_draw_wait_caller_profile_stride, 1);
+  auto& skip_sample = NewCachedLabel();
+  ldr(w17, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                    A64BackendContext,
+                                    blue_dragon_draw_wait_caller_profile_counter))));
+  add(w17, w17, 1);
+  str(w17, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                    A64BackendContext,
+                                    blue_dragon_draw_wait_caller_profile_counter))));
+  if (stride <= 4095) {
+    cmp(w17, stride);
+  } else {
+    mov(w11, stride);
+    cmp(w17, w11);
+  }
+  b(LO, skip_sample);
+  str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                     A64BackendContext,
+                                     blue_dragon_draw_wait_caller_profile_counter))));
+  CallNativeSafe(reinterpret_cast<void*>(&RecordBlueDragonDrawWaitCallerProfile));
+  L(skip_sample);
 }
 
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
