@@ -5473,6 +5473,285 @@ static bool ValueHasOnlyUse(const hir::Value* value, const hir::Instr* instr) {
          value->use_head->next == nullptr;
 }
 
+static bool IsIntegerType(hir::TypeName type) {
+  switch (type) {
+    case hir::INT8_TYPE:
+    case hir::INT16_TYPE:
+    case hir::INT32_TYPE:
+    case hir::INT64_TYPE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static uint64_t IntegerValueBits(const hir::Value* value) {
+  switch (value->type) {
+    case hir::INT8_TYPE:
+      return static_cast<uint8_t>(value->constant.i8);
+    case hir::INT16_TYPE:
+      return static_cast<uint16_t>(value->constant.i16);
+    case hir::INT32_TYPE:
+      return static_cast<uint32_t>(value->constant.i32);
+    case hir::INT64_TYPE:
+      return static_cast<uint64_t>(value->constant.i64);
+    default:
+      return 0;
+  }
+}
+
+static bool ValuesMatchForCompare(const hir::Value* a, const hir::Value* b) {
+  if (a == b) {
+    return true;
+  }
+  if (!a || !b || a->type != b->type || !IsIntegerType(a->type)) {
+    return false;
+  }
+  if (a->IsConstant() && b->IsConstant()) {
+    return IntegerValueBits(a) == IntegerValueBits(b);
+  }
+  return false;
+}
+
+static bool CompareOperandsMatch(const hir::Instr* a, const hir::Instr* b) {
+  return a && b && ValuesMatchForCompare(a->src1.value, b->src1.value) &&
+         ValuesMatchForCompare(a->src2.value, b->src2.value);
+}
+
+static bool ValueUsesOnly(const hir::Value* value, const hir::Instr* allowed_a,
+                          const hir::Instr* allowed_b = nullptr) {
+  if (!value || !value->use_head) {
+    return false;
+  }
+  for (auto use = value->use_head; use; use = use->next) {
+    if (use->instr == allowed_a || use->instr == allowed_b) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+static bool IsStoreContextOfValue(const hir::Instr* instr,
+                                  const hir::Value* value,
+                                  uint32_t* out_offset) {
+  if (!instr || instr->GetOpcodeNum() != hir::OPCODE_STORE_CONTEXT ||
+      instr->src2.value != value) {
+    return false;
+  }
+  *out_offset = static_cast<uint32_t>(instr->src1.offset);
+  return true;
+}
+
+static bool IsPpcCrGtEqStorePair(uint32_t gt_offset, uint32_t eq_offset) {
+  const uint32_t cr_base = static_cast<uint32_t>(offsetof(ppc::PPCContext, cr0));
+  const uint32_t cr_end = cr_base + 8 * 4;
+  return gt_offset + 1 == eq_offset && gt_offset >= cr_base + 1 &&
+         gt_offset < cr_end && ((gt_offset - cr_base) & 3) == 1;
+}
+
+static const hir::Instr* BranchOnValue(const hir::Instr* instr,
+                                       const hir::Value* value) {
+  if (!instr || instr->src1.value != value) {
+    return nullptr;
+  }
+  switch (instr->GetOpcodeNum()) {
+    case hir::OPCODE_BRANCH_TRUE:
+    case hir::OPCODE_BRANCH_FALSE:
+      return instr;
+    default:
+      return nullptr;
+  }
+}
+
+static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
+  const hir::Value* src1 = instr->src1.value;
+  const hir::Value* src2 = instr->src2.value;
+  if (!src1 || !src2 || src1->type != src2->type ||
+      !IsIntegerType(src1->type)) {
+    return false;
+  }
+
+  switch (src1->type) {
+    case hir::INT8_TYPE: {
+      if (src1->IsConstant()) {
+        e.mov(e.w0, IntegerValueBits(src1));
+        if (src2->IsConstant()) {
+          e.mov(e.w1, IntegerValueBits(src2));
+          e.cmp(e.w0, e.w1);
+        } else {
+          WReg src2_reg(0);
+          A64Emitter::SetupReg(src2, src2_reg);
+          e.cmp(e.w0, src2_reg);
+        }
+      } else if (src2->IsConstant()) {
+        WReg src1_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        e.cmp(src1_reg, static_cast<uint32_t>(IntegerValueBits(src2) & 0xFF));
+      } else {
+        WReg src1_reg(0);
+        WReg src2_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        A64Emitter::SetupReg(src2, src2_reg);
+        e.cmp(src1_reg, src2_reg);
+      }
+      return true;
+    }
+    case hir::INT16_TYPE: {
+      if (src1->IsConstant()) {
+        e.mov(e.w0, IntegerValueBits(src1));
+        if (src2->IsConstant()) {
+          e.mov(e.w1, IntegerValueBits(src2));
+          e.cmp(e.w0, e.w1);
+        } else {
+          WReg src2_reg(0);
+          A64Emitter::SetupReg(src2, src2_reg);
+          e.cmp(e.w0, src2_reg);
+        }
+      } else if (src2->IsConstant()) {
+        WReg src1_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        uint32_t imm = static_cast<uint32_t>(IntegerValueBits(src2) & 0xFFFF);
+        if (imm <= 4095) {
+          e.cmp(src1_reg, imm);
+        } else {
+          e.mov(e.w0, imm);
+          e.cmp(src1_reg, e.w0);
+        }
+      } else {
+        WReg src1_reg(0);
+        WReg src2_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        A64Emitter::SetupReg(src2, src2_reg);
+        e.cmp(src1_reg, src2_reg);
+      }
+      return true;
+    }
+    case hir::INT32_TYPE: {
+      if (src1->IsConstant()) {
+        e.mov(e.w0, IntegerValueBits(src1));
+        if (src2->IsConstant()) {
+          e.mov(e.w1, IntegerValueBits(src2));
+          e.cmp(e.w0, e.w1);
+        } else {
+          WReg src2_reg(0);
+          A64Emitter::SetupReg(src2, src2_reg);
+          e.cmp(e.w0, src2_reg);
+        }
+      } else if (src2->IsConstant()) {
+        WReg src1_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        uint32_t imm = static_cast<uint32_t>(IntegerValueBits(src2));
+        if (imm <= 4095) {
+          e.cmp(src1_reg, imm);
+        } else {
+          e.mov(e.w0, imm);
+          e.cmp(src1_reg, e.w0);
+        }
+      } else {
+        WReg src1_reg(0);
+        WReg src2_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        A64Emitter::SetupReg(src2, src2_reg);
+        e.cmp(src1_reg, src2_reg);
+      }
+      return true;
+    }
+    case hir::INT64_TYPE: {
+      if (src1->IsConstant()) {
+        e.mov(e.x0, IntegerValueBits(src1));
+        if (src2->IsConstant()) {
+          e.mov(e.x1, IntegerValueBits(src2));
+          e.cmp(e.x0, e.x1);
+        } else {
+          XReg src2_reg(0);
+          A64Emitter::SetupReg(src2, src2_reg);
+          e.cmp(e.x0, src2_reg);
+        }
+      } else if (src2->IsConstant()) {
+        XReg src1_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        uint64_t imm = IntegerValueBits(src2);
+        if (imm <= 4095) {
+          e.cmp(src1_reg, static_cast<uint32_t>(imm));
+        } else {
+          e.mov(e.x0, imm);
+          e.cmp(src1_reg, e.x0);
+        }
+      } else {
+        XReg src1_reg(0);
+        XReg src2_reg(0);
+        A64Emitter::SetupReg(src1, src1_reg);
+        A64Emitter::SetupReg(src2, src2_reg);
+        e.cmp(src1_reg, src2_reg);
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
+                                               const hir::Instr* instr,
+                                               const hir::Instr** new_tail) {
+  if (!instr || instr->GetOpcodeNum() != hir::OPCODE_COMPARE_UGT ||
+      !instr->dest || instr->dest->type != hir::INT8_TYPE) {
+    return false;
+  }
+
+  const hir::Instr* gt_store = instr->next;
+  uint32_t gt_offset = 0;
+  if (!IsStoreContextOfValue(gt_store, instr->dest, &gt_offset) ||
+      !ValueUsesOnly(instr->dest, gt_store)) {
+    return false;
+  }
+
+  const hir::Instr* eq_compare = gt_store->next;
+  if (!eq_compare || eq_compare->GetOpcodeNum() != hir::OPCODE_COMPARE_EQ ||
+      !eq_compare->dest || eq_compare->dest->type != hir::INT8_TYPE ||
+      !CompareOperandsMatch(instr, eq_compare)) {
+    return false;
+  }
+
+  const hir::Instr* eq_store = eq_compare->next;
+  uint32_t eq_offset = 0;
+  if (!IsStoreContextOfValue(eq_store, eq_compare->dest, &eq_offset) ||
+      !IsPpcCrGtEqStorePair(gt_offset, eq_offset)) {
+    return false;
+  }
+
+  const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
+  if (!ValueUsesOnly(eq_compare->dest, eq_store, branch)) {
+    return false;
+  }
+
+  if (!EmitIntegerCompareFlags(*e, instr)) {
+    return false;
+  }
+
+  WReg gt_reg(0);
+  WReg eq_reg(0);
+  A64Emitter::SetupReg(instr->dest, gt_reg);
+  A64Emitter::SetupReg(eq_compare->dest, eq_reg);
+  e->cset(gt_reg, Xbyak_aarch64::HI);
+  e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
+  e->cset(eq_reg, Xbyak_aarch64::EQ);
+  e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  if (branch) {
+    auto& target = e->GetLabel(branch->src2.label->id);
+    if (branch->GetOpcodeNum() == hir::OPCODE_BRANCH_TRUE) {
+      e->b(Xbyak_aarch64::EQ, target);
+    } else {
+      e->b(Xbyak_aarch64::NE, target);
+    }
+    *new_tail = branch->next;
+  } else {
+    *new_tail = eq_store->next;
+  }
+  return true;
+}
+
 static bool TrySelectUnsignedZeroCompareStoreContext(A64Emitter* e,
                                                      const hir::Instr* instr,
                                                      const hir::Instr** new_tail) {
@@ -5519,6 +5798,9 @@ static bool TrySelectUnsignedZeroCompareStoreContext(A64Emitter* e,
 bool SelectSequence(A64Emitter* e, const hir::Instr* i,
                     const hir::Instr** new_tail) {
   if (TrySelectUnsignedZeroCompareStoreContext(e, i, new_tail)) {
+    return true;
+  }
+  if (TrySelectUnsignedGtEqCompareStores(e, i, new_tail)) {
     return true;
   }
 

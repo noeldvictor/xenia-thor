@@ -207,6 +207,16 @@ context-store pair peephole without an audit counter first. The local
 but clean hot function sizes stayed at `8272A3A4=12332` and `8272A8E8=5520`.
 See `docs/research/20260520-164105-a64-ugt-eq-context-pair-nohit.md`.
 
+The proven successor is the 2026-05-20 UGT/EQ CR branch peephole. It only
+matches when `COMPARE_UGT` and same-operand `COMPARE_EQ` store to adjacent PPC
+CR `GT`/`EQ` bytes and the EQ result is used only by its store plus an optional
+immediate branch. It emits one `cmp`, two `cset`/`strb` pairs, and direct
+`b.eq` / `b.ne`. Proof `scratch\thor-debug\20260520-170433-*` had no searched
+fatal markers and shrank clean code size from `8272A3A4=12332` to `12296` and
+`8272A8E8=5520` to `5508`. Keep it, but do not broaden it to arbitrary compare
+pairs without a new exact-offset/use audit. See
+`docs/research/20260520-170621-a64-ugt-eq-cr-branch-peephole.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

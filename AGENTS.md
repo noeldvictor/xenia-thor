@@ -1306,6 +1306,16 @@ required.
   `scratch/thor-debug/20260520-163945-*`, but clean hot function sizes stayed
   unchanged (`8272A3A4 12332`, `8272A8E8 5520`), so the code was reverted
   before commit. Add an audit counter before revisiting this exact shape.
+- UGT/EQ CR branch peephole:
+  `docs/research/20260520-170621-a64-ugt-eq-cr-branch-peephole.md`.
+  A narrower successor is now proven: it matches `COMPARE_UGT` plus
+  same-operand `COMPARE_EQ` only when the stores target adjacent PPC CR `GT`
+  and `EQ` bytes and the EQ value is used only by the store plus an immediate
+  branch. It emits one `cmp`, two `cset`/`strb` pairs, and direct `b.eq` /
+  `b.ne`. Proof `scratch/thor-debug/20260520-170433-*` had no searched fatal
+  markers and shrank clean code size from `8272A3A4 12332 -> 12296` and
+  `8272A8E8 5520 -> 5508`. This is safe CPU/codegen progress, not a playable
+  speed breakthrough.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
