@@ -159,6 +159,12 @@ required.
   It says Blue Dragon performance work should treat CPU/A64 dispatch, helper
   fallbacks, XMA/audio cost, and debug overhead as the first wall; GPU/Adreno
   deep dives should stay narrow until evidence points back to rendering.
+- Rejected hotpath note:
+  `docs/research/20260519-234533-blue-dragon-copy-fastpath-dead-end.md`.
+  It documents why the tempting `8272A3A4:8272A8B4` Blue Dragon byte-copy
+  fastpath was removed: partial HIR-block replacement either crashed or
+  black-idled the route. Revisit only with a full PPC/HIR region proof and a
+  route-clean fastpath-on capture.
 
 ## Current Porting Priorities
 

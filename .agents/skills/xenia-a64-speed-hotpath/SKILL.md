@@ -65,6 +65,11 @@ interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,
 `8272A3F4`, `8272A474`, `8272A548`, and `8272A424`.
 
+Do not reintroduce a partial `8272A3A4:8272A8B4` byte-copy splice without a new
+full-region proof. The 2026-05-19 attempt either crashed at `8272A8B4` or
+black-idled the route after resuming at `8272A8D0`; see
+`docs/research/20260519-234533-blue-dragon-copy-fastpath-dead-end.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.
