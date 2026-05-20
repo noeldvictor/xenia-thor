@@ -1228,6 +1228,16 @@ required.
   `arm64_add_i64_wrapped_imm_fastpath` and rollback flag
   `-Arm64AddI64WrappedImmFastpath false`. Do not generalize this to `ADD_I32`
   or `SUB` without a separate audit and Thor route proof.
+- I64 logical-immediate lowering:
+  `docs/research/20260520-152237-a64-i64-logical-immediate-lowering.md`.
+  aX360e/Edge donor comparison showed the 32-bit logical paths already used
+  immediate-aware helper lowering, while 64-bit `AND` / `AND_NOT` / `OR` /
+  `XOR` still materialized every constant. The local A64 sequence now emits
+  direct A64 logical immediates for encodable I64 masks and preserves the old
+  scratch-register fallback otherwise. Thor proof
+  `scratch/thor-debug/20260520-152048-*` stayed active through 60 seconds and
+  shrank `8272A3A4` from `12772` to `12652` bytes versus the prior default
+  proof.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

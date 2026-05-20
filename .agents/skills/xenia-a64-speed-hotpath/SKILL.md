@@ -134,6 +134,14 @@ extend this exception to `ADD_I32`, `SUB_I32`, or `SUB_I64` without a separate
 audit proof. See
 `docs/research/20260520-151030-a64-add-i64-wrapped-immediate-fastpath.md`.
 
+The 2026-05-20 I64 logical-immediate pass is route-proven and should stay in
+the generic A64 backend: `AND_I64`, `AND_NOT_I64` with constant second operand,
+`OR_I64`, and `XOR_I64` now emit direct A64 logical immediates when masks are
+encodable and keep the old scratch-register fallback otherwise. Capture
+`scratch\thor-debug\20260520-152048-*` stayed active through 60 seconds and
+shrunk `8272A3A4` to `code_size=12652`. See
+`docs/research/20260520-152237-a64-i64-logical-immediate-lowering.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.
