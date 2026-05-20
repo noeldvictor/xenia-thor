@@ -218,6 +218,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_add_i64_wrapped_imm_fastpath");
             copyIntExtra(
                     intent, launchArguments, "arm64_add_i64_wrapped_imm_fastpath_function");
+            copyBooleanExtra(intent, launchArguments, "arm64_immediate_lowering_audit");
+            copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_function");
+            copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_budget");
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_body_time_filter");
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_block_filter");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot");

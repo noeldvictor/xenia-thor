@@ -1246,6 +1246,18 @@ required.
   active through 60 seconds, but the current hottest functions did not shrink
   further, so treat this as a generic codegen cleanup rather than a measured
   Blue Dragon speed win.
+- Immediate-lowering audit:
+  `docs/research/20260520-154650-a64-immediate-lowering-audit.md`.
+  Use `-Arm64ImmediateLoweringAudit true
+  -Arm64ImmediateLoweringAuditFunction 0x8272A3A4
+  -Arm64ImmediateLoweringAuditBudget 256` to log logical-immediate choices for
+  one guest function. `tools/thor/thor_xenia_debug.ps1` converts high guest
+  addresses to signed 32-bit `--ei` values for Android extras; do not work
+  around this by passing decimal unsigned addresses. The first `8272A3A4` audit
+  (`scratch/thor-debug/20260520-154135-*`) saw 68 rows, all
+  `logical_imm yes action logical-imm`, with zero `mov+reg` logical misses.
+  Do not spend the next `8272A3A4` speed pass on more logical-immediate cleanup
+  unless a new audit names a miss.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

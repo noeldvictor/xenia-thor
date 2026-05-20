@@ -33,6 +33,9 @@ DECLARE_uint32(arm64_add_sub_imm_audit_function);
 DECLARE_uint32(arm64_add_sub_imm_audit_budget);
 DECLARE_bool(arm64_add_i64_wrapped_imm_fastpath);
 DECLARE_uint32(arm64_add_i64_wrapped_imm_fastpath_function);
+DECLARE_bool(arm64_immediate_lowering_audit);
+DECLARE_uint32(arm64_immediate_lowering_audit_function);
+DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 
 namespace xe {
 namespace cpu {
@@ -88,6 +91,7 @@ static void EmitBinaryConstLhs(A64Emitter& e, const REG& dest,
 namespace {
 
 std::atomic<uint32_t> a64_add_sub_imm_audit_count{0};
+std::atomic<uint32_t> a64_immediate_lowering_audit_count{0};
 
 static bool HasWrappedSmallInverse(uint64_t imm, uint32_t bits,
                                    uint64_t* out_inverse) {
@@ -131,15 +135,17 @@ static bool IsRotatedRunOfOnes(uint64_t value, uint32_t bits) {
   return false;
 }
 
-static bool IsA64LogicalImmediate64(uint64_t imm) {
-  if (imm == 0 || imm == ~uint64_t{0}) {
+static bool IsA64LogicalImmediate(uint64_t imm, uint32_t reg_bits) {
+  uint64_t reg_mask = MaskBits(reg_bits);
+  imm &= reg_mask;
+  if (imm == 0 || imm == reg_mask) {
     return false;
   }
-  for (uint32_t bits = 2; bits <= 64; bits <<= 1) {
+  for (uint32_t bits = 2; bits <= reg_bits; bits <<= 1) {
     uint64_t mask = MaskBits(bits);
     uint64_t pattern = imm & mask;
     uint64_t repeated = 0;
-    for (uint32_t shift = 0; shift < 64; shift += bits) {
+    for (uint32_t shift = 0; shift < reg_bits; shift += bits) {
       repeated |= pattern << shift;
     }
     if (repeated == imm && IsRotatedRunOfOnes(pattern, bits)) {
@@ -149,23 +155,70 @@ static bool IsA64LogicalImmediate64(uint64_t imm) {
   return false;
 }
 
-enum class LogicalI64Op {
+enum class LogicalImmOp {
   kAnd,
   kOrr,
   kEor,
 };
 
-static void EmitLogicalI64Imm(A64Emitter& e, LogicalI64Op op, const XReg& dest,
-                              const XReg& src, uint64_t imm) {
-  if (IsA64LogicalImmediate64(imm)) {
+static void MaybeAuditLogicalImmediate(A64Emitter& e, const char* opcode,
+                                       uint32_t reg_bits, uint64_t imm,
+                                       const char* constant_side,
+                                       bool logical_imm) {
+  if (!cvars::arm64_immediate_lowering_audit) {
+    return;
+  }
+  uint32_t function = e.current_guest_function();
+  uint32_t filter = cvars::arm64_immediate_lowering_audit_function;
+  if (filter != 0 && function != filter) {
+    return;
+  }
+  uint32_t log_index = a64_immediate_lowering_audit_count.fetch_add(1);
+  if (log_index >= cvars::arm64_immediate_lowering_audit_budget) {
+    return;
+  }
+  uint64_t masked = imm & MaskBits(reg_bits);
+  XELOGW(
+      "A64 immediate lowering audit {:03}: fn {:08X} op {} width {} "
+      "const_side {} imm 0x{:016X} masked 0x{:016X} logical_imm {} action {}",
+      log_index + 1, function, opcode, reg_bits, constant_side, imm, masked,
+      logical_imm ? "yes" : "no", logical_imm ? "logical-imm" : "mov+reg");
+}
+
+static void EmitLogicalImm32(A64Emitter& e, LogicalImmOp op,
+                             const char* opcode, const WReg& dest,
+                             const WReg& src, uint32_t imm,
+                             const char* constant_side) {
+  bool logical_imm = IsA64LogicalImmediate(imm, 32);
+  MaybeAuditLogicalImmediate(e, opcode, 32, imm, constant_side, logical_imm);
+  switch (op) {
+    case LogicalImmOp::kAnd:
+      e.and_imm(dest, src, imm, e.w0);
+      return;
+    case LogicalImmOp::kOrr:
+      e.orr_imm(dest, src, imm, e.w0);
+      return;
+    case LogicalImmOp::kEor:
+      e.eor_imm(dest, src, imm, e.w0);
+      return;
+  }
+}
+
+static void EmitLogicalImm64(A64Emitter& e, LogicalImmOp op,
+                             const char* opcode, const XReg& dest,
+                             const XReg& src, uint64_t imm,
+                             const char* constant_side) {
+  bool logical_imm = IsA64LogicalImmediate(imm, 64);
+  MaybeAuditLogicalImmediate(e, opcode, 64, imm, constant_side, logical_imm);
+  if (logical_imm) {
     switch (op) {
-      case LogicalI64Op::kAnd:
+      case LogicalImmOp::kAnd:
         e.and_(dest, src, imm);
         return;
-      case LogicalI64Op::kOrr:
+      case LogicalImmOp::kOrr:
         e.orr(dest, src, imm);
         return;
-      case LogicalI64Op::kEor:
+      case LogicalImmOp::kEor:
         e.eor(dest, src, imm);
         return;
     }
@@ -173,13 +226,13 @@ static void EmitLogicalI64Imm(A64Emitter& e, LogicalI64Op op, const XReg& dest,
 
   e.mov(e.x0, imm);
   switch (op) {
-    case LogicalI64Op::kAnd:
+    case LogicalImmOp::kAnd:
       e.and_(dest, src, e.x0);
       return;
-    case LogicalI64Op::kOrr:
+    case LogicalImmOp::kOrr:
       e.orr(dest, src, e.x0);
       return;
-    case LogicalI64Op::kEor:
+    case LogicalImmOp::kEor:
       e.eor(dest, src, e.x0);
       return;
   }
@@ -1750,9 +1803,11 @@ struct AND_I8 : Sequence<AND_I8, I<OPCODE_AND, I8Op, I8Op, I8Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & i.src2.constant()) & 0xFF));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1, i.src2.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I8", i.dest, i.src1,
+                       i.src2.constant() & 0xFF, "src2");
     } else if (i.src1.is_constant) {
-      e.and_imm(i.dest, i.src2, i.src1.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I8", i.dest, i.src2,
+                       i.src1.constant() & 0xFF, "src1");
     } else {
       e.and_(i.dest, i.src1, i.src2);
     }
@@ -1764,9 +1819,11 @@ struct AND_I16 : Sequence<AND_I16, I<OPCODE_AND, I16Op, I16Op, I16Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & i.src2.constant()) & 0xFFFF));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1, i.src2.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I16", i.dest, i.src1,
+                       i.src2.constant() & 0xFFFF, "src2");
     } else if (i.src1.is_constant) {
-      e.and_imm(i.dest, i.src2, i.src1.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I16", i.dest, i.src2,
+                       i.src1.constant() & 0xFFFF, "src1");
     } else {
       e.and_(i.dest, i.src1, i.src2);
     }
@@ -1778,9 +1835,11 @@ struct AND_I32 : Sequence<AND_I32, I<OPCODE_AND, I32Op, I32Op, I32Op>> {
       e.mov(i.dest, static_cast<uint64_t>(static_cast<uint32_t>(
                         i.src1.constant() & i.src2.constant())));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I32", i.dest, i.src1,
+                       static_cast<uint32_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      e.and_imm(i.dest, i.src2, static_cast<uint32_t>(i.src1.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_I32", i.dest, i.src2,
+                       static_cast<uint32_t>(i.src1.constant()), "src1");
     } else {
       e.and_(i.dest, i.src1, i.src2);
     }
@@ -1792,11 +1851,11 @@ struct AND_I64 : Sequence<AND_I64, I<OPCODE_AND, I64Op, I64Op, I64Op>> {
       e.mov(i.dest,
             static_cast<uint64_t>(i.src1.constant() & i.src2.constant()));
     } else if (i.src2.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kAnd, i.dest, i.src1,
-                        static_cast<uint64_t>(i.src2.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kAnd, "AND_I64", i.dest, i.src1,
+                       static_cast<uint64_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kAnd, i.dest, i.src2,
-                        static_cast<uint64_t>(i.src1.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kAnd, "AND_I64", i.dest, i.src2,
+                       static_cast<uint64_t>(i.src1.constant()), "src1");
     } else {
       e.and_(i.dest, i.src1, i.src2);
     }
@@ -1821,8 +1880,9 @@ struct AND_NOT_I8 : Sequence<AND_NOT_I8, I<OPCODE_AND_NOT, I8Op, I8Op, I8Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & ~i.src2.constant()) & 0xFF));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1,
-                ~static_cast<uint32_t>(i.src2.constant() & 0xFF), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_NOT_I8", i.dest, i.src1,
+                       ~static_cast<uint32_t>(i.src2.constant() & 0xFF),
+                       "src2_inverted");
     } else if (i.src1.is_constant) {
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
       e.bic(i.dest, e.w0, i.src2);
@@ -1838,8 +1898,9 @@ struct AND_NOT_I16
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & ~i.src2.constant()) & 0xFFFF));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1,
-                ~static_cast<uint32_t>(i.src2.constant() & 0xFFFF), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_NOT_I16", i.dest, i.src1,
+                       ~static_cast<uint32_t>(i.src2.constant() & 0xFFFF),
+                       "src2_inverted");
     } else if (i.src1.is_constant) {
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
       e.bic(i.dest, e.w0, i.src2);
@@ -1855,8 +1916,9 @@ struct AND_NOT_I32
       e.mov(i.dest, static_cast<uint64_t>(static_cast<uint32_t>(
                         i.src1.constant() & ~i.src2.constant())));
     } else if (i.src2.is_constant) {
-      e.and_imm(i.dest, i.src1,
-                ~static_cast<uint32_t>(i.src2.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kAnd, "AND_NOT_I32", i.dest, i.src1,
+                       ~static_cast<uint32_t>(i.src2.constant()),
+                       "src2_inverted");
     } else if (i.src1.is_constant) {
       e.mov(e.w0,
             static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
@@ -1873,8 +1935,9 @@ struct AND_NOT_I64
       e.mov(i.dest,
             static_cast<uint64_t>(i.src1.constant() & ~i.src2.constant()));
     } else if (i.src2.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kAnd, i.dest, i.src1,
-                        ~static_cast<uint64_t>(i.src2.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kAnd, "AND_NOT_I64", i.dest, i.src1,
+                       ~static_cast<uint64_t>(i.src2.constant()),
+                       "src2_inverted");
     } else if (i.src1.is_constant) {
       e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
       e.bic(i.dest, e.x0, i.src2);
@@ -1904,9 +1967,11 @@ struct OR_I8 : Sequence<OR_I8, I<OPCODE_OR, I8Op, I8Op, I8Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() | i.src2.constant()) & 0xFF));
     } else if (i.src2.is_constant) {
-      e.orr_imm(i.dest, i.src1, i.src2.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I8", i.dest, i.src1,
+                       i.src2.constant() & 0xFF, "src2");
     } else if (i.src1.is_constant) {
-      e.orr_imm(i.dest, i.src2, i.src1.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I8", i.dest, i.src2,
+                       i.src1.constant() & 0xFF, "src1");
     } else {
       e.orr(i.dest, i.src1, i.src2);
     }
@@ -1918,9 +1983,11 @@ struct OR_I16 : Sequence<OR_I16, I<OPCODE_OR, I16Op, I16Op, I16Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() | i.src2.constant()) & 0xFFFF));
     } else if (i.src2.is_constant) {
-      e.orr_imm(i.dest, i.src1, i.src2.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I16", i.dest, i.src1,
+                       i.src2.constant() & 0xFFFF, "src2");
     } else if (i.src1.is_constant) {
-      e.orr_imm(i.dest, i.src2, i.src1.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I16", i.dest, i.src2,
+                       i.src1.constant() & 0xFFFF, "src1");
     } else {
       e.orr(i.dest, i.src1, i.src2);
     }
@@ -1932,9 +1999,11 @@ struct OR_I32 : Sequence<OR_I32, I<OPCODE_OR, I32Op, I32Op, I32Op>> {
       e.mov(i.dest, static_cast<uint64_t>(static_cast<uint32_t>(
                         i.src1.constant() | i.src2.constant())));
     } else if (i.src2.is_constant) {
-      e.orr_imm(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I32", i.dest, i.src1,
+                       static_cast<uint32_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      e.orr_imm(i.dest, i.src2, static_cast<uint32_t>(i.src1.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kOrr, "OR_I32", i.dest, i.src2,
+                       static_cast<uint32_t>(i.src1.constant()), "src1");
     } else {
       e.orr(i.dest, i.src1, i.src2);
     }
@@ -1946,11 +2015,11 @@ struct OR_I64 : Sequence<OR_I64, I<OPCODE_OR, I64Op, I64Op, I64Op>> {
       e.mov(i.dest,
             static_cast<uint64_t>(i.src1.constant() | i.src2.constant()));
     } else if (i.src2.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kOrr, i.dest, i.src1,
-                        static_cast<uint64_t>(i.src2.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kOrr, "OR_I64", i.dest, i.src1,
+                       static_cast<uint64_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kOrr, i.dest, i.src2,
-                        static_cast<uint64_t>(i.src1.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kOrr, "OR_I64", i.dest, i.src2,
+                       static_cast<uint64_t>(i.src1.constant()), "src1");
     } else {
       e.orr(i.dest, i.src1, i.src2);
     }
@@ -1974,9 +2043,11 @@ struct XOR_I8 : Sequence<XOR_I8, I<OPCODE_XOR, I8Op, I8Op, I8Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() ^ i.src2.constant()) & 0xFF));
     } else if (i.src2.is_constant) {
-      e.eor_imm(i.dest, i.src1, i.src2.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I8", i.dest, i.src1,
+                       i.src2.constant() & 0xFF, "src2");
     } else if (i.src1.is_constant) {
-      e.eor_imm(i.dest, i.src2, i.src1.constant() & 0xFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I8", i.dest, i.src2,
+                       i.src1.constant() & 0xFF, "src1");
     } else {
       e.eor(i.dest, i.src1, i.src2);
     }
@@ -1988,9 +2059,11 @@ struct XOR_I16 : Sequence<XOR_I16, I<OPCODE_XOR, I16Op, I16Op, I16Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() ^ i.src2.constant()) & 0xFFFF));
     } else if (i.src2.is_constant) {
-      e.eor_imm(i.dest, i.src1, i.src2.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I16", i.dest, i.src1,
+                       i.src2.constant() & 0xFFFF, "src2");
     } else if (i.src1.is_constant) {
-      e.eor_imm(i.dest, i.src2, i.src1.constant() & 0xFFFF, e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I16", i.dest, i.src2,
+                       i.src1.constant() & 0xFFFF, "src1");
     } else {
       e.eor(i.dest, i.src1, i.src2);
     }
@@ -2002,9 +2075,11 @@ struct XOR_I32 : Sequence<XOR_I32, I<OPCODE_XOR, I32Op, I32Op, I32Op>> {
       e.mov(i.dest, static_cast<uint64_t>(static_cast<uint32_t>(
                         i.src1.constant() ^ i.src2.constant())));
     } else if (i.src2.is_constant) {
-      e.eor_imm(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I32", i.dest, i.src1,
+                       static_cast<uint32_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      e.eor_imm(i.dest, i.src2, static_cast<uint32_t>(i.src1.constant()), e.w0);
+      EmitLogicalImm32(e, LogicalImmOp::kEor, "XOR_I32", i.dest, i.src2,
+                       static_cast<uint32_t>(i.src1.constant()), "src1");
     } else {
       e.eor(i.dest, i.src1, i.src2);
     }
@@ -2016,11 +2091,11 @@ struct XOR_I64 : Sequence<XOR_I64, I<OPCODE_XOR, I64Op, I64Op, I64Op>> {
       e.mov(i.dest,
             static_cast<uint64_t>(i.src1.constant() ^ i.src2.constant()));
     } else if (i.src2.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kEor, i.dest, i.src1,
-                        static_cast<uint64_t>(i.src2.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kEor, "XOR_I64", i.dest, i.src1,
+                       static_cast<uint64_t>(i.src2.constant()), "src2");
     } else if (i.src1.is_constant) {
-      EmitLogicalI64Imm(e, LogicalI64Op::kEor, i.dest, i.src2,
-                        static_cast<uint64_t>(i.src1.constant()));
+      EmitLogicalImm64(e, LogicalImmOp::kEor, "XOR_I64", i.dest, i.src2,
+                       static_cast<uint64_t>(i.src1.constant()), "src1");
     } else {
       e.eor(i.dest, i.src1, i.src2);
     }

@@ -150,6 +150,21 @@ generic codegen cleanup; use an immediate-lowering hit audit before broadening
 more shapes. See
 `docs/research/20260520-152733-a64-and-not-logical-immediate-lowering.md`.
 
+Use the logical immediate audit before chasing more constant-materialization
+work in a hot function:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 45 -PerfSampleSeconds "40" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64ImmediateLoweringAudit true -Arm64ImmediateLoweringAuditFunction 0x8272A3A4 -Arm64ImmediateLoweringAuditBudget 256
+```
+
+Capture `scratch\thor-debug\20260520-154135-*` proved `8272A3A4` has no
+remaining logical-immediate `mov+reg` misses in the audited shapes: 38
+`AND_I8` rows and 30 `AND_I64` rows were all `logical-imm`. The final interval
+idled with audit logging active, so use this lane for translation evidence, not
+speed comparison. For high guest address filters, pass hex; the Thor script
+converts to signed Android `--ei` extras. See
+`docs/research/20260520-154650-a64-immediate-lowering-audit.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

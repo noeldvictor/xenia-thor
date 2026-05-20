@@ -143,6 +143,9 @@ param(
     [string]$Arm64AddSubImmAuditBudget = "",
     [string]$Arm64AddI64WrappedImmFastpath = "true",
     [string]$Arm64AddI64WrappedImmFastpathFunction = "",
+    [string]$Arm64ImmediateLoweringAudit = "false",
+    [string]$Arm64ImmediateLoweringAuditFunction = "",
+    [string]$Arm64ImmediateLoweringAuditBudget = "",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
@@ -373,7 +376,14 @@ function ConvertTo-AdbIntText {
     param([string]$Value)
     $trimmed = $Value.Trim()
     if ($trimmed -match "^(?i)0x([0-9a-f]+)$") {
-        return [Convert]::ToUInt32($Matches[1], 16).ToString()
+        $u32 = [Convert]::ToUInt32($Matches[1], 16)
+        return [BitConverter]::ToInt32([BitConverter]::GetBytes($u32), 0).ToString()
+    }
+    if ($trimmed -match "^[0-9]+$") {
+        $u32 = [Convert]::ToUInt64($trimmed, 10)
+        if ($u32 -le [uint32]::MaxValue -and $u32 -gt [int32]::MaxValue) {
+            return [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]$u32), 0).ToString()
+        }
     }
     return $trimmed
 }
@@ -791,6 +801,15 @@ function Start-XeniaEmulator {
     if ($Arm64AddI64WrappedImmFastpathFunction) {
         $parts += "--ei arm64_add_i64_wrapped_imm_fastpath_function $(ConvertTo-AdbIntText $Arm64AddI64WrappedImmFastpathFunction)"
     }
+    if ($Arm64ImmediateLoweringAudit) {
+        $parts += "--ez arm64_immediate_lowering_audit $(ConvertTo-BooleanText $Arm64ImmediateLoweringAudit)"
+    }
+    if ($Arm64ImmediateLoweringAuditFunction) {
+        $parts += "--ei arm64_immediate_lowering_audit_function $(ConvertTo-AdbIntText $Arm64ImmediateLoweringAuditFunction)"
+    }
+    if ($Arm64ImmediateLoweringAuditBudget) {
+        $parts += "--ei arm64_immediate_lowering_audit_budget $(ConvertTo-AdbIntText $Arm64ImmediateLoweringAuditBudget)"
+    }
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
@@ -928,6 +947,9 @@ function Write-CaptureMetadata {
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
         "arm64_add_i64_wrapped_imm_fastpath=$Arm64AddI64WrappedImmFastpath",
         "arm64_add_i64_wrapped_imm_fastpath_function=$Arm64AddI64WrappedImmFastpathFunction",
+        "arm64_immediate_lowering_audit=$Arm64ImmediateLoweringAudit",
+        "arm64_immediate_lowering_audit_function=$Arm64ImmediateLoweringAuditFunction",
+        "arm64_immediate_lowering_audit_budget=$Arm64ImmediateLoweringAuditBudget",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",

@@ -218,6 +218,21 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: optional exact guest function start address for "
     "the wrapped I64 ADD immediate fastpath. 0 enables all functions.",
     "a64");
+DEFINE_bool(
+    arm64_immediate_lowering_audit, false,
+    "Thor ARM64 speed lane: log logical-immediate lowering choices without "
+    "changing generated code. Research-only lowering audit.",
+    "a64");
+DEFINE_uint32(
+    arm64_immediate_lowering_audit_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "the immediate-lowering audit. 0 logs all functions.",
+    "a64");
+DEFINE_uint32(
+    arm64_immediate_lowering_audit_budget, 256,
+    "Thor ARM64 speed lane: maximum immediate-lowering audit lines to emit "
+    "per process.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
@@ -987,6 +1002,11 @@ void A64Backend::StartSpeedProfiler() {
   if (cvars::arm64_add_i64_wrapped_imm_fastpath) {
     XELOGW("A64 ADD_I64 wrapped immediate fastpath enabled: function={:08X}",
            cvars::arm64_add_i64_wrapped_imm_fastpath_function);
+  }
+  if (cvars::arm64_immediate_lowering_audit) {
+    XELOGW("A64 immediate lowering audit enabled: function={:08X} budget={}",
+           cvars::arm64_immediate_lowering_audit_function,
+           cvars::arm64_immediate_lowering_audit_budget);
   }
   speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
       std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });
