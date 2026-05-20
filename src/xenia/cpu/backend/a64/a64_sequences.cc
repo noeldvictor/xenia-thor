@@ -552,8 +552,12 @@ struct STORE_CONTEXT_I8
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFF));
-      e.strb(e.w0, ptr(e.GetContextReg(), offset));
+      if ((i.src2.constant() & 0xFF) == 0) {
+        e.strb(e.wzr, ptr(e.GetContextReg(), offset));
+      } else {
+        e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFF));
+        e.strb(e.w0, ptr(e.GetContextReg(), offset));
+      }
     } else {
       e.strb(i.src2, ptr(e.GetContextReg(), offset));
     }
@@ -565,8 +569,12 @@ struct STORE_CONTEXT_I16
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
-      e.strh(e.w0, ptr(e.GetContextReg(), offset));
+      if ((i.src2.constant() & 0xFFFF) == 0) {
+        e.strh(e.wzr, ptr(e.GetContextReg(), offset));
+      } else {
+        e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
+        e.strh(e.w0, ptr(e.GetContextReg(), offset));
+      }
     } else {
       e.strh(i.src2, ptr(e.GetContextReg(), offset));
     }
@@ -3508,8 +3516,12 @@ struct STORE_LOCAL_I8
     auto base = PrepareLocalBase(e, off, 1);
     uint32_t imm = PrepareLocalImm(off, 1);
     if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFF));
-      e.strb(e.w0, ptr(base, imm));
+      if ((i.src2.constant() & 0xFF) == 0) {
+        e.strb(e.wzr, ptr(base, imm));
+      } else {
+        e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFF));
+        e.strb(e.w0, ptr(base, imm));
+      }
     } else {
       e.strb(i.src2, ptr(base, imm));
     }
@@ -3522,8 +3534,12 @@ struct STORE_LOCAL_I16
     auto base = PrepareLocalBase(e, off, 2);
     uint32_t imm = PrepareLocalImm(off, 2);
     if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
-      e.strh(e.w0, ptr(base, imm));
+      if ((i.src2.constant() & 0xFFFF) == 0) {
+        e.strh(e.wzr, ptr(base, imm));
+      } else {
+        e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
+        e.strh(e.w0, ptr(base, imm));
+      }
     } else {
       e.strh(i.src2, ptr(base, imm));
     }
@@ -5424,11 +5440,88 @@ static int anchor_memory_dest = anchor_memory;
 extern volatile int anchor_vector;
 static int anchor_vector_dest = anchor_vector;
 
+namespace {
+
+static bool IsIntegerZeroValue(const hir::Value* value) {
+  if (!value || !(value->flags & hir::VALUE_IS_CONSTANT)) {
+    return false;
+  }
+  switch (value->type) {
+    case hir::INT8_TYPE:
+    case hir::INT16_TYPE:
+    case hir::INT32_TYPE:
+    case hir::INT64_TYPE:
+      return value->constant.i64 == 0;
+    default:
+      return false;
+  }
+}
+
+static bool IsUnsignedZeroCompareAlwaysFalse(const hir::Instr* instr) {
+  switch (instr->GetOpcodeNum()) {
+    case hir::OPCODE_COMPARE_ULT:
+      return IsIntegerZeroValue(instr->src2.value);
+    case hir::OPCODE_COMPARE_UGT:
+      return IsIntegerZeroValue(instr->src1.value);
+    default:
+      return false;
+  }
+}
+
+static bool ValueHasOnlyUse(const hir::Value* value, const hir::Instr* instr) {
+  return value && value->use_head && value->use_head->instr == instr &&
+         value->use_head->next == nullptr;
+}
+
+static bool TrySelectUnsignedZeroCompareStoreContext(A64Emitter* e,
+                                                     const hir::Instr* instr,
+                                                     const hir::Instr** new_tail) {
+  if (!IsUnsignedZeroCompareAlwaysFalse(instr) || !instr->dest ||
+      instr->dest->type != hir::INT8_TYPE) {
+    return false;
+  }
+
+  const hir::Instr* store = instr->next;
+  if (!store || store->GetOpcodeNum() != hir::OPCODE_STORE_CONTEXT ||
+      store->src2.value != instr->dest ||
+      !ValueHasOnlyUse(instr->dest, store)) {
+    return false;
+  }
+
+  const uint32_t offset = static_cast<uint32_t>(store->src1.offset);
+  switch (store->src2.value->type) {
+    case hir::INT8_TYPE:
+      e->strb(e->wzr, ptr(e->GetContextReg(), offset));
+      *new_tail = store->next;
+      return true;
+    case hir::INT16_TYPE:
+      e->strh(e->wzr, ptr(e->GetContextReg(), offset));
+      *new_tail = store->next;
+      return true;
+    case hir::INT32_TYPE:
+      e->str(e->wzr, ptr(e->GetContextReg(), offset));
+      *new_tail = store->next;
+      return true;
+    case hir::INT64_TYPE:
+      e->str(e->xzr, ptr(e->GetContextReg(), offset));
+      *new_tail = store->next;
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 // ============================================================================
 // SelectSequence — dispatch an instruction to its sequence handler
 // ============================================================================
 bool SelectSequence(A64Emitter* e, const hir::Instr* i,
                     const hir::Instr** new_tail) {
+  if (TrySelectUnsignedZeroCompareStoreContext(e, i, new_tail)) {
+    return true;
+  }
+
   const InstrKey key(i);
   auto& sequence_table = SequenceTable();
   auto it = sequence_table.find(key);

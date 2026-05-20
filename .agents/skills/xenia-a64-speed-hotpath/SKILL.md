@@ -191,6 +191,16 @@ shrunk `8272A3A4` from `12540` to `12432` bytes and `8272A8E8` from `5592` to
 `5552` bytes. See
 `docs/research/20260520-161650-a64-unsigned-zero-compare-fold.md`.
 
+The 2026-05-20 compare-to-context-store peephole is the next proven CR churn
+cleanup. A zero-store-only build `scratch\thor-debug\20260520-162727-*` reached
+the Blue Dragon Voice Language menu but did not shrink the hot functions. The
+actual win was fusing always-false unsigned zero compares whose only use is the
+immediately following `store_context`; proof
+`scratch\thor-debug\20260520-163134-*` reached the same menu with no searched
+fatal markers and shrank `8272A3A4` from `12432` to `12332` bytes and
+`8272A8E8` from `5552` to `5520`. See
+`docs/research/20260520-163450-a64-compare-store-context-peephole.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

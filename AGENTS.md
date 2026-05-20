@@ -1287,6 +1287,17 @@ required.
   `scratch/thor-debug/20260520-161344-*` stayed active through 70 seconds,
   shrank `8272A3A4` to `12432`, and shrank `8272A8E8` to `5552`. This is still
   CPU/codegen progress only because the screenshot was black.
+- Compare-to-context store peephole:
+  `docs/research/20260520-163450-a64-compare-store-context-peephole.md`.
+  Zero byte/halfword context/local stores now use `wzr` directly, and A64 now
+  fuses the specific HIR pair `COMPARE_ULT x, 0` or `COMPARE_UGT 0, x`
+  followed by a single-use `store_context` into a direct zero context store.
+  The zero-store-only proof `scratch/thor-debug/20260520-162727-*` was safe but
+  did not shrink `8272A3A4`; the peephole proof
+  `scratch/thor-debug/20260520-163134-*` reached the Blue Dragon Voice Language
+  menu, had no searched fatal markers, and shrank `8272A3A4 12432 -> 12332`
+  and `8272A8E8 5552 -> 5520`. Keep this as a proven generic cleanup, but the
+  route remains CPU/A64 and XMA heavy rather than playable-speed.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
