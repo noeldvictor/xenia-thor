@@ -315,6 +315,44 @@ static void MaybeAuditWrappedAddSubImm(A64Emitter& e, const char* opcode,
       would_emit);
 }
 
+template <typename T>
+static bool IsUnsignedZeroConstant(const T& op) {
+  if (!op.is_constant) {
+    return false;
+  }
+  using ConstantType =
+      typename std::make_unsigned<std::remove_cv_t<decltype(op.constant())>>::
+          type;
+  return static_cast<ConstantType>(op.constant()) == 0;
+}
+
+template <typename SRC1, typename SRC2>
+static bool TryEmitUnsignedZeroCompareFold(A64Emitter& e, hir::Opcode opcode,
+                                           const WReg& dest, const SRC1& src1,
+                                           const SRC2& src2) {
+  if (IsUnsignedZeroConstant(src2)) {
+    if (opcode == OPCODE_COMPARE_ULT) {
+      e.mov(dest, uint64_t{0});
+      return true;
+    }
+    if (opcode == OPCODE_COMPARE_UGE) {
+      e.mov(dest, uint64_t{1});
+      return true;
+    }
+  }
+  if (IsUnsignedZeroConstant(src1)) {
+    if (opcode == OPCODE_COMPARE_UGT) {
+      e.mov(dest, uint64_t{0});
+      return true;
+    }
+    if (opcode == OPCODE_COMPARE_ULE) {
+      e.mov(dest, uint64_t{1});
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -2765,6 +2803,10 @@ EMITTER_OPCODE_TABLE(OPCODE_CNTLZ, CNTLZ_I8, CNTLZ_I16, CNTLZ_I32, CNTLZ_I64);
 #define DEFINE_COMPARE_XX(NAME, COND)                                          \
   struct NAME##_I8 : Sequence<NAME##_I8, I<OPCODE_##NAME, I8Op, I8Op, I8Op>> { \
     static void Emit(A64Emitter& e, const EmitArgType& i) {                    \
+      if (TryEmitUnsignedZeroCompareFold(e, OPCODE_##NAME, i.dest, i.src1,     \
+                                         i.src2)) {                            \
+        return;                                                                \
+      }                                                                        \
       if (i.src1.is_constant) {                                                \
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));          \
         if (i.src2.is_constant) {                                              \
@@ -2790,6 +2832,10 @@ EMITTER_OPCODE_TABLE(OPCODE_CNTLZ, CNTLZ_I8, CNTLZ_I16, CNTLZ_I32, CNTLZ_I64);
   struct NAME##_I16                                                            \
       : Sequence<NAME##_I16, I<OPCODE_##NAME, I8Op, I16Op, I16Op>> {           \
     static void Emit(A64Emitter& e, const EmitArgType& i) {                    \
+      if (TryEmitUnsignedZeroCompareFold(e, OPCODE_##NAME, i.dest, i.src1,     \
+                                         i.src2)) {                            \
+        return;                                                                \
+      }                                                                        \
       if (i.src1.is_constant) {                                                \
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));        \
         if (i.src2.is_constant) {                                              \
@@ -2815,6 +2861,10 @@ EMITTER_OPCODE_TABLE(OPCODE_CNTLZ, CNTLZ_I8, CNTLZ_I16, CNTLZ_I32, CNTLZ_I64);
   struct NAME##_I32                                                            \
       : Sequence<NAME##_I32, I<OPCODE_##NAME, I8Op, I32Op, I32Op>> {           \
     static void Emit(A64Emitter& e, const EmitArgType& i) {                    \
+      if (TryEmitUnsignedZeroCompareFold(e, OPCODE_##NAME, i.dest, i.src1,     \
+                                         i.src2)) {                            \
+        return;                                                                \
+      }                                                                        \
       if (i.src1.is_constant) {                                                \
         e.mov(e.w0, static_cast<uint64_t>(                                     \
                         static_cast<uint32_t>(i.src1.constant())));            \
@@ -2842,6 +2892,10 @@ EMITTER_OPCODE_TABLE(OPCODE_CNTLZ, CNTLZ_I8, CNTLZ_I16, CNTLZ_I32, CNTLZ_I64);
   struct NAME##_I64                                                            \
       : Sequence<NAME##_I64, I<OPCODE_##NAME, I8Op, I64Op, I64Op>> {           \
     static void Emit(A64Emitter& e, const EmitArgType& i) {                    \
+      if (TryEmitUnsignedZeroCompareFold(e, OPCODE_##NAME, i.dest, i.src1,     \
+                                         i.src2)) {                            \
+        return;                                                                \
+      }                                                                        \
       if (i.src1.is_constant) {                                                \
         e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));                 \
         if (i.src2.is_constant) {                                              \

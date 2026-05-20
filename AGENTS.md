@@ -1279,6 +1279,14 @@ required.
   later idled; repeat proof `scratch/thor-debug/20260520-160757-*` stayed
   active through 70 seconds with no searched fatal markers. Treat this as a
   route-proven codegen cleanup, not a visible title-screen proof.
+- Unsigned zero-compare fold:
+  `docs/research/20260520-161650-a64-unsigned-zero-compare-fold.md`.
+  The Blue Dragon hot dumps contain many CR flag rows such as
+  `compare_ult value, 0`; A64 now folds unsigned zero-bound integer compares
+  that are always true or false. Proof
+  `scratch/thor-debug/20260520-161344-*` stayed active through 70 seconds,
+  shrank `8272A3A4` to `12432`, and shrank `8272A8E8` to `5552`. This is still
+  CPU/codegen progress only because the screenshot was black.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

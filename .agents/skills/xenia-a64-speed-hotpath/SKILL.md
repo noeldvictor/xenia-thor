@@ -183,6 +183,14 @@ to `5592` bytes. The earlier `scratch\thor-debug\20260520-160530-*` attempt
 idled later, so keep treating Blue Dragon speed routes as timing-sensitive.
 See `docs/research/20260520-161130-a64-zero-select-fastpath.md`.
 
+The 2026-05-20 unsigned zero-compare pass folds integer compares that are
+forced by an unsigned zero bound, such as `COMPARE_ULT x, 0 -> false` and
+`COMPARE_UGE x, 0 -> true`. Proof
+`scratch\thor-debug\20260520-161344-*` stayed active through 70 seconds and
+shrunk `8272A3A4` from `12540` to `12432` bytes and `8272A8E8` from `5592` to
+`5552` bytes. See
+`docs/research/20260520-161650-a64-unsigned-zero-compare-fold.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.
