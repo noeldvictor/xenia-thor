@@ -165,6 +165,15 @@ speed comparison. For high guest address filters, pass hex; the Thor script
 converts to signed Android `--ei` extras. See
 `docs/research/20260520-154650-a64-immediate-lowering-audit.md`.
 
+Global audit `scratch\thor-debug\20260520-154815-*` found 44 `OR_I32 imm 0`
+fallbacks in the first 256 logical-immediate rows. Those now lower through the
+zero fastpath as `action identity`; `AND reg, 0` also lowers as `action zero`.
+Post-change audit `scratch\thor-debug\20260520-155154-*` left only two
+first-budget `mov+reg` rows, both `AND_I64` masks (`0x6001007D` and `0xEF`).
+Quiet proof `scratch\thor-debug\20260520-155321-*` stayed route-clean through
+60 seconds. See
+`docs/research/20260520-155700-a64-zero-logical-immediate-fastpath.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

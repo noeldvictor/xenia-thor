@@ -164,7 +164,7 @@ enum class LogicalImmOp {
 static void MaybeAuditLogicalImmediate(A64Emitter& e, const char* opcode,
                                        uint32_t reg_bits, uint64_t imm,
                                        const char* constant_side,
-                                       bool logical_imm) {
+                                       bool logical_imm, const char* action) {
   if (!cvars::arm64_immediate_lowering_audit) {
     return;
   }
@@ -182,15 +182,31 @@ static void MaybeAuditLogicalImmediate(A64Emitter& e, const char* opcode,
       "A64 immediate lowering audit {:03}: fn {:08X} op {} width {} "
       "const_side {} imm 0x{:016X} masked 0x{:016X} logical_imm {} action {}",
       log_index + 1, function, opcode, reg_bits, constant_side, imm, masked,
-      logical_imm ? "yes" : "no", logical_imm ? "logical-imm" : "mov+reg");
+      logical_imm ? "yes" : "no", action);
 }
 
 static void EmitLogicalImm32(A64Emitter& e, LogicalImmOp op,
                              const char* opcode, const WReg& dest,
                              const WReg& src, uint32_t imm,
                              const char* constant_side) {
+  if (imm == 0) {
+    switch (op) {
+      case LogicalImmOp::kAnd:
+        MaybeAuditLogicalImmediate(e, opcode, 32, imm, constant_side, false,
+                                   "zero");
+        e.mov(dest, uint64_t{0});
+        return;
+      case LogicalImmOp::kOrr:
+      case LogicalImmOp::kEor:
+        MaybeAuditLogicalImmediate(e, opcode, 32, imm, constant_side, false,
+                                   "identity");
+        e.mov(dest, src);
+        return;
+    }
+  }
   bool logical_imm = IsA64LogicalImmediate(imm, 32);
-  MaybeAuditLogicalImmediate(e, opcode, 32, imm, constant_side, logical_imm);
+  MaybeAuditLogicalImmediate(e, opcode, 32, imm, constant_side, logical_imm,
+                             logical_imm ? "logical-imm" : "mov+reg");
   switch (op) {
     case LogicalImmOp::kAnd:
       e.and_imm(dest, src, imm, e.w0);
@@ -208,8 +224,24 @@ static void EmitLogicalImm64(A64Emitter& e, LogicalImmOp op,
                              const char* opcode, const XReg& dest,
                              const XReg& src, uint64_t imm,
                              const char* constant_side) {
+  if (imm == 0) {
+    switch (op) {
+      case LogicalImmOp::kAnd:
+        MaybeAuditLogicalImmediate(e, opcode, 64, imm, constant_side, false,
+                                   "zero");
+        e.mov(dest, uint64_t{0});
+        return;
+      case LogicalImmOp::kOrr:
+      case LogicalImmOp::kEor:
+        MaybeAuditLogicalImmediate(e, opcode, 64, imm, constant_side, false,
+                                   "identity");
+        e.mov(dest, src);
+        return;
+    }
+  }
   bool logical_imm = IsA64LogicalImmediate(imm, 64);
-  MaybeAuditLogicalImmediate(e, opcode, 64, imm, constant_side, logical_imm);
+  MaybeAuditLogicalImmediate(e, opcode, 64, imm, constant_side, logical_imm,
+                             logical_imm ? "logical-imm" : "mov+reg");
   if (logical_imm) {
     switch (op) {
       case LogicalImmOp::kAnd:

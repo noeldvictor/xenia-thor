@@ -1258,6 +1258,17 @@ required.
   `logical_imm yes action logical-imm`, with zero `mov+reg` logical misses.
   Do not spend the next `8272A3A4` speed pass on more logical-immediate cleanup
   unless a new audit names a miss.
+- Zero logical-immediate cleanup:
+  `docs/research/20260520-155700-a64-zero-logical-immediate-fastpath.md`.
+  Global audit `scratch/thor-debug/20260520-154815-*` showed 46 `mov+reg`
+  rows in the first 256 logical-immediate audit rows, including 44
+  `OR_I32 imm 0` cases. `OR/XOR reg, 0` now lowers as identity, and
+  `AND reg, 0` lowers as zero. Post-change audit
+  `scratch/thor-debug/20260520-155154-*` moved those 44 `OR_I32` rows to
+  `action identity`; quiet proof `scratch/thor-debug/20260520-155321-*`
+  stayed active through 60 seconds. The remaining first-budget misses were two
+  `AND_I64` masks, `0x6001007D` and `0xEF`; do not change them without a
+  separate audit/proof.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
