@@ -67,6 +67,14 @@ DEFINE_bool(
     "Inline tiny PPC leaf helpers matching "
     "`lwz r11,D(r13); lwz r3,D(r11); blr` in the A64 backend.",
     "a64");
+DEFINE_bool(a64_inline_fpr_helpers, true,
+            "Inline PPC __savefpr_* / __restfpr_* ABI helpers in the A64 "
+            "backend. Experimental.",
+            "a64");
+DEFINE_bool(a64_inline_vmx_helpers, true,
+            "Inline PPC __savevmx_* / __restvmx_* ABI helpers in the A64 "
+            "backend. Experimental.",
+            "a64");
 
 namespace {
 std::atomic<int> g_a64_call_trace_budget{0};
@@ -348,6 +356,63 @@ bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
     return false;
   }
   *first_gpr = parsed;
+  return true;
+}
+
+bool ParseFprVmxHelper(const xe::cpu::GuestFunction* function, bool* is_save,
+                       bool* is_vmx, int* first_reg, int* last_reg) {
+  if (!function || !is_save || !is_vmx || !first_reg || !last_reg) {
+    return false;
+  }
+
+  const std::string& name = function->name();
+  constexpr std::string_view kSaveFprPrefix = "__savefpr_";
+  constexpr std::string_view kRestFprPrefix = "__restfpr_";
+  constexpr std::string_view kSaveVmxPrefix = "__savevmx_";
+  constexpr std::string_view kRestVmxPrefix = "__restvmx_";
+  std::string_view suffix;
+  if (function->behavior() == xe::cpu::Function::Behavior::kProlog &&
+      name.rfind(kSaveFprPrefix, 0) == 0) {
+    *is_save = true;
+    *is_vmx = false;
+    suffix = std::string_view(name).substr(kSaveFprPrefix.size());
+  } else if (function->behavior() == xe::cpu::Function::Behavior::kEpilog &&
+             name.rfind(kRestFprPrefix, 0) == 0) {
+    *is_save = false;
+    *is_vmx = false;
+    suffix = std::string_view(name).substr(kRestFprPrefix.size());
+  } else if (function->behavior() == xe::cpu::Function::Behavior::kProlog &&
+             name.rfind(kSaveVmxPrefix, 0) == 0) {
+    *is_save = true;
+    *is_vmx = true;
+    suffix = std::string_view(name).substr(kSaveVmxPrefix.size());
+  } else if (function->behavior() == xe::cpu::Function::Behavior::kEpilog &&
+             name.rfind(kRestVmxPrefix, 0) == 0) {
+    *is_save = false;
+    *is_vmx = true;
+    suffix = std::string_view(name).substr(kRestVmxPrefix.size());
+  } else {
+    return false;
+  }
+
+  int parsed = 0;
+  auto result =
+      std::from_chars(suffix.data(), suffix.data() + suffix.size(), parsed);
+  if (result.ec != std::errc() || result.ptr != suffix.data() + suffix.size()) {
+    return false;
+  }
+  if (*is_vmx) {
+    if ((parsed < 14 || parsed > 31) && (parsed < 64 || parsed > 127)) {
+      return false;
+    }
+    *last_reg = parsed < 32 ? 31 : 127;
+  } else {
+    if (parsed < 14 || parsed > 31) {
+      return false;
+    }
+    *last_reg = 31;
+  }
+  *first_reg = parsed;
   return true;
 }
 
@@ -874,6 +939,84 @@ bool A64Emitter::TryEmitGprLrHelperCall(const hir::Instr* instr,
   return true;
 }
 
+bool A64Emitter::TryEmitFprVmxHelperCall(const hir::Instr* instr,
+                                         GuestFunction* function) {
+  if ((instr->flags & hir::CALL_TAIL) != 0) {
+    return false;
+  }
+
+  bool is_save = false;
+  bool is_vmx = false;
+  int first_reg = 0;
+  int last_reg = 0;
+  if (!ParseFprVmxHelper(function, &is_save, &is_vmx, &first_reg, &last_reg)) {
+    return false;
+  }
+  if ((is_vmx && !cvars::a64_inline_vmx_helpers) ||
+      (!is_vmx && !cvars::a64_inline_fpr_helpers)) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  const int slot_size = is_vmx ? 16 : 8;
+  const int stack_limit = is_vmx ? (last_reg + 1) : 32;
+  const int32_t first_stack_offset = -slot_size * (stack_limit - first_reg);
+  const uint32_t base_subtract =
+      static_cast<uint32_t>(-first_stack_offset);
+
+  ldr(w9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[12]))));
+  if (base_subtract) {
+    sub(w9, w9, base_subtract);
+  }
+  AddGuestAddressToMembase(w9, x9);
+  if (is_vmx) {
+    and_(x9, x9, ~0xFull);
+  }
+
+  for (int reg = first_reg; reg <= last_reg; ++reg) {
+    const uint32_t slot_offset = static_cast<uint32_t>(
+        (-slot_size * (stack_limit - reg)) - first_stack_offset);
+    if (is_vmx) {
+      const auto context_offset =
+          static_cast<int32_t>(offsetof(ppc::PPCContext, v) +
+                               sizeof(xe::vec128_t) *
+                                   static_cast<size_t>(reg));
+      if (is_save) {
+        ldr(QReg(0), ptr(GetContextReg(), context_offset));
+        rev32(VReg16B(0), VReg16B(0));
+        str(QReg(0), ptr(x9, slot_offset));
+      } else {
+        ldr(QReg(0), ptr(x9, slot_offset));
+        rev32(VReg16B(0), VReg16B(0));
+        str(QReg(0), ptr(GetContextReg(), context_offset));
+      }
+    } else {
+      const auto context_offset =
+          static_cast<int32_t>(offsetof(ppc::PPCContext, f) +
+                               sizeof(double) * static_cast<size_t>(reg));
+      if (is_save) {
+        ldr(x10, ptr(GetContextReg(), context_offset));
+        rev(x10, x10);
+        str(x10, ptr(x9, slot_offset));
+      } else {
+        ldr(x10, ptr(x9, slot_offset));
+        rev(x10, x10);
+        str(x10, ptr(GetContextReg(), context_offset));
+      }
+    }
+  }
+
+  if (is_vmx) {
+    mov(x10, 0xFFFFFFFFFFFFFFF0ull);
+    str(x10, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[11]))));
+  }
+
+  return true;
+}
+
 void A64Emitter::AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
                                           Xbyak_aarch64::XReg host_reg) {
   mov(WReg(host_reg.getIdx()), guest_reg);
@@ -1119,6 +1262,9 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
   if (TryEmitGprLrHelperCall(instr, function)) {
+    return;
+  }
+  if (TryEmitFprVmxHelperCall(instr, function)) {
     return;
   }
   if (TryEmitPpcThreadFieldLeafHelperCall(instr, function)) {

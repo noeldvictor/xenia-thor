@@ -112,6 +112,9 @@ param(
     [string]$Arm64SpeedProfileTopFunctions = "",
     [string]$Arm64SpeedProfileMinDelta = "",
     [string]$A64InlineGprLrHelpers = "",
+    [string]$A64InlineFprHelpers = "true",
+    [string]$A64InlineVmxHelpers = "true",
+    [string]$A64InlineFprVmxHelpers = "",
     [string]$A64InlinePpcThreadFieldLeafHelpers = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$Arm64BlueDragonDrawWaitProbeStride = "",
@@ -642,6 +645,22 @@ function Start-XeniaEmulator {
     if ($A64InlineGprLrHelpers) {
         $parts += "--ez a64_inline_gprlr_helpers $(ConvertTo-BooleanText $A64InlineGprLrHelpers)"
     }
+    $effectiveA64InlineFprHelpers = $A64InlineFprHelpers
+    $effectiveA64InlineVmxHelpers = $A64InlineVmxHelpers
+    if ($A64InlineFprVmxHelpers) {
+        if (-not $effectiveA64InlineFprHelpers) {
+            $effectiveA64InlineFprHelpers = $A64InlineFprVmxHelpers
+        }
+        if (-not $effectiveA64InlineVmxHelpers) {
+            $effectiveA64InlineVmxHelpers = $A64InlineFprVmxHelpers
+        }
+    }
+    if ($effectiveA64InlineFprHelpers) {
+        $parts += "--ez a64_inline_fpr_helpers $(ConvertTo-BooleanText $effectiveA64InlineFprHelpers)"
+    }
+    if ($effectiveA64InlineVmxHelpers) {
+        $parts += "--ez a64_inline_vmx_helpers $(ConvertTo-BooleanText $effectiveA64InlineVmxHelpers)"
+    }
     if ($A64InlinePpcThreadFieldLeafHelpers) {
         $parts += "--ez a64_inline_ppc_thread_field_leaf_helpers $(ConvertTo-BooleanText $A64InlinePpcThreadFieldLeafHelpers)"
     }
@@ -731,6 +750,16 @@ function Write-CaptureMetadata {
     $deviceState = Get-AdbDeviceState
     $packagePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
     $focused = (Invoke-AdbShellCommand "dumpsys activity activities | grep -E 'mFocusedApp|mResumedActivity|$PackageName' | head -40") -join "`n"
+    $effectiveA64InlineFprHelpers = $A64InlineFprHelpers
+    $effectiveA64InlineVmxHelpers = $A64InlineVmxHelpers
+    if ($A64InlineFprVmxHelpers) {
+        if (-not $effectiveA64InlineFprHelpers) {
+            $effectiveA64InlineFprHelpers = $A64InlineFprVmxHelpers
+        }
+        if (-not $effectiveA64InlineVmxHelpers) {
+            $effectiveA64InlineVmxHelpers = $A64InlineFprVmxHelpers
+        }
+    }
     @(
         "timestamp=$Stamp",
         "branch=$branch",
@@ -748,6 +777,9 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_top_functions=$Arm64SpeedProfileTopFunctions",
         "arm64_speed_profile_min_delta=$Arm64SpeedProfileMinDelta",
         "a64_inline_gprlr_helpers=$A64InlineGprLrHelpers",
+        "a64_inline_fpr_helpers=$effectiveA64InlineFprHelpers",
+        "a64_inline_vmx_helpers=$effectiveA64InlineVmxHelpers",
+        "a64_inline_fpr_vmx_helpers=$A64InlineFprVmxHelpers",
         "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",

@@ -141,6 +141,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_top_functions");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_min_delta");
             copyBooleanExtra(intent, launchArguments, "a64_inline_gprlr_helpers");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_fpr_helpers");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_vmx_helpers");
             copyBooleanExtra(
                     intent, launchArguments, "a64_inline_ppc_thread_field_leaf_helpers");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");

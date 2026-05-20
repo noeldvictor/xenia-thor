@@ -938,6 +938,36 @@ required.
     visibly beat the host-counter route at the 180s/270s checkpoints.
   - Current safe Blue Dragon route remains host-counter fastpath, no sleep,
     default timeout, and `-MountCache true`.
+- A64 FPR/VMX helper inline:
+  `docs/research/20260519-204252-a64-fpr-vmx-helper-inline.md`.
+  - `a64_inline_fpr_helpers` and `a64_inline_vmx_helpers` are routed through
+    Android and `tools/thor/thor_xenia_debug.ps1`; both are now default-on in
+    the A64 backend after split and combined Thor validation.
+  - The Thor script exposes split knobs
+    `-A64InlineFprHelpers true|false` and `-A64InlineVmxHelpers true|false`.
+    `-A64InlineFprVmxHelpers` is only a legacy alias that sets both when the
+    split knobs are absent. The script defaults the split knobs to `true`
+    because existing Android configs can persist older `false` values even
+    after the C++ defaults change.
+  - The helper inline path must do guest stack offset math before applying
+    membase. Subtracting after `AddGuestAddressToMembase` parked Blue Dragon on
+    black screen in the pre-fix probes.
+  - VMX helper inlining must align the guest effective address to 16 bytes and
+    preserve the `r11 = -16` side effect from the compiler helper stubs.
+  - Current Blue Dragon speed command does not need explicit FPR/VMX helper
+    flags when launched through `tools/thor/thor_xenia_debug.ps1` unless
+    overriding the script defaults, but it should still include
+    `-A64InlinePpcThreadFieldLeafHelpers true
+    -Arm64BlueDragonDrawWaitProbe true
+    -Arm64BlueDragonDrawWaitFastpath true
+    -Arm64BlueDragonDrawWaitFastpathHostCounterTime true
+    -MountCache true`.
+  - Validation capture `scratch\thor-debug\20260519-203701-*` reached the
+    Microsoft Game Studios opening scene and removed `__savefpr`,
+    `__restfpr`, `__savevmx`, and `__restvmx` from late top profile entries.
+  - The remaining wall is still CPU/A64 around `8246B408`; do not pivot to
+    broad GPU work until speed captures show GPU Commands or GPU VSync as the
+    top wall.
 
 ## Codex Hooks / Automation
 
