@@ -537,6 +537,23 @@ std::vector<ThreadDebugInfo*> Processor::QueryThreadDebugInfos() {
   return result;
 }
 
+std::vector<ThreadDebugInfo*> Processor::TryQueryThreadDebugInfos(
+    bool* acquired) {
+  auto global_lock = global_critical_region_.TryAcquire();
+  bool owns_lock = global_lock.owns_lock();
+  if (acquired) {
+    *acquired = owns_lock;
+  }
+  std::vector<ThreadDebugInfo*> result;
+  if (!owns_lock) {
+    return result;
+  }
+  for (auto& it : thread_debug_infos_) {
+    result.push_back(it.second.get());
+  }
+  return result;
+}
+
 ThreadDebugInfo* Processor::QueryThreadDebugInfo(uint32_t thread_id) {
   auto global_lock = global_critical_region_.Acquire();
   const auto& it = thread_debug_infos_.find(thread_id);

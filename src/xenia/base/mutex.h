@@ -10,6 +10,7 @@
 #ifndef XENIA_BASE_MUTEX_H_
 #define XENIA_BASE_MUTEX_H_
 
+#include <cstdint>
 #include <mutex>
 
 namespace xe {
@@ -55,18 +56,24 @@ namespace xe {
 class global_critical_region {
  public:
   static std::recursive_mutex& mutex();
+  static void NoteOwner();
+  static uint32_t last_owner_system_thread_id();
 
   // Acquires a lock on the global critical section.
   // Use this when keeping an instance is not possible. Otherwise, prefer
   // to keep an instance of global_critical_region near the members requiring
   // it to keep things readable.
   static std::unique_lock<std::recursive_mutex> AcquireDirect() {
-    return std::unique_lock<std::recursive_mutex>(mutex());
+    auto lock = std::unique_lock<std::recursive_mutex>(mutex());
+    NoteOwner();
+    return lock;
   }
 
   // Acquires a lock on the global critical section.
   inline std::unique_lock<std::recursive_mutex> Acquire() {
-    return std::unique_lock<std::recursive_mutex>(mutex());
+    auto lock = std::unique_lock<std::recursive_mutex>(mutex());
+    NoteOwner();
+    return lock;
   }
 
   // Acquires a deferred lock on the global critical section.
@@ -77,7 +84,12 @@ class global_critical_region {
   // Tries to acquire a lock on the glboal critical section.
   // Check owns_lock() to see if the lock was successfully acquired.
   inline std::unique_lock<std::recursive_mutex> TryAcquire() {
-    return std::unique_lock<std::recursive_mutex>(mutex(), std::try_to_lock);
+    auto lock =
+        std::unique_lock<std::recursive_mutex>(mutex(), std::try_to_lock);
+    if (lock.owns_lock()) {
+      NoteOwner();
+    }
+    return lock;
   }
 };
 

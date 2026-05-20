@@ -28,6 +28,7 @@
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
+#include "xenia/base/mutex.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading.h"
 #include "third_party/fmt/include/fmt/format.h"
@@ -45,6 +46,7 @@
 #include "xenia/cpu/backend/a64/a64_stack_layout.h"
 #include "xenia/cpu/breakpoint.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/ppc/ppc_frontend.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/stack_walker.h"
 #include "xenia/cpu/thread_state.h"
@@ -219,6 +221,11 @@ DEFINE_string(
     "selected-function block-entry profiling. Requires "
     "arm64_speed_profile_interval_ms.",
     "a64");
+DEFINE_bool(
+    arm64_speed_profile_thread_snapshot, false,
+    "Thor ARM64 speed lane: log each guest thread's last A64 function and "
+    "PPC context registers on every speed-profile interval.",
+    "a64");
 
 namespace xe {
 namespace cpu {
@@ -377,6 +384,21 @@ bool FunctionStartMatchesAddressFilter(A64Function* function,
   }
 
   return false;
+}
+
+const char* ThreadDebugStateName(ThreadDebugInfo::State state) {
+  switch (state) {
+    case ThreadDebugInfo::State::kAlive:
+      return "alive";
+    case ThreadDebugInfo::State::kWaiting:
+      return "waiting";
+    case ThreadDebugInfo::State::kExited:
+      return "exited";
+    case ThreadDebugInfo::State::kZombie:
+      return "zombie";
+    default:
+      return "unknown";
+  }
 }
 
 }  // namespace
@@ -1101,6 +1123,58 @@ void A64Backend::LogSpeedProfile() {
         i + 1, sample.function_address, sample.function_name,
         sample.block_ordinal, sample.block_address, sample.delta,
         sample.total);
+  }
+
+  if (cvars::arm64_speed_profile_thread_snapshot && processor()) {
+    bool acquired_thread_debug_lock = false;
+    std::vector<ThreadDebugInfo*> thread_infos;
+    for (uint32_t attempt = 0; attempt < 20; ++attempt) {
+      thread_infos =
+          processor()->TryQueryThreadDebugInfos(&acquired_thread_debug_lock);
+      if (acquired_thread_debug_lock) {
+        break;
+      }
+      xe::threading::Sleep(std::chrono::milliseconds(1));
+    }
+    if (!acquired_thread_debug_lock) {
+      auto owner = ppc::QueryGlobalLockOwnerSnapshot();
+      XELOGW(
+          "A64 thread snapshot skipped: processor debug lock busy "
+          "after_retries=20 last_global_owner_sys_tid={} global_lock_count={} "
+          "owner_tid={:08X} owner_lr={:08X} owner_ctr={:08X} "
+          "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X}",
+          xe::global_critical_region::last_owner_system_thread_id(),
+          owner.count, owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
+          owner.r4);
+      return;
+    }
+    for (auto* thread_info : thread_infos) {
+      if (!thread_info) {
+        continue;
+      }
+      auto* thread = thread_info->thread;
+      auto* thread_state = thread ? thread->thread_state() : nullptr;
+      auto* context = thread_state ? thread_state->context() : nullptr;
+      uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
+      uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
+      uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+      uint32_t r3 = context ? static_cast<uint32_t>(context->r[3]) : 0;
+      uint32_t r4 = context ? static_cast<uint32_t>(context->r[4]) : 0;
+      uint32_t last_fn = 0;
+      uint32_t last_ret = 0;
+      if (context) {
+        auto* a64_context = BackendContextForGuestContext(context);
+        last_fn = a64_context->last_guest_function;
+        last_ret = a64_context->last_guest_return_address;
+      }
+      XELOGW(
+          "A64 thread snapshot tid={:08X} handle={:08X} state={} "
+          "last_fn={:08X} last_ret={:08X} lr={:08X} ctr={:08X} "
+          "r1={:08X} r3={:08X} r4={:08X}",
+          thread_info->thread_id, thread_info->thread_handle,
+          ThreadDebugStateName(thread_info->state), last_fn, last_ret, lr, ctr,
+          r1, r3, r4);
+    }
   }
 }
 

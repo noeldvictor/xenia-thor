@@ -4,6 +4,7 @@ param(
     [string]$Mode = "FullApk",
     [string]$Variant = "GithubDebug",
     [string]$DeviceSerial = "",
+    [string]$PackageName = "jp.xenia.emulator.github.debug",
     [switch]$NoSubst
 )
 
@@ -89,6 +90,13 @@ function Install-Apk {
     Invoke-Adb @("install", "-r", "-d", $apkPath)
 }
 
+function Grant-DebugStorageAccess {
+    if (!$DeviceSerial) {
+        return
+    }
+    Invoke-Adb @("shell", "appops", "set", $PackageName, "MANAGE_EXTERNAL_STORAGE", "allow")
+}
+
 $assembleTask = ":app:assemble$Variant"
 $nativeTask = ":app:externalNativeBuild$Variant"
 
@@ -104,13 +112,16 @@ switch ($Mode) {
     }
     "Install" {
         Install-Apk
+        Grant-DebugStorageAccess
     }
     "FullDeploy" {
         Invoke-Gradle @($assembleTask)
         Install-Apk
+        Grant-DebugStorageAccess
     }
     "ApkShellDeploy" {
         Invoke-Gradle @($assembleTask, "-x", $nativeTask)
         Install-Apk
+        Grant-DebugStorageAccess
     }
 }

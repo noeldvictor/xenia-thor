@@ -32,7 +32,7 @@ param(
     [string]$BreakOnDebugbreak = "",
     [string]$DisassembleFunctions = "false",
     [string]$DisassembleFunctionFilter = "",
-    [string]$MountCache = "false",
+    [string]$MountCache = "true",
     [string]$MmapAddressHigh = "",
     [string]$ClearMemoryPageState = "false",
     [string]$EmitInlineMmioChecks = "false",
@@ -136,6 +136,7 @@ param(
     [string]$Arm64BlueDragonJumpTableFastpath = "false",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
+    [string]$Arm64SpeedProfileThreadSnapshot = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -766,6 +767,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileBlockFilter) {
         $parts += "--es arm64_speed_profile_block_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBlockFilter)"
     }
+    if ($Arm64SpeedProfileThreadSnapshot) {
+        $parts += "--ez arm64_speed_profile_thread_snapshot $(ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshot)"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -886,6 +890,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_jump_table_fastpath=$Arm64BlueDragonJumpTableFastpath",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
+        "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

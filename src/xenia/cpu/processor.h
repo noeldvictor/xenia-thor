@@ -133,6 +133,7 @@ class Processor {
   // This is the preferred way to sample thread state vs. attempting to ask
   // the kernel.
   std::vector<ThreadDebugInfo*> QueryThreadDebugInfos();
+  std::vector<ThreadDebugInfo*> TryQueryThreadDebugInfos(bool* acquired);
 
   // Returns the debugger info for the given thread.
   ThreadDebugInfo* QueryThreadDebugInfo(uint32_t thread_id);

@@ -37,7 +37,28 @@ powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode L
 Then summarize the latest evidence:
 
 ```powershell
-rg -n "A64 speed profile|A64 speed profile body|__savegprlr|__restgprlr|8246B408|8248B040|827294CC|8272A3A4|Fatal signal|AndroidRuntime|VK_ERROR_DEVICE_LOST|GPU is hung|XMA|top_threads" scratch\thor-debug
+rg -n "A64 speed profile|A64 thread snapshot|last_global_owner_sys_tid|ResolvePath\\(cache|__savegprlr|__restgprlr|8246B408|8248B040|827294CC|8272A3A4|Fatal signal|AndroidRuntime|VK_ERROR_DEVICE_LOST|GPU is hung|XMA|top_threads" scratch\thor-debug
+```
+
+`tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370` reapplies
+the debug app-op for `MANAGE_EXTERNAL_STORAGE` after install. If a run shows
+`funcs=0` forever, verify `cmd appops get jp.xenia.emulator.github.debug
+MANAGE_EXTERNAL_STORAGE` before chasing A64.
+
+The Thor debug launcher defaults `mount_cache=true` for Blue Dragon. Keep it on
+for correctness runs; `MountCache false` can keep the game busier but leaves
+`ResolvePath(cache:\pack) failed - device not found` noise in the route.
+
+## Thread Snapshot Lane
+
+Use the thread snapshot flag when the screen is black or the route's final
+interval disagrees with `top -H`. It logs each guest thread's last A64 function,
+guest return address, LR/CTR/R1/R3/R4, and retries briefly before giving up on
+the processor debug lock. Skip lines include the last observed global critical
+owner system TID and PPC global-lock owner breadcrumbs.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 50 -PerfSampleSeconds "45" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 10 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileThreadSnapshot true
 ```
 
 ## Body-Time Lane

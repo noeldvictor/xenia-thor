@@ -1100,6 +1100,21 @@ required.
   - The next speed lane should inspect `8272A3A4` and `8272A8E8` or add
     body-time/generated-code profiling, because entry counts alone now overstate
     the cost of tiny high-frequency helpers.
+- Blue Dragon Thor debug lane as of 2026-05-20:
+  - `arm64_speed_profile_thread_snapshot` logs per-XThread `last_fn`,
+    `last_ret`, LR/CTR/R1/R3/R4 from the A64 backend context on speed-profile
+    intervals. It retries the processor debug lock briefly; if still blocked,
+    the skip line includes `last_global_owner_sys_tid` plus PPC global-lock
+    owner breadcrumbs.
+  - `tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370`
+    reapplies `MANAGE_EXTERNAL_STORAGE` via appops after install, and the debug
+    APK declares `android.permission.MANAGE_EXTERNAL_STORAGE`. If a capture
+    reports `funcs=0` forever, check storage appops before debugging A64.
+  - `tools\thor\thor_xenia_debug.ps1` defaults `mount_cache=true`. This removes
+    `ResolvePath(cache:\pack) failed - device not found`, but the latest
+    cache-mounted run still black-idles by the 45s interval with
+    `entry_delta=0`; the next correctness target is wait/event/cache-route HLE,
+    not another blind helper splice.
 
 ## Codex Hooks / Automation
 

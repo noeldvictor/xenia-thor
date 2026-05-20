@@ -13,6 +13,7 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
 #include <cctype>
 #include <cstring>
 #include <limits>
@@ -906,6 +907,11 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   }
   if (backend_->speed_profile_enabled()) {
     EmitAtomicIncrement64(current_guest_function_entry_count_);
+    mov(w16, current_guest_function_);
+    str(w16, ptr(x19, static_cast<uint32_t>(
+                          offsetof(A64BackendContext, last_guest_function))));
+    str(w0, ptr(x19, static_cast<uint32_t>(offsetof(
+                          A64BackendContext, last_guest_return_address))));
   }
   MaybeEmitBodyTimeProfileStart();
   MaybeEmitBlueDragonDrawWaitCallerProfile();

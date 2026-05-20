@@ -10,6 +10,7 @@
 #ifndef XENIA_CPU_PPC_PPC_FRONTEND_H_
 #define XENIA_CPU_PPC_PPC_FRONTEND_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "xenia/base/type_pool.h"
@@ -35,6 +36,18 @@ struct PPCBuiltins {
   Function* leave_global_lock;
   Function* syscall_handler;
 };
+
+struct GlobalLockOwnerSnapshot {
+  int32_t count;
+  uint32_t thread_id;
+  uint32_t lr;
+  uint32_t ctr;
+  uint32_t r1;
+  uint32_t r3;
+  uint32_t r4;
+};
+
+GlobalLockOwnerSnapshot QueryGlobalLockOwnerSnapshot();
 
 class PPCFrontend {
  public:
