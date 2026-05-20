@@ -142,6 +142,14 @@ encodable and keep the old scratch-register fallback otherwise. Capture
 shrunk `8272A3A4` to `code_size=12652`. See
 `docs/research/20260520-152237-a64-i64-logical-immediate-lowering.md`.
 
+The follow-up `AND_NOT_I8/I16/I32 reg, reg, const` cleanup is route-clean but
+not a measured Blue Dragon hot-block win. Capture
+`scratch\thor-debug\20260520-152601-*` stayed active through 60 seconds, while
+`8272A3A4` and `8272A8E8` remained at `code_size=12652` and `5600`. Keep it as
+generic codegen cleanup; use an immediate-lowering hit audit before broadening
+more shapes. See
+`docs/research/20260520-152733-a64-and-not-logical-immediate-lowering.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

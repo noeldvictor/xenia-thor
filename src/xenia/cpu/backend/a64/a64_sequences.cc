@@ -1821,8 +1821,8 @@ struct AND_NOT_I8 : Sequence<AND_NOT_I8, I<OPCODE_AND_NOT, I8Op, I8Op, I8Op>> {
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & ~i.src2.constant()) & 0xFF));
     } else if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFF));
-      e.bic(i.dest, i.src1, e.w0);
+      e.and_imm(i.dest, i.src1,
+                ~static_cast<uint32_t>(i.src2.constant() & 0xFF), e.w0);
     } else if (i.src1.is_constant) {
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
       e.bic(i.dest, e.w0, i.src2);
@@ -1838,8 +1838,8 @@ struct AND_NOT_I16
       e.mov(i.dest, static_cast<uint64_t>(
                         (i.src1.constant() & ~i.src2.constant()) & 0xFFFF));
     } else if (i.src2.is_constant) {
-      e.mov(e.w0, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
-      e.bic(i.dest, i.src1, e.w0);
+      e.and_imm(i.dest, i.src1,
+                ~static_cast<uint32_t>(i.src2.constant() & 0xFFFF), e.w0);
     } else if (i.src1.is_constant) {
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
       e.bic(i.dest, e.w0, i.src2);
@@ -1855,9 +1855,8 @@ struct AND_NOT_I32
       e.mov(i.dest, static_cast<uint64_t>(static_cast<uint32_t>(
                         i.src1.constant() & ~i.src2.constant())));
     } else if (i.src2.is_constant) {
-      e.mov(e.w0,
-            static_cast<uint64_t>(static_cast<uint32_t>(i.src2.constant())));
-      e.bic(i.dest, i.src1, e.w0);
+      e.and_imm(i.dest, i.src1,
+                ~static_cast<uint32_t>(i.src2.constant()), e.w0);
     } else if (i.src1.is_constant) {
       e.mov(e.w0,
             static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));

@@ -1238,6 +1238,14 @@ required.
   `scratch/thor-debug/20260520-152048-*` stayed active through 60 seconds and
   shrank `8272A3A4` from `12772` to `12652` bytes versus the prior default
   proof.
+- AND_NOT logical-immediate follow-up:
+  `docs/research/20260520-152733-a64-and-not-logical-immediate-lowering.md`.
+  `AND_NOT_I8`, `AND_NOT_I16`, and `AND_NOT_I32` with a constant second
+  operand now lower through the existing 32-bit `and_imm` helper as
+  `src1 & ~const`. Thor proof `scratch/thor-debug/20260520-152601-*` stayed
+  active through 60 seconds, but the current hottest functions did not shrink
+  further, so treat this as a generic codegen cleanup rather than a measured
+  Blue Dragon speed win.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
