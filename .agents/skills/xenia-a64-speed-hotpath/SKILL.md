@@ -37,7 +37,17 @@ powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode L
 Then summarize the latest evidence:
 
 ```powershell
-rg -n "A64 speed profile|__savegprlr|__restgprlr|8246B408|8248B040|827294CC|8272A3A4|Fatal signal|AndroidRuntime|VK_ERROR_DEVICE_LOST|GPU is hung|XMA|top_threads" scratch\thor-debug
+rg -n "A64 speed profile|A64 speed profile body|__savegprlr|__restgprlr|8246B408|8248B040|827294CC|8272A3A4|Fatal signal|AndroidRuntime|VK_ERROR_DEVICE_LOST|GPU is hung|XMA|top_threads" scratch\thor-debug
+```
+
+## Body-Time Lane
+
+Use body-time counters when entry counts are misleading after helper fastpaths.
+This is especially useful for Blue Dragon where `827294CC`, `826C5620`, and
+`826BF770` can stay high-frequency even when each call is cheap.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 95 -PerfSampleSeconds "70" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4,8272A8E8,826C5620,827294CC,826BF770"
 ```
 
 ## Classification
@@ -55,6 +65,9 @@ Read the final speed-profile interval first.
   file/device I/O, and MMIO paths.
 - If resolves or resolve misses are high, inspect function lookup, code-cache
   registration, and invalidation.
+- If `A64 speed profile body top` disagrees with entry-count top rows, trust
+  body time for the next optimization target. Entry count means "called often";
+  body time means "burned measured generated-code cycles."
 - If thread samples show XMA or audio ahead of the guest CPU, use
   `-XmaFastSilence true` only as an A/B cost probe, not as a fix.
 - If GPU/composer threads are not hot and the screen is merely slow, stay in
@@ -93,6 +106,7 @@ A speed patch is not a win until the notes include:
 - commit hash and APK SHA-256;
 - profiler cvars and logging mode;
 - final A64 counter interval;
+- final A64 body-time interval when the body filter was enabled;
 - thread sample summary;
 - screenshot path or route status;
 - whether the run crashed, hung, or changed visible progress;

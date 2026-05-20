@@ -273,6 +273,10 @@ required.
     periodic summaries for function-entry deltas, direct/indirect guest calls,
     guest-to-host transitions, runtime resolves, and top guest PCs. It is
     default-off and preferred before noisy compiled-call tracing.
+  - `-Arm64SpeedProfileBodyTimeFilter "8272A3A4,8272A8E8,826C5620,827294CC,826BF770"`
+    with the speed profiler to measure filtered generated-code body time using
+    CNTVCT. Use this when entry counts are misleading after helper fastpaths.
+    Body-time rows are sorted by elapsed guest body ticks, not call count.
   - `-A64InlinePpcThreadFieldLeafHelpers false` to roll back the A64 inline
     for tiny PPC leaf helpers matching `lwz r11,D(r13); lwz r3,D(r11); blr`.
     Blue Dragon's hot draw-wait route calls one of these helpers at
@@ -472,6 +476,16 @@ required.
   performance. The latest thread sample shows the main guest CPU thread and XMA
   decoder as the top consumers, with GPU command work below them. Treat the
   current speed wall as CPU/JIT/audio/debug-overhead first, GPU second.
+- Current speed discriminator:
+  `docs/research/20260519-230000-a64-body-time-profiler.md`.
+  The validated Thor capture `scratch\thor-debug\20260519-225321-*` reached the
+  Blue Dragon loading spinner with APK SHA-256
+  `3951852CB716C00DB006ED96216BFBA056070BF679FF8733286E43DFED17F6FC` and no
+  searched fatal markers. Filtered body-time rows show `8272A3A4` as the
+  largest measured guest-body cost in the loading route; `827294CC` and
+  `826C5620` remain high-frequency but relatively cheap after their current
+  fastpaths. Prefer body-time or simpleperf evidence before adding more
+  entry-count-driven micro-fastpaths.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.

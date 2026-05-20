@@ -11,11 +11,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cctype>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -201,11 +206,123 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: minimum entry-count delta before a function can "
     "appear in the periodic top-function report.",
     "a64");
+DEFINE_string(
+    arm64_speed_profile_body_time_filter, "",
+    "Thor ARM64 speed lane: optional comma/semicolon/space separated guest "
+    "function addresses or inclusive ranges for CNTVCT body-time profiling. "
+    "Requires arm64_speed_profile_interval_ms.",
+    "a64");
 
 namespace xe {
 namespace cpu {
 namespace backend {
 namespace a64 {
+
+namespace {
+
+std::string_view TrimAddressToken(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool ParseAddressToken(std::string_view value, uint32_t* out_address) {
+  value = TrimAddressToken(value);
+  if (value.empty()) {
+    return false;
+  }
+
+  int base = 10;
+  if (value.size() > 2 && value[0] == '0' &&
+      (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  } else {
+    if (value.size() >= 8) {
+      base = 16;
+    }
+    for (char c : value) {
+      if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+        base = 16;
+        break;
+      }
+    }
+  }
+
+  uint64_t parsed = 0;
+  auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (result.ec != std::errc() || result.ptr != value.data() + value.size() ||
+      parsed > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  *out_address = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool FunctionMatchesAddressFilter(A64Function* function,
+                                  std::string_view filter) {
+  if (!function || filter.empty()) {
+    return false;
+  }
+
+  uint32_t function_start = function->address();
+  uint32_t function_end = function->end_address();
+  if (function_end < function_start) {
+    function_end = function_start;
+  }
+
+  size_t token_start = 0;
+  while (token_start < filter.size()) {
+    while (token_start < filter.size() &&
+           (std::isspace(static_cast<unsigned char>(filter[token_start])) ||
+            filter[token_start] == ',' || filter[token_start] == ';')) {
+      ++token_start;
+    }
+    if (token_start >= filter.size()) {
+      break;
+    }
+
+    size_t token_end = token_start;
+    while (token_end < filter.size() && filter[token_end] != ',' &&
+           filter[token_end] != ';' &&
+           !std::isspace(static_cast<unsigned char>(filter[token_end]))) {
+      ++token_end;
+    }
+
+    std::string_view token =
+        TrimAddressToken(filter.substr(token_start, token_end - token_start));
+    size_t range_separator = token.find('-');
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (range_separator != std::string_view::npos) {
+      if (ParseAddressToken(token.substr(0, range_separator), &start) &&
+          ParseAddressToken(token.substr(range_separator + 1), &end)) {
+        if (start > end) {
+          std::swap(start, end);
+        }
+        if (start <= function_end && end >= function_start) {
+          return true;
+        }
+      }
+    } else if (ParseAddressToken(token, &start) && start >= function_start &&
+               start <= function_end) {
+      return true;
+    }
+
+    token_start = token_end;
+  }
+
+  return false;
+}
+
+}  // namespace
 
 // Resolve a guest function at runtime. Called by the resolve thunk when
 // a guest address has not yet been compiled.
@@ -680,6 +797,16 @@ bool A64Backend::speed_profile_enabled() const {
   return cvars::arm64_speed_profile_interval_ms != 0;
 }
 
+bool A64Backend::BodyTimeProfileEnabledForFunction(
+    A64Function* function) const {
+  if (!speed_profile_enabled() ||
+      cvars::arm64_speed_profile_body_time_filter.empty()) {
+    return false;
+  }
+  return FunctionMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_body_time_filter);
+}
+
 void A64Backend::RecordResolveFunction(bool success) {
   if (!speed_profile_enabled()) {
     return;
@@ -747,10 +874,14 @@ void A64Backend::LogSpeedProfile() {
     std::string name;
     uint64_t total = 0;
     uint64_t delta = 0;
+    uint64_t body_ticks_total = 0;
+    uint64_t body_ticks_delta = 0;
+    uint64_t body_ticks_per_entry = 0;
     size_t code_size = 0;
   };
 
   std::vector<FunctionSample> samples;
+  std::vector<FunctionSample> body_samples;
   uint64_t entry_delta_total = 0;
   size_t function_count = 0;
   {
@@ -766,22 +897,43 @@ void A64Backend::LogSpeedProfile() {
           function->profile_entry_count()->load(std::memory_order_relaxed);
       uint64_t delta = total - entry.last_entry_count;
       entry.last_entry_count = total;
+      uint64_t body_total =
+          function->profile_body_ticks()->load(std::memory_order_relaxed);
+      uint64_t body_delta = body_total - entry.last_body_ticks;
+      entry.last_body_ticks = body_total;
       entry_delta_total += delta;
-      if (delta < cvars::arm64_speed_profile_min_delta) {
+      if (delta < cvars::arm64_speed_profile_min_delta && body_delta == 0) {
         continue;
       }
       std::string name = function->name();
       if (name.empty()) {
         name = fmt::format("sub_{:08X}", function->address());
       }
-      samples.push_back({function->address(), std::move(name), total, delta,
-                         function->machine_code_length()});
+      uint64_t body_ticks_per_entry = delta ? body_delta / delta : 0;
+      FunctionSample sample = {function->address(),
+                               std::move(name),
+                               total,
+                               delta,
+                               body_total,
+                               body_delta,
+                               body_ticks_per_entry,
+                               function->machine_code_length()};
+      if (delta >= cvars::arm64_speed_profile_min_delta) {
+        samples.push_back(sample);
+      }
+      if (body_delta != 0) {
+        body_samples.push_back(std::move(sample));
+      }
     }
   }
 
   std::sort(samples.begin(), samples.end(),
             [](const FunctionSample& a, const FunctionSample& b) {
               return a.delta > b.delta;
+            });
+  std::sort(body_samples.begin(), body_samples.end(),
+            [](const FunctionSample& a, const FunctionSample& b) {
+              return a.body_ticks_delta > b.body_ticks_delta;
             });
 
   auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
@@ -822,6 +974,19 @@ void A64Backend::LogSpeedProfile() {
            "code_size={}",
            i + 1, sample.address, sample.name, sample.delta, sample.total,
            sample.code_size);
+  }
+
+  size_t body_top_count = std::min<size_t>(
+      body_samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < body_top_count; ++i) {
+    const auto& sample = body_samples[i];
+    XELOGW(
+        "A64 speed profile body top {:02}: fn {:08X} '{}' "
+        "body_ticks_delta={} body_ticks_total={} entries_delta={} "
+        "ticks_per_entry={} code_size={}",
+        i + 1, sample.address, sample.name, sample.body_ticks_delta,
+        sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry,
+        sample.code_size);
   }
 }
 

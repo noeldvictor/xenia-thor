@@ -37,6 +37,7 @@ class A64Function : public GuestFunction {
   void Setup(uint8_t* machine_code, size_t machine_code_length);
   void MarkProfileRegistered(A64Backend* backend);
   std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
+  std::atomic<uint64_t>* profile_body_ticks() { return &profile_body_ticks_; }
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -45,6 +46,7 @@ class A64Function : public GuestFunction {
   std::atomic<uint8_t*> machine_code_{nullptr};
   std::atomic<size_t> machine_code_length_{0};
   std::atomic<uint64_t> profile_entry_count_{0};
+  std::atomic<uint64_t> profile_body_ticks_{0};
   std::atomic<A64Backend*> profile_registered_backend_{nullptr};
 };
 

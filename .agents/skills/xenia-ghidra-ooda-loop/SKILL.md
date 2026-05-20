@@ -13,6 +13,8 @@ project.
 1. Start from runtime evidence, not a whole-disc guess:
    - latest `scratch/thor-debug/*speed-logcat*.txt`;
    - A64 speed-profile top PCs;
+   - A64 body-time top PCs when `arm64_speed_profile_body_time_filter` was
+     enabled;
    - native crash/tombstone addresses;
    - generated-code ranges;
    - Xenia focused PPC dumps.
@@ -77,6 +79,9 @@ Use this for hot PCs such as `8246B408`:
   `-DisassembleFunctions true -DisassembleFunctionFilter "8246B408,8248B040"`.
 - Use Ghidra guest PPC only after there is a concrete guest address and a
   question like "what token/timer/global does this loop wait on?"
+- If body-time points at a large generated guest function such as `8272A3A4`,
+  first classify the function shape, inner loop, imports/globals, and state
+  fields before attempting a whole-body fastpath.
 - Cross-check Ghidra output against Xenia's PPC disassembly, HIR dump, import
   logs, and runtime capture.
 

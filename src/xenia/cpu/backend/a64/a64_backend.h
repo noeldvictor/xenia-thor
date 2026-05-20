@@ -136,6 +136,7 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* speed_profile_extern_calls() {
     return &speed_profile_extern_calls_;
   }
+  bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
 
   bool Initialize(Processor* processor) override;
 
@@ -176,6 +177,7 @@ class A64Backend : public Backend {
   struct ProfiledFunctionEntry {
     A64Function* function = nullptr;
     uint64_t last_entry_count = 0;
+    uint64_t last_body_ticks = 0;
   };
 
   static bool ExceptionCallbackThunk(Exception* ex, void* data);

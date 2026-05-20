@@ -710,11 +710,16 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   trace_data_ = &function->trace_data();
 
   current_guest_function_ = function->address();
-  current_guest_function_entry_count_ =
-      static_cast<A64Function*>(function)->profile_entry_count();
+  auto a64_function = static_cast<A64Function*>(function);
+  current_guest_function_entry_count_ = a64_function->profile_entry_count();
+  current_guest_function_body_ticks_ =
+      backend_->BodyTimeProfileEnabledForFunction(a64_function)
+          ? a64_function->profile_body_ticks()
+          : nullptr;
 
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
+  body_time_start_stack_offset_ = 0;
   source_map_arena_.Reset();
   tail_code_.clear();
   fpcr_mode_ = FPCRMode::Unknown;
@@ -749,6 +754,41 @@ void A64Emitter::EmitAtomicIncrement64(std::atomic<uint64_t>* counter) {
   cbnz(w11, retry);
 }
 
+void A64Emitter::EmitAtomicAdd64(std::atomic<uint64_t>* counter,
+                                 const Xbyak_aarch64::XReg& value_reg) {
+  if (!counter) {
+    return;
+  }
+
+  mov(x12, reinterpret_cast<uint64_t>(counter));
+  auto& retry = NewCachedLabel();
+  L(retry);
+  ldxr(x13, ptr(x12));
+  add(x13, x13, value_reg);
+  stxr(w14, x13, ptr(x12));
+  cbnz(w14, retry);
+}
+
+void A64Emitter::MaybeEmitBodyTimeProfileStart() {
+  if (!current_guest_function_body_ticks_) {
+    return;
+  }
+
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  str(x17, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
+}
+
+void A64Emitter::MaybeEmitBodyTimeProfileEnd() {
+  if (!current_guest_function_body_ticks_) {
+    return;
+  }
+
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  ldr(x11, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
+  sub(x17, x17, x11);
+  EmitAtomicAdd64(current_guest_function_body_ticks_, x17);
+}
+
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // Calculate local variable stack offsets.
   auto locals = builder->locals();
@@ -761,6 +801,11 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     stack_offset = xe::align(stack_offset, align_size);
     slot->set_constant(static_cast<uint32_t>(stack_offset));
     stack_offset += type_size;
+  }
+  if (current_guest_function_body_ticks_) {
+    stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
+    body_time_start_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
   }
   // Align total stack offset to 16 bytes (ARM64 ABI requirement).
   stack_offset -= StackLayout::GUEST_STACK_SIZE;
@@ -818,6 +863,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   if (backend_->speed_profile_enabled()) {
     EmitAtomicIncrement64(current_guest_function_entry_count_);
   }
+  MaybeEmitBodyTimeProfileStart();
   MaybeEmitBlueDragonDrawWaitCallerProfile();
 
   // ========================================================================
@@ -886,6 +932,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // ========================================================================
   L(*epilog_label_);
   MaybeEmitBlueDragonStricmpReturnProfile();
+  MaybeEmitBodyTimeProfileEnd();
   epilog_label_ = nullptr;
   code_offsets.epilog = getSize();
 
@@ -1095,6 +1142,7 @@ bool A64Emitter::TryEmitGprLrHelperCall(const hir::Instr* instr,
       mov(x9, x0);
     }
 
+    MaybeEmitBodyTimeProfileEnd();
     PopStackpoint();
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
     ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -1623,6 +1671,7 @@ bool A64Emitter::TryEmitBlueDragonJumpTableFunctionBody() {
     mov(x9, x0);
   }
 
+  MaybeEmitBodyTimeProfileEnd();
   PopStackpoint();
   ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
   ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -1707,6 +1756,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       synchronize_stack_on_next_instruction_ = true;
     } else {
       // Tail call: pass our return address to the callee.
+      MaybeEmitBodyTimeProfileEnd();
       PopStackpoint();
       ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
       ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -1738,6 +1788,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   }
 
   if (instr->flags & hir::CALL_TAIL) {
+    MaybeEmitBodyTimeProfileEnd();
     PopStackpoint();
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
     ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -1790,6 +1841,7 @@ void A64Emitter::CallIndirect(const hir::Instr* instr, int reg_index) {
 
   if (instr->flags & hir::CALL_TAIL) {
     // Tail call: pass our return address to the callee.
+    MaybeEmitBodyTimeProfileEnd();
     PopStackpoint();
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
     ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));

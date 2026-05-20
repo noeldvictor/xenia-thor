@@ -139,6 +139,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void CallNativeSafe(void* fn);
   void SetReturnAddress(uint64_t value);
   void EmitAtomicIncrement64(std::atomic<uint64_t>* counter);
+  void EmitAtomicAdd64(std::atomic<uint64_t>* counter,
+                       const Xbyak_aarch64::XReg& value_reg);
+  void MaybeEmitBodyTimeProfileStart();
+  void MaybeEmitBodyTimeProfileEnd();
 
   // Backend context register = x19.
   // Points to A64BackendContext (immediately before PPCContext in memory).
@@ -190,6 +194,8 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   uint64_t feature_flags_ = 0;
   uint32_t current_guest_function_ = 0;
   std::atomic<uint64_t>* current_guest_function_entry_count_ = nullptr;
+  std::atomic<uint64_t>* current_guest_function_body_ticks_ = nullptr;
+  size_t body_time_start_stack_offset_ = 0;
 
   Xbyak_aarch64::Label* epilog_label_ = nullptr;
 
