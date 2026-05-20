@@ -923,6 +923,21 @@ required.
     `-Arm64BlueDragonDrawWaitFastpath true -Arm64BlueDragonDrawWaitFastpathHostCounterTime true -Arm64BlueDragonDrawWaitProbe true -MountCache true`.
   - The remaining wall is still `8246B408`, now as generated A64 busy-wait
     cost rather than per-entry native clock thunk cost.
+- Blue Dragon wait-yield and timeout probes:
+  `docs/research/20260519-200005-blue-dragon-wait-yield-timeout-probes.md`.
+  - New default-off/neutral knobs are routed through Android and the Thor
+    script: `arm64_blue_dragon_draw_wait_fastpath_native_yield_stride`,
+    `arm64_blue_dragon_draw_wait_fastpath_native_sleep_us`, and
+    `arm64_blue_dragon_draw_wait_fastpath_timeout_ms` (`5000` preserves the
+    current predicate).
+  - `-Arm64BlueDragonDrawWaitFastpathNativeYieldStride 8192` was stable but did
+    not remove the `8246B408` wall.
+  - `-Arm64BlueDragonDrawWaitFastpathNativeSleepUs 100` parked on black screen;
+    treat sleep as a negative-control probe until the wait producer is known.
+  - `-Arm64BlueDragonDrawWaitFastpathTimeoutMs 1000` was stable but did not
+    visibly beat the host-counter route at the 180s/270s checkpoints.
+  - Current safe Blue Dragon route remains host-counter fastpath, no sleep,
+    default timeout, and `-MountCache true`.
 
 ## Codex Hooks / Automation
 

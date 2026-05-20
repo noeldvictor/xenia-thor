@@ -118,6 +118,9 @@ param(
     [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
     [string]$Arm64BlueDragonDrawWaitFastpath = "false",
     [string]$Arm64BlueDragonDrawWaitFastpathHostCounterTime = "false",
+    [string]$Arm64BlueDragonDrawWaitFastpathNativeYieldStride = "",
+    [string]$Arm64BlueDragonDrawWaitFastpathNativeSleepUs = "",
+    [string]$Arm64BlueDragonDrawWaitFastpathTimeoutMs = "",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -657,6 +660,15 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonDrawWaitFastpathHostCounterTime) {
         $parts += "--ez arm64_blue_dragon_draw_wait_fastpath_host_counter_time $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitFastpathHostCounterTime)"
     }
+    if ($Arm64BlueDragonDrawWaitFastpathNativeYieldStride) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_fastpath_native_yield_stride $Arm64BlueDragonDrawWaitFastpathNativeYieldStride"
+    }
+    if ($Arm64BlueDragonDrawWaitFastpathNativeSleepUs) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_fastpath_native_sleep_us $Arm64BlueDragonDrawWaitFastpathNativeSleepUs"
+    }
+    if ($Arm64BlueDragonDrawWaitFastpathTimeoutMs) {
+        $parts += "--ei arm64_blue_dragon_draw_wait_fastpath_timeout_ms $Arm64BlueDragonDrawWaitFastpathTimeoutMs"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -742,6 +754,9 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
         "arm64_blue_dragon_draw_wait_fastpath=$Arm64BlueDragonDrawWaitFastpath",
         "arm64_blue_dragon_draw_wait_fastpath_host_counter_time=$Arm64BlueDragonDrawWaitFastpathHostCounterTime",
+        "arm64_blue_dragon_draw_wait_fastpath_native_yield_stride=$Arm64BlueDragonDrawWaitFastpathNativeYieldStride",
+        "arm64_blue_dragon_draw_wait_fastpath_native_sleep_us=$Arm64BlueDragonDrawWaitFastpathNativeSleepUs",
+        "arm64_blue_dragon_draw_wait_fastpath_timeout_ms=$Arm64BlueDragonDrawWaitFastpathTimeoutMs",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

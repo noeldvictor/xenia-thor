@@ -114,6 +114,24 @@ DEFINE_bool(
     "Research-only and title-specific.",
     "a64");
 DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_fastpath_native_yield_stride, 0,
+    "Thor ARM64 bring-up: in the Blue Dragon draw-wait fastpath, call the "
+    "host scheduler yield helper every N wait-return hits. 0 disables it. "
+    "Research-only and title-specific.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_fastpath_native_sleep_us, 0,
+    "Thor ARM64 bring-up: sleep this many host microseconds in the Blue Dragon "
+    "draw-wait native yield helper. 0 uses sched_yield only. Research-only and "
+    "title-specific.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_draw_wait_fastpath_timeout_ms, 5000,
+    "Thor ARM64 bring-up: timeout threshold for the Blue Dragon draw-wait "
+    "fastpath. 5000 matches the observed guest predicate. Research-only and "
+    "title-specific.",
+    "a64");
+DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
     "0 disables inline counters and periodic top-function reports.",

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <cstring>
 #include <limits>
@@ -28,6 +29,7 @@
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
+#include "xenia/base/threading.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_code_cache.h"
 #include "xenia/cpu/backend/a64/a64_function.h"
@@ -51,6 +53,9 @@ DECLARE_uint32(arm64_compiled_call_trace_after_ms);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_yield_stride);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_sleep_us);
+DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_timeout_ms);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -299,6 +304,17 @@ void UpdateBlueDragonDrawWaitKernelTimeForFastpath(void* raw_context) {
   }
   xe::store_and_swap<uint32_t>(thread + 0x58,
                                xe::Clock::QueryGuestUptimeMillis());
+}
+
+void YieldBlueDragonDrawWaitFastpath(void* raw_context) {
+  (void)raw_context;
+  uint32_t sleep_us =
+      cvars::arm64_blue_dragon_draw_wait_fastpath_native_sleep_us;
+  if (sleep_us != 0) {
+    xe::threading::Sleep(std::chrono::microseconds(sleep_us));
+    return;
+  }
+  xe::threading::MaybeYield();
 }
 
 bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
@@ -1058,7 +1074,7 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
   ldr(w10, ptr(x9, 0xC));
   rev(w10, w10);
   sub(w10, w17, w10);
-  mov(w11, uint32_t{0x1388});
+  mov(w11, cvars::arm64_blue_dragon_draw_wait_fastpath_timeout_ms);
   cmp(w10, w11);
   b(LO, return_one);
 
@@ -1068,6 +1084,30 @@ bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
   b(done);
 
   L(return_one);
+  uint32_t native_yield_stride =
+      cvars::arm64_blue_dragon_draw_wait_fastpath_native_yield_stride;
+  if (native_yield_stride != 0) {
+    auto& skip_yield = NewCachedLabel();
+    ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_draw_wait_yield_counter))));
+    add(w11, w11, 1);
+    str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_draw_wait_yield_counter))));
+    if (native_yield_stride <= 4095) {
+      cmp(w11, native_yield_stride);
+    } else {
+      mov(w15, native_yield_stride);
+      cmp(w11, w15);
+    }
+    b(LO, skip_yield);
+    str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_draw_wait_yield_counter))));
+    CallNativeSafe(reinterpret_cast<void*>(&YieldBlueDragonDrawWaitFastpath));
+    L(skip_yield);
+  }
   mov(w9, uint32_t{1});
   str(x9, ptr(GetContextReg(),
               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
