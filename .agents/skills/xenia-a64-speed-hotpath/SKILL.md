@@ -49,6 +49,24 @@ The Thor debug launcher defaults `mount_cache=true` for Blue Dragon. Keep it on
 for correctness runs; `MountCache false` can keep the game busier but leaves
 `ResolvePath(cache:\pack) failed - device not found` noise in the route.
 
+## Title Proof Lane
+
+Use this lane to answer only "does Blue Dragon reach the visible title screen on
+Thor?" It avoids the speed lane's auto START/A input and forced Vulkan signed
+10:10:10:2 fallback. Default title capture is final-screenshot only; pass
+`-TitleScreenshotSeconds "30,35,40,45"` only when the experiment needs timed
+screenshots because extra screencaps can perturb this route.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonTitleCapture -DeviceSerial c3ca0370 -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileThreadSnapshot true -A64InlinePpcThreadFieldLeafHelpers true -Arm64BlueDragonDrawWaitProbe true -Arm64BlueDragonDrawWaitFastpath true -Arm64BlueDragonDrawWaitFastpathHostCounterTime true -Arm64BlueDragonDrawWaitInlineInCaller true -Arm64BlueDragonMemcpyFastpath true -Arm64BlueDragonStricmpFastpath true -Arm64BlueDragonJumpTableFastpath true
+```
+
+Known title proof: `scratch\thor-debug\20260520-011006-*` shows `press START`
+with APK SHA `EA375B75215C12AC84EB5E121C7FC0AC191B189EAD9BBB97F333CC49B2372EF7`.
+This is still timing-sensitive; same-cvar captures can black-idle when snapshot
+sampling is disabled. Treat that as a route-determinism bug, not as
+compatibility.
+
 ## Thread Snapshot Lane
 
 Use the thread snapshot flag when the screen is black or the route's final

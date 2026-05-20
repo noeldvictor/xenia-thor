@@ -1115,6 +1115,26 @@ required.
     cache-mounted run still black-idles by the 45s interval with
     `entry_delta=0`; the next correctness target is wait/event/cache-route HLE,
     not another blind helper splice.
+  - Blue Dragon has now reached the visible `press START` title screen on the
+    AYN Thor Max, but this is still a research milestone, not compatibility.
+    Proof captures:
+    - `scratch\thor-debug\20260520-005304-*`: wait-traced 45s run, title
+      screenshot, A64 thread snapshots active.
+    - `scratch\thor-debug\20260520-010150-*`: no wait trace, 45s live capture,
+      title screenshot.
+    - `scratch\thor-debug\20260520-011006-*`: title-capture mode with thread
+      snapshots, title screenshot, same APK SHA
+      `EA375B75215C12AC84EB5E121C7FC0AC191B189EAD9BBB97F333CC49B2372EF7`.
+  - Title is timing-sensitive. Several same-cvar captures black-idled before
+    the title loop, while snapshot-enabled runs continued into the title. Treat
+    the next bug as route determinism around the cache/file/wait phase,
+    especially `cache:\pack\item_rec.*` and the XThread wait set.
+  - Use `tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonTitleCapture`
+    for title proof. It avoids auto START/A input and avoids the forced Vulkan
+    signed 10:10:10:2 fallback used by the speed lane. Its default screenshot
+    behavior is final-only; timed screenshots are available via
+    `-TitleScreenshotSeconds` but can perturb timing, so use them only when the
+    experiment explicitly needs multi-frame proof.
 
 ## Codex Hooks / Automation
 

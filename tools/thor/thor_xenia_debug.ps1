@@ -10,6 +10,7 @@ param(
         "LaunchEmulator",
         "LaunchBlueDragon",
         "LaunchBlueDragonLiveCapture",
+        "LaunchBlueDragonTitleCapture",
         "LaunchBlueDragonSpeedCapture",
         "StopNoise",
         "Capture")]
@@ -147,6 +148,7 @@ param(
     [string]$XboxkrnlIgnoreGuestDebugBreakpoints = "false",
     [int]$LiveCaptureSeconds = 75,
     [string]$PerfSampleSeconds = "60,120",
+    [string]$TitleScreenshotSeconds = "0",
     [int]$PerfTopThreadCount = 80,
     [string]$Simpleperf = "false",
     [int]$SimpleperfStartSecond = 70,
@@ -854,6 +856,7 @@ function Write-CaptureMetadata {
         "apk_sha256=$apkHash",
         "target=$CaptureTarget",
         "live_capture_seconds=$LiveCaptureSeconds",
+        "title_screenshot_seconds=$TitleScreenshotSeconds",
         "simpleperf=$Simpleperf",
         "simpleperf_start_second=$SimpleperfStartSecond",
         "simpleperf_seconds=$SimpleperfSeconds",
@@ -1222,6 +1225,18 @@ function Use-BlueDragonSpeedDefaults {
     }
 }
 
+function Use-BlueDragonTitleDefaults {
+    $script:HideAndroidOsd = "false"
+    $script:HidNopConnected = "false"
+    $script:HidNopButtonSequence = ""
+    $script:VulkanForceSigned2101010UnormFallback = "false"
+    $script:VulkanForce2101010Rgba8Fallback = "false"
+    $script:LogLevel = "0"
+    if ($script:Arm64SpeedProfileIntervalMs) {
+        $script:LogLevel = "1"
+    }
+}
+
 if (!$OutDir) {
     $OutDir = Join-Path $RepoRoot "scratch\thor-debug"
 }
@@ -1327,6 +1342,71 @@ done | head -50
         Write-Output "Log errors: $LogErrorPath"
         Write-Output "Meta: $MetaPath"
         Write-Output "Screenshot: $ScreenshotPath"
+        if ($ShaderDumpPath) {
+            Write-Output "Shader dumps: $ShaderDumpPath"
+        }
+    }
+    "LaunchBlueDragonTitleCapture" {
+        if (!$PSBoundParameters.ContainsKey("LiveCaptureSeconds")) {
+            $LiveCaptureSeconds = 45
+        }
+        Use-BlueDragonTitleDefaults
+        $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $LogPath = Join-Path $OutDir "$Stamp-title-logcat.txt"
+        $LogErrorPath = Join-Path $OutDir "$Stamp-title-logcat.err.txt"
+        $FilteredLogPath = Join-Path $OutDir "$Stamp-title-logcat-filtered.txt"
+        $MetaPath = Join-Path $OutDir "$Stamp-meta.txt"
+        $ScreenshotPath = Join-Path $OutDir "$Stamp-screenshot.png"
+        $launchTarget = Resolve-BlueDragonLaunchTarget
+        $titleScreenshotSamples = @(Get-PerfSampleSecondValues $TitleScreenshotSeconds $LiveCaptureSeconds)
+        $titleScreenshotPaths = @()
+        $elapsedSeconds = 0
+        Write-Output "Launching target: $launchTarget"
+        Write-Output "Title capture seconds: $LiveCaptureSeconds"
+        Write-Output "Title screenshot seconds: $($titleScreenshotSamples -join ',')"
+        Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+        Invoke-Adb @("logcat", "-c") | Out-Null
+        Set-ActiveShaderDumpPath $Stamp
+
+        $adbPath = (Get-Command adb).Source
+        $adbArguments = @()
+        if ($DeviceSerial) {
+            $adbArguments += @("-s", $DeviceSerial)
+        }
+        $adbArguments += @("logcat", "-v", "time")
+        $logcatProcess = Start-Process -FilePath $adbPath -ArgumentList $adbArguments `
+            -RedirectStandardOutput $LogPath -RedirectStandardError $LogErrorPath `
+            -WindowStyle Hidden -PassThru
+        try {
+            Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+            foreach ($sampleSecond in $titleScreenshotSamples) {
+                if ($sampleSecond -gt $elapsedSeconds) {
+                    Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
+                    $elapsedSeconds = $sampleSecond
+                }
+                $sampleScreenshotPath = Join-Path $OutDir "$Stamp-title-${sampleSecond}s-screenshot.png"
+                Invoke-AdbExecOutToFile "screencap -p" $sampleScreenshotPath
+                $titleScreenshotPaths += $sampleScreenshotPath
+            }
+            if ($LiveCaptureSeconds -gt $elapsedSeconds) {
+                Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
+            }
+        } finally {
+            Stop-LiveLogcat $logcatProcess
+        }
+
+        Write-FilteredLog $LogPath $FilteredLogPath
+        $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
+        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        Write-Output "Log: $LogPath"
+        Write-Output "Filtered log: $FilteredLogPath"
+        Write-Output "Log errors: $LogErrorPath"
+        Write-Output "Meta: $MetaPath"
+        Write-Output "Screenshot: $ScreenshotPath"
+        foreach ($titleScreenshotPath in $titleScreenshotPaths) {
+            Write-Output "Title screenshot: $titleScreenshotPath"
+        }
         if ($ShaderDumpPath) {
             Write-Output "Shader dumps: $ShaderDumpPath"
         }
