@@ -173,8 +173,22 @@ struct A64ContextTrafficStats {
   uint32_t context_store_compare_sources = 0;
   uint32_t context_store_constant_sources = 0;
   uint32_t context_store_select_sources = 0;
+  uint32_t context_store_is_false_sources = 0;
+  uint32_t cr_store_compare_sources = 0;
+  uint32_t cr_store_constant_sources = 0;
+  uint32_t cr_store_select_sources = 0;
+  uint32_t cr_store_is_false_sources = 0;
+  uint32_t cr_update_triplets = 0;
+  uint32_t cr_update_triplets_strict = 0;
+  uint32_t cr_update_triplets_signed = 0;
+  uint32_t cr_update_triplets_unsigned = 0;
+  uint32_t cr_gt_eq_pairs = 0;
+  uint32_t cr_gt_eq_pairs_strict = 0;
+  uint32_t cr6_update_shapes = 0;
+  uint32_t cr6_update_shapes_strict = 0;
   std::unordered_map<uint32_t, uint32_t> context_load_offsets;
   std::unordered_map<uint32_t, uint32_t> context_store_offsets;
+  std::unordered_map<uint64_t, uint32_t> cr_store_source_offsets;
 };
 
 bool ConsumeContextTrafficAuditBudget(uint32_t* out_index) {
@@ -325,6 +339,326 @@ bool IsVectorCompareOpcode(xe::cpu::hir::Opcode opcode) {
          opcode <= xe::cpu::hir::OPCODE_VECTOR_COMPARE_UGE;
 }
 
+bool IsCrContextOffset(uint32_t offset) {
+  using xe::cpu::ppc::PPCContext;
+  const uint32_t cr_base = static_cast<uint32_t>(offsetof(PPCContext, cr0));
+  const uint32_t cr_end = static_cast<uint32_t>(offsetof(PPCContext, fpscr));
+  return offset >= cr_base && offset < cr_end;
+}
+
+uint64_t MakeContextTrafficOffsetOpcodeKey(uint32_t offset,
+                                           xe::cpu::hir::Opcode opcode) {
+  return (static_cast<uint64_t>(offset) << 32) |
+         static_cast<uint32_t>(opcode);
+}
+
+const char* ContextTrafficOpcodeName(xe::cpu::hir::Opcode opcode) {
+  using namespace xe::cpu::hir;
+  switch (opcode) {
+    case OPCODE_LOAD_CONTEXT:
+      return "load_context";
+    case OPCODE_STORE_CONTEXT:
+      return "store_context";
+    case OPCODE_COMPARE_EQ:
+      return "cmp_eq";
+    case OPCODE_COMPARE_NE:
+      return "cmp_ne";
+    case OPCODE_COMPARE_SLT:
+      return "cmp_slt";
+    case OPCODE_COMPARE_SLE:
+      return "cmp_sle";
+    case OPCODE_COMPARE_SGT:
+      return "cmp_sgt";
+    case OPCODE_COMPARE_SGE:
+      return "cmp_sge";
+    case OPCODE_COMPARE_ULT:
+      return "cmp_ult";
+    case OPCODE_COMPARE_ULE:
+      return "cmp_ule";
+    case OPCODE_COMPARE_UGT:
+      return "cmp_ugt";
+    case OPCODE_COMPARE_UGE:
+      return "cmp_uge";
+    case OPCODE_VECTOR_COMPARE_EQ:
+      return "vcmp_eq";
+    case OPCODE_VECTOR_COMPARE_SGT:
+      return "vcmp_sgt";
+    case OPCODE_VECTOR_COMPARE_SGE:
+      return "vcmp_sge";
+    case OPCODE_VECTOR_COMPARE_UGT:
+      return "vcmp_ugt";
+    case OPCODE_VECTOR_COMPARE_UGE:
+      return "vcmp_uge";
+    case OPCODE_IS_TRUE:
+      return "is_true";
+    case OPCODE_IS_FALSE:
+      return "is_false";
+    case OPCODE_NOT:
+      return "not";
+    case OPCODE_AND:
+      return "and";
+    case OPCODE_AND_NOT:
+      return "and_not";
+    case OPCODE_OR:
+      return "or";
+    case OPCODE_XOR:
+      return "xor";
+    case OPCODE_SELECT:
+      return "select";
+    case OPCODE_TRUNCATE:
+      return "truncate";
+    case OPCODE_ZERO_EXTEND:
+      return "zero_extend";
+    case OPCODE_SHL:
+      return "shl";
+    case OPCODE_SHR:
+      return "shr";
+    default:
+      return "other";
+  }
+}
+
+bool AuditIntegerType(xe::cpu::hir::TypeName type) {
+  using namespace xe::cpu::hir;
+  switch (type) {
+    case INT8_TYPE:
+    case INT16_TYPE:
+    case INT32_TYPE:
+    case INT64_TYPE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+uint64_t AuditIntegerValueBits(const xe::cpu::hir::Value* value) {
+  using namespace xe::cpu::hir;
+  switch (value->type) {
+    case INT8_TYPE:
+      return static_cast<uint8_t>(value->constant.i8);
+    case INT16_TYPE:
+      return static_cast<uint16_t>(value->constant.i16);
+    case INT32_TYPE:
+      return static_cast<uint32_t>(value->constant.i32);
+    case INT64_TYPE:
+      return static_cast<uint64_t>(value->constant.i64);
+    default:
+      return 0;
+  }
+}
+
+bool AuditValuesMatchForCompare(const xe::cpu::hir::Value* a,
+                                const xe::cpu::hir::Value* b) {
+  if (a == b) {
+    return true;
+  }
+  if (!a || !b || a->type != b->type || !AuditIntegerType(a->type)) {
+    return false;
+  }
+  if (a->IsConstant() && b->IsConstant()) {
+    return AuditIntegerValueBits(a) == AuditIntegerValueBits(b);
+  }
+  return false;
+}
+
+bool AuditCompareOperandsMatch(const xe::cpu::hir::Instr* a,
+                               const xe::cpu::hir::Instr* b) {
+  return a && b &&
+         AuditValuesMatchForCompare(a->src1.value, b->src1.value) &&
+         AuditValuesMatchForCompare(a->src2.value, b->src2.value);
+}
+
+bool AuditValueUsesOnly(const xe::cpu::hir::Value* value,
+                        const xe::cpu::hir::Instr* allowed_a,
+                        const xe::cpu::hir::Instr* allowed_b = nullptr) {
+  if (!value || !value->use_head) {
+    return false;
+  }
+  for (auto use = value->use_head; use; use = use->next) {
+    if (use->instr == allowed_a || use->instr == allowed_b) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+bool AuditStoreContextOfValue(const xe::cpu::hir::Instr* instr,
+                              const xe::cpu::hir::Value* value,
+                              uint32_t* out_offset) {
+  if (!instr || instr->GetOpcodeNum() != xe::cpu::hir::OPCODE_STORE_CONTEXT ||
+      instr->src2.value != value) {
+    return false;
+  }
+  *out_offset = static_cast<uint32_t>(instr->src1.offset);
+  return true;
+}
+
+const xe::cpu::hir::Instr* AuditBranchOnValue(
+    const xe::cpu::hir::Instr* instr, const xe::cpu::hir::Value* value) {
+  if (!instr || instr->src1.value != value) {
+    return nullptr;
+  }
+  switch (instr->GetOpcodeNum()) {
+    case xe::cpu::hir::OPCODE_BRANCH_TRUE:
+    case xe::cpu::hir::OPCODE_BRANCH_FALSE:
+      return instr;
+    default:
+      return nullptr;
+  }
+}
+
+bool AuditPpcCrGtEqStorePair(uint32_t gt_offset, uint32_t eq_offset) {
+  using xe::cpu::ppc::PPCContext;
+  const uint32_t cr_base = static_cast<uint32_t>(offsetof(PPCContext, cr0));
+  const uint32_t cr_end = cr_base + 8 * 4;
+  return gt_offset + 1 == eq_offset && gt_offset >= cr_base + 1 &&
+         gt_offset < cr_end && ((gt_offset - cr_base) & 3) == 1;
+}
+
+bool AuditPpcCrLtGtEqStoreTriplet(uint32_t lt_offset, uint32_t gt_offset,
+                                  uint32_t eq_offset) {
+  using xe::cpu::ppc::PPCContext;
+  const uint32_t cr_base = static_cast<uint32_t>(offsetof(PPCContext, cr0));
+  const uint32_t cr_end = cr_base + 8 * 4;
+  return lt_offset + 1 == gt_offset && gt_offset + 1 == eq_offset &&
+         lt_offset >= cr_base && eq_offset < cr_end &&
+         ((lt_offset - cr_base) & 3) == 0;
+}
+
+bool AuditCrTripletShape(const xe::cpu::hir::Instr* instr, bool* strict,
+                         bool* is_signed) {
+  using namespace xe::cpu::hir;
+  if (!instr || !instr->dest || instr->dest->type != INT8_TYPE) {
+    return false;
+  }
+
+  if (instr->GetOpcodeNum() == OPCODE_COMPARE_SLT) {
+    *is_signed = true;
+  } else if (instr->GetOpcodeNum() == OPCODE_COMPARE_ULT) {
+    *is_signed = false;
+  } else {
+    return false;
+  }
+
+  const Instr* lt_store = instr->next;
+  uint32_t lt_offset = 0;
+  if (!AuditStoreContextOfValue(lt_store, instr->dest, &lt_offset)) {
+    return false;
+  }
+
+  const Instr* gt_compare = lt_store->next;
+  Opcode expected_gt = *is_signed ? OPCODE_COMPARE_SGT : OPCODE_COMPARE_UGT;
+  if (!gt_compare || gt_compare->GetOpcodeNum() != expected_gt ||
+      !gt_compare->dest || gt_compare->dest->type != INT8_TYPE ||
+      !AuditCompareOperandsMatch(instr, gt_compare)) {
+    return false;
+  }
+
+  const Instr* gt_store = gt_compare->next;
+  uint32_t gt_offset = 0;
+  if (!AuditStoreContextOfValue(gt_store, gt_compare->dest, &gt_offset)) {
+    return false;
+  }
+
+  const Instr* eq_compare = gt_store->next;
+  if (!eq_compare || eq_compare->GetOpcodeNum() != OPCODE_COMPARE_EQ ||
+      !eq_compare->dest || eq_compare->dest->type != INT8_TYPE ||
+      !AuditCompareOperandsMatch(instr, eq_compare)) {
+    return false;
+  }
+
+  const Instr* eq_store = eq_compare->next;
+  uint32_t eq_offset = 0;
+  if (!AuditStoreContextOfValue(eq_store, eq_compare->dest, &eq_offset) ||
+      !AuditPpcCrLtGtEqStoreTriplet(lt_offset, gt_offset, eq_offset)) {
+    return false;
+  }
+
+  const Instr* branch = AuditBranchOnValue(eq_store->next, eq_compare->dest);
+  *strict = AuditValueUsesOnly(instr->dest, lt_store) &&
+            AuditValueUsesOnly(gt_compare->dest, gt_store) &&
+            AuditValueUsesOnly(eq_compare->dest, eq_store, branch);
+  return true;
+}
+
+bool AuditCrGtEqPairShape(const xe::cpu::hir::Instr* instr, bool* strict) {
+  using namespace xe::cpu::hir;
+  if (!instr || instr->GetOpcodeNum() != OPCODE_COMPARE_UGT || !instr->dest ||
+      instr->dest->type != INT8_TYPE) {
+    return false;
+  }
+
+  const Instr* gt_store = instr->next;
+  uint32_t gt_offset = 0;
+  if (!AuditStoreContextOfValue(gt_store, instr->dest, &gt_offset)) {
+    return false;
+  }
+
+  const Instr* eq_compare = gt_store->next;
+  if (!eq_compare || eq_compare->GetOpcodeNum() != OPCODE_COMPARE_EQ ||
+      !eq_compare->dest || eq_compare->dest->type != INT8_TYPE ||
+      !AuditCompareOperandsMatch(instr, eq_compare)) {
+    return false;
+  }
+
+  const Instr* eq_store = eq_compare->next;
+  uint32_t eq_offset = 0;
+  if (!AuditStoreContextOfValue(eq_store, eq_compare->dest, &eq_offset) ||
+      !AuditPpcCrGtEqStorePair(gt_offset, eq_offset)) {
+    return false;
+  }
+
+  const Instr* branch = AuditBranchOnValue(eq_store->next, eq_compare->dest);
+  *strict = AuditValueUsesOnly(instr->dest, gt_store) &&
+            AuditValueUsesOnly(eq_compare->dest, eq_store, branch);
+  return true;
+}
+
+bool AuditCr6UpdateShape(const xe::cpu::hir::Instr* instr, bool* strict) {
+  using namespace xe::cpu::hir;
+  using xe::cpu::ppc::PPCContext;
+
+  if (!instr || instr->GetOpcodeNum() != OPCODE_NOT || !instr->dest) {
+    return false;
+  }
+
+  const Instr* all_false = instr->next;
+  if (!all_false || all_false->GetOpcodeNum() != OPCODE_IS_FALSE ||
+      all_false->src1.value != instr->dest || !all_false->dest ||
+      all_false->dest->type != INT8_TYPE) {
+    return false;
+  }
+
+  const Instr* all_store = all_false->next;
+  uint32_t all_offset = 0;
+  if (!AuditStoreContextOfValue(all_store, all_false->dest, &all_offset) ||
+      all_offset !=
+          static_cast<uint32_t>(offsetof(PPCContext, cr6.cr6_all_equal))) {
+    return false;
+  }
+
+  const Instr* none_false = all_store->next;
+  if (!none_false || none_false->GetOpcodeNum() != OPCODE_IS_FALSE ||
+      none_false->src1.value != instr->src1.value || !none_false->dest ||
+      none_false->dest->type != INT8_TYPE) {
+    return false;
+  }
+
+  const Instr* none_store = none_false->next;
+  uint32_t none_offset = 0;
+  if (!AuditStoreContextOfValue(none_store, none_false->dest, &none_offset) ||
+      none_offset !=
+          static_cast<uint32_t>(offsetof(PPCContext, cr6.cr6_none_equal))) {
+    return false;
+  }
+
+  *strict = AuditValueUsesOnly(instr->dest, all_false) &&
+            AuditValueUsesOnly(all_false->dest, all_store) &&
+            AuditValueUsesOnly(none_false->dest, none_store);
+  return true;
+}
+
 std::string FormatContextTrafficTopOffsets(
     const std::unordered_map<uint32_t, uint32_t>& offsets) {
   if (offsets.empty()) {
@@ -348,6 +682,37 @@ std::string FormatContextTrafficTopOffsets(
       text += ",";
     }
     text += fmt::format("0x{:03X}:{}", sorted[i].first, sorted[i].second);
+  }
+  return text;
+}
+
+std::string FormatContextTrafficTopOffsetOpcodes(
+    const std::unordered_map<uint64_t, uint32_t>& offsets) {
+  if (offsets.empty()) {
+    return "-";
+  }
+
+  std::vector<std::pair<uint64_t, uint32_t>> sorted(offsets.begin(),
+                                                    offsets.end());
+  std::sort(sorted.begin(), sorted.end(),
+            [](const auto& a, const auto& b) {
+              if (a.second != b.second) {
+                return a.second > b.second;
+              }
+              return a.first < b.first;
+            });
+
+  std::string text;
+  size_t count = std::min<size_t>(sorted.size(), 10);
+  for (size_t i = 0; i < count; ++i) {
+    if (!text.empty()) {
+      text += ",";
+    }
+    uint32_t offset = static_cast<uint32_t>(sorted[i].first >> 32);
+    auto opcode = static_cast<xe::cpu::hir::Opcode>(
+        static_cast<uint32_t>(sorted[i].first));
+    text += fmt::format("0x{:03X}:{}:{}", offset,
+                        ContextTrafficOpcodeName(opcode), sorted[i].second);
   }
   return text;
 }
@@ -1116,21 +1481,38 @@ void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
         }
         case hir::OPCODE_STORE_CONTEXT: {
           auto* value = instr->src2.value;
+          uint32_t offset = static_cast<uint32_t>(instr->src1.offset);
           size_t size = value ? hir::GetTypeSize(value->type) : 1;
-          AddContextTrafficAccess(&stats, static_cast<uint32_t>(
-                                              instr->src1.offset),
-                                  size, true);
+          AddContextTrafficAccess(&stats, offset, size, true);
           if (value) {
             if (value->IsConstant()) {
               ++stats.context_store_constant_sources;
+              if (IsCrContextOffset(offset)) {
+                ++stats.cr_store_constant_sources;
+              }
             }
             if (value->def) {
               auto source_opcode = value->def->GetOpcodeNum();
+              if (IsCrContextOffset(offset)) {
+                ++stats.cr_store_source_offsets
+                    [MakeContextTrafficOffsetOpcodeKey(offset, source_opcode)];
+              }
               if (IsIntegerCompareOpcode(source_opcode) ||
                   IsVectorCompareOpcode(source_opcode)) {
                 ++stats.context_store_compare_sources;
+                if (IsCrContextOffset(offset)) {
+                  ++stats.cr_store_compare_sources;
+                }
               } else if (source_opcode == hir::OPCODE_SELECT) {
                 ++stats.context_store_select_sources;
+                if (IsCrContextOffset(offset)) {
+                  ++stats.cr_store_select_sources;
+                }
+              } else if (source_opcode == hir::OPCODE_IS_FALSE) {
+                ++stats.context_store_is_false_sources;
+                if (IsCrContextOffset(offset)) {
+                  ++stats.cr_store_is_false_sources;
+                }
               }
             }
           }
@@ -1200,6 +1582,32 @@ void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
         default:
           break;
       }
+
+      bool strict = false;
+      bool is_signed = false;
+      if (AuditCrTripletShape(instr, &strict, &is_signed)) {
+        ++stats.cr_update_triplets;
+        if (strict) {
+          ++stats.cr_update_triplets_strict;
+        }
+        if (is_signed) {
+          ++stats.cr_update_triplets_signed;
+        } else {
+          ++stats.cr_update_triplets_unsigned;
+        }
+      }
+      if (AuditCrGtEqPairShape(instr, &strict)) {
+        ++stats.cr_gt_eq_pairs;
+        if (strict) {
+          ++stats.cr_gt_eq_pairs_strict;
+        }
+      }
+      if (AuditCr6UpdateShape(instr, &strict)) {
+        ++stats.cr6_update_shapes;
+        if (strict) {
+          ++stats.cr6_update_shapes_strict;
+        }
+      }
     }
   }
 
@@ -1215,7 +1623,8 @@ void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
   XELOGW(
       "A64 context traffic audit {:03}: fn {:08X} ppc_loads "
       "lr/ctr/gpr/cr/xer/fpr/vmx/runtime={}/{}/{}/{}/{}/{}/{}/{} "
-      "ppc_stores={}/{}/{}/{}/{}/{}/{}/{} store_src cmp/const/select={}/{}/{} "
+      "ppc_stores={}/{}/{}/{}/{}/{}/{}/{} "
+      "store_src cmp/const/select/is_false={}/{}/{}/{} "
       "barriers ctx/mem={}/{} atomics/resv={}/{}",
       log_index, current_guest_function_, stats.lr_loads, stats.ctr_loads,
       stats.gpr_loads, stats.cr_loads, stats.xer_loads, stats.fpr_loads,
@@ -1224,12 +1633,28 @@ void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
       stats.vmx_stores, stats.runtime_stores,
       stats.context_store_compare_sources,
       stats.context_store_constant_sources, stats.context_store_select_sources,
+      stats.context_store_is_false_sources,
       stats.context_barriers, stats.memory_barriers, stats.atomics,
       stats.reservation_ops);
   XELOGW("A64 context traffic audit {:03}: fn {:08X} load_top={} store_top={}",
          log_index, current_guest_function_,
          FormatContextTrafficTopOffsets(stats.context_load_offsets),
          FormatContextTrafficTopOffsets(stats.context_store_offsets));
+  XELOGW(
+      "A64 context traffic audit {:03}: fn {:08X} cr_store_src "
+      "cmp/const/select/is_false={}/{}/{}/{} top={}",
+      log_index, current_guest_function_, stats.cr_store_compare_sources,
+      stats.cr_store_constant_sources, stats.cr_store_select_sources,
+      stats.cr_store_is_false_sources,
+      FormatContextTrafficTopOffsetOpcodes(stats.cr_store_source_offsets));
+  XELOGW(
+      "A64 context traffic audit {:03}: fn {:08X} cr_shapes "
+      "triplet={}/{} signed/unsigned={}/{} gt_eq={}/{} cr6={}/{}",
+      log_index, current_guest_function_, stats.cr_update_triplets,
+      stats.cr_update_triplets_strict, stats.cr_update_triplets_signed,
+      stats.cr_update_triplets_unsigned, stats.cr_gt_eq_pairs,
+      stats.cr_gt_eq_pairs_strict, stats.cr6_update_shapes,
+      stats.cr6_update_shapes_strict);
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {

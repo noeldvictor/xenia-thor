@@ -207,14 +207,14 @@ context-store pair peephole without an audit counter first. The local
 but clean hot function sizes stayed at `8272A3A4=12332` and `8272A8E8=5520`.
 See `docs/research/20260520-164105-a64-ugt-eq-context-pair-nohit.md`.
 
-The proven successor is the 2026-05-20 UGT/EQ CR branch peephole. It only
-matches when `COMPARE_UGT` and same-operand `COMPARE_EQ` store to adjacent PPC
-CR `GT`/`EQ` bytes and the EQ result is used only by its store plus an optional
-immediate branch. It emits one `cmp`, two `cset`/`strb` pairs, and direct
-`b.eq` / `b.ne`. Proof `scratch\thor-debug\20260520-170433-*` had no searched
-fatal markers and shrank clean code size from `8272A3A4=12332` to `12296` and
-`8272A8E8=5520` to `5508`. Keep it, but do not broaden it to arbitrary compare
-pairs without a new exact-offset/use audit. See
+The proven successor was the 2026-05-20 UGT/EQ CR branch peephole. It matches
+when `COMPARE_UGT` and same-operand `COMPARE_EQ` store to adjacent PPC CR
+`GT`/`EQ` bytes and emits one `cmp`, two `cset`/`strb` pairs, plus direct
+`b.eq` / `b.ne` for an immediate branch. First proof
+`scratch\thor-debug\20260520-170433-*` had no searched fatal markers and shrank
+clean code size from `8272A3A4=12332` to `12296` and `8272A8E8=5520` to
+`5508`. The later CR-shape audit proved the original only-use guard was too
+strict; see the relaxed peephole note below before editing this path again. See
 `docs/research/20260520-170621-a64-ugt-eq-cr-branch-peephole.md`.
 
 Do not re-add the broad integer compare-branch fusion tried in
@@ -290,6 +290,17 @@ step is a CR shape hit audit or a narrow GPR context-cache experiment, not more
 blind compare fusions.
 
 See `docs/research/20260520-182253-a64-context-traffic-audit.md`.
+
+The 2026-05-20 CR-shape audit found why the strict triplet missed:
+`8272A3A4` has 60 exact CR triplets and 50 `UGT/EQ` pairs, but zero triplets
+passed the old only-use guard because Blue Dragon keeps compare values alive for
+later users. The relaxed lowering still materializes each compare result with
+`cset` into its assigned HIR value register, then skips the redundant adjacent
+compare/store work. Proof `scratch\thor-debug\20260520-183741-*` had no
+searched fatal markers and shrank `8272A3A4` from `12544` to `12196`, and
+`8272A8E8` from `5508` to `5356`. The run still black-idled later, so this is a
+generated-code shrink, not an FPS breakthrough. See
+`docs/research/20260520-184020-a64-cr-shape-relaxed-peephole.md`.
 
 ## Classification
 

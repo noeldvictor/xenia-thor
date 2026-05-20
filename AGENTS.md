@@ -165,6 +165,17 @@ required.
   fastpath was removed: partial HIR-block replacement either crashed or
   black-idled the route. Revisit only with a full PPC/HIR region proof and a
   route-clean fastpath-on capture.
+- Current `8272A3A4` CR lowering note:
+  `docs/research/20260520-184020-a64-cr-shape-relaxed-peephole.md`.
+  The CR-shape audit found 60 exact `LT/GT/EQ` triplets and 50 `UGT/EQ` pairs
+  in the hot HIR, with the old only-use guard rejecting all triplets. The A64
+  backend now materializes compare results into their assigned value registers
+  and can still fuse the adjacent CR stores when those values have later users.
+  Thor proof `scratch/thor-debug/20260520-183741-*` shrank `8272A3A4` from
+  `12544` to `12196` bytes and `8272A8E8` from `5508` to `5356`, with no
+  searched fatal markers. It still black-idled later, so treat it as a
+  generated-code shrink only; next work is state traffic, barriers, and hot GPR
+  context slots.
 
 ## Current Porting Priorities
 

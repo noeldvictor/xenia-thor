@@ -5719,8 +5719,7 @@ static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
 
   const hir::Instr* lt_store = instr->next;
   uint32_t lt_offset = 0;
-  if (!IsStoreContextOfValue(lt_store, instr->dest, &lt_offset) ||
-      !ValueUsesOnly(instr->dest, lt_store)) {
+  if (!IsStoreContextOfValue(lt_store, instr->dest, &lt_offset)) {
     return false;
   }
 
@@ -5735,8 +5734,7 @@ static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
 
   const hir::Instr* gt_store = gt_compare->next;
   uint32_t gt_offset = 0;
-  if (!IsStoreContextOfValue(gt_store, gt_compare->dest, &gt_offset) ||
-      !ValueUsesOnly(gt_compare->dest, gt_store)) {
+  if (!IsStoreContextOfValue(gt_store, gt_compare->dest, &gt_offset)) {
     return false;
   }
 
@@ -5755,14 +5753,13 @@ static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
   }
 
   const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
-  if (!ValueUsesOnly(eq_compare->dest, eq_store, branch)) {
-    return false;
-  }
-
   if (!EmitIntegerCompareFlags(*e, instr)) {
     return false;
   }
 
+  // Later HIR can still read these compare values. Emit the same cset results
+  // into their assigned value registers, then skip only the redundant compare
+  // and CR-store instructions.
   WReg lt_reg(0);
   WReg gt_reg(0);
   WReg eq_reg(0);
@@ -5799,8 +5796,7 @@ static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
 
   const hir::Instr* gt_store = instr->next;
   uint32_t gt_offset = 0;
-  if (!IsStoreContextOfValue(gt_store, instr->dest, &gt_offset) ||
-      !ValueUsesOnly(instr->dest, gt_store)) {
+  if (!IsStoreContextOfValue(gt_store, instr->dest, &gt_offset)) {
     return false;
   }
 
@@ -5819,14 +5815,12 @@ static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
   }
 
   const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
-  if (!ValueUsesOnly(eq_compare->dest, eq_store, branch)) {
-    return false;
-  }
-
   if (!EmitIntegerCompareFlags(*e, instr)) {
     return false;
   }
 
+  // Preserve the materialized compare values for any later users while
+  // collapsing the adjacent CR stores to one flags-producing compare.
   WReg gt_reg(0);
   WReg eq_reg(0);
   A64Emitter::SetupReg(instr->dest, gt_reg);
