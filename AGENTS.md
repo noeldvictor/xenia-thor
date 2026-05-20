@@ -1003,6 +1003,21 @@ required.
     Microsoft Game Studios opening scene with inline-in-caller enabled, but this
     is not yet a proven speed win. Use same-route A/B before making it a
     default.
+- Blue Dragon hot helper fastpaths:
+  `docs/research/20260519-214300-blue-dragon-hot-helper-fastpaths.md`.
+  - `826BF770` is byte-copy / `memcpy` shaped; default-off
+    `arm64_blue_dragon_memcpy_fastpath` is routed through Android and the Thor
+    script as `-Arm64BlueDragonMemcpyFastpath true|false`.
+  - `826C5620` is ASCII case-insensitive string-compare shaped and is a likely
+    next default-off helper fastpath candidate.
+  - `8273EF84`, `8273EF74`, `8273F7B4`, and `8273F7C4` are single-`sc 2`
+    syscall/import thunks into HLE.
+  - `827294CC` is a compact jump-table dispatch helper; `8272A3A4` and
+    `8272A8E8` look like byte/bitstream packing or decompression loops.
+  - The current A64 top-function profiler counts function entries, not elapsed
+    time. After a function-body fastpath, a function may stay high in the list
+    because it is called often. Do not judge body-fastpath wins by entry count
+    alone; use same-route time-to-scene, better timing counters, or simpleperf.
 
 ## Codex Hooks / Automation
 

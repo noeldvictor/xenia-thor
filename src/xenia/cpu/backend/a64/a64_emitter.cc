@@ -60,6 +60,7 @@ DECLARE_bool(arm64_blue_dragon_draw_wait_inline_in_caller);
 DECLARE_bool(arm64_blue_dragon_draw_wait_caller_profile);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
+DECLARE_bool(arm64_blue_dragon_memcpy_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -742,6 +743,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
 
   if (TryEmitBlueDragonDrawWaitFunctionBody()) {
     b(*epilog_label_);
+  } else if (TryEmitBlueDragonMemcpyFunctionBody()) {
+    b(*epilog_label_);
   } else {
   // Walk HIR blocks and emit ARM64 instructions.
   auto block = builder->first_block();
@@ -1345,6 +1348,38 @@ bool A64Emitter::EmitBlueDragonDrawWaitFastpathBody() {
               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
 
   L(done);
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonMemcpyFunctionBody() {
+  if (!cvars::arm64_blue_dragon_memcpy_fastpath ||
+      current_guest_function_ != 0x826BF770) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  auto& skip_copy = NewCachedLabel();
+  ldr(w9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+  str(x9, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
+  ldr(w10, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[4]))));
+  ldr(w2, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[5]))));
+  cbz(w2, skip_copy);
+
+  AddGuestAddressToMembase(w9, x0);
+  AddGuestAddressToMembase(w10, x1);
+  mov(x9, reinterpret_cast<uint64_t>(
+              static_cast<void* (*)(void*, const void*, size_t)>(
+                  &std::memmove)));
+  blr(x9);
+
+  L(skip_copy);
+  ldr(x9, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
+  str(x9, ptr(GetContextReg(),
+              static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
   return true;
 }
 

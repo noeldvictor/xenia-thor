@@ -152,6 +152,12 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: maximum Blue Dragon draw-wait caller sample lines "
     "to emit per process.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_memcpy_fastpath, false,
+    "Thor ARM64 speed lane: replace Blue Dragon's hot 826BF770 byte-copy "
+    "helper with a native host memmove over translated guest pointers. "
+    "Research-only and title-specific.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
