@@ -1034,6 +1034,18 @@ required.
   - The overlapping A64 entry profile points the next direct guest fastpath at
     `826C5620` first, with `827294CC`, `8272A3A4`, `8272A8E8`, and
     `826BF770` still in the hot set.
+- Blue Dragon `826C5620` stricmp body replacement failed:
+  `docs/research/20260519-220900-blue-dragon-stricmp-fastpath-failed.md`.
+  - A temporary default-off whole-function A64 replacement for `826C5620`
+    produced black-screen idle/stall captures instead of the loading spinner.
+  - Capture `scratch\thor-debug\20260519-220047-*` stalled by 130s; revised
+    capture `scratch\thor-debug\20260519-220549-*` still stalled by 75s after
+    preserving extra volatile-looking registers.
+  - Do not re-add this as a body fastpath until a return-state probe proves
+    exact PPC-visible effects, especially condition-register fields and caller
+    register dependencies.
+  - Next experiment should sample the normal generated `826C5620` return state
+    or move to `827294CC`, `8272A3A4`, and `8272A8E8`.
 
 ## Codex Hooks / Automation
 
