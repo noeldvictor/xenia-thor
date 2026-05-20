@@ -10,6 +10,7 @@
 #include "xenia/cpu/backend/a64/a64_emitter.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -71,6 +72,7 @@ DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
+DECLARE_bool(arm64_context_value_cache);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
@@ -87,6 +89,15 @@ DEFINE_bool(a64_inline_kernel_high_frequency_exports, true,
             "Inline a small set of high-frequency Xbox kernel exports in the "
             "A64 backend to avoid guest-to-host thunk overhead.",
             "a64");
+DEFINE_bool(a64_inline_kernel_spinlock_exports, true,
+            "Inline tiny high-frequency Xbox kernel spin-lock exports in the "
+            "A64 backend. Experimental.",
+            "a64");
+DEFINE_bool(
+    a64_inline_kf_lower_irql, false,
+    "Inline KfLowerIrql by restoring the processor IRQL directly. "
+    "Experimental; skips the native APC delivery check.",
+    "a64");
 DEFINE_bool(a64_inline_fpr_helpers, true,
             "Inline PPC __savefpr_* / __restfpr_* ABI helpers in the A64 "
             "backend. Experimental.",
@@ -189,6 +200,249 @@ struct A64ContextTrafficStats {
   std::unordered_map<uint32_t, uint32_t> context_load_offsets;
   std::unordered_map<uint32_t, uint32_t> context_store_offsets;
   std::unordered_map<uint64_t, uint32_t> cr_store_source_offsets;
+};
+
+struct A64ContextValueCacheStats {
+  uint32_t eligible_loads = 0;
+  uint32_t load_hits = 0;
+  uint32_t eligible_stores = 0;
+  uint32_t store_caches = 0;
+  uint32_t offset_invalidations = 0;
+  uint32_t register_invalidations = 0;
+  uint32_t safety_resets = 0;
+};
+
+class A64ContextValueCache {
+ public:
+  explicit A64ContextValueCache(bool enabled) : enabled_(enabled) { Reset(); }
+
+  const A64ContextValueCacheStats& stats() const { return stats_; }
+
+  void ResetBlock() {
+    if (!enabled_) {
+      return;
+    }
+    Reset();
+  }
+
+  bool TryEmitLoad(xe::cpu::backend::a64::A64Emitter& e,
+                   const xe::cpu::hir::Instr* instr) {
+    using namespace xe::cpu::hir;
+    if (!enabled_ || !instr || instr->GetOpcodeNum() != OPCODE_LOAD_CONTEXT ||
+        !instr->dest || instr->dest->type != INT64_TYPE) {
+      return false;
+    }
+
+    uint32_t offset = static_cast<uint32_t>(instr->src1.offset);
+    uint32_t slot = 0;
+    if (!TryGetGprSlot(offset, sizeof(uint64_t), &slot)) {
+      return false;
+    }
+
+    ++stats_.eligible_loads;
+    Entry& entry = entries_[slot];
+    if (!entry.valid) {
+      return false;
+    }
+
+    int dest_host_reg = -1;
+    if (!TryHostIntegerRegIndex(instr->dest, &dest_host_reg)) {
+      return false;
+    }
+
+    Xbyak_aarch64::XReg dest_reg(0);
+    xe::cpu::backend::a64::A64Emitter::SetupReg(instr->dest, dest_reg);
+    if (dest_host_reg != entry.host_reg) {
+      e.mov(dest_reg, Xbyak_aarch64::XReg(entry.host_reg));
+    }
+    InvalidateHostReg(dest_host_reg);
+    entry.valid = true;
+    entry.host_reg = dest_host_reg;
+    ++stats_.load_hits;
+    return true;
+  }
+
+  void ObservePostEmit(const xe::cpu::hir::Instr* instr,
+                       const xe::cpu::hir::Instr* new_tail) {
+    if (!enabled_ || !instr) {
+      return;
+    }
+
+    if (new_tail != instr->next) {
+      const xe::cpu::hir::Instr* cursor = instr;
+      while (cursor && cursor != new_tail) {
+        ObserveInstructionEffects(cursor);
+        cursor = cursor->next;
+      }
+      if (!cursor) {
+        ResetWithReason();
+      }
+      return;
+    }
+
+    ObserveInstructionEffects(instr);
+  }
+
+ private:
+  struct Entry {
+    bool valid = false;
+    int host_reg = -1;
+  };
+
+  void ObserveInstructionEffects(const xe::cpu::hir::Instr* instr) {
+    using namespace xe::cpu::hir;
+    if (!instr) {
+      return;
+    }
+
+    switch (instr->GetOpcodeNum()) {
+      case OPCODE_LOAD_CONTEXT: {
+        if (!instr->dest || instr->dest->type != INT64_TYPE) {
+          break;
+        }
+        uint32_t slot = 0;
+        if (!TryGetGprSlot(static_cast<uint32_t>(instr->src1.offset),
+                           sizeof(uint64_t), &slot)) {
+          break;
+        }
+        int host_reg = -1;
+        if (TryHostIntegerRegIndex(instr->dest, &host_reg)) {
+          InvalidateHostReg(host_reg);
+          entries_[slot].valid = true;
+          entries_[slot].host_reg = host_reg;
+        }
+        return;
+      }
+      case OPCODE_STORE_CONTEXT: {
+        uint32_t offset = static_cast<uint32_t>(instr->src1.offset);
+        size_t size = instr->src2.value
+                          ? xe::cpu::hir::GetTypeSize(instr->src2.value->type)
+                          : 1;
+        uint32_t slot = 0;
+        if (!TryGetGprSlot(offset, size, &slot)) {
+          InvalidateOverlappingGprSlots(offset, size);
+          break;
+        }
+
+        ++stats_.eligible_stores;
+        int host_reg = -1;
+        if (instr->src2.value && instr->src2.value->type == INT64_TYPE &&
+            TryHostIntegerRegIndex(instr->src2.value, &host_reg)) {
+          entries_[slot].valid = true;
+          entries_[slot].host_reg = host_reg;
+          ++stats_.store_caches;
+        } else {
+          InvalidateSlot(slot);
+        }
+        return;
+      }
+      default:
+        break;
+    }
+
+    if (instr->dest) {
+      int host_reg = -1;
+      if (TryHostIntegerRegIndex(instr->dest, &host_reg)) {
+        InvalidateHostReg(host_reg);
+      }
+    }
+
+    if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+      ResetWithReason();
+    }
+  }
+
+  static bool IsIntegerType(xe::cpu::hir::TypeName type) {
+    using namespace xe::cpu::hir;
+    switch (type) {
+      case INT8_TYPE:
+      case INT16_TYPE:
+      case INT32_TYPE:
+      case INT64_TYPE:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  static bool TryHostIntegerRegIndex(const xe::cpu::hir::Value* value,
+                                     int* host_reg) {
+    if (!value || value->IsConstant() || !IsIntegerType(value->type) ||
+        value->reg.index < 0 ||
+        value->reg.index >= xe::cpu::backend::a64::A64Emitter::GPR_COUNT) {
+      return false;
+    }
+    Xbyak_aarch64::XReg reg(0);
+    xe::cpu::backend::a64::A64Emitter::SetupReg(value, reg);
+    *host_reg = reg.getIdx();
+    return true;
+  }
+
+  static bool TryGetGprSlot(uint32_t offset, size_t size, uint32_t* slot) {
+    using xe::cpu::ppc::PPCContext;
+    const uint32_t gpr_base = static_cast<uint32_t>(offsetof(PPCContext, r));
+    const uint32_t gpr_size = 32 * sizeof(uint64_t);
+    if (size != sizeof(uint64_t) || offset < gpr_base ||
+        offset >= gpr_base + gpr_size || ((offset - gpr_base) & 7)) {
+      return false;
+    }
+    *slot = (offset - gpr_base) >> 3;
+    return true;
+  }
+
+  void Reset() {
+    for (auto& entry : entries_) {
+      entry = {};
+    }
+  }
+
+  void ResetWithReason() {
+    bool had_entries = false;
+    for (const auto& entry : entries_) {
+      had_entries |= entry.valid;
+    }
+    if (had_entries) {
+      ++stats_.safety_resets;
+    }
+    Reset();
+  }
+
+  void InvalidateSlot(uint32_t slot) {
+    if (entries_[slot].valid) {
+      entries_[slot] = {};
+      ++stats_.offset_invalidations;
+    }
+  }
+
+  void InvalidateHostReg(int host_reg) {
+    for (auto& entry : entries_) {
+      if (entry.valid && entry.host_reg == host_reg) {
+        entry = {};
+        ++stats_.register_invalidations;
+      }
+    }
+  }
+
+  void InvalidateOverlappingGprSlots(uint32_t offset, size_t size) {
+    using xe::cpu::ppc::PPCContext;
+    const uint32_t gpr_base = static_cast<uint32_t>(offsetof(PPCContext, r));
+    const uint32_t gpr_size = 32 * sizeof(uint64_t);
+    uint32_t end = offset + static_cast<uint32_t>(std::max<size_t>(size, 1));
+    if (offset >= gpr_base + gpr_size || end <= gpr_base) {
+      return;
+    }
+    for (uint32_t slot = 0; slot < entries_.size(); ++slot) {
+      uint32_t slot_offset = gpr_base + slot * sizeof(uint64_t);
+      uint32_t slot_end = slot_offset + sizeof(uint64_t);
+      if (offset < slot_end && end > slot_offset) {
+        InvalidateSlot(slot);
+      }
+    }
+  }
+
+  bool enabled_ = false;
+  std::array<Entry, 32> entries_;
+  A64ContextValueCacheStats stats_;
 };
 
 bool ConsumeContextTrafficAuditBudget(uint32_t* out_index) {
@@ -1761,10 +2015,13 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // Walk HIR blocks and emit ARM64 instructions.
   auto block = builder->first_block();
   synchronize_stack_on_next_instruction_ = false;
+  A64ContextValueCache context_value_cache(
+      cvars::arm64_context_value_cache);
   while (block) {
     // Reset FPCR tracking on each block entry (we don't know which
     // predecessor ran, so mode is unknown).
     ForgetFpcrMode();
+    context_value_cache.ResetBlock();
 
     // Bind all labels targeting this block.
     auto label = block->label_head;
@@ -1786,6 +2043,10 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
           EnsureSynchronizedGuestAndHostStack();
         }
       }
+      if (context_value_cache.TryEmitLoad(*this, instr)) {
+        instr = instr->next;
+        continue;
+      }
       const hir::Instr* new_tail = instr;
       if (!SelectSequence(this, instr, &new_tail)) {
         // No sequence matched — this is expected in Phase 1 before
@@ -1794,10 +2055,25 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
                hir::GetOpcodeName(instr->GetOpcodeInfo()));
         return false;
       }
+      context_value_cache.ObservePostEmit(instr, new_tail);
       instr = new_tail;
     }
 
     block = block->next;
+  }
+  const auto& cache_stats = context_value_cache.stats();
+  if (cvars::arm64_context_traffic_audit &&
+      (!cvars::arm64_context_traffic_audit_function ||
+       cvars::arm64_context_traffic_audit_function ==
+           current_guest_function_) &&
+      cache_stats.eligible_loads) {
+    XELOGW(
+        "A64 context value cache: fn {:08X} loads/hits={}/{} "
+        "stores/cached={}/{} invalid offset/reg={}/{} resets={}",
+        current_guest_function_, cache_stats.eligible_loads,
+        cache_stats.load_hits, cache_stats.eligible_stores,
+        cache_stats.store_caches, cache_stats.offset_invalidations,
+        cache_stats.register_invalidations, cache_stats.safety_resets);
   }
   }
 
@@ -2213,8 +2489,112 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     return true;
   }
 
+  if (name == "KfLowerIrql" && cvars::a64_inline_kf_lower_irql) {
+    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext, processor_irql))));
+    ldr(w10, ptr(GetContextReg(), r3_offset));
+
+    auto& retry = NewCachedLabel();
+    L(retry);
+    ldaxr(w11, ptr(x9));
+    stlxr(w12, w10, ptr(x9));
+    cbnz(w12, retry);
+    return true;
+  }
+
   if (!function->extern_handler()) {
     return false;
+  }
+
+  auto emit_load_spin_lock_ptr = [&](Xbyak_aarch64::Label& slow) {
+    ldr(w9, ptr(GetContextReg(), r3_offset));
+    cbz(w9, slow);
+    AddGuestAddressToMembase(w9, x9);
+  };
+
+  auto emit_release_spin_lock = [&]() {
+    auto& retry = NewCachedLabel();
+    L(retry);
+    ldaxr(w10, ptr(x9));
+    sub(w10, w10, 1);
+    stlxr(w11, w10, ptr(x9));
+    cbnz(w11, retry);
+  };
+
+  if (cvars::a64_inline_kernel_spinlock_exports &&
+      name == "KeAcquireSpinLockAtRaisedIrql") {
+    auto& slow = NewCachedLabel();
+    auto& retry = NewCachedLabel();
+    auto& busy = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_spin_lock_ptr(slow);
+
+    L(retry);
+    ldaxr(w10, ptr(x9));
+    cbnz(w10, busy);
+    mov(w11, 1);
+    stlxr(w12, w11, ptr(x9));
+    cbnz(w12, retry);
+    b(done);
+
+    L(busy);
+    clrex(15);
+    yield();
+    b(retry);
+
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
+  }
+
+  if (cvars::a64_inline_kernel_spinlock_exports &&
+      name == "KeTryToAcquireSpinLockAtRaisedIrql") {
+    auto& slow = NewCachedLabel();
+    auto& retry = NewCachedLabel();
+    auto& fail = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_spin_lock_ptr(slow);
+
+    L(retry);
+    ldaxr(w10, ptr(x9));
+    cbnz(w10, fail);
+    mov(w11, 1);
+    stlxr(w12, w11, ptr(x9));
+    cbnz(w12, retry);
+    mov(x10, 1);
+    str(x10, ptr(GetContextReg(), r3_offset));
+    b(done);
+
+    L(fail);
+    clrex(15);
+    str(xzr, ptr(GetContextReg(), r3_offset));
+    b(done);
+
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
+  }
+
+  if (cvars::a64_inline_kernel_spinlock_exports &&
+      name == "KeReleaseSpinLockFromRaisedIrql") {
+    auto& slow = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_spin_lock_ptr(slow);
+    emit_release_spin_lock();
+    b(done);
+
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
   }
 
   auto emit_load_critical_section_and_thread = [&](

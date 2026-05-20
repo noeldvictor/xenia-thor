@@ -302,6 +302,25 @@ searched fatal markers and shrank `8272A3A4` from `12544` to `12196`, and
 generated-code shrink, not an FPS breakthrough. See
 `docs/research/20260520-184020-a64-cr-shape-relaxed-peephole.md`.
 
+The 2026-05-20 block-local context value cache is a negative result, not a
+speed win. With `arm64_context_value_cache=true`, `8272A3A4` reported
+`loads/hits=255/0` twice despite 240 cacheable stores. Keep it default-off and
+do not count simple same-block emit caching as the state-cache answer. The next
+state-cache step must be a cross-block PPC GPR/CR cache with helper, exit,
+exception, and aliasing flush rules. See
+`docs/research/20260520-192930-a64-context-cache-and-spinlock-fastpaths.md`.
+
+Raised-IRQL spinlock exports are now an HLE/JIT speed lane. The A64 backend
+inlines `KeAcquireSpinLockAtRaisedIrql`,
+`KeTryToAcquireSpinLockAtRaisedIrql`, and
+`KeReleaseSpinLockFromRaisedIrql` by default. Proof
+`scratch\thor-debug\20260520-192739-*` reached the Blue Dragon Voice Language
+menu with `a64_inline_kernel_spinlock_exports=true` and
+`a64_inline_kf_lower_irql=false`; guest-to-host calls dropped versus the
+previous healthy route. Keep `a64_inline_kf_lower_irql` default-off: the naive
+IRQL-store inline skipped APC delivery and black-idled
+`scratch\thor-debug\20260520-192530-*`.
+
 ## Classification
 
 Read the final speed-profile interval first.

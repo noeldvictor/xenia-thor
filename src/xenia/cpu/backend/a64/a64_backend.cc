@@ -235,6 +235,12 @@ DEFINE_uint32(
     "per process.",
     "a64");
 DEFINE_bool(
+    arm64_context_value_cache, false,
+    "Thor ARM64 speed lane: reuse still-live GPR context values inside a HIR "
+    "block to replace later LOAD_CONTEXT instructions with register moves. "
+    "Research-only emit-time cache.",
+    "a64");
+DEFINE_bool(
     arm64_context_traffic_audit, false,
     "Thor ARM64 speed lane: log HIR context/local/memory traffic summaries "
     "for compiled functions. Research-only lowering audit.",
@@ -1143,6 +1149,9 @@ void A64Backend::StartSpeedProfiler() {
     XELOGW("A64 immediate lowering audit enabled: function={:08X} budget={}",
            cvars::arm64_immediate_lowering_audit_function,
            cvars::arm64_immediate_lowering_audit_budget);
+  }
+  if (cvars::arm64_context_value_cache) {
+    XELOGW("A64 context value cache enabled");
   }
   if (cvars::arm64_context_traffic_audit) {
     XELOGW("A64 context traffic audit enabled: function={:08X} budget={}",

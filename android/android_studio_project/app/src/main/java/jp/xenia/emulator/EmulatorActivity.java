@@ -164,6 +164,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_inline_vmx_helpers");
             copyBooleanExtra(
                     intent, launchArguments, "a64_inline_ppc_thread_field_leaf_helpers");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_kernel_high_frequency_exports");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_kernel_spinlock_exports");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_kf_lower_irql");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
             copyIntExtra(
                     intent, launchArguments, "arm64_blue_dragon_draw_wait_probe_stride");
@@ -221,6 +224,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_immediate_lowering_audit");
             copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_budget");
+            copyBooleanExtra(intent, launchArguments, "arm64_context_value_cache");
             copyBooleanExtra(intent, launchArguments, "arm64_context_traffic_audit");
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_budget");

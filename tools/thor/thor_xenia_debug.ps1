@@ -121,6 +121,8 @@ param(
     [string]$A64InlineFprVmxHelpers = "",
     [string]$A64InlinePpcThreadFieldLeafHelpers = "",
     [string]$A64InlineKernelHighFrequencyExports = "true",
+    [string]$A64InlineKernelSpinlockExports = "true",
+    [string]$A64InlineKfLowerIrql = "false",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$Arm64BlueDragonDrawWaitProbeStride = "",
     [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
@@ -147,6 +149,7 @@ param(
     [string]$Arm64ImmediateLoweringAudit = "false",
     [string]$Arm64ImmediateLoweringAuditFunction = "",
     [string]$Arm64ImmediateLoweringAuditBudget = "",
+    [string]$Arm64ContextValueCache = "",
     [string]$Arm64ContextTrafficAudit = "false",
     [string]$Arm64ContextTrafficAuditFunction = "",
     [string]$Arm64ContextTrafficAuditBudget = "",
@@ -739,6 +742,12 @@ function Start-XeniaEmulator {
     if ($A64InlineKernelHighFrequencyExports) {
         $parts += "--ez a64_inline_kernel_high_frequency_exports $(ConvertTo-BooleanText $A64InlineKernelHighFrequencyExports)"
     }
+    if ($A64InlineKernelSpinlockExports) {
+        $parts += "--ez a64_inline_kernel_spinlock_exports $(ConvertTo-BooleanText $A64InlineKernelSpinlockExports)"
+    }
+    if ($A64InlineKfLowerIrql) {
+        $parts += "--ez a64_inline_kf_lower_irql $(ConvertTo-BooleanText $A64InlineKfLowerIrql)"
+    }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
@@ -816,6 +825,9 @@ function Start-XeniaEmulator {
     }
     if ($Arm64ImmediateLoweringAuditBudget) {
         $parts += "--ei arm64_immediate_lowering_audit_budget $(ConvertTo-AdbIntText $Arm64ImmediateLoweringAuditBudget)"
+    }
+    if ($Arm64ContextValueCache) {
+        $parts += "--ez arm64_context_value_cache $(ConvertTo-BooleanText $Arm64ContextValueCache)"
     }
     if ($Arm64ContextTrafficAudit) {
         $parts += "--ez arm64_context_traffic_audit $(ConvertTo-BooleanText $Arm64ContextTrafficAudit)"
@@ -940,6 +952,8 @@ function Write-CaptureMetadata {
         "a64_inline_fpr_vmx_helpers=$A64InlineFprVmxHelpers",
         "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
         "a64_inline_kernel_high_frequency_exports=$A64InlineKernelHighFrequencyExports",
+        "a64_inline_kernel_spinlock_exports=$A64InlineKernelSpinlockExports",
+        "a64_inline_kf_lower_irql=$A64InlineKfLowerIrql",
         "arm64_global_reservation_helpers=$Arm64GlobalReservationHelpers",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
@@ -967,6 +981,7 @@ function Write-CaptureMetadata {
         "arm64_immediate_lowering_audit=$Arm64ImmediateLoweringAudit",
         "arm64_immediate_lowering_audit_function=$Arm64ImmediateLoweringAuditFunction",
         "arm64_immediate_lowering_audit_budget=$Arm64ImmediateLoweringAuditBudget",
+        "arm64_context_value_cache=$Arm64ContextValueCache",
         "arm64_context_traffic_audit=$Arm64ContextTrafficAudit",
         "arm64_context_traffic_audit_function=$Arm64ContextTrafficAuditFunction",
         "arm64_context_traffic_audit_budget=$Arm64ContextTrafficAuditBudget",

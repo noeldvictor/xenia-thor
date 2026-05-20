@@ -176,6 +176,16 @@ required.
   searched fatal markers. It still black-idled later, so treat it as a
   generated-code shrink only; next work is state traffic, barriers, and hot GPR
   context slots.
+- Current A64 context-cache/spinlock note:
+  `docs/research/20260520-192930-a64-context-cache-and-spinlock-fastpaths.md`.
+  The block-local `arm64_context_value_cache` probe found zero `8272A3A4` load
+  hits (`255/0`) despite 240 cacheable stores, so it is default-off and should
+  not be treated as the PPC state-cache solution. A real state cache must live
+  across HIR blocks with explicit helper/exit/barrier flush rules. The raised
+  IRQL spinlock fastpaths are default-on and route-clean with Blue Dragon when
+  `a64_inline_kf_lower_irql=false`; keep the naive `KfLowerIrql` inline
+  default-off because it black-idled the route when it skipped native APC
+  delivery.
 
 ## Current Porting Priorities
 
