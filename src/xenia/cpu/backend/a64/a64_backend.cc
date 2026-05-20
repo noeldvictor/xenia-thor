@@ -180,6 +180,12 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: maximum Blue Dragon 826C5620 return-state sample "
     "lines to emit per process.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_jump_table_fastpath, false,
+    "Thor ARM64 speed lane: replace Blue Dragon's hot 827294CC jump-table "
+    "tail-dispatch helper with a hand-emitted A64 path. Research-only and "
+    "title-specific.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "

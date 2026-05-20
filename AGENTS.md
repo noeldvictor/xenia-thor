@@ -1060,6 +1060,20 @@ required.
   - Fastpath capture `scratch\thor-debug\20260519-222409-*` reached the Blue
     Dragon loading spinner with no searched fatal markers. Keep the fastpath
     default-off until simpleperf or same-route timing proves a real speed win.
+- Blue Dragon `827294CC` jump-table helper fastpath:
+  `docs/research/20260519-224000-blue-dragon-jump-table-fastpath.md`.
+  - `arm64_blue_dragon_jump_table_fastpath` is routed through Android and
+    `tools/thor/thor_xenia_debug.ps1` as
+    `-Arm64BlueDragonJumpTableFastpath`.
+  - The helper writes `r25`, `r26`, `r12`, `r0`, and `ctr`, does the big-endian
+    branch-table load from `0x827294EC + ((r10 << 2) & 0xFFFFFFFC)`, then uses
+    the normal A64 tail-call path.
+  - Capture `scratch\thor-debug\20260519-223650-*` reached the loading spinner
+    with no searched fatal markers. `827294CC` code size dropped from 356 to
+    308 bytes, but Blue Dragon still did not reach title by 95s.
+  - The next speed lane should inspect `8272A3A4` and `8272A8E8` or add
+    body-time/generated-code profiling, because entry counts alone now overstate
+    the cost of tiny high-frequency helpers.
 
 ## Codex Hooks / Automation
 

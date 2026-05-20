@@ -65,6 +65,7 @@ DECLARE_bool(arm64_blue_dragon_stricmp_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_return_profile);
 DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
+DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -835,6 +836,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     b(*epilog_label_);
   } else if (TryEmitBlueDragonStricmpFunctionBody()) {
     b(*epilog_label_);
+  } else if (TryEmitBlueDragonJumpTableFunctionBody()) {
+    b(*epilog_label_);
   } else {
   // Walk HIR blocks and emit ARM64 instructions.
   auto block = builder->first_block();
@@ -1570,6 +1573,66 @@ bool A64Emitter::TryEmitBlueDragonStricmpFunctionBody() {
                static_cast<int32_t>(offsetof(ppc::PPCContext, r[6]))));
   str(x16, ptr(GetContextReg(),
                static_cast<int32_t>(offsetof(ppc::PPCContext, r[9]))));
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonJumpTableFunctionBody() {
+  if (!cvars::arm64_blue_dragon_jump_table_fastpath ||
+      current_guest_function_ != 0x827294CC) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  mov(w13, 0xB);
+  mov(w14, 0x5);
+  str(x13, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[25]))));
+  str(x14, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[26]))));
+
+  mov(w12, 0x827294ECu);
+  str(x12, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[12]))));
+  ldr(w16, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[10]))));
+  lsl(w16, w16, 2);
+  add(w12, w12, w16);
+  AddGuestAddressToMembase(w12, x12);
+  ldr(w16, ptr(x12));
+  rev(w16, w16);
+  str(x16, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[0]))));
+  str(x16, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, ctr))));
+
+  if (backend_->speed_profile_enabled()) {
+    EmitAtomicIncrement64(backend_->speed_profile_indirect_guest_calls());
+  }
+
+  if (code_cache_->has_indirection_table()) {
+    mov(x0, A64CodeCache::execute_address_high());
+    orr(x16, x16, x0);
+    ldr(w9, ptr(x16, static_cast<uint32_t>(0)));
+    orr(x9, x9, x0);
+  } else {
+    mov(x0, x20);
+    mov(x1, x16);
+    mov(x9, reinterpret_cast<uint64_t>(&ResolveFunction));
+    blr(x9);
+    mov(x9, x0);
+  }
+
+  PopStackpoint();
+  ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+  ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
+  if (stack_size() <= 4095) {
+    add(sp, sp, static_cast<uint32_t>(stack_size()));
+  } else {
+    mov(x17, static_cast<uint64_t>(stack_size()));
+    add(sp, sp, x17, UXTX);
+  }
+  br(x9);
   return true;
 }
 

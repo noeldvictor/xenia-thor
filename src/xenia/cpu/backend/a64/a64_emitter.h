@@ -127,6 +127,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   bool EmitBlueDragonDrawWaitFastpathBody();
   bool TryEmitBlueDragonMemcpyFunctionBody();
   bool TryEmitBlueDragonStricmpFunctionBody();
+  bool TryEmitBlueDragonJumpTableFunctionBody();
   void MaybeEmitBlueDragonDrawWaitCallerProfile();
   void MaybeEmitBlueDragonStricmpReturnProfile();
   void AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
