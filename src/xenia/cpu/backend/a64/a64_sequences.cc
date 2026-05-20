@@ -2991,14 +2991,20 @@ struct SELECT_I8
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
     }
     e.cmp(cond, 0);
-    if (i.src2.is_constant) {
+    bool src2_zero = i.src2.is_constant && ((i.src2.constant() & 0xFF) == 0);
+    bool src3_zero = i.src3.is_constant && ((i.src3.constant() & 0xFF) == 0);
+    if (i.src2.is_constant && !src2_zero) {
       e.mov(e.w1, static_cast<uint64_t>(i.src2.constant() & 0xFF));
     }
-    if (i.src3.is_constant) {
+    if (i.src3.is_constant && !src3_zero) {
       e.mov(e.w2, static_cast<uint64_t>(i.src3.constant() & 0xFF));
     }
-    WReg s2 = i.src2.is_constant ? e.w1 : WReg(i.src2.reg().getIdx());
-    WReg s3 = i.src3.is_constant ? e.w2 : WReg(i.src3.reg().getIdx());
+    WReg s2 = src2_zero ? e.wzr
+                        : (i.src2.is_constant ? e.w1
+                                              : WReg(i.src2.reg().getIdx()));
+    WReg s3 = src3_zero ? e.wzr
+                        : (i.src3.is_constant ? e.w2
+                                              : WReg(i.src3.reg().getIdx()));
     e.csel(i.dest, s2, s3, Xbyak_aarch64::NE);
   }
 };
@@ -3010,14 +3016,20 @@ struct SELECT_I16
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
     }
     e.cmp(cond, 0);
-    if (i.src2.is_constant) {
+    bool src2_zero = i.src2.is_constant && ((i.src2.constant() & 0xFFFF) == 0);
+    bool src3_zero = i.src3.is_constant && ((i.src3.constant() & 0xFFFF) == 0);
+    if (i.src2.is_constant && !src2_zero) {
       e.mov(e.w1, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
     }
-    if (i.src3.is_constant) {
+    if (i.src3.is_constant && !src3_zero) {
       e.mov(e.w2, static_cast<uint64_t>(i.src3.constant() & 0xFFFF));
     }
-    WReg s2 = i.src2.is_constant ? e.w1 : WReg(i.src2.reg().getIdx());
-    WReg s3 = i.src3.is_constant ? e.w2 : WReg(i.src3.reg().getIdx());
+    WReg s2 = src2_zero ? e.wzr
+                        : (i.src2.is_constant ? e.w1
+                                              : WReg(i.src2.reg().getIdx()));
+    WReg s3 = src3_zero ? e.wzr
+                        : (i.src3.is_constant ? e.w2
+                                              : WReg(i.src3.reg().getIdx()));
     e.csel(i.dest, s2, s3, Xbyak_aarch64::NE);
   }
 };
@@ -3029,16 +3041,24 @@ struct SELECT_I32
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
     }
     e.cmp(cond, 0);
-    if (i.src2.is_constant) {
+    bool src2_zero =
+        i.src2.is_constant && (static_cast<uint32_t>(i.src2.constant()) == 0);
+    bool src3_zero =
+        i.src3.is_constant && (static_cast<uint32_t>(i.src3.constant()) == 0);
+    if (i.src2.is_constant && !src2_zero) {
       e.mov(e.w1,
             static_cast<uint64_t>(static_cast<uint32_t>(i.src2.constant())));
     }
-    if (i.src3.is_constant) {
+    if (i.src3.is_constant && !src3_zero) {
       e.mov(e.w2,
             static_cast<uint64_t>(static_cast<uint32_t>(i.src3.constant())));
     }
-    WReg s2 = i.src2.is_constant ? e.w1 : WReg(i.src2.reg().getIdx());
-    WReg s3 = i.src3.is_constant ? e.w2 : WReg(i.src3.reg().getIdx());
+    WReg s2 = src2_zero ? e.wzr
+                        : (i.src2.is_constant ? e.w1
+                                              : WReg(i.src2.reg().getIdx()));
+    WReg s3 = src3_zero ? e.wzr
+                        : (i.src3.is_constant ? e.w2
+                                              : WReg(i.src3.reg().getIdx()));
     e.csel(i.dest, s2, s3, Xbyak_aarch64::NE);
   }
 };
@@ -3050,14 +3070,22 @@ struct SELECT_I64
       e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
     }
     e.cmp(cond, 0);
-    if (i.src2.is_constant) {
+    bool src2_zero =
+        i.src2.is_constant && (static_cast<uint64_t>(i.src2.constant()) == 0);
+    bool src3_zero =
+        i.src3.is_constant && (static_cast<uint64_t>(i.src3.constant()) == 0);
+    if (i.src2.is_constant && !src2_zero) {
       e.mov(e.x1, static_cast<uint64_t>(i.src2.constant()));
     }
-    if (i.src3.is_constant) {
+    if (i.src3.is_constant && !src3_zero) {
       e.mov(e.x2, static_cast<uint64_t>(i.src3.constant()));
     }
-    XReg s2 = i.src2.is_constant ? e.x1 : XReg(i.src2.reg().getIdx());
-    XReg s3 = i.src3.is_constant ? e.x2 : XReg(i.src3.reg().getIdx());
+    XReg s2 = src2_zero ? e.xzr
+                        : (i.src2.is_constant ? e.x1
+                                              : XReg(i.src2.reg().getIdx()));
+    XReg s3 = src3_zero ? e.xzr
+                        : (i.src3.is_constant ? e.x2
+                                              : XReg(i.src3.reg().getIdx()));
     e.csel(i.dest, s2, s3, Xbyak_aarch64::NE);
   }
 };

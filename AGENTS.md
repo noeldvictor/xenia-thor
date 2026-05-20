@@ -1269,6 +1269,16 @@ required.
   stayed active through 60 seconds. The remaining first-budget misses were two
   `AND_I64` masks, `0x6001007D` and `0xEF`; do not change them without a
   separate audit/proof.
+- Zero-select cleanup:
+  `docs/research/20260520-161130-a64-zero-select-fastpath.md`. The hot
+  `8272A3A4` HIR has repeated variable-shift fixups shaped like
+  `select shift_too_large, 0, shifted_value`. Integer `SELECT_I8/I16/I32/I64`
+  now uses `wzr` / `xzr` directly for zero constants instead of materializing
+  zero into a scratch register before `csel`. First proof
+  `scratch/thor-debug/20260520-160530-*` shrank `8272A3A4` to `12540` but
+  later idled; repeat proof `scratch/thor-debug/20260520-160757-*` stayed
+  active through 70 seconds with no searched fatal markers. Treat this as a
+  route-proven codegen cleanup, not a visible title-screen proof.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

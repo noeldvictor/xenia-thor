@@ -174,6 +174,15 @@ Quiet proof `scratch\thor-debug\20260520-155321-*` stayed route-clean through
 60 seconds. See
 `docs/research/20260520-155700-a64-zero-logical-immediate-fastpath.md`.
 
+The 2026-05-20 integer zero-select pass is a small generic cleanup for the
+Blue Dragon shift/select pattern in `8272A3A4`: `SELECT_I8/I16/I32/I64` now
+uses `wzr` / `xzr` directly when either value operand is constant zero. Repeat
+proof `scratch\thor-debug\20260520-160757-*` stayed active through 70 seconds
+and shrank `8272A3A4` from `12652` to `12540` bytes and `8272A8E8` from `5600`
+to `5592` bytes. The earlier `scratch\thor-debug\20260520-160530-*` attempt
+idled later, so keep treating Blue Dragon speed routes as timing-sensitive.
+See `docs/research/20260520-161130-a64-zero-select-fastpath.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.
