@@ -117,6 +117,23 @@ full-region proof. The 2026-05-19 attempt either crashed at `8272A8B4` or
 black-idled the route after resuming at `8272A8D0`; see
 `docs/research/20260519-234533-blue-dragon-copy-fastpath-dead-end.md`.
 
+Do not reintroduce wrapped-immediate `ADD`/`SUB` lowering by default without a
+lowering audit first. The 2026-05-20 broad I32/I64 pass
+`scratch/thor-debug/20260520-143752-*` and the narrower `ADD_I32`-only pass
+`scratch/thor-debug/20260520-144309-*` both black-idled Blue Dragon; restored
+default donor lowering `scratch/thor-debug/20260520-144638-*` resumed healthy
+entry deltas. See
+`docs/research/20260520-144829-a64-wrapped-addi-bisect.md`.
+
+Exception: the audited `ADD_I64 reg, reg, wrapped-small-negative` case is now
+route-proven and default-on. Capture `scratch\thor-debug\20260520-150652-*`
+confirmed `arm64_add_i64_wrapped_imm_fastpath=true`, active Blue Dragon
+counters through 60 seconds, and `8272A3A4 code_size=12772`. Roll it back with
+`-Arm64AddI64WrappedImmFastpath false` if a future route regresses. Do not
+extend this exception to `ADD_I32`, `SUB_I32`, or `SUB_I64` without a separate
+audit proof. See
+`docs/research/20260520-151030-a64-add-i64-wrapped-immediate-fastpath.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

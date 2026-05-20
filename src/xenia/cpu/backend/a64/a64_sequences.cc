@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/backend/a64/a64_sequences.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <type_traits>
@@ -26,6 +27,12 @@
 #include "xenia/cpu/backend/a64/a64_tracers.h"
 #include "xenia/cpu/hir/instr.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+
+DECLARE_bool(arm64_add_sub_imm_audit);
+DECLARE_uint32(arm64_add_sub_imm_audit_function);
+DECLARE_uint32(arm64_add_sub_imm_audit_budget);
+DECLARE_bool(arm64_add_i64_wrapped_imm_fastpath);
+DECLARE_uint32(arm64_add_i64_wrapped_imm_fastpath_function);
 
 namespace xe {
 namespace cpu {
@@ -77,6 +84,69 @@ static void EmitBinaryConstLhs(A64Emitter& e, const REG& dest,
     op_fn(e, dest, XReg(17), src2);
   }
 }
+
+namespace {
+
+std::atomic<uint32_t> a64_add_sub_imm_audit_count{0};
+
+static bool HasWrappedSmallInverse(uint64_t imm, uint32_t bits,
+                                   uint64_t* out_inverse) {
+  uint64_t mask = bits == 32 ? uint64_t{0xFFFFFFFFu} : ~uint64_t{0};
+  imm &= mask;
+  uint64_t inverse = (uint64_t{0} - imm) & mask;
+  if (imm <= 4095 || inverse == 0 || inverse > 4095) {
+    return false;
+  }
+  *out_inverse = inverse;
+  return true;
+}
+
+static bool TryEmitAddI64WrappedSmallImmediate(A64Emitter& e, const XReg& dest,
+                                               const XReg& src,
+                                               uint64_t imm) {
+  if (!cvars::arm64_add_i64_wrapped_imm_fastpath) {
+    return false;
+  }
+  uint32_t filter = cvars::arm64_add_i64_wrapped_imm_fastpath_function;
+  if (filter != 0 && e.current_guest_function() != filter) {
+    return false;
+  }
+  uint64_t inverse = 0;
+  if (!HasWrappedSmallInverse(imm, 64, &inverse)) {
+    return false;
+  }
+  e.sub(dest, src, static_cast<uint32_t>(inverse));
+  return true;
+}
+
+static void MaybeAuditWrappedAddSubImm(A64Emitter& e, const char* opcode,
+                                       uint32_t bits, uint64_t imm,
+                                       const char* constant_side,
+                                       const char* would_emit) {
+  if (!cvars::arm64_add_sub_imm_audit) {
+    return;
+  }
+  uint64_t inverse = 0;
+  if (!HasWrappedSmallInverse(imm, bits, &inverse)) {
+    return;
+  }
+  uint32_t function = e.current_guest_function();
+  uint32_t filter = cvars::arm64_add_sub_imm_audit_function;
+  if (filter != 0 && function != filter) {
+    return;
+  }
+  uint32_t log_index = a64_add_sub_imm_audit_count.fetch_add(1);
+  if (log_index >= cvars::arm64_add_sub_imm_audit_budget) {
+    return;
+  }
+  XELOGW(
+      "A64 ADD/SUB immediate audit {:03}: fn {:08X} op {} width {} "
+      "const_side {} imm 0x{:016X} inverse 0x{:X} current mov+reg would {}",
+      log_index + 1, function, opcode, bits, constant_side, imm, inverse,
+      would_emit);
+}
+
+}  // namespace
 
 // ============================================================================
 // OPCODE_COMMENT
@@ -433,6 +503,7 @@ struct ADD_I32 : Sequence<ADD_I32, I<OPCODE_ADD, I32Op, I32Op, I32Op>> {
                         i.src1.constant() + i.src2.constant())));
     } else if (i.src2.is_constant) {
       uint32_t imm = static_cast<uint32_t>(i.src2.constant());
+      MaybeAuditWrappedAddSubImm(e, "ADD_I32", 32, imm, "src2", "SUB #inverse");
       if (imm <= 4095) {
         e.add(i.dest, i.src1, imm);
       } else {
@@ -441,6 +512,7 @@ struct ADD_I32 : Sequence<ADD_I32, I<OPCODE_ADD, I32Op, I32Op, I32Op>> {
       }
     } else if (i.src1.is_constant) {
       uint32_t imm = static_cast<uint32_t>(i.src1.constant());
+      MaybeAuditWrappedAddSubImm(e, "ADD_I32", 32, imm, "src1", "SUB #inverse");
       if (imm <= 4095) {
         e.add(i.dest, i.src2, imm);
       } else {
@@ -459,6 +531,10 @@ struct ADD_I64 : Sequence<ADD_I64, I<OPCODE_ADD, I64Op, I64Op, I64Op>> {
             static_cast<uint64_t>(i.src1.constant() + i.src2.constant()));
     } else if (i.src2.is_constant) {
       uint64_t imm = static_cast<uint64_t>(i.src2.constant());
+      MaybeAuditWrappedAddSubImm(e, "ADD_I64", 64, imm, "src2", "SUB #inverse");
+      if (TryEmitAddI64WrappedSmallImmediate(e, i.dest, i.src1, imm)) {
+        return;
+      }
       if (imm <= 4095) {
         e.add(i.dest, i.src1, static_cast<uint32_t>(imm));
       } else {
@@ -467,6 +543,10 @@ struct ADD_I64 : Sequence<ADD_I64, I<OPCODE_ADD, I64Op, I64Op, I64Op>> {
       }
     } else if (i.src1.is_constant) {
       uint64_t imm = static_cast<uint64_t>(i.src1.constant());
+      MaybeAuditWrappedAddSubImm(e, "ADD_I64", 64, imm, "src1", "SUB #inverse");
+      if (TryEmitAddI64WrappedSmallImmediate(e, i.dest, i.src2, imm)) {
+        return;
+      }
       if (imm <= 4095) {
         e.add(i.dest, i.src2, static_cast<uint32_t>(imm));
       } else {
@@ -938,6 +1018,11 @@ struct SUB_I16 : Sequence<SUB_I16, I<OPCODE_SUB, I16Op, I16Op, I16Op>> {
 };
 struct SUB_I32 : Sequence<SUB_I32, I<OPCODE_SUB, I32Op, I32Op, I32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (!(i.src1.is_constant && i.src2.is_constant) && i.src2.is_constant) {
+      MaybeAuditWrappedAddSubImm(e, "SUB_I32", 32,
+                                 static_cast<uint32_t>(i.src2.constant()),
+                                 "src2", "ADD #inverse");
+    }
     EmitSubInt<EmitArgType, WReg>(e, i);
   }
 };
@@ -948,6 +1033,7 @@ struct SUB_I64 : Sequence<SUB_I64, I<OPCODE_SUB, I64Op, I64Op, I64Op>> {
             static_cast<uint64_t>(i.src1.constant() - i.src2.constant()));
     } else if (i.src2.is_constant) {
       uint64_t imm = static_cast<uint64_t>(i.src2.constant());
+      MaybeAuditWrappedAddSubImm(e, "SUB_I64", 64, imm, "src2", "ADD #inverse");
       if (imm <= 4095) {
         e.sub(i.dest, i.src1, static_cast<uint32_t>(imm));
       } else {

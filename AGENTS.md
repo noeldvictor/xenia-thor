@@ -1208,6 +1208,26 @@ required.
   `scratch/thor-debug/20260520-124314-*` shrank `8272A3A4` to `14532`, but the
   emulator process exited cleanly around 41 seconds and the script then fell
   into launcher/file-picker noise. Code-size shrink alone is not enough.
+- Wrapped-immediate follow-up:
+  `docs/research/20260520-144829-a64-wrapped-addi-bisect.md`. aX360e does not
+  have a better implementation for this exact `ADD`/`SUB` path; its A64 donor
+  code still materializes large constants. A broad I32/I64 rewrite
+  (`scratch/thor-debug/20260520-143752-*`) and an `ADD_I32`-only rewrite
+  (`scratch/thor-debug/20260520-144309-*`) both reproduced the black/idle
+  route signature with no fatal marker. The restored donor/default backend
+  (`scratch/thor-debug/20260520-144638-*`) resumed healthy entry deltas through
+  60 seconds. Do not reintroduce wrapped `ADD`/`SUB` immediate lowering as a
+  default path until a lowering audit names the guest functions and HIR
+  instructions rewritten and a Thor route proof reaches the same later active
+  intervals.
+- Narrow wrapped-immediate success:
+  `docs/research/20260520-151030-a64-add-i64-wrapped-immediate-fastpath.md`.
+  The audit proved the first useful Blue Dragon candidate budget was `ADD_I64`
+  with wrapped small-negative constants. The route-proven default-on lowering is
+  only `ADD_I64 reg, reg, -N -> SUB #N` for `N <= 4095`, guarded by
+  `arm64_add_i64_wrapped_imm_fastpath` and rollback flag
+  `-Arm64AddI64WrappedImmFastpath false`. Do not generalize this to `ADD_I32`
+  or `SUB` without a separate audit and Thor route proof.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

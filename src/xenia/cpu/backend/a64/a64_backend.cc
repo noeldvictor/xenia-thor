@@ -193,6 +193,31 @@ DEFINE_bool(
     "tail-dispatch helper with a hand-emitted A64 path. Research-only and "
     "title-specific.",
     "a64");
+DEFINE_bool(
+    arm64_add_sub_imm_audit, false,
+    "Thor ARM64 speed lane: log wrapped ADD/SUB immediate candidates without "
+    "changing generated code. Research-only lowering audit.",
+    "a64");
+DEFINE_uint32(
+    arm64_add_sub_imm_audit_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "the wrapped ADD/SUB immediate audit. 0 logs all functions.",
+    "a64");
+DEFINE_uint32(
+    arm64_add_sub_imm_audit_budget, 128,
+    "Thor ARM64 speed lane: maximum wrapped ADD/SUB immediate audit lines to "
+    "emit per process.",
+    "a64");
+DEFINE_bool(
+    arm64_add_i64_wrapped_imm_fastpath, true,
+    "Thor ARM64 speed lane: lower I64 ADD with a wrapped small negative "
+    "constant as SUB #imm. Research-only; pass false to disable.",
+    "a64");
+DEFINE_uint32(
+    arm64_add_i64_wrapped_imm_fastpath_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "the wrapped I64 ADD immediate fastpath. 0 enables all functions.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
@@ -953,6 +978,16 @@ void A64Backend::StartSpeedProfiler() {
       "A64 speed profile enabled: interval_ms={} top_functions={} "
       "min_delta={}",
       interval_ms, top_functions, min_delta);
+  if (cvars::arm64_add_sub_imm_audit) {
+    XELOGW(
+        "A64 ADD/SUB immediate audit enabled: function={:08X} budget={}",
+        cvars::arm64_add_sub_imm_audit_function,
+        cvars::arm64_add_sub_imm_audit_budget);
+  }
+  if (cvars::arm64_add_i64_wrapped_imm_fastpath) {
+    XELOGW("A64 ADD_I64 wrapped immediate fastpath enabled: function={:08X}",
+           cvars::arm64_add_i64_wrapped_imm_fastpath_function);
+  }
   speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
       std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });
 }

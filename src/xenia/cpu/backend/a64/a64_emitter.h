@@ -185,6 +185,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   Xbyak_aarch64::Label& GetLabel(uint32_t label_id);
 
   XexModule* GuestModule() { return guest_module_; }
+  uint32_t current_guest_function() const { return current_guest_function_; }
 
  protected:
   void* Emplace(const EmitFunctionInfo& func_info,

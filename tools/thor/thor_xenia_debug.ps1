@@ -138,6 +138,11 @@ param(
     [string]$Arm64BlueDragonStricmpReturnProfileStride = "",
     [string]$Arm64BlueDragonStricmpReturnProfileBudget = "",
     [string]$Arm64BlueDragonJumpTableFastpath = "false",
+    [string]$Arm64AddSubImmAudit = "false",
+    [string]$Arm64AddSubImmAuditFunction = "",
+    [string]$Arm64AddSubImmAuditBudget = "",
+    [string]$Arm64AddI64WrappedImmFastpath = "true",
+    [string]$Arm64AddI64WrappedImmFastpathFunction = "",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
@@ -771,6 +776,21 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonJumpTableFastpath) {
         $parts += "--ez arm64_blue_dragon_jump_table_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonJumpTableFastpath)"
     }
+    if ($Arm64AddSubImmAudit) {
+        $parts += "--ez arm64_add_sub_imm_audit $(ConvertTo-BooleanText $Arm64AddSubImmAudit)"
+    }
+    if ($Arm64AddSubImmAuditFunction) {
+        $parts += "--ei arm64_add_sub_imm_audit_function $(ConvertTo-AdbIntText $Arm64AddSubImmAuditFunction)"
+    }
+    if ($Arm64AddSubImmAuditBudget) {
+        $parts += "--ei arm64_add_sub_imm_audit_budget $(ConvertTo-AdbIntText $Arm64AddSubImmAuditBudget)"
+    }
+    if ($Arm64AddI64WrappedImmFastpath) {
+        $parts += "--ez arm64_add_i64_wrapped_imm_fastpath $(ConvertTo-BooleanText $Arm64AddI64WrappedImmFastpath)"
+    }
+    if ($Arm64AddI64WrappedImmFastpathFunction) {
+        $parts += "--ei arm64_add_i64_wrapped_imm_fastpath_function $(ConvertTo-AdbIntText $Arm64AddI64WrappedImmFastpathFunction)"
+    }
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
@@ -903,6 +923,11 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_stricmp_return_profile_stride=$Arm64BlueDragonStricmpReturnProfileStride",
         "arm64_blue_dragon_stricmp_return_profile_budget=$Arm64BlueDragonStricmpReturnProfileBudget",
         "arm64_blue_dragon_jump_table_fastpath=$Arm64BlueDragonJumpTableFastpath",
+        "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
+        "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
+        "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
+        "arm64_add_i64_wrapped_imm_fastpath=$Arm64AddI64WrappedImmFastpath",
+        "arm64_add_i64_wrapped_imm_fastpath_function=$Arm64AddI64WrappedImmFastpathFunction",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
