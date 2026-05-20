@@ -217,6 +217,13 @@ fatal markers and shrank clean code size from `8272A3A4=12332` to `12296` and
 pairs without a new exact-offset/use audit. See
 `docs/research/20260520-170621-a64-ugt-eq-cr-branch-peephole.md`.
 
+Do not re-add the broad integer compare-branch fusion tried in
+`scratch\thor-debug\20260520-171056-*`. It matched `COMPARE_*` followed by a
+single-use branch and lowered it as `cmp` plus `b.cond`, but Blue Dragon
+black-idled after the early burst with `entry_delta=0` in the final intervals.
+The local code was reverted before commit. See
+`docs/research/20260520-171256-a64-compare-branch-black-idle.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

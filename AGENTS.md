@@ -1316,6 +1316,14 @@ required.
   markers and shrank clean code size from `8272A3A4 12332 -> 12296` and
   `8272A8E8 5520 -> 5508`. This is safe CPU/codegen progress, not a playable
   speed breakthrough.
+- Rejected generic compare-branch fusion:
+  `docs/research/20260520-171256-a64-compare-branch-black-idle.md`.
+  A local uncommitted matcher for integer `COMPARE_*` followed by a single-use
+  branch built and deployed, but `scratch/thor-debug/20260520-171056-*`
+  black-idled after the early burst (`entry_delta=0` for the final intervals)
+  with no clean hot-function shrink beyond the already committed UGT/EQ CR
+  peephole. The code was reverted before commit. Do not re-add without a hit
+  audit, condition-polarity tests, and an idle-state explanation.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
