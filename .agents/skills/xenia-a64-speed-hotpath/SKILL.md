@@ -224,6 +224,49 @@ black-idled after the early burst with `entry_delta=0` in the final intervals.
 The local code was reverted before commit. See
 `docs/research/20260520-171256-a64-compare-branch-black-idle.md`.
 
+The 2026-05-20 Edge-style global reservation helper import is default-off. It
+adds `TryAcquireReservationHelper`, `ReservedStore32Helper`, and
+`ReservedStore64Helper`, plus `-Arm64GlobalReservationHelpers true`, but the
+default-on experiment `scratch\thor-debug\20260520-172518-*` black-idled after
+the early burst. Keep it as opt-in PPC sync infrastructure, not a Blue Dragon
+speed fix. See
+`docs/research/20260520-173242-edge-reservation-helper-import.md`.
+
+## External PPC To A64 Reference Lane
+
+Use this lane when the work feels like isolated peepholes instead of backend
+maturity. The 2026-05-20 source harvest says the useful public references are:
+
+- Dolphin `JitArm64`: best direct PPC-to-AArch64 JIT structure. Study its
+  pinned PPC state/membase registers, GPR/FPR/CR register cache, branch/CTR/LR
+  lowering, block linking, and last-use-driven flushes. Do not copy GPL code
+  bodies into this fork without a deliberate license decision.
+- QEMU TCG: best mature DBT architecture reference for translation blocks,
+  direct block chaining, `lookup_and_goto_ptr`, helper global read/write
+  metadata, PPC CR globals, and reservation/atomic semantics. Use as a design
+  and semantics oracle, not as embedded code.
+- RPCS3 PPU/LLVM/AArch64: useful second-backbone reference for function/module
+  analysis, local/global PPU state separation, LLVM lowering, AArch64 transform
+  passes, and leaf-block handling. Treat LLVM as a parallel research route
+  after the direct A64 hot path is instrumented.
+- IBM PowerPC branch docs: sanity check for CR/LR/CTR and BO/BI branch
+  semantics before broadening compare/branch fusions.
+
+For Blue Dragon, translate this into a state-traffic sprint:
+
+1. First add an audit for `8272A3A4` that counts context loads/stores, CR
+   loads/stores, LR/CTR traffic, helper calls, direct exits, indirect exits,
+   endian swaps, and dispatcher returns.
+2. Then add a Dolphin-style PPC state cache at the HIR/A64 boundary, starting
+   with CR bytes and common hot GPR context slots.
+3. Flush only at helpers, exits, exceptions, and exact aliasing barriers.
+4. Use QEMU-style helper classification to keep state live across helpers that
+   are proven not to mutate guest context.
+5. Only use LLVM/RPCS3 ideas for a larger hot-function comparison after the
+   direct A64 audit gives us the concrete waste map.
+
+See `docs/research/20260520-180132-powerpc-to-arm64-source-harvest.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

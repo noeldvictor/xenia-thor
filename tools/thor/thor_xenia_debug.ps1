@@ -105,6 +105,7 @@ param(
     [string]$Arm64ForceInterpreterRanges = "",
     [string]$Arm64GuestStoreWatch = "",
     [string]$Arm64GuestStoreWatchBudget = "",
+    [string]$Arm64GlobalReservationHelpers = "",
     [string]$Arm64CompiledCallTraceInterval = "",
     [string]$Arm64CompiledCallTraceMinCount = "",
     [string]$Arm64CompiledCallTraceBudget = "",
@@ -680,6 +681,9 @@ function Start-XeniaEmulator {
     if ($Arm64GuestStoreWatchBudget) {
         $parts += "--ei arm64_guest_store_watch_budget $Arm64GuestStoreWatchBudget"
     }
+    if ($Arm64GlobalReservationHelpers) {
+        $parts += "--ez arm64_global_reservation_helpers $(ConvertTo-BooleanText $Arm64GlobalReservationHelpers)"
+    }
     if ($Arm64CompiledCallTraceInterval) {
         $parts += "--ei arm64_compiled_call_trace_interval $Arm64CompiledCallTraceInterval"
     }
@@ -924,6 +928,7 @@ function Write-CaptureMetadata {
         "a64_inline_fpr_vmx_helpers=$A64InlineFprVmxHelpers",
         "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
         "a64_inline_kernel_high_frequency_exports=$A64InlineKernelHighFrequencyExports",
+        "arm64_global_reservation_helpers=$Arm64GlobalReservationHelpers",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
         "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
@@ -1294,6 +1299,7 @@ function Use-BlueDragonSpeedDefaults {
         "Arm64ForceInterpreterRanges",
         "Arm64GuestStoreWatch",
         "Arm64GuestStoreWatchBudget",
+        "Arm64GlobalReservationHelpers",
         "Arm64CompiledCallTraceInterval",
         "Arm64CompiledCallTraceMinCount",
         "Arm64CompiledCallTraceBudget",

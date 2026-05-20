@@ -1324,6 +1324,36 @@ required.
   with no clean hot-function shrink beyond the already committed UGT/EQ CR
   peephole. The code was reverted before commit. Do not re-add without a hit
   audit, condition-polarity tests, and an idle-state explanation.
+- Edge reservation helper import:
+  `docs/research/20260520-173242-edge-reservation-helper-import.md`.
+  Refreshed donors on 2026-05-20: aX360e `main` stayed at
+  `2b4c889e8f849d07ede83334fa0b323f5c647828`, while Xenia Edge `edge` moved to
+  `eee166febd27dfdffc556c4474e1aa49f2b4ccc5`. The latest Edge A64 delta is
+  mostly trace plumbing plus a global PPC reservation helper path, not a hidden
+  large opcode-table win. This fork now has Edge-style
+  `TryAcquireReservationHelper`, `ReservedStore32Helper`, and
+  `ReservedStore64Helper`, gated by `arm64_global_reservation_helpers`
+  (default `false`) and exposed in the Thor script as
+  `-Arm64GlobalReservationHelpers true`. Do not make it default-on for Blue
+  Dragon: the default-on experiment `scratch/thor-debug/20260520-172518-*`
+  black-idled after the early burst. Treat this as opt-in PPC sync
+  infrastructure, not a speed win.
+- PowerPC-to-ARM64 public source harvest:
+  `docs/research/20260520-180132-powerpc-to-arm64-source-harvest.md`.
+  Useful online references exist, but none is a drop-in Xenon-to-Thor backend.
+  Dolphin `JitArm64` is the closest direct PPC-to-AArch64 JIT reference for
+  pinned state registers, GPR/FPR/CR register caching, branch/CTR/LR lowering,
+  and block linking. QEMU TCG is the best reference for translation-block
+  chaining, helper global read/write metadata, PPC CR globals, and
+  reservation/atomic semantics. RPCS3 PPU/LLVM/AArch64 is a useful second
+  backbone for function/module analysis and LLVM hot-function experiments. IBM
+  PowerPC branch docs are the sanity check for CR/LR/CTR and BO/BI branch
+  semantics. Treat Dolphin/QEMU/RPCS3 implementation code as GPL-family design
+  reference unless the repo deliberately changes import/licensing strategy.
+  Next speed sprint should be a measured `8272A3A4` state-traffic reduction
+  sprint: count context loads/stores, CR traffic, LR/CTR traffic, helper calls,
+  exits, endian swaps, and dispatcher returns, then add a Dolphin-style cache
+  for CR bytes and hot GPR context slots.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

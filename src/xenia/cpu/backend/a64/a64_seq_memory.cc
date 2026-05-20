@@ -37,6 +37,10 @@ DEFINE_string(arm64_guest_store_watch, "",
               "a64");
 DEFINE_int32(arm64_guest_store_watch_budget, 128,
              "Maximum A64 guest store watch log lines.", "a64");
+DEFINE_bool(arm64_global_reservation_helpers, false,
+            "Use Edge-style global reservation helpers for A64 "
+            "RESERVED_LOAD/STORE instead of the legacy inline CAS path.",
+            "a64");
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -1207,6 +1211,22 @@ static const Xbyak_aarch64::XReg& LoadBackendCtxPtr(A64Emitter& e) {
 struct RESERVED_LOAD_I32
     : Sequence<RESERVED_LOAD_I32, I<OPCODE_RESERVED_LOAD, I32Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (cvars::arm64_global_reservation_helpers) {
+      if (i.src1.is_constant) {
+        e.mov(e.w1, static_cast<uint32_t>(i.src1.constant()));
+      } else {
+        e.mov(e.w1, WReg(i.src1.reg().getIdx()));
+      }
+      e.CallNativeSafe(e.backend()->try_acquire_reservation_helper_);
+      auto addr = ComputeMemoryAddress(e, i.src1);
+      e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+      auto bctx = LoadBackendCtxPtr(e);
+      e.mov(e.w0, i.dest);
+      e.str(e.x0, ptr(bctx, static_cast<uint32_t>(offsetof(
+                                A64BackendContext, cached_reserve_value_))));
+      return;
+    }
+
     auto addr = ComputeMemoryAddress(e, i.src1);
     // Save guest address before load; dest may alias addr register.
     e.mov(e.w0, WReg(addr.getIdx()));
@@ -1232,6 +1252,21 @@ struct RESERVED_LOAD_I32
 struct RESERVED_LOAD_I64
     : Sequence<RESERVED_LOAD_I64, I<OPCODE_RESERVED_LOAD, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (cvars::arm64_global_reservation_helpers) {
+      if (i.src1.is_constant) {
+        e.mov(e.w1, static_cast<uint32_t>(i.src1.constant()));
+      } else {
+        e.mov(e.w1, WReg(i.src1.reg().getIdx()));
+      }
+      e.CallNativeSafe(e.backend()->try_acquire_reservation_helper_);
+      auto addr = ComputeMemoryAddress(e, i.src1);
+      e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+      auto bctx = LoadBackendCtxPtr(e);
+      e.str(i.dest, ptr(bctx, static_cast<uint32_t>(offsetof(
+                                  A64BackendContext, cached_reserve_value_))));
+      return;
+    }
+
     auto addr = ComputeMemoryAddress(e, i.src1);
     // Save guest address before load; dest may alias addr register.
     e.mov(e.w0, WReg(addr.getIdx()));
@@ -1258,6 +1293,24 @@ struct RESERVED_STORE_I32
                I<OPCODE_RESERVED_STORE, I8Op, I64Op, I32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto addr = ComputeMemoryAddress(e, i.src1);
+    if (cvars::arm64_global_reservation_helpers) {
+      e.add(e.x2, e.GetMembaseReg(), addr);
+      if (i.src2.is_constant) {
+        e.mov(e.w3,
+              static_cast<uint64_t>(static_cast<uint32_t>(i.src2.constant())));
+      } else {
+        e.mov(e.w3, WReg(i.src2.reg().getIdx()));
+      }
+      if (i.src1.is_constant) {
+        e.mov(e.w1, static_cast<uint32_t>(i.src1.constant()));
+      } else {
+        e.mov(e.w1, WReg(i.src1.reg().getIdx()));
+      }
+      e.CallNativeSafe(e.backend()->reserved_store_32_helper);
+      e.mov(i.dest, e.w0);
+      return;
+    }
+
     auto& no_reserve = e.NewCachedLabel();
     auto& done = e.NewCachedLabel();
     // Check if we have a reservation.
@@ -1322,6 +1375,23 @@ struct RESERVED_STORE_I64
                I<OPCODE_RESERVED_STORE, I8Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto addr = ComputeMemoryAddress(e, i.src1);
+    if (cvars::arm64_global_reservation_helpers) {
+      e.add(e.x2, e.GetMembaseReg(), addr);
+      if (i.src2.is_constant) {
+        e.mov(e.x3, static_cast<uint64_t>(i.src2.constant()));
+      } else {
+        e.mov(e.x3, XReg(i.src2.reg().getIdx()));
+      }
+      if (i.src1.is_constant) {
+        e.mov(e.w1, static_cast<uint32_t>(i.src1.constant()));
+      } else {
+        e.mov(e.w1, WReg(i.src1.reg().getIdx()));
+      }
+      e.CallNativeSafe(e.backend()->reserved_store_64_helper);
+      e.mov(i.dest, e.w0);
+      return;
+    }
+
     auto& no_reserve = e.NewCachedLabel();
     auto& done = e.NewCachedLabel();
     auto bctx = LoadBackendCtxPtr(e);
