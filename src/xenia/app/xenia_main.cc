@@ -61,6 +61,9 @@
 #endif  // XE_PLATFORM_WIN32
 
 // Available input drivers:
+#if XE_PLATFORM_ANDROID
+#include "xenia/hid/android/android_hid.h"
+#endif  // XE_PLATFORM_ANDROID
 #include "xenia/hid/nop/nop_hid.h"
 #if !XE_PLATFORM_ANDROID
 #include "xenia/hid/sdl/sdl_hid.h"
@@ -75,7 +78,8 @@
 DEFINE_string(apu, "any", "Audio system. Use: [any, nop, sdl, xaudio2]", "APU");
 DEFINE_string(gpu, "any", "Graphics system. Use: [any, d3d12, vulkan, null]",
               "GPU");
-DEFINE_string(hid, "any", "Input system. Use: [any, nop, sdl, winkey, xinput]",
+DEFINE_string(hid, "any",
+              "Input system. Use: [any, android, nop, sdl, winkey, xinput]",
               "HID");
 
 DEFINE_path(
@@ -467,6 +471,9 @@ std::vector<std::unique_ptr<hid::InputDriver>> EmulatorApp::CreateInputDrivers(
 #if XE_PLATFORM_WIN32
     factory.Add("xinput", xe::hid::xinput::Create);
 #endif  // XE_PLATFORM_WIN32
+#if XE_PLATFORM_ANDROID
+    factory.Add("android", xe::hid::android::Create);
+#endif  // XE_PLATFORM_ANDROID
 #if !XE_PLATFORM_ANDROID
     factory.Add("sdl", xe::hid::sdl::Create);
 #endif  // !XE_PLATFORM_ANDROID

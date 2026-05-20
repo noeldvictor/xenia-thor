@@ -302,6 +302,9 @@ workspace("xenia")
   include("src/xenia/gpu/null")
   include("src/xenia/gpu/vulkan")
   include("src/xenia/hid")
+  if os.istarget("android") then
+    include("src/xenia/hid/android")
+  end
   include("src/xenia/hid/nop")
   include("src/xenia/kernel")
   include("src/xenia/ui")

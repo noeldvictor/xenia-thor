@@ -22,6 +22,8 @@ param(
     [string]$LogLevel = "",
     [string]$XmaTraceContextState = "false",
     [string]$XmaFastSilence = "false",
+    [ValidateSet("android", "any", "nop", "sdl", "winkey", "xinput")]
+    [string]$HidDriver = "android",
     [string]$HidNopConnected = "false",
     [string]$HidNopButtons = "",
     [string]$HidNopButtonSequence = "",
@@ -477,7 +479,7 @@ function Start-XeniaEmulator {
         "--es apu nop",
         "--ez xma_trace_context_state $(ConvertTo-BooleanText $XmaTraceContextState)",
         "--ez xma_fast_silence $(ConvertTo-BooleanText $XmaFastSilence)",
-        "--es hid nop",
+        "--es hid $(ConvertTo-AdbShellSingleQuote $HidDriver)",
         "--ez arm64_enable_mini_jit $(ConvertTo-BooleanText $Arm64MiniJit)",
         "--ez hid_nop_connected $(ConvertTo-BooleanText $HidNopConnected)",
         "--ez android_hide_osd $(ConvertTo-BooleanText $HideAndroidOsd)",
@@ -904,6 +906,7 @@ function Write-CaptureMetadata {
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
         "xboxkrnl_nt_create_file_fail_log_budget=$XboxkrnlNtCreateFileFailLogBudget",
         "hide_android_osd=$HideAndroidOsd",
+        "hid_driver=$HidDriver",
         "hid_nop_connected=$HidNopConnected",
         "hid_nop_button_sequence=$HidNopButtonSequence",
         "vulkan_force_signed_2101010_unorm_fallback=$VulkanForceSigned2101010UnormFallback",
@@ -1120,6 +1123,7 @@ function Write-PerfSnapshot {
 
 function Use-BlueDragonSpeedDefaults {
     $script:HideAndroidOsd = "true"
+    $script:HidDriver = "nop"
     $script:HidNopConnected = "true"
     if (!$script:HidNopButtonSequence) {
         $script:HidNopButtonSequence = "start@45000:3000;a@68000:3000;a@86000:3000;a@106000:3000"

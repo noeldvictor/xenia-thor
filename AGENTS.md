@@ -1163,6 +1163,13 @@ required.
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.
 - Input: Android currently falls back to nop HID for emulator app paths; real controls need mapping.
+- Input update: Android now has a first-pass `hid=android` bridge for Thor
+  controller 1. It maps Android gamepad keycodes, sticks, triggers, and hat
+  axes to XInput user 0. Keep `hid=nop` available only for scripted START/A
+  research automation, not normal handheld play tests. On the Thor Max,
+  `dumpsys input` reports the built-in pad as `Odin Controller`
+  vendor `0x2020`, product `0x0111`, with `X/Y`, `Z/RZ`, `HAT_X/HAT_Y`, and
+  `BRAKE/GAS` axes.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

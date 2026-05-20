@@ -1,12 +1,31 @@
 package jp.xenia.emulator;
 
 import android.content.Intent;
+import android.view.InputDevice;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.TextView;
 
 public class EmulatorActivity extends WindowedAppActivity {
+    private static final float AXIS_DEADZONE = 0.05f;
+
+    private static native void nativeOnAndroidGamepadKey(
+            int keyCode, boolean pressed, int repeatCount, int deviceId);
+
+    private static native void nativeOnAndroidGamepadMotion(
+            int deviceId,
+            float leftX,
+            float leftY,
+            float rightX,
+            float rightY,
+            float leftTrigger,
+            float rightTrigger,
+            float hatX,
+            float hatY);
+
     @Override
     protected String getWindowedAppIdentifier() {
         return "xenia";
@@ -221,8 +240,174 @@ public class EmulatorActivity extends WindowedAppActivity {
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.activity_emulator);
-        setWindowSurfaceView(findViewById(R.id.emulator_surface_view));
+        final WindowSurfaceView surfaceView = findViewById(R.id.emulator_surface_view);
+        setWindowSurfaceView(surfaceView);
+        if (surfaceView != null) {
+            surfaceView.setFocusable(true);
+            surfaceView.setFocusableInTouchMode(true);
+            surfaceView.requestFocus();
+        }
         updateOsd(getLaunchArguments(intent));
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(final KeyEvent event) {
+        if (handleGamepadKeyEvent(event)) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(final MotionEvent event) {
+        if (handleGamepadMotionEvent(event)) {
+            return true;
+        }
+        return super.dispatchGenericMotionEvent(event);
+    }
+
+    private static boolean isGamepadSource(final int source) {
+        return ((source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD)
+                || ((source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK)
+                || ((source & InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD);
+    }
+
+    private static boolean isGamepadKeyCode(final int keyCode) {
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_BUTTON_A:
+            case KeyEvent.KEYCODE_BUTTON_B:
+            case KeyEvent.KEYCODE_BUTTON_X:
+            case KeyEvent.KEYCODE_BUTTON_Y:
+            case KeyEvent.KEYCODE_BUTTON_L1:
+            case KeyEvent.KEYCODE_BUTTON_R1:
+            case KeyEvent.KEYCODE_BUTTON_L2:
+            case KeyEvent.KEYCODE_BUTTON_R2:
+            case KeyEvent.KEYCODE_BUTTON_THUMBL:
+            case KeyEvent.KEYCODE_BUTTON_THUMBR:
+            case KeyEvent.KEYCODE_BUTTON_START:
+            case KeyEvent.KEYCODE_BUTTON_SELECT:
+            case KeyEvent.KEYCODE_BUTTON_MODE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private boolean handleGamepadKeyEvent(final KeyEvent event) {
+        if (event == null || !isGamepadKeyCode(event.getKeyCode())) {
+            return false;
+        }
+        final int action = event.getAction();
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
+            return false;
+        }
+        if (!isGamepadSource(event.getSource())
+                && event.getKeyCode() < KeyEvent.KEYCODE_BUTTON_A) {
+            return false;
+        }
+        nativeOnAndroidGamepadKey(
+                event.getKeyCode(),
+                action == KeyEvent.ACTION_DOWN,
+                event.getRepeatCount(),
+                event.getDeviceId());
+        return true;
+    }
+
+    private boolean handleGamepadMotionEvent(final MotionEvent event) {
+        if (event == null || event.getActionMasked() != MotionEvent.ACTION_MOVE
+                || !isGamepadSource(event.getSource())) {
+            return false;
+        }
+
+        final float leftX = getCenteredAxis(event, MotionEvent.AXIS_X);
+        final float leftY = getCenteredAxis(event, MotionEvent.AXIS_Y);
+        final float axisZ = getCenteredAxis(event, MotionEvent.AXIS_Z);
+        final float axisRz = getCenteredAxis(event, MotionEvent.AXIS_RZ);
+        final float axisRx = getCenteredAxis(event, MotionEvent.AXIS_RX);
+        final float axisRy = getCenteredAxis(event, MotionEvent.AXIS_RY);
+
+        float rightX = axisRx;
+        float rightY = axisRy;
+        if (rightX == 0.0f && rightY == 0.0f
+                && (axisZ != 0.0f || axisRz != 0.0f
+                        || !hasAxis(event, MotionEvent.AXIS_RX))) {
+            rightX = axisZ;
+            rightY = axisRz;
+        }
+
+        float leftTrigger = getTriggerAxis(event, MotionEvent.AXIS_LTRIGGER);
+        float rightTrigger = getTriggerAxis(event, MotionEvent.AXIS_RTRIGGER);
+        if (leftTrigger == 0.0f && rightTrigger == 0.0f) {
+            leftTrigger = getTriggerAxis(event, MotionEvent.AXIS_BRAKE);
+            rightTrigger = getTriggerAxis(event, MotionEvent.AXIS_GAS);
+        }
+        if (leftTrigger == 0.0f && rightTrigger == 0.0f
+                && hasAxis(event, MotionEvent.AXIS_RX)
+                && (hasAxis(event, MotionEvent.AXIS_Z)
+                        || hasAxis(event, MotionEvent.AXIS_RZ))) {
+            leftTrigger = getTriggerAxis(event, MotionEvent.AXIS_Z);
+            rightTrigger = getTriggerAxis(event, MotionEvent.AXIS_RZ);
+        }
+
+        nativeOnAndroidGamepadMotion(
+                event.getDeviceId(),
+                leftX,
+                leftY,
+                rightX,
+                rightY,
+                leftTrigger,
+                rightTrigger,
+                getCenteredAxis(event, MotionEvent.AXIS_HAT_X),
+                getCenteredAxis(event, MotionEvent.AXIS_HAT_Y));
+        return true;
+    }
+
+    private static boolean hasAxis(final MotionEvent event, final int axis) {
+        return getMotionRange(event, axis) != null;
+    }
+
+    private static InputDevice.MotionRange getMotionRange(
+            final MotionEvent event, final int axis) {
+        final InputDevice device = event.getDevice();
+        if (device == null) {
+            return null;
+        }
+        InputDevice.MotionRange range = device.getMotionRange(axis, event.getSource());
+        if (range == null) {
+            range = device.getMotionRange(axis);
+        }
+        return range;
+    }
+
+    private static float getCenteredAxis(final MotionEvent event, final int axis) {
+        final InputDevice.MotionRange range = getMotionRange(event, axis);
+        final float flat = range != null ? Math.max(range.getFlat(), AXIS_DEADZONE) : AXIS_DEADZONE;
+        final float value = event.getAxisValue(axis);
+        return Math.abs(value) > flat ? clamp(value, -1.0f, 1.0f) : 0.0f;
+    }
+
+    private static float getTriggerAxis(final MotionEvent event, final int axis) {
+        final InputDevice.MotionRange range = getMotionRange(event, axis);
+        if (range == null) {
+            return 0.0f;
+        }
+        final float flat = Math.max(range.getFlat(), AXIS_DEADZONE);
+        float value = event.getAxisValue(axis);
+        if (Math.abs(value) <= flat) {
+            return 0.0f;
+        }
+        if (range.getMin() < 0.0f) {
+            value = (value + 1.0f) * 0.5f;
+        }
+        return clamp(value, 0.0f, 1.0f);
+    }
+
+    private static float clamp(final float value, final float min, final float max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static void copyStringExtra(
