@@ -125,6 +125,9 @@ class Processor {
 
   Irql RaiseIrql(Irql new_value);
   void LowerIrql(Irql old_value);
+  volatile uint32_t* raw_irql_ptr_for_a64() {
+    return reinterpret_cast<volatile uint32_t*>(&irql_);
+  }
 
   bool Save(ByteStream* stream);
   bool Restore(ByteStream* stream);

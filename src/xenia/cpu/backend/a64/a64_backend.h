@@ -97,6 +97,7 @@ struct A64BackendContext {
   uint32_t blue_dragon_draw_wait_caller_profile_counter;
   uint32_t last_guest_function;
   uint32_t last_guest_return_address;
+  volatile uint32_t* processor_irql;
 };
 
 // Default FPCR for FPU mode (round to nearest, no flush to zero).

@@ -293,6 +293,15 @@ required.
     for tiny PPC leaf helpers matching `lwz r11,D(r13); lwz r3,D(r11); blr`.
     Blue Dragon's hot draw-wait route calls one of these helpers at
     `8248B040`; keep the inline pattern-based rather than address-only.
+  - `-A64InlineKernelHighFrequencyExports false` to roll back the A64 inline
+    for selected high-frequency Xbox kernel exports. Current safe set is
+    `KeRaiseIrqlToDpcLevel`, recursive/uncontended `RtlEnterCriticalSection`,
+    `RtlTryEnterCriticalSection`, and recursive `RtlLeaveCriticalSection` with
+    host fallback where needed.
+  - Do not re-enable A64 spinlock export inlines without a new one-variable
+    experiment and idle proof. Both an eager spinlock inline and a guarded
+    one-CAS spinlock inline reproduced the bad Blue Dragon signature:
+    `entry_delta=0` after the early loading route with all guest execution idle.
   - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
     wait state.
   - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel
@@ -498,6 +507,13 @@ required.
   `826C5620` remain high-frequency but relatively cheap after their current
   fastpaths. Prefer body-time or simpleperf evidence before adding more
   entry-count-driven micro-fastpaths.
+- Current kernel-transition speed note:
+  `docs/research/20260520-134854-a64-kernel-extern-fastpaths.md`.
+  The stable capture `scratch\thor-debug\20260520-134646-*` keeps Blue Dragon
+  guest execution moving through 75 seconds and cuts speed-profile
+  guest-to-host deltas versus the IRQL-only baseline by inlining selected
+  high-frequency kernel exports. The guarded spinlock inline attempt
+  `scratch\thor-debug\20260520-134410-*` black-idled and was removed.
 - Focused PPC dumps show the graphics interrupt callback at `8246DBB0` and draw
   wait function `8246B408`; token-kick experiments prove token movement alone
   does not satisfy the game.

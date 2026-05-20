@@ -122,7 +122,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   bool TryEmitFprVmxHelperCall(const hir::Instr* instr,
                                GuestFunction* function);
   bool TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
-                                           GuestFunction* function);
+                                            GuestFunction* function);
+  void EmitKernelExternHostCall(const GuestFunction* function);
+  bool TryEmitKernelHighFrequencyExternCall(const hir::Instr* instr,
+                                            const GuestFunction* function);
   bool TryEmitBlueDragonDrawWaitFunctionBody();
   bool TryEmitBlueDragonDrawWaitInlineCall(GuestFunction* function);
   bool EmitBlueDragonDrawWaitFastpathBody();

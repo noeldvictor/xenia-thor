@@ -1441,6 +1441,7 @@ void A64Backend::InitializeBackendContext(void* ctx) {
   a64_ctx->flags = (1U << kA64BackendNJMOn);  // NJM on by default
   a64_ctx->guest_tick_count = Clock::GetGuestTickCountPointer();
   a64_ctx->host_uptime_millis_base = Clock::QueryHostUptimeMillis();
+  a64_ctx->processor_irql = processor()->raw_irql_ptr_for_a64();
 
   // Allocate stackpoints for longjmp detection.
   if (cvars::a64_enable_host_guest_stack_synchronization) {

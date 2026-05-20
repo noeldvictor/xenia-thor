@@ -37,6 +37,7 @@
 #include "xenia/cpu/backend/a64/a64_sequences.h"
 #include "xenia/cpu/backend/a64/a64_stack_layout.h"
 #include "xenia/cpu/cpu_flags.h"
+#include "xenia/cpu/export_resolver.h"
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/hir/hir_builder.h"
 #include "xenia/cpu/hir/label.h"
@@ -78,6 +79,10 @@ DEFINE_bool(
     "Inline tiny PPC leaf helpers matching "
     "`lwz r11,D(r13); lwz r3,D(r11); blr` in the A64 backend.",
     "a64");
+DEFINE_bool(a64_inline_kernel_high_frequency_exports, true,
+            "Inline a small set of high-frequency Xbox kernel exports in the "
+            "A64 backend to avoid guest-to-host thunk overhead.",
+            "a64");
 DEFINE_bool(a64_inline_fpr_helpers, true,
             "Inline PPC __savefpr_* / __restfpr_* ABI helpers in the A64 "
             "backend. Experimental.",
@@ -1342,6 +1347,229 @@ bool A64Emitter::TryEmitPpcThreadFieldLeafHelperCall(const hir::Instr* instr,
   return true;
 }
 
+void A64Emitter::EmitKernelExternHostCall(const GuestFunction* function) {
+  mov(x0, reinterpret_cast<uint64_t>(function->extern_handler()));
+  ldr(x1, ptr(GetContextReg(), static_cast<int32_t>(offsetof(
+                                   ppc::PPCContext, kernel_state))));
+  mov(x9, reinterpret_cast<uint64_t>(backend()->guest_to_host_thunk()));
+  blr(x9);
+}
+
+bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
+    const hir::Instr* instr, const GuestFunction* function) {
+  (void)instr;
+  if (!cvars::a64_inline_kernel_high_frequency_exports || !function ||
+      function->behavior() != Function::Behavior::kExtern) {
+    return false;
+  }
+
+  const cpu::Export* export_data = function->export_data();
+  if (!export_data ||
+      !(export_data->tags & cpu::ExportTag::kHighFrequency)) {
+    return false;
+  }
+
+  const std::string_view name(export_data->name);
+  const int32_t r3_offset =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]));
+  const int32_t r13_offset =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, r[13]));
+  constexpr uint32_t kKpcrCurrentThreadOffset = 0x100;
+  constexpr uint32_t kRtlCriticalSectionLockCountOffset = 0x10;
+  constexpr uint32_t kRtlCriticalSectionRecursionCountOffset = 0x14;
+  constexpr uint32_t kRtlCriticalSectionOwningThreadOffset = 0x18;
+
+  if (name == "KeRaiseIrqlToDpcLevel") {
+    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext, processor_irql))));
+    mov(w11, static_cast<uint32_t>(cpu::Irql::DPC));
+
+    auto& retry = NewCachedLabel();
+    L(retry);
+    ldaxr(w10, ptr(x9));
+    stlxr(w12, w11, ptr(x9));
+    cbnz(w12, retry);
+
+    sxtw(x10, w10);
+    str(x10, ptr(GetContextReg(), r3_offset));
+    return true;
+  }
+
+  if (!function->extern_handler()) {
+    return false;
+  }
+
+  auto emit_load_critical_section_and_thread = [&](
+                                                   Xbyak_aarch64::Label& slow) {
+    ldr(w9, ptr(GetContextReg(), r3_offset));
+    cbz(w9, slow);
+    AddGuestAddressToMembase(w9, x9);
+
+    ldr(w10, ptr(GetContextReg(), r13_offset));
+    cbz(w10, slow);
+    AddGuestAddressToMembase(w10, x10);
+    ldr(w11, ptr(x10, kKpcrCurrentThreadOffset));
+    rev(w11, w11);
+    cbz(w11, slow);
+  };
+
+  auto emit_increment_lock_count = [&]() {
+    add(x12, x9, kRtlCriticalSectionLockCountOffset);
+    auto& retry = NewCachedLabel();
+    L(retry);
+    ldaxr(w13, ptr(x12));
+    add(w13, w13, 1);
+    stlxr(w14, w13, ptr(x12));
+    cbnz(w14, retry);
+  };
+
+  if (name == "RtlEnterCriticalSection") {
+    auto& slow = NewCachedLabel();
+    auto& try_free_lock = NewCachedLabel();
+    auto& free_lock_busy = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_critical_section_and_thread(slow);
+
+    ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+    rev(w13, w13);
+    cmp(w13, w11);
+    b(NE, try_free_lock);
+
+    emit_increment_lock_count();
+    ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    rev(w13, w13);
+    add(w13, w13, 1);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    b(done);
+
+    L(try_free_lock);
+    add(x12, x9, kRtlCriticalSectionLockCountOffset);
+    auto& retry_free_lock = NewCachedLabel();
+    L(retry_free_lock);
+    ldaxr(w13, ptr(x12));
+    mov(w14, 0xFFFFFFFFu);
+    cmp(w13, w14);
+    b(NE, free_lock_busy);
+    mov(w14, 0);
+    stlxr(w15, w14, ptr(x12));
+    cbnz(w15, retry_free_lock);
+
+    mov(w13, w11);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+    mov(w13, 1);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    b(done);
+
+    L(free_lock_busy);
+    clrex(15);
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
+  }
+
+  if (name == "RtlTryEnterCriticalSection") {
+    auto& slow = NewCachedLabel();
+    auto& check_recursive = NewCachedLabel();
+    auto& fail = NewCachedLabel();
+    auto& success = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_critical_section_and_thread(slow);
+
+    add(x12, x9, kRtlCriticalSectionLockCountOffset);
+    auto& retry_free_lock = NewCachedLabel();
+    L(retry_free_lock);
+    ldaxr(w13, ptr(x12));
+    mov(w14, 0xFFFFFFFFu);
+    cmp(w13, w14);
+    b(NE, check_recursive);
+    mov(w14, 0);
+    stlxr(w15, w14, ptr(x12));
+    cbnz(w15, retry_free_lock);
+
+    mov(w13, w11);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+    mov(w13, 1);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    b(success);
+
+    L(check_recursive);
+    clrex(15);
+    ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+    rev(w13, w13);
+    cmp(w13, w11);
+    b(NE, fail);
+
+    emit_increment_lock_count();
+    ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    rev(w13, w13);
+    add(w13, w13, 1);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+
+    L(success);
+    mov(x13, 1);
+    str(x13, ptr(GetContextReg(), r3_offset));
+    b(done);
+
+    L(fail);
+    str(xzr, ptr(GetContextReg(), r3_offset));
+    b(done);
+
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
+  }
+
+  if (name == "RtlLeaveCriticalSection") {
+    auto& slow = NewCachedLabel();
+    auto& done = NewCachedLabel();
+
+    emit_load_critical_section_and_thread(slow);
+
+    ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+    rev(w13, w13);
+    cmp(w13, w11);
+    b(NE, slow);
+
+    ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    rev(w13, w13);
+    cmp(w13, 1);
+    b(LS, slow);
+
+    sub(w13, w13, 1);
+    rev(w13, w13);
+    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+
+    add(x12, x9, kRtlCriticalSectionLockCountOffset);
+    auto& retry_dec_lock = NewCachedLabel();
+    L(retry_dec_lock);
+    ldaxr(w13, ptr(x12));
+    sub(w13, w13, 1);
+    stlxr(w14, w13, ptr(x12));
+    cbnz(w14, retry_dec_lock);
+    b(done);
+
+    L(slow);
+    EmitKernelExternHostCall(function);
+
+    L(done);
+    return true;
+  }
+
+  return false;
+}
+
 bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
   if (!cvars::arm64_blue_dragon_draw_wait_fastpath ||
       current_guest_function_ != 0x8246B408) {
@@ -1932,14 +2160,13 @@ void A64Emitter::CallExtern(const hir::Instr* instr, const Function* function) {
     }
   } else if (function->behavior() == Function::Behavior::kExtern) {
     auto extern_function = static_cast<const GuestFunction*>(function);
+    if (TryEmitKernelHighFrequencyExternCall(instr, extern_function)) {
+      return;
+    }
     if (extern_function->extern_handler()) {
       undefined = false;
       // GuestToHostThunk: x0=target, x1=arg0
-      mov(x0, reinterpret_cast<uint64_t>(extern_function->extern_handler()));
-      ldr(x1, ptr(GetContextReg(), static_cast<int32_t>(offsetof(
-                                       ppc::PPCContext, kernel_state))));
-      mov(x9, reinterpret_cast<uint64_t>(backend()->guest_to_host_thunk()));
-      blr(x9);
+      EmitKernelExternHostCall(extern_function);
     }
   }
   if (undefined) {

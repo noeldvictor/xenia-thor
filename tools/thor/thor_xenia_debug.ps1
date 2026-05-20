@@ -119,6 +119,7 @@ param(
     [string]$A64InlineVmxHelpers = "true",
     [string]$A64InlineFprVmxHelpers = "",
     [string]$A64InlinePpcThreadFieldLeafHelpers = "",
+    [string]$A64InlineKernelHighFrequencyExports = "true",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$Arm64BlueDragonDrawWaitProbeStride = "",
     [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
@@ -713,6 +714,9 @@ function Start-XeniaEmulator {
     if ($A64InlinePpcThreadFieldLeafHelpers) {
         $parts += "--ez a64_inline_ppc_thread_field_leaf_helpers $(ConvertTo-BooleanText $A64InlinePpcThreadFieldLeafHelpers)"
     }
+    if ($A64InlineKernelHighFrequencyExports) {
+        $parts += "--ez a64_inline_kernel_high_frequency_exports $(ConvertTo-BooleanText $A64InlineKernelHighFrequencyExports)"
+    }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
@@ -880,6 +884,7 @@ function Write-CaptureMetadata {
         "a64_inline_vmx_helpers=$effectiveA64InlineVmxHelpers",
         "a64_inline_fpr_vmx_helpers=$A64InlineFprVmxHelpers",
         "a64_inline_ppc_thread_field_leaf_helpers=$A64InlinePpcThreadFieldLeafHelpers",
+        "a64_inline_kernel_high_frequency_exports=$A64InlineKernelHighFrequencyExports",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
         "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
