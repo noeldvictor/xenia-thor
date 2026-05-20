@@ -1176,6 +1176,22 @@ required.
   the old `8246B408` draw-wait wall. Short validation capture
   `scratch/thor-debug/20260520-111324-*` reached Blue Dragon `press START` at
   20 seconds without manual speed flags. Keep `xma_fast_silence` opt-in only.
+- A64 offset-lowering update:
+  `docs/research/20260520-125511-a64-offset-lowering-speed.md`.
+  The safe generic win is `AddGuestMemoryOffset`: skip redundant `mov w0,w0`,
+  return immediately for zero offsets, encode small constant offsets directly,
+  and encode page-aligned shifted immediates when possible. Thor captures
+  `scratch/thor-debug/20260520-124856-*` and
+  `scratch/thor-debug/20260520-125303-*` stayed in `EmulatorActivity` with no
+  searched fatal markers; `8272A3A4` stayed at `code_size=14612` versus the
+  older speed-pack baseline around `15952`. The shifted-immediate case did not
+  further shrink the current Blue Dragon hot blocks, but is still a correct
+  generic lowering.
+- Do not retry broad wrapped-immediate `ADD`/`SUB` lowering without per-op
+  semantic proof. The rejected experiment in
+  `scratch/thor-debug/20260520-124314-*` shrank `8272A3A4` to `14532`, but the
+  emulator process exited cleanly around 41 seconds and the script then fell
+  into launcher/file-picker noise. Code-size shrink alone is not enough.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

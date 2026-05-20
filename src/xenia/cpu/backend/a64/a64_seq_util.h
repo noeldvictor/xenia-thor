@@ -299,11 +299,22 @@ inline XReg AddGuestMemoryOffset(A64Emitter& e, const XReg& base,
   // Guest address arithmetic wraps at 32 bits before the host membase is
   // applied. Keep the add in W registers so stale high bits can't escape into
   // the final host pointer.
-  e.mov(e.w0, WReg(base.getIdx()));
+  if (base.getIdx() != e.x0.getIdx()) {
+    e.mov(e.w0, WReg(base.getIdx()));
+  }
   if (offset.is_constant) {
-    e.mov(e.w17,
-          static_cast<uint64_t>(static_cast<uint32_t>(offset.constant())));
-    e.add(e.w0, e.w0, e.w17);
+    uint32_t value = static_cast<uint32_t>(offset.constant());
+    if (value == 0) {
+      return e.x0;
+    }
+    if (value <= 4095) {
+      e.add(e.w0, e.w0, value);
+    } else if ((value & 0xFFFu) == 0 && (value >> 12) <= 4095) {
+      e.add(e.w0, e.w0, value >> 12, 12);
+    } else {
+      e.mov(e.w17, static_cast<uint64_t>(value));
+      e.add(e.w0, e.w0, e.w17);
+    }
   } else {
     e.add(e.w0, e.w0, WReg(offset.reg().getIdx()));
   }
