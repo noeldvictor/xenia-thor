@@ -166,6 +166,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$script:RootBoundParameters = @{} + $PSBoundParameters
 $script:AdbEvents = New-Object System.Collections.Generic.List[string]
 $script:LastAdbExitCode = 0
 $script:ActiveDumpShadersPath = ""
@@ -1075,6 +1076,28 @@ function Get-PerfSampleSecondValues {
     return $samples | Sort-Object -Unique
 }
 
+function Set-DefaultIfNotBound {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+
+    if (!$script:RootBoundParameters.ContainsKey($Name)) {
+        Set-Variable -Name $Name -Scope Script -Value $Value
+    }
+}
+
+function Use-BlueDragonA64SpeedPack {
+    Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitProbe" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitFastpathHostCounterTime" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitInlineInCaller" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonMemcpyFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonStricmpFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonJumpTableFastpath" "true"
+}
+
 function Write-PerfSnapshot {
     param(
         [string]$Stamp,
@@ -1122,6 +1145,7 @@ function Write-PerfSnapshot {
 }
 
 function Use-BlueDragonSpeedDefaults {
+    Use-BlueDragonA64SpeedPack
     $script:HideAndroidOsd = "true"
     $script:HidDriver = "nop"
     $script:HidNopConnected = "true"

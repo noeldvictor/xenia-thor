@@ -1170,6 +1170,12 @@ required.
   `dumpsys input` reports the built-in pad as `Odin Controller`
   vendor `0x2020`, product `0x0111`, with `X/Y`, `Z/RZ`, `HAT_X/HAT_Y`, and
   `BRAKE/GAS` axes.
+- Speed lane update: `LaunchBlueDragonSpeedCapture` now enables the validated
+  Blue Dragon A64 speed pack by default, unless a flag is explicitly overridden
+  on the command line. This prevents new captures from accidentally measuring
+  the old `8246B408` draw-wait wall. Short validation capture
+  `scratch/thor-debug/20260520-111324-*` reached Blue Dragon `press START` at
+  20 seconds without manual speed flags. Keep `xma_fast_silence` opt-in only.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
