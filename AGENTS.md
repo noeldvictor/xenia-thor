@@ -1018,6 +1018,22 @@ required.
     time. After a function-body fastpath, a function may stay high in the list
     because it is called often. Do not judge body-fastpath wins by entry count
     alone; use same-route time-to-scene, better timing counters, or simpleperf.
+- Thor simpleperf speed lane:
+  `docs/research/20260519-215706-thor-simpleperf-speed-lane.md`.
+  - `tools/thor/thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture`
+    supports `-Simpleperf true`, `-SimpleperfStartSecond`,
+    `-SimpleperfSeconds`, `-SimpleperfFrequency`, `-SimpleperfEvent`,
+    `-SimpleperfCallGraph`, and `-SimpleperfPercentLimit`.
+  - The script records with Android `simpleperf --app`, pulls `perf.data` into
+    ignored `scratch/thor-debug`, and writes a host-side report using the NDK
+    `simpleperf.exe` plus the unstripped Android `libxenia-app.so` symbol dir.
+  - Long capture `scratch\thor-debug\20260519-215347-*` at 105s-117s showed
+    about 34% self in generated guest code, about 8% native compile/resolve,
+    about 4% GPU commands, and about 3% XMA/audio while the screen remained on
+    the loading spinner.
+  - The overlapping A64 entry profile points the next direct guest fastpath at
+    `826C5620` first, with `827294CC`, `8272A3A4`, `8272A8E8`, and
+    `826BF770` still in the hot set.
 
 ## Codex Hooks / Automation
 

@@ -140,6 +140,13 @@ param(
     [int]$LiveCaptureSeconds = 75,
     [string]$PerfSampleSeconds = "60,120",
     [int]$PerfTopThreadCount = 80,
+    [string]$Simpleperf = "false",
+    [int]$SimpleperfStartSecond = 70,
+    [int]$SimpleperfSeconds = 12,
+    [int]$SimpleperfFrequency = 1000,
+    [string]$SimpleperfEvent = "cpu-cycles:u",
+    [string]$SimpleperfCallGraph = "fp",
+    [string]$SimpleperfPercentLimit = "0.5",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
@@ -304,6 +311,29 @@ function Invoke-AdbExecOutToFile {
         cmd /c $cmdLine
     }
     $script:LastAdbExitCode = $LASTEXITCODE
+}
+
+function Invoke-AdbPullToFile {
+    param(
+        [string]$DevicePath,
+        [string]$OutputPath
+    )
+
+    Ensure-AdbDevice
+    $serialPart = ""
+    if ($DeviceSerial) {
+        $serialPart = "-s $DeviceSerial "
+    }
+
+    $cmdLine = "adb ${serialPart}pull `"$DevicePath`" `"$OutputPath`""
+    $output = cmd /c "$cmdLine 2>&1"
+    $script:LastAdbExitCode = $LASTEXITCODE
+    if ($LASTEXITCODE -ne 0) {
+        Repair-AdbDevice "pull failed: $DevicePath"
+        $output = cmd /c "$cmdLine 2>&1"
+        $script:LastAdbExitCode = $LASTEXITCODE
+    }
+    return $output
 }
 
 function ConvertTo-AdbShellSingleQuote {
@@ -792,6 +822,13 @@ function Write-CaptureMetadata {
         "apk_sha256=$apkHash",
         "target=$CaptureTarget",
         "live_capture_seconds=$LiveCaptureSeconds",
+        "simpleperf=$Simpleperf",
+        "simpleperf_start_second=$SimpleperfStartSecond",
+        "simpleperf_seconds=$SimpleperfSeconds",
+        "simpleperf_frequency=$SimpleperfFrequency",
+        "simpleperf_event=$SimpleperfEvent",
+        "simpleperf_call_graph=$SimpleperfCallGraph",
+        "simpleperf_percent_limit=$SimpleperfPercentLimit",
         "shader_dump_device_path=$script:ActiveDumpShadersPath",
         "arm64_speed_profile_interval_ms=$Arm64SpeedProfileIntervalMs",
         "arm64_speed_profile_top_functions=$Arm64SpeedProfileTopFunctions",
@@ -868,6 +905,102 @@ function Add-PerfSection {
         $Lines | Out-File -Encoding utf8 -Append $Path
     } else {
         "(no output)" | Out-File -Encoding utf8 -Append $Path
+    }
+}
+
+function Resolve-SimpleperfHostPath {
+    $candidates = @()
+    foreach ($root in @($env:ANDROID_NDK_HOME, $env:ANDROID_NDK_ROOT)) {
+        if ($root) {
+            $candidates += (Join-Path $root "simpleperf\bin\windows\x86_64\simpleperf.exe")
+        }
+    }
+    $sdkRoot = $env:ANDROID_HOME
+    if (!$sdkRoot) {
+        $sdkRoot = $env:ANDROID_SDK_ROOT
+    }
+    if (!$sdkRoot) {
+        $sdkRoot = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    }
+    if ($sdkRoot -and (Test-Path (Join-Path $sdkRoot "ndk"))) {
+        $ndkDirs = Get-ChildItem -Path (Join-Path $sdkRoot "ndk") -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending
+        foreach ($ndkDir in $ndkDirs) {
+            $candidates += (Join-Path $ndkDir.FullName "simpleperf\bin\windows\x86_64\simpleperf.exe")
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+    return ""
+}
+
+function Resolve-SimpleperfSymbolDir {
+    $symbolDir = Join-Path $RepoRoot "android\android_studio_project\app\build\intermediates\ndkBuild\githubDebug\obj\local\arm64-v8a"
+    if (Test-Path (Join-Path $symbolDir "libxenia-app.so")) {
+        return (Resolve-Path $symbolDir).Path
+    }
+    return ""
+}
+
+function Write-SimpleperfCapture {
+    param(
+        [string]$Stamp,
+        [string]$Label,
+        [string]$OutDir
+    )
+
+    $safeLabel = $Label -replace "[^A-Za-z0-9_.-]", "_"
+    $deviceBase = "/data/local/tmp/xenia-thor-$Stamp-$safeLabel"
+    $deviceData = "$deviceBase.data"
+    $deviceRecordLog = "$deviceBase-record.txt"
+    $localDataPath = Join-Path $OutDir "$Stamp-simpleperf-$safeLabel.data"
+    $localRecordPath = Join-Path $OutDir "$Stamp-simpleperf-$safeLabel-record.txt"
+    $localReportPath = Join-Path $OutDir "$Stamp-simpleperf-$safeLabel-report.txt"
+
+    $recordCommand = @(
+        "rm -f $deviceData $deviceRecordLog",
+        "simpleperf record --app $PackageName -e $SimpleperfEvent -f $SimpleperfFrequency --duration $SimpleperfSeconds --call-graph $SimpleperfCallGraph -o $deviceData > $deviceRecordLog 2>&1",
+        "echo SIMPLEPERF_RECORD_EXIT:`$?",
+        "cat $deviceRecordLog",
+        "ls -l $deviceData 2>/dev/null"
+    ) -join "; "
+    $recordLines = Invoke-AdbShellCommand $recordCommand
+    $recordLines | Out-File -Encoding utf8 $localRecordPath
+
+    Invoke-AdbPullToFile $deviceData $localDataPath | Out-File -Encoding utf8 -Append $localRecordPath
+
+    $hostSimpleperf = Resolve-SimpleperfHostPath
+    $symbolDir = Resolve-SimpleperfSymbolDir
+    if ($hostSimpleperf -and (Test-Path $localDataPath)) {
+        $reportArgs = @(
+            "report",
+            "-i", $localDataPath,
+            "--sort", "comm,dso,symbol",
+            "-n",
+            "--children",
+            "--percent-limit", $SimpleperfPercentLimit
+        )
+        if ($symbolDir) {
+            $reportArgs += @("--symdir", $symbolDir)
+        }
+        & $hostSimpleperf @reportArgs 2>&1 | Out-File -Encoding utf8 $localReportPath
+    } else {
+        @(
+            "simpleperf_report_skipped=true",
+            "host_simpleperf=$hostSimpleperf",
+            "local_data_exists=$(Test-Path $localDataPath)",
+            "symbol_dir=$symbolDir"
+        ) | Out-File -Encoding utf8 $localReportPath
+    }
+
+    return @{
+        Data = $localDataPath
+        Record = $localRecordPath
+        Report = $localReportPath
     }
 }
 
@@ -1167,11 +1300,17 @@ done | head -50
         $launchTarget = Resolve-BlueDragonLaunchTarget
         $sampleSeconds = @(Get-PerfSampleSecondValues $PerfSampleSeconds $LiveCaptureSeconds)
         $perfPaths = @()
+        $simpleperfPaths = @()
+        $simpleperfEnabled = (ConvertTo-BooleanText $Simpleperf) -eq "true"
+        $simpleperfRan = $false
         $elapsedSeconds = 0
 
         Use-BlueDragonSpeedDefaults
         Write-Output "Launching target: $launchTarget"
         Write-Output "Speed sample seconds: $($sampleSeconds -join ',')"
+        if ($simpleperfEnabled) {
+            Write-Output "Simpleperf: start=${SimpleperfStartSecond}s duration=${SimpleperfSeconds}s event=$SimpleperfEvent freq=$SimpleperfFrequency callgraph=$SimpleperfCallGraph"
+        }
         if ($Arm64SpeedProfileIntervalMs) {
             Write-Output "A64 speed profile interval: ${Arm64SpeedProfileIntervalMs}ms"
         }
@@ -1180,11 +1319,33 @@ done | head -50
         Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
 
         foreach ($sampleSecond in $sampleSeconds) {
+            if ($simpleperfEnabled -and !$simpleperfRan -and
+                $SimpleperfStartSecond -le $sampleSecond -and
+                $SimpleperfSeconds -gt 0) {
+                if ($SimpleperfStartSecond -gt $elapsedSeconds) {
+                    Start-Sleep -Seconds ($SimpleperfStartSecond - $elapsedSeconds)
+                    $elapsedSeconds = $SimpleperfStartSecond
+                }
+                $simpleperfPaths += Write-SimpleperfCapture $Stamp "${SimpleperfStartSecond}s-${SimpleperfSeconds}s" $OutDir
+                $elapsedSeconds += $SimpleperfSeconds
+                $simpleperfRan = $true
+            }
             if ($sampleSecond -gt $elapsedSeconds) {
                 Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
                 $elapsedSeconds = $sampleSecond
             }
             $perfPaths += Write-PerfSnapshot $Stamp "${sampleSecond}s" $OutDir
+        }
+        if ($simpleperfEnabled -and !$simpleperfRan -and
+            $SimpleperfStartSecond -le $LiveCaptureSeconds -and
+            $SimpleperfSeconds -gt 0) {
+            if ($SimpleperfStartSecond -gt $elapsedSeconds) {
+                Start-Sleep -Seconds ($SimpleperfStartSecond - $elapsedSeconds)
+                $elapsedSeconds = $SimpleperfStartSecond
+            }
+            $simpleperfPaths += Write-SimpleperfCapture $Stamp "${SimpleperfStartSecond}s-${SimpleperfSeconds}s" $OutDir
+            $elapsedSeconds += $SimpleperfSeconds
+            $simpleperfRan = $true
         }
         if ($LiveCaptureSeconds -gt $elapsedSeconds) {
             Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
@@ -1202,6 +1363,11 @@ done | head -50
         Write-Output "Screenshot: $ScreenshotPath"
         foreach ($perfPath in $perfPaths) {
             Write-Output "Perf: $perfPath"
+        }
+        foreach ($simpleperfPath in $simpleperfPaths) {
+            Write-Output "Simpleperf data: $($simpleperfPath.Data)"
+            Write-Output "Simpleperf record: $($simpleperfPath.Record)"
+            Write-Output "Simpleperf report: $($simpleperfPath.Report)"
         }
     }
     "StopNoise" {
