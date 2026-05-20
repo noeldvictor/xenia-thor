@@ -181,6 +181,17 @@ public class EmulatorActivity extends WindowedAppActivity {
                     launchArguments,
                     "arm64_blue_dragon_draw_wait_caller_profile_budget");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_memcpy_fastpath");
+            copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_stricmp_fastpath");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_blue_dragon_stricmp_return_profile");
+            copyIntExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_blue_dragon_stricmp_return_profile_stride");
+            copyIntExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_blue_dragon_stricmp_return_profile_budget");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");

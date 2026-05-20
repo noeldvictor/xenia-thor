@@ -158,6 +158,28 @@ DEFINE_bool(
     "helper with a native host memmove over translated guest pointers. "
     "Research-only and title-specific.",
     "a64");
+DEFINE_bool(
+    arm64_blue_dragon_stricmp_fastpath, false,
+    "Thor ARM64 speed lane: replace Blue Dragon's hot 826C5620 ASCII "
+    "case-insensitive string-compare helper with a hand-emitted A64 loop that "
+    "preserves PPC-visible CR and volatile register side effects. "
+    "Research-only and title-specific.",
+    "a64");
+DEFINE_bool(
+    arm64_blue_dragon_stricmp_return_profile, false,
+    "Thor ARM64 speed lane: sample Blue Dragon's normal generated 826C5620 "
+    "ASCII string-compare return state. Research-only and title-specific.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_stricmp_return_profile_stride, 4096,
+    "Thor ARM64 speed lane: sample every N returns from Blue Dragon's 826C5620 "
+    "string-compare helper when return profiling is enabled.",
+    "a64");
+DEFINE_uint32(
+    arm64_blue_dragon_stricmp_return_profile_budget, 64,
+    "Thor ARM64 speed lane: maximum Blue Dragon 826C5620 return-state sample "
+    "lines to emit per process.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "

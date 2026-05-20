@@ -129,6 +129,10 @@ param(
     [string]$Arm64BlueDragonDrawWaitCallerProfileStride = "",
     [string]$Arm64BlueDragonDrawWaitCallerProfileBudget = "",
     [string]$Arm64BlueDragonMemcpyFastpath = "false",
+    [string]$Arm64BlueDragonStricmpFastpath = "false",
+    [string]$Arm64BlueDragonStricmpReturnProfile = "false",
+    [string]$Arm64BlueDragonStricmpReturnProfileStride = "",
+    [string]$Arm64BlueDragonStricmpReturnProfileBudget = "",
     [string]$XboxkrnlThreadWaitTrace = "false",
     [string]$XboxkrnlThreadWaitTraceBudget = "",
     [string]$XboxkrnlThreadWaitTraceAfterMs = "",
@@ -738,6 +742,18 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonMemcpyFastpath) {
         $parts += "--ez arm64_blue_dragon_memcpy_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonMemcpyFastpath)"
     }
+    if ($Arm64BlueDragonStricmpFastpath) {
+        $parts += "--ez arm64_blue_dragon_stricmp_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonStricmpFastpath)"
+    }
+    if ($Arm64BlueDragonStricmpReturnProfile) {
+        $parts += "--ez arm64_blue_dragon_stricmp_return_profile $(ConvertTo-BooleanText $Arm64BlueDragonStricmpReturnProfile)"
+    }
+    if ($Arm64BlueDragonStricmpReturnProfileStride) {
+        $parts += "--ei arm64_blue_dragon_stricmp_return_profile_stride $Arm64BlueDragonStricmpReturnProfileStride"
+    }
+    if ($Arm64BlueDragonStricmpReturnProfileBudget) {
+        $parts += "--ei arm64_blue_dragon_stricmp_return_profile_budget $Arm64BlueDragonStricmpReturnProfileBudget"
+    }
     if ($XboxkrnlThreadWaitTrace) {
         $parts += "--ez xboxkrnl_thread_wait_trace $(ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)"
     }
@@ -851,6 +867,10 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_caller_profile_stride=$Arm64BlueDragonDrawWaitCallerProfileStride",
         "arm64_blue_dragon_draw_wait_caller_profile_budget=$Arm64BlueDragonDrawWaitCallerProfileBudget",
         "arm64_blue_dragon_memcpy_fastpath=$Arm64BlueDragonMemcpyFastpath",
+        "arm64_blue_dragon_stricmp_fastpath=$Arm64BlueDragonStricmpFastpath",
+        "arm64_blue_dragon_stricmp_return_profile=$Arm64BlueDragonStricmpReturnProfile",
+        "arm64_blue_dragon_stricmp_return_profile_stride=$Arm64BlueDragonStricmpReturnProfileStride",
+        "arm64_blue_dragon_stricmp_return_profile_budget=$Arm64BlueDragonStricmpReturnProfileBudget",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",

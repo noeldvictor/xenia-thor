@@ -61,6 +61,10 @@ DECLARE_bool(arm64_blue_dragon_draw_wait_caller_profile);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
 DECLARE_bool(arm64_blue_dragon_memcpy_fastpath);
+DECLARE_bool(arm64_blue_dragon_stricmp_fastpath);
+DECLARE_bool(arm64_blue_dragon_stricmp_return_profile);
+DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_stride);
+DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -94,6 +98,13 @@ std::atomic<uint32_t> g_blue_dragon_draw_wait_caller_profile_configured_budget{
 std::mutex g_blue_dragon_draw_wait_caller_profile_counts_mutex;
 std::unordered_map<uint32_t, uint64_t>
     g_blue_dragon_draw_wait_caller_profile_counts;
+std::atomic<int> g_blue_dragon_stricmp_return_profile_budget{0};
+std::atomic<uint32_t> g_blue_dragon_stricmp_return_profile_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+std::atomic<uint64_t> g_blue_dragon_stricmp_return_profile_count{0};
+std::mutex g_blue_dragon_stricmp_return_profile_counts_mutex;
+std::unordered_map<uint32_t, uint64_t>
+    g_blue_dragon_stricmp_return_profile_lr_counts;
 
 std::string_view TrimTraceToken(std::string_view value) {
   while (!value.empty() &&
@@ -233,6 +244,39 @@ bool ConsumeBlueDragonDrawWaitCallerProfileBudget() {
       std::memory_order_relaxed);
   while (value > 0) {
     if (g_blue_dragon_draw_wait_caller_profile_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ConfigureBlueDragonStricmpReturnProfileBudget() {
+  uint32_t budget = cvars::arm64_blue_dragon_stricmp_return_profile_budget;
+  uint32_t configured_budget =
+      g_blue_dragon_stricmp_return_profile_configured_budget.load(
+          std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_blue_dragon_stricmp_return_profile_configured_budget
+          .compare_exchange_strong(configured_budget, budget,
+                                   std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_blue_dragon_stricmp_return_profile_budget.store(
+        clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumeBlueDragonStricmpReturnProfileBudget() {
+  int value = g_blue_dragon_stricmp_return_profile_budget.load(
+      std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_blue_dragon_stricmp_return_profile_budget.compare_exchange_strong(
             value, value - 1, std::memory_order_acq_rel)) {
       return true;
     }
@@ -397,6 +441,50 @@ void RecordBlueDragonDrawWaitCallerProfile(void* raw_context) {
       static_cast<uint32_t>(ctx->r[1]), static_cast<uint32_t>(ctx->r[3]),
       static_cast<uint32_t>(ctx->r[29]), static_cast<uint32_t>(ctx->r[30]),
       static_cast<uint32_t>(ctx->r[31]));
+}
+
+void RecordBlueDragonStricmpReturnProfile(void* raw_context) {
+  auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  if (!ctx || !cvars::arm64_blue_dragon_stricmp_return_profile) {
+    return;
+  }
+
+  uint64_t sample_count =
+      g_blue_dragon_stricmp_return_profile_count.fetch_add(
+          1, std::memory_order_relaxed) +
+      1;
+  uint32_t stride =
+      std::max(cvars::arm64_blue_dragon_stricmp_return_profile_stride, 1u);
+  if (stride > 1 && sample_count % stride != 0) {
+    return;
+  }
+
+  ConfigureBlueDragonStricmpReturnProfileBudget();
+  if (!ConsumeBlueDragonStricmpReturnProfileBudget()) {
+    return;
+  }
+
+  uint32_t lr = static_cast<uint32_t>(ctx->lr);
+  uint64_t samples_for_lr = 0;
+  {
+    std::lock_guard<std::mutex> lock(
+        g_blue_dragon_stricmp_return_profile_counts_mutex);
+    samples_for_lr = ++g_blue_dragon_stricmp_return_profile_lr_counts[lr];
+  }
+
+  uint32_t cr_packed = static_cast<uint32_t>(ctx->cr());
+  std::string lr_name = DescribeTraceFunction(ctx->processor, lr);
+  XELOGW(
+      "A64 Blue Dragon stricmp return sample count={} thid {:08X} lr {:08X} "
+      "'{}' samples_for_lr={} r1 {:08X} r3 {:08X} r4 {:08X} r5 {:08X} "
+      "r6 {:08X} r9 {:08X} cr {:08X} cr0 {:08X} cr5 {:08X} cr6 {:08X} "
+      "cr7 {:08X} xer_so {}",
+      sample_count, ctx->thread_id, lr, lr_name, samples_for_lr,
+      static_cast<uint32_t>(ctx->r[1]), static_cast<uint32_t>(ctx->r[3]),
+      static_cast<uint32_t>(ctx->r[4]), static_cast<uint32_t>(ctx->r[5]),
+      static_cast<uint32_t>(ctx->r[6]), static_cast<uint32_t>(ctx->r[9]),
+      cr_packed, ctx->cr0.value, ctx->cr5.value, ctx->cr6.value,
+      ctx->cr7.value, static_cast<uint32_t>(ctx->xer_so));
 }
 
 bool ParseGprLrHelper(const xe::cpu::GuestFunction* function, bool* is_save,
@@ -745,6 +833,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     b(*epilog_label_);
   } else if (TryEmitBlueDragonMemcpyFunctionBody()) {
     b(*epilog_label_);
+  } else if (TryEmitBlueDragonStricmpFunctionBody()) {
+    b(*epilog_label_);
   } else {
   // Walk HIR blocks and emit ARM64 instructions.
   auto block = builder->first_block();
@@ -792,6 +882,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // EPILOG
   // ========================================================================
   L(*epilog_label_);
+  MaybeEmitBlueDragonStricmpReturnProfile();
   epilog_label_ = nullptr;
   code_offsets.epilog = getSize();
 
@@ -1383,6 +1474,105 @@ bool A64Emitter::TryEmitBlueDragonMemcpyFunctionBody() {
   return true;
 }
 
+bool A64Emitter::TryEmitBlueDragonStricmpFunctionBody() {
+  if (!cvars::arm64_blue_dragon_stricmp_fastpath ||
+      current_guest_function_ != 0x826C5620) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  auto emit_signed_cr = [&](uint32_t field, const WReg& lhs, uint32_t rhs) {
+    int32_t base = static_cast<int32_t>(offsetof(ppc::PPCContext, cr0) +
+                                        (4 * field));
+    cmp(lhs, rhs);
+    cset(w11, LT);
+    strb(w11, ptr(GetContextReg(), base + 0));
+    cset(w11, GT);
+    strb(w11, ptr(GetContextReg(), base + 1));
+    cset(w11, EQ);
+    strb(w11, ptr(GetContextReg(), base + 2));
+  };
+  auto emit_cr0_from_result = [&]() {
+    int32_t base = static_cast<int32_t>(offsetof(ppc::PPCContext, cr0));
+    cmp(w15, 0);
+    cset(w11, LT);
+    strb(w11, ptr(GetContextReg(), base + 0));
+    cset(w11, GT);
+    strb(w11, ptr(GetContextReg(), base + 1));
+    cset(w11, EQ);
+    strb(w11, ptr(GetContextReg(), base + 2));
+  };
+
+  auto& loop = NewCachedLabel();
+  auto& advance = NewCachedLabel();
+  auto& lower_second_done = NewCachedLabel();
+  auto& lower_first_done = NewCachedLabel();
+  auto& return_result = NewCachedLabel();
+
+  ldr(w16, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+  ldr(w17, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[4]))));
+  mov(w9, w16);
+  mov(w10, w17);
+  AddGuestAddressToMembase(w9, x9);
+  AddGuestAddressToMembase(w10, x10);
+
+  L(loop);
+  ldrb(w14, ptr(x10));
+  ldrb(w13, ptr(x9));
+
+  emit_signed_cr(7, w14, 0);
+  sub(x15, x13, x14);
+  emit_cr0_from_result();
+  cbz(w14, return_result);
+  cbz(w15, advance);
+
+  emit_signed_cr(5, w14, static_cast<uint32_t>('A'));
+  emit_signed_cr(6, w14, static_cast<uint32_t>('Z'));
+  cmp(w14, static_cast<uint32_t>('A'));
+  b(LT, lower_second_done);
+  cmp(w14, static_cast<uint32_t>('Z'));
+  b(GT, lower_second_done);
+  orr(w14, w14, static_cast<uint32_t>(0x20));
+  L(lower_second_done);
+
+  emit_signed_cr(0, w13, static_cast<uint32_t>('A'));
+  emit_signed_cr(1, w13, static_cast<uint32_t>('Z'));
+  cmp(w13, static_cast<uint32_t>('A'));
+  b(LT, lower_first_done);
+  cmp(w13, static_cast<uint32_t>('Z'));
+  b(GT, lower_first_done);
+  orr(w13, w13, static_cast<uint32_t>(0x20));
+  L(lower_first_done);
+
+  sub(x15, x13, x14);
+  emit_cr0_from_result();
+  cbz(w15, advance);
+  b(return_result);
+
+  L(advance);
+  add(x9, x9, 1);
+  add(x10, x10, 1);
+  add(w16, w16, 1);
+  add(w17, w17, 1);
+  b(loop);
+
+  L(return_result);
+  str(x15, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+  str(x17, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[4]))));
+  str(x13, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[5]))));
+  str(x14, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[6]))));
+  str(x16, ptr(GetContextReg(),
+               static_cast<int32_t>(offsetof(ppc::PPCContext, r[9]))));
+  return true;
+}
+
 void A64Emitter::MaybeEmitBlueDragonDrawWaitCallerProfile() {
   if (!cvars::arm64_blue_dragon_draw_wait_caller_profile ||
       current_guest_function_ != 0x8246B408) {
@@ -1411,6 +1601,16 @@ void A64Emitter::MaybeEmitBlueDragonDrawWaitCallerProfile() {
                                      blue_dragon_draw_wait_caller_profile_counter))));
   CallNativeSafe(reinterpret_cast<void*>(&RecordBlueDragonDrawWaitCallerProfile));
   L(skip_sample);
+}
+
+void A64Emitter::MaybeEmitBlueDragonStricmpReturnProfile() {
+  if (!cvars::arm64_blue_dragon_stricmp_return_profile ||
+      current_guest_function_ != 0x826C5620) {
+    return;
+  }
+
+  ForgetFpcrMode();
+  CallNativeSafe(reinterpret_cast<void*>(&RecordBlueDragonStricmpReturnProfile));
 }
 
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {

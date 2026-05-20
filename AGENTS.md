@@ -1046,6 +1046,20 @@ required.
     register dependencies.
   - Next experiment should sample the normal generated `826C5620` return state
     or move to `827294CC`, `8272A3A4`, and `8272A8E8`.
+- Blue Dragon exact-state `826C5620` stricmp fastpath:
+  `docs/research/20260519-223000-blue-dragon-stricmp-exact-fastpath.md`.
+  - `arm64_blue_dragon_stricmp_return_profile` is routed through Android and
+    `tools/thor/thor_xenia_debug.ps1` as
+    `-Arm64BlueDragonStricmpReturnProfile`, with stride and budget switches.
+  - Return-state capture `scratch\thor-debug\20260519-221800-*` proved the
+    helper updates meaningful CR state; `cr0`, `cr1`, `cr5`, `cr6`, and `cr7`
+    matter for an exact body replacement.
+  - `arm64_blue_dragon_stricmp_fastpath` was reintroduced as an exact-state
+    version that writes `r3`, `r4`, `r5`, `r6`, `r9`, and CR field bytes 0..2
+    for `cr0`, `cr1`, `cr5`, `cr6`, and `cr7`, while leaving SO bytes intact.
+  - Fastpath capture `scratch\thor-debug\20260519-222409-*` reached the Blue
+    Dragon loading spinner with no searched fatal markers. Keep the fastpath
+    default-off until simpleperf or same-route timing proves a real speed win.
 
 ## Codex Hooks / Automation
 
