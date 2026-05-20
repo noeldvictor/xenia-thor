@@ -147,6 +147,9 @@ param(
     [string]$Arm64ImmediateLoweringAudit = "false",
     [string]$Arm64ImmediateLoweringAuditFunction = "",
     [string]$Arm64ImmediateLoweringAuditBudget = "",
+    [string]$Arm64ContextTrafficAudit = "false",
+    [string]$Arm64ContextTrafficAuditFunction = "",
+    [string]$Arm64ContextTrafficAuditBudget = "",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
@@ -814,6 +817,15 @@ function Start-XeniaEmulator {
     if ($Arm64ImmediateLoweringAuditBudget) {
         $parts += "--ei arm64_immediate_lowering_audit_budget $(ConvertTo-AdbIntText $Arm64ImmediateLoweringAuditBudget)"
     }
+    if ($Arm64ContextTrafficAudit) {
+        $parts += "--ez arm64_context_traffic_audit $(ConvertTo-BooleanText $Arm64ContextTrafficAudit)"
+    }
+    if ($Arm64ContextTrafficAuditFunction) {
+        $parts += "--ei arm64_context_traffic_audit_function $(ConvertTo-AdbIntText $Arm64ContextTrafficAuditFunction)"
+    }
+    if ($Arm64ContextTrafficAuditBudget) {
+        $parts += "--ei arm64_context_traffic_audit_budget $(ConvertTo-AdbIntText $Arm64ContextTrafficAuditBudget)"
+    }
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
@@ -955,6 +967,9 @@ function Write-CaptureMetadata {
         "arm64_immediate_lowering_audit=$Arm64ImmediateLoweringAudit",
         "arm64_immediate_lowering_audit_function=$Arm64ImmediateLoweringAuditFunction",
         "arm64_immediate_lowering_audit_budget=$Arm64ImmediateLoweringAuditBudget",
+        "arm64_context_traffic_audit=$Arm64ContextTrafficAudit",
+        "arm64_context_traffic_audit_function=$Arm64ContextTrafficAuditFunction",
+        "arm64_context_traffic_audit_budget=$Arm64ContextTrafficAuditBudget",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",

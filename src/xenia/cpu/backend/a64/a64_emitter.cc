@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <unordered_map>
 
 #include "third_party/fmt/include/fmt/format.h"
@@ -70,6 +71,9 @@ DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
+DECLARE_bool(arm64_context_traffic_audit);
+DECLARE_uint32(arm64_context_traffic_audit_function);
+DECLARE_uint32(arm64_context_traffic_audit_budget);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
             "A64 backend.",
@@ -112,6 +116,241 @@ std::atomic<uint64_t> g_blue_dragon_stricmp_return_profile_count{0};
 std::mutex g_blue_dragon_stricmp_return_profile_counts_mutex;
 std::unordered_map<uint32_t, uint64_t>
     g_blue_dragon_stricmp_return_profile_lr_counts;
+std::atomic<uint32_t> g_a64_context_traffic_audit_count{0};
+
+enum class ContextTrafficSlot {
+  kOther,
+  kThreadState,
+  kVirtualMembase,
+  kLr,
+  kCtr,
+  kGpr,
+  kFpr,
+  kVmx,
+  kXer,
+  kCr,
+  kFpscr,
+  kVscr,
+  kThreadRuntime,
+  kReservation,
+};
+
+struct A64ContextTrafficStats {
+  uint32_t blocks = 0;
+  uint32_t instrs = 0;
+  uint32_t context_loads = 0;
+  uint32_t context_stores = 0;
+  uint32_t cr_loads = 0;
+  uint32_t cr_stores = 0;
+  uint32_t gpr_loads = 0;
+  uint32_t gpr_stores = 0;
+  uint32_t lr_loads = 0;
+  uint32_t lr_stores = 0;
+  uint32_t ctr_loads = 0;
+  uint32_t ctr_stores = 0;
+  uint32_t xer_loads = 0;
+  uint32_t xer_stores = 0;
+  uint32_t fpr_loads = 0;
+  uint32_t fpr_stores = 0;
+  uint32_t vmx_loads = 0;
+  uint32_t vmx_stores = 0;
+  uint32_t runtime_loads = 0;
+  uint32_t runtime_stores = 0;
+  uint32_t local_loads = 0;
+  uint32_t local_stores = 0;
+  uint32_t memory_loads = 0;
+  uint32_t memory_stores = 0;
+  uint32_t memory_barriers = 0;
+  uint32_t context_barriers = 0;
+  uint32_t byte_swaps = 0;
+  uint32_t integer_compares = 0;
+  uint32_t vector_compares = 0;
+  uint32_t branches = 0;
+  uint32_t calls = 0;
+  uint32_t returns = 0;
+  uint32_t atomics = 0;
+  uint32_t reservation_ops = 0;
+  uint32_t context_store_compare_sources = 0;
+  uint32_t context_store_constant_sources = 0;
+  uint32_t context_store_select_sources = 0;
+  std::unordered_map<uint32_t, uint32_t> context_load_offsets;
+  std::unordered_map<uint32_t, uint32_t> context_store_offsets;
+};
+
+bool ConsumeContextTrafficAuditBudget(uint32_t* out_index) {
+  uint32_t budget = cvars::arm64_context_traffic_audit_budget;
+  uint32_t value = g_a64_context_traffic_audit_count.load(
+      std::memory_order_relaxed);
+  while (value < budget) {
+    if (g_a64_context_traffic_audit_count.compare_exchange_strong(
+            value, value + 1, std::memory_order_acq_rel)) {
+      *out_index = value + 1;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool AccessOverlaps(size_t offset, size_t size, size_t range_start,
+                    size_t range_end) {
+  size_t end = offset + std::max<size_t>(size, 1);
+  return offset < range_end && end > range_start;
+}
+
+ContextTrafficSlot ClassifyContextTrafficSlot(size_t offset, size_t size) {
+  using xe::cpu::ppc::PPCContext;
+
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, thread_state),
+                     offsetof(PPCContext, thread_state) +
+                         sizeof(static_cast<PPCContext*>(nullptr)
+                                    ->thread_state))) {
+    return ContextTrafficSlot::kThreadState;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, virtual_membase),
+                     offsetof(PPCContext, virtual_membase) +
+                         sizeof(static_cast<PPCContext*>(nullptr)
+                                    ->virtual_membase))) {
+    return ContextTrafficSlot::kVirtualMembase;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, lr),
+                     offsetof(PPCContext, lr) +
+                         sizeof(static_cast<PPCContext*>(nullptr)->lr))) {
+    return ContextTrafficSlot::kLr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, ctr),
+                     offsetof(PPCContext, ctr) +
+                         sizeof(static_cast<PPCContext*>(nullptr)->ctr))) {
+    return ContextTrafficSlot::kCtr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, r),
+                     offsetof(PPCContext, f))) {
+    return ContextTrafficSlot::kGpr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, f),
+                     offsetof(PPCContext, v))) {
+    return ContextTrafficSlot::kFpr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, v),
+                     offsetof(PPCContext, xer_ca))) {
+    return ContextTrafficSlot::kVmx;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, xer_ca),
+                     offsetof(PPCContext, cr0))) {
+    return ContextTrafficSlot::kXer;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, cr0),
+                     offsetof(PPCContext, fpscr))) {
+    return ContextTrafficSlot::kCr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, fpscr),
+                     offsetof(PPCContext, vscr_sat))) {
+    return ContextTrafficSlot::kFpscr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, vscr_sat),
+                     offsetof(PPCContext, thread_id))) {
+    return ContextTrafficSlot::kVscr;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, thread_id),
+                     offsetof(PPCContext, physical_membase))) {
+    return ContextTrafficSlot::kThreadRuntime;
+  }
+  if (AccessOverlaps(offset, size, offsetof(PPCContext, physical_membase),
+                     sizeof(PPCContext))) {
+    return ContextTrafficSlot::kReservation;
+  }
+  return ContextTrafficSlot::kOther;
+}
+
+void AddContextTrafficAccess(A64ContextTrafficStats* stats, uint32_t offset,
+                             size_t size, bool store) {
+  ContextTrafficSlot slot = ClassifyContextTrafficSlot(offset, size);
+  if (store) {
+    ++stats->context_stores;
+    ++stats->context_store_offsets[offset];
+  } else {
+    ++stats->context_loads;
+    ++stats->context_load_offsets[offset];
+  }
+
+  auto add_load_store = [store](uint32_t* loads, uint32_t* stores) {
+    if (store) {
+      ++*stores;
+    } else {
+      ++*loads;
+    }
+  };
+
+  switch (slot) {
+    case ContextTrafficSlot::kLr:
+      add_load_store(&stats->lr_loads, &stats->lr_stores);
+      break;
+    case ContextTrafficSlot::kCtr:
+      add_load_store(&stats->ctr_loads, &stats->ctr_stores);
+      break;
+    case ContextTrafficSlot::kGpr:
+      add_load_store(&stats->gpr_loads, &stats->gpr_stores);
+      break;
+    case ContextTrafficSlot::kFpr:
+      add_load_store(&stats->fpr_loads, &stats->fpr_stores);
+      break;
+    case ContextTrafficSlot::kVmx:
+      add_load_store(&stats->vmx_loads, &stats->vmx_stores);
+      break;
+    case ContextTrafficSlot::kXer:
+      add_load_store(&stats->xer_loads, &stats->xer_stores);
+      break;
+    case ContextTrafficSlot::kCr:
+      add_load_store(&stats->cr_loads, &stats->cr_stores);
+      break;
+    case ContextTrafficSlot::kThreadState:
+    case ContextTrafficSlot::kVirtualMembase:
+    case ContextTrafficSlot::kThreadRuntime:
+    case ContextTrafficSlot::kReservation:
+      add_load_store(&stats->runtime_loads, &stats->runtime_stores);
+      break;
+    case ContextTrafficSlot::kOther:
+    case ContextTrafficSlot::kFpscr:
+    case ContextTrafficSlot::kVscr:
+      break;
+  }
+}
+
+bool IsIntegerCompareOpcode(xe::cpu::hir::Opcode opcode) {
+  return opcode >= xe::cpu::hir::OPCODE_COMPARE_EQ &&
+         opcode <= xe::cpu::hir::OPCODE_COMPARE_UGE;
+}
+
+bool IsVectorCompareOpcode(xe::cpu::hir::Opcode opcode) {
+  return opcode >= xe::cpu::hir::OPCODE_VECTOR_COMPARE_EQ &&
+         opcode <= xe::cpu::hir::OPCODE_VECTOR_COMPARE_UGE;
+}
+
+std::string FormatContextTrafficTopOffsets(
+    const std::unordered_map<uint32_t, uint32_t>& offsets) {
+  if (offsets.empty()) {
+    return "-";
+  }
+
+  std::vector<std::pair<uint32_t, uint32_t>> sorted(offsets.begin(),
+                                                    offsets.end());
+  std::sort(sorted.begin(), sorted.end(),
+            [](const auto& a, const auto& b) {
+              if (a.second != b.second) {
+                return a.second > b.second;
+              }
+              return a.first < b.first;
+            });
+
+  std::string text;
+  size_t count = std::min<size_t>(sorted.size(), 8);
+  for (size_t i = 0; i < count; ++i) {
+    if (!text.empty()) {
+      text += ",";
+    }
+    text += fmt::format("0x{:03X}:{}", sorted[i].first, sorted[i].second);
+  }
+  return text;
+}
 
 std::string_view TrimTraceToken(std::string_view value) {
   while (!value.empty() &&
@@ -735,6 +974,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     a64_function->SetupProfileBlockCounts(block_count);
     current_a64_function_ = a64_function;
   }
+  MaybeLogContextTrafficAudit(builder);
 
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
@@ -837,6 +1077,159 @@ void A64Emitter::MaybeEmitBlockProfileEntry(const hir::Block* block) {
   current_a64_function_->set_profile_block_address(
       static_cast<size_t>(block->ordinal), FindBlockGuestAddress(block));
   EmitAtomicIncrement64(counter);
+}
+
+void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
+  if (!cvars::arm64_context_traffic_audit || !builder) {
+    return;
+  }
+  uint32_t function_filter = cvars::arm64_context_traffic_audit_function;
+  if (function_filter && function_filter != current_guest_function_) {
+    return;
+  }
+
+  uint32_t log_index = 0;
+  if (!ConsumeContextTrafficAuditBudget(&log_index)) {
+    return;
+  }
+
+  A64ContextTrafficStats stats;
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      ++stats.instrs;
+      auto opcode = instr->GetOpcodeNum();
+
+      if (IsIntegerCompareOpcode(opcode)) {
+        ++stats.integer_compares;
+      } else if (IsVectorCompareOpcode(opcode)) {
+        ++stats.vector_compares;
+      }
+
+      switch (opcode) {
+        case hir::OPCODE_LOAD_CONTEXT: {
+          size_t size = instr->dest ? hir::GetTypeSize(instr->dest->type) : 1;
+          AddContextTrafficAccess(&stats, static_cast<uint32_t>(
+                                              instr->src1.offset),
+                                  size, false);
+          break;
+        }
+        case hir::OPCODE_STORE_CONTEXT: {
+          auto* value = instr->src2.value;
+          size_t size = value ? hir::GetTypeSize(value->type) : 1;
+          AddContextTrafficAccess(&stats, static_cast<uint32_t>(
+                                              instr->src1.offset),
+                                  size, true);
+          if (value) {
+            if (value->IsConstant()) {
+              ++stats.context_store_constant_sources;
+            }
+            if (value->def) {
+              auto source_opcode = value->def->GetOpcodeNum();
+              if (IsIntegerCompareOpcode(source_opcode) ||
+                  IsVectorCompareOpcode(source_opcode)) {
+                ++stats.context_store_compare_sources;
+              } else if (source_opcode == hir::OPCODE_SELECT) {
+                ++stats.context_store_select_sources;
+              }
+            }
+          }
+          break;
+        }
+        case hir::OPCODE_LOAD_LOCAL:
+          ++stats.local_loads;
+          break;
+        case hir::OPCODE_STORE_LOCAL:
+          ++stats.local_stores;
+          break;
+        case hir::OPCODE_LOAD_MMIO:
+        case hir::OPCODE_LOAD_OFFSET:
+        case hir::OPCODE_LOAD:
+        case hir::OPCODE_LVL:
+        case hir::OPCODE_LVR:
+          ++stats.memory_loads;
+          break;
+        case hir::OPCODE_STORE_MMIO:
+        case hir::OPCODE_STORE_OFFSET:
+        case hir::OPCODE_STORE:
+        case hir::OPCODE_MEMSET:
+        case hir::OPCODE_STVL:
+        case hir::OPCODE_STVR:
+          ++stats.memory_stores;
+          break;
+        case hir::OPCODE_ATOMIC_EXCHANGE:
+        case hir::OPCODE_ATOMIC_COMPARE_EXCHANGE:
+          ++stats.atomics;
+          ++stats.memory_loads;
+          ++stats.memory_stores;
+          break;
+        case hir::OPCODE_RESERVED_LOAD:
+          ++stats.reservation_ops;
+          ++stats.memory_loads;
+          break;
+        case hir::OPCODE_RESERVED_STORE:
+          ++stats.reservation_ops;
+          ++stats.memory_loads;
+          ++stats.memory_stores;
+          break;
+        case hir::OPCODE_CONTEXT_BARRIER:
+          ++stats.context_barriers;
+          break;
+        case hir::OPCODE_MEMORY_BARRIER:
+          ++stats.memory_barriers;
+          break;
+        case hir::OPCODE_BYTE_SWAP:
+          ++stats.byte_swaps;
+          break;
+        case hir::OPCODE_BRANCH:
+        case hir::OPCODE_BRANCH_TRUE:
+        case hir::OPCODE_BRANCH_FALSE:
+          ++stats.branches;
+          break;
+        case hir::OPCODE_CALL:
+        case hir::OPCODE_CALL_TRUE:
+        case hir::OPCODE_CALL_INDIRECT:
+        case hir::OPCODE_CALL_INDIRECT_TRUE:
+        case hir::OPCODE_CALL_EXTERN:
+          ++stats.calls;
+          break;
+        case hir::OPCODE_RETURN:
+        case hir::OPCODE_RETURN_TRUE:
+          ++stats.returns;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  XELOGW(
+      "A64 context traffic audit {:03}: fn {:08X} blocks={} instrs={} "
+      "context_loads={} context_stores={} locals={}/{} mem={}/{} "
+      "byte_swaps={} cmp={}/{} branches={} calls={} returns={}",
+      log_index, current_guest_function_, stats.blocks, stats.instrs,
+      stats.context_loads, stats.context_stores, stats.local_loads,
+      stats.local_stores, stats.memory_loads, stats.memory_stores,
+      stats.byte_swaps, stats.integer_compares, stats.vector_compares,
+      stats.branches, stats.calls, stats.returns);
+  XELOGW(
+      "A64 context traffic audit {:03}: fn {:08X} ppc_loads "
+      "lr/ctr/gpr/cr/xer/fpr/vmx/runtime={}/{}/{}/{}/{}/{}/{}/{} "
+      "ppc_stores={}/{}/{}/{}/{}/{}/{}/{} store_src cmp/const/select={}/{}/{} "
+      "barriers ctx/mem={}/{} atomics/resv={}/{}",
+      log_index, current_guest_function_, stats.lr_loads, stats.ctr_loads,
+      stats.gpr_loads, stats.cr_loads, stats.xer_loads, stats.fpr_loads,
+      stats.vmx_loads, stats.runtime_loads, stats.lr_stores, stats.ctr_stores,
+      stats.gpr_stores, stats.cr_stores, stats.xer_stores, stats.fpr_stores,
+      stats.vmx_stores, stats.runtime_stores,
+      stats.context_store_compare_sources,
+      stats.context_store_constant_sources, stats.context_store_select_sources,
+      stats.context_barriers, stats.memory_barriers, stats.atomics,
+      stats.reservation_ops);
+  XELOGW("A64 context traffic audit {:03}: fn {:08X} load_top={} store_top={}",
+         log_index, current_guest_function_,
+         FormatContextTrafficTopOffsets(stats.context_load_offsets),
+         FormatContextTrafficTopOffsets(stats.context_store_offsets));
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {

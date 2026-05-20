@@ -267,6 +267,30 @@ For Blue Dragon, translate this into a state-traffic sprint:
 
 See `docs/research/20260520-180132-powerpc-to-arm64-source-harvest.md`.
 
+## Context Traffic Lane
+
+Use this before another `8272A3A4` codegen pass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 50 -PerfSampleSeconds "40" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4" -Arm64ContextTrafficAudit true -Arm64ContextTrafficAuditFunction 0x8272A3A4 -Arm64ContextTrafficAuditBudget 4
+```
+
+Known audit proof: `scratch\thor-debug\20260520-181744-*`; route-clean
+post-triplet proof: `scratch\thor-debug\20260520-182128-*`.
+
+`8272A3A4` currently reports `context_loads=255`, `context_stores=442`,
+`ppc_stores=252 GPR + 183 CR`, and 85 context barriers. Top CR stores are
+`0xA3C..0xA3E` (CR6). Top GPR load/store slots are around `r29`, `r31`, `r1`,
+`r30`, `r27`, `r23`, `r11`, and `r10`.
+
+The exact `LT/GT/EQ` CR triplet peephole is route-clean but did not shrink the
+hot function: `8272A3A4 code_size` stayed `12544` in
+`scratch\thor-debug\20260520-182128-*`. Do not count it as a speed win. Next
+step is a CR shape hit audit or a narrow GPR context-cache experiment, not more
+blind compare fusions.
+
+See `docs/research/20260520-182253-a64-context-traffic-audit.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

@@ -5550,6 +5550,15 @@ static bool IsPpcCrGtEqStorePair(uint32_t gt_offset, uint32_t eq_offset) {
          gt_offset < cr_end && ((gt_offset - cr_base) & 3) == 1;
 }
 
+static bool IsPpcCrLtGtEqStoreTriplet(uint32_t lt_offset, uint32_t gt_offset,
+                                      uint32_t eq_offset) {
+  const uint32_t cr_base = static_cast<uint32_t>(offsetof(ppc::PPCContext, cr0));
+  const uint32_t cr_end = cr_base + 8 * 4;
+  return lt_offset + 1 == gt_offset && gt_offset + 1 == eq_offset &&
+         lt_offset >= cr_base && eq_offset < cr_end &&
+         ((lt_offset - cr_base) & 3) == 0;
+}
+
 static const hir::Instr* BranchOnValue(const hir::Instr* instr,
                                        const hir::Value* value) {
   if (!instr || instr->src1.value != value) {
@@ -5692,6 +5701,94 @@ static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
   }
 }
 
+static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
+                                                   const hir::Instr* instr,
+                                                   const hir::Instr** new_tail) {
+  if (!instr || !instr->dest || instr->dest->type != hir::INT8_TYPE) {
+    return false;
+  }
+
+  bool is_signed = false;
+  if (instr->GetOpcodeNum() == hir::OPCODE_COMPARE_SLT) {
+    is_signed = true;
+  } else if (instr->GetOpcodeNum() == hir::OPCODE_COMPARE_ULT) {
+    is_signed = false;
+  } else {
+    return false;
+  }
+
+  const hir::Instr* lt_store = instr->next;
+  uint32_t lt_offset = 0;
+  if (!IsStoreContextOfValue(lt_store, instr->dest, &lt_offset) ||
+      !ValueUsesOnly(instr->dest, lt_store)) {
+    return false;
+  }
+
+  const hir::Instr* gt_compare = lt_store->next;
+  hir::Opcode expected_gt =
+      is_signed ? hir::OPCODE_COMPARE_SGT : hir::OPCODE_COMPARE_UGT;
+  if (!gt_compare || gt_compare->GetOpcodeNum() != expected_gt ||
+      !gt_compare->dest || gt_compare->dest->type != hir::INT8_TYPE ||
+      !CompareOperandsMatch(instr, gt_compare)) {
+    return false;
+  }
+
+  const hir::Instr* gt_store = gt_compare->next;
+  uint32_t gt_offset = 0;
+  if (!IsStoreContextOfValue(gt_store, gt_compare->dest, &gt_offset) ||
+      !ValueUsesOnly(gt_compare->dest, gt_store)) {
+    return false;
+  }
+
+  const hir::Instr* eq_compare = gt_store->next;
+  if (!eq_compare || eq_compare->GetOpcodeNum() != hir::OPCODE_COMPARE_EQ ||
+      !eq_compare->dest || eq_compare->dest->type != hir::INT8_TYPE ||
+      !CompareOperandsMatch(instr, eq_compare)) {
+    return false;
+  }
+
+  const hir::Instr* eq_store = eq_compare->next;
+  uint32_t eq_offset = 0;
+  if (!IsStoreContextOfValue(eq_store, eq_compare->dest, &eq_offset) ||
+      !IsPpcCrLtGtEqStoreTriplet(lt_offset, gt_offset, eq_offset)) {
+    return false;
+  }
+
+  const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
+  if (!ValueUsesOnly(eq_compare->dest, eq_store, branch)) {
+    return false;
+  }
+
+  if (!EmitIntegerCompareFlags(*e, instr)) {
+    return false;
+  }
+
+  WReg lt_reg(0);
+  WReg gt_reg(0);
+  WReg eq_reg(0);
+  A64Emitter::SetupReg(instr->dest, lt_reg);
+  A64Emitter::SetupReg(gt_compare->dest, gt_reg);
+  A64Emitter::SetupReg(eq_compare->dest, eq_reg);
+  e->cset(lt_reg, is_signed ? Xbyak_aarch64::LT : Xbyak_aarch64::LO);
+  e->strb(lt_reg, ptr(e->GetContextReg(), lt_offset));
+  e->cset(gt_reg, is_signed ? Xbyak_aarch64::GT : Xbyak_aarch64::HI);
+  e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
+  e->cset(eq_reg, Xbyak_aarch64::EQ);
+  e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  if (branch) {
+    auto& target = e->GetLabel(branch->src2.label->id);
+    if (branch->GetOpcodeNum() == hir::OPCODE_BRANCH_TRUE) {
+      e->b(Xbyak_aarch64::EQ, target);
+    } else {
+      e->b(Xbyak_aarch64::NE, target);
+    }
+    *new_tail = branch->next;
+  } else {
+    *new_tail = eq_store->next;
+  }
+  return true;
+}
+
 static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
                                                const hir::Instr* instr,
                                                const hir::Instr** new_tail) {
@@ -5798,6 +5895,9 @@ static bool TrySelectUnsignedZeroCompareStoreContext(A64Emitter* e,
 bool SelectSequence(A64Emitter* e, const hir::Instr* i,
                     const hir::Instr** new_tail) {
   if (TrySelectUnsignedZeroCompareStoreContext(e, i, new_tail)) {
+    return true;
+  }
+  if (TrySelectIntegerCrTripletCompareStores(e, i, new_tail)) {
     return true;
   }
   if (TrySelectUnsignedGtEqCompareStores(e, i, new_tail)) {

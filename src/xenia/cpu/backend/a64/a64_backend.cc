@@ -234,6 +234,21 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: maximum immediate-lowering audit lines to emit "
     "per process.",
     "a64");
+DEFINE_bool(
+    arm64_context_traffic_audit, false,
+    "Thor ARM64 speed lane: log HIR context/local/memory traffic summaries "
+    "for compiled functions. Research-only lowering audit.",
+    "a64");
+DEFINE_uint32(
+    arm64_context_traffic_audit_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "the context-traffic audit. 0 logs all functions.",
+    "a64");
+DEFINE_uint32(
+    arm64_context_traffic_audit_budget, 32,
+    "Thor ARM64 speed lane: maximum context-traffic audit function summaries "
+    "to emit per process.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
@@ -1128,6 +1143,11 @@ void A64Backend::StartSpeedProfiler() {
     XELOGW("A64 immediate lowering audit enabled: function={:08X} budget={}",
            cvars::arm64_immediate_lowering_audit_function,
            cvars::arm64_immediate_lowering_audit_budget);
+  }
+  if (cvars::arm64_context_traffic_audit) {
+    XELOGW("A64 context traffic audit enabled: function={:08X} budget={}",
+           cvars::arm64_context_traffic_audit_function,
+           cvars::arm64_context_traffic_audit_budget);
   }
   speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
       std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });

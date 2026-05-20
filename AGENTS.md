@@ -1354,6 +1354,20 @@ required.
   sprint: count context loads/stores, CR traffic, LR/CTR traffic, helper calls,
   exits, endian swaps, and dispatcher returns, then add a Dolphin-style cache
   for CR bytes and hot GPR context slots.
+- A64 context-traffic audit:
+  `docs/research/20260520-182253-a64-context-traffic-audit.md`.
+  The Thor launcher now exposes `-Arm64ContextTrafficAudit true`,
+  `-Arm64ContextTrafficAuditFunction 0x8272A3A4`, and
+  `-Arm64ContextTrafficAuditBudget 4`, and `EmulatorActivity.java` forwards
+  the cvars to native. The first real `8272A3A4` audit measured
+  `context_loads=255`, `context_stores=442`, `ppc_stores=252 GPR + 183 CR`,
+  85 context barriers, and top CR stores at `0xA3C..0xA3E` (CR6). Top GPR
+  slots are `0x108`, `0x118`, `0x028`, `0x110`, `0x0F8`, `0x0D8`, `0x078`,
+  and `0x070`. A generic exact `LT/GT/EQ` CR triplet peephole is route-clean
+  and reached the Blue Dragon Voice Language menu in
+  `scratch/thor-debug/20260520-182128-*`, but `8272A3A4 code_size` stayed
+  `12544`; do not count it as a measured hot-path win. Next target is a CR
+  shape hit audit plus a narrow GPR context-cache experiment, not GPU work.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
