@@ -95,6 +95,10 @@ DEFINE_bool(a64_inline_kernel_spinlock_exports, true,
             "Inline tiny high-frequency Xbox kernel spin-lock exports in the "
             "A64 backend. Experimental.",
             "a64");
+DEFINE_bool(a64_lse_kernel_lock_fastpaths, true,
+            "Use ARMv8.1 LSE atomics in A64 kernel lock/IRQL fastpaths when "
+            "the host CPU supports them. Experimental.",
+            "a64");
 DEFINE_bool(
     a64_inline_rtl_leave_final_unlock, true,
     "Inline the uncontended final RtlLeaveCriticalSection unlock in the A64 "
@@ -2546,6 +2550,14 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
                                       A64BackendContext, processor_irql))));
     mov(w11, static_cast<uint32_t>(cpu::Irql::DPC));
 
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      swpal(w11, w10, ptr(x9));
+      sxtw(x10, w10);
+      str(x10, ptr(GetContextReg(), r3_offset));
+      return true;
+    }
+
     auto& retry = NewCachedLabel();
     L(retry);
     ldaxr(w10, ptr(x9));
@@ -2593,15 +2605,24 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
                                       A64BackendContext, processor_irql))));
     ldr(w10, ptr(GetContextReg(), r3_offset));
 
-    auto& retry = NewCachedLabel();
-    L(retry);
-    ldaxr(w11, ptr(x9));
-    stlxr(w12, w10, ptr(x9));
-    cbnz(w12, retry);
-    if (audit_kf_lower) {
-      EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      swpal(w10, w11, ptr(x9));
+      if (audit_kf_lower) {
+        EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
+      }
+      b(done);
+    } else {
+      auto& retry = NewCachedLabel();
+      L(retry);
+      ldaxr(w11, ptr(x9));
+      stlxr(w12, w10, ptr(x9));
+      cbnz(w12, retry);
+      if (audit_kf_lower) {
+        EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
+      }
+      b(done);
     }
-    b(done);
 
     L(slow_pending);
     if (audit_kf_lower) {
@@ -2635,6 +2656,12 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
                                       A64BackendContext, processor_irql))));
     ldr(w10, ptr(GetContextReg(), r3_offset));
 
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      swpal(w10, w11, ptr(x9));
+      return true;
+    }
+
     auto& retry = NewCachedLabel();
     L(retry);
     ldaxr(w11, ptr(x9));
@@ -2654,6 +2681,13 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
   };
 
   auto emit_release_spin_lock = [&]() {
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      mov(w10, 0xFFFFFFFFu);
+      ldaddal(w10, w11, ptr(x9));
+      return;
+    }
+
     auto& retry = NewCachedLabel();
     L(retry);
     ldaxr(w10, ptr(x9));
@@ -2671,18 +2705,29 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     emit_load_spin_lock_ptr(slow);
 
-    L(retry);
-    ldaxr(w10, ptr(x9));
-    cbnz(w10, busy);
-    mov(w11, 1);
-    stlxr(w12, w11, ptr(x9));
-    cbnz(w12, retry);
-    b(done);
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      L(retry);
+      mov(w10, 0);
+      mov(w11, 1);
+      casal(w10, w11, ptr(x9));
+      cbz(w10, done);
+      yield();
+      b(retry);
+    } else {
+      L(retry);
+      ldaxr(w10, ptr(x9));
+      cbnz(w10, busy);
+      mov(w11, 1);
+      stlxr(w12, w11, ptr(x9));
+      cbnz(w12, retry);
+      b(done);
 
-    L(busy);
-    clrex(15);
-    yield();
-    b(retry);
+      L(busy);
+      clrex(15);
+      yield();
+      b(retry);
+    }
 
     L(slow);
     EmitKernelExternHostCall(function);
@@ -2700,20 +2745,31 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     emit_load_spin_lock_ptr(slow);
 
-    L(retry);
-    ldaxr(w10, ptr(x9));
-    cbnz(w10, fail);
-    mov(w11, 1);
-    stlxr(w12, w11, ptr(x9));
-    cbnz(w12, retry);
-    mov(x10, 1);
-    str(x10, ptr(GetContextReg(), r3_offset));
-    b(done);
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      mov(w10, 0);
+      mov(w11, 1);
+      casal(w10, w11, ptr(x9));
+      cmp(w10, 0);
+      cset(w10, EQ);
+      str(x10, ptr(GetContextReg(), r3_offset));
+      b(done);
+    } else {
+      L(retry);
+      ldaxr(w10, ptr(x9));
+      cbnz(w10, fail);
+      mov(w11, 1);
+      stlxr(w12, w11, ptr(x9));
+      cbnz(w12, retry);
+      mov(x10, 1);
+      str(x10, ptr(GetContextReg(), r3_offset));
+      b(done);
 
-    L(fail);
-    clrex(15);
-    str(xzr, ptr(GetContextReg(), r3_offset));
-    b(done);
+      L(fail);
+      clrex(15);
+      str(xzr, ptr(GetContextReg(), r3_offset));
+      b(done);
+    }
 
     L(slow);
     EmitKernelExternHostCall(function);
@@ -2754,6 +2810,13 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
   auto emit_increment_lock_count = [&]() {
     add(x12, x9, kRtlCriticalSectionLockCountOffset);
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      mov(w13, 1);
+      ldaddal(w13, w14, ptr(x12));
+      return;
+    }
+
     auto& retry = NewCachedLabel();
     L(retry);
     ldaxr(w13, ptr(x12));
@@ -2787,15 +2850,25 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     L(try_free_lock);
     add(x12, x9, kRtlCriticalSectionLockCountOffset);
-    auto& retry_free_lock = NewCachedLabel();
-    L(retry_free_lock);
-    ldaxr(w13, ptr(x12));
-    mov(w14, 0xFFFFFFFFu);
-    cmp(w13, w14);
-    b(NE, free_lock_busy);
-    mov(w14, 0);
-    stlxr(w15, w14, ptr(x12));
-    cbnz(w15, retry_free_lock);
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      mov(w13, 0xFFFFFFFFu);
+      mov(w14, 0);
+      casal(w13, w14, ptr(x12));
+      mov(w15, 0xFFFFFFFFu);
+      cmp(w13, w15);
+      b(NE, free_lock_busy);
+    } else {
+      auto& retry_free_lock = NewCachedLabel();
+      L(retry_free_lock);
+      ldaxr(w13, ptr(x12));
+      mov(w14, 0xFFFFFFFFu);
+      cmp(w13, w14);
+      b(NE, free_lock_busy);
+      mov(w14, 0);
+      stlxr(w15, w14, ptr(x12));
+      cbnz(w15, retry_free_lock);
+    }
 
     mov(w13, w11);
     rev(w13, w13);
@@ -2838,15 +2911,25 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     emit_load_critical_section_and_thread(slow);
 
     add(x12, x9, kRtlCriticalSectionLockCountOffset);
-    auto& retry_free_lock = NewCachedLabel();
-    L(retry_free_lock);
-    ldaxr(w13, ptr(x12));
-    mov(w14, 0xFFFFFFFFu);
-    cmp(w13, w14);
-    b(NE, check_recursive);
-    mov(w14, 0);
-    stlxr(w15, w14, ptr(x12));
-    cbnz(w15, retry_free_lock);
+    if (cvars::a64_lse_kernel_lock_fastpaths &&
+        IsFeatureEnabled(kA64EmitLSE)) {
+      mov(w13, 0xFFFFFFFFu);
+      mov(w14, 0);
+      casal(w13, w14, ptr(x12));
+      mov(w15, 0xFFFFFFFFu);
+      cmp(w13, w15);
+      b(NE, check_recursive);
+    } else {
+      auto& retry_free_lock = NewCachedLabel();
+      L(retry_free_lock);
+      ldaxr(w13, ptr(x12));
+      mov(w14, 0xFFFFFFFFu);
+      cmp(w13, w14);
+      b(NE, check_recursive);
+      mov(w14, 0);
+      stlxr(w15, w14, ptr(x12));
+      cbnz(w15, retry_free_lock);
+    }
 
     mov(w13, w11);
     rev(w13, w13);
@@ -2908,12 +2991,18 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
 
       add(x12, x9, kRtlCriticalSectionLockCountOffset);
-      auto& retry_dec_lock = NewCachedLabel();
-      L(retry_dec_lock);
-      ldaxr(w13, ptr(x12));
-      sub(w13, w13, 1);
-      stlxr(w14, w13, ptr(x12));
-      cbnz(w14, retry_dec_lock);
+      if (cvars::a64_lse_kernel_lock_fastpaths &&
+          IsFeatureEnabled(kA64EmitLSE)) {
+        mov(w13, 0xFFFFFFFFu);
+        ldaddal(w13, w14, ptr(x12));
+      } else {
+        auto& retry_dec_lock = NewCachedLabel();
+        L(retry_dec_lock);
+        ldaxr(w13, ptr(x12));
+        sub(w13, w13, 1);
+        stlxr(w14, w13, ptr(x12));
+        cbnz(w14, retry_dec_lock);
+      }
       if (audit_rtl_leave) {
         EmitAtomicIncrement64(backend_->rtl_leave_recursive_inline_count());
       }
@@ -2937,12 +3026,20 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
       auto& retry_final_unlock = NewCachedLabel();
       auto& restore_slow = NewCachedLabel();
-      L(retry_final_unlock);
-      ldaxr(w13, ptr(x12));
-      cbnz(w13, restore_slow);
-      mov(w14, 0xFFFFFFFFu);
-      stlxr(w15, w14, ptr(x12));
-      cbnz(w15, retry_final_unlock);
+      if (cvars::a64_lse_kernel_lock_fastpaths &&
+          IsFeatureEnabled(kA64EmitLSE)) {
+        mov(w13, 0);
+        mov(w14, 0xFFFFFFFFu);
+        casal(w13, w14, ptr(x12));
+        cbnz(w13, restore_slow);
+      } else {
+        L(retry_final_unlock);
+        ldaxr(w13, ptr(x12));
+        cbnz(w13, restore_slow);
+        mov(w14, 0xFFFFFFFFu);
+        stlxr(w15, w14, ptr(x12));
+        cbnz(w15, retry_final_unlock);
+      }
       if (audit_rtl_leave) {
         EmitAtomicIncrement64(backend_->rtl_leave_final_inline_count());
       }

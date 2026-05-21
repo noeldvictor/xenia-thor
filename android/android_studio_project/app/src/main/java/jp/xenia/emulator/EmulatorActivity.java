@@ -166,6 +166,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "a64_inline_ppc_thread_field_leaf_helpers");
             copyBooleanExtra(intent, launchArguments, "a64_inline_kernel_high_frequency_exports");
             copyBooleanExtra(intent, launchArguments, "a64_inline_kernel_spinlock_exports");
+            copyBooleanExtra(intent, launchArguments, "a64_lse_kernel_lock_fastpaths");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_enter_free_first");
             copyBooleanExtra(intent, launchArguments, "a64_inline_rtl_leave_final_unlock");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_leave_fastpath_audit");

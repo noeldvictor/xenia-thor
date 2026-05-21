@@ -225,6 +225,18 @@ required.
   reached Voice Language with the guard off. Do not enable this by default or
   count it as a speed win until a later native `KfLowerIrql` / `CheckApcs`
   audit proves what host-side scheduling/APC behavior must be preserved.
+- Current A64 LSE kernel lock note:
+  `docs/research/20260521-160124-a64-lse-kernel-lock-fastpaths.md`.
+  `a64_lse_kernel_lock_fastpaths` is default-on and guarded by the existing
+  host `kA64EmitLSE` feature check. It replaces `ldaxr`/`stlxr` retry loops in
+  hot kernel lock/IRQL fastpaths with LSE atomics (`swpal`, `casal`,
+  `ldaddal`) where possible. Thor A/B proof
+  `scratch/thor-debug/20260521-155831-*` reached the Blue Dragon Voice
+  Language screen with LSE on, while same-APK
+  `scratch/thor-debug/20260521-155946-*` black-idled with
+  `-A64LseKernelLockFastpaths false`. Keep the cvar's rollback path in all
+  Blue Dragon scripts and do not treat this as the final FPS fix; the next wall
+  remains `827294CC`, `8272A3A4`, `8272A8E8`, XMA/audio, and GPU command work.
 
 ## Current Porting Priorities
 

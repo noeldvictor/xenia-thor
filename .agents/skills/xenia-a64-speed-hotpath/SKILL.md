@@ -351,6 +351,17 @@ previous healthy route. Keep `a64_inline_kf_lower_irql` default-off: the naive
 IRQL-store inline skipped APC delivery and black-idled
 `scratch\thor-debug\20260520-192530-*`.
 
+`a64_lse_kernel_lock_fastpaths` is default-on for Thor and uses the existing
+`kA64EmitLSE` feature check before emitting ARMv8.1 LSE atomics for hot kernel
+lock/IRQL helpers. It shrinks `RtlEnterCriticalSection`, `RtlLeaveCriticalSection`,
+`KeRaiseIrqlToDpcLevel`, `KeAcquireSpinLockAtRaisedIrql`, and
+`KeReleaseSpinLockFromRaisedIrql` versus the old exclusive-loop paths. A/B proof:
+`scratch\thor-debug\20260521-155831-*` reached the Blue Dragon Voice Language
+screen with `-A64LseKernelLockFastpaths true`, while the same APK black-idled in
+`scratch\thor-debug\20260521-155946-*` with the toggle false. Keep the rollback
+switch available; this is backend maturity, not the final FPS fix. See
+`docs/research/20260521-160124-a64-lse-kernel-lock-fastpaths.md`.
+
 `RtlLeaveCriticalSection` now has a default-on uncontended final-unlock inline.
 It only handles owner-current, `recursion_count == 1`, and `lock_count == 0`;
 if a waiter races in, it restores owner/recursion and falls back to native HLE
