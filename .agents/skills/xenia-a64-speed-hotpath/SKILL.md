@@ -160,6 +160,14 @@ Known `82282490` OptHIR baseline from that tool:
 `context_barriers=213`. See
 `docs/research/20260521-182504-hir-hotpath-report-tool.md`.
 
+Clean route after the reverted broad lane-replace probe:
+`scratch\thor-debug\20260521-182630-*` reached the opening route again on
+HEAD `5aaf0d776` with APK SHA
+`FE1CA12C2B572C5643775702DF68D3DEA4A45661B2A2DCD7A8694EAF45F26312`.
+`82282490` stayed at `code_size=87168`; final thread sample was Main Thread
+about `92.3%`, XMA Decoder about `46.1%`, GPU Commands about `11.5%`. See
+`docs/research/20260521-183001-clean-route-rebaseline.md`.
+
 HIR/disassembly capture `scratch\thor-debug\20260521-170941-*` classifies
 `82282490` as a large VMX-heavy routine, not a tiny helper. The visible slice
 is dominated by `load_context`, `store_context`, `byte_swap`, branches,

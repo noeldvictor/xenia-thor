@@ -324,6 +324,14 @@ required.
   Current `82282490` OptHIR summary is `store_context=1415`,
   `load_context=763`, `dot_product_4=136`, `permutes=381`, and
   `context_barriers=213`; state traffic remains the bigger target.
+- Clean route rebaseline:
+  `docs/research/20260521-183001-clean-route-rebaseline.md`.
+  After reverting the broad lane-replace probe and redeploying clean `master`,
+  `scratch/thor-debug/20260521-182630-*` recovered the opening-scene route.
+  HEAD `5aaf0d776`, APK SHA
+  `FE1CA12C2B572C5643775702DF68D3DEA4A45661B2A2DCD7A8694EAF45F26312`.
+  `82282490` stayed at `code_size=87168`; final sample had Main Thread about
+  `92.3%`, XMA Decoder about `46.1%`, and GPU Commands about `11.5%`.
 
 ## Current Porting Priorities
 
