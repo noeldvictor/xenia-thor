@@ -1237,6 +1237,7 @@ function Set-DefaultIfNotBound {
 }
 
 function Use-BlueDragonA64SpeedPack {
+    Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitProbe" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitFastpath" "true"
@@ -1409,6 +1410,7 @@ function Use-BlueDragonSpeedDefaults {
 }
 
 function Use-BlueDragonTitleDefaults {
+    Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""

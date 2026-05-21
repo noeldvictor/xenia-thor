@@ -39,6 +39,16 @@ Keep that default for automated speed/title work so a frozen or idle emulator
 process cannot keep chewing battery/CPU after the run. Pass
 `-StopAppAfterCapture false` only for a deliberate manual inspection pass.
 
+Blue Dragon speed/title defaults also force `arm64_context_value_cache=false`.
+That block-local cache is a negative result, and Android's saved
+`xenia.config.toml` can keep old experiment cvars alive if the launcher does not
+send an explicit override.
+
+Do not use `-XmaFastSilence true` as a general Blue Dragon speed preset.
+Capture `scratch\thor-debug\20260521-145734-*` lowered CPU use but black-idled
+with repeated `entry_delta=0`, while clean audio-on capture
+`scratch\thor-debug\20260521-145533-*` progressed to the loading screen.
+
 Then summarize the latest evidence:
 
 ```powershell

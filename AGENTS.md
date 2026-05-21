@@ -136,6 +136,10 @@ required.
   screenshot by default to avoid stale frozen emulator processes making the Thor
   feel slow after a run. Pass `-StopAppAfterCapture false` only when the next
   step needs the app left open for manual inspection.
+- Blue Dragon speed/title defaults explicitly pass `arm64_context_value_cache=false`
+  because Android's saved `xenia.config.toml` can preserve old experiment cvars
+  between app launches. Do not trust blank metadata for a cvar if the filtered
+  log says the feature is enabled; check the launch args and device config.
 - As of 2026-05-18, Blue Dragon's VdSwap frontbuffers `1CA1C000` and
   `1CDB4000` are still all-zero on Thor, but forced-presenting resolve
   candidate `1C340000` as 640x360 format 7 produces a visible dark-blue guest
