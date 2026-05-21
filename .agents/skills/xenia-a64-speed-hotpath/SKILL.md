@@ -333,6 +333,16 @@ no searched fatal markers. Roll back with
 no-snapshot speed run black-idles, compare with the toggle off before blaming
 this path because both on and off captures idled in the same cleaned APK.
 
+Use `-A64RtlLeaveFastpathAudit true` when the next question is whether the
+critical-section leave fastpath is carrying its weight. It is default-off and
+diagnostic: proof `scratch\thor-debug\20260520-222648-*` reached Voice
+Language and reported final totals `final_inline=195628`,
+`recursive_inline=23189`, `native_fallback=3028`, and `restore_slow=14`.
+`a64_rtl_enter_free_first` is default-off: the free-lock-first enter reorder
+black-idled `scratch\thor-debug\20260520-223025-*`, while the same APK with
+`-A64RtlEnterFreeFirst false` reached Voice Language in
+`scratch\thor-debug\20260520-223155-*`.
+
 ## Classification
 
 Read the final speed-profile interval first.

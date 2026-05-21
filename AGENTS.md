@@ -197,6 +197,16 @@ required.
   screen with no searched fatal markers. The speed route still has unrelated
   black-idle nondeterminism; both on and off captures idled in the same cleaned
   APK, so use one-variable A/B before blaming this toggle.
+- Current A64 critical-section audit note:
+  `docs/research/20260520-223349-a64-critical-section-audit.md`.
+  `a64_rtl_leave_fastpath_audit` is default-off and logs recursive/final/native
+  `RtlLeaveCriticalSection` path counts through the speed profiler. Audit proof
+  `scratch/thor-debug/20260520-222648-*` reached Voice Language and showed
+  final unlock dominating by the final interval (`195628` final inline,
+  `23189` recursive inline, `3028` native fallback, `14` restore races).
+  `a64_rtl_enter_free_first` exists only as a default-off experiment:
+  `scratch/thor-debug/20260520-223025-*` black-idled with it on, while the same
+  APK reached Voice Language with `-A64RtlEnterFreeFirst false`.
 
 ## Current Porting Priorities
 
@@ -338,6 +348,12 @@ required.
   - `-A64InlineRtlLeaveFinalUnlock false` rolls back the uncontended final
     `RtlLeaveCriticalSection` unlock inline. The off path should report
     `RtlLeaveCriticalSection code_size=448`; the on path reports `528`.
+  - `-A64RtlLeaveFastpathAudit true` enables default-off RtlLeave path counters
+    in the A64 speed profile. This is diagnostic and raises
+    `RtlLeaveCriticalSection code_size` to about `640`.
+  - `-A64RtlEnterFreeFirst true` is an unsafe/default-off experiment. Do not
+    use it for default captures; it black-idled Blue Dragon in
+    `scratch/thor-debug/20260520-223025-*`.
   - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
     wait state.
   - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel

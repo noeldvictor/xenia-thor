@@ -76,6 +76,7 @@ DECLARE_bool(arm64_context_value_cache);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
+DECLARE_bool(a64_rtl_leave_fastpath_audit);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
             "A64 backend.",
@@ -97,6 +98,11 @@ DEFINE_bool(
     a64_inline_rtl_leave_final_unlock, true,
     "Inline the uncontended final RtlLeaveCriticalSection unlock in the A64 "
     "backend. Experimental.",
+    "a64");
+DEFINE_bool(
+    a64_rtl_enter_free_first, false,
+    "Try the free-lock RtlEnterCriticalSection A64 path before the recursive "
+    "owner check. Experimental; default-off after Blue Dragon black-idle.",
     "a64");
 DEFINE_bool(
     a64_inline_kf_lower_irql, false,
@@ -2634,18 +2640,20 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     emit_load_critical_section_and_thread(slow);
 
-    ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
-    rev(w13, w13);
-    cmp(w13, w11);
-    b(NE, try_free_lock);
+    if (!cvars::a64_rtl_enter_free_first) {
+      ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+      rev(w13, w13);
+      cmp(w13, w11);
+      b(NE, try_free_lock);
 
-    emit_increment_lock_count();
-    ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
-    rev(w13, w13);
-    add(w13, w13, 1);
-    rev(w13, w13);
-    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
-    b(done);
+      emit_increment_lock_count();
+      ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      rev(w13, w13);
+      add(w13, w13, 1);
+      rev(w13, w13);
+      str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      b(done);
+    }
 
     L(try_free_lock);
     add(x12, x9, kRtlCriticalSectionLockCountOffset);
@@ -2669,6 +2677,20 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     L(free_lock_busy);
     clrex(15);
+    if (cvars::a64_rtl_enter_free_first) {
+      ldr(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+      rev(w13, w13);
+      cmp(w13, w11);
+      b(NE, slow);
+
+      emit_increment_lock_count();
+      ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      rev(w13, w13);
+      add(w13, w13, 1);
+      rev(w13, w13);
+      str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      b(done);
+    }
     L(slow);
     EmitKernelExternHostCall(function);
 
@@ -2737,6 +2759,7 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
   if (name == "RtlLeaveCriticalSection") {
     auto& slow = NewCachedLabel();
     auto& done = NewCachedLabel();
+    const bool audit_rtl_leave = cvars::a64_rtl_leave_fastpath_audit;
 
     emit_load_critical_section_and_thread(slow);
 
@@ -2761,6 +2784,9 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       sub(w13, w13, 1);
       stlxr(w14, w13, ptr(x12));
       cbnz(w14, retry_dec_lock);
+      if (audit_rtl_leave) {
+        EmitAtomicIncrement64(backend_->rtl_leave_recursive_inline_count());
+      }
       b(done);
     };
 
@@ -2787,6 +2813,9 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       mov(w14, 0xFFFFFFFFu);
       stlxr(w15, w14, ptr(x12));
       cbnz(w15, retry_final_unlock);
+      if (audit_rtl_leave) {
+        EmitAtomicIncrement64(backend_->rtl_leave_final_inline_count());
+      }
       b(done);
 
       L(restore_slow);
@@ -2797,6 +2826,9 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       mov(w13, w11);
       rev(w13, w13);
       str(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+      if (audit_rtl_leave) {
+        EmitAtomicIncrement64(backend_->rtl_leave_restore_slow_count());
+      }
       b(slow);
     } else {
       b(LS, slow);
@@ -2804,6 +2836,9 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     }
 
     L(slow);
+    if (audit_rtl_leave) {
+      EmitAtomicIncrement64(backend_->rtl_leave_native_fallback_count());
+    }
     EmitKernelExternHostCall(function);
 
     L(done);

@@ -293,6 +293,11 @@ DEFINE_bool(
     "Thor ARM64 speed lane: after A64 counters have been active, log one "
     "guest thread snapshot when a later profile interval goes idle.",
     "a64");
+DEFINE_bool(
+    a64_rtl_leave_fastpath_audit, false,
+    "Thor ARM64 speed lane: count A64 RtlLeaveCriticalSection recursive, "
+    "final-unlock, restore-to-native, and native fallback paths.",
+    "a64");
 
 namespace xe {
 namespace cpu {
@@ -1158,6 +1163,9 @@ void A64Backend::StartSpeedProfiler() {
            cvars::arm64_context_traffic_audit_function,
            cvars::arm64_context_traffic_audit_budget);
   }
+  if (cvars::a64_rtl_leave_fastpath_audit) {
+    XELOGW("A64 RtlLeave fastpath audit enabled");
+  }
   speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
       std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });
 }
@@ -1299,6 +1307,27 @@ void A64Backend::LogSpeedProfile() {
       g2h.first, direct.second, direct.first, indirect.second, indirect.first,
       extern_calls.second, extern_calls.first, resolves.second, resolves.first,
       resolve_misses.second, resolve_misses.first);
+
+  if (cvars::a64_rtl_leave_fastpath_audit) {
+    auto recursive_inline =
+        load_delta(rtl_leave_recursive_inline_count_,
+                   last_rtl_leave_recursive_inline_count_);
+    auto final_inline =
+        load_delta(rtl_leave_final_inline_count_,
+                   last_rtl_leave_final_inline_count_);
+    auto restore_slow =
+        load_delta(rtl_leave_restore_slow_count_,
+                   last_rtl_leave_restore_slow_count_);
+    auto native_fallback =
+        load_delta(rtl_leave_native_fallback_count_,
+                   last_rtl_leave_native_fallback_count_);
+    XELOGW(
+        "A64 RtlLeave audit: recursive_inline={}/{} final_inline={}/{} "
+        "restore_slow={}/{} native_fallback={}/{}",
+        recursive_inline.second, recursive_inline.first, final_inline.second,
+        final_inline.first, restore_slow.second, restore_slow.first,
+        native_fallback.second, native_fallback.first);
+  }
 
   const bool interval_had_activity =
       entry_delta_total || h2g.second || g2h.second || direct.second ||

@@ -139,6 +139,18 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* speed_profile_extern_calls() {
     return &speed_profile_extern_calls_;
   }
+  std::atomic<uint64_t>* rtl_leave_recursive_inline_count() {
+    return &rtl_leave_recursive_inline_count_;
+  }
+  std::atomic<uint64_t>* rtl_leave_final_inline_count() {
+    return &rtl_leave_final_inline_count_;
+  }
+  std::atomic<uint64_t>* rtl_leave_restore_slow_count() {
+    return &rtl_leave_restore_slow_count_;
+  }
+  std::atomic<uint64_t>* rtl_leave_native_fallback_count() {
+    return &rtl_leave_native_fallback_count_;
+  }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
 
@@ -220,6 +232,10 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> speed_profile_extern_calls_{0};
   std::atomic<uint64_t> speed_profile_resolve_calls_{0};
   std::atomic<uint64_t> speed_profile_resolve_misses_{0};
+  std::atomic<uint64_t> rtl_leave_recursive_inline_count_{0};
+  std::atomic<uint64_t> rtl_leave_final_inline_count_{0};
+  std::atomic<uint64_t> rtl_leave_restore_slow_count_{0};
+  std::atomic<uint64_t> rtl_leave_native_fallback_count_{0};
   uint64_t last_speed_profile_host_to_guest_entries_ = 0;
   uint64_t last_speed_profile_guest_to_host_calls_ = 0;
   uint64_t last_speed_profile_direct_guest_calls_ = 0;
@@ -227,6 +243,10 @@ class A64Backend : public Backend {
   uint64_t last_speed_profile_extern_calls_ = 0;
   uint64_t last_speed_profile_resolve_calls_ = 0;
   uint64_t last_speed_profile_resolve_misses_ = 0;
+  uint64_t last_rtl_leave_recursive_inline_count_ = 0;
+  uint64_t last_rtl_leave_final_inline_count_ = 0;
+  uint64_t last_rtl_leave_restore_slow_count_ = 0;
+  uint64_t last_rtl_leave_native_fallback_count_ = 0;
   bool speed_profile_seen_activity_ = false;
   bool speed_profile_idle_snapshot_emitted_ = false;
 };
