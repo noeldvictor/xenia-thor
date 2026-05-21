@@ -147,6 +147,19 @@ Capture `scratch\thor-debug\20260521-170107-*` reached the opening
 The hot block PCs to classify next are `822824B8`, `822825F4`, `822824F0`,
 `822825E0`, `8228252C`, `82282490`, `82282600`, `822824EC`, and `822825C8`.
 
+HIR/disassembly capture `scratch\thor-debug\20260521-170941-*` classifies
+`82282490` as a large VMX-heavy routine, not a tiny helper. The visible slice
+is dominated by `load_context`, `store_context`, `byte_swap`, branches,
+`vmrghw` / `permute.2`, `vmsum4fp128` / `dot_product_4`, `stvx`, and `lvx`.
+The broad `arm64_vmx_dot_f32_fastpath` experiment is a negative result:
+`scratch\thor-debug\20260521-171859-*` black-idled with the toggle true, while
+same-APK capture `scratch\thor-debug\20260521-172247-*` reached the opening
+sky/dragon-wing scene with it false. Keep it default-off. Prefer
+semantics-preserving direct `PERMUTE_I32` / `vmrghw` lowering, exact
+byte-swap/store fusion, and vector state-traffic reduction before touching dot
+product again. See
+`docs/research/20260521-172826-blue-dragon-vmx-dot-negative.md`.
+
 Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
 interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,

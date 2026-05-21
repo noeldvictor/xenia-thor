@@ -213,6 +213,12 @@ DEFINE_bool(
     "title-specific.",
     "a64");
 DEFINE_bool(
+    arm64_vmx_dot_f32_fastpath, false,
+    "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
+    "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
+    "broad path black-idled Blue Dragon on 2026-05-21.",
+    "a64");
+DEFINE_bool(
     arm64_add_sub_imm_audit, false,
     "Thor ARM64 speed lane: log wrapped ADD/SUB immediate candidates without "
     "changing generated code. Research-only lowering audit.",

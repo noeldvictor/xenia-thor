@@ -39,6 +39,7 @@ DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
 DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
+DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
 namespace cpu {
@@ -4856,11 +4857,44 @@ EMITTER_OPCODE_TABLE(OPCODE_LOG2, LOG2_F32, LOG2_F64, LOG2_V128);
 // ============================================================================
 // OPCODE_DOT_PRODUCT_3
 // ============================================================================
+template <bool IncludeFourthLane>
+static void EmitDotProductF32Fastpath(A64Emitter& e, SReg dest,
+                                      const VReg& src1, const VReg& src2) {
+  e.fmul(VReg(2).s4, src1.s4, src2.s4);
+  e.dup(VReg(3).s4, VReg(2).s4[1]);
+  e.fadd(SReg(2), SReg(2), SReg(3));
+  e.dup(VReg(3).s4, VReg(2).s4[2]);
+  e.fadd(SReg(2), SReg(2), SReg(3));
+  if constexpr (IncludeFourthLane) {
+    e.dup(VReg(3).s4, VReg(2).s4[3]);
+    e.fadd(SReg(2), SReg(2), SReg(3));
+  }
+
+  e.fabs(SReg(3), SReg(2));
+  e.mov(e.w17, 0x7F800000u);
+  e.fmov(SReg(0), e.w17);
+  e.fcmp(SReg(3), SReg(0));
+  auto& not_inf = e.NewCachedLabel();
+  e.b(Xbyak_aarch64::NE, not_inf);
+  e.mov(e.w17, 0x7FC00000u);
+  e.fmov(SReg(2), e.w17);
+  e.L(not_inf);
+
+  e.fmov(dest, SReg(2));
+}
+
 struct DOT_PRODUCT_3_F32
     : Sequence<DOT_PRODUCT_3_F32,
                I<OPCODE_DOT_PRODUCT_3, F32Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     EmitWithVmxFpcr(e, [&] {
+      if (cvars::arm64_vmx_dot_f32_fastpath) {
+        int s1, s2;
+        PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+        EmitDotProductF32Fastpath<false>(e, i.dest, VReg(s1), VReg(s2));
+        return;
+      }
+
       int s1 = SrcVReg(e, i.src1, 0);
       int s2 = SrcVReg(e, i.src2, 1);
 
@@ -4893,6 +4927,15 @@ struct DOT_PRODUCT_3_V128
                I<OPCODE_DOT_PRODUCT_3, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     EmitWithVmxFpcr(e, [&] {
+      if (cvars::arm64_vmx_dot_f32_fastpath) {
+        int s1, s2;
+        PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+        int d = i.dest.reg().getIdx();
+        EmitDotProductF32Fastpath<false>(e, SReg(2), VReg(s1), VReg(s2));
+        e.dup(VReg(d).s4, VReg(2).s4[0]);
+        return;
+      }
+
       // Inline NEON: multiply in double precision, sum 3 elements, convert
       // back. Uses v0-v3 as scratch.
       int s1 = SrcVReg(e, i.src1, 0);
@@ -4937,6 +4980,13 @@ struct DOT_PRODUCT_4_F32
                I<OPCODE_DOT_PRODUCT_4, F32Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     EmitWithVmxFpcr(e, [&] {
+      if (cvars::arm64_vmx_dot_f32_fastpath) {
+        int s1, s2;
+        PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+        EmitDotProductF32Fastpath<true>(e, i.dest, VReg(s1), VReg(s2));
+        return;
+      }
+
       int s1 = SrcVReg(e, i.src1, 0);
       int s2 = SrcVReg(e, i.src2, 1);
 
@@ -4969,6 +5019,15 @@ struct DOT_PRODUCT_4_V128
                I<OPCODE_DOT_PRODUCT_4, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     EmitWithVmxFpcr(e, [&] {
+      if (cvars::arm64_vmx_dot_f32_fastpath) {
+        int s1, s2;
+        PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+        int d = i.dest.reg().getIdx();
+        EmitDotProductF32Fastpath<true>(e, SReg(2), VReg(s1), VReg(s2));
+        e.dup(VReg(d).s4, VReg(2).s4[0]);
+        return;
+      }
+
       // Inline NEON: multiply in double precision, sum all 4 elements.
       int s1 = SrcVReg(e, i.src1, 0);
       int s2 = SrcVReg(e, i.src2, 1);

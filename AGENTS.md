@@ -264,6 +264,18 @@ required.
   opening "Microsoft Game Studios Presents" scene; next speed work should
   classify `82282490` blocks `822824B8`, `822824F0`, `8228252C`, `822825E0`,
   `822825F4`, and `82282600` before changing codegen.
+- Current Blue Dragon VMX dot negative:
+  `docs/research/20260521-172826-blue-dragon-vmx-dot-negative.md`.
+  HIR/disassembly capture `scratch/thor-debug/20260521-170941-*` shows
+  `82282490` is a large VMX-heavy routine with repeated `vmsum4fp128` /
+  `dot_product_4`, `vmrghw` / `permute.2`, `lvx`, `stvx`, `byte_swap`, and
+  high vector context load/store traffic. The naive
+  `arm64_vmx_dot_f32_fastpath` shortcut is default-off: same-APK A/B capture
+  `scratch/thor-debug/20260521-171859-*` black-idled with the cvar true, while
+  `scratch/thor-debug/20260521-172247-*` reached the opening sky/dragon-wing
+  scene with it false. Prioritize semantics-preserving `PERMUTE_I32` /
+  `vmrghw`, `stvx` byte-swap/store fusion, and vector state traffic reductions
+  before trying another dot-product rewrite.
 
 ## Current Porting Priorities
 
