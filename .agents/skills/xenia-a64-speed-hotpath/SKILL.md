@@ -170,6 +170,13 @@ same-APK rollback run `scratch\thor-debug\20260521-173734-*` black-idled before
 body-time activated. See
 `docs/research/20260521-174106-blue-dragon-permute-i32-zip-fastpath.md`.
 
+Do not re-add the broad `PERMUTE_I32` lane-replace helper. Offline
+`82282490` HIR shows useful-looking non-zip masks, but the generic helper
+black-idled both `scratch\thor-debug\20260521-181513-*` and
+`scratch\thor-debug\20260521-181920-*` before `82282490` body-time activated.
+Retry only as an exact-mask experiment with correctness proof. See
+`docs/research/20260521-182124-permute-i32-lane-replace-negative.md`.
+
 Do not re-add the reverted non-constant swapped `STORE_V128` address-spill
 cleanup as a casual follow-up. The local change built, but
 `scratch\thor-debug\20260521-174627-*` black-idled before delayed body-time

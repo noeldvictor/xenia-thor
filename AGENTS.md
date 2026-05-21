@@ -307,6 +307,15 @@ required.
   `scratch/thor-debug/20260521-175626-*` black-idled with `entry_delta=0` from
   17:57:14 onward, so prefer low-noise compile-time audits for the next context
   sprint.
+- Reverted `PERMUTE_I32` lane-replace probe:
+  `docs/research/20260521-182124-permute-i32-lane-replace-negative.md`.
+  Offline `82282490` HIR still shows tempting non-zip masks, but the broad
+  generic lane-replace helper black-idled twice:
+  `scratch/thor-debug/20260521-181513-*` and
+  `scratch/thor-debug/20260521-181920-*`. Keep only the proven
+  `0x05010400`/`0x07030602` zip lowering default-on. Do not re-add generic
+  lane-replace `PERMUTE_I32` without an exact-mask correctness harness or a
+  route-clean opening-scene proof.
 
 ## Current Porting Priorities
 
