@@ -26,11 +26,116 @@ function Add-Count {
     }
 }
 
+function Get-ContextOffsetName {
+    param([int]$Offset)
+
+    if ($Offset -eq 0) {
+        return "thread_state"
+    }
+    if ($Offset -eq 8) {
+        return "virtual_membase"
+    }
+    if ($Offset -eq 16) {
+        return "lr"
+    }
+    if ($Offset -eq 24) {
+        return "ctr"
+    }
+    if ($Offset -ge 32 -and $Offset -lt 288) {
+        $index = [Math]::Floor(($Offset - 32) / 8)
+        $lane = ($Offset - 32) % 8
+        if ($lane -eq 0) {
+            return ("r[{0}]" -f $index)
+        }
+        return ("r[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 288 -and $Offset -lt 544) {
+        $index = [Math]::Floor(($Offset - 288) / 8)
+        $lane = ($Offset - 288) % 8
+        if ($lane -eq 0) {
+            return ("f[{0}]" -f $index)
+        }
+        return ("f[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 544 -and $Offset -lt 2592) {
+        $index = [Math]::Floor(($Offset - 544) / 16)
+        $lane = ($Offset - 544) % 16
+        if ($lane -eq 0) {
+            return ("v[{0}]" -f $index)
+        }
+        return ("v[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 2592 -and $Offset -lt 2596) {
+        $xerNames = @("xer_ca", "xer_ov", "xer_so", "xer_pad")
+        return $xerNames[$Offset - 2592]
+    }
+    if ($Offset -ge 2596 -and $Offset -lt 2628) {
+        $crIndex = [Math]::Floor(($Offset - 2596) / 4)
+        $fieldIndex = ($Offset - 2596) % 4
+        $fieldNames = @(
+            @("lt", "gt", "eq", "so"),
+            @("fx", "fex", "vx", "ox"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("all_equal", "1", "none_equal", "3"),
+            @("0", "1", "2", "3")
+        )
+        return ("cr{0}.{1}" -f $crIndex, $fieldNames[$crIndex][$fieldIndex])
+    }
+    if ($Offset -ge 2628 -and $Offset -lt 2632) {
+        return "fpscr"
+    }
+    if ($Offset -eq 2632) {
+        return "vscr_sat"
+    }
+    if ($Offset -eq 2636) {
+        return "thread_id"
+    }
+    if ($Offset -ge 2640) {
+        return "runtime_or_reservation"
+    }
+    return "unknown"
+}
+
+function Get-ContextOffsetClass {
+    param([int]$Offset)
+
+    $name = Get-ContextOffsetName $Offset
+    if ($name -match "^r\[") {
+        return "GPR"
+    }
+    if ($name -match "^f\[") {
+        return "FPR"
+    }
+    if ($name -match "^v\[") {
+        return "VMX"
+    }
+    if ($name -match "^cr") {
+        return "CR"
+    }
+    if ($name -match "^xer") {
+        return "XER"
+    }
+    if ($name -in @("lr", "ctr")) {
+        return "LR/CTR"
+    }
+    if ($name -in @("fpscr", "vscr_sat")) {
+        return "FP/VMX_STATUS"
+    }
+    if ($name -in @("thread_state", "virtual_membase", "thread_id", "runtime_or_reservation")) {
+        return "RUNTIME"
+    }
+    return "OTHER"
+}
+
 function Write-TopTable {
     param(
         [string]$Title,
         [hashtable]$Table,
-        [int]$Limit
+        [int]$Limit,
+        [switch]$AnnotateContextOffsets
     )
     Write-Output ""
     Write-Output "## $Title"
@@ -43,7 +148,12 @@ function Write-TopTable {
                               @{ Expression = "Name"; Ascending = $true } |
         Select-Object -First $Limit |
         ForEach-Object {
-            Write-Output ("{0} {1}" -f $_.Name, $_.Value)
+            if ($AnnotateContextOffsets -and $_.Name -match "^\+([0-9]+)$") {
+                $offset = [int]$Matches[1]
+                Write-Output ("{0} {1} {2}" -f $_.Name, (Get-ContextOffsetName $offset), $_.Value)
+            } else {
+                Write-Output ("{0} {1}" -f $_.Name, $_.Value)
+            }
         }
 }
 
@@ -59,6 +169,8 @@ $linePattern = "Filtered function dump $functionPattern $phasePattern`:\s+(?<tex
 $opCounts = @{}
 $contextLoadOffsets = @{}
 $contextStoreOffsets = @{}
+$contextLoadClasses = @{}
+$contextStoreClasses = @{}
 $permuteControls = @{}
 $memoryLoads = @{}
 $memoryStores = @{}
@@ -96,10 +208,14 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     Add-Count $opCounts $op
 
     if ($text -match "load_context \+([0-9]+)") {
-        Add-Count $contextLoadOffsets ("+" + $Matches[1])
+        $offset = [int]$Matches[1]
+        Add-Count $contextLoadOffsets ("+" + $offset)
+        Add-Count $contextLoadClasses (Get-ContextOffsetClass $offset)
     }
     if ($text -match "store_context \+([0-9]+)") {
-        Add-Count $contextStoreOffsets ("+" + $Matches[1])
+        $offset = [int]$Matches[1]
+        Add-Count $contextStoreOffsets ("+" + $offset)
+        Add-Count $contextStoreClasses (Get-ContextOffsetClass $offset)
     }
     if ($text -match "permute\.2\s+([0-9A-Fa-f]+)") {
         Add-Count $permuteControls ("0x" + $Matches[1].ToUpperInvariant())
@@ -158,8 +274,10 @@ Write-Output ("calls={0}" -f $calls)
 Write-Output ("context_barriers={0}" -f $contextBarriers)
 
 Write-TopTable "Opcode Top" $opCounts $Top
-Write-TopTable "Context Load Offsets" $contextLoadOffsets $Top
-Write-TopTable "Context Store Offsets" $contextStoreOffsets $Top
+Write-TopTable "Context Load Classes" $contextLoadClasses $Top
+Write-TopTable "Context Store Classes" $contextStoreClasses $Top
+Write-TopTable "Context Load Offsets" $contextLoadOffsets $Top -AnnotateContextOffsets
+Write-TopTable "Context Store Offsets" $contextStoreOffsets $Top -AnnotateContextOffsets
 Write-TopTable "PERMUTE_I32 Controls" $permuteControls $Top
 Write-TopTable "Memory Load Ops" $memoryLoads $Top
 Write-TopTable "Memory Store Ops" $memoryStores $Top

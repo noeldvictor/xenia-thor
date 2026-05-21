@@ -323,7 +323,13 @@ required.
   `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_hotpath_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20`.
   Current `82282490` OptHIR summary is `store_context=1415`,
   `load_context=763`, `dot_product_4=136`, `permutes=381`, and
-  `context_barriers=213`; state traffic remains the bigger target.
+  `context_barriers=213`. As of
+  `docs/research/20260521-195741-hir-context-offset-annotations.md`, the tool
+  annotates context offsets with PPC field names and class totals. `82282490`
+  OptHIR class totals are loads `GPR=546`, `VMX=155`, `FPR=38`, and stores
+  `GPR=562`, `VMX=373`, `CR=343`, `LR/CTR=68`. The next state-cache sprint
+  should start with GPR slots `r[1]`, `r[11]`, `r[10]`, `r[29]..r[31]` and CR6
+  stores before another vector micro-peephole.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

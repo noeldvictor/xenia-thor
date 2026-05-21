@@ -160,6 +160,14 @@ Known `82282490` OptHIR baseline from that tool:
 `context_barriers=213`. See
 `docs/research/20260521-182504-hir-hotpath-report-tool.md`.
 
+The report now annotates context offsets with PPC context field names. Current
+`82282490` class totals are loads `GPR=546`, `VMX=155`, `FPR=38`, and stores
+`GPR=562`, `VMX=373`, `CR=343`, `LR/CTR=68`. Top concrete state slots are
+`r[1]`, `r[11]`, `r[10]`, `r[29]..r[31]`, `v[0]`, `v[11]..v[13]`, and
+`cr6.all_equal/cr6.none_equal`. Use this to design a real state-cache or
+state-traffic pass before another isolated vector micro-peephole. See
+`docs/research/20260521-195741-hir-context-offset-annotations.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
