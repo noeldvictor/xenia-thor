@@ -43,6 +43,11 @@ class ContextPromotionPass : public CompilerPass {
  private:
   void PromoteBlock(hir::Block* block);
   void RemoveDeadStoresBlock(hir::Block* block);
+  bool TryGetContextValue(size_t offset, size_t size, hir::TypeName type,
+                          hir::Value** out_value) const;
+  void SetContextValueRange(size_t offset, size_t size, hir::Value* value);
+  bool IsContextRangeValid(size_t offset, size_t size) const;
+  void MarkContextRange(size_t offset, size_t size);
 
  private:
   std::vector<hir::Value*> context_values_;

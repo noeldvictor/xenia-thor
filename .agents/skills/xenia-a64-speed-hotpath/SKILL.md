@@ -177,6 +177,17 @@ activated, and the code was reverted before commit. Only retry it with an audit
 that proves `82282490` hits and a route-clean opening-scene capture. See
 `docs/research/20260521-175053-v128-store-address-spill-negative.md`.
 
+`ContextPromotionPass` is now range-aware for context load reuse and
+block-local context-store DSE. Keep the change as optimizer foundation, but do
+not treat it as a speed win: proof `scratch\thor-debug\20260521-180212-*`
+reached the opening sky/dragon-wing scene with APK SHA
+`3A9C1EF2FB39F2DA4ACFA1B8C969A06D106439DBBFF1556D3084D1AA7A3CDCF3`, while
+`82282490` stayed at `code_size=87168`. Runtime `82282490` context-audit
+capture `scratch\thor-debug\20260521-175626-*` black-idled before delayed
+body-time activated, so use low-noise compile-time summaries before another
+context/state-cache sprint. See
+`docs/research/20260521-180835-context-promotion-range-aware.md`.
+
 Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
 interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,

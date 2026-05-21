@@ -295,6 +295,18 @@ required.
   activated. The code was reverted before commit. Do not reintroduce this tiny
   store cleanup without a route-clean Blue Dragon opening-scene proof and an
   audit showing it actually shrinks `82282490`.
+- Range-aware context promotion foundation:
+  `docs/research/20260521-180835-context-promotion-range-aware.md`.
+  `ContextPromotionPass` now tracks full byte ranges for `LOAD_CONTEXT` reuse
+  and block-local `STORE_CONTEXT` DSE instead of using only the start offset.
+  Thor proof `scratch/thor-debug/20260521-180212-*` reached the opening
+  sky/dragon-wing scene with APK SHA
+  `3A9C1EF2FB39F2DA4ACFA1B8C969A06D106439DBBFF1556D3084D1AA7A3CDCF3`, but
+  `82282490` stayed at `code_size=87168`; count this as optimizer foundation,
+  not an FPS win. Runtime `82282490` context audit capture
+  `scratch/thor-debug/20260521-175626-*` black-idled with `entry_delta=0` from
+  17:57:14 onward, so prefer low-noise compile-time audits for the next context
+  sprint.
 
 ## Current Porting Priorities
 
@@ -1520,6 +1532,15 @@ required.
   presets forcing them off unless explicitly overridden. When touching CR
   triplet lowering, preserve the interleaved `cset`/`strb` order because HIR
   compare values can share one host register.
+- Range-aware context promotion foundation:
+  `docs/research/20260521-180835-context-promotion-range-aware.md`.
+  The pass now records full context byte ranges for load reuse and block-local
+  store DSE. Blue Dragon proof `scratch/thor-debug/20260521-180212-*` reached
+  the opening sky/dragon-wing scene, but `82282490 code_size` stayed `87168`;
+  this is scaffolding for a real state cache, not the state cache itself. Avoid
+  using runtime `82282490` context-audit captures as speed evidence for this
+  route because `scratch/thor-debug/20260521-175626-*` black-idled before body
+  time activated.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

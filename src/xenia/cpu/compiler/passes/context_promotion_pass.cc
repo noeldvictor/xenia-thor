@@ -100,22 +100,23 @@ void ContextPromotionPass::PromoteBlock(Block* block) {
       validity.reset();
     } else if (i->opcode == &OPCODE_LOAD_CONTEXT_info) {
       size_t offset = i->src1.offset;
-      if (validity.test(static_cast<uint32_t>(offset))) {
+      size_t size = i->dest ? GetTypeSize(i->dest->type) : 1;
+      Value* previous_value = nullptr;
+      if (i->dest &&
+          TryGetContextValue(offset, size, i->dest->type, &previous_value)) {
         // Legit previous value, reuse.
-        Value* previous_value = context_values_[offset];
         i->opcode = &hir::OPCODE_ASSIGN_info;
         i->set_src1(previous_value);
       } else {
         // Store the loaded value into the table.
-        context_values_[offset] = i->dest;
-        validity.set(static_cast<uint32_t>(offset));
+        SetContextValueRange(offset, size, i->dest);
       }
     } else if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
       size_t offset = i->src1.offset;
       Value* value = i->src2.value;
+      size_t size = value ? GetTypeSize(value->type) : 1;
       // Store value into the table for later.
-      context_values_[offset] = value;
-      validity.set(static_cast<uint32_t>(offset));
+      SetContextValueRange(offset, size, value);
     }
     i = next;
   }
@@ -135,15 +136,79 @@ void ContextPromotionPass::RemoveDeadStoresBlock(Block* block) {
       validity.reset();
     } else if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
       size_t offset = i->src1.offset;
-      if (!validity.test(static_cast<uint32_t>(offset))) {
+      Value* value = i->src2.value;
+      size_t size = value ? GetTypeSize(value->type) : 1;
+      if (!IsContextRangeValid(offset, size)) {
         // Offset not yet written, mark and continue.
-        validity.set(static_cast<uint32_t>(offset));
+        MarkContextRange(offset, size);
       } else {
         // Already written to. Remove this store.
         i->Remove();
       }
     }
     i = prev;
+  }
+}
+
+bool ContextPromotionPass::TryGetContextValue(size_t offset, size_t size,
+                                              TypeName type,
+                                              Value** out_value) const {
+  if (size == 0 || offset + size > context_values_.size()) {
+    return false;
+  }
+
+  Value* value = nullptr;
+  for (size_t n = 0; n < size; ++n) {
+    uint32_t byte_offset = static_cast<uint32_t>(offset + n);
+    if (!context_validity_.test(byte_offset)) {
+      return false;
+    }
+    Value* byte_value = context_values_[offset + n];
+    if (!byte_value || byte_value->type != type) {
+      return false;
+    }
+    if (!value) {
+      value = byte_value;
+    } else if (value != byte_value) {
+      return false;
+    }
+  }
+
+  *out_value = value;
+  return value != nullptr;
+}
+
+void ContextPromotionPass::SetContextValueRange(size_t offset, size_t size,
+                                                Value* value) {
+  if (!value || size == 0 || offset + size > context_values_.size()) {
+    return;
+  }
+  for (size_t n = 0; n < size; ++n) {
+    size_t byte_offset = offset + n;
+    context_values_[byte_offset] = value;
+    context_validity_.set(static_cast<uint32_t>(byte_offset));
+  }
+}
+
+bool ContextPromotionPass::IsContextRangeValid(size_t offset,
+                                               size_t size) const {
+  if (size == 0 || offset + size > context_values_.size()) {
+    return false;
+  }
+  for (size_t n = 0; n < size; ++n) {
+    if (!context_validity_.test(static_cast<uint32_t>(offset + n))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ContextPromotionPass::MarkContextRange(size_t offset, size_t size) {
+  if (size == 0 || offset + size > context_values_.size()) {
+    return;
+  }
+  for (size_t n = 0; n < size; ++n) {
+    context_validity_.set(static_cast<uint32_t>(offset + n));
   }
 }
 
