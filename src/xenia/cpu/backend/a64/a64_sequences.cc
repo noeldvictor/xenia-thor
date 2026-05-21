@@ -36,6 +36,9 @@ DECLARE_uint32(arm64_add_i64_wrapped_imm_fastpath_function);
 DECLARE_bool(arm64_immediate_lowering_audit);
 DECLARE_uint32(arm64_immediate_lowering_audit_function);
 DECLARE_uint32(arm64_immediate_lowering_audit_budget);
+DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
+DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
+DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
 
 namespace xe {
 namespace cpu {
@@ -5559,18 +5562,71 @@ static bool IsPpcCrLtGtEqStoreTriplet(uint32_t lt_offset, uint32_t gt_offset,
          ((lt_offset - cr_base) & 3) == 0;
 }
 
-static const hir::Instr* BranchOnValue(const hir::Instr* instr,
-                                       const hir::Value* value) {
-  if (!instr || instr->src1.value != value) {
+static const hir::Instr* BranchOnCompareValue(const hir::Instr* instr,
+                                              const hir::Value* a,
+                                              Cond a_cond,
+                                              const hir::Value* b,
+                                              Cond b_cond,
+                                              const hir::Value* c,
+                                              Cond c_cond,
+                                              Cond* out_true_cond) {
+  const bool broaden_branch_match =
+      cvars::arm64_cr_compare_branch_across_context_barrier;
+  if (broaden_branch_match && instr &&
+      instr->GetOpcodeNum() == hir::OPCODE_CONTEXT_BARRIER) {
+    instr = instr->next;
+  }
+  if (!instr) {
     return nullptr;
   }
   switch (instr->GetOpcodeNum()) {
     case hir::OPCODE_BRANCH_TRUE:
     case hir::OPCODE_BRANCH_FALSE:
-      return instr;
+      break;
     default:
       return nullptr;
   }
+  const hir::Value* branch_value = instr->src1.value;
+  if (!broaden_branch_match) {
+    if (branch_value == c) {
+      *out_true_cond = c_cond;
+      return instr;
+    }
+    return nullptr;
+  }
+  if (branch_value == a) {
+    *out_true_cond = a_cond;
+    return instr;
+  }
+  if (branch_value == b) {
+    *out_true_cond = b_cond;
+    return instr;
+  }
+  if (branch_value == c) {
+    *out_true_cond = c_cond;
+    return instr;
+  }
+  return nullptr;
+}
+
+static void EmitBranchOnCompareValue(A64Emitter* e, const hir::Instr* branch,
+                                     Cond true_cond) {
+  auto false_cond =
+      static_cast<Cond>((static_cast<uint32_t>(true_cond) ^ 1u) & 0xFu);
+  auto& target = e->GetLabel(branch->src2.label->id);
+  e->b(branch->GetOpcodeNum() == hir::OPCODE_BRANCH_TRUE ? true_cond
+                                                         : false_cond,
+       target);
+}
+
+static bool ShouldElideCrStoresForFusedBranch(const A64Emitter& e,
+                                              const hir::Instr* branch) {
+  if (!branch || !cvars::arm64_cr_store_elide_for_fused_branch) {
+    return false;
+  }
+  uint32_t function_filter =
+      cvars::arm64_cr_store_elide_for_fused_branch_function;
+  return !function_filter || function_filter == e.current_guest_function();
 }
 
 static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
@@ -5752,10 +5808,16 @@ static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
     return false;
   }
 
-  const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
+  Cond branch_true_cond = Xbyak_aarch64::EQ;
+  const hir::Instr* branch = BranchOnCompareValue(
+      eq_store->next, instr->dest,
+      is_signed ? Xbyak_aarch64::LT : Xbyak_aarch64::LO, gt_compare->dest,
+      is_signed ? Xbyak_aarch64::GT : Xbyak_aarch64::HI, eq_compare->dest,
+      Xbyak_aarch64::EQ, &branch_true_cond);
   if (!EmitIntegerCompareFlags(*e, instr)) {
     return false;
   }
+  const bool elide_cr_stores = ShouldElideCrStoresForFusedBranch(*e, branch);
 
   // Later HIR can still read these compare values. Emit the same cset results
   // into their assigned value registers, then skip only the redundant compare
@@ -5766,19 +5828,20 @@ static bool TrySelectIntegerCrTripletCompareStores(A64Emitter* e,
   A64Emitter::SetupReg(instr->dest, lt_reg);
   A64Emitter::SetupReg(gt_compare->dest, gt_reg);
   A64Emitter::SetupReg(eq_compare->dest, eq_reg);
-  e->cset(lt_reg, is_signed ? Xbyak_aarch64::LT : Xbyak_aarch64::LO);
-  e->strb(lt_reg, ptr(e->GetContextReg(), lt_offset));
-  e->cset(gt_reg, is_signed ? Xbyak_aarch64::GT : Xbyak_aarch64::HI);
-  e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
-  e->cset(eq_reg, Xbyak_aarch64::EQ);
-  e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  if (elide_cr_stores) {
+    e->cset(lt_reg, is_signed ? Xbyak_aarch64::LT : Xbyak_aarch64::LO);
+    e->cset(gt_reg, is_signed ? Xbyak_aarch64::GT : Xbyak_aarch64::HI);
+    e->cset(eq_reg, Xbyak_aarch64::EQ);
+  } else {
+    e->cset(lt_reg, is_signed ? Xbyak_aarch64::LT : Xbyak_aarch64::LO);
+    e->strb(lt_reg, ptr(e->GetContextReg(), lt_offset));
+    e->cset(gt_reg, is_signed ? Xbyak_aarch64::GT : Xbyak_aarch64::HI);
+    e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
+    e->cset(eq_reg, Xbyak_aarch64::EQ);
+    e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  }
   if (branch) {
-    auto& target = e->GetLabel(branch->src2.label->id);
-    if (branch->GetOpcodeNum() == hir::OPCODE_BRANCH_TRUE) {
-      e->b(Xbyak_aarch64::EQ, target);
-    } else {
-      e->b(Xbyak_aarch64::NE, target);
-    }
+    EmitBranchOnCompareValue(e, branch, branch_true_cond);
     *new_tail = branch->next;
   } else {
     *new_tail = eq_store->next;
@@ -5814,10 +5877,15 @@ static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
     return false;
   }
 
-  const hir::Instr* branch = BranchOnValue(eq_store->next, eq_compare->dest);
+  Cond branch_true_cond = Xbyak_aarch64::EQ;
+  const hir::Instr* branch =
+      BranchOnCompareValue(eq_store->next, nullptr, Xbyak_aarch64::EQ,
+                           instr->dest, Xbyak_aarch64::HI, eq_compare->dest,
+                           Xbyak_aarch64::EQ, &branch_true_cond);
   if (!EmitIntegerCompareFlags(*e, instr)) {
     return false;
   }
+  const bool elide_cr_stores = ShouldElideCrStoresForFusedBranch(*e, branch);
 
   // Preserve the materialized compare values for any later users while
   // collapsing the adjacent CR stores to one flags-producing compare.
@@ -5825,17 +5893,17 @@ static bool TrySelectUnsignedGtEqCompareStores(A64Emitter* e,
   WReg eq_reg(0);
   A64Emitter::SetupReg(instr->dest, gt_reg);
   A64Emitter::SetupReg(eq_compare->dest, eq_reg);
-  e->cset(gt_reg, Xbyak_aarch64::HI);
-  e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
-  e->cset(eq_reg, Xbyak_aarch64::EQ);
-  e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  if (elide_cr_stores) {
+    e->cset(gt_reg, Xbyak_aarch64::HI);
+    e->cset(eq_reg, Xbyak_aarch64::EQ);
+  } else {
+    e->cset(gt_reg, Xbyak_aarch64::HI);
+    e->strb(gt_reg, ptr(e->GetContextReg(), gt_offset));
+    e->cset(eq_reg, Xbyak_aarch64::EQ);
+    e->strb(eq_reg, ptr(e->GetContextReg(), eq_offset));
+  }
   if (branch) {
-    auto& target = e->GetLabel(branch->src2.label->id);
-    if (branch->GetOpcodeNum() == hir::OPCODE_BRANCH_TRUE) {
-      e->b(Xbyak_aarch64::EQ, target);
-    } else {
-      e->b(Xbyak_aarch64::NE, target);
-    }
+    EmitBranchOnCompareValue(e, branch, branch_true_cond);
     *new_tail = branch->next;
   } else {
     *new_tail = eq_store->next;

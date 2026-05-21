@@ -156,6 +156,10 @@ param(
     [string]$Arm64ImmediateLoweringAuditFunction = "",
     [string]$Arm64ImmediateLoweringAuditBudget = "",
     [string]$Arm64ContextValueCache = "",
+    [string]$Arm64ContextValueCacheFallthrough = "",
+    [string]$Arm64CrCompareBranchAcrossContextBarrier = "",
+    [string]$Arm64CrStoreElideForFusedBranch = "",
+    [string]$Arm64CrStoreElideForFusedBranchFunction = "",
     [string]$Arm64ContextTrafficAudit = "false",
     [string]$Arm64ContextTrafficAuditFunction = "",
     [string]$Arm64ContextTrafficAuditBudget = "",
@@ -854,6 +858,18 @@ function Start-XeniaEmulator {
     if ($Arm64ContextValueCache) {
         $parts += "--ez arm64_context_value_cache $(ConvertTo-BooleanText $Arm64ContextValueCache)"
     }
+    if ($Arm64ContextValueCacheFallthrough) {
+        $parts += "--ez arm64_context_value_cache_fallthrough $(ConvertTo-BooleanText $Arm64ContextValueCacheFallthrough)"
+    }
+    if ($Arm64CrCompareBranchAcrossContextBarrier) {
+        $parts += "--ez arm64_cr_compare_branch_across_context_barrier $(ConvertTo-BooleanText $Arm64CrCompareBranchAcrossContextBarrier)"
+    }
+    if ($Arm64CrStoreElideForFusedBranch) {
+        $parts += "--ez arm64_cr_store_elide_for_fused_branch $(ConvertTo-BooleanText $Arm64CrStoreElideForFusedBranch)"
+    }
+    if ($Arm64CrStoreElideForFusedBranchFunction) {
+        $parts += "--ei arm64_cr_store_elide_for_fused_branch_function $(ConvertTo-AdbIntText $Arm64CrStoreElideForFusedBranchFunction)"
+    }
     if ($Arm64ContextTrafficAudit) {
         $parts += "--ez arm64_context_traffic_audit $(ConvertTo-BooleanText $Arm64ContextTrafficAudit)"
     }
@@ -1014,6 +1030,10 @@ function Write-CaptureMetadata {
         "arm64_immediate_lowering_audit_function=$Arm64ImmediateLoweringAuditFunction",
         "arm64_immediate_lowering_audit_budget=$Arm64ImmediateLoweringAuditBudget",
         "arm64_context_value_cache=$Arm64ContextValueCache",
+        "arm64_context_value_cache_fallthrough=$Arm64ContextValueCacheFallthrough",
+        "arm64_cr_compare_branch_across_context_barrier=$Arm64CrCompareBranchAcrossContextBarrier",
+        "arm64_cr_store_elide_for_fused_branch=$Arm64CrStoreElideForFusedBranch",
+        "arm64_cr_store_elide_for_fused_branch_function=$Arm64CrStoreElideForFusedBranchFunction",
         "arm64_context_traffic_audit=$Arm64ContextTrafficAudit",
         "arm64_context_traffic_audit_function=$Arm64ContextTrafficAuditFunction",
         "arm64_context_traffic_audit_budget=$Arm64ContextTrafficAuditBudget",
@@ -1238,6 +1258,9 @@ function Set-DefaultIfNotBound {
 
 function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
+    Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
+    Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
+    Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitProbe" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitFastpath" "true"
@@ -1309,9 +1332,11 @@ function Use-BlueDragonSpeedDefaults {
     $script:DisassembleFunctions = "false"
     $script:XmaTraceContextState = "false"
     $script:ClearMemoryPageState = "false"
-    $script:LogLevel = "0"
-    if ($script:Arm64SpeedProfileIntervalMs) {
-        $script:LogLevel = "1"
+    if (!$script:RootBoundParameters.ContainsKey("LogLevel")) {
+        $script:LogLevel = "0"
+        if ($script:Arm64SpeedProfileIntervalMs) {
+            $script:LogLevel = "1"
+        }
     }
     $script:VulkanForceSigned2101010UnormFallback = "true"
     $script:VulkanForce2101010Rgba8Fallback = "false"
@@ -1411,14 +1436,19 @@ function Use-BlueDragonSpeedDefaults {
 
 function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
+    Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
+    Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
+    Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""
     $script:VulkanForceSigned2101010UnormFallback = "false"
     $script:VulkanForce2101010Rgba8Fallback = "false"
-    $script:LogLevel = "0"
-    if ($script:Arm64SpeedProfileIntervalMs) {
-        $script:LogLevel = "1"
+    if (!$script:RootBoundParameters.ContainsKey("LogLevel")) {
+        $script:LogLevel = "0"
+        if ($script:Arm64SpeedProfileIntervalMs) {
+            $script:LogLevel = "1"
+        }
     }
 }
 

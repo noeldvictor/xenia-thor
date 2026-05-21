@@ -1438,6 +1438,18 @@ required.
   `scratch/thor-debug/20260520-182128-*`, but `8272A3A4 code_size` stayed
   `12544`; do not count it as a measured hot-path win. Next target is a CR
   shape hit audit plus a narrow GPR context-cache experiment, not GPU work.
+- A64 state-cache / CR branch negative result:
+  `docs/research/20260521-153300-a64-context-cache-cr-branch-negative.md`.
+  The fallthrough context-value cache found zero `8272A3A4` load hits
+  (`loads/hits=255/0`, `fallthrough_preserves=0`). Broadening CR
+  compare/branch fusion across `context_barrier`, and eliding CR stores before
+  a fused branch, both caused Blue Dragon guest crashes. Keep
+  `arm64_context_value_cache_fallthrough`,
+  `arm64_cr_compare_branch_across_context_barrier`, and
+  `arm64_cr_store_elide_for_fused_branch` default-off, and keep Blue Dragon
+  presets forcing them off unless explicitly overridden. When touching CR
+  triplet lowering, preserve the interleaved `cset`/`strb` order because HIR
+  compare values can share one host register.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

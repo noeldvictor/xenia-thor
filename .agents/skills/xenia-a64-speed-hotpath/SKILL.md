@@ -325,6 +325,21 @@ state-cache step must be a cross-block PPC GPR/CR cache with helper, exit,
 exception, and aliasing flush rules. See
 `docs/research/20260520-192930-a64-context-cache-and-spinlock-fastpaths.md`.
 
+The 2026-05-21 fallthrough context-cache extension is also a negative result.
+Even with `arm64_context_value_cache=true` and
+`arm64_context_value_cache_fallthrough=true`, `8272A3A4` still reported
+`loads/hits=255/0` and `fallthrough_preserves=0`. Keep both cache cvars forced
+off in Blue Dragon presets unless a run explicitly asks for them.
+
+Do not enable `arm64_cr_compare_branch_across_context_barrier` or
+`arm64_cr_store_elide_for_fused_branch` in the Blue Dragon speed pack. The HIR
+dump showed tempting `compare -> CR store triplet -> context_barrier -> branch`
+shapes, but broadening CR branch fusion across the barrier and eliding CR
+stores caused guest crashes. The safe CR triplet path must keep interleaved
+`cset`/`strb` ordering because multiple compare values can share one host
+register. See
+`docs/research/20260521-153300-a64-context-cache-cr-branch-negative.md`.
+
 Raised-IRQL spinlock exports are now an HLE/JIT speed lane. The A64 backend
 inlines `KeAcquireSpinLockAtRaisedIrql`,
 `KeTryToAcquireSpinLockAtRaisedIrql`, and

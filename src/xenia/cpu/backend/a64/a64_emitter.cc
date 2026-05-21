@@ -73,6 +73,7 @@ DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
+DECLARE_bool(arm64_context_value_cache_fallthrough);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
@@ -236,19 +237,30 @@ struct A64ContextValueCacheStats {
   uint32_t offset_invalidations = 0;
   uint32_t register_invalidations = 0;
   uint32_t safety_resets = 0;
+  uint32_t block_resets = 0;
+  uint32_t barrier_resets = 0;
+  uint32_t fallthrough_preserves = 0;
 };
 
 class A64ContextValueCache {
  public:
-  explicit A64ContextValueCache(bool enabled) : enabled_(enabled) { Reset(); }
+  explicit A64ContextValueCache(bool enabled, bool fallthrough_enabled)
+      : enabled_(enabled),
+        fallthrough_enabled_(enabled && fallthrough_enabled) {
+    Reset();
+  }
 
   const A64ContextValueCacheStats& stats() const { return stats_; }
 
-  void ResetBlock() {
+  void ResetBlock(const xe::cpu::hir::Block* block) {
     if (!enabled_) {
       return;
     }
-    Reset();
+    if (fallthrough_enabled_ && CanPreserveIntoBlock(block)) {
+      ++stats_.fallthrough_preserves;
+      return;
+    }
+    ResetWithReason(&stats_.block_resets);
   }
 
   bool TryEmitLoad(xe::cpu::backend::a64::A64Emitter& e,
@@ -301,7 +313,7 @@ class A64ContextValueCache {
         cursor = cursor->next;
       }
       if (!cursor) {
-        ResetWithReason();
+        ResetWithReason(&stats_.safety_resets);
       }
       return;
     }
@@ -322,6 +334,9 @@ class A64ContextValueCache {
     }
 
     switch (instr->GetOpcodeNum()) {
+      case OPCODE_CONTEXT_BARRIER:
+        ResetWithReason(&stats_.barrier_resets);
+        return;
       case OPCODE_LOAD_CONTEXT: {
         if (!instr->dest || instr->dest->type != INT64_TYPE) {
           break;
@@ -374,8 +389,28 @@ class A64ContextValueCache {
     }
 
     if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
-      ResetWithReason();
+      if (fallthrough_enabled_ &&
+          (instr->GetOpcodeNum() == OPCODE_BRANCH_TRUE ||
+           instr->GetOpcodeNum() == OPCODE_BRANCH_FALSE)) {
+        return;
+      }
+      ResetWithReason(&stats_.safety_resets);
     }
+  }
+
+  static bool IsConditionalBranchTail(const xe::cpu::hir::Instr* instr) {
+    using namespace xe::cpu::hir;
+    return instr &&
+           (instr->GetOpcodeNum() == OPCODE_BRANCH_TRUE ||
+            instr->GetOpcodeNum() == OPCODE_BRANCH_FALSE);
+  }
+
+  static bool CanPreserveIntoBlock(const xe::cpu::hir::Block* block) {
+    if (!block || !block->prev || block->label_head ||
+        block->incoming_edge_head) {
+      return false;
+    }
+    return IsConditionalBranchTail(block->prev->instr_tail);
   }
 
   static bool IsIntegerType(xe::cpu::hir::TypeName type) {
@@ -422,13 +457,13 @@ class A64ContextValueCache {
     }
   }
 
-  void ResetWithReason() {
+  void ResetWithReason(uint32_t* counter) {
     bool had_entries = false;
     for (const auto& entry : entries_) {
       had_entries |= entry.valid;
     }
-    if (had_entries) {
-      ++stats_.safety_resets;
+    if (had_entries && counter) {
+      ++(*counter);
     }
     Reset();
   }
@@ -467,6 +502,7 @@ class A64ContextValueCache {
   }
 
   bool enabled_ = false;
+  bool fallthrough_enabled_ = false;
   std::array<Entry, 32> entries_;
   A64ContextValueCacheStats stats_;
 };
@@ -2042,12 +2078,13 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   auto block = builder->first_block();
   synchronize_stack_on_next_instruction_ = false;
   A64ContextValueCache context_value_cache(
-      cvars::arm64_context_value_cache);
+      cvars::arm64_context_value_cache,
+      cvars::arm64_context_value_cache_fallthrough);
   while (block) {
     // Reset FPCR tracking on each block entry (we don't know which
     // predecessor ran, so mode is unknown).
     ForgetFpcrMode();
-    context_value_cache.ResetBlock();
+    context_value_cache.ResetBlock(block);
 
     // Bind all labels targeting this block.
     auto label = block->label_head;
@@ -2095,11 +2132,14 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
       cache_stats.eligible_loads) {
     XELOGW(
         "A64 context value cache: fn {:08X} loads/hits={}/{} "
-        "stores/cached={}/{} invalid offset/reg={}/{} resets={}",
+        "stores/cached={}/{} invalid offset/reg={}/{} "
+        "resets safety/block/barrier={}/{}/{} fallthrough_preserves={}",
         current_guest_function_, cache_stats.eligible_loads,
         cache_stats.load_hits, cache_stats.eligible_stores,
         cache_stats.store_caches, cache_stats.offset_invalidations,
-        cache_stats.register_invalidations, cache_stats.safety_resets);
+        cache_stats.register_invalidations, cache_stats.safety_resets,
+        cache_stats.block_resets, cache_stats.barrier_resets,
+        cache_stats.fallthrough_preserves);
   }
   }
 

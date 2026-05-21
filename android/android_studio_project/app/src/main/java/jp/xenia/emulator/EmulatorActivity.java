@@ -234,6 +234,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_immediate_lowering_audit_budget");
             copyBooleanExtra(intent, launchArguments, "arm64_context_value_cache");
+            copyBooleanExtra(intent, launchArguments, "arm64_context_value_cache_fallthrough");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_cr_compare_branch_across_context_barrier");
+            copyBooleanExtra(intent, launchArguments, "arm64_cr_store_elide_for_fused_branch");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_cr_store_elide_for_fused_branch_function");
             copyBooleanExtra(intent, launchArguments, "arm64_context_traffic_audit");
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_budget");

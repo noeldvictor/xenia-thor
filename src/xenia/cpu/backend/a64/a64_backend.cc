@@ -245,6 +245,29 @@ DEFINE_bool(
     "Research-only emit-time cache.",
     "a64");
 DEFINE_bool(
+    arm64_context_value_cache_fallthrough, false,
+    "Thor ARM64 speed lane: keep the context value cache across unlabeled "
+    "fallthrough HIR blocks after conditional branches. Requires "
+    "arm64_context_value_cache. Research-only emit-time cache experiment.",
+    "a64");
+DEFINE_bool(
+    arm64_cr_compare_branch_across_context_barrier, false,
+    "Thor ARM64 speed lane: let CR compare/store peepholes fuse an immediate "
+    "branch separated only by a no-op HIR context_barrier. Research-only "
+    "PPC CR branch lowering. Default-off after Blue Dragon guest crash.",
+    "a64");
+DEFINE_bool(
+    arm64_cr_store_elide_for_fused_branch, false,
+    "Thor ARM64 speed lane: when a CR compare/store peephole also fuses the "
+    "immediate branch consuming that compare, skip the PPC CR context stores. "
+    "Research-only and unsafe outside targeted experiments.",
+    "a64");
+DEFINE_uint32(
+    arm64_cr_store_elide_for_fused_branch_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "arm64_cr_store_elide_for_fused_branch. 0 enables all functions.",
+    "a64");
+DEFINE_bool(
     arm64_context_traffic_audit, false,
     "Thor ARM64 speed lane: log HIR context/local/memory traffic summaries "
     "for compiled functions. Research-only lowering audit.",
@@ -1161,6 +1184,16 @@ void A64Backend::StartSpeedProfiler() {
   }
   if (cvars::arm64_context_value_cache) {
     XELOGW("A64 context value cache enabled");
+  }
+  if (cvars::arm64_context_value_cache_fallthrough) {
+    XELOGW("A64 context value cache fallthrough preservation enabled");
+  }
+  if (cvars::arm64_cr_compare_branch_across_context_barrier) {
+    XELOGW("A64 CR compare/branch barrier fusion enabled");
+  }
+  if (cvars::arm64_cr_store_elide_for_fused_branch) {
+    XELOGW("A64 CR store elide for fused branch enabled: function={:08X}",
+           cvars::arm64_cr_store_elide_for_fused_branch_function);
   }
   if (cvars::arm64_context_traffic_audit) {
     XELOGW("A64 context traffic audit enabled: function={:08X} budget={}",
