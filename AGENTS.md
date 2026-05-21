@@ -316,6 +316,14 @@ required.
   `0x05010400`/`0x07030602` zip lowering default-on. Do not re-add generic
   lane-replace `PERMUTE_I32` without an exact-mask correctness harness or a
   route-clean opening-scene proof.
+- Offline HIR hotpath report tool:
+  `docs/research/20260521-182504-hir-hotpath-report-tool.md`.
+  Use `tools/thor/thor_hir_hotpath_report.ps1` on filtered function-dump logs
+  before guessing at another `82282490` patch. Known command:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_hotpath_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20`.
+  Current `82282490` OptHIR summary is `store_context=1415`,
+  `load_context=763`, `dot_product_4=136`, `permutes=381`, and
+  `context_barriers=213`; state traffic remains the bigger target.
 
 ## Current Porting Priorities
 

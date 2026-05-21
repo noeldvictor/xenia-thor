@@ -147,6 +147,19 @@ Capture `scratch\thor-debug\20260521-170107-*` reached the opening
 The hot block PCs to classify next are `822824B8`, `822825F4`, `822824F0`,
 `822825E0`, `8228252C`, `82282490`, `82282600`, `822824EC`, and `822825C8`.
 
+Use the offline HIR hotpath report before another `82282490` edit when a
+filtered dump exists:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_hotpath_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20
+```
+
+Known `82282490` OptHIR baseline from that tool:
+`hir_lines=6799`, `store_context=1415`, `load_context=763`,
+`dot_product_4=136`, `permutes=381`, `permute.2=236`, and
+`context_barriers=213`. See
+`docs/research/20260521-182504-hir-hotpath-report-tool.md`.
+
 HIR/disassembly capture `scratch\thor-debug\20260521-170941-*` classifies
 `82282490` as a large VMX-heavy routine, not a tiny helper. The visible slice
 is dominated by `load_context`, `store_context`, `byte_swap`, branches,
