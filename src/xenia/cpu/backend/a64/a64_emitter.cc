@@ -94,6 +94,11 @@ DEFINE_bool(a64_inline_kernel_spinlock_exports, true,
             "A64 backend. Experimental.",
             "a64");
 DEFINE_bool(
+    a64_inline_rtl_leave_final_unlock, true,
+    "Inline the uncontended final RtlLeaveCriticalSection unlock in the A64 "
+    "backend. Experimental.",
+    "a64");
+DEFINE_bool(
     a64_inline_kf_lower_irql, false,
     "Inline KfLowerIrql by restoring the processor IRQL directly. "
     "Experimental; skips the native APC delivery check.",
@@ -2743,20 +2748,60 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     ldr(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
     rev(w13, w13);
     cmp(w13, 1);
-    b(LS, slow);
 
-    sub(w13, w13, 1);
-    rev(w13, w13);
-    str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+    auto emit_recursive_release = [&]() {
+      sub(w13, w13, 1);
+      rev(w13, w13);
+      str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
 
-    add(x12, x9, kRtlCriticalSectionLockCountOffset);
-    auto& retry_dec_lock = NewCachedLabel();
-    L(retry_dec_lock);
-    ldaxr(w13, ptr(x12));
-    sub(w13, w13, 1);
-    stlxr(w14, w13, ptr(x12));
-    cbnz(w14, retry_dec_lock);
-    b(done);
+      add(x12, x9, kRtlCriticalSectionLockCountOffset);
+      auto& retry_dec_lock = NewCachedLabel();
+      L(retry_dec_lock);
+      ldaxr(w13, ptr(x12));
+      sub(w13, w13, 1);
+      stlxr(w14, w13, ptr(x12));
+      cbnz(w14, retry_dec_lock);
+      b(done);
+    };
+
+    if (cvars::a64_inline_rtl_leave_final_unlock) {
+      auto& final_release = NewCachedLabel();
+      b(EQ, final_release);
+      b(LO, slow);
+
+      emit_recursive_release();
+
+      L(final_release);
+      add(x12, x9, kRtlCriticalSectionLockCountOffset);
+      ldr(w13, ptr(x12));
+      cbnz(w13, slow);
+
+      str(wzr, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      str(wzr, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+
+      auto& retry_final_unlock = NewCachedLabel();
+      auto& restore_slow = NewCachedLabel();
+      L(retry_final_unlock);
+      ldaxr(w13, ptr(x12));
+      cbnz(w13, restore_slow);
+      mov(w14, 0xFFFFFFFFu);
+      stlxr(w15, w14, ptr(x12));
+      cbnz(w15, retry_final_unlock);
+      b(done);
+
+      L(restore_slow);
+      clrex(15);
+      mov(w13, 1);
+      rev(w13, w13);
+      str(w13, ptr(x9, kRtlCriticalSectionRecursionCountOffset));
+      mov(w13, w11);
+      rev(w13, w13);
+      str(w13, ptr(x9, kRtlCriticalSectionOwningThreadOffset));
+      b(slow);
+    } else {
+      b(LS, slow);
+      emit_recursive_release();
+    }
 
     L(slow);
     EmitKernelExternHostCall(function);

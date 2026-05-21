@@ -321,6 +321,18 @@ previous healthy route. Keep `a64_inline_kf_lower_irql` default-off: the naive
 IRQL-store inline skipped APC delivery and black-idled
 `scratch\thor-debug\20260520-192530-*`.
 
+`RtlLeaveCriticalSection` now has a default-on uncontended final-unlock inline.
+It only handles owner-current, `recursion_count == 1`, and `lock_count == 0`;
+if a waiter races in, it restores owner/recursion and falls back to native HLE
+so the wake path remains native. Proof `scratch\thor-debug\20260520-220613-*`
+reached the Blue Dragon Voice Language screen with
+`a64_inline_rtl_leave_final_unlock=true`, `a64_inline_kf_lower_irql=false`, and
+no searched fatal markers. Roll back with
+`-A64InlineRtlLeaveFinalUnlock false`; the cleaned off path should keep
+`RtlLeaveCriticalSection code_size=448`, while the on path is `528`. If a
+no-snapshot speed run black-idles, compare with the toggle off before blaming
+this path because both on and off captures idled in the same cleaned APK.
+
 ## Classification
 
 Read the final speed-profile interval first.

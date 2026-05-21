@@ -186,6 +186,17 @@ required.
   `a64_inline_kf_lower_irql=false`; keep the naive `KfLowerIrql` inline
   default-off because it black-idled the route when it skipped native APC
   delivery.
+- Current A64 critical-section leave note:
+  `docs/research/20260520-220803-a64-rtl-leave-final-unlock.md`.
+  `a64_inline_rtl_leave_final_unlock` is default-on and inlines only the
+  uncontended final release shape for `RtlLeaveCriticalSection`
+  (`recursion_count == 1`, `lock_count == 0`, owner is current thread). If a
+  waiter races in, it restores the critical-section fields and falls back to
+  native HLE so the wake path is preserved. Thor proof
+  `scratch/thor-debug/20260520-220613-*` reached the Blue Dragon Voice Language
+  screen with no searched fatal markers. The speed route still has unrelated
+  black-idle nondeterminism; both on and off captures idled in the same cleaned
+  APK, so use one-variable A/B before blaming this toggle.
 
 ## Current Porting Priorities
 
@@ -317,12 +328,16 @@ required.
   - `-A64InlineKernelHighFrequencyExports false` to roll back the A64 inline
     for selected high-frequency Xbox kernel exports. Current safe set is
     `KeRaiseIrqlToDpcLevel`, recursive/uncontended `RtlEnterCriticalSection`,
-    `RtlTryEnterCriticalSection`, and recursive `RtlLeaveCriticalSection` with
-    host fallback where needed.
-  - Do not re-enable A64 spinlock export inlines without a new one-variable
-    experiment and idle proof. Both an eager spinlock inline and a guarded
-    one-CAS spinlock inline reproduced the bad Blue Dragon signature:
-    `entry_delta=0` after the early loading route with all guest execution idle.
+    `RtlTryEnterCriticalSection`, recursive `RtlLeaveCriticalSection`, and
+    uncontended final `RtlLeaveCriticalSection` unlock with host fallback where
+    needed.
+  - `-A64InlineKernelSpinlockExports false` rolls back the raised-IRQL spinlock
+    export inlines. They are default-on after
+    `scratch/thor-debug/20260520-193232-*`; keep `a64_inline_kf_lower_irql`
+    default-off because the naive IRQL-store inline skipped native APC delivery.
+  - `-A64InlineRtlLeaveFinalUnlock false` rolls back the uncontended final
+    `RtlLeaveCriticalSection` unlock inline. The off path should report
+    `RtlLeaveCriticalSection code_size=448`; the on path reports `528`.
   - `-Arm64BlueDragonDrawWaitProbe true` to log the current Blue Dragon draw
     wait state.
   - `-XboxkrnlThreadWaitTrace true` and `-XboxkrnlEventTrace true` for kernel
