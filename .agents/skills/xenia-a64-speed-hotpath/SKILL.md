@@ -343,6 +343,19 @@ black-idled `scratch\thor-debug\20260520-223025-*`, while the same APK with
 `-A64RtlEnterFreeFirst false` reached Voice Language in
 `scratch\thor-debug\20260520-223155-*`.
 
+`KfLowerIrql` remains a timing-sensitive native boundary. The APC-guarded
+inline probe is default-off and diagnostic only:
+`-A64InlineKfLowerIrqlApcGuard true -A64KfLowerIrqlApcGuardAudit true`
+optionally combined with `-A64KfLowerIrqlApcGuardNativePollInterval N`.
+Blue Dragon black-idled with no-poll (`scratch\thor-debug\20260521-001506-*`),
+poll-64 (`scratch\thor-debug\20260521-002131-*`), and poll-4
+(`scratch\thor-debug\20260521-002312-*`), while the same APK reached Voice
+Language with the guard off (`scratch\thor-debug\20260521-001638-*`). The guard
+can reduce G2H calls, but it is not a speed win until a native
+`KfLowerIrql`/`CheckApcs()` audit proves the host scheduling/APC cadence that
+must be preserved. See
+`docs/research/20260521-002511-a64-kf-lower-irql-apc-guard.md`.
+
 ## Classification
 
 Read the final speed-profile interval first.

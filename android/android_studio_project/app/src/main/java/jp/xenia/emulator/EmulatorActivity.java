@@ -170,6 +170,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_inline_rtl_leave_final_unlock");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_leave_fastpath_audit");
             copyBooleanExtra(intent, launchArguments, "a64_inline_kf_lower_irql");
+            copyBooleanExtra(intent, launchArguments, "a64_inline_kf_lower_irql_apc_guard");
+            copyBooleanExtra(intent, launchArguments, "a64_kf_lower_irql_apc_guard_audit");
+            copyIntExtra(
+                    intent,
+                    launchArguments,
+                    "a64_kf_lower_irql_apc_guard_native_poll_interval");
             copyBooleanExtra(intent, launchArguments, "arm64_blue_dragon_draw_wait_probe");
             copyIntExtra(
                     intent, launchArguments, "arm64_blue_dragon_draw_wait_probe_stride");

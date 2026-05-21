@@ -206,6 +206,11 @@ class XThread : public XObject, public cpu::Thread {
   void LockApc();
   void UnlockApc(bool queue_delivery);
   util::NativeList* apc_list() { return &apc_list_; }
+  void NoteApcQueued();
+  void NoteApcDequeued();
+  volatile uint32_t* a64_apc_pending_count_ptr() {
+    return reinterpret_cast<volatile uint32_t*>(&apc_pending_count_);
+  }
   void EnqueueApc(uint32_t normal_routine, uint32_t normal_context,
                   uint32_t arg1, uint32_t arg2);
 
@@ -277,6 +282,7 @@ class XThread : public XObject, public cpu::Thread {
 
   xe::global_critical_region global_critical_region_;
   std::atomic<uint32_t> irql_ = {0};
+  std::atomic<uint32_t> apc_pending_count_ = {0};
   util::NativeList apc_list_;
 };
 

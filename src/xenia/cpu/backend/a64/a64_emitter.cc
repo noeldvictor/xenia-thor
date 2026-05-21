@@ -109,6 +109,21 @@ DEFINE_bool(
     "Inline KfLowerIrql by restoring the processor IRQL directly. "
     "Experimental; skips the native APC delivery check.",
     "a64");
+DEFINE_bool(
+    a64_inline_kf_lower_irql_apc_guard, false,
+    "Inline KfLowerIrql only when the current thread reports no pending APCs; "
+    "falls back to the native export for APC delivery.",
+    "a64");
+DEFINE_bool(a64_kf_lower_irql_apc_guard_audit, false,
+            "Count guarded KfLowerIrql inline and fallback paths in the A64 "
+            "speed profile.",
+            "a64");
+DEFINE_uint32(
+    a64_kf_lower_irql_apc_guard_native_poll_interval, 0,
+    "When a64_inline_kf_lower_irql_apc_guard is enabled, force every Nth "
+    "no-pending KfLowerIrql through the native export. Use a power of two; 0 "
+    "disables forced native polling.",
+    "a64");
 DEFINE_bool(a64_inline_fpr_helpers, true,
             "Inline PPC __savefpr_* / __restfpr_* ABI helpers in the A64 "
             "backend. Experimental.",
@@ -2479,6 +2494,8 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]));
   const int32_t r13_offset =
       static_cast<int32_t>(offsetof(ppc::PPCContext, r[13]));
+  const int32_t a64_apc_pending_count_offset = static_cast<int32_t>(
+      offsetof(ppc::PPCContext, a64_apc_pending_count));
   constexpr uint32_t kKpcrCurrentThreadOffset = 0x100;
   constexpr uint32_t kRtlCriticalSectionLockCountOffset = 0x10;
   constexpr uint32_t kRtlCriticalSectionRecursionCountOffset = 0x14;
@@ -2497,6 +2514,79 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
     sxtw(x10, w10);
     str(x10, ptr(GetContextReg(), r3_offset));
+    return true;
+  }
+
+  if (name == "KfLowerIrql" &&
+      cvars::a64_inline_kf_lower_irql_apc_guard) {
+    if (!function->extern_handler()) {
+      return false;
+    }
+    auto& slow_missing = NewCachedLabel();
+    auto& slow_pending = NewCachedLabel();
+    auto& slow_poll = NewCachedLabel();
+    auto& done = NewCachedLabel();
+    const bool audit_kf_lower =
+        cvars::a64_kf_lower_irql_apc_guard_audit;
+    uint32_t native_poll_interval =
+        cvars::a64_kf_lower_irql_apc_guard_native_poll_interval;
+    if (native_poll_interval & (native_poll_interval - 1)) {
+      native_poll_interval = 0;
+    }
+
+    ldr(x12, ptr(GetContextReg(), a64_apc_pending_count_offset));
+    cbz(x12, slow_missing);
+    ldr(w13, ptr(x12));
+    cbnz(w13, slow_pending);
+
+    if (native_poll_interval) {
+      const uint32_t counter_offset = static_cast<uint32_t>(offsetof(
+          A64BackendContext, kf_lower_irql_apc_guard_counter));
+      ldr(w14, ptr(GetBackendCtxReg(), counter_offset));
+      add(w14, w14, 1);
+      str(w14, ptr(GetBackendCtxReg(), counter_offset));
+      tst(w14, native_poll_interval - 1);
+      b(EQ, slow_poll);
+    }
+
+    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext, processor_irql))));
+    ldr(w10, ptr(GetContextReg(), r3_offset));
+
+    auto& retry = NewCachedLabel();
+    L(retry);
+    ldaxr(w11, ptr(x9));
+    stlxr(w12, w10, ptr(x9));
+    cbnz(w12, retry);
+    if (audit_kf_lower) {
+      EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
+    }
+    b(done);
+
+    L(slow_pending);
+    if (audit_kf_lower) {
+      EmitAtomicIncrement64(
+          backend_->kf_lower_irql_apc_pending_fallback_count());
+    }
+    EmitKernelExternHostCall(function);
+    b(done);
+
+    L(slow_poll);
+    if (audit_kf_lower) {
+      EmitAtomicIncrement64(
+          backend_->kf_lower_irql_apc_poll_fallback_count());
+    }
+    EmitKernelExternHostCall(function);
+    b(done);
+
+    L(slow_missing);
+    if (audit_kf_lower) {
+      EmitAtomicIncrement64(
+          backend_->kf_lower_irql_apc_missing_fallback_count());
+    }
+    EmitKernelExternHostCall(function);
+
+    L(done);
     return true;
   }
 

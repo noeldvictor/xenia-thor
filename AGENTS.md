@@ -207,6 +207,16 @@ required.
   `a64_rtl_enter_free_first` exists only as a default-off experiment:
   `scratch/thor-debug/20260520-223025-*` black-idled with it on, while the same
   APK reached Voice Language with `-A64RtlEnterFreeFirst false`.
+- Current A64 KfLowerIrql APC-guard note:
+  `docs/research/20260521-002511-a64-kf-lower-irql-apc-guard.md`.
+  `a64_inline_kf_lower_irql_apc_guard` is default-off and diagnostic only.
+  It checks the current thread's host APC pending counter before inlining the
+  IRQL restore, with optional native polling through
+  `a64_kf_lower_irql_apc_guard_native_poll_interval`. Blue Dragon still
+  black-idled with no-poll, poll-64, and poll-4 captures, while the same APK
+  reached Voice Language with the guard off. Do not enable this by default or
+  count it as a speed win until a later native `KfLowerIrql` / `CheckApcs`
+  audit proves what host-side scheduling/APC behavior must be preserved.
 
 ## Current Porting Priorities
 

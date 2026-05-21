@@ -426,6 +426,11 @@ typedef struct PPCContext_s {
   // Value of last reserved load
   uint64_t reserved_val;
 
+  // Optional host-side pointers used by guarded A64 kernel fastpaths.
+  volatile uint32_t* a64_apc_pending_count;
+  volatile int32_t* a64_apc_disable_count;
+  uint64_t a64_fastpath_reserved[6];
+
   static std::string GetRegisterName(PPCRegister reg);
   std::string GetStringFromValue(PPCRegister reg) const;
   void SetValueFromString(PPCRegister reg, std::string value);

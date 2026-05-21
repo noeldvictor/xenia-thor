@@ -357,6 +357,9 @@ X_STATUS XThread::Create() {
 
   // Initialize the KTHREAD object.
   InitializeGuestObject();
+  thread_state_->context()->a64_apc_pending_count = a64_apc_pending_count_ptr();
+  thread_state_->context()->a64_apc_disable_count =
+      &guest_object<X_KTHREAD>()->apc_disable_count;
 
   X_KPCR* pcr = memory()->TranslateVirtual<X_KPCR*>(pcr_address_);
 
@@ -584,6 +587,19 @@ void XThread::CheckApcs() { DeliverAPCs(); }
 
 void XThread::LockApc() { global_critical_region_.mutex().lock(); }
 
+void XThread::NoteApcQueued() {
+  apc_pending_count_.fetch_add(1, std::memory_order_release);
+}
+
+void XThread::NoteApcDequeued() {
+  uint32_t pending = apc_pending_count_.load(std::memory_order_acquire);
+  while (pending != 0 &&
+         !apc_pending_count_.compare_exchange_weak(
+             pending, pending - 1, std::memory_order_acq_rel,
+             std::memory_order_acquire)) {
+  }
+}
+
 void XThread::UnlockApc(bool queue_delivery) {
   bool needs_apc = apc_list_.HasPending();
   global_critical_region_.mutex().unlock();
@@ -612,6 +628,7 @@ void XThread::EnqueueApc(uint32_t normal_routine, uint32_t normal_context,
 
   uint32_t list_entry_ptr = apc_ptr + 8;
   apc_list_.Insert(list_entry_ptr);
+  NoteApcQueued();
 
   UnlockApc(true);
 }
@@ -626,6 +643,7 @@ void XThread::DeliverAPCs() {
     // Get APC entry (offset for LIST_ENTRY offset) and cache what we need.
     // Calling the routine may delete the memory/overwrite it.
     uint32_t apc_ptr = apc_list_.Shift() - 8;
+    NoteApcDequeued();
     auto apc = reinterpret_cast<XAPC*>(memory()->TranslateVirtual(apc_ptr));
     bool needs_freeing = apc->kernel_routine == XAPC::kDummyKernelRoutine;
 
@@ -690,6 +708,7 @@ void XThread::RundownAPCs() {
     // Get APC entry (offset for LIST_ENTRY offset) and cache what we need.
     // Calling the routine may delete the memory/overwrite it.
     uint32_t apc_ptr = apc_list_.Shift() - 8;
+    NoteApcDequeued();
     auto apc = reinterpret_cast<XAPC*>(memory()->TranslateVirtual(apc_ptr));
     bool needs_freeing = apc->kernel_routine == XAPC::kDummyKernelRoutine;
 

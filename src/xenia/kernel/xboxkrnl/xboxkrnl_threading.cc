@@ -1435,6 +1435,7 @@ dword_result_t KeInsertQueueApc_entry(pointer_t<XAPC> apc, lpvoid_t arg1,
 
   uint32_t list_entry_ptr = apc.guest_address() + 8;
   apc_list->Insert(list_entry_ptr);
+  thread->NoteApcQueued();
 
   // Unlock thread.
   thread->UnlockApc(true);
@@ -1464,6 +1465,7 @@ dword_result_t KeRemoveQueueApc_entry(pointer_t<XAPC> apc) {
   uint32_t list_entry_ptr = apc.guest_address() + 8;
   if (apc_list->IsQueued(list_entry_ptr)) {
     apc_list->Remove(list_entry_ptr);
+    thread->NoteApcDequeued();
     result = true;
   }
 

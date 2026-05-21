@@ -53,6 +53,10 @@
 #include "xenia/cpu/thread_state.h"
 #include "xenia/cpu/xex_module.h"
 
+DECLARE_bool(a64_inline_kf_lower_irql_apc_guard);
+DECLARE_bool(a64_kf_lower_irql_apc_guard_audit);
+DECLARE_uint32(a64_kf_lower_irql_apc_guard_native_poll_interval);
+
 DEFINE_uint32(a64_max_stackpoints, 65536,
               "Max number of host->guest stack mappings we can record.",
               "a64");
@@ -1166,6 +1170,13 @@ void A64Backend::StartSpeedProfiler() {
   if (cvars::a64_rtl_leave_fastpath_audit) {
     XELOGW("A64 RtlLeave fastpath audit enabled");
   }
+  if (cvars::a64_inline_kf_lower_irql_apc_guard) {
+    XELOGW("A64 KfLowerIrql APC-guard fastpath enabled: native_poll_interval={}",
+           cvars::a64_kf_lower_irql_apc_guard_native_poll_interval);
+  }
+  if (cvars::a64_kf_lower_irql_apc_guard_audit) {
+    XELOGW("A64 KfLowerIrql APC-guard audit enabled");
+  }
   speed_profile_timer_ = threading::HighResolutionTimer::CreateRepeating(
       std::chrono::milliseconds(interval_ms), [this]() { LogSpeedProfile(); });
 }
@@ -1327,6 +1338,26 @@ void A64Backend::LogSpeedProfile() {
         recursive_inline.second, recursive_inline.first, final_inline.second,
         final_inline.first, restore_slow.second, restore_slow.first,
         native_fallback.second, native_fallback.first);
+  }
+  if (cvars::a64_kf_lower_irql_apc_guard_audit) {
+    auto fastpath =
+        load_delta(kf_lower_irql_apc_fastpath_count_,
+                   last_kf_lower_irql_apc_fastpath_count_);
+    auto pending_fallback =
+        load_delta(kf_lower_irql_apc_pending_fallback_count_,
+                   last_kf_lower_irql_apc_pending_fallback_count_);
+    auto poll_fallback =
+        load_delta(kf_lower_irql_apc_poll_fallback_count_,
+                   last_kf_lower_irql_apc_poll_fallback_count_);
+    auto missing_fallback =
+        load_delta(kf_lower_irql_apc_missing_fallback_count_,
+                   last_kf_lower_irql_apc_missing_fallback_count_);
+    XELOGW(
+        "A64 KfLowerIrql APC-guard audit: fastpath={}/{} "
+        "pending_fallback={}/{} poll_fallback={}/{} missing_fallback={}/{}",
+        fastpath.second, fastpath.first, pending_fallback.second,
+        pending_fallback.first, poll_fallback.second, poll_fallback.first,
+        missing_fallback.second, missing_fallback.first);
   }
 
   const bool interval_had_activity =

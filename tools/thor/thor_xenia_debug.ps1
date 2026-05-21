@@ -126,6 +126,9 @@ param(
     [string]$A64InlineRtlLeaveFinalUnlock = "true",
     [string]$A64RtlLeaveFastpathAudit = "false",
     [string]$A64InlineKfLowerIrql = "false",
+    [string]$A64InlineKfLowerIrqlApcGuard = "false",
+    [string]$A64KfLowerIrqlApcGuardAudit = "false",
+    [string]$A64KfLowerIrqlApcGuardNativePollInterval = "",
     [string]$Arm64BlueDragonDrawWaitProbe = "false",
     [string]$Arm64BlueDragonDrawWaitProbeStride = "",
     [string]$Arm64BlueDragonDrawWaitInlineTickStep = "",
@@ -760,6 +763,15 @@ function Start-XeniaEmulator {
     if ($A64InlineKfLowerIrql) {
         $parts += "--ez a64_inline_kf_lower_irql $(ConvertTo-BooleanText $A64InlineKfLowerIrql)"
     }
+    if ($A64InlineKfLowerIrqlApcGuard) {
+        $parts += "--ez a64_inline_kf_lower_irql_apc_guard $(ConvertTo-BooleanText $A64InlineKfLowerIrqlApcGuard)"
+    }
+    if ($A64KfLowerIrqlApcGuardAudit) {
+        $parts += "--ez a64_kf_lower_irql_apc_guard_audit $(ConvertTo-BooleanText $A64KfLowerIrqlApcGuardAudit)"
+    }
+    if ($A64KfLowerIrqlApcGuardNativePollInterval) {
+        $parts += "--ei a64_kf_lower_irql_apc_guard_native_poll_interval $A64KfLowerIrqlApcGuardNativePollInterval"
+    }
     if ($Arm64BlueDragonDrawWaitProbe) {
         $parts += "--ez arm64_blue_dragon_draw_wait_probe $(ConvertTo-BooleanText $Arm64BlueDragonDrawWaitProbe)"
     }
@@ -969,6 +981,9 @@ function Write-CaptureMetadata {
         "a64_inline_rtl_leave_final_unlock=$A64InlineRtlLeaveFinalUnlock",
         "a64_rtl_leave_fastpath_audit=$A64RtlLeaveFastpathAudit",
         "a64_inline_kf_lower_irql=$A64InlineKfLowerIrql",
+        "a64_inline_kf_lower_irql_apc_guard=$A64InlineKfLowerIrqlApcGuard",
+        "a64_kf_lower_irql_apc_guard_audit=$A64KfLowerIrqlApcGuardAudit",
+        "a64_kf_lower_irql_apc_guard_native_poll_interval=$A64KfLowerIrqlApcGuardNativePollInterval",
         "arm64_global_reservation_helpers=$Arm64GlobalReservationHelpers",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
