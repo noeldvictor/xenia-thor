@@ -287,6 +287,14 @@ required.
   shrank `82282490` code size to `87168`. Same-APK rollback run
   `scratch/thor-debug/20260521-173734-*` black-idled before body-time
   activated, so keep the rollback flag but leave the fastpath on for Thor.
+- Reverted V128 swapped-store address-spill cleanup:
+  `docs/research/20260521-175053-v128-store-address-spill-negative.md`.
+  The local attempt to skip the `x17` address spill for non-constant swapped
+  `STORE_V128` built and deployed, but
+  `scratch/thor-debug/20260521-174627-*` black-idled before delayed body-time
+  activated. The code was reverted before commit. Do not reintroduce this tiny
+  store cleanup without a route-clean Blue Dragon opening-scene proof and an
+  audit showing it actually shrinks `82282490`.
 
 ## Current Porting Priorities
 

@@ -170,6 +170,13 @@ same-APK rollback run `scratch\thor-debug\20260521-173734-*` black-idled before
 body-time activated. See
 `docs/research/20260521-174106-blue-dragon-permute-i32-zip-fastpath.md`.
 
+Do not re-add the reverted non-constant swapped `STORE_V128` address-spill
+cleanup as a casual follow-up. The local change built, but
+`scratch\thor-debug\20260521-174627-*` black-idled before delayed body-time
+activated, and the code was reverted before commit. Only retry it with an audit
+that proves `82282490` hits and a route-clean opening-scene capture. See
+`docs/research/20260521-175053-v128-store-address-spill-negative.md`.
+
 Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
 interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,
