@@ -276,6 +276,17 @@ required.
   scene with it false. Prioritize semantics-preserving `PERMUTE_I32` /
   `vmrghw`, `stvx` byte-swap/store fusion, and vector state traffic reductions
   before trying another dot-product rewrite.
+- Current Blue Dragon `PERMUTE_I32` zip fastpath:
+  `docs/research/20260521-174106-blue-dragon-permute-i32-zip-fastpath.md`.
+  `arm64_permute_i32_zip_fastpath` is default-on and Android-forwarded. It
+  lowers exact PPC merge-word masks `0x05010400` (`vmrghw`) to NEON `zip1 .s4`
+  and `0x07030602` (`vmrglw`) to `zip2 .s4`; all other `PERMUTE_I32` controls
+  keep the old TBL path. Thor proof `scratch/thor-debug/20260521-173359-*`
+  reached the opening sky/dragon-wing scene with APK SHA
+  `9E6A13BD7B8CC0B9A67F5042DA34599BE4F9623A3697350A9FD61D9F71B21BC1` and
+  shrank `82282490` code size to `87168`. Same-APK rollback run
+  `scratch/thor-debug/20260521-173734-*` black-idled before body-time
+  activated, so keep the rollback flag but leave the fastpath on for Thor.
 
 ## Current Porting Priorities
 

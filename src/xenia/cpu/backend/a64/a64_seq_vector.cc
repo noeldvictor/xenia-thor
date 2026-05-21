@@ -18,6 +18,8 @@
 #include "xenia/cpu/backend/a64/a64_stack_layout.h"
 #include "xenia/cpu/hir/instr.h"
 
+DECLARE_bool(arm64_permute_i32_zip_fastpath);
+
 namespace xe {
 namespace cpu {
 namespace backend {
@@ -884,6 +886,18 @@ struct PERMUTE_I32
     int s2 = SrcVReg(e, i.src2, 0);
     int s3 = SrcVReg(e, i.src3, 1);
     int d = i.dest.reg().getIdx();
+    if (cvars::arm64_permute_i32_zip_fastpath) {
+      if (control == 0x05010400u) {
+        // vmrghw: [src2.x, src3.x, src2.y, src3.y].
+        e.zip1(VReg(d).s4, VReg(s2).s4, VReg(s3).s4);
+        return;
+      }
+      if (control == 0x07030602u) {
+        // vmrglw: [src2.z, src3.z, src2.w, src3.w].
+        e.zip2(VReg(d).s4, VReg(s2).s4, VReg(s3).s4);
+        return;
+      }
+    }
     // Build TBL control from the I32 permute control word.
     // Each byte of control selects: bits [1:0] = which dword, bit [2] = src2 vs
     // src3. PPC word i = vec128_t.u32[i] = NEON element s[i] (direct mapping).

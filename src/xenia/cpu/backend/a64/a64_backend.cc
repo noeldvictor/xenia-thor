@@ -219,6 +219,11 @@ DEFINE_bool(
     "broad path black-idled Blue Dragon on 2026-05-21.",
     "a64");
 DEFINE_bool(
+    arm64_permute_i32_zip_fastpath, true,
+    "Thor ARM64 speed lane: lower common INT32 vector permutes such as "
+    "vmrghw/vmrglw with direct NEON zip1/zip2 instead of generic TBL.",
+    "a64");
+DEFINE_bool(
     arm64_add_sub_imm_audit, false,
     "Thor ARM64 speed lane: log wrapped ADD/SUB immediate candidates without "
     "changing generated code. Research-only lowering audit.",

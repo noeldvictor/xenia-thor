@@ -124,6 +124,7 @@ param(
     [string]$A64InlineKernelSpinlockExports = "true",
     [string]$A64LseKernelLockFastpaths = "true",
     [string]$Arm64VmxDotF32Fastpath = "false",
+    [string]$Arm64PermuteI32ZipFastpath = "true",
     [string]$A64RtlEnterFreeFirst = "false",
     [string]$A64InlineRtlLeaveFinalUnlock = "true",
     [string]$A64RtlLeaveFastpathAudit = "false",
@@ -767,6 +768,9 @@ function Start-XeniaEmulator {
     if ($Arm64VmxDotF32Fastpath) {
         $parts += "--ez arm64_vmx_dot_f32_fastpath $(ConvertTo-BooleanText $Arm64VmxDotF32Fastpath)"
     }
+    if ($Arm64PermuteI32ZipFastpath) {
+        $parts += "--ez arm64_permute_i32_zip_fastpath $(ConvertTo-BooleanText $Arm64PermuteI32ZipFastpath)"
+    }
     if ($A64RtlEnterFreeFirst) {
         $parts += "--ez a64_rtl_enter_free_first $(ConvertTo-BooleanText $A64RtlEnterFreeFirst)"
     }
@@ -1017,6 +1021,7 @@ function Write-CaptureMetadata {
         "a64_inline_kernel_spinlock_exports=$A64InlineKernelSpinlockExports",
         "a64_lse_kernel_lock_fastpaths=$A64LseKernelLockFastpaths",
         "arm64_vmx_dot_f32_fastpath=$Arm64VmxDotF32Fastpath",
+        "arm64_permute_i32_zip_fastpath=$Arm64PermuteI32ZipFastpath",
         "a64_rtl_enter_free_first=$A64RtlEnterFreeFirst",
         "a64_inline_rtl_leave_final_unlock=$A64InlineRtlLeaveFinalUnlock",
         "a64_rtl_leave_fastpath_audit=$A64RtlLeaveFastpathAudit",

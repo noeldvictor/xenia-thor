@@ -160,6 +160,16 @@ byte-swap/store fusion, and vector state-traffic reduction before touching dot
 product again. See
 `docs/research/20260521-172826-blue-dragon-vmx-dot-negative.md`.
 
+`arm64_permute_i32_zip_fastpath` is the current safe vector win and should stay
+default-on for Thor unless a later A/B regresses. It maps exact `PERMUTE_I32`
+controls `0x05010400` (`vmrghw`) and `0x07030602` (`vmrglw`) to NEON
+`zip1 .s4` and `zip2 .s4`; use `-Arm64PermuteI32ZipFastpath false` as the
+rollback. Proof `scratch\thor-debug\20260521-173359-*` reached the opening
+sky/dragon-wing scene and shrank `82282490` code size to `87168`, while
+same-APK rollback run `scratch\thor-debug\20260521-173734-*` black-idled before
+body-time activated. See
+`docs/research/20260521-174106-blue-dragon-permute-i32-zip-fastpath.md`.
+
 Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
 interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,
