@@ -34,6 +34,11 @@ Run the canonical profiled speed capture:
 powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 100 -PerfSampleSeconds "45,90" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1
 ```
 
+Blue Dragon capture modes stop Xenia after the final screenshot by default.
+Keep that default for automated speed/title work so a frozen or idle emulator
+process cannot keep chewing battery/CPU after the run. Pass
+`-StopAppAfterCapture false` only for a deliberate manual inspection pass.
+
 Then summarize the latest evidence:
 
 ```powershell

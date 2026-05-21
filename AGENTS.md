@@ -132,6 +132,10 @@ required.
   preferred speed lane. It runs Blue Dragon with the known nop HID sequence,
   disables trace-heavy flags, uses error-only Xenia logging, avoids live logcat,
   writes timed perf snapshots, then captures logcat, metadata, and a screenshot.
+- Blue Dragon live/title/speed capture modes force-stop Xenia after the final
+  screenshot by default to avoid stale frozen emulator processes making the Thor
+  feel slow after a run. Pass `-StopAppAfterCapture false` only when the next
+  step needs the app left open for manual inspection.
 - As of 2026-05-18, Blue Dragon's VdSwap frontbuffers `1CA1C000` and
   `1CDB4000` are still all-zero on Thor, but forced-presenting resolve
   candidate `1C340000` as 640x360 format 7 produces a visible dark-blue guest

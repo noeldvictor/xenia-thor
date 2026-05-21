@@ -183,6 +183,7 @@ param(
     [string]$SimpleperfCallGraph = "fp",
     [string]$SimpleperfPercentLimit = "0.5",
     [string[]]$NoisePackages = @("net.rpcsx.easy"),
+    [string]$StopAppAfterCapture = "true",
     [string]$LogFilter = "xenia|Vulkan|Adreno|AndroidRuntime|FATAL|crash|tombstone|signal|backtrace"
 )
 
@@ -959,6 +960,7 @@ function Write-CaptureMetadata {
         "target=$CaptureTarget",
         "live_capture_seconds=$LiveCaptureSeconds",
         "title_screenshot_seconds=$TitleScreenshotSeconds",
+        "stop_app_after_capture=$StopAppAfterCapture",
         "simpleperf=$Simpleperf",
         "simpleperf_start_second=$SimpleperfStartSecond",
         "simpleperf_seconds=$SimpleperfSeconds",
@@ -1036,6 +1038,36 @@ function Write-CaptureMetadata {
         "activity:",
         $focused
     ) | Out-File -Encoding utf8 $MetaPath
+}
+
+function Stop-XeniaAfterCapture {
+    param(
+        [string]$Reason,
+        [string]$MetaPath
+    )
+
+    if ((ConvertTo-BooleanText $StopAppAfterCapture) -ne "true") {
+        return
+    }
+
+    $beforePid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
+    Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+    Start-Sleep -Milliseconds 250
+    $afterPid = (Invoke-Adb @("shell", "pidof", $PackageName)) -join " "
+    Add-AdbEvent "post-capture force-stop reason=$Reason before_pid=$beforePid after_pid=$afterPid"
+
+    if ($MetaPath) {
+        @(
+            "",
+            "post_capture_cleanup:",
+            "stop_app_after_capture=$StopAppAfterCapture",
+            "reason=$Reason",
+            "before_pid=$beforePid",
+            "after_pid=$afterPid"
+        ) | Out-File -Encoding utf8 -Append $MetaPath
+    }
+
+    Write-Output "Post-capture force-stop: before_pid=$beforePid after_pid=$afterPid"
 }
 
 function Write-FilteredLog {
@@ -1478,16 +1510,20 @@ done | head -50
             -RedirectStandardOutput $LogPath -RedirectStandardError $LogErrorPath `
             -WindowStyle Hidden -PassThru
         try {
-            Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
-            Start-Sleep -Seconds $LiveCaptureSeconds
-        } finally {
-            Stop-LiveLogcat $logcatProcess
-        }
+            try {
+                Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+                Start-Sleep -Seconds $LiveCaptureSeconds
+            } finally {
+                Stop-LiveLogcat $logcatProcess
+            }
 
-        Write-FilteredLog $LogPath $FilteredLogPath
-        $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
-        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
-        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+            Write-FilteredLog $LogPath $FilteredLogPath
+            $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
+            Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+            Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        } finally {
+            Stop-XeniaAfterCapture "live capture complete" $MetaPath
+        }
         Write-Output "Log: $LogPath"
         Write-Output "Filtered log: $FilteredLogPath"
         Write-Output "Log errors: $LogErrorPath"
@@ -1529,27 +1565,31 @@ done | head -50
             -RedirectStandardOutput $LogPath -RedirectStandardError $LogErrorPath `
             -WindowStyle Hidden -PassThru
         try {
-            Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
-            foreach ($sampleSecond in $titleScreenshotSamples) {
-                if ($sampleSecond -gt $elapsedSeconds) {
-                    Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
-                    $elapsedSeconds = $sampleSecond
+            try {
+                Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+                foreach ($sampleSecond in $titleScreenshotSamples) {
+                    if ($sampleSecond -gt $elapsedSeconds) {
+                        Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
+                        $elapsedSeconds = $sampleSecond
+                    }
+                    $sampleScreenshotPath = Join-Path $OutDir "$Stamp-title-${sampleSecond}s-screenshot.png"
+                    Invoke-AdbExecOutToFile "screencap -p" $sampleScreenshotPath
+                    $titleScreenshotPaths += $sampleScreenshotPath
                 }
-                $sampleScreenshotPath = Join-Path $OutDir "$Stamp-title-${sampleSecond}s-screenshot.png"
-                Invoke-AdbExecOutToFile "screencap -p" $sampleScreenshotPath
-                $titleScreenshotPaths += $sampleScreenshotPath
+                if ($LiveCaptureSeconds -gt $elapsedSeconds) {
+                    Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
+                }
+            } finally {
+                Stop-LiveLogcat $logcatProcess
             }
-            if ($LiveCaptureSeconds -gt $elapsedSeconds) {
-                Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
-            }
-        } finally {
-            Stop-LiveLogcat $logcatProcess
-        }
 
-        Write-FilteredLog $LogPath $FilteredLogPath
-        $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
-        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
-        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+            Write-FilteredLog $LogPath $FilteredLogPath
+            $ShaderDumpPath = Pull-ActiveShaderDumps $Stamp $OutDir
+            Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+            Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        } finally {
+            Stop-XeniaAfterCapture "title capture complete" $MetaPath
+        }
         Write-Output "Log: $LogPath"
         Write-Output "Filtered log: $FilteredLogPath"
         Write-Output "Log errors: $LogErrorPath"
@@ -1591,13 +1631,31 @@ done | head -50
         if ($Arm64SpeedProfileBlockFilter) {
             Write-Output "A64 block filter: $Arm64SpeedProfileBlockFilter"
         }
-        Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
-        Invoke-Adb @("logcat", "-c") | Out-Null
-        Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+        try {
+            Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
+            Invoke-Adb @("logcat", "-c") | Out-Null
+            Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
 
-        foreach ($sampleSecond in $sampleSeconds) {
+            foreach ($sampleSecond in $sampleSeconds) {
+                if ($simpleperfEnabled -and !$simpleperfRan -and
+                    $SimpleperfStartSecond -le $sampleSecond -and
+                    $SimpleperfSeconds -gt 0) {
+                    if ($SimpleperfStartSecond -gt $elapsedSeconds) {
+                        Start-Sleep -Seconds ($SimpleperfStartSecond - $elapsedSeconds)
+                        $elapsedSeconds = $SimpleperfStartSecond
+                    }
+                    $simpleperfPaths += Write-SimpleperfCapture $Stamp "${SimpleperfStartSecond}s-${SimpleperfSeconds}s" $OutDir
+                    $elapsedSeconds += $SimpleperfSeconds
+                    $simpleperfRan = $true
+                }
+                if ($sampleSecond -gt $elapsedSeconds) {
+                    Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
+                    $elapsedSeconds = $sampleSecond
+                }
+                $perfPaths += Write-PerfSnapshot $Stamp "${sampleSecond}s" $OutDir
+            }
             if ($simpleperfEnabled -and !$simpleperfRan -and
-                $SimpleperfStartSecond -le $sampleSecond -and
+                $SimpleperfStartSecond -le $LiveCaptureSeconds -and
                 $SimpleperfSeconds -gt 0) {
                 if ($SimpleperfStartSecond -gt $elapsedSeconds) {
                     Start-Sleep -Seconds ($SimpleperfStartSecond - $elapsedSeconds)
@@ -1607,33 +1665,19 @@ done | head -50
                 $elapsedSeconds += $SimpleperfSeconds
                 $simpleperfRan = $true
             }
-            if ($sampleSecond -gt $elapsedSeconds) {
-                Start-Sleep -Seconds ($sampleSecond - $elapsedSeconds)
-                $elapsedSeconds = $sampleSecond
+            if ($LiveCaptureSeconds -gt $elapsedSeconds) {
+                Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
             }
-            $perfPaths += Write-PerfSnapshot $Stamp "${sampleSecond}s" $OutDir
-        }
-        if ($simpleperfEnabled -and !$simpleperfRan -and
-            $SimpleperfStartSecond -le $LiveCaptureSeconds -and
-            $SimpleperfSeconds -gt 0) {
-            if ($SimpleperfStartSecond -gt $elapsedSeconds) {
-                Start-Sleep -Seconds ($SimpleperfStartSecond - $elapsedSeconds)
-                $elapsedSeconds = $SimpleperfStartSecond
-            }
-            $simpleperfPaths += Write-SimpleperfCapture $Stamp "${SimpleperfStartSecond}s-${SimpleperfSeconds}s" $OutDir
-            $elapsedSeconds += $SimpleperfSeconds
-            $simpleperfRan = $true
-        }
-        if ($LiveCaptureSeconds -gt $elapsedSeconds) {
-            Start-Sleep -Seconds ($LiveCaptureSeconds - $elapsedSeconds)
-        }
-        $perfPaths += Write-PerfSnapshot $Stamp "final" $OutDir
+            $perfPaths += Write-PerfSnapshot $Stamp "final" $OutDir
 
-        $logcat = Invoke-Adb @("logcat", "-d", "-v", "time")
-        $logcat | Out-File -Encoding utf8 $LogPath
-        Write-FilteredLog $LogPath $FilteredLogPath
-        Write-CaptureMetadata $Stamp $MetaPath $launchTarget
-        Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+            $logcat = Invoke-Adb @("logcat", "-d", "-v", "time")
+            $logcat | Out-File -Encoding utf8 $LogPath
+            Write-FilteredLog $LogPath $FilteredLogPath
+            Write-CaptureMetadata $Stamp $MetaPath $launchTarget
+            Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+        } finally {
+            Stop-XeniaAfterCapture "speed capture complete" $MetaPath
+        }
         Write-Output "Log: $LogPath"
         Write-Output "Filtered log: $FilteredLogPath"
         Write-Output "Meta: $MetaPath"
