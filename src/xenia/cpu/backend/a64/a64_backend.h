@@ -140,6 +140,9 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* speed_profile_extern_calls() {
     return &speed_profile_extern_calls_;
   }
+  std::atomic<uint32_t>* speed_profile_body_time_active() {
+    return &speed_profile_body_time_active_;
+  }
   std::atomic<uint64_t>* rtl_leave_recursive_inline_count() {
     return &rtl_leave_recursive_inline_count_;
   }
@@ -245,6 +248,7 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> speed_profile_extern_calls_{0};
   std::atomic<uint64_t> speed_profile_resolve_calls_{0};
   std::atomic<uint64_t> speed_profile_resolve_misses_{0};
+  std::atomic<uint32_t> speed_profile_body_time_active_{1};
   std::atomic<uint64_t> rtl_leave_recursive_inline_count_{0};
   std::atomic<uint64_t> rtl_leave_final_inline_count_{0};
   std::atomic<uint64_t> rtl_leave_restore_slow_count_{0};
@@ -260,6 +264,7 @@ class A64Backend : public Backend {
   uint64_t last_speed_profile_extern_calls_ = 0;
   uint64_t last_speed_profile_resolve_calls_ = 0;
   uint64_t last_speed_profile_resolve_misses_ = 0;
+  uint64_t speed_profile_start_host_uptime_ms_ = 0;
   uint64_t last_rtl_leave_recursive_inline_count_ = 0;
   uint64_t last_rtl_leave_final_inline_count_ = 0;
   uint64_t last_rtl_leave_restore_slow_count_ = 0;

@@ -79,6 +79,7 @@ DECLARE_bool(arm64_context_value_cache_fallthrough);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
+DECLARE_uint32(arm64_speed_profile_body_time_after_ms);
 DECLARE_bool(a64_rtl_leave_fastpath_audit);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
@@ -1720,12 +1721,36 @@ void A64Emitter::MaybeEmitBodyTimeProfileStart() {
     return;
   }
 
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    str(xzr, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
+    auto& inactive = NewCachedLabel();
+    mov(x12, reinterpret_cast<uint64_t>(
+                 backend_->speed_profile_body_time_active()));
+    ldr(w11, ptr(x12));
+    cbz(w11, inactive);
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    str(x17, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
+    L(inactive);
+    return;
+  }
+
   mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
   str(x17, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
 }
 
 void A64Emitter::MaybeEmitBodyTimeProfileEnd() {
   if (!current_guest_function_body_ticks_) {
+    return;
+  }
+
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    auto& inactive = NewCachedLabel();
+    ldr(x11, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
+    cbz(x11, inactive);
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    sub(x17, x17, x11);
+    EmitAtomicAdd64(current_guest_function_body_ticks_, x17);
+    L(inactive);
     return;
   }
 

@@ -251,6 +251,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_context_traffic_audit_budget");
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_body_time_filter");
+            copyIntExtra(intent, launchArguments, "arm64_speed_profile_body_time_after_ms");
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_block_filter");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot_on_idle");

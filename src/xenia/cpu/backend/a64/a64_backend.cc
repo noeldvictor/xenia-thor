@@ -317,6 +317,12 @@ DEFINE_string(
     "function addresses or inclusive ranges for CNTVCT body-time profiling. "
     "Requires arm64_speed_profile_interval_ms.",
     "a64");
+DEFINE_uint32(
+    arm64_speed_profile_body_time_after_ms, 0,
+    "Thor ARM64 speed lane: when body-time counters are enabled, delay their "
+    "generated-code CNTVCT accounting until this many host milliseconds after "
+    "the A64 speed profiler starts. 0 records from function entry.",
+    "a64");
 DEFINE_string(
     arm64_speed_profile_block_filter, "",
     "Thor ARM64 speed lane: optional comma/semicolon/space separated guest "
@@ -1177,10 +1183,19 @@ void A64Backend::StartSpeedProfiler() {
   uint32_t interval_ms = cvars::arm64_speed_profile_interval_ms;
   uint32_t top_functions = cvars::arm64_speed_profile_top_functions;
   uint32_t min_delta = cvars::arm64_speed_profile_min_delta;
+  speed_profile_start_host_uptime_ms_ = Clock::QueryHostUptimeMillis();
+  speed_profile_body_time_active_.store(
+      cvars::arm64_speed_profile_body_time_after_ms == 0 ? 1u : 0u,
+      std::memory_order_release);
   XELOGW(
       "A64 speed profile enabled: interval_ms={} top_functions={} "
       "min_delta={}",
       interval_ms, top_functions, min_delta);
+  if (!cvars::arm64_speed_profile_body_time_filter.empty()) {
+    XELOGW("A64 body-time profile enabled: filter='{}' after_ms={}",
+           cvars::arm64_speed_profile_body_time_filter,
+           cvars::arm64_speed_profile_body_time_after_ms);
+  }
   if (cvars::arm64_add_sub_imm_audit) {
     XELOGW(
         "A64 ADD/SUB immediate audit enabled: function={:08X} budget={}",
@@ -1231,6 +1246,17 @@ void A64Backend::StartSpeedProfiler() {
 void A64Backend::LogSpeedProfile() {
   if (!speed_profile_enabled()) {
     return;
+  }
+
+  if (!cvars::arm64_speed_profile_body_time_filter.empty() &&
+      cvars::arm64_speed_profile_body_time_after_ms != 0 &&
+      !speed_profile_body_time_active_.load(std::memory_order_acquire)) {
+    uint64_t elapsed_ms =
+        Clock::QueryHostUptimeMillis() - speed_profile_start_host_uptime_ms_;
+    if (elapsed_ms >= cvars::arm64_speed_profile_body_time_after_ms) {
+      speed_profile_body_time_active_.store(1, std::memory_order_release);
+      XELOGW("A64 body-time profile activated after {}ms", elapsed_ms);
+    }
   }
 
   struct FunctionSample {

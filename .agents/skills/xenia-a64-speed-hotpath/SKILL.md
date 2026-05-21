@@ -112,6 +112,20 @@ This is especially useful for Blue Dragon where `827294CC`, `826C5620`, and
 powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 95 -PerfSampleSeconds "70" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4,8272A8E8,826C5620,827294CC,826BF770"
 ```
 
+For the current Blue Dragon opening-scene route, delay body-time activation
+until after the title/input transition. Body-time from boot
+`scratch\thor-debug\20260521-164744-*` black-idled after 16:48:32, while the
+delayed route `scratch\thor-debug\20260521-165657-*` reached the rendered
+opening scene and identified `82282490` as the true body-time leader.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -PerfSampleSeconds "120,150,175" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 25 -Arm64SpeedProfileMinDelta 1 -A64LseKernelLockFastpaths true -A64RtlLeaveFastpathAudit false -Arm64SpeedProfileBodyTimeFilter "82274DB0,82287788,826BF770,82274E38,82282490" -Arm64SpeedProfileBodyTimeAfterMs 120000 -StopAppAfterCapture true
+```
+
+Current read: high-entry `82274DB0`, `826BF770`, and `82274E38` are cheap
+one-ish-tick helpers in the opening scene. Prioritize the large
+`82282490` / `82281D28` cluster before chasing those tiny helpers.
+
 ## Block Profiler Lane
 
 Use block counters only after body time identifies one concrete function. The
@@ -122,10 +136,25 @@ instrument the function whose start address is `8272A3A4`.
 powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 45 -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 20 -Arm64SpeedProfileMinDelta 1 -Arm64SpeedProfileBodyTimeFilter "8272A3A4" -Arm64SpeedProfileBlockFilter "8272A3A4"
 ```
 
+Current `82282490` opening-scene block profile:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -PerfSampleSeconds "120,150,175" -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 25 -Arm64SpeedProfileMinDelta 1 -A64LseKernelLockFastpaths true -A64RtlLeaveFastpathAudit false -Arm64SpeedProfileBodyTimeFilter "82282490" -Arm64SpeedProfileBodyTimeAfterMs 120000 -Arm64SpeedProfileBlockFilter "82282490" -StopAppAfterCapture true
+```
+
+Capture `scratch\thor-debug\20260521-170107-*` reached the opening
+`Microsoft Game Studios Presents` scene and kept `82282490` body-time top.
+The hot block PCs to classify next are `822824B8`, `822825F4`, `822824F0`,
+`822825E0`, `8228252C`, `82282490`, `82282600`, `822824EC`, and `822825C8`.
+
 Treat block-profiler runs as trace-heavy diagnostics. Harvest the first useful
 interval, then return to a clean speed capture before judging progress. The
 first `8272A3A4` run found hot guest block PCs `8272A8B4`, `8272AA50`,
 `8272A3F4`, `8272A474`, `8272A548`, and `8272A424`.
+
+Do not enable `arm64_blue_dragon_jump_table_inline_in_caller` by default.
+Post-input-fix retest `scratch\thor-debug\20260521-164314-*` black-idled with
+`entry_delta=0` from 16:44:02 onward. Keep it as a diagnostic only.
 
 Do not reintroduce a partial `8272A3A4:8272A8B4` byte-copy splice without a new
 full-region proof. The 2026-05-19 attempt either crashed at `8272A8B4` or

@@ -167,6 +167,7 @@ param(
     [string]$Arm64ContextTrafficAuditFunction = "",
     [string]$Arm64ContextTrafficAuditBudget = "",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
+    [string]$Arm64SpeedProfileBodyTimeAfterMs = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
     [string]$Arm64SpeedProfileThreadSnapshotOnIdle = "false",
@@ -894,6 +895,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
+    if ($Arm64SpeedProfileBodyTimeAfterMs) {
+        $parts += "--ei arm64_speed_profile_body_time_after_ms $Arm64SpeedProfileBodyTimeAfterMs"
+    }
     if ($Arm64SpeedProfileBlockFilter) {
         $parts += "--es arm64_speed_profile_block_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBlockFilter)"
     }
@@ -1053,6 +1057,7 @@ function Write-CaptureMetadata {
         "arm64_context_traffic_audit_function=$Arm64ContextTrafficAuditFunction",
         "arm64_context_traffic_audit_budget=$Arm64ContextTrafficAuditBudget",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
+        "arm64_speed_profile_body_time_after_ms=$Arm64SpeedProfileBodyTimeAfterMs",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
@@ -1676,6 +1681,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileBodyTimeFilter) {
             Write-Output "A64 body-time filter: $Arm64SpeedProfileBodyTimeFilter"
+        }
+        if ($Arm64SpeedProfileBodyTimeAfterMs) {
+            Write-Output "A64 body-time after: ${Arm64SpeedProfileBodyTimeAfterMs}ms"
         }
         if ($Arm64SpeedProfileBlockFilter) {
             Write-Output "A64 block filter: $Arm64SpeedProfileBlockFilter"

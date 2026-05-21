@@ -249,9 +249,21 @@ required.
   `FB4877DF6BEA31D86B8354632668A36BDAD134D48738132E26813FD7C5F631B6`.
   Keep `arm64_blue_dragon_stricmp_deferred_cr_fastpath=false`: capture
   `scratch/thor-debug/20260521-161210-*` guest-crashed at PC `826A2498` with it
-  enabled. Keep `arm64_blue_dragon_jump_table_inline_in_caller=false` until a
-  clean same-route A/B after the input fix proves it; the pre-fix short route
-  removed `827294CC` from early top rows but was not enough evidence.
+  enabled. Keep `arm64_blue_dragon_jump_table_inline_in_caller=false`: the
+  post-input-fix retest `scratch/thor-debug/20260521-164314-*` black-idled with
+  `entry_delta=0` from 16:44:02 onward.
+- Current delayed A64 body-time note:
+  `docs/research/20260521-170708-blue-dragon-delayed-body-time-profile.md`.
+  Body-time instrumentation from boot black-idled
+  `scratch/thor-debug/20260521-164744-*`, so use
+  `-Arm64SpeedProfileBodyTimeAfterMs 120000` for the current opening-scene
+  route. Delayed run `scratch/thor-debug/20260521-165657-*` reached the opening
+  sky/wing scene and showed `82282490` as the real body-time leader despite
+  lower entry count: final interval `body_ticks_delta=9488930` at `65296`
+  entries. Block-profile run `scratch/thor-debug/20260521-170107-*` reached the
+  opening "Microsoft Game Studios Presents" scene; next speed work should
+  classify `82282490` blocks `822824B8`, `822824F0`, `8228252C`, `822825E0`,
+  `822825F4`, and `82282600` before changing codegen.
 
 ## Current Porting Priorities
 
