@@ -1350,6 +1350,16 @@ required.
 - Use `tools\thor\thor_codex_goal_loop.ps1` to enable, disable, reset, or
   inspect the loop. The current Blue Dragon speed/opening loop command is:
   `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonOpeningSpeed`.
+- For the user's "do not stop researching until Blue Dragon works at full
+  speed" instruction, use the dedicated bounded full-speed command:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48`.
+  The proof marker is
+  `scratch\thor-debug\latest-blue-dragon-full-speed-proof.json`.
+- Full-speed proof means a quiet Thor speed capture with Blue Dragon Disc 1
+  launched from the known SD-card path, visible title/opening/gameplay route
+  evidence, commit/APK hash/cvars/capture paths recorded, no searched fatal
+  markers, and sustained at least 30 FPS over a representative 180-second route
+  segment. Track 60 FPS as a stretch target when the game itself allows it.
 - The Stop hook must stay bounded. Default max is 12 Stop-hook attempts, after
   which it should stop and summarize the blocker, capture paths, and next
   experiment instead of running forever.

@@ -56,6 +56,12 @@ Enable current speed/opening loop:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonOpeningSpeed
 ```
 
+Enable full-speed research loop:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48
+```
+
 Disable:
 
 ```powershell
@@ -73,6 +79,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_l
 - Config: `scratch/thor-debug/codex-goal-loop.json`
 - Attempts: `scratch/thor-debug/codex-goal-loop-state.json`
 - Current speed proof: `scratch/thor-debug/latest-blue-dragon-speed-proof.json`
+- Full-speed proof: `scratch/thor-debug/latest-blue-dragon-full-speed-proof.json`
 - Legacy title proof: `scratch/thor-debug/latest-title-proof.json`
 
 Do not commit scratch proof markers or device logs unless the repo already
@@ -103,3 +110,13 @@ Every loop prompt should say:
 - whether to build, deploy, and capture on Thor;
 - which logs, screenshots, APK hashes, cvars, or FPS data prove progress;
 - when to stop and summarize a blocker instead of guessing again.
+
+For Blue Dragon full speed, define the stop condition concretely:
+
+- launch Disc 1 from the known Thor SD-card path;
+- show title/opening/gameplay route evidence;
+- record commit, APK hash, launch cvars, screenshot, and capture paths;
+- use a quiet speed capture with profiler data;
+- require sustained at least 30 FPS over a representative 180-second route
+  segment, with 60 FPS tracked as a stretch target when the game itself allows
+  it.
