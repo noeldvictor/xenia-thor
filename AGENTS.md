@@ -583,6 +583,9 @@ required.
   - `.agents/skills/xenia-ghidra-ooda-loop/SKILL.md` is the repo-local static
     analysis coordinator for mapping Thor runtime evidence to Ghidra/native
     ARM64/guest PPC/generated-JIT queues and dated triage reports.
+  - `.agents/skills/xenia-codex-goal-loop/SKILL.md` is the bounded
+    continuation expert for Codex Stop hooks, heartbeat automations, proof
+    markers, and "keep going until goal or blocker" loops.
 
 ## Agent Skill Donor Audit
 
@@ -1337,15 +1340,22 @@ required.
 ## Codex Hooks / Automation
 
 - Research note: `docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md`.
+- Current research refresh:
+  `docs/research/20260521-190747-codex-goal-loop-research.md`.
 - Project hooks live in `.codex/hooks.json` and must be reviewed/trusted by the
   Codex environment before they run.
-- `.codex/hooks/blue_dragon_stop.ps1` is passive by default. It only
-  auto-continues when `scratch\thor-debug\continue-until-blue-dragon-title.flag`
-  exists and stops once `scratch\thor-debug\latest-title-proof.json` exists.
-- The Blue Dragon Stop hook is bounded to 12 attempts so ADB/device/build
-  failures become a blocker report instead of an endless loop.
-- Prefer a Codex thread automation only for scheduled later wakeups; use the
-  project Stop hook for active-session bounded continuation.
+- `.codex/hooks/blue_dragon_stop.ps1` is passive by default. It now supports
+  the generic config file `scratch\thor-debug\codex-goal-loop.json` and keeps
+  the legacy `continue-until-blue-dragon-title.flag` path for compatibility.
+- Use `tools\thor\thor_codex_goal_loop.ps1` to enable, disable, reset, or
+  inspect the loop. The current Blue Dragon speed/opening loop command is:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonOpeningSpeed`.
+- The Stop hook must stay bounded. Default max is 12 Stop-hook attempts, after
+  which it should stop and summarize the blocker, capture paths, and next
+  experiment instead of running forever.
+- Prefer a Codex thread automation only for scheduled later wakeups. Use the
+  project Stop hook for active-session bounded continuation, and use
+  `.agents/skills/xenia-codex-goal-loop/SKILL.md` when setting either up.
 
 ## Android ARM64 Risk Register
 
