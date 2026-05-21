@@ -237,6 +237,21 @@ required.
   `-A64LseKernelLockFastpaths false`. Keep the cvar's rollback path in all
   Blue Dragon scripts and do not treat this as the final FPS fix; the next wall
   remains `827294CC`, `8272A3A4`, `8272A8E8`, XMA/audio, and GPU command work.
+- Current Blue Dragon nop input route note:
+  `docs/research/20260521-164045-blue-dragon-nop-keystroke-route-fix.md`.
+  The speed lane now depends on nop HID emitting scheduled
+  `XamInputGetKeystroke` transitions, not only `GetState` button states. The
+  no-auto-input title proof `scratch/thor-debug/20260521-162805-*` reached and
+  stayed at `press START`; after the nop keystroke fix,
+  `scratch/thor-debug/20260521-163237-*` reached the loading spinner and
+  `scratch/thor-debug/20260521-163453-*` reached the opening rendered sky/wing
+  scene by 180 seconds with APK SHA
+  `FB4877DF6BEA31D86B8354632668A36BDAD134D48738132E26813FD7C5F631B6`.
+  Keep `arm64_blue_dragon_stricmp_deferred_cr_fastpath=false`: capture
+  `scratch/thor-debug/20260521-161210-*` guest-crashed at PC `826A2498` with it
+  enabled. Keep `arm64_blue_dragon_jump_table_inline_in_caller=false` until a
+  clean same-route A/B after the input fix proves it; the pre-fix short route
+  removed `827294CC` from early top rows but was not enough evidence.
 
 ## Current Porting Priorities
 

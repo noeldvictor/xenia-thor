@@ -66,10 +66,12 @@ DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
 DECLARE_bool(arm64_blue_dragon_memcpy_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_fastpath);
+DECLARE_bool(arm64_blue_dragon_stricmp_deferred_cr_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_return_profile);
 DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
+DECLARE_bool(arm64_blue_dragon_jump_table_inline_in_caller);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -3339,11 +3341,35 @@ bool A64Emitter::TryEmitBlueDragonStricmpFunctionBody() {
     cset(w11, EQ);
     strb(w11, ptr(GetContextReg(), base + 2));
   };
+  auto emit_cr_constant = [&](uint32_t field, bool lt, bool gt, bool eq) {
+    int32_t base = static_cast<int32_t>(offsetof(ppc::PPCContext, cr0) +
+                                        (4 * field));
+    if (lt || gt || eq) {
+      mov(w11, 1);
+    }
+    if (lt) {
+      strb(w11, ptr(GetContextReg(), base + 0));
+    } else {
+      strb(wzr, ptr(GetContextReg(), base + 0));
+    }
+    if (gt) {
+      strb(w11, ptr(GetContextReg(), base + 1));
+    } else {
+      strb(wzr, ptr(GetContextReg(), base + 1));
+    }
+    if (eq) {
+      strb(w11, ptr(GetContextReg(), base + 2));
+    } else {
+      strb(wzr, ptr(GetContextReg(), base + 2));
+    }
+  };
 
   auto& loop = NewCachedLabel();
   auto& advance = NewCachedLabel();
   auto& lower_second_done = NewCachedLabel();
   auto& lower_first_done = NewCachedLabel();
+  auto& raw_diff = NewCachedLabel();
+  auto& nul_return = NewCachedLabel();
   auto& return_result = NewCachedLabel();
 
   ldr(w16, ptr(GetContextReg(),
@@ -3358,6 +3384,62 @@ bool A64Emitter::TryEmitBlueDragonStricmpFunctionBody() {
   L(loop);
   ldrb(w14, ptr(x10));
   ldrb(w13, ptr(x9));
+
+  if (cvars::arm64_blue_dragon_stricmp_deferred_cr_fastpath) {
+    sub(x15, x13, x14);
+    cbz(w14, nul_return);
+    cbnz(w15, raw_diff);
+    b(advance);
+
+    L(nul_return);
+    emit_cr_constant(7, false, false, true);
+    emit_cr0_from_result();
+    b(return_result);
+
+    L(raw_diff);
+    emit_cr_constant(7, false, true, false);
+    emit_signed_cr(5, w14, static_cast<uint32_t>('A'));
+    emit_signed_cr(6, w14, static_cast<uint32_t>('Z'));
+    cmp(w14, static_cast<uint32_t>('A'));
+    b(LT, lower_second_done);
+    cmp(w14, static_cast<uint32_t>('Z'));
+    b(GT, lower_second_done);
+    orr(w14, w14, static_cast<uint32_t>(0x20));
+    L(lower_second_done);
+
+    emit_signed_cr(0, w13, static_cast<uint32_t>('A'));
+    emit_signed_cr(1, w13, static_cast<uint32_t>('Z'));
+    cmp(w13, static_cast<uint32_t>('A'));
+    b(LT, lower_first_done);
+    cmp(w13, static_cast<uint32_t>('Z'));
+    b(GT, lower_first_done);
+    orr(w13, w13, static_cast<uint32_t>(0x20));
+    L(lower_first_done);
+
+    sub(x15, x13, x14);
+    emit_cr0_from_result();
+    b(return_result);
+
+    L(advance);
+    add(x9, x9, 1);
+    add(x10, x10, 1);
+    add(w16, w16, 1);
+    add(w17, w17, 1);
+    b(loop);
+
+    L(return_result);
+    str(x15, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[3]))));
+    str(x17, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[4]))));
+    str(x13, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[5]))));
+    str(x14, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[6]))));
+    str(x16, ptr(GetContextReg(),
+                 static_cast<int32_t>(offsetof(ppc::PPCContext, r[9]))));
+    return true;
+  }
 
   emit_signed_cr(7, w14, 0);
   sub(x15, x13, x14);
@@ -3415,6 +3497,53 @@ bool A64Emitter::TryEmitBlueDragonJumpTableFunctionBody() {
     return false;
   }
 
+  EmitBlueDragonJumpTableDispatch();
+
+  MaybeEmitBodyTimeProfileEnd();
+  PopStackpoint();
+  ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+  ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
+  if (stack_size() <= 4095) {
+    add(sp, sp, static_cast<uint32_t>(stack_size()));
+  } else {
+    mov(x17, static_cast<uint64_t>(stack_size()));
+    add(sp, sp, x17, UXTX);
+  }
+  br(x9);
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonJumpTableInlineCall(
+    const hir::Instr* instr, GuestFunction* function) {
+  if (!cvars::arm64_blue_dragon_jump_table_fastpath ||
+      !cvars::arm64_blue_dragon_jump_table_inline_in_caller || !function ||
+      function->address() != 0x827294CC) {
+    return false;
+  }
+
+  EmitBlueDragonJumpTableDispatch();
+
+  if (instr->flags & hir::CALL_TAIL) {
+    MaybeEmitBodyTimeProfileEnd();
+    PopStackpoint();
+    ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+    ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
+    if (stack_size() <= 4095) {
+      add(sp, sp, static_cast<uint32_t>(stack_size()));
+    } else {
+      mov(x17, static_cast<uint64_t>(stack_size()));
+      add(sp, sp, x17, UXTX);
+    }
+    br(x9);
+  } else {
+    ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
+    blr(x9);
+    synchronize_stack_on_next_instruction_ = true;
+  }
+  return true;
+}
+
+bool A64Emitter::EmitBlueDragonJumpTableDispatch() {
   ForgetFpcrMode();
 
   mov(w13, 0xB);
@@ -3456,17 +3585,6 @@ bool A64Emitter::TryEmitBlueDragonJumpTableFunctionBody() {
     mov(x9, x0);
   }
 
-  MaybeEmitBodyTimeProfileEnd();
-  PopStackpoint();
-  ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
-  ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
-  if (stack_size() <= 4095) {
-    add(sp, sp, static_cast<uint32_t>(stack_size()));
-  } else {
-    mov(x17, static_cast<uint64_t>(stack_size()));
-    add(sp, sp, x17, UXTX);
-  }
-  br(x9);
   return true;
 }
 
@@ -3522,6 +3640,9 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     return;
   }
   if (TryEmitBlueDragonDrawWaitInlineCall(function)) {
+    return;
+  }
+  if (TryEmitBlueDragonJumpTableInlineCall(instr, function)) {
     return;
   }
 

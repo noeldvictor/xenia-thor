@@ -42,6 +42,7 @@ class NopInputDriver final : public InputDriver {
 
   uint32_t packet_number_ = 1;
   uint16_t previous_buttons_ = 0;
+  uint16_t previous_keystroke_buttons_ = 0;
   bool research_logged_ = false;
   std::chrono::steady_clock::time_point button_schedule_start_time_;
 };

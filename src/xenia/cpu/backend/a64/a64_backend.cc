@@ -178,6 +178,13 @@ DEFINE_bool(
     "Research-only and title-specific.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_stricmp_deferred_cr_fastpath, false,
+    "Thor ARM64 speed lane: when the 826C5620 Blue Dragon string-compare "
+    "helper is enabled, keep equal-character loop iterations in registers and "
+    "only write the PPC-visible CR state when the helper exits. Research-only "
+    "and title-specific.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_stricmp_return_profile, false,
     "Thor ARM64 speed lane: sample Blue Dragon's normal generated 826C5620 "
     "ASCII string-compare return state. Research-only and title-specific.",
@@ -196,6 +203,13 @@ DEFINE_bool(
     arm64_blue_dragon_jump_table_fastpath, false,
     "Thor ARM64 speed lane: replace Blue Dragon's hot 827294CC jump-table "
     "tail-dispatch helper with a hand-emitted A64 path. Research-only and "
+    "title-specific.",
+    "a64");
+DEFINE_bool(
+    arm64_blue_dragon_jump_table_inline_in_caller, false,
+    "Thor ARM64 speed lane: inline Blue Dragon calls to the hot 827294CC "
+    "jump-table helper so the caller dispatches directly to the computed "
+    "target without entering the helper function. Research-only and "
     "title-specific.",
     "a64");
 DEFINE_bool(

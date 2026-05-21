@@ -362,6 +362,23 @@ screen with `-A64LseKernelLockFastpaths true`, while the same APK black-idled in
 switch available; this is backend maturity, not the final FPS fix. See
 `docs/research/20260521-160124-a64-lse-kernel-lock-fastpaths.md`.
 
+The speed/title automation now requires nop HID keystroke events as well as
+button state. Before the fix, the title route could sit forever at visible
+`press START` because Blue Dragon polls `XamInputGetKeystroke` in the menu path.
+The fixed nop driver emits scheduled START/A key-down and key-up transitions.
+Proof `scratch\thor-debug\20260521-163237-*` reached the loading spinner, and
+`scratch\thor-debug\20260521-163453-*` reached the opening rendered sky/wing
+scene by 180 seconds with APK SHA
+`FB4877DF6BEA31D86B8354632668A36BDAD134D48738132E26813FD7C5F631B6`. See
+`docs/research/20260521-164045-blue-dragon-nop-keystroke-route-fix.md`.
+
+Do not enable `arm64_blue_dragon_stricmp_deferred_cr_fastpath` in the speed
+pack. Capture `scratch\thor-debug\20260521-161210-*` crashed the guest at PC
+`826A2498` with it on. Do not enable
+`arm64_blue_dragon_jump_table_inline_in_caller` until it has a fresh same-route
+A/B after the nop keystroke fix; the pre-fix short run looked promising for
+`827294CC`, but the longer route evidence was contaminated by menu automation.
+
 `RtlLeaveCriticalSection` now has a default-on uncontended final-unlock inline.
 It only handles owner-current, `recursion_count == 1`, and `lock_count == 0`;
 if a waiter races in, it restores owner/recursion and falls back to native HLE

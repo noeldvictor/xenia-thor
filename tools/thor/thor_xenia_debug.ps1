@@ -144,10 +144,12 @@ param(
     [string]$Arm64BlueDragonDrawWaitCallerProfileBudget = "",
     [string]$Arm64BlueDragonMemcpyFastpath = "false",
     [string]$Arm64BlueDragonStricmpFastpath = "false",
+    [string]$Arm64BlueDragonStricmpDeferredCrFastpath = "false",
     [string]$Arm64BlueDragonStricmpReturnProfile = "false",
     [string]$Arm64BlueDragonStricmpReturnProfileStride = "",
     [string]$Arm64BlueDragonStricmpReturnProfileBudget = "",
     [string]$Arm64BlueDragonJumpTableFastpath = "false",
+    [string]$Arm64BlueDragonJumpTableInlineInCaller = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -823,6 +825,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonStricmpFastpath) {
         $parts += "--ez arm64_blue_dragon_stricmp_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonStricmpFastpath)"
     }
+    if ($Arm64BlueDragonStricmpDeferredCrFastpath) {
+        $parts += "--ez arm64_blue_dragon_stricmp_deferred_cr_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonStricmpDeferredCrFastpath)"
+    }
     if ($Arm64BlueDragonStricmpReturnProfile) {
         $parts += "--ez arm64_blue_dragon_stricmp_return_profile $(ConvertTo-BooleanText $Arm64BlueDragonStricmpReturnProfile)"
     }
@@ -834,6 +839,9 @@ function Start-XeniaEmulator {
     }
     if ($Arm64BlueDragonJumpTableFastpath) {
         $parts += "--ez arm64_blue_dragon_jump_table_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonJumpTableFastpath)"
+    }
+    if ($Arm64BlueDragonJumpTableInlineInCaller) {
+        $parts += "--ez arm64_blue_dragon_jump_table_inline_in_caller $(ConvertTo-BooleanText $Arm64BlueDragonJumpTableInlineInCaller)"
     }
     if ($Arm64AddSubImmAudit) {
         $parts += "--ez arm64_add_sub_imm_audit $(ConvertTo-BooleanText $Arm64AddSubImmAudit)"
@@ -1022,10 +1030,12 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_draw_wait_caller_profile_budget=$Arm64BlueDragonDrawWaitCallerProfileBudget",
         "arm64_blue_dragon_memcpy_fastpath=$Arm64BlueDragonMemcpyFastpath",
         "arm64_blue_dragon_stricmp_fastpath=$Arm64BlueDragonStricmpFastpath",
+        "arm64_blue_dragon_stricmp_deferred_cr_fastpath=$Arm64BlueDragonStricmpDeferredCrFastpath",
         "arm64_blue_dragon_stricmp_return_profile=$Arm64BlueDragonStricmpReturnProfile",
         "arm64_blue_dragon_stricmp_return_profile_stride=$Arm64BlueDragonStricmpReturnProfileStride",
         "arm64_blue_dragon_stricmp_return_profile_budget=$Arm64BlueDragonStricmpReturnProfileBudget",
         "arm64_blue_dragon_jump_table_fastpath=$Arm64BlueDragonJumpTableFastpath",
+        "arm64_blue_dragon_jump_table_inline_in_caller=$Arm64BlueDragonJumpTableInlineInCaller",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1273,7 +1283,9 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitInlineInCaller" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonMemcpyFastpath" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonStricmpFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonStricmpDeferredCrFastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonJumpTableFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonJumpTableInlineInCaller" "false"
 }
 
 function Write-PerfSnapshot {

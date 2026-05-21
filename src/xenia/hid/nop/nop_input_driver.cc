@@ -19,6 +19,7 @@
 
 #include "xenia/base/logging.h"
 #include "xenia/hid/hid_flags.h"
+#include "xenia/ui/virtual_key.h"
 
 namespace xe {
 namespace hid {
@@ -47,6 +48,37 @@ int32_t ParseIntOrDefault(const std::string& value, int32_t default_value) {
     return default_value;
   }
   return int32_t(parsed);
+}
+
+ui::VirtualKey GetVirtualKeyForButton(uint16_t button) {
+  switch (button) {
+    case X_INPUT_GAMEPAD_DPAD_UP:
+      return ui::VirtualKey::kXInputPadDpadUp;
+    case X_INPUT_GAMEPAD_DPAD_DOWN:
+      return ui::VirtualKey::kXInputPadDpadDown;
+    case X_INPUT_GAMEPAD_DPAD_LEFT:
+      return ui::VirtualKey::kXInputPadDpadLeft;
+    case X_INPUT_GAMEPAD_DPAD_RIGHT:
+      return ui::VirtualKey::kXInputPadDpadRight;
+    case X_INPUT_GAMEPAD_START:
+      return ui::VirtualKey::kXInputPadStart;
+    case X_INPUT_GAMEPAD_BACK:
+      return ui::VirtualKey::kXInputPadBack;
+    case X_INPUT_GAMEPAD_LEFT_SHOULDER:
+      return ui::VirtualKey::kXInputPadLShoulder;
+    case X_INPUT_GAMEPAD_RIGHT_SHOULDER:
+      return ui::VirtualKey::kXInputPadRShoulder;
+    case X_INPUT_GAMEPAD_A:
+      return ui::VirtualKey::kXInputPadA;
+    case X_INPUT_GAMEPAD_B:
+      return ui::VirtualKey::kXInputPadB;
+    case X_INPUT_GAMEPAD_X:
+      return ui::VirtualKey::kXInputPadX;
+    case X_INPUT_GAMEPAD_Y:
+      return ui::VirtualKey::kXInputPadY;
+    default:
+      return ui::VirtualKey::kNone;
+  }
 }
 
 }  // namespace
@@ -259,9 +291,65 @@ X_RESULT NopInputDriver::SetState(uint32_t user_index,
 
 X_RESULT NopInputDriver::GetKeystroke(uint32_t user_index, uint32_t flags,
                                       X_INPUT_KEYSTROKE* out_keystroke) {
-  if (!IsResearchControllerConnected()) {
+  uint8_t actual_user_index = static_cast<uint8_t>(user_index & 0xFF);
+  if (!IsResearchControllerConnected() ||
+      (actual_user_index != 0 && actual_user_index != 0xFF)) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
   }
+  if (!out_keystroke) {
+    return X_ERROR_BAD_ARGUMENTS;
+  }
+  if (actual_user_index == 0xFF) {
+    actual_user_index = 0;
+  }
+
+  LogResearchControllerOnce(user_index, "GetKeystroke");
+  std::memset(out_keystroke, 0, sizeof(*out_keystroke));
+
+  const uint16_t active_buttons = GetActiveButtons();
+  const uint16_t changed_buttons = active_buttons ^ previous_keystroke_buttons_;
+  if (!changed_buttons) {
+    return X_ERROR_EMPTY;
+  }
+
+  constexpr uint16_t kButtonOrder[] = {
+      X_INPUT_GAMEPAD_DPAD_UP,        X_INPUT_GAMEPAD_DPAD_DOWN,
+      X_INPUT_GAMEPAD_DPAD_LEFT,      X_INPUT_GAMEPAD_DPAD_RIGHT,
+      X_INPUT_GAMEPAD_START,          X_INPUT_GAMEPAD_BACK,
+      X_INPUT_GAMEPAD_LEFT_SHOULDER,  X_INPUT_GAMEPAD_RIGHT_SHOULDER,
+      X_INPUT_GAMEPAD_A,              X_INPUT_GAMEPAD_B,
+      X_INPUT_GAMEPAD_X,              X_INPUT_GAMEPAD_Y,
+  };
+
+  auto emit_button = [&](uint16_t button, uint16_t flags) {
+    const ui::VirtualKey virtual_key = GetVirtualKeyForButton(button);
+    if (virtual_key == ui::VirtualKey::kNone) {
+      return false;
+    }
+    out_keystroke->virtual_key = uint16_t(virtual_key);
+    out_keystroke->unicode = 0;
+    out_keystroke->flags = flags;
+    out_keystroke->user_index = actual_user_index;
+    out_keystroke->hid_code = 0;
+    return true;
+  };
+
+  for (uint16_t button : kButtonOrder) {
+    if ((changed_buttons & button) && !(active_buttons & button) &&
+        emit_button(button, X_INPUT_KEYSTROKE_KEYUP)) {
+      previous_keystroke_buttons_ &= ~button;
+      return X_ERROR_SUCCESS;
+    }
+  }
+  for (uint16_t button : kButtonOrder) {
+    if ((changed_buttons & button) && (active_buttons & button) &&
+        emit_button(button, X_INPUT_KEYSTROKE_KEYDOWN)) {
+      previous_keystroke_buttons_ |= button;
+      return X_ERROR_SUCCESS;
+    }
+  }
+
+  previous_keystroke_buttons_ = active_buttons;
   return X_ERROR_EMPTY;
 }
 
