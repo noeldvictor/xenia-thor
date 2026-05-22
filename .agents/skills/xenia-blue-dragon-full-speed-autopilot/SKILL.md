@@ -134,8 +134,13 @@ promotion work. The first guarded local-slot/data-flow probe for `r[1]` and
 `arm64_context_promotion_gpr_local_slots` default-off. The counter follow-up
 showed the local-slot bridge is a bad shape for `82282490`: `103` local stores
 for only `3` replaced loads, with `r[11]` giving zero replaced loads. Keep the
-local-slot audit default-off too. The next state-cache slice should try a
-lower-overhead pinned-GPR path for `r[1]` first.
+local-slot audit default-off too. The first pinned `r[1]` probe was also a
+negative result: no-fallthrough stayed route-clean but logged
+`loads/hits=107/0`, while fallthrough black-stalled before `82282490`. Keep
+`arm64_context_pinned_gpr_r1` and its fallthrough mode default-off. The next
+state-cache slice should classify those `r[1]` loads by block/predecessor/alias
+shape, then move the design before A64 register allocation if the pattern still
+justifies it.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

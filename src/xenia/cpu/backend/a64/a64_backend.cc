@@ -282,6 +282,27 @@ DEFINE_bool(
     "and is research-only after the 82282490 GPR state-span audit.",
     "a64");
 DEFINE_bool(
+    arm64_context_pinned_gpr_r1, false,
+    "Thor ARM64 speed lane: keep PPC r[1] in a dedicated non-allocator host "
+    "GPR inside selected generated functions. Default-off research cache.",
+    "a64");
+DEFINE_bool(
+    arm64_context_pinned_gpr_r1_fallthrough, false,
+    "Thor ARM64 speed lane: preserve the pinned PPC r[1] cache across "
+    "single-predecessor conditional-branch fallthrough blocks. Requires "
+    "arm64_context_pinned_gpr_r1 and is default-off research.",
+    "a64");
+DEFINE_uint32(
+    arm64_context_pinned_gpr_r1_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "arm64_context_pinned_gpr_r1. 0 enables all functions.",
+    "a64");
+DEFINE_bool(
+    arm64_context_pinned_gpr_r1_audit, false,
+    "Thor ARM64 speed lane: log pinned PPC r[1] cache hit/update/reset "
+    "counts for generated functions using arm64_context_pinned_gpr_r1.",
+    "a64");
+DEFINE_bool(
     arm64_cr_compare_branch_across_context_barrier, false,
     "Thor ARM64 speed lane: let CR compare/store peepholes fuse an immediate "
     "branch separated only by a no-op HIR context_barrier. Research-only "
@@ -1236,6 +1257,13 @@ void A64Backend::StartSpeedProfiler() {
   }
   if (cvars::arm64_context_value_cache_preserve_barrier) {
     XELOGW("A64 context value cache context_barrier preservation enabled");
+  }
+  if (cvars::arm64_context_pinned_gpr_r1) {
+    XELOGW("A64 pinned PPC r[1] cache enabled: function={:08X} "
+           "fallthrough={} audit={}",
+           cvars::arm64_context_pinned_gpr_r1_function,
+           cvars::arm64_context_pinned_gpr_r1_fallthrough,
+           cvars::arm64_context_pinned_gpr_r1_audit);
   }
   if (cvars::arm64_cr_compare_branch_across_context_barrier) {
     XELOGW("A64 CR compare/branch barrier fusion enabled");

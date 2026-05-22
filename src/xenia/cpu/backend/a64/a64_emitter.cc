@@ -77,6 +77,10 @@ DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
 DECLARE_bool(arm64_context_value_cache_fallthrough);
 DECLARE_bool(arm64_context_value_cache_preserve_barrier);
+DECLARE_bool(arm64_context_pinned_gpr_r1);
+DECLARE_bool(arm64_context_pinned_gpr_r1_fallthrough);
+DECLARE_uint32(arm64_context_pinned_gpr_r1_function);
+DECLARE_bool(arm64_context_pinned_gpr_r1_audit);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
@@ -251,21 +255,45 @@ struct A64ContextValueCacheStats {
   uint32_t fallthrough_preserves = 0;
   std::array<uint32_t, 32> load_hits_by_slot = {};
   std::array<uint32_t, 32> store_caches_by_slot = {};
+  uint32_t pinned_r1_loads = 0;
+  uint32_t pinned_r1_hits = 0;
+  uint32_t pinned_r1_pin_loads = 0;
+  uint32_t pinned_r1_pin_stores = 0;
+  uint32_t pinned_r1_block_resets = 0;
+  uint32_t pinned_r1_branch_resets = 0;
+  uint32_t pinned_r1_volatile_resets = 0;
+  uint32_t pinned_r1_overlap_resets = 0;
+  uint32_t pinned_r1_barrier_preserves = 0;
+  uint32_t pinned_r1_fallthrough_preserves = 0;
 };
 
 class A64ContextValueCache {
  public:
   explicit A64ContextValueCache(bool enabled, bool fallthrough_enabled,
-                                bool preserve_barrier_enabled)
+                                bool preserve_barrier_enabled,
+                                bool pinned_r1_enabled,
+                                bool pinned_r1_fallthrough_enabled)
       : enabled_(enabled),
         fallthrough_enabled_(enabled && fallthrough_enabled),
-        preserve_barrier_enabled_(enabled && preserve_barrier_enabled) {
+        preserve_barrier_enabled_(enabled && preserve_barrier_enabled),
+        pinned_r1_enabled_(pinned_r1_enabled),
+        pinned_r1_fallthrough_enabled_(pinned_r1_enabled &&
+                                       pinned_r1_fallthrough_enabled) {
     Reset();
   }
 
   const A64ContextValueCacheStats& stats() const { return stats_; }
 
   void ResetBlock(const xe::cpu::hir::Block* block) {
+    if (!enabled_ && !pinned_r1_enabled_) {
+      return;
+    }
+    if (pinned_r1_enabled_ && pinned_r1_valid_ &&
+        pinned_r1_fallthrough_enabled_ && CanPreserveIntoBlock(block)) {
+      ++stats_.pinned_r1_fallthrough_preserves;
+    } else if (pinned_r1_enabled_) {
+      InvalidatePinnedR1(&stats_.pinned_r1_block_resets);
+    }
     if (!enabled_) {
       return;
     }
@@ -279,7 +307,7 @@ class A64ContextValueCache {
   bool TryEmitLoad(xe::cpu::backend::a64::A64Emitter& e,
                    const xe::cpu::hir::Instr* instr) {
     using namespace xe::cpu::hir;
-    if (!enabled_ || !instr || instr->GetOpcodeNum() != OPCODE_LOAD_CONTEXT ||
+    if (!instr || instr->GetOpcodeNum() != OPCODE_LOAD_CONTEXT ||
         !instr->dest || instr->dest->type != INT64_TYPE) {
       return false;
     }
@@ -287,6 +315,30 @@ class A64ContextValueCache {
     uint32_t offset = static_cast<uint32_t>(instr->src1.offset);
     uint32_t slot = 0;
     if (!TryGetGprSlot(offset, sizeof(uint64_t), &slot)) {
+      return false;
+    }
+
+    if (pinned_r1_enabled_ && slot == 1) {
+      ++stats_.pinned_r1_loads;
+      int dest_host_reg = -1;
+      if (!TryHostIntegerRegIndex(instr->dest, &dest_host_reg)) {
+        return false;
+      }
+      Xbyak_aarch64::XReg dest_reg(0);
+      xe::cpu::backend::a64::A64Emitter::SetupReg(instr->dest, dest_reg);
+      if (pinned_r1_valid_) {
+        e.mov(dest_reg, e.x29);
+        ++stats_.pinned_r1_hits;
+        return true;
+      }
+      e.ldr(e.x29, Xbyak_aarch64::ptr(e.GetContextReg(), offset));
+      e.mov(dest_reg, e.x29);
+      pinned_r1_valid_ = true;
+      ++stats_.pinned_r1_pin_loads;
+      return true;
+    }
+
+    if (!enabled_) {
       return false;
     }
 
@@ -315,24 +367,26 @@ class A64ContextValueCache {
   }
 
   void ObservePostEmit(const xe::cpu::hir::Instr* instr,
-                       const xe::cpu::hir::Instr* new_tail) {
-    if (!enabled_ || !instr) {
+                       const xe::cpu::hir::Instr* new_tail,
+                       xe::cpu::backend::a64::A64Emitter& e) {
+    if ((!enabled_ && !pinned_r1_enabled_) || !instr) {
       return;
     }
 
     if (new_tail != instr->next) {
       const xe::cpu::hir::Instr* cursor = instr;
       while (cursor && cursor != new_tail) {
-        ObserveInstructionEffects(cursor);
+        ObserveInstructionEffects(cursor, e);
         cursor = cursor->next;
       }
       if (!cursor) {
         ResetWithReason(&stats_.safety_resets);
+        InvalidatePinnedR1(&stats_.pinned_r1_volatile_resets);
       }
       return;
     }
 
-    ObserveInstructionEffects(instr);
+    ObserveInstructionEffects(instr, e);
   }
 
  private:
@@ -341,7 +395,8 @@ class A64ContextValueCache {
     int host_reg = -1;
   };
 
-  void ObserveInstructionEffects(const xe::cpu::hir::Instr* instr) {
+  void ObserveInstructionEffects(const xe::cpu::hir::Instr* instr,
+                                 xe::cpu::backend::a64::A64Emitter& e) {
     using namespace xe::cpu::hir;
     if (!instr) {
       return;
@@ -349,6 +404,12 @@ class A64ContextValueCache {
 
     switch (instr->GetOpcodeNum()) {
       case OPCODE_CONTEXT_BARRIER:
+        if (pinned_r1_valid_) {
+          ++stats_.pinned_r1_barrier_preserves;
+        }
+        if (!enabled_) {
+          return;
+        }
         if (preserve_barrier_enabled_) {
           ++stats_.barrier_preserves;
           return;
@@ -364,6 +425,19 @@ class A64ContextValueCache {
                            sizeof(uint64_t), &slot)) {
           break;
         }
+        if (pinned_r1_enabled_ && slot == 1) {
+          int host_reg = -1;
+          if (TryHostIntegerRegIndex(instr->dest, &host_reg)) {
+            e.mov(e.x29, Xbyak_aarch64::XReg(host_reg));
+            pinned_r1_valid_ = true;
+            ++stats_.pinned_r1_pin_loads;
+          } else {
+            InvalidatePinnedR1(&stats_.pinned_r1_volatile_resets);
+          }
+        }
+        if (!enabled_) {
+          return;
+        }
         int host_reg = -1;
         if (TryHostIntegerRegIndex(instr->dest, &host_reg)) {
           InvalidateHostReg(host_reg);
@@ -377,6 +451,15 @@ class A64ContextValueCache {
         size_t size = instr->src2.value
                           ? xe::cpu::hir::GetTypeSize(instr->src2.value->type)
                           : 1;
+        uint32_t access_end =
+            offset + static_cast<uint32_t>(std::max<size_t>(size, 1));
+        if (pinned_r1_enabled_ && offset < GprSlotOffset(2) &&
+            access_end > GprSlotOffset(1)) {
+          InvalidatePinnedR1(&stats_.pinned_r1_overlap_resets);
+        }
+        if (!enabled_) {
+          return;
+        }
         uint32_t slot = 0;
         if (!TryGetGprSlot(offset, size, &slot)) {
           InvalidateOverlappingGprSlots(offset, size);
@@ -402,12 +485,21 @@ class A64ContextValueCache {
 
     if (instr->dest) {
       int host_reg = -1;
-      if (TryHostIntegerRegIndex(instr->dest, &host_reg)) {
+      if (enabled_ && TryHostIntegerRegIndex(instr->dest, &host_reg)) {
         InvalidateHostReg(host_reg);
       }
     }
 
     if (instr->opcode->flags & OPCODE_FLAG_BRANCH) {
+      if (pinned_r1_valid_ && pinned_r1_fallthrough_enabled_ &&
+          IsConditionalBranchTail(instr)) {
+        ++stats_.pinned_r1_fallthrough_preserves;
+      } else {
+        InvalidatePinnedR1(&stats_.pinned_r1_branch_resets);
+      }
+      if (!enabled_) {
+        return;
+      }
       if (fallthrough_enabled_ &&
           (instr->GetOpcodeNum() == OPCODE_BRANCH_TRUE ||
            instr->GetOpcodeNum() == OPCODE_BRANCH_FALSE)) {
@@ -418,7 +510,10 @@ class A64ContextValueCache {
     }
 
     if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
-      ResetWithReason(&stats_.safety_resets);
+      InvalidatePinnedR1(&stats_.pinned_r1_volatile_resets);
+      if (enabled_) {
+        ResetWithReason(&stats_.safety_resets);
+      }
     }
   }
 
@@ -475,6 +570,12 @@ class A64ContextValueCache {
     return true;
   }
 
+  static uint32_t GprSlotOffset(uint32_t slot) {
+    using xe::cpu::ppc::PPCContext;
+    return static_cast<uint32_t>(offsetof(PPCContext, r) +
+                                 slot * sizeof(uint64_t));
+  }
+
   void Reset() {
     for (auto& entry : entries_) {
       entry = {};
@@ -525,9 +626,21 @@ class A64ContextValueCache {
     }
   }
 
+  void InvalidatePinnedR1(uint32_t* counter) {
+    if (pinned_r1_valid_) {
+      pinned_r1_valid_ = false;
+      if (counter) {
+        ++(*counter);
+      }
+    }
+  }
+
   bool enabled_ = false;
   bool fallthrough_enabled_ = false;
   bool preserve_barrier_enabled_ = false;
+  bool pinned_r1_enabled_ = false;
+  bool pinned_r1_fallthrough_enabled_ = false;
+  bool pinned_r1_valid_ = false;
   std::array<Entry, 32> entries_;
   A64ContextValueCacheStats stats_;
 };
@@ -2143,7 +2256,12 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   A64ContextValueCache context_value_cache(
       cvars::arm64_context_value_cache,
       cvars::arm64_context_value_cache_fallthrough,
-      cvars::arm64_context_value_cache_preserve_barrier);
+      cvars::arm64_context_value_cache_preserve_barrier,
+      cvars::arm64_context_pinned_gpr_r1 &&
+          (!cvars::arm64_context_pinned_gpr_r1_function ||
+           cvars::arm64_context_pinned_gpr_r1_function ==
+               current_guest_function_),
+      cvars::arm64_context_pinned_gpr_r1_fallthrough);
   while (block) {
     // Reset FPCR tracking on each block entry (we don't know which
     // predecessor ran, so mode is unknown).
@@ -2182,7 +2300,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
                hir::GetOpcodeName(instr->GetOpcodeInfo()));
         return false;
       }
-      context_value_cache.ObservePostEmit(instr, new_tail);
+      context_value_cache.ObservePostEmit(instr, new_tail, *this);
       instr = new_tail;
     }
 
@@ -2209,6 +2327,25 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
            current_guest_function_,
            FormatGprSlotCounts(cache_stats.load_hits_by_slot),
            FormatGprSlotCounts(cache_stats.store_caches_by_slot));
+  }
+  if (cvars::arm64_context_pinned_gpr_r1_audit &&
+      cvars::arm64_context_pinned_gpr_r1 &&
+      (!cvars::arm64_context_pinned_gpr_r1_function ||
+       cvars::arm64_context_pinned_gpr_r1_function ==
+           current_guest_function_) &&
+      cache_stats.pinned_r1_loads) {
+    XELOGW(
+        "A64 pinned r1 cache: fn {:08X} loads/hits={}/{} pin_loads={} "
+        "pin_stores={} resets block/branch/volatile/overlap={}/{}/{}/{} "
+        "barrier_preserves={} fallthrough_preserves={}",
+        current_guest_function_, cache_stats.pinned_r1_loads,
+        cache_stats.pinned_r1_hits, cache_stats.pinned_r1_pin_loads,
+        cache_stats.pinned_r1_pin_stores, cache_stats.pinned_r1_block_resets,
+        cache_stats.pinned_r1_branch_resets,
+        cache_stats.pinned_r1_volatile_resets,
+        cache_stats.pinned_r1_overlap_resets,
+        cache_stats.pinned_r1_barrier_preserves,
+        cache_stats.pinned_r1_fallthrough_preserves);
   }
   }
 

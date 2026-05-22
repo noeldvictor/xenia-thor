@@ -163,6 +163,10 @@ param(
     [string]$Arm64ContextValueCache = "",
     [string]$Arm64ContextValueCacheFallthrough = "",
     [string]$Arm64ContextValueCachePreserveBarrier = "",
+    [string]$Arm64ContextPinnedGprR1 = "",
+    [string]$Arm64ContextPinnedGprR1Fallthrough = "",
+    [string]$Arm64ContextPinnedGprR1Function = "",
+    [string]$Arm64ContextPinnedGprR1Audit = "",
     [string]$Arm64ContextPromotionGprLocalSlots = "",
     [string]$Arm64ContextPromotionGprLocalSlotsFunction = "",
     [string]$Arm64ContextPromotionGprLocalSlotsAudit = "",
@@ -889,6 +893,18 @@ function Start-XeniaEmulator {
     if ($Arm64ContextValueCachePreserveBarrier) {
         $parts += "--ez arm64_context_value_cache_preserve_barrier $(ConvertTo-BooleanText $Arm64ContextValueCachePreserveBarrier)"
     }
+    if ($Arm64ContextPinnedGprR1) {
+        $parts += "--ez arm64_context_pinned_gpr_r1 $(ConvertTo-BooleanText $Arm64ContextPinnedGprR1)"
+    }
+    if ($Arm64ContextPinnedGprR1Fallthrough) {
+        $parts += "--ez arm64_context_pinned_gpr_r1_fallthrough $(ConvertTo-BooleanText $Arm64ContextPinnedGprR1Fallthrough)"
+    }
+    if ($Arm64ContextPinnedGprR1Function) {
+        $parts += "--ei arm64_context_pinned_gpr_r1_function $(ConvertTo-AdbIntText $Arm64ContextPinnedGprR1Function)"
+    }
+    if ($Arm64ContextPinnedGprR1Audit) {
+        $parts += "--ez arm64_context_pinned_gpr_r1_audit $(ConvertTo-BooleanText $Arm64ContextPinnedGprR1Audit)"
+    }
     if ($Arm64ContextPromotionGprLocalSlots) {
         $parts += "--ez arm64_context_promotion_gpr_local_slots $(ConvertTo-BooleanText $Arm64ContextPromotionGprLocalSlots)"
     }
@@ -1077,6 +1093,10 @@ function Write-CaptureMetadata {
         "arm64_context_value_cache=$Arm64ContextValueCache",
         "arm64_context_value_cache_fallthrough=$Arm64ContextValueCacheFallthrough",
         "arm64_context_value_cache_preserve_barrier=$Arm64ContextValueCachePreserveBarrier",
+        "arm64_context_pinned_gpr_r1=$Arm64ContextPinnedGprR1",
+        "arm64_context_pinned_gpr_r1_fallthrough=$Arm64ContextPinnedGprR1Fallthrough",
+        "arm64_context_pinned_gpr_r1_function=$Arm64ContextPinnedGprR1Function",
+        "arm64_context_pinned_gpr_r1_audit=$Arm64ContextPinnedGprR1Audit",
         "arm64_context_promotion_gpr_local_slots=$Arm64ContextPromotionGprLocalSlots",
         "arm64_context_promotion_gpr_local_slots_function=$Arm64ContextPromotionGprLocalSlotsFunction",
         "arm64_context_promotion_gpr_local_slots_audit=$Arm64ContextPromotionGprLocalSlotsAudit",
@@ -1310,6 +1330,10 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCachePreserveBarrier" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Fallthrough" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Function" ""
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Audit" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlots" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsFunction" ""
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsAudit" "false"
@@ -1494,6 +1518,10 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCachePreserveBarrier" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Fallthrough" "false"
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Function" ""
+    Set-DefaultIfNotBound "Arm64ContextPinnedGprR1Audit" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlots" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsFunction" ""
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsAudit" "false"

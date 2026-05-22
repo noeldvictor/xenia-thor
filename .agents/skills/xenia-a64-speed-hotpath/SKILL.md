@@ -236,6 +236,19 @@ conditional branches, returns, traps, multi-predecessor joins, volatile ops,
 and overlapping context writes. See
 `docs/research/20260522-114745-gpr-local-slot-promotion-counters.md`.
 
+The first pinned `r[1]` version is also not a speed win. Keep
+`arm64_context_pinned_gpr_r1` and
+`arm64_context_pinned_gpr_r1_fallthrough` default-off. Final APK control
+`scratch\thor-debug\20260522-123536-*` reached the loading spinner with
+`82282490 code_size=87168`; pinned no-fallthrough
+`scratch\thor-debug\20260522-123918-*` was route-clean but logged
+`loads/hits=107/0`, `pin_loads=107`, and grew `82282490` to `87596` bytes.
+Pinned fallthrough `scratch\thor-debug\20260522-123232-*` black-stalled before
+`82282490`. Do not tune emit-time `x29` pinning next. First classify the
+`r[1]` loads by block/predecessor/alias shape, or move the state-cache design
+before A64 register allocation. See
+`docs/research/20260522-123855-a64-pinned-r1-cache-probe.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

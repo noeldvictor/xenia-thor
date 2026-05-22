@@ -146,9 +146,13 @@ did not improve comparable body-time intervals. The counter follow-up showed
 stores and `3` replaced loads. Keep
 `arm64_context_promotion_gpr_local_slots` and
 `arm64_context_promotion_gpr_local_slots_audit` default-off. Next runtime
-slice: try a lower-overhead pinned-GPR path for `r[1]` first, with resets at
-volatile ops, calls, conditional branches, returns, traps, multi-predecessor
-joins, exits, exceptions, and overlapping context writes.
+check: the default-off pinned `r[1]` probe also missed. Pinned no-fallthrough
+was route-clean but logged `loads/hits=107/0` and grew `82282490`; pinned
+fallthrough black-stalled before the target function. Keep
+`arm64_context_pinned_gpr_r1` and its fallthrough mode default-off. Next slice:
+add or run an offline report that classifies the `107` `r[1]` loads by block,
+predecessor shape, branch boundary, and aliasing store before trying a
+pre-register-allocation GPR live-in/cache design.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

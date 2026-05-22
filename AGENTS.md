@@ -383,6 +383,18 @@ required.
   replaced loads. Keep the local-slot path as a default-off scaffold only. The
   next state-cache slice should try a lower-overhead pinned-GPR path for `r[1]`
   first, with explicit helper/exit/branch/exception/volatile/alias reset rules.
+- A64 pinned `r[1]` cache probe:
+  `docs/research/20260522-123855-a64-pinned-r1-cache-probe.md`.
+  `arm64_context_pinned_gpr_r1` and
+  `arm64_context_pinned_gpr_r1_fallthrough` are default-off and script-routable.
+  Final APK control `scratch/thor-debug/20260522-123536-*` reached the loading
+  spinner with no searched fatal markers and `82282490 code_size=87168`.
+  Pinned no-fallthrough `scratch/thor-debug/20260522-123918-*` was route-clean
+  but logged `loads/hits=107/0`, `pin_loads=107`, and grew `82282490` to
+  `87596` bytes. Pinned fallthrough `scratch/thor-debug/20260522-123232-*`
+  black-stalled before reaching `82282490`. Do not tune emit-time `x29`
+  pinning next; first classify the `r[1]` loads by block/predecessor/alias
+  shape or move to a pre-register-allocation live-in/state-cache design.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
