@@ -150,9 +150,12 @@ check: the default-off pinned `r[1]` probe also missed. Pinned no-fallthrough
 was route-clean but logged `loads/hits=107/0` and grew `82282490`; pinned
 fallthrough black-stalled before the target function. Keep
 `arm64_context_pinned_gpr_r1` and its fallthrough mode default-off. Next slice:
-add or run an offline report that classifies the `107` `r[1]` loads by block,
-predecessor shape, branch boundary, and aliasing store before trying a
-pre-register-allocation GPR live-in/cache design.
+use the new `tools/thor/thor_hir_gpr_load_shape_report.ps1` result instead of
+repeating the failed cache shapes. It found `76` first-in-block `r[1]` loads,
+`87` multi-predecessor loads, and no aliasing stores, which means the next
+useful worker slice is a CFG/live-in availability report or guarded
+pre-register-allocation GPR state-cache design that proves all predecessors
+leave `r[1]` clean before replacing loads.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

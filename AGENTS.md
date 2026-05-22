@@ -395,6 +395,16 @@ required.
   black-stalled before reaching `82282490`. Do not tune emit-time `x29`
   pinning next; first classify the `r[1]` loads by block/predecessor/alias
   shape or move to a pre-register-allocation live-in/state-cache design.
+- HIR `r[1]` load-shape report:
+  `docs/research/20260522-125206-r1-load-shape-report.md`.
+  Use `tools/thor/thor_hir_gpr_load_shape_report.ps1` for exact GPR load
+  shape checks. On `82282490`, `r[1]` has `107` exact loads, `11` exact stores,
+  `0` aliasing stores, `76` first loads in their block, `87` loads in
+  multi-predecessor blocks, and `31` loads after a context barrier before the
+  next branch. This explains why post-RA emit-time and fallthrough pinning
+  produced zero hits. Do not tune the old caches next; add a CFG/live-in
+  availability report or guarded pre-register-allocation state-cache design
+  that proves all predecessors leave `r[1]` clean before replacing loads.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

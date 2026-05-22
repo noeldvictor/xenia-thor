@@ -138,9 +138,10 @@ local-slot audit default-off too. The first pinned `r[1]` probe was also a
 negative result: no-fallthrough stayed route-clean but logged
 `loads/hits=107/0`, while fallthrough black-stalled before `82282490`. Keep
 `arm64_context_pinned_gpr_r1` and its fallthrough mode default-off. The next
-state-cache slice should classify those `r[1]` loads by block/predecessor/alias
-shape, then move the design before A64 register allocation if the pattern still
-justifies it.
+load-shape report found `76` first-in-block loads, `87` multi-predecessor
+loads, and no aliasing stores. Move the next state-cache design before A64
+register allocation only after a CFG/live-in availability report proves which
+target-load blocks have all predecessors leaving `r[1]` clean.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

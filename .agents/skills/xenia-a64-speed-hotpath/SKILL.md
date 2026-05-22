@@ -249,6 +249,21 @@ Pinned fallthrough `scratch\thor-debug\20260522-123232-*` black-stalled before
 before A64 register allocation. See
 `docs/research/20260522-123855-a64-pinned-r1-cache-probe.md`.
 
+The follow-up load-shape report did that classification. Use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_gpr_load_shape_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Gpr 1 -Top 25
+```
+
+Current `r[1]` result: `107` exact loads, `11` exact stores, `0` aliasing
+stores, `76` first loads in their block, `87` loads in multi-predecessor
+blocks, and `31` loads after a context barrier before the next branch. This
+matches the zero-hit pinned cache result. Do not implement another post-RA
+cache for this path. Next add a CFG/live-in availability report or guarded
+pre-register-allocation GPR state-cache design that proves all predecessors
+leave `r[1]` clean before replacing loads. See
+`docs/research/20260522-125206-r1-load-shape-report.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
