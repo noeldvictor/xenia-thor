@@ -1705,7 +1705,11 @@ required.
   was killing state at conditional branches. NativeCore now builds with branch
   state preserved and better dirty-reason counters. Next work should deploy an
   audited capture and verify the runtime probe reaches roughly the expected
-  `50+` replacement range before a quiet speed run.
+  `50+` replacement range before a quiet speed run. That audit is now complete:
+  `docs/research/20260522-160205-r1-livein-audit-capture.md` shows
+  `loads_replaced=64/107`, `branch_preserves=153`, and no searched fatal
+  markers in `scratch/thor-debug/20260522-155827-*`. Keep the toggle
+  default-off until a quiet same-APK A/B proves it improves body time.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

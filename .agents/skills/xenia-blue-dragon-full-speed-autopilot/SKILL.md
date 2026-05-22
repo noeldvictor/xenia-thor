@@ -159,6 +159,14 @@ the likely gap: `branch_true` / `branch_false` should not kill the explicit r1
 edge carrier just because HIR marks them volatile. NativeCore passes. Next run
 an audited route capture with the r1 live-in toggle enabled and confirm
 `loads_replaced` approaches `50+` before judging FPS.
+The audited capture is complete:
+`docs/research/20260522-160205-r1-livein-audit-capture.md` and
+`scratch/thor-debug/20260522-155827-*` show `loads_replaced=64/107`,
+`branch_preserves=153`, and no searched fatal markers. This proves the
+replacement-count target. Next do a quiet same-APK A/B before judging speed:
+control with the toggle off, then experiment with
+`arm64_context_promotion_gpr_livein_r1=true`, audit off, same route, same body
+filter, and only compare matching routes.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

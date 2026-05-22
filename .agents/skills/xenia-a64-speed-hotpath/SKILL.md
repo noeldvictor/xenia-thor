@@ -293,6 +293,14 @@ The next code fix preserves the carrier across conditional branches:
 must see their successor edges rather than killing state there. NativeCore
 builds. Next run an audited r1 live-in capture and require roughly `50+`
 runtime replacements before any quiet FPS comparison.
+The audited replacement target is now met. Capture
+`scratch\thor-debug\20260522-155827-*` logged `loads_attempted=107`,
+`loads_replaced=64`, `loads_seeded=43`, `local_loads=59`,
+`local_stores=17`, `call_resets=43`, and `branch_preserves=153`, with no
+searched fatal markers. See
+`docs/research/20260522-160205-r1-livein-audit-capture.md`. Next run a quiet
+same-APK A/B with audit off and compare body-time/route only when both runs
+reach matching loading/opening evidence.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

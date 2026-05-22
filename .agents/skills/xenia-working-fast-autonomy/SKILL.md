@@ -174,6 +174,10 @@ The first carrier fix is now in code: preserve `r[1]` state across
 generic volatile flag was killing state before successors. NativeCore passed.
 Next slice should deploy and run an audited r1 live-in route capture, not a
 quiet FPS run, and require the runtime `loads_replaced` count to approach `50+`.
+That audit now passed: `scratch/thor-debug/20260522-155827-*` logged
+`loads_replaced=64/107`, `branch_preserves=153`, and no searched fatal markers.
+Next slice should run a quiet same-APK A/B, control off versus r1 live-in on
+with audit off, and compare only matching routes with body-time evidence.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
