@@ -148,6 +148,9 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void EmitAtomicIncrement64(std::atomic<uint64_t>* counter);
   void EmitAtomicAdd64(std::atomic<uint64_t>* counter,
                        const Xbyak_aarch64::XReg& value_reg);
+  void MaybeEmitBlockBodyTimeProfileInit();
+  void MaybeEmitBlockBodyTimeTransition(const hir::Block* block);
+  void MaybeEmitBlockBodyTimeEnd();
   void MaybeEmitBodyTimeProfileStart();
   void MaybeEmitBodyTimeProfileEnd();
   uint32_t FindBlockGuestAddress(const hir::Block* block) const;
@@ -207,7 +210,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   A64Function* current_a64_function_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_entry_count_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_body_ticks_ = nullptr;
+  bool current_guest_function_block_body_ticks_ = false;
   size_t body_time_start_stack_offset_ = 0;
+  size_t block_body_time_start_stack_offset_ = 0;
+  size_t block_body_time_counter_stack_offset_ = 0;
 
   Xbyak_aarch64::Label* epilog_label_ = nullptr;
 

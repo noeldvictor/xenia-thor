@@ -369,6 +369,12 @@ DEFINE_string(
     "arm64_speed_profile_interval_ms.",
     "a64");
 DEFINE_bool(
+    arm64_speed_profile_block_body_time, false,
+    "Thor ARM64 speed lane: when block profiling is enabled, also attribute "
+    "CNTVCT body ticks to generated-code blocks. Research-only and higher "
+    "overhead than block-entry counts.",
+    "a64");
+DEFINE_bool(
     arm64_speed_profile_thread_snapshot, false,
     "Thor ARM64 speed lane: log each guest thread's last A64 function and "
     "PPC context registers on every speed-profile interval.",
@@ -1172,6 +1178,16 @@ bool A64Backend::BlockProfileEnabledForFunction(A64Function* function) const {
       function, cvars::arm64_speed_profile_block_filter);
 }
 
+bool A64Backend::BlockBodyTimeProfileEnabledForFunction(
+    A64Function* function) const {
+  if (!speed_profile_enabled() || !cvars::arm64_speed_profile_block_body_time ||
+      cvars::arm64_speed_profile_block_filter.empty()) {
+    return false;
+  }
+  return FunctionStartMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_block_filter);
+}
+
 void A64Backend::RecordResolveFunction(bool success) {
   if (!speed_profile_enabled()) {
     return;
@@ -1232,6 +1248,11 @@ void A64Backend::StartSpeedProfiler() {
   if (!cvars::arm64_speed_profile_body_time_filter.empty()) {
     XELOGW("A64 body-time profile enabled: filter='{}' after_ms={}",
            cvars::arm64_speed_profile_body_time_filter,
+           cvars::arm64_speed_profile_body_time_after_ms);
+  }
+  if (cvars::arm64_speed_profile_block_body_time) {
+    XELOGW("A64 block body-time profile enabled: filter='{}' after_ms={}",
+           cvars::arm64_speed_profile_block_filter,
            cvars::arm64_speed_profile_body_time_after_ms);
   }
   if (cvars::arm64_add_sub_imm_audit) {
@@ -1296,7 +1317,10 @@ void A64Backend::LogSpeedProfile() {
     return;
   }
 
-  if (!cvars::arm64_speed_profile_body_time_filter.empty() &&
+  const bool any_body_time_profile =
+      !cvars::arm64_speed_profile_body_time_filter.empty() ||
+      cvars::arm64_speed_profile_block_body_time;
+  if (any_body_time_profile &&
       cvars::arm64_speed_profile_body_time_after_ms != 0 &&
       !speed_profile_body_time_active_.load(std::memory_order_acquire)) {
     uint64_t elapsed_ms =
@@ -1324,11 +1348,15 @@ void A64Backend::LogSpeedProfile() {
     std::string function_name;
     uint64_t total = 0;
     uint64_t delta = 0;
+    uint64_t body_ticks_total = 0;
+    uint64_t body_ticks_delta = 0;
+    uint64_t body_ticks_per_entry = 0;
   };
 
   std::vector<FunctionSample> samples;
   std::vector<FunctionSample> body_samples;
   std::vector<BlockSample> block_samples;
+  std::vector<BlockSample> block_body_samples;
   uint64_t entry_delta_total = 0;
   size_t function_count = 0;
   {
@@ -1377,6 +1405,9 @@ void A64Backend::LogSpeedProfile() {
         if (entry.last_block_counts.size() != block_count) {
           entry.last_block_counts.assign(block_count, 0);
         }
+        if (entry.last_block_body_ticks.size() != block_count) {
+          entry.last_block_body_ticks.assign(block_count, 0);
+        }
         for (size_t i = 0; i < block_count; ++i) {
           auto* block_counter = function->profile_block_count(i);
           if (!block_counter) {
@@ -1386,12 +1417,28 @@ void A64Backend::LogSpeedProfile() {
               block_counter->load(std::memory_order_relaxed);
           uint64_t block_delta = block_total - entry.last_block_counts[i];
           entry.last_block_counts[i] = block_total;
-          if (block_delta < cvars::arm64_speed_profile_min_delta) {
-            continue;
+          uint64_t block_body_total = 0;
+          uint64_t block_body_delta = 0;
+          auto* block_body_counter = function->profile_block_body_ticks(i);
+          if (block_body_counter) {
+            block_body_total =
+                block_body_counter->load(std::memory_order_relaxed);
+            block_body_delta =
+                block_body_total - entry.last_block_body_ticks[i];
+            entry.last_block_body_ticks[i] = block_body_total;
           }
-          block_samples.push_back(
-              {function->address(), function->profile_block_address(i),
-               static_cast<uint16_t>(i), name, block_total, block_delta});
+          uint64_t block_ticks_per_entry =
+              block_delta ? block_body_delta / block_delta : 0;
+          BlockSample block_sample = {
+              function->address(), function->profile_block_address(i),
+              static_cast<uint16_t>(i), name, block_total, block_delta,
+              block_body_total, block_body_delta, block_ticks_per_entry};
+          if (block_delta >= cvars::arm64_speed_profile_min_delta) {
+            block_samples.push_back(block_sample);
+          }
+          if (block_body_delta != 0) {
+            block_body_samples.push_back(std::move(block_sample));
+          }
         }
       }
     }
@@ -1408,6 +1455,10 @@ void A64Backend::LogSpeedProfile() {
   std::sort(block_samples.begin(), block_samples.end(),
             [](const BlockSample& a, const BlockSample& b) {
               return a.delta > b.delta;
+            });
+  std::sort(block_body_samples.begin(), block_body_samples.end(),
+            [](const BlockSample& a, const BlockSample& b) {
+              return a.body_ticks_delta > b.body_ticks_delta;
             });
 
   auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
@@ -1529,6 +1580,19 @@ void A64Backend::LogSpeedProfile() {
         i + 1, sample.function_address, sample.function_name,
         sample.block_ordinal, sample.block_address, sample.delta,
         sample.total);
+  }
+
+  size_t block_body_top_count = std::min<size_t>(
+      block_body_samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < block_body_top_count; ++i) {
+    const auto& sample = block_body_samples[i];
+    XELOGW(
+        "A64 speed profile block body top {:02}: fn {:08X} '{}' block={} "
+        "guest={:08X} body_ticks_delta={} body_ticks_total={} "
+        "entries_delta={} ticks_per_entry={}",
+        i + 1, sample.function_address, sample.function_name,
+        sample.block_ordinal, sample.block_address, sample.body_ticks_delta,
+        sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry);
   }
 
   const bool should_log_thread_snapshot =

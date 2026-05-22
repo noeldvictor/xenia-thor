@@ -183,6 +183,7 @@ param(
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
     [string]$Arm64SpeedProfileBodyTimeAfterMs = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
+    [string]$Arm64SpeedProfileBlockBodyTime = "false",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
     [string]$Arm64SpeedProfileThreadSnapshotOnIdle = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
@@ -957,6 +958,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileBlockFilter) {
         $parts += "--es arm64_speed_profile_block_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBlockFilter)"
     }
+    if ($Arm64SpeedProfileBlockBodyTime) {
+        $parts += "--ez arm64_speed_profile_block_body_time $(ConvertTo-BooleanText $Arm64SpeedProfileBlockBodyTime)"
+    }
     if ($Arm64SpeedProfileThreadSnapshot) {
         $parts += "--ez arm64_speed_profile_thread_snapshot $(ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshot)"
     }
@@ -1129,6 +1133,7 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
         "arm64_speed_profile_body_time_after_ms=$Arm64SpeedProfileBodyTimeAfterMs",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
+        "arm64_speed_profile_block_body_time=$Arm64SpeedProfileBlockBodyTime",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
         "xma_fast_silence=$XmaFastSilence",
@@ -1781,6 +1786,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileBlockFilter) {
             Write-Output "A64 block filter: $Arm64SpeedProfileBlockFilter"
+        }
+        if ($Arm64SpeedProfileBlockBodyTime) {
+            Write-Output "A64 block body-time: $(ConvertTo-BooleanText $Arm64SpeedProfileBlockBodyTime)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

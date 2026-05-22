@@ -453,9 +453,25 @@ required.
   `822824F0` is the only dynamic-hot vector block in the old entry-count
   profile (`total=1994364`) and carries `3` `stvewx`, `3` dynamic extracts in
   `stvewx`, `9` total extracts, `6` splats, `3` `mul_add`, and `3` permutes.
-  Static-heavy vector blocks still need body-time proof. Next add lower-noise
-  per-block body-time attribution for `82282490`, separating `822824F0` from
-  the other entry-hot control blocks before a default-off `stvewx` peephole.
+  Static-heavy vector blocks still need body-time proof. This no longer
+  justifies a peephole by itself; use block body-time evidence below first.
+- A64 block body-time profiler:
+  `docs/research/20260522-171725-82282490-block-body-time-profiler.md`.
+  `arm64_speed_profile_block_body_time` is default-off and launchable through
+  `tools/thor/thor_xenia_debug.ps1 -Arm64SpeedProfileBlockBodyTime true` with
+  `-Arm64SpeedProfileBlockFilter 82282490`. `tools/thor/thor_hir_block_mix_report.ps1`
+  now parses `A64 speed profile block body top` rows and adds a `Dynamic
+  Body-Time Blocks With HIR Mix` section. Capture
+  `scratch/thor-debug/20260522-170927-*` reached the visible opening sky/wing
+  route with no searched fatal markers. The body-time ranking overturns the old
+  entry-count target: `822825E0` dominates (`body_total=34726883`, peak
+  `14525259`, peak `ticks_per_entry=61`), then `822825C8`
+  (`body_total=3216407`, peak `1041116`, peak `ticks_per_entry=500`), then
+  `822824F0` (`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`).
+  Do not start the `822824F0` `stvewx` peephole yet. Next audit why
+  `822825E0` recursively calls `82282490` so often, and inspect
+  `822825C8 -> 0x8227FEE8` to decide whether the cost is generated-code call
+  overhead, callee body work, or a helper/HLE boundary.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

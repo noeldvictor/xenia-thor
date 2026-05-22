@@ -208,6 +208,20 @@ dynamic-hot vector block in the old block profile and carries `3` `stvewx`
 dynamic extract/store shapes. Next useful worker slice is lower-noise
 per-block body-time attribution for `82282490`, separating `822824F0` from
 other entry-hot blocks before a default-off codegen peephole.
+That profiler now exists:
+`docs/research/20260522-171725-82282490-block-body-time-profiler.md`.
+`arm64_speed_profile_block_body_time` is default-off; launch with
+`-Arm64SpeedProfileBlockBodyTime true` and parse with
+`tools/thor/thor_hir_block_mix_report.ps1`. The 17:09 capture
+`scratch/thor-debug/20260522-170927-*` reached the visible opening route with no
+searched fatal markers. Body-time says the next target is not `822824F0`:
+`822825E0` dominates (`body_total=34726883`, peak `14525259`, peak
+`ticks_per_entry=61`), then `822825C8` (`body_total=3216407`, peak `1041116`,
+peak `ticks_per_entry=500`). `822824F0` is only third by body time
+(`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`). Next useful
+worker slice is an offline/capture-backed audit of the `822825E0` recursive
+call path and `822825C8 -> 0x8227FEE8`, not a `stvewx` peephole from stale
+entry counts.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

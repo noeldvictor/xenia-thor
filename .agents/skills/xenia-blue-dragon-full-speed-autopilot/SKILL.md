@@ -195,6 +195,20 @@ shapes. This is a plausible micro-target, but still not body-time proof. Next
 slice should add lower-noise per-block body-time attribution for `82282490`,
 separating `822824F0` from the other entry-hot control blocks before a
 default-off `stvewx` dynamic extract/store codegen experiment.
+That block body-time profiler now exists:
+`docs/research/20260522-171725-82282490-block-body-time-profiler.md`. Use
+`-Arm64SpeedProfileBlockBodyTime true` with `-Arm64SpeedProfileBlockFilter
+82282490`, and use `tools/thor/thor_hir_block_mix_report.ps1` to parse the
+`Dynamic Body-Time Blocks With HIR Mix` section. Capture
+`scratch/thor-debug/20260522-170927-*` reached the visible opening route with no
+searched fatal markers. The old `822824F0` entry-count target is not the current
+body-time wall: `822825E0` dominates (`body_total=34726883`, peak
+`14525259`, peak `ticks_per_entry=61`), then `822825C8`
+(`body_total=3216407`, peak `1041116`, peak `ticks_per_entry=500`), then
+`822824F0` (`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`).
+Do not start the `822824F0` `stvewx` peephole yet. Next audit the `822825E0`
+recursive `bl 0x82282490` path and the `822825C8 -> 0x8227FEE8` callee path
+before choosing a default-off codegen or HLE experiment.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

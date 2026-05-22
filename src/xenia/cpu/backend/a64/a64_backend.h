@@ -169,6 +169,7 @@ class A64Backend : public Backend {
   }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
+  bool BlockBodyTimeProfileEnabledForFunction(A64Function* function) const;
 
   bool Initialize(Processor* processor) override;
 
@@ -211,6 +212,7 @@ class A64Backend : public Backend {
     uint64_t last_entry_count = 0;
     uint64_t last_body_ticks = 0;
     std::vector<uint64_t> last_block_counts;
+    std::vector<uint64_t> last_block_body_ticks;
   };
 
   static bool ExceptionCallbackThunk(Exception* ex, void* data);

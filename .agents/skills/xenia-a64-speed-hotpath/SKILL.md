@@ -351,10 +351,25 @@ Current vector read: `82282490` has `extract=22`, `extract_dynamic=6`,
 `load_vector_shl=73`, and `load_vector_shr=64`. `822824F0` is the only
 dynamic-hot vector block in the old block profile and carries `3` `stvewx`
 dynamic extract/store shapes at PCs `82282580`, `82282584`, and `82282588`.
-Do not broaden this into static VMX work. Next add lower-noise per-block
-body-time attribution for `82282490`; if `822824F0` remains hot, gate the first
-codegen experiment tightly around its `stvewx` dynamic extract/store shape.
+Do not broaden this into static VMX work, and do not start the `stvewx`
+peephole unless newer block body-time evidence agrees.
 See `docs/research/20260522-165526-82282490-vector-shape-audit.md`.
+
+For block body-time attribution, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -Arm64SpeedProfileBodyTimeFilter "82282490" -Arm64SpeedProfileBodyTimeAfterMs 120000 -Arm64SpeedProfileBlockFilter "82282490" -Arm64SpeedProfileBlockBodyTime true -StopAppAfterCapture true
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_mix_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260522-170927-speed-logcat.txt -Top 12
+```
+
+Current body-time read from `scratch\thor-debug\20260522-170927-*`:
+`822825E0` dominates (`body_total=34726883`, peak `14525259`, peak
+`ticks_per_entry=61`), then `822825C8` (`body_total=3216407`, peak `1041116`,
+peak `ticks_per_entry=500`), then `822824F0` (`body_total=1280491`, peak
+`554835`, peak `ticks_per_entry=1`). `822825E0` is a tiny branch plus recursive
+`bl 0x82282490`; `822825C8` calls `0x8227FEE8`. Next inspect those call paths
+before writing another codegen peephole. See
+`docs/research/20260522-171725-82282490-block-body-time-profiler.md`.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

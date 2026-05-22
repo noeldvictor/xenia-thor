@@ -42,6 +42,7 @@ class A64Function : public GuestFunction {
   void SetupProfileBlockCounts(size_t count);
   size_t profile_block_count_count() const { return profile_block_count_count_; }
   std::atomic<uint64_t>* profile_block_count(size_t ordinal);
+  std::atomic<uint64_t>* profile_block_body_ticks(size_t ordinal);
   uint32_t profile_block_address(size_t ordinal) const;
   void set_profile_block_address(size_t ordinal, uint32_t address);
 
@@ -54,6 +55,7 @@ class A64Function : public GuestFunction {
   std::atomic<uint64_t> profile_entry_count_{0};
   std::atomic<uint64_t> profile_body_ticks_{0};
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_counts_;
+  std::unique_ptr<std::atomic<uint64_t>[]> profile_block_body_ticks_;
   std::unique_ptr<uint32_t[]> profile_block_addresses_;
   size_t profile_block_count_count_ = 0;
   std::atomic<A64Backend*> profile_registered_backend_{nullptr};

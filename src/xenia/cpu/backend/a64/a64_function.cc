@@ -42,15 +42,18 @@ void A64Function::MarkProfileRegistered(A64Backend* backend) {
 
 void A64Function::SetupProfileBlockCounts(size_t count) {
   if (count == profile_block_count_count_ && profile_block_counts_ &&
-      profile_block_addresses_) {
+      profile_block_body_ticks_ && profile_block_addresses_) {
     return;
   }
 
   profile_block_counts_ = std::make_unique<std::atomic<uint64_t>[]>(count);
+  profile_block_body_ticks_ =
+      std::make_unique<std::atomic<uint64_t>[]>(count);
   profile_block_addresses_ = std::make_unique<uint32_t[]>(count);
   profile_block_count_count_ = count;
   for (size_t i = 0; i < count; ++i) {
     profile_block_counts_[i].store(0, std::memory_order_relaxed);
+    profile_block_body_ticks_[i].store(0, std::memory_order_relaxed);
     profile_block_addresses_[i] = 0;
   }
 }
@@ -60,6 +63,13 @@ std::atomic<uint64_t>* A64Function::profile_block_count(size_t ordinal) {
     return nullptr;
   }
   return &profile_block_counts_[ordinal];
+}
+
+std::atomic<uint64_t>* A64Function::profile_block_body_ticks(size_t ordinal) {
+  if (!profile_block_body_ticks_ || ordinal >= profile_block_count_count_) {
+    return nullptr;
+  }
+  return &profile_block_body_ticks_[ordinal];
 }
 
 uint32_t A64Function::profile_block_address(size_t ordinal) const {

@@ -131,6 +131,9 @@ function New-BlockRow {
         permute_controls = @{}
         profile_total = 0
         profile_peak_delta = 0
+        profile_body_total = 0
+        profile_body_peak_delta = 0
+        profile_body_peak_tpe = 0
     }
 }
 
@@ -242,32 +245,64 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     }
     $resolvedProfile = (Resolve-Path -LiteralPath $BlockProfileLog).Path
     $profilePattern = "A64 speed profile block top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) delta=(?<delta>\d+) total=(?<total>\d+)"
+    $bodyProfilePattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
     Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
-        if ($_ -notmatch $profilePattern) {
+        if ($_ -match $profilePattern) {
+            $guest = $Matches.guest.ToUpperInvariant()
+            $row = $null
+            if ($guest -ne "00000000") {
+                $row = $blocks | Where-Object { $_.guest -eq $guest } | Select-Object -First 1
+            }
+            if ($null -eq $row) {
+                $index = [int]$Matches.block
+                if ($index -lt 0 -or $index -ge $blocks.Count) {
+                    return
+                }
+                $row = $blocks[$index]
+            }
+            $total = [int64]$Matches.total
+            $delta = [int64]$Matches.delta
+            if ($total -gt $row.profile_total) {
+                $row.profile_total = $total
+            }
+            if ($delta -gt $row.profile_peak_delta) {
+                $row.profile_peak_delta = $delta
+            }
+            if ($row.guest -eq "00000000" -and $Matches.guest -ne "00000000") {
+                $row.guest = $Matches.guest.ToUpperInvariant()
+            }
             return
         }
-        $guest = $Matches.guest.ToUpperInvariant()
-        $row = $null
-        if ($guest -ne "00000000") {
-            $row = $blocks | Where-Object { $_.guest -eq $guest } | Select-Object -First 1
-        }
-        if ($null -eq $row) {
-            $index = [int]$Matches.block
-            if ($index -lt 0 -or $index -ge $blocks.Count) {
-                return
+
+        if ($_ -match $bodyProfilePattern) {
+            $guest = $Matches.guest.ToUpperInvariant()
+            $row = $null
+            if ($guest -ne "00000000") {
+                $row = $blocks | Where-Object { $_.guest -eq $guest } | Select-Object -First 1
             }
-            $row = $blocks[$index]
-        }
-        $total = [int64]$Matches.total
-        $delta = [int64]$Matches.delta
-        if ($total -gt $row.profile_total) {
-            $row.profile_total = $total
-        }
-        if ($delta -gt $row.profile_peak_delta) {
-            $row.profile_peak_delta = $delta
-        }
-        if ($row.guest -eq "00000000" -and $Matches.guest -ne "00000000") {
-            $row.guest = $Matches.guest.ToUpperInvariant()
+            if ($null -eq $row) {
+                $index = [int]$Matches.block
+                if ($index -lt 0 -or $index -ge $blocks.Count) {
+                    return
+                }
+                $row = $blocks[$index]
+            }
+            $total = [int64]$Matches.total
+            $delta = [int64]$Matches.delta
+            $tpe = [int64]$Matches.tpe
+            if ($total -gt $row.profile_body_total) {
+                $row.profile_body_total = $total
+            }
+            if ($delta -gt $row.profile_body_peak_delta) {
+                $row.profile_body_peak_delta = $delta
+            }
+            if ($tpe -gt $row.profile_body_peak_tpe) {
+                $row.profile_body_peak_tpe = $tpe
+            }
+            if ($row.guest -eq "00000000" -and $Matches.guest -ne "00000000") {
+                $row.guest = $Matches.guest.ToUpperInvariant()
+            }
+            return
         }
     }
 }
@@ -302,8 +337,32 @@ if (!$dynamicRows) {
     Write-Output "(no block profile data supplied)"
 } else {
     $dynamicRows | ForEach-Object {
-        Write-Output ("block={0} guest={1} total={2} peak_delta={3} instr={4} ctx={5}/{6} gpr={7}/{8} vmx={9}/{10} cr={11}/{12} mem={13}/{14} perm={15} dot4={16} bswap={17} branches={18} calls={19} barriers={20} ppc={21} controls={22}" -f
+        Write-Output ("block={0} guest={1} total={2} peak_delta={3} body_total={4} body_peak_delta={5} body_peak_tpe={6} instr={7} ctx={8}/{9} gpr={10}/{11} vmx={12}/{13} cr={14}/{15} mem={16}/{17} perm={18} dot4={19} bswap={20} branches={21} calls={22} barriers={23} ppc={24} controls={25}" -f
             $_.index, $_.guest, $_.profile_total, $_.profile_peak_delta,
+            $_.profile_body_total, $_.profile_body_peak_delta,
+            $_.profile_body_peak_tpe,
+            $_.instructions, $_.context_loads, $_.context_stores,
+            $_.gpr_loads, $_.gpr_stores, $_.vmx_loads, $_.vmx_stores,
+            $_.cr_loads, $_.cr_stores, $_.memory_loads, $_.memory_stores,
+            $_.permutes, $_.dot4, $_.byte_swaps, $_.branches, $_.calls,
+            $_.barriers, (Get-TopPairs $_.ppc 6), (Get-TopPairs $_.permute_controls 4))
+    }
+}
+
+Write-Output ""
+Write-Output "## Dynamic Body-Time Blocks With HIR Mix"
+$bodyRows = $blocks | Where-Object { $_.profile_body_total -gt 0 } |
+    Sort-Object -Property @{ Expression = "profile_body_total"; Descending = $true },
+                          @{ Expression = "index"; Ascending = $true } |
+    Select-Object -First $Top
+if (!$bodyRows) {
+    Write-Output "(no block body-time profile data supplied)"
+} else {
+    $bodyRows | ForEach-Object {
+        Write-Output ("block={0} guest={1} body_total={2} body_peak_delta={3} body_peak_tpe={4} entry_total={5} entry_peak_delta={6} instr={7} ctx={8}/{9} gpr={10}/{11} vmx={12}/{13} cr={14}/{15} mem={16}/{17} perm={18} dot4={19} bswap={20} branches={21} calls={22} barriers={23} ppc={24} controls={25}" -f
+            $_.index, $_.guest, $_.profile_body_total,
+            $_.profile_body_peak_delta, $_.profile_body_peak_tpe,
+            $_.profile_total, $_.profile_peak_delta,
             $_.instructions, $_.context_loads, $_.context_stores,
             $_.gpr_loads, $_.gpr_stores, $_.vmx_loads, $_.vmx_stores,
             $_.cr_loads, $_.cr_stores, $_.memory_loads, $_.memory_stores,

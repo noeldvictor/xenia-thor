@@ -1795,7 +1795,10 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
       backend_->BodyTimeProfileEnabledForFunction(a64_function)
           ? a64_function->profile_body_ticks()
           : nullptr;
-  if (backend_->BlockProfileEnabledForFunction(a64_function)) {
+  current_guest_function_block_body_ticks_ =
+      backend_->BlockBodyTimeProfileEnabledForFunction(a64_function);
+  if (backend_->BlockProfileEnabledForFunction(a64_function) ||
+      current_guest_function_block_body_ticks_) {
     size_t block_count = 0;
     for (auto block = builder->first_block(); block; block = block->next) {
       if (block->ordinal == UINT16_MAX) {
@@ -1812,6 +1815,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
   body_time_start_stack_offset_ = 0;
+  block_body_time_start_stack_offset_ = 0;
+  block_body_time_counter_stack_offset_ = 0;
   source_map_arena_.Reset();
   tail_code_.clear();
   fpcr_mode_ = FPCRMode::Unknown;
@@ -1861,6 +1866,79 @@ void A64Emitter::EmitAtomicAdd64(std::atomic<uint64_t>* counter,
   cbnz(w14, retry);
 }
 
+void A64Emitter::MaybeEmitBlockBodyTimeProfileInit() {
+  if (!current_guest_function_block_body_ticks_) {
+    return;
+  }
+  str(xzr,
+      ptr(sp, static_cast<uint32_t>(block_body_time_start_stack_offset_)));
+  str(xzr,
+      ptr(sp, static_cast<uint32_t>(block_body_time_counter_stack_offset_)));
+}
+
+void A64Emitter::MaybeEmitBlockBodyTimeEnd() {
+  if (!current_guest_function_block_body_ticks_) {
+    return;
+  }
+
+  auto& no_active_block = NewCachedLabel();
+  ldr(x10,
+      ptr(sp, static_cast<uint32_t>(block_body_time_counter_stack_offset_)));
+  cbz(x10, no_active_block);
+  ldr(x11, ptr(sp, static_cast<uint32_t>(block_body_time_start_stack_offset_)));
+  cbz(x11, no_active_block);
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  sub(x17, x17, x11);
+  auto& retry = NewCachedLabel();
+  L(retry);
+  ldxr(x12, ptr(x10));
+  add(x12, x12, x17);
+  stxr(w13, x12, ptr(x10));
+  cbnz(w13, retry);
+  str(xzr,
+      ptr(sp, static_cast<uint32_t>(block_body_time_start_stack_offset_)));
+  str(xzr,
+      ptr(sp, static_cast<uint32_t>(block_body_time_counter_stack_offset_)));
+  L(no_active_block);
+}
+
+void A64Emitter::MaybeEmitBlockBodyTimeTransition(const hir::Block* block) {
+  if (!current_guest_function_block_body_ticks_ || !current_a64_function_ ||
+      !block || block->ordinal == UINT16_MAX) {
+    return;
+  }
+
+  auto* counter = current_a64_function_->profile_block_body_ticks(
+      static_cast<size_t>(block->ordinal));
+  if (!counter) {
+    return;
+  }
+
+  MaybeEmitBlockBodyTimeEnd();
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    auto& inactive = NewCachedLabel();
+    mov(x12, reinterpret_cast<uint64_t>(
+                 backend_->speed_profile_body_time_active()));
+    ldr(w11, ptr(x12));
+    cbz(w11, inactive);
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    str(x17,
+        ptr(sp, static_cast<uint32_t>(block_body_time_start_stack_offset_)));
+    mov(x17, reinterpret_cast<uint64_t>(counter));
+    str(x17,
+        ptr(sp, static_cast<uint32_t>(block_body_time_counter_stack_offset_)));
+    L(inactive);
+    return;
+  }
+
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  str(x17,
+      ptr(sp, static_cast<uint32_t>(block_body_time_start_stack_offset_)));
+  mov(x17, reinterpret_cast<uint64_t>(counter));
+  str(x17,
+      ptr(sp, static_cast<uint32_t>(block_body_time_counter_stack_offset_)));
+}
+
 void A64Emitter::MaybeEmitBodyTimeProfileStart() {
   if (!current_guest_function_body_ticks_) {
     return;
@@ -1884,6 +1962,7 @@ void A64Emitter::MaybeEmitBodyTimeProfileStart() {
 }
 
 void A64Emitter::MaybeEmitBodyTimeProfileEnd() {
+  MaybeEmitBlockBodyTimeEnd();
   if (!current_guest_function_body_ticks_) {
     return;
   }
@@ -2167,6 +2246,13 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     body_time_start_stack_offset_ = stack_offset;
     stack_offset += sizeof(uint64_t);
   }
+  if (current_guest_function_block_body_ticks_) {
+    stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
+    block_body_time_start_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
+    block_body_time_counter_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
+  }
   // Align total stack offset to 16 bytes (ARM64 ABI requirement).
   stack_offset -= StackLayout::GUEST_STACK_SIZE;
   stack_offset = xe::align(stack_offset, static_cast<size_t>(16));
@@ -2229,6 +2315,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
                           A64BackendContext, last_guest_return_address))));
   }
   MaybeEmitBodyTimeProfileStart();
+  MaybeEmitBlockBodyTimeProfileInit();
   MaybeEmitBlueDragonDrawWaitCallerProfile();
 
   // ========================================================================
@@ -2274,6 +2361,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
       L(GetLabel(label->id));
       label = label->next;
     }
+    MaybeEmitBlockBodyTimeTransition(block);
     MaybeEmitBlockProfileEntry(block);
 
     // Process each instruction in the block.
