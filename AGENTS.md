@@ -405,6 +405,16 @@ required.
   produced zero hits. Do not tune the old caches next; add a CFG/live-in
   availability report or guarded pre-register-allocation state-cache design
   that proves all predecessors leave `r[1]` clean before replacing loads.
+- HIR `r[1]` live-in availability report:
+  `docs/research/20260522-150536-r1-livein-availability-report.md`.
+  Use `tools/thor/thor_hir_gpr_livein_report.ps1` for edge-aware target-GPR
+  availability before a pre-RA cache patch. On `82282490`, strict helper and
+  barrier flushing exposes only `14` replaceable first `r[1]` loads, while
+  helper-flush plus `context_barrier` preservation exposes `56` replaceable
+  first loads and `61` total loads. Next runtime patch should be default-off,
+  function-filtered, audited, pre-register-allocation, and barrier-aware; it
+  must kill state at calls/helpers, exits, exceptions, volatile context ops,
+  and exact/aliasing writes.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

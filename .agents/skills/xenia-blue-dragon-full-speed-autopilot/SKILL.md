@@ -142,6 +142,10 @@ load-shape report found `76` first-in-block loads, `87` multi-predecessor
 loads, and no aliasing stores. Move the next state-cache design before A64
 register allocation only after a CFG/live-in availability report proves which
 target-load blocks have all predecessors leaving `r[1]` clean.
+The live-in report now says strict helper+barrier flushing exposes only `14`
+replaceable first loads, but preserving clean `r[1]` across `context_barrier`
+exposes `56`. The next runtime patch should therefore be default-off,
+function-filtered, audited, pre-RA, and barrier-aware.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

@@ -157,6 +157,14 @@ useful worker slice is a CFG/live-in availability report or guarded
 pre-register-allocation GPR state-cache design that proves all predecessors
 leave `r[1]` clean before replacing loads.
 
+Latest offline follow-up: `tools/thor/thor_hir_gpr_livein_report.ps1` found
+that strict helper+barrier flushing exposes only `14` replaceable first `r[1]`
+loads, while helper flushing with `context_barrier` preservation exposes `56`
+replaceable first loads. Next slice should implement the guarded, default-off,
+function-filtered pre-RA `r[1]` live-in probe for `82282490` with audit counters
+and explicit kills at calls/helpers, exits, exceptions, volatile context ops,
+and exact/aliasing writes.
+
 Avoid the known rejected lanes unless new evidence changes the premise:
 
 - broad `PERMUTE_I32` lane-replace helper;

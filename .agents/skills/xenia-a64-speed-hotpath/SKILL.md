@@ -264,6 +264,20 @@ pre-register-allocation GPR state-cache design that proves all predecessors
 leave `r[1]` clean before replacing loads. See
 `docs/research/20260522-125206-r1-load-shape-report.md`.
 
+The live-in availability report is now available:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_gpr_livein_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Gpr 1 -Top 40
+```
+
+Current read: strict helper+barrier flushing exposes only `14` replaceable
+first `r[1]` loads. Helper flushing with `context_barrier` preservation exposes
+`56` replaceable first loads and `61` replaceable loads total. Next runtime
+patch should be a default-off, function-filtered, audited pre-RA `r[1]`
+live-in/state-cache probe for `82282490`, with explicit kills at calls/helpers,
+exits, exceptions, volatile context ops, and exact/aliasing writes. See
+`docs/research/20260522-150536-r1-livein-availability-report.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
