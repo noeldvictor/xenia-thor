@@ -280,6 +280,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_block_filter");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_block_body_time");
             copyStringExtra(intent, launchArguments, "arm64_speed_profile_call_edge_filter");
+            copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_call_edge_audit_only");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot");
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot_on_idle");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");

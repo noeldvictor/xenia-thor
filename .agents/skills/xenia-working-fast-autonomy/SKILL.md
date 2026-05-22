@@ -233,16 +233,22 @@ no callee dump. The default-off call-edge profiler now exists:
 clobber in the first capture. Fixed edge capture
 `scratch/thor-debug/20260522-175951-*` and same-APK control
 `scratch/thor-debug/20260522-180335-*` both black-idled before `82282490`, so no
-dynamic edge rows existed yet. The follow-up control sandwich
-`docs/research/20260522-183742-call-edge-control-sandwich.md` found controls
-`scratch/thor-debug/20260522-182318-*` and
-`scratch/thor-debug/20260522-183118-*` reached opening and `82282490` body-time
-on the same APK, while edge capture `scratch/thor-debug/20260522-182705-*`
-with `arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52
-and emitted no dynamic edge rows. Keep the cvar default-off and do not rerun
-that exact edge capture unchanged. Next useful slice is a compile/activation
-audit or a lower-overhead inert-until-target profiler path, followed by route
-safety proof before judging edge timing.
+dynamic edge rows existed yet. The later call-edge audit-only note
+`docs/research/20260522-190502-call-edge-audit-only-and-edge-proof.md`
+changes that read. The old edge-only idle was missing the route-stabilizing
+delayed `82282490` body-time filter. New default-off
+`arm64_speed_profile_call_edge_audit_only` logs compile-time direct-call slot
+counts without emitting generated edge counters. Audit-only plus delayed
+body-time reached opening and logged `blocks=164`, `direct_call_edges=60`,
+`instrumentation=0`; audit-only without delayed body-time black-idled before
+`82282490`. Real call-edge profiling plus delayed body-time reached opening and
+emitted dynamic edge rows. `822825E0 -> 82282490` dominates
+(`body_ticks_total=21299726`, peak `7315115`), followed by
+`822825C8 -> 8227FEE8` (`body_ticks_total=4515376`, peak `1933191`). Keep both
+call-edge cvars default-off, but use `-Arm64SpeedProfileBodyTimeFilter` with
+`82282490` and `-Arm64SpeedProfileBodyTimeAfterMs 120000` for future edge
+captures on this route. Next useful slice is a focused `8227FEE8` HIR/body-time
+capture or a recursive child-path audit from the proven edge rows.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

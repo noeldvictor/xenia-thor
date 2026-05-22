@@ -171,6 +171,7 @@ class A64Backend : public Backend {
   bool BlockProfileEnabledForFunction(A64Function* function) const;
   bool BlockBodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool CallEdgeProfileEnabledForFunction(A64Function* function) const;
+  bool CallEdgeAuditOnlyEnabledForFunction(A64Function* function) const;
 
   bool Initialize(Processor* processor) override;
 

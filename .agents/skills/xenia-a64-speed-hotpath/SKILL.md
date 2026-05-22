@@ -381,17 +381,22 @@ when a capture emits them. The first profiler capture found and fixed an `x9`
 callee-address clobber. Fixed edge capture `scratch/thor-debug/20260522-175951-*`
 and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
 before `82282490`, so the profiler had not produced edge body-time evidence.
-The control sandwich
-`docs/research/20260522-183742-call-edge-control-sandwich.md` tightened that:
-controls `scratch/thor-debug/20260522-182318-*` and
-`scratch/thor-debug/20260522-183118-*` reached opening and emitted `82282490`
-body-time rows on the same APK, while edge capture
-`scratch/thor-debug/20260522-182705-*` with
-`arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52 and
-emitted no dynamic edge rows. Keep the cvar default-off and do not rerun the
-same edge capture unchanged. Next speed-lane step is a low-overhead
-compile/activation audit, or an inert-until-target profiler path, followed by
-route-safety proof before judging edge timing.
+The call-edge audit-only follow-up is
+`docs/research/20260522-190502-call-edge-audit-only-and-edge-proof.md`. It adds
+default-off `arm64_speed_profile_call_edge_audit_only`, which logs matching
+function direct-call slot counts without emitting edge counters. Audit-only with
+delayed `-Arm64SpeedProfileBodyTimeFilter 82282490` reached opening and logged
+`blocks=164`, `direct_call_edges=60`, `instrumentation=0`; audit-only without
+that delayed body-time filter black-idled before `82282490`. Real call-edge
+profiling with the delayed body-time filter reached opening and produced usable
+edge rows: `822825E0 -> 82282490` dominates (`body_ticks_total=21299726`,
+peak `7315115`), followed by `822825C8 -> 8227FEE8`
+(`body_ticks_total=4515376`, peak `1933191`). Keep both call-edge cvars
+default-off. Future edge captures for this opening route should include
+`-Arm64SpeedProfileBodyTimeFilter 82282490` and
+`-Arm64SpeedProfileBodyTimeAfterMs 120000`. Next speed-lane step is a focused
+`8227FEE8` dump/body-time capture or a recursive-child-path audit from these
+proven edge rows.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

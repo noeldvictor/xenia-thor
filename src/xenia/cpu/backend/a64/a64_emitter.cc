@@ -1799,6 +1799,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
       backend_->BlockBodyTimeProfileEnabledForFunction(a64_function);
   current_guest_function_call_edge_profile_ =
       backend_->CallEdgeProfileEnabledForFunction(a64_function);
+  const bool current_guest_function_call_edge_audit_only =
+      backend_->CallEdgeAuditOnlyEnabledForFunction(a64_function);
   if (backend_->BlockProfileEnabledForFunction(a64_function) ||
       current_guest_function_block_body_ticks_) {
     size_t block_count = 0;
@@ -1812,9 +1814,15 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     a64_function->SetupProfileBlockCounts(block_count);
     current_a64_function_ = a64_function;
   }
-  if (current_guest_function_call_edge_profile_) {
+  if (current_guest_function_call_edge_profile_ ||
+      current_guest_function_call_edge_audit_only) {
     size_t call_edge_count = 0;
+    size_t block_count = 0;
     for (auto block = builder->first_block(); block; block = block->next) {
+      if (block->ordinal != UINT16_MAX) {
+        block_count =
+            std::max(block_count, static_cast<size_t>(block->ordinal) + 1);
+      }
       for (auto instr = block->instr_head; instr; instr = instr->next) {
         switch (instr->GetOpcodeNum()) {
           case hir::OPCODE_CALL:
@@ -1826,8 +1834,20 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
         }
       }
     }
-    a64_function->SetupProfileCallEdges(call_edge_count);
-    current_a64_function_ = a64_function;
+    if (current_guest_function_call_edge_audit_only) {
+      std::string name = function->name();
+      if (name.empty()) {
+        name = fmt::format("sub_{:08X}", function->address());
+      }
+      XELOGW(
+          "A64 call-edge compile audit: fn {:08X} '{}' blocks={} "
+          "direct_call_edges={} instrumentation=0",
+          function->address(), name, block_count, call_edge_count);
+    }
+    if (current_guest_function_call_edge_profile_) {
+      a64_function->SetupProfileCallEdges(call_edge_count);
+      current_a64_function_ = a64_function;
+    }
   }
   MaybeLogContextTrafficAudit(builder);
 

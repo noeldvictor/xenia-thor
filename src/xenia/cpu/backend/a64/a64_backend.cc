@@ -382,6 +382,13 @@ DEFINE_string(
     "Requires arm64_speed_profile_interval_ms.",
     "a64");
 DEFINE_bool(
+    arm64_speed_profile_call_edge_audit_only, false,
+    "Thor ARM64 speed lane: with arm64_speed_profile_call_edge_filter set, "
+    "log matching function compile-time call-edge slot counts without emitting "
+    "generated call-edge counters or enabling call-edge body-time accounting. "
+    "Use this to separate filter/route effects from instrumentation effects.",
+    "a64");
+DEFINE_bool(
     arm64_speed_profile_thread_snapshot, false,
     "Thor ARM64 speed lane: log each guest thread's last A64 function and "
     "PPC context registers on every speed-profile interval.",
@@ -1198,6 +1205,18 @@ bool A64Backend::BlockBodyTimeProfileEnabledForFunction(
 bool A64Backend::CallEdgeProfileEnabledForFunction(
     A64Function* function) const {
   if (!speed_profile_enabled() ||
+      cvars::arm64_speed_profile_call_edge_audit_only ||
+      cvars::arm64_speed_profile_call_edge_filter.empty()) {
+    return false;
+  }
+  return FunctionStartMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_call_edge_filter);
+}
+
+bool A64Backend::CallEdgeAuditOnlyEnabledForFunction(
+    A64Function* function) const {
+  if (!speed_profile_enabled() ||
+      !cvars::arm64_speed_profile_call_edge_audit_only ||
       cvars::arm64_speed_profile_call_edge_filter.empty()) {
     return false;
   }
@@ -1272,7 +1291,11 @@ void A64Backend::StartSpeedProfiler() {
            cvars::arm64_speed_profile_block_filter,
            cvars::arm64_speed_profile_body_time_after_ms);
   }
-  if (!cvars::arm64_speed_profile_call_edge_filter.empty()) {
+  if (!cvars::arm64_speed_profile_call_edge_filter.empty() &&
+      cvars::arm64_speed_profile_call_edge_audit_only) {
+    XELOGW("A64 call-edge compile audit enabled: filter='{}'",
+           cvars::arm64_speed_profile_call_edge_filter);
+  } else if (!cvars::arm64_speed_profile_call_edge_filter.empty()) {
     XELOGW("A64 call-edge profile enabled: filter='{}' after_ms={}",
            cvars::arm64_speed_profile_call_edge_filter,
            cvars::arm64_speed_profile_body_time_after_ms);
@@ -1342,7 +1365,8 @@ void A64Backend::LogSpeedProfile() {
   const bool any_body_time_profile =
       !cvars::arm64_speed_profile_body_time_filter.empty() ||
       cvars::arm64_speed_profile_block_body_time ||
-      !cvars::arm64_speed_profile_call_edge_filter.empty();
+      (!cvars::arm64_speed_profile_call_edge_audit_only &&
+       !cvars::arm64_speed_profile_call_edge_filter.empty());
   if (any_body_time_profile &&
       cvars::arm64_speed_profile_body_time_after_ms != 0 &&
       !speed_profile_body_time_active_.load(std::memory_order_acquire)) {

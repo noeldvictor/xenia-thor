@@ -152,6 +152,7 @@ $linePattern = "Filtered function dump $functionPattern $phasePattern`:\s+(?<tex
 $blocks = New-Object System.Collections.Generic.List[object]
 $current = $null
 $callEdgeRows = @{}
+$callEdgeAuditRows = New-Object System.Collections.Generic.List[object]
 
 Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     if ($_ -notmatch $linePattern) {
@@ -229,6 +230,7 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     $profilePattern = "A64 speed profile block top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) delta=(?<delta>\d+) total=(?<total>\d+)"
     $bodyProfilePattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
     $callEdgePattern = "A64 speed profile call edge top \d+: fn $functionPattern .* edge=(?<edge>\d+) block=(?<block>[0-9A-Fa-f]{8}) target=(?<target>[0-9A-Fa-f]{8}) calls_delta=(?<calls_delta>\d+) calls_total=(?<calls_total>\d+) body_ticks_delta=(?<body_delta>\d+) body_ticks_total=(?<body_total>\d+) ticks_per_call=(?<tpc>\d+)"
+    $callEdgeAuditPattern = "A64 call-edge compile audit: fn $functionPattern '(?<name>[^']*)' blocks=(?<blocks>\d+) direct_call_edges=(?<edges>\d+) instrumentation=(?<instrumentation>\d+)"
     Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
         if ($_ -match $profilePattern) {
             $guest = $Matches.guest.ToUpperInvariant()
@@ -279,6 +281,17 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
             if ($tpe -gt $row.profile_body_peak_tpe) {
                 $row.profile_body_peak_tpe = $tpe
             }
+            return
+        }
+
+        if ($_ -match $callEdgeAuditPattern) {
+            $callEdgeAuditRows.Add([pscustomobject][ordered]@{
+                function = $Function.ToUpperInvariant()
+                name = $Matches.name
+                blocks = [int]$Matches.blocks
+                direct_call_edges = [int]$Matches.edges
+                instrumentation = [int]$Matches.instrumentation
+            }) | Out-Null
             return
         }
 
@@ -417,6 +430,24 @@ if ($callEdgeRows.Count -eq 0) {
                 $edgeRow.body_ticks_total, $edgeRow.body_ticks_peak_delta,
                 $edgeRow.ticks_per_call_peak, $edgeRow.samples,
                 $staticSummary)
+        }
+}
+
+Write-Output ""
+Write-Output "## Call-Edge Compile Audit Rows"
+if ($callEdgeAuditRows.Count -eq 0) {
+    if ([string]::IsNullOrWhiteSpace($BlockProfileLog)) {
+        Write-Output "(no block/call-edge profile log supplied)"
+    } else {
+        Write-Output "(no call-edge compile audit rows found)"
+    }
+} else {
+    $callEdgeAuditRows |
+        Select-Object -First $Top |
+        ForEach-Object {
+            Write-Output ("fn={0} name='{1}' blocks={2} direct_call_edges={3} instrumentation={4}" -f
+                $_.function, $_.name, $_.blocks, $_.direct_call_edges,
+                $_.instrumentation)
         }
 }
 

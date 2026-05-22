@@ -494,16 +494,24 @@ required.
   control `scratch/thor-debug/20260522-180335-*` both had no fatal markers but
   black-idled before `82282490`, so no call-edge rows existed yet. Follow-up
   control sandwich `docs/research/20260522-183742-call-edge-control-sandwich.md`
-  tightened the read: controls `scratch/thor-debug/20260522-182318-*` and
-  `scratch/thor-debug/20260522-183118-*` both reached the visible opening route
-  and emitted `82282490` body-time rows on the same APK, while edge capture
-  `scratch/thor-debug/20260522-182705-*` with
-  `arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52,
-  had no fatal markers, and emitted no dynamic call-edge rows. Keep the cvar
-  off by default and do not rerun the exact edge capture unchanged. Next
-  priority is a lower-overhead compile/activation audit or a change that keeps
-  the profiler inert until the filtered function is actually compiled/reached,
-  followed by a route-safety sandwich before judging edge timing.
+  tightened the read, but the later audit-only note
+  `docs/research/20260522-190502-call-edge-audit-only-and-edge-proof.md`
+  corrected the important route detail: the route-stable runs include delayed
+  `arm64_speed_profile_body_time_filter=82282490`. New default-off
+  `arm64_speed_profile_call_edge_audit_only` logs compile-time slot counts
+  without emitting edge counters. Audit-only with the delayed body-time filter
+  reached opening and logged `blocks=164`, `direct_call_edges=60`,
+  `instrumentation=0`; audit-only without the body-time filter black-idled
+  before `82282490` and emitted no compile-audit row. Real call-edge profiling
+  with the delayed body-time filter also reached opening and produced dynamic
+  edge rows: `822825E0 -> 82282490` dominates (`body_ticks_total=21299726`,
+  peak `7315115`), followed by `822825C8 -> 8227FEE8`
+  (`body_ticks_total=4515376`, peak `1933191`). Keep both call-edge cvars
+  default-off, but future edge captures for this route should include
+  `-Arm64SpeedProfileBodyTimeFilter 82282490` and
+  `-Arm64SpeedProfileBodyTimeAfterMs 120000`. Next priority is a focused
+  `8227FEE8` HIR/body-time capture or a recursive-child-path audit from the
+  proven edge rows, not the stale `822824F0` `stvewx` peephole.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

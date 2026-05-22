@@ -219,18 +219,25 @@ now exists: `docs/research/20260522-181040-a64-call-edge-profiler.md`, cvar
 `-Arm64SpeedProfileCallEdgeFilter`. The first capture exposed and fixed an `x9`
 callee-address clobber; fixed edge capture `scratch/thor-debug/20260522-175951-*`
 and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
-before `82282490`, so no dynamic edge rows existed yet. The follow-up sandwich
-`docs/research/20260522-183742-call-edge-control-sandwich.md` is a stronger
-negative for the current edge-filter path: controls
-`scratch/thor-debug/20260522-182318-*` and
-`scratch/thor-debug/20260522-183118-*` both reached opening and emitted
-`82282490` body-time rows on the same APK, while edge capture
-`scratch/thor-debug/20260522-182705-*` with
-`arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52 and
-emitted no dynamic edge rows. Keep the cvar default-off and do not rerun that
-exact edge capture unchanged. Next slice should add a low-overhead
-compile/activation audit, or make the profiler inert until the filtered
-function is compiled/reached, then prove route safety before using edge rows.
+before `82282490`, so no dynamic edge rows existed yet. The later call-edge
+audit-only note
+`docs/research/20260522-190502-call-edge-audit-only-and-edge-proof.md`
+changes the read. The old edge-only idle was missing the route-stabilizing
+delayed `82282490` body-time filter. New default-off
+`arm64_speed_profile_call_edge_audit_only` logs compile-time direct-call slot
+counts without emitting edge counters. Audit-only plus delayed body-time reached
+the opening route and logged `blocks=164`, `direct_call_edges=60`,
+`instrumentation=0`; audit-only without the body-time filter black-idled before
+`82282490`. Real call-edge profiling plus delayed body-time reached opening and
+produced dynamic edge rows: `822825E0 -> 82282490` dominates
+(`body_ticks_total=21299726`, peak `7315115`), followed by
+`822825C8 -> 8227FEE8` (`body_ticks_total=4515376`, peak `1933191`). Keep
+`arm64_speed_profile_call_edge_filter` and
+`arm64_speed_profile_call_edge_audit_only` default-off, but future edge
+captures for this route should include `-Arm64SpeedProfileBodyTimeFilter` with
+`82282490` and `-Arm64SpeedProfileBodyTimeAfterMs 120000`. Next slice should
+focus `8227FEE8` or the recursive `822825E0 -> 82282490` child path using the
+proven edge evidence, not the stale `822824F0` `stvewx` peephole.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

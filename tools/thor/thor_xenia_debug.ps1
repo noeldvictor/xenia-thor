@@ -185,6 +185,7 @@ param(
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileBlockBodyTime = "false",
     [string]$Arm64SpeedProfileCallEdgeFilter = "",
+    [string]$Arm64SpeedProfileCallEdgeAuditOnly = "false",
     [string]$Arm64SpeedProfileThreadSnapshot = "false",
     [string]$Arm64SpeedProfileThreadSnapshotOnIdle = "false",
     [string]$XboxkrnlThreadWaitTrace = "false",
@@ -965,6 +966,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileCallEdgeFilter) {
         $parts += "--es arm64_speed_profile_call_edge_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileCallEdgeFilter)"
     }
+    if ($Arm64SpeedProfileCallEdgeAuditOnly) {
+        $parts += "--ez arm64_speed_profile_call_edge_audit_only $(ConvertTo-BooleanText $Arm64SpeedProfileCallEdgeAuditOnly)"
+    }
     if ($Arm64SpeedProfileThreadSnapshot) {
         $parts += "--ez arm64_speed_profile_thread_snapshot $(ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshot)"
     }
@@ -1139,6 +1143,7 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_block_body_time=$Arm64SpeedProfileBlockBodyTime",
         "arm64_speed_profile_call_edge_filter=$Arm64SpeedProfileCallEdgeFilter",
+        "arm64_speed_profile_call_edge_audit_only=$Arm64SpeedProfileCallEdgeAuditOnly",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
         "xma_fast_silence=$XmaFastSilence",
@@ -1797,6 +1802,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileCallEdgeFilter) {
             Write-Output "A64 call-edge filter: $Arm64SpeedProfileCallEdgeFilter"
+        }
+        if ($Arm64SpeedProfileCallEdgeAuditOnly) {
+            Write-Output "A64 call-edge audit-only: $(ConvertTo-BooleanText $Arm64SpeedProfileCallEdgeAuditOnly)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
