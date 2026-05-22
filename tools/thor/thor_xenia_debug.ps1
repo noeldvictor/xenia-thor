@@ -165,6 +165,7 @@ param(
     [string]$Arm64ContextValueCachePreserveBarrier = "",
     [string]$Arm64ContextPromotionGprLocalSlots = "",
     [string]$Arm64ContextPromotionGprLocalSlotsFunction = "",
+    [string]$Arm64ContextPromotionGprLocalSlotsAudit = "",
     [string]$Arm64CrCompareBranchAcrossContextBarrier = "",
     [string]$Arm64CrStoreElideForFusedBranch = "",
     [string]$Arm64CrStoreElideForFusedBranchFunction = "",
@@ -894,6 +895,9 @@ function Start-XeniaEmulator {
     if ($Arm64ContextPromotionGprLocalSlotsFunction) {
         $parts += "--ei arm64_context_promotion_gpr_local_slots_function $(ConvertTo-AdbIntText $Arm64ContextPromotionGprLocalSlotsFunction)"
     }
+    if ($Arm64ContextPromotionGprLocalSlotsAudit) {
+        $parts += "--ez arm64_context_promotion_gpr_local_slots_audit $(ConvertTo-BooleanText $Arm64ContextPromotionGprLocalSlotsAudit)"
+    }
     if ($Arm64CrCompareBranchAcrossContextBarrier) {
         $parts += "--ez arm64_cr_compare_branch_across_context_barrier $(ConvertTo-BooleanText $Arm64CrCompareBranchAcrossContextBarrier)"
     }
@@ -1075,6 +1079,7 @@ function Write-CaptureMetadata {
         "arm64_context_value_cache_preserve_barrier=$Arm64ContextValueCachePreserveBarrier",
         "arm64_context_promotion_gpr_local_slots=$Arm64ContextPromotionGprLocalSlots",
         "arm64_context_promotion_gpr_local_slots_function=$Arm64ContextPromotionGprLocalSlotsFunction",
+        "arm64_context_promotion_gpr_local_slots_audit=$Arm64ContextPromotionGprLocalSlotsAudit",
         "arm64_cr_compare_branch_across_context_barrier=$Arm64CrCompareBranchAcrossContextBarrier",
         "arm64_cr_store_elide_for_fused_branch=$Arm64CrStoreElideForFusedBranch",
         "arm64_cr_store_elide_for_fused_branch_function=$Arm64CrStoreElideForFusedBranchFunction",
@@ -1307,6 +1312,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextValueCachePreserveBarrier" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlots" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsFunction" ""
+    Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsAudit" "false"
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
@@ -1490,6 +1496,7 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64ContextValueCachePreserveBarrier" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlots" "false"
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsFunction" ""
+    Set-DefaultIfNotBound "Arm64ContextPromotionGprLocalSlotsAudit" "false"
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     $script:HideAndroidOsd = "false"

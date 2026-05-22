@@ -222,10 +222,19 @@ The first guarded local-slot version is route-clean but not a speed win. Keep
 `scratch\thor-debug\20260522-113303-*` enabled it only for `82282490`, reached
 the visible opening sky/dragon-wing route, and had no searched fatal markers,
 but `82282490` grew from `87168` to `87660` bytes and comparable
-ticks-per-entry were flat to slightly worse. Next work should add exact
-promotion counters/code-size attribution or try a lower-overhead pinned-GPR
-path for `r[1]`/`r[11]`. See
+ticks-per-entry were flat to slightly worse. See
 `docs/research/20260522-113012-gpr-local-slot-promotion-probe.md`.
+
+The counter follow-up explains why that shape lost. Capture
+`scratch\thor-debug\20260522-114838-*` reached the same visible opening route
+with no searched fatal markers and logged `82282490` local-slot counts:
+`103` local stores for only `3` replaced loads. `r[11]` had `68` local stores
+for `0` replaced loads; `r[1]` had `35` local stores for `3` replaced loads.
+Do not tune the local-slot bridge next. Try a lower-overhead pinned-GPR path
+for `r[1]` first, with explicit resets for helpers, exits, exceptions,
+conditional branches, returns, traps, multi-predecessor joins, volatile ops,
+and overlapping context writes. See
+`docs/research/20260522-114745-gpr-local-slot-promotion-counters.md`.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

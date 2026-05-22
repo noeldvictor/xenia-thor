@@ -131,9 +131,11 @@ load-after-store GPRs.
 Also run `tools/thor/thor_hir_gpr_promotion_audit.ps1` before cross-block GPR
 promotion work. The first guarded local-slot/data-flow probe for `r[1]` and
 `r[11]` reached the opening route but was not faster, so keep
-`arm64_context_promotion_gpr_local_slots` default-off. The next state-cache
-slice should add exact promotion counters/code-size attribution or try a
-lower-overhead pinned-GPR path.
+`arm64_context_promotion_gpr_local_slots` default-off. The counter follow-up
+showed the local-slot bridge is a bad shape for `82282490`: `103` local stores
+for only `3` replaced loads, with `r[11]` giving zero replaced loads. Keep the
+local-slot audit default-off too. The next state-cache slice should try a
+lower-overhead pinned-GPR path for `r[1]` first.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

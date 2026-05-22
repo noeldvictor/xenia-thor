@@ -15,6 +15,7 @@
 
 #include "xenia/apu/apu_flags.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/profiling.h"
 #include "xenia/cpu/compiler/compiler.h"
 #include "xenia/cpu/ppc/ppc_context.h"
@@ -33,6 +34,11 @@ DEFINE_uint32(arm64_context_promotion_gpr_local_slots_function, 0,
               "Optional guest function start address filter for "
               "arm64_context_promotion_gpr_local_slots. 0 applies globally.",
               "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_local_slots_audit, false,
+            "Thor ARM64 research: log promotion counts for "
+            "arm64_context_promotion_gpr_local_slots. Requires the local-slot "
+            "experiment to be enabled.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -62,6 +68,31 @@ struct GprLocalSlotValue {
 
 struct GprLocalSlotBlockState {
   std::array<Value*, 2> values = {};
+};
+
+struct GprLocalSlotPromotionStats {
+  uint32_t blocks = 0;
+  uint32_t dominated_blocks = 0;
+  uint32_t pred_state_hits = 0;
+  uint32_t pred_values_seeded = 0;
+  uint32_t promoted_loads_seen = 0;
+  uint32_t promoted_stores_seen = 0;
+  uint32_t loads_seeded_from_context = 0;
+  uint32_t loads_replaced = 0;
+  uint32_t local_loads_inserted = 0;
+  uint32_t local_stores_inserted = 0;
+  uint32_t stores_tracked = 0;
+  uint32_t volatile_resets = 0;
+  uint32_t overlap_resets = 0;
+  uint32_t stores_skipped_no_tail = 0;
+  std::array<uint32_t, 2> loads_seen_by_slot = {};
+  std::array<uint32_t, 2> stores_seen_by_slot = {};
+  std::array<uint32_t, 2> loads_seeded_by_slot = {};
+  std::array<uint32_t, 2> loads_replaced_by_slot = {};
+  std::array<uint32_t, 2> local_loads_by_slot = {};
+  std::array<uint32_t, 2> local_stores_by_slot = {};
+  std::array<uint32_t, 2> stores_tracked_by_slot = {};
+  std::array<uint32_t, 2> overlap_resets_by_slot = {};
 };
 
 int GetPromotedGprIndex(size_t offset, TypeName type) {
@@ -99,6 +130,37 @@ Instr* FirstTailBranch(Block* block) {
     instr = instr->prev;
   }
   return first_tail_branch;
+}
+
+uint32_t FindFirstSourceOffset(HIRBuilder* builder) {
+  for (auto block = builder->first_block(); block; block = block->next) {
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_SOURCE_OFFSET_info) {
+        return static_cast<uint32_t>(instr->src1.offset);
+      }
+    }
+  }
+  return 0;
+}
+
+bool HasLiveGprLocalValue(const std::array<GprLocalSlotValue, 2>& current) {
+  for (const auto& slot : current) {
+    if (slot.value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint32_t CountDirtyGprLocalValues(
+    const std::array<GprLocalSlotValue, 2>& current) {
+  uint32_t count = 0;
+  for (const auto& slot : current) {
+    if (slot.value && slot.dirty) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 }  // namespace
@@ -200,18 +262,7 @@ bool ContextPromotionPass::ShouldRunGprLocalSlotPromotion(
     HIRBuilder* builder) const {
   uint32_t function_filter =
       cvars::arm64_context_promotion_gpr_local_slots_function;
-  if (!function_filter) {
-    return true;
-  }
-
-  for (auto block = builder->first_block(); block; block = block->next) {
-    for (auto instr = block->instr_head; instr; instr = instr->next) {
-      if (instr->opcode == &OPCODE_SOURCE_OFFSET_info) {
-        return static_cast<uint32_t>(instr->src1.offset) == function_filter;
-      }
-    }
-  }
-  return false;
+  return !function_filter || FindFirstSourceOffset(builder) == function_filter;
 }
 
 void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
@@ -220,22 +271,32 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
     local_slots[n] = builder->AllocLocal(INT64_TYPE);
   }
 
+  GprLocalSlotPromotionStats stats;
   std::unordered_map<Block*, GprLocalSlotBlockState> outgoing_states;
 
   for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
     std::array<GprLocalSlotValue, 2> current = {};
 
     if (Block* pred = GetSingleDominatingPredecessor(block)) {
+      ++stats.dominated_blocks;
       auto pred_state = outgoing_states.find(pred);
       if (pred_state != outgoing_states.end()) {
+        ++stats.pred_state_hits;
         for (size_t n = 0; n < current.size(); ++n) {
           current[n].value = pred_state->second.values[n];
+          if (current[n].value) {
+            ++stats.pred_values_seeded;
+          }
         }
       }
     }
 
     for (Instr* instr = block->instr_head; instr; instr = instr->next) {
       if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+        if (HasLiveGprLocalValue(current)) {
+          ++stats.volatile_resets;
+        }
         current = {};
         continue;
       }
@@ -248,18 +309,26 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
           continue;
         }
 
+        ++stats.promoted_loads_seen;
+        ++stats.loads_seen_by_slot[slot_index];
         auto& slot = current[slot_index];
         if (slot.value) {
           if (slot.value->def && slot.value->def->block != block) {
             Value* local_value = builder->LoadLocal(local_slots[slot_index]);
             builder->last_instr()->MoveBefore(instr);
             slot.value = local_value;
+            ++stats.local_loads_inserted;
+            ++stats.local_loads_by_slot[slot_index];
           }
           instr->opcode = &OPCODE_ASSIGN_info;
           instr->set_src1(slot.value);
+          ++stats.loads_replaced;
+          ++stats.loads_replaced_by_slot[slot_index];
         } else {
           slot.value = instr->dest;
           slot.dirty = true;
+          ++stats.loads_seeded_from_context;
+          ++stats.loads_seeded_by_slot[slot_index];
         }
         continue;
       }
@@ -270,13 +339,21 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
         size_t size = value ? GetTypeSize(value->type) : 1;
         int slot_index = value ? GetPromotedGprIndex(offset, value->type) : -1;
         if (slot_index >= 0) {
+          ++stats.promoted_stores_seen;
+          ++stats.stores_seen_by_slot[slot_index];
           current[slot_index].value = value;
           current[slot_index].dirty = true;
+          ++stats.stores_tracked;
+          ++stats.stores_tracked_by_slot[slot_index];
           continue;
         }
         for (size_t n = 0; n < current.size(); ++n) {
           if (RangesOverlap(offset, size, kPromotedGprOffsets[n],
                             kPromotedGprSize)) {
+            if (current[n].value) {
+              ++stats.overlap_resets;
+              ++stats.overlap_resets_by_slot[n];
+            }
             current[n] = {};
           }
         }
@@ -290,7 +367,11 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
         }
         builder->StoreLocal(local_slots[n], current[n].value);
         builder->last_instr()->MoveBefore(insert_before);
+        ++stats.local_stores_inserted;
+        ++stats.local_stores_by_slot[n];
       }
+    } else {
+      stats.stores_skipped_no_tail += CountDirtyGprLocalValues(current);
     }
 
     GprLocalSlotBlockState outgoing = {};
@@ -298,6 +379,38 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
       outgoing.values[n] = current[n].value;
     }
     outgoing_states.emplace(block, outgoing);
+  }
+
+  if (cvars::arm64_context_promotion_gpr_local_slots_audit) {
+    uint32_t function_address = FindFirstSourceOffset(builder);
+    XELOGW(
+        "A64 GPR local-slot promotion audit fn {:08X}: blocks={} "
+        "dominated_blocks={} pred_state_hits={} pred_values_seeded={} "
+        "loads_seen={} loads_seeded={} loads_replaced={} local_loads={} "
+        "stores_seen={} stores_tracked={} local_stores={} volatile_resets={} "
+        "overlap_resets={} stores_skipped_no_tail={}",
+        function_address, stats.blocks, stats.dominated_blocks,
+        stats.pred_state_hits, stats.pred_values_seeded,
+        stats.promoted_loads_seen, stats.loads_seeded_from_context,
+        stats.loads_replaced, stats.local_loads_inserted,
+        stats.promoted_stores_seen, stats.stores_tracked,
+        stats.local_stores_inserted, stats.volatile_resets,
+        stats.overlap_resets, stats.stores_skipped_no_tail);
+    XELOGW(
+        "A64 GPR local-slot promotion audit fn {:08X}: "
+        "r1 loads/seeded/replaced/local_loads stores/tracked/local_stores/"
+        "overlap_resets={}/{}/{}/{} {}/{}/{}/{}; "
+        "r11 loads/seeded/replaced/local_loads stores/tracked/local_stores/"
+        "overlap_resets={}/{}/{}/{} {}/{}/{}/{}",
+        function_address, stats.loads_seen_by_slot[0],
+        stats.loads_seeded_by_slot[0], stats.loads_replaced_by_slot[0],
+        stats.local_loads_by_slot[0], stats.stores_seen_by_slot[0],
+        stats.stores_tracked_by_slot[0], stats.local_stores_by_slot[0],
+        stats.overlap_resets_by_slot[0], stats.loads_seen_by_slot[1],
+        stats.loads_seeded_by_slot[1], stats.loads_replaced_by_slot[1],
+        stats.local_loads_by_slot[1], stats.stores_seen_by_slot[1],
+        stats.stores_tracked_by_slot[1], stats.local_stores_by_slot[1],
+        stats.overlap_resets_by_slot[1]);
   }
 }
 

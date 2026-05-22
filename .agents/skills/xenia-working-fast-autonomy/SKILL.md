@@ -140,12 +140,15 @@ blocks; the PPC translator does not run `DataFlowAnalysisPass`.
 
 Latest runtime check: guarded local-slot promotion for `r[1]`/`r[11]` reached
 the opening route without fatal markers, but increased `82282490` code size and
-did not improve comparable body-time intervals. Keep
-`arm64_context_promotion_gpr_local_slots` default-off. Next runtime slice:
-either add exact promotion counters/code-size attribution, or try a
-lower-overhead pinned-GPR path for `r[1]`/`r[11]` with resets at volatile ops,
-calls, conditional branches, returns, traps, multi-predecessor joins, exits,
-exceptions, and overlapping context writes.
+did not improve comparable body-time intervals. The counter follow-up showed
+`103` local stores for only `3` replaced loads in `82282490`; `r[11]` produced
+`68` local stores and `0` replaced loads, while `r[1]` produced `35` local
+stores and `3` replaced loads. Keep
+`arm64_context_promotion_gpr_local_slots` and
+`arm64_context_promotion_gpr_local_slots_audit` default-off. Next runtime
+slice: try a lower-overhead pinned-GPR path for `r[1]` first, with resets at
+volatile ops, calls, conditional branches, returns, traps, multi-predecessor
+joins, exits, exceptions, and overlapping context writes.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
