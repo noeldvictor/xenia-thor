@@ -356,6 +356,17 @@ required.
   invalidation (`register_invalidations=768`), not just barrier reset. Next
   state-cache work should move before A64 register allocation or pin one/two
   PPC GPRs with explicit helper/exit/branch flushes.
+- HIR GPR promotion audit:
+  `docs/research/20260521-213650-hir-gpr-promotion-audit.md`.
+  Use `tools/thor/thor_hir_gpr_promotion_audit.ps1` before cross-block GPR
+  promotion work. On the current `82282490` OptHIR dump it found
+  `118` blocks, `546` whole-GPR loads, `562` whole-GPR stores,
+  `29` dominated single-predecessor blocks, and `61` first whole-GPR loads in
+  those blocks. Top pre-RA load-promotion candidates are `r[1]` (`score=32`),
+  `r[11]` (`13`), and `r[10]` (`11`). Do not create cross-block SSA values
+  directly in `ContextPromotionPass`; the PPC translator does not currently run
+  `DataFlowAnalysisPass`, so the first runtime patch needs local-slot lowering
+  or a guarded data-flow stage before `RegisterAllocationPass`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

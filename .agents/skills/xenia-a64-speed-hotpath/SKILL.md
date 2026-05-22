@@ -200,6 +200,23 @@ HIR-level GPR load promotion before A64 register allocation or a pinned-register
 experiment for `r[1]`/`r[11]`, not another emit-time cache-preservation tweak.
 See `docs/research/20260521-212700-a64-gpr-cache-barrier-negative.md`.
 
+Before changing `ContextPromotionPass` for cross-block GPR work, run the
+promotion audit:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_gpr_promotion_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20
+```
+
+Current audit read: `82282490` has `118` blocks, `546` whole-GPR loads,
+`562` whole-GPR stores, `29` dominated single-predecessor blocks, and `61`
+first whole-GPR loads in those blocks. Top dominated first-load candidates are
+`r[1]` (`score=32`), `r[11]` (`13`), and `r[10]` (`11`). Important gate:
+the PPC translator does not currently run `DataFlowAnalysisPass`, so do not
+wire predecessor `Value*` objects directly into successor blocks. The next
+runtime patch needs local-slot lowering or a guarded data-flow stage before
+`RegisterAllocationPass`. See
+`docs/research/20260521-213650-hir-gpr-promotion-audit.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
