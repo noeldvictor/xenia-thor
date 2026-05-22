@@ -39,6 +39,22 @@ DEFINE_bool(arm64_context_promotion_gpr_local_slots_audit, false,
             "arm64_context_promotion_gpr_local_slots. Requires the local-slot "
             "experiment to be enabled.",
             "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_livein_r1, false,
+            "Thor ARM64 research: use a guarded pre-RA live-in local carrier "
+            "for PPC r[1] in selected functions. Default-off experiment.",
+            "CPU");
+DEFINE_uint32(arm64_context_promotion_gpr_livein_r1_function, 0,
+              "Optional guest function start address filter for "
+              "arm64_context_promotion_gpr_livein_r1. 0 applies globally.",
+              "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_livein_r1_preserve_barrier, true,
+            "Thor ARM64 research: preserve clean r[1] availability across "
+            "HIR context_barrier instructions in the live-in r1 probe.",
+            "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_livein_r1_audit, false,
+            "Thor ARM64 research: log attempted/replaced/skipped counters for "
+            "arm64_context_promotion_gpr_livein_r1.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -163,6 +179,128 @@ uint32_t CountDirtyGprLocalValues(
   return count;
 }
 
+constexpr size_t kR1ContextOffset =
+    offsetof(ppc::PPCContext, r) + 1 * sizeof(uint64_t);
+
+struct GprLiveInR1Availability {
+  bool clean = false;
+  bool needs_entry_local = false;
+};
+
+struct GprLiveInR1State {
+  bool clean = false;
+};
+
+struct GprLiveInR1RewriteState {
+  Value* value = nullptr;
+  bool clean = false;
+  bool dirty = false;
+};
+
+struct GprLiveInR1Stats {
+  uint32_t function_address = 0;
+  uint32_t blocks = 0;
+  uint32_t target_loads_seen = 0;
+  uint32_t target_stores_seen = 0;
+  uint32_t target_alias_stores_seen = 0;
+  uint32_t entry_clean_blocks = 0;
+  uint32_t needs_entry_local_blocks = 0;
+  uint32_t loads_attempted = 0;
+  uint32_t loads_replaced = 0;
+  uint32_t loads_seeded_from_context = 0;
+  uint32_t local_loads_inserted = 0;
+  uint32_t local_stores_inserted = 0;
+  uint32_t branch_stores_inserted = 0;
+  uint32_t final_stores_inserted = 0;
+  uint32_t skipped_dirty_entry = 0;
+  uint32_t skipped_after_call = 0;
+  uint32_t skipped_after_barrier = 0;
+  uint32_t skipped_after_alias = 0;
+  uint32_t skipped_no_value_for_store = 0;
+  uint32_t call_resets = 0;
+  uint32_t barrier_resets = 0;
+  uint32_t alias_resets = 0;
+  uint32_t exit_resets = 0;
+};
+
+bool IsTargetR1Load(Instr* instr) {
+  return instr->opcode == &OPCODE_LOAD_CONTEXT_info &&
+         instr->src1.offset == kR1ContextOffset && instr->dest &&
+         instr->dest->type == INT64_TYPE;
+}
+
+bool IsTargetR1Store(Instr* instr) {
+  return instr->opcode == &OPCODE_STORE_CONTEXT_info &&
+         instr->src1.offset == kR1ContextOffset && instr->src2.value &&
+         instr->src2.value->type == INT64_TYPE;
+}
+
+bool IsTargetR1OverlapStore(Instr* instr) {
+  if (instr->opcode != &OPCODE_STORE_CONTEXT_info || !instr->src2.value) {
+    return false;
+  }
+  size_t size = GetTypeSize(instr->src2.value->type);
+  return RangesOverlap(instr->src1.offset, size, kR1ContextOffset,
+                       sizeof(uint64_t));
+}
+
+bool IsContextStateKillingInstr(Instr* instr, bool preserve_barrier,
+                                bool* killed_by_call,
+                                bool* killed_by_barrier,
+                                bool* killed_by_exit) {
+  *killed_by_call = false;
+  *killed_by_barrier = false;
+  *killed_by_exit = false;
+  if (instr->opcode == &OPCODE_CONTEXT_BARRIER_info) {
+    if (!preserve_barrier) {
+      *killed_by_barrier = true;
+      return true;
+    }
+    return false;
+  }
+  if (instr->opcode == &OPCODE_CALL_info ||
+      instr->opcode == &OPCODE_CALL_TRUE_info ||
+      instr->opcode == &OPCODE_CALL_INDIRECT_info ||
+      instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info ||
+      instr->opcode == &OPCODE_CALL_EXTERN_info) {
+    *killed_by_call = true;
+    return true;
+  }
+  if (instr->opcode == &OPCODE_RETURN_info ||
+      instr->opcode == &OPCODE_RETURN_TRUE_info ||
+      instr->opcode == &OPCODE_TRAP_info ||
+      instr->opcode == &OPCODE_TRAP_TRUE_info ||
+      instr->opcode == &OPCODE_DEBUG_BREAK_info ||
+      instr->opcode == &OPCODE_DEBUG_BREAK_TRUE_info) {
+    *killed_by_exit = true;
+    return true;
+  }
+  if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+    *killed_by_call = true;
+    return true;
+  }
+  return false;
+}
+
+Block* GetBranchTargetBlock(Instr* instr) {
+  if (instr->opcode == &OPCODE_BRANCH_info) {
+    return instr->src1.label ? instr->src1.label->block : nullptr;
+  }
+  if (instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+      instr->opcode == &OPCODE_BRANCH_FALSE_info) {
+    return instr->src2.label ? instr->src2.label->block : nullptr;
+  }
+  return nullptr;
+}
+
+Instr* FirstTailBranchOrNull(Block* block) {
+  return FirstTailBranch(block);
+}
+
+uint32_t GetEdgeKey(Block* src, Block* dest) {
+  return (uint32_t(src->ordinal) << 16) | uint32_t(dest->ordinal);
+}
+
 }  // namespace
 
 ContextPromotionPass::ContextPromotionPass() : CompilerPass() {}
@@ -208,6 +346,10 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
   if (cvars::arm64_context_promotion_gpr_local_slots &&
       ShouldRunGprLocalSlotPromotion(builder)) {
     PromoteDominatedGprLocalSlots(builder);
+  }
+  if (cvars::arm64_context_promotion_gpr_livein_r1 &&
+      ShouldRunGprLiveInR1Promotion(builder)) {
+    PromoteGprLiveInR1(builder);
   }
 
   // Remove all dead stores.
@@ -411,6 +553,278 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
         stats.local_loads_by_slot[1], stats.stores_seen_by_slot[1],
         stats.stores_tracked_by_slot[1], stats.local_stores_by_slot[1],
         stats.overlap_resets_by_slot[1]);
+  }
+}
+
+bool ContextPromotionPass::ShouldRunGprLiveInR1Promotion(
+    HIRBuilder* builder) const {
+  uint32_t function_filter =
+      cvars::arm64_context_promotion_gpr_livein_r1_function;
+  return !function_filter || FindFirstSourceOffset(builder) == function_filter;
+}
+
+void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
+  const bool preserve_barrier =
+      cvars::arm64_context_promotion_gpr_livein_r1_preserve_barrier;
+  GprLiveInR1Stats stats;
+  stats.function_address = FindFirstSourceOffset(builder);
+
+  std::vector<Block*> blocks;
+  std::unordered_map<Block*, GprLiveInR1Availability> availability;
+  std::unordered_map<uint32_t, bool> edge_clean;
+  for (auto block = builder->first_block(); block; block = block->next) {
+    blocks.push_back(block);
+    availability[block] = {};
+    ++stats.blocks;
+    for (auto edge = block->outgoing_edge_head; edge;
+         edge = edge->outgoing_next) {
+      edge_clean[GetEdgeKey(edge->src, edge->dest)] = true;
+    }
+  }
+
+  auto transfer_block = [&](Block* block, bool entry_clean,
+                            std::unordered_map<uint32_t, bool>* out_edges) {
+    bool clean = entry_clean;
+    std::unordered_map<Block*, bool> captured_edges;
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      bool killed_by_call = false;
+      bool killed_by_barrier = false;
+      bool killed_by_exit = false;
+      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
+                                     &killed_by_barrier, &killed_by_exit)) {
+        clean = false;
+      }
+      if (IsTargetR1Store(instr)) {
+        clean = true;
+      } else if (IsTargetR1OverlapStore(instr)) {
+        clean = false;
+      } else if (IsTargetR1Load(instr)) {
+        clean = true;
+      }
+      if (Block* target = GetBranchTargetBlock(instr)) {
+        captured_edges[target] = clean;
+        (*out_edges)[GetEdgeKey(block, target)] = clean;
+      }
+    }
+    for (auto edge = block->outgoing_edge_head; edge;
+         edge = edge->outgoing_next) {
+      if (!captured_edges.count(edge->dest)) {
+        (*out_edges)[GetEdgeKey(edge->src, edge->dest)] = clean;
+      }
+    }
+    return clean;
+  };
+
+  bool changed = true;
+  for (uint32_t iteration = 0; changed && iteration < 64; ++iteration) {
+    changed = false;
+    for (Block* block : blocks) {
+      bool entry_clean = block->incoming_edge_head != nullptr;
+      for (auto edge = block->incoming_edge_head; edge;
+           edge = edge->incoming_next) {
+        auto edge_state = edge_clean.find(GetEdgeKey(edge->src, edge->dest));
+        if (edge_state == edge_clean.end() || !edge_state->second) {
+          entry_clean = false;
+          break;
+        }
+      }
+      if (availability[block].clean != entry_clean) {
+        availability[block].clean = entry_clean;
+        changed = true;
+      }
+
+      std::unordered_map<uint32_t, bool> new_edge_states;
+      transfer_block(block, entry_clean, &new_edge_states);
+      for (auto& new_edge_state : new_edge_states) {
+        auto old_edge_state = edge_clean.find(new_edge_state.first);
+        if (old_edge_state == edge_clean.end() ||
+            old_edge_state->second != new_edge_state.second) {
+          edge_clean[new_edge_state.first] = new_edge_state.second;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  auto block_needs_entry_local = [&](Block* block) {
+    if (!availability[block].clean) {
+      return false;
+    }
+    bool clean = true;
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      bool killed_by_call = false;
+      bool killed_by_barrier = false;
+      bool killed_by_exit = false;
+      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
+                                     &killed_by_barrier, &killed_by_exit)) {
+        clean = false;
+      }
+      if (IsTargetR1Store(instr)) {
+        clean = true;
+      } else if (IsTargetR1OverlapStore(instr)) {
+        clean = false;
+      } else if (IsTargetR1Load(instr)) {
+        return clean;
+      }
+    }
+    return false;
+  };
+
+  for (Block* block : blocks) {
+    if (availability[block].clean) {
+      ++stats.entry_clean_blocks;
+    }
+    availability[block].needs_entry_local = block_needs_entry_local(block);
+    if (availability[block].needs_entry_local) {
+      ++stats.needs_entry_local_blocks;
+    }
+  }
+
+  Value* local_slot = builder->AllocLocal(INT64_TYPE);
+
+  auto ensure_value_from_local = [&](Instr* insert_before,
+                                     GprLiveInR1RewriteState* state) {
+    if (!state->value) {
+      Value* local_value = builder->LoadLocal(local_slot);
+      builder->last_instr()->MoveBefore(insert_before);
+      state->value = local_value;
+      state->dirty = false;
+      ++stats.local_loads_inserted;
+    }
+  };
+
+  auto store_local_if_needed = [&](Instr* insert_before,
+                                   GprLiveInR1RewriteState* state,
+                                   bool branch_store) {
+    if (!state->clean || !state->dirty) {
+      return;
+    }
+    if (!state->value) {
+      ++stats.skipped_no_value_for_store;
+      return;
+    }
+    builder->StoreLocal(local_slot, state->value);
+    builder->last_instr()->MoveBefore(insert_before);
+    state->dirty = false;
+    ++stats.local_stores_inserted;
+    if (branch_store) {
+      ++stats.branch_stores_inserted;
+    } else {
+      ++stats.final_stores_inserted;
+    }
+  };
+
+  for (Block* block : blocks) {
+    GprLiveInR1RewriteState state;
+    state.clean = availability[block].clean;
+
+    for (Instr* instr = block->instr_head; instr;) {
+      Instr* next = instr->next;
+
+      bool killed_by_call = false;
+      bool killed_by_barrier = false;
+      bool killed_by_exit = false;
+      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
+                                     &killed_by_barrier, &killed_by_exit)) {
+        if (state.clean) {
+          if (killed_by_barrier) {
+            ++stats.barrier_resets;
+          } else if (killed_by_exit) {
+            ++stats.exit_resets;
+          } else {
+            ++stats.call_resets;
+          }
+        }
+        state = {};
+      }
+
+      if (IsTargetR1Store(instr)) {
+        ++stats.target_stores_seen;
+        state.clean = true;
+        state.value = instr->src2.value;
+        state.dirty = true;
+      } else if (IsTargetR1OverlapStore(instr)) {
+        ++stats.target_alias_stores_seen;
+        if (state.clean) {
+          ++stats.alias_resets;
+        }
+        state = {};
+      } else if (IsTargetR1Load(instr)) {
+        ++stats.target_loads_seen;
+        ++stats.loads_attempted;
+        if (state.clean) {
+          ensure_value_from_local(instr, &state);
+          instr->opcode = &hir::OPCODE_ASSIGN_info;
+          instr->set_src1(state.value);
+          ++stats.loads_replaced;
+        } else {
+          if (killed_by_call) {
+            ++stats.skipped_after_call;
+          } else if (killed_by_barrier) {
+            ++stats.skipped_after_barrier;
+          } else {
+            ++stats.skipped_dirty_entry;
+          }
+          state.clean = true;
+          state.value = instr->dest;
+          state.dirty = true;
+          ++stats.loads_seeded_from_context;
+        }
+      }
+
+      if (Block* target = GetBranchTargetBlock(instr)) {
+        auto target_availability = availability.find(target);
+        if (target_availability != availability.end() &&
+            target_availability->second.needs_entry_local) {
+          store_local_if_needed(instr, &state, true);
+        }
+      }
+
+      instr = next;
+    }
+
+    bool has_needing_successor = false;
+    for (auto edge = block->outgoing_edge_head; edge;
+         edge = edge->outgoing_next) {
+      auto target_availability = availability.find(edge->dest);
+      if (target_availability != availability.end() &&
+          target_availability->second.needs_entry_local) {
+        has_needing_successor = true;
+        break;
+      }
+    }
+    if (has_needing_successor && state.clean && state.dirty) {
+      if (Instr* insert_before = FirstTailBranchOrNull(block)) {
+        store_local_if_needed(insert_before, &state, false);
+      } else {
+        ++stats.skipped_no_value_for_store;
+      }
+    }
+  }
+
+  if (cvars::arm64_context_promotion_gpr_livein_r1_audit) {
+    XELOGW(
+        "A64 GPR live-in r1 promotion audit fn {:08X}: blocks={} "
+        "entry_clean_blocks={} needs_entry_local_blocks={} "
+        "loads_attempted={} loads_replaced={} loads_seeded={} "
+        "local_loads={} local_stores={} branch_stores={} final_stores={} "
+        "stores_seen={} alias_stores={} call_resets={} barrier_resets={} "
+        "alias_resets={} exit_resets={} preserve_barrier={}",
+        stats.function_address, stats.blocks, stats.entry_clean_blocks,
+        stats.needs_entry_local_blocks, stats.loads_attempted,
+        stats.loads_replaced, stats.loads_seeded_from_context,
+        stats.local_loads_inserted, stats.local_stores_inserted,
+        stats.branch_stores_inserted, stats.final_stores_inserted,
+        stats.target_stores_seen, stats.target_alias_stores_seen,
+        stats.call_resets, stats.barrier_resets, stats.alias_resets,
+        stats.exit_resets, preserve_barrier);
+    XELOGW(
+        "A64 GPR live-in r1 promotion audit fn {:08X}: skipped "
+        "dirty_entry={} after_call={} after_barrier={} after_alias={} "
+        "no_value_for_store={}",
+        stats.function_address, stats.skipped_dirty_entry,
+        stats.skipped_after_call, stats.skipped_after_barrier,
+        stats.skipped_after_alias, stats.skipped_no_value_for_store);
   }
 }
 

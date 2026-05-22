@@ -1692,6 +1692,17 @@ required.
   using runtime `82282490` context-audit captures as speed evidence for this
   route because `scratch/thor-debug/20260521-175626-*` black-idled before body
   time activated.
+- r1 live-in state-cache probe:
+  `docs/research/20260522-153742-r1-livein-state-cache-probe.md`.
+  The default-off `arm64_context_promotion_gpr_livein_r1` path is route-clean
+  but not a speed win yet. The 2026-05-22 Thor capture
+  `scratch/thor-debug/20260522-152727-*` had no searched fatal markers, but
+  replaced only `16/107` `r[1]` loads in `82282490` despite the offline
+  barrier-preserving report predicting `56` replaceable first loads. Keep it
+  default-off and do not enable it in Blue Dragon presets. Next work should
+  improve actual-CFG eligibility/dirty-reason audit or the pre-RA carrier until
+  the runtime probe reaches roughly the expected `50+` replacement range before
+  another long Thor speed run.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

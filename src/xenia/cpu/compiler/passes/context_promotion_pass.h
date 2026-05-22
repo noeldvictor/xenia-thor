@@ -44,6 +44,8 @@ class ContextPromotionPass : public CompilerPass {
   void PromoteBlock(hir::Block* block);
   bool ShouldRunGprLocalSlotPromotion(hir::HIRBuilder* builder) const;
   void PromoteDominatedGprLocalSlots(hir::HIRBuilder* builder);
+  bool ShouldRunGprLiveInR1Promotion(hir::HIRBuilder* builder) const;
+  void PromoteGprLiveInR1(hir::HIRBuilder* builder);
   void RemoveDeadStoresBlock(hir::Block* block);
   bool TryGetContextValue(size_t offset, size_t size, hir::TypeName type,
                           hir::Value** out_value) const;

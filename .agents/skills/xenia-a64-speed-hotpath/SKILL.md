@@ -278,6 +278,16 @@ live-in/state-cache probe for `82282490`, with explicit kills at calls/helpers,
 exits, exceptions, volatile context ops, and exact/aliasing writes. See
 `docs/research/20260522-150536-r1-livein-availability-report.md`.
 
+The first guarded live-in implementation is route-clean but under-replaces.
+Keep `arm64_context_promotion_gpr_livein_r1` default-off. Capture
+`scratch\thor-debug\20260522-152727-*` had no searched fatal markers and logged
+`loads_attempted=107`, `loads_replaced=16`, `loads_seeded=91`,
+`call_resets=91`, and `82282490 code_size=87224`. Do not start another long
+Thor speed run from this toggle yet. Next add actual-CFG/dirty-reason audit or
+improve the pre-RA carrier until the runtime replacement count approaches the
+offline `56` first-load opportunity. See
+`docs/research/20260522-153742-r1-livein-state-cache-probe.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

@@ -258,6 +258,16 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "arm64_context_promotion_gpr_local_slots_audit");
             copyBooleanExtra(
+                    intent, launchArguments, "arm64_context_promotion_gpr_livein_r1");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_context_promotion_gpr_livein_r1_function");
+            copyBooleanExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_context_promotion_gpr_livein_r1_preserve_barrier");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_context_promotion_gpr_livein_r1_audit");
+            copyBooleanExtra(
                     intent, launchArguments, "arm64_cr_compare_branch_across_context_barrier");
             copyBooleanExtra(intent, launchArguments, "arm64_cr_store_elide_for_fused_branch");
             copyIntExtra(

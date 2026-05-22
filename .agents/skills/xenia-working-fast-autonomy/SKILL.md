@@ -160,10 +160,15 @@ leave `r[1]` clean before replacing loads.
 Latest offline follow-up: `tools/thor/thor_hir_gpr_livein_report.ps1` found
 that strict helper+barrier flushing exposes only `14` replaceable first `r[1]`
 loads, while helper flushing with `context_barrier` preservation exposes `56`
-replaceable first loads. Next slice should implement the guarded, default-off,
-function-filtered pre-RA `r[1]` live-in probe for `82282490` with audit counters
-and explicit kills at calls/helpers, exits, exceptions, volatile context ops,
-and exact/aliasing writes.
+replaceable first loads. The first guarded runtime implementation was
+route-clean but too conservative: `scratch/thor-debug/20260522-152727-*` had no
+searched fatal markers and logged `loads_attempted=107`,
+`loads_replaced=16`, `loads_seeded=91`, `call_resets=91`, and
+`82282490 code_size=87224`. Keep
+`arm64_context_promotion_gpr_livein_r1` default-off. Next slice should add
+actual-CFG/dirty-reason audit or improve the pre-RA carrier until the runtime
+replacement count is close to the offline `56` first-load opportunity before
+running another long Thor speed capture.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

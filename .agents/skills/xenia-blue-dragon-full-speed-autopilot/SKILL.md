@@ -146,6 +146,14 @@ The live-in report now says strict helper+barrier flushing exposes only `14`
 replaceable first loads, but preserving clean `r[1]` across `context_barrier`
 exposes `56`. The next runtime patch should therefore be default-off,
 function-filtered, audited, pre-RA, and barrier-aware.
+The first guarded runtime implementation is clean but underpowered:
+`docs/research/20260522-153742-r1-livein-state-cache-probe.md` and
+`scratch/thor-debug/20260522-152727-*` show `loads_attempted=107` but only
+`loads_replaced=16`, with `82282490 code_size=87224` and no searched fatal
+markers. Keep `arm64_context_promotion_gpr_livein_r1` default-off. The next
+action is not another long speed run; add dirty-reason/actual-CFG eligibility
+audit or improve the pre-RA carrier until the runtime replacement count is much
+closer to the offline `56` first-load opportunity.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
