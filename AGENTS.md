@@ -636,7 +636,10 @@ required.
   - `.agents/skills/xenia-working-fast-autonomy/SKILL.md` is the concrete
     worker loop under the autopilot. It makes each continuation pick one lane
     and leave a code patch, Thor capture, deterministic analysis artifact, or
-    blocker with the exact next experiment.
+    blocker with the exact next experiment. As of 2026-05-22 it also carries
+    the current `82282490` local-slot/data-flow GPR promotion target so the
+    next continuation starts at `r[1]`/`r[11]` instead of repeating the failed
+    emit-time context-cache lane.
 
 ## Agent Skill Donor Audit
 

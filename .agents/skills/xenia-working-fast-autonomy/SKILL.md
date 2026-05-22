@@ -17,11 +17,26 @@ Keep going, but keep it bounded:
 
 - stop only for the full-speed proof marker, max hook attempts, or a concrete
   blocker;
+- do not end a continuation after orientation only;
 - do one variable at a time;
 - update dated research/worklogs;
 - commit and push validated progress on `master`;
 - never commit game files, keys, raw copyrighted dumps, private screenshots,
   or scratch captures.
+
+## Autonomy Contract
+
+Every invocation must end in one of these states:
+
+- full-speed proof marker written and summarized;
+- a validated code/tooling/docs slice committed and pushed;
+- a Thor capture or offline analysis artifact with a dated worklog entry;
+- a concrete blocker with the exact failed command, missing input, and next
+  experiment.
+
+If proof is absent and no user decision is needed, re-arm the Stop hook before
+ending. Do not ask the user to say "continue" just because the next step is
+known.
 
 ## Startup Checklist
 
@@ -95,10 +110,16 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 The current best autonomous lane is `82282490` state traffic in the opening
-route. Before editing, run or inspect:
+route. Before editing, run or inspect the state-span report:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_state_span_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20
+```
+
+Then run the GPR promotion audit before cross-block state work:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_gpr_promotion_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20
 ```
 
 Prioritize real GPR state traffic around `r[1]`, `r[10]`, `r[11]`, and
@@ -111,6 +132,17 @@ Latest evidence: the default-off
 still produced `82282490 loads/hits=546/0` because host-register invalidation
 killed reuse. The next state-cache slice should move before A64 register
 allocation or pin one/two PPC GPRs, not preserve more emit-time cache entries.
+The current promotion audit found `118` blocks, `546` whole-GPR loads, `562`
+whole-GPR stores, `29` dominated single-predecessor blocks, and `61` first
+whole-GPR loads in those blocks. Top pre-RA candidates are `r[1]`, `r[11]`,
+and `r[10]`. Do not wire predecessor `Value*` objects directly into successor
+blocks; the PPC translator does not run `DataFlowAnalysisPass`, so the first
+runtime patch needs local-slot lowering or a guarded data-flow stage before
+`RegisterAllocationPass`.
+
+Next runtime patch: implement a guarded load-only GPR promotion for `r[1]` and
+`r[11]`, with resets at volatile ops, calls, conditional branches, returns,
+traps, multi-predecessor joins, and overlapping context writes.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
@@ -132,6 +164,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_l
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode Status
 ```
 
-Commit and push validated tracked changes. Leave the next action in the
-worklog as a concrete command or patch target so the Stop hook or heartbeat can
-resume without rediscovery.
+Commit and push validated tracked changes. If the heartbeat automation is
+active, keep its prompt aligned with the latest next action. Leave the next
+action in the worklog as a concrete command or patch target so the Stop hook or
+heartbeat can resume without rediscovery.

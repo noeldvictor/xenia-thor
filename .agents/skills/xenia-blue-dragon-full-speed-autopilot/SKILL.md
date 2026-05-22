@@ -128,6 +128,11 @@ code. Current `82282490` signal: `r[1]` is the leading cross-span repeated
 load, while `r[11]`, `r[10]`, and `r[31]` are leading cross-span
 load-after-store GPRs.
 
+Also run `tools/thor/thor_hir_gpr_promotion_audit.ps1` before cross-block GPR
+promotion work. Latest audit says the next runtime patch should be guarded
+load-only local-slot/data-flow promotion for `r[1]` and `r[11]`, not direct
+cross-block `Value*` rewrites in `ContextPromotionPass`.
+
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
 fusion, or old block-local/fallthrough context cache without new evidence.

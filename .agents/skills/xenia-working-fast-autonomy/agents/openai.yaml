@@ -1,4 +1,4 @@
 interface:
   display_name: "Xenia Working Fast Autonomy"
   short_description: "Drive bounded autonomous Blue Dragon speed work on AYN Thor."
-  default_prompt: "Keep working autonomously toward full-speed Blue Dragon on AYN Thor using bounded evidence-driven loops."
+  default_prompt: "Use $xenia-working-fast-autonomy to keep working toward full-speed Blue Dragon on AYN Thor with bounded proof-driven loops."
