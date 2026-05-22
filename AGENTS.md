@@ -492,10 +492,18 @@ required.
   bug: the profiler clobbered `x9` after loading the direct callee address.
   Fixed edge capture `scratch/thor-debug/20260522-175951-*` and same-APK
   control `scratch/thor-debug/20260522-180335-*` both had no fatal markers but
-  black-idled before `82282490`, so no call-edge rows exist yet. Keep the cvar
-  off by default and do not judge speed from this. Next priority is to prove a
-  same-APK control reaches the opening route / `82282490` again before rerunning
-  the edge filter, or add route-stability/idle attribution.
+  black-idled before `82282490`, so no call-edge rows existed yet. Follow-up
+  control sandwich `docs/research/20260522-183742-call-edge-control-sandwich.md`
+  tightened the read: controls `scratch/thor-debug/20260522-182318-*` and
+  `scratch/thor-debug/20260522-183118-*` both reached the visible opening route
+  and emitted `82282490` body-time rows on the same APK, while edge capture
+  `scratch/thor-debug/20260522-182705-*` with
+  `arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52,
+  had no fatal markers, and emitted no dynamic call-edge rows. Keep the cvar
+  off by default and do not rerun the exact edge capture unchanged. Next
+  priority is a lower-overhead compile/activation audit or a change that keeps
+  the profiler inert until the filtered function is actually compiled/reached,
+  followed by a route-safety sandwich before judging edge timing.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

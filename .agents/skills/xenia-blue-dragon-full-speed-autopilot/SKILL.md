@@ -219,10 +219,18 @@ now exists: `docs/research/20260522-181040-a64-call-edge-profiler.md`, cvar
 `-Arm64SpeedProfileCallEdgeFilter`. The first capture exposed and fixed an `x9`
 callee-address clobber; fixed edge capture `scratch/thor-debug/20260522-175951-*`
 and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
-before `82282490`, so no dynamic edge rows exist yet. Keep the cvar default-off.
-Next slice should prove a same-APK control reaches the opening route /
-`82282490` again before rerunning the edge filter, or add route-stability/idle
-attribution.
+before `82282490`, so no dynamic edge rows existed yet. The follow-up sandwich
+`docs/research/20260522-183742-call-edge-control-sandwich.md` is a stronger
+negative for the current edge-filter path: controls
+`scratch/thor-debug/20260522-182318-*` and
+`scratch/thor-debug/20260522-183118-*` both reached opening and emitted
+`82282490` body-time rows on the same APK, while edge capture
+`scratch/thor-debug/20260522-182705-*` with
+`arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52 and
+emitted no dynamic edge rows. Keep the cvar default-off and do not rerun that
+exact edge capture unchanged. Next slice should add a low-overhead
+compile/activation audit, or make the profiler inert until the filtered
+function is compiled/reached, then prove route safety before using edge rows.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

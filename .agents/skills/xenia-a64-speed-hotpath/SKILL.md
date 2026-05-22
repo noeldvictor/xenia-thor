@@ -380,10 +380,18 @@ Use `tools/thor/thor_hir_call_path_report.ps1` to parse dynamic call-edge rows
 when a capture emits them. The first profiler capture found and fixed an `x9`
 callee-address clobber. Fixed edge capture `scratch/thor-debug/20260522-175951-*`
 and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
-before `82282490`, so the profiler has not yet produced edge body-time evidence.
-Next speed-lane step is a same-APK control route proof back to opening /
-`82282490`, or route-stability/idle attribution before rerunning the edge
-filter.
+before `82282490`, so the profiler had not produced edge body-time evidence.
+The control sandwich
+`docs/research/20260522-183742-call-edge-control-sandwich.md` tightened that:
+controls `scratch/thor-debug/20260522-182318-*` and
+`scratch/thor-debug/20260522-183118-*` reached opening and emitted `82282490`
+body-time rows on the same APK, while edge capture
+`scratch/thor-debug/20260522-182705-*` with
+`arm64_speed_profile_call_edge_filter=82282490` black-idled by 18:27:52 and
+emitted no dynamic edge rows. Keep the cvar default-off and do not rerun the
+same edge capture unchanged. Next speed-lane step is a low-overhead
+compile/activation audit, or an inert-until-target profiler path, followed by
+route-safety proof before judging edge timing.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
