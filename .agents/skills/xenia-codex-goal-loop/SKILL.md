@@ -65,7 +65,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_l
 For Blue Dragon full-speed work, also use
 `.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md`. That skill is
 the higher-level contract for Stop-hook continuation, heartbeat wakeups, proof
-markers, and current sprint priorities.
+markers, and current sprint priorities. Use
+`.agents/skills/xenia-working-fast-autonomy/SKILL.md` as the concrete worker
+loop that makes each continuation produce code, capture evidence, analysis
+tooling, or a blocker with the next experiment.
 
 Disable:
 
@@ -112,6 +115,7 @@ Every loop prompt should say:
 
 - which route or performance proof ends the loop;
 - which local skills to use;
+- which concrete worker output is required this slice;
 - whether to build, deploy, and capture on Thor;
 - which logs, screenshots, APK hashes, cvars, or FPS data prove progress;
 - when to stop and summarize a blocker instead of guessing again.

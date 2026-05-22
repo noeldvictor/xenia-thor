@@ -91,13 +91,16 @@ Treat `>=30 FPS` as the first full-speed proof target for this route. Track
 At the start of every continuation:
 
 1. Read `AGENTS.md`.
-2. Read this skill and `.agents/skills/xenia-codex-goal-loop/SKILL.md`.
+2. Read this skill, `.agents/skills/xenia-working-fast-autonomy/SKILL.md`,
+   and `.agents/skills/xenia-codex-goal-loop/SKILL.md`.
 3. Read the latest `docs/worklogs/YYYYMMDD.md`.
 4. Check `scratch/thor-debug/codex-goal-loop.json`.
 5. Check for the proof marker.
 6. Run `git status --short --branch`.
 
-If proof is absent, pick exactly one next lane:
+If proof is absent, use
+`.agents/skills/xenia-working-fast-autonomy/SKILL.md` as the worker loop for
+the continuation, then pick exactly one next lane:
 
 - use `.agents/skills/xenia-a64-speed-hotpath/SKILL.md` for FPS and generated
   CPU hot paths;

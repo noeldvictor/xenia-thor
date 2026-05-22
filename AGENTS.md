@@ -604,6 +604,10 @@ required.
     active autopilot contract for continuing this conversation through Stop
     hooks and heartbeats until Blue Dragon reaches full-speed proof on AYN
     Thor or a concrete blocker is recorded.
+  - `.agents/skills/xenia-working-fast-autonomy/SKILL.md` is the concrete
+    worker loop under the autopilot. It makes each continuation pick one lane
+    and leave a code patch, Thor capture, deterministic analysis artifact, or
+    blocker with the exact next experiment.
 
 ## Agent Skill Donor Audit
 
@@ -1372,7 +1376,9 @@ required.
   speed" instruction, use the dedicated bounded full-speed command:
   `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48`.
   Read `.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md` first
-  for the continuation contract.
+  for the continuation contract, then
+  `.agents/skills/xenia-working-fast-autonomy/SKILL.md` for the concrete
+  worker loop used by each follow-up.
   The proof marker is
   `scratch\thor-debug\latest-blue-dragon-full-speed-proof.json`.
 - Full-speed proof means a quiet Thor speed capture with Blue Dragon Disc 1
