@@ -62,6 +62,11 @@ Enable full-speed research loop:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48
 ```
 
+For Blue Dragon full-speed work, also use
+`.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md`. That skill is
+the higher-level contract for Stop-hook continuation, heartbeat wakeups, proof
+markers, and current sprint priorities.
+
 Disable:
 
 ```powershell

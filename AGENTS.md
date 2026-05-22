@@ -592,6 +592,10 @@ required.
   - `.agents/skills/xenia-codex-goal-loop/SKILL.md` is the bounded
     continuation expert for Codex Stop hooks, heartbeat automations, proof
     markers, and "keep going until goal or blocker" loops.
+  - `.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md` is the
+    active autopilot contract for continuing this conversation through Stop
+    hooks and heartbeats until Blue Dragon reaches full-speed proof on AYN
+    Thor or a concrete blocker is recorded.
 
 ## Agent Skill Donor Audit
 
@@ -1359,6 +1363,8 @@ required.
 - For the user's "do not stop researching until Blue Dragon works at full
   speed" instruction, use the dedicated bounded full-speed command:
   `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48`.
+  Read `.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md` first
+  for the continuation contract.
   The proof marker is
   `scratch\thor-debug\latest-blue-dragon-full-speed-proof.json`.
 - Full-speed proof means a quiet Thor speed capture with Blue Dragon Disc 1
