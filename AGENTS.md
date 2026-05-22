@@ -367,6 +367,17 @@ required.
   directly in `ContextPromotionPass`; the PPC translator does not currently run
   `DataFlowAnalysisPass`, so the first runtime patch needs local-slot lowering
   or a guarded data-flow stage before `RegisterAllocationPass`.
+- A64 GPR local-slot promotion probe:
+  `docs/research/20260522-113012-gpr-local-slot-promotion-probe.md`.
+  `arm64_context_promotion_gpr_local_slots` is default-off and Android/Thor
+  script-routable with optional function filter
+  `arm64_context_promotion_gpr_local_slots_function`. Capture
+  `scratch/thor-debug/20260522-113303-*` enabled it for `82282490`, reached the
+  visible opening sky/dragon-wing route, and had no searched fatal markers, but
+  it is not a speed win: `82282490` code size grew from `87168` to `87660`, and
+  comparable body-time intervals were flat to slightly worse. Keep it as a
+  scaffold only; next work needs exact promotion counters/code-size attribution
+  or a lower-overhead pinned-GPR path for `r[1]`/`r[11]`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

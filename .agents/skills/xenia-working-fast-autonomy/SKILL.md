@@ -136,13 +136,16 @@ The current promotion audit found `118` blocks, `546` whole-GPR loads, `562`
 whole-GPR stores, `29` dominated single-predecessor blocks, and `61` first
 whole-GPR loads in those blocks. Top pre-RA candidates are `r[1]`, `r[11]`,
 and `r[10]`. Do not wire predecessor `Value*` objects directly into successor
-blocks; the PPC translator does not run `DataFlowAnalysisPass`, so the first
-runtime patch needs local-slot lowering or a guarded data-flow stage before
-`RegisterAllocationPass`.
+blocks; the PPC translator does not run `DataFlowAnalysisPass`.
 
-Next runtime patch: implement a guarded load-only GPR promotion for `r[1]` and
-`r[11]`, with resets at volatile ops, calls, conditional branches, returns,
-traps, multi-predecessor joins, and overlapping context writes.
+Latest runtime check: guarded local-slot promotion for `r[1]`/`r[11]` reached
+the opening route without fatal markers, but increased `82282490` code size and
+did not improve comparable body-time intervals. Keep
+`arm64_context_promotion_gpr_local_slots` default-off. Next runtime slice:
+either add exact promotion counters/code-size attribution, or try a
+lower-overhead pinned-GPR path for `r[1]`/`r[11]` with resets at volatile ops,
+calls, conditional branches, returns, traps, multi-predecessor joins, exits,
+exceptions, and overlapping context writes.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

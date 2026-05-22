@@ -129,9 +129,11 @@ load, while `r[11]`, `r[10]`, and `r[31]` are leading cross-span
 load-after-store GPRs.
 
 Also run `tools/thor/thor_hir_gpr_promotion_audit.ps1` before cross-block GPR
-promotion work. Latest audit says the next runtime patch should be guarded
-load-only local-slot/data-flow promotion for `r[1]` and `r[11]`, not direct
-cross-block `Value*` rewrites in `ContextPromotionPass`.
+promotion work. The first guarded local-slot/data-flow probe for `r[1]` and
+`r[11]` reached the opening route but was not faster, so keep
+`arm64_context_promotion_gpr_local_slots` default-off. The next state-cache
+slice should add exact promotion counters/code-size attribution or try a
+lower-overhead pinned-GPR path.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

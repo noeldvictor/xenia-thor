@@ -9,6 +9,10 @@
 
 #include "xenia/cpu/compiler/passes/context_promotion_pass.h"
 
+#include <array>
+#include <cstddef>
+#include <unordered_map>
+
 #include "xenia/apu/apu_flags.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/profiling.h"
@@ -20,6 +24,15 @@ DECLARE_bool(debug);
 
 DEFINE_bool(store_all_context_values, false,
             "Don't strip dead context stores to aid in debugging.", "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
+            "Thor ARM64 research: promote dominated first loads of selected "
+            "whole PPC GPR context slots through HIR locals before register "
+            "allocation. Default-off experiment.",
+            "CPU");
+DEFINE_uint32(arm64_context_promotion_gpr_local_slots_function, 0,
+              "Optional guest function start address filter for "
+              "arm64_context_promotion_gpr_local_slots. 0 applies globally.",
+              "CPU");
 
 namespace xe {
 namespace cpu {
@@ -33,6 +46,62 @@ using xe::cpu::hir::Block;
 using xe::cpu::hir::HIRBuilder;
 using xe::cpu::hir::Instr;
 using xe::cpu::hir::Value;
+
+namespace {
+
+constexpr size_t kPromotedGprOffsets[] = {
+    offsetof(ppc::PPCContext, r) + 1 * sizeof(uint64_t),
+    offsetof(ppc::PPCContext, r) + 11 * sizeof(uint64_t),
+};
+constexpr size_t kPromotedGprSize = sizeof(uint64_t);
+
+struct GprLocalSlotValue {
+  Value* value = nullptr;
+  bool dirty = false;
+};
+
+struct GprLocalSlotBlockState {
+  std::array<Value*, 2> values = {};
+};
+
+int GetPromotedGprIndex(size_t offset, TypeName type) {
+  if (type != INT64_TYPE) {
+    return -1;
+  }
+  for (size_t n = 0; n < sizeof(kPromotedGprOffsets) /
+                             sizeof(kPromotedGprOffsets[0]);
+       ++n) {
+    if (offset == kPromotedGprOffsets[n]) {
+      return static_cast<int>(n);
+    }
+  }
+  return -1;
+}
+
+bool RangesOverlap(size_t a_offset, size_t a_size, size_t b_offset,
+                   size_t b_size) {
+  return a_offset < b_offset + b_size && b_offset < a_offset + a_size;
+}
+
+Block* GetSingleDominatingPredecessor(Block* block) {
+  auto edge = block->incoming_edge_head;
+  if (!edge || edge->incoming_next || !(edge->flags & Edge::DOMINATES)) {
+    return nullptr;
+  }
+  return edge->src;
+}
+
+Instr* FirstTailBranch(Block* block) {
+  Instr* first_tail_branch = nullptr;
+  Instr* instr = block->instr_tail;
+  while (instr && (instr->opcode->flags & OPCODE_FLAG_BRANCH)) {
+    first_tail_branch = instr;
+    instr = instr->prev;
+  }
+  return first_tail_branch;
+}
+
+}  // namespace
 
 ContextPromotionPass::ContextPromotionPass() : CompilerPass() {}
 
@@ -72,6 +141,11 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
   while (block) {
     PromoteBlock(block);
     block = block->next;
+  }
+
+  if (cvars::arm64_context_promotion_gpr_local_slots &&
+      ShouldRunGprLocalSlotPromotion(builder)) {
+    PromoteDominatedGprLocalSlots(builder);
   }
 
   // Remove all dead stores.
@@ -119,6 +193,111 @@ void ContextPromotionPass::PromoteBlock(Block* block) {
       SetContextValueRange(offset, size, value);
     }
     i = next;
+  }
+}
+
+bool ContextPromotionPass::ShouldRunGprLocalSlotPromotion(
+    HIRBuilder* builder) const {
+  uint32_t function_filter =
+      cvars::arm64_context_promotion_gpr_local_slots_function;
+  if (!function_filter) {
+    return true;
+  }
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_SOURCE_OFFSET_info) {
+        return static_cast<uint32_t>(instr->src1.offset) == function_filter;
+      }
+    }
+  }
+  return false;
+}
+
+void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
+  std::array<Value*, 2> local_slots = {};
+  for (size_t n = 0; n < local_slots.size(); ++n) {
+    local_slots[n] = builder->AllocLocal(INT64_TYPE);
+  }
+
+  std::unordered_map<Block*, GprLocalSlotBlockState> outgoing_states;
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    std::array<GprLocalSlotValue, 2> current = {};
+
+    if (Block* pred = GetSingleDominatingPredecessor(block)) {
+      auto pred_state = outgoing_states.find(pred);
+      if (pred_state != outgoing_states.end()) {
+        for (size_t n = 0; n < current.size(); ++n) {
+          current[n].value = pred_state->second.values[n];
+        }
+      }
+    }
+
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+        current = {};
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        TypeName type = instr->dest ? instr->dest->type : MAX_TYPENAME;
+        int slot_index = GetPromotedGprIndex(offset, type);
+        if (slot_index < 0) {
+          continue;
+        }
+
+        auto& slot = current[slot_index];
+        if (slot.value) {
+          if (slot.value->def && slot.value->def->block != block) {
+            Value* local_value = builder->LoadLocal(local_slots[slot_index]);
+            builder->last_instr()->MoveBefore(instr);
+            slot.value = local_value;
+          }
+          instr->opcode = &OPCODE_ASSIGN_info;
+          instr->set_src1(slot.value);
+        } else {
+          slot.value = instr->dest;
+          slot.dirty = true;
+        }
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_STORE_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        Value* value = instr->src2.value;
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        int slot_index = value ? GetPromotedGprIndex(offset, value->type) : -1;
+        if (slot_index >= 0) {
+          current[slot_index].value = value;
+          current[slot_index].dirty = true;
+          continue;
+        }
+        for (size_t n = 0; n < current.size(); ++n) {
+          if (RangesOverlap(offset, size, kPromotedGprOffsets[n],
+                            kPromotedGprSize)) {
+            current[n] = {};
+          }
+        }
+      }
+    }
+
+    if (Instr* insert_before = FirstTailBranch(block)) {
+      for (size_t n = 0; n < current.size(); ++n) {
+        if (!current[n].value || !current[n].dirty) {
+          continue;
+        }
+        builder->StoreLocal(local_slots[n], current[n].value);
+        builder->last_instr()->MoveBefore(insert_before);
+      }
+    }
+
+    GprLocalSlotBlockState outgoing = {};
+    for (size_t n = 0; n < current.size(); ++n) {
+      outgoing.values[n] = current[n].value;
+    }
+    outgoing_states.emplace(block, outgoing);
   }
 }
 

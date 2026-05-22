@@ -217,6 +217,16 @@ runtime patch needs local-slot lowering or a guarded data-flow stage before
 `RegisterAllocationPass`. See
 `docs/research/20260521-213650-hir-gpr-promotion-audit.md`.
 
+The first guarded local-slot version is route-clean but not a speed win. Keep
+`arm64_context_promotion_gpr_local_slots` default-off. Capture
+`scratch\thor-debug\20260522-113303-*` enabled it only for `82282490`, reached
+the visible opening sky/dragon-wing route, and had no searched fatal markers,
+but `82282490` grew from `87168` to `87660` bytes and comparable
+ticks-per-entry were flat to slightly worse. Next work should add exact
+promotion counters/code-size attribution or try a lower-overhead pinned-GPR
+path for `r[1]`/`r[11]`. See
+`docs/research/20260522-113012-gpr-local-slot-promotion-probe.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
