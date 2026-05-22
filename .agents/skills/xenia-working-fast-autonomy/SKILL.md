@@ -186,6 +186,14 @@ logged `82282490` body-time rows, while live-in-on
 A/B unchanged; use one control-sandwich confirmation only if needed, otherwise
 move to another `82282490` hotpath.
 
+Next offline filter: run or inspect
+`tools/thor/thor_hir_block_mix_report.ps1`. It joins `82282490` OptHIR block
+shape to the prior block-profile capture. Current result: dynamic entry-count
+hot blocks are the early control/state path, especially mixed block `822824F0`;
+static context/vector-heavy blocks need block body-time proof before broad VMX
+work. The next useful worker slice is an `822824F0` HIR/profile audit or a
+lower-noise block body-time profiler, not another unchanged r1 live-in A/B.
+
 Avoid the known rejected lanes unless new evidence changes the premise:
 
 - broad `PERMUTE_I32` lane-replace helper;

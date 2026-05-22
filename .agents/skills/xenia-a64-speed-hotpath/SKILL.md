@@ -308,6 +308,21 @@ no `82282490` body-time rows after activation. See
 default-off. Do not repeat this exact A/B unchanged; use one control-sandwich
 confirmation if needed, otherwise move to the next `82282490` hotpath.
 
+The block-mix report is now the next offline filter:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_mix_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260521-170107-speed-logcat.txt -Top 20
+```
+
+Current read: dynamic entry-count hot blocks are the early control/state path
+`822824B8`, `822824F0`, `822825E0`, `822825F4`, `822825C8`, `82282490`,
+`82282600`, and `822824EC`. Static context/vector-heavy blocks such as
+`82282CE4`, `82283DBC`, `822836C8`, `82283828`, and `822847E8` need block
+body-time proof before broad vector work. Next patch should inspect or audit
+dynamic-hot mixed block `822824F0`, or add lower-noise block body-time
+instrumentation first. See
+`docs/research/20260522-163537-82282490-block-mix-report.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

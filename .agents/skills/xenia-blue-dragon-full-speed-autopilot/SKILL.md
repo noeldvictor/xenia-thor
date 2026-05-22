@@ -172,6 +172,12 @@ emitted no `82282490` body-time rows after activation. Keep
 `arm64_context_promotion_gpr_livein_r1` default-off. Do not repeat this exact
 A/B unchanged; if the path is revisited, do one control-sandwich confirmation
 or move to another `82282490` hotpath.
+The next offline filter is `tools/thor/thor_hir_block_mix_report.ps1`. Current
+evidence says dynamic entry-count hot blocks are the early control/state path,
+especially `822824F0`, while the large static VMX/vector blocks need block
+body-time proof before broad vector lowering. Next slice should inspect or audit
+`822824F0`, or add lower-noise block body-time evidence, instead of repeating
+the exact r1 live-in A/B or restarting broad VMX/dot/permute work.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

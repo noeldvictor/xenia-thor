@@ -415,6 +415,20 @@ required.
   function-filtered, audited, pre-register-allocation, and barrier-aware; it
   must kill state at calls/helpers, exits, exceptions, volatile context ops,
   and exact/aliasing writes.
+- HIR block-mix report:
+  `docs/research/20260522-163537-82282490-block-mix-report.md`.
+  Use `tools/thor/thor_hir_block_mix_report.ps1` before the next `82282490`
+  codegen patch. Known command:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_mix_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260521-170107-speed-logcat.txt -Top 20`.
+  The report joins OptHIR block shape to the prior block profile by guest PC
+  first, then block index. Dynamic entry-count hot blocks are the early control
+  path: `822824B8`, `822824F0`, `822825E0`, `822825F4`, `822825C8`,
+  `82282490`, `82282600`, and `822824EC`. Static context/vector-heavy blocks
+  include `82282CE4`, `82282678`, `82282C2C`, `822849B8`, `822847E8`,
+  `82283DBC`, `822836C8`, and `82283828`, but those need block body-time proof
+  before a broad VMX rewrite. Current next target is dynamic-hot mixed block
+  `822824F0`, or a lower-noise block body-time profiler if static vector-heavy
+  blocks are revisited.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
