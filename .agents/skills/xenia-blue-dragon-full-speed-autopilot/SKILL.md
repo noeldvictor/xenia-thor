@@ -154,6 +154,11 @@ markers. Keep `arm64_context_promotion_gpr_livein_r1` default-off. The next
 action is not another long speed run; add dirty-reason/actual-CFG eligibility
 audit or improve the pre-RA carrier until the runtime replacement count is much
 closer to the offline `56` first-load opportunity.
+Follow-up `docs/research/20260522-154921-r1-livein-branch-preserve.md` fixed
+the likely gap: `branch_true` / `branch_false` should not kill the explicit r1
+edge carrier just because HIR marks them volatile. NativeCore passes. Next run
+an audited route capture with the r1 live-in toggle enabled and confirm
+`loads_replaced` approaches `50+` before judging FPS.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

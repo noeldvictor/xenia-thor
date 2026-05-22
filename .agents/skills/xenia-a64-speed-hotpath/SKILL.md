@@ -287,6 +287,12 @@ Thor speed run from this toggle yet. Next add actual-CFG/dirty-reason audit or
 improve the pre-RA carrier until the runtime replacement count approaches the
 offline `56` first-load opportunity. See
 `docs/research/20260522-153742-r1-livein-state-cache-probe.md`.
+The next code fix preserves the carrier across conditional branches:
+`docs/research/20260522-154921-r1-livein-branch-preserve.md`. HIR marks
+`branch_true` and `branch_false` volatile, but the explicit r1 edge carrier
+must see their successor edges rather than killing state there. NativeCore
+builds. Next run an audited r1 live-in capture and require roughly `50+`
+runtime replacements before any quiet FPS comparison.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

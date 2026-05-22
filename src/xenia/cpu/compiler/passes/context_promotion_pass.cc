@@ -187,14 +187,19 @@ struct GprLiveInR1Availability {
   bool needs_entry_local = false;
 };
 
-struct GprLiveInR1State {
-  bool clean = false;
+enum class GprLiveInR1DirtyReason {
+  kEntry,
+  kCall,
+  kBarrier,
+  kAlias,
+  kExit,
 };
 
 struct GprLiveInR1RewriteState {
   Value* value = nullptr;
   bool clean = false;
   bool dirty = false;
+  GprLiveInR1DirtyReason dirty_reason = GprLiveInR1DirtyReason::kEntry;
 };
 
 struct GprLiveInR1Stats {
@@ -216,11 +221,13 @@ struct GprLiveInR1Stats {
   uint32_t skipped_after_call = 0;
   uint32_t skipped_after_barrier = 0;
   uint32_t skipped_after_alias = 0;
+  uint32_t skipped_after_exit = 0;
   uint32_t skipped_no_value_for_store = 0;
   uint32_t call_resets = 0;
   uint32_t barrier_resets = 0;
   uint32_t alias_resets = 0;
   uint32_t exit_resets = 0;
+  uint32_t conditional_branch_preserves = 0;
 };
 
 bool IsTargetR1Load(Instr* instr) {
@@ -274,6 +281,10 @@ bool IsContextStateKillingInstr(Instr* instr, bool preserve_barrier,
       instr->opcode == &OPCODE_DEBUG_BREAK_TRUE_info) {
     *killed_by_exit = true;
     return true;
+  }
+  if (instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+      instr->opcode == &OPCODE_BRANCH_FALSE_info) {
+    return false;
   }
   if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
     *killed_by_call = true;
@@ -714,12 +725,44 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
     }
   };
 
+  auto reset_state = [](GprLiveInR1RewriteState* state,
+                        GprLiveInR1DirtyReason reason) {
+    *state = {};
+    state->dirty_reason = reason;
+  };
+
+  auto count_skipped_load = [&](GprLiveInR1DirtyReason reason) {
+    switch (reason) {
+      case GprLiveInR1DirtyReason::kCall:
+        ++stats.skipped_after_call;
+        break;
+      case GprLiveInR1DirtyReason::kBarrier:
+        ++stats.skipped_after_barrier;
+        break;
+      case GprLiveInR1DirtyReason::kAlias:
+        ++stats.skipped_after_alias;
+        break;
+      case GprLiveInR1DirtyReason::kExit:
+        ++stats.skipped_after_exit;
+        break;
+      case GprLiveInR1DirtyReason::kEntry:
+      default:
+        ++stats.skipped_dirty_entry;
+        break;
+    }
+  };
+
   for (Block* block : blocks) {
     GprLiveInR1RewriteState state;
     state.clean = availability[block].clean;
 
     for (Instr* instr = block->instr_head; instr;) {
       Instr* next = instr->next;
+
+      if (instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+          instr->opcode == &OPCODE_BRANCH_FALSE_info) {
+        ++stats.conditional_branch_preserves;
+      }
 
       bool killed_by_call = false;
       bool killed_by_barrier = false;
@@ -735,7 +778,10 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
             ++stats.call_resets;
           }
         }
-        state = {};
+        reset_state(&state,
+                    killed_by_barrier ? GprLiveInR1DirtyReason::kBarrier
+                    : killed_by_exit  ? GprLiveInR1DirtyReason::kExit
+                                      : GprLiveInR1DirtyReason::kCall);
       }
 
       if (IsTargetR1Store(instr)) {
@@ -748,7 +794,7 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
         if (state.clean) {
           ++stats.alias_resets;
         }
-        state = {};
+        reset_state(&state, GprLiveInR1DirtyReason::kAlias);
       } else if (IsTargetR1Load(instr)) {
         ++stats.target_loads_seen;
         ++stats.loads_attempted;
@@ -758,13 +804,7 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
           instr->set_src1(state.value);
           ++stats.loads_replaced;
         } else {
-          if (killed_by_call) {
-            ++stats.skipped_after_call;
-          } else if (killed_by_barrier) {
-            ++stats.skipped_after_barrier;
-          } else {
-            ++stats.skipped_dirty_entry;
-          }
+          count_skipped_load(state.dirty_reason);
           state.clean = true;
           state.value = instr->dest;
           state.dirty = true;
@@ -821,10 +861,11 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
     XELOGW(
         "A64 GPR live-in r1 promotion audit fn {:08X}: skipped "
         "dirty_entry={} after_call={} after_barrier={} after_alias={} "
-        "no_value_for_store={}",
+        "after_exit={} no_value_for_store={} branch_preserves={}",
         stats.function_address, stats.skipped_dirty_entry,
         stats.skipped_after_call, stats.skipped_after_barrier,
-        stats.skipped_after_alias, stats.skipped_no_value_for_store);
+        stats.skipped_after_alias, stats.skipped_after_exit,
+        stats.skipped_no_value_for_store, stats.conditional_branch_preserves);
   }
 }
 

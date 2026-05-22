@@ -169,6 +169,11 @@ searched fatal markers and logged `loads_attempted=107`,
 actual-CFG/dirty-reason audit or improve the pre-RA carrier until the runtime
 replacement count is close to the offline `56` first-load opportunity before
 running another long Thor speed capture.
+The first carrier fix is now in code: preserve `r[1]` state across
+`branch_true` / `branch_false` for this explicit edge carrier, because their
+generic volatile flag was killing state before successors. NativeCore passed.
+Next slice should deploy and run an audited r1 live-in route capture, not a
+quiet FPS run, and require the runtime `loads_replaced` count to approach `50+`.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

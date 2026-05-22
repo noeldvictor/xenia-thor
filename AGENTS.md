@@ -1699,10 +1699,13 @@ required.
   `scratch/thor-debug/20260522-152727-*` had no searched fatal markers, but
   replaced only `16/107` `r[1]` loads in `82282490` despite the offline
   barrier-preserving report predicting `56` replaceable first loads. Keep it
-  default-off and do not enable it in Blue Dragon presets. Next work should
-  improve actual-CFG eligibility/dirty-reason audit or the pre-RA carrier until
-  the runtime probe reaches roughly the expected `50+` replacement range before
-  another long Thor speed run.
+  default-off and do not enable it in Blue Dragon presets. Follow-up
+  `docs/research/20260522-154921-r1-livein-branch-preserve.md` found the likely
+  gap: `branch_true` / `branch_false` are volatile HIR opcodes, and the probe
+  was killing state at conditional branches. NativeCore now builds with branch
+  state preserved and better dirty-reason counters. Next work should deploy an
+  audited capture and verify the runtime probe reaches roughly the expected
+  `50+` replacement range before a quiet speed run.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
