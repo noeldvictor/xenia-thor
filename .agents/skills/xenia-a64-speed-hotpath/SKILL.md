@@ -181,6 +181,15 @@ load-after-store GPRs. That points toward a real GPR state cache with explicit
 flushes at helpers, exits, exceptions, and aliasing barriers. See
 `docs/research/20260521-210004-hir-state-span-report.md`.
 
+The state-span report now also emits a `Candidate GPR State Cache Plan`. On the
+current `82282490` dump, the top scores are `r[1]=220`, `r[11]=169`,
+`r[10]=98`, `r[31]=92`, `r[29]=78`, `r[30]=71`, and `r[28]=69`. Treat the
+first implementation as a guarded clean-value cache only: preserve clean INT64
+GPR knowledge across no-op `context_barrier`, reset on calls, branches, labels,
+helper-expanded instruction ranges, volatile ops, and overlapping writes, and
+do not elide stores yet. See
+`docs/research/20260521-211840-gpr-state-cache-candidate-plan.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

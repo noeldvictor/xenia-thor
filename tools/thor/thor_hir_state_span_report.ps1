@@ -120,6 +120,76 @@ function Write-TopTable {
         }
 }
 
+function Add-CandidateStat {
+    param(
+        [hashtable]$Table,
+        [int]$Offset,
+        [string]$Metric,
+        [int]$Amount = 1
+    )
+
+    if ((Get-ContextOffsetClass $Offset) -ne "GPR") {
+        return
+    }
+    if (!$Table.ContainsKey($Offset)) {
+        $Table[$Offset] = [ordered]@{
+            same_repeated_loads = 0
+            same_load_after_store = 0
+            same_store_after_load = 0
+            cross_load_after_store = 0
+            cross_load_after_load = 0
+        }
+    }
+    $Table[$Offset][$Metric] += $Amount
+}
+
+function Write-GprCandidatePlan {
+    param(
+        [hashtable]$Table,
+        [int]$Limit
+    )
+
+    Write-Output ""
+    Write-Output "## Candidate GPR State Cache Plan"
+    if ($Table.Count -eq 0) {
+        Write-Output "(none)"
+        return
+    }
+
+    Write-Output "First-patch flush model: keep only clean INT64 GPR values; do not elide stores; preserve across no-op context_barrier only after proving with a guarded cvar; reset on calls, branches, labels, helper-expanded instruction ranges, volatile ops, and overlapping non-GPR context writes."
+
+    $rows = foreach ($entry in $Table.GetEnumerator()) {
+        $stats = $entry.Value
+        $score =
+            (3 * $stats.cross_load_after_store) +
+            (2 * $stats.cross_load_after_load) +
+            (2 * $stats.same_load_after_store) +
+            $stats.same_repeated_loads +
+            $stats.same_store_after_load
+        [pscustomobject]@{
+            Offset = [int]$entry.Key
+            Name = Get-ContextOffsetName ([int]$entry.Key)
+            Score = $score
+            SameRepeatedLoads = $stats.same_repeated_loads
+            SameLoadAfterStore = $stats.same_load_after_store
+            SameStoreAfterLoad = $stats.same_store_after_load
+            CrossLoadAfterStore = $stats.cross_load_after_store
+            CrossLoadAfterLoad = $stats.cross_load_after_load
+        }
+    }
+
+    $rows |
+        Sort-Object -Property @{ Expression = "Score"; Descending = $true },
+                              @{ Expression = "Offset"; Ascending = $true } |
+        Select-Object -First $Limit |
+        ForEach-Object {
+            Write-Output ("+{0} {1} score={2} same_reloads={3} same_las={4} same_sal={5} cross_las={6} cross_lal={7}" -f
+                $_.Offset, $_.Name, $_.Score, $_.SameRepeatedLoads,
+                $_.SameLoadAfterStore, $_.SameStoreAfterLoad,
+                $_.CrossLoadAfterStore, $_.CrossLoadAfterLoad)
+        }
+}
+
 function New-Span {
     param(
         [string]$Label,
@@ -152,6 +222,7 @@ $sameSpanStoreAfterStore = @{}
 $sameSpanStoreAfterLoad = @{}
 $crossSpanLoadAfterStore = @{}
 $crossSpanLoadAfterLoad = @{}
+$gprCandidateStats = @{}
 $contextAccessClasses = @{}
 $spanHotness = @{}
 
@@ -229,14 +300,18 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
         if ($spanLastAccess.ContainsKey($offset)) {
             if ($spanLastAccess[$offset] -eq "load") {
                 Add-Count $sameSpanRepeatedLoads $key
+                Add-CandidateStat $gprCandidateStats $offset "same_repeated_loads"
             } elseif ($spanLastAccess[$offset] -eq "store") {
                 Add-Count $sameSpanLoadAfterStore $key
+                Add-CandidateStat $gprCandidateStats $offset "same_load_after_store"
             }
         } elseif ($globalLastAccess.ContainsKey($offset)) {
             if ($globalLastAccess[$offset] -eq "store") {
                 Add-Count $crossSpanLoadAfterStore $key
+                Add-CandidateStat $gprCandidateStats $offset "cross_load_after_store"
             } elseif ($globalLastAccess[$offset] -eq "load") {
                 Add-Count $crossSpanLoadAfterLoad $key
+                Add-CandidateStat $gprCandidateStats $offset "cross_load_after_load"
             }
         }
         $spanLastAccess[$offset] = "load"
@@ -248,6 +323,7 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
                 Add-Count $sameSpanStoreAfterStore $key
             } elseif ($spanLastAccess[$offset] -eq "load") {
                 Add-Count $sameSpanStoreAfterLoad $key
+                Add-CandidateStat $gprCandidateStats $offset "same_store_after_load"
             }
         }
         $spanLastAccess[$offset] = "store"
@@ -281,3 +357,4 @@ Write-TopTable "Same-Span Store After Store" $sameSpanStoreAfterStore $Top
 Write-TopTable "Same-Span Store After Load" $sameSpanStoreAfterLoad $Top
 Write-TopTable "Cross-Span Load After Store" $crossSpanLoadAfterStore $Top
 Write-TopTable "Cross-Span Load After Load" $crossSpanLoadAfterLoad $Top
+Write-GprCandidatePlan $gprCandidateStats $Top

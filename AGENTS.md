@@ -337,7 +337,15 @@ required.
   cross-span repeated-load GPR is `r[1]` (`81`), while cross-span
   load-after-store GPRs are led by `r[11]` (`25`), `r[31]` (`16`), `r[10]`
   (`14`), `r[3]` (`11`), `r[29]` (`10`), and `r[30]` (`9`). Treat this as the
-  next state-cache design map, not a runtime speed win.
+  next state-cache design map, not a runtime speed win. As of
+  `docs/research/20260521-211840-gpr-state-cache-candidate-plan.md`, the
+  report also prints a candidate GPR cache plan. The top scores are `r[1]`
+  (`220`), `r[11]` (`169`), `r[10]` (`98`), `r[31]` (`92`), `r[29]` (`78`),
+  `r[30]` (`71`), and `r[28]` (`69`). First patch should keep clean INT64 GPR
+  values only, preserve across no-op `context_barrier` behind a guarded cvar,
+  and reset on calls, branches, labels, helper-expanded instruction ranges,
+  volatile ops, and overlapping writes. Do not elide stores in that first
+  patch.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
