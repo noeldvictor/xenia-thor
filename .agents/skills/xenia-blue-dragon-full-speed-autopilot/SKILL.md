@@ -163,10 +163,15 @@ The audited capture is complete:
 `docs/research/20260522-160205-r1-livein-audit-capture.md` and
 `scratch/thor-debug/20260522-155827-*` show `loads_replaced=64/107`,
 `branch_preserves=153`, and no searched fatal markers. This proves the
-replacement-count target. Next do a quiet same-APK A/B before judging speed:
-control with the toggle off, then experiment with
-`arm64_context_promotion_gpr_livein_r1=true`, audit off, same route, same body
-filter, and only compare matching routes.
+replacement-count target. The quiet same-APK A/B did not prove speed:
+`docs/research/20260522-162135-r1-livein-quiet-ab.md` shows control
+`scratch/thor-debug/20260522-161306-*` reached the opening sky/wing route with
+`82282490` body-time rows, while live-in-on
+`scratch/thor-debug/20260522-161710-*` stayed at the loading spinner and
+emitted no `82282490` body-time rows after activation. Keep
+`arm64_context_promotion_gpr_livein_r1` default-off. Do not repeat this exact
+A/B unchanged; if the path is revisited, do one control-sandwich confirmation
+or move to another `82282490` hotpath.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

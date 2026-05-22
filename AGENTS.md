@@ -1709,7 +1709,14 @@ required.
   `docs/research/20260522-160205-r1-livein-audit-capture.md` shows
   `loads_replaced=64/107`, `branch_preserves=153`, and no searched fatal
   markers in `scratch/thor-debug/20260522-155827-*`. Keep the toggle
-  default-off until a quiet same-APK A/B proves it improves body time.
+  default-off. Quiet same-APK A/B
+  `docs/research/20260522-162135-r1-livein-quiet-ab.md` did not prove a speed
+  win: control `scratch/thor-debug/20260522-161306-*` reached the opening
+  sky/wing route with `82282490` body-time rows, while live-in-on
+  `scratch/thor-debug/20260522-161710-*` stayed at loading, emitted no
+  `82282490` body-time rows after activation, and had no fatal markers. Do not
+  repeat the exact A/B unchanged; if revisited, do one control-sandwich route
+  confirmation or move to another `82282490` hotpath.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.

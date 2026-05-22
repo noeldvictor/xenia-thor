@@ -176,8 +176,15 @@ Next slice should deploy and run an audited r1 live-in route capture, not a
 quiet FPS run, and require the runtime `loads_replaced` count to approach `50+`.
 That audit now passed: `scratch/thor-debug/20260522-155827-*` logged
 `loads_replaced=64/107`, `branch_preserves=153`, and no searched fatal markers.
-Next slice should run a quiet same-APK A/B, control off versus r1 live-in on
-with audit off, and compare only matching routes with body-time evidence.
+The quiet A/B is not a speed win:
+`docs/research/20260522-162135-r1-livein-quiet-ab.md` shows control
+`scratch/thor-debug/20260522-161306-*` reached the visible opening route and
+logged `82282490` body-time rows, while live-in-on
+`scratch/thor-debug/20260522-161710-*` stayed at loading and emitted no
+`82282490` body-time rows after activation. Keep
+`arm64_context_promotion_gpr_livein_r1` default-off. Do not repeat the exact
+A/B unchanged; use one control-sandwich confirmation only if needed, otherwise
+move to another `82282490` hotpath.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

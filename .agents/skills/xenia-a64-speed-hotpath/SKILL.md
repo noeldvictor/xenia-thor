@@ -298,9 +298,15 @@ The audited replacement target is now met. Capture
 `loads_replaced=64`, `loads_seeded=43`, `local_loads=59`,
 `local_stores=17`, `call_resets=43`, and `branch_preserves=153`, with no
 searched fatal markers. See
-`docs/research/20260522-160205-r1-livein-audit-capture.md`. Next run a quiet
-same-APK A/B with audit off and compare body-time/route only when both runs
-reach matching loading/opening evidence.
+`docs/research/20260522-160205-r1-livein-audit-capture.md`. The follow-up
+quiet A/B did not prove a speed win. Control
+`scratch/thor-debug/20260522-161306-*` reached the visible opening sky/wing
+route and logged `82282490` body-time rows at code size `87168`; live-in-on
+`scratch/thor-debug/20260522-161710-*` stayed at the loading spinner and logged
+no `82282490` body-time rows after activation. See
+`docs/research/20260522-162135-r1-livein-quiet-ab.md`. Keep the toggle
+default-off. Do not repeat this exact A/B unchanged; use one control-sandwich
+confirmation if needed, otherwise move to the next `82282490` hotpath.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
