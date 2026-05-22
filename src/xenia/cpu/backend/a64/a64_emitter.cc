@@ -76,6 +76,7 @@ DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
 DECLARE_bool(arm64_context_value_cache_fallthrough);
+DECLARE_bool(arm64_context_value_cache_preserve_barrier);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
@@ -246,14 +247,19 @@ struct A64ContextValueCacheStats {
   uint32_t safety_resets = 0;
   uint32_t block_resets = 0;
   uint32_t barrier_resets = 0;
+  uint32_t barrier_preserves = 0;
   uint32_t fallthrough_preserves = 0;
+  std::array<uint32_t, 32> load_hits_by_slot = {};
+  std::array<uint32_t, 32> store_caches_by_slot = {};
 };
 
 class A64ContextValueCache {
  public:
-  explicit A64ContextValueCache(bool enabled, bool fallthrough_enabled)
+  explicit A64ContextValueCache(bool enabled, bool fallthrough_enabled,
+                                bool preserve_barrier_enabled)
       : enabled_(enabled),
-        fallthrough_enabled_(enabled && fallthrough_enabled) {
+        fallthrough_enabled_(enabled && fallthrough_enabled),
+        preserve_barrier_enabled_(enabled && preserve_barrier_enabled) {
     Reset();
   }
 
@@ -304,6 +310,7 @@ class A64ContextValueCache {
     entry.valid = true;
     entry.host_reg = dest_host_reg;
     ++stats_.load_hits;
+    ++stats_.load_hits_by_slot[slot];
     return true;
   }
 
@@ -342,6 +349,10 @@ class A64ContextValueCache {
 
     switch (instr->GetOpcodeNum()) {
       case OPCODE_CONTEXT_BARRIER:
+        if (preserve_barrier_enabled_) {
+          ++stats_.barrier_preserves;
+          return;
+        }
         ResetWithReason(&stats_.barrier_resets);
         return;
       case OPCODE_LOAD_CONTEXT: {
@@ -379,6 +390,7 @@ class A64ContextValueCache {
           entries_[slot].valid = true;
           entries_[slot].host_reg = host_reg;
           ++stats_.store_caches;
+          ++stats_.store_caches_by_slot[slot];
         } else {
           InvalidateSlot(slot);
         }
@@ -395,12 +407,17 @@ class A64ContextValueCache {
       }
     }
 
-    if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+    if (instr->opcode->flags & OPCODE_FLAG_BRANCH) {
       if (fallthrough_enabled_ &&
           (instr->GetOpcodeNum() == OPCODE_BRANCH_TRUE ||
            instr->GetOpcodeNum() == OPCODE_BRANCH_FALSE)) {
         return;
       }
+      ResetWithReason(&stats_.safety_resets);
+      return;
+    }
+
+    if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
       ResetWithReason(&stats_.safety_resets);
     }
   }
@@ -510,9 +527,24 @@ class A64ContextValueCache {
 
   bool enabled_ = false;
   bool fallthrough_enabled_ = false;
+  bool preserve_barrier_enabled_ = false;
   std::array<Entry, 32> entries_;
   A64ContextValueCacheStats stats_;
 };
+
+std::string FormatGprSlotCounts(const std::array<uint32_t, 32>& counts) {
+  std::string text;
+  for (size_t i = 0; i < counts.size(); ++i) {
+    if (!counts[i]) {
+      continue;
+    }
+    if (!text.empty()) {
+      text += " ";
+    }
+    text += fmt::format("r[{}]={}", i, counts[i]);
+  }
+  return text.empty() ? "-" : text;
+}
 
 bool ConsumeContextTrafficAuditBudget(uint32_t* out_index) {
   uint32_t budget = cvars::arm64_context_traffic_audit_budget;
@@ -2110,7 +2142,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   synchronize_stack_on_next_instruction_ = false;
   A64ContextValueCache context_value_cache(
       cvars::arm64_context_value_cache,
-      cvars::arm64_context_value_cache_fallthrough);
+      cvars::arm64_context_value_cache_fallthrough,
+      cvars::arm64_context_value_cache_preserve_barrier);
   while (block) {
     // Reset FPCR tracking on each block entry (we don't know which
     // predecessor ran, so mode is unknown).
@@ -2164,13 +2197,18 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     XELOGW(
         "A64 context value cache: fn {:08X} loads/hits={}/{} "
         "stores/cached={}/{} invalid offset/reg={}/{} "
-        "resets safety/block/barrier={}/{}/{} fallthrough_preserves={}",
+        "resets safety/block/barrier={}/{}/{} barrier_preserves={} "
+        "fallthrough_preserves={}",
         current_guest_function_, cache_stats.eligible_loads,
         cache_stats.load_hits, cache_stats.eligible_stores,
         cache_stats.store_caches, cache_stats.offset_invalidations,
         cache_stats.register_invalidations, cache_stats.safety_resets,
         cache_stats.block_resets, cache_stats.barrier_resets,
-        cache_stats.fallthrough_preserves);
+        cache_stats.barrier_preserves, cache_stats.fallthrough_preserves);
+    XELOGW("A64 context value cache slots: fn {:08X} load_hits={} stores={}",
+           current_guest_function_,
+           FormatGprSlotCounts(cache_stats.load_hits_by_slot),
+           FormatGprSlotCounts(cache_stats.store_caches_by_slot));
   }
   }
 

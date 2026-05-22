@@ -106,6 +106,12 @@ Prioritize real GPR state traffic around `r[1]`, `r[10]`, `r[11]`, and
 cache design must name flush behavior for helpers, exits, exceptions, memory
 aliases, and context barriers.
 
+Latest evidence: the default-off
+`arm64_context_value_cache_preserve_barrier` audit reached the opening route but
+still produced `82282490 loads/hits=546/0` because host-register invalidation
+killed reuse. The next state-cache slice should move before A64 register
+allocation or pin one/two PPC GPRs, not preserve more emit-time cache entries.
+
 Avoid the known rejected lanes unless new evidence changes the premise:
 
 - broad `PERMUTE_I32` lane-replace helper;

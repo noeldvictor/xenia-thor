@@ -276,6 +276,12 @@ DEFINE_bool(
     "arm64_context_value_cache. Research-only emit-time cache experiment.",
     "a64");
 DEFINE_bool(
+    arm64_context_value_cache_preserve_barrier, false,
+    "Thor ARM64 speed lane: keep clean GPR context value-cache entries across "
+    "no-op HIR context_barrier instructions. Requires arm64_context_value_cache "
+    "and is research-only after the 82282490 GPR state-span audit.",
+    "a64");
+DEFINE_bool(
     arm64_cr_compare_branch_across_context_barrier, false,
     "Thor ARM64 speed lane: let CR compare/store peepholes fuse an immediate "
     "branch separated only by a no-op HIR context_barrier. Research-only "
@@ -1227,6 +1233,9 @@ void A64Backend::StartSpeedProfiler() {
   }
   if (cvars::arm64_context_value_cache_fallthrough) {
     XELOGW("A64 context value cache fallthrough preservation enabled");
+  }
+  if (cvars::arm64_context_value_cache_preserve_barrier) {
+    XELOGW("A64 context value cache context_barrier preservation enabled");
   }
   if (cvars::arm64_cr_compare_branch_across_context_barrier) {
     XELOGW("A64 CR compare/branch barrier fusion enabled");

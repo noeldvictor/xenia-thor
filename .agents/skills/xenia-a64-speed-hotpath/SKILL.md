@@ -190,6 +190,16 @@ helper-expanded instruction ranges, volatile ops, and overlapping writes, and
 do not elide stores yet. See
 `docs/research/20260521-211840-gpr-state-cache-candidate-plan.md`.
 
+The first emit-time version of that idea is a negative result. Keep
+`arm64_context_value_cache_preserve_barrier` default-off: capture
+`scratch\thor-debug\20260521-212305-*` reached the visible opening route, but
+`82282490` logged `loads/hits=546/0` even with `barrier_preserves=213`. It did
+cache stores (`r[11]=110`, `r[10]=64`, `r[31]=19`), but
+`register_invalidations=768` killed all reuse. The next real attempt should be
+HIR-level GPR load promotion before A64 register allocation or a pinned-register
+experiment for `r[1]`/`r[11]`, not another emit-time cache-preservation tweak.
+See `docs/research/20260521-212700-a64-gpr-cache-barrier-negative.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

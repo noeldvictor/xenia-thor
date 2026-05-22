@@ -245,6 +245,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_context_value_cache");
             copyBooleanExtra(intent, launchArguments, "arm64_context_value_cache_fallthrough");
             copyBooleanExtra(
+                    intent, launchArguments, "arm64_context_value_cache_preserve_barrier");
+            copyBooleanExtra(
                     intent, launchArguments, "arm64_cr_compare_branch_across_context_barrier");
             copyBooleanExtra(intent, launchArguments, "arm64_cr_store_elide_for_fused_branch");
             copyIntExtra(

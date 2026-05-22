@@ -346,6 +346,16 @@ required.
   and reset on calls, branches, labels, helper-expanded instruction ranges,
   volatile ops, and overlapping writes. Do not elide stores in that first
   patch.
+- A64 clean-GPR barrier-preserve negative:
+  `docs/research/20260521-212700-a64-gpr-cache-barrier-negative.md`.
+  `arm64_context_value_cache_preserve_barrier` is default-off and audit-only.
+  Thor capture `scratch/thor-debug/20260521-212305-*` reached the visible
+  opening sky/dragon-wing route with no searched fatal markers, but
+  `82282490` still reported `loads/hits=546/0` despite
+  `barrier_preserves=213` and `stores/cached=562/463`. The loss is host-register
+  invalidation (`register_invalidations=768`), not just barrier reset. Next
+  state-cache work should move before A64 register allocation or pin one/two
+  PPC GPRs with explicit helper/exit/branch flushes.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
