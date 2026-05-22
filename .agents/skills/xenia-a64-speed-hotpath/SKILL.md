@@ -367,9 +367,16 @@ Current body-time read from `scratch\thor-debug\20260522-170927-*`:
 `ticks_per_entry=61`), then `822825C8` (`body_total=3216407`, peak `1041116`,
 peak `ticks_per_entry=500`), then `822824F0` (`body_total=1280491`, peak
 `554835`, peak `ticks_per_entry=1`). `822825E0` is a tiny branch plus recursive
-`bl 0x82282490`; `822825C8` calls `0x8227FEE8`. Next inspect those call paths
-before writing another codegen peephole. See
-`docs/research/20260522-171725-82282490-block-body-time-profiler.md`.
+`bl 0x82282490`; `822825C8` calls `0x8227FEE8`. The follow-up call-path audit
+is `docs/research/20260522-173542-82282490-call-path-audit.md`. Use
+`tools/thor/thor_hir_call_path_report.ps1` to join HIR with block body-time.
+Current read: `822825E0 -> 0x82282490` accounts for
+`charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` accounts for
+`charged_body_total=3216407`. The targeted `8227FEE8` dump capture
+`scratch/thor-debug/20260522-172738-*` idled before the route and emitted no
+callee dump. Next speed-lane patch should be a default-off direct-call
+edge/body profiler for those edges, or a control-sandwiched `8227FEE8` callee
+capture after a stable route check.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

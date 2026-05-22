@@ -468,10 +468,20 @@ required.
   `14525259`, peak `ticks_per_entry=61`), then `822825C8`
   (`body_total=3216407`, peak `1041116`, peak `ticks_per_entry=500`), then
   `822824F0` (`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`).
-  Do not start the `822824F0` `stvewx` peephole yet. Next audit why
-  `822825E0` recursively calls `82282490` so often, and inspect
-  `822825C8 -> 0x8227FEE8` to decide whether the cost is generated-code call
-  overhead, callee body work, or a helper/HLE boundary.
+  Do not start the `822824F0` `stvewx` peephole yet.
+- `82282490` call-path audit:
+  `docs/research/20260522-173542-82282490-call-path-audit.md`.
+  Use `tools/thor/thor_hir_call_path_report.ps1` to join focused HIR dumps to
+  block body-time captures. Current result: the hottest charged target is
+  `822825E0 -> 0x82282490` (`charged_body_total=34726883`), followed by
+  `822825C8 -> 0x8227FEE8` (`charged_body_total=3216407`). `822825E0` is only
+  a child-pointer guard around a recursive call, and `822825C8` is a compact
+  call setup computing `r5 = r28 + ((*(r31 + 0) << 6) & 0xFFFFFFC0)`. Capture
+  `scratch/thor-debug/20260522-172738-*` tried to dump `8227FEE8` but idled
+  before the route and emitted no filtered dump, with no fatal markers. Next
+  useful slice is a default-off direct-call edge/body profiler for
+  `822825E0 -> 82282490` and `822825C8 -> 8227FEE8`, or a control-sandwiched
+  callee capture after proving the route is stable.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

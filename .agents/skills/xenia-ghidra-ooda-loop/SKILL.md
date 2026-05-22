@@ -82,6 +82,14 @@ Use this for hot PCs such as `8246B408`:
 - If body-time points at a large generated guest function such as `8272A3A4`,
   first classify the function shape, inner loop, imports/globals, and state
   fields before attempting a whole-body fastpath.
+- For current Blue Dragon opening work, use
+  `tools/thor/thor_hir_call_path_report.ps1` before Ghidra when block body-time
+  points at a call-heavy HIR block. The 2026-05-22 audit found
+  `822825E0 -> 0x82282490` and `822825C8 -> 0x8227FEE8` are inclusive
+  call-path charges; a targeted `8227FEE8` dump capture idled before route
+  progress. Next static question is whether `8227FEE8` is generated-code body
+  work, guest-call overhead, or a helper/HLE boundary, but only after a stable
+  route capture or direct-call edge profiler isolates it.
 - Cross-check Ghidra output against Xenia's PPC disassembly, HIR dump, import
   logs, and runtime capture.
 

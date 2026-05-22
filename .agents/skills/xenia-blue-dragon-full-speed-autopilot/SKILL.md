@@ -206,9 +206,16 @@ body-time wall: `822825E0` dominates (`body_total=34726883`, peak
 `14525259`, peak `ticks_per_entry=61`), then `822825C8`
 (`body_total=3216407`, peak `1041116`, peak `ticks_per_entry=500`), then
 `822824F0` (`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`).
-Do not start the `822824F0` `stvewx` peephole yet. Next audit the `822825E0`
-recursive `bl 0x82282490` path and the `822825C8 -> 0x8227FEE8` callee path
-before choosing a default-off codegen or HLE experiment.
+Do not start the `822824F0` `stvewx` peephole yet. The call-path audit now
+exists: `docs/research/20260522-173542-82282490-call-path-audit.md`.
+`tools/thor/thor_hir_call_path_report.ps1` shows the charged body-time wall is
+inclusive call work: `822825E0 -> 0x82282490` has
+`charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` has
+`charged_body_total=3216407`. A targeted `8227FEE8` dump attempt in
+`scratch/thor-debug/20260522-172738-*` idled before the route and emitted no
+callee dump, with no searched fatal markers. Next slice should add a
+default-off direct-call edge/body profiler for those two edges, or run a
+control-sandwiched `8227FEE8` callee capture after proving the route is stable.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

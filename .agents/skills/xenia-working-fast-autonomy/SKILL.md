@@ -219,9 +219,16 @@ searched fatal markers. Body-time says the next target is not `822824F0`:
 `ticks_per_entry=61`), then `822825C8` (`body_total=3216407`, peak `1041116`,
 peak `ticks_per_entry=500`). `822824F0` is only third by body time
 (`body_total=1280491`, peak `554835`, peak `ticks_per_entry=1`). Next useful
-worker slice is an offline/capture-backed audit of the `822825E0` recursive
-call path and `822825C8 -> 0x8227FEE8`, not a `stvewx` peephole from stale
-entry counts.
+worker slice is no longer a stale `stvewx` peephole. The call-path audit now
+exists: `docs/research/20260522-173542-82282490-call-path-audit.md`.
+`tools/thor/thor_hir_call_path_report.ps1` found the charged body-time wall is
+inclusive call work: `822825E0 -> 0x82282490` has
+`charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` has
+`charged_body_total=3216407`. A targeted `8227FEE8` dump in
+`scratch/thor-debug/20260522-172738-*` idled before route progress and emitted
+no callee dump. Next useful slice is a default-off direct-call edge/body
+profiler for those two edges, or a control-sandwiched `8227FEE8` callee capture
+after proving the route is stable.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
