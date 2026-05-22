@@ -168,6 +168,19 @@ The report now annotates context offsets with PPC context field names. Current
 state-traffic pass before another isolated vector micro-peephole. See
 `docs/research/20260521-195741-hir-context-offset-annotations.md`.
 
+Use the state-span report when deciding which context slots are worth caching
+across HIR blocks or barriers:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_state_span_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -Top 20
+```
+
+Current `82282490` span read: `r[1]` dominates cross-span repeated loads, while
+`r[11]`, `r[10]`, `r[31]`, `r[29]`, and `r[30]` are the leading cross-span
+load-after-store GPRs. That points toward a real GPR state cache with explicit
+flushes at helpers, exits, exceptions, and aliasing barriers. See
+`docs/research/20260521-210004-hir-state-span-report.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

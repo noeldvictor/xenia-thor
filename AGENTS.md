@@ -330,6 +330,14 @@ required.
   `GPR=562`, `VMX=373`, `CR=343`, `LR/CTR=68`. The next state-cache sprint
   should start with GPR slots `r[1]`, `r[11]`, `r[10]`, `r[29]..r[31]` and CR6
   stores before another vector micro-peephole.
+- HIR state-span report:
+  `docs/research/20260521-210004-hir-state-span-report.md`.
+  Use `tools/thor/thor_hir_state_span_report.ps1` to rank same-span and
+  cross-span context churn. On the existing `82282490` OptHIR dump, the largest
+  cross-span repeated-load GPR is `r[1]` (`81`), while cross-span
+  load-after-store GPRs are led by `r[11]` (`25`), `r[31]` (`16`), `r[10]`
+  (`14`), `r[3]` (`11`), `r[29]` (`10`), and `r[30]` (`9`). Treat this as the
+  next state-cache design map, not a runtime speed win.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

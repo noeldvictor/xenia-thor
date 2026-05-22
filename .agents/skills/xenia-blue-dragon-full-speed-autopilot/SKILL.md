@@ -113,12 +113,17 @@ If proof is absent, pick exactly one next lane:
 ## Current Best Next Move
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
-The offline HIR report now maps context offsets to PPC state names. Prioritize
-a real GPR/CR state-traffic reduction plan for:
+The offline HIR reports now map context offsets to PPC state names and
+barrier/span churn. Prioritize a real GPR/CR state-traffic reduction plan for:
 
 - `r[1]`, `r[10]`, `r[11]`, `r[28]`, `r[29]`, `r[30]`, `r[31]`;
 - CR6 fields: `cr6.all_equal`, `cr6.1`, `cr6.none_equal`;
 - explicit flushes at helpers, exits, exceptions, and aliasing barriers.
+
+Use `tools/thor/thor_hir_state_span_report.ps1` before editing A64 state-cache
+code. Current `82282490` signal: `r[1]` is the leading cross-span repeated
+load, while `r[11]`, `r[10]`, and `r[31]` are leading cross-span
+load-after-store GPRs.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
