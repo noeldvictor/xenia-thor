@@ -183,6 +183,18 @@ barriers, CR6/CR0 stores, stack-derived args, `vspltw`, `vmaddfp`, and
 `stvewx`. Next slice should add lower-noise per-block body-time attribution for
 `82282490`, or an A64 `stvewx` / `extract` / `splat` codegen audit, before a
 peephole.
+That vector-shape audit now exists too:
+`docs/research/20260522-165526-82282490-vector-shape-audit.md`. Use
+`tools/thor/thor_hir_vector_shape_report.ps1` before any vector peephole.
+Current result: `82282490` has `stvewx=6`, `stvewx_dynamic_extract=6`,
+`extract=22`, `extract_dynamic=6`, `splat=152`, `extract_then_splat=16`,
+`permute=381`, `load_vector_shl=73`, and `load_vector_shr=64`. `822824F0` is
+the only dynamic-hot vector block in the old entry-count profile
+(`total=1994364`) and carries `3` `stvewx` / dynamic-extract / `store.1`
+shapes. This is a plausible micro-target, but still not body-time proof. Next
+slice should add lower-noise per-block body-time attribution for `82282490`,
+separating `822824F0` from the other entry-hot control blocks before a
+default-off `stvewx` dynamic extract/store codegen experiment.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

@@ -441,6 +441,21 @@ required.
   math/store, FPR/FPSCR, and CR tail work. Do not patch it from entry counts
   alone; next add per-block body-time attribution or an A64 `stvewx` /
   `extract` / `splat` codegen audit before a peephole.
+- HIR vector-shape report:
+  `docs/research/20260522-165526-82282490-vector-shape-audit.md`.
+  Use `tools/thor/thor_hir_vector_shape_report.ps1` before any
+  `stvewx` / `extract` / `splat` peephole. Known command:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_vector_shape_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260521-170107-speed-logcat.txt -Top 12`.
+  Current `82282490` read: `117` blocks, `6798` HIR instructions,
+  `extract=22`, `extract_dynamic=6`, `splat=152`, `extract_then_splat=16`,
+  `stvewx=6`, `stvewx_store1=6`, `stvewx_dynamic_extract=6`, `mul_add=6`,
+  `permute=381`, `load_vector_shl=73`, and `load_vector_shr=64`.
+  `822824F0` is the only dynamic-hot vector block in the old entry-count
+  profile (`total=1994364`) and carries `3` `stvewx`, `3` dynamic extracts in
+  `stvewx`, `9` total extracts, `6` splats, `3` `mul_add`, and `3` permutes.
+  Static-heavy vector blocks still need body-time proof. Next add lower-noise
+  per-block body-time attribution for `82282490`, separating `822824F0` from
+  the other entry-hot control blocks before a default-off `stvewx` peephole.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

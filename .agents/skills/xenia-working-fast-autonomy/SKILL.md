@@ -198,6 +198,16 @@ two calls, five barriers, `3` `mul_add`, `6` splats, `9` extracts, and three
 `stvewx` stores. Next useful worker slice is lower-noise per-block body-time
 attribution for `82282490`, or an A64 `stvewx` / `extract` / `splat` codegen
 audit, before writing a peephole.
+The A64 vector-shape audit now exists:
+`docs/research/20260522-165526-82282490-vector-shape-audit.md`. Current result
+on `82282490`: `extract=22`, `extract_dynamic=6`, `splat=152`,
+`extract_then_splat=16`, `stvewx=6`, `stvewx_store1=6`,
+`stvewx_dynamic_extract=6`, `mul_add=6`, `permute=381`,
+`load_vector_shl=73`, and `load_vector_shr=64`. `822824F0` is the only
+dynamic-hot vector block in the old block profile and carries `3` `stvewx`
+dynamic extract/store shapes. Next useful worker slice is lower-noise
+per-block body-time attribution for `82282490`, separating `822824F0` from
+other entry-hot blocks before a default-off codegen peephole.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

@@ -339,6 +339,23 @@ next add per-block body-time attribution or an A64 `stvewx` / `extract` /
 `splat` codegen audit first. See
 `docs/research/20260522-164404-822824f0-hir-profile-audit.md`.
 
+For the vector-shape audit, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_vector_shape_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260521-170107-speed-logcat.txt -Top 12
+```
+
+Current vector read: `82282490` has `extract=22`, `extract_dynamic=6`,
+`splat=152`, `extract_then_splat=16`, `stvewx=6`, `stvewx_store1=6`,
+`stvewx_dynamic_extract=6`, `mul_add=6`, `permute=381`,
+`load_vector_shl=73`, and `load_vector_shr=64`. `822824F0` is the only
+dynamic-hot vector block in the old block profile and carries `3` `stvewx`
+dynamic extract/store shapes at PCs `82282580`, `82282584`, and `82282588`.
+Do not broaden this into static VMX work. Next add lower-noise per-block
+body-time attribution for `82282490`; if `822824F0` remains hot, gate the first
+codegen experiment tightly around its `stvewx` dynamic extract/store shape.
+See `docs/research/20260522-165526-82282490-vector-shape-audit.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA
