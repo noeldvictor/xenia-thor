@@ -482,6 +482,20 @@ required.
   useful slice is a default-off direct-call edge/body profiler for
   `822825E0 -> 82282490` and `822825C8 -> 8227FEE8`, or a control-sandwiched
   callee capture after proving the route is stable.
+- A64 call-edge profiler:
+  `docs/research/20260522-181040-a64-call-edge-profiler.md`.
+  `arm64_speed_profile_call_edge_filter` is default-off and launchable through
+  `tools/thor/thor_xenia_debug.ps1 -Arm64SpeedProfileCallEdgeFilter 82282490`.
+  It profiles non-tail direct guest call edges inside filtered caller
+  functions and logs `A64 speed profile call edge top` rows. The first capture
+  `scratch/thor-debug/20260522-175432-*` found and fixed an instrumentation
+  bug: the profiler clobbered `x9` after loading the direct callee address.
+  Fixed edge capture `scratch/thor-debug/20260522-175951-*` and same-APK
+  control `scratch/thor-debug/20260522-180335-*` both had no fatal markers but
+  black-idled before `82282490`, so no call-edge rows exist yet. Keep the cvar
+  off by default and do not judge speed from this. Next priority is to prove a
+  same-APK control reaches the opening route / `82282490` again before rerunning
+  the edge filter, or add route-stability/idle attribution.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

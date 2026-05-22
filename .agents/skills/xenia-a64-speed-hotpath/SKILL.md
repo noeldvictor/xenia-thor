@@ -374,9 +374,16 @@ Current read: `822825E0 -> 0x82282490` accounts for
 `charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` accounts for
 `charged_body_total=3216407`. The targeted `8227FEE8` dump capture
 `scratch/thor-debug/20260522-172738-*` idled before the route and emitted no
-callee dump. Next speed-lane patch should be a default-off direct-call
-edge/body profiler for those edges, or a control-sandwiched `8227FEE8` callee
-capture after a stable route check.
+callee dump. The default-off direct-call edge profiler now exists:
+`arm64_speed_profile_call_edge_filter` / `-Arm64SpeedProfileCallEdgeFilter`.
+Use `tools/thor/thor_hir_call_path_report.ps1` to parse dynamic call-edge rows
+when a capture emits them. The first profiler capture found and fixed an `x9`
+callee-address clobber. Fixed edge capture `scratch/thor-debug/20260522-175951-*`
+and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
+before `82282490`, so the profiler has not yet produced edge body-time evidence.
+Next speed-lane step is a same-APK control route proof back to opening /
+`82282490`, or route-stability/idle attribution before rerunning the edge
+filter.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

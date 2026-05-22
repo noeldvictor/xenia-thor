@@ -226,9 +226,16 @@ inclusive call work: `822825E0 -> 0x82282490` has
 `charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` has
 `charged_body_total=3216407`. A targeted `8227FEE8` dump in
 `scratch/thor-debug/20260522-172738-*` idled before route progress and emitted
-no callee dump. Next useful slice is a default-off direct-call edge/body
-profiler for those two edges, or a control-sandwiched `8227FEE8` callee capture
-after proving the route is stable.
+no callee dump. The default-off call-edge profiler now exists:
+`docs/research/20260522-181040-a64-call-edge-profiler.md`, cvar
+`arm64_speed_profile_call_edge_filter`, Thor flag
+`-Arm64SpeedProfileCallEdgeFilter`. It found and fixed an `x9` callee-address
+clobber in the first capture. Fixed edge capture
+`scratch/thor-debug/20260522-175951-*` and same-APK control
+`scratch/thor-debug/20260522-180335-*` both black-idled before `82282490`, so no
+dynamic edge rows exist yet. Keep the cvar default-off. Next useful slice is a
+same-APK control route proof back to the opening route / `82282490`, or
+route-stability/idle attribution before rerunning the edge filter.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

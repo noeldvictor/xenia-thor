@@ -45,6 +45,17 @@ class A64Function : public GuestFunction {
   std::atomic<uint64_t>* profile_block_body_ticks(size_t ordinal);
   uint32_t profile_block_address(size_t ordinal) const;
   void set_profile_block_address(size_t ordinal, uint32_t address);
+  void SetupProfileCallEdges(size_t count);
+  size_t profile_call_edge_slot_count() const {
+    return profile_call_edge_slot_count_;
+  }
+  std::atomic<uint64_t>* profile_call_edge_count(size_t ordinal);
+  std::atomic<uint64_t>* profile_call_edge_body_ticks(size_t ordinal);
+  uint32_t profile_call_edge_caller_block_address(size_t ordinal) const;
+  uint32_t profile_call_edge_target_address(size_t ordinal) const;
+  void set_profile_call_edge_addresses(size_t ordinal,
+                                       uint32_t caller_block_address,
+                                       uint32_t target_address);
 
  protected:
   bool CallImpl(ThreadState* thread_state, uint32_t return_address) override;
@@ -58,6 +69,11 @@ class A64Function : public GuestFunction {
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_body_ticks_;
   std::unique_ptr<uint32_t[]> profile_block_addresses_;
   size_t profile_block_count_count_ = 0;
+  std::unique_ptr<std::atomic<uint64_t>[]> profile_call_edge_counts_;
+  std::unique_ptr<std::atomic<uint64_t>[]> profile_call_edge_body_ticks_;
+  std::unique_ptr<uint32_t[]> profile_call_edge_caller_block_addresses_;
+  std::unique_ptr<uint32_t[]> profile_call_edge_target_addresses_;
+  size_t profile_call_edge_slot_count_ = 0;
   std::atomic<A64Backend*> profile_registered_backend_{nullptr};
 };
 

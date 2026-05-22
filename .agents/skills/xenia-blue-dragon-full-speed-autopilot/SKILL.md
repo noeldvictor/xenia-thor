@@ -213,9 +213,16 @@ inclusive call work: `822825E0 -> 0x82282490` has
 `charged_body_total=34726883`, and `822825C8 -> 0x8227FEE8` has
 `charged_body_total=3216407`. A targeted `8227FEE8` dump attempt in
 `scratch/thor-debug/20260522-172738-*` idled before the route and emitted no
-callee dump, with no searched fatal markers. Next slice should add a
-default-off direct-call edge/body profiler for those two edges, or run a
-control-sandwiched `8227FEE8` callee capture after proving the route is stable.
+callee dump, with no searched fatal markers. The default-off call-edge profiler
+now exists: `docs/research/20260522-181040-a64-call-edge-profiler.md`, cvar
+`arm64_speed_profile_call_edge_filter`, and Thor flag
+`-Arm64SpeedProfileCallEdgeFilter`. The first capture exposed and fixed an `x9`
+callee-address clobber; fixed edge capture `scratch/thor-debug/20260522-175951-*`
+and same-APK control `scratch/thor-debug/20260522-180335-*` both black-idled
+before `82282490`, so no dynamic edge rows exist yet. Keep the cvar default-off.
+Next slice should prove a same-APK control reaches the opening route /
+`82282490` again before rerunning the edge filter, or add route-stability/idle
+attribution.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

@@ -1797,6 +1797,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
           : nullptr;
   current_guest_function_block_body_ticks_ =
       backend_->BlockBodyTimeProfileEnabledForFunction(a64_function);
+  current_guest_function_call_edge_profile_ =
+      backend_->CallEdgeProfileEnabledForFunction(a64_function);
   if (backend_->BlockProfileEnabledForFunction(a64_function) ||
       current_guest_function_block_body_ticks_) {
     size_t block_count = 0;
@@ -1810,6 +1812,23 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     a64_function->SetupProfileBlockCounts(block_count);
     current_a64_function_ = a64_function;
   }
+  if (current_guest_function_call_edge_profile_) {
+    size_t call_edge_count = 0;
+    for (auto block = builder->first_block(); block; block = block->next) {
+      for (auto instr = block->instr_head; instr; instr = instr->next) {
+        switch (instr->GetOpcodeNum()) {
+          case hir::OPCODE_CALL:
+          case hir::OPCODE_CALL_TRUE:
+            ++call_edge_count;
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    a64_function->SetupProfileCallEdges(call_edge_count);
+    current_a64_function_ = a64_function;
+  }
   MaybeLogContextTrafficAudit(builder);
 
   // Reset state.
@@ -1817,6 +1836,9 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   body_time_start_stack_offset_ = 0;
   block_body_time_start_stack_offset_ = 0;
   block_body_time_counter_stack_offset_ = 0;
+  call_edge_time_start_stack_offset_ = 0;
+  current_call_edge_ordinal_ = 0;
+  current_block_guest_address_ = 0;
   source_map_arena_.Reset();
   tail_code_.clear();
   fpcr_mode_ = FPCRMode::Unknown;
@@ -1864,6 +1886,58 @@ void A64Emitter::EmitAtomicAdd64(std::atomic<uint64_t>* counter,
   add(x13, x13, value_reg);
   stxr(w14, x13, ptr(x12));
   cbnz(w14, retry);
+}
+
+void A64Emitter::MaybeEmitCallEdgeProfileStart(
+    std::atomic<uint64_t>* entry_counter) {
+  if (!entry_counter) {
+    return;
+  }
+
+  EmitAtomicIncrement64(entry_counter);
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    str(xzr, ptr(sp, static_cast<uint32_t>(
+                         call_edge_time_start_stack_offset_)));
+    auto& inactive = NewCachedLabel();
+    mov(x12, reinterpret_cast<uint64_t>(
+                 backend_->speed_profile_body_time_active()));
+    ldr(w11, ptr(x12));
+    cbz(w11, inactive);
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    str(x17, ptr(sp, static_cast<uint32_t>(
+                         call_edge_time_start_stack_offset_)));
+    L(inactive);
+    return;
+  }
+
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  str(x17,
+      ptr(sp, static_cast<uint32_t>(call_edge_time_start_stack_offset_)));
+}
+
+void A64Emitter::MaybeEmitCallEdgeProfileEnd(
+    std::atomic<uint64_t>* body_ticks_counter) {
+  if (!body_ticks_counter) {
+    return;
+  }
+
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    auto& inactive = NewCachedLabel();
+    ldr(x11, ptr(sp, static_cast<uint32_t>(
+                         call_edge_time_start_stack_offset_)));
+    cbz(x11, inactive);
+    mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    sub(x17, x17, x11);
+    EmitAtomicAdd64(body_ticks_counter, x17);
+    L(inactive);
+    return;
+  }
+
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  ldr(x11,
+      ptr(sp, static_cast<uint32_t>(call_edge_time_start_stack_offset_)));
+  sub(x17, x17, x11);
+  EmitAtomicAdd64(body_ticks_counter, x17);
 }
 
 void A64Emitter::MaybeEmitBlockBodyTimeProfileInit() {
@@ -2253,6 +2327,11 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     block_body_time_counter_stack_offset_ = stack_offset;
     stack_offset += sizeof(uint64_t);
   }
+  if (current_guest_function_call_edge_profile_) {
+    stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
+    call_edge_time_start_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
+  }
   // Align total stack offset to 16 bytes (ARM64 ABI requirement).
   stack_offset -= StackLayout::GUEST_STACK_SIZE;
   stack_offset = xe::align(stack_offset, static_cast<size_t>(16));
@@ -2350,6 +2429,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
                current_guest_function_),
       cvars::arm64_context_pinned_gpr_r1_fallthrough);
   while (block) {
+    current_block_guest_address_ = FindBlockGuestAddress(block);
     // Reset FPCR tracking on each block entry (we don't know which
     // predecessor ran, so mode is unknown).
     ForgetFpcrMode();
@@ -3918,6 +3998,18 @@ void A64Emitter::MaybeEmitBlueDragonStricmpReturnProfile() {
 
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
+  std::atomic<uint64_t>* call_edge_entry_counter = nullptr;
+  std::atomic<uint64_t>* call_edge_body_ticks_counter = nullptr;
+  if (current_guest_function_call_edge_profile_ && current_a64_function_) {
+    size_t edge_ordinal = current_call_edge_ordinal_++;
+    current_a64_function_->set_profile_call_edge_addresses(
+        edge_ordinal, current_block_guest_address_, function->address());
+    call_edge_entry_counter =
+        current_a64_function_->profile_call_edge_count(edge_ordinal);
+    call_edge_body_ticks_counter =
+        current_a64_function_->profile_call_edge_body_ticks(edge_ordinal);
+  }
+
   if (TryEmitGprLrHelperCall(instr, function)) {
     return;
   }
@@ -3942,14 +4034,17 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
 
   if (fn->machine_code()) {
     // Direct call — function is already compiled.
-    mov(x9, reinterpret_cast<uint64_t>(fn->machine_code()));
     if (!(instr->flags & hir::CALL_TAIL)) {
       // Pass the next call's guest return address in x0.
+      MaybeEmitCallEdgeProfileStart(call_edge_entry_counter);
+      mov(x9, reinterpret_cast<uint64_t>(fn->machine_code()));
       ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
       blr(x9);
+      MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
       synchronize_stack_on_next_instruction_ = true;
     } else {
       // Tail call: pass our return address to the callee.
+      mov(x9, reinterpret_cast<uint64_t>(fn->machine_code()));
       MaybeEmitBodyTimeProfileEnd();
       PopStackpoint();
       ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
@@ -3963,6 +4058,10 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       br(x9);
     }
     return;
+  }
+
+  if (!(instr->flags & hir::CALL_TAIL)) {
+    MaybeEmitCallEdgeProfileStart(call_edge_entry_counter);
   }
 
   if (code_cache_->has_indirection_table()) {
@@ -3996,6 +4095,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   } else {
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
     blr(x9);
+    MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
     synchronize_stack_on_next_instruction_ = true;
   }
 }

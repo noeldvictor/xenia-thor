@@ -87,6 +87,87 @@ void A64Function::set_profile_block_address(size_t ordinal, uint32_t address) {
   profile_block_addresses_[ordinal] = address;
 }
 
+void A64Function::SetupProfileCallEdges(size_t count) {
+  if (count == profile_call_edge_slot_count_ && profile_call_edge_counts_ &&
+      profile_call_edge_body_ticks_ &&
+      profile_call_edge_caller_block_addresses_ &&
+      profile_call_edge_target_addresses_) {
+    return;
+  }
+
+  if (!count) {
+    profile_call_edge_counts_.reset();
+    profile_call_edge_body_ticks_.reset();
+    profile_call_edge_caller_block_addresses_.reset();
+    profile_call_edge_target_addresses_.reset();
+    profile_call_edge_slot_count_ = 0;
+    return;
+  }
+
+  profile_call_edge_counts_ =
+      std::make_unique<std::atomic<uint64_t>[]>(count);
+  profile_call_edge_body_ticks_ =
+      std::make_unique<std::atomic<uint64_t>[]>(count);
+  profile_call_edge_caller_block_addresses_ =
+      std::make_unique<uint32_t[]>(count);
+  profile_call_edge_target_addresses_ = std::make_unique<uint32_t[]>(count);
+  profile_call_edge_slot_count_ = count;
+  for (size_t i = 0; i < count; ++i) {
+    profile_call_edge_counts_[i].store(0, std::memory_order_relaxed);
+    profile_call_edge_body_ticks_[i].store(0, std::memory_order_relaxed);
+    profile_call_edge_caller_block_addresses_[i] = 0;
+    profile_call_edge_target_addresses_[i] = 0;
+  }
+}
+
+std::atomic<uint64_t>* A64Function::profile_call_edge_count(size_t ordinal) {
+  if (!profile_call_edge_counts_ || ordinal >= profile_call_edge_slot_count_) {
+    return nullptr;
+  }
+  return &profile_call_edge_counts_[ordinal];
+}
+
+std::atomic<uint64_t>* A64Function::profile_call_edge_body_ticks(
+    size_t ordinal) {
+  if (!profile_call_edge_body_ticks_ ||
+      ordinal >= profile_call_edge_slot_count_) {
+    return nullptr;
+  }
+  return &profile_call_edge_body_ticks_[ordinal];
+}
+
+uint32_t A64Function::profile_call_edge_caller_block_address(
+    size_t ordinal) const {
+  if (!profile_call_edge_caller_block_addresses_ ||
+      ordinal >= profile_call_edge_slot_count_) {
+    return 0;
+  }
+  return profile_call_edge_caller_block_addresses_[ordinal];
+}
+
+uint32_t A64Function::profile_call_edge_target_address(size_t ordinal) const {
+  if (!profile_call_edge_target_addresses_ ||
+      ordinal >= profile_call_edge_slot_count_) {
+    return 0;
+  }
+  return profile_call_edge_target_addresses_[ordinal];
+}
+
+void A64Function::set_profile_call_edge_addresses(
+    size_t ordinal, uint32_t caller_block_address, uint32_t target_address) {
+  if (!profile_call_edge_caller_block_addresses_ ||
+      !profile_call_edge_target_addresses_ ||
+      ordinal >= profile_call_edge_slot_count_) {
+    return;
+  }
+  if (caller_block_address) {
+    profile_call_edge_caller_block_addresses_[ordinal] = caller_block_address;
+  }
+  if (target_address) {
+    profile_call_edge_target_addresses_[ordinal] = target_address;
+  }
+}
+
 bool A64Function::CallImpl(ThreadState* thread_state, uint32_t return_address) {
   auto backend =
       reinterpret_cast<A64Backend*>(thread_state->processor()->backend());

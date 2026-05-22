@@ -374,6 +374,13 @@ DEFINE_bool(
     "CNTVCT body ticks to generated-code blocks. Research-only and higher "
     "overhead than block-entry counts.",
     "a64");
+DEFINE_string(
+    arm64_speed_profile_call_edge_filter, "",
+    "Thor ARM64 speed lane: optional comma/semicolon/space separated guest "
+    "function start addresses or inclusive start-address ranges for "
+    "direct-call edge CNTVCT profiling inside selected caller functions. "
+    "Requires arm64_speed_profile_interval_ms.",
+    "a64");
 DEFINE_bool(
     arm64_speed_profile_thread_snapshot, false,
     "Thor ARM64 speed lane: log each guest thread's last A64 function and "
@@ -1188,6 +1195,16 @@ bool A64Backend::BlockBodyTimeProfileEnabledForFunction(
       function, cvars::arm64_speed_profile_block_filter);
 }
 
+bool A64Backend::CallEdgeProfileEnabledForFunction(
+    A64Function* function) const {
+  if (!speed_profile_enabled() ||
+      cvars::arm64_speed_profile_call_edge_filter.empty()) {
+    return false;
+  }
+  return FunctionStartMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_call_edge_filter);
+}
+
 void A64Backend::RecordResolveFunction(bool success) {
   if (!speed_profile_enabled()) {
     return;
@@ -1255,6 +1272,11 @@ void A64Backend::StartSpeedProfiler() {
            cvars::arm64_speed_profile_block_filter,
            cvars::arm64_speed_profile_body_time_after_ms);
   }
+  if (!cvars::arm64_speed_profile_call_edge_filter.empty()) {
+    XELOGW("A64 call-edge profile enabled: filter='{}' after_ms={}",
+           cvars::arm64_speed_profile_call_edge_filter,
+           cvars::arm64_speed_profile_body_time_after_ms);
+  }
   if (cvars::arm64_add_sub_imm_audit) {
     XELOGW(
         "A64 ADD/SUB immediate audit enabled: function={:08X} budget={}",
@@ -1319,7 +1341,8 @@ void A64Backend::LogSpeedProfile() {
 
   const bool any_body_time_profile =
       !cvars::arm64_speed_profile_body_time_filter.empty() ||
-      cvars::arm64_speed_profile_block_body_time;
+      cvars::arm64_speed_profile_block_body_time ||
+      !cvars::arm64_speed_profile_call_edge_filter.empty();
   if (any_body_time_profile &&
       cvars::arm64_speed_profile_body_time_after_ms != 0 &&
       !speed_profile_body_time_active_.load(std::memory_order_acquire)) {
@@ -1352,11 +1375,24 @@ void A64Backend::LogSpeedProfile() {
     uint64_t body_ticks_delta = 0;
     uint64_t body_ticks_per_entry = 0;
   };
+  struct CallEdgeSample {
+    uint32_t function_address = 0;
+    uint32_t caller_block_address = 0;
+    uint32_t target_address = 0;
+    uint16_t edge_ordinal = 0;
+    std::string function_name;
+    uint64_t total = 0;
+    uint64_t delta = 0;
+    uint64_t body_ticks_total = 0;
+    uint64_t body_ticks_delta = 0;
+    uint64_t body_ticks_per_call = 0;
+  };
 
   std::vector<FunctionSample> samples;
   std::vector<FunctionSample> body_samples;
   std::vector<BlockSample> block_samples;
   std::vector<BlockSample> block_body_samples;
+  std::vector<CallEdgeSample> call_edge_samples;
   uint64_t entry_delta_total = 0;
   size_t function_count = 0;
   {
@@ -1441,6 +1477,49 @@ void A64Backend::LogSpeedProfile() {
           }
         }
       }
+
+      size_t call_edge_count = function->profile_call_edge_slot_count();
+      if (call_edge_count != 0) {
+        if (entry.last_call_edge_counts.size() != call_edge_count) {
+          entry.last_call_edge_counts.assign(call_edge_count, 0);
+        }
+        if (entry.last_call_edge_body_ticks.size() != call_edge_count) {
+          entry.last_call_edge_body_ticks.assign(call_edge_count, 0);
+        }
+        for (size_t i = 0; i < call_edge_count; ++i) {
+          auto* call_counter = function->profile_call_edge_count(i);
+          auto* call_body_counter = function->profile_call_edge_body_ticks(i);
+          if (!call_counter || !call_body_counter) {
+            continue;
+          }
+          uint64_t call_total =
+              call_counter->load(std::memory_order_relaxed);
+          uint64_t call_delta = call_total - entry.last_call_edge_counts[i];
+          entry.last_call_edge_counts[i] = call_total;
+          uint64_t call_body_total =
+              call_body_counter->load(std::memory_order_relaxed);
+          uint64_t call_body_delta =
+              call_body_total - entry.last_call_edge_body_ticks[i];
+          entry.last_call_edge_body_ticks[i] = call_body_total;
+          if (call_delta < cvars::arm64_speed_profile_min_delta &&
+              call_body_delta == 0) {
+            continue;
+          }
+          uint64_t ticks_per_call =
+              call_delta ? call_body_delta / call_delta : 0;
+          call_edge_samples.push_back(
+              {function->address(),
+               function->profile_call_edge_caller_block_address(i),
+               function->profile_call_edge_target_address(i),
+               static_cast<uint16_t>(i),
+               name,
+               call_total,
+               call_delta,
+               call_body_total,
+               call_body_delta,
+               ticks_per_call});
+        }
+      }
     }
   }
 
@@ -1459,6 +1538,16 @@ void A64Backend::LogSpeedProfile() {
   std::sort(block_body_samples.begin(), block_body_samples.end(),
             [](const BlockSample& a, const BlockSample& b) {
               return a.body_ticks_delta > b.body_ticks_delta;
+            });
+  std::sort(call_edge_samples.begin(), call_edge_samples.end(),
+            [](const CallEdgeSample& a, const CallEdgeSample& b) {
+              if (a.body_ticks_delta != b.body_ticks_delta) {
+                return a.body_ticks_delta > b.body_ticks_delta;
+              }
+              if (a.delta != b.delta) {
+                return a.delta > b.delta;
+              }
+              return a.edge_ordinal < b.edge_ordinal;
             });
 
   auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
@@ -1593,6 +1682,21 @@ void A64Backend::LogSpeedProfile() {
         i + 1, sample.function_address, sample.function_name,
         sample.block_ordinal, sample.block_address, sample.body_ticks_delta,
         sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry);
+  }
+
+  size_t call_edge_top_count = std::min<size_t>(
+      call_edge_samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < call_edge_top_count; ++i) {
+    const auto& sample = call_edge_samples[i];
+    XELOGW(
+        "A64 speed profile call edge top {:02}: fn {:08X} '{}' edge={} "
+        "block={:08X} target={:08X} calls_delta={} calls_total={} "
+        "body_ticks_delta={} body_ticks_total={} ticks_per_call={}",
+        i + 1, sample.function_address, sample.function_name,
+        sample.edge_ordinal, sample.caller_block_address,
+        sample.target_address, sample.delta, sample.total,
+        sample.body_ticks_delta, sample.body_ticks_total,
+        sample.body_ticks_per_call);
   }
 
   const bool should_log_thread_snapshot =

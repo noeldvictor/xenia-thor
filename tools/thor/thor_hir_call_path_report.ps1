@@ -151,6 +151,7 @@ $phasePattern = [Regex]::Escape($Phase)
 $linePattern = "Filtered function dump $functionPattern $phasePattern`:\s+(?<text>.*)$"
 $blocks = New-Object System.Collections.Generic.List[object]
 $current = $null
+$callEdgeRows = @{}
 
 Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     if ($_ -notmatch $linePattern) {
@@ -227,6 +228,7 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     $resolvedProfile = (Resolve-Path -LiteralPath $BlockProfileLog).Path
     $profilePattern = "A64 speed profile block top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) delta=(?<delta>\d+) total=(?<total>\d+)"
     $bodyProfilePattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
+    $callEdgePattern = "A64 speed profile call edge top \d+: fn $functionPattern .* edge=(?<edge>\d+) block=(?<block>[0-9A-Fa-f]{8}) target=(?<target>[0-9A-Fa-f]{8}) calls_delta=(?<calls_delta>\d+) calls_total=(?<calls_total>\d+) body_ticks_delta=(?<body_delta>\d+) body_ticks_total=(?<body_total>\d+) ticks_per_call=(?<tpc>\d+)"
     Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
         if ($_ -match $profilePattern) {
             $guest = $Matches.guest.ToUpperInvariant()
@@ -276,6 +278,49 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
             }
             if ($tpe -gt $row.profile_body_peak_tpe) {
                 $row.profile_body_peak_tpe = $tpe
+            }
+            return
+        }
+
+        if ($_ -match $callEdgePattern) {
+            $edge = [int]$Matches.edge
+            $blockGuest = $Matches.block.ToUpperInvariant()
+            $target = $Matches.target.ToUpperInvariant()
+            $key = "{0}|{1}|{2}" -f $edge, $blockGuest, $target
+            if (!$callEdgeRows.ContainsKey($key)) {
+                $callEdgeRows[$key] = [pscustomobject][ordered]@{
+                    edge = $edge
+                    block_guest = $blockGuest
+                    target = ("0x" + $target)
+                    calls_total = 0
+                    calls_peak_delta = 0
+                    body_ticks_total = 0
+                    body_ticks_peak_delta = 0
+                    ticks_per_call_peak = 0
+                    samples = 0
+                }
+            }
+            $row = $callEdgeRows[$key]
+            $row.samples += 1
+            $callsTotal = [int64]$Matches.calls_total
+            $callsDelta = [int64]$Matches.calls_delta
+            $bodyTotal = [int64]$Matches.body_total
+            $bodyDelta = [int64]$Matches.body_delta
+            $tpc = [int64]$Matches.tpc
+            if ($callsTotal -gt $row.calls_total) {
+                $row.calls_total = $callsTotal
+            }
+            if ($callsDelta -gt $row.calls_peak_delta) {
+                $row.calls_peak_delta = $callsDelta
+            }
+            if ($bodyTotal -gt $row.body_ticks_total) {
+                $row.body_ticks_total = $bodyTotal
+            }
+            if ($bodyDelta -gt $row.body_ticks_peak_delta) {
+                $row.body_ticks_peak_delta = $bodyDelta
+            }
+            if ($tpc -gt $row.ticks_per_call_peak) {
+                $row.ticks_per_call_peak = $tpc
             }
             return
         }
@@ -339,6 +384,39 @@ if ($targetRows.Count -eq 0) {
                 $_.target, $_.blocks.Count, ($_.blocks -join ","),
                 $_.charged_body_total, $_.charged_body_peak_delta,
                 $_.entry_total, $_.entry_peak_delta, $_.static_call_sites)
+        }
+}
+
+Write-Output ""
+Write-Output "## Dynamic Call Edge Body-Time Rows"
+if ($callEdgeRows.Count -eq 0) {
+    if ([string]::IsNullOrWhiteSpace($BlockProfileLog)) {
+        Write-Output "(no block/call-edge profile log supplied)"
+    } else {
+        Write-Output "(no dynamic call-edge rows found)"
+    }
+} else {
+    $callEdgeRows.Values |
+        Sort-Object -Property @{ Expression = "body_ticks_total"; Descending = $true },
+                              @{ Expression = "calls_total"; Descending = $true },
+                              @{ Expression = "edge"; Ascending = $true } |
+        Select-Object -First $Top |
+        ForEach-Object {
+            $edgeRow = $_
+            $block = $blocks | Where-Object { $_.guest -eq $edgeRow.block_guest } | Select-Object -First 1
+            $staticSummary = "-"
+            if ($null -ne $block) {
+                $staticSummary = "instr={0} ctx={1}/{2} mem={3}/{4} branches={5} calls={6} barriers={7}" -f
+                    $block.instructions, $block.context_loads, $block.context_stores,
+                    $block.memory_loads, $block.memory_stores, $block.branches,
+                    $block.calls, $block.barriers
+            }
+            Write-Output ("edge={0} block_guest={1} target={2} calls_total={3} calls_peak_delta={4} body_ticks_total={5} body_ticks_peak_delta={6} ticks_per_call_peak={7} samples={8} static={9}" -f
+                $edgeRow.edge, $edgeRow.block_guest, $edgeRow.target,
+                $edgeRow.calls_total, $edgeRow.calls_peak_delta,
+                $edgeRow.body_ticks_total, $edgeRow.body_ticks_peak_delta,
+                $edgeRow.ticks_per_call_peak, $edgeRow.samples,
+                $staticSummary)
         }
 }
 
