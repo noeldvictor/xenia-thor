@@ -429,6 +429,18 @@ required.
   before a broad VMX rewrite. Current next target is dynamic-hot mixed block
   `822824F0`, or a lower-noise block body-time profiler if static vector-heavy
   blocks are revisited.
+- HIR block-detail report:
+  `docs/research/20260522-164404-822824f0-hir-profile-audit.md`.
+  Use `tools/thor/thor_hir_block_detail_report.ps1` for a single hot block.
+  Known command:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_detail_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockGuest 822824F0 -Top 20`.
+  `822824F0` has `198` HIR instructions, `22` context loads, `43` context
+  stores, `16` memory loads, `4` memory stores, `3` permutes, `3` `mul_add`,
+  `6` splats, `9` extracts, two calls (`0x82274DB0`, `0x82287788`), and
+  `5` context barriers. It is mixed CR6 gate, stack/call setup, vector
+  math/store, FPR/FPSCR, and CR tail work. Do not patch it from entry counts
+  alone; next add per-block body-time attribution or an A64 `stvewx` /
+  `extract` / `splat` codegen audit before a peephole.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

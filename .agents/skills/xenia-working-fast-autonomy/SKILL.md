@@ -193,6 +193,11 @@ hot blocks are the early control/state path, especially mixed block `822824F0`;
 static context/vector-heavy blocks need block body-time proof before broad VMX
 work. The next useful worker slice is an `822824F0` HIR/profile audit or a
 lower-noise block body-time profiler, not another unchanged r1 live-in A/B.
+That `822824F0` audit now exists and shows a mixed CR/call/vector/FPR block:
+two calls, five barriers, `3` `mul_add`, `6` splats, `9` extracts, and three
+`stvewx` stores. Next useful worker slice is lower-noise per-block body-time
+attribution for `82282490`, or an A64 `stvewx` / `extract` / `splat` codegen
+audit, before writing a peephole.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

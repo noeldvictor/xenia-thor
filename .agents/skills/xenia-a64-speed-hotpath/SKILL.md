@@ -323,6 +323,22 @@ dynamic-hot mixed block `822824F0`, or add lower-noise block body-time
 instrumentation first. See
 `docs/research/20260522-163537-82282490-block-mix-report.md`.
 
+For a single-block audit, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_detail_report.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -Phase OptHIR -BlockGuest 822824F0 -Top 20
+```
+
+Current `822824F0` read: `198` HIR instructions, `22` context loads,
+`43` context stores, `16` memory loads, `4` memory stores, `3` permutes,
+`3` `mul_add`, `6` splats, `9` extracts, two calls (`0x82274DB0`,
+`0x82287788`), and `5` context barriers. The block mixes CR6 gates,
+stack/call setup, vector math/store (`vspltw`, `vmaddfp`, `stvewx`),
+FPR/FPSCR work, and CR tail branches. Do not patch it from entry counts alone;
+next add per-block body-time attribution or an A64 `stvewx` / `extract` /
+`splat` codegen audit first. See
+`docs/research/20260522-164404-822824f0-hir-profile-audit.md`.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

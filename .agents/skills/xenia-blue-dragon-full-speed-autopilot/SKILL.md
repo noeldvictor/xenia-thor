@@ -178,6 +178,11 @@ especially `822824F0`, while the large static VMX/vector blocks need block
 body-time proof before broad vector lowering. Next slice should inspect or audit
 `822824F0`, or add lower-noise block body-time evidence, instead of repeating
 the exact r1 live-in A/B or restarting broad VMX/dot/permute work.
+That `822824F0` audit now exists. It shows a mixed block with two calls, five
+barriers, CR6/CR0 stores, stack-derived args, `vspltw`, `vmaddfp`, and
+`stvewx`. Next slice should add lower-noise per-block body-time attribution for
+`82282490`, or an A64 `stvewx` / `extract` / `splat` codegen audit, before a
+peephole.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
