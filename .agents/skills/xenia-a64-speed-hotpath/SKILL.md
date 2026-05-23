@@ -506,6 +506,14 @@ body-time was `8227F1D8 body_ticks_total=4117139` and
 `82490030 body_ticks_total=4007328`; `826BFC7C` was not a meaningful dynamic
 row. Next run should dump/profile `82490030` with delayed block body-time and
 `8227F1D8` as parent comparator.
+The first filtered `82490030` run black-idled before target evidence:
+`docs/research/20260523-154117-82490030-filtered-capture-black-idle.md`.
+`scratch/thor-debug/20260523-153726-*` had no `82490030` HIR/body/block rows
+and ended on a black screenshot with clean fatal search. The idle owner line
+reported `last_global_owner_thread_id=F80002E8`, `owner_hint=hit`, and
+`owner_hint_state=zombie`. Next run should be a no-disassembly delayed
+body-time control for `8227F1D8,82490030`, not another unchanged filtered dump
+or a codegen patch.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

@@ -667,6 +667,22 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   in this route. Next capture should dump/profile `82490030` with delayed
   body/block-time and keep `8227F1D8` as the parent comparator; do not start a
   local `8227F1D8` peephole yet.
+- `82490030` filtered capture black-idle:
+  `docs/research/20260523-154117-82490030-filtered-capture-black-idle.md`.
+  Capture `scratch/thor-debug/20260523-153726-*` used the intended
+  `82490030` disassembly filter plus delayed `8227F1D8,82490030` body-time,
+  but black-idled before the opening route. Fatal-marker search was clean, no
+  `82490030` HIR/body/block rows landed, and the final screenshot was black.
+  Counters went flat by `15:38:15`; body-time activated later with
+  `entry_delta=0`. Idle attribution reported a busy processor debug lock with
+  `last_global_owner_sys_tid=15739`, `last_global_owner_thread_id=F80002E8`,
+  `owner_hint=hit`, `owner_hint_source=thread_id_or_handle`,
+  `owner_hint_tid=00000016`, `owner_hint_handle=F80002E8`, and
+  `owner_hint_state=zombie`. Do not repeat this exact filtered run unchanged
+  and do not patch `82490030` from it. Next prove route stability with a
+  no-disassembly delayed body-time control for `8227F1D8,82490030`; if that
+  also black-idles, improve zombie owner/native TID attribution before changing
+  generated code.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

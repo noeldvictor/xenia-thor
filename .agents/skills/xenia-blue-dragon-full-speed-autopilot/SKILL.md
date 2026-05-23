@@ -118,13 +118,14 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: run a
-route-stabilized filtered HIR plus delayed body/block-time capture for
-`82490030`, keeping `8227F1D8` in the body-time filter as the parent
-comparator. The route-clean `8227F1D8` call-edge split proves `82490030` almost
-fully explains the parent wall, while `826BFC7C` did not show up as a
-meaningful dynamic row. Do not start a local `8227F1D8` peephole or chase
-`826BFC7C` until fresh route evidence says to.
+Latest priority, superseding the older chronology below: re-prove route
+stability with a no-disassembly delayed body-time control for
+`8227F1D8,82490030`. The route-clean `8227F1D8` call-edge split proves
+`82490030` almost fully explains the parent wall, but the first filtered
+`82490030` HIR/block capture black-idled before route progress. Do not repeat
+that exact filtered run unchanged, do not start a local `8227F1D8` or
+`82490030` peephole, and do not chase `826BFC7C` until fresh route evidence
+says to.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -360,6 +361,17 @@ the parent: `8227F1D8 body_ticks_total=4117139`,
 `ticks_per_call=72`. `826BFC7C` did not appear as a meaningful dynamic row.
 The next slice should dump/profile `82490030` itself with delayed block
 body-time and `8227F1D8` as parent comparator before any codegen experiment.
+The first filtered `82490030` attempt black-idled:
+`docs/research/20260523-154117-82490030-filtered-capture-black-idle.md`.
+`scratch/thor-debug/20260523-153726-*` had a black screenshot, clean fatal
+search, and no `82490030` HIR/body/block rows. Counters went flat by
+`15:38:15`, body-time activated later with `entry_delta=0`, and idle
+attribution reported a busy processor debug lock with
+`last_global_owner_thread_id=F80002E8`, `owner_hint=hit`,
+`owner_hint_source=thread_id_or_handle`, and `owner_hint_state=zombie`. The
+next slice should run a no-disassembly delayed body-time control for
+`8227F1D8,82490030`; if that also black-idles, improve zombie owner/native TID
+attribution before changing generated code.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

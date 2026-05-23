@@ -359,6 +359,16 @@ opening route with no searched fatal markers. Final dynamic rows identify
 `calls_total=32107`, and `ticks_per_call=72`. `826BFC7C` did not show as a
 meaningful dynamic row. The next useful worker slice is filtered `82490030`
 HIR plus delayed body/block-time with `8227F1D8` as parent comparator.
+The first filtered `82490030` attempt is a negative route-stability result:
+`docs/research/20260523-154117-82490030-filtered-capture-black-idle.md`.
+Capture `scratch/thor-debug/20260523-153726-*` black-idled before opening with
+clean fatal search, no `82490030` HIR/body/block rows, and a black final
+screenshot. The idle line reported a busy processor debug lock with
+`last_global_owner_thread_id=F80002E8`, `owner_hint=hit`, and
+`owner_hint_state=zombie`. Do not repeat that exact filtered run unchanged.
+Next useful worker slice is a no-disassembly delayed body-time control for
+`8227F1D8,82490030`; if that also black-idles, improve zombie owner/native TID
+attribution before changing generated code.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
