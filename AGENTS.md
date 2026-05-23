@@ -553,6 +553,28 @@ required.
   stabilizer. If it reaches opening, use the warning-level HIR dump for focused
   codegen audit; if it black-idles, inspect `owner_hint` before changing guest
   behavior.
+- `8227FEE8` filtered HIR sandwich:
+  `docs/research/20260522-234847-8227fee8-filtered-hir-sandwich.md`.
+  Filtered middle capture `scratch/thor-debug/20260522-233545-*` used the same
+  APK SHA `E92DAC2CB4E7080C196DB9656305F372DC20C189E7697A2FCCD47D1E12DA3FA3`,
+  `-DisassembleFunctionFilter 8227FEE8`, and delayed body-time
+  `82282490,8227FEE8`; it reached visible opening, logged the warning-level
+  `8227FEE8` OptHIR dump, and had no searched fatal markers. Final body-time
+  still showed `82282490` dominant (`body_ticks_total=26728115`,
+  `ticks_per_entry=120`) with `8227FEE8` secondary
+  (`body_ticks_total=4125095`, `ticks_per_entry=264`, code size `49804`).
+  HIR shape for `8227FEE8`: `store_context=1426`, `load_context=896`,
+  `context_barrier=332`, `branches=284`, `calls=78`, `permute=48`,
+  `byte_swaps=30`, no dot/extract/splat/stvewx surface. The static vector
+  candidates are blocks `82280A68` and `82280E1C`, each with
+  `lvlx/lvrx/stvlx/stvrx/vor` and `perm=24`, but they still need body-time
+  proof. Post-control no-filter capture `scratch/thor-debug/20260522-234038-*`
+  black-idled with clean fatal search and `owner_hint=miss` for
+  `last_global_owner_sys_tid=7347`, so route nondeterminism remains. Next run
+  delayed `8227FEE8` block body-time with
+  `-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`;
+  do not start broad r1/GPR cache or vector peepholes without that block
+  attribution.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

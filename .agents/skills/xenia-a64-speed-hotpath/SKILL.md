@@ -429,6 +429,27 @@ be a control-sandwiched filtered `8227FEE8` capture with delayed body-time route
 stabilizer; use HIR if route-clean, or use the new `owner_hint` fields if it
 black-idles.
 
+The filtered `8227FEE8` sandwich is now route-clean in the middle but not clean
+enough for a speed A/B: see
+`docs/research/20260522-234847-8227fee8-filtered-hir-sandwich.md`. Capture
+`scratch/thor-debug/20260522-233545-*` reached visible opening and produced the
+warning-level `8227FEE8` OptHIR dump with no searched fatal markers. Body-time
+still names `82282490` as dominant (`body_ticks_total=26728115`,
+`ticks_per_entry=120`), while `8227FEE8` is a real secondary target
+(`body_ticks_total=4125095`, `ticks_per_entry=264`, code size `49804`). HIR
+shape for `8227FEE8` is not dot/extract/splat/stvewx. It is mostly state
+traffic (`store_context=1426`, `load_context=896`, `context_barrier=332`,
+`branches=284`, `calls=78`) plus two static vector-load/store blocks:
+`82280A68` and `82280E1C` each have `lvlx/lvrx/stvlx/stvrx` and `perm=24`.
+Post-control `scratch/thor-debug/20260522-234038-*` black-idled with clean
+fatal search and `owner_hint=miss` for `last_global_owner_sys_tid=7347`.
+Therefore the next A64 hotpath action is delayed block body-time for
+`8227FEE8`, not a broad peephole:
+`-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`.
+Use that to choose between a function/block-gated vector load/store lowering
+patch, a tightly audited GPR state-traffic reduction, or more idle-owner
+instrumentation if the route flatlines again.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

@@ -115,6 +115,13 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
+Latest priority, superseding the older chronology below: run delayed
+`8227FEE8` block body-time with
+`-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`
+before any new GPR cache, r1 live-in retry, or vector peephole. The route-clean
+filtered HIR capture proves `8227FEE8` is a real secondary target, but the next
+patch must be chosen from internal block body-time, not from static HIR counts.
+
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
 barrier/span churn. Prioritize a real GPR/CR state-traffic reduction plan for:
@@ -275,6 +282,25 @@ control-sandwiched filtered `8227FEE8` capture with delayed body-time route
 stabilizer. If it reaches opening, use the warning-level HIR dump for focused
 codegen audit; if it black-idles again, inspect the new `owner_hint` fields
 before changing guest behavior.
+The filtered `8227FEE8` sandwich now has a route-clean HIR middle and a
+black-idle post-control:
+`docs/research/20260522-234847-8227fee8-filtered-hir-sandwich.md`.
+Filtered capture `scratch/thor-debug/20260522-233545-*` reached visible
+opening, emitted the warning-level `8227FEE8` OptHIR dump, and had no searched
+fatal markers. It measured `8227FEE8` as secondary
+(`body_ticks_total=4125095`, `ticks_per_entry=264`, code size `49804`) while
+`82282490` still dominated (`body_ticks_total=26728115`,
+`ticks_per_entry=120`). The `8227FEE8` HIR shape is state-traffic heavy
+(`store_context=1426`, `load_context=896`, `context_barrier=332`,
+`branches=284`, `calls=78`) with a smaller `lvlx/lvrx/stvlx/stvrx` vector
+surface in static blocks `82280A68` and `82280E1C`; no dot/extract/splat/stvewx
+surface appears. Post-control `scratch/thor-debug/20260522-234038-*`
+black-idled with clean fatal search and `owner_hint=miss` for
+`last_global_owner_sys_tid=7347`, so route nondeterminism remains. Current best
+next move: delayed block body-time for `8227FEE8` with
+`-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`.
+Do not start a broad GPR cache, r1 live-in retry, or vector peephole until that
+block attribution says which internal blocks actually burn time.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

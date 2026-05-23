@@ -283,6 +283,23 @@ not black-idle. Next worker slice should run a control-sandwiched filtered
 `8227FEE8` capture with the delayed body-time route stabilizer. If it reaches
 opening, use the warning-level HIR dump for codegen audit; if it black-idles,
 inspect `owner_hint` before changing generated-code behavior.
+The control-sandwiched filtered `8227FEE8` lane now has usable HIR but still
+needs block attribution:
+`docs/research/20260522-234847-8227fee8-filtered-hir-sandwich.md`.
+Filtered capture `scratch/thor-debug/20260522-233545-*` reached visible
+opening, emitted `8227FEE8` OptHIR at warning level, and had no searched fatal
+markers. `8227FEE8` was secondary (`body_ticks_total=4125095`,
+`ticks_per_entry=264`, code size `49804`) behind `82282490`
+(`body_ticks_total=26728115`, `ticks_per_entry=120`). Its HIR is mostly
+GPR/CR state traffic and barriers (`store_context=1426`,
+`load_context=896`, `context_barrier=332`, `branches=284`, `calls=78`), plus
+static `lvlx/lvrx/stvlx/stvrx` vector-load/store shapes in blocks `82280A68`
+and `82280E1C`. Post-control `scratch/thor-debug/20260522-234038-*`
+black-idled with clean fatal search and `owner_hint=miss` for
+`last_global_owner_sys_tid=7347`. Next worker slice should run delayed
+`8227FEE8` block body-time with
+`-Arm64SpeedProfileBlockFilter 8227FEE8` and
+`-Arm64SpeedProfileBlockBodyTime true` before any codegen experiment.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
