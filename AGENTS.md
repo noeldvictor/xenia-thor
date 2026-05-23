@@ -90,6 +90,27 @@ required.
 - Clearly mark this fork as an extremely unstable research-only experiment in user-facing docs.
 - Do not imply official Xenia support or compatibility.
 
+## Continual Harness Adaptation
+
+Use the repo-local Continual Harness refiner pattern when the autonomous loop is
+starting to repeat itself or when a capture changes the next target:
+
+- Skill: `.agents/skills/xenia-continual-harness-refiner/SKILL.md`.
+- Window builder:
+  `tools/thor/thor_continual_harness_review.ps1 -Mode Window`.
+- Scratch output:
+  `scratch/thor-debug/continual-harness-window.md` (do not commit it).
+- Research note:
+  `docs/research/20260523-125940-continual-harness-adaptation.md`.
+
+The portable idea from Continual Harness is recent trajectory window -> refiner
+pass -> conservative CRUD over prompt, local skills, memory notes, and tooling.
+For this repo, the trajectory window is worklogs, research notes, goal-loop
+state, git state, and capture metadata. The CRUD targets are `AGENTS.md`,
+repo-local skills, `tools/thor/thor_codex_goal_loop.ps1`, dated research
+memory, and deterministic analysis tools. Do not import Pokemon-specific code or
+let a refiner pass change emulator behavior without the normal experiment gate.
+
 ## Repo Facts As Of 2026-05-17
 
 - Origin is SSH: `git@github.com:noeldvictor/xenia-thor.git`.

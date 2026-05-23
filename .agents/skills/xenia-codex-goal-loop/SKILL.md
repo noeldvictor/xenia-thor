@@ -70,6 +70,17 @@ markers, and current sprint priorities. Use
 loop that makes each continuation produce code, capture evidence, analysis
 tooling, or a blocker with the next experiment.
 
+When the loop starts repeating stale experiments or a new capture changes the
+next target, use `.agents/skills/xenia-continual-harness-refiner/SKILL.md` and
+build a trajectory window:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_continual_harness_review.ps1 -Mode Window
+```
+
+Use the scratch window to make conservative prompt, skill, memory, or tooling
+CRUD updates before re-arming the loop.
+
 Disable:
 
 ```powershell

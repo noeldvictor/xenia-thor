@@ -72,6 +72,10 @@ Choose exactly one lane for the slice:
   `.agents/skills/xenia-blue-dragon-route-capture/SKILL.md`.
 - Risky behavior changes: run
   `.agents/skills/xenia-thor-experiment-gate/SKILL.md` first.
+- Harness refinement: use
+  `.agents/skills/xenia-continual-harness-refiner/SKILL.md` when recent slices
+  repeat stale lanes, the heartbeat/Stop-hook prompt is stale, or a capture
+  changes the next target.
 
 Prefer the lane with the newest hard evidence. Do not retry a rejected
 experiment unless a new audit, disassembly, or capture explains why the old
@@ -90,7 +94,9 @@ Each slice must leave at least one durable output:
 
 If no safe code change is obvious, improve the offline OODA loop first: parser,
 report, cvar audit, disassembly map, Ghidra queue, capture summarizer, or
-experiment ledger.
+experiment ledger. If the problem is stale process rather than missing data,
+run the continual-harness refiner window and update the local harness before
+another Thor run.
 
 ## Validation Ladder
 

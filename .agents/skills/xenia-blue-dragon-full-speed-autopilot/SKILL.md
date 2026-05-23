@@ -112,6 +112,9 @@ the continuation, then pick exactly one next lane:
   presenter, PM4, Vulkan, RenderDoc, or Adreno evidence;
 - use `.agents/skills/xenia-thor-experiment-gate/SKILL.md` before risky
   behavior changes.
+- use `.agents/skills/xenia-continual-harness-refiner/SKILL.md` when the
+  autopilot is repeating stale work or a new capture requires prompt/skill/tool
+  updates before the next slice.
 
 ## Current Best Next Move
 
