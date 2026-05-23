@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -576,6 +577,72 @@ const char* ThreadDebugStateName(ThreadDebugInfo::State state) {
     default:
       return "unknown";
   }
+}
+
+std::string TrimProcValue(std::string value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front()))) {
+    value.erase(value.begin());
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back()))) {
+    value.pop_back();
+  }
+  return value;
+}
+
+struct NativeThreadProcSnapshot {
+  bool live = false;
+  std::string name = "-";
+  std::string state = "-";
+};
+
+NativeThreadProcSnapshot QueryNativeThreadProcSnapshot(
+    uint32_t system_thread_id) {
+  NativeThreadProcSnapshot snapshot;
+  if (!system_thread_id) {
+    return snapshot;
+  }
+
+#if XE_PLATFORM_LINUX
+  const std::string task_path =
+      fmt::format("/proc/self/task/{}", system_thread_id);
+
+  std::ifstream comm_stream(task_path + "/comm");
+  if (comm_stream) {
+    snapshot.live = true;
+    std::string name;
+    if (std::getline(comm_stream, name)) {
+      snapshot.name = TrimProcValue(std::move(name));
+      if (snapshot.name.empty()) {
+        snapshot.name = "-";
+      }
+    }
+  }
+
+  std::ifstream status_stream(task_path + "/status");
+  if (status_stream) {
+    snapshot.live = true;
+    std::string line;
+    while (std::getline(status_stream, line)) {
+      if (line.rfind("Name:", 0) == 0 && snapshot.name == "-") {
+        snapshot.name = TrimProcValue(line.substr(5));
+        if (snapshot.name.empty()) {
+          snapshot.name = "-";
+        }
+      } else if (line.rfind("State:", 0) == 0) {
+        snapshot.state = TrimProcValue(line.substr(6));
+        if (snapshot.state.empty()) {
+          snapshot.state = "-";
+        }
+      }
+    }
+  }
+#else
+  (void)system_thread_id;
+#endif
+
+  return snapshot;
 }
 
 }  // namespace
@@ -1757,21 +1824,31 @@ void A64Backend::LogSpeedProfile() {
         have_owner_hint = true;
         owner_hint_source = "thread_id_or_handle";
       }
+      auto native_owner_snapshot =
+          QueryNativeThreadProcSnapshot(owner_system_thread_id);
+      auto hint_native_snapshot =
+          QueryNativeThreadProcSnapshot(owner_hint.system_thread_id);
       XELOGW(
           "A64 thread snapshot skipped: processor debug lock busy "
           "after_retries=20 last_global_owner_sys_tid={} "
           "last_global_owner_thread_id={:08X} global_lock_count={} "
           "owner_tid={:08X} owner_lr={:08X} owner_ctr={:08X} "
           "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X} "
+          "native_owner_live={} native_owner_name='{}' "
+          "native_owner_state='{}' "
           "owner_hint={} owner_hint_source={} owner_hint_sys_tid={} "
           "owner_hint_tid={:08X} owner_hint_handle={:08X} "
-          "owner_hint_state={}",
+          "owner_hint_state={} owner_hint_native_live={} "
+          "owner_hint_native_name='{}' owner_hint_native_state='{}'",
           owner_system_thread_id, owner_thread_id,
           owner.count, owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
-          owner.r4, have_owner_hint ? "hit" : "miss", owner_hint_source,
+          owner.r4, native_owner_snapshot.live ? "true" : "false",
+          native_owner_snapshot.name, native_owner_snapshot.state,
+          have_owner_hint ? "hit" : "miss", owner_hint_source,
           owner_hint.system_thread_id, owner_hint.thread_id,
-          owner_hint.thread_handle,
-          ThreadDebugStateName(owner_hint.state));
+          owner_hint.thread_handle, ThreadDebugStateName(owner_hint.state),
+          hint_native_snapshot.live ? "true" : "false",
+          hint_native_snapshot.name, hint_native_snapshot.state);
       return;
     }
     for (auto* thread_info : thread_infos) {

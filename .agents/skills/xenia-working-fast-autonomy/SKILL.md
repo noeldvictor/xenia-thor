@@ -383,6 +383,18 @@ capture and not a codegen patch. Improve zombie owner/native TID attribution,
 preferably by reporting whether `last_global_owner_sys_tid` is a live Android
 thread under `/proc/<pid>/task/<tid>` and by separating that live native owner
 from stale XThread hint fields.
+That attribution patch is implemented and validated:
+`docs/research/20260523-160650-a64-owner-native-tid-attribution.md`.
+`Processor::OnThreadNativeStarted()` updates thread debug hints with the real
+Linux `gettid()` after XThread startup, and the idle skip log now reports
+`/proc/self/task` liveness for owner and hint TIDs. Capture
+`scratch/thor-debug/20260523-160357-*` reproduced the black-idle on APK SHA
+`2E3D88F46BB709AA3A869634C24219FBBA0568695C1F4902693132701CF9EBE5`: the hint
+now matches by `system_tid` (`28245`), but that native task is gone and the
+cached XThread state is `zombie`. The next useful worker slice is diagnostic
+global critical-region ownership/lifetime attribution around the processor
+debug lock, not another unchanged 82490030 capture and not generated-code
+behavior.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

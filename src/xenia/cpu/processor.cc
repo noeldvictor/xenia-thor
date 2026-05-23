@@ -497,6 +497,23 @@ void Processor::OnThreadCreated(uint32_t thread_handle,
   thread_debug_infos_.emplace(thread_info->thread_id, std::move(thread_info));
 }
 
+void Processor::OnThreadNativeStarted(uint32_t thread_id,
+                                      uint32_t system_thread_id) {
+  if (!system_thread_id) {
+    return;
+  }
+
+  auto global_lock = global_critical_region_.Acquire();
+  auto it = thread_debug_infos_.find(thread_id);
+  if (it == thread_debug_infos_.end()) {
+    return;
+  }
+  auto* thread_info = it->second.get();
+  thread_info->system_thread_id = system_thread_id;
+  UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                        thread_info->thread_handle, thread_info->state);
+}
+
 void Processor::OnThreadExit(uint32_t thread_id) {
   auto global_lock = global_critical_region_.Acquire();
   auto it = thread_debug_infos_.find(thread_id);

@@ -698,6 +698,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   zombie owner/native TID attribution, especially live `/proc/<pid>/task/<tid>`
   mapping for `last_global_owner_sys_tid` and clearer separation from stale
   `owner_hint_sys_tid`.
+- A64 owner native-TID attribution:
+  `docs/research/20260523-160650-a64-owner-native-tid-attribution.md`.
+  Diagnostic patch `scratch/thor-debug/20260523-160357-*` deployed APK SHA
+  `2E3D88F46BB709AA3A869634C24219FBBA0568695C1F4902693132701CF9EBE5` and
+  reproduced the black-idle with clean fatal-marker search. The new idle line
+  fixed the stale Android `pthread_t` hint problem: `owner_hint_source=system_tid`
+  and `owner_hint_sys_tid=28245` now match `last_global_owner_sys_tid=28245`.
+  `/proc/self/task/28245` was already gone
+  (`native_owner_live=false`, `owner_hint_native_live=false`) while the cached
+  XThread was `owner_hint_state=zombie`. The next lane is not 82490030 codegen;
+  it is diagnostic global critical-region ownership/lifetime attribution around
+  the processor debug lock, so the next black-idle can tell stale last-owner
+  bookkeeping from a native thread exiting while holding the lock.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

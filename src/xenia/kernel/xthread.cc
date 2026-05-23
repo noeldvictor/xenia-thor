@@ -381,6 +381,8 @@ X_STATUS XThread::Create() {
   thread_ = xe::threading::Thread::Create(params, [this]() {
     // Set thread ID override. This is used by logging.
     xe::threading::set_current_thread_id(handle());
+    emulator()->processor()->OnThreadNativeStarted(
+        thread_id_, xe::threading::current_thread_system_id());
 
     // Set name immediately, if we have one.
     thread_->set_name(thread_name_);

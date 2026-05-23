@@ -527,6 +527,16 @@ Before any generated-code patch or repeated 82490030 capture, add better
 zombie owner/native TID attribution: live `/proc/<pid>/task/<tid>` lookup for
 `last_global_owner_sys_tid`, native thread name/state if available, and clear
 logging that distinguishes a live native owner from stale XThread hint fields.
+That diagnostic now exists:
+`docs/research/20260523-160650-a64-owner-native-tid-attribution.md`.
+`Processor::OnThreadNativeStarted()` replaces Android `pthread_t`-style thread
+hints with real Linux TIDs after XThread startup, and the A64 idle skip line
+checks `/proc/self/task` liveness for both the lock owner and hint TIDs.
+Validation `scratch/thor-debug/20260523-160357-*` reproduced the black-idle and
+reported `owner_hint_source=system_tid`, matching `28245`, with both native
+liveness probes false and `owner_hint_state=zombie`. Treat this as proof that
+the current blocker is global critical-region ownership/lifetime attribution,
+not an `82490030` codegen peephole.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

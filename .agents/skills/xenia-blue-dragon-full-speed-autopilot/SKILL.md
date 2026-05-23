@@ -118,14 +118,16 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: re-prove route
-stability with a no-disassembly delayed body-time control for
-`8227F1D8,82490030`. The route-clean `8227F1D8` call-edge split proves
-`82490030` almost fully explains the parent wall, but the first filtered
-`82490030` HIR/block capture black-idled before route progress. Do not repeat
-that exact filtered run unchanged, do not start a local `8227F1D8` or
-`82490030` peephole, and do not chase `826BFC7C` until fresh route evidence
-says to.
+Latest priority, superseding the older chronology below: improve diagnostic
+global critical-region ownership/lifetime attribution around the processor
+debug lock. The `82490030` filtered capture and no-disassembly control both
+black-idled, and the native-TID attribution patch proved the owner hint now
+matches the real Linux TID but that TID is already absent from
+`/proc/self/task` while the XThread hint is `zombie`. Do not rerun the exact
+`82490030` captures unchanged, do not start a local `8227F1D8` or `82490030`
+peephole, and do not chase `826BFC7C` until a fresh route-clean capture points
+there. Next slice should distinguish stale last-owner bookkeeping from a native
+thread exiting while holding the global critical region.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -387,6 +389,19 @@ capture unchanged and do not patch generated code from this evidence. Next
 slice should improve zombie owner/native TID attribution, especially live
 `/proc/<pid>/task/<last_global_owner_sys_tid>` mapping and clearer separation
 between the real native owner TID and stale XThread hint fields.
+That native-TID attribution patch now exists:
+`docs/research/20260523-160650-a64-owner-native-tid-attribution.md`.
+It adds `Processor::OnThreadNativeStarted()` so Android hints store the real
+Linux `gettid()` value after XThread startup, and it logs `/proc/self/task`
+liveness for the lock owner and hint TIDs. Validation capture
+`scratch/thor-debug/20260523-160357-*` used APK SHA
+`2E3D88F46BB709AA3A869634C24219FBBA0568695C1F4902693132701CF9EBE5` and
+reproduced the black-idle with clean fatal search. The new line reports
+`owner_hint_source=system_tid`, `owner_hint_sys_tid=28245` matching
+`last_global_owner_sys_tid=28245`, and both native liveness probes false while
+`owner_hint_state=zombie`. Next slice should instrument/audit global
+critical-region ownership and release lifetime around the processor debug lock,
+not patch 82490030 generated code.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

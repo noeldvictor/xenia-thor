@@ -207,6 +207,7 @@ class Processor {
   // TODO(benvanik): hide.
   void OnThreadCreated(uint32_t handle, ThreadState* thread_state,
                        Thread* thread);
+  void OnThreadNativeStarted(uint32_t thread_id, uint32_t system_thread_id);
   void OnThreadExit(uint32_t thread_id);
   void OnThreadDestroyed(uint32_t thread_id);
   void OnThreadEnteringWait(uint32_t thread_id);
