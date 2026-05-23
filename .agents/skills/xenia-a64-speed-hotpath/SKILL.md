@@ -497,6 +497,15 @@ is dominated by entry block `8227F1D8` (`body_ticks_total=4152240`, peak delta
 `1764204`) with two calls, `0x82490030` and `0x826BFC7C`. Next run should use
 `-Arm64SpeedProfileCallEdgeFilter 8227F1D8` and delayed body-time for
 `8227F1D8,82490030,826BFC7C` before a codegen patch.
+That call-edge split is now route-clean:
+`docs/research/20260523-153235-8227f1d8-call-edge-split.md`.
+`scratch/thor-debug/20260523-152754-*` reached visible opening and showed the
+hot child edge is `8227F1D8 -> 82490030`: final edge
+`body_ticks_total=4054641`, `calls_total=32107`, `ticks_per_call=72`. Final
+body-time was `8227F1D8 body_ticks_total=4117139` and
+`82490030 body_ticks_total=4007328`; `826BFC7C` was not a meaningful dynamic
+row. Next run should dump/profile `82490030` with delayed block body-time and
+`8227F1D8` as parent comparator.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

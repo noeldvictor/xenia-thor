@@ -349,6 +349,16 @@ Internal block body-time is dominated by block `8227F1D8`
 `0x82490030` and `0x826BFC7C`. The next useful worker slice is
 `-Arm64SpeedProfileCallEdgeFilter 8227F1D8` with delayed body-time for
 `8227F1D8,82490030,826BFC7C`, not a local peephole.
+That split now exists:
+`docs/research/20260523-153235-8227f1d8-call-edge-split.md`.
+Route-clean capture `scratch/thor-debug/20260523-152754-*` reached the visible
+opening route with no searched fatal markers. Final dynamic rows identify
+`8227F1D8 -> 82490030` as the child wall: parent
+`8227F1D8 body_ticks_total=4117139`, child
+`82490030 body_ticks_total=4007328`, edge `body_ticks_total=4054641`,
+`calls_total=32107`, and `ticks_per_call=72`. `826BFC7C` did not show as a
+meaningful dynamic row. The next useful worker slice is filtered `82490030`
+HIR plus delayed body/block-time with `8227F1D8` as parent comparator.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

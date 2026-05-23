@@ -654,6 +654,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   calls: `0x82490030` and `0x826BFC7C`. Next split those two edges with
   `-Arm64SpeedProfileCallEdgeFilter 8227F1D8` and delayed body-time for
   `8227F1D8,82490030,826BFC7C`; do not start a function-local peephole yet.
+- `8227F1D8` call-edge split:
+  `docs/research/20260523-153235-8227f1d8-call-edge-split.md`.
+  Route-clean capture `scratch/thor-debug/20260523-152754-*` reached visible
+  opening on APK SHA
+  `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5` with a
+  clean fatal-marker search. Final dynamic rows show `82490030` almost fully
+  explains `8227F1D8`: parent `8227F1D8 body_ticks_total=4117139`, child
+  `82490030 body_ticks_total=4007328`, and edge
+  `8227F1D8 -> 82490030 body_ticks_total=4054641`, `calls_total=32107`,
+  `ticks_per_call=72`. `826BFC7C` did not appear as a meaningful dynamic row
+  in this route. Next capture should dump/profile `82490030` with delayed
+  body/block-time and keep `8227F1D8` as the parent comparator; do not start a
+  local `8227F1D8` peephole yet.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

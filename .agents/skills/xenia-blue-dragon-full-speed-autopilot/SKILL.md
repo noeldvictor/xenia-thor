@@ -119,13 +119,12 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below: run a
-route-stabilized call-edge split for `8227F1D8`, with delayed body-time for
-`8227F1D8,82490030,826BFC7C` and
-`-Arm64SpeedProfileCallEdgeFilter 8227F1D8`. The route-clean filtered HIR and
-block body-time capture proves `8227F1D8` is real, but its measured wall is
-inclusive work in entry block `8227F1D8`, which calls `0x82490030` and
-`0x826BFC7C`. Do not start a function-local GPR/vector/CR peephole until the
-edge split names the actual callee wall.
+route-stabilized filtered HIR plus delayed body/block-time capture for
+`82490030`, keeping `8227F1D8` in the body-time filter as the parent
+comparator. The route-clean `8227F1D8` call-edge split proves `82490030` almost
+fully explains the parent wall, while `826BFC7C` did not show up as a
+meaningful dynamic row. Do not start a local `8227F1D8` peephole or chase
+`826BFC7C` until fresh route evidence says to.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -351,6 +350,16 @@ is almost entirely block `8227F1D8`: `body_ticks_total=4152240`, peak delta
 `1764204`, peak `ticks_per_entry=262`. That block has only `69` HIR
 instructions but two calls, `0x82490030` and `0x826BFC7C`, so the next slice is
 a call-edge split for `8227F1D8`, not a peephole.
+That call-edge split is now route-clean:
+`docs/research/20260523-153235-8227f1d8-call-edge-split.md`.
+`scratch/thor-debug/20260523-152754-*` reached visible opening and had a clean
+fatal-marker search. Final dynamic rows show `82490030` nearly fully explains
+the parent: `8227F1D8 body_ticks_total=4117139`,
+`82490030 body_ticks_total=4007328`, and
+`8227F1D8 -> 82490030 body_ticks_total=4054641`, `calls_total=32107`,
+`ticks_per_call=72`. `826BFC7C` did not appear as a meaningful dynamic row.
+The next slice should dump/profile `82490030` itself with delayed block
+body-time and `8227F1D8` as parent comparator before any codegen experiment.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
