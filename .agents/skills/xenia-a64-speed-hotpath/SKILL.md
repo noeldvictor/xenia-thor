@@ -461,10 +461,19 @@ TID to guest thread ID/handle before reporting `owner_hint_source`. NativeCore
 and FullDeploy passed; patched APK SHA is
 `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
 validation `scratch/thor-debug/20260523-000506-*` stayed alive at the loading
-spinner with clean fatal search, so the next useful A64 hotpath run is still
-the delayed `8227FEE8` block body-time capture on the patched APK. If it
-black-idles, inspect `last_global_owner_thread_id`, `owner_hint_source`, and
-`owner_hint_sys_tid` before codegen work.
+spinner with clean fatal search.
+
+The repeated delayed block body-time capture is now route-clean:
+`docs/research/20260523-122718-8227fee8-block-body-time-route-clean.md`.
+`scratch/thor-debug/20260523-122223-*` reached the visible opening sky/wing
+route with clean fatal search. Final `8227FEE8` body row:
+`body_ticks_total=6914659`, `body_ticks_delta=1871176`, `entries_delta=2041`,
+`ticks_per_entry=916`, `code_size=71868`. The hot internal block is
+`822809F4`, not the stale static vector-heavy blocks: `body_total=1937201`,
+peak `665665`, calls to `0x8227F1D8` and `0x8247BE20`. Next A64 hotpath run
+should split those callees using delayed body-time plus
+`-Arm64SpeedProfileCallEdgeFilter 8227FEE8`; do not start the `82280A68` /
+`82280E1C` vector peephole until callee evidence says it matters.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

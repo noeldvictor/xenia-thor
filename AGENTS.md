@@ -590,9 +590,22 @@ required.
   `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`.
   Short validation capture `scratch/thor-debug/20260523-000506-*` stayed
   active at the loading spinner with clean fatal search, so it build/deploy
-  validated the patch but did not exercise the new idle line. Next repeat the
-  delayed `8227FEE8` block body-time capture on the patched APK; if it
-  black-idles, inspect the new owner fields before changing guest codegen.
+  validated the patch but did not exercise the new idle line.
+- `8227FEE8` route-clean block body-time:
+  `docs/research/20260523-122718-8227fee8-block-body-time-route-clean.md`.
+  Capture `scratch/thor-debug/20260523-122223-*` reached the visible opening
+  sky/wing route on APK SHA
+  `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5` with a
+  clean fatal-marker search. It finally produced delayed `8227FEE8` block
+  body-time rows. Final `8227FEE8` function row:
+  `body_ticks_total=6914659`, `body_ticks_delta=1871176`,
+  `entries_delta=2041`, `ticks_per_entry=916`, `code_size=71868`.
+  Internal block body-time points away from the stale `82280A68` /
+  `82280E1C` vector peephole for now. The dynamic wall is call-heavy block
+  `822809F4` (`body_total=1937201`, peak `665665`, peak
+  `ticks_per_entry=128`) with direct calls to `0x8227F1D8` and
+  `0x8247BE20`. Next split those callees with a delayed body-time/call-edge
+  capture for `8227FEE8,8227F1D8,8247BE20` before writing a codegen patch.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

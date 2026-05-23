@@ -313,9 +313,18 @@ as well as native TID, and logs `owner_hint_source` plus
 `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
 validation `scratch/thor-debug/20260523-000506-*` stayed active at loading
 with clean fatal search, so the new idle line still needs a black-idle capture.
-Next repeat delayed `8227FEE8` block body-time on the patched APK. If it
-black-idles, inspect `last_global_owner_thread_id`, `owner_hint_source`, and
-`owner_hint_sys_tid` before guest codegen changes.
+The repeated delayed block body-time capture is now route-clean:
+`docs/research/20260523-122718-8227fee8-block-body-time-route-clean.md`.
+`scratch/thor-debug/20260523-122223-*` reached the visible opening sky/wing
+route, had a clean fatal-marker search, and produced `8227FEE8` body/block
+rows. Final `8227FEE8` body row: `body_ticks_total=6914659`,
+`body_ticks_delta=1871176`, `entries_delta=2041`, `ticks_per_entry=916`,
+`code_size=71868`. Dynamic block body-time says do not start the stale
+`82280A68` / `82280E1C` vector peephole yet. The internal wall is call-heavy
+block `822809F4` (`body_total=1937201`, peak `665665`, peak
+`ticks_per_entry=128`) with direct calls to `0x8227F1D8` and `0x8247BE20`.
+Next split those callees with delayed body-time and
+`-Arm64SpeedProfileCallEdgeFilter 8227FEE8` before a codegen patch.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

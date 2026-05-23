@@ -311,9 +311,18 @@ passed; patched APK SHA is
 `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
 validation `scratch/thor-debug/20260523-000506-*` stayed active at the loading
 spinner with clean fatal search, so the new owner fields are not exercised yet.
-Next worker slice should repeat delayed `8227FEE8` block body-time on the
-patched APK; if it black-idles, use the new owner fields before changing guest
-codegen.
+That repeat is now route-clean:
+`docs/research/20260523-122718-8227fee8-block-body-time-route-clean.md`.
+`scratch/thor-debug/20260523-122223-*` reached the visible opening sky/wing
+route with clean fatal search and produced delayed `8227FEE8` body/block rows.
+Final `8227FEE8` body row: `body_ticks_total=6914659`,
+`body_ticks_delta=1871176`, `entries_delta=2041`, `ticks_per_entry=916`,
+`code_size=71868`. Dynamic body-time inside `8227FEE8` is not the stale static
+vector-heavy blocks; it is call-heavy block `822809F4`
+(`body_total=1937201`, peak `665665`) calling `0x8227F1D8` and `0x8247BE20`.
+Next worker slice should split those callees with delayed body-time and
+`-Arm64SpeedProfileCallEdgeFilter 8227FEE8`, then choose a default-off
+function-gated codegen experiment from the callee evidence.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
