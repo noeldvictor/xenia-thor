@@ -642,6 +642,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `8227F1D8` itself with delayed body/block-time; do not start the old
   `82280A68` / `82280E1C` vector peephole or broad GPR cache from this
   evidence alone.
+- `8227F1D8` filtered HIR and block body-time:
+  `docs/research/20260523-131338-8227f1d8-filtered-hir-block-body-time.md`.
+  Route-clean capture `scratch/thor-debug/20260523-130934-*` reached visible
+  opening, emitted warning-level `8227F1D8` OptHIR, and had a clean
+  fatal-marker search. Final `8227F1D8` row:
+  `body_ticks_total=4238549`, `body_ticks_delta=907049`,
+  `entries_delta=9675`, `ticks_per_entry=93`, `code_size=28180`. Internal
+  block body-time is almost entirely block `8227F1D8`
+  (`body_ticks_total=4152240`, peak delta `1764204`), and that block has two
+  calls: `0x82490030` and `0x826BFC7C`. Next split those two edges with
+  `-Arm64SpeedProfileCallEdgeFilter 8227F1D8` and delayed body-time for
+  `8227F1D8,82490030,826BFC7C`; do not start a function-local peephole yet.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

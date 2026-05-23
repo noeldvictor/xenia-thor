@@ -119,13 +119,13 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below: run a
-route-stabilized filtered HIR plus delayed body/block-time capture for
-`8227F1D8`, keeping `8227FEE8` in the body-time filter as the parent comparator.
-The route-clean callee split proves `8227F1D8` is the next measured child wall
-under `8227FEE8`; `8247BE20` is tiny in this route. Do not start the old
-`82280A68` / `82280E1C` vector peephole, a broad GPR cache, or another r1
-live-in retry until `8227F1D8` HIR and block body-time say what shape is
-actually hot.
+route-stabilized call-edge split for `8227F1D8`, with delayed body-time for
+`8227F1D8,82490030,826BFC7C` and
+`-Arm64SpeedProfileCallEdgeFilter 8227F1D8`. The route-clean filtered HIR and
+block body-time capture proves `8227F1D8` is real, but its measured wall is
+inclusive work in entry block `8227F1D8`, which calls `0x82490030` and
+`0x826BFC7C`. Do not start a function-local GPR/vector/CR peephole until the
+edge split names the actual callee wall.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -341,6 +341,16 @@ is `822809F4 -> 8227F1D8`: `calls_total=26098`,
 `body_ticks_total=2031295`, peak delta `1137492`, peak
 `ticks_per_call=216`. The next slice should dump/profile `8227F1D8` itself
 with delayed block body-time before any codegen experiment.
+That filtered HIR and block body-time capture is now route-clean:
+`docs/research/20260523-131338-8227f1d8-filtered-hir-block-body-time.md`.
+`scratch/thor-debug/20260523-130934-*` reached visible opening, emitted
+`8227F1D8` OptHIR, and had a clean fatal search. Final `8227F1D8` function row:
+`body_ticks_total=4238549`, `body_ticks_delta=907049`,
+`entries_delta=9675`, `ticks_per_entry=93`, `code_size=28180`. Block body-time
+is almost entirely block `8227F1D8`: `body_ticks_total=4152240`, peak delta
+`1764204`, peak `ticks_per_entry=262`. That block has only `69` HIR
+instructions but two calls, `0x82490030` and `0x826BFC7C`, so the next slice is
+a call-edge split for `8227F1D8`, not a peephole.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

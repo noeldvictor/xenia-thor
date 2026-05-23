@@ -487,6 +487,16 @@ call-edge rows under `8227FEE8` identify `822809F4 -> 8227F1D8` as the wall:
 `8227F1D8` HIR dump and delayed block body-time, with `8227FEE8` kept as a
 parent comparator. If it black-idles, use the owner attribution fields before
 changing generated code.
+That filtered HIR/block body-time run is now route-clean:
+`docs/research/20260523-131338-8227f1d8-filtered-hir-block-body-time.md`.
+`scratch/thor-debug/20260523-130934-*` reached visible opening and dumped
+`8227F1D8` OptHIR. Final `8227F1D8` body row:
+`body_ticks_total=4238549`, `body_ticks_delta=907049`,
+`entries_delta=9675`, `ticks_per_entry=93`, `code_size=28180`. Block body-time
+is dominated by entry block `8227F1D8` (`body_ticks_total=4152240`, peak delta
+`1764204`) with two calls, `0x82490030` and `0x826BFC7C`. Next run should use
+`-Arm64SpeedProfileCallEdgeFilter 8227F1D8` and delayed body-time for
+`8227F1D8,82490030,826BFC7C` before a codegen patch.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

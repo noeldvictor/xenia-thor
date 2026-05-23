@@ -340,6 +340,15 @@ edge rows show `822809F4 -> 8227F1D8` at `body_ticks_total=2031295`, peak
 delta `1137492`, and peak `ticks_per_call=216`. The next useful worker slice
 is filtered `8227F1D8` HIR plus delayed body/block-time; no codegen patch
 should start until that report names the actual hot shape.
+That report now exists:
+`docs/research/20260523-131338-8227f1d8-filtered-hir-block-body-time.md`.
+Route-clean capture `scratch/thor-debug/20260523-130934-*` emitted
+`8227F1D8` OptHIR and measured final `8227F1D8 body_ticks_total=4238549`.
+Internal block body-time is dominated by block `8227F1D8`
+(`body_ticks_total=4152240`, peak `1764204`), whose only direct calls are
+`0x82490030` and `0x826BFC7C`. The next useful worker slice is
+`-Arm64SpeedProfileCallEdgeFilter 8227F1D8` with delayed body-time for
+`8227F1D8,82490030,826BFC7C`, not a local peephole.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
