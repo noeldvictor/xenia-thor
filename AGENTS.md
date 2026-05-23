@@ -575,6 +575,24 @@ required.
   `-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`;
   do not start broad r1/GPR cache or vector peepholes without that block
   attribution.
+- `8227FEE8` block body-time black-idle and owner attribution:
+  `docs/research/20260523-001018-a64-owner-thread-id-attribution.md`.
+  Capture `scratch/thor-debug/20260522-235449-*` attempted delayed
+  `8227FEE8` function/block body-time but black-idled before useful target
+  rows: screenshot black, no searched fatal markers, and no `8227FEE8` body or
+  block rows after activation. The idle line again reported a busy processor
+  debug lock with `last_global_owner_sys_tid=14186` and `owner_hint=miss`.
+  Diagnostic patch now records both native system TID and
+  `xe::threading::current_thread_id()` for the global critical-region owner,
+  lets `Processor` query the lock-free thread hint cache by guest thread ID or
+  handle, and logs `last_global_owner_thread_id`, `owner_hint_source`, and
+  `owner_hint_sys_tid`. NativeCore and FullDeploy passed; patched APK SHA
+  `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`.
+  Short validation capture `scratch/thor-debug/20260523-000506-*` stayed
+  active at the loading spinner with clean fatal search, so it build/deploy
+  validated the patch but did not exercise the new idle line. Next repeat the
+  delayed `8227FEE8` block body-time capture on the patched APK; if it
+  black-idles, inspect the new owner fields before changing guest codegen.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

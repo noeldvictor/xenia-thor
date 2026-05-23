@@ -629,6 +629,37 @@ bool Processor::TryGetThreadDebugHintBySystemThreadId(
   return false;
 }
 
+bool Processor::TryGetThreadDebugHintByThreadIdOrHandle(
+    uint32_t thread_id_or_handle, ThreadDebugHint* out_hint) const {
+  if (!thread_id_or_handle || !out_hint) {
+    return false;
+  }
+
+  for (const auto& slot : thread_debug_hint_slots_) {
+    const uint32_t slot_system_thread_id =
+        slot.system_thread_id.load(std::memory_order_acquire);
+    if (!slot_system_thread_id) {
+      continue;
+    }
+    const uint32_t slot_thread_id =
+        slot.thread_id.load(std::memory_order_relaxed);
+    const uint32_t slot_thread_handle =
+        slot.thread_handle.load(std::memory_order_relaxed);
+    if (slot_thread_id != thread_id_or_handle &&
+        slot_thread_handle != thread_id_or_handle) {
+      continue;
+    }
+    out_hint->system_thread_id = slot_system_thread_id;
+    out_hint->thread_id = slot_thread_id;
+    out_hint->thread_handle = slot_thread_handle;
+    out_hint->state = static_cast<ThreadDebugInfo::State>(
+        slot.state.load(std::memory_order_relaxed));
+    return true;
+  }
+
+  return false;
+}
+
 ThreadDebugInfo* Processor::QueryThreadDebugInfo(uint32_t thread_id) {
   auto global_lock = global_critical_region_.Acquire();
   const auto& it = thread_debug_infos_.find(thread_id);

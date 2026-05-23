@@ -148,6 +148,8 @@ class Processor {
   };
   bool TryGetThreadDebugHintBySystemThreadId(
       uint32_t system_thread_id, ThreadDebugHint* out_hint) const;
+  bool TryGetThreadDebugHintByThreadIdOrHandle(
+      uint32_t thread_id_or_handle, ThreadDebugHint* out_hint) const;
 
   // Returns the debugger info for the given thread.
   ThreadDebugInfo* QueryThreadDebugInfo(uint32_t thread_id);

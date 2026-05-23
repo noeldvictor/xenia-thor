@@ -301,6 +301,21 @@ next move: delayed block body-time for `8227FEE8` with
 `-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`.
 Do not start a broad GPR cache, r1 live-in retry, or vector peephole until that
 block attribution says which internal blocks actually burn time.
+The first delayed `8227FEE8` block body-time run black-idled before target rows:
+`docs/research/20260523-001018-a64-owner-thread-id-attribution.md`.
+`scratch/thor-debug/20260522-235449-*` had a black screenshot, clean fatal
+search, no `8227FEE8` body/block rows after activation, and another busy
+processor debug-lock skip with `last_global_owner_sys_tid=14186` plus
+`owner_hint=miss`. A diagnostic patch now records
+`last_global_owner_thread_id`, queries owner hints by guest thread ID or handle
+as well as native TID, and logs `owner_hint_source` plus
+`owner_hint_sys_tid`. NativeCore and FullDeploy passed; patched APK SHA is
+`962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
+validation `scratch/thor-debug/20260523-000506-*` stayed active at loading
+with clean fatal search, so the new idle line still needs a black-idle capture.
+Next repeat delayed `8227FEE8` block body-time on the patched APK. If it
+black-idles, inspect `last_global_owner_thread_id`, `owner_hint_source`, and
+`owner_hint_sys_tid` before guest codegen changes.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

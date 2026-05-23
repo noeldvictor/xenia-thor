@@ -450,6 +450,22 @@ Use that to choose between a function/block-gated vector load/store lowering
 patch, a tightly audited GPR state-traffic reduction, or more idle-owner
 instrumentation if the route flatlines again.
 
+The first delayed `8227FEE8` block body-time capture flatlined before block
+rows: `docs/research/20260523-001018-a64-owner-thread-id-attribution.md`.
+`scratch/thor-debug/20260522-235449-*` had a black screenshot, clean fatal
+search, no `8227FEE8` body/block rows, and idle skip
+`last_global_owner_sys_tid=14186 owner_hint=miss`. The diagnostic patch now
+records `last_global_owner_thread_id` from `xe::threading::current_thread_id()`
+alongside the native owner TID, and A64 idle-skip lookup falls back from native
+TID to guest thread ID/handle before reporting `owner_hint_source`. NativeCore
+and FullDeploy passed; patched APK SHA is
+`962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
+validation `scratch/thor-debug/20260523-000506-*` stayed alive at the loading
+spinner with clean fatal search, so the next useful A64 hotpath run is still
+the delayed `8227FEE8` block body-time capture on the patched APK. If it
+black-idles, inspect `last_global_owner_thread_id`, `owner_hint_source`, and
+`owner_hint_sys_tid` before codegen work.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

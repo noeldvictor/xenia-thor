@@ -1744,21 +1744,34 @@ void A64Backend::LogSpeedProfile() {
       auto owner = ppc::QueryGlobalLockOwnerSnapshot();
       const uint32_t owner_system_thread_id =
           xe::global_critical_region::last_owner_system_thread_id();
+      const uint32_t owner_thread_id =
+          xe::global_critical_region::last_owner_thread_id();
       Processor::ThreadDebugHint owner_hint;
-      const bool have_owner_hint =
-          processor()->TryGetThreadDebugHintBySystemThreadId(
-              owner_system_thread_id, &owner_hint);
+      const char* owner_hint_source = "miss";
+      bool have_owner_hint = processor()->TryGetThreadDebugHintBySystemThreadId(
+          owner_system_thread_id, &owner_hint);
+      if (have_owner_hint) {
+        owner_hint_source = "system_tid";
+      } else if (processor()->TryGetThreadDebugHintByThreadIdOrHandle(
+                     owner_thread_id, &owner_hint)) {
+        have_owner_hint = true;
+        owner_hint_source = "thread_id_or_handle";
+      }
       XELOGW(
           "A64 thread snapshot skipped: processor debug lock busy "
-          "after_retries=20 last_global_owner_sys_tid={} global_lock_count={} "
+          "after_retries=20 last_global_owner_sys_tid={} "
+          "last_global_owner_thread_id={:08X} global_lock_count={} "
           "owner_tid={:08X} owner_lr={:08X} owner_ctr={:08X} "
           "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X} "
-          "owner_hint={} owner_hint_tid={:08X} owner_hint_handle={:08X} "
+          "owner_hint={} owner_hint_source={} owner_hint_sys_tid={} "
+          "owner_hint_tid={:08X} owner_hint_handle={:08X} "
           "owner_hint_state={}",
-          owner_system_thread_id,
+          owner_system_thread_id, owner_thread_id,
           owner.count, owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
-          owner.r4, have_owner_hint ? "hit" : "miss", owner_hint.thread_id,
-          owner_hint.thread_handle, ThreadDebugStateName(owner_hint.state));
+          owner.r4, have_owner_hint ? "hit" : "miss", owner_hint_source,
+          owner_hint.system_thread_id, owner_hint.thread_id,
+          owner_hint.thread_handle,
+          ThreadDebugStateName(owner_hint.state));
       return;
     }
     for (auto* thread_info : thread_infos) {

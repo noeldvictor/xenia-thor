@@ -300,6 +300,20 @@ black-idled with clean fatal search and `owner_hint=miss` for
 `8227FEE8` block body-time with
 `-Arm64SpeedProfileBlockFilter 8227FEE8` and
 `-Arm64SpeedProfileBlockBodyTime true` before any codegen experiment.
+That delayed block body-time run black-idled before useful target rows:
+`docs/research/20260523-001018-a64-owner-thread-id-attribution.md`.
+`scratch/thor-debug/20260522-235449-*` had no searched fatal markers but no
+`8227FEE8` body/block rows and a black screenshot. The idle owner line reported
+`last_global_owner_sys_tid=14186` and `owner_hint=miss`. A diagnostic patch now
+adds `last_global_owner_thread_id`, guest thread-ID/handle hint lookup, and
+`owner_hint_source` / `owner_hint_sys_tid` fields. NativeCore and FullDeploy
+passed; patched APK SHA is
+`962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`. Short
+validation `scratch/thor-debug/20260523-000506-*` stayed active at the loading
+spinner with clean fatal search, so the new owner fields are not exercised yet.
+Next worker slice should repeat delayed `8227FEE8` block body-time on the
+patched APK; if it black-idles, use the new owner fields before changing guest
+codegen.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

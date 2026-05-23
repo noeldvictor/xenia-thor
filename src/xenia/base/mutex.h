@@ -58,6 +58,7 @@ class global_critical_region {
   static std::recursive_mutex& mutex();
   static void NoteOwner();
   static uint32_t last_owner_system_thread_id();
+  static uint32_t last_owner_thread_id();
 
   // Acquires a lock on the global critical section.
   // Use this when keeping an instance is not possible. Otherwise, prefer
