@@ -369,6 +369,20 @@ screenshot. The idle line reported a busy processor debug lock with
 Next useful worker slice is a no-disassembly delayed body-time control for
 `8227F1D8,82490030`; if that also black-idles, improve zombie owner/native TID
 attribution before changing generated code.
+That no-disassembly control also black-idled:
+`docs/research/20260523-155012-82490030-control-black-idle.md`.
+Capture `scratch/thor-debug/20260523-154626-*` had no disassembly filter and
+used delayed body-time for `8227F1D8,82490030`, but still produced no target
+body rows and ended black with a clean fatal search. The counters dropped to
+`entry_delta=0` by `15:47:15` and stayed flat. The idle skip line again points
+at `last_global_owner_thread_id=F80002E8`, `owner_hint=hit`,
+`owner_hint_source=thread_id_or_handle`, and `owner_hint_state=zombie`; it also
+logged `last_global_owner_sys_tid=20126` while `owner_hint_sys_tid=946810032`
+looks stale. The next useful worker slice is not another unchanged 82490030
+capture and not a codegen patch. Improve zombie owner/native TID attribution,
+preferably by reporting whether `last_global_owner_sys_tid` is a live Android
+thread under `/proc/<pid>/task/<tid>` and by separating that live native owner
+from stale XThread hint fields.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

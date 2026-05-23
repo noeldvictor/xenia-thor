@@ -514,6 +514,19 @@ reported `last_global_owner_thread_id=F80002E8`, `owner_hint=hit`, and
 `owner_hint_state=zombie`. Next run should be a no-disassembly delayed
 body-time control for `8227F1D8,82490030`, not another unchanged filtered dump
 or a codegen patch.
+That control is also a black-idle:
+`docs/research/20260523-155012-82490030-control-black-idle.md`.
+`scratch/thor-debug/20260523-154626-*` used no disassembly filter and delayed
+body-time for `8227F1D8,82490030`, but no target body rows landed, the final
+screenshot was black, and fatal-marker search was clean. Activity fell from
+`entry_delta=3843047` to `189129`, then `0` from `15:47:15` onward. The owner
+line repeated `last_global_owner_thread_id=F80002E8`,
+`owner_hint_source=thread_id_or_handle`, and `owner_hint_state=zombie`, while
+`last_global_owner_sys_tid=20126` and `owner_hint_sys_tid=946810032` disagree.
+Before any generated-code patch or repeated 82490030 capture, add better
+zombie owner/native TID attribution: live `/proc/<pid>/task/<tid>` lookup for
+`last_global_owner_sys_tid`, native thread name/state if available, and clear
+logging that distinguishes a live native owner from stale XThread hint fields.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

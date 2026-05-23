@@ -372,6 +372,21 @@ attribution reported a busy processor debug lock with
 next slice should run a no-disassembly delayed body-time control for
 `8227F1D8,82490030`; if that also black-idles, improve zombie owner/native TID
 attribution before changing generated code.
+That no-disassembly control also black-idled:
+`docs/research/20260523-155012-82490030-control-black-idle.md`.
+`scratch/thor-debug/20260523-154626-*` used the same APK SHA
+`962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`, no
+disassembly filter, delayed body-time for `8227F1D8,82490030`, and
+`arm64_context_promotion_gpr_livein_r1=false`. It produced no target body rows,
+ended on a black screenshot with clean fatal search, and flatlined from
+`15:47:15` onward. Idle attribution again points at
+`last_global_owner_thread_id=F80002E8` with `owner_hint=hit`,
+`owner_hint_source=thread_id_or_handle`, `owner_hint_state=zombie`, and a
+suspect stale `owner_hint_sys_tid=946810032`. Do not repeat either 82490030
+capture unchanged and do not patch generated code from this evidence. Next
+slice should improve zombie owner/native TID attribution, especially live
+`/proc/<pid>/task/<last_global_owner_sys_tid>` mapping and clearer separation
+between the real native owner TID and stale XThread hint fields.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

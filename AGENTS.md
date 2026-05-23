@@ -679,10 +679,25 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `owner_hint=hit`, `owner_hint_source=thread_id_or_handle`,
   `owner_hint_tid=00000016`, `owner_hint_handle=F80002E8`, and
   `owner_hint_state=zombie`. Do not repeat this exact filtered run unchanged
-  and do not patch `82490030` from it. Next prove route stability with a
-  no-disassembly delayed body-time control for `8227F1D8,82490030`; if that
-  also black-idles, improve zombie owner/native TID attribution before changing
-  generated code.
+  and do not patch `82490030` from it.
+- `82490030` no-disassembly control black-idle:
+  `docs/research/20260523-155012-82490030-control-black-idle.md`. Capture
+  `scratch/thor-debug/20260523-154626-*` used the same APK SHA
+  `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5`, no
+  disassembly filter, delayed body-time for `8227F1D8,82490030`, and
+  `arm64_context_promotion_gpr_livein_r1=false`. It also black-idled before
+  visible route progress: fatal-marker search was clean, no `8227F1D8` or
+  `82490030` body rows landed, final screenshot was black, and counters went
+  flat by `15:47:15`. Idle attribution repeated the same zombied owner path:
+  `last_global_owner_sys_tid=20126`, `last_global_owner_thread_id=F80002E8`,
+  `owner_hint=hit`, `owner_hint_source=thread_id_or_handle`,
+  `owner_hint_sys_tid=946810032`, `owner_hint_tid=00000016`,
+  `owner_hint_handle=F80002E8`, and `owner_hint_state=zombie`. Do not rerun the
+  exact filtered `82490030` capture or the exact no-disassembly control
+  unchanged, and do not patch generated code from this evidence. Next improve
+  zombie owner/native TID attribution, especially live `/proc/<pid>/task/<tid>`
+  mapping for `last_global_owner_sys_tid` and clearer separation from stale
+  `owner_hint_sys_tid`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
