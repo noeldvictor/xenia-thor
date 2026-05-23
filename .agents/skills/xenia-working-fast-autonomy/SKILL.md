@@ -249,6 +249,20 @@ call-edge cvars default-off, but use `-Arm64SpeedProfileBodyTimeFilter` with
 `82282490` and `-Arm64SpeedProfileBodyTimeAfterMs 120000` for future edge
 captures on this route. Next useful slice is a focused `8227FEE8` HIR/body-time
 capture or a recursive child-path audit from the proven edge rows.
+Focused `8227FEE8` body-time evidence now exists:
+`docs/research/20260522-193049-8227fee8-focused-capture.md`. Route-clean
+capture `scratch/thor-debug/20260522-191427-*` reached visible opening with no
+searched fatal markers and measured `8227FEE8` at
+`body_ticks_total=3650429`, peak delta `1408271`, peak `ticks_per_entry=738`,
+and code size `49804`; `82282490` remained dominant at
+`body_ticks_total=25866736`. HIR was missing because filtered dumps were
+info-level under the stable `log_level=1` lane; `-LogLevel 0` black-idled. The
+filtered dump path now logs at warning level and Thor metadata records
+`disassemble_function_filter`, but first patched filtered run
+`scratch/thor-debug/20260522-192429-*` black-idled before route progress. Next
+worker slice should not rerun that exact capture unchanged; prove patched APK
+route safety with a no-filter control, do a control-sandwiched filtered capture,
+or switch to offline guest/Ghidra analysis for `8227FEE8`.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

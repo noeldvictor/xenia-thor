@@ -1069,6 +1069,8 @@ function Write-CaptureMetadata {
         "simpleperf_call_graph=$SimpleperfCallGraph",
         "simpleperf_percent_limit=$SimpleperfPercentLimit",
         "shader_dump_device_path=$script:ActiveDumpShadersPath",
+        "disassemble_functions=$DisassembleFunctions",
+        "disassemble_function_filter=$DisassembleFunctionFilter",
         "arm64_speed_profile_interval_ms=$Arm64SpeedProfileIntervalMs",
         "arm64_speed_profile_top_functions=$Arm64SpeedProfileTopFunctions",
         "arm64_speed_profile_min_delta=$Arm64SpeedProfileMinDelta",
@@ -1787,6 +1789,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileIntervalMs) {
             Write-Output "A64 speed profile interval: ${Arm64SpeedProfileIntervalMs}ms"
+        }
+        if ($DisassembleFunctionFilter) {
+            Write-Output "Disassemble function filter: $DisassembleFunctionFilter"
         }
         if ($Arm64SpeedProfileBodyTimeFilter) {
             Write-Output "A64 body-time filter: $Arm64SpeedProfileBodyTimeFilter"

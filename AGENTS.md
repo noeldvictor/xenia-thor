@@ -512,6 +512,23 @@ required.
   `-Arm64SpeedProfileBodyTimeAfterMs 120000`. Next priority is a focused
   `8227FEE8` HIR/body-time capture or a recursive-child-path audit from the
   proven edge rows, not the stale `822824F0` `stvewx` peephole.
+- `8227FEE8` focused capture:
+  `docs/research/20260522-193049-8227fee8-focused-capture.md`.
+  Route-clean capture `scratch/thor-debug/20260522-191427-*` reached the visible
+  opening sky/wing route with no searched fatal markers and measured
+  `8227FEE8` as a real secondary child target (`body_ticks_total=3650429`,
+  peak delta `1408271`, peak `ticks_per_entry=738`, code size `49804`), while
+  `82282490` still dominated (`body_ticks_total=25866736`). The capture did not
+  include HIR because the stable speed lane uses `log_level=1` and filtered
+  dumps were info-level. A `-LogLevel 0` retry `scratch/thor-debug/20260522-191832-*`
+  black-idled before useful route progress. Filtered function dumps now log at
+  warning level and `tools/thor/thor_xenia_debug.ps1` records the disassembly
+  filter in metadata, but first patched filtered run
+  `scratch/thor-debug/20260522-192429-*` black-idled before `82282490` and
+  emitted no HIR/body rows. Keep the tooling patch, do not rerun that exact
+  capture unchanged, and next prove patched APK route safety with a no-filter
+  control or a control-sandwiched filtered capture before relying on
+  `8227FEE8` HIR.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

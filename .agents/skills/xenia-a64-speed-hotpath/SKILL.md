@@ -398,6 +398,21 @@ default-off. Future edge captures for this opening route should include
 `8227FEE8` dump/body-time capture or a recursive-child-path audit from these
 proven edge rows.
 
+The first focused `8227FEE8` body-time capture is
+`docs/research/20260522-193049-8227fee8-focused-capture.md`.
+`scratch/thor-debug/20260522-191427-*` reached the visible opening sky/wing
+route with no searched fatal markers and measured `8227FEE8` at
+`body_ticks_total=3650429`, peak delta `1408271`, peak `ticks_per_entry=738`,
+and code size `49804`; `82282490` was still larger at
+`body_ticks_total=25866736`. The focused HIR report returned `hir_lines=0`
+because filtered dumps were info-level while speed captures run at
+`log_level=1`. A `-LogLevel 0` retry black-idled. Filtered dumps now log at
+warning level and capture metadata records `disassemble_function_filter`, but
+the first patched filtered run `scratch/thor-debug/20260522-192429-*`
+black-idled before useful route progress. Do not rerun that exact capture
+unchanged. Before using `8227FEE8` HIR for codegen, run a patched no-filter
+control or a control-sandwiched filtered capture with delayed body-time.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

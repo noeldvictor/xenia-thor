@@ -147,7 +147,7 @@ void LogTextBlockLineByLine(uint32_t function_address, const char* label,
     return;
   }
 
-  XELOGI("Filtered function dump {:08X} {} begins", function_address, label);
+  XELOGW("Filtered function dump {:08X} {} begins", function_address, label);
   const char* line_start = text;
   while (*line_start) {
     const char* line_end = line_start;
@@ -155,13 +155,13 @@ void LogTextBlockLineByLine(uint32_t function_address, const char* label,
       ++line_end;
     }
     if (line_end != line_start) {
-      XELOGI("Filtered function dump {:08X} {}: {}", function_address, label,
+      XELOGW("Filtered function dump {:08X} {}: {}", function_address, label,
              std::string_view(line_start,
                               static_cast<size_t>(line_end - line_start)));
     }
     line_start = *line_end == '\n' ? line_end + 1 : line_end;
   }
-  XELOGI("Filtered function dump {:08X} {} ends", function_address, label);
+  XELOGW("Filtered function dump {:08X} {} ends", function_address, label);
 }
 
 void LogFilteredFunctionDebugInfo(GuestFunction* function,
@@ -171,7 +171,7 @@ void LogFilteredFunctionDebugInfo(GuestFunction* function,
   }
 
   const uint32_t address = function->address();
-  XELOGI("Filtered function dump {:08X}-{:08X} {}", address,
+  XELOGW("Filtered function dump {:08X}-{:08X} {}", address,
          function->end_address(), function->name());
   LogTextBlockLineByLine(address, "PPC", debug_info->source_disasm());
   LogTextBlockLineByLine(address, "RawHIR", debug_info->raw_hir_disasm());

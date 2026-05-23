@@ -238,6 +238,20 @@ captures for this route should include `-Arm64SpeedProfileBodyTimeFilter` with
 `82282490` and `-Arm64SpeedProfileBodyTimeAfterMs 120000`. Next slice should
 focus `8227FEE8` or the recursive `822825E0 -> 82282490` child path using the
 proven edge evidence, not the stale `822824F0` `stvewx` peephole.
+The focused `8227FEE8` capture now exists:
+`docs/research/20260522-193049-8227fee8-focused-capture.md`. Route-clean
+capture `scratch/thor-debug/20260522-191427-*` reached the visible opening
+sky/wing route with no searched fatal markers and measured `8227FEE8` at
+`body_ticks_total=3650429`, peak delta `1408271`, peak `ticks_per_entry=738`,
+and code size `49804`; `82282490` remained larger at
+`body_ticks_total=25866736`. It did not produce HIR because filtered dumps were
+info-level under the stable `log_level=1` speed lane, and a `-LogLevel 0` retry
+black-idled. Filtered function dumps now log at warning level and Thor metadata
+records `disassemble_function_filter`, but first patched filtered run
+`scratch/thor-debug/20260522-192429-*` black-idled before route progress and
+emitted no HIR/body rows. Do not rerun that exact filtered capture unchanged.
+Next prove patched APK route safety with a no-filter control, or use a
+control-sandwiched filtered capture before using `8227FEE8` HIR for codegen.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch
