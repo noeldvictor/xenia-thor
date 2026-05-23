@@ -263,6 +263,16 @@ filtered dump path now logs at warning level and Thor metadata records
 worker slice should not rerun that exact capture unchanged; prove patched APK
 route safety with a no-filter control, do a control-sandwiched filtered capture,
 or switch to offline guest/Ghidra analysis for `8227FEE8`.
+The no-filter patched control is now also a black-idle:
+`docs/research/20260522-230909-patched-route-control-black-idle.md` and
+`scratch/thor-debug/20260522-230518-*`. It used no disassembly filter, delayed
+body-time `82282490,8227FEE8`, and APK SHA
+`89086669EF6CC19A028049FBF5957827CF7CFA97C85F0083021A739B9C16FFAF`, but
+counters went flat from `23:06:05`, body-time activated with no target body
+rows, and final screenshot was black. The idle snapshot could not acquire the
+processor debug lock and reported `last_global_owner_sys_tid=21741`. Next
+worker slice should add route-stability or idle attribution before another
+filtered HIR capture.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

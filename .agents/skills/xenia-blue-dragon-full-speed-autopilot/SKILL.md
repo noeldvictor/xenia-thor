@@ -252,6 +252,17 @@ records `disassemble_function_filter`, but first patched filtered run
 emitted no HIR/body rows. Do not rerun that exact filtered capture unchanged.
 Next prove patched APK route safety with a no-filter control, or use a
 control-sandwiched filtered capture before using `8227FEE8` HIR for codegen.
+The no-filter control is now a negative route-safety result:
+`docs/research/20260522-230909-patched-route-control-black-idle.md`.
+`scratch/thor-debug/20260522-230518-*` used HEAD `0ec440af6`, APK SHA
+`89086669EF6CC19A028049FBF5957827CF7CFA97C85F0083021A739B9C16FFAF`, no
+disassembly filter, delayed body-time filter `82282490,8227FEE8`, and
+`arm64_context_promotion_gpr_livein_r1=false`. It black-idled before opening:
+counters went flat from `23:06:05`, body-time activated without any
+`82282490`/`8227FEE8` rows, screenshot was black, and fatal-marker search was
+clean. Idle snapshot was skipped because the processor debug lock was busy with
+`last_global_owner_sys_tid=21741`. Do not run the filtered `8227FEE8` capture
+next. First add route-stability or idle attribution around this flatline.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

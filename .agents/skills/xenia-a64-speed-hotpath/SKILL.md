@@ -412,6 +412,15 @@ the first patched filtered run `scratch/thor-debug/20260522-192429-*`
 black-idled before useful route progress. Do not rerun that exact capture
 unchanged. Before using `8227FEE8` HIR for codegen, run a patched no-filter
 control or a control-sandwiched filtered capture with delayed body-time.
+The patched no-filter control was attempted in
+`docs/research/20260522-230909-patched-route-control-black-idle.md`.
+`scratch/thor-debug/20260522-230518-*` used no disassembly filter and delayed
+body-time `82282490,8227FEE8`, but black-idled before route progress. Counters
+went flat from `23:06:05`, no `82282490`/`8227FEE8` body rows appeared after
+body-time activation, and the final screenshot was black. The idle snapshot was
+blocked by a busy processor debug lock with `last_global_owner_sys_tid=21741`.
+Do not spend the next speed run on filtered HIR; add route-stability or idle
+attribution first.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

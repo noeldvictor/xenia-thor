@@ -529,6 +529,18 @@ required.
   capture unchanged, and next prove patched APK route safety with a no-filter
   control or a control-sandwiched filtered capture before relying on
   `8227FEE8` HIR.
+- Patched no-filter route control:
+  `docs/research/20260522-230909-patched-route-control-black-idle.md`.
+  Capture `scratch/thor-debug/20260522-230518-*` used HEAD `0ec440af6`, APK SHA
+  `89086669EF6CC19A028049FBF5957827CF7CFA97C85F0083021A739B9C16FFAF`, no
+  disassembly filter, delayed body-time filter `82282490,8227FEE8`, and
+  `arm64_context_promotion_gpr_livein_r1=false`. It still black-idled before
+  route progress: counters went flat from `23:06:05` onward, body-time
+  activated with no `82282490`/`8227FEE8` body rows, final screenshot was
+  black, and fatal-marker search was clean. Idle snapshot triggered but skipped
+  because the processor debug lock stayed busy with
+  `last_global_owner_sys_tid=21741`. Do not run the next filtered HIR capture
+  yet. First add route-stability or idle attribution around this flatline.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
