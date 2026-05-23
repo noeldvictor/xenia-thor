@@ -474,6 +474,19 @@ peak `665665`, calls to `0x8227F1D8` and `0x8247BE20`. Next A64 hotpath run
 should split those callees using delayed body-time plus
 `-Arm64SpeedProfileCallEdgeFilter 8227FEE8`; do not start the `82280A68` /
 `82280E1C` vector peephole until callee evidence says it matters.
+The callee split is now complete:
+`docs/research/20260523-124029-8227fee8-callee-call-edge-split.md`.
+`scratch/thor-debug/20260523-123406-*` reached visible opening with clean fatal
+search. Final function body-time put `8227F1D8` ahead in the last interval
+(`body_ticks_delta=844204`, `body_ticks_total=3714635`,
+`ticks_per_entry=84`, `code_size=20180`), while `8247BE20` stayed tiny
+(`body_ticks_total=27747`, `ticks_per_entry=2`, `code_size=796`). Dynamic
+call-edge rows under `8227FEE8` identify `822809F4 -> 8227F1D8` as the wall:
+`calls_total=26098`, `body_ticks_total=2031295`, peak delta `1137492`, peak
+`ticks_per_call=216`. The next A64 hotpath run should enable a filtered
+`8227F1D8` HIR dump and delayed block body-time, with `8227FEE8` kept as a
+parent comparator. If it black-idles, use the owner attribution fields before
+changing generated code.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

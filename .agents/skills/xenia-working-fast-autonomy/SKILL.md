@@ -323,6 +323,17 @@ vector-heavy blocks; it is call-heavy block `822809F4`
 Next worker slice should split those callees with delayed body-time and
 `-Arm64SpeedProfileCallEdgeFilter 8227FEE8`, then choose a default-off
 function-gated codegen experiment from the callee evidence.
+That split now exists:
+`docs/research/20260523-124029-8227fee8-callee-call-edge-split.md`.
+Route-clean capture `scratch/thor-debug/20260523-123406-*` reached the visible
+opening sky/wing route with no searched fatal markers. Final body-time made
+`8227F1D8` the child target (`body_ticks_total=3714635`,
+`ticks_per_entry=84`, `code_size=20180`), while `8247BE20` stayed tiny
+(`body_ticks_total=27747`, `ticks_per_entry=2`, `code_size=796`). Dynamic
+edge rows show `822809F4 -> 8227F1D8` at `body_ticks_total=2031295`, peak
+delta `1137492`, and peak `ticks_per_call=216`. The next useful worker slice
+is filtered `8227F1D8` HIR plus delayed body/block-time; no codegen patch
+should start until that report names the actual hot shape.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

@@ -115,12 +115,14 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: run delayed
-`8227FEE8` block body-time with
-`-Arm64SpeedProfileBlockFilter 8227FEE8 -Arm64SpeedProfileBlockBodyTime true`
-before any new GPR cache, r1 live-in retry, or vector peephole. The route-clean
-filtered HIR capture proves `8227FEE8` is a real secondary target, but the next
-patch must be chosen from internal block body-time, not from static HIR counts.
+Latest priority, superseding the older chronology below: run a
+route-stabilized filtered HIR plus delayed body/block-time capture for
+`8227F1D8`, keeping `8227FEE8` in the body-time filter as the parent comparator.
+The route-clean callee split proves `8227F1D8` is the next measured child wall
+under `8227FEE8`; `8247BE20` is tiny in this route. Do not start the old
+`82280A68` / `82280E1C` vector peephole, a broad GPR cache, or another r1
+live-in retry until `8227F1D8` HIR and block body-time say what shape is
+actually hot.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -325,6 +327,17 @@ block `822809F4` (`body_total=1937201`, peak `665665`, peak
 `ticks_per_entry=128`) with direct calls to `0x8227F1D8` and `0x8247BE20`.
 Next split those callees with delayed body-time and
 `-Arm64SpeedProfileCallEdgeFilter 8227FEE8` before a codegen patch.
+That callee split is now route-clean:
+`docs/research/20260523-124029-8227fee8-callee-call-edge-split.md`.
+`scratch/thor-debug/20260523-123406-*` reached visible opening on the same APK
+SHA `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5` with a
+clean fatal-marker search. Final function body-time put `8227F1D8` first in
+the last interval (`body_ticks_total=3714635`, `ticks_per_entry=84`), while
+`8247BE20` stayed tiny (`body_ticks_total=27747`). The dominant dynamic edge
+is `822809F4 -> 8227F1D8`: `calls_total=26098`,
+`body_ticks_total=2031295`, peak delta `1137492`, peak
+`ticks_per_call=216`. The next slice should dump/profile `8227F1D8` itself
+with delayed block body-time before any codegen experiment.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

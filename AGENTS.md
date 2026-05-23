@@ -606,6 +606,21 @@ required.
   `ticks_per_entry=128`) with direct calls to `0x8227F1D8` and
   `0x8247BE20`. Next split those callees with a delayed body-time/call-edge
   capture for `8227FEE8,8227F1D8,8247BE20` before writing a codegen patch.
+- `8227FEE8` callee call-edge split:
+  `docs/research/20260523-124029-8227fee8-callee-call-edge-split.md`.
+  Route-clean capture `scratch/thor-debug/20260523-123406-*` reached the
+  visible opening sky/wing route on APK SHA
+  `962D3086F4030D9BD5A9D46AF5E8DFA4A320A13BFCD14135B8B077AECDC31CC5` with a
+  clean fatal-marker search. Final body-time put `8227F1D8` first in the last
+  interval (`body_ticks_delta=844204`, `body_ticks_total=3714635`,
+  `ticks_per_entry=84`, `code_size=20180`) while `8247BE20` stayed tiny
+  (`body_ticks_total=27747`, `ticks_per_entry=2`, `code_size=796`). Dynamic
+  edge timing under `8227FEE8` confirms `822809F4 -> 8227F1D8` as the wall:
+  `calls_total=26098`, `body_ticks_total=2031295`, peak delta `1137492`, and
+  peak `ticks_per_call=216`. The next speed slice should dump and profile
+  `8227F1D8` itself with delayed body/block-time; do not start the old
+  `82280A68` / `82280E1C` vector peephole or broad GPR cache from this
+  evidence alone.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
