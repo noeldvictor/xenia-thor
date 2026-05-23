@@ -419,8 +419,15 @@ body-time `82282490,8227FEE8`, but black-idled before route progress. Counters
 went flat from `23:06:05`, no `82282490`/`8227FEE8` body rows appeared after
 body-time activation, and the final screenshot was black. The idle snapshot was
 blocked by a busy processor debug lock with `last_global_owner_sys_tid=21741`.
-Do not spend the next speed run on filtered HIR; add route-stability or idle
-attribution first.
+Idle owner attribution and patched route recheck now exist in
+`docs/research/20260522-232945-a64-idle-owner-attribution.md`. The A64 idle
+snapshot skip line now maps busy native owner TIDs through a lock-free hint
+(`owner_hint`, guest thread ID, handle, state), and successful thread snapshots
+include `native=...`. Patched capture `scratch/thor-debug/20260522-232133-*`
+reached visible opening with no searched fatal markers. Next speed run should
+be a control-sandwiched filtered `8227FEE8` capture with delayed body-time route
+stabilizer; use HIR if route-clean, or use the new `owner_hint` fields if it
+black-idles.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

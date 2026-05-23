@@ -10,6 +10,8 @@
 #ifndef XENIA_CPU_PROCESSOR_H_
 #define XENIA_CPU_PROCESSOR_H_
 
+#include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <string>
@@ -138,6 +140,15 @@ class Processor {
   std::vector<ThreadDebugInfo*> QueryThreadDebugInfos();
   std::vector<ThreadDebugInfo*> TryQueryThreadDebugInfos(bool* acquired);
 
+  struct ThreadDebugHint {
+    uint32_t system_thread_id = 0;
+    uint32_t thread_id = 0;
+    uint32_t thread_handle = 0;
+    ThreadDebugInfo::State state = ThreadDebugInfo::State::kZombie;
+  };
+  bool TryGetThreadDebugHintBySystemThreadId(
+      uint32_t system_thread_id, ThreadDebugHint* out_hint) const;
+
   // Returns the debugger info for the given thread.
   ThreadDebugInfo* QueryThreadDebugInfo(uint32_t thread_id);
 
@@ -239,6 +250,9 @@ class Processor {
   // instructions.
   uint32_t CalculateNextGuestInstruction(ThreadDebugInfo* thread_info,
                                          uint32_t current_pc);
+  void UpdateThreadDebugHint(uint32_t system_thread_id, uint32_t thread_id,
+                             uint32_t thread_handle,
+                             ThreadDebugInfo::State state);
 
   bool DemandFunction(Function* function);
 
@@ -268,6 +282,16 @@ class Processor {
   // Maps thread ID to state. Updated on thread create, and threads are never
   // removed. Must be guarded with the global lock.
   std::map<uint32_t, std::unique_ptr<ThreadDebugInfo>> thread_debug_infos_;
+
+  struct ThreadDebugHintSlot {
+    std::atomic<uint32_t> system_thread_id{0};
+    std::atomic<uint32_t> thread_id{0};
+    std::atomic<uint32_t> thread_handle{0};
+    std::atomic<uint32_t> state{0};
+  };
+  static constexpr size_t kThreadDebugHintCapacity = 128;
+  std::array<ThreadDebugHintSlot, kThreadDebugHintCapacity>
+      thread_debug_hint_slots_;
 
   // TODO(benvanik): cleanup/change structures.
   std::vector<Breakpoint*> breakpoints_;

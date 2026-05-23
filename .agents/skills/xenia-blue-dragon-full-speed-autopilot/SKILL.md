@@ -261,8 +261,20 @@ disassembly filter, delayed body-time filter `82282490,8227FEE8`, and
 counters went flat from `23:06:05`, body-time activated without any
 `82282490`/`8227FEE8` rows, screenshot was black, and fatal-marker search was
 clean. Idle snapshot was skipped because the processor debug lock was busy with
-`last_global_owner_sys_tid=21741`. Do not run the filtered `8227FEE8` capture
-next. First add route-stability or idle attribution around this flatline.
+`last_global_owner_sys_tid=21741`.
+Idle owner attribution and a patched route recheck now exist:
+`docs/research/20260522-232945-a64-idle-owner-attribution.md`.
+The A64 idle snapshot skip line now logs a lock-free native-TID hint
+(`owner_hint`, guest thread ID, handle, and state) when the processor debug lock
+is busy, and successful thread snapshots include `native=...`. Patched capture
+`scratch/thor-debug/20260522-232133-*` used APK SHA
+`E92DAC2CB4E7080C196DB9656305F372DC20C189E7697A2FCCD47D1E12DA3FA3`, reached
+the visible opening sky/wing route with no searched fatal markers, and did not
+exercise the owner-hint line because the route stayed active. Next run a
+control-sandwiched filtered `8227FEE8` capture with delayed body-time route
+stabilizer. If it reaches opening, use the warning-level HIR dump for focused
+codegen audit; if it black-idles again, inspect the new `owner_hint` fields
+before changing guest behavior.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

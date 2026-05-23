@@ -1742,14 +1742,23 @@ void A64Backend::LogSpeedProfile() {
     }
     if (!acquired_thread_debug_lock) {
       auto owner = ppc::QueryGlobalLockOwnerSnapshot();
+      const uint32_t owner_system_thread_id =
+          xe::global_critical_region::last_owner_system_thread_id();
+      Processor::ThreadDebugHint owner_hint;
+      const bool have_owner_hint =
+          processor()->TryGetThreadDebugHintBySystemThreadId(
+              owner_system_thread_id, &owner_hint);
       XELOGW(
           "A64 thread snapshot skipped: processor debug lock busy "
           "after_retries=20 last_global_owner_sys_tid={} global_lock_count={} "
           "owner_tid={:08X} owner_lr={:08X} owner_ctr={:08X} "
-          "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X}",
-          xe::global_critical_region::last_owner_system_thread_id(),
+          "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X} "
+          "owner_hint={} owner_hint_tid={:08X} owner_hint_handle={:08X} "
+          "owner_hint_state={}",
+          owner_system_thread_id,
           owner.count, owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
-          owner.r4);
+          owner.r4, have_owner_hint ? "hit" : "miss", owner_hint.thread_id,
+          owner_hint.thread_handle, ThreadDebugStateName(owner_hint.state));
       return;
     }
     for (auto* thread_info : thread_infos) {
@@ -1772,12 +1781,12 @@ void A64Backend::LogSpeedProfile() {
         last_ret = a64_context->last_guest_return_address;
       }
       XELOGW(
-          "A64 thread snapshot tid={:08X} handle={:08X} state={} "
+          "A64 thread snapshot tid={:08X} handle={:08X} native={:08X} state={} "
           "last_fn={:08X} last_ret={:08X} lr={:08X} ctr={:08X} "
           "r1={:08X} r3={:08X} r4={:08X}",
           thread_info->thread_id, thread_info->thread_handle,
-          ThreadDebugStateName(thread_info->state), last_fn, last_ret, lr, ctr,
-          r1, r3, r4);
+          thread_info->system_thread_id, ThreadDebugStateName(thread_info->state),
+          last_fn, last_ret, lr, ctr, r1, r3, r4);
     }
   }
 }

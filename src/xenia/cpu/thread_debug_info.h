@@ -48,6 +48,8 @@ struct ThreadDebugInfo {
   // XThread::handle() of the thread.
   // This will be invalidated when the thread dies.
   uint32_t thread_handle = 0;
+  // Host/native system thread ID. Used only for attribution in diagnostics.
+  uint32_t system_thread_id = 0;
   // Thread object. Only valid when the thread is alive.
   Thread* thread = nullptr;
   // Current state of the thread.

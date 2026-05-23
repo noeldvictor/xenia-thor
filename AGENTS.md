@@ -539,8 +539,20 @@ required.
   activated with no `82282490`/`8227FEE8` body rows, final screenshot was
   black, and fatal-marker search was clean. Idle snapshot triggered but skipped
   because the processor debug lock stayed busy with
-  `last_global_owner_sys_tid=21741`. Do not run the next filtered HIR capture
-  yet. First add route-stability or idle attribution around this flatline.
+  `last_global_owner_sys_tid=21741`.
+- Idle owner attribution and patched route recheck:
+  `docs/research/20260522-232945-a64-idle-owner-attribution.md`.
+  The A64 idle snapshot skip line now includes a lock-free native-TID hint
+  (`owner_hint`, guest thread ID, handle, and state) when the processor debug
+  lock is busy; successful thread snapshots also include `native=...`. Patched
+  capture `scratch/thor-debug/20260522-232133-*` used APK SHA
+  `E92DAC2CB4E7080C196DB9656305F372DC20C189E7697A2FCCD47D1E12DA3FA3`, reached
+  the visible opening sky/wing route with no searched fatal markers, and did
+  not exercise the owner-hint line because counters stayed active. Next run a
+  control-sandwiched filtered `8227FEE8` capture with delayed body-time route
+  stabilizer. If it reaches opening, use the warning-level HIR dump for focused
+  codegen audit; if it black-idles, inspect `owner_hint` before changing guest
+  behavior.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

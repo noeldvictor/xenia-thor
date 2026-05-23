@@ -487,9 +487,13 @@ void Processor::OnThreadCreated(uint32_t thread_handle,
   auto thread_info = std::make_unique<ThreadDebugInfo>();
   thread_info->thread_handle = thread_handle;
   thread_info->thread_id = thread_state->thread_id();
+  thread_info->system_thread_id =
+      thread && thread->thread() ? thread->thread()->system_id() : 0;
   thread_info->thread = thread;
   thread_info->state = ThreadDebugInfo::State::kAlive;
   thread_info->suspended = false;
+  UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                        thread_info->thread_handle, thread_info->state);
   thread_debug_infos_.emplace(thread_info->thread_id, std::move(thread_info));
 }
 
@@ -499,6 +503,8 @@ void Processor::OnThreadExit(uint32_t thread_id) {
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
   thread_info->state = ThreadDebugInfo::State::kExited;
+  UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                        thread_info->thread_handle, thread_info->state);
 }
 
 void Processor::OnThreadDestroyed(uint32_t thread_id) {
@@ -507,6 +513,8 @@ void Processor::OnThreadDestroyed(uint32_t thread_id) {
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
   thread_info->state = ThreadDebugInfo::State::kZombie;
+  UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                        thread_info->thread_handle, thread_info->state);
   thread_info->thread = nullptr;
 }
 
@@ -516,6 +524,8 @@ void Processor::OnThreadEnteringWait(uint32_t thread_id) {
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
   thread_info->state = ThreadDebugInfo::State::kWaiting;
+  UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                        thread_info->thread_handle, thread_info->state);
 }
 
 void Processor::OnThreadLeavingWait(uint32_t thread_id) {
@@ -525,7 +535,48 @@ void Processor::OnThreadLeavingWait(uint32_t thread_id) {
   auto thread_info = it->second.get();
   if (thread_info->state == ThreadDebugInfo::State::kWaiting) {
     thread_info->state = ThreadDebugInfo::State::kAlive;
+    UpdateThreadDebugHint(thread_info->system_thread_id, thread_info->thread_id,
+                          thread_info->thread_handle, thread_info->state);
   }
+}
+
+void Processor::UpdateThreadDebugHint(uint32_t system_thread_id,
+                                      uint32_t thread_id,
+                                      uint32_t thread_handle,
+                                      ThreadDebugInfo::State state) {
+  if (!system_thread_id) {
+    return;
+  }
+
+  ThreadDebugHintSlot* empty_slot = nullptr;
+  for (auto& slot : thread_debug_hint_slots_) {
+    const uint32_t slot_system_thread_id =
+        slot.system_thread_id.load(std::memory_order_acquire);
+    const uint32_t slot_thread_id =
+        slot.thread_id.load(std::memory_order_relaxed);
+    if (slot_system_thread_id == system_thread_id ||
+        (thread_id && slot_thread_id == thread_id)) {
+      slot.thread_id.store(thread_id, std::memory_order_relaxed);
+      slot.thread_handle.store(thread_handle, std::memory_order_relaxed);
+      slot.state.store(static_cast<uint32_t>(state),
+                       std::memory_order_relaxed);
+      slot.system_thread_id.store(system_thread_id, std::memory_order_release);
+      return;
+    }
+    if (!slot_system_thread_id && !empty_slot) {
+      empty_slot = &slot;
+    }
+  }
+
+  if (!empty_slot) {
+    return;
+  }
+  empty_slot->thread_id.store(thread_id, std::memory_order_relaxed);
+  empty_slot->thread_handle.store(thread_handle, std::memory_order_relaxed);
+  empty_slot->state.store(static_cast<uint32_t>(state),
+                          std::memory_order_relaxed);
+  empty_slot->system_thread_id.store(system_thread_id,
+                                     std::memory_order_release);
 }
 
 std::vector<ThreadDebugInfo*> Processor::QueryThreadDebugInfos() {
@@ -552,6 +603,30 @@ std::vector<ThreadDebugInfo*> Processor::TryQueryThreadDebugInfos(
     result.push_back(it.second.get());
   }
   return result;
+}
+
+bool Processor::TryGetThreadDebugHintBySystemThreadId(
+    uint32_t system_thread_id, ThreadDebugHint* out_hint) const {
+  if (!system_thread_id || !out_hint) {
+    return false;
+  }
+
+  for (const auto& slot : thread_debug_hint_slots_) {
+    const uint32_t slot_system_thread_id =
+        slot.system_thread_id.load(std::memory_order_acquire);
+    if (slot_system_thread_id != system_thread_id) {
+      continue;
+    }
+    out_hint->system_thread_id = slot_system_thread_id;
+    out_hint->thread_id = slot.thread_id.load(std::memory_order_relaxed);
+    out_hint->thread_handle =
+        slot.thread_handle.load(std::memory_order_relaxed);
+    out_hint->state = static_cast<ThreadDebugInfo::State>(
+        slot.state.load(std::memory_order_relaxed));
+    return true;
+  }
+
+  return false;
 }
 
 ThreadDebugInfo* Processor::QueryThreadDebugInfo(uint32_t thread_id) {

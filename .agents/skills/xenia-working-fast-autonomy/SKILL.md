@@ -270,9 +270,19 @@ body-time `82282490,8227FEE8`, and APK SHA
 `89086669EF6CC19A028049FBF5957827CF7CFA97C85F0083021A739B9C16FFAF`, but
 counters went flat from `23:06:05`, body-time activated with no target body
 rows, and final screenshot was black. The idle snapshot could not acquire the
-processor debug lock and reported `last_global_owner_sys_tid=21741`. Next
-worker slice should add route-stability or idle attribution before another
-filtered HIR capture.
+processor debug lock and reported `last_global_owner_sys_tid=21741`.
+Idle owner attribution and patched route recheck now exist:
+`docs/research/20260522-232945-a64-idle-owner-attribution.md`. The A64 idle
+snapshot skip line now logs a lock-free native-TID hint (`owner_hint`, guest
+thread ID, handle, and state) when the processor debug lock is busy, while
+normal thread snapshots include `native=...`. Patched capture
+`scratch/thor-debug/20260522-232133-*` reached visible opening with APK SHA
+`E92DAC2CB4E7080C196DB9656305F372DC20C189E7697A2FCCD47D1E12DA3FA3` and no
+searched fatal markers; the owner-hint path did not fire because the route did
+not black-idle. Next worker slice should run a control-sandwiched filtered
+`8227FEE8` capture with the delayed body-time route stabilizer. If it reaches
+opening, use the warning-level HIR dump for codegen audit; if it black-idles,
+inspect `owner_hint` before changing generated-code behavior.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
