@@ -76,6 +76,7 @@ DECLARE_bool(arm64_blue_dragon_vmx_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
+DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -1861,6 +1862,37 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     if (current_guest_function_call_edge_profile_) {
       a64_function->SetupProfileCallEdges(call_edge_count);
       current_a64_function_ = a64_function;
+    }
+  }
+  if (cvars::arm64_blue_dragon_edge_variant_audit &&
+      current_guest_function_ == 0x82282490) {
+    uint64_t eligible_edges = 0;
+    for (auto block = builder->first_block(); block; block = block->next) {
+      for (auto instr = block->instr_head; instr; instr = instr->next) {
+        if (instr->GuestAddressFor() != 0x82282598) {
+          continue;
+        }
+        Function* target = nullptr;
+        switch (instr->GetOpcodeNum()) {
+          case hir::OPCODE_CALL:
+            target = instr->src1.symbol;
+            break;
+          case hir::OPCODE_CALL_TRUE:
+            target = instr->src2.symbol;
+            break;
+          default:
+            break;
+        }
+        if (target && target->address() == 0x82287788) {
+          ++eligible_edges;
+        }
+      }
+    }
+    if (eligible_edges) {
+      backend_->blue_dragon_edge_variant_eligible_compile_count()->fetch_add(
+          eligible_edges, std::memory_order_relaxed);
+      backend_->blue_dragon_edge_variant_variant_storage_missing_count()
+          ->fetch_add(eligible_edges, std::memory_order_relaxed);
     }
   }
   MaybeLogContextTrafficAudit(builder);
@@ -4306,6 +4338,35 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
         break;
     }
   }
+  if (cvars::arm64_blue_dragon_edge_variant_audit && instr &&
+      current_guest_function_ == 0x82287788) {
+    auto* backend = backend_;
+    switch (instr->GuestAddressFor()) {
+      case 0x8228778C:
+      case 0x82287854:
+      case 0x82287ED4:
+      case 0x82287EDC:
+      case 0x82287EE4:
+      case 0x82288220:
+        EmitAtomicIncrement64(
+            backend->blue_dragon_edge_variant_call_kill_count());
+        break;
+      default:
+        break;
+    }
+  }
+
+  const bool blue_dragon_edge_variant_hot_edge =
+      cvars::arm64_blue_dragon_edge_variant_audit && instr &&
+      current_guest_function_ == 0x82282490 &&
+      instr->GuestAddressFor() == 0x82282598 &&
+      function->address() == 0x82287788;
+  if (blue_dragon_edge_variant_hot_edge) {
+    auto* backend = backend_;
+    EmitAtomicIncrement64(
+        backend->blue_dragon_edge_variant_eligible_call_count());
+    EmitAtomicIncrement64(backend->blue_dragon_edge_variant_variant_miss_count());
+  }
 
   std::atomic<uint64_t>* call_edge_entry_counter = nullptr;
   std::atomic<uint64_t>* call_edge_body_ticks_counter = nullptr;
@@ -4342,6 +4403,10 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   }
 
   if (fn->machine_code()) {
+    if (blue_dragon_edge_variant_hot_edge) {
+      EmitAtomicIncrement64(
+          backend_->blue_dragon_edge_variant_normal_entry_fallback_count());
+    }
     // Direct call — function is already compiled.
     if (!(instr->flags & hir::CALL_TAIL)) {
       // Pass the next call's guest return address in x0.
@@ -4373,7 +4438,16 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     MaybeEmitCallEdgeProfileStart(call_edge_entry_counter);
   }
 
+  if (blue_dragon_edge_variant_hot_edge) {
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_variant_normal_entry_fallback_count());
+  }
+
   if (code_cache_->has_indirection_table()) {
+    if (blue_dragon_edge_variant_hot_edge) {
+      EmitAtomicIncrement64(
+          backend_->blue_dragon_edge_variant_indirection_fallback_count());
+    }
     // Load host code address from indirection table.
     mov(x0,A64CodeCache::execute_address_high());
     mov(w16, function->address());

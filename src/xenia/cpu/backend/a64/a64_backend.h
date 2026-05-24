@@ -287,6 +287,31 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_state_carrier_fpscr_fallback_count() {
     return &blue_dragon_state_carrier_fpscr_fallback_count_;
   }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_eligible_compile_count() {
+    return &blue_dragon_edge_variant_eligible_compile_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_variant_variant_storage_missing_count() {
+    return &blue_dragon_edge_variant_variant_storage_missing_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_eligible_call_count() {
+    return &blue_dragon_edge_variant_eligible_call_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_payload_materialized_count() {
+    return &blue_dragon_edge_variant_payload_materialized_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_normal_entry_fallback_count() {
+    return &blue_dragon_edge_variant_normal_entry_fallback_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_indirection_fallback_count() {
+    return &blue_dragon_edge_variant_indirection_fallback_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_call_kill_count() {
+    return &blue_dragon_edge_variant_call_kill_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_variant_miss_count() {
+    return &blue_dragon_edge_variant_variant_miss_count_;
+  }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool EntryExitTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
@@ -429,6 +454,18 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> blue_dragon_state_carrier_fpscr_writeback_count_{0};
   std::atomic<uint64_t> blue_dragon_state_carrier_fpscr_call_kill_count_{0};
   std::atomic<uint64_t> blue_dragon_state_carrier_fpscr_fallback_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_eligible_compile_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_variant_variant_storage_missing_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_eligible_call_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_payload_materialized_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_normal_entry_fallback_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_indirection_fallback_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_call_kill_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_variant_miss_count_{0};
   uint64_t last_speed_profile_host_to_guest_entries_ = 0;
   uint64_t last_speed_profile_guest_to_host_calls_ = 0;
   uint64_t last_speed_profile_direct_guest_calls_ = 0;
@@ -485,6 +522,15 @@ class A64Backend : public Backend {
   uint64_t last_blue_dragon_state_carrier_fpscr_writeback_count_ = 0;
   uint64_t last_blue_dragon_state_carrier_fpscr_call_kill_count_ = 0;
   uint64_t last_blue_dragon_state_carrier_fpscr_fallback_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_eligible_compile_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_variant_variant_storage_missing_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_eligible_call_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_payload_materialized_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_normal_entry_fallback_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_indirection_fallback_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_call_kill_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_variant_miss_count_ = 0;
   bool speed_profile_seen_activity_ = false;
   bool speed_profile_idle_snapshot_emitted_ = false;
 };

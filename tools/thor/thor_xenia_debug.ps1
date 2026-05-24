@@ -166,6 +166,7 @@ param(
     [string]$Arm64BlueDragonF1CarrierAudit = "false",
     [string]$Arm64BlueDragonF1CarrierFastpath = "false",
     [string]$Arm64BlueDragonStateCarrierDesignAudit = "false",
+    [string]$Arm64BlueDragonEdgeVariantAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -927,6 +928,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonStateCarrierDesignAudit) {
         $parts += "--ez arm64_blue_dragon_state_carrier_design_audit $(ConvertTo-BooleanText $Arm64BlueDragonStateCarrierDesignAudit)"
     }
+    if ($Arm64BlueDragonEdgeVariantAudit) {
+        $parts += "--ez arm64_blue_dragon_edge_variant_audit $(ConvertTo-BooleanText $Arm64BlueDragonEdgeVariantAudit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1190,6 +1194,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_f1_carrier_audit=$Arm64BlueDragonF1CarrierAudit",
         "arm64_blue_dragon_f1_carrier_fastpath=$Arm64BlueDragonF1CarrierFastpath",
         "arm64_blue_dragon_state_carrier_design_audit=$Arm64BlueDragonStateCarrierDesignAudit",
+        "arm64_blue_dragon_edge_variant_audit=$Arm64BlueDragonEdgeVariantAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1465,6 +1470,7 @@ function Test-BlueDragonSpeedLogRowsRequested {
         "Arm64BlueDragonCallBoundaryStateAudit",
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
+        "Arm64BlueDragonEdgeVariantAudit",
         "Arm64AddSubImmAudit",
         "Arm64ImmediateLoweringAudit",
         "Arm64ContextPinnedGprR1Audit",
@@ -1512,6 +1518,7 @@ function Test-BlueDragonSpeedProfilerRowsRequested {
         "Arm64BlueDragonCallBoundaryStateAudit",
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
+        "Arm64BlueDragonEdgeVariantAudit",
         "Arm64SpeedProfileBlockBodyTime",
         "Arm64SpeedProfileCallEdgeAuditOnly",
         "Arm64SpeedProfileThreadSnapshot",

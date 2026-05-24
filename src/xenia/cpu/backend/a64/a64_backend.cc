@@ -291,6 +291,14 @@ DEFINE_bool(
     "title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_edge_variant_audit, false,
+    "Thor ARM64 speed lane: instrument the Blue Dragon 82282490:82282598 -> "
+    "82287788 edge-variant design. Counts eligible compiles/calls, missing "
+    "variant storage, payload materialization, normal-entry and indirection "
+    "fallbacks, child call kills, and variant misses only; does not change "
+    "generated behavior. Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -2027,6 +2035,44 @@ void A64Backend::LogSpeedProfile() {
         fpscr_dirty_write.first, fpscr_writeback.second, fpscr_writeback.first,
         fpscr_call_kill.second, fpscr_call_kill.first, fpscr_fallback.second,
         fpscr_fallback.first);
+  }
+  if (cvars::arm64_blue_dragon_edge_variant_audit) {
+    auto eligible_compile = load_delta(
+        blue_dragon_edge_variant_eligible_compile_count_,
+        last_blue_dragon_edge_variant_eligible_compile_count_);
+    auto variant_storage_missing = load_delta(
+        blue_dragon_edge_variant_variant_storage_missing_count_,
+        last_blue_dragon_edge_variant_variant_storage_missing_count_);
+    auto eligible_call =
+        load_delta(blue_dragon_edge_variant_eligible_call_count_,
+                   last_blue_dragon_edge_variant_eligible_call_count_);
+    auto payload_materialized = load_delta(
+        blue_dragon_edge_variant_payload_materialized_count_,
+        last_blue_dragon_edge_variant_payload_materialized_count_);
+    auto normal_entry_fallback = load_delta(
+        blue_dragon_edge_variant_normal_entry_fallback_count_,
+        last_blue_dragon_edge_variant_normal_entry_fallback_count_);
+    auto indirection_fallback = load_delta(
+        blue_dragon_edge_variant_indirection_fallback_count_,
+        last_blue_dragon_edge_variant_indirection_fallback_count_);
+    auto call_kill =
+        load_delta(blue_dragon_edge_variant_call_kill_count_,
+                   last_blue_dragon_edge_variant_call_kill_count_);
+    auto variant_miss =
+        load_delta(blue_dragon_edge_variant_variant_miss_count_,
+                   last_blue_dragon_edge_variant_variant_miss_count_);
+    XELOGW(
+        "A64 Blue Dragon edge-variant audit: eligible_compiles={}/{} "
+        "variant_storage_missing={}/{} eligible_calls={}/{} "
+        "payload_materializations={}/{} normal_entry_fallbacks={}/{} "
+        "indirection_fallbacks={}/{} call_kills={}/{} variant_misses={}/{}",
+        eligible_compile.second, eligible_compile.first,
+        variant_storage_missing.second, variant_storage_missing.first,
+        eligible_call.second, eligible_call.first, payload_materialized.second,
+        payload_materialized.first, normal_entry_fallback.second,
+        normal_entry_fallback.first, indirection_fallback.second,
+        indirection_fallback.first, call_kill.second, call_kill.first,
+        variant_miss.second, variant_miss.first);
   }
 
   const bool interval_had_activity =
