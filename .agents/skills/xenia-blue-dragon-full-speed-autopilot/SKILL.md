@@ -119,21 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
-`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md` confirms
-the Blue Dragon word-loop speed preset moved the wall back to recursive
-`82282490` work. Fresh route-clean captures show
-`822825E0 -> 82282490` dominates dynamic call-edge body time
-(`body_ticks_total=28602334`, `calls_total=117425`, peak
-`ticks_per_call=1244`), while `822825C8 -> 8227FEE8` is secondary
-(`body_ticks_total=11951162`). Do not restart stale `822824F0` vector work from
-entry counts alone. Android/Thor tooling now exposes
-`a64_enable_host_guest_stack_synchronization`; keep the Blue Dragon speed-pack
-default `true` for now. Stack-sync-off is route-clean twice and shrinks
-generated code for `82282490` (`87168` -> `85104`), but the repeat off capture
-landed at `82282490=27192157`, essentially matching the stack-sync-on control
-(`27192906`). Treat this as code-size evidence only, not speed proof. Do not
-run another unchanged stack-sync A/B; next slice should add stackpoint/prolog
-overhead attribution or directly reduce recursive call/prolog cost.
+`docs/research/20260524-025544-a64-entry-exit-profiler.md` supersedes the
+stackpoint/prolog question raised by
+`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md`.
+Recursive `822825E0 -> 82282490` is still the opening-route wall, but the new
+default-off `arm64_speed_profile_entry_exit_time_filter` capture
+`scratch/thor-debug/20260524-025000-*` shows generated prolog/epilog/stackpoint
+overhead is tiny: `82282490` entry/exit was `273393` ticks over `186010`
+entries (`1.47` ticks/call, `0.93%` of body total), and `82281D28` was `1.547`
+ticks/call (`1.56%` of body total). Keep the Blue Dragon speed-pack
+`a64_enable_host_guest_stack_synchronization` default `true`; stack-sync-off is
+still code-size evidence only, not speed proof. Do not run another unchanged
+stack-sync or entry/exit A/B. Next slice should focus exclusive attribution
+inside the `82282490` body/recursive child path, or fresh body-backed
+state-traffic reduction.
 
 The `82485DD8` word copy-loop fastpath remains confirmed for the Blue Dragon
 Thor speed preset. `docs/research/20260524-014050-word-loop-preset-rebaseline.md`

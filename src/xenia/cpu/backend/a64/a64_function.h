@@ -39,6 +39,12 @@ class A64Function : public GuestFunction {
   void MarkProfileRegistered(A64Backend* backend);
   std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
   std::atomic<uint64_t>* profile_body_ticks() { return &profile_body_ticks_; }
+  std::atomic<uint64_t>* profile_prolog_ticks() {
+    return &profile_prolog_ticks_;
+  }
+  std::atomic<uint64_t>* profile_epilog_ticks() {
+    return &profile_epilog_ticks_;
+  }
   void SetupProfileBlockCounts(size_t count);
   size_t profile_block_count_count() const { return profile_block_count_count_; }
   std::atomic<uint64_t>* profile_block_count(size_t ordinal);
@@ -65,6 +71,8 @@ class A64Function : public GuestFunction {
   std::atomic<size_t> machine_code_length_{0};
   std::atomic<uint64_t> profile_entry_count_{0};
   std::atomic<uint64_t> profile_body_ticks_{0};
+  std::atomic<uint64_t> profile_prolog_ticks_{0};
+  std::atomic<uint64_t> profile_epilog_ticks_{0};
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_counts_;
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_body_ticks_;
   std::unique_ptr<uint32_t[]> profile_block_addresses_;

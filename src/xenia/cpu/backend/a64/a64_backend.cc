@@ -368,6 +368,13 @@ DEFINE_string(
     "function addresses or inclusive ranges for CNTVCT body-time profiling. "
     "Requires arm64_speed_profile_interval_ms.",
     "a64");
+DEFINE_string(
+    arm64_speed_profile_entry_exit_time_filter, "",
+    "Thor ARM64 speed lane: optional comma/semicolon/space separated guest "
+    "function start addresses or inclusive start-address ranges for "
+    "selected-function generated prolog and epilog CNTVCT attribution. "
+    "Default-off and higher overhead on recursive hot paths.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_body_time_after_ms, 0,
     "Thor ARM64 speed lane: when body-time counters are enabled, delay their "
@@ -1262,6 +1269,16 @@ bool A64Backend::BodyTimeProfileEnabledForFunction(
       function, cvars::arm64_speed_profile_body_time_filter);
 }
 
+bool A64Backend::EntryExitTimeProfileEnabledForFunction(
+    A64Function* function) const {
+  if (!speed_profile_enabled() ||
+      cvars::arm64_speed_profile_entry_exit_time_filter.empty()) {
+    return false;
+  }
+  return FunctionStartMatchesAddressFilter(
+      function, cvars::arm64_speed_profile_entry_exit_time_filter);
+}
+
 bool A64Backend::BlockProfileEnabledForFunction(A64Function* function) const {
   if (!speed_profile_enabled() ||
       cvars::arm64_speed_profile_block_filter.empty()) {
@@ -1365,6 +1382,11 @@ void A64Backend::StartSpeedProfiler() {
            cvars::arm64_speed_profile_body_time_filter,
            cvars::arm64_speed_profile_body_time_after_ms);
   }
+  if (!cvars::arm64_speed_profile_entry_exit_time_filter.empty()) {
+    XELOGW("A64 entry/exit-time profile enabled: filter='{}' after_ms={}",
+           cvars::arm64_speed_profile_entry_exit_time_filter,
+           cvars::arm64_speed_profile_body_time_after_ms);
+  }
   if (cvars::arm64_speed_profile_block_body_time) {
     XELOGW("A64 block body-time profile enabled: filter='{}' after_ms={}",
            cvars::arm64_speed_profile_block_filter,
@@ -1443,6 +1465,7 @@ void A64Backend::LogSpeedProfile() {
 
   const bool any_body_time_profile =
       !cvars::arm64_speed_profile_body_time_filter.empty() ||
+      !cvars::arm64_speed_profile_entry_exit_time_filter.empty() ||
       cvars::arm64_speed_profile_block_body_time ||
       (!cvars::arm64_speed_profile_call_edge_audit_only &&
        !cvars::arm64_speed_profile_call_edge_filter.empty());
@@ -1490,12 +1513,25 @@ void A64Backend::LogSpeedProfile() {
     uint64_t body_ticks_delta = 0;
     uint64_t body_ticks_per_call = 0;
   };
+  struct EntryExitSample {
+    uint32_t address = 0;
+    std::string name;
+    uint64_t entries_delta = 0;
+    uint64_t prolog_ticks_total = 0;
+    uint64_t prolog_ticks_delta = 0;
+    uint64_t prolog_ticks_per_1000_entries = 0;
+    uint64_t epilog_ticks_total = 0;
+    uint64_t epilog_ticks_delta = 0;
+    uint64_t epilog_ticks_per_1000_entries = 0;
+    size_t code_size = 0;
+  };
 
   std::vector<FunctionSample> samples;
   std::vector<FunctionSample> body_samples;
   std::vector<BlockSample> block_samples;
   std::vector<BlockSample> block_body_samples;
   std::vector<CallEdgeSample> call_edge_samples;
+  std::vector<EntryExitSample> entry_exit_samples;
   uint64_t entry_delta_total = 0;
   size_t function_count = 0;
   {
@@ -1515,6 +1551,14 @@ void A64Backend::LogSpeedProfile() {
           function->profile_body_ticks()->load(std::memory_order_relaxed);
       uint64_t body_delta = body_total - entry.last_body_ticks;
       entry.last_body_ticks = body_total;
+      uint64_t prolog_total =
+          function->profile_prolog_ticks()->load(std::memory_order_relaxed);
+      uint64_t prolog_delta = prolog_total - entry.last_prolog_ticks;
+      entry.last_prolog_ticks = prolog_total;
+      uint64_t epilog_total =
+          function->profile_epilog_ticks()->load(std::memory_order_relaxed);
+      uint64_t epilog_delta = epilog_total - entry.last_epilog_ticks;
+      entry.last_epilog_ticks = epilog_total;
       entry_delta_total += delta;
       if (delta < cvars::arm64_speed_profile_min_delta && body_delta == 0) {
         continue;
@@ -1537,6 +1581,19 @@ void A64Backend::LogSpeedProfile() {
       }
       if (body_delta != 0) {
         body_samples.push_back(std::move(sample));
+      }
+      if (prolog_delta != 0 || epilog_delta != 0) {
+        entry_exit_samples.push_back(
+            {function->address(),
+             name,
+             delta,
+             prolog_total,
+             prolog_delta,
+             delta ? (prolog_delta * 1000) / delta : 0,
+             epilog_total,
+             epilog_delta,
+             delta ? (epilog_delta * 1000) / delta : 0,
+             function->machine_code_length()});
       }
 
       size_t block_count = function->profile_block_count_count();
@@ -1651,6 +1708,17 @@ void A64Backend::LogSpeedProfile() {
                 return a.delta > b.delta;
               }
               return a.edge_ordinal < b.edge_ordinal;
+            });
+  std::sort(entry_exit_samples.begin(), entry_exit_samples.end(),
+            [](const EntryExitSample& a, const EntryExitSample& b) {
+              uint64_t a_total =
+                  a.prolog_ticks_delta + a.epilog_ticks_delta;
+              uint64_t b_total =
+                  b.prolog_ticks_delta + b.epilog_ticks_delta;
+              if (a_total != b_total) {
+                return a_total > b_total;
+              }
+              return a.address < b.address;
             });
 
   auto load_delta = [](std::atomic<uint64_t>& counter, uint64_t& last) {
@@ -1800,6 +1868,23 @@ void A64Backend::LogSpeedProfile() {
         sample.target_address, sample.delta, sample.total,
         sample.body_ticks_delta, sample.body_ticks_total,
         sample.body_ticks_per_call);
+  }
+
+  size_t entry_exit_top_count = std::min<size_t>(
+      entry_exit_samples.size(), cvars::arm64_speed_profile_top_functions);
+  for (size_t i = 0; i < entry_exit_top_count; ++i) {
+    const auto& sample = entry_exit_samples[i];
+    XELOGW(
+        "A64 speed profile entry/exit top {:02}: fn {:08X} '{}' "
+        "prolog_ticks_delta={} prolog_ticks_total={} "
+        "epilog_ticks_delta={} epilog_ticks_total={} entries_delta={} "
+        "prolog_ticks_per_1000_entries={} "
+        "epilog_ticks_per_1000_entries={} code_size={}",
+        i + 1, sample.address, sample.name, sample.prolog_ticks_delta,
+        sample.prolog_ticks_total, sample.epilog_ticks_delta,
+        sample.epilog_ticks_total, sample.entries_delta,
+        sample.prolog_ticks_per_1000_entries,
+        sample.epilog_ticks_per_1000_entries, sample.code_size);
   }
 
   const bool should_log_thread_snapshot =

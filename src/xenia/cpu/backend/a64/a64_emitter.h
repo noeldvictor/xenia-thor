@@ -157,6 +157,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void MaybeEmitBlockBodyTimeEnd();
   void MaybeEmitBodyTimeProfileStart();
   void MaybeEmitBodyTimeProfileEnd();
+  void MaybeEmitEntryExitTimeProfileStartInX15();
+  void MaybeEmitEntryExitTimeProfileStoreStartFromX15();
+  void MaybeEmitEntryExitTimeProfilePrologEnd();
+  void MaybeEmitEntryExitTimeProfileEpilogEndFromX15();
   uint32_t FindBlockGuestAddress(const hir::Block* block) const;
   void MaybeEmitBlockProfileEntry(const hir::Block* block);
   void MaybeLogContextTrafficAudit(hir::HIRBuilder* builder);
@@ -214,9 +218,12 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   A64Function* current_a64_function_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_entry_count_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_body_ticks_ = nullptr;
+  std::atomic<uint64_t>* current_guest_function_prolog_ticks_ = nullptr;
+  std::atomic<uint64_t>* current_guest_function_epilog_ticks_ = nullptr;
   bool current_guest_function_block_body_ticks_ = false;
   bool current_guest_function_call_edge_profile_ = false;
   size_t body_time_start_stack_offset_ = 0;
+  size_t entry_exit_time_start_stack_offset_ = 0;
   size_t block_body_time_start_stack_offset_ = 0;
   size_t block_body_time_counter_stack_offset_ = 0;
   size_t call_edge_time_start_stack_offset_ = 0;

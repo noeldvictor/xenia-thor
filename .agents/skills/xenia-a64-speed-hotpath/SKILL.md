@@ -623,22 +623,17 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current recursive `82282490` / stack-sync probe:
-`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md`.
-Route-clean block body-time `scratch/thor-debug/20260524-014437-*` shows
-`822825E0` inside `82282490` dominates (`body_ticks_total=36823133`), while
-stale vector-ish `822824F0` is only `1394125`. Route-clean call-edge capture
-`scratch/thor-debug/20260524-014858-*` splits the dominant path as
-`822825E0 -> 82282490` (`body_ticks_total=28602334`, `calls_total=117425`,
-peak `ticks_per_call=1244`) and secondary `822825C8 -> 8227FEE8`
-(`body_ticks_total=11951162`). Android/Thor tooling now exposes
-`a64_enable_host_guest_stack_synchronization`. Keep the Blue Dragon speed-pack
-default `true`; stack-sync-off was route-clean twice and shrank generated code
-for `82282490` (`87168` -> `85104`), but the repeat off capture landed at
-`82282490=27192157`, essentially matching the stack-sync-on control
-(`27192906`). Treat this as code-size evidence only, not speed proof. Do not
-run another unchanged stack-sync A/B. Next speed lane is lower-overhead
-stackpoint/prolog attribution or direct recursive call/prolog cost reduction.
+Current recursive `82282490` entry/exit read:
+`docs/research/20260524-025544-a64-entry-exit-profiler.md`. The prior
+stack-sync probe showed `822825E0 -> 82282490` is the dominant recursive edge,
+but route-clean capture `scratch/thor-debug/20260524-025000-*` now shows
+generated prolog/epilog/stackpoint overhead is not the main wall:
+`82282490` entry/exit was `273393` ticks over `186010` entries (`1.47`
+ticks/call, `0.93%` of body total), and `82281D28` was `1.547` ticks/call
+(`1.56%` of body total). Keep `a64_enable_host_guest_stack_synchronization`
+default-on; stack-sync-off remains code-size evidence only. Do not run another
+unchanged stack-sync or entry/exit A/B. Next speed lane is exclusive body/callee
+attribution inside `82282490`, or fresh body-backed state-traffic reduction.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

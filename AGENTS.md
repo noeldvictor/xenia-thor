@@ -824,9 +824,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   deterministically shrank code size for `82282490` (`87168` -> `85104`), but
   the second off capture landed at `82282490=27192157`, essentially matching
   the stack-sync-on control (`27192906`). Treat this as code-size evidence, not
-  a speed proof. Do not run more unchanged stack-sync A/B captures; next add
-  stackpoint/prolog overhead attribution or reduce recursive call/prolog cost
-  directly.
+  a speed proof.
+- Entry/exit profiler update:
+  `docs/research/20260524-025544-a64-entry-exit-profiler.md`. The default-off
+  `arm64_speed_profile_entry_exit_time_filter` / Thor
+  `-Arm64SpeedProfileEntryExitTimeFilter` lane reached the visible opening
+  route in `scratch/thor-debug/20260524-025000-*` with clean fatal search.
+  `82282490` prolog+epilog/stackpoint attribution was only `273393` ticks over
+  `186010` entries, or `1.47` ticks/call and `0.93%` of body total.
+  `82281D28` was similarly small at `1.547` ticks/call and `1.56%` of body
+  total. Do not run more unchanged stack-sync or entry/exit A/B captures, and
+  do not treat stackpoint/prolog/epilog as the main wall. Next focus is
+  exclusive attribution inside `82282490` body/recursive child work, or fresh
+  body-backed state-traffic reduction.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

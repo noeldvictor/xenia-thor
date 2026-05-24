@@ -152,6 +152,7 @@ if ($Mode -eq "Window") {
         "disassemble_functions",
         "disassemble_function_filter",
         "arm64_speed_profile_body_time_filter",
+        "arm64_speed_profile_entry_exit_time_filter",
         "arm64_speed_profile_body_time_after_ms",
         "arm64_speed_profile_block_filter",
         "arm64_speed_profile_block_body_time",

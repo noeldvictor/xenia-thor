@@ -1797,6 +1797,16 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
       backend_->BodyTimeProfileEnabledForFunction(a64_function)
           ? a64_function->profile_body_ticks()
           : nullptr;
+  const bool current_guest_function_entry_exit_profile =
+      backend_->EntryExitTimeProfileEnabledForFunction(a64_function);
+  current_guest_function_prolog_ticks_ =
+      current_guest_function_entry_exit_profile
+          ? a64_function->profile_prolog_ticks()
+          : nullptr;
+  current_guest_function_epilog_ticks_ =
+      current_guest_function_entry_exit_profile
+          ? a64_function->profile_epilog_ticks()
+          : nullptr;
   current_guest_function_block_body_ticks_ =
       backend_->BlockBodyTimeProfileEnabledForFunction(a64_function);
   current_guest_function_call_edge_profile_ =
@@ -1856,6 +1866,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   // Reset state.
   stack_size_ = StackLayout::GUEST_STACK_SIZE;
   body_time_start_stack_offset_ = 0;
+  entry_exit_time_start_stack_offset_ = 0;
   block_body_time_start_stack_offset_ = 0;
   block_body_time_counter_stack_offset_ = 0;
   call_edge_time_start_stack_offset_ = 0;
@@ -2078,6 +2089,67 @@ void A64Emitter::MaybeEmitBodyTimeProfileEnd() {
   ldr(x11, ptr(sp, static_cast<uint32_t>(body_time_start_stack_offset_)));
   sub(x17, x17, x11);
   EmitAtomicAdd64(current_guest_function_body_ticks_, x17);
+}
+
+void A64Emitter::MaybeEmitEntryExitTimeProfileStartInX15() {
+  if (!current_guest_function_prolog_ticks_ &&
+      !current_guest_function_epilog_ticks_) {
+    return;
+  }
+
+  if (cvars::arm64_speed_profile_body_time_after_ms != 0) {
+    auto& inactive = NewCachedLabel();
+    auto& done = NewCachedLabel();
+    mov(x12,
+        reinterpret_cast<uint64_t>(backend_->speed_profile_body_time_active()));
+    ldr(w11, ptr(x12));
+    cbz(w11, inactive);
+    mrs(x15, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+    b(done);
+    L(inactive);
+    mov(x15, 0);
+    L(done);
+    return;
+  }
+
+  mrs(x15, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+}
+
+void A64Emitter::MaybeEmitEntryExitTimeProfileStoreStartFromX15() {
+  if (!current_guest_function_prolog_ticks_ &&
+      !current_guest_function_epilog_ticks_) {
+    return;
+  }
+  str(x15,
+      ptr(sp, static_cast<uint32_t>(entry_exit_time_start_stack_offset_)));
+}
+
+void A64Emitter::MaybeEmitEntryExitTimeProfilePrologEnd() {
+  if (!current_guest_function_prolog_ticks_) {
+    return;
+  }
+
+  auto& inactive = NewCachedLabel();
+  ldr(x11,
+      ptr(sp, static_cast<uint32_t>(entry_exit_time_start_stack_offset_)));
+  cbz(x11, inactive);
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  sub(x17, x17, x11);
+  EmitAtomicAdd64(current_guest_function_prolog_ticks_, x17);
+  L(inactive);
+}
+
+void A64Emitter::MaybeEmitEntryExitTimeProfileEpilogEndFromX15() {
+  if (!current_guest_function_epilog_ticks_) {
+    return;
+  }
+
+  auto& inactive = NewCachedLabel();
+  cbz(x15, inactive);
+  mrs(x17, 3, 3, 14, 0, 2);  // CNTVCT_EL0.
+  sub(x17, x17, x15);
+  EmitAtomicAdd64(current_guest_function_epilog_ticks_, x17);
+  L(inactive);
 }
 
 uint32_t A64Emitter::FindBlockGuestAddress(const hir::Block* block) const {
@@ -2342,6 +2414,12 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     body_time_start_stack_offset_ = stack_offset;
     stack_offset += sizeof(uint64_t);
   }
+  if (current_guest_function_prolog_ticks_ ||
+      current_guest_function_epilog_ticks_) {
+    stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
+    entry_exit_time_start_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
+  }
   if (current_guest_function_block_body_ticks_) {
     stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
     block_body_time_start_stack_offset_ = stack_offset;
@@ -2378,6 +2456,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // ========================================================================
   code_offsets.prolog = getSize();
 
+  MaybeEmitEntryExitTimeProfileStartInX15();
+
   // sub sp, sp, #stack_size
   if (stack_size <= 4095) {
     sub(sp, sp, static_cast<uint32_t>(stack_size));
@@ -2386,6 +2466,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     sub(sp, sp, x17, UXTX);
   }
   code_offsets.prolog_stack_alloc = getSize();
+  MaybeEmitEntryExitTimeProfileStoreStartFromX15();
 
   // Store host return address (x30/LR) so the epilog can restore it.
   str(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -2415,6 +2496,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     str(w0, ptr(x19, static_cast<uint32_t>(offsetof(
                           A64BackendContext, last_guest_return_address))));
   }
+  MaybeEmitEntryExitTimeProfilePrologEnd();
   MaybeEmitBodyTimeProfileStart();
   MaybeEmitBlockBodyTimeProfileInit();
   MaybeEmitBlueDragonDrawWaitCallerProfile();
@@ -2553,8 +2635,16 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   epilog_label_ = nullptr;
   code_offsets.epilog = getSize();
 
+  MaybeEmitEntryExitTimeProfileStartInX15();
+  MaybeEmitEntryExitTimeProfileStoreStartFromX15();
+
   // Pop stackpoint before leaving.
   PopStackpoint();
+
+  if (current_guest_function_epilog_ticks_) {
+    ldr(x15,
+        ptr(sp, static_cast<uint32_t>(entry_exit_time_start_stack_offset_)));
+  }
 
   // Restore host return address and deallocate stack.
   ldr(x30, ptr(sp, static_cast<uint32_t>(StackLayout::HOST_RET_ADDR)));
@@ -2564,6 +2654,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     mov(x17, static_cast<uint64_t>(stack_size));
     add(sp, sp, x17, UXTX);
   }
+  MaybeEmitEntryExitTimeProfileEpilogEndFromX15();
   ret();
 
   // ========================================================================

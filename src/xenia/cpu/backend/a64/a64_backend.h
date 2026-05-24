@@ -168,6 +168,7 @@ class A64Backend : public Backend {
     return &kf_lower_irql_apc_missing_fallback_count_;
   }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
+  bool EntryExitTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
   bool BlockBodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool CallEdgeProfileEnabledForFunction(A64Function* function) const;
@@ -213,6 +214,8 @@ class A64Backend : public Backend {
     A64Function* function = nullptr;
     uint64_t last_entry_count = 0;
     uint64_t last_body_ticks = 0;
+    uint64_t last_prolog_ticks = 0;
+    uint64_t last_epilog_ticks = 0;
     std::vector<uint64_t> last_block_counts;
     std::vector<uint64_t> last_block_body_ticks;
     std::vector<uint64_t> last_call_edge_counts;

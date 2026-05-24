@@ -184,6 +184,7 @@ param(
     [string]$Arm64ContextTrafficAuditFunction = "",
     [string]$Arm64ContextTrafficAuditBudget = "",
     [string]$Arm64SpeedProfileBodyTimeFilter = "",
+    [string]$Arm64SpeedProfileEntryExitTimeFilter = "",
     [string]$Arm64SpeedProfileBodyTimeAfterMs = "",
     [string]$Arm64SpeedProfileBlockFilter = "",
     [string]$Arm64SpeedProfileBlockBodyTime = "false",
@@ -966,6 +967,9 @@ function Start-XeniaEmulator {
     if ($Arm64SpeedProfileBodyTimeFilter) {
         $parts += "--es arm64_speed_profile_body_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileBodyTimeFilter)"
     }
+    if ($Arm64SpeedProfileEntryExitTimeFilter) {
+        $parts += "--es arm64_speed_profile_entry_exit_time_filter $(ConvertTo-AdbShellSingleQuote $Arm64SpeedProfileEntryExitTimeFilter)"
+    }
     if ($Arm64SpeedProfileBodyTimeAfterMs) {
         $parts += "--ei arm64_speed_profile_body_time_after_ms $Arm64SpeedProfileBodyTimeAfterMs"
     }
@@ -1156,6 +1160,7 @@ function Write-CaptureMetadata {
         "arm64_context_traffic_audit_function=$Arm64ContextTrafficAuditFunction",
         "arm64_context_traffic_audit_budget=$Arm64ContextTrafficAuditBudget",
         "arm64_speed_profile_body_time_filter=$Arm64SpeedProfileBodyTimeFilter",
+        "arm64_speed_profile_entry_exit_time_filter=$Arm64SpeedProfileEntryExitTimeFilter",
         "arm64_speed_profile_body_time_after_ms=$Arm64SpeedProfileBodyTimeAfterMs",
         "arm64_speed_profile_block_filter=$Arm64SpeedProfileBlockFilter",
         "arm64_speed_profile_block_body_time=$Arm64SpeedProfileBlockBodyTime",
@@ -1812,6 +1817,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileBodyTimeFilter) {
             Write-Output "A64 body-time filter: $Arm64SpeedProfileBodyTimeFilter"
+        }
+        if ($Arm64SpeedProfileEntryExitTimeFilter) {
+            Write-Output "A64 entry/exit-time filter: $Arm64SpeedProfileEntryExitTimeFilter"
         }
         if ($Arm64SpeedProfileBodyTimeAfterMs) {
             Write-Output "A64 body-time after: ${Arm64SpeedProfileBodyTimeAfterMs}ms"

@@ -116,19 +116,17 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and `822824F0` lanes:
-`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md` shows
-the current Blue Dragon speed-preset wall is recursive `82282490` work.
-Route-clean block/call-edge captures put `822825E0 -> 82282490` first
-(`body_ticks_total=28602334`, `calls_total=117425`, peak
-`ticks_per_call=1244`) and `822825C8 -> 8227FEE8` second
-(`body_ticks_total=11951162`). Android/Thor tooling now exposes
-`a64_enable_host_guest_stack_synchronization`, but keep the Blue Dragon speed
-pack default `true`. Stack-sync-off is route-clean twice and shrinks generated
-code for `82282490` (`87168` -> `85104`), but the repeat off capture landed at
-`82282490=27192157`, essentially matching the stack-sync-on control
-(`27192906`). Treat this as code-size evidence only, not speed proof. Do not
-run another unchanged stack-sync A/B; next add stackpoint/prolog overhead
-attribution or directly reduce recursive call/prolog cost.
+`docs/research/20260524-025544-a64-entry-exit-profiler.md` now answers the
+stackpoint/prolog question from the recursive `82282490` lane. Route-clean
+capture `scratch/thor-debug/20260524-025000-*` shows generated
+prolog/epilog/stackpoint attribution is tiny: `82282490` entry/exit was
+`1.47` ticks/call and `0.93%` of body total; `82281D28` was `1.547`
+ticks/call and `1.56%` of body total. Keep
+`a64_enable_host_guest_stack_synchronization` default-on and treat the prior
+stack-sync-off result as code-size evidence only. Do not run another unchanged
+stack-sync or entry/exit A/B. The current best lane is exclusive attribution
+inside `82282490` body/recursive child work, or fresh body-backed state-traffic
+reduction.
 
 The current best autonomous lane is `82282490` state traffic in the opening
 route. Before editing, run or inspect the state-span report:
