@@ -890,6 +890,25 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `87168 -> 87088` bytes), and do not repeat the exact A/B unchanged. Next
   target should be larger body-backed work in `8228252C-822825C4`, especially
   `8228252C -> 82287788` or broader state/vector/FPR traffic.
+- Current `82287788` focused child-lane read:
+  `docs/research/20260524-042555-82287788-focused-callee-split.md`.
+  Two route-clean captures (`scratch/thor-debug/20260524-041413-*` and
+  `scratch/thor-debug/20260524-042031-*`) reached the visible opening sky/wing
+  route on APK SHA
+  `A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8` with
+  clean fatal-marker searches. The lower-noise call-edge capture keeps
+  `82282490` dominant at `31584286` body ticks, with `82287788` secondary at
+  `3659269` body ticks (`ticks_per_entry=5`, `code_size=35380`). The only
+  meaningful dynamic child edge was `82287788 -> 821CE028` at `1147798` body
+  ticks over `340310` calls. The top local span is `822877BC-82287B38`:
+  `store_context=186`, `load_context=145`, `context_barrier=15`,
+  `lvlx/lvrx/vor/stvx`, `lvx128:6`, `vmaddfp:6`, `vspltw:6`, constant
+  `extract=6`, and `splat=10`. Do not revive the known-crashy CR
+  compare/barrier fusion or CR-store elision cvars, and do not restart broad
+  VMX-dot or stale `822824F0` peepholes. Next patch should be preceded by a
+  focused `822877BC-82287B38` state/vector-reduction audit, then a default-off
+  function/span-gated experiment only if the audit identifies a semantics-safe
+  lowering.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

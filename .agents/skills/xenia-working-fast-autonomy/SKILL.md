@@ -116,6 +116,22 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
+`8228252C -> 82287788` child lane. Both captures reached the visible opening
+sky/wing route with clean fatal-marker searches. The lower-noise call-edge run
+keeps `82282490` dominant at `31584286` body ticks and shows `82287788` as a
+secondary local/codegen lane at `3659269` body ticks, with only one meaningful
+dynamic child edge: `82287788 -> 821CE028` at `1147798` body ticks over
+`340310` calls. The top local span is `822877BC-82287B38`, with
+`store_context=186`, `load_context=145`, `context_barrier=15`,
+`lvlx/lvrx/vor/stvx`, `lvx128:6`, `vmaddfp:6`, `vspltw:6`, constant
+`extract=6`, and `splat=10`. Keep CR compare/barrier fusion, CR-store elision,
+and broad VMX-dot toggles default-off; those lanes have prior crash/negative
+evidence. Next useful output is a focused `822877BC-82287B38`
+state/vector-reduction audit, or a default-off function/span-gated patch only
+after that audit proves a safer lowering.
+
+Previous evidence:
 `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` closes the
 first `8228252C` lane-fold probe. The default-off A64 `EXTRACT_I32` fastpath
 for only `82282580 -> lane 0` and `82282584 -> lane 1` is route-clean and

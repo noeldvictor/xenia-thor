@@ -119,6 +119,27 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
+`8228252C -> 82287788` child lane after the lane-fold probe. Two captures
+(`scratch/thor-debug/20260524-041413-*` and
+`scratch/thor-debug/20260524-042031-*`) reached the visible opening sky/wing
+route with clean fatal-marker searches on APK SHA
+`A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. The
+lower-noise call-edge split keeps `82282490` as the main wall
+(`body_ticks_total=31584286`) and puts `82287788` as a secondary child
+(`body_ticks_total=3659269`, `ticks_per_entry=5`, `code_size=35380`). The only
+meaningful dynamic child edge is `82287788 -> 821CE028`
+(`body_ticks_total=1147798`, `calls_total=340310`, `ticks_per_call=3`). The top
+local span is `822877BC-82287B38`, with `store_context=186`,
+`load_context=145`, `context_barrier=15`, `lvlx/lvrx/vor/stvx`, `lvx128:6`,
+`vmaddfp:6`, `vspltw:6`, constant `extract=6`, and `splat=10`. Do not revive
+the known-crashy CR compare/barrier fusion or CR-store elision cvars, and do
+not restart broad VMX-dot or stale `822824F0` peepholes. Next slice should make
+or run a focused `822877BC-82287B38` state/vector-reduction audit, then only
+patch a default-off function/span-gated lowering if the audit identifies a
+semantics-safe shape.
+
+Previous priority:
 `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` closes the
 first `8228252C` lane-fold probe. The default-off A64 `EXTRACT_I32` fastpath
 for only `82282580 -> lane 0` and `82282584 -> lane 1` is route-clean and

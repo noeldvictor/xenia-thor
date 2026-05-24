@@ -623,7 +623,26 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current recursive `82282490` generated-code read:
+Current `82287788` child-lane read:
+`docs/research/20260524-042555-82287788-focused-callee-split.md`. The focused
+HIR/block-body capture `scratch\thor-debug\20260524-041413-*` and lower-noise
+call-edge capture `scratch\thor-debug\20260524-042031-*` both reached the
+visible opening sky/wing route with clean fatal-marker searches on APK SHA
+`A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. The
+lower-noise run keeps `82282490` as the main wall
+(`body_ticks_total=31584286`) and puts `82287788` secondary
+(`body_ticks_total=3659269`, `ticks_per_entry=5`, `code_size=35380`). The only
+meaningful dynamic child edge is `82287788 -> 821CE028`
+(`body_ticks_total=1147798`, `calls_total=340310`, `ticks_per_call=3`). The top
+local span `822877BC-82287B38` has `store_context=186`, `load_context=145`,
+`context_barrier=15`, `lvlx/lvrx/vor/stvx`, `lvx128:6`, `vmaddfp:6`,
+`vspltw:6`, constant `extract=6`, and `splat=10`. Do not re-enable the
+known-crashy CR compare/barrier fusion or CR-store elision cvars, and do not
+restart broad VMX-dot or stale `822824F0` peepholes. Next speed lane is a
+focused `822877BC-82287B38` state/vector-reduction audit before any default-off
+function/span-gated lowering experiment.
+
+Previous recursive `82282490` generated-code read:
 `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` implements
 and validates the first lane-fold probe. The default-off
 `arm64_blue_dragon_stvewx_stack_lane_fastpath` folds only `82282580 -> lane 0`
