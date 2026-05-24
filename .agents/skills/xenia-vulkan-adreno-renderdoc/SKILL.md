@@ -16,6 +16,24 @@ For this fork, AYN Thor Adreno proof matters more than Windows renderer proof,
 but CPU/A64 speed evidence still outranks GPU deep dives when the profile says
 the guest CPU is the wall.
 
+## Mature Vulkan Port Bias
+
+Use `docs/research/20260524-135929-mature-vulkan-port-design.md` as the GPU
+design ladder. Other mature emulator Vulkan ports converge on the same shape:
+
+- device and driver profile before optional Vulkan behavior;
+- console GPU milestone classification before frame tools;
+- deterministic trace/replay before broad renderer edits;
+- shader/pipeline cache timing before async compilation or prewarming;
+- EDRAM, resolve, texture-cache, and writeback correctness before speed claims;
+- explicit queue/fence/present wait attribution before "push more GPU" work;
+- validation, RenderDoc, AGI, and quiet FPS captures kept as separate lanes.
+
+For Blue Dragon, do not start broad GPU work while quiet captures still show the
+main CPU/JIT thread as the wall. A GPU slice needs fresh evidence such as high
+GPU wait, resolve/copy body cost, shader/pipeline stalls, present pacing stalls,
+or a real black-frame milestone regression.
+
 ## Normal Evidence Search
 
 ```powershell
@@ -85,6 +103,10 @@ immediately after the capture attempt.
 - Treat shader/pipeline compile latency as a possible guest watchdog trigger.
 - If the screen is black, prove whether the guest frontbuffer contains useful
   data before blaming Android presentation.
+- Treat Adreno as a tile-based mobile target: minimize unnecessary
+  external-memory round-trips, use precise load/store intent where the current
+  render-target path permits it, and avoid optional format or extension
+  assumptions without Thor feature logs.
 - Do not report fork-specific Vulkan findings upstream unless reproduced on an
   official Xenia build.
 

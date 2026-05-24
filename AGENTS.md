@@ -47,6 +47,12 @@ Primary target:
 - Priority is ARM64 on AYN Thor Max. Windows/x64 is useful as a control or
   semantics reference, but do not default to Windows-first workflows unless the
   exact question needs it.
+- For xenia-thor work, prefer Thor device proof whenever a change affects
+  runtime behavior. Unrelated Windows-only PS3/Eternal Sonata tests are not an
+  active xenia-thor slice by themselves and should not block Thor build, deploy,
+  ADB, or capture work unless they are actually saturating the host or touching
+  the same repo/device/git operation. Keep PS3 Eternal Sonata work Windows-only
+  unless the user explicitly starts a separate Thor PS3 sprint.
 
 ## Thor Max Translation Model
 
@@ -1183,6 +1189,14 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 - GPU work should be command-stream, shader-microcode, EDRAM/resolve, and
   format-specific. Do not rely on optional Vulkan formats without probing
   Adreno support, and do not treat EDRAM as normal host images.
+- Mature Vulkan port work should follow
+  `docs/research/20260524-135929-mature-vulkan-port-design.md`:
+  device profile, console GPU milestone classification, deterministic
+  trace/replay, shader/pipeline cache discipline, EDRAM/resolve correctness,
+  explicit sync/frame-pacing attribution, and separate validation/RenderDoc/AGI
+  lanes. Do not start broad async pipeline compilation, persistent cache
+  prewarming, tile-memory tricks, or Adreno workarounds until route evidence
+  proves the GPU path is the wall and the correctness risk is bounded.
 - System work should keep kernel/XAM/thread/timer/storage/input/audio HLE
   visible and measurable because Blue Dragon can be CPU-ready while blocked by
   device-service behavior.
