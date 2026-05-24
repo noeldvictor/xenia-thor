@@ -671,6 +671,25 @@ speed slice should add or run focused provenance for that `822824F0`
 vector-load join before any default-off function/span-gated codegen
 experiment.
 
+Latest vector-load provenance:
+`docs/research/20260524-060827-822824f0-vector-load-provenance.md`.
+Use the deterministic auditor before changing this lane:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_vector_load_join_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -StartGuest 822824F0 -EndGuest 82282528 -BlockProfileLog scratch\thor-debug\20260524-030450-speed-logcat.txt -Top 16
+```
+
+Current read: `822824F0-82282528` is still body-backed local work
+(`body_ticks_total=3501617`, child edge `82274DB0=1480443`, approximate
+exclusive `2021174`), but the vector join crosses the span boundary.
+`82282520 lvlx vr13,r0,r11` has `ea=r30+0x14` and stores `v[13]`.
+`82282528 lvrx vr0,r11,r10` has `ea=r30+0x20`, includes the `lvrx` zero path,
+and stores `v[0]`. The first matching `vor vr0,vr13,vr0` join is `8228254C`
+in the next span. Do not patch local `822824F0-82282528` generated code yet;
+next audit the cross-span `lvlx/lvrx -> vor -> extract/splat -> vmaddfp`
+consumer chain through at least `8228254C`, or return to the larger
+`8228252C-822825C4` state/vector/FPR target with better provenance.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

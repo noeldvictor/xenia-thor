@@ -994,6 +994,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   generated-code behavior from the comparison alone. Next slice should add or
   run focused provenance for that exact `822824F0` vector-load join before any
   default-off function/span-gated codegen experiment.
+- Current `822824F0` vector-load provenance:
+  `docs/research/20260524-060827-822824f0-vector-load-provenance.md` and
+  `tools/thor/thor_hir_vector_load_join_audit.ps1`. The auditor confirms
+  `822824F0-82282528` is real local work (`body_ticks_total=3501617`, child
+  edge `82274DB0=1480443`, approximate exclusive `2021174`), but the vector
+  load join is not self-contained. `82282520 lvlx vr13,r0,r11` loads from
+  `r30 + 0x14` and stores `v[13]`; `82282528 lvrx vr0,r11,r10` loads from
+  `r30 + 0x20`, has the `lvrx` zero path, and stores `v[0]`; the first
+  matching `vor vr0,vr13,vr0` join is at `8228254C` in the next span. Do not
+  patch local `822824F0-82282528` generated-code behavior yet. Next step is a
+  cross-span provenance audit through at least `8228254C`, or a return to the
+  larger `8228252C-822825C4` state/vector/FPR target with better provenance.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

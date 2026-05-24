@@ -164,6 +164,19 @@ should be focused provenance for that `822824F0` vector-load join, or a
 deterministic tool/report that proves why a default-off function/span-gated
 codegen experiment is safe.
 
+Latest vector-load provenance:
+`docs/research/20260524-060827-822824f0-vector-load-provenance.md` and
+`tools/thor/thor_hir_vector_load_join_audit.ps1` close the local-only
+`822824F0` patch temptation. The span is still real local work
+(`body_ticks_total=3501617`, child edge `82274DB0=1480443`, approximate
+exclusive `2021174`), but it is not a self-contained vector join:
+`82282520 lvlx` produces `v[13]` from `r30 + 0x14`, `82282528 lvrx` produces
+`v[0]` from `r30 + 0x20` with a zero path, and the first `vor vr0,vr13,vr0`
+join is `8228254C` in the next span. The next useful worker output should be a
+cross-span provenance report through at least `8228254C`, or a better-proven
+return to the larger `8228252C-822825C4` state/vector/FPR target. Do not patch
+local `822824F0-82282528` generated-code behavior yet.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
