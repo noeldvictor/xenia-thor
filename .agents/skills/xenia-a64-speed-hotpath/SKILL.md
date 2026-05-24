@@ -623,7 +623,18 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current recursive `82282490` entry/exit read:
+Current recursive `82282490` generated-code read:
+`docs/research/20260524-033116-8228252c-a64-codegen-audit.md` audits exact
+slice `8228252C-822825C4` with `tools/thor/thor_hir_a64_codegen_audit.ps1`.
+The slice has body total `8530471`, child edge `8228252C -> 82287788` body
+`5653971`, approximate exclusive local work `2876500`, and a local lowering
+shape of `store_context:27`, `load_context:14`, `extract:9`, `splat:6`,
+`stvewx:3`, and `vmaddfp:3`. The next speed lane is stack-lane/provenance proof
+for `stvewx` PCs `82282580`, `82282584`, and `82282588`, or a default-off
+function/block-gated lane-folding probe only for the two apparent `r1 +
+constant` stores. Keep broad `822824F0` vector peepholes stale.
+
+Previous recursive `82282490` block-slice read:
 `docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` maps the
 body-backed local span to inspect next. Use
 `tools/thor/thor_hir_dynamic_block_slice_report.ps1` before patching local

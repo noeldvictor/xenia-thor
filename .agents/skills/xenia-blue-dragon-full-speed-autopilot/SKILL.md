@@ -119,6 +119,18 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-033116-8228252c-a64-codegen-audit.md` adds the A64
+generated-code/lowering audit for the current top local `82282490` slice. Use
+`tools/thor/thor_hir_a64_codegen_audit.ps1` for this lane. The slice
+`8228252C-822825C4` has body total `8530471`, child edge
+`8228252C -> 82287788` body `5653971`, approximate exclusive local work
+`2876500`, and a generated-code floor dominated by `store_context:27`,
+`load_context:14`, `extract:9`, `splat:6`, `stvewx:3`, and `vmaddfp:3`. Next
+slice should prove stack-lane provenance for `82282580`, `82282584`, and
+`82282588`, or make a default-off function/block-gated `stvewx` lane-folding
+probe only for the two apparent `r1 + constant` stores. Keep broad `822824F0`
+vector peepholes stale until fresh body-backed evidence reopens them.
+
 `docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` is the
 latest local-target map. Use
 `tools/thor/thor_hir_dynamic_block_slice_report.ps1` before a local

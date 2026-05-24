@@ -859,6 +859,16 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `load_context:14`, `extract:9`, and `splat:6`. Next run an A64 generated
   code audit for this slice before implementing a default-off function/block
   gated vector/store or state-traffic experiment.
+- Current `8228252C` A64 generated-code audit:
+  `docs/research/20260524-033116-8228252c-a64-codegen-audit.md` and
+  `tools/thor/thor_hir_a64_codegen_audit.ps1`. The audit confirms the local
+  slice is mostly context traffic plus three `stvewx` dynamic extract/store
+  shapes and three heavy `vmaddfp` lowerings. Approximate local exclusive work
+  is `2876500` ticks after subtracting the `82287788` child edge. Do not start
+  a broad `822824F0` vector peephole. Next slice should prove stack lane
+  provenance for `82282580`, `82282584`, and `82282588`, or make a default-off
+  function/block-gated `stvewx` lane-folding probe only for the two apparent
+  `r1 + constant` stores, with rollback and correctness logging.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

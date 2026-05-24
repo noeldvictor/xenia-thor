@@ -115,7 +115,18 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 
 ## Current Default Bias
 
-Latest evidence supersedes the stale `82490030` and `822824F0` lanes:
+Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-033116-8228252c-a64-codegen-audit.md` adds a concrete
+A64 lowering audit for `8228252C-822825C4`. The slice still has body total
+`8530471`, child edge `8228252C -> 82287788` body `5653971`, and approximate
+exclusive local work `2876500`, but the local generated-code floor is now
+clear: `store_context:27`, `load_context:14`, `extract:9`, `splat:6`,
+`stvewx:3`, and `vmaddfp:3`. The three `stvewx` PCs are `82282580`,
+`82282584`, and `82282588`; the first two look like stack-address stores from
+`r1 + constant`, while the third still needs `r6` provenance proof. The next
+worker slice should prove those lane assumptions offline or make a default-off,
+function/block-gated lane-folding probe for only the two proven `r1` stores.
+
 `docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` adds the
 dynamic-block map requested by the previous slice. The top local target is now
 `8228252C-822825C4`: body total `8530471`, edge body `5653971`, approximate

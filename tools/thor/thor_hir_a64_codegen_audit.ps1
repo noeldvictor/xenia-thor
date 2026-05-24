@@ -1,0 +1,429 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$LogPath,
+    [Parameter(Mandatory = $true)]
+    [string]$Function,
+    [Parameter(Mandatory = $true)]
+    [string]$StartGuest,
+    [ValidateSet("RawHIR", "OptHIR")]
+    [string]$Phase = "OptHIR",
+    [string]$EndGuest = "",
+    [string]$BlockProfileLog = "",
+    [int]$Top = 12
+)
+
+$ErrorActionPreference = "Stop"
+
+function Add-Count {
+    param(
+        [hashtable]$Table,
+        [string]$Key,
+        [int64]$Amount = 1
+    )
+    if ([string]::IsNullOrWhiteSpace($Key)) {
+        return
+    }
+    if ($Table.ContainsKey($Key)) {
+        $Table[$Key] += $Amount
+    } else {
+        $Table[$Key] = $Amount
+    }
+}
+
+function Get-TopPairs {
+    param(
+        [hashtable]$Table,
+        [int]$Limit = 8
+    )
+    if ($Table.Count -eq 0) {
+        return "-"
+    }
+    return (($Table.GetEnumerator() |
+        Sort-Object -Property @{ Expression = "Value"; Descending = $true },
+                              @{ Expression = "Name"; Ascending = $true } |
+        Select-Object -First $Limit |
+        ForEach-Object { "{0}:{1}" -f $_.Name, $_.Value }) -join ",")
+}
+
+function Convert-HexToInt64 {
+    param([string]$Hex)
+    return [Convert]::ToInt64($Hex, 16)
+}
+
+function Get-ContextOffsetName {
+    param([int]$Offset)
+
+    if ($Offset -eq 0) { return "thread_state" }
+    if ($Offset -eq 8) { return "virtual_membase" }
+    if ($Offset -eq 16) { return "lr" }
+    if ($Offset -eq 24) { return "ctr" }
+    if ($Offset -ge 32 -and $Offset -lt 288) {
+        $index = [Math]::Floor(($Offset - 32) / 8)
+        $lane = ($Offset - 32) % 8
+        if ($lane -eq 0) { return ("r[{0}]" -f $index) }
+        return ("r[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 288 -and $Offset -lt 544) {
+        $index = [Math]::Floor(($Offset - 288) / 8)
+        $lane = ($Offset - 288) % 8
+        if ($lane -eq 0) { return ("f[{0}]" -f $index) }
+        return ("f[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 544 -and $Offset -lt 2592) {
+        $index = [Math]::Floor(($Offset - 544) / 16)
+        $lane = ($Offset - 544) % 16
+        if ($lane -eq 0) { return ("v[{0}]" -f $index) }
+        return ("v[{0}]+{1}" -f $index, $lane)
+    }
+    if ($Offset -ge 2592 -and $Offset -lt 2596) {
+        $xerNames = @("xer_ca", "xer_ov", "xer_so", "xer_pad")
+        return $xerNames[$Offset - 2592]
+    }
+    if ($Offset -ge 2596 -and $Offset -lt 2628) {
+        $crIndex = [Math]::Floor(($Offset - 2596) / 4)
+        $fieldIndex = ($Offset - 2596) % 4
+        $fieldNames = @(
+            @("lt", "gt", "eq", "so"),
+            @("fx", "fex", "vx", "ox"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("0", "1", "2", "3"),
+            @("all_equal", "1", "none_equal", "3"),
+            @("0", "1", "2", "3")
+        )
+        return ("cr{0}.{1}" -f $crIndex, $fieldNames[$crIndex][$fieldIndex])
+    }
+    if ($Offset -ge 2628 -and $Offset -lt 2632) { return "fpscr" }
+    if ($Offset -eq 2632) { return "vscr_sat" }
+    if ($Offset -eq 2636) { return "thread_id" }
+    if ($Offset -ge 2640) { return "runtime_or_reservation" }
+    return "unknown"
+}
+
+function New-ItemRow {
+    param(
+        [string]$Kind,
+        [int]$Ordinal,
+        [string]$Address,
+        [string]$Op,
+        [string]$Text,
+        [string]$PpcAddress,
+        [string]$PpcOp
+    )
+    return [pscustomobject][ordered]@{
+        kind = $Kind
+        ordinal = $Ordinal
+        address = $Address
+        op = $Op
+        text = $Text
+        ppc_address = $PpcAddress
+        ppc_op = $PpcOp
+    }
+}
+
+if (!(Test-Path -LiteralPath $LogPath)) {
+    throw "LogPath not found: $LogPath"
+}
+
+$resolvedLog = (Resolve-Path -LiteralPath $LogPath).Path
+$functionUpper = $Function.ToUpperInvariant()
+$startUpper = $StartGuest.ToUpperInvariant()
+$endUpper = $EndGuest.ToUpperInvariant()
+$functionPattern = [Regex]::Escape($functionUpper)
+$phasePattern = [Regex]::Escape($Phase)
+$linePattern = "Filtered function dump $functionPattern $phasePattern`:\s+(?<text>.*)$"
+
+$items = New-Object System.Collections.Generic.List[object]
+$ppcByAddress = @{}
+$currentPpcAddress = ""
+$currentPpcOp = ""
+$ordinal = 0
+
+Get-Content -LiteralPath $resolvedLog | ForEach-Object {
+    if ($_ -notmatch $linePattern) {
+        return
+    }
+    $text = $Matches.text
+    if ($text -match "^\s*<entry>:") {
+        return
+    }
+    if ($text -match "^\s*(loc_[0-9A-Fa-f]+|_label[0-9A-Fa-f]+):") {
+        $items.Add((New-ItemRow "label" $ordinal "" "" $text.Trim() $currentPpcAddress $currentPpcOp)) | Out-Null
+        $ordinal += 1
+        return
+    }
+    if ($text -match "^\s*;\s+(?<addr>[0-9A-Fa-f]{8})\s+[0-9A-Fa-f]{8}\s+(?<op>[A-Za-z0-9_\.]+)\s*(?<args>.*)$") {
+        $currentPpcAddress = $Matches.addr.ToUpperInvariant()
+        $currentPpcOp = $Matches.op.ToLowerInvariant()
+        $item = New-ItemRow "ppc" $ordinal $currentPpcAddress $currentPpcOp $text.Trim() $currentPpcAddress $currentPpcOp
+        $items.Add($item) | Out-Null
+        if (!$ppcByAddress.ContainsKey($currentPpcAddress)) {
+            $ppcByAddress[$currentPpcAddress] = $item
+        }
+        $ordinal += 1
+        return
+    }
+    if ($text -match "^\s*;\s*(in:|out:|$)" -or [string]::IsNullOrWhiteSpace($text)) {
+        return
+    }
+
+    $trimmed = $text.Trim()
+    $op = ""
+    if ($trimmed -match "^\S+\s*=\s*(?<op>[A-Za-z0-9_\.]+)\b") {
+        $op = $Matches.op.ToLowerInvariant()
+    } elseif ($trimmed -match "^(?<op>[A-Za-z0-9_\.]+)\b") {
+        $op = $Matches.op.ToLowerInvariant()
+    }
+    if ([string]::IsNullOrWhiteSpace($op)) {
+        return
+    }
+    $items.Add((New-ItemRow "hir" $ordinal "" $op $trimmed $currentPpcAddress $currentPpcOp)) | Out-Null
+    $ordinal += 1
+}
+
+if (!$ppcByAddress.ContainsKey($startUpper)) {
+    throw "StartGuest $startUpper not found in $Phase dump for $functionUpper."
+}
+$startOrdinal = [int]$ppcByAddress[$startUpper].ordinal
+
+$profileRows = @{}
+$edgeRows = @{}
+if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
+    if (!(Test-Path -LiteralPath $BlockProfileLog)) {
+        throw "BlockProfileLog not found: $BlockProfileLog"
+    }
+    $resolvedProfile = (Resolve-Path -LiteralPath $BlockProfileLog).Path
+    $bodyPattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
+    $edgePattern = "A64 speed profile call edge top \d+: fn $functionPattern .* edge=(?<edge>\d+) block=(?<block>[0-9A-Fa-f]{8}) target=(?<target>[0-9A-Fa-f]{8}) calls_delta=(?<calls_delta>\d+) calls_total=(?<calls_total>\d+) body_ticks_delta=(?<body_delta>\d+) body_ticks_total=(?<body_total>\d+) ticks_per_call=(?<tpc>\d+)"
+    Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
+        if ($_ -match $bodyPattern) {
+            $guest = $Matches.guest.ToUpperInvariant()
+            $total = [int64]$Matches.total
+            if (!$profileRows.ContainsKey($guest) -or $total -ge [int64]$profileRows[$guest].body_ticks_total) {
+                $profileRows[$guest] = [pscustomobject][ordered]@{
+                    guest = $guest
+                    block = [int]$Matches.block
+                    body_ticks_total = $total
+                    body_ticks_delta = [int64]$Matches.delta
+                    entries_delta = [int64]$Matches.entries
+                    ticks_per_entry = [int64]$Matches.tpe
+                }
+            }
+            return
+        }
+        if ($_ -match $edgePattern) {
+            $blockGuest = $Matches.block.ToUpperInvariant()
+            if (!$edgeRows.ContainsKey($blockGuest)) {
+                $edgeRows[$blockGuest] = New-Object System.Collections.Generic.List[object]
+            }
+            $edgeRows[$blockGuest].Add([pscustomobject][ordered]@{
+                target = $Matches.target.ToUpperInvariant()
+                calls_total = [int64]$Matches.calls_total
+                body_ticks_total = [int64]$Matches.body_total
+                ticks_per_call = [int64]$Matches.tpc
+            }) | Out-Null
+        }
+    }
+}
+
+$endOrdinal = $items.Count
+if (![string]::IsNullOrWhiteSpace($endUpper)) {
+    if (!$ppcByAddress.ContainsKey($endUpper)) {
+        throw "EndGuest $endUpper not found in $Phase dump for $functionUpper."
+    }
+    $endOrdinal = [int]$ppcByAddress[$endUpper].ordinal
+} elseif ($profileRows.Count -gt 0) {
+    foreach ($guest in $profileRows.Keys) {
+        if (!$ppcByAddress.ContainsKey($guest)) {
+            continue
+        }
+        $candidateOrdinal = [int]$ppcByAddress[$guest].ordinal
+        if ($candidateOrdinal -gt $startOrdinal -and $candidateOrdinal -lt $endOrdinal) {
+            $endOrdinal = $candidateOrdinal
+            $endUpper = $guest
+        }
+    }
+}
+if ($endOrdinal -eq $items.Count) {
+    $nextLabel = $items |
+        Where-Object { $_.kind -eq "label" -and [int]$_.ordinal -gt $startOrdinal } |
+        Sort-Object -Property ordinal |
+        Select-Object -First 1
+    if ($null -ne $nextLabel) {
+        $endOrdinal = [int]$nextLabel.ordinal
+    }
+}
+
+$slice = $items | Where-Object { [int]$_.ordinal -ge $startOrdinal -and [int]$_.ordinal -lt $endOrdinal }
+$ppc = $slice | Where-Object { $_.kind -eq "ppc" }
+$hir = $slice | Where-Object { $_.kind -eq "hir" }
+
+$ppcOps = @{}
+$hirOps = @{}
+$loads = @{}
+$stores = @{}
+$stvewxPcs = @{}
+$dynamicExtractPcs = @{}
+$splatPcs = @{}
+
+$extract = 0
+$extractDynamic = 0
+$extractConstant = 0
+$splat = 0
+$mulAdd = 0
+$load1 = 0
+$loadOffset1 = 0
+$store1 = 0
+$contextBarrier = 0
+$calls = 0
+$branches = 0
+$stvewx = 0
+$stvewxDynamicExtract = 0
+$stvewxStore1 = 0
+$stvewxMaskedAddress = 0
+
+foreach ($row in $ppc) {
+    Add-Count $ppcOps $row.op
+    if ($row.op -eq "stvewx") {
+        $stvewx += 1
+        Add-Count $stvewxPcs $row.address
+    }
+}
+
+foreach ($row in $hir) {
+    Add-Count $hirOps $row.op
+    if ($row.text -match "\bload_context\s+\+(?<offset>\d+)") {
+        $offset = [int]$Matches.offset
+        Add-Count $loads (Get-ContextOffsetName $offset)
+    }
+    if ($row.text -match "\bstore_context\s+\+(?<offset>\d+)") {
+        $offset = [int]$Matches.offset
+        Add-Count $stores (Get-ContextOffsetName $offset)
+    }
+    if ($row.op -eq "extract") {
+        $extract += 1
+        if ($row.text -match "\bextract\s+[^,]+,\s+v[0-9]+\.(i8|i16|i32|i64)") {
+            $extractDynamic += 1
+            Add-Count $dynamicExtractPcs $row.ppc_address
+            if ($row.ppc_op -eq "stvewx") {
+                $stvewxDynamicExtract += 1
+            }
+        } else {
+            $extractConstant += 1
+        }
+    }
+    if ($row.op -eq "splat") {
+        $splat += 1
+        Add-Count $splatPcs $row.ppc_address
+    }
+    if ($row.op -eq "mul_add") { $mulAdd += 1 }
+    if ($row.op -eq "load.1") { $load1 += 1 }
+    if ($row.op -eq "load_offset.1") { $loadOffset1 += 1 }
+    if ($row.op -eq "store.1") {
+        $store1 += 1
+        if ($row.ppc_op -eq "stvewx") {
+            $stvewxStore1 += 1
+        }
+    }
+    if ($row.op -eq "context_barrier") { $contextBarrier += 1 }
+    if ($row.op -like "call*") { $calls += 1 }
+    if ($row.op -like "branch*") { $branches += 1 }
+    if ($row.ppc_op -eq "stvewx" -and $row.text -match "\band\s+[^,]+,\s+-4\b") {
+        $stvewxMaskedAddress += 1
+    }
+}
+
+$profile = $null
+if ($profileRows.ContainsKey($startUpper)) {
+    $profile = $profileRows[$startUpper]
+}
+$edgeBody = 0
+$edgeCalls = 0
+$edgeTargets = "-"
+if ($edgeRows.ContainsKey($startUpper)) {
+    $latestByTarget = @{}
+    foreach ($edge in $edgeRows[$startUpper]) {
+        if (!$latestByTarget.ContainsKey($edge.target) -or
+            [int64]$edge.body_ticks_total -ge [int64]$latestByTarget[$edge.target].body_ticks_total) {
+            $latestByTarget[$edge.target] = $edge
+        }
+    }
+    $targetParts = New-Object System.Collections.Generic.List[string]
+    foreach ($edge in $latestByTarget.Values) {
+        $edgeBody += [int64]$edge.body_ticks_total
+        $edgeCalls += [int64]$edge.calls_total
+        $targetParts.Add(("{0}:{1}" -f $edge.target, $edge.body_ticks_total)) | Out-Null
+    }
+    $edgeTargets = $targetParts -join ","
+}
+$exclusive = 0
+$exclusivePct = 0.0
+if ($null -ne $profile) {
+    $exclusive = [Math]::Max([int64]0, [int64]$profile.body_ticks_total - [int64]$edgeBody)
+    if ([int64]$profile.body_ticks_total -gt 0) {
+        $exclusivePct = [Math]::Round(($exclusive * 100.0) / [int64]$profile.body_ticks_total, 2)
+    }
+}
+
+$loadContextCount = 0
+if ($hirOps.ContainsKey("load_context")) {
+    $loadContextCount = [int64]$hirOps["load_context"]
+}
+$storeContextCount = 0
+if ($hirOps.ContainsKey("store_context")) {
+    $storeContextCount = [int64]$hirOps["store_context"]
+}
+
+$knownScalarFloor =
+    $extractDynamic * 11 +
+    $extractConstant +
+    $splat +
+    $load1 * 2 +
+    $loadOffset1 * 2 +
+    $store1 * 2 +
+    $loadContextCount +
+    $storeContextCount
+
+Write-Output "# HIR A64 Codegen Audit"
+Write-Output ""
+Write-Output ("log={0}" -f $resolvedLog)
+if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
+    Write-Output ("block_profile_log={0}" -f (Resolve-Path -LiteralPath $BlockProfileLog).Path)
+}
+Write-Output ("function={0}" -f $functionUpper)
+Write-Output ("phase={0}" -f $Phase)
+$endLabel = $endUpper
+if ([string]::IsNullOrWhiteSpace($endLabel)) {
+    $endLabel = "next_label"
+}
+Write-Output ("slice={0}-{1}" -f $startUpper, $endLabel)
+if ($null -ne $profile) {
+    Write-Output ("body_ticks_total={0} body_ticks_delta={1} entries_delta={2} ticks_per_entry={3} edge_targets={4} edge_body_total={5} edge_calls_total={6} approx_exclusive={7} exclusive_pct={8}" -f $profile.body_ticks_total, $profile.body_ticks_delta, $profile.entries_delta, $profile.ticks_per_entry, $edgeTargets, $edgeBody, $edgeCalls, $exclusive, $exclusivePct)
+}
+Write-Output ("ppc_count={0} hir_count={1}" -f $ppc.Count, $hir.Count)
+Write-Output ("ppc_ops={0}" -f (Get-TopPairs $ppcOps $Top))
+Write-Output ("hir_ops={0}" -f (Get-TopPairs $hirOps $Top))
+Write-Output ("context_loads={0}" -f (Get-TopPairs $loads $Top))
+Write-Output ("context_stores={0}" -f (Get-TopPairs $stores $Top))
+Write-Output ""
+Write-Output "## Hot Lowering Shapes"
+Write-Output ("extract={0} dynamic={1} constant={2} dynamic_pcs={3}" -f $extract, $extractDynamic, $extractConstant, (Get-TopPairs $dynamicExtractPcs $Top))
+Write-Output ("splat={0} pcs={1}" -f $splat, (Get-TopPairs $splatPcs $Top))
+Write-Output ("mul_add_v128={0}" -f $mulAdd)
+Write-Output ("load1={0} load_offset1={1} store1={2}" -f $load1, $loadOffset1, $store1)
+Write-Output ("stvewx={0} masked_address={1} dynamic_extract={2} store1={3} pcs={4}" -f $stvewx, $stvewxMaskedAddress, $stvewxDynamicExtract, $stvewxStore1, (Get-TopPairs $stvewxPcs $Top))
+Write-Output ("context_barriers={0} calls={1} branches={2}" -f $contextBarrier, $calls, $branches)
+Write-Output ("known_scalar_codegen_floor={0}" -f $knownScalarFloor)
+Write-Output ""
+Write-Output "## A64 Lowering Anchors"
+Write-Output "load_context/store_context: src/xenia/cpu/backend/a64/a64_sequences.cc emits direct ldr/str from the PPC context register; nonzero constants add a mov."
+Write-Output "load.1/store.1: src/xenia/cpu/backend/a64/a64_seq_memory.cc computes a 32-bit guest address through x0 before ldr/str; byte-swap paths add rev."
+Write-Output "extract dynamic i32: src/xenia/cpu/backend/a64/a64_seq_vector.cc builds a TBL control with scalar ops, then tbl+umov. This audit counts it as an 11-instruction scalar/vector floor."
+Write-Output "splat i32: src/xenia/cpu/backend/a64/a64_seq_vector.cc variable i32 splat lowers to dup."
+Write-Output "mul_add v128: src/xenia/cpu/backend/a64/a64_sequences.cc uses VMX FPCR mode, scratch stack saves, fmla, NaN fixup, and denormal handling when required."
+Write-Output ""
+Write-Output "## PPC Preview"
+foreach ($row in ($ppc | Select-Object -First $Top)) {
+    Write-Output ("{0}" -f $row.text)
+}
