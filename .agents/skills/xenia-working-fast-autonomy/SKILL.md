@@ -228,6 +228,18 @@ Keep the cvar default-off. Next worker output should be a quiet same-APK A/B
 or control sandwich with audit off; if it is inconclusive again, move to
 `MUL_ADD_V128` cost.
 
+Latest all-three `stvewx` quiet A/B:
+`docs/research/20260524-071045-blue-dragon-all-three-stvewx-quiet-ab.md`.
+Control `scratch/thor-debug/20260524-070253-*` and fastpath-on
+`scratch/thor-debug/20260524-070613-*` used the same commit/APK with audit,
+body-time, block body-time, and disassembly off. Both reached matching opening
+sky/dragon-wing frames with clean fatal-marker searches. The fastpath shrank
+`82282490` code size by `120` bytes, but final `82282490` total entries were
+identical at `183498`, final deltas were close, and final Main Thread stayed
+around one full core. Treat this as no proven speed win. Keep the cvar
+default-off. Next worker output should move to `MUL_ADD_V128` cost/source
+audit for `82282568/8228256C/82282570`.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture

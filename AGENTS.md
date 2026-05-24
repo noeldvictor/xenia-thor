@@ -1063,6 +1063,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   Keep the cvar default-off in presets. Next useful step is a quiet same-APK
   A/B or control sandwich with audit off; if that is inconclusive again, move
   to `MUL_ADD_V128` cost for `82282568/8228256C/82282570`.
+- Current all-three `stvewx` quiet A/B:
+  `docs/research/20260524-071045-blue-dragon-all-three-stvewx-quiet-ab.md`.
+  Control `scratch/thor-debug/20260524-070253-*` and fastpath-on
+  `scratch/thor-debug/20260524-070613-*` used the same commit `a924aba56` and
+  APK SHA `8A3DA22B2208AA67DE13C07383490F3BEBA14E2DC1538AAB5CE08FD035626771`
+  with audit, body-time, block body-time, and disassembly all off. Both reached
+  visually matching opening sky/dragon-wing frames with clean fatal-marker
+  searches. The fastpath shrank `82282490` code size from `86828` to `86708`,
+  but final `82282490` total entries stayed identical at `183498`, final
+  interval deltas were close (`54908` control vs. `51940` fastpath-on), and
+  final Main Thread stayed around one full core. Treat this as no proven speed
+  win. Keep `arm64_blue_dragon_stvewx_stack_lane_fastpath` default-off and stop
+  spending new sprint slices on narrow `stvewx` lane folds unless a broader
+  state/vector experiment reopens them. Next lane: `MUL_ADD_V128` source/cost
+  audit for `82282568/8228256C/82282570`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

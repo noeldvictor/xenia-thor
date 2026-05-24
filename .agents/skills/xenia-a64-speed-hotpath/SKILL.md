@@ -759,6 +759,19 @@ enabled. Next use a quiet same-APK A/B or control sandwich with audit off; if
 that misses or is inconclusive, move to `MUL_ADD_V128` cost at
 `82282568/8228256C/82282570`.
 
+Latest all-three `stvewx` quiet A/B:
+`docs/research/20260524-071045-blue-dragon-all-three-stvewx-quiet-ab.md`.
+Control `scratch/thor-debug/20260524-070253-*` and fastpath-on
+`scratch/thor-debug/20260524-070613-*` used the same commit/APK and disabled
+audit, body-time, block body-time, and disassembly. Both reached matching
+opening sky/dragon-wing frames with clean fatal-marker searches. The fastpath
+shrunk `82282490` from `86828` to `86708` bytes, but final `82282490` total
+entries were identical at `183498`; final deltas were `54908` control versus
+`51940` fastpath-on, which is not enough to call a speed win for this route.
+Keep the cvar default-off and do not spend another immediate slice on narrow
+`stvewx` lane folds. Move to `MUL_ADD_V128` source/cost audit for
+`82282568/8228256C/82282570`.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

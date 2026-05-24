@@ -240,6 +240,19 @@ Keep the cvar default-off in presets. Next useful slice is a quiet same-APK
 A/B or control sandwich with audit off; if that is inconclusive again, switch
 to `MUL_ADD_V128` cost for `82282568/8228256C/82282570`.
 
+Latest all-three `stvewx` quiet A/B:
+`docs/research/20260524-071045-blue-dragon-all-three-stvewx-quiet-ab.md`.
+Control `scratch/thor-debug/20260524-070253-*` and fastpath-on
+`scratch/thor-debug/20260524-070613-*` used the same commit/APK with audit,
+body-time, block body-time, and disassembly off. Both reached matching opening
+sky/dragon-wing frames with clean fatal-marker searches. The fastpath shrank
+`82282490` code size from `86828` to `86708`, but final `82282490` total
+entries stayed identical at `183498` and final interval deltas were close
+(`54908` control vs. `51940` fastpath-on). Treat this as no proven speed win.
+Keep the cvar default-off and stop spending new sprint slices on narrow
+`stvewx` lane folds unless broader state/vector work reopens them. Next lane:
+`MUL_ADD_V128` source/cost audit for `82282568/8228256C/82282570`.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
