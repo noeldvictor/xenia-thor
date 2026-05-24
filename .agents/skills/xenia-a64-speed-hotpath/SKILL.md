@@ -1302,7 +1302,21 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `82287788` pair-entry ROI:
+Latest `82287788` `fpscr` dirty-cache audit:
+`docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.
+Run `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1` before considering any
+`fpscr` forwarding or dirty-cache patch. On `82287788`, the report finds
+`loads=26`, `stores=26`, `paired_load_store_updates=26`, and dynamic upper
+`loads=43973072` / `stores=43973072`, but `strict_same_window=0`.
+Useful savings require `cfg_phi_or_stack_carrier_required=24` transitions and
+`external_visibility_flush_required=2` call-visible transitions. Required call
+writeback PCs are `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`. The
+parent `82282490` check has `loads=12`, `stores=12`, and every transition
+crosses external call visibility. Do not write a Blue Dragon-only `fpscr`
+behavior shortcut next; return to broader `8228252C-822825C4` state/vector/FPR
+work, or first build a generic CFG-aware dirty-state carrier audit.
+
+Previous `82287788` pair-entry ROI:
 `docs/research/20260524-113615-82287788-pair-entry-roi.md`.
 Run `tools/thor/thor_hir_function_pair_variant_audit.ps1` with
 `-CompareExistingStackCarrier` before considering another `f[1]` pair-entry

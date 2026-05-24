@@ -119,6 +119,21 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`
+adds `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`. The report closes the
+tempting `fpscr` shortcut for now. For `82287788` on the hot
+`82282490 -> 82287788` edge, `fpscr` has `loads=26`, `stores=26`, and
+dynamic upper `loads=43973072` / `stores=43973072`, but there are
+`strict_same_window=0` reload wins. The useful transitions are
+`cfg_phi_or_stack_carrier_required=24` plus
+`external_visibility_flush_required=2`, with call writebacks at `82287ED4`,
+`82287EDC`, `82287EE4`, and `82288220`. A parent `82282490` check reports all
+12 transitions require external call visibility. Do not patch `fpscr` dirty
+caching next. Return to broader `8228252C-822825C4` state/vector/FPR work, or
+first design a generic CFG-aware dirty carrier audit with exact call/exit
+writebacks.
+
+Previous priority:
 `docs/research/20260524-113615-82287788-pair-entry-roi.md`
 adds `-CompareExistingStackCarrier` to
 `tools/thor/thor_hir_function_pair_variant_audit.ps1`. The `f[1]` pair-entry

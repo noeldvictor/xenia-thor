@@ -2419,6 +2419,24 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.
+  New deterministic tool `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`
+  parses filtered HIR, pairs `fpscr` (`+2628`) load/update/store rows, and
+  classifies store-to-next-load transitions by whether they are strict local
+  wins, CFG/PHI or stack-carrier wins, external-visibility writebacks, or exit
+  flushes. For `82287788` on the hot `82282490 -> 82287788` edge, it reports
+  `loads=26`, `stores=26`, `paired_load_store_updates=26`, dynamic upper
+  `loads=43973072`, `stores=43973072`, but `strict_same_window=0`,
+  `cfg_phi_or_stack_carrier_required=24`, and
+  `external_visibility_flush_required=2`. Required call writeback PCs include
+  `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`. The parent `82282490`
+  check is worse: `loads=12`, `stores=12`, and all 12 transitions require
+  external call visibility. Do not implement an `fpscr` dirty-cache behavior
+  patch next; the win needs a CFG-aware dirty carrier with exact call/exit
+  writebacks, not a Blue Dragon-only peephole. Return to broader
+  `8228252C-822825C4` state/vector/FPR work or first build a generic dirty
+  state-carrier audit.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-113615-82287788-pair-entry-roi.md`.
   `tools/thor/thor_hir_function_pair_variant_audit.ps1` now supports
   `-CompareExistingStackCarrier`. The pair-specific `f[1]` entry remains

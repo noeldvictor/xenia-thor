@@ -115,6 +115,18 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 
 ## Current Default Bias
 
+Latest lane closure:
+`docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md` adds
+`tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`. It shows `fpscr` is too
+cross-boundary for the next local speed patch: `82287788` has `loads=26`,
+`stores=26`, and a large dynamic access upper, but `strict_same_window=0`;
+24 store-to-next-load transitions require CFG/PHI or a stack carrier, and 2
+require external call visibility with writebacks at `82287ED4`, `82287EDC`,
+`82287EE4`, and `82288220`. Parent `82282490` is worse: all 12 transitions
+cross external call visibility. Do not patch `fpscr` dirty caching next.
+Return to broader body-backed `8228252C-822825C4` state/vector/FPR work, or
+first build a generic CFG-aware dirty-state carrier audit.
+
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
 `docs/research/20260524-052524-82281d28-call-edge-split.md` says the larger
 `82281D28` lane is not a local patch target yet. Capture
