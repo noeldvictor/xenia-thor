@@ -80,9 +80,15 @@ uint16_t GetAndroidKeyButton(jint key_code) {
       return X_INPUT_GAMEPAD_A;
     case AKEYCODE_BUTTON_B:
       return X_INPUT_GAMEPAD_B;
+    case AKEYCODE_BUTTON_C:
+      // Some Android handheld key layouts expose the west face button as C.
+      return X_INPUT_GAMEPAD_X;
     case AKEYCODE_BUTTON_X:
       return X_INPUT_GAMEPAD_X;
     case AKEYCODE_BUTTON_Y:
+      return X_INPUT_GAMEPAD_Y;
+    case AKEYCODE_BUTTON_Z:
+      // Some Android handheld key layouts expose the north face button as Z.
       return X_INPUT_GAMEPAD_Y;
     case AKEYCODE_BUTTON_L1:
       return X_INPUT_GAMEPAD_LEFT_SHOULDER;

@@ -119,6 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`
+closes the standalone branch-loop lane. The broader offline pass audited
+`82282490-822824B8`, `822824B8-822824E8`, and `822825F4-82282600` together:
+the loop head plus tail total `2133128` local-exclusive ticks with four CR
+predicate stores, but only three fallthrough-only GPR reload opportunities, all
+inside `822824B8-822824E8`. The entry/setup slice adds only `249802` ticks and
+no reload win. Do not patch CR store/barrier fusion or a narrow branch-local
+GPR carrier next. The next useful slice should return to higher-traffic
+CFG-aware or interprocedural state-carrier work around `8228252C-822825C4` and
+the hot `82282490 -> 82287788` state round-trip, with explicit
+call/helper/barrier/exit/alias flush rules.
+
+Previous priority:
 `docs/research/20260524-120704-822824b8-branch-state-audit.md`
 adds `tools/thor/thor_hir_branch_state_audit.ps1`. The fresh
 `822824B8-822824E8` branch span is real local work
@@ -144,10 +157,8 @@ have no HIR DCE payoff, `f[1]` pair-entry ROI is only a seed load, `fpscr`
 requires CFG-aware dirty writebacks, and the quiet `stvewx` / `MUL_ADD_V128`
 A/B runs did not prove speed. Do not patch `8228252C-822825C4` behavior next
 unless the slice is a broader CFG-aware or interprocedural state-carrier
-design. The next one-variable local lane should be an offline audit of fresh
-non-call-heavy `822824B8-822824E8` CR/GPR compare-and-branch traffic
-(`approx_exclusive=1099164`, `exclusive_pct=100`) before any default-off
-function/span-gated codegen experiment.
+design. The later branch-loop aggregate audit has now closed the
+`822824B8` local detour, so avoid another immediate CR/GPR branch slice.
 
 Previous priority:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`

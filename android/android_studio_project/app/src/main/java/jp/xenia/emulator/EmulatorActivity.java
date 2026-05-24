@@ -1,6 +1,7 @@
 package jp.xenia.emulator;
 
 import android.content.Intent;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -9,8 +10,12 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.TextView;
 
+import org.jetbrains.annotations.Nullable;
+
 public class EmulatorActivity extends WindowedAppActivity {
+    private static final String TAG = "XeniaInput";
     private static final float AXIS_DEADZONE = 0.05f;
+    private static int sGamepadLogBudget = 24;
 
     private static native void nativeOnAndroidGamepadKey(
             int keyCode, boolean pressed, int repeatCount, int deviceId);
@@ -367,6 +372,30 @@ public class EmulatorActivity extends WindowedAppActivity {
                 || ((source & InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD);
     }
 
+    private static boolean isGamepadDevice(@Nullable final InputDevice device) {
+        if (device == null) {
+            return false;
+        }
+        final int sources = device.getSources();
+        if (isGamepadSource(sources)) {
+            return true;
+        }
+        final String name = device.getName();
+        return name != null && name.toLowerCase().contains("odin controller");
+    }
+
+    private static void logGamepadEvent(
+            final String kind, final InputDevice device, final int source, final String detail) {
+        if (sGamepadLogBudget <= 0) {
+            return;
+        }
+        sGamepadLogBudget--;
+        final String name = device != null ? device.getName() : "<none>";
+        final int deviceId = device != null ? device.getId() : -1;
+        Log.i(TAG, kind + " device=" + deviceId + " name=\"" + name
+                + "\" source=0x" + Integer.toHexString(source) + " " + detail);
+    }
+
     private static boolean isGamepadKeyCode(final int keyCode) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_UP:
@@ -375,8 +404,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_BUTTON_A:
             case KeyEvent.KEYCODE_BUTTON_B:
+            case KeyEvent.KEYCODE_BUTTON_C:
             case KeyEvent.KEYCODE_BUTTON_X:
             case KeyEvent.KEYCODE_BUTTON_Y:
+            case KeyEvent.KEYCODE_BUTTON_Z:
             case KeyEvent.KEYCODE_BUTTON_L1:
             case KeyEvent.KEYCODE_BUTTON_R1:
             case KeyEvent.KEYCODE_BUTTON_L2:
@@ -400,21 +431,21 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
             return false;
         }
-        if (!isGamepadSource(event.getSource())
-                && event.getKeyCode() < KeyEvent.KEYCODE_BUTTON_A) {
-            return false;
-        }
+        final InputDevice device = event.getDevice();
         nativeOnAndroidGamepadKey(
                 event.getKeyCode(),
                 action == KeyEvent.ACTION_DOWN,
                 event.getRepeatCount(),
                 event.getDeviceId());
+        logGamepadEvent("key", device, event.getSource(),
+                KeyEvent.keyCodeToString(event.getKeyCode()) + " "
+                        + (action == KeyEvent.ACTION_DOWN ? "down" : "up"));
         return true;
     }
 
     private boolean handleGamepadMotionEvent(final MotionEvent event) {
         if (event == null || event.getActionMasked() != MotionEvent.ACTION_MOVE
-                || !isGamepadSource(event.getSource())) {
+                || (!isGamepadSource(event.getSource()) && !isGamepadDevice(event.getDevice()))) {
             return false;
         }
 
@@ -458,6 +489,9 @@ public class EmulatorActivity extends WindowedAppActivity {
                 rightTrigger,
                 getCenteredAxis(event, MotionEvent.AXIS_HAT_X),
                 getCenteredAxis(event, MotionEvent.AXIS_HAT_Y));
+        logGamepadEvent("motion", event.getDevice(), event.getSource(),
+                "lx=" + leftX + " ly=" + leftY + " rx=" + rightX + " ry=" + rightY
+                        + " lt=" + leftTrigger + " rt=" + rightTrigger);
         return true;
     }
 
@@ -472,6 +506,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             return null;
         }
         InputDevice.MotionRange range = device.getMotionRange(axis, event.getSource());
+        if (range == null) {
+            range = device.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK);
+        }
+        if (range == null) {
+            range = device.getMotionRange(axis, InputDevice.SOURCE_GAMEPAD);
+        }
         if (range == null) {
             range = device.getMotionRange(axis);
         }

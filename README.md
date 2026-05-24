@@ -87,8 +87,10 @@ Current state as of 2026-05-24:
 - It still is not playable gameplay.
 - The normal Android launcher path now defaults to the real Thor/Android
   controller bridge (`hid=android`); `hid=nop` remains for scripted research
-  captures. The next main lanes are longer input routes, A64 backend hot-path
-  profiling, and reducing remaining research-only Vulkan fallback knobs.
+  captures. The Android bridge is device-aware for the Thor/Odin built-in pad,
+  including keyboard-source D-pad events and `BUTTON_C` / `BUTTON_Z` fallbacks.
+  The next main lanes are longer input routes, A64 backend hot-path profiling,
+  and reducing remaining research-only Vulkan fallback knobs.
 - It is not a compatibility result.
 
 ## Local Notes

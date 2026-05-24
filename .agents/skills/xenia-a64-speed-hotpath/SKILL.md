@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `822824B8` branch-state audit:
+Latest branch-loop aggregate audit:
+`docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`.
+Run the branch-state tool on nearby branch slices before patching this lane.
+The broader pass across `82282490-822824B8`, `822824B8-822824E8`, and
+`822825F4-82282600` closes standalone branch/GPR work: `822824B8` plus
+`822825F4` totals `2133128` local-exclusive ticks and four CR predicate stores,
+but only three fallthrough-only GPR reloads, all in `822824B8-822824E8`.
+Entry/setup adds only `249802` ticks and no reload opportunity. Do not patch
+CR store/barrier fusion or a narrow branch-local GPR carrier next. Move back to
+higher-traffic CFG-aware/interprocedural state-carrier design around
+`8228252C-822825C4` and `82282490 -> 82287788`, with exact
+call/helper/barrier/exit/alias flush rules.
+
+Previous `822824B8` branch-state audit:
 `docs/research/20260524-120704-822824b8-branch-state-audit.md`.
 Run `tools/thor/thor_hir_branch_state_audit.ps1` before considering any
 branch-local CR/GPR context patch. On `82282490:822824B8-822824E8`, it reports
@@ -1326,10 +1339,9 @@ fallout, `f[1]` pair-entry ROI is only the seed context load, `fpscr` needs
 CFG-aware dirty writebacks, the all-three `stvewx` lane fold did not prove
 speed, and the three-PC `MUL_ADD_V128` fastpath was mixed. Do not patch
 `8228252C-822825C4` behavior next unless building a broader CFG-aware or
-interprocedural state-carrier design. For a one-variable local A64 lane, audit
-`822824B8-822824E8` first: it is fresh, non-call-heavy, and branch/CR/GPR
-centric (`approx_exclusive=1099164`, `exclusive_pct=100`, `store_context=16`,
-`load_context=4`).
+interprocedural state-carrier design. The later branch-loop aggregate audit has
+closed the `822824B8` local detour, so avoid another immediate CR/GPR branch
+patch.
 
 Previous `82287788` `fpscr` dirty-cache audit:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.

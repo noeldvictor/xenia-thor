@@ -2187,6 +2187,16 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `-HidDriver android -LogLevel 2` logged the Android HID active-as-XInput
   info line, and synthetic Android START/A keyevents produced native
   `Android HID: key` down/up rows with no fatal markers.
+- Input follow-up: `docs/research/20260524-122605-thor-controller-device-aware-input.md`
+  fixes Thor/Odin controller event filtering after the launcher default fix.
+  `EmulatorActivity` now forwards recognized D-pad/gamepad key codes even when
+  Android reports them as keyboard/virtual-source events, accepts the
+  `Odin Controller` device fallback for motion, retries joystick/gamepad axis
+  ranges, and logs the first few bridge events as `XeniaInput`. Native Android
+  HID also maps `BUTTON_C -> X` and `BUTTON_Z -> Y` for Thor keylayout
+  compatibility. `FullDeploy` and `ApkShellDeploy` passed on `c3ca0370`, and
+  synthetic `DPAD_UP`, `BUTTON_A`, and `BUTTON_C` events reached both Java and
+  native Android HID logs.
 - Speed lane update: `LaunchBlueDragonSpeedCapture` now enables the validated
   Blue Dragon A64 speed pack by default, unless a flag is explicitly overridden
   on the command line. This prevents new captures from accidentally measuring
@@ -2419,6 +2429,20 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`.
+  The broader branch-loop audit closes the standalone `822824B8 <-> 822825F4`
+  branch/GPR lane. Re-running the dynamic slice ranking and branch-state tool
+  across `82282490-822824B8`, `822824B8-822824E8`, and
+  `822825F4-82282600` shows the loop head plus tail totals `2133128`
+  local-exclusive ticks and four CR predicate stores, but only three
+  fallthrough-only GPR reload opportunities, all in `822824B8-822824E8`.
+  The nearby entry/setup slice adds only `249802` ticks and no reload win. Do
+  not patch CR store/barrier fusion or a narrow branch-local GPR carrier next.
+  The next useful output should return to higher-traffic CFG-aware or
+  interprocedural state-carrier design around `8228252C-822825C4` and the hot
+  `82282490 -> 82287788` state round-trip, with exact call/helper/barrier/exit
+  flush rules.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-120704-822824b8-branch-state-audit.md`.
   New deterministic tool `tools/thor/thor_hir_branch_state_audit.ps1` audits
   branchy HIR spans for context stores consumed by branch predicates and
@@ -2444,11 +2468,9 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   missed, `fpscr` needs CFG-aware dirty writebacks, all-three `stvewx` was not
   speed-positive, and the three-PC `MUL_ADD_V128` fastpath was mixed. Do not
   patch `8228252C-822825C4` behavior next unless the slice is explicitly a
-  broader CFG-aware/interprocedural state-carrier design. For a local
-  one-variable slice, audit the fresh non-call-heavy `822824B8-822824E8`
-  CR/GPR compare-and-branch span first (`approx_exclusive=1099164`,
-  `exclusive_pct=100`, `store_context=16`, `load_context=4`), then decide
-  whether a default-off function/span-gated codegen experiment is justified.
+  broader CFG-aware/interprocedural state-carrier design. The later branch-loop
+  aggregate audit has now closed the `822824B8` local detour, so do not spend
+  another immediate slice on that CR/GPR branch lane.
 - Previous Blue Dragon speed lane:
   `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.
   New deterministic tool `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`

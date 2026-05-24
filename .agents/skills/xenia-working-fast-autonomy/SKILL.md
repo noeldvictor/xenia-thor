@@ -116,6 +116,17 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`
+closes the branch-loop detour. Across `82282490-822824B8`,
+`822824B8-822824E8`, and `822825F4-82282600`, the loop head plus tail total
+`2133128` local-exclusive ticks and four CR predicate stores, but only three
+fallthrough-only GPR reloads, all in `822824B8-822824E8`. Entry/setup adds only
+`249802` ticks and no reload opportunity. Do not patch CR store/barrier fusion
+or a narrow branch-local GPR carrier next. Return to higher-traffic CFG-aware
+or interprocedural state-carrier work, especially around `8228252C-822825C4`
+and the hot `82282490 -> 82287788` state round-trip with exact flush rules.
+
+Previous lane closure:
 `docs/research/20260524-120704-822824b8-branch-state-audit.md` adds
 `tools/thor/thor_hir_branch_state_audit.ps1`. For
 `82282490:822824B8-822824E8`, the audit confirms local body time
@@ -138,10 +149,9 @@ DCE payoff, `f[1]` pair-entry only saves the seed context load after the
 stack-slot carrier A/B missed, `fpscr` needs exact CFG/call writebacks,
 all-three `stvewx` did not prove speed, and the three-PC `MUL_ADD_V128`
 fastpath was mixed. Do not spend the next slice on another narrow
-`8228252C-822825C4` PC-fold. Either build a broader CFG-aware/interprocedural
-state-carrier audit, or audit the fresh non-call-heavy `822824B8-822824E8`
-CR/GPR compare-and-branch span (`approx_exclusive=1099164`,
-`exclusive_pct=100`) before any codegen behavior patch.
+`8228252C-822825C4` PC-fold. The later branch-loop aggregate audit has now
+closed the fresh `822824B8` detour too, so prefer a broader CFG-aware or
+interprocedural state-carrier audit before any codegen behavior patch.
 
 Previous lane closure:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md` adds
