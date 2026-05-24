@@ -614,6 +614,15 @@ block body-time/disassembly: off `scratch/thor-debug/20260524-012352-*` had
 pass `-Arm64BlueDragonWordCopyLoopFastpath false` for controls. Do not combine
 it with `arm64_blue_dragon_vmx_copy_loop_fastpath` yet.
 
+Current preset rebaseline:
+`docs/research/20260524-014050-word-loop-preset-rebaseline.md` /
+`scratch/thor-debug/20260524-013649-*` confirmed the speed pack sends
+`arm64_blue_dragon_word_copy_loop_fastpath=true` and moved the wall back to
+`82282490`: final body-time `82282490=25383515`, `82281D28=7175068`,
+`82490030=3480696`, `82486178=1358411`, `82485DD8=618538`, and
+`82486018=457433`. Next speed lane is delayed `82282490` block body-time under
+the current preset, not more stale `82490030` child work.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

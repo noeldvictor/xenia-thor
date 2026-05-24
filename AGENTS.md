@@ -795,6 +795,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `82485DD8=774505`. The Blue Dragon Thor speed preset may enable this toggle;
   keep the backend cvar globally default-off and do not combine it with the
   `82486178` VMX copy-loop toggle yet.
+- Word-loop preset rebaseline:
+  `docs/research/20260524-014050-word-loop-preset-rebaseline.md`.
+  Capture `scratch/thor-debug/20260524-013649-*` confirmed the Blue Dragon
+  speed preset sends `arm64_blue_dragon_word_copy_loop_fastpath=true`, reached
+  the visible opening sky/wing route, and had clean fatal-marker search. Final
+  body-time moved the main wall back to the opening-scene cluster:
+  `82282490=25383515`, `82281D28=7175068`, `82490030=3480696`,
+  `82282388=2082550`, `82282410=2004094`, `82486178=1358411`,
+  `82485DD8=618538`, `82486018=457433`. Next speed slice should run delayed
+  `82282490` block body-time under the current preset; if the old
+  `822825E0 -> 82282490` recursive wall still dominates, use call-edge/HIR
+  callee analysis there.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

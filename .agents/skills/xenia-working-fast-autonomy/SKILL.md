@@ -465,6 +465,13 @@ route-wide win for the Blue Dragon speed preset: `82490030` went from
 `3923146` off to `3573598` on and `82485DD8` went from `1010794` off to
 `774505` on, with matching visible opening screenshots and clean fatal search.
 Do not combine it with the `82486178` VMX copy-loop toggle yet.
+The follow-up preset rebaseline
+`docs/research/20260524-014050-word-loop-preset-rebaseline.md` confirmed the
+speed pack sends the word-loop toggle and moved the next target back to
+`82282490`: final body-time `82282490=25383515`, `82281D28=7175068`,
+`82490030=3480696`, `82486178=1358411`, `82485DD8=618538`, and
+`82486018=457433`. The next worker slice should run delayed `82282490` block
+body-time under the current preset, not more stale `82490030` child work.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
