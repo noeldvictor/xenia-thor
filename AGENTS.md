@@ -820,11 +820,13 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   hot recursive edge is not repeatedly entering via the host-to-guest thunk.
   Android/Thor tooling now exposes
   `a64_enable_host_guest_stack_synchronization`; keep the Blue Dragon speed
-  pack default at `true`. Same-APK A/B showed stack-sync-off was route-clean
-  and modestly smaller/faster for `82282490` (`27192906` on ->
-  `26462740` off; code size `87168` -> `85104`), but this is not enough to
-  disable a correctness guard globally. Next use a route-matched stack-sync
-  sandwich or a stackpoint/prolog overhead profiler before changing the preset.
+  pack default at `true`. Stack-sync-off was route-clean twice and
+  deterministically shrank code size for `82282490` (`87168` -> `85104`), but
+  the second off capture landed at `82282490=27192157`, essentially matching
+  the stack-sync-on control (`27192906`). Treat this as code-size evidence, not
+  a speed proof. Do not run more unchanged stack-sync A/B captures; next add
+  stackpoint/prolog overhead attribution or reduce recursive call/prolog cost
+  directly.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

@@ -633,11 +633,12 @@ stale vector-ish `822824F0` is only `1394125`. Route-clean call-edge capture
 peak `ticks_per_call=1244`) and secondary `822825C8 -> 8227FEE8`
 (`body_ticks_total=11951162`). Android/Thor tooling now exposes
 `a64_enable_host_guest_stack_synchronization`. Keep the Blue Dragon speed-pack
-default `true`; same-APK stack-sync-off was clean and modestly improved
-`82282490` (`27192906` on -> `26462740` off; code size `87168` -> `85104`),
-but this is not enough to disable a correctness guard globally. Next speed lane
-is either a route-matched stack-sync sandwich or lower-overhead
-stackpoint/prolog attribution before changing the preset.
+default `true`; stack-sync-off was route-clean twice and shrank generated code
+for `82282490` (`87168` -> `85104`), but the repeat off capture landed at
+`82282490=27192157`, essentially matching the stack-sync-on control
+(`27192906`). Treat this as code-size evidence only, not speed proof. Do not
+run another unchanged stack-sync A/B. Next speed lane is lower-overhead
+stackpoint/prolog attribution or direct recursive call/prolog cost reduction.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

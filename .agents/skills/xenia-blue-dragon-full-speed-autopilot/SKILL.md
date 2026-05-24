@@ -128,12 +128,12 @@ the Blue Dragon word-loop speed preset moved the wall back to recursive
 (`body_ticks_total=11951162`). Do not restart stale `822824F0` vector work from
 entry counts alone. Android/Thor tooling now exposes
 `a64_enable_host_guest_stack_synchronization`; keep the Blue Dragon speed-pack
-default `true` for now. A same-APK A/B showed stack-sync-off was route-clean
-and modestly smaller/faster for `82282490` (`27192906` on -> `26462740` off;
-code size `87168` -> `85104`), but this is not enough to disable a correctness
-guard globally. Next slice should either run a route-matched stack-sync
-control sandwich or add a stackpoint/prolog overhead profiler before changing
-the preset.
+default `true` for now. Stack-sync-off is route-clean twice and shrinks
+generated code for `82282490` (`87168` -> `85104`), but the repeat off capture
+landed at `82282490=27192157`, essentially matching the stack-sync-on control
+(`27192906`). Treat this as code-size evidence only, not speed proof. Do not
+run another unchanged stack-sync A/B; next slice should add stackpoint/prolog
+overhead attribution or directly reduce recursive call/prolog cost.
 
 The `82485DD8` word copy-loop fastpath remains confirmed for the Blue Dragon
 Thor speed preset. `docs/research/20260524-014050-word-loop-preset-rebaseline.md`
