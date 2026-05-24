@@ -1300,6 +1300,27 @@ Read the final speed-profile interval first.
 - If GPU/composer threads are not hot and the screen is merely slow, stay in
   CPU/A64 until evidence changes.
 
+## Current Blue Dragon Lane
+
+Latest runtime audit:
+`docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
+The first deployed audit capture reached the visible route but emitted no audit
+rows because `EmulatorActivity.java` did not forward
+`arm64_blue_dragon_mul_add_v128_audit` to native. That Android bridge is fixed.
+Rerun `scratch/thor-debug/20260524-075713-*` reached the visible opening
+sky/dragon-wing route with clean fatal-marker search on APK SHA
+`7BBAB603A9931918867E9AAE0869193F3A2049329ED7FB448D36C4E66B97EE85`.
+Final `MUL_ADD_V128` audit counters for `82282490` PCs `82282568`,
+`8228256C`, and `82282570` were hot but semantically quiet:
+`total=722256/2131533`, each PC `240752/710511`, `fpcr_switch=240752/710511`,
+`sw_flush_path=0/0`, `input_denorm=0/0`, `output_denorm=0/0`,
+`nan_entry=0/0`, and `nan_lane=0/0`.
+
+Next speed experiment should be a default-off Blue-Dragon/function/PC-gated
+`MUL_ADD_V128` fastpath for only those three PCs. Keep it out of presets until
+it has both a route-clean proof and a quiet same-APK A/B. Do not generalize
+this evidence to global `MUL_ADD_V128`.
+
 ## Files To Inspect
 
 - `src/xenia/cpu/backend/a64/`

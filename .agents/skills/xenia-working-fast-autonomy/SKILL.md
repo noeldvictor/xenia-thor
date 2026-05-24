@@ -748,6 +748,18 @@ speed pack sends the word-loop toggle and moved the next target back to
 `82486018=457433`. The next worker slice should run delayed `82282490` block
 body-time under the current preset, not more stale `82490030` child work.
 
+Latest current worker target:
+`docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
+The Android launch bridge for `arm64_blue_dragon_mul_add_v128_audit` is fixed
+and route-clean capture `scratch/thor-debug/20260524-075713-*` produced real
+runtime counters for `82282490` PCs `82282568`, `8228256C`, and `82282570`.
+Final counters were `total=722256/2131533`, each PC `240752/710511`,
+`fpcr_switch=240752/710511`, and zero observed software-flush, input-denormal,
+output-denormal, NaN-entry, or NaN-lane paths. Next worker slice should
+implement one default-off Blue-Dragon/function/PC-gated `MUL_ADD_V128`
+fastpath for only those three PCs, then prove route safety before any quiet
+same-APK A/B.
+
 Avoid the known rejected lanes unless new evidence changes the premise:
 
 - broad `PERMUTE_I32` lane-replace helper;

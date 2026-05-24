@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`
+fixes the Android cvar plumbing for `arm64_blue_dragon_mul_add_v128_audit` and
+records the first real route-clean runtime counters. Capture
+`scratch/thor-debug/20260524-075713-*` reached the visible opening
+sky/dragon-wing route with clean fatal-marker search on APK SHA
+`7BBAB603A9931918867E9AAE0869193F3A2049329ED7FB448D36C4E66B97EE85`.
+The final `MUL_ADD_V128` audit row for `82282490` PCs `82282568`,
+`8228256C`, and `82282570` was `total=722256/2131533`,
+each PC `240752/710511`, `fpcr_switch=240752/710511`, and all slow semantic
+checks cold: `sw_flush_path=0/0`, `input_denorm=0/0`, `output_denorm=0/0`,
+`nan_entry=0/0`, `nan_lane=0/0`. The next patch should be a default-off
+Blue-Dragon/function/PC-gated `MUL_ADD_V128` fastpath for only those three PCs,
+with route-clean proof before a quiet same-APK A/B. Keep the audit and fastpath
+out of presets until speed is proven.
+
+Previous priority:
 `docs/research/20260524-052524-82281d28-call-edge-split.md` split the larger
 `82281D28` lane. Capture `scratch/thor-debug/20260524-052031-*` reached the
 visible opening sky/wing route with clean fatal-marker search on APK SHA

@@ -2418,6 +2418,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 - Audio: Android currently uses 5 ms paced silent nop audio for bring-up. This
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
+- Current Blue Dragon speed lane:
+  `docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
+  The deployed runtime audit initially produced no rows because Android did not
+  forward `arm64_blue_dragon_mul_add_v128_audit` to native; the missing
+  `EmulatorActivity.java` extra bridge is now fixed. Rerun
+  `scratch/thor-debug/20260524-075713-*` reached the visible opening
+  sky/dragon-wing route with clean fatal-marker search on APK SHA
+  `7BBAB603A9931918867E9AAE0869193F3A2049329ED7FB448D36C4E66B97EE85`. Final
+  counters for the three `82282490` `MUL_ADD_V128` PCs were hot:
+  `total=722256/2131533`, `pc82282568=240752/710511`,
+  `pc8228256C=240752/710511`, and `pc82282570=240752/710511`, while
+  `sw_flush_path`, `input_denorm`, `output_denorm`, `nan_entry`, and
+  `nan_lane` all stayed `0/0`. Next patch should be default-off,
+  Blue-Dragon/function/PC-gated, and limited to those three PCs; prove route
+  safety before any quiet same-APK speed A/B.
 - UI/app flow: Android launcher has a first-pass game file picker, but user experience, permissions, errors, and direct path handling still need hardening.
 - Build dependencies: submodules are not initialized after a fresh clone.
 
