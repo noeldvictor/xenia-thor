@@ -726,6 +726,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `global_lock_owner_seq`, `global_lock_owner_age_ms`, and
   `global_lock_owner_source`. If it stays route-clean, return to measured
   performance profiling instead of repeating stale `82490030` captures.
+- Processor thread lifecycle owner tags:
+  `docs/research/20260523-234203-processor-thread-lifecycle-owner-tags.md`.
+  After the 180-second attribution capture
+  `scratch/thor-debug/20260523-232432-*` reproduced black-idle with
+  `global_lock_owner_source='Acquire'`, add a tagged `Acquire(source)` overload
+  and label `Processor::OnThreadCreated`, `OnThreadNativeStarted`,
+  `OnThreadExit`, `OnThreadDestroyed`, `OnThreadEnteringWait`, and
+  `OnThreadLeavingWait`. `NativeCore` and `FullDeploy` passed; APK SHA
+  `862F86C44625B460A5BAB8528E25AB4E946F52CDB30137D7479D24AC3BD50FCB`.
+  Short validation `scratch/thor-debug/20260523-233953-*` stayed active for
+  100 seconds at the loading overlay with clean fatal-marker search and no idle
+  skip line, so the new specific labels are route-safe but not yet exercised.
+  Next run a longer tagged-lifecycle attribution capture; if black-idle
+  reproduces, inspect whether `global_lock_owner_source` names a processor
+  lifecycle method before changing lock behavior.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

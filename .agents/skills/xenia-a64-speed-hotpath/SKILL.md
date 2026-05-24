@@ -550,6 +550,19 @@ skip line. Next use a longer route-stabilized attribution capture before any
 new generated-code patch; if it stays active and reaches the visible route,
 return to measured body-time/call-edge profiling instead of repeating the stale
 `82490030` captures unchanged.
+The longer attribution capture
+`docs/research/20260523-232908-global-owner-source-black-idle.md` reproduced
+black-idle in `scratch/thor-debug/20260523-232432-*`: `global_lock_count=0`,
+`global_lock_owner_source='Acquire'`, `global_lock_owner_age_ms=25053`, dead
+native owner liveness, and zombie `owner_hint_state`. That is still not
+generated-code evidence. The follow-up
+`docs/research/20260523-234203-processor-thread-lifecycle-owner-tags.md` adds
+`Acquire(source)` and tags processor thread lifecycle methods. `NativeCore` and
+`FullDeploy` passed with APK SHA
+`862F86C44625B460A5BAB8528E25AB4E946F52CDB30137D7479D24AC3BD50FCB`; short
+validation `scratch/thor-debug/20260523-233953-*` stayed active at loading with
+no idle skip line. Next run a longer tagged-lifecycle attribution capture before
+any lock behavior change.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

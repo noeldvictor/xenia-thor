@@ -409,6 +409,20 @@ route-stabilized attribution capture; if it black-idles, inspect
 `global_lock_owner_source`. If it stays active and reaches the visible route,
 resume measured hotpath profiling rather than repeating stale `82490030`
 captures.
+The first long follow-up reproduced black-idle:
+`docs/research/20260523-232908-global-owner-source-black-idle.md`.
+Capture `scratch/thor-debug/20260523-232432-*` reported
+`global_lock_owner_source='Acquire'`, `global_lock_owner_age_ms=25053`,
+`global_lock_count=0`, dead native owner liveness, and zombie `owner_hint_state`.
+That proves the next useful detail is a callsite tag. The follow-up patch in
+`docs/research/20260523-234203-processor-thread-lifecycle-owner-tags.md` adds
+`Acquire(source)` and labels processor thread lifecycle methods. `NativeCore`
+and `FullDeploy` passed; APK SHA
+`862F86C44625B460A5BAB8528E25AB4E946F52CDB30137D7479D24AC3BD50FCB`. Short
+validation `scratch/thor-debug/20260523-233953-*` stayed active for 100 seconds
+at loading with a clean fatal search and no idle-snapshot skip line. Next worker
+slice should run a longer tagged-lifecycle attribution capture; if it black-idles,
+use the specific `global_lock_owner_source` before changing lock behavior.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

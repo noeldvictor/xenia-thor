@@ -80,10 +80,14 @@ class global_critical_region {
   }
 
   // Acquires a lock on the global critical section.
-  inline std::unique_lock<std::recursive_mutex> Acquire() {
+  inline std::unique_lock<std::recursive_mutex> Acquire(const char* source) {
     auto lock = std::unique_lock<std::recursive_mutex>(mutex());
-    NoteOwner("Acquire");
+    NoteOwner(source ? source : "Acquire");
     return lock;
+  }
+
+  inline std::unique_lock<std::recursive_mutex> Acquire() {
+    return Acquire("Acquire");
   }
 
   // Acquires a deferred lock on the global critical section.

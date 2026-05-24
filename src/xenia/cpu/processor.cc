@@ -483,7 +483,8 @@ void Processor::OnFunctionDefined(Function* function) {
 
 void Processor::OnThreadCreated(uint32_t thread_handle,
                                 ThreadState* thread_state, Thread* thread) {
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadCreated");
   auto thread_info = std::make_unique<ThreadDebugInfo>();
   thread_info->thread_handle = thread_handle;
   thread_info->thread_id = thread_state->thread_id();
@@ -503,7 +504,8 @@ void Processor::OnThreadNativeStarted(uint32_t thread_id,
     return;
   }
 
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadNativeStarted");
   auto it = thread_debug_infos_.find(thread_id);
   if (it == thread_debug_infos_.end()) {
     return;
@@ -515,7 +517,8 @@ void Processor::OnThreadNativeStarted(uint32_t thread_id,
 }
 
 void Processor::OnThreadExit(uint32_t thread_id) {
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadExit");
   auto it = thread_debug_infos_.find(thread_id);
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
@@ -525,7 +528,8 @@ void Processor::OnThreadExit(uint32_t thread_id) {
 }
 
 void Processor::OnThreadDestroyed(uint32_t thread_id) {
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadDestroyed");
   auto it = thread_debug_infos_.find(thread_id);
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
@@ -536,7 +540,8 @@ void Processor::OnThreadDestroyed(uint32_t thread_id) {
 }
 
 void Processor::OnThreadEnteringWait(uint32_t thread_id) {
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadEnteringWait");
   auto it = thread_debug_infos_.find(thread_id);
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
@@ -546,7 +551,8 @@ void Processor::OnThreadEnteringWait(uint32_t thread_id) {
 }
 
 void Processor::OnThreadLeavingWait(uint32_t thread_id) {
-  auto global_lock = global_critical_region_.Acquire();
+  auto global_lock =
+      global_critical_region_.Acquire("Processor::OnThreadLeavingWait");
   auto it = thread_debug_infos_.find(thread_id);
   assert_true(it != thread_debug_infos_.end());
   auto thread_info = it->second.get();
