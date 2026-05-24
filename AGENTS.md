@@ -2443,6 +2443,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-145241-state-carrier-followup-plan.md`.
+  New offline planner `tools/thor/thor_hir_state_carrier_followup_plan.ps1`
+  parses the latest route-clean state-carrier counter row and joins it with
+  prior static audits. It keeps `f[1]` as a broader design lane only:
+  `3477646` reads and zero fallbacks, but `50.10%` helper-preserved /
+  `49.90%` child-spanning traffic and prior stack-slot / pair-entry evidence
+  make another narrow patch the wrong next move. It keeps `fpscr` audit-only:
+  `3640919` dirty writes, `1182090` required writebacks, and `2924556` call
+  kills require exact CFG writeback rules. Do not patch generated behavior
+  yet. Next work should design a broader `82282490 -> 82287788` parent/callee
+  carrier with compile-time/runtime counters, or prove exact CFG writeback
+  rules before any quiet speed A/B.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-143436-state-carrier-audit-interval-fix.md`.
   Route-clean Thor capture `scratch/thor-debug/20260524-143436-*` proved the
   state-carrier audit lane after `tools/thor/thor_xenia_debug.ps1` began

@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest state-carrier route capture:
+Latest state-carrier follow-up plan:
+`docs/research/20260524-145241-state-carrier-followup-plan.md` adds
+`tools/thor/thor_hir_state_carrier_followup_plan.ps1`. Run it before another
+carrier behavior patch. It parses the route-clean
+`scratch/thor-debug/20260524-143436-*` counter row and confirms: `f[1]` is
+real but not enough as another narrow stack-slot or pair-entry patch
+(`3477646` reads, zero fallbacks, `50.10%` helper-preserved, `49.90%`
+child-spanning); `fpscr` is still a dirty CFG carrier (`3640919` dirty writes,
+`1182090` required writebacks, `2924556` call kills). Do not patch generated
+behavior yet. Next A64 work should design broader `82282490 -> 82287788`
+parent/callee carrier counters or exact CFG writeback rules before any quiet
+speed A/B.
+
+Previous state-carrier route capture:
 `docs/research/20260524-141502-state-carrier-audit-route-capture.md`
 records a route-clean Thor run for
 `arm64_blue_dragon_state_carrier_design_audit` on APK SHA

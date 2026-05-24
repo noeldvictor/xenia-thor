@@ -116,6 +116,19 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-145241-state-carrier-followup-plan.md`
+adds `tools/thor/thor_hir_state_carrier_followup_plan.ps1`, an offline planner
+over the latest route-clean Thor state-carrier row. It confirms `f[1]` is
+dynamic but still not a narrow-patch lane (`3477646` reads, zero fallbacks,
+`50.10%` helper-preserved, `49.90%` child-spanning, previous stack-slot A/B
+not speed-positive, pair-entry seed-only too small). It also keeps `fpscr`
+design-only (`3640919` dirty writes, `1182090` required writebacks,
+`2924556` call kills). Do not patch generated behavior yet. Next work should
+design a broader `82282490 -> 82287788` parent/callee carrier with
+compile-time/runtime counters, or prove exact CFG writeback rules before any
+quiet speed A/B.
+
+Previous lane closure:
 `docs/research/20260524-143436-state-carrier-audit-interval-fix.md`
 records the route-clean Thor state-carrier audit after fixing
 `tools/thor/thor_xenia_debug.ps1` to default
