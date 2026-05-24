@@ -116,6 +116,27 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-182632-a64-edge-variant-storage-plan.md`
+adds `tools/thor/thor_a64_edge_variant_storage_plan.ps1`. It source-checks the
+normal-entry singleton, guest-address-only indirection, direct-call normal
+machine-code path, counter-only edge probe, and prior variant-storage design
+requirement. For `82282490:82282598 -> 82287788`, the final route-clean counter
+row still has `eligible_calls=675279`, `normal_fallback_share=100.00%`,
+`indirection_fallbacks=675279`, `variant_misses=675279`,
+`payload_materializations=0`, `storage_missing=1`, and `call_kills=1695703`
+(`2.51` kills per eligible call). Do not patch generated behavior or run a
+quiet speed A/B from the counter patch. The next productive slice should be a
+default-off `caller-local_or_side-table_skeleton_counter_only` or a
+`cfg_fpscr_writeback_audit_no_behavior_change`.
+
+Previous lane closure:
+`docs/research/20260524-181117-a64-edge-variant-counter-probe.md` adds the
+default-off `arm64_blue_dragon_edge_variant_audit` path. The route-clean Thor
+capture proved the hot edge is active and still entirely normal-entry /
+indirection fallback, with zero payload materializations. Treat it as audit
+evidence only, not a speed A/B target.
+
+Previous lane closure:
 `docs/research/20260524-165127-a64-edge-variant-design-audit.md`
 adds `tools/thor/thor_a64_edge_variant_design_audit.ps1`. It source-checks the
 normal entry and code-cache contracts and reports `normal_entry_singleton=true`,
@@ -124,10 +145,7 @@ normal entry and code-cache contracts and reports `normal_entry_singleton=true`,
 and `edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
 For `82282490:82282598 -> 82287788`, do not patch generated behavior, replace
 the normal `82287788` entry, change the global indirection slot, or run a
-quiet speed A/B yet. The next productive slice should be a default-off
-compile/runtime counter-only probe for edge eligibility, payload
-materialization, normal-entry fallback, child-call kill, and variant-miss
-counts, or exact `fpscr` CFG writeback proof.
+quiet speed A/B yet.
 
 Previous lane closure:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`

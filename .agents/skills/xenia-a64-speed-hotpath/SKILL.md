@@ -1313,7 +1313,31 @@ Swappy only after present timing shows queue-stuffing. Keep Blue Dragon on the
 A64 lane while Thor captures show Main Thread is the wall, but build the Vulkan
 diagnostic lane so GPU work is ready when evidence changes.
 
-Latest edge-variant design audit:
+Latest edge-variant storage plan:
+`docs/research/20260524-182632-a64-edge-variant-storage-plan.md` adds
+`tools/thor/thor_a64_edge_variant_storage_plan.ps1`. Run it before any
+generated-code behavior patch for `82282490:82282598 -> 82287788`. It confirms
+the normal entry and global guest-address indirection must remain unchanged,
+the current edge probe is counter-only, and the hot edge still has
+`eligible_calls=675279`, `normal_fallback_share=100.00%`,
+`indirection_fallbacks=675279`, `variant_misses=675279`,
+`payload_materializations=0`, `storage_missing=1`, and `call_kills=1695703`.
+The best first storage direction is a caller-local variant patchpoint; an edge
+side table is second only if lookup is compile-time or outside the hot path.
+Next A64 work should be a default-off
+`caller-local_or_side-table_skeleton_counter_only`, or a
+`cfg_fpscr_writeback_audit_no_behavior_change`. Do not run a quiet speed A/B
+from the current counter patch.
+
+Previous edge-variant counter probe:
+`docs/research/20260524-181117-a64-edge-variant-counter-probe.md` adds
+default-off `arm64_blue_dragon_edge_variant_audit` and Thor launcher plumbing.
+Route-clean capture `scratch/thor-debug/20260524-180737-*` reached visible
+opening with a clean fatal-marker search. It proved the edge is hot but no
+payload is materialized and all calls still use normal-entry / indirection
+fallback.
+
+Previous edge-variant design audit:
 `docs/research/20260524-165127-a64-edge-variant-design-audit.md` adds
 `tools/thor/thor_a64_edge_variant_design_audit.ps1`. Run it before any
 generated-code carrier behavior patch for `82282490:82282598 -> 82287788`. It
@@ -1323,9 +1347,6 @@ reports `normal_entry_singleton=true`, `indirection_key=guest_address_only`,
 `edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
 Do not preload a spare register, replace `82287788`'s normal machine-code
 pointer, change the global indirection slot, or run a quiet speed A/B yet.
-Next A64 work should be a default-off compile/runtime counter-only edge
-variant probe with exact eligibility, payload materialization,
-normal-entry fallback, child-call kill, and variant-miss counts.
 
 Previous state-carrier ABI audit:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md` adds

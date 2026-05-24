@@ -119,6 +119,31 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-182632-a64-edge-variant-storage-plan.md`
+adds `tools/thor/thor_a64_edge_variant_storage_plan.ps1`. It joins the latest
+route-clean edge-variant counter row, singleton-entry/indirection source audit,
+interprocedural `f[1]`/`fpscr` evidence, and the `fpscr` dirty-cache audit. For
+exact edge `82282490:82282598 -> 82287788`, source checks are all ok and the
+dynamic row still says `eligible_calls=675279`,
+`normal_fallback_share=100.00%`, `indirection_fallbacks=675279`,
+`variant_misses=675279`, `payload_materializations=0`, `storage_missing=1`,
+and `call_kills=1695703` (`2.51` kills per call). Do not patch generated
+behavior yet and do not run a quiet speed A/B from the current counter patch.
+The next useful slice is either a default-off
+`caller-local_or_side-table_skeleton_counter_only` or a
+`cfg_fpscr_writeback_audit_no_behavior_change`.
+
+Previous priority:
+`docs/research/20260524-181117-a64-edge-variant-counter-probe.md` adds the
+default-off `arm64_blue_dragon_edge_variant_audit` path and Thor launcher flag.
+Route-clean capture `scratch/thor-debug/20260524-180737-*` reached visible
+opening sky/dragon-wing with a clean fatal-marker search on APK SHA
+`25BEA1C91D7F9D6F57F808A1C8CC91F8115E485E3FDA491D2D81EB600B5F7B97`. It proved
+the hot edge is active but only as audit evidence: no payload was materialized,
+all calls used normal-entry/indirection fallback, and no generated behavior
+changed. Do not run a quiet speed A/B from this patch.
+
+Previous priority:
 `docs/research/20260524-165127-a64-edge-variant-design-audit.md`
 adds `tools/thor/thor_a64_edge_variant_design_audit.ps1`. It source-checks the
 normal entry, direct-call, unresolved-call, code-cache, indirection,
@@ -129,10 +154,7 @@ normal entry, direct-call, unresolved-call, code-cache, indirection,
 `edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
 For exact edge `82282490:82282598 -> 82287788`, do not preload a spare
 register, replace `82287788`'s normal machine-code pointer, or change the
-global indirection slot. Next useful work is a default-off compile/runtime
-counter-only probe for edge eligibility, payload materialization,
-normal-entry fallback, child-call kill, and variant-miss counts before any
-generated behavior change.
+global indirection slot.
 
 Previous priority:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`
