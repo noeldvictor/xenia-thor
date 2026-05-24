@@ -756,6 +756,16 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `Processor::OnThreadDestroyed` black-idle as fixed unless it reappears with
   fresh evidence. Resume performance profiling from the restored
   `8227F1D8 -> 82490030` route.
+- Current `82490030` split:
+  `docs/research/20260524-001152-82490030-call-edge-split.md`.
+  Route-clean capture `scratch/thor-debug/20260524-000643-*` reached the
+  visible Blue Dragon sky/wing opening route, had clean fatal-marker search,
+  and emitted no idle owner lines. The dynamic child target summary says
+  `82486178` is the next target (`body_ticks_total=2302621`,
+  `calls_total=33218`), followed by `82485DD8` (`804023`) and `82486018`
+  (`679426`). Do not patch local `82490030` codegen yet; run a filtered HIR
+  plus delayed body/block-time capture for `82486178` with `82490030`,
+  `82485DD8`, and `82486018` as body-time comparators.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

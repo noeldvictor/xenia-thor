@@ -218,9 +218,7 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     }
 }
 
-if ($blocks.Count -eq 0) {
-    throw "No $Phase dump for function $($Function.ToUpperInvariant()) found in $resolvedLog."
-}
+$hirDumpFound = $blocks.Count -gt 0
 
 if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     if (!(Test-Path -LiteralPath $BlockProfileLog)) {
@@ -340,6 +338,10 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     }
 }
 
+if (!$hirDumpFound -and $callEdgeRows.Count -eq 0 -and $callEdgeAuditRows.Count -eq 0) {
+    throw "No $Phase dump or dynamic call-edge rows for function $($Function.ToUpperInvariant()) found in $resolvedLog."
+}
+
 $callBlocks = @($blocks | Where-Object { $_.calls -gt 0 -or $_.call_targets.Count -gt 0 })
 $targetRows = @{}
 foreach ($block in $callBlocks) {
@@ -377,10 +379,14 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
 }
 Write-Output "function=$($Function.ToUpperInvariant())"
 Write-Output "phase=$Phase"
+Write-Output "hir_dump_found=$($hirDumpFound.ToString().ToLowerInvariant())"
 Write-Output "blocks=$($blocks.Count)"
 Write-Output "call_blocks=$($callBlocks.Count)"
 Write-Output ""
 Write-Output "Note: charged_body_total is the inclusive body time charged to the caller block until the next HIR label/function exit. A call-heavy block can mostly represent callee work."
+if (!$hirDumpFound) {
+    Write-Output "Note: no filtered HIR dump was found, so static block context is unavailable; dynamic call-edge rows are still summarized below."
+}
 
 Write-Output ""
 Write-Output "## Call Target Charge Summary"
@@ -397,6 +403,60 @@ if ($targetRows.Count -eq 0) {
                 $_.target, $_.blocks.Count, ($_.blocks -join ","),
                 $_.charged_body_total, $_.charged_body_peak_delta,
                 $_.entry_total, $_.entry_peak_delta, $_.static_call_sites)
+        }
+}
+
+Write-Output ""
+Write-Output "## Dynamic Call Edge Target Summary"
+if ($callEdgeRows.Count -eq 0) {
+    if ([string]::IsNullOrWhiteSpace($BlockProfileLog)) {
+        Write-Output "(no block/call-edge profile log supplied)"
+    } else {
+        Write-Output "(no dynamic call-edge rows found)"
+    }
+} else {
+    $dynamicTargetRows = @{}
+    foreach ($edgeRow in $callEdgeRows.Values) {
+        $target = $edgeRow.target
+        if (!$dynamicTargetRows.ContainsKey($target)) {
+            $dynamicTargetRows[$target] = [pscustomobject][ordered]@{
+                target = $target
+                edges = New-Object System.Collections.Generic.List[string]
+                blocks = New-Object System.Collections.Generic.List[string]
+                calls_total = 0
+                calls_peak_delta = 0
+                body_ticks_total = 0
+                body_ticks_peak_delta = 0
+                ticks_per_call_peak = 0
+            }
+        }
+        $row = $dynamicTargetRows[$target]
+        Add-Unique $row.edges ([string]$edgeRow.edge)
+        Add-Unique $row.blocks $edgeRow.block_guest
+        $row.calls_total += [int64]$edgeRow.calls_total
+        if ($edgeRow.calls_peak_delta -gt $row.calls_peak_delta) {
+            $row.calls_peak_delta = [int64]$edgeRow.calls_peak_delta
+        }
+        $row.body_ticks_total += [int64]$edgeRow.body_ticks_total
+        if ($edgeRow.body_ticks_peak_delta -gt $row.body_ticks_peak_delta) {
+            $row.body_ticks_peak_delta = [int64]$edgeRow.body_ticks_peak_delta
+        }
+        if ($edgeRow.ticks_per_call_peak -gt $row.ticks_per_call_peak) {
+            $row.ticks_per_call_peak = [int64]$edgeRow.ticks_per_call_peak
+        }
+    }
+
+    $dynamicTargetRows.Values |
+        Sort-Object -Property @{ Expression = "body_ticks_total"; Descending = $true },
+                              @{ Expression = "calls_total"; Descending = $true },
+                              @{ Expression = "target"; Ascending = $true } |
+        Select-Object -First $Top |
+        ForEach-Object {
+            Write-Output ("target={0} edges={1} blocks={2} block_guests={3} calls_total={4} calls_peak_delta={5} body_ticks_total={6} body_ticks_peak_delta={7} ticks_per_call_peak={8}" -f
+                $_.target, ($_.edges -join ","), $_.blocks.Count, ($_.blocks -join ","),
+                $_.calls_total, $_.calls_peak_delta,
+                $_.body_ticks_total, $_.body_ticks_peak_delta,
+                $_.ticks_per_call_peak)
         }
 }
 

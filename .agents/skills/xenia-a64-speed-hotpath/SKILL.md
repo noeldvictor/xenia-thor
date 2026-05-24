@@ -575,6 +575,16 @@ Validation `scratch/thor-debug/20260523-235417-*` reached the visible opening,
 had no fatal markers or idle-snapshot skip, and restored body-time rows:
 `8227F1D8 body_ticks_total=2956364`, `82490030 body_ticks_total=2877652`.
 Resume measured A64 hotpath work from this stable route.
+Current `82490030` split:
+`docs/research/20260524-001152-82490030-call-edge-split.md`.
+`scratch/thor-debug/20260524-000643-*` reached the visible opening route with
+clean fatal search and no idle owner lines. Dynamic call-edge totals identify
+`82486178` as the next child (`body_ticks_total=2302621`,
+`calls_total=33218`), ahead of `82485DD8` (`804023`) and `82486018`
+(`679426`). Use a filtered HIR plus delayed body/block-time capture for
+`82486178` before any local `82490030` generated-code patch. The call-path
+report tool can now summarize dynamic-only call-edge captures without a HIR
+dump.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

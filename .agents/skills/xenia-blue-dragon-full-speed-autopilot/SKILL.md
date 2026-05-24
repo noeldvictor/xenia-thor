@@ -118,16 +118,16 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: improve diagnostic
-global critical-region ownership/lifetime attribution around the processor
-debug lock. The `82490030` filtered capture and no-disassembly control both
-black-idled, and the native-TID attribution patch proved the owner hint now
-matches the real Linux TID but that TID is already absent from
-`/proc/self/task` while the XThread hint is `zombie`. Do not rerun the exact
-`82490030` captures unchanged, do not start a local `8227F1D8` or `82490030`
-peephole, and do not chase `826BFC7C` until a fresh route-clean capture points
-there. Next slice should distinguish stale last-owner bookkeeping from a native
-thread exiting while holding the global critical region.
+Latest priority, superseding the older chronology below: run a filtered HIR plus
+delayed body/block-time capture for `82486178`. The route-clean
+`82490030` call-edge split in
+`docs/research/20260524-001152-82490030-call-edge-split.md` reached the visible
+opening route, had clean fatal-marker search, and emitted no idle owner lines.
+Dynamic child totals from `82490030` put `82486178` first
+(`body_ticks_total=2302621`, `calls_total=33218`), followed by `82485DD8`
+(`804023`) and `82486018` (`679426`). Do not patch local `82490030` codegen
+yet, and treat the prior `Processor::OnThreadDestroyed` black-idle as fixed
+unless fresh owner-source evidence reopens it.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
@@ -443,6 +443,15 @@ opening route, had a clean fatal search, emitted no idle-snapshot skip line,
 and restored body-time rows for `8227F1D8` and `82490030`. Resume measured
 performance profiling from this route unless a fresh capture reopens the
 `Processor::OnThreadDestroyed` black-idle.
+The restored `82490030` call-edge split is route-clean:
+`docs/research/20260524-001152-82490030-call-edge-split.md`.
+Capture `scratch/thor-debug/20260524-000643-*` reached visible opening, had no
+searched fatal markers, and emitted no idle owner lines. The dynamic child
+summary puts `82486178` first (`body_ticks_total=2302621`,
+`calls_total=33218`), then `82485DD8` (`804023`) and `82486018` (`679426`).
+The call-path parser now supports dynamic-only call-edge logs without a HIR
+dump. Next slice should dump/profile `82486178` with delayed body/block-time,
+not patch local `82490030` codegen.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

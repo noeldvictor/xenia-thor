@@ -436,6 +436,15 @@ opening route with clean fatal search, no idle-snapshot skip line, and body-time
 rows for `8227F1D8` and `82490030`. Next worker slice should resume measured
 hotpath profiling from the restored route unless fresh evidence reopens the
 thread-destroy lock issue.
+The next profiling split is now complete:
+`docs/research/20260524-001152-82490030-call-edge-split.md`.
+`scratch/thor-debug/20260524-000643-*` reached visible opening with clean fatal
+search and no idle owner lines. Dynamic call-edge totals from `82490030` put
+`82486178` first (`body_ticks_total=2302621`, `calls_total=33218`), followed
+by `82485DD8` (`804023`) and `82486018` (`679426`). The next worker slice is a
+filtered `82486178` HIR plus delayed body/block-time capture with `82490030`,
+`82485DD8`, and `82486018` as comparators. Do not make a local `82490030`
+codegen change first.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
