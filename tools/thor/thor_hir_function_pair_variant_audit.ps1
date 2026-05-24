@@ -15,6 +15,7 @@ param(
     [string]$EdgeProfileLog = "",
     [string]$PreservedHelperPattern = "__savegprlr_|__restgprlr_",
     [string]$PreservedCallPcs = "",
+    [switch]$CompareExistingStackCarrier,
     [int]$Top = 24
 )
 
@@ -449,6 +450,24 @@ Write-Output ("static_replace_upper={0}" -f $staticReplaceUpper)
 Write-Output "required_design=pair-specific callee entry or thunk; do not alter normal callee entry; keep parent context store visible unless a later visibility audit proves it movable"
 Write-Output "required_flush=kill or fall back on unknown calls, indirect child calls before target loads, callee target stores, exits/exceptions, and overlapping context writes"
 Write-Output ""
+
+if ($CompareExistingStackCarrier) {
+    $existingCarrierSeedLoads = if ($replaceableLoads -gt 0) { 1 } else { 0 }
+    $existingCarrierReuseLoads = [Math]::Max(0, $replaceableLoads - $existingCarrierSeedLoads)
+    $pairIncrementalContextLoads = $existingCarrierSeedLoads
+    $pairIncrementalStaticUpper = "-"
+    if ($null -ne $edge -and $pairIncrementalContextLoads -gt 0) {
+        $pairIncrementalStaticUpper =
+            [string]([int64]$pairIncrementalContextLoads * [int64]$edge.calls_total)
+    }
+    Write-Output "## Existing Stack-Carrier Comparison"
+    Write-Output (
+        "stack_carrier_compare enabled=True existing_seed_context_loads={0} existing_reuse_loads={1} pair_incremental_context_loads={2} pair_incremental_static_upper={3}" -f
+        $existingCarrierSeedLoads, $existingCarrierReuseLoads,
+        $pairIncrementalContextLoads, $pairIncrementalStaticUpper)
+    Write-Output "stack_carrier_read=pair entry removes only the seed context load if the current stack-slot carrier already covers the remaining loads; weigh this against new pair-entry ABI/prolog/flag overhead."
+    Write-Output ""
+}
 
 Write-Output "## Decision"
 Write-Output ("decision={0}" -f $decision)

@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `82287788` function-pair variant audit:
+Latest `82287788` pair-entry ROI:
+`docs/research/20260524-113615-82287788-pair-entry-roi.md`.
+Run `tools/thor/thor_hir_function_pair_variant_audit.ps1` with
+`-CompareExistingStackCarrier` before considering another `f[1]` pair-entry
+patch. It shows the raw pair-entry candidate still replaces all ten
+`f[1]` loads, but compared with the existing stack-slot carrier the
+incremental gain is only the seed load (`pair_incremental_static_upper=1691272`).
+That is too small for a standalone pair-entry ABI/prolog/thunk patch after the
+larger stack-slot carrier A/B missed speed proof. Next A64 lane should be a
+broader state-cache/callee-variant design for `8228252C-822825C4`, or an
+`fpscr` dirty-cache audit with exact writeback points.
+
+Previous `82287788` function-pair variant audit:
 `docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
 `tools/thor/thor_hir_function_pair_variant_audit.ps1` proves the `f[1]`
 candidate is cleaner as a pair-specific entry problem than as another local

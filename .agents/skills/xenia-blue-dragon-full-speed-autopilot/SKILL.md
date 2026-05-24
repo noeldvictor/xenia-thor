@@ -119,6 +119,18 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-113615-82287788-pair-entry-roi.md`
+adds `-CompareExistingStackCarrier` to
+`tools/thor/thor_hir_function_pair_variant_audit.ps1`. The `f[1]` pair-entry
+candidate is real, but compared to the existing stack-slot carrier it only
+removes the first context load per `82287788` call
+(`pair_incremental_static_upper=1691272`), while requiring new pair-entry
+ABI/prolog/thunk machinery. Do not implement a standalone `f[1]` pair-entry
+behavior patch next. Move to a broader `8228252C-822825C4`
+state-cache/callee-variant design, or an `fpscr` dirty-cache audit with exact
+writeback points before any `fpscr` behavior patch.
+
+Previous priority:
 `docs/research/20260524-112944-82287788-function-pair-variant-audit.md`
 adds `tools/thor/thor_hir_function_pair_variant_audit.ps1`. For the hot
 `82282490` `82282598 -> 82287788` edge, the tool reports that `f[1]` (`+296`)

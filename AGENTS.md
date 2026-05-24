@@ -2419,6 +2419,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-113615-82287788-pair-entry-roi.md`.
+  `tools/thor/thor_hir_function_pair_variant_audit.ps1` now supports
+  `-CompareExistingStackCarrier`. The pair-specific `f[1]` entry remains
+  statically clean for `82282490:82282598 -> 82287788`, but against the
+  already-tested stack-slot carrier it only removes the first context load per
+  callee call: `existing_seed_context_loads=1`, `existing_reuse_loads=9`,
+  `pair_incremental_context_loads=1`, and
+  `pair_incremental_static_upper=1691272`. Do not implement a standalone
+  pair-entry behavior patch next; the ABI/prolog/thunk complexity is too large
+  for this incremental upside after the broader `f[1]` carrier A/B missed
+  speed proof. Move to a broader `8228252C-822825C4` state-cache/callee-variant
+  design or an `fpscr` dirty-cache audit with exact writeback points.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
   New tool `tools/thor/thor_hir_function_pair_variant_audit.ps1` audits a
   pair-specific callee entry/thunk candidate for the hot `82282490`

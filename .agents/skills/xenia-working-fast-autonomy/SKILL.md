@@ -749,6 +749,17 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-113615-82287788-pair-entry-roi.md`.
+The function-pair audit now has `-CompareExistingStackCarrier`. The pair-entry
+`f[1]` candidate is clean, but the incremental win over the already-tested
+stack-slot carrier is only one context load per call
+(`pair_incremental_static_upper=1691272`) because the stack-slot carrier
+already replaces nine reloads. Do not spend the next worker slice implementing
+a standalone `f[1]` pair-entry behavior patch. Move to broader
+`8228252C-822825C4` state-cache/callee-variant design or an `fpscr`
+dirty-cache audit with exact writeback rules.
+
+Previous current worker target:
 `docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
 Use `tools/thor/thor_hir_function_pair_variant_audit.ps1` before implementing
 a pair-specific callee entry or thunk. For `82282490:82282598 -> 82287788`,
