@@ -116,6 +116,20 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-165127-a64-edge-variant-design-audit.md`
+adds `tools/thor/thor_a64_edge_variant_design_audit.ps1`. It source-checks the
+normal entry and code-cache contracts and reports `normal_entry_singleton=true`,
+`indirection_key=guest_address_only`, `machine_code_slot=single_per_guest_function`,
+`resolve_path=normal_machine_code_only`, `current_call_abi=guest_return_only_in_x0`,
+and `edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
+For `82282490:82282598 -> 82287788`, do not patch generated behavior, replace
+the normal `82287788` entry, change the global indirection slot, or run a
+quiet speed A/B yet. The next productive slice should be a default-off
+compile/runtime counter-only probe for edge eligibility, payload
+materialization, normal-entry fallback, child-call kill, and variant-miss
+counts, or exact `fpscr` CFG writeback proof.
+
+Previous lane closure:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`
 adds `tools/thor/thor_a64_state_carrier_abi_audit.ps1`. It source-checks the
 A64 direct-call path and reports `current_direct_call_abi=guest_return_only_in_x0`,

@@ -2443,6 +2443,28 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-165127-a64-edge-variant-design-audit.md`.
+  New source audit tool `tools/thor/thor_a64_edge_variant_design_audit.ps1`
+  confirms the normal entry is a singleton: host entry, compiled direct calls,
+  unresolved resolution, the guest-address indirection table, and
+  `A64Function::machine_code()` all point to one normal entry per guest
+  function. For hot edge `82282490:82282598 -> 82287788`, an edge-specific
+  carrier cannot safely preload a spare register, replace `82287788`'s normal
+  machine-code pointer, or change the global indirection slot. Next work should
+  be a default-off compile/runtime counter-only probe for exact edge-variant
+  eligibility, payload materialization, normal-entry fallback, child-call kill,
+  and variant-miss counts before any generated behavior change.
+- Parallel Vulkan design lane:
+  `docs/research/20260524-165737-mature-vulkan-port-speed-design.md`.
+  External emulator evidence from Dolphin, RPCS3, PCSX2, Khronos, Android, and
+  mobile GPU guidance says mature Vulkan ports win by measuring GPU-side costs
+  directly: pipeline cache misses, shader/pipeline compile stalls, barriers,
+  render passes, readbacks, texture uploads/copies, descriptor churn, present
+  waits, and frame pacing. Do not pivot Blue Dragon away from A64 while Thor
+  captures show Main Thread as the wall, but do add PCSX2-style GPU counters
+  and pipeline-cache/readback/barrier/present diagnostics before any broad
+  Vulkan rewrite.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`.
   New source audit tool `tools/thor/thor_a64_state_carrier_abi_audit.ps1`
   confirms the current A64 direct-call ABI is `guest_return_only_in_x0`, the

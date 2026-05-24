@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-165127-a64-edge-variant-design-audit.md`
+adds `tools/thor/thor_a64_edge_variant_design_audit.ps1`. It source-checks the
+normal entry, direct-call, unresolved-call, code-cache, indirection,
+`A64Function`, and `GuestFunction` contracts and reports
+`normal_entry_singleton=true`, `indirection_key=guest_address_only`,
+`machine_code_slot=single_per_guest_function`,
+`resolve_path=normal_machine_code_only`, and
+`edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
+For exact edge `82282490:82282598 -> 82287788`, do not preload a spare
+register, replace `82287788`'s normal machine-code pointer, or change the
+global indirection slot. Next useful work is a default-off compile/runtime
+counter-only probe for edge eligibility, payload materialization,
+normal-entry fallback, child-call kill, and variant-miss counts before any
+generated behavior change.
+
+Previous priority:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`
 adds `tools/thor/thor_a64_state_carrier_abi_audit.ps1`, a source audit of the
 current A64 direct-call contract. It confirms the direct-call ABI is

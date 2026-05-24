@@ -1302,7 +1302,32 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest state-carrier ABI audit:
+Parallel Vulkan design lane:
+`docs/research/20260524-165737-mature-vulkan-port-speed-design.md` records the
+external emulator research pass. Borrow the process from Dolphin/RPCS3/PCSX2,
+not a blind renderer rewrite: add PCSX2-style GPU counters for draws, command
+submissions, render passes, barriers, readbacks, texture uploads/copies,
+pipeline creates/time, descriptor allocations/updates, EDRAM resolves, and
+present waits; add pipeline-cache cold/warm metadata; and evaluate Android
+Swappy only after present timing shows queue-stuffing. Keep Blue Dragon on the
+A64 lane while Thor captures show Main Thread is the wall, but build the Vulkan
+diagnostic lane so GPU work is ready when evidence changes.
+
+Latest edge-variant design audit:
+`docs/research/20260524-165127-a64-edge-variant-design-audit.md` adds
+`tools/thor/thor_a64_edge_variant_design_audit.ps1`. Run it before any
+generated-code carrier behavior patch for `82282490:82282598 -> 82287788`. It
+reports `normal_entry_singleton=true`, `indirection_key=guest_address_only`,
+`machine_code_slot=single_per_guest_function`,
+`resolve_path=normal_machine_code_only`, and
+`edge_variant_without_global_entrypoint=caller_local_or_side_table_required`.
+Do not preload a spare register, replace `82287788`'s normal machine-code
+pointer, change the global indirection slot, or run a quiet speed A/B yet.
+Next A64 work should be a default-off compile/runtime counter-only edge
+variant probe with exact eligibility, payload materialization,
+normal-entry fallback, child-call kill, and variant-miss counts.
+
+Previous state-carrier ABI audit:
 `docs/research/20260524-163338-a64-state-carrier-abi-audit.md` adds
 `tools/thor/thor_a64_state_carrier_abi_audit.ps1`. Run it before any broader
 parent/callee carrier behavior patch. It confirms the current A64 direct-call
