@@ -777,6 +777,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `82486178 body_ticks_total=1727468`. Keep the cvar default-off and do not
   repeat that exact A/B unchanged. Next speed slice should use fresh evidence
   on remaining `82490030` children, especially `82485DD8` and `82486018`.
+- `82485DD8` word copy-loop fastpath probe:
+  `docs/research/20260524-011500-82485dd8-word-copy-loop-fastpath.md`.
+  Fresh route-clean HIR/block capture `scratch/thor-debug/20260524-010013-*`
+  identified `82485E70` as a local word copy/update loop. The default-off
+  `arm64_blue_dragon_word_copy_loop_fastpath` toggle is gated to
+  `82485DD8:82485E70` and is a positive same-APK profiled A/B:
+  fastpath-on `scratch/thor-debug/20260524-010729-*` lowered
+  `82485DD8 body_ticks_total` to `695645` and `82485E70` block body-time to
+  `75310`; fastpath-off control `scratch/thor-debug/20260524-011110-*` had
+  `82485DD8=2307804` and `82485E70=1122726`. Keep the cvar default-off until a
+  quiet same-APK A/B without block body-time/disassembly confirms the route-wide
+  speed win. Do not combine it with the `82486178` VMX copy-loop toggle yet.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

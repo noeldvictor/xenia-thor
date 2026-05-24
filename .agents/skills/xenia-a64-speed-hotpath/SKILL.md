@@ -597,6 +597,19 @@ body-time totals. Keep the cvar default-off, do not rerun the exact A/B
 unchanged, and move the next speed lane to `82485DD8` / `82486018` or a fresh
 low-noise comparator.
 
+Current `82485DD8` word-loop probe:
+`docs/research/20260524-011500-82485dd8-word-copy-loop-fastpath.md`.
+`scratch/thor-debug/20260524-010013-*` found `82485E70` is a local
+`lwzu/addic./rldicr/stwu/bne` word copy/update loop. The default-off
+`arm64_blue_dragon_word_copy_loop_fastpath` shortcut is route-clean and a
+positive profiled A/B: fastpath-on `scratch/thor-debug/20260524-010729-*`
+lowered `82485DD8` to `695645` and `82485E70` to `75310`; same-APK off control
+`scratch/thor-debug/20260524-011110-*` had `82485DD8=2307804` and
+`82485E70=1122726`. Next speed lane should confirm with a quiet same-APK A/B
+without block body-time/disassembly before enabling this outside explicit
+research runs. Do not combine it with `arm64_blue_dragon_vmx_copy_loop_fastpath`
+yet.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

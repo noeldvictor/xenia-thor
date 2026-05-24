@@ -118,18 +118,17 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: keep
-`arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not repeat the
-exact `82486178` fastpath A/B unchanged. The route-clean probe in
-`docs/research/20260524-005156-82486178-vmx-copy-loop-fastpath.md` added a
-default-off function/block-gated shortcut for `82486178:8248627C`, but the
-same-APK inner-loop A/B did not prove speed. Fastpath-on
-`scratch/thor-debug/20260524-004420-*` reached visible opening with
-`82486178 body_ticks_total=2050839`; fastpath-off control
-`scratch/thor-debug/20260524-004802-*` reached visible opening with
-`82486178 body_ticks_total=1727468`. Next slice should use fresh evidence on
-the remaining `82490030` children, especially `82485DD8` and `82486018`, before
-another generated-code shortcut.
+Latest priority, superseding the older chronology below: confirm the positive
+`82485DD8` word copy-loop fastpath with a quieter same-APK A/B. Evidence in
+`docs/research/20260524-011500-82485dd8-word-copy-loop-fastpath.md` says
+`arm64_blue_dragon_word_copy_loop_fastpath` is route-clean and speed-positive in
+the profiled lane: fastpath-on `scratch/thor-debug/20260524-010729-*` lowered
+`82485DD8 body_ticks_total` to `695645` and `82485E70` block body-time to
+`75310`; same-APK fastpath-off `scratch/thor-debug/20260524-011110-*` had
+`82485DD8=2307804` and `82485E70=1122726`. Keep it default-off until a quiet
+A/B without block body-time/disassembly confirms the route-wide win. Keep
+`arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not combine the
+two toggles yet.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and

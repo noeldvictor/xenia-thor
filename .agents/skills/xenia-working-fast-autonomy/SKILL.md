@@ -454,6 +454,14 @@ control `scratch/thor-debug/20260524-004802-*` reached visible opening with
 `82486178 body_ticks_total=1727468`. Do not repeat that exact A/B unchanged.
 Next useful worker slice should inspect `82485DD8` and/or `82486018` with fresh
 body/HIR/block evidence before another codegen shortcut.
+The `82485DD8` word copy-loop fastpath probe is now a positive candidate:
+`docs/research/20260524-011500-82485dd8-word-copy-loop-fastpath.md`.
+`arm64_blue_dragon_word_copy_loop_fastpath` is route-clean and the profiled
+same-APK A/B lowered `82485DD8` from `2307804` off to `695645` on, while
+`82485E70` dropped from `1122726` off to `75310` on. Keep the toggle
+default-off until a quiet same-APK A/B without block body-time/disassembly
+confirms route-wide speed. Do not combine it with the `82486178` VMX copy-loop
+toggle yet.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

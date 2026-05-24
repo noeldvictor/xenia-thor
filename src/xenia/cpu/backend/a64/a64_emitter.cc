@@ -73,6 +73,7 @@ DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_bool(arm64_blue_dragon_jump_table_inline_in_caller);
 DECLARE_bool(arm64_blue_dragon_vmx_copy_loop_fastpath);
+DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -2464,7 +2465,8 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     }
     MaybeEmitBlockBodyTimeTransition(block);
     MaybeEmitBlockProfileEntry(block);
-    if (TryEmitBlueDragonVmxCopyLoopBlock(block)) {
+    if (TryEmitBlueDragonVmxCopyLoopBlock(block) ||
+        TryEmitBlueDragonWordCopyLoopBlock(block)) {
       block = block->next;
       continue;
     }
@@ -4062,6 +4064,59 @@ bool A64Emitter::TryEmitBlueDragonVmxCopyLoopBlock(const hir::Block* block) {
   str(QReg(5), ptr(GetContextReg(), vmx_offset(13)));
   str(QReg(6), ptr(GetContextReg(), vmx_offset(12)));
   str(QReg(7), ptr(GetContextReg(), vmx_offset(11)));
+
+  mov(w17, 1);
+  strb(w17, ptr(GetContextReg(), xer_ca));
+  strb(wzr, ptr(GetContextReg(), cr0_base + 0));
+  strb(wzr, ptr(GetContextReg(), cr0_base + 1));
+  strb(w17, ptr(GetContextReg(), cr0_base + 2));
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonWordCopyLoopBlock(const hir::Block* block) {
+  if (!cvars::arm64_blue_dragon_word_copy_loop_fastpath ||
+      current_guest_function_ != 0x82485DD8 ||
+      current_block_guest_address_ != 0x82485E70 || !block ||
+      !block->label_head) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  const auto gpr_offset = [](int reg) -> int32_t {
+    return static_cast<int32_t>(offsetof(ppc::PPCContext, r) +
+                                sizeof(uint64_t) *
+                                    static_cast<size_t>(reg));
+  };
+  const int32_t cr0_base =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, cr0));
+  const int32_t xer_ca =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, xer_ca));
+
+  ldr(x9, ptr(GetContextReg(), gpr_offset(29)));   // PPC r29 source cursor.
+  ldr(x10, ptr(GetContextReg(), gpr_offset(4)));   // PPC r4 dest cursor.
+  ldr(x11, ptr(GetContextReg(), gpr_offset(11)));  // PPC r11 count.
+  ldr(x13, ptr(GetContextReg(), gpr_offset(31)));  // PPC r31 shift mask.
+
+  auto& loop = NewCachedLabel();
+  L(loop);
+  add(x9, x9, 0x04);
+  AddGuestAddressToMembase(w9, x14);
+  ldr(w15, ptr(x14));
+  rev(w16, w15);
+  add(x10, x10, 0x04);
+  AddGuestAddressToMembase(w10, x17);
+  str(w15, ptr(x17));
+
+  sub(x11, x11, 1);
+  lsl(x13, x13, 1);
+  cbnz(w11, loop);
+
+  str(x9, ptr(GetContextReg(), gpr_offset(29)));
+  str(x10, ptr(GetContextReg(), gpr_offset(4)));
+  str(x11, ptr(GetContextReg(), gpr_offset(11)));
+  str(x13, ptr(GetContextReg(), gpr_offset(31)));
+  str(x16, ptr(GetContextReg(), gpr_offset(10)));
 
   mov(w17, 1);
   strb(w17, ptr(GetContextReg(), xer_ca));

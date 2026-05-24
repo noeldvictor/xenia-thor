@@ -220,6 +220,12 @@ DEFINE_bool(
     "Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_word_copy_loop_fastpath, false,
+    "Thor ARM64 speed lane: replace Blue Dragon's 82485DD8:82485E70 "
+    "word load/store update loop with a narrow block-gated A64 path. "
+    "Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
