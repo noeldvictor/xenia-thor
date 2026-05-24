@@ -116,6 +116,22 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
+is the current larger lane, but not yet a local patch target. Capture
+`scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing
+route with clean fatal-marker search. Final body rows were
+`82281D28=65346716`, `82282490=31615045`, `82282388=18965773`,
+`82282410=17323669`, `82287788=3277477`, and `821CE028=716173`. Internal block
+body-time is dominated by `8228233C` (`body_ticks_total=46564347`,
+`ticks_per_entry=707`), but the warning-level HIR log starts at `82282398`,
+so exact span mapping for that hot block is incomplete. Visible HIR after the
+missing region shows a call to `0x826BF770` and recursive `0x82281D28`, and the
+large `82282388` / `82282410` body rows suggest child/recursive work. Do not
+patch local `82281D28` generated code yet. Next useful worker output is a
+route-stabilized `82281D28` call-edge split with delayed body-time comparators
+`82281D28,82282388,82282410,82282490,826BF770,82287788,821CE028`.
+
+Previous evidence:
 `docs/research/20260524-045602-821ce028-focused-capture.md` shows the
 `821CE028` child is route-clean but too small for the next immediate codegen
 patch. Capture `scratch/thor-debug/20260524-045022-*` reached the visible

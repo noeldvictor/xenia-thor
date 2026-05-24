@@ -623,7 +623,24 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current `821CE028` child-lane read:
+Current `82281D28` focused lane:
+`docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
+`scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing
+route with clean fatal-marker search on APK SHA
+`A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. Final
+body rows were `82281D28=65346716`, `82282490=31615045`,
+`82282388=18965773`, `82282410=17323669`, `82287788=3277477`, and
+`821CE028=716173`. The hottest internal block row is `8228233C`
+(`body_ticks_total=46564347`, `ticks_per_entry=707`), but the warning-level
+HIR dump starts at `82282398`, so exact local span mapping is incomplete.
+Visible HIR after that point shows calls to `0x826BF770` and recursive
+`0x82281D28`, and the large `82282388` / `82282410` body rows make this look
+call-edge heavy. Do not patch local `82281D28` generated code yet. Next run
+should be a route-stabilized `82281D28` call-edge split with delayed body-time
+comparators:
+`82281D28,82282388,82282410,82282490,826BF770,82287788,821CE028`.
+
+Previous `821CE028` child-lane read:
 `docs/research/20260524-045602-821ce028-focused-capture.md`. Capture
 `scratch\thor-debug\20260524-045022-*` reached visible opening sky/wing with a
 clean fatal-marker search. Final body rows were `82282490=37190996`,

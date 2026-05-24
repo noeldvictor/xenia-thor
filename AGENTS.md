@@ -932,6 +932,22 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   offline `r10` state-traffic audit. Prefer the larger next target:
   route-stabilized filtered HIR plus delayed body/block-time capture for
   `82281D28`, keeping `82282490`, `82287788`, and `821CE028` as comparators.
+- Current `82281D28` focused capture:
+  `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
+  `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing
+  route with clean fatal-marker search on the same APK SHA
+  `A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`.
+  Final body rows put `82281D28` first at `65346716`, followed by
+  `82282490=31615045`, `82282388=18965773`, `82282410=17323669`,
+  `82287788=3277477`, and `821CE028=716173`. The hottest internal block row
+  is `8228233C` with `body_ticks_total=46564347`, but the warning-level HIR
+  dump starts at `82282398`, so exact local span mapping is incomplete. Visible
+  HIR after that point shows calls to `0x826BF770` and recursive
+  `0x82281D28`, and the sibling/alias-looking `82282388` and `82282410` body
+  rows are also large. Do not patch local `82281D28` generated code yet. Next
+  run should be a route-stabilized `82281D28` call-edge split with delayed
+  body-time comparators:
+  `82281D28,82282388,82282410,82282490,826BF770,82287788,821CE028`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

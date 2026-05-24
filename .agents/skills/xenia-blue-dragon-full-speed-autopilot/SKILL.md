@@ -119,6 +119,23 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-050931-82281d28-focused-capture.md` followed the
+larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
+reached the visible opening sky/wing route with clean fatal-marker search on
+APK SHA `A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`.
+Final body rows put `82281D28=65346716` first, then
+`82282490=31615045`, `82282388=18965773`, `82282410=17323669`,
+`82287788=3277477`, and `821CE028=716173`. The top internal block row is
+`8228233C` with `body_ticks_total=46564347`, but the warning-level HIR dump
+starts at `82282398`, so exact local span mapping is incomplete. The visible
+HIR after that point shows calls to `0x826BF770` and recursive `0x82281D28`,
+and large sibling/alias-looking rows `82282388` and `82282410` make this look
+call-edge heavy. Do not patch `82281D28` generated code yet. Next run should
+be a route-stabilized `82281D28` call-edge split with delayed body-time
+comparators:
+`82281D28,82282388,82282410,82282490,826BF770,82287788,821CE028`.
+
+Previous priority:
 `docs/research/20260524-045602-821ce028-focused-capture.md` follows the
 `82287788 -> 821CE028` child edge. Capture
 `scratch/thor-debug/20260524-045022-*` reached the visible opening sky/wing
