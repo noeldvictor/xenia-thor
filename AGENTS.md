@@ -1096,6 +1096,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `82282568/8228256C/82282570` that counts denormal flush need, NaN-fixup
   entry/per-lane repair, FPCR mode switches, and source/dest alias copies
   before any shortcut.
+- Current `MUL_ADD_V128` runtime audit patch:
+  `docs/research/20260524-074442-blue-dragon-mul-add-v128-runtime-audit.md`.
+  The backend now has default-off cvar
+  `arm64_blue_dragon_mul_add_v128_audit`, gated to Blue Dragon guest function
+  `82282490` and PCs `82282568`, `8228256C`, and `82282570`. It logs total and
+  per-PC calls, FPCR switches, software flush-path eligibility, input/output
+  denormal sightings, NaN-fixup entry and repaired lanes, plus source/dest
+  vector copies. `tools/thor/thor_xenia_debug.ps1` exposes
+  `-Arm64BlueDragonMulAddV128Audit`; presets keep it default-off. `NativeCore`
+  passed. Next step is `FullDeploy` plus a delayed `82282490` body-time
+  speed capture with the audit enabled; do not patch a fastpath until those
+  counters prove the expensive paths are cold.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

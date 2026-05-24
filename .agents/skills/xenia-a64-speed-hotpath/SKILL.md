@@ -785,6 +785,18 @@ test differences. Next hotpath work should add a default-off runtime audit for
 these PCs that counts denormal flush need, NaN-fixup entry/per-lane repair,
 FPCR mode switches, and source/dest alias copies.
 
+Latest `MUL_ADD_V128` runtime audit patch:
+`docs/research/20260524-074442-blue-dragon-mul-add-v128-runtime-audit.md`.
+The backend now has default-off cvar
+`arm64_blue_dragon_mul_add_v128_audit`, gated to `82282490` PCs `82282568`,
+`8228256C`, and `82282570`. It logs total/per-PC calls, FPCR switches,
+software flush-path eligibility, input/output denormal sightings, NaN-fixup
+entry and repaired lanes, plus source/dest vector copies. `tools/thor`
+exposes it as `-Arm64BlueDragonMulAddV128Audit`; speed/title presets keep it
+off. `NativeCore` passed. Next speed-lane command is a `FullDeploy` followed
+by `LaunchBlueDragonSpeedCapture` with delayed `82282490` body-time and
+`-Arm64BlueDragonMulAddV128Audit true`.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

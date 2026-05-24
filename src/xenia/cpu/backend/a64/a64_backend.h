@@ -173,6 +173,42 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_stvewx_stack_lane_fallback_count() {
     return &blue_dragon_stvewx_stack_lane_fallback_count_;
   }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_total_count() {
+    return &blue_dragon_mul_add_v128_audit_total_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_pc0_count() {
+    return &blue_dragon_mul_add_v128_audit_pc0_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_pc1_count() {
+    return &blue_dragon_mul_add_v128_audit_pc1_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_pc2_count() {
+    return &blue_dragon_mul_add_v128_audit_pc2_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_fpcr_switch_count() {
+    return &blue_dragon_mul_add_v128_audit_fpcr_switch_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_sw_flush_path_count() {
+    return &blue_dragon_mul_add_v128_audit_sw_flush_path_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_input_denorm_count() {
+    return &blue_dragon_mul_add_v128_audit_input_denorm_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_output_denorm_count() {
+    return &blue_dragon_mul_add_v128_audit_output_denorm_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_nan_entry_count() {
+    return &blue_dragon_mul_add_v128_audit_nan_entry_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_nan_lane_count() {
+    return &blue_dragon_mul_add_v128_audit_nan_lane_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_src_copy_count() {
+    return &blue_dragon_mul_add_v128_audit_src_copy_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_mul_add_v128_audit_dest_copy_count() {
+    return &blue_dragon_mul_add_v128_audit_dest_copy_count_;
+  }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool EntryExitTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
@@ -274,6 +310,18 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> kf_lower_irql_apc_missing_fallback_count_{0};
   std::atomic<uint64_t> blue_dragon_stvewx_stack_lane_fastpath_count_{0};
   std::atomic<uint64_t> blue_dragon_stvewx_stack_lane_fallback_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_total_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_pc0_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_pc1_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_pc2_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_fpcr_switch_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_sw_flush_path_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_input_denorm_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_output_denorm_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_nan_entry_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_nan_lane_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_src_copy_count_{0};
+  std::atomic<uint64_t> blue_dragon_mul_add_v128_audit_dest_copy_count_{0};
   uint64_t last_speed_profile_host_to_guest_entries_ = 0;
   uint64_t last_speed_profile_guest_to_host_calls_ = 0;
   uint64_t last_speed_profile_direct_guest_calls_ = 0;
@@ -292,6 +340,18 @@ class A64Backend : public Backend {
   uint64_t last_kf_lower_irql_apc_missing_fallback_count_ = 0;
   uint64_t last_blue_dragon_stvewx_stack_lane_fastpath_count_ = 0;
   uint64_t last_blue_dragon_stvewx_stack_lane_fallback_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_total_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_pc0_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_pc1_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_pc2_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_fpcr_switch_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_sw_flush_path_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_input_denorm_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_output_denorm_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_nan_entry_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_nan_lane_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_src_copy_count_ = 0;
+  uint64_t last_blue_dragon_mul_add_v128_audit_dest_copy_count_ = 0;
   bool speed_profile_seen_activity_ = false;
   bool speed_profile_idle_snapshot_emitted_ = false;
 };

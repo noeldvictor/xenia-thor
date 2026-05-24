@@ -157,6 +157,7 @@ param(
     [string]$Arm64BlueDragonWordCopyLoopFastpath = "false",
     [string]$Arm64BlueDragonStvewxStackLaneFastpath = "false",
     [string]$Arm64BlueDragonStvewxStackLaneAudit = "false",
+    [string]$Arm64BlueDragonMulAddV128Audit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -885,6 +886,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonStvewxStackLaneAudit) {
         $parts += "--ez arm64_blue_dragon_stvewx_stack_lane_audit $(ConvertTo-BooleanText $Arm64BlueDragonStvewxStackLaneAudit)"
     }
+    if ($Arm64BlueDragonMulAddV128Audit) {
+        $parts += "--ez arm64_blue_dragon_mul_add_v128_audit $(ConvertTo-BooleanText $Arm64BlueDragonMulAddV128Audit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1141,6 +1145,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_word_copy_loop_fastpath=$Arm64BlueDragonWordCopyLoopFastpath",
         "arm64_blue_dragon_stvewx_stack_lane_fastpath=$Arm64BlueDragonStvewxStackLaneFastpath",
         "arm64_blue_dragon_stvewx_stack_lane_audit=$Arm64BlueDragonStvewxStackLaneAudit",
+        "arm64_blue_dragon_mul_add_v128_audit=$Arm64BlueDragonMulAddV128Audit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1424,6 +1429,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonWordCopyLoopFastpath" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
 }
 
 function Write-PerfSnapshot {
@@ -1608,6 +1614,7 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""
@@ -1849,6 +1856,9 @@ done | head -50
         }
         if ($Arm64SpeedProfileCallEdgeAuditOnly) {
             Write-Output "A64 call-edge audit-only: $(ConvertTo-BooleanText $Arm64SpeedProfileCallEdgeAuditOnly)"
+        }
+        if ($Arm64BlueDragonMulAddV128Audit) {
+            Write-Output "A64 Blue Dragon MUL_ADD_V128 audit: $(ConvertTo-BooleanText $Arm64BlueDragonMulAddV128Audit)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

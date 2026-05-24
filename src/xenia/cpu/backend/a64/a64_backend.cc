@@ -239,6 +239,13 @@ DEFINE_bool(
     "back to the generic dynamic EXTRACT_I32 path on mismatch.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_mul_add_v128_audit, false,
+    "Thor ARM64 speed lane: instrument Blue Dragon 82282490 vmaddfp/"
+    "MUL_ADD_V128 sites 82282568, 8228256C, and 82282570 for denormal, "
+    "NaN-fixup, FPCR-switch, and scratch-copy cost attribution. "
+    "Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1815,6 +1822,54 @@ void A64Backend::LogSpeedProfile() {
         "A64 Blue Dragon stvewx stack-lane audit: fastpath={}/{} "
         "fallback={}/{}",
         fastpath.second, fastpath.first, fallback.second, fallback.first);
+  }
+  if (cvars::arm64_blue_dragon_mul_add_v128_audit) {
+    auto total = load_delta(
+        blue_dragon_mul_add_v128_audit_total_count_,
+        last_blue_dragon_mul_add_v128_audit_total_count_);
+    auto pc0 = load_delta(blue_dragon_mul_add_v128_audit_pc0_count_,
+                          last_blue_dragon_mul_add_v128_audit_pc0_count_);
+    auto pc1 = load_delta(blue_dragon_mul_add_v128_audit_pc1_count_,
+                          last_blue_dragon_mul_add_v128_audit_pc1_count_);
+    auto pc2 = load_delta(blue_dragon_mul_add_v128_audit_pc2_count_,
+                          last_blue_dragon_mul_add_v128_audit_pc2_count_);
+    auto fpcr_switch = load_delta(
+        blue_dragon_mul_add_v128_audit_fpcr_switch_count_,
+        last_blue_dragon_mul_add_v128_audit_fpcr_switch_count_);
+    auto sw_flush = load_delta(
+        blue_dragon_mul_add_v128_audit_sw_flush_path_count_,
+        last_blue_dragon_mul_add_v128_audit_sw_flush_path_count_);
+    auto input_denorm = load_delta(
+        blue_dragon_mul_add_v128_audit_input_denorm_count_,
+        last_blue_dragon_mul_add_v128_audit_input_denorm_count_);
+    auto output_denorm = load_delta(
+        blue_dragon_mul_add_v128_audit_output_denorm_count_,
+        last_blue_dragon_mul_add_v128_audit_output_denorm_count_);
+    auto nan_entry =
+        load_delta(blue_dragon_mul_add_v128_audit_nan_entry_count_,
+                   last_blue_dragon_mul_add_v128_audit_nan_entry_count_);
+    auto nan_lane =
+        load_delta(blue_dragon_mul_add_v128_audit_nan_lane_count_,
+                   last_blue_dragon_mul_add_v128_audit_nan_lane_count_);
+    auto src_copy =
+        load_delta(blue_dragon_mul_add_v128_audit_src_copy_count_,
+                   last_blue_dragon_mul_add_v128_audit_src_copy_count_);
+    auto dest_copy =
+        load_delta(blue_dragon_mul_add_v128_audit_dest_copy_count_,
+                   last_blue_dragon_mul_add_v128_audit_dest_copy_count_);
+    XELOGW(
+        "A64 Blue Dragon MUL_ADD_V128 audit: total={}/{} "
+        "pc82282568={}/{} pc8228256C={}/{} pc82282570={}/{} "
+        "fpcr_switch={}/{} sw_flush_path={}/{} input_denorm={}/{} "
+        "output_denorm={}/{} nan_entry={}/{} nan_lane={}/{} "
+        "src_copy={}/{} dest_copy={}/{}",
+        total.second, total.first, pc0.second, pc0.first, pc1.second,
+        pc1.first, pc2.second, pc2.first, fpcr_switch.second,
+        fpcr_switch.first, sw_flush.second, sw_flush.first,
+        input_denorm.second, input_denorm.first, output_denorm.second,
+        output_denorm.first, nan_entry.second, nan_entry.first,
+        nan_lane.second, nan_lane.first, src_copy.second, src_copy.first,
+        dest_copy.second, dest_copy.first);
   }
 
   const bool interval_had_activity =

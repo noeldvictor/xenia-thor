@@ -39,6 +39,7 @@ DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
 DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
+DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -4604,13 +4605,76 @@ struct MUL_ADD_V128
     //   1. Flush s3 into v3, save to stack[32].
     //   2. Flush s1/s2 into v0/v1, save to stack[0]/stack[16].
     //   3. Restore s3 into v3, fmla into v2, NaN fixup, flush output.
-    EmitWithVmxFpcr(e, [&] {
+    const uint32_t guest_pc = i.instr ? i.instr->GuestAddressFor() : 0;
+    const bool audit =
+        cvars::arm64_blue_dragon_mul_add_v128_audit &&
+        e.current_guest_function() == 0x82282490 &&
+        (guest_pc == 0x82282568 || guest_pc == 0x8228256C ||
+         guest_pc == 0x82282570);
+
+    std::atomic<uint64_t>* pc_counter = nullptr;
+    if (audit) {
+      pc_counter =
+          guest_pc == 0x82282568
+              ? e.backend()->blue_dragon_mul_add_v128_audit_pc0_count()
+              : guest_pc == 0x8228256C
+                    ? e.backend()->blue_dragon_mul_add_v128_audit_pc1_count()
+                    : e.backend()->blue_dragon_mul_add_v128_audit_pc2_count();
+    }
+    auto* total_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_total_count()
+              : nullptr;
+    auto* fpcr_switch_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_fpcr_switch_count()
+              : nullptr;
+    auto* sw_flush_path_counter =
+        audit
+            ? e.backend()->blue_dragon_mul_add_v128_audit_sw_flush_path_count()
+            : nullptr;
+    auto* input_denorm_counter =
+        audit
+            ? e.backend()->blue_dragon_mul_add_v128_audit_input_denorm_count()
+            : nullptr;
+    auto* output_denorm_counter =
+        audit
+            ? e.backend()->blue_dragon_mul_add_v128_audit_output_denorm_count()
+            : nullptr;
+    auto* nan_entry_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_nan_entry_count()
+              : nullptr;
+    auto* nan_lane_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_nan_lane_count()
+              : nullptr;
+    auto* src_copy_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_src_copy_count()
+              : nullptr;
+    auto* dest_copy_counter =
+        audit ? e.backend()->blue_dragon_mul_add_v128_audit_dest_copy_count()
+              : nullptr;
+
+    const bool fpcr_switch = e.ChangeFpcrMode(FPCRMode::Vmx);
+    e.EmitAtomicIncrement64(total_counter);
+    e.EmitAtomicIncrement64(pc_counter);
+    if (fpcr_switch) {
+      e.EmitAtomicIncrement64(fpcr_switch_counter);
+    }
+    const bool software_flush =
+        !e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);
+    if (software_flush) {
+      e.EmitAtomicIncrement64(sw_flush_path_counter);
+    }
+
+    {
       int d = i.dest.reg().getIdx();
 
       // Flush s3 → v3, save to stack slot 2.
       int s3 = SrcVReg(e, i.src3, 3);
-      if (s3 != 3) e.mov(VReg(3).b16, VReg(s3).b16);
-      if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
+      if (s3 != 3) {
+        e.EmitAtomicIncrement64(src_copy_counter);
+        e.mov(VReg(3).b16, VReg(s3).b16);
+      }
+      AuditV128DenormalIfAny(e, 3, input_denorm_counter, 0, 1);
+      if (software_flush) {
         FlushDenormals_V128(e, 3, 0, 1);
       }
       e.str(QReg(3),
@@ -4618,8 +4682,22 @@ struct MUL_ADD_V128
                 e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 32));
 
       // Flush s1/s2 → v0/v1, save to stack slots 0/1.
-      int s1, s2;
-      PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+      int s1 = SrcVReg(e, i.src1, 0);
+      int s2 = SrcVReg(e, i.src2, 1);
+      if (s1 != 0) {
+        e.EmitAtomicIncrement64(src_copy_counter);
+        e.mov(VReg(0).b16, VReg(s1).b16);
+      }
+      if (s2 != 1) {
+        e.EmitAtomicIncrement64(src_copy_counter);
+        e.mov(VReg(1).b16, VReg(s2).b16);
+      }
+      AuditV128DenormalIfAny(e, 0, input_denorm_counter, 2, 3);
+      AuditV128DenormalIfAny(e, 1, input_denorm_counter, 2, 3);
+      if (software_flush) {
+        FlushDenormals_V128(e, 0);
+        FlushDenormals_V128(e, 1);
+      }
       e.str(QReg(0), Xbyak_aarch64::ptr(e.sp, static_cast<int32_t>(
                                                   StackLayout::GUEST_SCRATCH)));
       e.str(QReg(1),
@@ -4630,17 +4708,19 @@ struct MUL_ADD_V128
       e.ldr(QReg(2),
             Xbyak_aarch64::ptr(
                 e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 32));
-      e.fmla(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);
+      e.fmla(VReg(2).s4, VReg(0).s4, VReg(1).s4);
 
       // PPC NaN fixup (sources on stack at offsets 0/16/32).
-      FixupVmxNan_V128_Fma(e);
+      FixupVmxNan_V128_Fma(e, nan_entry_counter, nan_lane_counter);
 
       // Flush output denormals.
-      if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
+      AuditV128DenormalIfAny(e, 2, output_denorm_counter, 0, 1);
+      if (software_flush) {
         FlushDenormals_V128(e, 2, 0, 1);
       }
+      e.EmitAtomicIncrement64(dest_copy_counter);
       e.mov(VReg(d).b16, VReg(2).b16);
-    });
+    }
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_MUL_ADD, MUL_ADD_F32, MUL_ADD_F64, MUL_ADD_V128);

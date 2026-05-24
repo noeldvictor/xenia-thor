@@ -268,6 +268,20 @@ use a default-off function/span/PC-gated runtime audit for
 per-lane repair, FPCR mode switches, and source/dest alias copies before any
 shortcut.
 
+Latest `MUL_ADD_V128` runtime audit patch:
+`docs/research/20260524-074442-blue-dragon-mul-add-v128-runtime-audit.md`.
+The backend now has default-off cvar
+`arm64_blue_dragon_mul_add_v128_audit`, gated to Blue Dragon guest function
+`82282490` and PCs `82282568`, `8228256C`, and `82282570`. It logs total and
+per-PC calls, FPCR switches, software flush-path eligibility, input/output
+denormal sightings, NaN-fixup entry and repaired lanes, and source/dest vector
+copies. `tools/thor/thor_xenia_debug.ps1` exposes
+`-Arm64BlueDragonMulAddV128Audit`; presets keep it default-off. `NativeCore`
+passed. Next continuation should run `FullDeploy`, then a delayed `82282490`
+body-time speed capture with `-Arm64BlueDragonMulAddV128Audit true`. Do not
+patch a fastpath until that route-clean audit proves the expensive paths are
+cold.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`

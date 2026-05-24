@@ -10,6 +10,8 @@
 #ifndef XENIA_CPU_BACKEND_A64_A64_SEQ_UTIL_H_
 #define XENIA_CPU_BACKEND_A64_A64_SEQ_UTIL_H_
 
+#include <atomic>
+
 #include "xenia/base/memory.h"
 #include "xenia/base/vec128.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
@@ -345,6 +347,32 @@ inline void FlushDenormals_V128(A64Emitter& e, int vreg, int sa = 2,
   e.bic(VReg(vreg).b16, VReg(vreg).b16, VReg(sa).b16);
 }
 
+inline void AuditV128DenormalIfAny(A64Emitter& e, int vreg,
+                                   std::atomic<uint64_t>* counter, int sa = 2,
+                                   int sb = 3) {
+  if (!counter) {
+    return;
+  }
+
+  // Same denormal predicate as FlushDenormals_V128, but only records whether
+  // any lane would be flushed. Clobbers sa, sb, and w0.
+  auto& denormal_found = e.NewCachedLabel();
+  auto& done = e.NewCachedLabel();
+  e.shl(VReg(sa).s4, VReg(vreg).s4, 1);
+  e.movi(VReg(sb).s4, 1u);
+  e.sub(VReg(sa).s4, VReg(sa).s4, VReg(sb).s4);
+  e.mvni(VReg(sb).s4, 0xFFu, LSL, 24);
+  e.cmhi(VReg(sb).s4, VReg(sb).s4, VReg(sa).s4);
+  for (int lane = 0; lane < 4; ++lane) {
+    e.umov(e.w0, VReg(sb).s4[lane]);
+    e.cbnz(e.w0, denormal_found);
+  }
+  e.b(done);
+  e.L(denormal_found);
+  e.EmitAtomicIncrement64(counter);
+  e.L(done);
+}
+
 // Fixup for vmaxfp/vminfp when BOTH inputs are NaN.
 // ARM64 fmax/fmin with DN=0 correctly propagates NaN when only one input is
 // NaN, but when both are NaN it may quiet an SNaN differently than x64.
@@ -461,7 +489,9 @@ inline void FixupVmxNan_V128(A64Emitter& e) {
 //   GUEST_SCRATCH + 32 = src3 (16 bytes)
 // PPC rule: first NaN by operand position (src1 > src2 > src3) wins.
 // Clobbers v0, v1, v3, w0, w16, w17.
-inline void FixupVmxNan_V128_Fma(A64Emitter& e) {
+inline void FixupVmxNan_V128_Fma(
+    A64Emitter& e, std::atomic<uint64_t>* nan_entry_counter = nullptr,
+    std::atomic<uint64_t>* nan_lane_counter = nullptr) {
   using namespace Xbyak_aarch64;
   auto& done = e.NewCachedLabel();
 
@@ -470,6 +500,7 @@ inline void FixupVmxNan_V128_Fma(A64Emitter& e) {
   e.uminv(SReg(3), VReg(3).s4);
   e.fmov(e.w0, SReg(3));
   e.cbnz(e.w0, done);
+  e.EmitAtomicIncrement64(nan_entry_counter);
 
   // NaN threshold constant.
   e.mov(e.w16, 0xFF000000u);
@@ -485,6 +516,7 @@ inline void FixupVmxNan_V128_Fma(A64Emitter& e) {
     e.lsl(e.w17, e.w0, 1);
     e.cmp(e.w17, e.w16);
     e.b(LS, lane_ok);
+    e.EmitAtomicIncrement64(nan_lane_counter);
 
     // Result is NaN. Check src1[lane].
     e.ldr(e.w0, ptr(e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) +

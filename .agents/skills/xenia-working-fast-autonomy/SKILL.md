@@ -254,6 +254,19 @@ disabled for tests. Next worker output should be a default-off runtime audit
 for those three PCs, counting denormal flush need, NaN-fixup entry/per-lane
 repair, FPCR mode switches, and source/dest alias copies before a shortcut.
 
+Latest `MUL_ADD_V128` runtime audit patch:
+`docs/research/20260524-074442-blue-dragon-mul-add-v128-runtime-audit.md`
+adds default-off cvar `arm64_blue_dragon_mul_add_v128_audit`, gated to Blue
+Dragon guest function `82282490` and PCs `82282568`, `8228256C`, and
+`82282570`. It logs total/per-PC calls, FPCR switches, software flush-path
+eligibility, input/output denormal sightings, NaN-fixup entry and repaired
+lanes, and source/dest vector copies. `tools/thor/thor_xenia_debug.ps1` now
+accepts `-Arm64BlueDragonMulAddV128Audit`; presets keep it default-off.
+`NativeCore` passed. Next worker output should be `FullDeploy` plus a
+route-stabilized delayed `82282490` body-time speed capture with the audit
+enabled, then either a guarded fastpath if expensive paths are cold or broader
+`8228252C-822825C4` state/vector/FPR work if they are hot.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
