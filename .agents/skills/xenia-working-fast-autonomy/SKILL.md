@@ -116,6 +116,18 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
+adds deterministic tool `tools/thor/thor_hir_state_carrier_design_audit.ps1`.
+Run it before any new `8228252C-822825C4` carrier behavior patch. It joins the
+parent span, the `82282598 -> 82287788` callee HIR, and same-run edge rows,
+then prints seed/kill/writeback requirements. Current output says `f[1]` is a
+medium-risk read-only entry seed but too small alone, `fpscr` is the large
+very-high-risk dirty candidate with writebacks at `82287ED4`, `82287EDC`,
+`82287EE4`, and `82288220`, `r[3]` is mutable/high-risk, and `lr` is blocked.
+The next useful output is a default-off counter/probe for the carrier plan, not
+a behavior patch or speed A/B.
+
+Previous lane closure:
 `docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`
 returns the sprint from closed narrow probes to a broader state-carrier design
 problem. `8228252C-822825C4` remains the top body-backed local target

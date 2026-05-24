@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest state-carrier design constraints:
+Latest state-carrier audit:
+`docs/research/20260524-133027-8228252c-state-carrier-design-audit.md` adds
+`tools/thor/thor_hir_state_carrier_design_audit.ps1`. Use it before patching
+any `8228252C-822825C4` carrier behavior. For `82282598 -> 82287788`, current
+output classifies `f[1]` as `read_only_entry_seed` (`loads=10`, `stores=0`,
+dynamic upper `16912720`), `fpscr` as `dirty_cfg_carrier` (`loads=26`,
+`stores=26`, writebacks at `82287ED4`, `82287EDC`, `82287EE4`, `82288220`),
+`r[3]` as mutable/high-risk, and `lr` as blocked call-link state. Do not run a
+speed A/B from this directly. First add a default-off carrier-design
+counter/probe that reports dynamic seed hits, reads, dirty writes, writebacks,
+kills, and fallbacks.
+
+Previous state-carrier design constraints:
 `docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`.
 `8228252C-822825C4` remains the top `82282490` local/exclusive target
 (`approx_exclusive=2876500`), but the live direct-call state roundtrip at

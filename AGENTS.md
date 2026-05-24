@@ -2429,6 +2429,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`.
+  New deterministic tool `tools/thor/thor_hir_state_carrier_design_audit.ps1`
+  joins parent span HIR, callee HIR, and dynamic edge rows to print exact seed,
+  kill, and writeback requirements for `82282490:8228252C-822825C4` and
+  `82282598 -> 82287788`. It classifies `f[1]` as a medium-risk
+  `read_only_entry_seed` (`loads=10`, `stores=0`, dynamic upper `16912720`),
+  `fpscr` as a very-high-risk `dirty_cfg_carrier` (`loads=26`, `stores=26`,
+  writebacks at `82287ED4`, `82287EDC`, `82287EE4`, `82288220`), `r[3]` as a
+  high-risk mutable cache candidate, and `lr` as blocked call-link state. Do
+  not patch behavior yet. Next useful output is a default-off carrier-design
+  counter/probe that reports dynamic seed hits, reads, dirty writes, writebacks,
+  kills, and fallbacks before any speed A/B.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`.
   The broader state-carrier design pass keeps `8228252C-822825C4` as the top
   body-backed local target (`approx_exclusive=2876500`) but blocks another

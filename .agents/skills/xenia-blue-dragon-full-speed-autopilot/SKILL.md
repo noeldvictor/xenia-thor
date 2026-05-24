@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
+adds `tools/thor/thor_hir_state_carrier_design_audit.ps1`. Use it before any
+new state-carrier behavior patch. For `82282490:8228252C-822825C4` and
+`82282598 -> 82287788`, it prints per-field seed, kill, and writeback
+requirements. Current output classifies `f[1]` as a medium-risk
+`read_only_entry_seed` (`loads=10`, `stores=0`, dynamic upper `16912720`),
+`fpscr` as a very-high-risk `dirty_cfg_carrier` (`loads=26`, `stores=26`,
+writebacks at `82287ED4`, `82287EDC`, `82287EE4`, `82288220`), `r[3]` as a
+high-risk mutable cache candidate, and `lr` as blocked call-link state. Do not
+patch behavior next. The next useful slice is a default-off carrier-design
+counter/probe that reports dynamic seed hits, reads, dirty writes, writebacks,
+kills, and fallbacks before any speed A/B.
+
+Previous priority:
 `docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`
 keeps `8228252C-822825C4` first by local/exclusive body time
 (`approx_exclusive=2876500`) but closes another narrow local-patch jump. The
