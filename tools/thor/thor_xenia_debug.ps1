@@ -162,6 +162,7 @@ param(
     [string]$Arm64BlueDragonCallBoundaryStateAudit = "false",
     [string]$Arm64BlueDragonCallBoundaryStateSuppressDeadStores = "false",
     [string]$Arm64BlueDragonF1CarrierAudit = "false",
+    [string]$Arm64BlueDragonF1CarrierFastpath = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -905,6 +906,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonF1CarrierAudit) {
         $parts += "--ez arm64_blue_dragon_f1_carrier_audit $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierAudit)"
     }
+    if ($Arm64BlueDragonF1CarrierFastpath) {
+        $parts += "--ez arm64_blue_dragon_f1_carrier_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierFastpath)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1166,6 +1170,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_call_boundary_state_audit=$Arm64BlueDragonCallBoundaryStateAudit",
         "arm64_blue_dragon_call_boundary_state_suppress_dead_stores=$Arm64BlueDragonCallBoundaryStateSuppressDeadStores",
         "arm64_blue_dragon_f1_carrier_audit=$Arm64BlueDragonF1CarrierAudit",
+        "arm64_blue_dragon_f1_carrier_fastpath=$Arm64BlueDragonF1CarrierFastpath",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1454,6 +1459,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateSuppressDeadStores" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonF1CarrierAudit" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonF1CarrierFastpath" "false"
 }
 
 function Write-PerfSnapshot {
@@ -1899,6 +1905,9 @@ done | head -50
         }
         if ($Arm64BlueDragonF1CarrierAudit) {
             Write-Output "A64 Blue Dragon f1 carrier audit: $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierAudit)"
+        }
+        if ($Arm64BlueDragonF1CarrierFastpath) {
+            Write-Output "A64 Blue Dragon f1 carrier fastpath: $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierFastpath)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

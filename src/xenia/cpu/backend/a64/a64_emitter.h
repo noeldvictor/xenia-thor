@@ -201,6 +201,12 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
 
   XexModule* GuestModule() { return guest_module_; }
   uint32_t current_guest_function() const { return current_guest_function_; }
+  bool blue_dragon_f1_carrier_stack_slot_enabled() const {
+    return blue_dragon_f1_carrier_stack_slot_offset_ != 0;
+  }
+  size_t blue_dragon_f1_carrier_stack_slot_offset() const {
+    return blue_dragon_f1_carrier_stack_slot_offset_;
+  }
 
  protected:
   void* Emplace(const EmitFunctionInfo& func_info,
@@ -227,6 +233,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   size_t block_body_time_start_stack_offset_ = 0;
   size_t block_body_time_counter_stack_offset_ = 0;
   size_t call_edge_time_start_stack_offset_ = 0;
+  size_t blue_dragon_f1_carrier_stack_slot_offset_ = 0;
   size_t current_call_edge_ordinal_ = 0;
   uint32_t current_block_guest_address_ = 0;
 

@@ -44,6 +44,7 @@ DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
+DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -279,8 +280,7 @@ enum class BlueDragonF1CarrierLoadKind {
 
 static BlueDragonF1CarrierLoadKind GetBlueDragonF1CarrierLoadKind(
     A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
-  if (!cvars::arm64_blue_dragon_f1_carrier_audit || !instr ||
-      e.current_guest_function() != 0x82287788 || offset != 296) {
+  if (!instr || e.current_guest_function() != 0x82287788 || offset != 296) {
     return BlueDragonF1CarrierLoadKind::kNone;
   }
 
@@ -299,6 +299,48 @@ static BlueDragonF1CarrierLoadKind GetBlueDragonF1CarrierLoadKind(
       return BlueDragonF1CarrierLoadKind::kChildPreserved;
     default:
       return BlueDragonF1CarrierLoadKind::kNone;
+  }
+}
+
+static bool EmitBlueDragonF1CarrierFastpath(
+    A64Emitter& e, const hir::Instr* instr, const DReg& dest, uint32_t offset,
+    BlueDragonF1CarrierLoadKind kind) {
+  if (!cvars::arm64_blue_dragon_f1_carrier_fastpath ||
+      kind == BlueDragonF1CarrierLoadKind::kNone || !instr ||
+      !e.blue_dragon_f1_carrier_stack_slot_enabled() || offset != 296) {
+    return false;
+  }
+
+  const uint32_t guest_pc = instr->GuestAddressFor();
+  const uint32_t carrier_offset =
+      static_cast<uint32_t>(e.blue_dragon_f1_carrier_stack_slot_offset());
+  if (guest_pc == 0x82287798) {
+    e.ldr(dest, ptr(e.GetContextReg(), offset));
+    e.str(dest, ptr(e.sp, carrier_offset));
+    if (cvars::arm64_blue_dragon_f1_carrier_audit) {
+      e.EmitAtomicIncrement64(e.backend()->blue_dragon_f1_carrier_seed_count());
+    }
+    return true;
+  }
+
+  switch (guest_pc) {
+    case 0x82287828:
+    case 0x82287A1C:
+    case 0x82287A2C:
+    case 0x82287AA4:
+    case 0x82287CF8:
+    case 0x82287D10:
+    case 0x82287D8C:
+    case 0x82287EA8:
+    case 0x82287F1C:
+      e.ldr(dest, ptr(e.sp, carrier_offset));
+      if (cvars::arm64_blue_dragon_f1_carrier_audit) {
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_f1_carrier_reuse_count());
+      }
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -732,8 +774,13 @@ struct LOAD_CONTEXT_F64
     : Sequence<LOAD_CONTEXT_F64, I<OPCODE_LOAD_CONTEXT, F64Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonF1CarrierAudit(
-        e, GetBlueDragonF1CarrierLoadKind(e, i.instr, offset));
+    const auto f1_carrier_kind =
+        GetBlueDragonF1CarrierLoadKind(e, i.instr, offset);
+    EmitBlueDragonF1CarrierAudit(e, f1_carrier_kind);
+    if (EmitBlueDragonF1CarrierFastpath(e, i.instr, i.dest, offset,
+                                        f1_carrier_kind)) {
+      return;
+    }
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };

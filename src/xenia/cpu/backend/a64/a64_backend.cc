@@ -276,6 +276,13 @@ DEFINE_bool(
     "title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_f1_carrier_fastpath, false,
+    "Thor ARM64 speed lane: replace Blue Dragon 82287788 f[1] context reloads "
+    "with a function-local stack-slot carrier seeded at 82287798 and reused "
+    "only at audited f[1]-preserving PCs. Research-only, title-specific, and "
+    "default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1950,11 +1957,15 @@ void A64Backend::LogSpeedProfile() {
     auto child = load_delta(
         blue_dragon_f1_carrier_child_preserved_count_,
         last_blue_dragon_f1_carrier_child_preserved_count_);
+    auto seed = load_delta(blue_dragon_f1_carrier_seed_count_,
+                           last_blue_dragon_f1_carrier_seed_count_);
+    auto reuse = load_delta(blue_dragon_f1_carrier_reuse_count_,
+                            last_blue_dragon_f1_carrier_reuse_count_);
     XELOGW(
         "A64 Blue Dragon f1 carrier audit: total={}/{} "
-        "helper_preserved={}/{} child_preserved={}/{}",
+        "helper_preserved={}/{} child_preserved={}/{} seed={}/{} reuse={}/{}",
         total.second, total.first, helper.second, helper.first, child.second,
-        child.first);
+        child.first, seed.second, seed.first, reuse.second, reuse.first);
   }
 
   const bool interval_had_activity =

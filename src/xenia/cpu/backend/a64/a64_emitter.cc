@@ -74,6 +74,7 @@ DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_bool(arm64_blue_dragon_jump_table_inline_in_caller);
 DECLARE_bool(arm64_blue_dragon_vmx_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
+DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -1870,6 +1871,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   block_body_time_start_stack_offset_ = 0;
   block_body_time_counter_stack_offset_ = 0;
   call_edge_time_start_stack_offset_ = 0;
+  blue_dragon_f1_carrier_stack_slot_offset_ = 0;
   current_call_edge_ordinal_ = 0;
   current_block_guest_address_ = 0;
   source_map_arena_.Reset();
@@ -2430,6 +2432,12 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   if (current_guest_function_call_edge_profile_) {
     stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
     call_edge_time_start_stack_offset_ = stack_offset;
+    stack_offset += sizeof(uint64_t);
+  }
+  if (cvars::arm64_blue_dragon_f1_carrier_fastpath &&
+      current_guest_function_ == 0x82287788) {
+    stack_offset = xe::align(stack_offset, static_cast<size_t>(8));
+    blue_dragon_f1_carrier_stack_slot_offset_ = stack_offset;
     stack_offset += sizeof(uint64_t);
   }
   // Align total stack offset to 16 bytes (ARM64 ABI requirement).

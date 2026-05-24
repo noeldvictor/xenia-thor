@@ -119,6 +119,27 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`
+adds the default-off `arm64_blue_dragon_f1_carrier_fastpath` replacement probe
+for the audited `82287788` `f[1]` (`+296`) load sites. NativeCore and
+FullDeploy passed. Audit capture `scratch/thor-debug/20260524-105424-*`
+reached the visible opening sky/dragon-wing route on APK SHA
+`A2A59F7777F77B52526ABF5E401194A4A7490D71B4F7A878ED8099B0CA7557A9` with a
+clean fatal-marker search and final counters `seed=223805/688280` and
+`reuse=443749/1365365`. Quiet same-APK A/B was route-clean but not faster:
+control `scratch/thor-debug/20260524-105813-*` reached a later opening
+`Microsoft Game Studios Presents` frame, while fastpath-on
+`scratch/thor-debug/20260524-110156-*` remained at an earlier sky/dragon-wing
+frame; `82287788` code size changed `35568 -> 35572`, and `82282490` remained
+the real wall. Keep both `arm64_blue_dragon_f1_carrier_fastpath` and
+`arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. Do not
+repeat this exact f[1] carrier A/B unchanged. Next useful slice is broader
+`8228252C-822825C4` parent/callee state/vector/FPR reduction, especially a
+design that reduces the live `82282490 -> 82287788` state round-trip without
+hiding guest-visible `r[3]`, `f[1]`, `fpscr`, or `lr` state. Require an offline
+audit before the next Thor behavior patch.
+
+Previous priority:
 `docs/research/20260524-104145-blue-dragon-f1-carrier-runtime-audit.md`
 adds the default-off `arm64_blue_dragon_f1_carrier_audit` runtime probe.
 NativeCore and FullDeploy passed. Capture
@@ -131,12 +152,8 @@ clean fatal-marker search. Final counters were `total=755910/2159587`,
 replacement opportunity is dynamically real, but it is not speed proof because
 the run used generated-code atomic counters and `82287788` remains cheap
 (`body_ticks_total=3578711`, `ticks_per_entry=5`). Keep
-`arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. Next
-useful slice is a default-off `82287788` `f[1]` carrier replacement probe for
-offset `296`, preserving only across `__savegprlr_28`, `__restgprlr_28`, and
-direct calls to `0x821CE028`, with explicit kills for unknown calls, indirect
-calls, exits, exceptions, and overlapping stores. Do not include `fpscr` or a
-broad FPR cache.
+`arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. The later
+fastpath A/B supersedes this as the current decision.
 
 Previous priority:
 `docs/research/20260524-102113-821ce028-f1-clobber-audit.md` resolves the

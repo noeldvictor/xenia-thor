@@ -245,6 +245,12 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_f1_carrier_child_preserved_count() {
     return &blue_dragon_f1_carrier_child_preserved_count_;
   }
+  std::atomic<uint64_t>* blue_dragon_f1_carrier_seed_count() {
+    return &blue_dragon_f1_carrier_seed_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_f1_carrier_reuse_count() {
+    return &blue_dragon_f1_carrier_reuse_count_;
+  }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool EntryExitTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
@@ -373,6 +379,8 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> blue_dragon_f1_carrier_total_count_{0};
   std::atomic<uint64_t> blue_dragon_f1_carrier_helper_preserved_count_{0};
   std::atomic<uint64_t> blue_dragon_f1_carrier_child_preserved_count_{0};
+  std::atomic<uint64_t> blue_dragon_f1_carrier_seed_count_{0};
+  std::atomic<uint64_t> blue_dragon_f1_carrier_reuse_count_{0};
   uint64_t last_speed_profile_host_to_guest_entries_ = 0;
   uint64_t last_speed_profile_guest_to_host_calls_ = 0;
   uint64_t last_speed_profile_direct_guest_calls_ = 0;
@@ -415,6 +423,8 @@ class A64Backend : public Backend {
   uint64_t last_blue_dragon_f1_carrier_total_count_ = 0;
   uint64_t last_blue_dragon_f1_carrier_helper_preserved_count_ = 0;
   uint64_t last_blue_dragon_f1_carrier_child_preserved_count_ = 0;
+  uint64_t last_blue_dragon_f1_carrier_seed_count_ = 0;
+  uint64_t last_blue_dragon_f1_carrier_reuse_count_ = 0;
   bool speed_profile_seen_activity_ = false;
   bool speed_profile_idle_snapshot_emitted_ = false;
 };

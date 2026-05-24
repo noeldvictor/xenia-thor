@@ -2419,25 +2419,33 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`.
+  The default-off `arm64_blue_dragon_f1_carrier_fastpath` cvar now seeds a
+  function-local stack-slot carrier for `82287788` `f[1]` (`+296`) at
+  `82287798` and reuses it only at the audited `f[1]`-preserving PCs. NativeCore
+  and FullDeploy passed. Audit capture `scratch/thor-debug/20260524-105424-*`
+  reached the visible opening sky/dragon-wing route on APK SHA
+  `A2A59F7777F77B52526ABF5E401194A4A7490D71B4F7A878ED8099B0CA7557A9` with a
+  clean fatal-marker search and final counters
+  `seed=223805/688280` and `reuse=443749/1365365`. Quiet same-APK A/B control
+  `scratch/thor-debug/20260524-105813-*` versus fastpath-on
+  `scratch/thor-debug/20260524-110156-*` was route-clean but did not prove
+  speed: control reached a later opening frame, `82287788` code size changed
+  `35568 -> 35572`, and `82282490` stayed the real wall. Keep both
+  `arm64_blue_dragon_f1_carrier_fastpath` and
+  `arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. Do not
+  repeat this exact f[1] carrier A/B unchanged. Next useful lane is broader
+  `8228252C-822825C4` parent/callee state/vector/FPR reduction, especially a
+  design that reduces the live `82282490 -> 82287788` state round-trip without
+  hiding guest-visible `r[3]`, `f[1]`, `fpscr`, or `lr` state.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-104145-blue-dragon-f1-carrier-runtime-audit.md`.
-  The default-off `arm64_blue_dragon_f1_carrier_audit` cvar now counts the
-  `82287788` `f[1]` (`+296`) load sites that a narrow carrier could replace
-  after GPR/LR helper calls and the `f[1]`-preserving `821CE028` child call.
-  NativeCore and FullDeploy passed, and capture
-  `scratch/thor-debug/20260524-103438-*` reached the visible opening
-  sky/dragon-wing route on APK SHA
-  `514C6A8C0C14820BFE0ED48CF280D00371B30602AEEE5CD86AE06A82E05D139F` with a
-  clean fatal-marker search. Final counters were
-  `total=755910/2159587`, `helper_preserved=379058/1081707`, and
-  `child_preserved=376852/1077880`. This is dynamic opportunity evidence, not
-  speed proof, because the run used generated-code atomic counters. `82287788`
-  is also high-entry but cheap in the route (`body_ticks_total=3578711`,
-  `ticks_per_entry=5`), so the upside is bounded unless the real carrier also
-  reduces parent/callee state traffic. Keep the audit cvar default-off and out
-  of presets. Next useful lane is a default-off `82287788` `f[1]` carrier
-  replacement probe for offset `296`, preserving only across `__savegprlr_28`,
-  `__restgprlr_28`, and direct calls to `0x821CE028`, with explicit kills for
-  unknown calls, indirect calls, exits, exceptions, and overlapping stores.
+  The default-off `arm64_blue_dragon_f1_carrier_audit` cvar counts the
+  `82287788` `f[1]` load sites that the replacement probe later targeted.
+  Capture `scratch/thor-debug/20260524-103438-*` reached the visible route with
+  clean fatal-marker search and counters `total=755910/2159587`,
+  `helper_preserved=379058/1081707`, and
+  `child_preserved=376852/1077880`, proving dynamic opportunity but not speed.
 - Previous Blue Dragon speed lane:
   `docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The focused
   child audit resolves the main unknown-call blocker from the `82287788`

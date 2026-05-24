@@ -1302,17 +1302,33 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `821CE028` f[1] clobber audit:
+Latest `82287788` f[1] carrier fastpath A/B:
+`docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`.
+`arm64_blue_dragon_f1_carrier_fastpath` is implemented but default-off. It
+seeds a stack-slot carrier for `f[1]` at `82287798` and reuses it only at the
+audited helper/`821CE028`-preserved PCs. NativeCore and FullDeploy passed.
+Route-safety/audit capture `scratch/thor-debug/20260524-105424-*` reached
+visible opening sky/dragon-wing with clean fatal search and counters
+`seed=223805/688280`, `reuse=443749/1365365`. Quiet same-APK A/B was also
+route-clean but not a speed win: control `scratch/thor-debug/20260524-105813-*`
+got further into the opening than fastpath-on
+`scratch/thor-debug/20260524-110156-*`, and `82287788` code size changed
+`35568 -> 35572`. Keep `arm64_blue_dragon_f1_carrier_fastpath` and
+`arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. Do not
+repeat this exact A/B unchanged. Next speed evidence should move to broader
+`8228252C-822825C4` parent/callee state/vector/FPR reduction, with an offline
+audit proving how to reduce live `82282490 -> 82287788` state round-trips
+without hiding guest-visible `r[3]`, `f[1]`, `fpscr`, or `lr` state.
+
+Previous `821CE028` f[1] clobber audit:
 `docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The child call
 from `82287788` does not access `f[1]`: `target_loads=0`,
 `target_stores=0`, and `decision=no_target_context_access_observed` for offset
 `296`. The only calls are `call_indirect.6` return paths, and the hotpath
 report shows only `f[0]` context traffic, not `f[1]` or `fpscr`. Treat direct
 calls to `0x821CE028` as `f[1]`-preserving for the narrow `82287788` carrier
-lane, but do not patch `821CE028`. Next speed evidence should be a default-off
-`82287788` runtime carrier audit/probe that counts dynamic replacement
-opportunities for all 10 static `f[1]` loads with GPR/LR helpers and
-`821CE028` whitelisted.
+lane, but do not patch `821CE028`. The later carrier fastpath A/B supersedes
+this as the current decision.
 
 Previous FPR carrier safety audit:
 `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
