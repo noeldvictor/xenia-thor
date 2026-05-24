@@ -2419,6 +2419,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The focused
+  child audit resolves the main unknown-call blocker from the `82287788`
+  `f[1]` carrier lane. Re-running
+  `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` on `821CE028` offset
+  `296` reports `target_loads=0`, `target_stores=0`, and
+  `decision=no_target_context_access_observed`. The only calls are the
+  `call_indirect.6` return paths at `821CE1CC` and `821CE1D4`. Hotpath report
+  confirms the only FPR traffic is `f[0]` (`+288`), with no `f[1]` (`+296`) or
+  `fpscr` (`+2628`) traffic. Treat `821CE028` as `f[1]`-preserving for the
+  narrow `82287788` carrier lane, but do not patch `821CE028` or call it a
+  speed target. Next useful lane is a default-off `82287788` runtime carrier
+  audit/probe that treats `__savegprlr_28`, `__restgprlr_28`, and direct calls
+  to `0x821CE028` as `f[1]`-preserving and counts dynamic replacement
+  opportunities for all 10 static `f[1]` loads before quiet A/B.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
   `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` classifies whether
   `82287788` `f[1]` loads can be served by a safe carrier. For offset `296`,

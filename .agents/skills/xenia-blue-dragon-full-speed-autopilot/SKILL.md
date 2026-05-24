@@ -119,6 +119,21 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-102113-821ce028-f1-clobber-audit.md` resolves the
+child-call blocker for the `82287788` `f[1]` carrier lane. Running
+`tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` on `821CE028` offset `296`
+reports `target_loads=0`, `target_stores=0`, and
+`decision=no_target_context_access_observed`; the only calls are the
+`call_indirect.6` return paths at `821CE1CC` and `821CE1D4`. Hotpath report
+shows the only FPR context traffic is `f[0]` (`+288`), with no `f[1]` or
+`fpscr` traffic. Treat `821CE028` as `f[1]`-preserving only for the narrow
+parent `82287788` carrier lane. Do not patch `821CE028`. Next useful slice is
+a default-off `82287788` runtime carrier audit/probe that treats
+`__savegprlr_28`, `__restgprlr_28`, and direct calls to `0x821CE028` as
+`f[1]`-preserving and counts dynamic replacement opportunities for all 10
+static `f[1]` loads before quiet A/B.
+
+Previous priority:
 `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`
 adds `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1`. For `82287788`
 offset `296` (`f[1]`), the audit reports `target_loads=10`,

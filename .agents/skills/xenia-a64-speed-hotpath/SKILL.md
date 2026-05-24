@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest FPR carrier safety audit:
+Latest `821CE028` f[1] clobber audit:
+`docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The child call
+from `82287788` does not access `f[1]`: `target_loads=0`,
+`target_stores=0`, and `decision=no_target_context_access_observed` for offset
+`296`. The only calls are `call_indirect.6` return paths, and the hotpath
+report shows only `f[0]` context traffic, not `f[1]` or `fpscr`. Treat direct
+calls to `0x821CE028` as `f[1]`-preserving for the narrow `82287788` carrier
+lane, but do not patch `821CE028`. Next speed evidence should be a default-off
+`82287788` runtime carrier audit/probe that counts dynamic replacement
+opportunities for all 10 static `f[1]` loads with GPR/LR helpers and
+`821CE028` whitelisted.
+
+Previous FPR carrier safety audit:
 `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
 Use `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` before implementing an
 `f[1]` carrier for `82282490 -> 82287788`. For `82287788` offset `296`, the

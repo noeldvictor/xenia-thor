@@ -749,6 +749,20 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The `821CE028`
+child call no longer needs to be treated as an unknown `f[1]` clobber for the
+parent `82287788` carrier lane. Reusing
+`tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` on `821CE028` offset `296`
+reports `target_loads=0`, `target_stores=0`, and
+`decision=no_target_context_access_observed`; the only calls are return
+`call_indirect.6` rows. Hotpath report shows only `f[0]` context traffic, not
+`f[1]` or `fpscr`. Do not patch `821CE028`. Next worker slice should add a
+default-off `82287788` runtime carrier audit/probe that treats
+`__savegprlr_28`, `__restgprlr_28`, and direct calls to `0x821CE028` as
+`f[1]`-preserving, then counts dynamic replacement opportunities for all 10
+static `f[1]` loads before a quiet A/B.
+
+Previous current worker target:
 `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
 `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` now audits whether a target
 FPR context value can be carried through helper/unknown calls. For `82287788`

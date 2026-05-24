@@ -318,7 +318,10 @@ if ($loads.Count -eq 0) {
 
 Write-Output ""
 Write-Output "## Decision"
-if ($stores.Count -gt 0) {
+if ($loads.Count -eq 0 -and $stores.Count -eq 0) {
+    Write-Output "decision=no_target_context_access_observed"
+    Write-Output "reason=the filtered function dump does not load or store the target offset; only carry across calls in this function after proving those calls are returns or target-preserving."
+} elseif ($stores.Count -gt 0) {
     Write-Output "decision=no_fpr_entry_carrier"
     Write-Output "reason=target offset is stored inside the callee, so an entry carrier would need exact dirty forwarding."
 } elseif ($helperWhitelistLoads -gt 0 -and $unknownBlockedLoads -gt 0) {
