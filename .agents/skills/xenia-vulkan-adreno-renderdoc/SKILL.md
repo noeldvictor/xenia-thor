@@ -53,6 +53,15 @@ route metadata proves whether the GPU wall is pipeline creation, queue/present,
 barriers, readbacks/uploads/copies, descriptor churn, resolves, or completion
 waits.
 
+The first route-clean counter sandwich is
+`docs/research/20260524-175206-vulkan-counter-route-sandwich.md`. Both control
+and counter-on captures reached the visible opening sky/dragon-wing route with
+clean fatal-marker searches. The counter-on run had `issue_swaps=840`,
+`pipeline_creates=56`, `barrier_submits=115307`, `present_failures=0`, and no
+queue submit failures, while Main Thread stayed near one full core and GPU
+Commands stayed low. Treat this as evidence to keep the main sprint CPU/A64
+biased, not as permission for a broad Vulkan rewrite.
+
 ## Normal Evidence Search
 
 ```powershell

@@ -136,9 +136,13 @@ The default-off Vulkan perf counter skeleton is documented in
 with `-VulkanTracePerfCounters true` plus
 `-VulkanTracePerfCountersLogInterval <N>`. It currently reports IssueSwap,
 pipeline create/cache-hit, queue submit, present/acquire/submit, barrier, and
-render-pass counters. The next Vulkan lane should be a route-stabilized
-control/counter sandwich, not RenderDoc-only FPS claims, Swappy/frame pacing,
-or broad Adreno rewrite work without present/submit/resolve evidence.
+render-pass counters. The route-clean sandwich in
+`docs/research/20260524-175206-vulkan-counter-route-sandwich.md` reached the
+opening sky/dragon-wing route with counters on and off, clean fatal-marker
+searches, and no queue/present/pipeline failures; it still showed Main Thread
+around one full core and GPU Commands well below one full core. Do not pivot to
+RenderDoc-only FPS claims, Swappy/frame pacing, or broad Adreno rewrite work
+until counters expose a real GPU wall.
 
 ## Repo Facts As Of 2026-05-17
 
