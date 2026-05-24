@@ -35,6 +35,7 @@
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/vulkan/vulkan_shared_memory.h"
 #include "xenia/gpu/xenos.h"
+#include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
@@ -1818,6 +1819,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
   SCOPE_profile_cpu_f("gpu");
+  ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
   if (cvars::gpu_trace_swap) {
     static std::atomic<bool> logged_vulkan_swap_cvars{false};
@@ -2416,6 +2418,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "frame_completed={} submission={}",
         frame_current_, frame_completed_, GetCurrentSubmission());
   }
+  ui::vulkan::VulkanPerfCountersLogSnapshot("issue_swap");
 }
 
 bool VulkanCommandProcessor::PushBufferMemoryBarrier(
@@ -2473,6 +2476,7 @@ bool VulkanCommandProcessor::PushBufferMemoryBarrier(
   buffer_memory_barrier.buffer = buffer;
   buffer_memory_barrier.offset = offset;
   buffer_memory_barrier.size = size;
+  ui::vulkan::VulkanPerfCountersRecordBufferBarrier();
   return true;
 }
 
@@ -2555,6 +2559,7 @@ bool VulkanCommandProcessor::PushImageMemoryBarrier(
   image_memory_barrier.dstQueueFamilyIndex = dst_queue_family_index;
   image_memory_barrier.image = image;
   image_memory_barrier.subresourceRange = subresource_range;
+  ui::vulkan::VulkanPerfCountersRecordImageBarrier();
   return true;
 }
 
@@ -2592,6 +2597,11 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
         pending_barriers_image_memory_barriers_.data() +
             it->image_memory_barriers_offset);
   }
+  ui::vulkan::VulkanPerfCountersRecordBarrierSubmit(
+      uint32_t(pending_barriers_.size()),
+      uint32_t(pending_barriers_buffer_memory_barriers_.size()),
+      uint32_t(pending_barriers_image_memory_barriers_.size()),
+      force_end_render_pass);
   pending_barriers_.clear();
   pending_barriers_buffer_memory_barriers_.clear();
   pending_barriers_image_memory_barriers_.clear();
@@ -2627,6 +2637,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.pClearValues = nullptr;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
+  ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
 
 void VulkanCommandProcessor::EndRenderPass() {
@@ -4285,8 +4296,15 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
     }
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer.buffer;
+    const uint64_t submit_start =
+        ui::vulkan::VulkanPerfCountersEnabled()
+            ? ui::vulkan::VulkanPerfCountersNow()
+            : 0;
     const VkResult submit_result = completion_timeline_.AcquireFenceAndSubmit(
         vulkan_device->queue_family_graphics_compute(), 0, 1, &submit_info);
+    ui::vulkan::VulkanPerfCountersRecordQueueSubmit(
+        submit_start, 1, submit_info.commandBufferCount,
+        submit_info.waitSemaphoreCount, int32_t(submit_result));
     if (submit_result != VK_SUCCESS) {
       XELOGE("Failed to submit a GPU emulation Vulkan command buffer: {}",
              vk::to_string(vk::Result(submit_result)));

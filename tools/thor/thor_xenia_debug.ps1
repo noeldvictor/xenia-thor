@@ -57,6 +57,8 @@ param(
     [string]$VulkanTraceDrawState = "false",
     [string]$VulkanTraceDrawShaderFilter = "",
     [string]$VulkanTracePipelineCreation = "false",
+    [string]$VulkanTracePerfCounters = "false",
+    [string]$VulkanTracePerfCountersLogInterval = "",
     [string]$VulkanTraceShaderConstants = "false",
     [string]$VulkanTraceShaderConstantsShaderFilter = "",
     [string]$VulkanTraceTextureSourceChecksum = "false",
@@ -579,6 +581,7 @@ function Start-XeniaEmulator {
         "--ez vulkan_trace_copy_state $(ConvertTo-BooleanText $VulkanTraceCopyState)",
         "--ez vulkan_trace_draw_state $(ConvertTo-BooleanText $VulkanTraceDrawState)",
         "--ez vulkan_trace_pipeline_creation $(ConvertTo-BooleanText $VulkanTracePipelineCreation)",
+        "--ez vulkan_trace_perf_counters $(ConvertTo-BooleanText $VulkanTracePerfCounters)",
         "--ez vulkan_trace_shader_constants $(ConvertTo-BooleanText $VulkanTraceShaderConstants)",
         "--ez vulkan_trace_texture_source_checksum $(ConvertTo-BooleanText $VulkanTraceTextureSourceChecksum)",
         "--ez vulkan_trace_vertex_fetch_checksum $(ConvertTo-BooleanText $VulkanTraceVertexFetchChecksum)",
@@ -661,6 +664,9 @@ function Start-XeniaEmulator {
     }
     if ($VulkanTraceDrawStateBudget) {
         $parts += "--ei vulkan_trace_draw_state_budget $VulkanTraceDrawStateBudget"
+    }
+    if ($VulkanTracePerfCountersLogInterval) {
+        $parts += "--ei vulkan_trace_perf_counters_log_interval $(ConvertTo-AdbIntText $VulkanTracePerfCountersLogInterval)"
     }
     if ($VulkanTraceShaderConstantsBudget) {
         $parts += "--ei vulkan_trace_shader_constants_budget $VulkanTraceShaderConstantsBudget"
@@ -1231,6 +1237,8 @@ function Write-CaptureMetadata {
         "hid_nop_button_sequence=$HidNopButtonSequence",
         "vulkan_force_signed_2101010_unorm_fallback=$VulkanForceSigned2101010UnormFallback",
         "vulkan_force_2101010_rgba8_fallback=$VulkanForce2101010Rgba8Fallback",
+        "vulkan_trace_perf_counters=$VulkanTracePerfCounters",
+        "vulkan_trace_perf_counters_log_interval=$VulkanTracePerfCountersLogInterval",
         "",
         "adb_events:",
         ($script:AdbEvents -join "`n"),
@@ -2001,6 +2009,12 @@ done | head -50
         }
         if ($Arm64BlueDragonF1CarrierFastpath) {
             Write-Output "A64 Blue Dragon f1 carrier fastpath: $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierFastpath)"
+        }
+        if ($VulkanTracePerfCounters) {
+            Write-Output "Vulkan perf counters: $(ConvertTo-BooleanText $VulkanTracePerfCounters)"
+        }
+        if ($VulkanTracePerfCountersLogInterval) {
+            Write-Output "Vulkan perf counter log interval: $VulkanTracePerfCountersLogInterval"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

@@ -32,6 +32,7 @@
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/xenos.h"
+#include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 namespace xe {
@@ -1784,6 +1785,7 @@ VkShaderModule VulkanPipelineCache::GetGeometryShader(GeometryShaderKey key) {
 bool VulkanPipelineCache::EnsurePipelineCreated(
     const PipelineCreationArguments& creation_arguments) {
   if (creation_arguments.pipeline->second.pipeline != VK_NULL_HANDLE) {
+    ui::vulkan::VulkanPerfCountersRecordGraphicsPipelineCacheHit();
     return true;
   }
 
@@ -2179,9 +2181,15 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
   VkPipeline pipeline;
-  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
-                                    &pipeline_create_info, nullptr,
-                                    &pipeline) != VK_SUCCESS) {
+  const uint64_t pipeline_create_start =
+      ui::vulkan::VulkanPerfCountersEnabled()
+          ? ui::vulkan::VulkanPerfCountersNow()
+          : 0;
+  const VkResult pipeline_create_result = dfn.vkCreateGraphicsPipelines(
+      device, VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline);
+  ui::vulkan::VulkanPerfCountersRecordGraphicsPipelineCreate(
+      pipeline_create_start, int32_t(pipeline_create_result));
+  if (pipeline_create_result != VK_SUCCESS) {
     // TODO(Triang3l): Move these error messages outside.
     /* if (creation_arguments.pixel_shader) {
       XELOGE(

@@ -10,6 +10,7 @@
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -17,10 +18,12 @@
 #include <vector>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/platform.h"
+#include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 #if XE_PLATFORM_ANDROID
@@ -53,10 +56,328 @@ DEFINE_bool(
     "may present with tearing if frames don't meet the host display refresh "
     "rate.",
     "Vulkan");
+DEFINE_bool(vulkan_trace_perf_counters, false,
+            "Trace compact aggregate Vulkan performance counters for "
+            "pipeline creation, submits, barriers, render passes, and "
+            "present/acquire timing. Default-off Thor route diagnostic.",
+            "GPU");
+DEFINE_int32(vulkan_trace_perf_counters_log_interval, 60,
+             "When vulkan_trace_perf_counters is enabled, log a compact "
+             "snapshot every N snapshot requests after the first one. <= 0 "
+             "logs every request.",
+             "GPU");
 
 namespace xe {
 namespace ui {
 namespace vulkan {
+
+namespace {
+
+struct VulkanPerfCounterState {
+  std::atomic<uint64_t> issue_swap_count{0};
+
+  std::atomic<uint64_t> graphics_pipeline_cache_hit_count{0};
+  std::atomic<uint64_t> graphics_pipeline_create_count{0};
+  std::atomic<uint64_t> graphics_pipeline_create_fail_count{0};
+  std::atomic<uint64_t> graphics_pipeline_create_ticks{0};
+
+  std::atomic<uint64_t> buffer_barrier_count{0};
+  std::atomic<uint64_t> image_barrier_count{0};
+  std::atomic<uint64_t> barrier_submit_count{0};
+  std::atomic<uint64_t> barrier_submit_group_count{0};
+  std::atomic<uint64_t> barrier_submit_buffer_count{0};
+  std::atomic<uint64_t> barrier_submit_image_count{0};
+  std::atomic<uint64_t> barrier_force_end_render_pass_count{0};
+  std::atomic<uint64_t> render_pass_begin_count{0};
+  std::atomic<uint64_t> presenter_render_pass_begin_count{0};
+
+  std::atomic<uint64_t> queue_submit_count{0};
+  std::atomic<uint64_t> queue_submit_fail_count{0};
+  std::atomic<uint64_t> queue_submit_ticks{0};
+  std::atomic<uint64_t> queue_submit_command_buffer_count{0};
+  std::atomic<uint64_t> queue_submit_wait_semaphore_count{0};
+
+  std::atomic<uint64_t> present_acquire_count{0};
+  std::atomic<uint64_t> present_acquire_fail_count{0};
+  std::atomic<uint64_t> present_acquire_ticks{0};
+  std::atomic<uint64_t> present_submit_count{0};
+  std::atomic<uint64_t> present_submit_fail_count{0};
+  std::atomic<uint64_t> present_submit_ticks{0};
+  std::atomic<uint64_t> present_submit_command_buffer_count{0};
+  std::atomic<uint64_t> present_count{0};
+  std::atomic<uint64_t> present_fail_count{0};
+  std::atomic<uint64_t> present_ticks{0};
+
+  std::atomic<uint64_t> snapshot_request_count{0};
+};
+
+VulkanPerfCounterState vulkan_perf_counter_state;
+
+uint64_t ElapsedTicks(uint64_t start_ticks) {
+  if (!start_ticks) {
+    return 0;
+  }
+  const uint64_t end_ticks = VulkanPerfCountersNow();
+  return end_ticks >= start_ticks ? end_ticks - start_ticks : 0;
+}
+
+uint64_t TicksToMicroseconds(uint64_t ticks) {
+  const uint64_t frequency = xe::Clock::QueryHostTickFrequency();
+  if (!frequency) {
+    return 0;
+  }
+  return (ticks * uint64_t(1000000)) / frequency;
+}
+
+void AddTicks(std::atomic<uint64_t>& destination, uint64_t ticks) {
+  if (ticks) {
+    destination.fetch_add(ticks, std::memory_order_relaxed);
+  }
+}
+
+bool IsSwapchainSuccessLike(int32_t result) {
+  constexpr int32_t kVkSuccess = 0;
+  constexpr int32_t kVkSuboptimalKhr = 1000001003;
+  return result == kVkSuccess || result == kVkSuboptimalKhr;
+}
+
+}  // namespace
+
+bool VulkanPerfCountersEnabled() { return cvars::vulkan_trace_perf_counters; }
+
+uint64_t VulkanPerfCountersNow() { return xe::Clock::QueryHostTickCount(); }
+
+void VulkanPerfCountersRecordIssueSwap() {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.issue_swap_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordGraphicsPipelineCacheHit() {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.graphics_pipeline_cache_hit_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordGraphicsPipelineCreate(uint64_t start_ticks,
+                                                    int32_t result) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.graphics_pipeline_create_count.fetch_add(
+      1, std::memory_order_relaxed);
+  if (result != 0) {
+    vulkan_perf_counter_state.graphics_pipeline_create_fail_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  AddTicks(vulkan_perf_counter_state.graphics_pipeline_create_ticks,
+           ElapsedTicks(start_ticks));
+}
+
+void VulkanPerfCountersRecordBufferBarrier() {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.buffer_barrier_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordImageBarrier() {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.image_barrier_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordBarrierSubmit(uint32_t barrier_group_count,
+                                           uint32_t buffer_barrier_count,
+                                           uint32_t image_barrier_count,
+                                           bool force_end_render_pass) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.barrier_submit_count.fetch_add(
+      1, std::memory_order_relaxed);
+  vulkan_perf_counter_state.barrier_submit_group_count.fetch_add(
+      barrier_group_count, std::memory_order_relaxed);
+  vulkan_perf_counter_state.barrier_submit_buffer_count.fetch_add(
+      buffer_barrier_count, std::memory_order_relaxed);
+  vulkan_perf_counter_state.barrier_submit_image_count.fetch_add(
+      image_barrier_count, std::memory_order_relaxed);
+  if (force_end_render_pass) {
+    vulkan_perf_counter_state.barrier_force_end_render_pass_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+}
+
+void VulkanPerfCountersRecordRenderPassBegin(bool presenter) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  if (presenter) {
+    vulkan_perf_counter_state.presenter_render_pass_begin_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else {
+    vulkan_perf_counter_state.render_pass_begin_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+}
+
+void VulkanPerfCountersRecordQueueSubmit(uint64_t start_ticks,
+                                         uint32_t submit_count,
+                                         uint32_t command_buffer_count,
+                                         uint32_t wait_semaphore_count,
+                                         int32_t result) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.queue_submit_count.fetch_add(
+      submit_count, std::memory_order_relaxed);
+  vulkan_perf_counter_state.queue_submit_command_buffer_count.fetch_add(
+      command_buffer_count, std::memory_order_relaxed);
+  vulkan_perf_counter_state.queue_submit_wait_semaphore_count.fetch_add(
+      wait_semaphore_count, std::memory_order_relaxed);
+  if (result != 0) {
+    vulkan_perf_counter_state.queue_submit_fail_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  AddTicks(vulkan_perf_counter_state.queue_submit_ticks,
+           ElapsedTicks(start_ticks));
+}
+
+void VulkanPerfCountersRecordPresentAcquire(uint64_t start_ticks,
+                                            int32_t result) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.present_acquire_count.fetch_add(
+      1, std::memory_order_relaxed);
+  if (!IsSwapchainSuccessLike(result)) {
+    vulkan_perf_counter_state.present_acquire_fail_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  AddTicks(vulkan_perf_counter_state.present_acquire_ticks,
+           ElapsedTicks(start_ticks));
+}
+
+void VulkanPerfCountersRecordPresentSubmit(uint64_t start_ticks,
+                                           uint32_t command_buffer_count,
+                                           int32_t result) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.present_submit_count.fetch_add(
+      1, std::memory_order_relaxed);
+  vulkan_perf_counter_state.present_submit_command_buffer_count.fetch_add(
+      command_buffer_count, std::memory_order_relaxed);
+  if (result != 0) {
+    vulkan_perf_counter_state.present_submit_fail_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  AddTicks(vulkan_perf_counter_state.present_submit_ticks,
+           ElapsedTicks(start_ticks));
+}
+
+void VulkanPerfCountersRecordPresent(uint64_t start_ticks, int32_t result) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.present_count.fetch_add(
+      1, std::memory_order_relaxed);
+  if (!IsSwapchainSuccessLike(result)) {
+    vulkan_perf_counter_state.present_fail_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  AddTicks(vulkan_perf_counter_state.present_ticks, ElapsedTicks(start_ticks));
+}
+
+void VulkanPerfCountersLogSnapshot(const char* reason) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  const uint64_t request =
+      vulkan_perf_counter_state.snapshot_request_count.fetch_add(
+          1, std::memory_order_relaxed) +
+      1;
+  const int32_t interval = cvars::vulkan_trace_perf_counters_log_interval;
+  if (request != 1 && interval > 0 &&
+      request % uint64_t(interval) != uint64_t(0)) {
+    return;
+  }
+
+  XELOGW(
+      "Vulkan perf counters: reason={} snapshots={} issue_swaps={} "
+      "pipeline_cache_hits={} pipeline_creates={} pipeline_create_failures={} "
+      "pipeline_create_us={} queue_submits={} queue_submit_failures={} "
+      "queue_submit_us={} queue_cmd_buffers={} queue_wait_semaphores={} "
+      "barrier_submits={} barrier_groups={} buffer_barriers={} "
+      "image_barriers={} barrier_force_end_render_pass={} "
+      "render_pass_begins={} presenter_render_pass_begins={} "
+      "present_acquires={} present_acquire_failures={} present_acquire_us={} "
+      "present_submits={} present_submit_failures={} present_submit_us={} "
+      "present_submit_cmd_buffers={} presents={} present_failures={} "
+      "present_us={}",
+      reason ? reason : "unknown", request,
+      vulkan_perf_counter_state.issue_swap_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.graphics_pipeline_cache_hit_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.graphics_pipeline_create_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.graphics_pipeline_create_fail_count.load(
+          std::memory_order_relaxed),
+      TicksToMicroseconds(
+          vulkan_perf_counter_state.graphics_pipeline_create_ticks.load(
+              std::memory_order_relaxed)),
+      vulkan_perf_counter_state.queue_submit_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.queue_submit_fail_count.load(
+          std::memory_order_relaxed),
+      TicksToMicroseconds(vulkan_perf_counter_state.queue_submit_ticks.load(
+          std::memory_order_relaxed)),
+      vulkan_perf_counter_state.queue_submit_command_buffer_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.queue_submit_wait_semaphore_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.barrier_submit_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.barrier_submit_group_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.buffer_barrier_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.image_barrier_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.barrier_force_end_render_pass_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.render_pass_begin_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.presenter_render_pass_begin_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.present_acquire_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.present_acquire_fail_count.load(
+          std::memory_order_relaxed),
+      TicksToMicroseconds(vulkan_perf_counter_state.present_acquire_ticks.load(
+          std::memory_order_relaxed)),
+      vulkan_perf_counter_state.present_submit_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.present_submit_fail_count.load(
+          std::memory_order_relaxed),
+      TicksToMicroseconds(vulkan_perf_counter_state.present_submit_ticks.load(
+          std::memory_order_relaxed)),
+      vulkan_perf_counter_state.present_submit_command_buffer_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.present_count.load(std::memory_order_relaxed),
+      vulkan_perf_counter_state.present_fail_count.load(
+          std::memory_order_relaxed),
+      TicksToMicroseconds(vulkan_perf_counter_state.present_ticks.load(
+          std::memory_order_relaxed)));
+}
 
 // Generated with `xb buildshaders`.
 namespace shaders {
@@ -1392,9 +1713,13 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
 
   VkSemaphore acquire_semaphore = paint_submission.acquire_semaphore();
   uint32_t swapchain_image_index;
+  const uint64_t acquire_start =
+      VulkanPerfCountersEnabled() ? VulkanPerfCountersNow() : 0;
   VkResult acquire_result = dfn.vkAcquireNextImageKHR(
       device, paint_context_.swapchain, UINT64_MAX, acquire_semaphore,
       VK_NULL_HANDLE, &swapchain_image_index);
+  VulkanPerfCountersRecordPresentAcquire(acquire_start,
+                                         int32_t(acquire_result));
   switch (acquire_result) {
     case VK_SUCCESS:
     case VK_SUBOPTIMAL_KHR:
@@ -1749,6 +2074,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
             dfn.vkCmdBeginRenderPass(draw_command_buffer,
                                      &swapchain_render_pass_begin_info,
                                      VK_SUBPASS_CONTENTS_INLINE);
+            VulkanPerfCountersRecordRenderPassBegin(true);
             swapchain_image_pass_begun = true;
             guest_output_viewport.width =
                 float(paint_context_.swapchain_extent.width);
@@ -1780,6 +2106,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
             dfn.vkCmdBeginRenderPass(draw_command_buffer,
                                      &intermediate_render_pass_begin_info,
                                      VK_SUBPASS_CONTENTS_INLINE);
+            VulkanPerfCountersRecordRenderPassBegin(true);
             guest_output_viewport.width = float(effect_rect_size.first);
             guest_output_viewport.height = float(effect_rect_size.second);
             guest_output_scissor.extent.width = effect_rect_size.first;
@@ -1949,6 +2276,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
     dfn.vkCmdBeginRenderPass(draw_command_buffer,
                              &swapchain_render_pass_begin_info,
                              VK_SUBPASS_CONTENTS_INLINE);
+    VulkanPerfCountersRecordRenderPassBegin(true);
   }
   if (swapchain_image_clear_needed) {
     VkClearRect swapchain_image_clear_rectangle;
@@ -2013,9 +2341,14 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
   submit_info.pCommandBuffers = command_buffers;
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = &present_semaphore;
+  const uint64_t present_submit_start =
+      VulkanPerfCountersEnabled() ? VulkanPerfCountersNow() : 0;
   const VkResult submit_result =
       paint_context_.completion_timeline.AcquireFenceAndSubmit(
           vulkan_device_->queue_family_graphics_compute(), 0, 1, &submit_info);
+  VulkanPerfCountersRecordPresentSubmit(
+      present_submit_start, submit_info.commandBufferCount,
+      int32_t(submit_result));
   if (submit_result != VK_SUCCESS) {
     XELOGE(
         "VulkanPresenter: Failed to submit the presentation command buffer: {}",
@@ -2058,9 +2391,13 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
   {
     const VulkanDevice::Queue::Acquisition queue_acquisition =
         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
+    const uint64_t present_start =
+        VulkanPerfCountersEnabled() ? VulkanPerfCountersNow() : 0;
     present_result =
         dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);
+    VulkanPerfCountersRecordPresent(present_start, int32_t(present_result));
   }
+  VulkanPerfCountersLogSnapshot("present");
   switch (present_result) {
     case VK_SUCCESS:
       return PaintResult::kPresented;

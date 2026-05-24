@@ -42,9 +42,16 @@ Before a GPU speed patch, run the no-behavior audit:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_vulkan_counter_surface_audit.ps1
 ```
 
-Prefer a default-off counter skeleton over a renderer rewrite until Thor route
-metadata exposes pipeline create time, queue submit/present time, barriers,
-readbacks/uploads/copies, descriptor churn, resolves, and completion waits.
+The current default-off counter skeleton is documented in
+`docs/research/20260524-173639-vulkan-perf-counter-skeleton.md`. Enable it
+through `tools\thor\thor_xenia_debug.ps1` with
+`-VulkanTracePerfCounters true -VulkanTracePerfCountersLogInterval <N>`. It
+already logs IssueSwap, graphics pipeline create/cache-hit, queue submit,
+present acquire/submit/present, barriers, and render-pass starts. Prefer a
+route-stabilized control/counter sandwich over a renderer rewrite until Thor
+route metadata proves whether the GPU wall is pipeline creation, queue/present,
+barriers, readbacks/uploads/copies, descriptor churn, resolves, or completion
+waits.
 
 ## Normal Evidence Search
 

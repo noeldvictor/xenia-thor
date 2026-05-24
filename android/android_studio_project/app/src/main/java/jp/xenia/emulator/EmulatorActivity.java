@@ -88,6 +88,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_draw_shader_filter");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_pipeline_creation");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_perf_counters");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");
@@ -135,6 +136,8 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "vulkan_trace_edram_checksum_budget");
             copyIntExtra(intent, launchArguments, "vulkan_trace_copy_state_budget");
             copyIntExtra(intent, launchArguments, "vulkan_trace_draw_state_budget");
+            copyIntExtra(
+                    intent, launchArguments, "vulkan_trace_perf_counters_log_interval");
             copyIntExtra(intent, launchArguments, "vulkan_trace_shader_constants_budget");
             copyIntExtra(
                     intent, launchArguments, "vulkan_trace_texture_source_checksum_budget");

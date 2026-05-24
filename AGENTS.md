@@ -131,9 +131,14 @@ external design ladder and
 `docs/research/20260524-171203-vulkan-counter-surface-audit.md` for the
 repo-local source map. Run
 `tools/thor/thor_vulkan_counter_surface_audit.ps1` before a GPU speed patch.
-The next Vulkan lane should be default-off counter plumbing and Thor route
-metadata, not RenderDoc-only FPS claims, Swappy/frame pacing, or broad Adreno
-rewrite work without present/submit/resolve evidence.
+The default-off Vulkan perf counter skeleton is documented in
+`docs/research/20260524-173639-vulkan-perf-counter-skeleton.md` and is enabled
+with `-VulkanTracePerfCounters true` plus
+`-VulkanTracePerfCountersLogInterval <N>`. It currently reports IssueSwap,
+pipeline create/cache-hit, queue submit, present/acquire/submit, barrier, and
+render-pass counters. The next Vulkan lane should be a route-stabilized
+control/counter sandwich, not RenderDoc-only FPS claims, Swappy/frame pacing,
+or broad Adreno rewrite work without present/submit/resolve evidence.
 
 ## Repo Facts As Of 2026-05-17
 

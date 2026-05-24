@@ -7,6 +7,7 @@ param(
         "src/xenia/gpu/vulkan/vulkan_texture_cache.cc",
         "src/xenia/gpu/vulkan/deferred_command_buffer.cc",
         "src/xenia/ui/vulkan/vulkan_presenter.cc",
+        "src/xenia/ui/vulkan/vulkan_diagnostic_counters.h",
         "src/xenia/ui/vulkan/vulkan_gpu_completion_timeline.cc",
         "src/xenia/ui/vulkan/vulkan_upload_buffer_pool.cc",
         "src/xenia/ui/vulkan/single_layout_descriptor_set_pool.cc",
@@ -113,6 +114,26 @@ function Write-Surface {
 $files = Get-LoadedFiles $SourcePaths
 
 $surfaces = @(
+    @{
+        Name = "default_off_counter_skeleton"
+        Group = "instrumentation"
+        Paths = @(
+            "src/xenia/ui/vulkan/vulkan_presenter.cc",
+            "src/xenia/ui/vulkan/vulkan_diagnostic_counters.h",
+            "src/xenia/gpu/vulkan/vulkan_command_processor.cc",
+            "src/xenia/gpu/vulkan/vulkan_pipeline_cache.cc",
+            "src/xenia/ui/vulkan/vulkan_presenter.cc"
+        )
+        Patterns = @(
+            "vulkan_trace_perf_counters",
+            "VulkanPerfCountersLogSnapshot",
+            "VulkanPerfCountersRecordQueueSubmit",
+            "VulkanPerfCountersRecordPresent"
+        )
+        Counter = "vulkan_trace_perf_counters,vulkan_trace_perf_counters_log_interval"
+        NextPatch = "run a Thor route capture with counters enabled before any GPU behavior change"
+        Note = "counter plumbing must stay default-off and metadata-visible"
+    },
     @{
         Name = "draw_pipeline_creation"
         Group = "pipeline"
@@ -354,7 +375,7 @@ Write-Output "# Vulkan Counter Surface Audit"
 Write-Output ""
 Write-Output ("source_count={0}" -f $files.Count)
 Write-Output ("safe_behavior_patch=none")
-Write-Output ("recommended_next_patch=default_off_vulkan_counter_skeleton")
+Write-Output ("recommended_next_patch=thor_route_capture_with_vulkan_trace_perf_counters")
 Write-Output ("counter_groups=pipeline,submission,present,barrier,copy_upload_readback,descriptor,render_pass,resolve,completion_wait,milestone")
 Write-Output ("capture_metadata=cold_warm_pipeline_cache,pipeline_creates,pipeline_create_us,queue_submit_count,queue_submit_us,present_us,barriers,readbacks,uploads,copies,descriptor_updates,resolve_counts,fence_wait_us")
 Write-Output ("do_not=broad_renderer_rewrite,renderdoc_fps_capture,swappy_before_present_timing")
@@ -382,4 +403,4 @@ Write-Output "## Decision"
 Write-Output ("surfaces_missing={0}" -f $missing)
 Write-Output "vulkan_speed_lane_status=diagnostics_ready_no_behavior_change"
 Write-Output "blue_dragon_lane_bias=stay_on_a64_while_main_thread_is_wall"
-Write-Output "next_gpu_slice=default_off_counters_then_thor_route_capture"
+Write-Output "next_gpu_slice=thor_route_capture_with_vulkan_trace_perf_counters"
