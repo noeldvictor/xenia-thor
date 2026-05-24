@@ -1893,14 +1893,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 - JIT memory: Android executable memory and cache coherency must be tested on device.
 - Guest memory layout: verify fixed mappings and any 32-bit guest assumptions on Android.
 - Vulkan: the manifest requires Vulkan, but runtime feature probing still needs Thor Max logs.
-- Input: Android currently falls back to nop HID for emulator app paths; real controls need mapping.
-- Input update: Android now has a first-pass `hid=android` bridge for Thor
+- Input: normal Android launcher game launches now default to `hid=android`
+  instead of `hid=nop`, so the Thor built-in pad is exposed as XInput
+  controller 1 for handheld play tests. Keep `hid=nop` only for scripted
+  START/A research automation and speed captures.
+- Input update: Android has a first-pass `hid=android` bridge for Thor
   controller 1. It maps Android gamepad keycodes, sticks, triggers, and hat
-  axes to XInput user 0. Keep `hid=nop` available only for scripted START/A
-  research automation, not normal handheld play tests. On the Thor Max,
-  `dumpsys input` reports the built-in pad as `Odin Controller`
-  vendor `0x2020`, product `0x0111`, with `X/Y`, `Z/RZ`, `HAT_X/HAT_Y`, and
-  `BRAKE/GAS` axes.
+  axes to XInput user 0. On the Thor Max, `dumpsys input` reports the built-in
+  pad as `Odin Controller` vendor `0x2020`, product `0x0111`, with `X/Y`,
+  `Z/RZ`, `HAT_X/HAT_Y`, and `BRAKE/GAS` axes. 2026-05-24 validation:
+  `ApkShellDeploy` passed on serial `c3ca0370`, `LaunchBlueDragon` with
+  `-HidDriver android -LogLevel 2` logged the Android HID active-as-XInput
+  info line, and synthetic Android START/A keyevents produced native
+  `Android HID: key` down/up rows with no fatal markers.
 - Speed lane update: `LaunchBlueDragonSpeedCapture` now enables the validated
   Blue Dragon A64 speed pack by default, unless a flag is explicitly overridden
   on the command line. This prevents new captures from accidentally measuring

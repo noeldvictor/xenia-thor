@@ -52,7 +52,7 @@ Current focus:
 - Vulkan bring-up and future RenderDoc/AGI lanes.
 - Blue Dragon Disc 1 as a legally owned local test case.
 
-Current state as of 2026-05-19:
+Current state as of 2026-05-24:
 
 - The Android Vulkan window/demo path runs on the Thor.
 - The emulator activity can launch Blue Dragon Disc 1 from the SD card.
@@ -85,9 +85,10 @@ Current state as of 2026-05-19:
 - An opt-in XMA fast-silence experiment can reach the opening scene, but it is
   not an audio correctness fix and does not make the game playable.
 - It still is not playable gameplay.
-- The next main lane is real Android controller mapping, longer scripted input,
-  A64 backend hot-path profiling, and reducing remaining research-only Vulkan
-  fallback knobs.
+- The normal Android launcher path now defaults to the real Thor/Android
+  controller bridge (`hid=android`); `hid=nop` remains for scripted research
+  captures. The next main lanes are longer input routes, A64 backend hot-path
+  profiling, and reducing remaining research-only Vulkan fallback knobs.
 - It is not a compatibility result.
 
 ## Local Notes

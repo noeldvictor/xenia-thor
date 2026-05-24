@@ -10,6 +10,7 @@ import android.view.View;
 public class LauncherActivity extends Activity {
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
+    private static final String DEFAULT_EMULATOR_HID_DRIVER = "android";
     private static final String THOR_XBOX360_DOCUMENT_ID =
             "2664-21DE:roms/xbox360";
     private static final Uri THOR_XBOX360_INITIAL_URI =
@@ -39,7 +40,7 @@ public class LauncherActivity extends Activity {
                 emulatorLaunchArguments.putString("gpu", "vulkan");
                 emulatorLaunchArguments.putString("cpu", "arm64");
                 emulatorLaunchArguments.putString("apu", "nop");
-                emulatorLaunchArguments.putString("hid", "nop");
+                emulatorLaunchArguments.putString("hid", DEFAULT_EMULATOR_HID_DRIVER);
                 emulatorLaunchArguments.putBoolean("discord", false);
                 emulatorIntent.putExtra(
                         WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
