@@ -226,6 +226,18 @@ DEFINE_bool(
     "Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_stvewx_stack_lane_fastpath, false,
+    "Thor ARM64 speed lane: fold the proven Blue Dragon 82282490 "
+    "stvewx stack-lane dynamic EXTRACT_I32 sites at 82282580 and 82282584 "
+    "to constant lanes. Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
+    arm64_blue_dragon_stvewx_stack_lane_audit, false,
+    "Thor ARM64 speed lane: when the Blue Dragon stvewx stack-lane fastpath "
+    "is enabled, compare the runtime lane against the folded lane and fall "
+    "back to the generic dynamic EXTRACT_I32 path on mismatch.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1790,6 +1802,18 @@ void A64Backend::LogSpeedProfile() {
         fastpath.second, fastpath.first, pending_fallback.second,
         pending_fallback.first, poll_fallback.second, poll_fallback.first,
         missing_fallback.second, missing_fallback.first);
+  }
+  if (cvars::arm64_blue_dragon_stvewx_stack_lane_audit) {
+    auto fastpath =
+        load_delta(blue_dragon_stvewx_stack_lane_fastpath_count_,
+                   last_blue_dragon_stvewx_stack_lane_fastpath_count_);
+    auto fallback =
+        load_delta(blue_dragon_stvewx_stack_lane_fallback_count_,
+                   last_blue_dragon_stvewx_stack_lane_fallback_count_);
+    XELOGW(
+        "A64 Blue Dragon stvewx stack-lane audit: fastpath={}/{} "
+        "fallback={}/{}",
+        fastpath.second, fastpath.first, fallback.second, fallback.first);
   }
 
   const bool interval_had_activity =

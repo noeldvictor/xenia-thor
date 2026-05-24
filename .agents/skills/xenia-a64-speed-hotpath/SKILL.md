@@ -624,13 +624,27 @@ Current preset rebaseline:
 the current preset, not more stale `82490030` child work.
 
 Current recursive `82282490` generated-code read:
+`docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` implements
+and validates the first lane-fold probe. The default-off
+`arm64_blue_dragon_stvewx_stack_lane_fastpath` folds only `82282580 -> lane 0`
+and `82282584 -> lane 1`. Audit capture
+`scratch/thor-debug/20260524-035227-*` reached the visible opening sky/wing
+route with clean fatal search and final counters
+`fastpath=446272/1338814 fallback=0/0`. The quiet same-APK A/B did not prove a
+speed win: control `scratch/thor-debug/20260524-035623-*` reached
+`Microsoft Game Studios Presents`, while fastpath-on
+`scratch/thor-debug/20260524-035944-*` reached an earlier sky/wing frame.
+Keep the fastpath and audit default-off and do not repeat the exact A/B
+unchanged. Next speed lane is larger body-backed work in `8228252C-822825C4`,
+especially the `8228252C -> 82287788` child path or broader state/vector/FPR
+traffic.
+
+Previous `8228252C` lane-provenance read:
 `docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` proves the
 first narrow stack-lane fold target. In exact slice `8228252C-822825C4`,
 `82282580` is constant lane `0` from `r1 + 0x50`, and `82282584` is constant
 lane `1` from `r1 + 0x54`, assuming normal 16-byte PPC stack alignment.
-`82282588` remains unknown because it is based on `r6 + 0x8`. Next speed lane
-can be a default-off Blue-Dragon/function/PC-gated A64 `EXTRACT_I32` fastpath
-for only `82282580` and `82282584`, with audit/counters before quiet A/B.
+`82282588` remains unknown because it is based on `r6 + 0x8`.
 
 Previous generated-code audit:
 `docs/research/20260524-033116-8228252c-a64-codegen-audit.md` audits exact

@@ -155,6 +155,8 @@ param(
     [string]$Arm64BlueDragonJumpTableInlineInCaller = "false",
     [string]$Arm64BlueDragonVmxCopyLoopFastpath = "false",
     [string]$Arm64BlueDragonWordCopyLoopFastpath = "false",
+    [string]$Arm64BlueDragonStvewxStackLaneFastpath = "false",
+    [string]$Arm64BlueDragonStvewxStackLaneAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -877,6 +879,12 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonWordCopyLoopFastpath) {
         $parts += "--ez arm64_blue_dragon_word_copy_loop_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonWordCopyLoopFastpath)"
     }
+    if ($Arm64BlueDragonStvewxStackLaneFastpath) {
+        $parts += "--ez arm64_blue_dragon_stvewx_stack_lane_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonStvewxStackLaneFastpath)"
+    }
+    if ($Arm64BlueDragonStvewxStackLaneAudit) {
+        $parts += "--ez arm64_blue_dragon_stvewx_stack_lane_audit $(ConvertTo-BooleanText $Arm64BlueDragonStvewxStackLaneAudit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1131,6 +1139,8 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_jump_table_inline_in_caller=$Arm64BlueDragonJumpTableInlineInCaller",
         "arm64_blue_dragon_vmx_copy_loop_fastpath=$Arm64BlueDragonVmxCopyLoopFastpath",
         "arm64_blue_dragon_word_copy_loop_fastpath=$Arm64BlueDragonWordCopyLoopFastpath",
+        "arm64_blue_dragon_stvewx_stack_lane_fastpath=$Arm64BlueDragonStvewxStackLaneFastpath",
+        "arm64_blue_dragon_stvewx_stack_lane_audit=$Arm64BlueDragonStvewxStackLaneAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1412,6 +1422,8 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonJumpTableFastpath" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonJumpTableInlineInCaller" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonWordCopyLoopFastpath" "true"
+    Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
 }
 
 function Write-PerfSnapshot {
@@ -1594,6 +1606,8 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLiveInR1Audit" "false"
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""

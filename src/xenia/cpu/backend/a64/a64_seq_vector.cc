@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "xenia/base/math.h"
+#include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_emitter.h"
 #include "xenia/cpu/backend/a64/a64_op.h"
 #include "xenia/cpu/backend/a64/a64_seq_util.h"
@@ -19,6 +20,8 @@
 #include "xenia/cpu/hir/instr.h"
 
 DECLARE_bool(arm64_permute_i32_zip_fastpath);
+DECLARE_bool(arm64_blue_dragon_stvewx_stack_lane_fastpath);
+DECLARE_bool(arm64_blue_dragon_stvewx_stack_lane_audit);
 
 namespace xe {
 namespace cpu {
@@ -183,14 +186,7 @@ struct EXTRACT_I32
     : Sequence<EXTRACT_I32, I<OPCODE_EXTRACT, I32Op, V128Op, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     int src_idx = SrcVReg(e, i.src1, 0);
-    if (i.src2.is_constant) {
-      uint8_t idx = VEC128_D(i.src2.constant());
-      if (idx == 0) {
-        e.umov(i.dest, VReg(src_idx).s4[0]);
-      } else {
-        e.umov(i.dest, VReg(src_idx).s4[idx]);
-      }
-    } else {
+    auto emit_dynamic = [&]() {
       // Dynamic: use TBL with computed control.
       e.and_(e.w0, i.src2, 0x03);
       e.lsl(e.w0, e.w0, 2);
@@ -204,6 +200,43 @@ struct EXTRACT_I32
       e.ins(VReg(1).b16[3], e.w3);
       e.tbl(VReg(1).b16, VReg(src_idx).b16, 1, VReg(1).b16);
       e.umov(i.dest, VReg(1).s4[0]);
+    };
+    if (i.src2.is_constant) {
+      uint8_t idx = VEC128_D(i.src2.constant());
+      if (idx == 0) {
+        e.umov(i.dest, VReg(src_idx).s4[0]);
+      } else {
+        e.umov(i.dest, VReg(src_idx).s4[idx]);
+      }
+    } else {
+      if (cvars::arm64_blue_dragon_stvewx_stack_lane_fastpath &&
+          e.current_guest_function() == 0x82282490) {
+        const uint32_t guest_pc = i.instr->GuestAddressFor();
+        const int folded_lane =
+            guest_pc == 0x82282580 ? 0 : guest_pc == 0x82282584 ? 1 : -1;
+        if (folded_lane >= 0) {
+          if (cvars::arm64_blue_dragon_stvewx_stack_lane_audit) {
+            auto& fallback = e.NewCachedLabel();
+            auto& done = e.NewCachedLabel();
+            e.and_(e.w17, i.src2, 0x03);
+            e.cmp(e.w17, static_cast<uint32_t>(folded_lane));
+            e.b(Xbyak_aarch64::NE, fallback);
+            e.EmitAtomicIncrement64(
+                e.backend()->blue_dragon_stvewx_stack_lane_fastpath_count());
+            e.umov(i.dest, VReg(src_idx).s4[folded_lane]);
+            e.b(done);
+            e.L(fallback);
+            e.EmitAtomicIncrement64(
+                e.backend()->blue_dragon_stvewx_stack_lane_fallback_count());
+            emit_dynamic();
+            e.L(done);
+          } else {
+            e.umov(i.dest, VReg(src_idx).s4[folded_lane]);
+          }
+          return;
+        }
+      }
+      emit_dynamic();
     }
   }
 };

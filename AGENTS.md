@@ -874,10 +874,22 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `tools/thor/thor_hir_stvewx_lane_audit.ps1`. The audit proves
   `82282580 -> lane 0` from `r1 + 0x50` and `82282584 -> lane 1` from
   `r1 + 0x54` under the normal 16-byte PPC stack-pointer alignment assumption.
-  `82282588` remains unknown because its address is `r6 + 0x8`. Next code
-  slice may implement a default-off, Blue-Dragon/function/PC-gated A64
-  `EXTRACT_I32` fastpath for only `82282580` and `82282584`, with audit or
-  counters before any quiet speed A/B.
+  `82282588` remains unknown because its address is `r6 + 0x8`.
+- Current `8228252C` `stvewx` lane fastpath probe:
+  `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md`.
+  The default-off, Blue-Dragon/function/PC-gated A64 `EXTRACT_I32` fastpath
+  for only `82282580` and `82282584` is route-clean and dynamically audited:
+  `scratch/thor-debug/20260524-035227-*` reached the visible opening sky/wing
+  route with clean fatal search and final audit counters
+  `fastpath=446272/1338814 fallback=0/0`. Quiet same-APK A/B was not a speed
+  win: control `scratch/thor-debug/20260524-035623-*` reached
+  `Microsoft Game Studios Presents`, while fastpath-on
+  `scratch/thor-debug/20260524-035944-*` reached an earlier sky/wing frame.
+  Keep `arm64_blue_dragon_stvewx_stack_lane_fastpath` and audit default-off.
+  Treat the patch as route-clean/code-size evidence only (`82282490`
+  `87168 -> 87088` bytes), and do not repeat the exact A/B unchanged. Next
+  target should be larger body-backed work in `8228252C-822825C4`, especially
+  `8228252C -> 82287788` or broader state/vector/FPR traffic.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

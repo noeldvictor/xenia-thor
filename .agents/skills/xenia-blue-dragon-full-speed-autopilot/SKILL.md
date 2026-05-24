@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` closes the
+first `8228252C` lane-fold probe. The default-off A64 `EXTRACT_I32` fastpath
+for only `82282580 -> lane 0` and `82282584 -> lane 1` is route-clean and
+audited: `scratch/thor-debug/20260524-035227-*` reached the visible opening
+sky/wing route, had clean fatal-marker search, and ended with
+`fastpath=446272/1338814 fallback=0/0`. The quiet same-APK A/B did not prove a
+speed win: control `scratch/thor-debug/20260524-035623-*` reached
+`Microsoft Game Studios Presents`, while fastpath-on
+`scratch/thor-debug/20260524-035944-*` reached an earlier sky/wing frame.
+Keep `arm64_blue_dragon_stvewx_stack_lane_fastpath` and audit default-off. Do
+not repeat the exact A/B unchanged. Next worker slice should move to larger
+body-backed work in `8228252C-822825C4`, especially the `8228252C -> 82287788`
+child path or broader state/vector/FPR traffic.
+
 `docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` proves the
 first narrow `stvewx` lane-folding target. Use
 `tools/thor/thor_hir_stvewx_lane_audit.ps1` before changing this lane again.
