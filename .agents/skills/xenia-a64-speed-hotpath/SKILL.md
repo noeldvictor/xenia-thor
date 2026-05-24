@@ -623,7 +623,23 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current `82281D28` focused lane:
+Current `82281D28` call-edge split:
+`docs/research/20260524-052524-82281d28-call-edge-split.md`. Capture
+`scratch/thor-debug/20260524-052031-*` reached the visible opening sky/wing
+route with clean fatal-marker search. With the HIR/block dump removed,
+`82282490` returned to the top body row: `82282490=30214411`,
+`82281D28=10212419`, `82287788=3195362`, `82282388=3020644`,
+`82282410=2902097`, `821CE028=674464`, and `826BF770=563064`. Dynamic edges
+show `8228233C -> 82281D28` at `body_ticks_total=7350722`,
+`calls_total=69445`, about `72.0%` of final `82281D28` body time. Reported
+direct edges account for about `89.1%`, leaving about `1115427` ticks of
+approximate parent-exclusive work. Do not patch local `82281D28` generated
+code yet or rerun the exact HIR/block capture unchanged. Next speed lane should
+collapse/reason about the recursive SCC and return to body-backed `82282490`
+local-span work, or improve the mapper enough to recover `8228233C` static span
+context before any local `82281D28` patch.
+
+Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing
 route with clean fatal-marker search on APK SHA

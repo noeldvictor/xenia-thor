@@ -119,6 +119,24 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-052524-82281d28-call-edge-split.md` split the larger
+`82281D28` lane. Capture `scratch/thor-debug/20260524-052031-*` reached the
+visible opening sky/wing route with clean fatal-marker search on APK SHA
+`A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. With the
+HIR/block dump removed, `82282490` returned to the top body row:
+`82282490=30214411`, `82281D28=10212419`, `82287788=3195362`,
+`82282388=3020644`, `82282410=2902097`, `821CE028=674464`, and
+`826BF770=563064`. Dynamic edges show `82281D28` is mostly recursive:
+`8228233C -> 82281D28` has `body_ticks_total=7350722`, `calls_total=69445`,
+and about `72.0%` of final `82281D28` body time. Reported direct edges account
+for about `89.1%`, leaving about `1115427` ticks of approximate
+parent-exclusive work. Do not patch local `82281D28` generated code yet or
+rerun the exact HIR/block capture unchanged. Next step should collapse/reason
+about the recursive SCC and return to body-backed `82282490` work, or improve
+the mapper enough to recover `8228233C` static span context before any local
+`82281D28` codegen patch.
+
+Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
 reached the visible opening sky/wing route with clean fatal-marker search on

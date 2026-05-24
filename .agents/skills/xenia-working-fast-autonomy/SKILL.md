@@ -116,6 +116,22 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-052524-82281d28-call-edge-split.md` says the larger
+`82281D28` lane is not a local patch target yet. Capture
+`scratch/thor-debug/20260524-052031-*` reached the visible opening sky/wing
+route with clean fatal search. With the HIR/block dump removed, body rows were
+`82282490=30214411`, `82281D28=10212419`, `82287788=3195362`,
+`82282388=3020644`, `82282410=2902097`, `821CE028=674464`, and
+`826BF770=563064`. Dynamic edges show `8228233C -> 82281D28` at
+`body_ticks_total=7350722` and `calls_total=69445`, about `72.0%` of
+`82281D28` body time. Reported direct edges are about `89.1%`, leaving only
+about `1115427` ticks of approximate parent-exclusive work. Do not patch local
+`82281D28` generated code or rerun the exact HIR/block capture unchanged. Next
+useful worker output is recursive/SCC attribution plus body-backed `82282490`
+local-span work, or a mapper improvement that recovers `8228233C` static span
+context before any local `82281D28` patch.
+
+Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

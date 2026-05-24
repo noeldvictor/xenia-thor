@@ -948,6 +948,22 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   run should be a route-stabilized `82281D28` call-edge split with delayed
   body-time comparators:
   `82281D28,82282388,82282410,82282490,826BF770,82287788,821CE028`.
+- Current `82281D28` call-edge split:
+  `docs/research/20260524-052524-82281d28-call-edge-split.md`. Capture
+  `scratch/thor-debug/20260524-052031-*` reached the visible opening sky/wing
+  route with clean fatal-marker search on the same APK SHA. With the HIR/block
+  dump removed, `82282490` returned to the top body row:
+  `82282490=30214411`, `82281D28=10212419`, `82287788=3195362`,
+  `82282388=3020644`, `82282410=2902097`, `821CE028=674464`, and
+  `826BF770=563064`. Dynamic edge rows say `82281D28` is mostly recursive:
+  `8228233C -> 82281D28` has `body_ticks_total=7350722`,
+  `calls_total=69445`, and accounts for about `72.0%` of final `82281D28`
+  body time. Reported direct edges account for about `89.1%`, leaving only
+  about `1115427` ticks of approximate parent-exclusive work. Do not patch
+  local `82281D28` generated code yet or rerun the exact HIR/block capture
+  unchanged. Next step should collapse/reason about the recursive SCC and
+  return to body-backed `82282490` work, or improve the mapper enough to
+  recover `8228233C` static span context before any local `82281D28` patch.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
