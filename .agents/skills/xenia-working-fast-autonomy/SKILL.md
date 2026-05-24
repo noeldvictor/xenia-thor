@@ -116,17 +116,29 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-143436-state-carrier-audit-interval-fix.md`
+records the route-clean Thor state-carrier audit after fixing
+`tools/thor/thor_xenia_debug.ps1` to default
+`Arm64SpeedProfileIntervalMs=15000` when row-producing speed-profiler
+instrumentation is requested. Capture `scratch/thor-debug/20260524-143436-*`
+reached the visible opening sky / dragon-wing route on APK SHA
+`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`, had a
+clean fatal-marker search, and logged the intended rows. Final counters:
+`f1_read=3477646`, `f1_helper_read=1742466`, `f1_child_read=1735180`,
+`f1_child_call=576589`, `f1_fallback=0`, `fpscr_read=3640919`,
+`fpscr_dirty_write=3640919`, `fpscr_required_writeback=1182090`,
+`fpscr_call_kill=2924556`, `fpscr_fallback=0`. This is audit evidence, not
+quiet FPS proof. Do not repeat the no-interval or log-level-only captures and
+do not patch behavior directly from this row. Next work should be an offline
+parent/callee `82282490 -> 82287788` state-carrier design, especially a
+broader `f[1]` carrier with explicit helper, child-call, barrier, exit,
+exception, and fallback rules, or a CFG-aware fpscr dirty-carrier audit before
+any speed A/B.
+
+Previous lane closure:
 `docs/research/20260524-141502-state-carrier-audit-route-capture.md`
-records a route-clean Thor capture for
-`arm64_blue_dragon_state_carrier_design_audit` on APK SHA
-`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`, but it
-was data-blocked because speed-lane `log_level=0` suppressed the warning/body
-rows. No state-carrier counter row and no `82282490,82287788` body-time rows
-landed. `tools/thor/thor_xenia_debug.ps1` now defaults to `LogLevel=1` when a
-Blue Dragon speed capture requests body-time, block/call-edge,
-thread-snapshot, or audit rows. Do not patch behavior from the no-row capture
-and do not rerun it unchanged; rerun the same route-stabilized audit with the
-fixed default or explicit `-LogLevel 1` before any carrier behavior patch.
+is route-clean but data-blocked; `scratch/thor-debug/20260524-142827-*` proved
+that `log_level=1` alone was not enough without a speed-profiler interval.
 
 Previous lane closure:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`

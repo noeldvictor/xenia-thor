@@ -2443,19 +2443,29 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-143436-state-carrier-audit-interval-fix.md`.
+  Route-clean Thor capture `scratch/thor-debug/20260524-143436-*` proved the
+  state-carrier audit lane after `tools/thor/thor_xenia_debug.ps1` began
+  auto-setting `Arm64SpeedProfileIntervalMs=15000` for row-producing speed
+  profiler captures. It reached the visible opening sky / dragon-wing route on
+  APK SHA `5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`
+  with a clean fatal-marker search and logged final counters:
+  `f1_read=3477646`, `f1_helper_read=1742466`, `f1_child_read=1735180`,
+  `f1_child_call=576589`, `f1_fallback=0`, `fpscr_read=3640919`,
+  `fpscr_dirty_write=3640919`, `fpscr_required_writeback=1182090`,
+  `fpscr_call_kill=2924556`, and `fpscr_fallback=0`. Final body-time kept
+  `82282490` dominant at `61133316`; Main Thread was still about one full core
+  and GPU Commands was low. Treat this as audit evidence, not a quiet FPS
+  verdict. Do not repeat the no-interval/log-level-only captures and do not
+  patch from this row directly. Next work should be an offline parent/callee
+  `82282490 -> 82287788` state-carrier design, especially a broader `f[1]`
+  carrier with explicit helper, child-call, barrier, exit, exception, and
+  fallback rules, or a CFG-aware fpscr dirty-carrier audit before any speed A/B.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-141502-state-carrier-audit-route-capture.md`.
-  First Thor capture for `arm64_blue_dragon_state_carrier_design_audit`
-  reached the visible opening sky / dragon-wing route on APK SHA
-  `5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD` with a
-  clean fatal-marker search, but `log_level=0` suppressed the warning/body rows:
-  no state-carrier audit row and no `82282490,82287788` body-time rows landed.
-  `tools/thor/thor_xenia_debug.ps1` now auto-lifts Blue Dragon speed captures
-  to `LogLevel=1` when body-time, block/call-edge, thread-snapshot, or audit
-  rows are requested; quiet no-instrumentation captures still default to
-  `LogLevel=0`. Do not patch generated behavior from the route-clean/no-row
-  capture and do not rerun the exact same command unchanged. Next useful output
-  is the same route-stabilized state-carrier audit with the fixed script
-  default or explicit `-LogLevel 1`.
+  Its route-clean no-row result was only partly caused by `log_level=0`; the
+  follow-up `scratch/thor-debug/20260524-142827-*` proved that the missing
+  `arm64_speed_profile_interval_ms` also blocked the profiler rows.
 - Previous Blue Dragon speed lane:
   `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`.
   New deterministic tool `tools/thor/thor_hir_state_carrier_design_audit.ps1`

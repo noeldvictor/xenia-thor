@@ -1486,6 +1486,45 @@ function Set-BlueDragonSpeedDefaultLogLevel {
     }
 }
 
+function Test-BlueDragonSpeedProfilerRowsRequested {
+    if ($script:Arm64SpeedProfileTopFunctions -or
+        $script:Arm64SpeedProfileMinDelta -or
+        $script:Arm64SpeedProfileBodyTimeFilter -or
+        $script:Arm64SpeedProfileEntryExitTimeFilter -or
+        $script:Arm64SpeedProfileBlockFilter -or
+        $script:Arm64SpeedProfileCallEdgeFilter) {
+        return $true
+    }
+
+    foreach ($name in @(
+        "A64RtlLeaveFastpathAudit",
+        "A64KfLowerIrqlApcGuardAudit",
+        "Arm64BlueDragonStvewxStackLaneAudit",
+        "Arm64BlueDragonMulAddV128Audit",
+        "Arm64BlueDragonCallBoundaryStateAudit",
+        "Arm64BlueDragonF1CarrierAudit",
+        "Arm64BlueDragonStateCarrierDesignAudit",
+        "Arm64SpeedProfileBlockBodyTime",
+        "Arm64SpeedProfileCallEdgeAuditOnly",
+        "Arm64SpeedProfileThreadSnapshot",
+        "Arm64SpeedProfileThreadSnapshotOnIdle"
+    )) {
+        $value = (Get-Variable -Name $name -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        if (Test-TrueLikeText $value) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Set-BlueDragonSpeedDefaultProfilerInterval {
+    if (!$script:RootBoundParameters.ContainsKey("Arm64SpeedProfileIntervalMs") -and
+        (Test-BlueDragonSpeedProfilerRowsRequested)) {
+        $script:Arm64SpeedProfileIntervalMs = "15000"
+    }
+}
+
 function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
@@ -1587,6 +1626,7 @@ function Use-BlueDragonSpeedDefaults {
     $script:XmaTraceContextState = "false"
     $script:ClearMemoryPageState = "false"
     Set-BlueDragonSpeedDefaultLogLevel
+    Set-BlueDragonSpeedDefaultProfilerInterval
     $script:VulkanForceSigned2101010UnormFallback = "true"
     $script:VulkanForce2101010Rgba8Fallback = "false"
     if (!$script:GpuUnknownRegisterLogBudget) {

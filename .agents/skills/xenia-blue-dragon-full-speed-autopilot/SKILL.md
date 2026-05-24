@@ -119,19 +119,31 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-143436-state-carrier-audit-interval-fix.md`
+records the route-clean Thor state-carrier audit after fixing the capture lane
+to auto-enable `Arm64SpeedProfileIntervalMs=15000` when row-producing profiler
+instrumentation is requested. Capture `scratch/thor-debug/20260524-143436-*`
+reached the visible opening sky / dragon-wing route on APK SHA
+`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`, had a
+clean fatal-marker search, and logged the intended rows. Final counters:
+`f1_read=3477646`, `f1_helper_read=1742466`, `f1_child_read=1735180`,
+`f1_child_call=576589`, `f1_fallback=0`, `fpscr_read=3640919`,
+`fpscr_dirty_write=3640919`, `fpscr_required_writeback=1182090`,
+`fpscr_call_kill=2924556`, `fpscr_fallback=0`. Final body-time kept
+`82282490` dominant at `61133316`, with `82281D28=13198164` and
+`82287788=7477399`; Main Thread remained about one full core while GPU Commands
+was low. Do not patch from this audit directly and do not repeat the
+no-interval/log-level-only captures. Next useful slice is an offline
+parent/callee state-carrier design for `82282490 -> 82287788`, especially a
+broader `f[1]` carrier with explicit helper, child-call, barrier, exit,
+exception, and fallback rules, or a CFG-aware fpscr dirty-carrier audit before
+any speed A/B.
+
+Previous priority:
 `docs/research/20260524-141502-state-carrier-audit-route-capture.md`
-records the first Thor capture for
-`arm64_blue_dragon_state_carrier_design_audit`. It reached the visible opening
-sky / dragon-wing route on APK SHA
-`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD` with a
-clean fatal-marker search, but `log_level=0` suppressed the warning/body rows:
-no state-carrier counter row and no `82282490,82287788` body-time rows landed.
-`tools/thor/thor_xenia_debug.ps1` now auto-lifts the default to `LogLevel=1`
-when Blue Dragon speed captures request body-time, block/call-edge,
-thread-snapshot, or audit rows. Do not patch behavior from the no-row capture
-and do not repeat the exact same command unchanged. Next useful output is the
-same route-stabilized audit with the fixed script default or explicit
-`-LogLevel 1`, then use the counter row before any carrier behavior patch.
+is now understood as a route-clean but data-blocked capture: `log_level=0` was
+one issue, and the follow-up `scratch/thor-debug/20260524-142827-*` proved the
+other issue was missing `arm64_speed_profile_interval_ms`.
 
 Previous priority:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
