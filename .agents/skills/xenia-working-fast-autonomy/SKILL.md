@@ -749,6 +749,18 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
+Use `tools/thor/thor_hir_function_pair_variant_audit.ps1` before implementing
+a pair-specific callee entry or thunk. For `82282490:82282598 -> 82287788`,
+the `f[1]` lane is statically clean for a specialized entry seed:
+`loads=10`, `stores=0`, `replaceable_loads=10`, `unsafe_loads=0`, and
+`static_replace_upper=16912720`. The `fpscr` control is blocked by callee
+writes. The next worker slice should source-design a default-off
+pair-specific thunk/entry seed or compile-time caller-seeded callee-slot proof
+for `f[1]`; do not alter normal `82287788` entry semantics or try to squeeze
+this through the generic `A64Emitter::Call` ABI without a design.
+
+Previous current worker target:
 `docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
 The interprocedural audit now prints a forwarding plan for the live
 `82282490 -> 82287788` direct-call state round-trip. The edge remains hot

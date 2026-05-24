@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-112944-82287788-function-pair-variant-audit.md`
+adds `tools/thor/thor_hir_function_pair_variant_audit.ps1`. For the hot
+`82282490` `82282598 -> 82287788` edge, the tool reports that `f[1]` (`+296`)
+has a parent seed store at `82282594`, callee `loads=10`, `stores=0`,
+`replaceable_loads=10`, `unsafe_loads=0`, and
+`static_replace_upper=16912720` when child calls `82287854` and `82287ED4`
+are treated as preserved. The `fpscr` control is rejected (`loads=26`,
+`stores=26`, `variant_shape=blocked_by_callee_writes`). Do not patch behavior
+yet: current `A64Emitter::Call` uses `x0` for the guest return address, so the
+next useful code lane is a default-off pair-specific thunk/entry-seed design
+or compile-time caller-seeded callee-slot proof for `f[1]`, preserving normal
+`82287788` entry semantics and parent context visibility.
+
+Previous priority:
 `docs/research/20260524-111940-8228252c-state-forwarding-plan.md`
 updates `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` so the
 direct-call state audit prints a forwarding-risk plan. For `82282490`

@@ -2419,6 +2419,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
+  New tool `tools/thor/thor_hir_function_pair_variant_audit.ps1` audits a
+  pair-specific callee entry/thunk candidate for the hot `82282490`
+  `82282598 -> 82287788` edge. For `f[1]` (`+296`), it reports parent seed
+  store present at `82282594`, callee `loads=10`, `stores=0`,
+  `replaceable_loads=10`, `unsafe_loads=0`, and
+  `static_replace_upper=16912720` when child calls at `82287854` and
+  `82287ED4` are treated as preserved from earlier `821CE028` proof. The
+  `fpscr` control is blocked (`loads=26`, `stores=26`,
+  `variant_shape=blocked_by_callee_writes`). Do not patch behavior yet:
+  `A64Emitter::Call` currently passes guest return in `x0`, so a real speed
+  experiment needs a default-off pair-specific thunk/entry seed or a
+  compile-time caller-seeded callee-slot proof, not another local
+  `load_context` peephole. Keep normal `82287788` entry semantics unchanged.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
   `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now prints a
   forwarding plan for live direct-call state. For `82282490` call PC

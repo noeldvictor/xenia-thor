@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `8228252C` parent/callee state-forwarding plan:
+Latest `82287788` function-pair variant audit:
+`docs/research/20260524-112944-82287788-function-pair-variant-audit.md`.
+`tools/thor/thor_hir_function_pair_variant_audit.ps1` proves the `f[1]`
+candidate is cleaner as a pair-specific entry problem than as another local
+load peephole. For `82282490:82282598 -> 82287788`, `f[1]` has `loads=10`,
+`stores=0`, `replaceable_loads=10`, `unsafe_loads=0`, and
+`static_replace_upper=16912720` when `82287854` and `82287ED4` are marked as
+preserved child calls. The `fpscr` control is blocked by callee writes. Current
+A64 direct-call emission passes guest return in `x0`, so the next A64 lane is
+a default-off pair-specific thunk/entry seed or caller-seeded callee-slot
+design, not changing normal `82287788` entry semantics and not extending the
+generic call ABI casually.
+
+Previous `8228252C` parent/callee state-forwarding plan:
 `docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
 `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now prints a
 forwarding-risk plan for live state crossing the `82282490` call PC
