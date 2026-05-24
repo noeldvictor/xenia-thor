@@ -1302,7 +1302,18 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest state-carrier follow-up plan:
+Latest state-carrier ABI audit:
+`docs/research/20260524-163338-a64-state-carrier-abi-audit.md` adds
+`tools/thor/thor_a64_state_carrier_abi_audit.ps1`. Run it before any broader
+parent/callee carrier behavior patch. It confirms the current A64 direct-call
+ABI is `guest_return_only_in_x0`, the existing `f[1]` carrier is only a
+callee-local `82287788` stack slot, and a real `82282490 -> 82287788` payload
+needs either an explicit call-ABI extension or an edge-specific compiled entry
+with normal-entry fallback. Do not run another quiet speed A/B from the current
+carrier evidence. Next A64 work should add edge-specific ABI/variant design
+counters or prove exact `fpscr` CFG writeback/flush rules.
+
+Previous state-carrier follow-up plan:
 `docs/research/20260524-145241-state-carrier-followup-plan.md` adds
 `tools/thor/thor_hir_state_carrier_followup_plan.ps1`. Run it before another
 carrier behavior patch. It parses the route-clean

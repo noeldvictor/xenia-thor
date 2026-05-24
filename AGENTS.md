@@ -2443,6 +2443,17 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-163338-a64-state-carrier-abi-audit.md`.
+  New source audit tool `tools/thor/thor_a64_state_carrier_abi_audit.ps1`
+  confirms the current A64 direct-call ABI is `guest_return_only_in_x0`, the
+  existing `f[1]` carrier is only a callee-local `82287788` stack slot, and a
+  broader `82282490 -> 82287788` payload is blocked without either a deliberate
+  call-ABI extension or an edge-specific compiled entry/variant with
+  normal-entry fallback. Do not run another quiet speed A/B or patch generated
+  behavior from the current state-carrier evidence. Next work should add
+  edge-specific ABI/variant design counters, or prove exact `fpscr` CFG
+  writeback/flush rules before any behavior patch.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-145241-state-carrier-followup-plan.md`.
   New offline planner `tools/thor/thor_hir_state_carrier_followup_plan.ps1`
   parses the latest route-clean state-carrier counter row and joins it with

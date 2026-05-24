@@ -119,6 +119,18 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-163338-a64-state-carrier-abi-audit.md`
+adds `tools/thor/thor_a64_state_carrier_abi_audit.ps1`, a source audit of the
+current A64 direct-call contract. It confirms the direct-call ABI is
+`guest_return_only_in_x0`, the existing `f[1]` carrier is only a
+callee-local `82287788` stack slot, and a broader `82282490 -> 82287788`
+payload is blocked until there is either an explicit call-ABI extension or an
+edge-specific compiled entry/variant with normal-entry fallback. Do not run a
+quiet speed A/B or patch generated behavior from the current carrier evidence.
+Next useful work is an edge-specific ABI/variant design audit with
+compile-time/runtime counters, or exact `fpscr` CFG writeback proof.
+
+Previous priority:
 `docs/research/20260524-145241-state-carrier-followup-plan.md`
 adds `tools/thor/thor_hir_state_carrier_followup_plan.ps1`, an offline planner
 that parses the latest route-clean `A64 Blue Dragon state-carrier design audit`

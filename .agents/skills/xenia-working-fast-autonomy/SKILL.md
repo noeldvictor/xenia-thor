@@ -116,6 +116,16 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-163338-a64-state-carrier-abi-audit.md`
+adds `tools/thor/thor_a64_state_carrier_abi_audit.ps1`. It source-checks the
+A64 direct-call path and reports `current_direct_call_abi=guest_return_only_in_x0`,
+`existing_f1_carrier_scope=callee_local_stack_slot`, and
+`parent_to_callee_payload_status=blocked_without_call_abi_extension_or_edge_specific_entry`.
+Do not make another quiet speed A/B from the current state-carrier evidence.
+The next productive slice should add edge-specific ABI/variant design counters
+or prove exact `fpscr` CFG writeback/flush rules before any behavior patch.
+
+Previous lane closure:
 `docs/research/20260524-145241-state-carrier-followup-plan.md`
 adds `tools/thor/thor_hir_state_carrier_followup_plan.ps1`, an offline planner
 over the latest route-clean Thor state-carrier row. It confirms `f[1]` is
