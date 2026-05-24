@@ -639,6 +639,16 @@ collapse/reason about the recursive SCC and return to body-backed `82282490`
 local-span work, or improve the mapper enough to recover `8228233C` static span
 context before any local `82281D28` patch.
 
+Current recursive-edge attribution helper:
+`docs/research/20260524-053502-call-path-recursive-heuristic.md`.
+`tools/thor/thor_hir_call_path_report.ps1` now prints dynamic direct-edge,
+self-recursive, and approximate parent-exclusive body-time shares when the log
+contains both function body-time rows and call-edge rows. Validation confirms
+`82281D28` is `89.08%` direct-edge body and `71.98%` self-recursive body;
+`82282490` is `84.08%` direct-edge body and `71.44%` self-recursive body.
+Run this before patching a call-heavy block, and prefer local/exclusive
+`82282490` spans such as `8228252C-822825C4` for the next patch.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

@@ -964,6 +964,16 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   unchanged. Next step should collapse/reason about the recursive SCC and
   return to body-backed `82282490` work, or improve the mapper enough to
   recover `8228233C` static span context before any local `82281D28` patch.
+- Current call-path attribution helper:
+  `docs/research/20260524-053502-call-path-recursive-heuristic.md`. The
+  updated `tools/thor/thor_hir_call_path_report.ps1` now prints a
+  `Dynamic Recursive/Exclusive Heuristic` from body-time plus call-edge rows.
+  Validation reports `82281D28` direct edges at `89.08%` and self-recursion at
+  `71.98%`, while `82282490` direct edges are `84.08%` and self-recursion is
+  `71.44%`. Use this report before patching call-heavy blocks. The next patch
+  candidate should come from body-backed local/exclusive `82282490` spans such
+  as the previously mapped `8228252C-822825C4` area, not inclusive recursive
+  block totals alone.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

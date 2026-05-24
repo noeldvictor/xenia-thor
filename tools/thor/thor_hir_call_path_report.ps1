@@ -106,6 +106,17 @@ function Get-TopPairs {
         ForEach-Object { "{0}:{1}" -f $_.Name, $_.Value }) -join ",")
 }
 
+function Format-Percent {
+    param(
+        [int64]$Numerator,
+        [int64]$Denominator
+    )
+    if ($Denominator -le 0) {
+        return "n/a"
+    }
+    return ("{0:N2}%" -f (($Numerator * 100.0) / $Denominator))
+}
+
 function New-BlockRow {
     param(
         [int]$Index,
@@ -151,6 +162,7 @@ $phasePattern = [Regex]::Escape($Phase)
 $linePattern = "Filtered function dump $functionPattern $phasePattern`:\s+(?<text>.*)$"
 $blocks = New-Object System.Collections.Generic.List[object]
 $current = $null
+$bodyTimeRows = @{}
 $callEdgeRows = @{}
 $callEdgeAuditRows = New-Object System.Collections.Generic.List[object]
 
@@ -227,9 +239,35 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     $resolvedProfile = (Resolve-Path -LiteralPath $BlockProfileLog).Path
     $profilePattern = "A64 speed profile block top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) delta=(?<delta>\d+) total=(?<total>\d+)"
     $bodyProfilePattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
+    $functionBodyPattern = "A64 speed profile body top \d+: fn (?<fn>[0-9A-Fa-f]{8}) '(?<name>[^']*)' body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+) code_size=(?<code_size>\d+)"
     $callEdgePattern = "A64 speed profile call edge top \d+: fn $functionPattern .* edge=(?<edge>\d+) block=(?<block>[0-9A-Fa-f]{8}) target=(?<target>[0-9A-Fa-f]{8}) calls_delta=(?<calls_delta>\d+) calls_total=(?<calls_total>\d+) body_ticks_delta=(?<body_delta>\d+) body_ticks_total=(?<body_total>\d+) ticks_per_call=(?<tpc>\d+)"
     $callEdgeAuditPattern = "A64 call-edge compile audit: fn $functionPattern '(?<name>[^']*)' blocks=(?<blocks>\d+) direct_call_edges=(?<edges>\d+) instrumentation=(?<instrumentation>\d+)"
     Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
+        if ($_ -match $functionBodyPattern) {
+            $fn = $Matches.fn.ToUpperInvariant()
+            if (!$bodyTimeRows.ContainsKey($fn)) {
+                $bodyTimeRows[$fn] = [pscustomobject][ordered]@{
+                    function = $fn
+                    name = $Matches.name
+                    body_ticks_delta = 0
+                    body_ticks_total = 0
+                    entries_delta = 0
+                    ticks_per_entry = 0
+                    code_size = 0
+                }
+            }
+            $row = $bodyTimeRows[$fn]
+            $total = [int64]$Matches.total
+            if ($total -ge $row.body_ticks_total) {
+                $row.body_ticks_delta = [int64]$Matches.delta
+                $row.body_ticks_total = $total
+                $row.entries_delta = [int64]$Matches.entries
+                $row.ticks_per_entry = [int64]$Matches.tpe
+                $row.code_size = [int64]$Matches.code_size
+            }
+            return
+        }
+
         if ($_ -match $profilePattern) {
             $guest = $Matches.guest.ToUpperInvariant()
             $row = $null
@@ -408,6 +446,7 @@ if ($targetRows.Count -eq 0) {
 
 Write-Output ""
 Write-Output "## Dynamic Call Edge Target Summary"
+$dynamicTargetRows = @{}
 if ($callEdgeRows.Count -eq 0) {
     if ([string]::IsNullOrWhiteSpace($BlockProfileLog)) {
         Write-Output "(no block/call-edge profile log supplied)"
@@ -415,7 +454,6 @@ if ($callEdgeRows.Count -eq 0) {
         Write-Output "(no dynamic call-edge rows found)"
     }
 } else {
-    $dynamicTargetRows = @{}
     foreach ($edgeRow in $callEdgeRows.Values) {
         $target = $edgeRow.target
         if (!$dynamicTargetRows.ContainsKey($target)) {
@@ -457,6 +495,55 @@ if ($callEdgeRows.Count -eq 0) {
                 $_.calls_total, $_.calls_peak_delta,
                 $_.body_ticks_total, $_.body_ticks_peak_delta,
                 $_.ticks_per_call_peak)
+        }
+}
+
+Write-Output ""
+Write-Output "## Dynamic Recursive/Exclusive Heuristic"
+if ($callEdgeRows.Count -eq 0) {
+    Write-Output "(no dynamic call-edge rows found)"
+} elseif (!$bodyTimeRows.ContainsKey($Function.ToUpperInvariant())) {
+    Write-Output "(no matching function body-time row found; pass the same log as -BlockProfileLog when body-time was enabled)"
+} else {
+    $functionBody = $bodyTimeRows[$Function.ToUpperInvariant()]
+    $edgeBodyTotal = [int64]0
+    $selfRecursiveBodyTotal = [int64]0
+    $selfRecursiveCallsTotal = [int64]0
+    foreach ($edgeRow in $callEdgeRows.Values) {
+        $edgeBodyTotal += [int64]$edgeRow.body_ticks_total
+        $normalizedTarget = ([string]$edgeRow.target) -replace "^0x", ""
+        if ($normalizedTarget.ToUpperInvariant() -eq $Function.ToUpperInvariant()) {
+            $selfRecursiveBodyTotal += [int64]$edgeRow.body_ticks_total
+            $selfRecursiveCallsTotal += [int64]$edgeRow.calls_total
+        }
+    }
+    $parentExclusive = [int64]$functionBody.body_ticks_total - $edgeBodyTotal
+    if ($parentExclusive -lt 0) {
+        $parentExclusive = 0
+    }
+    Write-Output ("function_body_ticks_total={0} body_ticks_delta={1} entries_delta={2} ticks_per_entry={3} code_size={4}" -f
+        $functionBody.body_ticks_total, $functionBody.body_ticks_delta,
+        $functionBody.entries_delta, $functionBody.ticks_per_entry,
+        $functionBody.code_size)
+    Write-Output ("dynamic_edge_body_total={0} dynamic_edge_body_pct={1}" -f
+        $edgeBodyTotal, (Format-Percent $edgeBodyTotal $functionBody.body_ticks_total))
+    Write-Output ("self_recursive_edge_body_total={0} self_recursive_calls_total={1} self_recursive_body_pct={2}" -f
+        $selfRecursiveBodyTotal, $selfRecursiveCallsTotal,
+        (Format-Percent $selfRecursiveBodyTotal $functionBody.body_ticks_total))
+    Write-Output ("approx_parent_exclusive_ticks={0} approx_parent_exclusive_pct={1}" -f
+        $parentExclusive, (Format-Percent $parentExclusive $functionBody.body_ticks_total))
+    Write-Output ""
+    Write-Output "Target body share:"
+    $dynamicTargetRows.Values |
+        Sort-Object -Property @{ Expression = "body_ticks_total"; Descending = $true },
+                              @{ Expression = "calls_total"; Descending = $true },
+                              @{ Expression = "target"; Ascending = $true } |
+        Select-Object -First $Top |
+        ForEach-Object {
+            Write-Output ("target={0} body_ticks_total={1} body_pct={2} calls_total={3} blocks={4}" -f
+                $_.target, $_.body_ticks_total,
+                (Format-Percent $_.body_ticks_total $functionBody.body_ticks_total),
+                $_.calls_total, ($_.blocks -join ","))
         }
 }
 

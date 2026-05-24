@@ -136,6 +136,17 @@ about the recursive SCC and return to body-backed `82282490` work, or improve
 the mapper enough to recover `8228233C` static span context before any local
 `82281D28` codegen patch.
 
+Tooling update:
+`docs/research/20260524-053502-call-path-recursive-heuristic.md` updates
+`tools/thor/thor_hir_call_path_report.ps1` to print recursive-edge coverage
+and approximate parent-exclusive body time whenever call-edge and body-time
+rows share a log. It confirms `82281D28` is `89.08%` dynamic direct-edge body
+and `71.98%` self-recursive body, while `82282490` is `84.08%` direct-edge
+body and `71.44%` self-recursive body on the older recursive capture. Use this
+report before patching call-heavy blocks. The next patch candidate should come
+from body-backed local/exclusive `82282490` spans such as the previously mapped
+`8228252C-822825C4` area, not inclusive recursive block totals alone.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`

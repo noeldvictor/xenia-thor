@@ -131,6 +131,16 @@ useful worker output is recursive/SCC attribution plus body-backed `82282490`
 local-span work, or a mapper improvement that recovers `8228233C` static span
 context before any local `82281D28` patch.
 
+Tooling update:
+`docs/research/20260524-053502-call-path-recursive-heuristic.md` adds
+recursive-edge coverage and parent-exclusive estimates to
+`tools/thor/thor_hir_call_path_report.ps1`. Validation reports `82281D28` at
+`89.08%` dynamic direct-edge body and `71.98%` self-recursive body, `82282490`
+at `84.08%` direct-edge body and `71.44%` self-recursive body, and old
+`8227F1D8` at `98.48%` child-edge body to `82490030`. Before a local codegen
+patch on a call-heavy block, run this report. Prefer body-backed local/exclusive
+`82282490` spans such as `8228252C-822825C4` for the next speed patch.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
