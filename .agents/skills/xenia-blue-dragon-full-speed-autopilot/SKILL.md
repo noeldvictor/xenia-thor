@@ -224,6 +224,22 @@ unchanged. If the next slice patches generated code, use a new default-off
 Blue-Dragon/function/PC-gated all-three-site `EXTRACT_I32` fastpath with audit
 counters first; if it misses, move to `MUL_ADD_V128` cost.
 
+Latest all-three `stvewx` fastpath audit:
+`docs/research/20260524-065602-blue-dragon-all-three-stvewx-fastpath.md`
+extends the existing default-off
+`arm64_blue_dragon_stvewx_stack_lane_fastpath` to fold all three proven
+`82282490` dynamic `EXTRACT_I32` PCs: `82282580 -> lane 0`,
+`82282584 -> lane 1`, and `82282588 -> lane 2`. `NativeCore` and
+`FullDeploy` passed. Capture `scratch/thor-debug/20260524-065132-*` reached
+the visible opening sky/dragon-wing route on APK SHA
+`8A3DA22B2208AA67DE13C07383490F3BEBA14E2DC1538AAB5CE08FD035626771`, had a
+clean fatal-marker search, and ended with audit counters
+`fastpath=722256/2008221 fallback=0/0`. This is route-clean correctness
+evidence, not a speed win because audit counters and block body-time were on.
+Keep the cvar default-off in presets. Next useful slice is a quiet same-APK
+A/B or control sandwich with audit off; if that is inconclusive again, switch
+to `MUL_ADD_V128` cost for `82282568/8228256C/82282570`.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`

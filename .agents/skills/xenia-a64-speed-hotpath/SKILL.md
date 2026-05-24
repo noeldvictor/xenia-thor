@@ -744,6 +744,21 @@ Blue-Dragon/function/PC-gated all-three-site `EXTRACT_I32` fastpath with audit
 counters and route-clean proof before quiet speed A/B. If it misses, move to
 `MUL_ADD_V128` cost.
 
+Latest all-three `stvewx` fastpath audit:
+`docs/research/20260524-065602-blue-dragon-all-three-stvewx-fastpath.md`.
+The existing default-off
+`arm64_blue_dragon_stvewx_stack_lane_fastpath` now folds `82282580`,
+`82282584`, and `82282588`. Build/deploy passed, and audit capture
+`scratch/thor-debug/20260524-065132-*` reached the visible opening
+sky/dragon-wing route on APK SHA
+`8A3DA22B2208AA67DE13C07383490F3BEBA14E2DC1538AAB5CE08FD035626771` with
+clean fatal-marker search. Final counters were
+`fastpath=722256/2008221 fallback=0/0`. This proves route-clean lane stability
+only. Do not judge speed from this run because audit and block body-time were
+enabled. Next use a quiet same-APK A/B or control sandwich with audit off; if
+that misses or is inconclusive, move to `MUL_ADD_V128` cost at
+`82282568/8228256C/82282570`.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

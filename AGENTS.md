@@ -1048,6 +1048,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   all-three-site `EXTRACT_I32` fastpath with audit counters first. If that
   misses route-speed proof, move to `MUL_ADD_V128` cost instead of another
   narrow `stvewx` tweak.
+- Current all-three `stvewx` fastpath audit:
+  `docs/research/20260524-065602-blue-dragon-all-three-stvewx-fastpath.md`.
+  The existing default-off
+  `arm64_blue_dragon_stvewx_stack_lane_fastpath` now folds all three proven
+  `82282490` dynamic `EXTRACT_I32` PCs: `82282580 -> lane 0`,
+  `82282584 -> lane 1`, and `82282588 -> lane 2`. `NativeCore` and
+  `FullDeploy` passed. Capture `scratch/thor-debug/20260524-065132-*` reached
+  the visible opening sky/dragon-wing route on APK SHA
+  `8A3DA22B2208AA67DE13C07383490F3BEBA14E2DC1538AAB5CE08FD035626771`, had a
+  clean fatal-marker search, and ended with audit counters
+  `fastpath=722256/2008221 fallback=0/0`. This is route-clean correctness
+  evidence, not a speed win: audit counters and block body-time were enabled.
+  Keep the cvar default-off in presets. Next useful step is a quiet same-APK
+  A/B or control sandwich with audit off; if that is inconclusive again, move
+  to `MUL_ADD_V128` cost for `82282568/8228256C/82282570`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

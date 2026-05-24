@@ -212,8 +212,10 @@ struct EXTRACT_I32
       if (cvars::arm64_blue_dragon_stvewx_stack_lane_fastpath &&
           e.current_guest_function() == 0x82282490) {
         const uint32_t guest_pc = i.instr->GuestAddressFor();
-        const int folded_lane =
-            guest_pc == 0x82282580 ? 0 : guest_pc == 0x82282584 ? 1 : -1;
+        const int folded_lane = guest_pc == 0x82282580   ? 0
+                                : guest_pc == 0x82282584 ? 1
+                                : guest_pc == 0x82282588 ? 2
+                                                         : -1;
         if (folded_lane >= 0) {
           if (cvars::arm64_blue_dragon_stvewx_stack_lane_audit) {
             auto& fallback = e.NewCachedLabel();

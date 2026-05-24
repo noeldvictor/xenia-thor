@@ -213,6 +213,21 @@ two-site A/B unchanged. If patching next, make a new default-off all-three-site
 `EXTRACT_I32` fastpath with audit counters, then route-clean proof before a
 quiet A/B. If it misses, switch to `MUL_ADD_V128` cost.
 
+Latest all-three `stvewx` fastpath audit:
+`docs/research/20260524-065602-blue-dragon-all-three-stvewx-fastpath.md`
+extends the existing default-off
+`arm64_blue_dragon_stvewx_stack_lane_fastpath` to all three proven sites.
+`NativeCore` and `FullDeploy` passed, and capture
+`scratch/thor-debug/20260524-065132-*` reached visible opening sky/dragon-wing
+on APK SHA
+`8A3DA22B2208AA67DE13C07383490F3BEBA14E2DC1538AAB5CE08FD035626771` with a
+clean fatal-marker search. Audit counters ended at
+`fastpath=722256/2008221 fallback=0/0`. Treat this as route-clean correctness
+only, not speed proof, because audit counters and block body-time were enabled.
+Keep the cvar default-off. Next worker output should be a quiet same-APK A/B
+or control sandwich with audit off; if it is inconclusive again, move to
+`MUL_ADD_V128` cost.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture

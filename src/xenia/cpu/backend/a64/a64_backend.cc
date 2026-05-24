@@ -228,8 +228,9 @@ DEFINE_bool(
 DEFINE_bool(
     arm64_blue_dragon_stvewx_stack_lane_fastpath, false,
     "Thor ARM64 speed lane: fold the proven Blue Dragon 82282490 "
-    "stvewx stack-lane dynamic EXTRACT_I32 sites at 82282580 and 82282584 "
-    "to constant lanes. Research-only, title-specific, and default-off.",
+    "stvewx stack-lane dynamic EXTRACT_I32 sites at 82282580, 82282584, "
+    "and 82282588 to constant lanes. Research-only, title-specific, and "
+    "default-off.",
     "a64");
 DEFINE_bool(
     arm64_blue_dragon_stvewx_stack_lane_audit, false,
