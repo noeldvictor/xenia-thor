@@ -107,7 +107,7 @@ switch ($Mode) {
             "Previous 82490030 split remains docs/research/20260524-001152-82490030-call-edge-split.md: dynamic child totals put 82486178 first (body_ticks_total=2302621, calls_total=33218), followed by 82485DD8 (804023) and 82486018 (679426). " +
             "Previous stability evidence remains docs/research/20260523-235800-object-release-outside-global-lock.md: the ObjectTable ReleaseHandle/RemoveHandle fix defers object->Release() until after the global critical-region lock and restored route-clean body-time rows for 8227F1D8 and 82490030. Treat the Processor::OnThreadDestroyed black-idle as fixed unless fresh owner-source evidence reopens it. " +
             "Previous route-clean parent evidence remains docs/research/20260523-153235-8227f1d8-call-edge-split.md: 8227F1D8 -> 82490030 is the hot child edge, while 826BFC7C was not meaningful in that route. " +
-            "Keep arm64_blue_dragon_vmx_copy_loop_fastpath, arm64_context_promotion_gpr_livein_r1, broad GPR caches, and call-edge profiling default-off outside targeted captures. Do not globally disable a64_enable_host_guest_stack_synchronization from the first modest A/B."
+            "Keep arm64_blue_dragon_vmx_copy_loop_fastpath, arm64_context_promotion_gpr_livein_r1, broad GPR caches, and call-edge profiling default-off outside targeted captures. Do not globally disable a64_enable_host_guest_stack_synchronization from this mixed evidence."
         )
         Enable-GoalLoop -Name "blue-dragon-full-speed" -Prompt $prompt -Proof "scratch/thor-debug/latest-blue-dragon-full-speed-proof.json" -Attempts $MaxAttempts
     }
