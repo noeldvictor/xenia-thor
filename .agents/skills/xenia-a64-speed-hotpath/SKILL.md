@@ -537,6 +537,19 @@ reported `owner_hint_source=system_tid`, matching `28245`, with both native
 liveness probes false and `owner_hint_state=zombie`. Treat this as proof that
 the current blocker is global critical-region ownership/lifetime attribution,
 not an `82490030` codegen peephole.
+That attribution patch now has an owner-source follow-up:
+`docs/research/20260523-232053-global-critical-owner-source-attribution.md`.
+It adds `global_lock_owner_seq`, `global_lock_owner_age_ms`, and
+`global_lock_owner_source` to A64 idle-snapshot skip logs and tags `Acquire`,
+`AcquireDirect`, `TryAcquire`, `XThread::LockApc`, and
+`ObjectTable::LookupObject`. `NativeCore` and `FullDeploy` passed with APK SHA
+`D68ED877D6C265420CD6853AB6C108C18F17E23911C2A1135016797D345C4823`. Short
+validation `scratch/thor-debug/20260523-231636-*` stayed active for 100 seconds
+with clean fatal search, ended at the loading overlay, and did not emit an idle
+skip line. Next use a longer route-stabilized attribution capture before any
+new generated-code patch; if it stays active and reaches the visible route,
+return to measured body-time/call-edge profiling instead of repeating the stale
+`82490030` captures unchanged.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

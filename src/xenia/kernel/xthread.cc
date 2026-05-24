@@ -587,7 +587,10 @@ void XThread::LowerIrql(uint32_t new_irql) { irql_ = new_irql; }
 
 void XThread::CheckApcs() { DeliverAPCs(); }
 
-void XThread::LockApc() { global_critical_region_.mutex().lock(); }
+void XThread::LockApc() {
+  global_critical_region_.mutex().lock();
+  xe::global_critical_region::NoteOwner("XThread::LockApc");
+}
 
 void XThread::NoteApcQueued() {
   apc_pending_count_.fetch_add(1, std::memory_order_release);

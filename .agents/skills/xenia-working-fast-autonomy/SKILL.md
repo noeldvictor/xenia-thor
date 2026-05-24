@@ -395,6 +395,20 @@ cached XThread state is `zombie`. The next useful worker slice is diagnostic
 global critical-region ownership/lifetime attribution around the processor
 debug lock, not another unchanged 82490030 capture and not generated-code
 behavior.
+That owner-source attribution patch now exists:
+`docs/research/20260523-232053-global-critical-owner-source-attribution.md`.
+It adds owner sequence, owner age, and owner source fields to the A64 idle skip
+line and tags `Acquire`, `AcquireDirect`, `TryAcquire`, `XThread::LockApc`,
+and `ObjectTable::LookupObject`. `NativeCore` and `FullDeploy` passed with APK
+SHA `D68ED877D6C265420CD6853AB6C108C18F17E23911C2A1135016797D345C4823`.
+Short validation `scratch/thor-debug/20260523-231636-*` stayed active for
+100 seconds, ended at the loading overlay, and had a clean fatal search but no
+idle-snapshot skip line. The next worker slice should run a longer
+route-stabilized attribution capture; if it black-idles, inspect
+`global_lock_owner_seq`, `global_lock_owner_age_ms`, and
+`global_lock_owner_source`. If it stays active and reaches the visible route,
+resume measured hotpath profiling rather than repeating stale `82490030`
+captures.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

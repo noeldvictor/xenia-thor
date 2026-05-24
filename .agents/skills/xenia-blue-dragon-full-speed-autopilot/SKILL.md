@@ -402,6 +402,20 @@ reproduced the black-idle with clean fatal search. The new line reports
 `owner_hint_state=zombie`. Next slice should instrument/audit global
 critical-region ownership and release lifetime around the processor debug lock,
 not patch 82490030 generated code.
+That owner-source attribution patch now exists:
+`docs/research/20260523-232053-global-critical-owner-source-attribution.md`.
+It records global critical-region owner sequence, owner age, and owner source
+in the A64 idle skip line, and tags `Acquire`, `AcquireDirect`, `TryAcquire`,
+`XThread::LockApc`, and `ObjectTable::LookupObject`. `NativeCore` and
+`FullDeploy` passed with APK SHA
+`D68ED877D6C265420CD6853AB6C108C18F17E23911C2A1135016797D345C4823`. Short
+validation `scratch/thor-debug/20260523-231636-*` stayed active for 100 seconds
+with clean fatal search but remained at the loading overlay and did not emit an
+idle-snapshot skip line. Next run a longer route-stabilized attribution capture;
+if it black-idles, inspect `global_lock_owner_seq`,
+`global_lock_owner_age_ms`, and `global_lock_owner_source`. If it stays active
+and reaches the visible route, return to measured performance profiling instead
+of repeating stale `82490030` captures.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

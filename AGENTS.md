@@ -711,6 +711,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   it is diagnostic global critical-region ownership/lifetime attribution around
   the processor debug lock, so the next black-idle can tell stale last-owner
   bookkeeping from a native thread exiting while holding the lock.
+- Global critical owner-source attribution:
+  `docs/research/20260523-232053-global-critical-owner-source-attribution.md`.
+  Diagnostic patch adds global critical-region owner sequence, owner age, and
+  owner source fields to the A64 idle skip line, and tags `Acquire`,
+  `AcquireDirect`, `TryAcquire`, `XThread::LockApc`, and
+  `ObjectTable::LookupObject`. `NativeCore` and `FullDeploy` passed; APK SHA
+  `D68ED877D6C265420CD6853AB6C108C18F17E23911C2A1135016797D345C4823`.
+  Short validation `scratch/thor-debug/20260523-231636-*` stayed active for
+  100 seconds with clean fatal-marker search and no idle-snapshot skip line,
+  ending at the loading overlay. This proves no early diagnostic regression,
+  but it did not yet exercise `global_lock_owner_*`. Next run a longer
+  route-stabilized attribution capture; if it black-idles, inspect
+  `global_lock_owner_seq`, `global_lock_owner_age_ms`, and
+  `global_lock_owner_source`. If it stays route-clean, return to measured
+  performance profiling instead of repeating stale `82490030` captures.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

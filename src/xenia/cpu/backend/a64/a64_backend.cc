@@ -1828,10 +1828,19 @@ void A64Backend::LogSpeedProfile() {
           QueryNativeThreadProcSnapshot(owner_system_thread_id);
       auto hint_native_snapshot =
           QueryNativeThreadProcSnapshot(owner_hint.system_thread_id);
+      auto critical_region_snapshot =
+          xe::global_critical_region::QueryDebugSnapshot();
+      const uint64_t now_ms = xe::Clock::QueryHostUptimeMillis();
+      const uint64_t owner_age_ms =
+          critical_region_snapshot.last_owner_host_uptime_ms
+              ? now_ms - critical_region_snapshot.last_owner_host_uptime_ms
+              : 0;
       XELOGW(
           "A64 thread snapshot skipped: processor debug lock busy "
           "after_retries=20 last_global_owner_sys_tid={} "
           "last_global_owner_thread_id={:08X} global_lock_count={} "
+          "global_lock_owner_seq={} global_lock_owner_age_ms={} "
+          "global_lock_owner_source='{}' "
           "owner_tid={:08X} owner_lr={:08X} owner_ctr={:08X} "
           "owner_r1={:08X} owner_r3={:08X} owner_r4={:08X} "
           "native_owner_live={} native_owner_name='{}' "
@@ -1840,8 +1849,12 @@ void A64Backend::LogSpeedProfile() {
           "owner_hint_tid={:08X} owner_hint_handle={:08X} "
           "owner_hint_state={} owner_hint_native_live={} "
           "owner_hint_native_name='{}' owner_hint_native_state='{}'",
-          owner_system_thread_id, owner_thread_id,
-          owner.count, owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
+          owner_system_thread_id, owner_thread_id, owner.count,
+          critical_region_snapshot.last_owner_sequence, owner_age_ms,
+          critical_region_snapshot.last_owner_source
+              ? critical_region_snapshot.last_owner_source
+              : "",
+          owner.thread_id, owner.lr, owner.ctr, owner.r1, owner.r3,
           owner.r4, native_owner_snapshot.live ? "true" : "false",
           native_owner_snapshot.name, native_owner_snapshot.state,
           have_owner_hint ? "hit" : "miss", owner_hint_source,

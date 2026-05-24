@@ -279,6 +279,7 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
   XObject* object = nullptr;
   if (!already_locked) {
     global_critical_region_.mutex().lock();
+    xe::global_critical_region::NoteOwner("ObjectTable::LookupObject");
   }
 
   // Lower 2 bits are ignored.

@@ -55,10 +55,19 @@ namespace xe {
 // };
 class global_critical_region {
  public:
+  struct DebugSnapshot {
+    uint32_t last_owner_system_thread_id = 0;
+    uint32_t last_owner_thread_id = 0;
+    uint64_t last_owner_sequence = 0;
+    uint64_t last_owner_host_uptime_ms = 0;
+    const char* last_owner_source = "";
+  };
+
   static std::recursive_mutex& mutex();
-  static void NoteOwner();
+  static void NoteOwner(const char* source = "");
   static uint32_t last_owner_system_thread_id();
   static uint32_t last_owner_thread_id();
+  static DebugSnapshot QueryDebugSnapshot();
 
   // Acquires a lock on the global critical section.
   // Use this when keeping an instance is not possible. Otherwise, prefer
@@ -66,14 +75,14 @@ class global_critical_region {
   // it to keep things readable.
   static std::unique_lock<std::recursive_mutex> AcquireDirect() {
     auto lock = std::unique_lock<std::recursive_mutex>(mutex());
-    NoteOwner();
+    NoteOwner("AcquireDirect");
     return lock;
   }
 
   // Acquires a lock on the global critical section.
   inline std::unique_lock<std::recursive_mutex> Acquire() {
     auto lock = std::unique_lock<std::recursive_mutex>(mutex());
-    NoteOwner();
+    NoteOwner("Acquire");
     return lock;
   }
 
@@ -88,7 +97,7 @@ class global_critical_region {
     auto lock =
         std::unique_lock<std::recursive_mutex>(mutex(), std::try_to_lock);
     if (lock.owns_lock()) {
-      NoteOwner();
+      NoteOwner("TryAcquire");
     }
     return lock;
   }
