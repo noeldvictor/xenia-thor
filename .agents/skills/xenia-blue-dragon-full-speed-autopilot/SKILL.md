@@ -119,6 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` now
+supersedes the broad "exclusive attribution" instruction. Same-run block
+body-time plus call-edge timing in `scratch/thor-debug/20260524-030450-*`
+reached the visible opening route with clean fatal search. Dynamic direct-call
+edges account for `84969304` ticks, or `84.08%` of final `82282490` body ticks;
+the self-recursive `822825E0 -> 82282490` edge alone is `72194274` ticks,
+about `71.44%` of final `82282490` body time and `98.32%` of the `822825E0`
+block body. Treat this as callee-body work, not generic call/prolog overhead.
+Do not rerun the exact block/call-edge capture unchanged. Next slice should
+map dynamic block-body guests such as `8228252C` back to exact `82282490`
+HIR/PPC spans, then choose a default-off function/block-gated state-traffic or
+lowering experiment from body-backed local spans.
+
 `docs/research/20260524-025544-a64-entry-exit-profiler.md` supersedes the
 stackpoint/prolog question raised by
 `docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md`.

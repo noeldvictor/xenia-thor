@@ -116,6 +116,18 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and `822824F0` lanes:
+`docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` now
+narrows the recursive-wall lane. Route-clean same-run block body-time plus
+call-edge timing `scratch/thor-debug/20260524-030450-*` shows dynamic
+direct-call edges are `84.08%` of final `82282490` body ticks, with
+`822825E0 -> 82282490` alone at `72194274` ticks (`71.44%` of final
+`82282490` body time and `98.32%` of the `822825E0` block body). This is
+mostly callee-body work, not caller-side call/prolog overhead. Do not rerun
+that exact capture unchanged. The next useful worker slice is a dynamic
+block-slice report or equivalent HIR/PPC mapping for block-body guests such as
+`8228252C`, followed by a default-off function/block-gated state-traffic or
+lowering experiment from body-backed local spans.
+
 `docs/research/20260524-025544-a64-entry-exit-profiler.md` now answers the
 stackpoint/prolog question from the recursive `82282490` lane. Route-clean
 capture `scratch/thor-debug/20260524-025000-*` shows generated

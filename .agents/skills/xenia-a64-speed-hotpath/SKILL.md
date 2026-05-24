@@ -624,6 +624,18 @@ Current preset rebaseline:
 the current preset, not more stale `82490030` child work.
 
 Current recursive `82282490` entry/exit read:
+`docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` is the
+latest recursive-wall read. Route-clean same-run block body-time plus call-edge
+timing `scratch/thor-debug/20260524-030450-*` shows direct-call edges account
+for `84969304` ticks, or `84.08%` of final `82282490` body ticks. The
+self-recursive `822825E0 -> 82282490` edge accounts for `72194274` ticks,
+about `71.44%` of final `82282490` body time and `98.32%` of the `822825E0`
+block body. Treat that as callee-body work, not generic call/prolog overhead.
+Do not rerun the same block/call-edge capture unchanged. Next speed lane is a
+dynamic block-slice report for `82282490` block-body guests such as `8228252C`,
+then a default-off function/block-gated state-traffic or lowering experiment
+from body-backed local spans.
+
 `docs/research/20260524-025544-a64-entry-exit-profiler.md`. The prior
 stack-sync probe showed `822825E0 -> 82282490` is the dominant recursive edge,
 but route-clean capture `scratch/thor-debug/20260524-025000-*` now shows

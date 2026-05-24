@@ -837,6 +837,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   do not treat stackpoint/prolog/epilog as the main wall. Next focus is
   exclusive attribution inside `82282490` body/recursive child work, or fresh
   body-backed state-traffic reduction.
+- Current `82282490` exclusive attribution:
+  `docs/research/20260524-031017-82282490-exclusive-callee-attribution.md`.
+  Same-run block body-time plus call-edge timing
+  `scratch/thor-debug/20260524-030450-*` reached the visible opening route
+  with clean fatal search. Dynamic direct-call edges account for `84969304`
+  ticks, or `84.08%` of final `82282490` body ticks; the self-recursive
+  `822825E0 -> 82282490` edge alone is `72194274` ticks, about `71.44%` of
+  final `82282490` body time and `98.32%` of the `822825E0` block body. Treat
+  this as callee-body work, not generic call/prolog overhead. Do not rerun this
+  exact capture unchanged. Next map dynamic block-body guests such as
+  `8228252C` back to exact HIR/PPC spans before a local `82282490` codegen or
+  state-traffic patch.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
