@@ -2419,6 +2419,20 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
+  `tools/thor/thor_hir_dead_state_store_dce_audit.ps1` now answers whether
+  moving a target `store_context` suppression into HIR would recursively delete
+  upstream work through `DeadCodeEliminationPass`. For exact
+  `82282490:8228252C-822825C4` `BlueDragonCallBoundaryDead` stores, the answer
+  is no: `target_store_context=13` and `dead_assignments=0`. Do not implement a
+  HIR-level version of the same `13`-store suppression. The unsafe all-span
+  upper bound exposes `22` dead assignments, mostly the live `f[1]` / `fpscr`
+  call-argument path before `82282598 -> 82287788`; focused `82287788` HIR
+  proves the callee loads `f[1]` and `fpscr`, so do not skip those stores. Next
+  useful lane is an interprocedural argument/state-roundtrip audit for
+  `82282598 -> 82287788`, focused on whether live `f[1]` / `fpscr` can be
+  carried or promoted without hiding guest-visible PPC state.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
   `arm64_blue_dragon_call_boundary_state_suppress_dead_stores` now exists,
   default-off, and suppresses only the `13` route-proven candidate-dead

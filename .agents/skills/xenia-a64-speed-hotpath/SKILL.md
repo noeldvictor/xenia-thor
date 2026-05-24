@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest call-boundary suppression probe:
+Latest HIR DCE audit:
+`docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
+Use `tools/thor/thor_hir_dead_state_store_dce_audit.ps1` before trying to move
+a backend store-suppression idea into HIR for DCE. For
+`82282490:8228252C-822825C4`, exact `BlueDragonCallBoundaryDead` removal has
+`target_store_context=13` and `dead_assignments=0`, so a HIR-level version of
+the `13`-store skip is not the next speed patch. The larger all-span upper
+bound comes from live `f[1]` / `fpscr` call state, and `82287788` HIR proves
+those values are loaded by the callee. Next speed evidence should focus on
+interprocedural live argument/state round-trips across `82282598 -> 82287788`,
+not another dead-store-only backend toggle.
+
+Previous call-boundary suppression probe:
 `docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
 `arm64_blue_dragon_call_boundary_state_suppress_dead_stores` is implemented but
 default-off. It suppresses only the `13` route-proven candidate-dead

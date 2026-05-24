@@ -119,6 +119,23 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`
+adds `tools/thor/thor_hir_dead_state_store_dce_audit.ps1`. The offline audit
+virtually removes target `store_context` rows before DCE and counts recursive
+dead assignment fallout. For the exact `13` route-proven candidate-dead stores
+in `82282490:8228252C-822825C4`, it reports `dead_assignments=0`. Do not
+implement a HIR-level version of that same `13`-store suppression; it would not
+delete the upstream vector/FPR work and would repeat the tiny backend store skip
+that missed speed. The unsafe all-span upper bound exposes `22` removable
+assignments, mostly the live `f[1]` / `fpscr` path before
+`82282598 -> 82287788`, but focused `82287788` HIR proves the callee really
+loads `f[1]` and `fpscr`. Do not skip that live state. Next useful slice is an
+interprocedural argument/state-roundtrip audit for `82282598 -> 82287788`,
+focused on a guarded function-pair carrier, callee-local promotion, or direct
+call argument lowering for live `f[1]` / `fpscr` without hiding guest-visible
+PPC state.
+
+Previous priority:
 `docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`
 adds default-off `arm64_blue_dragon_call_boundary_state_suppress_dead_stores`.
 It skips only the `13` route-proven candidate-dead stores before the Blue

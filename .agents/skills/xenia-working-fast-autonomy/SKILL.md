@@ -749,6 +749,20 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
+`tools/thor/thor_hir_dead_state_store_dce_audit.ps1` now tests whether moving
+targeted `store_context` suppression into HIR would let
+`DeadCodeEliminationPass` remove upstream work. Exact
+`BlueDragonCallBoundaryDead` suppression for `82282490:8228252C-822825C4`
+shows `target_store_context=13` and `dead_assignments=0`, so do not implement
+a HIR-level repeat of the same `13`-store skip. Unsafe all-span removal shows
+an upper bound of `22` dead assignments, mostly the live `f[1]` / `fpscr`
+argument path before `82282598 -> 82287788`; focused `82287788` HIR proves the
+callee loads and uses `f[1]` and `fpscr`. Next worker slice should audit
+interprocedural live argument/state round-trips for `82282598 -> 82287788`
+instead of another backend dead-store skip.
+
+Previous current worker target:
 `docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
 The exact `13`-site call-boundary store suppression probe is implemented and
 route-clean, but not speed-proven. Route-safety capture
