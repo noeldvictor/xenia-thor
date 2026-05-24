@@ -149,9 +149,20 @@ Current local-span ranking:
 `exclusive_pct=33.72`) and `822824F0-82282528` second
 (`approx_exclusive=2021174`, `exclusive_pct=57.72`). Do not repeat the exact
 narrow `stvewx` stack-lane fold A/B for `82282580/82282584`; it did not prove
-speed. The next useful worker output should be a broader state/vector/FPR
-traffic patch for `8228252C-822825C4`, or a focused offline comparison against
-`822824F0-82282528` if that patch is not clear yet.
+speed.
+
+Latest top-span comparison:
+`docs/research/20260524-055108-82282490-top-span-comparison.md` says not to
+patch generated-code behavior from the comparison alone. `8228252C-822825C4`
+is still the larger absolute local target (`approx_exclusive=2876500`), but CR
+fusion/elision is rejected, the exact `stvewx` lane-fold A/B already missed
+speed proof, and the remaining state/vector/FPR surface needs more provenance.
+`822824F0-82282528` is smaller but cleaner (`approx_exclusive=2021174`,
+`exclusive_pct=57.72`) and has an exact `lvlx/lvrx` to
+`load_vector_shl + permute` to `v[0]` shape. The next useful worker output
+should be focused provenance for that `822824F0` vector-load join, or a
+deterministic tool/report that proves why a default-off function/span-gated
+codegen experiment is safe.
 
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`

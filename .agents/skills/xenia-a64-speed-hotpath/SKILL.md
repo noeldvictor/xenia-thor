@@ -656,9 +656,20 @@ Current local/exclusive ranking:
 (`approx_exclusive=2876500`, `exclusive_pct=33.72`) and `822824F0-82282528`
 second (`approx_exclusive=2021174`, `exclusive_pct=57.72`). The narrow
 `stvewx` stack-lane fold for `82282580/82282584` was already route-clean and
-not a proven speed win, so the next speed patch should target broader
-state/vector/FPR traffic in `8228252C-822825C4`, or compare it with
-`822824F0-82282528` before changing code.
+not a proven speed win.
+
+Latest top-span comparison:
+`docs/research/20260524-055108-82282490-top-span-comparison.md`. The focused
+offline audit says do not patch generated-code behavior yet.
+`8228252C-822825C4` remains the larger absolute local target
+(`approx_exclusive=2876500`) but the obvious lanes are not ready: CR
+fusion/elision is rejected, exact `stvewx` lane-fold missed speed proof, and
+broad state/vector/FPR traffic needs more provenance. `822824F0-82282528` is
+smaller but cleaner (`approx_exclusive=2021174`, `exclusive_pct=57.72`) and
+has an exact `lvlx/lvrx -> load_vector_shl + permute -> v[0]` shape. The next
+speed slice should add or run focused provenance for that `822824F0`
+vector-load join before any default-off function/span-gated codegen
+experiment.
 
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture

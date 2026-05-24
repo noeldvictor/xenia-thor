@@ -154,9 +154,20 @@ updates `tools/thor/thor_hir_dynamic_block_slice_report.ps1` to print a
 (`approx_exclusive=2876500`, `exclusive_pct=33.72`) and `822824F0-82282528`
 second (`approx_exclusive=2021174`, `exclusive_pct=57.72`). Do not repeat the
 exact narrow `stvewx` stack-lane fold A/B for `82282580/82282584`; it was
-route-clean but did not prove speed. Next patch should target broader local
-state/vector/FPR traffic in `8228252C-822825C4`, or compare it against
-`822824F0-82282528` with a focused offline audit first.
+route-clean but did not prove speed.
+
+Latest top-span comparison:
+`docs/research/20260524-055108-82282490-top-span-comparison.md` ran the
+focused offline audit. `8228252C-822825C4` remains the larger absolute local
+target (`approx_exclusive=2876500`), but its obvious safe lanes are not ready:
+CR fusion/elision is rejected, exact `stvewx` lane-fold already missed speed
+proof, and the remaining state/vector/FPR traffic needs more provenance.
+`822824F0-82282528` is smaller but cleaner (`approx_exclusive=2021174`,
+`exclusive_pct=57.72`) and exposes an exact `lvlx/lvrx` to
+`load_vector_shl + permute` to `v[0]` shape. Do not patch generated-code
+behavior from this comparison alone. Next slice should add or run focused
+provenance for that `822824F0` vector-load join before any default-off
+function/span-gated codegen experiment.
 
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
