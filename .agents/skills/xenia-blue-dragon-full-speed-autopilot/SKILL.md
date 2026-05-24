@@ -119,6 +119,18 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` is the
+latest local-target map. Use
+`tools/thor/thor_hir_dynamic_block_slice_report.ps1` before a local
+`82282490` codegen patch. It maps `8228252C` to exact slice
+`8228252C-822825C4`, with body total `8530471`, edge body `5653971`, and
+approximate exclusive `2876500`. This is the current top local patch candidate:
+vector/FPR/state traffic with `vspltw:6`, `lvx128:4`, `stvewx:3`,
+`vmaddfp:3`, `store_context:27`, `load_context:14`, `extract:9`, and
+`splat:6`. Next slice should run an A64 generated-code audit for this exact
+span before implementing a default-off function/block-gated vector/store or
+state-traffic experiment.
+
 `docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` now
 supersedes the broad "exclusive attribution" instruction. Same-run block
 body-time plus call-edge timing in `scratch/thor-debug/20260524-030450-*`

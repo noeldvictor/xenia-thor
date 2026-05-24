@@ -116,6 +116,15 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and `822824F0` lanes:
+`docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` adds the
+dynamic-block map requested by the previous slice. The top local target is now
+`8228252C-822825C4`: body total `8530471`, edge body `5653971`, approximate
+exclusive `2876500`, and vector/FPR/state traffic (`vspltw:6`, `lvx128:4`,
+`stvewx:3`, `vmaddfp:3`, `store_context:27`, `load_context:14`,
+`extract:9`, `splat:6`). The next worker slice should run an A64
+generated-code audit for this exact span before writing a default-off
+function/block-gated vector/store or state-traffic experiment.
+
 `docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` now
 narrows the recursive-wall lane. Route-clean same-run block body-time plus
 call-edge timing `scratch/thor-debug/20260524-030450-*` shows dynamic

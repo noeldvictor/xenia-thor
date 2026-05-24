@@ -849,6 +849,16 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   exact capture unchanged. Next map dynamic block-body guests such as
   `8228252C` back to exact HIR/PPC spans before a local `82282490` codegen or
   state-traffic patch.
+- Current `82282490` dynamic block slicing:
+  `docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` and
+  `tools/thor/thor_hir_dynamic_block_slice_report.ps1`. The first report maps
+  `8228252C` to exact slice `8228252C-822825C4`, with body total `8530471`,
+  edge body `5653971`, and approximate exclusive `2876500`. This is now the
+  top local `82282490` patch candidate. Its shape is vector/FPR/state traffic:
+  `vspltw:6`, `lvx128:4`, `stvewx:3`, `vmaddfp:3`, `store_context:27`,
+  `load_context:14`, `extract:9`, and `splat:6`. Next run an A64 generated
+  code audit for this slice before implementing a default-off function/block
+  gated vector/store or state-traffic experiment.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

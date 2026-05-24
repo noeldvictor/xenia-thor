@@ -624,6 +624,16 @@ Current preset rebaseline:
 the current preset, not more stale `82490030` child work.
 
 Current recursive `82282490` entry/exit read:
+`docs/research/20260524-032005-82282490-dynamic-block-slice-report.md` maps the
+body-backed local span to inspect next. Use
+`tools/thor/thor_hir_dynamic_block_slice_report.ps1` before patching local
+`82282490` codegen. The top local target is `8228252C-822825C4`: body total
+`8530471`, edge body `5653971`, approximate exclusive `2876500`, and
+vector/FPR/state traffic (`vspltw:6`, `lvx128:4`, `stvewx:3`, `vmaddfp:3`,
+`store_context:27`, `load_context:14`, `extract:9`, `splat:6`). Next speed
+lane is an A64 generated-code audit for this exact slice, then one guarded
+function/block-gated experiment.
+
 `docs/research/20260524-031017-82282490-exclusive-callee-attribution.md` is the
 latest recursive-wall read. Route-clean same-run block body-time plus call-edge
 timing `scratch/thor-debug/20260524-030450-*` shows direct-call edges account
