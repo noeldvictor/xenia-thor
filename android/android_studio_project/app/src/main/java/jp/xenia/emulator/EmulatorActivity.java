@@ -255,6 +255,8 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent,
                     launchArguments,
                     "arm64_blue_dragon_call_boundary_state_suppress_dead_stores");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_blue_dragon_f1_carrier_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_add_sub_imm_audit");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_budget");

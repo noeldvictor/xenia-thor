@@ -43,6 +43,7 @@ DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
+DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -268,6 +269,58 @@ static bool EmitBlueDragonCallBoundaryStateProbe(
     }
   }
   return true;
+}
+
+enum class BlueDragonF1CarrierLoadKind {
+  kNone,
+  kHelperPreserved,
+  kChildPreserved,
+};
+
+static BlueDragonF1CarrierLoadKind GetBlueDragonF1CarrierLoadKind(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_f1_carrier_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 296) {
+    return BlueDragonF1CarrierLoadKind::kNone;
+  }
+
+  switch (instr->GuestAddressFor()) {
+    case 0x82287798:
+    case 0x82287828:
+      return BlueDragonF1CarrierLoadKind::kHelperPreserved;
+    case 0x82287A1C:
+    case 0x82287A2C:
+    case 0x82287AA4:
+    case 0x82287CF8:
+    case 0x82287D10:
+    case 0x82287D8C:
+    case 0x82287EA8:
+    case 0x82287F1C:
+      return BlueDragonF1CarrierLoadKind::kChildPreserved;
+    default:
+      return BlueDragonF1CarrierLoadKind::kNone;
+  }
+}
+
+static void EmitBlueDragonF1CarrierAudit(
+    A64Emitter& e, BlueDragonF1CarrierLoadKind kind) {
+  if (kind == BlueDragonF1CarrierLoadKind::kNone) {
+    return;
+  }
+  auto* backend = e.backend();
+  e.EmitAtomicIncrement64(backend->blue_dragon_f1_carrier_total_count());
+  switch (kind) {
+    case BlueDragonF1CarrierLoadKind::kHelperPreserved:
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_f1_carrier_helper_preserved_count());
+      break;
+    case BlueDragonF1CarrierLoadKind::kChildPreserved:
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_f1_carrier_child_preserved_count());
+      break;
+    case BlueDragonF1CarrierLoadKind::kNone:
+      break;
+  }
 }
 
 static bool IsRotatedRunOfOnes(uint64_t value, uint32_t bits) {
@@ -679,6 +732,8 @@ struct LOAD_CONTEXT_F64
     : Sequence<LOAD_CONTEXT_F64, I<OPCODE_LOAD_CONTEXT, F64Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonF1CarrierAudit(
+        e, GetBlueDragonF1CarrierLoadKind(e, i.instr, offset));
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };

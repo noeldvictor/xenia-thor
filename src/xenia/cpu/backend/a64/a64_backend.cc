@@ -268,6 +268,14 @@ DEFINE_bool(
     "Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_f1_carrier_audit, false,
+    "Thor ARM64 speed lane: instrument Blue Dragon 82287788 f[1] "
+    "LOAD_CONTEXT sites that an entry carrier could replace after preserving "
+    "GPR/LR helper calls and the f[1]-preserving 821CE028 child call. "
+    "Counts only; does not change generated behavior. Research-only, "
+    "title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1931,6 +1939,22 @@ void A64Backend::LogSpeedProfile() {
         live.second, live.first, suppressed.second, suppressed.first,
         suppressed_vmx.second, suppressed_vmx.first, suppressed_gpr.second,
         suppressed_gpr.first, suppressed_fpr.second, suppressed_fpr.first);
+  }
+  if (cvars::arm64_blue_dragon_f1_carrier_audit) {
+    auto total =
+        load_delta(blue_dragon_f1_carrier_total_count_,
+                   last_blue_dragon_f1_carrier_total_count_);
+    auto helper = load_delta(
+        blue_dragon_f1_carrier_helper_preserved_count_,
+        last_blue_dragon_f1_carrier_helper_preserved_count_);
+    auto child = load_delta(
+        blue_dragon_f1_carrier_child_preserved_count_,
+        last_blue_dragon_f1_carrier_child_preserved_count_);
+    XELOGW(
+        "A64 Blue Dragon f1 carrier audit: total={}/{} "
+        "helper_preserved={}/{} child_preserved={}/{}",
+        total.second, total.first, helper.second, helper.first, child.second,
+        child.first);
   }
 
   const bool interval_had_activity =

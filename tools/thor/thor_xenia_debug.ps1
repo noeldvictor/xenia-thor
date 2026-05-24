@@ -161,6 +161,7 @@ param(
     [string]$Arm64BlueDragonMulAddV128Audit = "false",
     [string]$Arm64BlueDragonCallBoundaryStateAudit = "false",
     [string]$Arm64BlueDragonCallBoundaryStateSuppressDeadStores = "false",
+    [string]$Arm64BlueDragonF1CarrierAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -901,6 +902,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonCallBoundaryStateSuppressDeadStores) {
         $parts += "--ez arm64_blue_dragon_call_boundary_state_suppress_dead_stores $(ConvertTo-BooleanText $Arm64BlueDragonCallBoundaryStateSuppressDeadStores)"
     }
+    if ($Arm64BlueDragonF1CarrierAudit) {
+        $parts += "--ez arm64_blue_dragon_f1_carrier_audit $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierAudit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1161,6 +1165,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_mul_add_v128_audit=$Arm64BlueDragonMulAddV128Audit",
         "arm64_blue_dragon_call_boundary_state_audit=$Arm64BlueDragonCallBoundaryStateAudit",
         "arm64_blue_dragon_call_boundary_state_suppress_dead_stores=$Arm64BlueDragonCallBoundaryStateSuppressDeadStores",
+        "arm64_blue_dragon_f1_carrier_audit=$Arm64BlueDragonF1CarrierAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1448,6 +1453,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateSuppressDeadStores" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonF1CarrierAudit" "false"
 }
 
 function Write-PerfSnapshot {
@@ -1636,6 +1642,7 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateSuppressDeadStores" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonF1CarrierAudit" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""
@@ -1889,6 +1896,9 @@ done | head -50
         }
         if ($Arm64BlueDragonCallBoundaryStateSuppressDeadStores) {
             Write-Output "A64 Blue Dragon call-boundary state suppress dead stores: $(ConvertTo-BooleanText $Arm64BlueDragonCallBoundaryStateSuppressDeadStores)"
+        }
+        if ($Arm64BlueDragonF1CarrierAudit) {
+            Write-Output "A64 Blue Dragon f1 carrier audit: $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierAudit)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

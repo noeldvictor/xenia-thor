@@ -749,6 +749,24 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-104145-blue-dragon-f1-carrier-runtime-audit.md`.
+The default-off `arm64_blue_dragon_f1_carrier_audit` probe is implemented and
+route-clean. NativeCore and FullDeploy passed. Capture
+`scratch/thor-debug/20260524-103438-*` reached visible opening sky/dragon-wing
+with a clean fatal-marker search on APK SHA
+`514C6A8C0C14820BFE0ED48CF280D00371B30602AEEE5CD86AE06A82E05D139F`.
+Final counters were `total=755910/2159587`,
+`helper_preserved=379058/1081707`, and
+`child_preserved=376852/1077880`; final body-time still had `82282490` first
+and `82287788` high-entry but cheap at `body_ticks_total=3578711`,
+`ticks_per_entry=5`. Keep the audit cvar default-off and out of presets. Next
+worker slice should implement a default-off `82287788` `f[1]` carrier
+replacement probe for offset `296`, preserving only across
+`__savegprlr_28`, `__restgprlr_28`, and direct calls to `0x821CE028`, with
+explicit kills for unknown calls, indirect calls, exits, exceptions, and
+overlapping stores. Do not touch `fpscr` or broad FPR caching in that slice.
+
+Previous current worker target:
 `docs/research/20260524-102113-821ce028-f1-clobber-audit.md`. The `821CE028`
 child call no longer needs to be treated as an unknown `f[1]` clobber for the
 parent `82287788` carrier lane. Reusing

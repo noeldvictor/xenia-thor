@@ -119,6 +119,26 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-104145-blue-dragon-f1-carrier-runtime-audit.md`
+adds the default-off `arm64_blue_dragon_f1_carrier_audit` runtime probe.
+NativeCore and FullDeploy passed. Capture
+`scratch/thor-debug/20260524-103438-*` reached the visible opening
+sky/dragon-wing route on APK SHA
+`514C6A8C0C14820BFE0ED48CF280D00371B30602AEEE5CD86AE06A82E05D139F` with a
+clean fatal-marker search. Final counters were `total=755910/2159587`,
+`helper_preserved=379058/1081707`, and
+`child_preserved=376852/1077880`. This proves the `82287788` `f[1]`
+replacement opportunity is dynamically real, but it is not speed proof because
+the run used generated-code atomic counters and `82287788` remains cheap
+(`body_ticks_total=3578711`, `ticks_per_entry=5`). Keep
+`arm64_blue_dragon_f1_carrier_audit` default-off and out of presets. Next
+useful slice is a default-off `82287788` `f[1]` carrier replacement probe for
+offset `296`, preserving only across `__savegprlr_28`, `__restgprlr_28`, and
+direct calls to `0x821CE028`, with explicit kills for unknown calls, indirect
+calls, exits, exceptions, and overlapping stores. Do not include `fpscr` or a
+broad FPR cache.
+
+Previous priority:
 `docs/research/20260524-102113-821ce028-f1-clobber-audit.md` resolves the
 child-call blocker for the `82287788` `f[1]` carrier lane. Running
 `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` on `821CE028` offset `296`
