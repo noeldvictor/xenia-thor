@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`
+implements the default-off `arm64_blue_dragon_mul_add_v128_fastpath` for only
+Blue Dragon `82282490` PCs `82282568`, `8228256C`, and `82282570`. `NativeCore`
+and `FullDeploy` passed. Route-safety capture
+`scratch/thor-debug/20260524-081212-*` reached the visible opening
+sky/dragon-wing route with clean fatal-marker search. Quiet same-APK A/B
+captures `scratch/thor-debug/20260524-081601-*` control and
+`scratch/thor-debug/20260524-081929-*` fastpath-on both reached matching
+opening route frames with clean fatal-marker searches. The fastpath shrank
+`82282490` code size `86828 -> 85424`, but final counters were mixed
+(`delta=65296 total=170142` control vs `delta=60844 total=177562` fastpath-on)
+and thread samples did not prove route-wide speed. Keep the cvar default-off
+and out of presets. The next useful lane is broader `8228252C-822825C4`
+local-span state/vector/FPR reduction, not another immediate narrow FMA skip.
+
+Previous priority:
 `docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`
 fixes the Android cvar plumbing for `arm64_blue_dragon_mul_add_v128_audit` and
 records the first real route-clean runtime counters. Capture

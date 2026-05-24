@@ -2419,6 +2419,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
+  `arm64_blue_dragon_mul_add_v128_fastpath` now exists, default-off, and is
+  gated to Blue Dragon function `82282490`, PCs `82282568/8228256C/82282570`,
+  and Thor hardware denormal-input flushing. `NativeCore` and `FullDeploy`
+  passed, and route-safety capture `scratch/thor-debug/20260524-081212-*`
+  reached the visible opening sky/dragon-wing route with clean fatal-marker
+  search. Quiet same-APK A/B (`20260524-081601-*` control and
+  `20260524-081929-*` fastpath-on) was route-clean and shrank `82282490` code
+  size `86828 -> 85424`, but did not prove route-wide speed. Keep the fastpath
+  default-off and out of presets. Next useful speed lane is broader
+  `8228252C-822825C4` local-span state/vector/FPR reduction, not another
+  immediate narrow FMA skip.
+- Previous Blue Dragon audit lane:
   `docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
   The deployed runtime audit initially produced no rows because Android did not
   forward `arm64_blue_dragon_mul_add_v128_audit` to native; the missing

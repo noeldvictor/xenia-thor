@@ -749,6 +749,15 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
+The narrow three-PC `MUL_ADD_V128` fastpath is route-clean and code-size
+positive but not speed-proven. It shrank `82282490` from `86828` to `85424`
+bytes in quiet A/B, but final counters and thread samples were mixed. Keep
+`arm64_blue_dragon_mul_add_v128_fastpath` default-off and out of presets. Next
+worker slice should move to broader `8228252C-822825C4` local-span
+state/vector/FPR reduction unless fresh evidence reopens this FMA lane.
+
+Previous worker target:
 `docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
 The Android launch bridge for `arm64_blue_dragon_mul_add_v128_audit` is fixed
 and route-clean capture `scratch/thor-debug/20260524-075713-*` produced real

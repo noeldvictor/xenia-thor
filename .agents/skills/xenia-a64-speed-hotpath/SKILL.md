@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest runtime audit:
+Latest fastpath result:
+`docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
+`arm64_blue_dragon_mul_add_v128_fastpath` is implemented but default-off. It is
+gated to Blue Dragon function `82282490`, PCs `82282568/8228256C/82282570`,
+and Thor hardware denormal-input flushing. Route-safety capture
+`scratch/thor-debug/20260524-081212-*` reached visible opening with clean fatal
+search. Quiet same-APK A/B (`20260524-081601-*` control,
+`20260524-081929-*` fastpath-on) was also route-clean and shrank `82282490`
+code size `86828 -> 85424`, but final route counters and thread samples did
+not prove speed. Keep it out of presets. Do not spend the next immediate slice
+on this same three-PC FMA skip unless broader `8228252C-822825C4`
+state/vector/FPR work reopens it.
+
+Previous runtime audit:
 `docs/research/20260524-080156-blue-dragon-mul-add-v128-audit-capture.md`.
 The first deployed audit capture reached the visible route but emitted no audit
 rows because `EmulatorActivity.java` did not forward
@@ -1316,10 +1329,9 @@ Final `MUL_ADD_V128` audit counters for `82282490` PCs `82282568`,
 `sw_flush_path=0/0`, `input_denorm=0/0`, `output_denorm=0/0`,
 `nan_entry=0/0`, and `nan_lane=0/0`.
 
-Next speed experiment should be a default-off Blue-Dragon/function/PC-gated
-`MUL_ADD_V128` fastpath for only those three PCs. Keep it out of presets until
-it has both a route-clean proof and a quiet same-APK A/B. Do not generalize
-this evidence to global `MUL_ADD_V128`.
+The audit explains why the fastpath was attempted: the three target PCs were
+hot while software-flush, denormal, and NaN repair paths were cold. The
+fastpath A/B above supersedes it as the current decision.
 
 ## Files To Inspect
 

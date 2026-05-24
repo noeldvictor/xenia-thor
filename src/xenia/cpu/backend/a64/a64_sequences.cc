@@ -39,6 +39,7 @@ DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
 DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
+DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
@@ -4606,11 +4607,15 @@ struct MUL_ADD_V128
     //   2. Flush s1/s2 into v0/v1, save to stack[0]/stack[16].
     //   3. Restore s3 into v3, fmla into v2, NaN fixup, flush output.
     const uint32_t guest_pc = i.instr ? i.instr->GuestAddressFor() : 0;
-    const bool audit =
-        cvars::arm64_blue_dragon_mul_add_v128_audit &&
+    const bool blue_dragon_target =
         e.current_guest_function() == 0x82282490 &&
         (guest_pc == 0x82282568 || guest_pc == 0x8228256C ||
          guest_pc == 0x82282570);
+    const bool audit =
+        cvars::arm64_blue_dragon_mul_add_v128_audit && blue_dragon_target;
+    const bool fastpath =
+        cvars::arm64_blue_dragon_mul_add_v128_fastpath &&
+        blue_dragon_target && e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);
 
     std::atomic<uint64_t>* pc_counter = nullptr;
     if (audit) {
@@ -4662,6 +4667,20 @@ struct MUL_ADD_V128
         !e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);
     if (software_flush) {
       e.EmitAtomicIncrement64(sw_flush_path_counter);
+    }
+    if (fastpath) {
+      int d = i.dest.reg().getIdx();
+      int s1, s2;
+      PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
+      int s3 = SrcVReg(e, i.src3, 2);
+      if (s3 != 2) {
+        e.mov(VReg(2).b16, VReg(s3).b16);
+      }
+      e.fmla(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);
+      if (d != 2) {
+        e.mov(VReg(d).b16, VReg(2).b16);
+      }
+      return;
     }
 
     {

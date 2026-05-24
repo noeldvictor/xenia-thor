@@ -239,6 +239,13 @@ DEFINE_bool(
     "back to the generic dynamic EXTRACT_I32 path on mismatch.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_mul_add_v128_fastpath, false,
+    "Thor ARM64 speed lane: use a narrow Blue Dragon 82282490 fastpath for "
+    "MUL_ADD_V128 sites 82282568, 8228256C, and 82282570 when Thor hardware "
+    "flushes VMX FP denormal inputs. Research-only, title-specific, and "
+    "default-off.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_mul_add_v128_audit, false,
     "Thor ARM64 speed lane: instrument Blue Dragon 82282490 vmaddfp/"
     "MUL_ADD_V128 sites 82282568, 8228256C, and 82282570 for denormal, "
