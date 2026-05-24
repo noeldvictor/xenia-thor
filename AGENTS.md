@@ -2443,22 +2443,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
-  `docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`.
-  New default-off cvar `arm64_blue_dragon_state_carrier_design_audit` counts
-  only, without changing generated behavior. It is title/function/PC/offset
-  gated to the audited `82282490 -> 82287788` path and reports `f[1]` seed,
-  read, helper-preserved read, child-preserved read, child-call, and fallback
-  counts plus `fpscr` seed, read, dirty-write, required-writeback, call-kill,
-  and fallback counts. NativeCore and ApkShell builds passed; APK SHA after the
-  build was
-  `5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`. No
-  route capture has used this probe yet. Next useful output is a
-  route-stabilized audit capture with
-  `-Arm64BlueDragonStateCarrierDesignAudit true`,
-  `-Arm64SpeedProfileBodyTimeFilter "82282490,82287788"`, and
-  `-Arm64SpeedProfileBodyTimeAfterMs 120000`. Do not judge FPS from that audit
-  capture, do not enable the probe in presets, and do not start a behavior
-  patch until the counter row proves which carrier has enough dynamic payoff.
+  `docs/research/20260524-141502-state-carrier-audit-route-capture.md`.
+  First Thor capture for `arm64_blue_dragon_state_carrier_design_audit`
+  reached the visible opening sky / dragon-wing route on APK SHA
+  `5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD` with a
+  clean fatal-marker search, but `log_level=0` suppressed the warning/body rows:
+  no state-carrier audit row and no `82282490,82287788` body-time rows landed.
+  `tools/thor/thor_xenia_debug.ps1` now auto-lifts Blue Dragon speed captures
+  to `LogLevel=1` when body-time, block/call-edge, thread-snapshot, or audit
+  rows are requested; quiet no-instrumentation captures still default to
+  `LogLevel=0`. Do not patch generated behavior from the route-clean/no-row
+  capture and do not rerun the exact same command unchanged. Next useful output
+  is the same route-stabilized state-carrier audit with the fixed script
+  default or explicit `-LogLevel 1`.
 - Previous Blue Dragon speed lane:
   `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`.
   New deterministic tool `tools/thor/thor_hir_state_carrier_design_audit.ps1`

@@ -424,6 +424,14 @@ function ConvertTo-BooleanText {
     return "true"
 }
 
+function Test-TrueLikeText {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+    return (ConvertTo-BooleanText $Value) -eq "true"
+}
+
 function ConvertTo-AdbIntText {
     param([string]$Value)
     $trimmed = $Value.Trim()
@@ -1428,6 +1436,56 @@ function Set-DefaultIfNotBound {
     }
 }
 
+function Test-BlueDragonSpeedLogRowsRequested {
+    if ($script:Arm64SpeedProfileIntervalMs -or
+        $script:Arm64SpeedProfileTopFunctions -or
+        $script:Arm64SpeedProfileMinDelta -or
+        $script:Arm64SpeedProfileBodyTimeFilter -or
+        $script:Arm64SpeedProfileEntryExitTimeFilter -or
+        $script:Arm64SpeedProfileBlockFilter -or
+        $script:Arm64SpeedProfileCallEdgeFilter) {
+        return $true
+    }
+
+    foreach ($name in @(
+        "A64RtlLeaveFastpathAudit",
+        "A64KfLowerIrqlApcGuardAudit",
+        "Arm64BlueDragonDrawWaitCallerProfile",
+        "Arm64BlueDragonStricmpReturnProfile",
+        "Arm64BlueDragonStvewxStackLaneAudit",
+        "Arm64BlueDragonMulAddV128Audit",
+        "Arm64BlueDragonCallBoundaryStateAudit",
+        "Arm64BlueDragonF1CarrierAudit",
+        "Arm64BlueDragonStateCarrierDesignAudit",
+        "Arm64AddSubImmAudit",
+        "Arm64ImmediateLoweringAudit",
+        "Arm64ContextPinnedGprR1Audit",
+        "Arm64ContextPromotionGprLocalSlotsAudit",
+        "Arm64ContextPromotionGprLiveInR1Audit",
+        "Arm64ContextTrafficAudit",
+        "Arm64SpeedProfileBlockBodyTime",
+        "Arm64SpeedProfileCallEdgeAuditOnly",
+        "Arm64SpeedProfileThreadSnapshot",
+        "Arm64SpeedProfileThreadSnapshotOnIdle"
+    )) {
+        $value = (Get-Variable -Name $name -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        if (Test-TrueLikeText $value) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Set-BlueDragonSpeedDefaultLogLevel {
+    if (!$script:RootBoundParameters.ContainsKey("LogLevel")) {
+        $script:LogLevel = "0"
+        if (Test-BlueDragonSpeedLogRowsRequested) {
+            $script:LogLevel = "1"
+        }
+    }
+}
+
 function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextValueCache" "false"
     Set-DefaultIfNotBound "Arm64ContextValueCacheFallthrough" "false"
@@ -1528,12 +1586,7 @@ function Use-BlueDragonSpeedDefaults {
     $script:DisassembleFunctions = "false"
     $script:XmaTraceContextState = "false"
     $script:ClearMemoryPageState = "false"
-    if (!$script:RootBoundParameters.ContainsKey("LogLevel")) {
-        $script:LogLevel = "0"
-        if ($script:Arm64SpeedProfileIntervalMs) {
-            $script:LogLevel = "1"
-        }
-    }
+    Set-BlueDragonSpeedDefaultLogLevel
     $script:VulkanForceSigned2101010UnormFallback = "true"
     $script:VulkanForce2101010Rgba8Fallback = "false"
     if (!$script:GpuUnknownRegisterLogBudget) {
@@ -1659,12 +1712,7 @@ function Use-BlueDragonTitleDefaults {
     $script:HidNopButtonSequence = ""
     $script:VulkanForceSigned2101010UnormFallback = "false"
     $script:VulkanForce2101010Rgba8Fallback = "false"
-    if (!$script:RootBoundParameters.ContainsKey("LogLevel")) {
-        $script:LogLevel = "0"
-        if ($script:Arm64SpeedProfileIntervalMs) {
-            $script:LogLevel = "1"
-        }
-    }
+    Set-BlueDragonSpeedDefaultLogLevel
 }
 
 if (!$OutDir) {

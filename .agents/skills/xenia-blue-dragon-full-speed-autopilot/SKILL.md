@@ -119,17 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
-`docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`
-adds default-off cvar `arm64_blue_dragon_state_carrier_design_audit`. It is a
-counter-only probe for the audited `82282490 -> 82287788` state-carrier design,
-not a behavior patch. It reports parent `f[1]`/`fpscr` seeds, callee reads,
-dirty writes, call-visible writeback points, call kills, and fallback counts.
-NativeCore and ApkShell builds passed; no Thor route capture has used it yet.
-Next useful output is a route-stabilized audit capture using
-`-Arm64BlueDragonStateCarrierDesignAudit true` with delayed body-time filter
-`82282490,82287788`. Do not judge FPS from that audit run, do not enable the
-probe in presets, and do not patch behavior until the counter row proves the
-next carrier lane.
+`docs/research/20260524-141502-state-carrier-audit-route-capture.md`
+records the first Thor capture for
+`arm64_blue_dragon_state_carrier_design_audit`. It reached the visible opening
+sky / dragon-wing route on APK SHA
+`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD` with a
+clean fatal-marker search, but `log_level=0` suppressed the warning/body rows:
+no state-carrier counter row and no `82282490,82287788` body-time rows landed.
+`tools/thor/thor_xenia_debug.ps1` now auto-lifts the default to `LogLevel=1`
+when Blue Dragon speed captures request body-time, block/call-edge,
+thread-snapshot, or audit rows. Do not patch behavior from the no-row capture
+and do not repeat the exact same command unchanged. Next useful output is the
+same route-stabilized audit with the fixed script default or explicit
+`-LogLevel 1`, then use the counter row before any carrier behavior patch.
 
 Previous priority:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`

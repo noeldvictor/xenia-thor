@@ -116,15 +116,17 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
-`docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`
-implements a default-off, counter-only runtime probe:
-`arm64_blue_dragon_state_carrier_design_audit`. It measures the audited
-`82282490 -> 82287788` `f[1]` and `fpscr` carrier requirements without changing
-generated behavior. NativeCore and ApkShell builds passed, and no Thor route
-capture has used the probe yet. The next useful output is a route-stabilized
-audit capture with `-Arm64BlueDragonStateCarrierDesignAudit true` plus delayed
-body-time comparators for `82282490,82287788`. Do not treat that run as a quiet
-speed A/B and do not enable the probe in presets.
+`docs/research/20260524-141502-state-carrier-audit-route-capture.md`
+records a route-clean Thor capture for
+`arm64_blue_dragon_state_carrier_design_audit` on APK SHA
+`5A80DD15AF4471FABE16E7370D6CA5EB25FC8582993F0208BE98DB33EFCFA2FD`, but it
+was data-blocked because speed-lane `log_level=0` suppressed the warning/body
+rows. No state-carrier counter row and no `82282490,82287788` body-time rows
+landed. `tools/thor/thor_xenia_debug.ps1` now defaults to `LogLevel=1` when a
+Blue Dragon speed capture requests body-time, block/call-edge,
+thread-snapshot, or audit rows. Do not patch behavior from the no-row capture
+and do not rerun it unchanged; rerun the same route-stabilized audit with the
+fixed default or explicit `-LogLevel 1` before any carrier behavior patch.
 
 Previous lane closure:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
