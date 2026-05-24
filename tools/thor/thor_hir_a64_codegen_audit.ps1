@@ -45,6 +45,39 @@ function Get-TopPairs {
         ForEach-Object { "{0}:{1}" -f $_.Name, $_.Value }) -join ",")
 }
 
+function Get-Count {
+    param(
+        [hashtable]$Table,
+        [string]$Key
+    )
+    if ($Table.ContainsKey($Key)) {
+        return [int64]$Table[$Key]
+    }
+    return [int64]0
+}
+
+function Add-EstimateRow {
+    param(
+        [System.Collections.Generic.List[object]]$Rows,
+        [string]$Shape,
+        [int64]$Count,
+        [int64]$FloorPerOp,
+        [string]$Source,
+        [string]$Note
+    )
+    if ($Count -le 0 -or $FloorPerOp -le 0) {
+        return
+    }
+    $Rows.Add([pscustomobject][ordered]@{
+        shape = $Shape
+        count = $Count
+        floor_per_op = $FloorPerOp
+        floor_total = $Count * $FloorPerOp
+        source = $Source
+        note = $Note
+    }) | Out-Null
+}
+
 function Convert-HexToInt64 {
     param([string]$Hex)
     return [Convert]::ToInt64($Hex, 16)
@@ -366,14 +399,29 @@ if ($null -ne $profile) {
     }
 }
 
-$loadContextCount = 0
-if ($hirOps.ContainsKey("load_context")) {
-    $loadContextCount = [int64]$hirOps["load_context"]
-}
-$storeContextCount = 0
-if ($hirOps.ContainsKey("store_context")) {
-    $storeContextCount = [int64]$hirOps["store_context"]
-}
+$loadContextCount = Get-Count $hirOps "load_context"
+$storeContextCount = Get-Count $hirOps "store_context"
+$loadVectorShl = Get-Count $hirOps "load_vector_shl"
+$loadVectorShr = Get-Count $hirOps "load_vector_shr"
+$permute = Get-Count $hirOps "permute"
+$orCount = Get-Count $hirOps "or"
+$andCount = Get-Count $hirOps "and"
+$addCount = Get-Count $hirOps "add"
+$truncateCount = Get-Count $hirOps "truncate"
+$zeroExtendCount = Get-Count $hirOps "zero_extend"
+$compareCount =
+    (Get-Count $hirOps "compare_eq") +
+    (Get-Count $hirOps "compare_ne") +
+    (Get-Count $hirOps "compare_slt") +
+    (Get-Count $hirOps "compare_sle") +
+    (Get-Count $hirOps "compare_sgt") +
+    (Get-Count $hirOps "compare_sge") +
+    (Get-Count $hirOps "compare_ult") +
+    (Get-Count $hirOps "compare_ule") +
+    (Get-Count $hirOps "compare_ugt") +
+    (Get-Count $hirOps "compare_uge")
+$callCount = $calls
+$branchCount = $branches
 
 $knownScalarFloor =
     $extractDynamic * 11 +
@@ -384,6 +432,43 @@ $knownScalarFloor =
     $store1 * 2 +
     $loadContextCount +
     $storeContextCount
+
+$estimateRows = New-Object System.Collections.Generic.List[object]
+Add-EstimateRow $estimateRows "load_context" $loadContextCount 1 "a64_sequences.cc" "direct PPC context ldr floor; nonzero offsets may need a mov"
+Add-EstimateRow $estimateRows "store_context" $storeContextCount 1 "a64_sequences.cc" "direct PPC context str floor; nonzero offsets may need a mov"
+Add-EstimateRow $estimateRows "load.1" $load1 2 "a64_seq_memory.cc" "guest address materialization plus byte load floor; endian paths add work"
+Add-EstimateRow $estimateRows "load_offset.1" $loadOffset1 2 "a64_seq_memory.cc" "guest offset load floor"
+Add-EstimateRow $estimateRows "store.1" $store1 2 "a64_seq_memory.cc" "guest address materialization plus byte store floor"
+Add-EstimateRow $estimateRows "load_vector_shl" $loadVectorShl 6 "a64_seq_vector.cc:LOAD_VECTOR_SHL_I8" "two mov, fmov, ins, dup/movi, add floor"
+Add-EstimateRow $estimateRows "load_vector_shr" $loadVectorShr 6 "a64_seq_vector.cc:LOAD_VECTOR_SHR_I8" "two mov, fmov, ins, dup/movi, sub floor"
+Add-EstimateRow $estimateRows "permute" $permute 8 "a64_seq_vector.cc:PERMUTE_V128" "TBL setup floor with possible src/control copies"
+Add-EstimateRow $estimateRows "extract_dynamic_i32" $extractDynamic 11 "a64_seq_vector.cc:EXTRACT_I32" "TBL control build plus tbl and umov"
+Add-EstimateRow $estimateRows "extract_constant_i32" $extractConstant 1 "a64_seq_vector.cc:EXTRACT_I32" "constant lane umov"
+Add-EstimateRow $estimateRows "splat_i32" $splat 1 "a64_seq_vector.cc:SPLAT_I32" "variable lane dup floor"
+Add-EstimateRow $estimateRows "mul_add_v128" $mulAdd 10 "a64_sequences.cc:MUL_ADD_V128" "no-denormal/no-NaN fast-path floor; slow paths add FPCR, flush, and NaN-fixup work"
+Add-EstimateRow $estimateRows "or" $orCount 1 "a64_sequences.cc" "single NEON/scalar logical op floor"
+Add-EstimateRow $estimateRows "and" $andCount 1 "a64_sequences.cc" "single logical op floor; immediate materialization may add work"
+Add-EstimateRow $estimateRows "add" $addCount 1 "a64_sequences.cc" "single add floor; immediate materialization may add work"
+Add-EstimateRow $estimateRows "truncate" $truncateCount 1 "a64_sequences.cc" "register move/mask floor"
+Add-EstimateRow $estimateRows "zero_extend" $zeroExtendCount 1 "a64_sequences.cc" "register move/mask floor"
+Add-EstimateRow $estimateRows "compare" $compareCount 1 "a64_sequences.cc" "cmp/fcmp floor; condition materialization may add work"
+Add-EstimateRow $estimateRows "branch" $branchCount 1 "a64_seq_control.cc" "direct branch floor"
+Add-EstimateRow $estimateRows "call" $callCount 2 "a64_seq_control.cc" "guest call/branch setup floor; callee body excluded separately when edge rows exist"
+
+$estimatedFloorTotal = [int64]0
+foreach ($row in $estimateRows) {
+    $estimatedFloorTotal += [int64]$row.floor_total
+}
+$exclusiveTicksPerEstimatedInstr = 0.0
+$bodyTicksPerEstimatedInstr = 0.0
+if ($estimatedFloorTotal -gt 0) {
+    if ($exclusive -gt 0) {
+        $exclusiveTicksPerEstimatedInstr = [Math]::Round($exclusive / [double]$estimatedFloorTotal, 2)
+    }
+    if ($null -ne $profile -and [int64]$profile.body_ticks_total -gt 0) {
+        $bodyTicksPerEstimatedInstr = [Math]::Round([int64]$profile.body_ticks_total / [double]$estimatedFloorTotal, 2)
+    }
+}
 
 Write-Output "# HIR A64 Codegen Audit"
 Write-Output ""
@@ -416,12 +501,24 @@ Write-Output ("stvewx={0} masked_address={1} dynamic_extract={2} store1={3} pcs=
 Write-Output ("context_barriers={0} calls={1} branches={2}" -f $contextBarrier, $calls, $branches)
 Write-Output ("known_scalar_codegen_floor={0}" -f $knownScalarFloor)
 Write-Output ""
+Write-Output "## Source-Reviewed A64 Floor Estimate"
+Write-Output "estimate_kind=heuristic_source_floor not_exact_instruction_count"
+Write-Output ("estimated_floor_total={0} body_ticks_per_estimated_instr={1} approx_exclusive_ticks_per_estimated_instr={2}" -f $estimatedFloorTotal, $bodyTicksPerEstimatedInstr, $exclusiveTicksPerEstimatedInstr)
+foreach ($row in ($estimateRows | Sort-Object -Property @{ Expression = "floor_total"; Descending = $true }, @{ Expression = "shape"; Ascending = $true })) {
+    Write-Output ("shape={0} count={1} floor_per_op={2} floor_total={3} source={4} note={5}" -f $row.shape, $row.count, $row.floor_per_op, $row.floor_total, $row.source, $row.note)
+}
+if ($contextBarrier -gt 0) {
+    Write-Output ("context_barrier_note=count:{0} not_in_floor can force register/materialization churn around aliases and calls" -f $contextBarrier)
+}
+Write-Output ""
 Write-Output "## A64 Lowering Anchors"
 Write-Output "load_context/store_context: src/xenia/cpu/backend/a64/a64_sequences.cc emits direct ldr/str from the PPC context register; nonzero constants add a mov."
 Write-Output "load.1/store.1: src/xenia/cpu/backend/a64/a64_seq_memory.cc computes a 32-bit guest address through x0 before ldr/str; byte-swap paths add rev."
 Write-Output "extract dynamic i32: src/xenia/cpu/backend/a64/a64_seq_vector.cc builds a TBL control with scalar ops, then tbl+umov. This audit counts it as an 11-instruction scalar/vector floor."
 Write-Output "splat i32: src/xenia/cpu/backend/a64/a64_seq_vector.cc variable i32 splat lowers to dup."
-Write-Output "mul_add v128: src/xenia/cpu/backend/a64/a64_sequences.cc uses VMX FPCR mode, scratch stack saves, fmla, NaN fixup, and denormal handling when required."
+Write-Output "load_vector_shl/shr: src/xenia/cpu/backend/a64/a64_seq_vector.cc builds the byte-control vector with two movs, fmov, ins, dup/movi, and add/sub."
+Write-Output "permute v128: src/xenia/cpu/backend/a64/a64_seq_vector.cc copies table/control vectors when needed, endian-adjusts control bytes, and emits tbl."
+Write-Output "mul_add v128: src/xenia/cpu/backend/a64/a64_sequences.cc uses VMX FPCR mode, scratch stack saves, fmla, NaN fixup, and denormal handling when required; the floor counts the no-NaN/no-software-denormal fast path only."
 Write-Output ""
 Write-Output "## PPC Preview"
 foreach ($row in ($ppc | Select-Object -First $Top)) {

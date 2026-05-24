@@ -188,6 +188,20 @@ generated-instruction estimate/source-review for this exact chain, especially
 `MUL_ADD_V128`, `PERMUTE_V128`, `LOAD_VECTOR_SHL`, and `EXTRACT/SPLAT`, then a
 comparison against `8228252C-822825C4` before any default-off codegen patch.
 
+Latest source-reviewed span estimate:
+`docs/research/20260524-063109-82282490-span-instruction-estimate.md` adds a
+`Source-Reviewed A64 Floor Estimate` to
+`tools/thor/thor_hir_a64_codegen_audit.ps1`. It keeps `8228252C-822825C4` as
+the better next local target by absolute exclusive time and estimated density:
+`approx_exclusive=2876500`, `estimated_floor_total=192`, and
+`approx_exclusive_ticks_per_estimated_instr=14981.77`, versus
+`822824F0-82282574` at `approx_exclusive=2021174`,
+`estimated_floor_total=164`, and `12324.23`. Do not patch local-only
+`822824F0` vector codegen from this. Next worker output should be either a
+default-off `MUL_ADD_V128` audit/source lane for `82282568/8228256C/82282570`,
+or stronger `82282588` dynamic-`EXTRACT_I32` / `stvewx` provenance before
+another lane-fold experiment.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture

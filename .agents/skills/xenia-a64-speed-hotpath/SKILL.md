@@ -708,6 +708,25 @@ exact chain, especially `MUL_ADD_V128`, `PERMUTE_V128`,
 `LOAD_VECTOR_SHL`, and `EXTRACT/SPLAT`, then compare against
 `8228252C-822825C4` before any default-off function/span-gated patch.
 
+Latest source-reviewed span estimate:
+`docs/research/20260524-063109-82282490-span-instruction-estimate.md`. Use the
+updated codegen auditor when comparing local spans:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_a64_codegen_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -StartGuest 8228252C -EndGuest 822825C4 -BlockProfileLog scratch\thor-debug\20260524-030450-speed-logcat.txt -Top 16
+```
+
+Current read: `8228252C-822825C4` remains the better next local target than
+`822824F0-82282574`. `8228252C-822825C4` has approximate exclusive `2876500`,
+estimated floor `192`, and `14981.77` exclusive ticks per estimated
+instruction; `822824F0-82282574` has approximate exclusive `2021174`,
+estimated floor `164`, and `12324.23` exclusive ticks per estimated
+instruction. Keep local-only `822824F0` vector codegen closed. Next speed lane
+should be a default-off `MUL_ADD_V128` audit/source lane for
+`82282568/8228256C/82282570`, or stronger `82282588`
+dynamic-`EXTRACT_I32` / `stvewx` provenance before another lane-fold
+experiment.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

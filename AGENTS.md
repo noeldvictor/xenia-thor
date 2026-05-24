@@ -1019,6 +1019,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   useful step is a generated-instruction estimate/source review for this exact
   chain, then compare it against `8228252C-822825C4` before any default-off
   function/span-gated codegen experiment.
+- Current `82282490` source-reviewed span estimate:
+  `docs/research/20260524-063109-82282490-span-instruction-estimate.md`.
+  `tools/thor/thor_hir_a64_codegen_audit.ps1` now prints a
+  `Source-Reviewed A64 Floor Estimate`. The estimate is a heuristic floor, not
+  exact generated instruction count. `822824F0-82282574` has estimated floor
+  `164`, approximate exclusive `2021174`, and `12324.23` exclusive ticks per
+  estimated instruction. `8228252C-822825C4` has estimated floor `192`,
+  approximate exclusive `2876500`, and `14981.77` exclusive ticks per
+  estimated instruction. Do not patch local-only `822824F0` vector codegen from
+  the cross-span audit. The next speed slice should target the larger
+  `8228252C-822825C4` lane or a shared `MUL_ADD_V128` cost lane with a
+  default-off, function/span-gated audit first. Good concrete next steps are a
+  `MUL_ADD_V128` source/audit lane for `82282568/8228256C/82282570`, or better
+  `82282588` dynamic-`EXTRACT_I32`/`stvewx` provenance before another lane-fold
+  experiment.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

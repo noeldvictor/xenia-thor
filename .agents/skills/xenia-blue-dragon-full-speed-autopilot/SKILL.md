@@ -196,6 +196,22 @@ local-only `822824F0` codegen yet. Next useful slice should estimate/generated
 instruction cost for this exact chain and compare it against
 `8228252C-822825C4` before a default-off function/span-gated experiment.
 
+Latest source-reviewed span estimate:
+`docs/research/20260524-063109-82282490-span-instruction-estimate.md` updates
+`tools/thor/thor_hir_a64_codegen_audit.ps1` with a
+`Source-Reviewed A64 Floor Estimate`. This is a heuristic source floor, not
+exact generated instruction count. The comparison keeps `8228252C-822825C4`
+ahead of the `822824F0-82282574` chain: `8228252C-822825C4` has approximate
+exclusive `2876500`, estimated floor `192`, and `14981.77` exclusive ticks per
+estimated instruction, while `822824F0-82282574` has approximate exclusive
+`2021174`, estimated floor `164`, and `12324.23` exclusive ticks per estimated
+instruction. Do not patch local-only `822824F0` vector codegen from this.
+Next useful slice should target the larger `8228252C-822825C4` lane or a
+shared `MUL_ADD_V128` cost lane with a default-off, function/span-gated audit
+first. Good concrete options are `MUL_ADD_V128` source/audit for
+`82282568/8228256C/82282570`, or better `82282588` dynamic-`EXTRACT_I32` /
+`stvewx` provenance before another lane-fold experiment.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
