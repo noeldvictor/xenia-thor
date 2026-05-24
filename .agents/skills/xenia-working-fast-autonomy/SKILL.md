@@ -445,6 +445,15 @@ by `82485DD8` (`804023`) and `82486018` (`679426`). The next worker slice is a
 filtered `82486178` HIR plus delayed body/block-time capture with `82490030`,
 `82485DD8`, and `82486018` as comparators. Do not make a local `82490030`
 codegen change first.
+The `82486178` fastpath probe is now complete:
+`docs/research/20260524-005156-82486178-vmx-copy-loop-fastpath.md`.
+`arm64_blue_dragon_vmx_copy_loop_fastpath` is route-clean but remains
+default-off. Inner-loop fastpath-on `scratch/thor-debug/20260524-004420-*`
+reached visible opening with `82486178 body_ticks_total=2050839`; same-APK
+control `scratch/thor-debug/20260524-004802-*` reached visible opening with
+`82486178 body_ticks_total=1727468`. Do not repeat that exact A/B unchanged.
+Next useful worker slice should inspect `82485DD8` and/or `82486018` with fresh
+body/HIR/block evidence before another codegen shortcut.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 

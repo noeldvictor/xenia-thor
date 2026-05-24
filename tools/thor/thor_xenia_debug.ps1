@@ -152,6 +152,7 @@ param(
     [string]$Arm64BlueDragonStricmpReturnProfileBudget = "",
     [string]$Arm64BlueDragonJumpTableFastpath = "false",
     [string]$Arm64BlueDragonJumpTableInlineInCaller = "false",
+    [string]$Arm64BlueDragonVmxCopyLoopFastpath = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -867,6 +868,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonJumpTableInlineInCaller) {
         $parts += "--ez arm64_blue_dragon_jump_table_inline_in_caller $(ConvertTo-BooleanText $Arm64BlueDragonJumpTableInlineInCaller)"
     }
+    if ($Arm64BlueDragonVmxCopyLoopFastpath) {
+        $parts += "--ez arm64_blue_dragon_vmx_copy_loop_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonVmxCopyLoopFastpath)"
+    }
     if ($Arm64AddSubImmAudit) {
         $parts += "--ez arm64_add_sub_imm_audit $(ConvertTo-BooleanText $Arm64AddSubImmAudit)"
     }
@@ -1112,6 +1116,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_stricmp_return_profile_budget=$Arm64BlueDragonStricmpReturnProfileBudget",
         "arm64_blue_dragon_jump_table_fastpath=$Arm64BlueDragonJumpTableFastpath",
         "arm64_blue_dragon_jump_table_inline_in_caller=$Arm64BlueDragonJumpTableInlineInCaller",
+        "arm64_blue_dragon_vmx_copy_loop_fastpath=$Arm64BlueDragonVmxCopyLoopFastpath",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",

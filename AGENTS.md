@@ -766,6 +766,17 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   (`679426`). Do not patch local `82490030` codegen yet; run a filtered HIR
   plus delayed body/block-time capture for `82486178` with `82490030`,
   `82485DD8`, and `82486018` as body-time comparators.
+- `82486178` VMX copy-loop fastpath probe:
+  `docs/research/20260524-005156-82486178-vmx-copy-loop-fastpath.md`.
+  The default-off `arm64_blue_dragon_vmx_copy_loop_fastpath` toggle is
+  function/block gated to `82486178:8248627C`. It is route-clean, but the
+  same-APK inner-loop A/B did not prove speed: fastpath-on
+  `scratch/thor-debug/20260524-004420-*` reached visible opening with
+  `82486178 body_ticks_total=2050839`, while fastpath-off control
+  `scratch/thor-debug/20260524-004802-*` reached visible opening with
+  `82486178 body_ticks_total=1727468`. Keep the cvar default-off and do not
+  repeat that exact A/B unchanged. Next speed slice should use fresh evidence
+  on remaining `82490030` children, especially `82485DD8` and `82486018`.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

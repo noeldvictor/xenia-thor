@@ -586,6 +586,17 @@ clean fatal search and no idle owner lines. Dynamic call-edge totals identify
 report tool can now summarize dynamic-only call-edge captures without a HIR
 dump.
 
+Current `82486178` fastpath probe:
+`docs/research/20260524-005156-82486178-vmx-copy-loop-fastpath.md`.
+The default-off `arm64_blue_dragon_vmx_copy_loop_fastpath` shortcut for
+`82486178:8248627C` is route-clean, but not a speed win. Fastpath-on
+`scratch/thor-debug/20260524-004420-*` and same-APK fastpath-off
+`scratch/thor-debug/20260524-004802-*` both reached visible opening with clean
+fatal searches; the control had lower final `82486178` and `82490030`
+body-time totals. Keep the cvar default-off, do not rerun the exact A/B
+unchanged, and move the next speed lane to `82485DD8` / `82486018` or a fresh
+low-noise comparator.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

@@ -72,6 +72,7 @@ DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_stricmp_return_profile_budget);
 DECLARE_bool(arm64_blue_dragon_jump_table_fastpath);
 DECLARE_bool(arm64_blue_dragon_jump_table_inline_in_caller);
+DECLARE_bool(arm64_blue_dragon_vmx_copy_loop_fastpath);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -2463,6 +2464,10 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
     }
     MaybeEmitBlockBodyTimeTransition(block);
     MaybeEmitBlockProfileEntry(block);
+    if (TryEmitBlueDragonVmxCopyLoopBlock(block)) {
+      block = block->next;
+      continue;
+    }
 
     // Process each instruction in the block.
     const hir::Instr* instr = block->instr_head;
@@ -3973,6 +3978,96 @@ bool A64Emitter::EmitBlueDragonJumpTableDispatch() {
     mov(x9, x0);
   }
 
+  return true;
+}
+
+bool A64Emitter::TryEmitBlueDragonVmxCopyLoopBlock(const hir::Block* block) {
+  if (!cvars::arm64_blue_dragon_vmx_copy_loop_fastpath ||
+      current_guest_function_ != 0x82486178 ||
+      current_block_guest_address_ != 0x8248627C || !block ||
+      !block->label_head) {
+    return false;
+  }
+
+  ForgetFpcrMode();
+
+  const auto gpr_offset = [](int reg) -> int32_t {
+    return static_cast<int32_t>(offsetof(ppc::PPCContext, r) +
+                                sizeof(uint64_t) *
+                                    static_cast<size_t>(reg));
+  };
+  const auto vmx_offset = [](int reg) -> int32_t {
+    return static_cast<int32_t>(offsetof(ppc::PPCContext, v) +
+                                sizeof(xe::vec128_t) *
+                                    static_cast<size_t>(reg));
+  };
+  const int32_t cr0_base =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, cr0));
+  const int32_t xer_ca =
+      static_cast<int32_t>(offsetof(ppc::PPCContext, xer_ca));
+
+  ldr(x9, ptr(GetContextReg(), gpr_offset(30)));  // PPC r30 source base.
+  ldr(x10, ptr(GetContextReg(), gpr_offset(4)));  // PPC r4 dest base.
+  ldr(x11, ptr(GetContextReg(), gpr_offset(31)));
+  ldr(x16, ptr(GetContextReg(), gpr_offset(28)));
+
+  auto& loop = NewCachedLabel();
+  L(loop);
+  add(w14, w9, 0x04);
+  and_(x14, x14, ~0xFull);
+  AddGuestAddressToMembase(w14, x14);
+  add(w15, w10, 0x04);
+  and_(x15, x15, ~0xFull);
+  AddGuestAddressToMembase(w15, x15);
+
+  ldr(QReg(0), ptr(x14, 0x00));
+  ldr(QReg(1), ptr(x14, 0x10));
+  ldr(QReg(2), ptr(x14, 0x20));
+  ldr(QReg(3), ptr(x14, 0x30));
+
+  rev32(VReg16B(4), VReg16B(0));
+  rev32(VReg16B(5), VReg16B(1));
+  rev32(VReg16B(6), VReg16B(2));
+  rev32(VReg16B(7), VReg16B(3));
+
+  str(QReg(0), ptr(x15, 0x00));
+  str(QReg(1), ptr(x15, 0x10));
+  str(QReg(2), ptr(x15, 0x20));
+  str(QReg(3), ptr(x15, 0x30));
+
+  sub(x16, x16, 1);
+  add(x9, x9, 0x40);
+  add(x10, x10, 0x40);
+  lsl(x11, x11, 1);
+  cbnz(w16, loop);
+
+  str(x16, ptr(GetContextReg(), gpr_offset(28)));
+  str(x9, ptr(GetContextReg(), gpr_offset(30)));
+  str(x10, ptr(GetContextReg(), gpr_offset(4)));
+  str(x11, ptr(GetContextReg(), gpr_offset(31)));
+
+  // Preserve the PPC-visible volatile GPR side effects of the final trip.
+  sub(x12, x9, 0x0C);
+  str(x12, ptr(GetContextReg(), gpr_offset(8)));
+  sub(x12, x10, 0x3C);
+  str(x12, ptr(GetContextReg(), gpr_offset(7)));
+  sub(x12, x10, 0x2C);
+  str(x12, ptr(GetContextReg(), gpr_offset(11)));
+  sub(x12, x10, 0x1C);
+  str(x12, ptr(GetContextReg(), gpr_offset(10)));
+  sub(x12, x10, 0x0C);
+  str(x12, ptr(GetContextReg(), gpr_offset(9)));
+
+  str(QReg(4), ptr(GetContextReg(), vmx_offset(0)));
+  str(QReg(5), ptr(GetContextReg(), vmx_offset(13)));
+  str(QReg(6), ptr(GetContextReg(), vmx_offset(12)));
+  str(QReg(7), ptr(GetContextReg(), vmx_offset(11)));
+
+  mov(w17, 1);
+  strb(w17, ptr(GetContextReg(), xer_ca));
+  strb(wzr, ptr(GetContextReg(), cr0_base + 0));
+  strb(wzr, ptr(GetContextReg(), cr0_base + 1));
+  strb(w17, ptr(GetContextReg(), cr0_base + 2));
   return true;
 }
 

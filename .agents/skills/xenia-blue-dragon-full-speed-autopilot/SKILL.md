@@ -118,16 +118,18 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: run a filtered HIR plus
-delayed body/block-time capture for `82486178`. The route-clean
-`82490030` call-edge split in
-`docs/research/20260524-001152-82490030-call-edge-split.md` reached the visible
-opening route, had clean fatal-marker search, and emitted no idle owner lines.
-Dynamic child totals from `82490030` put `82486178` first
-(`body_ticks_total=2302621`, `calls_total=33218`), followed by `82485DD8`
-(`804023`) and `82486018` (`679426`). Do not patch local `82490030` codegen
-yet, and treat the prior `Processor::OnThreadDestroyed` black-idle as fixed
-unless fresh owner-source evidence reopens it.
+Latest priority, superseding the older chronology below: keep
+`arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not repeat the
+exact `82486178` fastpath A/B unchanged. The route-clean probe in
+`docs/research/20260524-005156-82486178-vmx-copy-loop-fastpath.md` added a
+default-off function/block-gated shortcut for `82486178:8248627C`, but the
+same-APK inner-loop A/B did not prove speed. Fastpath-on
+`scratch/thor-debug/20260524-004420-*` reached visible opening with
+`82486178 body_ticks_total=2050839`; fastpath-off control
+`scratch/thor-debug/20260524-004802-*` reached visible opening with
+`82486178 body_ticks_total=1727468`. Next slice should use fresh evidence on
+the remaining `82490030` children, especially `82485DD8` and `82486018`, before
+another generated-code shortcut.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
