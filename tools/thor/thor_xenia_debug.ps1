@@ -1400,6 +1400,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonStricmpDeferredCrFastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonJumpTableFastpath" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonJumpTableInlineInCaller" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonWordCopyLoopFastpath" "true"
 }
 
 function Write-PerfSnapshot {

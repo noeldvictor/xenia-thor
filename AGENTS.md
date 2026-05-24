@@ -786,9 +786,15 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   fastpath-on `scratch/thor-debug/20260524-010729-*` lowered
   `82485DD8 body_ticks_total` to `695645` and `82485E70` block body-time to
   `75310`; fastpath-off control `scratch/thor-debug/20260524-011110-*` had
-  `82485DD8=2307804` and `82485E70=1122726`. Keep the cvar default-off until a
-  quiet same-APK A/B without block body-time/disassembly confirms the route-wide
-  speed win. Do not combine it with the `82486178` VMX copy-loop toggle yet.
+  `82485DD8=2307804` and `82485E70=1122726`.
+  `docs/research/20260524-013145-82485dd8-word-loop-quiet-ab.md` confirmed the
+  route-wide win without block body-time/disassembly: quiet fastpath-off
+  `scratch/thor-debug/20260524-012352-*` had `82490030=3923146` and
+  `82485DD8=1010794`, while quiet fastpath-on
+  `scratch/thor-debug/20260524-012713-*` had `82490030=3573598` and
+  `82485DD8=774505`. The Blue Dragon Thor speed preset may enable this toggle;
+  keep the backend cvar globally default-off and do not combine it with the
+  `82486178` VMX copy-loop toggle yet.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

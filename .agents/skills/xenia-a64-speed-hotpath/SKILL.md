@@ -605,10 +605,14 @@ Current `82485DD8` word-loop probe:
 positive profiled A/B: fastpath-on `scratch/thor-debug/20260524-010729-*`
 lowered `82485DD8` to `695645` and `82485E70` to `75310`; same-APK off control
 `scratch/thor-debug/20260524-011110-*` had `82485DD8=2307804` and
-`82485E70=1122726`. Next speed lane should confirm with a quiet same-APK A/B
-without block body-time/disassembly before enabling this outside explicit
-research runs. Do not combine it with `arm64_blue_dragon_vmx_copy_loop_fastpath`
-yet.
+`82485E70=1122726`. Quiet confirmation in
+`docs/research/20260524-013145-82485dd8-word-loop-quiet-ab.md` held without
+block body-time/disassembly: off `scratch/thor-debug/20260524-012352-*` had
+`82490030=3923146` and `82485DD8=1010794`; on
+`scratch/thor-debug/20260524-012713-*` had `82490030=3573598` and
+`82485DD8=774505`. The Blue Dragon A64 speed pack may default this toggle on;
+pass `-Arm64BlueDragonWordCopyLoopFastpath false` for controls. Do not combine
+it with `arm64_blue_dragon_vmx_copy_loop_fastpath` yet.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

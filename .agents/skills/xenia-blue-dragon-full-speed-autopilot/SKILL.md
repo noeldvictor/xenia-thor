@@ -118,17 +118,19 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: confirm the positive
-`82485DD8` word copy-loop fastpath with a quieter same-APK A/B. Evidence in
-`docs/research/20260524-011500-82485dd8-word-copy-loop-fastpath.md` says
-`arm64_blue_dragon_word_copy_loop_fastpath` is route-clean and speed-positive in
-the profiled lane: fastpath-on `scratch/thor-debug/20260524-010729-*` lowered
-`82485DD8 body_ticks_total` to `695645` and `82485E70` block body-time to
-`75310`; same-APK fastpath-off `scratch/thor-debug/20260524-011110-*` had
-`82485DD8=2307804` and `82485E70=1122726`. Keep it default-off until a quiet
-A/B without block body-time/disassembly confirms the route-wide win. Keep
-`arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not combine the
-two toggles yet.
+Latest priority, superseding the older chronology below: the `82485DD8` word
+copy-loop fastpath is now confirmed for the Blue Dragon Thor speed preset.
+Evidence in `docs/research/20260524-013145-82485dd8-word-loop-quiet-ab.md`
+shows quiet same-APK fastpath-off `scratch/thor-debug/20260524-012352-*` had
+`82490030=3923146` and `82485DD8=1010794`, while fastpath-on
+`scratch/thor-debug/20260524-012713-*` had `82490030=3573598` and
+`82485DD8=774505`, with matching visible opening screenshots and clean fatal
+searches. Use the Blue Dragon speed lane with
+`arm64_blue_dragon_word_copy_loop_fastpath=true` unless running an explicit
+control. Keep `arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not
+combine the two copy-loop toggles yet. Next slice should rebaseline delayed
+body-time under the new speed preset, then choose either a fresh `82490030`
+child split or the larger `82282490` opening-scene wall from current evidence.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and

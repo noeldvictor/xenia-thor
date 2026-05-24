@@ -459,9 +459,12 @@ The `82485DD8` word copy-loop fastpath probe is now a positive candidate:
 `arm64_blue_dragon_word_copy_loop_fastpath` is route-clean and the profiled
 same-APK A/B lowered `82485DD8` from `2307804` off to `695645` on, while
 `82485E70` dropped from `1122726` off to `75310` on. Keep the toggle
-default-off until a quiet same-APK A/B without block body-time/disassembly
-confirms route-wide speed. Do not combine it with the `82486178` VMX copy-loop
-toggle yet.
+globally default-off, but the quiet same-APK A/B in
+`docs/research/20260524-013145-82485dd8-word-loop-quiet-ab.md` confirmed the
+route-wide win for the Blue Dragon speed preset: `82490030` went from
+`3923146` off to `3573598` on and `82485DD8` went from `1010794` off to
+`774505` on, with matching visible opening screenshots and clean fatal search.
+Do not combine it with the `82486178` VMX copy-loop toggle yet.
 
 Avoid the known rejected lanes unless new evidence changes the premise:
 
