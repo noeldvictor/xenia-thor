@@ -2419,6 +2419,20 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
+  `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` classifies whether
+  `82287788` `f[1]` loads can be served by a safe carrier. For offset `296`,
+  it reports `target_loads=10`, `target_stores=0`, `helper_whitelist=2`, and
+  `unknown_call_blocked=8`. Source review of `TryEmitGprLrHelperCall` shows
+  `__savegprlr_28` / `__restgprlr_28` touch GPR/LR state but not FPR, VMX, or
+  `fpscr`, so the first two `f[1]` loads are plausible helper-whitelist
+  candidates. The remaining eight loads cross real child calls to
+  `0x821CE028` at `82287854` and `82287ED4`, so do not carry `f[1]` across
+  them without a separate clobber/use proof. Do not implement a speed patch
+  from this audit alone; next useful lane is a default-off dynamic counter for
+  helper-whitelist versus unknown-call-blocked `f[1]` hits, or a focused
+  `821CE028` `f[1]` clobber/use audit. Keep `fpscr` out of this lane.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
   `tools/thor/thor_hir_callee_local_promotion_audit.ps1` splits filtered HIR
   into strict promotion windows broken by labels, context barriers, calls,

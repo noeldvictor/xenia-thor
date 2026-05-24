@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`
+adds `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1`. For `82287788`
+offset `296` (`f[1]`), the audit reports `target_loads=10`,
+`target_stores=0`, `helper_whitelist=2`, and `unknown_call_blocked=8`.
+Source review of `TryEmitGprLrHelperCall` shows the `__savegprlr_28` /
+`__restgprlr_28` helpers touch GPR/LR state but not FPR, VMX, or `fpscr`.
+Only the first two `f[1]` loads are helper-whitelist candidates; the other
+eight cross real child calls to `0x821CE028` at `82287854` and `82287ED4`.
+Do not implement a speed patch from this audit alone. Next useful slice is a
+default-off runtime counter for dynamic helper-whitelist versus
+unknown-call-blocked `f[1]` hits, or a focused `821CE028` `f[1]` clobber/use
+audit. Keep `fpscr` out of this lane.
+
+Previous priority:
 `docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`
 adds `tools/thor/thor_hir_callee_local_promotion_audit.ps1`. The audit splits
 `82287788` into strict promotion windows broken by labels, context barriers,

@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest callee-local promotion audit:
+Latest FPR carrier safety audit:
+`docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
+Use `tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` before implementing an
+`f[1]` carrier for `82282490 -> 82287788`. For `82287788` offset `296`, the
+audit reports `target_loads=10`, `target_stores=0`, `helper_whitelist=2`, and
+`unknown_call_blocked=8`. `__savegprlr_28` / `__restgprlr_28` are GPR/LR-only
+helpers in A64 source and should not clobber FPR, but only two static loads are
+eligible before real `0x821CE028` child calls. Do not patch generated behavior
+from this alone. Next speed evidence should be a default-off runtime counter
+for dynamic helper-whitelist versus unknown-call-blocked `f[1]` hits, or a
+focused `821CE028` `f[1]` clobber/use audit. Keep `fpscr` out of this lane.
+
+Previous callee-local promotion audit:
 `docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
 Use `tools/thor/thor_hir_callee_local_promotion_audit.ps1` before implementing
 a callee-local context cache. For `82287788`, strict windows are broken by

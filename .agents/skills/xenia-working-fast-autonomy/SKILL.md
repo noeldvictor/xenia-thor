@@ -749,6 +749,20 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-101421-82287788-f1-carrier-safety-audit.md`.
+`tools/thor/thor_hir_fpr_carrier_safety_audit.ps1` now audits whether a target
+FPR context value can be carried through helper/unknown calls. For `82287788`
+offset `296` (`f[1]`), it found `target_loads=10`, `target_stores=0`,
+`helper_whitelist=2`, and `unknown_call_blocked=8`. Source review says
+`__savegprlr_28` / `__restgprlr_28` are GPR/LR-only helpers and should not
+clobber FPR, but the only eligible loads are `82287798` and `82287828`.
+The remaining `f[1]` loads cross real child calls to `0x821CE028`. Do not
+implement a speed patch yet. Next worker slice should either add a default-off
+runtime counter for dynamic helper-whitelist versus unknown-call-blocked
+`f[1]` hits, or audit `821CE028` for `f[1]` clobber/use. Keep `fpscr` out of
+this lane.
+
+Previous current worker target:
 `docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
 `tools/thor/thor_hir_callee_local_promotion_audit.ps1` now classifies strict
 callee-local promotion windows. It breaks windows on labels, context barriers,
