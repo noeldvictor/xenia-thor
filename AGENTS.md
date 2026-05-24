@@ -905,10 +905,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `lvlx/lvrx/vor/stvx`, `lvx128:6`, `vmaddfp:6`, `vspltw:6`, constant
   `extract=6`, and `splat=10`. Do not revive the known-crashy CR
   compare/barrier fusion or CR-store elision cvars, and do not restart broad
-  VMX-dot or stale `822824F0` peepholes. Next patch should be preceded by a
-  focused `822877BC-82287B38` state/vector-reduction audit, then a default-off
-  function/span-gated experiment only if the audit identifies a semantics-safe
-  lowering.
+  VMX-dot or stale `822824F0` peepholes.
+- Current `822877BC` span-reduction audit:
+  `docs/research/20260524-044223-822877bc-span-reduction-audit.md`. The new
+  `tools/thor/thor_hir_span_reduction_audit.ps1` folds together filtered HIR,
+  block-body rows, and separate call-edge rows. It found the parent span
+  `822877BC-82287B38` has `body_ticks_total=1173620`, but the child edge
+  `82287788 -> 821CE028` accounts for `1147798` body ticks over `340310`
+  calls, leaving only `25822` approximate parent-exclusive ticks (`2.2%`).
+  Treat the parent CR/state/vector traffic as misleading until the callee is
+  understood. Next run should be a route-stabilized filtered HIR plus delayed
+  body/block-time capture for `821CE028`, keeping `82282490` and `82287788` as
+  comparators. Do not patch local `822877BC-82287B38` generated code first.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-044223-822877bc-span-reduction-audit.md` closes the
+first parent-side `822877BC-82287B38` patch temptation. The new
+`tools/thor/thor_hir_span_reduction_audit.ps1` combines filtered HIR,
+block-body rows, and the separate call-edge capture. It shows
+`body_ticks_total=1173620` for the parent span, but the child edge
+`82287788 -> 821CE028` accounts for `1147798` ticks over `340310` calls,
+leaving only `25822` approximate parent-exclusive ticks (`2.2%`). Do not patch
+local `822877BC-82287B38` generated code first, even though the parent dump has
+large CR/state/vector traffic. Next slice should run a route-stabilized
+filtered HIR plus delayed body/block-time capture for `821CE028`, keeping
+`82282490` and `82287788` in the body-time filter as comparators. Keep CR
+compare/barrier fusion, CR-store elision, broad VMX-dot, stale `822824F0`,
+broad GPR caches, and the exact stvewx lane-fold A/B closed unless new
+exclusive body evidence reopens them.
+
+Previous priority:
 `docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
 `8228252C -> 82287788` child lane after the lane-fold probe. Two captures
 (`scratch/thor-debug/20260524-041413-*` and
@@ -139,7 +155,7 @@ or run a focused `822877BC-82287B38` state/vector-reduction audit, then only
 patch a default-off function/span-gated lowering if the audit identifies a
 semantics-safe shape.
 
-Previous priority:
+Older priority:
 `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` closes the
 first `8228252C` lane-fold probe. The default-off A64 `EXTRACT_I32` fastpath
 for only `82282580 -> lane 0` and `82282584 -> lane 1` is route-clean and

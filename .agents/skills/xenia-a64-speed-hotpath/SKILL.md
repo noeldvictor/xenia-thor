@@ -623,7 +623,18 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current `82287788` child-lane read:
+Current `822877BC` span-reduction read:
+`docs/research/20260524-044223-822877bc-span-reduction-audit.md`. Use
+`tools/thor/thor_hir_span_reduction_audit.ps1` when a hot parent span has both
+block-body and call-edge evidence. For `822877BC-82287B38`, the parent span
+has `body_ticks_total=1173620`, but the child edge `82287788 -> 821CE028`
+accounts for `1147798` body ticks over `340310` calls. Approximate exclusive
+parent work is only `25822` ticks (`2.2%`). Do not patch local
+`822877BC-82287B38` state/vector lowering first; dump/profile `821CE028` with
+route-stabilized delayed body/block-time, keeping `82282490` and `82287788`
+as comparators.
+
+Previous `82287788` child-lane read:
 `docs/research/20260524-042555-82287788-focused-callee-split.md`. The focused
 HIR/block-body capture `scratch\thor-debug\20260524-041413-*` and lower-noise
 call-edge capture `scratch\thor-debug\20260524-042031-*` both reached the

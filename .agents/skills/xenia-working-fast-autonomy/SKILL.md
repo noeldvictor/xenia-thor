@@ -116,6 +116,17 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-044223-822877bc-span-reduction-audit.md` shows the
+body-backed `822877BC-82287B38` parent span is mostly inclusive child work, not
+a safe local generated-code patch target. The new span auditor reports
+`body_ticks_total=1173620`, while `82287788 -> 821CE028` accounts for
+`1147798` body ticks over `340310` calls, leaving only `25822` approximate
+parent-exclusive ticks (`2.2%`). The parent dump still has CR/state/vector
+noise, but do not patch it first. Next useful worker output is a route-stable
+filtered HIR plus delayed body/block-time capture for `821CE028`, with
+`82282490` and `82287788` kept as comparators.
+
+Previous evidence:
 `docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
 `8228252C -> 82287788` child lane. Both captures reached the visible opening
 sky/wing route with clean fatal-marker searches. The lower-noise call-edge run
@@ -131,7 +142,7 @@ evidence. Next useful output is a focused `822877BC-82287B38`
 state/vector-reduction audit, or a default-off function/span-gated patch only
 after that audit proves a safer lowering.
 
-Previous evidence:
+Older evidence:
 `docs/research/20260524-040404-blue-dragon-stvewx-lane-fastpath.md` closes the
 first `8228252C` lane-fold probe. The default-off A64 `EXTRACT_I32` fastpath
 for only `82282580 -> lane 0` and `82282584 -> lane 1` is route-clean and
