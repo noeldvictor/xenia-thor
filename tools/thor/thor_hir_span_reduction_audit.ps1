@@ -320,9 +320,18 @@ $vectorPpcSet = @{
     "vmaddfp" = $true
 }
 
+function Test-IsVectorPpcOp {
+    param([string]$Op)
+
+    if ($vectorPpcSet.ContainsKey($Op)) {
+        return $true
+    }
+    return ($Op -match "^(vmsum4|vcmp|vsl|vsr|vxor|vrlimi|vsldoi|vupkd|vmrgh|vmrgl)")
+}
+
 foreach ($row in $ppc) {
     Add-Count $ppcOps $row.op
-    if ($vectorPpcSet.ContainsKey($row.op)) {
+    if (Test-IsVectorPpcOp $row.op) {
         Add-Count $ppcVectorOps $row.op
         Add-Count $ppcVectorPcs ("{0}:{1}" -f $row.address, $row.op)
     }

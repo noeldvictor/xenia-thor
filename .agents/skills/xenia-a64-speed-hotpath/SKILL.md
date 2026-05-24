@@ -623,7 +623,20 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
-Current `822877BC` span-reduction read:
+Current `821CE028` child-lane read:
+`docs/research/20260524-045602-821ce028-focused-capture.md`. Capture
+`scratch\thor-debug\20260524-045022-*` reached visible opening sky/wing with a
+clean fatal-marker search. Final body rows were `82282490=37190996`,
+`82281D28=7446911`, `82287788=4992080`, and `821CE028=2523574`.
+`821CE028` top block `821CE048-821CE1CC` is fully local at
+`body_total=607573` and contains a repeated VMX compare/dot/CR reduction shape:
+`vmsum4fp128*:6`, `vcmpgefp.:6`, `vcmpgtfp.:6`, `vslw:6`, `vxor:6`,
+`mfcr:12`, and `rlwinm:13`. Do not patch it immediately; CR store/barrier and
+broad VMX-dot lanes remain rejected, and the only safer lane is an offline
+function-gated `r10` state-traffic audit. Prefer the larger next target:
+route-stabilized filtered HIR plus delayed body/block-time for `82281D28`.
+
+Previous `822877BC` span-reduction read:
 `docs/research/20260524-044223-822877bc-span-reduction-audit.md`. Use
 `tools/thor/thor_hir_span_reduction_audit.ps1` when a hot parent span has both
 block-body and call-edge evidence. For `822877BC-82287B38`, the parent span

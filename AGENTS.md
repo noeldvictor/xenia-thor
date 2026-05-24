@@ -917,6 +917,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   understood. Next run should be a route-stabilized filtered HIR plus delayed
   body/block-time capture for `821CE028`, keeping `82282490` and `82287788` as
   comparators. Do not patch local `822877BC-82287B38` generated code first.
+- Current `821CE028` focused child read:
+  `docs/research/20260524-045602-821ce028-focused-capture.md`. Capture
+  `scratch/thor-debug/20260524-045022-*` reached the visible opening sky/wing
+  route with clean fatal-marker search on APK SHA
+  `A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. Final
+  body rows were `82282490=37190996`, `82281D28=7446911`,
+  `82287788=4992080`, and `821CE028=2523574`. `821CE028` is fully local; top
+  block `821CE048-821CE1CC` had `body_total=607573`, no child edge, and a
+  repeated VMX compare/dot/CR reduction shape (`vmsum4fp128*:6`,
+  `vcmpgefp.:6`, `vcmpgtfp.:6`, `vslw:6`, `vxor:6`, `mfcr:12`,
+  `rlwinm:13`). Do not patch it immediately: CR store/barrier and broad
+  VMX-dot lanes remain rejected, and the only safe-looking lane is a narrow
+  offline `r10` state-traffic audit. Prefer the larger next target:
+  route-stabilized filtered HIR plus delayed body/block-time capture for
+  `82281D28`, keeping `82282490`, `82287788`, and `821CE028` as comparators.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

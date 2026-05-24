@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-045602-821ce028-focused-capture.md` follows the
+`82287788 -> 821CE028` child edge. Capture
+`scratch/thor-debug/20260524-045022-*` reached the visible opening sky/wing
+route with clean fatal-marker search on APK SHA
+`A4CB9C0E8F4CBB63EB09F3DA38640BEA5410DFE5916A155627C18F3B90C39BD8`. Final
+body rows were `82282490=37190996`, `82281D28=7446911`,
+`82287788=4992080`, and `821CE028=2523574`. `821CE028` emitted OptHIR and its
+top local block `821CE048-821CE1CC` is fully local at `body_total=607573`, with
+`vmsum4fp128*:6`, `vcmpgefp.:6`, `vcmpgtfp.:6`, `vslw:6`, `vxor:6`,
+`mfcr:12`, and `rlwinm:13`. Do not patch `821CE028` immediately: CR
+store/barrier and broad VMX-dot lanes remain rejected, and the only safe-looking
+lane is a narrow offline `r10` state-traffic audit. Prefer the larger next
+target: route-stabilized filtered HIR plus delayed body/block-time capture for
+`82281D28`, keeping `82282490`, `82287788`, and `821CE028` as comparators.
+
+Previous priority:
 `docs/research/20260524-044223-822877bc-span-reduction-audit.md` closes the
 first parent-side `822877BC-82287B38` patch temptation. The new
 `tools/thor/thor_hir_span_reduction_audit.ps1` combines filtered HIR,
@@ -134,7 +150,7 @@ compare/barrier fusion, CR-store elision, broad VMX-dot, stale `822824F0`,
 broad GPR caches, and the exact stvewx lane-fold A/B closed unless new
 exclusive body evidence reopens them.
 
-Previous priority:
+Older priority:
 `docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
 `8228252C -> 82287788` child lane after the lane-fold probe. Two captures
 (`scratch/thor-debug/20260524-041413-*` and

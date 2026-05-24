@@ -116,6 +116,18 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-045602-821ce028-focused-capture.md` shows the
+`821CE028` child is route-clean but too small for the next immediate codegen
+patch. Capture `scratch/thor-debug/20260524-045022-*` reached the visible
+opening sky/wing route with clean fatal search. Final body rows were
+`82282490=37190996`, `82281D28=7446911`, `82287788=4992080`, and
+`821CE028=2523574`. Top local block `821CE048-821CE1CC` is fully local at
+`607573` body ticks and has a repeated VMX compare/dot/CR reduction shape.
+Do not patch CR store/barrier or broad VMX-dot; if staying on `821CE028`, do
+only an offline/function-gated `r10` state-traffic audit first. Prefer the
+larger next target: filtered HIR plus delayed body/block-time for `82281D28`.
+
+Previous evidence:
 `docs/research/20260524-044223-822877bc-span-reduction-audit.md` shows the
 body-backed `822877BC-82287B38` parent span is mostly inclusive child work, not
 a safe local generated-code patch target. The new span auditor reports
@@ -126,7 +138,7 @@ noise, but do not patch it first. Next useful worker output is a route-stable
 filtered HIR plus delayed body/block-time capture for `821CE028`, with
 `82282490` and `82287788` kept as comparators.
 
-Previous evidence:
+Older evidence:
 `docs/research/20260524-042555-82287788-focused-callee-split.md` follows the
 `8228252C -> 82287788` child lane. Both captures reached the visible opening
 sky/wing route with clean fatal-marker searches. The lower-noise call-edge run
