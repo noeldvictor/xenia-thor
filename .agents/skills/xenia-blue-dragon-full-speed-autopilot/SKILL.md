@@ -183,6 +183,19 @@ join is `8228254C` in the following span. Do not patch local
 `8228254C`, or return to the larger `8228252C-822825C4` state/vector/FPR target
 with better provenance.
 
+Latest cross-span consumer audit:
+`docs/research/20260524-062037-822824f0-cross-span-consumer-audit.md` extends
+the vector-load auditor with consumer rows. The larger `822824F0-82282574`
+span contains the full `lvlx/lvrx -> vsldoi -> vor -> extract/splat ->
+vmaddfp` chain, plus four stack-ish `lvx128` loads and downstream lookahead
+`stvewx` users. It is body-backed (`body_ticks_total=3501617`, child edge
+`82274DB0=1480443`, approximate exclusive `2021174`) but not a quick local
+peephole: the three `MUL_ADD_V128` lowerings bring VMX FPCR handling,
+scratch-stack saves, PPC NaN fixup, and denormal handling. Do not patch
+local-only `822824F0` codegen yet. Next useful slice should estimate/generated
+instruction cost for this exact chain and compare it against
+`8228252C-822825C4` before a default-off function/span-gated experiment.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`

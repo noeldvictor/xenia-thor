@@ -1006,6 +1006,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   patch local `822824F0-82282528` generated-code behavior yet. Next step is a
   cross-span provenance audit through at least `8228254C`, or a return to the
   larger `8228252C-822825C4` state/vector/FPR target with better provenance.
+- Current `822824F0` cross-span consumer audit:
+  `docs/research/20260524-062037-822824f0-cross-span-consumer-audit.md`.
+  `tools/thor/thor_hir_vector_load_join_audit.ps1` now prints vector consumer
+  rows. The full `822824F0-82282574` chain is self-contained in the larger
+  span (`lvlx/lvrx`, `vsldoi`, four stack-ish `lvx128` loads, `vor`, three
+  `extract+splat` pairs, and three `vmaddfp` lowerings), with
+  `body_ticks_total=3501617`, child edge `82274DB0=1480443`, and approximate
+  exclusive `2021174`. Do not implement a quick local-only `822824F0` vector
+  peephole: the real cost includes heavy `MUL_ADD_V128` lowering with VMX FPCR
+  handling, scratch-stack saves, PPC NaN fixup, and denormal handling. Next
+  useful step is a generated-instruction estimate/source review for this exact
+  chain, then compare it against `8228252C-822825C4` before any default-off
+  function/span-gated codegen experiment.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

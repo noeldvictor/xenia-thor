@@ -458,6 +458,7 @@ foreach ($i in 2..31) {
 
 $vectorLoads = New-Object System.Collections.Generic.List[object]
 $vectorJoins = New-Object System.Collections.Generic.List[object]
+$vectorConsumers = New-Object System.Collections.Generic.List[object]
 $ppcTrace = New-Object System.Collections.Generic.List[object]
 
 foreach ($row in ($lookaheadSlice | Where-Object { $_.kind -eq "ppc" } | Sort-Object -Property ordinal)) {
@@ -564,6 +565,8 @@ foreach ($row in ($lookaheadSlice | Where-Object { $_.kind -eq "ppc" } | Sort-Ob
         }
         { $_ -eq "vor" -or $_ -eq "or" } {
             if ($ppcArgs.Count -ge 3 -and $ppcArgs[0] -match "^vr\d+$") {
+                $hirRows = @($items | Where-Object { $_.kind -eq "hir" -and $_.ppc_address -eq $row.address })
+                $facts = Get-HirFacts $hirRows
                 $vectorJoins.Add([pscustomobject][ordered]@{
                     pc = $row.address
                     op = $row.op
@@ -571,6 +574,30 @@ foreach ($row in ($lookaheadSlice | Where-Object { $_.kind -eq "ppc" } | Sort-Ob
                     va = $ppcArgs[1].ToLowerInvariant()
                     vb = $ppcArgs[2].ToLowerInvariant()
                     in_slice = $inSlice
+                }) | Out-Null
+                $vectorConsumers.Add([pscustomobject][ordered]@{
+                    pc = $row.address
+                    op = $row.op
+                    args = ($ppcArgs -join ",")
+                    in_slice = $inSlice
+                    hir_ops = Get-TopPairs $facts.op_counts $Top
+                    loads = (($facts.loads | Sort-Object -Unique) -join ",")
+                    stores = (($facts.stores | Sort-Object -Unique) -join ",")
+                }) | Out-Null
+            }
+        }
+        { $_ -in @("vsldoi", "vspltw", "vmaddfp", "lvx128", "stvewx", "stvx", "lvx", "lvewx") } {
+            if ($ppcArgs.Count -ge 1) {
+                $hirRows = @($items | Where-Object { $_.kind -eq "hir" -and $_.ppc_address -eq $row.address })
+                $facts = Get-HirFacts $hirRows
+                $vectorConsumers.Add([pscustomobject][ordered]@{
+                    pc = $row.address
+                    op = $row.op
+                    args = ($ppcArgs -join ",")
+                    in_slice = $inSlice
+                    hir_ops = Get-TopPairs $facts.op_counts $Top
+                    loads = (($facts.loads | Sort-Object -Unique) -join ",")
+                    stores = (($facts.stores | Sort-Object -Unique) -join ",")
                 }) | Out-Null
             }
         }
@@ -606,6 +633,7 @@ if ($profileRows.ContainsKey($startUpper)) {
 
 $selfContainedJoin = $false
 $crossSpanJoin = $false
+$consumerChainSeen = $false
 $joinReason = "no vector join found in slice or lookahead"
 if ($vectorLoads.Count -gt 0 -and $vectorJoins.Count -gt 0) {
     $loadedRegs = @($vectorLoads | ForEach-Object { $_.vd })
@@ -621,6 +649,12 @@ if ($vectorLoads.Count -gt 0 -and $vectorJoins.Count -gt 0) {
             break
         }
     }
+}
+if ($vectorConsumers.Count -gt 0) {
+    $consumerOps = @($vectorConsumers | ForEach-Object { $_.op })
+    $consumerChainSeen = (($consumerOps -contains "vor" -or $consumerOps -contains "or") -and
+        ($consumerOps -contains "vspltw") -and
+        ($consumerOps -contains "vmaddfp"))
 }
 
 Write-Output "# HIR Vector Load Join Provenance Audit"
@@ -673,10 +707,23 @@ if ($vectorJoins.Count -eq 0) {
     }
 }
 Write-Output ""
+Write-Output "## Vector Consumer Rows"
+Write-Output ""
+if ($vectorConsumers.Count -eq 0) {
+    Write-Output "- none"
+} else {
+    foreach ($consumer in $vectorConsumers) {
+        $scope = "lookahead"
+        if ($consumer.in_slice) { $scope = "span" }
+        Write-Output ('- `{0}` `{1}` {2}: `args={3} hir_ops={4} loads={5} stores={6}`' -f $consumer.pc, $consumer.op, $scope, $consumer.args, $consumer.hir_ops, $consumer.loads, $consumer.stores)
+    }
+}
+Write-Output ""
 Write-Output "## Decision"
 Write-Output ""
 Write-Output ('- join_self_contained: `{0}`' -f $selfContainedJoin.ToString().ToLowerInvariant())
 Write-Output ('- cross_span_join_seen: `{0}`' -f $crossSpanJoin.ToString().ToLowerInvariant())
+Write-Output ('- consumer_chain_seen: `{0}`' -f $consumerChainSeen.ToString().ToLowerInvariant())
 Write-Output ('- reason: `{0}`' -f $joinReason)
 if ($selfContainedJoin) {
     Write-Output '- recommendation: `eligible_for_default_off_function_span_gated_codegen_probe_after_source_review`'

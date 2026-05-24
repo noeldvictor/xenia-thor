@@ -690,6 +690,24 @@ next audit the cross-span `lvlx/lvrx -> vor -> extract/splat -> vmaddfp`
 consumer chain through at least `8228254C`, or return to the larger
 `8228252C-822825C4` state/vector/FPR target with better provenance.
 
+Latest cross-span consumer audit:
+`docs/research/20260524-062037-822824f0-cross-span-consumer-audit.md` updates
+the auditor to print vector consumer rows. Use it on the larger chain:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_vector_load_join_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -StartGuest 822824F0 -EndGuest 82282574 -BlockProfileLog scratch\thor-debug\20260524-030450-speed-logcat.txt -Top 16
+```
+
+Current read: the full `822824F0-82282574` span has `body_ticks_total=3501617`,
+child edge `82274DB0=1480443`, and approximate exclusive `2021174`. The chain
+is self-contained at this wider scope: `lvlx/lvrx`, `vsldoi`, four stack-ish
+`lvx128` loads, `vor`, three constant-lane `extract+splat` pairs, and three
+`vmaddfp` lowerings. Do not implement a quick local-only `822824F0` vector
+peephole. Next make a generated-instruction estimate/source-review for this
+exact chain, especially `MUL_ADD_V128`, `PERMUTE_V128`,
+`LOAD_VECTOR_SHL`, and `EXTRACT/SPLAT`, then compare against
+`8228252C-822825C4` before any default-off function/span-gated patch.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

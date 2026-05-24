@@ -177,6 +177,17 @@ cross-span provenance report through at least `8228254C`, or a better-proven
 return to the larger `8228252C-822825C4` state/vector/FPR target. Do not patch
 local `822824F0-82282528` generated-code behavior yet.
 
+Latest cross-span consumer audit:
+`docs/research/20260524-062037-822824f0-cross-span-consumer-audit.md` extends
+the same tool to print vector consumer rows. `822824F0-82282574` now shows the
+full local chain: `lvlx/lvrx`, `vsldoi`, four stack-ish `lvx128` loads, `vor`,
+three constant-lane `extract+splat` pairs, and three `vmaddfp` lowerings,
+before lookahead reaches the sensitive `stvewx` store region. Keep
+local-only `822824F0` peepholes closed. The next useful worker output is a
+generated-instruction estimate/source-review for this exact chain, especially
+`MUL_ADD_V128`, `PERMUTE_V128`, `LOAD_VECTOR_SHL`, and `EXTRACT/SPLAT`, then a
+comparison against `8228252C-822825C4` before any default-off codegen patch.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
