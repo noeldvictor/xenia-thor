@@ -624,6 +624,15 @@ Current preset rebaseline:
 the current preset, not more stale `82490030` child work.
 
 Current recursive `82282490` generated-code read:
+`docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` proves the
+first narrow stack-lane fold target. In exact slice `8228252C-822825C4`,
+`82282580` is constant lane `0` from `r1 + 0x50`, and `82282584` is constant
+lane `1` from `r1 + 0x54`, assuming normal 16-byte PPC stack alignment.
+`82282588` remains unknown because it is based on `r6 + 0x8`. Next speed lane
+can be a default-off Blue-Dragon/function/PC-gated A64 `EXTRACT_I32` fastpath
+for only `82282580` and `82282584`, with audit/counters before quiet A/B.
+
+Previous generated-code audit:
 `docs/research/20260524-033116-8228252c-a64-codegen-audit.md` audits exact
 slice `8228252C-822825C4` with `tools/thor/thor_hir_a64_codegen_audit.ps1`.
 The slice has body total `8530471`, child edge `8228252C -> 82287788` body

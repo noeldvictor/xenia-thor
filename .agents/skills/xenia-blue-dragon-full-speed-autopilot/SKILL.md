@@ -119,6 +119,16 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` proves the
+first narrow `stvewx` lane-folding target. Use
+`tools/thor/thor_hir_stvewx_lane_audit.ps1` before changing this lane again.
+The audit proves `82282580 -> lane 0` from `r1 + 0x50` and
+`82282584 -> lane 1` from `r1 + 0x54` under the normal PPC stack-pointer
+16-byte alignment assumption. It leaves `82282588` unknown because the address
+is `r6 + 0x8`. Next slice may implement a default-off,
+Blue-Dragon/function/PC-gated A64 `EXTRACT_I32` fastpath for only `82282580`
+and `82282584`, with audit/counters before any quiet speed A/B.
+
 `docs/research/20260524-033116-8228252c-a64-codegen-audit.md` adds the A64
 generated-code/lowering audit for the current top local `82282490` slice. Use
 `tools/thor/thor_hir_a64_codegen_audit.ps1` for this lane. The slice

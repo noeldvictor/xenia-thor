@@ -116,6 +116,15 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest evidence supersedes the stale `82490030` and broad `822824F0` lanes:
+`docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` proves the
+first two `stvewx` dynamic extract lanes in `8228252C-822825C4`:
+`82282580 -> lane 0` from `r1 + 0x50` and `82282584 -> lane 1` from
+`r1 + 0x54`, under normal PPC 16-byte stack-pointer alignment. `82282588`
+stays unknown because its address comes from `r6 + 0x8`. The next worker slice
+may implement a default-off Blue-Dragon/function/PC-gated A64 `EXTRACT_I32`
+fastpath for only those two PCs, with audit/counters before any quiet speed
+A/B.
+
 `docs/research/20260524-033116-8228252c-a64-codegen-audit.md` adds a concrete
 A64 lowering audit for `8228252C-822825C4`. The slice still has body total
 `8530471`, child edge `8228252C -> 82287788` body `5653971`, and approximate

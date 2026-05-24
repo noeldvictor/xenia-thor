@@ -869,6 +869,15 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   provenance for `82282580`, `82282584`, and `82282588`, or make a default-off
   function/block-gated `stvewx` lane-folding probe only for the two apparent
   `r1 + constant` stores, with rollback and correctness logging.
+- Current `8228252C` `stvewx` lane provenance:
+  `docs/research/20260524-034103-8228252c-stvewx-lane-provenance.md` and
+  `tools/thor/thor_hir_stvewx_lane_audit.ps1`. The audit proves
+  `82282580 -> lane 0` from `r1 + 0x50` and `82282584 -> lane 1` from
+  `r1 + 0x54` under the normal 16-byte PPC stack-pointer alignment assumption.
+  `82282588` remains unknown because its address is `r6 + 0x8`. Next code
+  slice may implement a default-off, Blue-Dragon/function/PC-gated A64
+  `EXTRACT_I32` fastpath for only `82282580` and `82282584`, with audit or
+  counters before any quiet speed A/B.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,
