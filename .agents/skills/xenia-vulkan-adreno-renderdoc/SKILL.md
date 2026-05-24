@@ -18,8 +18,10 @@ the guest CPU is the wall.
 
 ## Mature Vulkan Port Bias
 
-Use `docs/research/20260524-135929-mature-vulkan-port-design.md` as the GPU
-design ladder. Other mature emulator Vulkan ports converge on the same shape:
+Use `docs/research/20260524-165737-mature-vulkan-port-speed-design.md` as the
+GPU design ladder, and `docs/research/20260524-171203-vulkan-counter-surface-audit.md`
+as the repo-local counter surface map. Other mature emulator Vulkan ports
+converge on the same shape:
 
 - device and driver profile before optional Vulkan behavior;
 - console GPU milestone classification before frame tools;
@@ -33,6 +35,16 @@ For Blue Dragon, do not start broad GPU work while quiet captures still show the
 main CPU/JIT thread as the wall. A GPU slice needs fresh evidence such as high
 GPU wait, resolve/copy body cost, shader/pipeline stalls, present pacing stalls,
 or a real black-frame milestone regression.
+
+Before a GPU speed patch, run the no-behavior audit:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_vulkan_counter_surface_audit.ps1
+```
+
+Prefer a default-off counter skeleton over a renderer rewrite until Thor route
+metadata exposes pipeline create time, queue submit/present time, barriers,
+readbacks/uploads/copies, descriptor churn, resolves, and completion waits.
 
 ## Normal Evidence Search
 

@@ -117,6 +117,24 @@ repo-local skills, `tools/thor/thor_codex_goal_loop.ps1`, dated research
 memory, and deterministic analysis tools. Do not import Pokemon-specific code or
 let a refiner pass change emulator behavior without the normal experiment gate.
 
+## Vulkan Speed Diagnostics
+
+Do not treat "push more GPU" as a renderer rewrite request while Blue Dragon
+Thor captures still show the guest CPU/JIT main thread as the wall. Mature
+emulator Vulkan ports first add counters for pipeline creation, shader
+translation, queue submission, present/acquire waits, barriers, render-pass
+churn, readbacks, uploads/copies, descriptor churn, resolves, and completion
+waits.
+
+Use `docs/research/20260524-165737-mature-vulkan-port-speed-design.md` for the
+external design ladder and
+`docs/research/20260524-171203-vulkan-counter-surface-audit.md` for the
+repo-local source map. Run
+`tools/thor/thor_vulkan_counter_surface_audit.ps1` before a GPU speed patch.
+The next Vulkan lane should be default-off counter plumbing and Thor route
+metadata, not RenderDoc-only FPS claims, Swappy/frame pacing, or broad Adreno
+rewrite work without present/submit/resolve evidence.
+
 ## Repo Facts As Of 2026-05-17
 
 - Origin is SSH: `git@github.com:noeldvictor/xenia-thor.git`.
