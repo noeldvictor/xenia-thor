@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest fastpath result:
+Latest call-boundary audit:
+`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md`.
+Use `tools/thor/thor_hir_call_boundary_state_audit.ps1` when a body-backed
+span is dominated by direct-call state traffic. Current result for `82282490`
+span `8228252C-822825C4` and child edge `82282598 -> 82287788`: `17`
+pre-call `store_context` rows, about `188` approximate state bytes. Only `4`
+stores are live into the child (`r[3]`, `f[1]`, `fpscr`, `lr`), while `13`
+stores, about `160` approximate bytes, are `callee_dead_parent_dead_linear` in
+the linear HIR audit and mostly VMX state. This is not behavior proof. Next
+speed slice should implement a default-off function/span/call-gated
+state-store suppression audit/counter for those candidate sites before any
+store-skipping experiment.
+
+Previous fastpath result:
 `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
 `arm64_blue_dragon_mul_add_v128_fastpath` is implemented but default-off. It is
 gated to Blue Dragon function `82282490`, PCs `82282568/8228256C/82282570`,

@@ -2419,6 +2419,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-083644-8228252c-call-boundary-state-audit.md`.
+  New tool `tools/thor/thor_hir_call_boundary_state_audit.ps1` compares parent
+  pre-call stores, callee first context access, and parent post-call context
+  access. For `82282490` span `8228252C-822825C4` at direct call
+  `82282598 -> 82287788`, it found `17` pre-call `store_context` rows, about
+  `188` approximate state bytes. Only `4` are live into the child (`r[3]`,
+  `f[1]`, `fpscr`, `lr`); `13`, about `160` approximate state bytes, are
+  `callee_dead_parent_dead_linear` in the linear HIR audit, mostly VMX state.
+  This is not proof that stores can be skipped. Next speed lane is a
+  default-off, function/span/call-gated state-store suppression audit/counter
+  for those candidates before any behavior change.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
   `arm64_blue_dragon_mul_add_v128_fastpath` now exists, default-off, and is
   gated to Blue Dragon function `82282490`, PCs `82282568/8228256C/82282570`,

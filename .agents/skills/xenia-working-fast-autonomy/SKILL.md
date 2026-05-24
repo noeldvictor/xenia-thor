@@ -749,6 +749,19 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md`.
+`tools/thor/thor_hir_call_boundary_state_audit.ps1` now compares parent
+pre-call stores, callee first context access, and parent post-call context
+access across a direct call. For `82282490` span `8228252C-822825C4` at
+`82282598 -> 82287788`, it found `17` pre-call stores, about `188`
+approximate state bytes. Only `4` are live into the child (`r[3]`, `f[1]`,
+`fpscr`, `lr`); `13` stores, about `160` approximate state bytes, are
+`callee_dead_parent_dead_linear` in the linear audit, mostly VMX stores. Do
+not skip stores from this static evidence alone. Next worker slice should add a
+default-off function/span/call-gated state-store suppression audit/counter for
+those 13 candidate sites before any behavior change.
+
+Previous worker target:
 `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.
 The narrow three-PC `MUL_ADD_V128` fastpath is route-clean and code-size
 positive but not speed-proven. It shrank `82282490` from `86828` to `85424`

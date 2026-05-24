@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md` adds
+`tools/thor/thor_hir_call_boundary_state_audit.ps1` and changes the next lane
+from another narrow vector/FMA peephole to call-boundary state traffic. For
+`82282490` parent span `8228252C-822825C4`, the hot direct child is
+`82282598 -> 82287788`. The audit found `17` parent pre-call `store_context`
+rows, about `188` approximate state bytes. Only `4` are live into the callee
+(`r[3]`, `f[1]`, `fpscr`, and `lr`). The other `13`, about `160` approximate
+state bytes, are `callee_dead_parent_dead_linear` in the linear HIR audit,
+mostly VMX stores (`v[11]`, `v[9]`, `v[8]`, `v[10]`, `v[13]`, `v[12]`,
+`v[0]`). This is not proof that stores can be skipped. The next useful slice is
+a default-off, function/span/call-gated state-store suppression audit/counter
+for those 13 candidate sites before any behavior change. Keep
+`arm64_blue_dragon_stvewx_stack_lane_fastpath` and
+`arm64_blue_dragon_mul_add_v128_fastpath` default-off.
+
+Previous priority:
 `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`
 implements the default-off `arm64_blue_dragon_mul_add_v128_fastpath` for only
 Blue Dragon `82282490` PCs `82282568`, `8228256C`, and `82282570`. `NativeCore`
