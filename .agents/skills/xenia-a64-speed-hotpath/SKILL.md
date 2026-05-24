@@ -1302,7 +1302,19 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest HIR DCE audit:
+Latest interprocedural state-roundtrip audit:
+`docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
+Use `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` before changing
+state traffic across a direct-call boundary. For `82282490` call PC
+`82282598 -> 82287788`, the dynamic edge is hot (`calls_total=1691272`,
+`body_ticks_total=5653971`). The parent stores `r[3]`, `f[1]`, `fpscr`, and
+`lr` before or at the call, and the callee reloads all four tracked fields.
+This proves the larger-looking DCE lane is live parent-to-callee state. Do not
+skip those stores. Next speed evidence should be a default-off
+Blue-Dragon/function-pair carrier or callee-local promotion probe with explicit
+helper/exit/exception/alias flush rules and route proof before quiet A/B.
+
+Previous HIR DCE audit:
 `docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
 Use `tools/thor/thor_hir_dead_state_store_dce_audit.ps1` before trying to move
 a backend store-suppression idea into HIR for DCE. For

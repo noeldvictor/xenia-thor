@@ -119,6 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`
+adds `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1`. The offline
+audit joins parent/callee filtered HIR with dynamic call-edge rows. For
+`82282490` call PC `82282598 -> 82287788`, the dynamic edge is hot
+(`calls_total=1691272`, `body_ticks_total=5653971`). Parent `82282490` stores
+`r[3]`, `f[1]`, `fpscr`, and `lr` before or at the call, and callee `82287788`
+loads all four tracked fields (`f[1] loads=10`, `fpscr loads=26/stores=26`).
+Do not skip that live state. Next useful slice is a default-off
+Blue-Dragon/function-pair carrier or callee-local promotion probe for
+`82282490 -> 82287788`, with explicit helper/exit/exception/alias flush rules
+and route proof before any quiet A/B.
+
+Previous priority:
 `docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`
 adds `tools/thor/thor_hir_dead_state_store_dce_audit.ps1`. The offline audit
 virtually removes target `store_context` rows before DCE and counts recursive

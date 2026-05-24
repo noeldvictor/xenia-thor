@@ -749,6 +749,19 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
+`tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now joins a parent
+filtered HIR dump, callee filtered HIR dump, and optional dynamic call-edge rows
+for direct-call state traffic. For `82282490` call PC `82282598 -> 82287788`,
+the edge is hot (`calls_total=1691272`, `body_ticks_total=5653971`). Parent
+`82282490` stores `r[3]`, `f[1]`, `fpscr`, and `lr` before or at the call, and
+callee `82287788` loads all four tracked fields (`f[1] loads=10`,
+`fpscr loads=26/stores=26`). Do not skip these live stores. Next worker slice
+should design or audit a default-off Blue-Dragon/function-pair carrier or
+callee-local promotion probe for `82282490 -> 82287788`, with explicit
+helper/exit/exception/alias flush rules and route proof before any quiet A/B.
+
+Previous current worker target:
 `docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
 `tools/thor/thor_hir_dead_state_store_dce_audit.ps1` now tests whether moving
 targeted `store_context` suppression into HIR would let

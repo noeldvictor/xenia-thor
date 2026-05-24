@@ -2419,6 +2419,18 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
+  `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now joins
+  parent/callee filtered HIR with dynamic call-edge rows for a direct-call
+  boundary. For `82282490` call PC `82282598 -> 82287788`, the dynamic edge is
+  hot (`calls_total=1691272`, `body_ticks_total=5653971`). Parent `82282490`
+  stores `r[3]`, `f[1]`, `fpscr`, and `lr` before or at the call, and callee
+  `82287788` loads all of them (`f[1] loads=10`, `fpscr loads=26/stores=26`).
+  Do not skip these live stores. The next useful lane is a default-off,
+  Blue-Dragon/function-pair carrier or callee-local promotion probe for
+  `82282490 -> 82287788`, with explicit helper/exit/exception/alias flush rules
+  and route proof before any quiet A/B.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-094213-hir-dead-state-store-dce-audit.md`.
   `tools/thor/thor_hir_dead_state_store_dce_audit.ps1` now answers whether
   moving a target `store_context` suppression into HIR would recursively delete
