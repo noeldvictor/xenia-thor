@@ -377,6 +377,7 @@ Write-Output "Note: approximate exclusive ticks subtract same-run direct call-ed
 Write-Output ""
 Write-Output "## Dynamic Block Slices"
 
+$candidateRows = New-Object System.Collections.Generic.List[object]
 foreach ($guest in $targetGuests) {
     $guestUpper = $guest.ToUpperInvariant()
     if (!$ppcByAddress.ContainsKey($guestUpper)) {
@@ -404,6 +405,24 @@ foreach ($guest in $targetGuests) {
     if ($profile.body_ticks_total -gt 0) {
         $exclusivePct = [Math]::Round(100.0 * $exclusive / [double]$profile.body_ticks_total, 2)
     }
+    $candidateRows.Add([pscustomobject][ordered]@{
+        guest = $guestUpper
+        span_start = $guestUpper
+        span_end = ""
+        body_total = [int64]$profile.body_ticks_total
+        edge_body_total = [int64]$edgeSummary.body_total
+        edge_calls_total = [int64]$edgeSummary.calls_total
+        approx_exclusive = [int64]$exclusive
+        exclusive_pct = [double]$exclusivePct
+        ticks_per_entry = [int64]$profile.ticks_per_entry
+        edge_targets = $edgeSummary.targets
+        ppc_count = 0
+        hir_count = 0
+        ppc_ops = ""
+        hir_ops = ""
+        loads = ""
+        stores = ""
+    }) | Out-Null
 
     $ppcOps = @{}
     $hirOps = @{}
@@ -446,6 +465,13 @@ foreach ($guest in $targetGuests) {
     if ($null -ne $lastPpc) {
         $spanEnd = $lastPpc.address
     }
+    $candidateRows[$candidateRows.Count - 1].span_end = $spanEnd
+    $candidateRows[$candidateRows.Count - 1].ppc_count = $slicePpc.Count
+    $candidateRows[$candidateRows.Count - 1].hir_count = $sliceHir.Count
+    $candidateRows[$candidateRows.Count - 1].ppc_ops = Get-TopPairs $ppcOps $ContextTop
+    $candidateRows[$candidateRows.Count - 1].hir_ops = Get-TopPairs $hirOps $ContextTop
+    $candidateRows[$candidateRows.Count - 1].loads = Get-TopPairs $loadSlots $ContextTop
+    $candidateRows[$candidateRows.Count - 1].stores = Get-TopPairs $storeSlots $ContextTop
     Write-Output ("guest={0} mapped=true label={1} span={2}-{3} body_total={4} body_delta={5} entries_delta={6} ticks_per_entry={7} edge_targets={8} edge_body_total={9} edge_calls_total={10} approx_exclusive={11} exclusive_pct={12} ppc_count={13} hir_count={14} mem={15}/{16} branches={17} calls={18} barriers={19} ppc_ops={20} hir_ops={21} loads={22} stores={23}" -f
         $guestUpper, $startItem.label, $guestUpper, $spanEnd,
         $profile.body_ticks_total, $profile.body_ticks_delta,
@@ -464,3 +490,26 @@ foreach ($guest in $targetGuests) {
         ForEach-Object { $_.text -replace "\s+", " " }
     Write-Output ("  ppc_preview={0}" -f (($ppcPreview) -join " | "))
 }
+
+Write-Output ""
+Write-Output "## Local Exclusive Candidate Ranking"
+Write-Output "Note: rank by approximate exclusive body ticks after subtracting direct child edge body ticks. Use this to choose the next local codegen audit, not as exact cycle accounting."
+
+$candidateRows |
+    Sort-Object -Property @{ Expression = "approx_exclusive"; Descending = $true },
+                          @{ Expression = "exclusive_pct"; Descending = $true },
+                          @{ Expression = "body_total"; Descending = $true },
+                          @{ Expression = "guest"; Ascending = $true } |
+    Select-Object -First $Top |
+    ForEach-Object {
+        $callHeavy = "false"
+        if ($_.body_total -gt 0 -and $_.edge_body_total -gt ([int64]($_.body_total * 0.5))) {
+            $callHeavy = "true"
+        }
+        Write-Output ("rank_guest={0} span={1}-{2} approx_exclusive={3} exclusive_pct={4} body_total={5} edge_body_total={6} edge_calls_total={7} ticks_per_entry={8} call_heavy={9} edge_targets={10} ppc_count={11} hir_count={12} ppc_ops={13} hir_ops={14} loads={15} stores={16}" -f
+            $_.guest, $_.span_start, $_.span_end, $_.approx_exclusive,
+            $_.exclusive_pct, $_.body_total, $_.edge_body_total,
+            $_.edge_calls_total, $_.ticks_per_entry, $callHeavy,
+            $_.edge_targets, $_.ppc_count, $_.hir_count, $_.ppc_ops,
+            $_.hir_ops, $_.loads, $_.stores)
+    }

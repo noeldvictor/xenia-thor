@@ -649,6 +649,17 @@ contains both function body-time rows and call-edge rows. Validation confirms
 Run this before patching a call-heavy block, and prefer local/exclusive
 `82282490` spans such as `8228252C-822825C4` for the next patch.
 
+Current local/exclusive ranking:
+`docs/research/20260524-054204-82282490-exclusive-candidate-ranking.md`.
+`tools/thor/thor_hir_dynamic_block_slice_report.ps1` now prints a
+`Local Exclusive Candidate Ranking`. It ranks `8228252C-822825C4` first
+(`approx_exclusive=2876500`, `exclusive_pct=33.72`) and `822824F0-82282528`
+second (`approx_exclusive=2021174`, `exclusive_pct=57.72`). The narrow
+`stvewx` stack-lane fold for `82282580/82282584` was already route-clean and
+not a proven speed win, so the next speed patch should target broader
+state/vector/FPR traffic in `8228252C-822825C4`, or compare it with
+`822824F0-82282528` before changing code.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

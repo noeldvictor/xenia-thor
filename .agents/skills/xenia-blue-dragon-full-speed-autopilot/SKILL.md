@@ -147,6 +147,17 @@ report before patching call-heavy blocks. The next patch candidate should come
 from body-backed local/exclusive `82282490` spans such as the previously mapped
 `8228252C-822825C4` area, not inclusive recursive block totals alone.
 
+Current local-span ranking:
+`docs/research/20260524-054204-82282490-exclusive-candidate-ranking.md`
+updates `tools/thor/thor_hir_dynamic_block_slice_report.ps1` to print a
+`Local Exclusive Candidate Ranking`. It keeps `8228252C-822825C4` first
+(`approx_exclusive=2876500`, `exclusive_pct=33.72`) and `822824F0-82282528`
+second (`approx_exclusive=2021174`, `exclusive_pct=57.72`). Do not repeat the
+exact narrow `stvewx` stack-lane fold A/B for `82282580/82282584`; it was
+route-clean but did not prove speed. Next patch should target broader local
+state/vector/FPR traffic in `8228252C-822825C4`, or compare it against
+`822824F0-82282528` with a focused offline audit first.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`

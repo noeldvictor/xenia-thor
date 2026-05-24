@@ -141,6 +141,18 @@ at `84.08%` direct-edge body and `71.44%` self-recursive body, and old
 patch on a call-heavy block, run this report. Prefer body-backed local/exclusive
 `82282490` spans such as `8228252C-822825C4` for the next speed patch.
 
+Current local-span ranking:
+`docs/research/20260524-054204-82282490-exclusive-candidate-ranking.md` adds a
+`Local Exclusive Candidate Ranking` to
+`tools/thor/thor_hir_dynamic_block_slice_report.ps1`. The current ranking keeps
+`8228252C-822825C4` first (`approx_exclusive=2876500`,
+`exclusive_pct=33.72`) and `822824F0-82282528` second
+(`approx_exclusive=2021174`, `exclusive_pct=57.72`). Do not repeat the exact
+narrow `stvewx` stack-lane fold A/B for `82282580/82282584`; it did not prove
+speed. The next useful worker output should be a broader state/vector/FPR
+traffic patch for `8228252C-822825C4`, or a focused offline comparison against
+`822824F0-82282528` if that patch is not clear yet.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture
