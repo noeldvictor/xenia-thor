@@ -1302,7 +1302,22 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest call-boundary runtime audit:
+Latest call-boundary suppression probe:
+`docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
+`arm64_blue_dragon_call_boundary_state_suppress_dead_stores` is implemented but
+default-off. It suppresses only the `13` route-proven candidate-dead
+`82282490` pre-call stores before `82282598 -> 82287788`, never live-in
+`r[3]`, `f[1]`, `fpscr`, or `lr`. Route-safety capture
+`scratch/thor-debug/20260524-091813-*` reached visible opening sky/dragon-wing
+with clean fatal-marker search and proved `suppressed=dead=9007635`. Quiet
+same-APK A/B (`20260524-092153-*` control, `20260524-092523-*` suppression-on)
+was route-clean and shrank `82282490` only `86828 -> 86768`, with mixed final
+counters and thread samples. Keep it out of presets. Do not repeat the exact
+same store-suppression A/B next; use fresh offline evidence for broader
+`8228252C-822825C4` state/vector/FPR reduction or a larger state-cache/lowering
+change.
+
+Previous call-boundary runtime audit:
 `docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`.
 Use `tools/thor/thor_hir_call_boundary_state_audit.ps1` when a body-backed
 span is dominated by direct-call state traffic, and use

@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`
+adds default-off `arm64_blue_dragon_call_boundary_state_suppress_dead_stores`.
+It skips only the `13` route-proven candidate-dead stores before the Blue
+Dragon `82282490` edge `82282598 -> 82287788`; it does not skip the live-in
+`r[3]`, `f[1]`, `fpscr`, or `lr` stores. Route-safety capture
+`scratch/thor-debug/20260524-091813-*` reached the visible opening
+sky/dragon-wing route with clean fatal-marker search and proved
+`suppressed=dead=9007635`. Quiet same-APK A/B
+(`scratch/thor-debug/20260524-092153-*` control and
+`scratch/thor-debug/20260524-092523-*` suppression-on) was route-clean and
+shrank `82282490` code size only `86828 -> 86768`, but did not prove route-wide
+speed. Keep the cvar default-off and out of presets. Do not repeat this exact
+A/B next; move to broader `8228252C-822825C4` state/vector/FPR reduction or a
+larger state-cache/lowering change backed by fresh offline evidence.
+
+Previous priority:
 `docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`
 adds the default-off `arm64_blue_dragon_call_boundary_state_audit` runtime
 counter and Android/Thor launch plumbing. Capture

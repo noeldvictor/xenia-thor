@@ -42,6 +42,7 @@ DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_audit);
+DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -137,7 +138,9 @@ enum class BlueDragonCallBoundaryStoreKind {
 
 static BlueDragonCallBoundaryStoreKind GetBlueDragonCallBoundaryStoreKind(
     A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
-  if (!cvars::arm64_blue_dragon_call_boundary_state_audit || !instr ||
+  if ((!cvars::arm64_blue_dragon_call_boundary_state_audit &&
+       !cvars::arm64_blue_dragon_call_boundary_state_suppress_dead_stores) ||
+      !instr ||
       e.current_guest_function() != 0x82282490) {
     return BlueDragonCallBoundaryStoreKind::kNone;
   }
@@ -198,34 +201,73 @@ static BlueDragonCallBoundaryStoreKind GetBlueDragonCallBoundaryStoreKind(
   }
 }
 
-static void EmitBlueDragonCallBoundaryStateAudit(
+static bool IsBlueDragonCallBoundaryDeadStore(
+    BlueDragonCallBoundaryStoreKind kind) {
+  return kind == BlueDragonCallBoundaryStoreKind::kDeadVmx ||
+         kind == BlueDragonCallBoundaryStoreKind::kDeadGpr ||
+         kind == BlueDragonCallBoundaryStoreKind::kDeadFpr;
+}
+
+static bool EmitBlueDragonCallBoundaryStateProbe(
     A64Emitter& e, BlueDragonCallBoundaryStoreKind kind) {
-  switch (kind) {
-    case BlueDragonCallBoundaryStoreKind::kDeadVmx:
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_count());
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_vmx_count());
-      break;
-    case BlueDragonCallBoundaryStoreKind::kDeadGpr:
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_count());
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_gpr_count());
-      break;
-    case BlueDragonCallBoundaryStoreKind::kDeadFpr:
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_count());
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_dead_fpr_count());
-      break;
-    case BlueDragonCallBoundaryStoreKind::kLiveIn:
-      e.EmitAtomicIncrement64(
-          e.backend()->blue_dragon_call_boundary_state_live_count());
-      break;
-    case BlueDragonCallBoundaryStoreKind::kNone:
-      break;
+  if (kind == BlueDragonCallBoundaryStoreKind::kNone) {
+    return false;
   }
+  if (cvars::arm64_blue_dragon_call_boundary_state_audit) {
+    switch (kind) {
+      case BlueDragonCallBoundaryStoreKind::kDeadVmx:
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_count());
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_vmx_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kDeadGpr:
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_count());
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_gpr_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kDeadFpr:
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_count());
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_dead_fpr_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kLiveIn:
+        e.EmitAtomicIncrement64(
+            e.backend()->blue_dragon_call_boundary_state_live_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kNone:
+        break;
+    }
+  }
+  if (!cvars::arm64_blue_dragon_call_boundary_state_suppress_dead_stores ||
+      !IsBlueDragonCallBoundaryDeadStore(kind)) {
+    return false;
+  }
+  if (cvars::arm64_blue_dragon_call_boundary_state_audit) {
+    auto* backend = e.backend();
+    e.EmitAtomicIncrement64(
+        backend->blue_dragon_call_boundary_state_suppressed_count());
+    switch (kind) {
+      case BlueDragonCallBoundaryStoreKind::kDeadVmx:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_call_boundary_state_suppressed_vmx_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kDeadGpr:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_call_boundary_state_suppressed_gpr_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kDeadFpr:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_call_boundary_state_suppressed_fpr_count());
+        break;
+      case BlueDragonCallBoundaryStoreKind::kLiveIn:
+      case BlueDragonCallBoundaryStoreKind::kNone:
+        break;
+    }
+  }
+  return true;
 }
 
 static bool IsRotatedRunOfOnes(uint64_t value, uint32_t bits) {
@@ -659,8 +701,10 @@ struct STORE_CONTEXT_I8
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       if ((i.src2.constant() & 0xFF) == 0) {
         e.strb(e.wzr, ptr(e.GetContextReg(), offset));
@@ -678,8 +722,10 @@ struct STORE_CONTEXT_I16
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I16Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       if ((i.src2.constant() & 0xFFFF) == 0) {
         e.strh(e.wzr, ptr(e.GetContextReg(), offset));
@@ -697,8 +743,10 @@ struct STORE_CONTEXT_I32
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       if (i.src2.constant() == 0) {
         e.str(e.wzr, ptr(e.GetContextReg(), offset));
@@ -717,8 +765,10 @@ struct STORE_CONTEXT_I64
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       if (i.src2.constant() == 0) {
         e.str(e.xzr, ptr(e.GetContextReg(), offset));
@@ -736,8 +786,10 @@ struct STORE_CONTEXT_F32
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, F32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       union {
         float f;
@@ -756,8 +808,10 @@ struct STORE_CONTEXT_F64
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, F64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       union {
         double d;
@@ -776,8 +830,10 @@ struct STORE_CONTEXT_V128
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
-    EmitBlueDragonCallBoundaryStateAudit(
-        e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset));
+    if (EmitBlueDragonCallBoundaryStateProbe(
+            e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
+      return;
+    }
     if (i.src2.is_constant) {
       LoadV128Const(e, 0, i.src2.constant());
       e.str(QReg(0), ptr(e.GetContextReg(), offset));

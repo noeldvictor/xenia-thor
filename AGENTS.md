@@ -2419,6 +2419,20 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
+  `arm64_blue_dragon_call_boundary_state_suppress_dead_stores` now exists,
+  default-off, and suppresses only the `13` route-proven candidate-dead
+  Blue Dragon `82282490` stores before `82282598 -> 82287788`. Route-safety
+  capture `scratch/thor-debug/20260524-091813-*` reached the visible opening
+  sky/dragon-wing route with clean fatal-marker search and proved
+  `suppressed=dead=9007635`; live-in stores stayed separate at `live=2771580`.
+  Quiet same-APK A/B (`20260524-092153-*` control and `20260524-092523-*`
+  suppression-on) was route-clean and shrank `82282490` code size only
+  `86828 -> 86768`, but did not prove route-wide speed. Keep the cvar
+  default-off and out of presets. Do not repeat this exact A/B next; move to a
+  broader `8228252C-822825C4` state/vector/FPR reduction or larger state-cache /
+  lowering change backed by fresh offline evidence.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`.
   The default-off `arm64_blue_dragon_call_boundary_state_audit` counter is
   route-clean on `scratch/thor-debug/20260524-084805-*`, with visible opening

@@ -261,6 +261,13 @@ DEFINE_bool(
     "title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_call_boundary_state_suppress_dead_stores, false,
+    "Thor ARM64 speed lane: suppress only the route-proven candidate-dead "
+    "Blue Dragon 82282490 store_context sites before the hot "
+    "82282598 -> 82287788 edge. Does not suppress live-in stores. "
+    "Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1902,12 +1909,28 @@ void A64Backend::LogSpeedProfile() {
     auto live =
         load_delta(blue_dragon_call_boundary_state_live_count_,
                    last_blue_dragon_call_boundary_state_live_count_);
+    auto suppressed =
+        load_delta(blue_dragon_call_boundary_state_suppressed_count_,
+                   last_blue_dragon_call_boundary_state_suppressed_count_);
+    auto suppressed_vmx = load_delta(
+        blue_dragon_call_boundary_state_suppressed_vmx_count_,
+        last_blue_dragon_call_boundary_state_suppressed_vmx_count_);
+    auto suppressed_gpr = load_delta(
+        blue_dragon_call_boundary_state_suppressed_gpr_count_,
+        last_blue_dragon_call_boundary_state_suppressed_gpr_count_);
+    auto suppressed_fpr = load_delta(
+        blue_dragon_call_boundary_state_suppressed_fpr_count_,
+        last_blue_dragon_call_boundary_state_suppressed_fpr_count_);
     XELOGW(
         "A64 Blue Dragon call-boundary state audit: dead={}/{} "
-        "dead_vmx={}/{} dead_gpr={}/{} dead_fpr={}/{} live={}/{}",
+        "dead_vmx={}/{} dead_gpr={}/{} dead_fpr={}/{} live={}/{} "
+        "suppressed={}/{} suppressed_vmx={}/{} suppressed_gpr={}/{} "
+        "suppressed_fpr={}/{}",
         dead.second, dead.first, dead_vmx.second, dead_vmx.first,
         dead_gpr.second, dead_gpr.first, dead_fpr.second, dead_fpr.first,
-        live.second, live.first);
+        live.second, live.first, suppressed.second, suppressed.first,
+        suppressed_vmx.second, suppressed_vmx.first, suppressed_gpr.second,
+        suppressed_gpr.first, suppressed_fpr.second, suppressed_fpr.first);
   }
 
   const bool interval_had_activity =

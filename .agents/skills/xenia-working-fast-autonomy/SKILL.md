@@ -749,6 +749,22 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-093001-blue-dragon-call-boundary-store-suppression-probe.md`.
+The exact `13`-site call-boundary store suppression probe is implemented and
+route-clean, but not speed-proven. Route-safety capture
+`scratch/thor-debug/20260524-091813-*` reached visible opening sky/dragon-wing
+with clean fatal-marker search and proved `suppressed=dead=9007635` while
+live-in stores stayed separate. Quiet same-APK A/B
+`scratch/thor-debug/20260524-092153-*` control versus
+`scratch/thor-debug/20260524-092523-*` suppression-on was route-clean and
+shrunk `82282490` only `86828 -> 86768`; final route counters and thread
+samples did not prove speed. Keep
+`arm64_blue_dragon_call_boundary_state_suppress_dead_stores` default-off and
+do not repeat the exact same A/B next. Next worker slice should find broader
+`8228252C-822825C4` state/vector/FPR reduction or a larger state-cache/lowering
+change from fresh offline evidence.
+
+Previous worker target:
 `docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`.
 `arm64_blue_dragon_call_boundary_state_audit` is now a default-off runtime
 counter with Android/Thor plumbing. Capture
