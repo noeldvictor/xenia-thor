@@ -749,6 +749,20 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
+`tools/thor/thor_hir_callee_local_promotion_audit.ps1` now classifies strict
+callee-local promotion windows. It breaks windows on labels, context barriers,
+calls, branches, and returns. For callee `82287788`, `f[1]` is read-only
+(`loads=10`, `stores=0`) but has `strict_redundant_loads=0`; its useful
+`9` reload opportunities cross boundaries and `2` cross calls. `fpscr` is
+mutable (`loads=26`, `stores=26`) and has no strict local wins. Do not build a
+blind callee-local cache. Next worker slice should design or audit a
+default-off CFG/function-pair `f[1]` carrier probe for `82282490 -> 82287788`
+with explicit call-clobber, helper, exit, exception, barrier, and alias flush
+rules. Treat `fpscr` as high-risk unless a source review proves exact dirty
+update forwarding.
+
+Previous current worker target:
 `docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
 `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now joins a parent
 filtered HIR dump, callee filtered HIR dump, and optional dynamic call-edge rows

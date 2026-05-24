@@ -1302,7 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest interprocedural state-roundtrip audit:
+Latest callee-local promotion audit:
+`docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
+Use `tools/thor/thor_hir_callee_local_promotion_audit.ps1` before implementing
+a callee-local context cache. For `82287788`, strict windows are broken by
+labels, context barriers, calls, branches, and returns. `f[1]` is read-only in
+the callee (`loads=10`, `stores=0`), but strict local reuse is zero; its
+`9` reload opportunities cross boundaries and `2` cross calls. `fpscr` is
+mutable (`loads=26`, `stores=26`) and has no strict local wins. Do not build a
+blind callee-local cache. Next speed evidence should be a default-off
+CFG/function-pair `f[1]` carrier audit/probe for `82282490 -> 82287788`, with
+call-clobber and flush rules proven before quiet A/B. Treat `fpscr` as
+high-risk unless source review proves exact dirty update forwarding.
+
+Previous interprocedural state-roundtrip audit:
 `docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
 Use `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` before changing
 state traffic across a direct-call boundary. For `82282490` call PC

@@ -119,6 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`
+adds `tools/thor/thor_hir_callee_local_promotion_audit.ps1`. The audit splits
+`82287788` into strict promotion windows broken by labels, context barriers,
+calls, branches, and returns. `f[1]` has `loads=10`, `stores=0`, but
+`strict_redundant_loads=0`; its useful `9` reload opportunities cross
+boundaries and `2` cross calls. `fpscr` has `loads=26`, `stores=26`, and no
+strict local wins; it is mutable/high-risk. Do not implement a blind
+callee-local context cache. Next useful slice is a default-off
+CFG/function-pair `f[1]` carrier audit/probe for `82282490 -> 82287788` that
+proves call-clobber and flush rules before any quiet A/B. Do not patch `fpscr`
+first.
+
+Previous priority:
 `docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`
 adds `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1`. The offline
 audit joins parent/callee filtered HIR with dynamic call-edge rows. For

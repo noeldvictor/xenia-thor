@@ -2419,6 +2419,19 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-100409-82287788-callee-local-promotion-audit.md`.
+  `tools/thor/thor_hir_callee_local_promotion_audit.ps1` splits filtered HIR
+  into strict promotion windows broken by labels, context barriers, calls,
+  branches, and returns. For callee `82287788`, `f[1]` has `loads=10`,
+  `stores=0`, `strict_redundant_loads=0`, `cross_boundary_reload_after_load=9`,
+  and `risky_call_crossings=2`; `fpscr` has `loads=26`, `stores=26`,
+  `strict_wins=0`, and `cross_boundary_reload_after_store=25`. Do not
+  implement a blind callee-local context cache. Keep `f[1]` as the best
+  candidate, but the next experiment must be a default-off CFG/function-pair
+  carrier audit/probe that proves call-clobber and flush rules for
+  `82282490 -> 82287788`. Treat `fpscr` as mutable/high-risk until a source
+  review proves exact dirty update forwarding.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-095137-82282598-82287788-state-roundtrip-audit.md`.
   `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now joins
   parent/callee filtered HIR with dynamic call-edge rows for a direct-call
