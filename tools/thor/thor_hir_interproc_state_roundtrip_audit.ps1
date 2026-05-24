@@ -399,7 +399,49 @@ foreach ($offset in $targetOffsets) {
     Write-Output ("candidate field={0} parent_store={1} callee_load={2} kind={3}" -f $stat.field, $hasParentStore, $hasCalleeLoad, $kind)
 }
 Write-Output ""
+Write-Output "## Forwarding Plan"
+foreach ($offset in $targetOffsets) {
+    $stat = $calleeStats[$offset]
+    $hasParentStore = $parentStores.ContainsKey($offset)
+    $hasCalleeLoad = $stat.loads -gt 0
+    $firstLoadPc = if ($null -ne $stat.first_load) { $stat.first_load.ppc_address } else { "-" }
+    $staticLoadUpper = "-"
+    $staticStoreUpper = "-"
+    if ($null -ne $edge) {
+        $staticLoadUpper = [string]([int64]$stat.loads * [int64]$edge.calls_total)
+        $staticStoreUpper = [string]([int64]$stat.stores * [int64]$edge.calls_total)
+    }
+
+    $plan = "no_roundtrip"
+    $risk = "none"
+    $recommendation = "ignore"
+    if ($hasParentStore -and $hasCalleeLoad) {
+        if ($stat.field -eq "lr") {
+            $plan = "call_link_state"
+            $risk = "high"
+            $recommendation = "do_not_forward_lr; it is part of PPC call/return visibility"
+        } elseif ($stat.stores -eq 0) {
+            $plan = "read_only_entry_seed_or_function_pair_argument"
+            $risk = "medium"
+            $recommendation = "possible only with a function-pair/callee variant; keep the parent context store unless a visibility model proves it can move"
+        } elseif ($stat.field -eq "fpscr") {
+            $plan = "mutable_dirty_status_cache"
+            $risk = "very_high"
+            $recommendation = "do_not_patch_without exact dirty writeback at calls, barriers, exits, exceptions, and all fpscr readers"
+        } else {
+            $plan = "mutable_state_cache"
+            $risk = "high"
+            $recommendation = "needs full dirty/alias/call visibility model; not a first patch"
+        }
+    }
+
+    Write-Output (
+        "plan field={0} parent_store={1} callee_loads={2} callee_stores={3} first_load_pc={4} static_load_upper={5} static_store_upper={6} plan={7} risk={8} recommendation={9}" -f
+        $stat.field, $hasParentStore, $stat.loads, $stat.stores, $firstLoadPc,
+        $staticLoadUpper, $staticStoreUpper, $plan, $risk, $recommendation)
+}
+Write-Output ""
 Write-Output "## Decision"
 Write-Output "decision=no_behavior_patch_yet"
 Write-Output "reason=offline evidence proves live parent-to-callee state roundtrips, but changing PPC context visibility across a direct call needs a guarded design and route proof."
-Write-Output "next_experiment=design a default-off 82282490->82287788 function-pair audit/probe for f[1]/fpscr carrier or callee-local promotion; do not skip the live stores."
+Write-Output "next_experiment=prefer a function-pair/callee-variant audit before generated behavior: f[1] is read-only but the first stack-slot carrier A/B missed; fpscr/r[3]/lr are mutable or call-link state and need a dirty/visibility model before any patch."

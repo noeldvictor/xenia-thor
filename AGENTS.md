@@ -2419,6 +2419,23 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
+  `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now prints a
+  forwarding plan for live direct-call state. For `82282490` call PC
+  `82282598 -> 82287788`, the dynamic edge is hot
+  (`calls_total=1691272`, `body_ticks_total=5653971`). The plan classifies
+  `f[1]` (`+296`) as the only medium-risk read-only candidate, with
+  `static_load_upper=16912720` and no callee stores, but the previous
+  stack-slot carrier A/B already missed speed proof. Treat the next useful
+  lane as a function-pair/callee-variant design audit for `f[1]`, not another
+  unchanged local reload probe. Keep the parent context store visible unless a
+  visibility model proves it can move. `fpscr` is larger
+  (`static_load_upper=43973072`, `static_store_upper=43973072`) but very
+  high-risk because it is mutable; do not patch it without exact dirty
+  writeback at calls, barriers, exits, exceptions, and all readers. `r[3]` is
+  mutable/high-risk, and `lr` is call-link state; do not forward either from
+  this evidence.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`.
   The default-off `arm64_blue_dragon_f1_carrier_fastpath` cvar now seeds a
   function-local stack-slot carrier for `82287788` `f[1]` (`+296`) at

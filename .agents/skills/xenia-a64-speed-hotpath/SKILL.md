@@ -1302,7 +1302,21 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `82287788` f[1] carrier fastpath A/B:
+Latest `8228252C` parent/callee state-forwarding plan:
+`docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
+`tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` now prints a
+forwarding-risk plan for live state crossing the `82282490` call PC
+`82282598 -> 82287788`. The dynamic edge is hot (`calls_total=1691272`,
+`body_ticks_total=5653971`). `f[1]` is read-only in the callee (`loads=10`,
+`stores=0`, `static_load_upper=16912720`) and is the only medium-risk
+candidate, but the previous stack-slot carrier A/B was not speed-positive.
+Next A64 speed work should audit a function-pair/callee-variant `f[1]` design
+that preserves parent context visibility until proven movable. Do not patch
+`fpscr` yet even though its upper bound is larger (`43973072` loads and stores):
+it is mutable and needs exact dirty writeback rules. Do not forward mutable
+`r[3]` or call-link `lr` from this evidence.
+
+Previous `82287788` f[1] carrier fastpath A/B:
 `docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`.
 `arm64_blue_dragon_f1_carrier_fastpath` is implemented but default-off. It
 seeds a stack-slot carrier for `f[1]` at `82287798` and reuses it only at the

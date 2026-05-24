@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-111940-8228252c-state-forwarding-plan.md`
+updates `tools/thor/thor_hir_interproc_state_roundtrip_audit.ps1` so the
+direct-call state audit prints a forwarding-risk plan. For `82282490`
+`82282598 -> 82287788`, the edge has `calls_total=1691272` and
+`body_ticks_total=5653971`. `f[1]` is the only medium-risk read-only candidate
+(`loads=10`, `stores=0`, `static_load_upper=16912720`), but the previous
+callee stack-slot carrier A/B already missed speed proof. Next useful slice is
+a function-pair/callee-variant design audit for `f[1]`, keeping parent context
+visibility unless proven movable. Do not patch `fpscr`, `r[3]`, or `lr` from
+this evidence: `fpscr` is mutable and very high-risk
+(`static_load_upper=43973072`, `static_store_upper=43973072`), `r[3]` is
+mutable/high-risk, and `lr` is call-link state.
+
+Previous priority:
 `docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`
 adds the default-off `arm64_blue_dragon_f1_carrier_fastpath` replacement probe
 for the audited `82287788` `f[1]` (`+296`) load sites. NativeCore and

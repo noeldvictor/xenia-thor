@@ -749,6 +749,20 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
+`docs/research/20260524-111940-8228252c-state-forwarding-plan.md`.
+The interprocedural audit now prints a forwarding plan for the live
+`82282490 -> 82287788` direct-call state round-trip. The edge remains hot
+(`calls_total=1691272`, `body_ticks_total=5653971`). `f[1]` is read-only in
+the callee (`loads=10`, `stores=0`, `static_load_upper=16912720`) and is the
+only medium-risk candidate, but the previous stack-slot fastpath did not prove
+speed. The next worker slice should be a function-pair/callee-variant design
+audit for `f[1]`, with parent context visibility preserved unless a visibility
+model proves it can move. Do not patch `fpscr` yet despite the larger static
+upper bound (`43973072` loads and stores): it is mutable and needs exact dirty
+writeback at calls, barriers, exits, exceptions, and readers. Do not forward
+`r[3]` or `lr` from this evidence.
+
+Previous current worker target:
 `docs/research/20260524-110545-blue-dragon-f1-carrier-fastpath-ab.md`.
 The default-off `arm64_blue_dragon_f1_carrier_fastpath` probe is implemented
 for the audited `82287788` `f[1]` load sites. It seeds a function-local stack
