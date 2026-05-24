@@ -299,6 +299,7 @@ $stores = @{}
 $stvewxPcs = @{}
 $dynamicExtractPcs = @{}
 $splatPcs = @{}
+$mulAddPcs = @{}
 
 $extract = 0
 $extractDynamic = 0
@@ -321,6 +322,9 @@ foreach ($row in $ppc) {
     if ($row.op -eq "stvewx") {
         $stvewx += 1
         Add-Count $stvewxPcs $row.address
+    }
+    if ($row.op -eq "vmaddfp") {
+        Add-Count $mulAddPcs $row.address
     }
 }
 
@@ -495,11 +499,28 @@ Write-Output ""
 Write-Output "## Hot Lowering Shapes"
 Write-Output ("extract={0} dynamic={1} constant={2} dynamic_pcs={3}" -f $extract, $extractDynamic, $extractConstant, (Get-TopPairs $dynamicExtractPcs $Top))
 Write-Output ("splat={0} pcs={1}" -f $splat, (Get-TopPairs $splatPcs $Top))
-Write-Output ("mul_add_v128={0}" -f $mulAdd)
+Write-Output ("mul_add_v128={0} vmaddfp_pcs={1}" -f $mulAdd, (Get-TopPairs $mulAddPcs $Top))
 Write-Output ("load1={0} load_offset1={1} store1={2}" -f $load1, $loadOffset1, $store1)
 Write-Output ("stvewx={0} masked_address={1} dynamic_extract={2} store1={3} pcs={4}" -f $stvewx, $stvewxMaskedAddress, $stvewxDynamicExtract, $stvewxStore1, (Get-TopPairs $stvewxPcs $Top))
 Write-Output ("context_barriers={0} calls={1} branches={2}" -f $contextBarrier, $calls, $branches)
 Write-Output ("known_scalar_codegen_floor={0}" -f $knownScalarFloor)
+if ($mulAdd -gt 0 -or $mulAddPcs.Count -gt 0) {
+    $mulAddRows = $ppc | Where-Object { $_.op -eq "vmaddfp" }
+    Write-Output ""
+    Write-Output "## MUL_ADD_V128 Source-Cost Audit"
+    Write-Output "source=src/xenia/cpu/backend/a64/a64_sequences.cc:MUL_ADD_V128"
+    Write-Output "helper_source=src/xenia/cpu/backend/a64/a64_seq_util.h:EmitWithVmxFpcr,FlushDenormals_V128,PrepareVmxFpSources,FixupVmxNan_V128_Fma"
+    Write-Output ("observed_vmaddfp_pcs={0}" -f (Get-TopPairs $mulAddPcs $Top))
+    foreach ($row in ($mulAddRows | Select-Object -First $Top)) {
+        Write-Output ("vmaddfp={0}" -f $row.text)
+    }
+    Write-Output "source_shape=EmitWithVmxFpcr; src3 copy/optional denormal flush; str q3; PrepareVmxFpSources for src1/src2; str q0/q1; ldr q2; fmla; FixupVmxNan_V128_Fma; optional output denormal flush; mov dest"
+    Write-Output "likely_hot_cost=lazy FPCR switch if previous mode differs; three scratch Q stores; one scratch Q reload; one fmla; NaN fast-path test; result copy"
+    Write-Output "slow_cost=software denormal flushing when kA64FZFlushesInputs is false; per-lane PPC NaN repair when any result lane is NaN; source copies when allocation needs scratch"
+    Write-Output "semantics_gate=x64 MUL_ADD_V128 intentionally avoids host FMA because vfmadd differed from vmul+vadd tests; A64 currently uses fmla, so shortcuts need explicit semantics coverage"
+    Write-Output "correctness_gate=do not replace with raw fmla unless a route audit proves src/result NaN and denormal cases are absent or an exact fallback is kept; PPC NaN precedence is src1,src2,src3,default"
+    Write-Output "next_experiment=default-off function/span/PC-gated runtime audit counters for these vmaddfp PCs before any shortcut"
+}
 Write-Output ""
 Write-Output "## Source-Reviewed A64 Floor Estimate"
 Write-Output "estimate_kind=heuristic_source_floor not_exact_instruction_count"

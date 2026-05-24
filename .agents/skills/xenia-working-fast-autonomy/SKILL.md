@@ -240,6 +240,20 @@ around one full core. Treat this as no proven speed win. Keep the cvar
 default-off. Next worker output should move to `MUL_ADD_V128` cost/source
 audit for `82282568/8228256C/82282570`.
 
+Latest `MUL_ADD_V128` source/cost audit:
+`docs/research/20260524-072228-mul-add-v128-source-cost-audit.md` updates
+`tools/thor/thor_hir_a64_codegen_audit.ps1` with a dedicated source-cost
+section. Both `822824F0-82282574` and `8228252C-822825C4` hit the same three
+`vmaddfp` PCs: `82282568`, `8228256C`, and `82282570`. `8228252C-822825C4`
+is still the larger local target (`approx_exclusive=2876500`,
+`mul_add_v128=3`). Do not patch behavior yet. The current lowering is heavy:
+VMX FPCR mode, optional denormal flushes, scratch source saves, `fmla`, PPC
+NaN fast-path/repair, optional output flush, and dest copy. x64 also warns
+against assuming host FMA is semantically equivalent because its fused path is
+disabled for tests. Next worker output should be a default-off runtime audit
+for those three PCs, counting denormal flush need, NaN-fixup entry/per-lane
+repair, FPCR mode switches, and source/dest alias copies before a shortcut.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture

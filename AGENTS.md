@@ -1078,6 +1078,24 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   spending new sprint slices on narrow `stvewx` lane folds unless a broader
   state/vector experiment reopens them. Next lane: `MUL_ADD_V128` source/cost
   audit for `82282568/8228256C/82282570`.
+- Current `MUL_ADD_V128` source/cost audit:
+  `docs/research/20260524-072228-mul-add-v128-source-cost-audit.md`.
+  `tools/thor/thor_hir_a64_codegen_audit.ps1` now prints a
+  `MUL_ADD_V128 Source-Cost Audit` section with exact `vmaddfp` PCs, source
+  anchors, lowering shape, slow-path hazards, and semantics gates. Both
+  `822824F0-82282574` and `8228252C-822825C4` hit the same three PCs:
+  `82282568`, `8228256C`, and `82282570`. The larger target remains
+  `8228252C-822825C4` (`approx_exclusive=2876500`,
+  `mul_add_v128=3`, `approx_exclusive_ticks_per_estimated_instr=14981.77`).
+  Do not patch `MUL_ADD_V128` behavior yet: the A64 lowering includes VMX FPCR
+  mode handling, optional denormal flushing, scratch source saves, `fmla`, PPC
+  NaN fast-path/repair, optional output flushing, and a destination copy. Also
+  remember x64 intentionally avoids host FMA for `MUL_ADD_V128` because the
+  fused path differed from `vmulps` plus `vaddps` tests. The next lane is a
+  default-off, function/span/PC-gated runtime audit for
+  `82282568/8228256C/82282570` that counts denormal flush need, NaN-fixup
+  entry/per-lane repair, FPCR mode switches, and source/dest alias copies
+  before any shortcut.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

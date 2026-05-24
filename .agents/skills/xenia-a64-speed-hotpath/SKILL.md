@@ -772,6 +772,19 @@ Keep the cvar default-off and do not spend another immediate slice on narrow
 `stvewx` lane folds. Move to `MUL_ADD_V128` source/cost audit for
 `82282568/8228256C/82282570`.
 
+Latest `MUL_ADD_V128` source/cost audit:
+`docs/research/20260524-072228-mul-add-v128-source-cost-audit.md`.
+`tools/thor/thor_hir_a64_codegen_audit.ps1` now prints exact `vmaddfp` PCs and
+source-cost hazards for `MUL_ADD_V128`. The hot PCs are `82282568`,
+`8228256C`, and `82282570`, and the larger local target remains
+`8228252C-822825C4` (`approx_exclusive=2876500`, `mul_add_v128=3`). Do not
+shortcut yet: A64 emits VMX FPCR handling, optional denormal flushing, scratch
+source saves, `fmla`, PPC NaN fixup, optional output flushing, and destination
+copy, and x64's fused FMA path is intentionally disabled for this opcode due
+test differences. Next hotpath work should add a default-off runtime audit for
+these PCs that counts denormal flush need, NaN-fixup entry/per-lane repair,
+FPCR mode switches, and source/dest alias copies.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

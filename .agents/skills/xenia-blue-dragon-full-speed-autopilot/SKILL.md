@@ -253,6 +253,21 @@ Keep the cvar default-off and stop spending new sprint slices on narrow
 `stvewx` lane folds unless broader state/vector work reopens them. Next lane:
 `MUL_ADD_V128` source/cost audit for `82282568/8228256C/82282570`.
 
+Latest `MUL_ADD_V128` source/cost audit:
+`docs/research/20260524-072228-mul-add-v128-source-cost-audit.md`.
+`tools/thor/thor_hir_a64_codegen_audit.ps1` now prints a dedicated
+`MUL_ADD_V128 Source-Cost Audit` section. Both body-backed spans hit
+`82282568`, `8228256C`, and `82282570`. `8228252C-822825C4` remains the larger
+local target (`approx_exclusive=2876500`, `mul_add_v128=3`,
+`approx_exclusive_ticks_per_estimated_instr=14981.77`). Do not patch behavior
+yet: A64 `MUL_ADD_V128` includes VMX FPCR handling, optional denormal flushing,
+scratch source saves, `fmla`, PPC NaN fixup, optional output flushing, and a
+dest copy, while x64 intentionally avoids fused host FMA for this opcode. Next
+use a default-off function/span/PC-gated runtime audit for
+`82282568/8228256C/82282570` to count denormal flush need, NaN-fixup entry and
+per-lane repair, FPCR mode switches, and source/dest alias copies before any
+shortcut.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
