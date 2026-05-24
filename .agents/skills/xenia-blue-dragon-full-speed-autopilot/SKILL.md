@@ -119,6 +119,21 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-115538-8228252c-lane-closure-next-target.md`
+rechecks the broader `82282490:8228252C-822825C4` span after the recent
+`fpscr`, `f[1]`, `stvewx`, and `MUL_ADD_V128` lanes. The span is still large
+(`approx_exclusive=2876500`, `store_context=27`, `load_context=14`), but the
+isolated safe-looking sub-lanes are closed for now: call-boundary dead stores
+have no HIR DCE payoff, `f[1]` pair-entry ROI is only a seed load, `fpscr`
+requires CFG-aware dirty writebacks, and the quiet `stvewx` / `MUL_ADD_V128`
+A/B runs did not prove speed. Do not patch `8228252C-822825C4` behavior next
+unless the slice is a broader CFG-aware or interprocedural state-carrier
+design. The next one-variable local lane should be an offline audit of fresh
+non-call-heavy `822824B8-822824E8` CR/GPR compare-and-branch traffic
+(`approx_exclusive=1099164`, `exclusive_pct=100`) before any default-off
+function/span-gated codegen experiment.
+
+Previous priority:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`
 adds `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`. The report closes the
 tempting `fpscr` shortcut for now. For `82287788` on the hot

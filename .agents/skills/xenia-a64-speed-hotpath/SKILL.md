@@ -1302,7 +1302,22 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `82287788` `fpscr` dirty-cache audit:
+Latest `8228252C` lane closure and pivot:
+`docs/research/20260524-115538-8228252c-lane-closure-next-target.md`.
+The broader `82282490:8228252C-822825C4` span remains high-value local work
+(`approx_exclusive=2876500`, `store_context=27`, `load_context=14`,
+`mul_add=3`, `stvewx=3`), but every currently isolated safe-looking lane is
+closed for immediate patching. Candidate-dead pre-call stores have no HIR DCE
+fallout, `f[1]` pair-entry ROI is only the seed context load, `fpscr` needs
+CFG-aware dirty writebacks, the all-three `stvewx` lane fold did not prove
+speed, and the three-PC `MUL_ADD_V128` fastpath was mixed. Do not patch
+`8228252C-822825C4` behavior next unless building a broader CFG-aware or
+interprocedural state-carrier design. For a one-variable local A64 lane, audit
+`822824B8-822824E8` first: it is fresh, non-call-heavy, and branch/CR/GPR
+centric (`approx_exclusive=1099164`, `exclusive_pct=100`, `store_context=16`,
+`load_context=4`).
+
+Previous `82287788` `fpscr` dirty-cache audit:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.
 Run `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1` before considering any
 `fpscr` forwarding or dirty-cache patch. On `82287788`, the report finds

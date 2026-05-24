@@ -116,6 +116,21 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-115538-8228252c-lane-closure-next-target.md`
+closes the immediate narrow `82282490:8228252C-822825C4` lanes. The span still
+has the best local absolute candidate score (`approx_exclusive=2876500`) and
+heavy state/vector/FPR traffic, but the isolated sub-lanes have already missed
+or need a broader carrier design: 13 candidate-dead pre-call stores have no HIR
+DCE payoff, `f[1]` pair-entry only saves the seed context load after the
+stack-slot carrier A/B missed, `fpscr` needs exact CFG/call writebacks,
+all-three `stvewx` did not prove speed, and the three-PC `MUL_ADD_V128`
+fastpath was mixed. Do not spend the next slice on another narrow
+`8228252C-822825C4` PC-fold. Either build a broader CFG-aware/interprocedural
+state-carrier audit, or audit the fresh non-call-heavy `822824B8-822824E8`
+CR/GPR compare-and-branch span (`approx_exclusive=1099164`,
+`exclusive_pct=100`) before any codegen behavior patch.
+
+Previous lane closure:
 `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md` adds
 `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`. It shows `fpscr` is too
 cross-boundary for the next local speed patch: `82287788` has `loads=26`,

@@ -2419,6 +2419,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-115538-8228252c-lane-closure-next-target.md`.
+  The broader `82282490:8228252C-822825C4` span remains the largest local
+  target (`approx_exclusive=2876500`, `store_context=27`, `load_context=14`,
+  `mul_add=3`, `stvewx=3`), but the immediate narrow lanes are now closed:
+  candidate-dead call-boundary stores have no HIR DCE payoff, `f[1]` pair
+  entry only saves the seed context load after the stack-slot carrier A/B
+  missed, `fpscr` needs CFG-aware dirty writebacks, all-three `stvewx` was not
+  speed-positive, and the three-PC `MUL_ADD_V128` fastpath was mixed. Do not
+  patch `8228252C-822825C4` behavior next unless the slice is explicitly a
+  broader CFG-aware/interprocedural state-carrier design. For a local
+  one-variable slice, audit the fresh non-call-heavy `822824B8-822824E8`
+  CR/GPR compare-and-branch span first (`approx_exclusive=1099164`,
+  `exclusive_pct=100`, `store_context=16`, `load_context=4`), then decide
+  whether a default-off function/span-gated codegen experiment is justified.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-114614-82287788-fpscr-dirty-cache-audit.md`.
   New deterministic tool `tools/thor/thor_hir_fpscr_dirty_cache_audit.ps1`
   parses filtered HIR, pairs `fpscr` (`+2628`) load/update/store rows, and
