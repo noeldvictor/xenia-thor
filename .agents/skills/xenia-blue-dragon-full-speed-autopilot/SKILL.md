@@ -119,6 +119,20 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
+adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It wraps the prior
+dirty-cache audit and turns `fpscr` into an exact no-behavior counter contract:
+`fpscr_static_loads=26`, `fpscr_static_stores=26`,
+`dynamic_context_access_upper=87946144`, `strict_same_window=0`,
+`cfg_carrier_required=24`, `external_visibility_required=2`, and required
+writeback call PCs `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`.
+Do not patch `fpscr` behavior and do not run a quiet speed A/B yet. The next
+useful slice is a default-off `arm64_blue_dragon_fpscr_cfg_writeback_audit`
+counter-only skeleton with `normal_entry_behavior=unchanged` and
+`payload_materializations_allowed=0`, or a return to caller-local edge-variant
+storage for `82282490:82282598 -> 82287788`.
+
+Previous priority:
 `docs/research/20260524-182632-a64-edge-variant-storage-plan.md`
 adds `tools/thor/thor_a64_edge_variant_storage_plan.ps1`. It joins the latest
 route-clean edge-variant counter row, singleton-entry/indirection source audit,

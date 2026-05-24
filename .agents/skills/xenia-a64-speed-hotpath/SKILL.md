@@ -1313,7 +1313,21 @@ Swappy only after present timing shows queue-stuffing. Keep Blue Dragon on the
 A64 lane while Thor captures show Main Thread is the wall, but build the Vulkan
 diagnostic lane so GPU work is ready when evidence changes.
 
-Latest edge-variant storage plan:
+Latest `fpscr` CFG writeback plan:
+`docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md` adds
+`tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. Run it before any
+`fpscr` behavior patch for `82287788` or the hot
+`82282490:82282598 -> 82287788` edge. It confirms
+`fpscr_static_loads=26`, `fpscr_static_stores=26`,
+`dynamic_context_access_upper=87946144`, `strict_same_window=0`,
+`cfg_carrier_required=24`, and `external_visibility_required=2`. Required call
+writeback PCs are `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`.
+Do not patch `fpscr` behavior or run a quiet speed A/B yet. Next A64 work
+should be a default-off `arm64_blue_dragon_fpscr_cfg_writeback_audit`
+counter-only skeleton with normal entry unchanged and zero payload
+materialization, or a return to caller-local edge-variant storage.
+
+Previous edge-variant storage plan:
 `docs/research/20260524-182632-a64-edge-variant-storage-plan.md` adds
 `tools/thor/thor_a64_edge_variant_storage_plan.ps1`. Run it before any
 generated-code behavior patch for `82282490:82282598 -> 82287788`. It confirms

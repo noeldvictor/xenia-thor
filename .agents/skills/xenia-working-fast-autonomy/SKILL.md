@@ -116,6 +116,20 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
+adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It turns the
+`82287788` `fpscr` dirty-cache lane into a no-behavior counter patch contract:
+`fpscr_static_loads=26`, `fpscr_static_stores=26`,
+`dynamic_context_access_upper=87946144`, `strict_same_window=0`,
+`cfg_carrier_required=24`, `external_visibility_required=2`, and required call
+writebacks at `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`. Do not patch
+`fpscr` behavior or run a quiet speed A/B yet. The next productive slice should
+be a default-off `arm64_blue_dragon_fpscr_cfg_writeback_audit` counter-only
+skeleton with normal entry behavior unchanged and zero payload materialization,
+or a return to caller-local edge-variant storage for
+`82282490:82282598 -> 82287788`.
+
+Previous lane closure:
 `docs/research/20260524-182632-a64-edge-variant-storage-plan.md`
 adds `tools/thor/thor_a64_edge_variant_storage_plan.ps1`. It source-checks the
 normal-entry singleton, guest-address-only indirection, direct-call normal
