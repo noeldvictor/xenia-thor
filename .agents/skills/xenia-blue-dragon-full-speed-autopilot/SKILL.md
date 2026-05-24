@@ -430,6 +430,19 @@ validation `scratch/thor-debug/20260523-233953-*` stayed active for 100 seconds
 at loading with clean fatal search and no idle-snapshot skip line. Next run a
 longer tagged-lifecycle attribution capture before changing lock behavior or
 returning to hotpath profiling.
+The longer tagged-lifecycle capture identified and fixed the blocker:
+`docs/research/20260523-235800-object-release-outside-global-lock.md`.
+Capture `scratch/thor-debug/20260523-234500-*` on commit `11747d104` reproduced
+black-idle with `global_lock_owner_source='Processor::OnThreadDestroyed'`.
+The fix defers `object->Release()` in `ObjectTable::ReleaseHandle` and
+`RemoveHandle` until after the object table/global critical-region lock is
+dropped. `NativeCore` and `FullDeploy` passed with APK SHA
+`FE5CBCF23E832807E51547D66387C3680DF6DB4B4802C9DB5BB64ACB46B8489B`.
+Validation `scratch/thor-debug/20260523-235417-*` reached the visible sky/wing
+opening route, had a clean fatal search, emitted no idle-snapshot skip line,
+and restored body-time rows for `8227F1D8` and `82490030`. Resume measured
+performance profiling from this route unless a fresh capture reopens the
+`Processor::OnThreadDestroyed` black-idle.
 
 Do not restart the rejected broad `PERMUTE_I32` lane-replace helper, naive VMX
 dot-product fastpath, non-constant V128 store cleanup, generic compare-branch

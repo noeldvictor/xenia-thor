@@ -159,16 +159,27 @@ X_STATUS ObjectTable::RetainHandle(X_HANDLE handle) {
 }
 
 X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
-  auto global_lock = global_critical_region_.Acquire();
+  XObject* object_to_release = nullptr;
+  X_STATUS result = X_STATUS_SUCCESS;
+  {
+    auto global_lock =
+        global_critical_region_.Acquire("ObjectTable::ReleaseHandle");
 
-  ObjectTableEntry* entry = LookupTable(handle);
-  if (!entry) {
-    return X_STATUS_INVALID_HANDLE;
+    ObjectTableEntry* entry = LookupTableLocked(handle);
+    if (!entry) {
+      result = X_STATUS_INVALID_HANDLE;
+    } else if (--entry->handle_ref_count == 0) {
+      // No more references. Remove it from the table.
+      result = RemoveHandleLocked(handle, &object_to_release);
+    }
   }
 
-  if (--entry->handle_ref_count == 0) {
-    // No more references. Remove it from the table.
-    return RemoveHandle(handle);
+  if (object_to_release) {
+    object_to_release->Release();
+  }
+
+  if (XFAILED(result)) {
+    return result;
   }
 
   // FIXME: Return a status code telling the caller it wasn't released
@@ -177,19 +188,33 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
 }
 
 X_STATUS ObjectTable::RemoveHandle(X_HANDLE handle) {
+  XObject* object_to_release = nullptr;
   X_STATUS result = X_STATUS_SUCCESS;
+  {
+    auto global_lock =
+        global_critical_region_.Acquire("ObjectTable::RemoveHandle");
+    result = RemoveHandleLocked(handle, &object_to_release);
+  }
 
+  if (object_to_release) {
+    object_to_release->Release();
+  }
+
+  return result;
+}
+
+X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
+                                         XObject** object_to_release) {
   handle = TranslateHandle(handle);
   if (!handle) {
     return X_STATUS_INVALID_HANDLE;
   }
 
-  ObjectTableEntry* entry = LookupTable(handle);
+  ObjectTableEntry* entry = LookupTableLocked(handle);
   if (!entry) {
     return X_STATUS_INVALID_HANDLE;
   }
 
-  auto global_lock = global_critical_region_.Acquire();
   if (entry->object) {
     auto object = entry->object;
     entry->object = nullptr;
@@ -207,10 +232,15 @@ X_STATUS ObjectTable::RemoveHandle(X_HANDLE handle) {
 
     // Remove object name from mapping to prevent naming collision.
     if (!object->name().empty()) {
-      RemoveNameMapping(object->name());
+      auto it = name_table_.find(string_key_case(object->name()));
+      if (it != name_table_.end()) {
+        name_table_.erase(it);
+      }
     }
-    // Release now that the object has been removed from the table.
-    object->Release();
+    // Release after dropping the object table/global critical-region lock.
+    if (object_to_release) {
+      *object_to_release = object;
+    }
   }
 
   return X_STATUS_SUCCESS;
@@ -246,12 +276,16 @@ void ObjectTable::PurgeAllObjects() {
 }
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTable(X_HANDLE handle) {
+  auto global_lock = global_critical_region_.Acquire();
+  return LookupTableLocked(handle);
+}
+
+ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(
+    X_HANDLE handle) {
   handle = TranslateHandle(handle);
   if (!handle) {
     return nullptr;
   }
-
-  auto global_lock = global_critical_region_.Acquire();
 
   // Lower 2 bits are ignored.
   uint32_t slot = GetHandleSlot(handle);

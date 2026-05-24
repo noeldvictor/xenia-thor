@@ -741,6 +741,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   Next run a longer tagged-lifecycle attribution capture; if black-idle
   reproduces, inspect whether `global_lock_owner_source` names a processor
   lifecycle method before changing lock behavior.
+- Object release outside global lock:
+  `docs/research/20260523-235800-object-release-outside-global-lock.md`.
+  Tagged-lifecycle capture `scratch/thor-debug/20260523-234500-*` reproduced
+  black-idle on commit `11747d104` and named
+  `global_lock_owner_source='Processor::OnThreadDestroyed'`. The fix defers
+  `object->Release()` in `ObjectTable::ReleaseHandle` and `RemoveHandle` until
+  after the object table/global critical-region lock is dropped. `NativeCore`
+  and `FullDeploy` passed; APK SHA
+  `FE5CBCF23E832807E51547D66387C3680DF6DB4B4802C9DB5BB64ACB46B8489B`.
+  Validation `scratch/thor-debug/20260523-235417-*` reached the visible
+  Blue Dragon sky/wing opening route with clean fatal-marker search, no idle
+  snapshot skip line, and live body-time rows. Treat the
+  `Processor::OnThreadDestroyed` black-idle as fixed unless it reappears with
+  fresh evidence. Resume performance profiling from the restored
+  `8227F1D8 -> 82490030` route.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

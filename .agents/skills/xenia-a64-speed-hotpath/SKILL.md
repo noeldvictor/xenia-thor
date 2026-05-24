@@ -563,6 +563,18 @@ generated-code evidence. The follow-up
 validation `scratch/thor-debug/20260523-233953-*` stayed active at loading with
 no idle skip line. Next run a longer tagged-lifecycle attribution capture before
 any lock behavior change.
+That longer capture and fix now exist:
+`docs/research/20260523-235800-object-release-outside-global-lock.md`.
+`scratch/thor-debug/20260523-234500-*` reproduced black-idle with
+`global_lock_owner_source='Processor::OnThreadDestroyed'`. The fix defers
+`object->Release()` in `ObjectTable::ReleaseHandle` and `RemoveHandle` until
+after the object table/global critical-region lock is dropped. `NativeCore` and
+`FullDeploy` passed with APK SHA
+`FE5CBCF23E832807E51547D66387C3680DF6DB4B4802C9DB5BB64ACB46B8489B`.
+Validation `scratch/thor-debug/20260523-235417-*` reached the visible opening,
+had no fatal markers or idle-snapshot skip, and restored body-time rows:
+`8227F1D8 body_ticks_total=2956364`, `82490030 body_ticks_total=2877652`.
+Resume measured A64 hotpath work from this stable route.
 
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on

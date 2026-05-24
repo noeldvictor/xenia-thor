@@ -87,7 +87,9 @@ class ObjectTable {
   };
 
   ObjectTableEntry* LookupTable(X_HANDLE handle);
+  ObjectTableEntry* LookupTableLocked(X_HANDLE handle);
   XObject* LookupObject(X_HANDLE handle, bool already_locked);
+  X_STATUS RemoveHandleLocked(X_HANDLE handle, XObject** object_to_release);
   void GetObjectsByType(XObject::Type type,
                         std::vector<object_ref<XObject>>* results);
 
