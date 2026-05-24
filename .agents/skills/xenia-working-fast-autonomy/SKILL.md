@@ -115,6 +115,20 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 
 ## Current Default Bias
 
+Latest evidence supersedes the stale `82490030` and `822824F0` lanes:
+`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md` shows
+the current Blue Dragon speed-preset wall is recursive `82282490` work.
+Route-clean block/call-edge captures put `822825E0 -> 82282490` first
+(`body_ticks_total=28602334`, `calls_total=117425`, peak
+`ticks_per_call=1244`) and `822825C8 -> 8227FEE8` second
+(`body_ticks_total=11951162`). Android/Thor tooling now exposes
+`a64_enable_host_guest_stack_synchronization`, but keep the Blue Dragon speed
+pack default `true` because the first same-APK stack-sync-off A/B is only a
+modest route-clean win for `82282490` (`27192906` on -> `26462740` off; code
+size `87168` -> `85104`). The next worker slice should run a route-matched
+stack-sync control sandwich or add stackpoint/prolog overhead attribution
+before changing the preset.
+
 The current best autonomous lane is `82282490` state traffic in the opening
 route. Before editing, run or inspect the state-span report:
 

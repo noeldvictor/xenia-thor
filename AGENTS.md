@@ -807,6 +807,24 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `82282490` block body-time under the current preset; if the old
   `822825E0 -> 82282490` recursive wall still dominates, use call-edge/HIR
   callee analysis there.
+- Current `82282490` recursive wall and stack-sync probe:
+  `docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md`.
+  Fresh block body-time `scratch/thor-debug/20260524-014437-*` and call-edge
+  capture `scratch/thor-debug/20260524-014858-*` reached the visible opening
+  sky/wing route with clean fatal searches and confirmed the current wall is
+  recursive call work, not stale `822824F0` vector work. The top edge is
+  `822825E0 -> 82282490` (`body_ticks_total=28602334`,
+  `calls_total=117425`, peak `ticks_per_call=1244`), with
+  `822825C8 -> 8227FEE8` secondary (`body_ticks_total=11951162`). A64 direct
+  guest calls use generated-code `blr` when the target has machine code, so the
+  hot recursive edge is not repeatedly entering via the host-to-guest thunk.
+  Android/Thor tooling now exposes
+  `a64_enable_host_guest_stack_synchronization`; keep the Blue Dragon speed
+  pack default at `true`. Same-APK A/B showed stack-sync-off was route-clean
+  and modestly smaller/faster for `82282490` (`27192906` on ->
+  `26462740` off; code size `87168` -> `85104`), but this is not enough to
+  disable a correctness guard globally. Next use a route-matched stack-sync
+  sandwich or a stackpoint/prolog overhead profiler before changing the preset.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

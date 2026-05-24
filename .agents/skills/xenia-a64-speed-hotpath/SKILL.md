@@ -623,6 +623,22 @@ Current preset rebaseline:
 `82486018=457433`. Next speed lane is delayed `82282490` block body-time under
 the current preset, not more stale `82490030` child work.
 
+Current recursive `82282490` / stack-sync probe:
+`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md`.
+Route-clean block body-time `scratch/thor-debug/20260524-014437-*` shows
+`822825E0` inside `82282490` dominates (`body_ticks_total=36823133`), while
+stale vector-ish `822824F0` is only `1394125`. Route-clean call-edge capture
+`scratch/thor-debug/20260524-014858-*` splits the dominant path as
+`822825E0 -> 82282490` (`body_ticks_total=28602334`, `calls_total=117425`,
+peak `ticks_per_call=1244`) and secondary `822825C8 -> 8227FEE8`
+(`body_ticks_total=11951162`). Android/Thor tooling now exposes
+`a64_enable_host_guest_stack_synchronization`. Keep the Blue Dragon speed-pack
+default `true`; same-APK stack-sync-off was clean and modestly improved
+`82282490` (`27192906` on -> `26462740` off; code size `87168` -> `85104`),
+but this is not enough to disable a correctness guard globally. Next speed lane
+is either a route-matched stack-sync sandwich or lower-overhead
+stackpoint/prolog attribution before changing the preset.
+
 Clean route after the reverted broad lane-replace probe:
 `scratch\thor-debug\20260521-182630-*` reached the opening route again on
 HEAD `5aaf0d776` with APK SHA

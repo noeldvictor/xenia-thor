@@ -123,6 +123,7 @@ param(
     [string]$A64InlineKernelHighFrequencyExports = "true",
     [string]$A64InlineKernelSpinlockExports = "true",
     [string]$A64LseKernelLockFastpaths = "true",
+    [string]$A64EnableHostGuestStackSynchronization = "",
     [string]$Arm64VmxDotF32Fastpath = "false",
     [string]$Arm64PermuteI32ZipFastpath = "true",
     [string]$A64RtlEnterFreeFirst = "false",
@@ -875,6 +876,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonWordCopyLoopFastpath) {
         $parts += "--ez arm64_blue_dragon_word_copy_loop_fastpath $(ConvertTo-BooleanText $Arm64BlueDragonWordCopyLoopFastpath)"
     }
+    if ($A64EnableHostGuestStackSynchronization) {
+        $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
+    }
     if ($Arm64AddSubImmAudit) {
         $parts += "--ez arm64_add_sub_imm_audit $(ConvertTo-BooleanText $Arm64AddSubImmAudit)"
     }
@@ -1090,6 +1094,7 @@ function Write-CaptureMetadata {
         "a64_inline_kernel_high_frequency_exports=$A64InlineKernelHighFrequencyExports",
         "a64_inline_kernel_spinlock_exports=$A64InlineKernelSpinlockExports",
         "a64_lse_kernel_lock_fastpaths=$A64LseKernelLockFastpaths",
+        "a64_enable_host_guest_stack_synchronization=$A64EnableHostGuestStackSynchronization",
         "arm64_vmx_dot_f32_fastpath=$Arm64VmxDotF32Fastpath",
         "arm64_permute_i32_zip_fastpath=$Arm64PermuteI32ZipFastpath",
         "a64_rtl_enter_free_first=$A64RtlEnterFreeFirst",
@@ -1390,6 +1395,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLiveInR1Audit" "false"
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "A64EnableHostGuestStackSynchronization" "true"
     Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitProbe" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitFastpath" "true"

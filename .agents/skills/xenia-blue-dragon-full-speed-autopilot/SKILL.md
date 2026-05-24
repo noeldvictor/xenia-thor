@@ -118,19 +118,29 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
-Latest priority, superseding the older chronology below: the `82485DD8` word
-copy-loop fastpath is confirmed for the Blue Dragon Thor speed preset, and the
-fresh preset rebaseline moved the main target back to `82282490`.
-`docs/research/20260524-014050-word-loop-preset-rebaseline.md` /
-`scratch/thor-debug/20260524-013649-*` confirmed
-`arm64_blue_dragon_word_copy_loop_fastpath=true`, reached the visible opening
-sky/wing route, and had clean fatal-marker search. Final body-time:
-`82282490=25383515`, `82281D28=7175068`, `82490030=3480696`,
-`82486178=1358411`, `82485DD8=618538`, `82486018=457433`. Keep
+Latest priority, superseding the older chronology below:
+`docs/research/20260524-021116-82282490-recursive-stack-sync-probe.md` confirms
+the Blue Dragon word-loop speed preset moved the wall back to recursive
+`82282490` work. Fresh route-clean captures show
+`822825E0 -> 82282490` dominates dynamic call-edge body time
+(`body_ticks_total=28602334`, `calls_total=117425`, peak
+`ticks_per_call=1244`), while `822825C8 -> 8227FEE8` is secondary
+(`body_ticks_total=11951162`). Do not restart stale `822824F0` vector work from
+entry counts alone. Android/Thor tooling now exposes
+`a64_enable_host_guest_stack_synchronization`; keep the Blue Dragon speed-pack
+default `true` for now. A same-APK A/B showed stack-sync-off was route-clean
+and modestly smaller/faster for `82282490` (`27192906` on -> `26462740` off;
+code size `87168` -> `85104`), but this is not enough to disable a correctness
+guard globally. Next slice should either run a route-matched stack-sync
+control sandwich or add a stackpoint/prolog overhead profiler before changing
+the preset.
+
+The `82485DD8` word copy-loop fastpath remains confirmed for the Blue Dragon
+Thor speed preset. `docs/research/20260524-014050-word-loop-preset-rebaseline.md`
+confirmed `arm64_blue_dragon_word_copy_loop_fastpath=true`, reached the visible
+opening sky/wing route, and had clean fatal-marker search. Keep
 `arm64_blue_dragon_vmx_copy_loop_fastpath` default-off and do not combine the
-two copy-loop toggles yet. Next slice should run delayed `82282490` block
-body-time under the current preset; if the old `822825E0 -> 82282490`
-recursive wall still dominates, use call-edge/HIR callee analysis there.
+two copy-loop toggles yet.
 
 As of the latest sprint, `82282490` remains the opening-scene body-time wall.
 The offline HIR reports now map context offsets to PPC state names and
