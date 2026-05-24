@@ -116,6 +116,19 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-120704-822824b8-branch-state-audit.md` adds
+`tools/thor/thor_hir_branch_state_audit.ps1`. For
+`82282490:822824B8-822824E8`, the audit confirms local body time
+(`body_ticks_total=1099164`) but closes the standalone patch: branch predicates
+are also CR context stores across barriers, and the only GPR wins are three
+fallthrough-only reloads (`r[11]`, `r[11]`, `r[31]`). The loop tail
+`822825F4-82282600` has the same CR predicate-store shape and no reload
+opportunity. Do not patch CR store/barrier or a narrow branch-local GPR carrier
+next. Either broaden the branch-state audit across the `822824B8 <-> 822825F4`
+loop and nearby branchy spans to prove aggregate GPR-carrier upside, or return
+to higher-traffic CFG-aware/interprocedural state-carrier design.
+
+Previous lane closure:
 `docs/research/20260524-115538-8228252c-lane-closure-next-target.md`
 closes the immediate narrow `82282490:8228252C-822825C4` lanes. The span still
 has the best local absolute candidate score (`approx_exclusive=2876500`) and

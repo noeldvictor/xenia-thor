@@ -2419,6 +2419,22 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-120704-822824b8-branch-state-audit.md`.
+  New deterministic tool `tools/thor/thor_hir_branch_state_audit.ps1` audits
+  branchy HIR spans for context stores consumed by branch predicates and
+  reloads that would need fallthrough-only carriers. On
+  `82282490:822824B8-822824E8`, it reports `body_ticks_total=1099164`,
+  `class_stores=cr:9,gpr:7`, `class_loads=gpr:4`, three branch predicates
+  stored to context before `context_barrier` / branch, and only three GPR
+  reload opportunities (`r[11]` twice and `r[31]` once), all crossing branch
+  barriers. The loop tail `822825F4-82282600` is similar CR predicate-store
+  work and has no reload opportunity. Do not patch `822824B8-822824E8` next:
+  broad CR store/compare/barrier fusion is a known Blue Dragon negative lane,
+  and the GPR upper bound is too small for another standalone carrier probe.
+  Next useful output is either a broader CFG-aware branch/GPR carrier audit
+  across the `822824B8 <-> 822825F4` loop and nearby branchy spans, or a return
+  to higher-traffic CFG-aware/interprocedural state-carrier design.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-115538-8228252c-lane-closure-next-target.md`.
   The broader `82282490:8228252C-822825C4` span remains the largest local
   target (`approx_exclusive=2876500`, `store_context=27`, `load_context=14`,

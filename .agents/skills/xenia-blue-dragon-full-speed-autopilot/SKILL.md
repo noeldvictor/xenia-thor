@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-120704-822824b8-branch-state-audit.md`
+adds `tools/thor/thor_hir_branch_state_audit.ps1`. The fresh
+`822824B8-822824E8` branch span is real local work
+(`body_ticks_total=1099164`, `class_stores=cr:9,gpr:7`), but not a patch target
+yet. The tool finds three branch predicates that were also stored to CR context
+before `context_barrier` / branch, plus only three fallthrough-only GPR reload
+opportunities (`r[11]`, `r[11]`, `r[31]`). The loop tail
+`822825F4-82282600` has the same CR predicate-store shape and no reload
+opportunity. Do not patch `822824B8-822824E8` next. Broad CR store/compare
+fusion is a known negative lane for Blue Dragon, and the local GPR upper bound
+is too small for a standalone carrier probe. Next useful slice should either
+broaden this audit across the `822824B8 <-> 822825F4` loop and other branchy
+local spans, or return to a higher-traffic CFG-aware/interprocedural
+state-carrier design.
+
+Previous priority:
 `docs/research/20260524-115538-8228252c-lane-closure-next-target.md`
 rechecks the broader `82282490:8228252C-822825C4` span after the recent
 `fpscr`, `f[1]`, `stvewx`, and `MUL_ADD_V128` lanes. The span is still large

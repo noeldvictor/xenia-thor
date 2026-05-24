@@ -1302,7 +1302,21 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest `8228252C` lane closure and pivot:
+Latest `822824B8` branch-state audit:
+`docs/research/20260524-120704-822824b8-branch-state-audit.md`.
+Run `tools/thor/thor_hir_branch_state_audit.ps1` before considering any
+branch-local CR/GPR context patch. On `82282490:822824B8-822824E8`, it reports
+`body_ticks_total=1099164`, `class_stores=cr:9,gpr:7`, and three branch
+predicate values that were also stored to CR context before
+`context_barrier` / branch. The only GPR reload wins are fallthrough-only:
+`r[11]` twice and `r[31]` once. The loop tail `822825F4-82282600` has the same
+CR predicate-store shape and no reload win. Do not patch this span next:
+CR store/compare/barrier fusion is a known negative lane, and the GPR upper
+bound is too small for another narrow carrier probe. Next A64 speed work should
+either broaden this audit across the branch loop/nearby branchy spans, or move
+back to higher-traffic CFG-aware state-carrier design.
+
+Previous `8228252C` lane closure and pivot:
 `docs/research/20260524-115538-8228252c-lane-closure-next-target.md`.
 The broader `82282490:8228252C-822825C4` span remains high-value local work
 (`approx_exclusive=2876500`, `store_context=27`, `load_context=14`,
