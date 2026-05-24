@@ -1034,6 +1034,20 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   `MUL_ADD_V128` source/audit lane for `82282568/8228256C/82282570`, or better
   `82282588` dynamic-`EXTRACT_I32`/`stvewx` provenance before another lane-fold
   experiment.
+- Current `82282588` `stvewx` provenance:
+  `docs/research/20260524-064118-82282588-stvewx-provenance.md`.
+  `tools/thor/thor_hir_stvewx_lane_audit.ps1` now supports
+  `-ProvenanceStartGuest` and simple `store_context` -> `load_context`
+  forwarding inside the audited provenance window. With target slice
+  `8228252C-822825C4` and provenance start `82282514`, all three dynamic
+  `stvewx` extract lanes are proven under the normal 16-byte PPC stack
+  alignment assumption: `82282580 -> lane 0`, `82282584 -> lane 1`, and
+  `82282588 -> lane 2` via `r6 = r1 + 0x50`, then `r6 + 0x8`. Do not repeat
+  the old two-site `stvewx` lane-fold A/B unchanged. If generated code is
+  patched next, make it a new default-off, Blue-Dragon/function/PC-gated
+  all-three-site `EXTRACT_I32` fastpath with audit counters first. If that
+  misses route-speed proof, move to `MUL_ADD_V128` cost instead of another
+  narrow `stvewx` tweak.
 - Clean route rebaseline:
   `docs/research/20260521-183001-clean-route-rebaseline.md`.
   After reverting the broad lane-replace probe and redeploying clean `master`,

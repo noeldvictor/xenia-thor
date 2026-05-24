@@ -8,7 +8,8 @@ param(
     [ValidateSet("RawHIR", "OptHIR")]
     [string]$Phase = "OptHIR",
     [string]$EndGuest = "",
-    [string]$BlockProfileLog = ""
+    [string]$BlockProfileLog = "",
+    [string]$ProvenanceStartGuest = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -203,6 +204,10 @@ if (!(Test-Path -LiteralPath $LogPath)) {
 $resolvedLog = (Resolve-Path -LiteralPath $LogPath).Path
 $functionUpper = $Function.ToUpperInvariant()
 $startUpper = $StartGuest.ToUpperInvariant()
+$provenanceStartUpper = $ProvenanceStartGuest.ToUpperInvariant()
+if ([string]::IsNullOrWhiteSpace($provenanceStartUpper)) {
+    $provenanceStartUpper = $startUpper
+}
 $endUpper = $EndGuest.ToUpperInvariant()
 $functionPattern = [Regex]::Escape($functionUpper)
 $phasePattern = [Regex]::Escape($Phase)
@@ -269,8 +274,15 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
 if (!$ppcOrdinals.ContainsKey($startUpper)) {
     throw "StartGuest $startUpper not found in $Phase dump for $functionUpper."
 }
+if (!$ppcOrdinals.ContainsKey($provenanceStartUpper)) {
+    throw "ProvenanceStartGuest $provenanceStartUpper not found in $Phase dump for $functionUpper."
+}
 
-$startOrdinal = [int]$ppcOrdinals[$startUpper]
+$targetStartOrdinal = [int]$ppcOrdinals[$startUpper]
+$startOrdinal = [int]$ppcOrdinals[$provenanceStartUpper]
+if ($startOrdinal -gt $targetStartOrdinal) {
+    throw "ProvenanceStartGuest $provenanceStartUpper must be before or equal to StartGuest $startUpper."
+}
 $endOrdinal = $items.Count
 if (![string]::IsNullOrWhiteSpace($endUpper)) {
     if (!$ppcOrdinals.ContainsKey($endUpper)) {
@@ -292,6 +304,7 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog) -and (Test-Path -LiteralPath
 }
 
 $exprs = @{}
+$contextExprs = @{}
 $records = New-Object System.Collections.Generic.List[object]
 $currentRecord = $null
 $currentPpcText = ""
@@ -329,12 +342,16 @@ foreach ($row in $slice) {
         if ($op -eq "load_context" -and $args -match "^\+(?<offset>\d+)") {
             $offset = [int]$Matches.offset
             $name = Get-ContextOffsetName $offset
-            $proof = "context"
-            if ($name -eq "r[1]") {
-                $proof = "r1_stack_pointer_assumed_16b_aligned"
+            if ($contextExprs.ContainsKey($name)) {
+                $exprs[$dest] = Copy-ExprWithChain $contextExprs[$name] $row.text
+            } else {
+                $proof = "context"
+                if ($name -eq "r[1]") {
+                    $proof = "r1_stack_pointer_assumed_16b_aligned"
+                }
+                $exprs[$dest] = New-Expr -Kind "context" -Desc $name -Base $name `
+                    -Offset 0 -Proof $proof -Chain @($row.text)
             }
-            $exprs[$dest] = New-Expr -Kind "context" -Desc $name -Base $name `
-                -Offset 0 -Proof $proof -Chain @($row.text)
             continue
         }
         if ($op -eq "add" -and $args -match "^(?<lhs>[^,]+),\s*(?<rhs>.+)$") {
@@ -432,6 +449,23 @@ foreach ($row in $slice) {
         continue
     }
 
+    if ($op -eq "context_barrier" -or $op -like "call*") {
+        $contextExprs.Clear()
+        continue
+    }
+
+    if ($op -eq "store_context" -and $args -match "^\+(?<offset>\d+),\s*(?<value>.+)$") {
+        $offset = [int]$Matches.offset
+        $name = Get-ContextOffsetName $offset
+        $source = Resolve-ValueExpr $exprs $Matches.value
+        if ($null -ne $source -and $source.kind -ne "unknown") {
+            $contextExprs[$name] = Copy-ExprWithChain $source $row.text
+        } elseif ($contextExprs.ContainsKey($name)) {
+            $contextExprs.Remove($name)
+        }
+        continue
+    }
+
     if ($op -eq "store.1" -and $null -ne $currentRecord) {
         $currentRecord.store_text = $row.text
     }
@@ -451,6 +485,9 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
 Write-Output ("function={0}" -f $functionUpper)
 Write-Output ("phase={0}" -f $Phase)
 Write-Output ("slice={0}-{1}" -f $startUpper, $(if ([string]::IsNullOrWhiteSpace($endUpper)) { "next" } else { $endUpper }))
+if ($provenanceStartUpper -ne $startUpper) {
+    Write-Output ("provenance_slice={0}-{1}" -f $provenanceStartUpper, $(if ([string]::IsNullOrWhiteSpace($endUpper)) { "next" } else { $endUpper }))
+}
 if (![string]::IsNullOrWhiteSpace($bodyProfileLine)) {
     Write-Output $bodyProfileLine
 }

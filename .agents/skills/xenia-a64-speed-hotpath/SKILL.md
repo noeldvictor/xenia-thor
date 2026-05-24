@@ -727,6 +727,23 @@ should be a default-off `MUL_ADD_V128` audit/source lane for
 dynamic-`EXTRACT_I32` / `stvewx` provenance before another lane-fold
 experiment.
 
+Latest `82282588` stvewx provenance:
+`docs/research/20260524-064118-82282588-stvewx-provenance.md`. Use the updated
+auditor with the measured slice and an earlier provenance start:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_stvewx_lane_audit.ps1 -LogPath scratch\thor-debug\20260521-170941-speed-logcat.txt -Function 82282490 -StartGuest 8228252C -ProvenanceStartGuest 82282514 -EndGuest 822825C4 -BlockProfileLog scratch\thor-debug\20260524-030450-speed-logcat.txt
+```
+
+Current read: the provenance-aware audit proves all three dynamic `stvewx`
+extract lanes in the measured span: `82282580 -> lane 0`,
+`82282584 -> lane 1`, and `82282588 -> lane 2` via
+`r6 = r1 + 0x50`, then `r6 + 0x8`. Do not rerun the old two-site lane-fold
+A/B unchanged. If this lane is patched next, make it a new default-off,
+Blue-Dragon/function/PC-gated all-three-site `EXTRACT_I32` fastpath with audit
+counters and route-clean proof before quiet speed A/B. If it misses, move to
+`MUL_ADD_V128` cost.
+
 Previous `82281D28` focused lane:
 `docs/research/20260524-050931-82281d28-focused-capture.md`. Capture
 `scratch/thor-debug/20260524-050427-*` reached the visible opening sky/wing

@@ -202,6 +202,17 @@ default-off `MUL_ADD_V128` audit/source lane for `82282568/8228256C/82282570`,
 or stronger `82282588` dynamic-`EXTRACT_I32` / `stvewx` provenance before
 another lane-fold experiment.
 
+Latest `82282588` stvewx provenance:
+`docs/research/20260524-064118-82282588-stvewx-provenance.md` updates
+`tools/thor/thor_hir_stvewx_lane_audit.ps1` with `-ProvenanceStartGuest` and
+context-store forwarding. The provenance-aware audit proves
+`82282588 -> lane 2` via `r6 = r1 + 0x50`, then `r6 + 0x8`, so the measured
+span now has all three dynamic extract lanes proven: `82282580 -> lane 0`,
+`82282584 -> lane 1`, and `82282588 -> lane 2`. Do not repeat the old
+two-site A/B unchanged. If patching next, make a new default-off all-three-site
+`EXTRACT_I32` fastpath with audit counters, then route-clean proof before a
+quiet A/B. If it misses, switch to `MUL_ADD_V128` cost.
+
 Previous evidence:
 `docs/research/20260524-050931-82281d28-focused-capture.md` shows `82281D28`
 is the current larger lane, but not yet a local patch target. Capture

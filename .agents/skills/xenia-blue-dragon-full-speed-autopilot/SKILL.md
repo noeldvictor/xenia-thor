@@ -212,6 +212,18 @@ first. Good concrete options are `MUL_ADD_V128` source/audit for
 `82282568/8228256C/82282570`, or better `82282588` dynamic-`EXTRACT_I32` /
 `stvewx` provenance before another lane-fold experiment.
 
+Latest `82282588` stvewx provenance:
+`docs/research/20260524-064118-82282588-stvewx-provenance.md` updates
+`tools/thor/thor_hir_stvewx_lane_audit.ps1` with `-ProvenanceStartGuest` and
+simple `store_context` -> `load_context` forwarding. With target slice
+`8228252C-822825C4` and provenance start `82282514`, the audit proves all
+three dynamic `stvewx` extract lanes: `82282580 -> lane 0`,
+`82282584 -> lane 1`, and `82282588 -> lane 2` through
+`r6 = r1 + 0x50`, then `r6 + 0x8`. Do not repeat the old two-site A/B
+unchanged. If the next slice patches generated code, use a new default-off
+Blue-Dragon/function/PC-gated all-three-site `EXTRACT_I32` fastpath with audit
+counters first; if it misses, move to `MUL_ADD_V128` cost.
+
 Previous priority:
 `docs/research/20260524-050931-82281d28-focused-capture.md` followed the
 larger `82281D28` lane. Capture `scratch/thor-debug/20260524-050427-*`
