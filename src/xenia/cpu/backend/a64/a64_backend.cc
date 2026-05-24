@@ -283,6 +283,14 @@ DEFINE_bool(
     "default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_state_carrier_design_audit, false,
+    "Thor ARM64 speed lane: instrument the Blue Dragon 82282490 -> 82287788 "
+    "state-carrier design candidates. Counts f[1]/fpscr seeds, reads, dirty "
+    "writes, call-visible writeback points, kills, and fallback/unclassified "
+    "accesses only; does not change generated behavior. Research-only, "
+    "title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1966,6 +1974,59 @@ void A64Backend::LogSpeedProfile() {
         "helper_preserved={}/{} child_preserved={}/{} seed={}/{} reuse={}/{}",
         total.second, total.first, helper.second, helper.first, child.second,
         child.first, seed.second, seed.first, reuse.second, reuse.first);
+  }
+  if (cvars::arm64_blue_dragon_state_carrier_design_audit) {
+    auto f1_seed =
+        load_delta(blue_dragon_state_carrier_f1_seed_count_,
+                   last_blue_dragon_state_carrier_f1_seed_count_);
+    auto f1_read =
+        load_delta(blue_dragon_state_carrier_f1_read_count_,
+                   last_blue_dragon_state_carrier_f1_read_count_);
+    auto f1_helper =
+        load_delta(blue_dragon_state_carrier_f1_helper_read_count_,
+                   last_blue_dragon_state_carrier_f1_helper_read_count_);
+    auto f1_child =
+        load_delta(blue_dragon_state_carrier_f1_child_read_count_,
+                   last_blue_dragon_state_carrier_f1_child_read_count_);
+    auto f1_child_call =
+        load_delta(blue_dragon_state_carrier_f1_child_call_count_,
+                   last_blue_dragon_state_carrier_f1_child_call_count_);
+    auto f1_fallback =
+        load_delta(blue_dragon_state_carrier_f1_fallback_count_,
+                   last_blue_dragon_state_carrier_f1_fallback_count_);
+    auto fpscr_seed =
+        load_delta(blue_dragon_state_carrier_fpscr_seed_count_,
+                   last_blue_dragon_state_carrier_fpscr_seed_count_);
+    auto fpscr_read =
+        load_delta(blue_dragon_state_carrier_fpscr_read_count_,
+                   last_blue_dragon_state_carrier_fpscr_read_count_);
+    auto fpscr_dirty_write =
+        load_delta(blue_dragon_state_carrier_fpscr_dirty_write_count_,
+                   last_blue_dragon_state_carrier_fpscr_dirty_write_count_);
+    auto fpscr_writeback =
+        load_delta(blue_dragon_state_carrier_fpscr_writeback_count_,
+                   last_blue_dragon_state_carrier_fpscr_writeback_count_);
+    auto fpscr_call_kill =
+        load_delta(blue_dragon_state_carrier_fpscr_call_kill_count_,
+                   last_blue_dragon_state_carrier_fpscr_call_kill_count_);
+    auto fpscr_fallback =
+        load_delta(blue_dragon_state_carrier_fpscr_fallback_count_,
+                   last_blue_dragon_state_carrier_fpscr_fallback_count_);
+    XELOGW(
+        "A64 Blue Dragon state-carrier design audit: f1_seed={}/{} "
+        "f1_read={}/{} f1_helper_read={}/{} f1_child_read={}/{} "
+        "f1_child_call={}/{} f1_fallback={}/{} fpscr_seed={}/{} "
+        "fpscr_read={}/{} fpscr_dirty_write={}/{} "
+        "fpscr_required_writeback={}/{} fpscr_call_kill={}/{} "
+        "fpscr_fallback={}/{}",
+        f1_seed.second, f1_seed.first, f1_read.second, f1_read.first,
+        f1_helper.second, f1_helper.first, f1_child.second, f1_child.first,
+        f1_child_call.second, f1_child_call.first, f1_fallback.second,
+        f1_fallback.first, fpscr_seed.second, fpscr_seed.first,
+        fpscr_read.second, fpscr_read.first, fpscr_dirty_write.second,
+        fpscr_dirty_write.first, fpscr_writeback.second, fpscr_writeback.first,
+        fpscr_call_kill.second, fpscr_call_kill.first, fpscr_fallback.second,
+        fpscr_fallback.first);
   }
 
   const bool interval_had_activity =

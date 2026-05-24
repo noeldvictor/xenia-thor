@@ -1302,7 +1302,18 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest state-carrier audit:
+Latest state-carrier runtime probe:
+`docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`
+adds default-off cvar `arm64_blue_dragon_state_carrier_design_audit`. It is
+counter-only and title/function/PC/offset gated to the audited
+`82282490 -> 82287788` path. It reports `f[1]` seed/read/helper/child-call and
+fallback counts plus `fpscr` seed/read/dirty-write/required-writeback/call-kill
+and fallback counts. NativeCore and ApkShell builds passed; no route capture
+has used it yet. Next run should be an audit capture with delayed body-time
+comparators for `82282490,82287788`. Do not judge FPS from that run and do not
+patch carrier behavior until the counter row proves the next lane.
+
+Previous state-carrier audit:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md` adds
 `tools/thor/thor_hir_state_carrier_design_audit.ps1`. Use it before patching
 any `8228252C-822825C4` carrier behavior. For `82282598 -> 82287788`, current

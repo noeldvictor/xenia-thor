@@ -119,6 +119,19 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`
+adds default-off cvar `arm64_blue_dragon_state_carrier_design_audit`. It is a
+counter-only probe for the audited `82282490 -> 82287788` state-carrier design,
+not a behavior patch. It reports parent `f[1]`/`fpscr` seeds, callee reads,
+dirty writes, call-visible writeback points, call kills, and fallback counts.
+NativeCore and ApkShell builds passed; no Thor route capture has used it yet.
+Next useful output is a route-stabilized audit capture using
+`-Arm64BlueDragonStateCarrierDesignAudit true` with delayed body-time filter
+`82282490,82287788`. Do not judge FPS from that audit run, do not enable the
+probe in presets, and do not patch behavior until the counter row proves the
+next carrier lane.
+
+Previous priority:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
 adds `tools/thor/thor_hir_state_carrier_design_audit.ps1`. Use it before any
 new state-carrier behavior patch. For `82282490:8228252C-822825C4` and

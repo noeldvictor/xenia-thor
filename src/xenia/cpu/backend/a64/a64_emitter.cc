@@ -75,6 +75,7 @@ DECLARE_bool(arm64_blue_dragon_jump_table_inline_in_caller);
 DECLARE_bool(arm64_blue_dragon_vmx_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
+DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -4267,6 +4268,45 @@ void A64Emitter::MaybeEmitBlueDragonStricmpReturnProfile() {
 
 void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
+  if (cvars::arm64_blue_dragon_state_carrier_design_audit && instr &&
+      current_guest_function_ == 0x82287788) {
+    auto* backend = backend_;
+    const uint32_t guest_pc = instr->GuestAddressFor();
+    switch (guest_pc) {
+      case 0x82287854:
+      case 0x82287ED4:
+        EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_f1_child_call_count());
+        break;
+      default:
+        break;
+    }
+    switch (guest_pc) {
+      case 0x8228778C:
+      case 0x82287854:
+      case 0x82287ED4:
+      case 0x82287EDC:
+      case 0x82287EE4:
+      case 0x82288220:
+        EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_fpscr_call_kill_count());
+        break;
+      default:
+        break;
+    }
+    switch (guest_pc) {
+      case 0x82287ED4:
+      case 0x82287EDC:
+      case 0x82287EE4:
+      case 0x82288220:
+        EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_fpscr_writeback_count());
+        break;
+      default:
+        break;
+    }
+  }
+
   std::atomic<uint64_t>* call_edge_entry_counter = nullptr;
   std::atomic<uint64_t>* call_edge_body_ticks_counter = nullptr;
   if (current_guest_function_call_edge_profile_ && current_a64_function_) {

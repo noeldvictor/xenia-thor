@@ -45,6 +45,7 @@ DECLARE_bool(arm64_blue_dragon_call_boundary_state_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
+DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -362,6 +363,80 @@ static void EmitBlueDragonF1CarrierAudit(
       break;
     case BlueDragonF1CarrierLoadKind::kNone:
       break;
+  }
+}
+
+static void EmitBlueDragonStateCarrierDesignLoadAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_state_carrier_design_audit || !instr ||
+      e.current_guest_function() != 0x82287788) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  const uint32_t guest_pc = instr->GuestAddressFor();
+  if (offset == 296) {
+    e.EmitAtomicIncrement64(backend->blue_dragon_state_carrier_f1_read_count());
+    switch (guest_pc) {
+      case 0x82287798:
+      case 0x82287828:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_f1_helper_read_count());
+        break;
+      case 0x82287A1C:
+      case 0x82287A2C:
+      case 0x82287AA4:
+      case 0x82287CF8:
+      case 0x82287D10:
+      case 0x82287D8C:
+      case 0x82287EA8:
+      case 0x82287F1C:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_f1_child_read_count());
+        break;
+      default:
+        e.EmitAtomicIncrement64(
+            backend->blue_dragon_state_carrier_f1_fallback_count());
+        break;
+    }
+    return;
+  }
+
+  if (offset == 2628) {
+    e.EmitAtomicIncrement64(
+        backend->blue_dragon_state_carrier_fpscr_read_count());
+  }
+}
+
+static void EmitBlueDragonStateCarrierDesignStoreAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_state_carrier_design_audit || !instr) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  const uint32_t guest_function = e.current_guest_function();
+  const uint32_t guest_pc = instr->GuestAddressFor();
+  if (guest_function == 0x82282490 && guest_pc == 0x82282594) {
+    if (offset == 296) {
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_state_carrier_f1_seed_count());
+    } else if (offset == 2628) {
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_state_carrier_fpscr_seed_count());
+    }
+    return;
+  }
+
+  if (guest_function != 0x82287788) {
+    return;
+  }
+  if (offset == 296) {
+    e.EmitAtomicIncrement64(
+        backend->blue_dragon_state_carrier_f1_fallback_count());
+  } else if (offset == 2628) {
+    e.EmitAtomicIncrement64(
+        backend->blue_dragon_state_carrier_fpscr_dirty_write_count());
   }
 }
 
@@ -753,6 +828,7 @@ struct LOAD_CONTEXT_I32
     : Sequence<LOAD_CONTEXT_I32, I<OPCODE_LOAD_CONTEXT, I32Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonStateCarrierDesignLoadAudit(e, i.instr, offset);
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };
@@ -774,6 +850,7 @@ struct LOAD_CONTEXT_F64
     : Sequence<LOAD_CONTEXT_F64, I<OPCODE_LOAD_CONTEXT, F64Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonStateCarrierDesignLoadAudit(e, i.instr, offset);
     const auto f1_carrier_kind =
         GetBlueDragonF1CarrierLoadKind(e, i.instr, offset);
     EmitBlueDragonF1CarrierAudit(e, f1_carrier_kind);
@@ -845,6 +922,7 @@ struct STORE_CONTEXT_I32
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonStateCarrierDesignStoreAudit(e, i.instr, offset);
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;
@@ -910,6 +988,7 @@ struct STORE_CONTEXT_F64
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, F64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonStateCarrierDesignStoreAudit(e, i.instr, offset);
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;

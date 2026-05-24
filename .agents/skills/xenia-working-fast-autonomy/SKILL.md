@@ -116,6 +116,17 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-135034-blue-dragon-state-carrier-design-probe.md`
+implements a default-off, counter-only runtime probe:
+`arm64_blue_dragon_state_carrier_design_audit`. It measures the audited
+`82282490 -> 82287788` `f[1]` and `fpscr` carrier requirements without changing
+generated behavior. NativeCore and ApkShell builds passed, and no Thor route
+capture has used the probe yet. The next useful output is a route-stabilized
+audit capture with `-Arm64BlueDragonStateCarrierDesignAudit true` plus delayed
+body-time comparators for `82282490,82287788`. Do not treat that run as a quiet
+speed A/B and do not enable the probe in presets.
+
+Previous lane closure:
 `docs/research/20260524-133027-8228252c-state-carrier-design-audit.md`
 adds deterministic tool `tools/thor/thor_hir_state_carrier_design_audit.ps1`.
 Run it before any new `8228252C-822825C4` carrier behavior patch. It joins the
