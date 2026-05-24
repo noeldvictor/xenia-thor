@@ -116,6 +116,20 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`
+returns the sprint from closed narrow probes to a broader state-carrier design
+problem. `8228252C-822825C4` remains the top body-backed local target
+(`approx_exclusive=2876500`) and contains the hot `82282598 -> 82287788` edge
+(`calls_total=1691272`). Parent `82282490` stores `r[3]`, `f[1]`, `fpscr`,
+and `lr`; callee `82287788` loads all four. Do not patch another local PC fold,
+standalone `f[1]` pair-entry thunk, or `fpscr` dirty-cache shortcut next:
+`f[1]` has only one seed-load incremental ROI after the stack-slot carrier
+A/B missed, `fpscr` needs exact call-visible dirty writebacks, `r[3]` is
+mutable, and `lr` is call-link state. The next useful output is a deterministic
+CFG/interprocedural state-carrier audit listing seed, kill, and writeback
+requirements before any new behavior patch.
+
+Previous lane closure:
 `docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`
 closes the branch-loop detour. Across `82282490-822824B8`,
 `822824B8-822824E8`, and `822825F4-82282600`, the loop head plus tail total

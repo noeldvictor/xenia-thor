@@ -1302,6 +1302,21 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
+Latest state-carrier design constraints:
+`docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`.
+`8228252C-822825C4` remains the top `82282490` local/exclusive target
+(`approx_exclusive=2876500`), but the live direct-call state roundtrip at
+`82282598 -> 82287788` makes another narrow codegen fold the wrong next step.
+Parent `82282490` stores `r[3]`, `f[1]`, `fpscr`, and `lr`; callee
+`82287788` loads all four. `f[1]` is read-only but only has one seed-load
+incremental win over the previous stack-slot carrier; `fpscr` needs CFG-aware
+dirty writebacks at call-visible PCs `82287ED4`, `82287EDC`, `82287EE4`, and
+`82288220`; `r[3]` is mutable; and `lr` is call-link state. Do not patch a
+local PC fold, standalone `f[1]` thunk, or `fpscr` shortcut next. First add or
+run a CFG/interprocedural state-carrier audit that prints seed, kill, and
+writeback requirements for `8228252C-822825C4` and the `82282598 -> 82287788`
+edge.
+
 Latest branch-loop aggregate audit:
 `docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`.
 Run the branch-state tool on nearby branch slices before patching this lane.

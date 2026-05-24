@@ -2429,6 +2429,21 @@ let a refiner pass change emulator behavior without the normal experiment gate.
   is enough to satisfy early XACT driver registration, but not a real Android
   audio backend.
 - Current Blue Dragon speed lane:
+  `docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`.
+  The broader state-carrier design pass keeps `8228252C-822825C4` as the top
+  body-backed local target (`approx_exclusive=2876500`) but blocks another
+  narrow generated-code patch. The hot edge `82282598 -> 82287788` has
+  `calls_total=1691272`; parent `82282490` stores `r[3]`, `f[1]`, `fpscr`,
+  and `lr` before or at the call, and callee `82287788` loads all four.
+  `f[1]` is read-only but the standalone carrier/pair-entry ROI is too small
+  after the previous A/B missed speed proof. `fpscr` has much larger access
+  upper bound, but needs CFG-aware dirty writebacks at call-visible PCs
+  `82287ED4`, `82287EDC`, `82287EE4`, and `82288220`; `r[3]` is mutable and
+  `lr` is call-link state. Do not patch behavior next from a local PC fold,
+  standalone `f[1]` thunk, or `fpscr` shortcut. The next useful output is a
+  deterministic CFG/interprocedural state-carrier audit that prints seed, kill,
+  and writeback requirements for `8228252C-822825C4` and `82282598 -> 82287788`.
+- Previous Blue Dragon speed lane:
   `docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`.
   The broader branch-loop audit closes the standalone `822824B8 <-> 822825F4`
   branch/GPR lane. Re-running the dynamic slice ranking and branch-state tool

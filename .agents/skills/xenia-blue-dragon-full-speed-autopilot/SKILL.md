@@ -119,6 +119,22 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260524-131709-8228252c-state-carrier-design-constraints.md`
+keeps `8228252C-822825C4` first by local/exclusive body time
+(`approx_exclusive=2876500`) but closes another narrow local-patch jump. The
+hot `82282598 -> 82287788` edge has `calls_total=1691272`, and parent
+`82282490` stores `r[3]`, `f[1]`, `fpscr`, and `lr` before or at the call;
+callee `82287788` loads all four. `f[1]` is read-only, but pair-entry only
+adds one seed-load win over the already-tested stack-slot carrier.
+`fpscr` has the largest raw access upper, but needs CFG-aware dirty state plus
+writebacks at call-visible PCs `82287ED4`, `82287EDC`, `82287EE4`, and
+`82288220`. `r[3]` is mutable, and `lr` is call-link state. Do not patch a
+local PC fold, standalone `f[1]` thunk, or `fpscr` shortcut next. The next
+useful slice should add or run a CFG/interprocedural state-carrier design audit
+that prints exact seed, kill, and writeback requirements for
+`8228252C-822825C4` and `82282598 -> 82287788` before any behavior patch.
+
+Previous priority:
 `docs/research/20260524-121503-82282490-branch-loop-aggregate-audit.md`
 closes the standalone branch-loop lane. The broader offline pass audited
 `82282490-822824B8`, `822824B8-822824E8`, and `822825F4-82282600` together:
