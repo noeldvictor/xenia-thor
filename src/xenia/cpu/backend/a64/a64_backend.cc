@@ -253,6 +253,14 @@ DEFINE_bool(
     "Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_call_boundary_state_audit, false,
+    "Thor ARM64 speed lane: instrument Blue Dragon 82282490 "
+    "8228252C-822825C4 pre-call store_context sites before the hot "
+    "82282598 -> 82287788 edge. Counts candidate-dead versus live-in "
+    "state stores only; does not suppress stores. Research-only, "
+    "title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -1877,6 +1885,29 @@ void A64Backend::LogSpeedProfile() {
         output_denorm.first, nan_entry.second, nan_entry.first,
         nan_lane.second, nan_lane.first, src_copy.second, src_copy.first,
         dest_copy.second, dest_copy.first);
+  }
+  if (cvars::arm64_blue_dragon_call_boundary_state_audit) {
+    auto dead =
+        load_delta(blue_dragon_call_boundary_state_dead_count_,
+                   last_blue_dragon_call_boundary_state_dead_count_);
+    auto dead_vmx =
+        load_delta(blue_dragon_call_boundary_state_dead_vmx_count_,
+                   last_blue_dragon_call_boundary_state_dead_vmx_count_);
+    auto dead_gpr =
+        load_delta(blue_dragon_call_boundary_state_dead_gpr_count_,
+                   last_blue_dragon_call_boundary_state_dead_gpr_count_);
+    auto dead_fpr =
+        load_delta(blue_dragon_call_boundary_state_dead_fpr_count_,
+                   last_blue_dragon_call_boundary_state_dead_fpr_count_);
+    auto live =
+        load_delta(blue_dragon_call_boundary_state_live_count_,
+                   last_blue_dragon_call_boundary_state_live_count_);
+    XELOGW(
+        "A64 Blue Dragon call-boundary state audit: dead={}/{} "
+        "dead_vmx={}/{} dead_gpr={}/{} dead_fpr={}/{} live={}/{}",
+        dead.second, dead.first, dead_vmx.second, dead_vmx.first,
+        dead_gpr.second, dead_gpr.first, dead_fpr.second, dead_fpr.first,
+        live.second, live.first);
   }
 
   const bool interval_had_activity =

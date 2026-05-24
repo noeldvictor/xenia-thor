@@ -749,17 +749,17 @@ speed pack sends the word-loop toggle and moved the next target back to
 body-time under the current preset, not more stale `82490030` child work.
 
 Latest current worker target:
-`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md`.
-`tools/thor/thor_hir_call_boundary_state_audit.ps1` now compares parent
-pre-call stores, callee first context access, and parent post-call context
-access across a direct call. For `82282490` span `8228252C-822825C4` at
-`82282598 -> 82287788`, it found `17` pre-call stores, about `188`
-approximate state bytes. Only `4` are live into the child (`r[3]`, `f[1]`,
-`fpscr`, `lr`); `13` stores, about `160` approximate state bytes, are
-`callee_dead_parent_dead_linear` in the linear audit, mostly VMX stores. Do
-not skip stores from this static evidence alone. Next worker slice should add a
-default-off function/span/call-gated state-store suppression audit/counter for
-those 13 candidate sites before any behavior change.
+`docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`.
+`arm64_blue_dragon_call_boundary_state_audit` is now a default-off runtime
+counter with Android/Thor plumbing. Capture
+`scratch/thor-debug/20260524-084805-*` reached visible opening sky/dragon-wing
+with clean fatal-marker search and proved the expected dynamic ratio:
+`675279` boundary hits, `13` candidate-dead stores per hit
+(`dead=8778627`), and `4` live-in stores per hit (`live=2701116`). This is
+audit proof only, not speed proof. Next worker slice should implement a
+separate default-off Blue-Dragon/function/PC-gated store-suppression probe for
+only the `13` candidate-dead sites and prove route safety before any quiet A/B.
+Do not skip the live-in `r[3]`, `f[1]`, `fpscr`, or `lr` stores.
 
 Previous worker target:
 `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.

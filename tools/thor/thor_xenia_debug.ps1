@@ -159,6 +159,7 @@ param(
     [string]$Arm64BlueDragonStvewxStackLaneAudit = "false",
     [string]$Arm64BlueDragonMulAddV128Fastpath = "false",
     [string]$Arm64BlueDragonMulAddV128Audit = "false",
+    [string]$Arm64BlueDragonCallBoundaryStateAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -893,6 +894,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonMulAddV128Audit) {
         $parts += "--ez arm64_blue_dragon_mul_add_v128_audit $(ConvertTo-BooleanText $Arm64BlueDragonMulAddV128Audit)"
     }
+    if ($Arm64BlueDragonCallBoundaryStateAudit) {
+        $parts += "--ez arm64_blue_dragon_call_boundary_state_audit $(ConvertTo-BooleanText $Arm64BlueDragonCallBoundaryStateAudit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1151,6 +1155,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_stvewx_stack_lane_audit=$Arm64BlueDragonStvewxStackLaneAudit",
         "arm64_blue_dragon_mul_add_v128_fastpath=$Arm64BlueDragonMulAddV128Fastpath",
         "arm64_blue_dragon_mul_add_v128_audit=$Arm64BlueDragonMulAddV128Audit",
+        "arm64_blue_dragon_call_boundary_state_audit=$Arm64BlueDragonCallBoundaryStateAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1436,6 +1441,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Fastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateAudit" "false"
 }
 
 function Write-PerfSnapshot {
@@ -1622,6 +1628,7 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Fastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Audit" "false"
+    Set-DefaultIfNotBound "Arm64BlueDragonCallBoundaryStateAudit" "false"
     $script:HideAndroidOsd = "false"
     $script:HidNopConnected = "false"
     $script:HidNopButtonSequence = ""
@@ -1869,6 +1876,9 @@ done | head -50
         }
         if ($Arm64BlueDragonMulAddV128Fastpath) {
             Write-Output "A64 Blue Dragon MUL_ADD_V128 fastpath: $(ConvertTo-BooleanText $Arm64BlueDragonMulAddV128Fastpath)"
+        }
+        if ($Arm64BlueDragonCallBoundaryStateAudit) {
+            Write-Output "A64 Blue Dragon call-boundary state audit: $(ConvertTo-BooleanText $Arm64BlueDragonCallBoundaryStateAudit)"
         }
         try {
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null

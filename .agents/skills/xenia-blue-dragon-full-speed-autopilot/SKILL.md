@@ -119,18 +119,18 @@ the continuation, then pick exactly one next lane:
 ## Current Best Next Move
 
 Latest priority, superseding the older chronology below:
-`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md` adds
-`tools/thor/thor_hir_call_boundary_state_audit.ps1` and changes the next lane
-from another narrow vector/FMA peephole to call-boundary state traffic. For
-`82282490` parent span `8228252C-822825C4`, the hot direct child is
-`82282598 -> 82287788`. The audit found `17` parent pre-call `store_context`
-rows, about `188` approximate state bytes. Only `4` are live into the callee
-(`r[3]`, `f[1]`, `fpscr`, and `lr`). The other `13`, about `160` approximate
-state bytes, are `callee_dead_parent_dead_linear` in the linear HIR audit,
-mostly VMX stores (`v[11]`, `v[9]`, `v[8]`, `v[10]`, `v[13]`, `v[12]`,
-`v[0]`). This is not proof that stores can be skipped. The next useful slice is
-a default-off, function/span/call-gated state-store suppression audit/counter
-for those 13 candidate sites before any behavior change. Keep
+`docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`
+adds the default-off `arm64_blue_dragon_call_boundary_state_audit` runtime
+counter and Android/Thor launch plumbing. Capture
+`scratch/thor-debug/20260524-084805-*` reached the visible opening
+sky/dragon-wing route with clean fatal-marker search and proved the exact
+runtime shape behind the static audit: `675279` dynamic boundary hits,
+`13` candidate-dead stores per hit (`dead=8778627`) and `4` live-in stores per
+hit (`live=2701116`). This is not speed proof because audit instrumentation
+increased generated code size. The next useful slice is a separate
+default-off, Blue-Dragon/function/PC-gated store-suppression probe for only the
+`13` candidate-dead sites, with route-clean proof before any quiet A/B. Do not
+skip the live-in `r[3]`, `f[1]`, `fpscr`, or `lr` stores. Keep
 `arm64_blue_dragon_stvewx_stack_lane_fastpath` and
 `arm64_blue_dragon_mul_add_v128_fastpath` default-off.
 

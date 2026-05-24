@@ -1302,18 +1302,20 @@ Read the final speed-profile interval first.
 
 ## Current Blue Dragon Lane
 
-Latest call-boundary audit:
-`docs/research/20260524-083644-8228252c-call-boundary-state-audit.md`.
+Latest call-boundary runtime audit:
+`docs/research/20260524-085451-blue-dragon-call-boundary-state-runtime-audit.md`.
 Use `tools/thor/thor_hir_call_boundary_state_audit.ps1` when a body-backed
-span is dominated by direct-call state traffic. Current result for `82282490`
-span `8228252C-822825C4` and child edge `82282598 -> 82287788`: `17`
-pre-call `store_context` rows, about `188` approximate state bytes. Only `4`
-stores are live into the child (`r[3]`, `f[1]`, `fpscr`, `lr`), while `13`
-stores, about `160` approximate bytes, are `callee_dead_parent_dead_linear` in
-the linear HIR audit and mostly VMX state. This is not behavior proof. Next
-speed slice should implement a default-off function/span/call-gated
-state-store suppression audit/counter for those candidate sites before any
-store-skipping experiment.
+span is dominated by direct-call state traffic, and use
+`arm64_blue_dragon_call_boundary_state_audit` only for targeted runtime
+counter proof. Capture `scratch/thor-debug/20260524-084805-*` reached visible
+opening sky/dragon-wing with clean fatal-marker search and proved `675279`
+dynamic hits through the `82282598 -> 82287788` boundary: `13` candidate-dead
+stores per hit (`dead=8778627`) and `4` live-in stores per hit
+(`live=2701116`). This is not speed proof because audit instrumentation grows
+generated code. Next speed slice should implement a separate default-off
+Blue-Dragon/function/PC-gated store-suppression probe for only those `13`
+candidate-dead sites, prove route safety, then run quiet A/B only if the route
+is clean. Do not skip live-in `r[3]`, `f[1]`, `fpscr`, or `lr`.
 
 Previous fastpath result:
 `docs/research/20260524-082324-blue-dragon-mul-add-v128-fastpath-ab.md`.

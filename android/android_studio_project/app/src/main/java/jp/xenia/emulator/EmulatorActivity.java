@@ -247,6 +247,10 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "arm64_blue_dragon_mul_add_v128_fastpath");
             copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_mul_add_v128_audit");
+            copyBooleanExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_blue_dragon_call_boundary_state_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_add_sub_imm_audit");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_budget");
