@@ -154,14 +154,36 @@ materialization. Count clean hit opportunities, dirty opportunities, misses,
 flushes, external visibility kills, and spill-pressure estimates for clean
 INT64 `r[1]` / `r[11]` before any behavior patch or quiet speed A/B.
 
-Latest implemented scaffold:
+Latest Thor audit capture:
+`docs/research/20260525-160247-arm64-guest-state-register-cache-audit-capture.md`
+records the FullDeploy plus route-clean Thor audit capture for
+`arm64_guest_state_register_cache_audit`. Use `0x82282490` for the guest-PC
+function filter; the old bare `82282490` spelling reached the route but emitted
+no audit rows. Corrected capture `scratch/thor-debug/20260525-155824-*` used
+commit `3b02ff758`, APK SHA
+`4ED7B6FE876F5ADCB7D11F70BDC42AC4D7A1BF916D680E4B22BEA861069440D6`, reached
+the visible opening sky/dragon-wing route, and had a clean fatal-marker search.
+Audit rows were behavior-neutral with `payload_materializations_allowed=0` and
+`behavior_changed=0`: `candidate_loads=778`, `candidate_stores=285`,
+`clean_hits_possible=357`, `dirty_hits_possible=247`, `normal_fallback=1063`,
+and `estimated_spill_pressure=2`. Per-slot totals favor a narrow `r1` lane:
+`r1=433/11/322/4/444` and `r11=345/274/35/243/619` for
+loads/stores/clean_hits/dirty_hits/fallback. Next useful slice is a
+default-off, function-filtered `r1` clean-load replacement prototype for
+`0x82282490` only: no store elision, no `r11` dirty caching, no payload
+materialization, normal fallback preserved, and route-clean Thor proof before
+any quiet speed A/B. The final capture remained CPU/JIT-heavy
+(`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
+pivot to broad Vulkan work.
+
+Previous implemented scaffold:
 `docs/research/20260525-154617-arm64-guest-state-register-cache-audit.md`
 adds the default-off `arm64_guest_state_register_cache_audit` and Thor launch
 plumbing. NativeCore and ApkShell passed. This remains counter-only:
 normal fallback is unchanged and `payload_materializations_allowed=0`. The next
 useful slice is a FullDeploy plus route-clean Thor audit capture scoped to
 `82282490`, using `-Arm64GuestStateRegisterCacheAudit true` and
-`-Arm64GuestStateRegisterCacheAuditFunction 82282490`; do not patch
+`-Arm64GuestStateRegisterCacheAuditFunction 0x82282490`; do not patch
 register-cache behavior or run a quiet speed A/B until those audit rows prove
 the hit volume and flush/spill pressure.
 

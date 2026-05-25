@@ -23,7 +23,7 @@ The Thor launcher bridge now exposes these as:
 
 ```powershell
 -Arm64GuestStateRegisterCacheAudit true
--Arm64GuestStateRegisterCacheAuditFunction 82282490
+-Arm64GuestStateRegisterCacheAuditFunction 0x82282490
 ```
 
 ## Counters
@@ -83,7 +83,7 @@ Suggested capture shape:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -PerfSampleSeconds "120,150,175" -Arm64GuestStateRegisterCacheAudit true -Arm64GuestStateRegisterCacheAuditFunction 82282490 -Arm64SpeedProfileBodyTimeFilter "82282490,82281D28,82287788" -Arm64SpeedProfileBodyTimeAfterMs 120000 -StopAppAfterCapture true
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -PerfSampleSeconds "120,150,175" -Arm64GuestStateRegisterCacheAudit true -Arm64GuestStateRegisterCacheAuditFunction 0x82282490 -Arm64SpeedProfileBodyTimeFilter "82282490,82281D28,82287788" -Arm64SpeedProfileBodyTimeAfterMs 120000 -StopAppAfterCapture true
 ```
 
 If this capture is route-clean and the counters show enough opportunity, the

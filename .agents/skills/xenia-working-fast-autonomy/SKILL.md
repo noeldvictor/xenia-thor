@@ -116,6 +116,26 @@ heavy audits enabled unless the note explicitly marks the speed data invalid.
 ## Current Default Bias
 
 Latest lane closure:
+`docs/research/20260525-160247-arm64-guest-state-register-cache-audit-capture.md`
+records the route-clean Thor capture for the default-off
+`arm64_guest_state_register_cache_audit`. Use `0x82282490` for the guest-PC
+function filter; the old bare `82282490` spelling produced a route-clean run
+with no audit rows. Corrected capture `scratch/thor-debug/20260525-155824-*`
+reached the visible opening sky/dragon-wing route with a clean fatal-marker
+search and logged behavior-neutral rows:
+`candidate_loads=778`, `candidate_stores=285`,
+`clean_hits_possible=357`, `dirty_hits_possible=247`,
+`normal_fallback=1063`, `estimated_spill_pressure=2`,
+`payload_materializations_allowed=0`, and `behavior_changed=0`.
+Per-slot totals make `r1` the safer first behavior lane:
+`r1=433/11/322/4/444` versus `r11=345/274/35/243/619` for
+loads/stores/clean_hits/dirty_hits/fallback. Next useful slice is a
+default-off, function-filtered `r1` clean-load replacement prototype for
+`0x82282490` only. Do not add store elision, `r11` dirty caching, payload
+materialization, or a quiet speed A/B until the first behavior prototype is
+route-clean on Thor.
+
+Previous lane closure:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
 adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It turns the
 `82287788` `fpscr` dirty-cache lane into a no-behavior counter patch contract:
