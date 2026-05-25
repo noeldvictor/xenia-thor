@@ -46,6 +46,7 @@ DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
+DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
 DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
@@ -407,6 +408,31 @@ static void EmitBlueDragonStateCarrierDesignLoadAudit(
     e.EmitAtomicIncrement64(
         backend->blue_dragon_state_carrier_fpscr_read_count());
   }
+}
+
+static void EmitBlueDragonEdgeVariantF1ReadAudit(A64Emitter& e,
+                                                 const hir::Instr* instr,
+                                                 uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_edge_variant_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 296) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  auto& inactive = e.NewCachedLabel();
+  auto& done = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_variant_payload_active))));
+  e.cbz(e.w11, inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_variant_active_f1_read_count());
+  e.b(done);
+  e.L(inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_variant_inactive_f1_read_count());
+  e.L(done);
 }
 
 static void EmitBlueDragonStateCarrierDesignStoreAudit(
@@ -937,6 +963,7 @@ struct LOAD_CONTEXT_F64
     EmitBlueDragonStateCarrierDesignLoadAudit(e, i.instr, offset);
     const auto f1_carrier_kind =
         GetBlueDragonF1CarrierLoadKind(e, i.instr, offset);
+    EmitBlueDragonEdgeVariantF1ReadAudit(e, i.instr, offset);
     EmitBlueDragonF1CarrierAudit(e, f1_carrier_kind);
     if (EmitBlueDragonF1CarrierFastpath(e, i.instr, i.dest, offset,
                                         f1_carrier_kind)) {

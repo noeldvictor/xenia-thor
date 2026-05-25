@@ -2069,18 +2069,39 @@ void A64Backend::LogSpeedProfile() {
     auto variant_miss =
         load_delta(blue_dragon_edge_variant_variant_miss_count_,
                    last_blue_dragon_edge_variant_variant_miss_count_);
+    auto marker_set =
+        load_delta(blue_dragon_edge_variant_marker_set_count_,
+                   last_blue_dragon_edge_variant_marker_set_count_);
+    auto marker_clear =
+        load_delta(blue_dragon_edge_variant_marker_clear_count_,
+                   last_blue_dragon_edge_variant_marker_clear_count_);
+    auto active_f1_read =
+        load_delta(blue_dragon_edge_variant_active_f1_read_count_,
+                   last_blue_dragon_edge_variant_active_f1_read_count_);
+    auto inactive_f1_read =
+        load_delta(blue_dragon_edge_variant_inactive_f1_read_count_,
+                   last_blue_dragon_edge_variant_inactive_f1_read_count_);
+    auto active_call_kill =
+        load_delta(blue_dragon_edge_variant_active_call_kill_count_,
+                   last_blue_dragon_edge_variant_active_call_kill_count_);
     XELOGW(
         "A64 Blue Dragon edge-variant audit: eligible_compiles={}/{} "
         "variant_storage_missing={}/{} eligible_calls={}/{} "
         "payload_materializations={}/{} normal_entry_fallbacks={}/{} "
-        "indirection_fallbacks={}/{} call_kills={}/{} variant_misses={}/{}",
+        "indirection_fallbacks={}/{} call_kills={}/{} variant_misses={}/{} "
+        "marker_sets={}/{} marker_clears={}/{} active_f1_reads={}/{} "
+        "inactive_f1_reads={}/{} active_call_kills={}/{}",
         eligible_compile.second, eligible_compile.first,
         variant_storage_missing.second, variant_storage_missing.first,
         eligible_call.second, eligible_call.first, payload_materialized.second,
         payload_materialized.first, normal_entry_fallback.second,
         normal_entry_fallback.first, indirection_fallback.second,
         indirection_fallback.first, call_kill.second, call_kill.first,
-        variant_miss.second, variant_miss.first);
+        variant_miss.second, variant_miss.first, marker_set.second,
+        marker_set.first, marker_clear.second, marker_clear.first,
+        active_f1_read.second, active_f1_read.first, inactive_f1_read.second,
+        inactive_f1_read.first, active_call_kill.second,
+        active_call_kill.first);
   }
   if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit) {
     auto static_load_sites = load_delta(

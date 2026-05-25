@@ -4463,6 +4463,16 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       case 0x82288220:
         EmitAtomicIncrement64(
             backend->blue_dragon_edge_variant_call_kill_count());
+        {
+          auto& no_active_payload = NewCachedLabel();
+          ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                            A64BackendContext,
+                                            blue_dragon_edge_variant_payload_active))));
+          cbz(w11, no_active_payload);
+          EmitAtomicIncrement64(
+              backend->blue_dragon_edge_variant_active_call_kill_count());
+          L(no_active_payload);
+        }
         break;
       default:
         break;
@@ -4511,6 +4521,29 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
         backend->blue_dragon_edge_variant_eligible_call_count());
     EmitAtomicIncrement64(backend->blue_dragon_edge_variant_variant_miss_count());
   }
+  const bool blue_dragon_edge_variant_marker_allowed =
+      blue_dragon_edge_variant_hot_edge && !(instr->flags & hir::CALL_TAIL);
+  auto emit_blue_dragon_edge_variant_marker_set = [&]() {
+    if (!blue_dragon_edge_variant_marker_allowed) {
+      return;
+    }
+    mov(w11, 1);
+    str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_variant_payload_active))));
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_variant_marker_set_count());
+  };
+  auto emit_blue_dragon_edge_variant_marker_clear = [&]() {
+    if (!blue_dragon_edge_variant_marker_allowed) {
+      return;
+    }
+    str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                       A64BackendContext,
+                                       blue_dragon_edge_variant_payload_active))));
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_variant_marker_clear_count());
+  };
 
   std::atomic<uint64_t>* call_edge_entry_counter = nullptr;
   std::atomic<uint64_t>* call_edge_body_ticks_counter = nullptr;
@@ -4554,10 +4587,12 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     // Direct call — function is already compiled.
     if (!(instr->flags & hir::CALL_TAIL)) {
       // Pass the next call's guest return address in x0.
+      emit_blue_dragon_edge_variant_marker_set();
       MaybeEmitCallEdgeProfileStart(call_edge_entry_counter);
       mov(x9, reinterpret_cast<uint64_t>(fn->machine_code()));
       ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
       blr(x9);
+      emit_blue_dragon_edge_variant_marker_clear();
       MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
       synchronize_stack_on_next_instruction_ = true;
     } else {
@@ -4586,6 +4621,8 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     EmitAtomicIncrement64(
         backend_->blue_dragon_edge_variant_normal_entry_fallback_count());
   }
+
+  emit_blue_dragon_edge_variant_marker_set();
 
   if (code_cache_->has_indirection_table()) {
     if (blue_dragon_edge_variant_hot_edge) {
@@ -4622,6 +4659,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   } else {
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
     blr(x9);
+    emit_blue_dragon_edge_variant_marker_clear();
     MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
     synchronize_stack_on_next_instruction_ = true;
   }

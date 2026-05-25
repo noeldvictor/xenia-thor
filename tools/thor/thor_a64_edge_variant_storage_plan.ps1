@@ -199,11 +199,33 @@ function Total {
     return [int64]$Counters[$Name].total
 }
 
+function Total-Optional {
+    param(
+        [hashtable]$Counters,
+        [string]$Name
+    )
+    if (!$Counters.ContainsKey($Name)) {
+        return 0
+    }
+    return [int64]$Counters[$Name].total
+}
+
 function Delta {
     param(
         [hashtable]$Counters,
         [string]$Name
     )
+    return [int64]$Counters[$Name].delta
+}
+
+function Delta-Optional {
+    param(
+        [hashtable]$Counters,
+        [string]$Name
+    )
+    if (!$Counters.ContainsKey($Name)) {
+        return 0
+    }
     return [int64]$Counters[$Name].delta
 }
 
@@ -251,6 +273,10 @@ $edgeCounterOnlyPatch =
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_payload_materialized_count') -and
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_variant_storage_missing_count') -and
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_normal_entry_fallback_count')
+$payloadScopeCounters =
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_marker_set_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_read_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_call_kill_count')
 $directCallUsesNormalMachineCode =
     Test-Pattern $emitterText 'if \(fn->machine_code\(\)\).*?reinterpret_cast<uint64_t>\(fn->machine_code\(\)\).*?blr\(x9\);'
 $designAuditRequiresVariant =
@@ -263,6 +289,11 @@ $variantMisses = Total $edgeCounters "variant_misses"
 $callKills = Total $edgeCounters "call_kills"
 $payloadMaterializations = Total $edgeCounters "payload_materializations"
 $storageMissing = Total $edgeCounters "variant_storage_missing"
+$markerSets = Total-Optional $edgeCounters "marker_sets"
+$markerClears = Total-Optional $edgeCounters "marker_clears"
+$activeF1Reads = Total-Optional $edgeCounters "active_f1_reads"
+$inactiveF1Reads = Total-Optional $edgeCounters "inactive_f1_reads"
+$activeCallKills = Total-Optional $edgeCounters "active_call_kills"
 
 $f1TotalReads = Get-FirstValue $stateFollowupText 'f1 total_reads=([0-9]+)' "unknown"
 $f1Fallbacks = Get-FirstValue $stateFollowupText 'f1 .*?fallback_total=([0-9]+)' "unknown"
@@ -295,6 +326,7 @@ Emit-SourceCheck "normal_entry_is_singleton" $normalEntrySingleton "do not repla
 Emit-SourceCheck "indirection_key_is_guest_address_only" $guestAddressOnlyIndirection "do not change the global 82287788 indirection slot for one caller"
 Emit-SourceCheck "direct_call_uses_normal_machine_code" $directCallUsesNormalMachineCode "a behavior patch needs explicit variant storage or caller-local dispatch"
 Emit-SourceCheck "edge_probe_is_counter_only" $edgeCounterOnlyPatch "current cvar produced audit rows but did not change generated behavior"
+Emit-SourceCheck "payload_scope_marker_is_counter_only" $payloadScopeCounters "marker tracks hot-edge lifetime but still does not materialize guest payload"
 Emit-SourceCheck "design_audit_requires_variant_storage" $designAuditRequiresVariant "only caller-local or side-table storage fits the current contracts"
 Write-Output ""
 
@@ -304,6 +336,10 @@ Write-Output ("edge parent=82282490 call_pc=82282598 callee=82287788 eligible_ca
     (Format-Percent $normalFallbacks $eligibleCalls), $indirectionFallbacks,
     $variantMisses, $payloadMaterializations, $storageMissing, $callKills,
     (Format-Ratio $callKills $eligibleCalls))
+Write-Output ("payload_scope marker_sets={0} marker_clears={1} active_f1_reads={2} inactive_f1_reads={3} active_call_kills={4} active_f1_reads_per_call={5} active_call_kills_per_call={6}" -f `
+    $markerSets, $markerClears, $activeF1Reads, $inactiveF1Reads,
+    $activeCallKills, (Format-Ratio $activeF1Reads $eligibleCalls),
+    (Format-Ratio $activeCallKills $eligibleCalls))
 Write-Output ""
 
 Write-Output "## Prior Payload Evidence"

@@ -58,20 +58,27 @@ the heartbeat instead of editing code.
 ## Current Blue Dragon Target
 
 Latest capture:
-`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
-The post-`PromoteBlock` residual audit for `0x82282490` is route-clean and
-behavior-neutral, but it closes the immediate `r1` / `r11` behavior lane:
-`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
-`dirty_hits_possible=0`, `normal_fallback=313`, and
-`payload_materializations_allowed=0 behavior_changed=0`. Per-slot totals are
-`r1=107/11/0/0/118` and `r11=67/128/0/0/195`
-loads/stores/clean_hits/dirty_hits/fallback. Do not implement the stale
-same-block `r1` clean-load replacement, `r11` dirty caching, store elision, or
-a quiet speed A/B from this lane.
+`docs/research/20260525-173225-edge-variant-payload-scope-audit.md`.
+The default-off `arm64_blue_dragon_edge_variant_audit` now has route-clean,
+behavior-neutral payload-scope counters for exact edge
+`82282490:82282598 -> 82287788`: `eligible_calls=687023`,
+`normal_fallbacks=687023`, `payload_materializations=0`,
+`marker_sets=687023`, `marker_clears=687023`,
+`active_f1_reads=2050899`, `inactive_f1_reads=3250`, and
+`active_call_kills=1722545`. Treat this as storage-boundary proof, not a speed
+verdict: `normal_fallback_share=100.00%`,
+`active_f1_reads_per_call=2.99`, and `active_call_kills_per_call=2.51`.
 
-Next useful worker slice: return to caller-local or side-table edge-variant
-payload storage for `82282490:82282598 -> 82287788`, with normal-entry fallback
-and counter-only payload/materialization diagnostics first.
+Next useful worker slice: add per-PC active `f[1]` read / kill-window
+attribution for the same marker, or use the marker as safe caller-local scope
+proof in a broader `82282490` / `82287788` state-roundtrip design. Do not
+materialize payloads or run a quiet speed A/B from this audit-only patch.
+
+Previous residual register-cache capture:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
+closed the immediate `r1` / `r11` behavior lane. Do not implement the stale
+same-block `r1` clean-load replacement, `r11` dirty caching, store elision, or
+a quiet speed A/B from that lane.
 
 Hardware acceleration note:
 `docs/research/20260525-171305-thor-hardware-acceleration-menu.md` is the

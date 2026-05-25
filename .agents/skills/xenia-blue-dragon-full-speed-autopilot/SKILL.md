@@ -180,21 +180,30 @@ patch or quiet speed A/B. The final capture remained CPU/JIT-heavy
 (`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
 pivot to broad Vulkan work.
 
-Latest residual audit capture:
+Latest edge payload-scope audit:
+`docs/research/20260525-173225-edge-variant-payload-scope-audit.md`
+records a FullDeploy plus route-clean Thor capture for the default-off
+`arm64_blue_dragon_edge_variant_audit` payload-scope marker. It reached the
+visible opening sky / dragon-wing route on APK SHA
+`12E4BC4F69BA1D0C4A4A249F64C74BD81FB802569B46122644C9242A57DA8CB1`, with a
+clean fatal-marker search. The exact edge
+`82282490:82282598 -> 82287788` now has behavior-neutral scope counters:
+`eligible_calls=687023`, `normal_fallbacks=687023`,
+`payload_materializations=0`, `marker_sets=687023`,
+`marker_clears=687023`, `active_f1_reads=2050899`,
+`inactive_f1_reads=3250`, and `active_call_kills=1722545`. Treat this as
+storage-boundary proof only: `normal_fallback_share=100.00%`,
+`active_f1_reads_per_call=2.99`, and `active_call_kills_per_call=2.51`. Do not
+run a quiet speed A/B or materialize payloads from this audit-only patch. Next
+useful slice is per-PC active `f[1]` read / kill-window attribution for this
+marker, or broader `82282490` / `82287788` state-roundtrip design using the
+marker as caller-local scope proof.
+
+Previous residual audit capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
-records the FullDeploy plus route-clean Thor capture for the post-`PromoteBlock`
-residual audit. It reached the visible opening sky / dragon-wing route on
-commit `85c422d2b`, APK SHA
-`18097BA09F0C50596DED67D4251E4401FC7D458AA5EF7AAC7365B362D14CD19A`, with a
-clean fatal-marker search. Residual counters for `82282490` show
-`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
-`dirty_hits_possible=0`, `normal_fallback=313`,
-`payload_materializations_allowed=0`, and `behavior_changed=0`. Per-slot totals
-are `r1=107/11/0/0/118` and `r11=67/128/0/0/195`. Do not implement the stale
-same-block `r1` clean-load replacement, `r11` dirty caching, store elision, or a
-quiet speed A/B from this lane. Return next to caller-local or side-table
-edge-variant payload storage for `82282490:82282598 -> 82287788`, with
-normal-entry fallback and counter-only payload/materialization diagnostics.
+closed the post-`PromoteBlock` `r1` / `r11` register-cache behavior lane. Do
+not implement the stale same-block `r1` clean-load replacement, `r11` dirty
+caching, store elision, or a quiet speed A/B from that lane.
 
 Thor hardware acceleration menu:
 `docs/research/20260525-171305-thor-hardware-acceleration-menu.md` maps the

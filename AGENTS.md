@@ -120,21 +120,31 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 ## Current Blue Dragon A64 Lane
 
 Latest route-clean audit:
-`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
-Commit `85c422d2b` / APK SHA
-`18097BA09F0C50596DED67D4251E4401FC7D458AA5EF7AAC7365B362D14CD19A` reached the
+`docs/research/20260525-173225-edge-variant-payload-scope-audit.md`.
+Working tree based on commit `ef0521239` / APK SHA
+`12E4BC4F69BA1D0C4A4A249F64C74BD81FB802569B46122644C9242A57DA8CB1` reached the
 visible opening sky / dragon-wing route with a clean fatal-marker search. The
-post-`PromoteBlock` residual guest-state register-cache audit for `82282490`
-closed the immediate `r1` / `r11` behavior lane:
-`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
-`dirty_hits_possible=0`, `normal_fallback=313`, and per-slot
-`r1=107/11/0/0/118`, `r11=67/128/0/0/195`.
+default-off `arm64_blue_dragon_edge_variant_audit` now includes a behavior-neutral
+caller-local payload-scope marker for exact edge `82282490:82282598 -> 82287788`.
+It does not materialize payloads, does not alter the normal `82287788` entry,
+and leaves global indirection untouched. Final counters were
+`eligible_calls=687023`, `normal_fallbacks=687023`, `payload_materializations=0`,
+`marker_sets=687023`, `marker_clears=687023`,
+`active_f1_reads=2050899`, `inactive_f1_reads=3250`, and
+`active_call_kills=1722545`.
 
-Do not implement the stale same-block `r1` clean-load replacement, `r11` dirty
-caching, store elision, or a quiet speed A/B from this lane. The next useful
-slice is caller-local or side-table edge-variant payload storage for
-`82282490:82282598 -> 82287788`, with normal-entry fallback and counter-only
-payload/materialization diagnostics before any behavior change.
+Treat this as storage-boundary proof, not a speed verdict:
+`normal_fallback_share=100.00%`, `active_f1_reads_per_call=2.99`, and
+`active_call_kills_per_call=2.51`. Do not run a quiet speed A/B or materialize
+an edge payload from this audit-only patch. The next useful slice is per-PC
+active `f[1]` read / kill-window attribution for the same marker, or a broader
+`82282490` / `82287788` state-roundtrip design using this marker as the safe
+caller-local scope proof.
+
+The previous route-clean residual register-cache audit remains closed:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
+Do not implement stale same-block `r1` clean-load replacement, `r11` dirty
+caching, store elision, or a quiet speed A/B from that lane.
 
 ## Thor Hardware Acceleration Plan
 
@@ -145,7 +155,7 @@ LSE-style atomics, but no `sve` / `sve2`. Optimize for the hardware actually
 present.
 
 Current priority remains CPU/JIT until captures change: the latest route-clean
-Blue Dragon sample ended with Main Thread `96.1%` and GPU Commands `11.5%`.
+Blue Dragon sample ended with Main Thread `96.2%` and GPU Commands `7.4%`.
 Do not move branchy PPC/JIT state traffic, fpscr writebacks, call-edge carriers,
 or helper-heavy VMX semantics to Vulkan compute.
 

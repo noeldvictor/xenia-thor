@@ -97,6 +97,7 @@ struct A64BackendContext {
   uint32_t blue_dragon_draw_wait_caller_profile_counter;
   uint32_t last_guest_function;
   uint32_t last_guest_return_address;
+  uint32_t blue_dragon_edge_variant_payload_active;
   volatile uint32_t* processor_irql;
   uint32_t kf_lower_irql_apc_guard_counter;
 };
@@ -312,6 +313,21 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_edge_variant_variant_miss_count() {
     return &blue_dragon_edge_variant_variant_miss_count_;
   }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_marker_set_count() {
+    return &blue_dragon_edge_variant_marker_set_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_marker_clear_count() {
+    return &blue_dragon_edge_variant_marker_clear_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_active_f1_read_count() {
+    return &blue_dragon_edge_variant_active_f1_read_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_inactive_f1_read_count() {
+    return &blue_dragon_edge_variant_inactive_f1_read_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_active_call_kill_count() {
+    return &blue_dragon_edge_variant_active_call_kill_count_;
+  }
   std::atomic<uint64_t>* blue_dragon_fpscr_cfg_static_load_site_count() {
     return &blue_dragon_fpscr_cfg_static_load_site_count_;
   }
@@ -521,6 +537,11 @@ class A64Backend : public Backend {
       0};
   std::atomic<uint64_t> blue_dragon_edge_variant_call_kill_count_{0};
   std::atomic<uint64_t> blue_dragon_edge_variant_variant_miss_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_marker_set_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_marker_clear_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_active_f1_read_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_inactive_f1_read_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_variant_active_call_kill_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_load_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_store_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_cfg_transition_site_count_{
@@ -609,6 +630,11 @@ class A64Backend : public Backend {
   uint64_t last_blue_dragon_edge_variant_indirection_fallback_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_call_kill_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_variant_miss_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_marker_set_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_marker_clear_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_active_f1_read_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_inactive_f1_read_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_active_call_kill_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_load_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_store_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_cfg_transition_site_count_ = 0;
