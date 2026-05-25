@@ -57,15 +57,15 @@ the heartbeat instead of editing code.
 
 ## Current Blue Dragon Target
 
-Latest source gate:
-`docs/research/20260525-161334-r1-clean-load-source-gate.md`. Do not implement
-the same-block `r1` clean-load replacement prototype from the pre-promotion
-`arm64_guest_state_register_cache_audit` counters alone. The audit runs before
-`ContextPromotionPass::PromoteBlock`, and `PromoteBlock` already rewrites
-same-block `LOAD_CONTEXT` to `ASSIGN` when a prior in-block context value
-exists. Next useful worker slice is a default-off post-`PromoteBlock` residual
-audit for `0x82282490`, behavior unchanged, counting remaining `r1` / `r11`
-traffic and residual clean/dirty opportunities before any quiet speed A/B.
+Latest scaffold:
+`docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`.
+The default-off post-`PromoteBlock` residual audit now exists for `r1` / `r11`
+guest-state register-cache traffic, with Android and Thor launch plumbing.
+Next useful worker slice is FullDeploy plus a route-clean Thor residual capture
+for `0x82282490` using `-Arm64GuestStateRegisterCacheResidualAudit true` and
+`-Arm64GuestStateRegisterCacheResidualAuditFunction 0x82282490`. Do not patch
+generated behavior or run a quiet speed A/B until residual rows are route-clean
+and show material post-promotion volume.
 
 ## Pick One Lane
 
@@ -139,13 +139,14 @@ search and logged behavior-neutral rows:
 `clean_hits_possible=357`, `dirty_hits_possible=247`,
 `normal_fallback=1063`, `estimated_spill_pressure=2`,
 `payload_materializations_allowed=0`, and `behavior_changed=0`.
-Per-slot totals make `r1` the safer first behavior lane:
-`r1=433/11/322/4/444` versus `r11=345/274/35/243/619` for
-loads/stores/clean_hits/dirty_hits/fallback. Next useful slice is a
-default-off, function-filtered `r1` clean-load replacement prototype for
-`0x82282490` only. Do not add store elision, `r11` dirty caching, payload
-materialization, or a quiet speed A/B until the first behavior prototype is
-route-clean on Thor.
+Per-slot totals looked like `r1` was the safer first behavior lane, but
+`docs/research/20260525-161334-r1-clean-load-source-gate.md` supersedes that:
+the audit runs before `PromoteBlock`, and normal `PromoteBlock` already handles
+same-block clean-load replacement. The residual scaffold in
+`docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`
+is the current next step. Do not add store elision, `r11` dirty caching, payload
+materialization, or a quiet speed A/B until the residual capture is route-clean
+on Thor.
 
 Previous lane closure:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`

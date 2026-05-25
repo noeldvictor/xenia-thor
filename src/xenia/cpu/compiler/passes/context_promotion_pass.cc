@@ -64,6 +64,17 @@ DEFINE_uint32(arm64_guest_state_register_cache_audit_function, 0,
               "Optional guest function start address filter for "
               "arm64_guest_state_register_cache_audit. 0 applies globally.",
               "CPU");
+DEFINE_bool(arm64_guest_state_register_cache_residual_audit, false,
+            "Thor ARM64 research: count remaining clean INT64 r[1]/r[11] "
+            "guest-state register-cache opportunities after normal "
+            "ContextPromotionPass and DSE, without changing generated code. "
+            "Default-off audit only.",
+            "CPU");
+DEFINE_uint32(
+    arm64_guest_state_register_cache_residual_audit_function, 0,
+    "Optional guest function start address filter for "
+    "arm64_guest_state_register_cache_residual_audit. 0 applies globally.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -535,8 +546,9 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
   // Promote loads to values.
   // Process each block independently, for now.
   if (cvars::arm64_guest_state_register_cache_audit &&
-      ShouldRunGuestStateRegisterCacheAudit(builder)) {
-    AuditGuestStateRegisterCache(builder);
+      ShouldRunGuestStateRegisterCacheAudit(
+          builder, cvars::arm64_guest_state_register_cache_audit_function)) {
+    AuditGuestStateRegisterCache(builder, false);
   }
 
   auto block = builder->first_block();
@@ -565,17 +577,23 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
     }
   }
 
+  if (cvars::arm64_guest_state_register_cache_residual_audit &&
+      ShouldRunGuestStateRegisterCacheAudit(
+          builder,
+          cvars::arm64_guest_state_register_cache_residual_audit_function)) {
+    AuditGuestStateRegisterCache(builder, true);
+  }
+
   return true;
 }
 
 bool ContextPromotionPass::ShouldRunGuestStateRegisterCacheAudit(
-    HIRBuilder* builder) const {
-  uint32_t function_filter =
-      cvars::arm64_guest_state_register_cache_audit_function;
+    HIRBuilder* builder, uint32_t function_filter) const {
   return !function_filter || FindFirstSourceOffset(builder) == function_filter;
 }
 
-void ContextPromotionPass::AuditGuestStateRegisterCache(HIRBuilder* builder) {
+void ContextPromotionPass::AuditGuestStateRegisterCache(HIRBuilder* builder,
+                                                        bool residual_phase) {
   GuestStateRegisterCacheAuditStats stats;
   stats.function_address = FindFirstSourceOffset(builder);
 
@@ -705,39 +723,40 @@ void ContextPromotionPass::AuditGuestStateRegisterCache(HIRBuilder* builder) {
     }
   }
 
+  const char* audit_name = residual_phase ? "residual audit" : "audit";
   XELOGW(
-      "A64 guest-state register-cache audit fn {:08X}: blocks={} "
+      "A64 guest-state register-cache {} fn {:08X}: blocks={} "
       "labeled_blocks={} multi_pred_blocks={} candidate_loads={} "
       "candidate_stores={} clean_hits_possible={} dirty_hits_possible={} "
       "normal_fallback={} estimated_spill_pressure={} "
       "payload_materializations_allowed=0 behavior_changed=0",
-      stats.function_address, stats.blocks, stats.labeled_blocks,
+      audit_name, stats.function_address, stats.blocks, stats.labeled_blocks,
       stats.multi_pred_blocks, stats.candidate_loads, stats.candidate_stores,
       stats.clean_hits_possible, stats.dirty_hits_possible,
       stats.normal_fallback, stats.estimated_spill_pressure);
   XELOGW(
-      "A64 guest-state register-cache audit fn {:08X}: "
+      "A64 guest-state register-cache {} fn {:08X}: "
       "miss_no_entry={} miss_multi_pred={} miss_volatile={} "
       "miss_overlap={} miss_after_call={} miss_after_helper={} "
       "miss_after_branch={} miss_after_label={} miss_after_return={} "
       "miss_after_trap={} miss_external_visibility={}",
-      stats.function_address, stats.miss_no_entry, stats.miss_multi_pred,
-      stats.miss_volatile, stats.miss_overlap, stats.miss_after_call,
-      stats.miss_after_helper, stats.miss_after_branch, stats.miss_after_label,
-      stats.miss_after_return, stats.miss_after_trap,
+      audit_name, stats.function_address, stats.miss_no_entry,
+      stats.miss_multi_pred, stats.miss_volatile, stats.miss_overlap,
+      stats.miss_after_call, stats.miss_after_helper, stats.miss_after_branch,
+      stats.miss_after_label, stats.miss_after_return, stats.miss_after_trap,
       stats.miss_external_visibility);
   XELOGW(
-      "A64 guest-state register-cache audit fn {:08X}: "
+      "A64 guest-state register-cache {} fn {:08X}: "
       "flush_call={} flush_helper={} flush_branch={} flush_label={} "
       "flush_return={} flush_trap={} flush_external_visibility={}",
-      stats.function_address, stats.flush_call, stats.flush_helper,
+      audit_name, stats.function_address, stats.flush_call, stats.flush_helper,
       stats.flush_branch, stats.flush_label, stats.flush_return,
       stats.flush_trap, stats.flush_external_visibility);
   XELOGW(
-      "A64 guest-state register-cache audit fn {:08X}: "
+      "A64 guest-state register-cache {} fn {:08X}: "
       "r1 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
       "r11 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}",
-      stats.function_address, stats.candidate_loads_by_slot[0],
+      audit_name, stats.function_address, stats.candidate_loads_by_slot[0],
       stats.candidate_stores_by_slot[0], stats.clean_hits_by_slot[0],
       stats.dirty_hits_by_slot[0], stats.fallback_by_slot[0],
       stats.candidate_loads_by_slot[1], stats.candidate_stores_by_slot[1],

@@ -144,6 +144,58 @@ around one full core and GPU Commands well below one full core. Do not pivot to
 RenderDoc-only FPS claims, Swappy/frame pacing, or broad Adreno rewrite work
 until counters expose a real GPU wall.
 
+## Cemu / Wii U Android Comparison Lane
+
+Use current public Cemu Android work as a serious design reference for
+xenia-thor, especially for Android-native performance, controller UX, settings
+surfaces, and handheld ergonomics. Do not "steal" code blindly. Treat this as
+license-aware comparative engineering:
+
+- Mainline Cemu is MPL-2.0. Xenia is BSD-style. Do not copy Cemu source into
+  this repo unless a file-level license plan is explicit and reviewed first.
+  Prefer architecture notes, measured behavior, UX patterns, and clean-room
+  reimplementation.
+- The SSimco Android Cemu fork is an active Android-port reference, but it is
+  still experimental. Use it to learn how mature emulator code is packaged,
+  configured, launched, profiled, and mapped to Android input, not as proof that
+  Xbox 360 work should be easy.
+- The SapphireRhodonite Cemu fork is a useful Android handheld UX reference for
+  dual-screen/external-display routing and device-specific presentation logic.
+  For xenia-thor, translate that lesson into clean surface lifecycle, external
+  display handling, game view scaling, and controller-friendly settings.
+
+Technical comparison rules:
+
+- Wii U and Xbox 360 both make the Android target feel plausible: both are
+  PowerPC-family consoles with ATI/AMD GPU lineage and unified memory ideas.
+  They are not interchangeable. Xbox 360 has Xenon SMT cores, VMX128, Xenos
+  EDRAM/resolve behavior, Xbox kernel/HLE contracts, and different memory and
+  synchronization pressure. Validate every borrowed idea on Thor.
+- Before a new A64/JIT speed experiment, scan Cemu Android and other mature
+  emulator backends for the pattern: guest-state register caches, block linking,
+  fast dispatch, code-cache invalidation, host ABI choices, SIMD/FP lowering,
+  shader/pipeline cache behavior, per-game hacks, and debug counters. Convert
+  findings into a dated `docs/research/YYYYMMDD-HHMMSS-*.md` note before code.
+- Do not pivot away from the current Blue Dragon CPU/JIT wall just because a
+  Wii U Android fork is fast. Use Cemu as pressure to improve our backend
+  design discipline, not as a substitute for Thor captures.
+
+Android UX mandate:
+
+- xenia-thor must grow a real handheld-facing settings and controller layer,
+  not only ADB cvars. Prioritize launcher-visible settings, per-game profiles,
+  controller mapping, profile import/export, safe defaults, and an expert page
+  for dangerous speed/debug toggles.
+- Controller work should first make the AYN Thor built-in controls reliable in
+  `EmulatorActivity`, then add external Bluetooth/USB gamepads, remapping,
+  dead zones, trigger handling, rumble, and a visible input test screen.
+- Settings should distinguish stable user settings from research cvars. Any
+  experimental speed toggle exposed in UI needs a plain rollback path and must
+  stay default-off until route proof justifies otherwise.
+- When starting the controller/settings lane, ask the user which UX shape they
+  want first: minimal Thor-only controller fix, Cemu-style settings/profiles,
+  or a broader emulator launcher polish pass.
+
 ## Repo Facts As Of 2026-05-17
 
 - Origin is SSH: `git@github.com:noeldvictor/xenia-thor.git`.

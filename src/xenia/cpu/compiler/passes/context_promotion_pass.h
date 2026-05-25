@@ -42,8 +42,10 @@ class ContextPromotionPass : public CompilerPass {
 
  private:
   void PromoteBlock(hir::Block* block);
-  bool ShouldRunGuestStateRegisterCacheAudit(hir::HIRBuilder* builder) const;
-  void AuditGuestStateRegisterCache(hir::HIRBuilder* builder);
+  bool ShouldRunGuestStateRegisterCacheAudit(hir::HIRBuilder* builder,
+                                             uint32_t function_filter) const;
+  void AuditGuestStateRegisterCache(hir::HIRBuilder* builder,
+                                    bool residual_phase);
   bool ShouldRunGprLocalSlotPromotion(hir::HIRBuilder* builder) const;
   void PromoteDominatedGprLocalSlots(hir::HIRBuilder* builder);
   bool ShouldRunGprLiveInR1Promotion(hir::HIRBuilder* builder) const;

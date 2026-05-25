@@ -180,6 +180,19 @@ patch or quiet speed A/B. The final capture remained CPU/JIT-heavy
 (`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
 pivot to broad Vulkan work.
 
+Latest residual-audit scaffold:
+`docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`
+implements default-off `arm64_guest_state_register_cache_residual_audit` plus
+`arm64_guest_state_register_cache_residual_audit_function`, Android forwarding,
+and Thor flags `-Arm64GuestStateRegisterCacheResidualAudit` /
+`-Arm64GuestStateRegisterCacheResidualAuditFunction`. NativeCore and ApkShell
+passed. Next useful slice is FullDeploy plus a route-clean Thor capture with
+`-Arm64GuestStateRegisterCacheResidualAudit true` and
+`-Arm64GuestStateRegisterCacheResidualAuditFunction 0x82282490`, keeping
+delayed body-time comparators `82282490,82281D28,82287788`. Do not patch
+generated behavior or run a quiet speed A/B until the residual row proves
+material post-promotion `r1` / `r11` traffic.
+
 Previous implemented scaffold:
 `docs/research/20260525-154617-arm64-guest-state-register-cache-audit.md`
 adds the default-off `arm64_guest_state_register_cache_audit` and Thor launch

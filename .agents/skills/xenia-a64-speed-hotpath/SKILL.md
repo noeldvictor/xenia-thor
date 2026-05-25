@@ -88,6 +88,16 @@ Thor audit capture scoped to `82282490`; do not implement cache behavior or a
 quiet speed A/B until those rows prove useful hit volume and manageable
 flush/spill pressure.
 
+Latest residual scaffold:
+`docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`
+adds `arm64_guest_state_register_cache_residual_audit` and Thor flags
+`-Arm64GuestStateRegisterCacheResidualAudit` /
+`-Arm64GuestStateRegisterCacheResidualAuditFunction`. This runs after normal
+`PromoteBlock` and DSE, so it should measure remaining `r1` / `r11` traffic
+after same-block clean-load promotion. Next run should be a route-clean Thor
+residual capture for `0x82282490`; do not patch register-cache behavior or run
+a quiet speed A/B from the pre-promotion counters alone.
+
 ## Baseline Run
 
 Build and deploy only when the native core changed:

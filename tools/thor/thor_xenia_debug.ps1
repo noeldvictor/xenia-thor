@@ -192,6 +192,8 @@ param(
     [string]$Arm64ContextPromotionGprLiveInR1Audit = "",
     [string]$Arm64GuestStateRegisterCacheAudit = "",
     [string]$Arm64GuestStateRegisterCacheAuditFunction = "",
+    [string]$Arm64GuestStateRegisterCacheResidualAudit = "",
+    [string]$Arm64GuestStateRegisterCacheResidualAuditFunction = "",
     [string]$Arm64CrCompareBranchAcrossContextBarrier = "",
     [string]$Arm64CrStoreElideForFusedBranch = "",
     [string]$Arm64CrStoreElideForFusedBranchFunction = "",
@@ -1012,6 +1014,12 @@ function Start-XeniaEmulator {
     if ($Arm64GuestStateRegisterCacheAuditFunction) {
         $parts += "--ei arm64_guest_state_register_cache_audit_function $(ConvertTo-AdbIntText $Arm64GuestStateRegisterCacheAuditFunction)"
     }
+    if ($Arm64GuestStateRegisterCacheResidualAudit) {
+        $parts += "--ez arm64_guest_state_register_cache_residual_audit $(ConvertTo-BooleanText $Arm64GuestStateRegisterCacheResidualAudit)"
+    }
+    if ($Arm64GuestStateRegisterCacheResidualAuditFunction) {
+        $parts += "--ei arm64_guest_state_register_cache_residual_audit_function $(ConvertTo-AdbIntText $Arm64GuestStateRegisterCacheResidualAuditFunction)"
+    }
     if ($Arm64CrCompareBranchAcrossContextBarrier) {
         $parts += "--ez arm64_cr_compare_branch_across_context_barrier $(ConvertTo-BooleanText $Arm64CrCompareBranchAcrossContextBarrier)"
     }
@@ -1232,6 +1240,8 @@ function Write-CaptureMetadata {
         "arm64_context_promotion_gpr_livein_r1_audit=$Arm64ContextPromotionGprLiveInR1Audit",
         "arm64_guest_state_register_cache_audit=$Arm64GuestStateRegisterCacheAudit",
         "arm64_guest_state_register_cache_audit_function=$Arm64GuestStateRegisterCacheAuditFunction",
+        "arm64_guest_state_register_cache_residual_audit=$Arm64GuestStateRegisterCacheResidualAudit",
+        "arm64_guest_state_register_cache_residual_audit_function=$Arm64GuestStateRegisterCacheResidualAuditFunction",
         "arm64_cr_compare_branch_across_context_barrier=$Arm64CrCompareBranchAcrossContextBarrier",
         "arm64_cr_store_elide_for_fused_branch=$Arm64CrStoreElideForFusedBranch",
         "arm64_cr_store_elide_for_fused_branch_function=$Arm64CrStoreElideForFusedBranchFunction",
@@ -1493,6 +1503,7 @@ function Test-BlueDragonSpeedLogRowsRequested {
         "Arm64ContextPromotionGprLocalSlotsAudit",
         "Arm64ContextPromotionGprLiveInR1Audit",
         "Arm64GuestStateRegisterCacheAudit",
+        "Arm64GuestStateRegisterCacheResidualAudit",
         "Arm64ContextTrafficAudit",
         "Arm64SpeedProfileBlockBodyTime",
         "Arm64SpeedProfileCallEdgeAuditOnly",
@@ -1575,6 +1586,8 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLiveInR1Audit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAuditFunction" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "A64EnableHostGuestStackSynchronization" "true"
@@ -1775,6 +1788,8 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64ContextPromotionGprLiveInR1Audit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAuditFunction" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
