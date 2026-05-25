@@ -142,6 +142,18 @@ Next useful slice is a default-off guest-state register-cache audit/design
 skeleton or caller-local/side-table edge-variant payload storage with
 normal-entry fallback and payload counters.
 
+Freshest priority:
+`docs/research/20260525-152958-a64-guest-state-cache-design.md` adds
+`tools/thor/thor_a64_guest_state_cache_design.ps1`. The tool confirms there is
+no structural guest-state register-cache skeleton yet and selects the
+HIR/context-promotion boundary as the safest no-behavior insertion point. The
+next useful code slice is a default-off counter-only
+`arm64_guest_state_register_cache_audit`, function-filtered for the hot route,
+with no store elision, no context-load replacement, and no payload
+materialization. Count clean hit opportunities, dirty opportunities, misses,
+flushes, external visibility kills, and spill-pressure estimates for clean
+INT64 `r[1]` / `r[11]` before any behavior patch or quiet speed A/B.
+
 Previous priority:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
 adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It wraps the prior

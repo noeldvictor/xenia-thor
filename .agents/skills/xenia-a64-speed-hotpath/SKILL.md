@@ -63,6 +63,19 @@ should be a default-off guest-state register-cache audit/design skeleton or
 caller-local/side-table edge-variant storage with normal-entry fallback, not a
 new narrow load fold.
 
+Latest no-behavior design contract:
+`docs/research/20260525-152958-a64-guest-state-cache-design.md` adds
+`tools/thor/thor_a64_guest_state_cache_design.ps1`. It confirms no structural
+guest-state register-cache skeleton exists yet, while `82282490` still has
+`GPR=1108`, `whole_gpr_loads=546`, `whole_gpr_stores=562`, and top clean-GPR
+candidates `r[1]` / `r[11]`. Treat the next code slice as a default-off
+counter-only `arm64_guest_state_register_cache_audit` at the
+HIR/context-promotion boundary, with no store elision, no context-load
+replacement, and no payload materialization until counters prove clean hits,
+flushes, and spill pressure. First fields should be clean INT64 `r[1]` and
+`r[11]`; reset on calls/helpers, branches, labels, returns, traps, volatile
+ops, overlapping context writes, and external context visibility.
+
 ## Baseline Run
 
 Build and deploy only when the native core changed:
