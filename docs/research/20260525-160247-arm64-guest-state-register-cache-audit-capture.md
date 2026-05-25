@@ -97,21 +97,24 @@ This keeps the route CPU/JIT-heavy. It does not justify a broad Vulkan pivot.
 
 ## Decision
 
-The audit is route-clean and useful enough to open a default-off behavior
-prototype, but not broad enough for an unconstrained register-cache rewrite.
-The safest next behavior slice is:
+The audit is route-clean and useful, but source review gates the originally
+planned `r1` clean-load behavior prototype. The audit runs before
+`ContextPromotionPass::PromoteBlock`, while `PromoteBlock` already rewrites
+same-block `LOAD_CONTEXT` instructions to `ASSIGN` when a prior in-block value
+is available. This means `clean_hits_possible` is a pre-promotion upper bound,
+not proof that a same-block `r1` replacement patch would change generated code.
 
-- function-filtered to `0x82282490`;
-- start with `r1` clean load replacement only;
-- no store elision;
-- no `r11` dirty-store caching yet;
-- flush on the same call/helper/branch/label/return/trap/external-visibility
-  boundaries used by the audit;
-- keep `payload_materializations_allowed=0` and normal fallback available;
-- first proof should be route-clean Thor correctness/counter capture, not a
-  quiet speed A/B.
+Superseding next slice:
 
-If the `r1` behavior prototype is route-clean, then run a same-APK quiet
-control sandwich. If it is not route-clean or hit volume collapses, fall back
-to caller-local/side-table edge-variant storage for
-`82282490:82282598 -> 82287788`.
+- do not implement a same-block `r1` clean-load replacement from this row alone;
+- add or run a default-off post-`PromoteBlock` residual audit for `0x82282490`;
+- report remaining `r1` / `r11` load/store traffic, residual clean/dirty
+  opportunities, boundary flush reasons, and spill pressure after the normal
+  pass has already rewritten same-block loads;
+- keep behavior unchanged: no store elision, no `r11` dirty caching, no payload
+  materialization, and no quiet speed A/B yet.
+
+If residual `r1` volume collapses after normal promotion, return to
+caller-local/side-table edge-variant storage for
+`82282490:82282598 -> 82287788` rather than spending another slice on
+same-block GPR caching.

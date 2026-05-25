@@ -55,6 +55,18 @@ Read the newest `docs/worklogs/YYYYMMDD.md` entry and any research note named
 by that entry. If the proof marker exists, summarize it and recommend pausing
 the heartbeat instead of editing code.
 
+## Current Blue Dragon Target
+
+Latest source gate:
+`docs/research/20260525-161334-r1-clean-load-source-gate.md`. Do not implement
+the same-block `r1` clean-load replacement prototype from the pre-promotion
+`arm64_guest_state_register_cache_audit` counters alone. The audit runs before
+`ContextPromotionPass::PromoteBlock`, and `PromoteBlock` already rewrites
+same-block `LOAD_CONTEXT` to `ASSIGN` when a prior in-block context value
+exists. Next useful worker slice is a default-off post-`PromoteBlock` residual
+audit for `0x82282490`, behavior unchanged, counting remaining `r1` / `r11`
+traffic and residual clean/dirty opportunities before any quiet speed A/B.
+
 ## Pick One Lane
 
 Choose exactly one lane for the slice:

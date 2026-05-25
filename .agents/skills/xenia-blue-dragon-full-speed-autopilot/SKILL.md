@@ -168,11 +168,15 @@ Audit rows were behavior-neutral with `payload_materializations_allowed=0` and
 `clean_hits_possible=357`, `dirty_hits_possible=247`, `normal_fallback=1063`,
 and `estimated_spill_pressure=2`. Per-slot totals favor a narrow `r1` lane:
 `r1=433/11/322/4/444` and `r11=345/274/35/243/619` for
-loads/stores/clean_hits/dirty_hits/fallback. Next useful slice is a
-default-off, function-filtered `r1` clean-load replacement prototype for
-`0x82282490` only: no store elision, no `r11` dirty caching, no payload
-materialization, normal fallback preserved, and route-clean Thor proof before
-any quiet speed A/B. The final capture remained CPU/JIT-heavy
+loads/stores/clean_hits/dirty_hits/fallback. Follow-up source gate
+`docs/research/20260525-161334-r1-clean-load-source-gate.md` supersedes the
+same-block `r1` prototype idea: the audit runs before `PromoteBlock`, and
+`PromoteBlock` already rewrites same-block `LOAD_CONTEXT` to `ASSIGN` when a
+prior in-block context value exists. Next useful slice is a default-off
+post-`PromoteBlock` residual audit for `0x82282490`, with behavior unchanged,
+to count remaining `r1` / `r11` load/store traffic, residual clean/dirty
+opportunities, boundary flush reasons, and spill pressure before any behavior
+patch or quiet speed A/B. The final capture remained CPU/JIT-heavy
 (`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
 pivot to broad Vulkan work.
 
