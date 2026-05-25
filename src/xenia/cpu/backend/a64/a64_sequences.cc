@@ -47,6 +47,7 @@ DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
 DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
+DECLARE_bool(arm64_blue_dragon_edge_payload_storage_audit);
 DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
@@ -483,6 +484,95 @@ static void EmitBlueDragonEdgeVariantF1ReadAudit(A64Emitter& e,
   e.L(done);
 }
 
+static void EmitBlueDragonEdgePayloadStorageF1ReadAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_edge_payload_storage_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 296) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  auto& inactive = e.NewCachedLabel();
+  auto& done = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_active))));
+  e.cbz(e.w11, inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_payload_storage_f1_active_read_covered_count());
+  e.b(done);
+  e.L(inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_payload_storage_f1_inactive_read_count());
+  e.L(done);
+}
+
+static bool IsBlueDragonEdgePayloadStorageFpscrExternalStorePc(
+    uint32_t guest_pc) {
+  switch (guest_pc) {
+    case 0x82287E6C:
+    case 0x822881FC:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static void EmitBlueDragonEdgePayloadStorageActiveCounter(
+    A64Emitter& e, std::atomic<uint64_t>* counter,
+    std::atomic<uint64_t>* secondary_counter = nullptr) {
+  auto& inactive = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_active))));
+  e.cbz(e.w11, inactive);
+  e.EmitAtomicIncrement64(counter);
+  if (secondary_counter) {
+    e.EmitAtomicIncrement64(secondary_counter);
+  }
+  e.L(inactive);
+}
+
+static void EmitBlueDragonEdgePayloadStorageStoreAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_edge_payload_storage_audit || !instr) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  const uint32_t guest_function = e.current_guest_function();
+  const uint32_t guest_pc = instr->GuestAddressFor();
+  if (guest_function == 0x82282490) {
+    if (guest_pc == 0x82282594 && offset == 296) {
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_edge_payload_storage_f1_seed_candidate_count());
+    } else if (guest_pc == 0x82282594 && offset == 2628) {
+      e.EmitAtomicIncrement64(backend
+                                  ->blue_dragon_edge_payload_storage_fpscr_seed_candidate_count());
+    } else if (guest_pc == 0x82282550 && offset == 56) {
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_edge_payload_storage_r3_seed_candidate_count());
+    }
+    return;
+  }
+
+  if (guest_function != 0x82287788) {
+    return;
+  }
+  if (offset == 2628) {
+    EmitBlueDragonEdgePayloadStorageActiveCounter(
+        e, backend->blue_dragon_edge_payload_storage_fpscr_dirty_write_count(),
+        IsBlueDragonEdgePayloadStorageFpscrExternalStorePc(guest_pc)
+            ? backend->blue_dragon_edge_payload_storage_external_visibility_count()
+            : nullptr);
+  } else if (offset == 56) {
+    EmitBlueDragonEdgePayloadStorageActiveCounter(
+        e, backend->blue_dragon_edge_payload_storage_r3_mutable_write_count());
+  }
+}
+
 static void EmitBlueDragonStateCarrierDesignStoreAudit(
     A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
   if (!cvars::arm64_blue_dragon_state_carrier_design_audit || !instr) {
@@ -872,6 +962,12 @@ EMITTER_OPCODE_TABLE(OPCODE_SOURCE_OFFSET, SOURCE_OFFSET);
 struct CONTEXT_BARRIER
     : Sequence<CONTEXT_BARRIER, I<OPCODE_CONTEXT_BARRIER, VoidOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (cvars::arm64_blue_dragon_edge_payload_storage_audit &&
+        e.current_guest_function() == 0x82287788) {
+      EmitBlueDragonEdgePayloadStorageActiveCounter(
+          e, e.backend()
+                 ->blue_dragon_edge_payload_storage_context_barrier_count());
+    }
     // No-op on ARM64 (context is always in x20).
   }
 };
@@ -1012,6 +1108,7 @@ struct LOAD_CONTEXT_F64
     const auto f1_carrier_kind =
         GetBlueDragonF1CarrierLoadKind(e, i.instr, offset);
     EmitBlueDragonEdgeVariantF1ReadAudit(e, i.instr, offset);
+    EmitBlueDragonEdgePayloadStorageF1ReadAudit(e, i.instr, offset);
     EmitBlueDragonF1CarrierAudit(e, f1_carrier_kind);
     if (EmitBlueDragonF1CarrierFastpath(e, i.instr, i.dest, offset,
                                         f1_carrier_kind)) {
@@ -1082,6 +1179,7 @@ struct STORE_CONTEXT_I32
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     EmitBlueDragonStateCarrierDesignStoreAudit(e, i.instr, offset);
+    EmitBlueDragonEdgePayloadStorageStoreAudit(e, i.instr, offset);
     EmitBlueDragonFpscrCfgWritebackStoreAudit(
         e, GetBlueDragonFpscrCfgStoreKind(e, i.instr, offset));
     if (EmitBlueDragonCallBoundaryStateProbe(
@@ -1106,6 +1204,7 @@ struct STORE_CONTEXT_I64
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonEdgePayloadStorageStoreAudit(e, i.instr, offset);
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;
@@ -1150,6 +1249,7 @@ struct STORE_CONTEXT_F64
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     EmitBlueDragonStateCarrierDesignStoreAudit(e, i.instr, offset);
+    EmitBlueDragonEdgePayloadStorageStoreAudit(e, i.instr, offset);
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;

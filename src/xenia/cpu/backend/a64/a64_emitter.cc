@@ -77,6 +77,7 @@ DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
 DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
+DECLARE_bool(arm64_blue_dragon_edge_payload_storage_audit);
 DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -1865,7 +1866,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
       current_a64_function_ = a64_function;
     }
   }
-  if (cvars::arm64_blue_dragon_edge_variant_audit &&
+  if ((cvars::arm64_blue_dragon_edge_variant_audit ||
+       cvars::arm64_blue_dragon_edge_payload_storage_audit) &&
       current_guest_function_ == 0x82282490) {
     uint64_t eligible_edges = 0;
     for (auto block = builder->first_block(); block; block = block->next) {
@@ -1889,10 +1891,21 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
         }
       }
     }
-    if (eligible_edges) {
+    if (eligible_edges && cvars::arm64_blue_dragon_edge_variant_audit) {
       backend_->blue_dragon_edge_variant_eligible_compile_count()->fetch_add(
           eligible_edges, std::memory_order_relaxed);
       backend_->blue_dragon_edge_variant_variant_storage_missing_count()
+          ->fetch_add(eligible_edges, std::memory_order_relaxed);
+    }
+    if (eligible_edges &&
+        cvars::arm64_blue_dragon_edge_payload_storage_audit) {
+      backend_->blue_dragon_edge_payload_storage_eligible_compile_count()
+          ->fetch_add(eligible_edges, std::memory_order_relaxed);
+      backend_->blue_dragon_edge_payload_storage_variant_codegen_skipped_count()
+          ->fetch_add(eligible_edges, std::memory_order_relaxed);
+      backend_->blue_dragon_edge_payload_storage_storage_missing_count()
+          ->fetch_add(eligible_edges, std::memory_order_relaxed);
+      backend_->blue_dragon_edge_payload_storage_normal_entry_owned_count()
           ->fetch_add(eligible_edges, std::memory_order_relaxed);
     }
   }
@@ -4525,6 +4538,66 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       L(no_active_payload);
     }
   }
+  if (cvars::arm64_blue_dragon_edge_payload_storage_audit && instr &&
+      current_guest_function_ == 0x82287788) {
+    auto* backend = backend_;
+    const uint32_t guest_pc = instr->GuestAddressFor();
+    std::atomic<uint64_t>* flush_counter = nullptr;
+    bool fpscr_required_writeback = false;
+    bool unknown_call = false;
+    switch (guest_pc) {
+      case 0x8228778C:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_helper_preserved_count();
+        break;
+      case 0x82287854:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_child_preserved_count();
+        break;
+      case 0x82287ED4:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_child_preserved_count();
+        fpscr_required_writeback = true;
+        break;
+      case 0x82287EDC:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_return_exit_count();
+        fpscr_required_writeback = true;
+        break;
+      case 0x82287EE4:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_helper_preserved_count();
+        fpscr_required_writeback = true;
+        break;
+      case 0x82288220:
+        flush_counter =
+            backend->blue_dragon_edge_payload_storage_return_exit_count();
+        fpscr_required_writeback = true;
+        break;
+      default:
+        unknown_call = true;
+        break;
+    }
+    auto& inactive_payload = NewCachedLabel();
+    ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_payload_storage_active))));
+    cbz(w11, inactive_payload);
+    if (flush_counter) {
+      EmitAtomicIncrement64(flush_counter);
+    }
+    if (fpscr_required_writeback) {
+      EmitAtomicIncrement64(
+          backend->blue_dragon_edge_payload_storage_fpscr_required_writeback_count());
+    }
+    if (unknown_call) {
+      EmitAtomicIncrement64(
+          backend->blue_dragon_edge_payload_storage_unknown_call_count());
+      EmitAtomicIncrement64(
+          backend->blue_dragon_edge_payload_storage_f1_unknown_kill_count());
+    }
+    L(inactive_payload);
+  }
   if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit && instr &&
       current_guest_function_ == 0x82287788) {
     auto* backend = backend_;
@@ -4591,6 +4664,42 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     EmitAtomicIncrement64(
         backend_->blue_dragon_edge_variant_marker_clear_count());
   };
+  const bool blue_dragon_edge_payload_storage_hot_edge =
+      cvars::arm64_blue_dragon_edge_payload_storage_audit && instr &&
+      current_guest_function_ == 0x82282490 &&
+      instr->GuestAddressFor() == 0x82282598 &&
+      function->address() == 0x82287788;
+  if (blue_dragon_edge_payload_storage_hot_edge) {
+    auto* backend = backend_;
+    EmitAtomicIncrement64(
+        backend->blue_dragon_edge_payload_storage_eligible_call_count());
+    EmitAtomicIncrement64(
+        backend->blue_dragon_edge_payload_storage_variant_miss_count());
+  }
+  const bool blue_dragon_edge_payload_storage_marker_allowed =
+      blue_dragon_edge_payload_storage_hot_edge &&
+      !(instr->flags & hir::CALL_TAIL);
+  auto emit_blue_dragon_edge_payload_storage_marker_set = [&]() {
+    if (!blue_dragon_edge_payload_storage_marker_allowed) {
+      return;
+    }
+    mov(w11, 1);
+    str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_payload_storage_active))));
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_payload_storage_marker_set_count());
+  };
+  auto emit_blue_dragon_edge_payload_storage_marker_clear = [&]() {
+    if (!blue_dragon_edge_payload_storage_marker_allowed) {
+      return;
+    }
+    str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                       A64BackendContext,
+                                       blue_dragon_edge_payload_storage_active))));
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_payload_storage_marker_clear_count());
+  };
 
   std::atomic<uint64_t>* call_edge_entry_counter = nullptr;
   std::atomic<uint64_t>* call_edge_body_ticks_counter = nullptr;
@@ -4631,14 +4740,20 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       EmitAtomicIncrement64(
           backend_->blue_dragon_edge_variant_normal_entry_fallback_count());
     }
+    if (blue_dragon_edge_payload_storage_hot_edge) {
+      EmitAtomicIncrement64(
+          backend_->blue_dragon_edge_payload_storage_normal_entry_fallback_count());
+    }
     // Direct call — function is already compiled.
     if (!(instr->flags & hir::CALL_TAIL)) {
       // Pass the next call's guest return address in x0.
       emit_blue_dragon_edge_variant_marker_set();
+      emit_blue_dragon_edge_payload_storage_marker_set();
       MaybeEmitCallEdgeProfileStart(call_edge_entry_counter);
       mov(x9, reinterpret_cast<uint64_t>(fn->machine_code()));
       ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
       blr(x9);
+      emit_blue_dragon_edge_payload_storage_marker_clear();
       emit_blue_dragon_edge_variant_marker_clear();
       MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
       synchronize_stack_on_next_instruction_ = true;
@@ -4668,13 +4783,22 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     EmitAtomicIncrement64(
         backend_->blue_dragon_edge_variant_normal_entry_fallback_count());
   }
+  if (blue_dragon_edge_payload_storage_hot_edge) {
+    EmitAtomicIncrement64(
+        backend_->blue_dragon_edge_payload_storage_normal_entry_fallback_count());
+  }
 
   emit_blue_dragon_edge_variant_marker_set();
+  emit_blue_dragon_edge_payload_storage_marker_set();
 
   if (code_cache_->has_indirection_table()) {
     if (blue_dragon_edge_variant_hot_edge) {
       EmitAtomicIncrement64(
           backend_->blue_dragon_edge_variant_indirection_fallback_count());
+    }
+    if (blue_dragon_edge_payload_storage_hot_edge) {
+      EmitAtomicIncrement64(
+          backend_->blue_dragon_edge_payload_storage_indirection_fallback_count());
     }
     // Load host code address from indirection table.
     mov(x0,A64CodeCache::execute_address_high());
@@ -4706,6 +4830,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   } else {
     ldr(x0, ptr(sp, static_cast<uint32_t>(StackLayout::GUEST_CALL_RET_ADDR)));
     blr(x9);
+    emit_blue_dragon_edge_payload_storage_marker_clear();
     emit_blue_dragon_edge_variant_marker_clear();
     MaybeEmitCallEdgeProfileEnd(call_edge_body_ticks_counter);
     synchronize_stack_on_next_instruction_ = true;

@@ -299,6 +299,14 @@ DEFINE_bool(
     "generated behavior. Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_edge_payload_storage_audit, false,
+    "Thor ARM64 speed lane: instrument the Blue Dragon 82282490:82282598 -> "
+    "82287788 edge payload-storage design. Counts eligible edges, normal-entry "
+    "fallbacks, f[1]/fpscr/r3 payload candidates, call-scope flush pressure, "
+    "and payload materialization only; does not change generated behavior. "
+    "Research-only, title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_fpscr_cfg_writeback_audit, false,
     "Thor ARM64 speed lane: instrument the Blue Dragon 82287788 fpscr CFG "
     "writeback plan. Counts static sites, dynamic context loads/stores, "
@@ -2170,6 +2178,133 @@ void A64Backend::LogSpeedProfile() {
         active_call_kill_sites[3].first, active_call_kill_sites[4].second,
         active_call_kill_sites[4].first, active_call_kill_sites[5].second,
         active_call_kill_sites[5].first);
+  }
+  if (cvars::arm64_blue_dragon_edge_payload_storage_audit) {
+    auto eligible_compile = load_delta(
+        blue_dragon_edge_payload_storage_eligible_compile_count_,
+        last_blue_dragon_edge_payload_storage_eligible_compile_count_);
+    auto variant_codegen_skipped = load_delta(
+        blue_dragon_edge_payload_storage_variant_codegen_skipped_count_,
+        last_blue_dragon_edge_payload_storage_variant_codegen_skipped_count_);
+    auto storage_missing = load_delta(
+        blue_dragon_edge_payload_storage_storage_missing_count_,
+        last_blue_dragon_edge_payload_storage_storage_missing_count_);
+    auto normal_entry_owned = load_delta(
+        blue_dragon_edge_payload_storage_normal_entry_owned_count_,
+        last_blue_dragon_edge_payload_storage_normal_entry_owned_count_);
+    auto eligible_call =
+        load_delta(blue_dragon_edge_payload_storage_eligible_call_count_,
+                   last_blue_dragon_edge_payload_storage_eligible_call_count_);
+    auto normal_entry_fallback = load_delta(
+        blue_dragon_edge_payload_storage_normal_entry_fallback_count_,
+        last_blue_dragon_edge_payload_storage_normal_entry_fallback_count_);
+    auto indirection_fallback = load_delta(
+        blue_dragon_edge_payload_storage_indirection_fallback_count_,
+        last_blue_dragon_edge_payload_storage_indirection_fallback_count_);
+    auto variant_miss =
+        load_delta(blue_dragon_edge_payload_storage_variant_miss_count_,
+                   last_blue_dragon_edge_payload_storage_variant_miss_count_);
+    auto payload_materialized = load_delta(
+        blue_dragon_edge_payload_storage_payload_materialized_count_,
+        last_blue_dragon_edge_payload_storage_payload_materialized_count_);
+    auto marker_set =
+        load_delta(blue_dragon_edge_payload_storage_marker_set_count_,
+                   last_blue_dragon_edge_payload_storage_marker_set_count_);
+    auto marker_clear =
+        load_delta(blue_dragon_edge_payload_storage_marker_clear_count_,
+                   last_blue_dragon_edge_payload_storage_marker_clear_count_);
+    auto f1_seed = load_delta(
+        blue_dragon_edge_payload_storage_f1_seed_candidate_count_,
+        last_blue_dragon_edge_payload_storage_f1_seed_candidate_count_);
+    auto f1_active_read = load_delta(
+        blue_dragon_edge_payload_storage_f1_active_read_covered_count_,
+        last_blue_dragon_edge_payload_storage_f1_active_read_covered_count_);
+    auto f1_inactive_read = load_delta(
+        blue_dragon_edge_payload_storage_f1_inactive_read_count_,
+        last_blue_dragon_edge_payload_storage_f1_inactive_read_count_);
+    auto f1_unknown_kill = load_delta(
+        blue_dragon_edge_payload_storage_f1_unknown_kill_count_,
+        last_blue_dragon_edge_payload_storage_f1_unknown_kill_count_);
+    auto fpscr_seed = load_delta(
+        blue_dragon_edge_payload_storage_fpscr_seed_candidate_count_,
+        last_blue_dragon_edge_payload_storage_fpscr_seed_candidate_count_);
+    auto fpscr_dirty_write = load_delta(
+        blue_dragon_edge_payload_storage_fpscr_dirty_write_count_,
+        last_blue_dragon_edge_payload_storage_fpscr_dirty_write_count_);
+    auto fpscr_required_writeback = load_delta(
+        blue_dragon_edge_payload_storage_fpscr_required_writeback_count_,
+        last_blue_dragon_edge_payload_storage_fpscr_required_writeback_count_);
+    auto r3_seed = load_delta(
+        blue_dragon_edge_payload_storage_r3_seed_candidate_count_,
+        last_blue_dragon_edge_payload_storage_r3_seed_candidate_count_);
+    auto r3_mutable_write = load_delta(
+        blue_dragon_edge_payload_storage_r3_mutable_write_count_,
+        last_blue_dragon_edge_payload_storage_r3_mutable_write_count_);
+    auto helper_preserved = load_delta(
+        blue_dragon_edge_payload_storage_helper_preserved_count_,
+        last_blue_dragon_edge_payload_storage_helper_preserved_count_);
+    auto child_preserved = load_delta(
+        blue_dragon_edge_payload_storage_child_preserved_count_,
+        last_blue_dragon_edge_payload_storage_child_preserved_count_);
+    auto return_exit =
+        load_delta(blue_dragon_edge_payload_storage_return_exit_count_,
+                   last_blue_dragon_edge_payload_storage_return_exit_count_);
+    auto unknown_call =
+        load_delta(blue_dragon_edge_payload_storage_unknown_call_count_,
+                   last_blue_dragon_edge_payload_storage_unknown_call_count_);
+    auto context_barrier = load_delta(
+        blue_dragon_edge_payload_storage_context_barrier_count_,
+        last_blue_dragon_edge_payload_storage_context_barrier_count_);
+    auto exception_or_trap = load_delta(
+        blue_dragon_edge_payload_storage_exception_or_trap_count_,
+        last_blue_dragon_edge_payload_storage_exception_or_trap_count_);
+    auto external_visibility = load_delta(
+        blue_dragon_edge_payload_storage_external_visibility_count_,
+        last_blue_dragon_edge_payload_storage_external_visibility_count_);
+    XELOGW(
+        "A64 Blue Dragon edge-payload-storage audit: "
+        "eligible_edge_compiles={}/{} variant_codegen_skipped={}/{} "
+        "storage_missing={}/{} normal_entry_owned={}/{} "
+        "eligible_edge_calls={}/{} normal_entry_fallbacks={}/{} "
+        "indirection_fallbacks={}/{} variant_misses={}/{} "
+        "payload_materializations={}/{} marker_sets={}/{} "
+        "marker_clears={}/{} payload_materializations_allowed=0 "
+        "behavior_changed=0 normal_entry=unchanged",
+        eligible_compile.second, eligible_compile.first,
+        variant_codegen_skipped.second, variant_codegen_skipped.first,
+        storage_missing.second, storage_missing.first,
+        normal_entry_owned.second, normal_entry_owned.first,
+        eligible_call.second, eligible_call.first, normal_entry_fallback.second,
+        normal_entry_fallback.first, indirection_fallback.second,
+        indirection_fallback.first, variant_miss.second, variant_miss.first,
+        payload_materialized.second, payload_materialized.first,
+        marker_set.second, marker_set.first, marker_clear.second,
+        marker_clear.first);
+    XELOGW(
+        "A64 Blue Dragon edge-payload-storage audit payload: "
+        "f1_seed_candidates={}/{} f1_active_reads_covered={}/{} "
+        "f1_inactive_reads={}/{} f1_unknown_kills={}/{} "
+        "fpscr_seed_candidates={}/{} fpscr_dirty_writes={}/{} "
+        "fpscr_required_writebacks={}/{} r3_seed_candidates={}/{} "
+        "r3_mutable_writes={}/{}",
+        f1_seed.second, f1_seed.first, f1_active_read.second,
+        f1_active_read.first, f1_inactive_read.second, f1_inactive_read.first,
+        f1_unknown_kill.second, f1_unknown_kill.first, fpscr_seed.second,
+        fpscr_seed.first, fpscr_dirty_write.second, fpscr_dirty_write.first,
+        fpscr_required_writeback.second, fpscr_required_writeback.first,
+        r3_seed.second, r3_seed.first, r3_mutable_write.second,
+        r3_mutable_write.first);
+    XELOGW(
+        "A64 Blue Dragon edge-payload-storage audit flush: "
+        "helper_preserved={}/{} child_preserved={}/{} return_exit={}/{} "
+        "unknown_call={}/{} context_barrier={}/{} "
+        "exception_or_trap={}/{} external_visibility={}/{}",
+        helper_preserved.second, helper_preserved.first, child_preserved.second,
+        child_preserved.first, return_exit.second, return_exit.first,
+        unknown_call.second, unknown_call.first, context_barrier.second,
+        context_barrier.first, exception_or_trap.second,
+        exception_or_trap.first, external_visibility.second,
+        external_visibility.first);
   }
   if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit) {
     auto static_load_sites = load_delta(

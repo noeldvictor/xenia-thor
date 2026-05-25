@@ -214,6 +214,29 @@ payload candidate; keep `fpscr` in the separate CFG-writeback lane; keep
 quiet speed A/B or materialize payload state until route-clean counter rows
 prove useful hit volume and manageable flush pressure.
 
+Latest edge payload-storage audit capture:
+`docs/research/20260525-193245-edge-payload-storage-audit-capture.md`.
+The default-off `arm64_blue_dragon_edge_payload_storage_audit` skeleton now has
+FullDeploy plus route-clean Thor proof for exact edge
+`82282490:82282598 -> 82287788`. Capture
+`scratch/thor-debug/20260525-192928-*` used APK SHA
+`9DD345DCD8C404E0BDE50D3C67F72EF1CA105A2C9A4A3F7554462EF17BA567DF`, reached
+visible opening sky / dragon-wing, and had a clean fatal-marker search.
+Behavior remained unchanged with `payload_materializations_allowed=0`,
+`behavior_changed=0`, normal-entry fallback preserved, no normal machine-code
+replacement, and no global indirection-slot change.
+
+Final route counters show useful edge volume but high lifetime pressure:
+`eligible_edge_calls=910159`, `f1_active_reads_covered=2717039`,
+`f1_unknown_kills=0`, `fpscr_dirty_writes=2849260`,
+`fpscr_required_writebacks=922692`, `r3_mutable_writes=2718234`,
+`context_barrier=11561589`, `external_visibility=48803`, and
+`unknown_call=0`. Do not materialize payload state or run a quiet speed A/B
+from this first audit. Next useful slice is a counter-only payload
+lifetime/segment audit for the same edge, measuring usable `f[1]` / `r[3]`
+reads before the first barrier, external visibility point, return/exit, or
+required `fpscr` writeback.
+
 Previous residual audit capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
 closed the post-`PromoteBlock` `r1` / `r11` register-cache behavior lane. Do

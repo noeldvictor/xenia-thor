@@ -167,6 +167,7 @@ param(
     [string]$Arm64BlueDragonF1CarrierFastpath = "false",
     [string]$Arm64BlueDragonStateCarrierDesignAudit = "false",
     [string]$Arm64BlueDragonEdgeVariantAudit = "false",
+    [string]$Arm64BlueDragonEdgePayloadStorageAudit = "false",
     [string]$Arm64BlueDragonFpscrCfgWritebackAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
@@ -936,6 +937,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonEdgeVariantAudit) {
         $parts += "--ez arm64_blue_dragon_edge_variant_audit $(ConvertTo-BooleanText $Arm64BlueDragonEdgeVariantAudit)"
     }
+    if ($Arm64BlueDragonEdgePayloadStorageAudit) {
+        $parts += "--ez arm64_blue_dragon_edge_payload_storage_audit $(ConvertTo-BooleanText $Arm64BlueDragonEdgePayloadStorageAudit)"
+    }
     if ($Arm64BlueDragonFpscrCfgWritebackAudit) {
         $parts += "--ez arm64_blue_dragon_fpscr_cfg_writeback_audit $(ConvertTo-BooleanText $Arm64BlueDragonFpscrCfgWritebackAudit)"
     }
@@ -1215,6 +1219,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_f1_carrier_fastpath=$Arm64BlueDragonF1CarrierFastpath",
         "arm64_blue_dragon_state_carrier_design_audit=$Arm64BlueDragonStateCarrierDesignAudit",
         "arm64_blue_dragon_edge_variant_audit=$Arm64BlueDragonEdgeVariantAudit",
+        "arm64_blue_dragon_edge_payload_storage_audit=$Arm64BlueDragonEdgePayloadStorageAudit",
         "arm64_blue_dragon_fpscr_cfg_writeback_audit=$Arm64BlueDragonFpscrCfgWritebackAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
@@ -1496,6 +1501,7 @@ function Test-BlueDragonSpeedLogRowsRequested {
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
         "Arm64BlueDragonEdgeVariantAudit",
+        "Arm64BlueDragonEdgePayloadStorageAudit",
         "Arm64BlueDragonFpscrCfgWritebackAudit",
         "Arm64AddSubImmAudit",
         "Arm64ImmediateLoweringAudit",
@@ -1547,6 +1553,7 @@ function Test-BlueDragonSpeedProfilerRowsRequested {
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
         "Arm64BlueDragonEdgeVariantAudit",
+        "Arm64BlueDragonEdgePayloadStorageAudit",
         "Arm64BlueDragonFpscrCfgWritebackAudit",
         "Arm64SpeedProfileBlockBodyTime",
         "Arm64SpeedProfileCallEdgeAuditOnly",
@@ -2053,6 +2060,9 @@ done | head -50
         }
         if ($Arm64BlueDragonF1CarrierFastpath) {
             Write-Output "A64 Blue Dragon f1 carrier fastpath: $(ConvertTo-BooleanText $Arm64BlueDragonF1CarrierFastpath)"
+        }
+        if ($Arm64BlueDragonEdgePayloadStorageAudit) {
+            Write-Output "A64 Blue Dragon edge payload storage audit: $(ConvertTo-BooleanText $Arm64BlueDragonEdgePayloadStorageAudit)"
         }
         if ($VulkanTracePerfCounters) {
             Write-Output "Vulkan perf counters: $(ConvertTo-BooleanText $VulkanTracePerfCounters)"

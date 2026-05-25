@@ -277,6 +277,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent,
                     launchArguments,
+                    "arm64_blue_dragon_edge_payload_storage_audit");
+            copyBooleanExtra(
+                    intent,
+                    launchArguments,
                     "arm64_blue_dragon_fpscr_cfg_writeback_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_add_sub_imm_audit");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_function");

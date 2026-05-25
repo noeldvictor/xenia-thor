@@ -98,6 +98,7 @@ struct A64BackendContext {
   uint32_t last_guest_function;
   uint32_t last_guest_return_address;
   uint32_t blue_dragon_edge_variant_payload_active;
+  uint32_t blue_dragon_edge_payload_storage_active;
   volatile uint32_t* processor_irql;
   uint32_t kf_lower_irql_apc_guard_counter;
 };
@@ -354,6 +355,110 @@ class A64Backend : public Backend {
       uint32_t index) {
     return &blue_dragon_edge_variant_active_call_kill_site_counts_[index];
   }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_eligible_compile_count() {
+    return &blue_dragon_edge_payload_storage_eligible_compile_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_variant_codegen_skipped_count() {
+    return &blue_dragon_edge_payload_storage_variant_codegen_skipped_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_storage_missing_count() {
+    return &blue_dragon_edge_payload_storage_storage_missing_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_normal_entry_owned_count() {
+    return &blue_dragon_edge_payload_storage_normal_entry_owned_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_eligible_call_count() {
+    return &blue_dragon_edge_payload_storage_eligible_call_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_normal_entry_fallback_count() {
+    return &blue_dragon_edge_payload_storage_normal_entry_fallback_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_indirection_fallback_count() {
+    return &blue_dragon_edge_payload_storage_indirection_fallback_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_variant_miss_count() {
+    return &blue_dragon_edge_payload_storage_variant_miss_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_payload_materialized_count() {
+    return &blue_dragon_edge_payload_storage_payload_materialized_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_payload_storage_marker_set_count() {
+    return &blue_dragon_edge_payload_storage_marker_set_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_payload_storage_marker_clear_count() {
+    return &blue_dragon_edge_payload_storage_marker_clear_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_f1_seed_candidate_count() {
+    return &blue_dragon_edge_payload_storage_f1_seed_candidate_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_f1_active_read_covered_count() {
+    return &blue_dragon_edge_payload_storage_f1_active_read_covered_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_f1_inactive_read_count() {
+    return &blue_dragon_edge_payload_storage_f1_inactive_read_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_f1_unknown_kill_count() {
+    return &blue_dragon_edge_payload_storage_f1_unknown_kill_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_fpscr_seed_candidate_count() {
+    return &blue_dragon_edge_payload_storage_fpscr_seed_candidate_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_fpscr_dirty_write_count() {
+    return &blue_dragon_edge_payload_storage_fpscr_dirty_write_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_fpscr_required_writeback_count() {
+    return &blue_dragon_edge_payload_storage_fpscr_required_writeback_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_r3_seed_candidate_count() {
+    return &blue_dragon_edge_payload_storage_r3_seed_candidate_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_r3_mutable_write_count() {
+    return &blue_dragon_edge_payload_storage_r3_mutable_write_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_helper_preserved_count() {
+    return &blue_dragon_edge_payload_storage_helper_preserved_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_child_preserved_count() {
+    return &blue_dragon_edge_payload_storage_child_preserved_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_payload_storage_return_exit_count() {
+    return &blue_dragon_edge_payload_storage_return_exit_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_payload_storage_unknown_call_count() {
+    return &blue_dragon_edge_payload_storage_unknown_call_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_context_barrier_count() {
+    return &blue_dragon_edge_payload_storage_context_barrier_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_exception_or_trap_count() {
+    return &blue_dragon_edge_payload_storage_exception_or_trap_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_edge_payload_storage_external_visibility_count() {
+    return &blue_dragon_edge_payload_storage_external_visibility_count_;
+  }
   std::atomic<uint64_t>* blue_dragon_fpscr_cfg_static_load_site_count() {
     return &blue_dragon_fpscr_cfg_static_load_site_count_;
   }
@@ -582,6 +687,57 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>
       blue_dragon_edge_variant_active_call_kill_site_counts_
           [kBlueDragonEdgeVariantCallKillSiteCount]{};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_eligible_compile_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_variant_codegen_skipped_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_storage_missing_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_normal_entry_owned_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_eligible_call_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_normal_entry_fallback_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_indirection_fallback_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_variant_miss_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_payload_materialized_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_payload_storage_marker_set_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_marker_clear_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_f1_seed_candidate_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_f1_active_read_covered_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_payload_storage_f1_inactive_read_count_{
+      0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_f1_unknown_kill_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_fpscr_seed_candidate_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_fpscr_dirty_write_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_fpscr_required_writeback_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_r3_seed_candidate_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_r3_mutable_write_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_helper_preserved_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_child_preserved_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_payload_storage_return_exit_count_{0};
+  std::atomic<uint64_t> blue_dragon_edge_payload_storage_unknown_call_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_context_barrier_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_exception_or_trap_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_payload_storage_external_visibility_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_load_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_store_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_cfg_transition_site_count_{
@@ -686,6 +842,41 @@ class A64Backend : public Backend {
       [kBlueDragonEdgeVariantF1ReadSiteCount]{};
   uint64_t last_blue_dragon_edge_variant_active_call_kill_site_counts_
       [kBlueDragonEdgeVariantCallKillSiteCount]{};
+  uint64_t last_blue_dragon_edge_payload_storage_eligible_compile_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_variant_codegen_skipped_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_storage_missing_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_normal_entry_owned_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_eligible_call_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_normal_entry_fallback_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_indirection_fallback_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_variant_miss_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_payload_materialized_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_marker_set_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_marker_clear_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_f1_seed_candidate_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_f1_active_read_covered_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_f1_inactive_read_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_f1_unknown_kill_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_fpscr_seed_candidate_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_fpscr_dirty_write_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_fpscr_required_writeback_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_r3_seed_candidate_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_r3_mutable_write_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_helper_preserved_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_child_preserved_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_return_exit_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_unknown_call_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_context_barrier_count_ = 0;
+  uint64_t
+      last_blue_dragon_edge_payload_storage_exception_or_trap_count_ = 0;
+  uint64_t last_blue_dragon_edge_payload_storage_external_visibility_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_load_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_store_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_cfg_transition_site_count_ = 0;

@@ -120,6 +120,37 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 ## Current Blue Dragon A64 Lane
 
 Latest route-clean audit:
+`docs/research/20260525-193245-edge-payload-storage-audit-capture.md`.
+The default-off `arm64_blue_dragon_edge_payload_storage_audit` skeleton now
+exists for exact edge `82282490:82282598 -> 82287788`, with Android/Thor launch
+plumbing. Capture `scratch/thor-debug/20260525-192928-*` used APK SHA
+`9DD345DCD8C404E0BDE50D3C67F72EF1CA105A2C9A4A3F7554462EF17BA567DF`, reached
+the visible opening sky / dragon-wing route, and had a clean fatal-marker
+search. It is behavior-neutral: `payload_materializations_allowed=0`,
+`behavior_changed=0`, normal-entry fallback is preserved, no normal
+`A64Function::machine_code()` replacement exists, and no global indirection-slot
+change exists.
+
+Final edge-payload counters show real volume:
+`eligible_edge_calls=910159`, `normal_entry_fallbacks=910159`,
+`indirection_fallbacks=910159`, `variant_misses=910159`,
+`payload_materializations=0`, `f1_active_reads_covered=2717039`,
+`f1_unknown_kills=0`, `fpscr_dirty_writes=2849260`,
+`fpscr_required_writebacks=922692`, and `r3_mutable_writes=2718234`.
+Flush pressure is also real: `context_barrier=11561589`,
+`external_visibility=48803`, `return_exit=910159`, and `unknown_call=0`.
+Final perf stayed CPU/JIT-bound: `82282490=51783317`, `82281D28=10283586`,
+`82287788=6836225`, Main Thread `103%`, GPU Commands `11.5%`.
+
+Do not materialize payload state or run a quiet speed A/B from this first
+payload-storage audit. Next useful slice is a counter-only payload
+lifetime/segment audit for the same edge: measure usable `f[1]` / `r[3]` reads
+before the first context barrier, external visibility point, return/exit, or
+required `fpscr` writeback. Keep `fpscr` in its separate CFG-writeback lane,
+keep `r[3]` count-only until lifetime is proven, and leave `lr` on the normal
+PPC call/return path.
+
+Previous route-clean audit:
 `docs/research/20260525-184957-edge-f1-kill-taxonomy.md`.
 Working tree based on commit `8d053566e` / APK SHA
 `DEDD20333729C3E6B44CC1E423357147F0A9149D034C6D0A2DB0237AB8BF5C61` reached the
@@ -143,7 +174,7 @@ Do not run a quiet speed A/B or materialize an `f[1]`-only edge payload from
 this audit-only patch. The previous standalone `f[1]` carrier was route-safe
 but did not prove speed.
 
-Latest offline design:
+Previous offline design:
 `docs/research/20260525-190544-edge-payload-storage-design.md` adds
 `tools/thor/thor_a64_edge_payload_storage_design.ps1`. It converts the
 zero-unknown-kill `f[1]` taxonomy into the next implementation contract:
