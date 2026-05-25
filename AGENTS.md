@@ -141,10 +141,22 @@ Final taxonomy counters were `helper_preserved_calls=720290`,
 
 Do not run a quiet speed A/B or materialize an `f[1]`-only edge payload from
 this audit-only patch. The previous standalone `f[1]` carrier was route-safe
-but did not prove speed. The next useful slice is a broader caller-local or
-side-table edge payload-storage design for `82282490:82282598 -> 82287788`,
-using the zero-unknown-kill result as input while keeping `fpscr` in its
-separate CFG-writeback lane.
+but did not prove speed.
+
+Latest offline design:
+`docs/research/20260525-190544-edge-payload-storage-design.md` adds
+`tools/thor/thor_a64_edge_payload_storage_design.ps1`. It converts the
+zero-unknown-kill `f[1]` taxonomy into the next implementation contract:
+the missing piece is a default-off, counter-only
+`arm64_blue_dragon_edge_payload_storage_audit` skeleton. Its first route proof
+must keep `payload_materializations_allowed=0`, `behavior_changed=0`, normal
+entry fallback preserved, no `A64Function::machine_code()` replacement, and no
+global indirection-slot change. Include `f[1]` as the first counted payload
+candidate, keep `fpscr` in the separate CFG-writeback lane, keep `r[3]`
+count-only until the `f[1]/fpscr` shape is known, and leave `lr` on the normal
+PPC call/return path. Do not run a quiet speed A/B or materialize payload state
+until route-clean counter rows prove useful hit volume and manageable flush
+pressure.
 
 The previous route-clean residual register-cache audit remains closed:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.

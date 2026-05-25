@@ -199,10 +199,20 @@ sites were `82287798=710511`, `82287828=350636`, `82287CF8=350031`,
 `8228778C=710511`, `82287854=350636`, `82287ED4=0`,
 `82287EDC=700732`, `82287EE4=9779`, and `82288220=9779`.
 Do not run a quiet speed A/B or materialize an `f[1]`-only payload from this
-audit-only patch. Next useful slice is a broader caller-local or side-table
-edge payload-storage design for `82282490:82282598 -> 82287788`, using the
-zero-unknown-kill result while keeping `fpscr` in the separate CFG-writeback
-lane.
+audit-only patch.
+
+Latest edge payload-storage design:
+`docs/research/20260525-190544-edge-payload-storage-design.md` adds
+`tools/thor/thor_a64_edge_payload_storage_design.ps1`. The missing piece is now
+explicit: a default-off, counter-only
+`arm64_blue_dragon_edge_payload_storage_audit` skeleton. The first code slice
+must keep `payload_materializations_allowed=0`, `behavior_changed=0`, normal
+entry fallback preserved, no normal `A64Function::machine_code()` replacement,
+and no global indirection-slot change. Include `f[1]` as the first counted
+payload candidate; keep `fpscr` in the separate CFG-writeback lane; keep
+`r[3]` count-only; leave `lr` on the normal PPC call/return path. Do not run a
+quiet speed A/B or materialize payload state until route-clean counter rows
+prove useful hit volume and manageable flush pressure.
 
 Previous residual audit capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
