@@ -57,15 +57,28 @@ the heartbeat instead of editing code.
 
 ## Current Blue Dragon Target
 
-Latest scaffold:
-`docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`.
-The default-off post-`PromoteBlock` residual audit now exists for `r1` / `r11`
-guest-state register-cache traffic, with Android and Thor launch plumbing.
-Next useful worker slice is FullDeploy plus a route-clean Thor residual capture
-for `0x82282490` using `-Arm64GuestStateRegisterCacheResidualAudit true` and
-`-Arm64GuestStateRegisterCacheResidualAuditFunction 0x82282490`. Do not patch
-generated behavior or run a quiet speed A/B until residual rows are route-clean
-and show material post-promotion volume.
+Latest capture:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
+The post-`PromoteBlock` residual audit for `0x82282490` is route-clean and
+behavior-neutral, but it closes the immediate `r1` / `r11` behavior lane:
+`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
+`dirty_hits_possible=0`, `normal_fallback=313`, and
+`payload_materializations_allowed=0 behavior_changed=0`. Per-slot totals are
+`r1=107/11/0/0/118` and `r11=67/128/0/0/195`
+loads/stores/clean_hits/dirty_hits/fallback. Do not implement the stale
+same-block `r1` clean-load replacement, `r11` dirty caching, store elision, or
+a quiet speed A/B from this lane.
+
+Next useful worker slice: return to caller-local or side-table edge-variant
+payload storage for `82282490:82282598 -> 82287788`, with normal-entry fallback
+and counter-only payload/materialization diagnostics first.
+
+Hardware acceleration note:
+`docs/research/20260525-171305-thor-hardware-acceleration-menu.md` is the
+current Thor menu. Use NEON/dot/I8MM/CRC/LSE only after opcode/source/counter
+proof, and push only Xenos-like bulk graphics transforms to Adreno after a
+measured graphics-work audit finds CPU-side graphics cost. Do not move branchy
+PPC/JIT state traffic to Vulkan compute while Main Thread remains the wall.
 
 ## Pick One Lane
 
@@ -126,6 +139,21 @@ from runs with broad disassembly, shader dumps, live logcat, RenderDoc, or
 heavy audits enabled unless the note explicitly marks the speed data invalid.
 
 ## Current Default Bias
+
+Latest lane closure:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
+records the FullDeploy plus route-clean Thor capture for the default-off
+`arm64_guest_state_register_cache_residual_audit`. It reached the visible
+opening sky / dragon-wing route on commit `85c422d2b`, APK SHA
+`18097BA09F0C50596DED67D4251E4401FC7D458AA5EF7AAC7365B362D14CD19A`, with a
+clean fatal-marker search. The residual counters show no post-promotion hit
+volume: `candidate_loads=174`, `candidate_stores=139`,
+`clean_hits_possible=0`, `dirty_hits_possible=0`, `normal_fallback=313`, and
+per-slot `r1=107/11/0/0/118`, `r11=67/128/0/0/195`. Do not patch `r1` or
+`r11` behavior from this lane. The next productive output should be a
+caller-local or side-table edge-variant payload-storage audit/skeleton for
+`82282490:82282598 -> 82287788`, keeping normal-entry fallback and counters
+before any behavior change.
 
 Latest lane closure:
 `docs/research/20260525-160247-arm64-guest-state-register-cache-audit-capture.md`

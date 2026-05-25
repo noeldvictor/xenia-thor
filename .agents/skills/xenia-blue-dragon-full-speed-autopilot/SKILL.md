@@ -180,6 +180,32 @@ patch or quiet speed A/B. The final capture remained CPU/JIT-heavy
 (`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
 pivot to broad Vulkan work.
 
+Latest residual audit capture:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
+records the FullDeploy plus route-clean Thor capture for the post-`PromoteBlock`
+residual audit. It reached the visible opening sky / dragon-wing route on
+commit `85c422d2b`, APK SHA
+`18097BA09F0C50596DED67D4251E4401FC7D458AA5EF7AAC7365B362D14CD19A`, with a
+clean fatal-marker search. Residual counters for `82282490` show
+`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
+`dirty_hits_possible=0`, `normal_fallback=313`,
+`payload_materializations_allowed=0`, and `behavior_changed=0`. Per-slot totals
+are `r1=107/11/0/0/118` and `r11=67/128/0/0/195`. Do not implement the stale
+same-block `r1` clean-load replacement, `r11` dirty caching, store elision, or a
+quiet speed A/B from this lane. Return next to caller-local or side-table
+edge-variant payload storage for `82282490:82282598 -> 82287788`, with
+normal-entry fallback and counter-only payload/materialization diagnostics.
+
+Thor hardware acceleration menu:
+`docs/research/20260525-171305-thor-hardware-acceleration-menu.md` maps the
+user's "get GPU work to GPU" request to measured lanes. Current Blue Dragon
+captures are still CPU/JIT-bound, so the main speed lane stays on A64
+generated-code quality and edge/function variants. Use Thor's NEON/dot/I8MM,
+CRC, and LSE features only after source/counter proof. Move work to Adreno only
+for Xenos-like bulk graphics transforms such as resolves, format conversions,
+texture deswizzle/endian/tile transforms, vertex fetch unpack, and clears/copies
+that can stay GPU-resident.
+
 Latest residual-audit scaffold:
 `docs/research/20260525-162250-arm64-guest-state-register-cache-residual-audit.md`
 implements default-off `arm64_guest_state_register_cache_residual_audit` plus

@@ -117,6 +117,58 @@ repo-local skills, `tools/thor/thor_codex_goal_loop.ps1`, dated research
 memory, and deterministic analysis tools. Do not import Pokemon-specific code or
 let a refiner pass change emulator behavior without the normal experiment gate.
 
+## Current Blue Dragon A64 Lane
+
+Latest route-clean audit:
+`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
+Commit `85c422d2b` / APK SHA
+`18097BA09F0C50596DED67D4251E4401FC7D458AA5EF7AAC7365B362D14CD19A` reached the
+visible opening sky / dragon-wing route with a clean fatal-marker search. The
+post-`PromoteBlock` residual guest-state register-cache audit for `82282490`
+closed the immediate `r1` / `r11` behavior lane:
+`candidate_loads=174`, `candidate_stores=139`, `clean_hits_possible=0`,
+`dirty_hits_possible=0`, `normal_fallback=313`, and per-slot
+`r1=107/11/0/0/118`, `r11=67/128/0/0/195`.
+
+Do not implement the stale same-block `r1` clean-load replacement, `r11` dirty
+caching, store elision, or a quiet speed A/B from this lane. The next useful
+slice is caller-local or side-table edge-variant payload storage for
+`82282490:82282598 -> 82287788`, with normal-entry fallback and counter-only
+payload/materialization diagnostics before any behavior change.
+
+## Thor Hardware Acceleration Plan
+
+Use `docs/research/20260525-171305-thor-hardware-acceleration-menu.md` as the
+current hardware-acceleration menu for AYN Thor. The tested Thor exposes
+NEON/Advanced SIMD, `asimddp`, `i8mm`, `bf16`, `asimdfhm`, `fcma`, `crc32`, and
+LSE-style atomics, but no `sve` / `sve2`. Optimize for the hardware actually
+present.
+
+Current priority remains CPU/JIT until captures change: the latest route-clean
+Blue Dragon sample ended with Main Thread `96.1%` and GPU Commands `11.5%`.
+Do not move branchy PPC/JIT state traffic, fpscr writebacks, call-edge carriers,
+or helper-heavy VMX semantics to Vulkan compute.
+
+Hardware lanes to pursue:
+
+- A64/JIT: caller-local or side-table edge-variant payload storage for
+  `82282490:82282598 -> 82287788`, with normal-entry fallback and counters.
+- NEON/VMX128: exact 128-bit boolean, splat, permute, shift, compare, min/max,
+  pack/unpack, vector-load-shift, and layout-transform lowering. Use dot/I8MM
+  only for proven integer sum-of-products shapes, not VMX FP32.
+- CRC/LSE/prefetch: apply only after source/counter evidence finds hot checksum,
+  lock/reservation, or predictable memory-stream pressure.
+- GPU/Adreno: push only Xenos-like bulk work to GPU: EDRAM resolves, format
+  conversions, texture deswizzle/endian/tile transforms, vertex fetch unpack,
+  clears/copies, and GPU-resident postprocess. Add counters for bytes, queue
+  waits, barriers, render-pass load/store choices, uploads, readbacks, pipeline
+  creation, and cache misses before behavior patches.
+
+When the user asks to "get GPU work to GPU", translate that into a measured
+graphics-work audit first. If it finds a bulk CPU graphics transform, make one
+default-off Vulkan compute or render-pass experiment with no immediate CPU
+readback and route-clean Thor proof.
+
 ## Vulkan Speed Diagnostics
 
 Do not treat "push more GPU" as a renderer rewrite request while Blue Dragon
