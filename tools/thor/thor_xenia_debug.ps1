@@ -167,6 +167,7 @@ param(
     [string]$Arm64BlueDragonF1CarrierFastpath = "false",
     [string]$Arm64BlueDragonStateCarrierDesignAudit = "false",
     [string]$Arm64BlueDragonEdgeVariantAudit = "false",
+    [string]$Arm64BlueDragonFpscrCfgWritebackAudit = "false",
     [string]$Arm64AddSubImmAudit = "false",
     [string]$Arm64AddSubImmAuditFunction = "",
     [string]$Arm64AddSubImmAuditBudget = "",
@@ -931,6 +932,9 @@ function Start-XeniaEmulator {
     if ($Arm64BlueDragonEdgeVariantAudit) {
         $parts += "--ez arm64_blue_dragon_edge_variant_audit $(ConvertTo-BooleanText $Arm64BlueDragonEdgeVariantAudit)"
     }
+    if ($Arm64BlueDragonFpscrCfgWritebackAudit) {
+        $parts += "--ez arm64_blue_dragon_fpscr_cfg_writeback_audit $(ConvertTo-BooleanText $Arm64BlueDragonFpscrCfgWritebackAudit)"
+    }
     if ($A64EnableHostGuestStackSynchronization) {
         $parts += "--ez a64_enable_host_guest_stack_synchronization $(ConvertTo-BooleanText $A64EnableHostGuestStackSynchronization)"
     }
@@ -1195,6 +1199,7 @@ function Write-CaptureMetadata {
         "arm64_blue_dragon_f1_carrier_fastpath=$Arm64BlueDragonF1CarrierFastpath",
         "arm64_blue_dragon_state_carrier_design_audit=$Arm64BlueDragonStateCarrierDesignAudit",
         "arm64_blue_dragon_edge_variant_audit=$Arm64BlueDragonEdgeVariantAudit",
+        "arm64_blue_dragon_fpscr_cfg_writeback_audit=$Arm64BlueDragonFpscrCfgWritebackAudit",
         "arm64_add_sub_imm_audit=$Arm64AddSubImmAudit",
         "arm64_add_sub_imm_audit_function=$Arm64AddSubImmAuditFunction",
         "arm64_add_sub_imm_audit_budget=$Arm64AddSubImmAuditBudget",
@@ -1471,6 +1476,7 @@ function Test-BlueDragonSpeedLogRowsRequested {
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
         "Arm64BlueDragonEdgeVariantAudit",
+        "Arm64BlueDragonFpscrCfgWritebackAudit",
         "Arm64AddSubImmAudit",
         "Arm64ImmediateLoweringAudit",
         "Arm64ContextPinnedGprR1Audit",
@@ -1519,6 +1525,7 @@ function Test-BlueDragonSpeedProfilerRowsRequested {
         "Arm64BlueDragonF1CarrierAudit",
         "Arm64BlueDragonStateCarrierDesignAudit",
         "Arm64BlueDragonEdgeVariantAudit",
+        "Arm64BlueDragonFpscrCfgWritebackAudit",
         "Arm64SpeedProfileBlockBodyTime",
         "Arm64SpeedProfileCallEdgeAuditOnly",
         "Arm64SpeedProfileThreadSnapshot",

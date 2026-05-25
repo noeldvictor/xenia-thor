@@ -273,6 +273,10 @@ public class EmulatorActivity extends WindowedAppActivity {
                     "arm64_blue_dragon_state_carrier_design_audit");
             copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_edge_variant_audit");
+            copyBooleanExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_blue_dragon_fpscr_cfg_writeback_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_add_sub_imm_audit");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_add_sub_imm_audit_budget");

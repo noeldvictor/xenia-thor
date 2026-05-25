@@ -299,6 +299,14 @@ DEFINE_bool(
     "generated behavior. Research-only, title-specific, and default-off.",
     "a64");
 DEFINE_bool(
+    arm64_blue_dragon_fpscr_cfg_writeback_audit, false,
+    "Thor ARM64 speed lane: instrument the Blue Dragon 82287788 fpscr CFG "
+    "writeback plan. Counts static sites, dynamic context loads/stores, "
+    "CFG/external writeback stores, required call writeback PCs, and payload "
+    "materialization only; does not change generated behavior. Research-only, "
+    "title-specific, and default-off.",
+    "a64");
+DEFINE_bool(
     arm64_vmx_dot_f32_fastpath, false,
     "Thor ARM64 speed lane: lower VMX128 dot_product_3/4 with single-precision "
     "NEON fmul/fadd and infinity-to-QNaN fixup. Default-off diagnostic; the "
@@ -2073,6 +2081,79 @@ void A64Backend::LogSpeedProfile() {
         normal_entry_fallback.first, indirection_fallback.second,
         indirection_fallback.first, call_kill.second, call_kill.first,
         variant_miss.second, variant_miss.first);
+  }
+  if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit) {
+    auto static_load_sites = load_delta(
+        blue_dragon_fpscr_cfg_static_load_site_count_,
+        last_blue_dragon_fpscr_cfg_static_load_site_count_);
+    auto static_store_sites = load_delta(
+        blue_dragon_fpscr_cfg_static_store_site_count_,
+        last_blue_dragon_fpscr_cfg_static_store_site_count_);
+    auto static_cfg_sites = load_delta(
+        blue_dragon_fpscr_cfg_static_cfg_transition_site_count_,
+        last_blue_dragon_fpscr_cfg_static_cfg_transition_site_count_);
+    auto static_external_sites = load_delta(
+        blue_dragon_fpscr_cfg_static_external_transition_site_count_,
+        last_blue_dragon_fpscr_cfg_static_external_transition_site_count_);
+    auto static_call_writeback_sites = load_delta(
+        blue_dragon_fpscr_cfg_static_call_writeback_site_count_,
+        last_blue_dragon_fpscr_cfg_static_call_writeback_site_count_);
+    auto loads = load_delta(blue_dragon_fpscr_cfg_load_count_,
+                            last_blue_dragon_fpscr_cfg_load_count_);
+    auto stores = load_delta(blue_dragon_fpscr_cfg_store_count_,
+                             last_blue_dragon_fpscr_cfg_store_count_);
+    auto cfg_stores = load_delta(
+        blue_dragon_fpscr_cfg_transition_store_count_,
+        last_blue_dragon_fpscr_cfg_transition_store_count_);
+    auto external_stores = load_delta(
+        blue_dragon_fpscr_cfg_external_store_count_,
+        last_blue_dragon_fpscr_cfg_external_store_count_);
+    auto required_call_writebacks = load_delta(
+        blue_dragon_fpscr_cfg_required_call_writeback_count_,
+        last_blue_dragon_fpscr_cfg_required_call_writeback_count_);
+    auto call_82287ed4 = load_delta(
+        blue_dragon_fpscr_cfg_call_writeback_82287ed4_count_,
+        last_blue_dragon_fpscr_cfg_call_writeback_82287ed4_count_);
+    auto call_82287edc = load_delta(
+        blue_dragon_fpscr_cfg_call_writeback_82287edc_count_,
+        last_blue_dragon_fpscr_cfg_call_writeback_82287edc_count_);
+    auto call_82287ee4 = load_delta(
+        blue_dragon_fpscr_cfg_call_writeback_82287ee4_count_,
+        last_blue_dragon_fpscr_cfg_call_writeback_82287ee4_count_);
+    auto call_82288220 = load_delta(
+        blue_dragon_fpscr_cfg_call_writeback_82288220_count_,
+        last_blue_dragon_fpscr_cfg_call_writeback_82288220_count_);
+    auto payload_materialized = load_delta(
+        blue_dragon_fpscr_cfg_payload_materialized_count_,
+        last_blue_dragon_fpscr_cfg_payload_materialized_count_);
+    auto unclassified_stores = load_delta(
+        blue_dragon_fpscr_cfg_unclassified_store_count_,
+        last_blue_dragon_fpscr_cfg_unclassified_store_count_);
+    XELOGW(
+        "A64 Blue Dragon fpscr CFG writeback audit: "
+        "static_load_sites={}/{} static_store_sites={}/{} "
+        "static_cfg_transition_sites={}/{} "
+        "static_external_transition_sites={}/{} "
+        "static_call_writeback_sites={}/{} loads={}/{} stores={}/{} "
+        "cfg_transition_stores={}/{} external_transition_stores={}/{} "
+        "required_call_writebacks={}/{} call_82287ED4={}/{} "
+        "call_82287EDC={}/{} call_82287EE4={}/{} call_82288220={}/{} "
+        "payload_materializations={}/{} unclassified_stores={}/{} "
+        "normal_entry=unchanged",
+        static_load_sites.second, static_load_sites.first,
+        static_store_sites.second, static_store_sites.first,
+        static_cfg_sites.second, static_cfg_sites.first,
+        static_external_sites.second, static_external_sites.first,
+        static_call_writeback_sites.second, static_call_writeback_sites.first,
+        loads.second, loads.first, stores.second, stores.first,
+        cfg_stores.second, cfg_stores.first, external_stores.second,
+        external_stores.first, required_call_writebacks.second,
+        required_call_writebacks.first, call_82287ed4.second,
+        call_82287ed4.first, call_82287edc.second, call_82287edc.first,
+        call_82287ee4.second, call_82287ee4.first, call_82288220.second,
+        call_82288220.first, payload_materialized.second,
+        payload_materialized.first, unclassified_stores.second,
+        unclassified_stores.first);
   }
 
   const bool interval_had_activity =

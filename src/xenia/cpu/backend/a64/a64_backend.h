@@ -312,6 +312,61 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_edge_variant_variant_miss_count() {
     return &blue_dragon_edge_variant_variant_miss_count_;
   }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_static_load_site_count() {
+    return &blue_dragon_fpscr_cfg_static_load_site_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_static_store_site_count() {
+    return &blue_dragon_fpscr_cfg_static_store_site_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_static_cfg_transition_site_count() {
+    return &blue_dragon_fpscr_cfg_static_cfg_transition_site_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_static_external_transition_site_count() {
+    return &blue_dragon_fpscr_cfg_static_external_transition_site_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_static_call_writeback_site_count() {
+    return &blue_dragon_fpscr_cfg_static_call_writeback_site_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_load_count() {
+    return &blue_dragon_fpscr_cfg_load_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_store_count() {
+    return &blue_dragon_fpscr_cfg_store_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_transition_store_count() {
+    return &blue_dragon_fpscr_cfg_transition_store_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_external_store_count() {
+    return &blue_dragon_fpscr_cfg_external_store_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_required_call_writeback_count() {
+    return &blue_dragon_fpscr_cfg_required_call_writeback_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_call_writeback_82287ed4_count() {
+    return &blue_dragon_fpscr_cfg_call_writeback_82287ed4_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_call_writeback_82287edc_count() {
+    return &blue_dragon_fpscr_cfg_call_writeback_82287edc_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_call_writeback_82287ee4_count() {
+    return &blue_dragon_fpscr_cfg_call_writeback_82287ee4_count_;
+  }
+  std::atomic<uint64_t>*
+  blue_dragon_fpscr_cfg_call_writeback_82288220_count() {
+    return &blue_dragon_fpscr_cfg_call_writeback_82288220_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_payload_materialized_count() {
+    return &blue_dragon_fpscr_cfg_payload_materialized_count_;
+  }
+  std::atomic<uint64_t>* blue_dragon_fpscr_cfg_unclassified_store_count() {
+    return &blue_dragon_fpscr_cfg_unclassified_store_count_;
+  }
   bool BodyTimeProfileEnabledForFunction(A64Function* function) const;
   bool EntryExitTimeProfileEnabledForFunction(A64Function* function) const;
   bool BlockProfileEnabledForFunction(A64Function* function) const;
@@ -466,6 +521,29 @@ class A64Backend : public Backend {
       0};
   std::atomic<uint64_t> blue_dragon_edge_variant_call_kill_count_{0};
   std::atomic<uint64_t> blue_dragon_edge_variant_variant_miss_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_load_site_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_store_site_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_cfg_transition_site_count_{
+      0};
+  std::atomic<uint64_t>
+      blue_dragon_fpscr_cfg_static_external_transition_site_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_call_writeback_site_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_load_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_store_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_transition_store_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_external_store_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_required_call_writeback_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_call_writeback_82287ed4_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_call_writeback_82287edc_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_call_writeback_82287ee4_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_call_writeback_82288220_count_{
+      0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_payload_materialized_count_{0};
+  std::atomic<uint64_t> blue_dragon_fpscr_cfg_unclassified_store_count_{0};
   uint64_t last_speed_profile_host_to_guest_entries_ = 0;
   uint64_t last_speed_profile_guest_to_host_calls_ = 0;
   uint64_t last_speed_profile_direct_guest_calls_ = 0;
@@ -531,6 +609,23 @@ class A64Backend : public Backend {
   uint64_t last_blue_dragon_edge_variant_indirection_fallback_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_call_kill_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_variant_miss_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_static_load_site_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_static_store_site_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_static_cfg_transition_site_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_static_external_transition_site_count_ =
+      0;
+  uint64_t last_blue_dragon_fpscr_cfg_static_call_writeback_site_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_load_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_store_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_transition_store_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_external_store_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_required_call_writeback_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_call_writeback_82287ed4_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_call_writeback_82287edc_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_call_writeback_82287ee4_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_call_writeback_82288220_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_payload_materialized_count_ = 0;
+  uint64_t last_blue_dragon_fpscr_cfg_unclassified_store_count_ = 0;
   bool speed_profile_seen_activity_ = false;
   bool speed_profile_idle_snapshot_emitted_ = false;
 };

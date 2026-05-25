@@ -46,6 +46,7 @@ DECLARE_bool(arm64_blue_dragon_call_boundary_state_suppress_dead_stores);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_audit);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
+DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
 
 namespace xe {
@@ -440,6 +441,88 @@ static void EmitBlueDragonStateCarrierDesignStoreAudit(
   }
 }
 
+enum class BlueDragonFpscrCfgStoreKind {
+  kNone,
+  kCfgTransition,
+  kExternalTransition,
+  kUnclassified,
+};
+
+static BlueDragonFpscrCfgStoreKind GetBlueDragonFpscrCfgStoreKind(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 2628) {
+    return BlueDragonFpscrCfgStoreKind::kNone;
+  }
+
+  switch (instr->GuestAddressFor()) {
+    case 0x82287A1C:
+    case 0x82287A2C:
+    case 0x82287B08:
+    case 0x82287B14:
+    case 0x82287B24:
+    case 0x82287B30:
+    case 0x82287CF8:
+    case 0x82287D10:
+    case 0x82287DE0:
+    case 0x82287E08:
+    case 0x82287E1C:
+    case 0x82287E30:
+    case 0x82287E40:
+    case 0x82287E54:
+    case 0x82287E60:
+    case 0x82287F1C:
+    case 0x822880A4:
+    case 0x822880BC:
+    case 0x82288194:
+    case 0x822881A0:
+    case 0x822881A8:
+    case 0x822881D8:
+    case 0x822881E4:
+    case 0x822881EC:
+      return BlueDragonFpscrCfgStoreKind::kCfgTransition;
+    case 0x82287E6C:
+    case 0x822881FC:
+      return BlueDragonFpscrCfgStoreKind::kExternalTransition;
+    default:
+      return BlueDragonFpscrCfgStoreKind::kUnclassified;
+  }
+}
+
+static void EmitBlueDragonFpscrCfgWritebackLoadAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 2628) {
+    return;
+  }
+  e.EmitAtomicIncrement64(e.backend()->blue_dragon_fpscr_cfg_load_count());
+}
+
+static void EmitBlueDragonFpscrCfgWritebackStoreAudit(
+    A64Emitter& e, BlueDragonFpscrCfgStoreKind kind) {
+  if (kind == BlueDragonFpscrCfgStoreKind::kNone) {
+    return;
+  }
+  auto* backend = e.backend();
+  e.EmitAtomicIncrement64(backend->blue_dragon_fpscr_cfg_store_count());
+  switch (kind) {
+    case BlueDragonFpscrCfgStoreKind::kCfgTransition:
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_fpscr_cfg_transition_store_count());
+      break;
+    case BlueDragonFpscrCfgStoreKind::kExternalTransition:
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_fpscr_cfg_external_store_count());
+      break;
+    case BlueDragonFpscrCfgStoreKind::kUnclassified:
+      e.EmitAtomicIncrement64(
+          backend->blue_dragon_fpscr_cfg_unclassified_store_count());
+      break;
+    case BlueDragonFpscrCfgStoreKind::kNone:
+      break;
+  }
+}
+
 static bool IsRotatedRunOfOnes(uint64_t value, uint32_t bits) {
   uint64_t mask = MaskBits(bits);
   value &= mask;
@@ -829,6 +912,7 @@ struct LOAD_CONTEXT_I32
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     EmitBlueDragonStateCarrierDesignLoadAudit(e, i.instr, offset);
+    EmitBlueDragonFpscrCfgWritebackLoadAudit(e, i.instr, offset);
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };
@@ -923,6 +1007,8 @@ struct STORE_CONTEXT_I32
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     EmitBlueDragonStateCarrierDesignStoreAudit(e, i.instr, offset);
+    EmitBlueDragonFpscrCfgWritebackStoreAudit(
+        e, GetBlueDragonFpscrCfgStoreKind(e, i.instr, offset));
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;

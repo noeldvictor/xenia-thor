@@ -77,6 +77,7 @@ DECLARE_bool(arm64_blue_dragon_word_copy_loop_fastpath);
 DECLARE_bool(arm64_blue_dragon_f1_carrier_fastpath);
 DECLARE_bool(arm64_blue_dragon_state_carrier_design_audit);
 DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
+DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
 DECLARE_bool(arm64_context_value_cache);
@@ -1893,6 +1894,118 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
           eligible_edges, std::memory_order_relaxed);
       backend_->blue_dragon_edge_variant_variant_storage_missing_count()
           ->fetch_add(eligible_edges, std::memory_order_relaxed);
+    }
+  }
+  if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit &&
+      current_guest_function_ == 0x82287788) {
+    auto is_cfg_transition_store = [](uint32_t guest_pc) {
+      switch (guest_pc) {
+        case 0x82287A1C:
+        case 0x82287A2C:
+        case 0x82287B08:
+        case 0x82287B14:
+        case 0x82287B24:
+        case 0x82287B30:
+        case 0x82287CF8:
+        case 0x82287D10:
+        case 0x82287DE0:
+        case 0x82287E08:
+        case 0x82287E1C:
+        case 0x82287E30:
+        case 0x82287E40:
+        case 0x82287E54:
+        case 0x82287E60:
+        case 0x82287F1C:
+        case 0x822880A4:
+        case 0x822880BC:
+        case 0x82288194:
+        case 0x822881A0:
+        case 0x822881A8:
+        case 0x822881D8:
+        case 0x822881E4:
+        case 0x822881EC:
+          return true;
+        default:
+          return false;
+      }
+    };
+    auto is_external_transition_store = [](uint32_t guest_pc) {
+      switch (guest_pc) {
+        case 0x82287E6C:
+        case 0x822881FC:
+          return true;
+        default:
+          return false;
+      }
+    };
+    auto is_required_call_writeback = [](uint32_t guest_pc) {
+      switch (guest_pc) {
+        case 0x82287ED4:
+        case 0x82287EDC:
+        case 0x82287EE4:
+        case 0x82288220:
+          return true;
+        default:
+          return false;
+      }
+    };
+    uint64_t load_sites = 0;
+    uint64_t store_sites = 0;
+    uint64_t cfg_transition_sites = 0;
+    uint64_t external_transition_sites = 0;
+    uint64_t call_writeback_sites = 0;
+    for (auto block = builder->first_block(); block; block = block->next) {
+      for (auto instr = block->instr_head; instr; instr = instr->next) {
+        const uint32_t guest_pc = instr->GuestAddressFor();
+        switch (instr->GetOpcodeNum()) {
+          case hir::OPCODE_LOAD_CONTEXT:
+            if (instr->dest && instr->dest->type == hir::INT32_TYPE &&
+                instr->src1.offset == 2628) {
+              ++load_sites;
+            }
+            break;
+          case hir::OPCODE_STORE_CONTEXT:
+            if (instr->src2.value &&
+                instr->src2.value->type == hir::INT32_TYPE &&
+                instr->src1.offset == 2628) {
+              ++store_sites;
+              if (is_cfg_transition_store(guest_pc)) {
+                ++cfg_transition_sites;
+              } else if (is_external_transition_store(guest_pc)) {
+                ++external_transition_sites;
+              }
+            }
+            break;
+          case hir::OPCODE_CALL:
+          case hir::OPCODE_CALL_TRUE:
+            if (is_required_call_writeback(guest_pc)) {
+              ++call_writeback_sites;
+            }
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    if (load_sites) {
+      backend_->blue_dragon_fpscr_cfg_static_load_site_count()->fetch_add(
+          load_sites, std::memory_order_relaxed);
+    }
+    if (store_sites) {
+      backend_->blue_dragon_fpscr_cfg_static_store_site_count()->fetch_add(
+          store_sites, std::memory_order_relaxed);
+    }
+    if (cfg_transition_sites) {
+      backend_->blue_dragon_fpscr_cfg_static_cfg_transition_site_count()
+          ->fetch_add(cfg_transition_sites, std::memory_order_relaxed);
+    }
+    if (external_transition_sites) {
+      backend_->blue_dragon_fpscr_cfg_static_external_transition_site_count()
+          ->fetch_add(external_transition_sites, std::memory_order_relaxed);
+    }
+    if (call_writeback_sites) {
+      backend_->blue_dragon_fpscr_cfg_static_call_writeback_site_count()
+          ->fetch_add(call_writeback_sites, std::memory_order_relaxed);
     }
   }
   MaybeLogContextTrafficAudit(builder);
@@ -4353,6 +4466,37 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
         break;
       default:
         break;
+    }
+  }
+  if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit && instr &&
+      current_guest_function_ == 0x82287788) {
+    auto* backend = backend_;
+    const uint32_t guest_pc = instr->GuestAddressFor();
+    std::atomic<uint64_t>* site_counter = nullptr;
+    switch (guest_pc) {
+      case 0x82287ED4:
+        site_counter =
+            backend->blue_dragon_fpscr_cfg_call_writeback_82287ed4_count();
+        break;
+      case 0x82287EDC:
+        site_counter =
+            backend->blue_dragon_fpscr_cfg_call_writeback_82287edc_count();
+        break;
+      case 0x82287EE4:
+        site_counter =
+            backend->blue_dragon_fpscr_cfg_call_writeback_82287ee4_count();
+        break;
+      case 0x82288220:
+        site_counter =
+            backend->blue_dragon_fpscr_cfg_call_writeback_82288220_count();
+        break;
+      default:
+        break;
+    }
+    if (site_counter) {
+      EmitAtomicIncrement64(
+          backend->blue_dragon_fpscr_cfg_required_call_writeback_count());
+      EmitAtomicIncrement64(site_counter);
     }
   }
 
