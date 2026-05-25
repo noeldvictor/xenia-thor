@@ -154,6 +154,17 @@ materialization. Count clean hit opportunities, dirty opportunities, misses,
 flushes, external visibility kills, and spill-pressure estimates for clean
 INT64 `r[1]` / `r[11]` before any behavior patch or quiet speed A/B.
 
+Latest implemented scaffold:
+`docs/research/20260525-154617-arm64-guest-state-register-cache-audit.md`
+adds the default-off `arm64_guest_state_register_cache_audit` and Thor launch
+plumbing. NativeCore and ApkShell passed. This remains counter-only:
+normal fallback is unchanged and `payload_materializations_allowed=0`. The next
+useful slice is a FullDeploy plus route-clean Thor audit capture scoped to
+`82282490`, using `-Arm64GuestStateRegisterCacheAudit true` and
+`-Arm64GuestStateRegisterCacheAuditFunction 82282490`; do not patch
+register-cache behavior or run a quiet speed A/B until those audit rows prove
+the hit volume and flush/spill pressure.
+
 Previous priority:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
 adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It wraps the prior

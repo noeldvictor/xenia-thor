@@ -55,6 +55,15 @@ DEFINE_bool(arm64_context_promotion_gpr_livein_r1_audit, false,
             "Thor ARM64 research: log attempted/replaced/skipped counters for "
             "arm64_context_promotion_gpr_livein_r1.",
             "CPU");
+DEFINE_bool(arm64_guest_state_register_cache_audit, false,
+            "Thor ARM64 research: count clean INT64 r[1]/r[11] guest-state "
+            "register-cache opportunities without changing generated code. "
+            "Default-off audit only.",
+            "CPU");
+DEFINE_uint32(arm64_guest_state_register_cache_audit_function, 0,
+              "Optional guest function start address filter for "
+              "arm64_guest_state_register_cache_audit. 0 applies globally.",
+              "CPU");
 
 namespace xe {
 namespace cpu {
@@ -111,6 +120,62 @@ struct GprLocalSlotPromotionStats {
   std::array<uint32_t, 2> overlap_resets_by_slot = {};
 };
 
+enum class GuestStateRegisterCacheAuditMissReason {
+  kEntry,
+  kMultiPred,
+  kCall,
+  kHelper,
+  kBranch,
+  kLabel,
+  kReturn,
+  kTrap,
+  kExternalVisibility,
+  kOverlap,
+};
+
+struct GuestStateRegisterCacheAuditSlotState {
+  bool known = false;
+  bool dirty = false;
+  GuestStateRegisterCacheAuditMissReason miss_reason =
+      GuestStateRegisterCacheAuditMissReason::kEntry;
+};
+
+struct GuestStateRegisterCacheAuditStats {
+  uint32_t function_address = 0;
+  uint64_t blocks = 0;
+  uint64_t labeled_blocks = 0;
+  uint64_t multi_pred_blocks = 0;
+  uint64_t candidate_loads = 0;
+  uint64_t candidate_stores = 0;
+  uint64_t clean_hits_possible = 0;
+  uint64_t dirty_hits_possible = 0;
+  uint64_t miss_no_entry = 0;
+  uint64_t miss_multi_pred = 0;
+  uint64_t miss_after_call = 0;
+  uint64_t miss_after_helper = 0;
+  uint64_t miss_after_branch = 0;
+  uint64_t miss_after_label = 0;
+  uint64_t miss_after_return = 0;
+  uint64_t miss_after_trap = 0;
+  uint64_t miss_external_visibility = 0;
+  uint64_t miss_overlap = 0;
+  uint64_t miss_volatile = 0;
+  uint64_t flush_call = 0;
+  uint64_t flush_helper = 0;
+  uint64_t flush_branch = 0;
+  uint64_t flush_label = 0;
+  uint64_t flush_return = 0;
+  uint64_t flush_trap = 0;
+  uint64_t flush_external_visibility = 0;
+  uint64_t estimated_spill_pressure = 0;
+  uint64_t normal_fallback = 0;
+  std::array<uint64_t, 2> candidate_loads_by_slot = {};
+  std::array<uint64_t, 2> candidate_stores_by_slot = {};
+  std::array<uint64_t, 2> clean_hits_by_slot = {};
+  std::array<uint64_t, 2> dirty_hits_by_slot = {};
+  std::array<uint64_t, 2> fallback_by_slot = {};
+};
+
 int GetPromotedGprIndex(size_t offset, TypeName type) {
   if (type != INT64_TYPE) {
     return -1;
@@ -123,6 +188,127 @@ int GetPromotedGprIndex(size_t offset, TypeName type) {
     }
   }
   return -1;
+}
+
+uint64_t CountLiveGuestStateRegisterCacheAuditSlots(
+    const std::array<GuestStateRegisterCacheAuditSlotState, 2>& current) {
+  uint64_t live = 0;
+  for (const auto& slot : current) {
+    if (slot.known) {
+      ++live;
+    }
+  }
+  return live;
+}
+
+void UpdateGuestStateRegisterCacheAuditSpillPressure(
+    GuestStateRegisterCacheAuditStats* stats,
+    const std::array<GuestStateRegisterCacheAuditSlotState, 2>& current) {
+  uint64_t live = CountLiveGuestStateRegisterCacheAuditSlots(current);
+  if (live > stats->estimated_spill_pressure) {
+    stats->estimated_spill_pressure = live;
+  }
+}
+
+void CountGuestStateRegisterCacheAuditMiss(
+    GuestStateRegisterCacheAuditStats* stats,
+    GuestStateRegisterCacheAuditMissReason reason) {
+  switch (reason) {
+    case GuestStateRegisterCacheAuditMissReason::kMultiPred:
+      ++stats->miss_multi_pred;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kCall:
+      ++stats->miss_after_call;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kHelper:
+      ++stats->miss_after_helper;
+      ++stats->miss_volatile;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kBranch:
+      ++stats->miss_after_branch;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kLabel:
+      ++stats->miss_after_label;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kReturn:
+      ++stats->miss_after_return;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kTrap:
+      ++stats->miss_after_trap;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kExternalVisibility:
+      ++stats->miss_external_visibility;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kOverlap:
+      ++stats->miss_overlap;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kEntry:
+    default:
+      ++stats->miss_no_entry;
+      break;
+  }
+}
+
+void FlushGuestStateRegisterCacheAuditState(
+    GuestStateRegisterCacheAuditStats* stats,
+    std::array<GuestStateRegisterCacheAuditSlotState, 2>* current,
+    GuestStateRegisterCacheAuditMissReason reason) {
+  uint64_t live = CountLiveGuestStateRegisterCacheAuditSlots(*current);
+  switch (reason) {
+    case GuestStateRegisterCacheAuditMissReason::kCall:
+      stats->flush_call += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kHelper:
+      stats->flush_helper += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kBranch:
+      stats->flush_branch += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kLabel:
+      stats->flush_label += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kReturn:
+      stats->flush_return += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kTrap:
+      stats->flush_trap += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kExternalVisibility:
+    case GuestStateRegisterCacheAuditMissReason::kOverlap:
+      stats->flush_external_visibility += live;
+      break;
+    case GuestStateRegisterCacheAuditMissReason::kEntry:
+    case GuestStateRegisterCacheAuditMissReason::kMultiPred:
+    default:
+      break;
+  }
+  for (auto& slot : *current) {
+    slot = {};
+    slot.miss_reason = reason;
+  }
+}
+
+bool IsGuestStateRegisterCacheAuditCall(Instr* instr) {
+  return instr->opcode == &OPCODE_CALL_info ||
+         instr->opcode == &OPCODE_CALL_TRUE_info ||
+         instr->opcode == &OPCODE_CALL_INDIRECT_info ||
+         instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info;
+}
+
+bool IsGuestStateRegisterCacheAuditHelper(Instr* instr) {
+  return instr->opcode == &OPCODE_CALL_EXTERN_info;
+}
+
+bool IsGuestStateRegisterCacheAuditReturn(Instr* instr) {
+  return instr->opcode == &OPCODE_RETURN_info ||
+         instr->opcode == &OPCODE_RETURN_TRUE_info ||
+         instr->opcode == &OPCODE_DEBUG_BREAK_info ||
+         instr->opcode == &OPCODE_DEBUG_BREAK_TRUE_info;
+}
+
+bool IsGuestStateRegisterCacheAuditTrap(Instr* instr) {
+  return instr->opcode == &OPCODE_TRAP_info ||
+         instr->opcode == &OPCODE_TRAP_TRUE_info;
 }
 
 bool RangesOverlap(size_t a_offset, size_t a_size, size_t b_offset,
@@ -348,6 +534,11 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
 
   // Promote loads to values.
   // Process each block independently, for now.
+  if (cvars::arm64_guest_state_register_cache_audit &&
+      ShouldRunGuestStateRegisterCacheAudit(builder)) {
+    AuditGuestStateRegisterCache(builder);
+  }
+
   auto block = builder->first_block();
   while (block) {
     PromoteBlock(block);
@@ -375,6 +566,183 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
   }
 
   return true;
+}
+
+bool ContextPromotionPass::ShouldRunGuestStateRegisterCacheAudit(
+    HIRBuilder* builder) const {
+  uint32_t function_filter =
+      cvars::arm64_guest_state_register_cache_audit_function;
+  return !function_filter || FindFirstSourceOffset(builder) == function_filter;
+}
+
+void ContextPromotionPass::AuditGuestStateRegisterCache(HIRBuilder* builder) {
+  GuestStateRegisterCacheAuditStats stats;
+  stats.function_address = FindFirstSourceOffset(builder);
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    std::array<GuestStateRegisterCacheAuditSlotState, 2> current = {};
+    GuestStateRegisterCacheAuditMissReason entry_reason =
+        GuestStateRegisterCacheAuditMissReason::kEntry;
+    if (block->label_head && block->incoming_edge_head) {
+      ++stats.labeled_blocks;
+      ++stats.flush_label;
+      entry_reason = GuestStateRegisterCacheAuditMissReason::kLabel;
+    }
+    if (block->incoming_edge_head && block->incoming_edge_head->incoming_next) {
+      ++stats.multi_pred_blocks;
+      entry_reason = GuestStateRegisterCacheAuditMissReason::kMultiPred;
+    }
+    for (auto& slot : current) {
+      slot.miss_reason = entry_reason;
+    }
+
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        TypeName type = instr->dest ? instr->dest->type : MAX_TYPENAME;
+        int slot_index = GetPromotedGprIndex(offset, type);
+        if (slot_index < 0) {
+          continue;
+        }
+
+        ++stats.candidate_loads;
+        ++stats.candidate_loads_by_slot[slot_index];
+        ++stats.normal_fallback;
+        ++stats.fallback_by_slot[slot_index];
+        auto& slot = current[slot_index];
+        if (slot.known) {
+          if (slot.dirty) {
+            ++stats.dirty_hits_possible;
+            ++stats.dirty_hits_by_slot[slot_index];
+          } else {
+            ++stats.clean_hits_possible;
+            ++stats.clean_hits_by_slot[slot_index];
+          }
+        } else {
+          CountGuestStateRegisterCacheAuditMiss(&stats, slot.miss_reason);
+        }
+        slot.known = true;
+        slot.dirty = false;
+        slot.miss_reason = GuestStateRegisterCacheAuditMissReason::kEntry;
+        UpdateGuestStateRegisterCacheAuditSpillPressure(&stats, current);
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_STORE_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        Value* value = instr->src2.value;
+        TypeName type = value ? value->type : MAX_TYPENAME;
+        int slot_index = value ? GetPromotedGprIndex(offset, type) : -1;
+        if (slot_index >= 0) {
+          ++stats.candidate_stores;
+          ++stats.candidate_stores_by_slot[slot_index];
+          ++stats.normal_fallback;
+          ++stats.fallback_by_slot[slot_index];
+          current[slot_index].known = true;
+          current[slot_index].dirty = true;
+          current[slot_index].miss_reason =
+              GuestStateRegisterCacheAuditMissReason::kEntry;
+          UpdateGuestStateRegisterCacheAuditSpillPressure(&stats, current);
+          continue;
+        }
+
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        for (size_t n = 0; n < current.size(); ++n) {
+          if (RangesOverlap(offset, size, kPromotedGprOffsets[n],
+                            kPromotedGprSize) &&
+              current[n].known) {
+            ++stats.flush_external_visibility;
+            current[n] = {};
+            current[n].miss_reason =
+                GuestStateRegisterCacheAuditMissReason::kOverlap;
+          }
+        }
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_CONTEXT_BARRIER_info) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current,
+            GuestStateRegisterCacheAuditMissReason::kExternalVisibility);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditCall(instr)) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kCall);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditHelper(instr)) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kHelper);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditReturn(instr)) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kReturn);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditTrap(instr)) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kTrap);
+        continue;
+      }
+
+      if (instr->opcode->flags & OPCODE_FLAG_BRANCH) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kBranch);
+        continue;
+      }
+
+      if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+        FlushGuestStateRegisterCacheAuditState(
+            &stats, &current, GuestStateRegisterCacheAuditMissReason::kHelper);
+      }
+    }
+  }
+
+  XELOGW(
+      "A64 guest-state register-cache audit fn {:08X}: blocks={} "
+      "labeled_blocks={} multi_pred_blocks={} candidate_loads={} "
+      "candidate_stores={} clean_hits_possible={} dirty_hits_possible={} "
+      "normal_fallback={} estimated_spill_pressure={} "
+      "payload_materializations_allowed=0 behavior_changed=0",
+      stats.function_address, stats.blocks, stats.labeled_blocks,
+      stats.multi_pred_blocks, stats.candidate_loads, stats.candidate_stores,
+      stats.clean_hits_possible, stats.dirty_hits_possible,
+      stats.normal_fallback, stats.estimated_spill_pressure);
+  XELOGW(
+      "A64 guest-state register-cache audit fn {:08X}: "
+      "miss_no_entry={} miss_multi_pred={} miss_volatile={} "
+      "miss_overlap={} miss_after_call={} miss_after_helper={} "
+      "miss_after_branch={} miss_after_label={} miss_after_return={} "
+      "miss_after_trap={} miss_external_visibility={}",
+      stats.function_address, stats.miss_no_entry, stats.miss_multi_pred,
+      stats.miss_volatile, stats.miss_overlap, stats.miss_after_call,
+      stats.miss_after_helper, stats.miss_after_branch, stats.miss_after_label,
+      stats.miss_after_return, stats.miss_after_trap,
+      stats.miss_external_visibility);
+  XELOGW(
+      "A64 guest-state register-cache audit fn {:08X}: "
+      "flush_call={} flush_helper={} flush_branch={} flush_label={} "
+      "flush_return={} flush_trap={} flush_external_visibility={}",
+      stats.function_address, stats.flush_call, stats.flush_helper,
+      stats.flush_branch, stats.flush_label, stats.flush_return,
+      stats.flush_trap, stats.flush_external_visibility);
+  XELOGW(
+      "A64 guest-state register-cache audit fn {:08X}: "
+      "r1 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
+      "r11 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}",
+      stats.function_address, stats.candidate_loads_by_slot[0],
+      stats.candidate_stores_by_slot[0], stats.clean_hits_by_slot[0],
+      stats.dirty_hits_by_slot[0], stats.fallback_by_slot[0],
+      stats.candidate_loads_by_slot[1], stats.candidate_stores_by_slot[1],
+      stats.clean_hits_by_slot[1], stats.dirty_hits_by_slot[1],
+      stats.fallback_by_slot[1]);
 }
 
 void ContextPromotionPass::PromoteBlock(Block* block) {

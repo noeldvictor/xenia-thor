@@ -76,6 +76,18 @@ flushes, and spill pressure. First fields should be clean INT64 `r[1]` and
 `r[11]`; reset on calls/helpers, branches, labels, returns, traps, volatile
 ops, overlapping context writes, and external context visibility.
 
+Latest counter scaffold:
+`docs/research/20260525-154617-arm64-guest-state-register-cache-audit.md`
+implements that default-off `arm64_guest_state_register_cache_audit` skeleton
+in `ContextPromotionPass` and exposes Thor launcher flags
+`-Arm64GuestStateRegisterCacheAudit` and
+`-Arm64GuestStateRegisterCacheAuditFunction`. It is behavior-neutral:
+`payload_materializations_allowed=0`, no load replacement, no store elision,
+and `normal_fallback` counts every candidate. Next run should be a route-clean
+Thor audit capture scoped to `82282490`; do not implement cache behavior or a
+quiet speed A/B until those rows prove useful hit volume and manageable
+flush/spill pressure.
+
 ## Baseline Run
 
 Build and deploy only when the native core changed:
