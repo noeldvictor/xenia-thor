@@ -47,6 +47,22 @@ If the answer points to a backend subsystem, make that the next lane. If the
 answer proves the issue is title/function-local, keep the patch default-off and
 gate it by title/function/PC with route-clean proof before quiet A/B.
 
+Latest Blue Dragon structural read:
+`docs/research/20260525-150348-82282490-82287788-register-cache-gap.md`
+adds `tools/thor/thor_a64_register_cache_gap_report.ps1`. Use it before
+another `82282490` / `82287788` behavior patch. It reports `82282490` at
+`GPR=1108`, `VMX=528`, `CR=345`, `whole_gpr_loads=546`,
+`whole_gpr_stores=562`, and `context_barriers=213`, while source still exposes
+only seven allocatable A64 GPRs (`x22-x28`) after fixed `x19` backend,
+`x20` PPC context, and `x21` membase. The exact edge
+`82282490:82282598 -> 82287788` is high-frequency
+(`calls_total=1691272`) but the live payloads are visibility-sensitive:
+`r[3]` mutable, `f[1]` read-only but already route-safe/not speed-proven,
+`fpscr` mutable and writeback-heavy, and `lr` call-link state. Next patch
+should be a default-off guest-state register-cache audit/design skeleton or
+caller-local/side-table edge-variant storage with normal-entry fallback, not a
+new narrow load fold.
+
 ## Baseline Run
 
 Build and deploy only when the native core changed:

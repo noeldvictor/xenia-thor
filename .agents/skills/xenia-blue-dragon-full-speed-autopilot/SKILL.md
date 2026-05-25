@@ -128,6 +128,21 @@ title-specific codegen experiment. Keep Vulkan as a parallel evidence lane only
 until GPU Commands/present/submit/pipeline stalls overtake the CPU/JIT wall.
 
 Latest priority, superseding the older chronology below:
+`docs/research/20260525-150348-82282490-82287788-register-cache-gap.md`
+adds `tools/thor/thor_a64_register_cache_gap_report.ps1`. It applies the mature
+A64 backend gate to the current `82282490 -> 82287788` wall: `82282490` has
+`GPR=1108`, `VMX=528`, `CR=345`, `whole_gpr_loads=546`,
+`whole_gpr_stores=562`, and `context_barriers=213`, while source exposes only
+seven allocatable A64 GPRs (`x22-x28`) after fixed `x19` backend context,
+`x20` PPC context, and `x21` membase. The hot edge still has
+`calls_total=1691272`, but `r[3]`, `fpscr`, and `lr` are too visible/mutable
+for a quick store/load deletion, and the route-safe `f[1]` carrier was not a
+speed win. Do not implement another narrow context-load fold from this evidence.
+Next useful slice is a default-off guest-state register-cache audit/design
+skeleton or caller-local/side-table edge-variant payload storage with
+normal-entry fallback and payload counters.
+
+Previous priority:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
 adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It wraps the prior
 dirty-cache audit and turns `fpscr` into an exact no-behavior counter contract:
