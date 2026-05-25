@@ -10,7 +10,6 @@ import android.view.View;
 public class LauncherActivity extends Activity {
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
-    private static final String DEFAULT_EMULATOR_HID_DRIVER = "android";
     private static final String THOR_XBOX360_DOCUMENT_ID =
             "2664-21DE:roms/xbox360";
     private static final Uri THOR_XBOX360_INITIAL_URI =
@@ -35,13 +34,8 @@ public class LauncherActivity extends Activity {
             if (uri != null && requestCode == REQUEST_OPEN_GAME) {
                 persistReadPermission(data, uri);
                 final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
-                final Bundle emulatorLaunchArguments = new Bundle();
-                emulatorLaunchArguments.putString("target", uri.toString());
-                emulatorLaunchArguments.putString("gpu", "vulkan");
-                emulatorLaunchArguments.putString("cpu", "arm64");
-                emulatorLaunchArguments.putString("apu", "nop");
-                emulatorLaunchArguments.putString("hid", DEFAULT_EMULATOR_HID_DRIVER);
-                emulatorLaunchArguments.putBoolean("discord", false);
+                final Bundle emulatorLaunchArguments =
+                        XeniaAndroidSettings.createLaunchArguments(this, uri);
                 emulatorIntent.putExtra(
                         WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
                 startActivity(emulatorIntent);
@@ -71,6 +65,10 @@ public class LauncherActivity extends Activity {
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/octet-stream");
         startActivityForResult(intent, REQUEST_OPEN_GPU_TRACE_VIEWER);
+    }
+
+    public void onOpenSettingsClick(final View view) {
+        startActivity(new Intent(this, SettingsActivity.class));
     }
 
     public void onLaunchWindowDemoClick(final View view) {

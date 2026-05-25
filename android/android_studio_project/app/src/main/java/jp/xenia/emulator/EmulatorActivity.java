@@ -45,6 +45,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "gpu");
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
+            copyBooleanExtra(intent, launchArguments, "mute");
             copyIntExtra(intent, launchArguments, "log_level");
             copyBooleanExtra(intent, launchArguments, "xma_trace_context_state");
             copyBooleanExtra(intent, launchArguments, "xma_fast_silence");

@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Xenia</string>
     <string name="activity_label_emulator">Launch Game</string>
+    <string name="activity_label_settings">Settings</string>
     <string name="activity_label_gpu_trace_viewer">GPU Trace Viewer</string>
     <string name="activity_label_window_demo">Window Demo</string>
     <string name="launcher_title">Xenia Thor</string>
@@ -9,10 +10,34 @@
     <string name="launcher_status_arm64">ARM64</string>
     <string name="launcher_status_unstable">Unstable</string>
     <string name="launcher_game_detail">ISO / XEX</string>
+    <string name="launcher_settings_detail">Profiles, GPU, audio, input</string>
     <string name="launcher_trace_detail">Frame capture analysis</string>
     <string name="launcher_demo_detail">Vulkan surface test</string>
     <string name="osd_app_title">Xenia Thor</string>
     <string name="osd_runtime_status">Vulkan / ARM64</string>
     <string name="osd_a64_research_active">aX360e A64 backend research</string>
     <string name="osd_default_title">Xbox 360 content</string>
+    <string name="settings_subtitle">Thor profiles and launch options</string>
+    <string name="settings_profile">Profile</string>
+    <string name="settings_profile_balanced">Thor balanced</string>
+    <string name="settings_profile_performance">Performance</string>
+    <string name="settings_profile_research">Research counters</string>
+    <string name="settings_profile_custom">Custom</string>
+    <string name="settings_gpu">GPU</string>
+    <string name="settings_gpu_vulkan">Vulkan</string>
+    <string name="settings_gpu_null">Null renderer</string>
+    <string name="settings_audio">Audio</string>
+    <string name="settings_audio_disabled">Disabled</string>
+    <string name="settings_audio_auto">Auto</string>
+    <string name="settings_input">Controller</string>
+    <string name="settings_input_android">Android / AYN Thor</string>
+    <string name="settings_input_none">No input</string>
+    <string name="settings_runtime">Runtime</string>
+    <string name="settings_mute_audio">Mute audio</string>
+    <string name="settings_hide_osd">Hide overlay</string>
+    <string name="settings_vulkan_counters">Vulkan counters</string>
+    <string name="settings_reset">Reset</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="settings_reset_saved">Default settings restored</string>
 </resources>

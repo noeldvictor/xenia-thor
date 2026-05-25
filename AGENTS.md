@@ -144,6 +144,26 @@ around one full core and GPU Commands well below one full core. Do not pivot to
 RenderDoc-only FPS claims, Swappy/frame pacing, or broad Adreno rewrite work
 until counters expose a real GPU wall.
 
+## Mobile TBR / GPU Memory Locality Lane
+
+Use Diya Joseph's 2024 thesis,
+`docs/research/20260525-165028-mobile-tbr-gpu-memory-thesis.md`, as a
+GPU-memory-locality checklist for Android Vulkan work. The thesis is about
+tile-based rendering, texture/cache locality, inter-frame reuse, and GPU memory
+latency hiding; it is not evidence that Blue Dragon's current A64/JIT wall
+should move to GPU compute.
+
+- Apply the thesis only after counters show GPU Commands, present waits, queue
+  submits, pipeline creation, barriers, resolves, readbacks, uploads, or texture
+  traffic overtaking the CPU/JIT wall.
+- Translate TCOR/DTexL/Boustrophedonic Frames/WaSP into diagnostics and
+  renderer hygiene: render-pass load/store behavior, resolve bytes, texture
+  upload/copy bytes, descriptor/pipeline churn, frame-to-frame resource reuse,
+  synchronization stalls, and Adreno/AGI bandwidth or cache counters.
+- Do not implement hardware-scheduler ideas directly in Xenia. Prefer coherent
+  batching, fewer tiny GPU tasks, stable resource reuse, and measured Vulkan
+  changes with Thor captures.
+
 ## Cemu / Wii U Android Comparison Lane
 
 Use current public Cemu Android work as a serious design reference for
@@ -182,6 +202,9 @@ Technical comparison rules:
 
 Android UX mandate:
 
+- User preference as of 2026-05-25: build the Cemu-style settings/profile path,
+  including GPU, audio, controller/input, runtime, and expert/research config
+  surfaces. Do not limit the lane to a one-off Thor controller fix.
 - xenia-thor must grow a real handheld-facing settings and controller layer,
   not only ADB cvars. Prioritize launcher-visible settings, per-game profiles,
   controller mapping, profile import/export, safe defaults, and an expert page
@@ -195,6 +218,65 @@ Android UX mandate:
 - When starting the controller/settings lane, ask the user which UX shape they
   want first: minimal Thor-only controller fix, Cemu-style settings/profiles,
   or a broader emulator launcher polish pass.
+
+## Binary Translation Research Triage
+
+Treat recent DBT/static-translation papers as pressure to improve design, not
+as proof that a full Xbox 360 game can be turned into a native Android APK in
+one sprint. Always record source links in dated research notes before changing
+JIT, memory-model, or GPU-offload behavior.
+
+- Elevator-style fully-static translation is a long-term offline
+  specialization/checking lane. Near term, translate that idea into
+  route-backed static guest-function audits, code-size estimates, and
+  function/edge variants with normal-entry fallback.
+- Partial cross-compilation maps to hot function/edge variants with explicit
+  native-call channels and fallbacks. For Blue Dragon, this currently points at
+  state-carrier and caller-local edge-variant work such as
+  `82282490:82282598 -> 82287788`, not a broad whole-game static conversion.
+- Learning-based DBT rule generation is only actionable when paired with
+  symbolic equivalence, PPC tests, and route proof. Do not land LLM/ML-derived
+  instruction rewrites from pattern matching alone.
+- Arancini/AtoMig-style weak-memory work means ARM ordering must stay explicit.
+  Do not delete barriers, stack sync, call-visible state writebacks, or external
+  visibility just because a local A64 span looks expensive.
+- Host-GPU latency research reinforces the current Vulkan rule: offload only
+  bulk, stable, cache-friendly kernels after counters show GPU headroom. Do not
+  move Blue Dragon CPU/JIT work to Vulkan compute while Main Thread remains the
+  wall.
+
+## VMX128 Inline Patching Lane
+
+The user believes VMX128 inline patching plus advanced ARM64 instructions can
+be a major speed source. Treat that as a high-priority research lane, but keep
+it proof-gated.
+
+- Thor `c3ca0370` reports AYN Thor / `kalama` with `asimd`, `asimddp`, `i8mm`,
+  `bf16`, `asimdfhm`, `fcma`, `crc32`, and related ARMv8/Armv9 features, but
+  no `sve` / `sve2` in `/proc/cpuinfo`. Do not build a Thor-required SVE/SVE2
+  path unless a future device capture proves those features.
+- Prefer default-off, function/PC-gated inline VMX128 patches over global
+  opcode rewrites. Every candidate needs a static HIR/source audit, dynamic
+  hit counters, fallback counters, generated-code size deltas, PPC tests when
+  available, and route-clean Thor proof before quiet A/B.
+- Good first-class NEON targets: direct 128-bit boolean ops, splats, permutes,
+  shifts, compares, min/max, pack/unpack, vector load-shift joins, and local
+  state/vector traffic reduction.
+- Use ARM dot-product/I8MM only when the VMX opcode is an integer
+  sum-of-products shape and signedness, lane order, saturation, endianness, and
+  accumulation semantics are proven. Do not apply `SDOT` / `UDOT` to FP32 VMX
+  dot products.
+- Be suspicious of fused FP shortcuts. `FMLA` can be fast, but VMX FP32 has
+  guest-visible NaN, denormal, FPCR/NJM, and result-order behavior. Existing
+  Blue Dragon MUL_ADD_V128 and VMX-dot lanes stayed default-off after mixed or
+  negative speed proof, so reopen them only with broader fresh evidence.
+- BF16/FHM/FCMA are not drop-in replacements for Xbox 360 VMX FP32. Use only
+  after an opcode-specific audit proves exact semantics.
+- Use the Box64 lesson as architecture, not copied code: inline native patches
+  need safe invalidation, normal-entry fallback, feature gates, and per-title
+  counters. For Xenia, map this to code-cache invalidation, edge/function
+  variants, and normal-entry fallback rather than blind self-modifying-code
+  assumptions.
 
 ## Repo Facts As Of 2026-05-17
 
