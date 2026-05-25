@@ -4456,31 +4456,50 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     auto* backend = backend_;
     const uint32_t guest_pc = instr->GuestAddressFor();
     std::atomic<uint64_t>* active_call_kill_site_counter = nullptr;
+    std::atomic<uint64_t>* active_f1_taxonomy_counter = nullptr;
     bool edge_variant_call_kill = true;
     switch (guest_pc) {
       case 0x8228778C:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(0);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_helper_preserved_call_count();
         break;
       case 0x82287854:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(1);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_child_preserved_call_count();
         break;
       case 0x82287ED4:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(2);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_child_preserved_call_count();
         break;
       case 0x82287EDC:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(3);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_return_exit_call_count();
         break;
       case 0x82287EE4:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(4);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_helper_preserved_call_count();
         break;
       case 0x82288220:
         active_call_kill_site_counter =
             backend->blue_dragon_edge_variant_active_call_kill_site_count(5);
+        active_f1_taxonomy_counter =
+            backend
+                ->blue_dragon_edge_variant_active_f1_return_exit_call_count();
         break;
       default:
         edge_variant_call_kill = false;
@@ -4497,6 +4516,12 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
       EmitAtomicIncrement64(
           backend->blue_dragon_edge_variant_active_call_kill_count());
       EmitAtomicIncrement64(active_call_kill_site_counter);
+      if (active_f1_taxonomy_counter) {
+        EmitAtomicIncrement64(active_f1_taxonomy_counter);
+      } else {
+        EmitAtomicIncrement64(
+            backend->blue_dragon_edge_variant_active_f1_unknown_call_kill_count());
+      }
       L(no_active_payload);
     }
   }

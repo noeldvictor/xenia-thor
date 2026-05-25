@@ -1392,6 +1392,19 @@ Swappy only after present timing shows queue-stuffing. Keep Blue Dragon on the
 A64 lane while Thor captures show Main Thread is the wall, but build the Vulkan
 diagnostic lane so GPU work is ready when evidence changes.
 
+Latest edge `f[1]` kill taxonomy:
+`docs/research/20260525-184957-edge-f1-kill-taxonomy.md` extends the
+default-off `arm64_blue_dragon_edge_variant_audit` without changing behavior.
+The route-clean Thor capture for exact edge `82282490:82282598 -> 82287788`
+kept `payload_materializations=0` and `normal_fallback_share=100.00%`, while
+splitting active call kills into `helper_preserved_calls=720290`,
+`child_preserved_calls=350636`, `return_exit_calls=710511`, and
+`unknown_call_kills=0`. The active read sites remain concentrated at
+`82287798`, `82287828`, `82287CF8`, `82287D10`, `82287D8C`, and `82287F1C`.
+Do not make an `f[1]`-only behavior patch or quiet speed A/B from this. Use the
+zero-unknown-kill proof as input to a broader caller-local or side-table edge
+payload-storage design, keeping `fpscr` in its separate CFG-writeback lane.
+
 Latest `fpscr` CFG writeback plan:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md` adds
 `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. Run it before any

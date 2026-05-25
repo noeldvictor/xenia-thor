@@ -58,22 +58,25 @@ the heartbeat instead of editing code.
 ## Current Blue Dragon Target
 
 Latest capture:
-`docs/research/20260525-175612-edge-variant-pc-attribution.md`.
+`docs/research/20260525-184957-edge-f1-kill-taxonomy.md`.
 The default-off `arm64_blue_dragon_edge_variant_audit` now has route-clean,
-behavior-neutral per-PC counters for exact edge `82282490:82282598 -> 82287788`:
-`eligible_calls=675279`, `normal_fallbacks=675279`,
-`payload_materializations=0`, `active_f1_reads=2015839`, and
-`active_call_kills=1693099`. Active `f[1]` read sites were
-`82287798=675279`, `82287828=333248`, `82287CF8=332673`,
-`82287D10=332673`, `82287D8C=332673`, and `82287F1C=9293`; four audited
-read PCs were zero. Active kill sites were `8228778C=675279`,
-`82287854=333248`, `82287EDC=665986`, `82287EE4=9293`,
-`82288220=9293`, and `82287ED4=0`.
+behavior-neutral taxonomy counters for exact edge
+`82282490:82282598 -> 82287788`: `eligible_calls=710511`,
+`normal_fallbacks=710511`, `payload_materializations=0`,
+`active_f1_reads=2121019`, and `active_call_kills=1781437`. Taxonomy counters
+were `helper_preserved_calls=720290`, `child_preserved_calls=350636`,
+`return_exit_calls=710511`, and `unknown_call_kills=0`. Active `f[1]` read
+sites were `82287798=710511`, `82287828=350636`, `82287CF8=350031`,
+`82287D10=350031`, `82287D8C=350031`, and `82287F1C=9779`; four audited read
+PCs were zero. Active kill sites were `8228778C=710511`,
+`82287854=350636`, `82287ED4=0`, `82287EDC=700732`,
+`82287EE4=9779`, and `82288220=9779`.
 
-Next useful worker slice: source-backed `f[1]` kill-taxonomy split for the same
-edge, separating helper-preserved calls from child/unknown-call kills and
-keeping `fpscr` out of the read-only `f[1]` lane. Do not materialize payloads
-or run a quiet speed A/B from this audit-only patch.
+Next useful worker slice: broader caller-local or side-table edge
+payload-storage design for `82282490:82282598 -> 82287788`, using the
+zero-unknown-kill result as proof for the `f[1]` lane while keeping `fpscr` in
+the separate CFG-writeback lane. Do not materialize an `f[1]`-only payload or
+run a quiet speed A/B from this audit-only patch.
 
 Previous residual register-cache capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`

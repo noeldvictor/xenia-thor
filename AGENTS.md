@@ -120,28 +120,31 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 ## Current Blue Dragon A64 Lane
 
 Latest route-clean audit:
-`docs/research/20260525-175612-edge-variant-pc-attribution.md`.
-Working tree based on commit `42be319ef` / APK SHA
-`FC9CE27AA7B7040CC741417B8B225B351A9624F43BCA444B4CA02480D57068E8` reached the
+`docs/research/20260525-184957-edge-f1-kill-taxonomy.md`.
+Working tree based on commit `8d053566e` / APK SHA
+`DEDD20333729C3E6B44CC1E423357147F0A9149D034C6D0A2DB0237AB8BF5C61` reached the
 visible opening sky / dragon-wing route with a clean fatal-marker search. The
-default-off `arm64_blue_dragon_edge_variant_audit` now includes per-PC active
-`f[1]` read and active call-kill attribution for exact edge
+default-off `arm64_blue_dragon_edge_variant_audit` now includes split log rows
+and per-PC `f[1]` call-kill taxonomy for exact edge
 `82282490:82282598 -> 82287788`. It remains behavior-neutral:
-`payload_materializations=0`, `normal_fallbacks=675279`, and
+`payload_materializations=0`, `normal_fallbacks=710511`, and
 `normal_fallback_share=100.00%`.
 
-The active `f[1]` read sites were `82287798=675279`,
-`82287828=333248`, `82287CF8=332673`, `82287D10=332673`,
-`82287D8C=332673`, `82287F1C=9293`, with
+Final taxonomy counters were `helper_preserved_calls=720290`,
+`child_preserved_calls=350636`, `return_exit_calls=710511`, and
+`unknown_call_kills=0`. The active `f[1]` read sites were
+`82287798=710511`, `82287828=350636`, `82287CF8=350031`,
+`82287D10=350031`, `82287D8C=350031`, `82287F1C=9779`, with
 `82287A1C/82287A2C/82287AA4/82287EA8=0`. Active kill sites were
-`8228778C=675279`, `82287854=333248`, `82287EDC=665986`,
-`82287EE4=9293`, `82288220=9293`, and `82287ED4=0`.
+`8228778C=710511`, `82287854=350636`, `82287ED4=0`,
+`82287EDC=700732`, `82287EE4=9779`, and `82288220=9779`.
 
-Do not run a quiet speed A/B or materialize an edge payload from this audit-only
-patch. The next useful slice is a source-backed `f[1]` kill-taxonomy split:
-classify helper-preserved vs child/unknown-call kills, keep `fpscr` out of the
-read-only `f[1]` lane, and only consider a behavior prototype if refined
-route-clean counters prove enough surviving active reads.
+Do not run a quiet speed A/B or materialize an `f[1]`-only edge payload from
+this audit-only patch. The previous standalone `f[1]` carrier was route-safe
+but did not prove speed. The next useful slice is a broader caller-local or
+side-table edge payload-storage design for `82282490:82282598 -> 82287788`,
+using the zero-unknown-kill result as input while keeping `fpscr` in its
+separate CFG-writeback lane.
 
 The previous route-clean residual register-cache audit remains closed:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.

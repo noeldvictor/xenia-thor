@@ -2084,6 +2084,18 @@ void A64Backend::LogSpeedProfile() {
     auto active_call_kill =
         load_delta(blue_dragon_edge_variant_active_call_kill_count_,
                    last_blue_dragon_edge_variant_active_call_kill_count_);
+    auto active_f1_helper_preserved_call = load_delta(
+        blue_dragon_edge_variant_active_f1_helper_preserved_call_count_,
+        last_blue_dragon_edge_variant_active_f1_helper_preserved_call_count_);
+    auto active_f1_child_preserved_call = load_delta(
+        blue_dragon_edge_variant_active_f1_child_preserved_call_count_,
+        last_blue_dragon_edge_variant_active_f1_child_preserved_call_count_);
+    auto active_f1_return_exit_call = load_delta(
+        blue_dragon_edge_variant_active_f1_return_exit_call_count_,
+        last_blue_dragon_edge_variant_active_f1_return_exit_call_count_);
+    auto active_f1_unknown_call_kill = load_delta(
+        blue_dragon_edge_variant_active_f1_unknown_call_kill_count_,
+        last_blue_dragon_edge_variant_active_f1_unknown_call_kill_count_);
     std::pair<uint64_t, uint64_t> active_f1_read_sites
         [kBlueDragonEdgeVariantF1ReadSiteCount];
     for (uint32_t i = 0; i < kBlueDragonEdgeVariantF1ReadSiteCount; ++i) {
@@ -2104,15 +2116,7 @@ void A64Backend::LogSpeedProfile() {
         "payload_materializations={}/{} normal_entry_fallbacks={}/{} "
         "indirection_fallbacks={}/{} call_kills={}/{} variant_misses={}/{} "
         "marker_sets={}/{} marker_clears={}/{} active_f1_reads={}/{} "
-        "inactive_f1_reads={}/{} active_call_kills={}/{} "
-        "active_f1_82287798={}/{} active_f1_82287828={}/{} "
-        "active_f1_82287a1c={}/{} active_f1_82287a2c={}/{} "
-        "active_f1_82287aa4={}/{} active_f1_82287cf8={}/{} "
-        "active_f1_82287d10={}/{} active_f1_82287d8c={}/{} "
-        "active_f1_82287ea8={}/{} active_f1_82287f1c={}/{} "
-        "active_kill_8228778c={}/{} active_kill_82287854={}/{} "
-        "active_kill_82287ed4={}/{} active_kill_82287edc={}/{} "
-        "active_kill_82287ee4={}/{} active_kill_82288220={}/{}",
+        "inactive_f1_reads={}/{} active_call_kills={}/{}",
         eligible_compile.second, eligible_compile.first,
         variant_storage_missing.second, variant_storage_missing.first,
         eligible_call.second, eligible_call.first, payload_materialized.second,
@@ -2123,7 +2127,27 @@ void A64Backend::LogSpeedProfile() {
         marker_set.first, marker_clear.second, marker_clear.first,
         active_f1_read.second, active_f1_read.first, inactive_f1_read.second,
         inactive_f1_read.first, active_call_kill.second,
-        active_call_kill.first, active_f1_read_sites[0].second,
+        active_call_kill.first);
+    XELOGW(
+        "A64 Blue Dragon edge-variant audit taxonomy: "
+        "active_f1_helper_preserved_calls={}/{} "
+        "active_f1_child_preserved_calls={}/{} "
+        "active_f1_return_exit_calls={}/{} "
+        "active_f1_unknown_call_kills={}/{}",
+        active_f1_helper_preserved_call.second,
+        active_f1_helper_preserved_call.first,
+        active_f1_child_preserved_call.second,
+        active_f1_child_preserved_call.first, active_f1_return_exit_call.second,
+        active_f1_return_exit_call.first, active_f1_unknown_call_kill.second,
+        active_f1_unknown_call_kill.first);
+    XELOGW(
+        "A64 Blue Dragon edge-variant audit f1-sites: "
+        "active_f1_82287798={}/{} active_f1_82287828={}/{} "
+        "active_f1_82287a1c={}/{} active_f1_82287a2c={}/{} "
+        "active_f1_82287aa4={}/{} active_f1_82287cf8={}/{} "
+        "active_f1_82287d10={}/{} active_f1_82287d8c={}/{} "
+        "active_f1_82287ea8={}/{} active_f1_82287f1c={}/{}",
+        active_f1_read_sites[0].second,
         active_f1_read_sites[0].first, active_f1_read_sites[1].second,
         active_f1_read_sites[1].first, active_f1_read_sites[2].second,
         active_f1_read_sites[2].first, active_f1_read_sites[3].second,
@@ -2133,7 +2157,13 @@ void A64Backend::LogSpeedProfile() {
         active_f1_read_sites[6].first, active_f1_read_sites[7].second,
         active_f1_read_sites[7].first, active_f1_read_sites[8].second,
         active_f1_read_sites[8].first, active_f1_read_sites[9].second,
-        active_f1_read_sites[9].first, active_call_kill_sites[0].second,
+        active_f1_read_sites[9].first);
+    XELOGW(
+        "A64 Blue Dragon edge-variant audit kill-sites: "
+        "active_kill_8228778c={}/{} active_kill_82287854={}/{} "
+        "active_kill_82287ed4={}/{} active_kill_82287edc={}/{} "
+        "active_kill_82287ee4={}/{} active_kill_82288220={}/{}",
+        active_call_kill_sites[0].second,
         active_call_kill_sites[0].first, active_call_kill_sites[1].second,
         active_call_kill_sites[1].first, active_call_kill_sites[2].second,
         active_call_kill_sites[2].first, active_call_kill_sites[3].second,

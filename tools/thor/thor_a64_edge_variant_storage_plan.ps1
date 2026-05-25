@@ -145,19 +145,58 @@ function Get-LatestEdgeCounterPayload {
         throw "EdgeCounterLogPath not found: $Path"
     }
 
-    $payload = $null
+    $basePrefix = "A64 Blue Dragon edge-variant audit:"
+    $taxonomyPrefix = "A64 Blue Dragon edge-variant audit taxonomy:"
+    $f1SitesPrefix = "A64 Blue Dragon edge-variant audit f1-sites:"
+    $killSitesPrefix = "A64 Blue Dragon edge-variant audit kill-sites:"
+
+    $basePayload = $null
+    $taxonomyPayload = $null
+    $f1SitesPayload = $null
+    $killSitesPayload = $null
     foreach ($line in Get-Content -LiteralPath $Path) {
-        $index = $line.IndexOf("A64 Blue Dragon edge-variant audit:")
-        if ($index -lt 0) {
+        $index = $line.IndexOf($basePrefix)
+        if ($index -ge 0) {
+            $basePayload = $line.Substring(
+                $index + $basePrefix.Length).Trim()
+            $taxonomyPayload = $null
+            $f1SitesPayload = $null
+            $killSitesPayload = $null
             continue
         }
-        $payload = $line.Substring(
-            $index + "A64 Blue Dragon edge-variant audit:".Length).Trim()
+
+        $index = $line.IndexOf($taxonomyPrefix)
+        if ($index -ge 0) {
+            $taxonomyPayload = $line.Substring(
+                $index + $taxonomyPrefix.Length).Trim()
+            continue
+        }
+
+        $index = $line.IndexOf($f1SitesPrefix)
+        if ($index -ge 0) {
+            $f1SitesPayload = $line.Substring(
+                $index + $f1SitesPrefix.Length).Trim()
+            continue
+        }
+
+        $index = $line.IndexOf($killSitesPrefix)
+        if ($index -ge 0) {
+            $killSitesPayload = $line.Substring(
+                $index + $killSitesPrefix.Length).Trim()
+            continue
+        }
     }
-    if ([string]::IsNullOrWhiteSpace($payload)) {
+    if ([string]::IsNullOrWhiteSpace($basePayload)) {
         throw "No A64 Blue Dragon edge-variant audit row found in $Path."
     }
-    return $payload
+
+    $payloads = @($basePayload)
+    foreach ($payload in @($taxonomyPayload, $f1SitesPayload, $killSitesPayload)) {
+        if (![string]::IsNullOrWhiteSpace($payload)) {
+            $payloads += $payload
+        }
+    }
+    return ($payloads -join " ")
 }
 
 function Read-CounterTotals {
@@ -282,6 +321,11 @@ $payloadPcCounters =
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_call_kill_site_count') -and
     (Test-Pattern $edgeCounterSourceText 'active_f1_82287798') -and
     (Test-Pattern $edgeCounterSourceText 'active_kill_8228778c')
+$payloadF1TaxonomyCounters =
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_helper_preserved_call_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_child_preserved_call_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_return_exit_call_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_unknown_call_kill_count')
 $directCallUsesNormalMachineCode =
     Test-Pattern $emitterText 'if \(fn->machine_code\(\)\).*?reinterpret_cast<uint64_t>\(fn->machine_code\(\)\).*?blr\(x9\);'
 $designAuditRequiresVariant =
@@ -299,6 +343,12 @@ $markerClears = Total-Optional $edgeCounters "marker_clears"
 $activeF1Reads = Total-Optional $edgeCounters "active_f1_reads"
 $inactiveF1Reads = Total-Optional $edgeCounters "inactive_f1_reads"
 $activeCallKills = Total-Optional $edgeCounters "active_call_kills"
+$activeF1HelperPreservedCalls = Total-Optional $edgeCounters "active_f1_helper_preserved_calls"
+$activeF1ChildPreservedCalls = Total-Optional $edgeCounters "active_f1_child_preserved_calls"
+$activeF1ReturnExitCalls = Total-Optional $edgeCounters "active_f1_return_exit_calls"
+$activeF1UnknownCallKills = Total-Optional $edgeCounters "active_f1_unknown_call_kills"
+$activeF1NonBlockingCalls =
+    $activeF1HelperPreservedCalls + $activeF1ChildPreservedCalls
 $activeF1SiteNames = @(
     "active_f1_82287798",
     "active_f1_82287828",
@@ -351,6 +401,7 @@ Emit-SourceCheck "direct_call_uses_normal_machine_code" $directCallUsesNormalMac
 Emit-SourceCheck "edge_probe_is_counter_only" $edgeCounterOnlyPatch "current cvar produced audit rows but did not change generated behavior"
 Emit-SourceCheck "payload_scope_marker_is_counter_only" $payloadScopeCounters "marker tracks hot-edge lifetime but still does not materialize guest payload"
 Emit-SourceCheck "payload_pc_attribution_is_counter_only" $payloadPcCounters "per-PC counters attribute active reads/kills without changing guest payload or entry behavior"
+Emit-SourceCheck "payload_f1_kill_taxonomy_is_counter_only" $payloadF1TaxonomyCounters "call taxonomy splits f[1]-preserved helpers/children from unknown kills without changing guest payload"
 Emit-SourceCheck "design_audit_requires_variant_storage" $designAuditRequiresVariant "only caller-local or side-table storage fits the current contracts"
 Write-Output ""
 
@@ -364,6 +415,11 @@ Write-Output ("payload_scope marker_sets={0} marker_clears={1} active_f1_reads={
     $markerSets, $markerClears, $activeF1Reads, $inactiveF1Reads,
     $activeCallKills, (Format-Ratio $activeF1Reads $eligibleCalls),
     (Format-Ratio $activeCallKills $eligibleCalls))
+Write-Output ("payload_f1_taxonomy helper_preserved_calls={0} child_preserved_calls={1} return_exit_calls={2} unknown_call_kills={3} nonblocking_calls={4} unknown_kills_per_call={5}" -f `
+    $activeF1HelperPreservedCalls, $activeF1ChildPreservedCalls,
+    $activeF1ReturnExitCalls, $activeF1UnknownCallKills,
+    $activeF1NonBlockingCalls,
+    (Format-Ratio $activeF1UnknownCallKills $eligibleCalls))
 $f1Sites = foreach ($name in $activeF1SiteNames) {
     "{0}={1}" -f $name, (Total-Optional $edgeCounters $name)
 }
@@ -398,12 +454,12 @@ Write-Output "rule host_to_guest_entry_unchanged=required"
 Write-Output "rule source_map_unwind_ownership=required_for_variant_code"
 Write-Output "rule f1_visibility=parent_store_must_remain_or_variant_must_prove_equivalent_context_visibility"
 Write-Output "rule fpscr_visibility=dirty_value_must_write_back_before calls, exits, exceptions, context barriers that expose PPCContext, and all external readers"
-Write-Output "rule payload_kill=helper_or_child_call_must_kill_or_flush_payload unless separately proven preserving"
+Write-Output "rule f1_payload_kill=unknown_or_unproven_calls_must_kill_or_flush_payload; source-proven GPR/LR helpers and 821CE028 direct child calls may be counted separately as f1-preserving"
 Write-Output ""
 
 Write-Output "## Decision"
 Write-Output "decision=no_generated_behavior_patch_yet"
-Write-Output "reason=edge is hot and storage is missing; per-PC f[1] reads are real, but the current kill model is too broad for a read-only f[1] payload and fpscr still needs CFG-aware writeback proof"
-Write-Output "safe_next_patch=f1_payload_kill_taxonomy_source_review_counter_only"
+Write-Output "reason=edge is hot and storage is missing; per-PC f[1] reads are real and the taxonomy can separate proven f1-preserving calls from true unknown kills, but fpscr still needs CFG-aware writeback proof and prior f1-only carrier A/B did not prove speed"
+Write-Output "safe_next_patch=broader_edge_payload_storage_design_with_fpscr_cfg_writeback_separate"
 Write-Output "alternate_next_patch=broader_82282490_82287788_state_roundtrip_design"
 Write-Output "do_not_run=quiet_speed_ab_or_payload_materialization_from_current_audit_patch"
