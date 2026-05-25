@@ -4454,28 +4454,50 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   if (cvars::arm64_blue_dragon_edge_variant_audit && instr &&
       current_guest_function_ == 0x82287788) {
     auto* backend = backend_;
-    switch (instr->GuestAddressFor()) {
+    const uint32_t guest_pc = instr->GuestAddressFor();
+    std::atomic<uint64_t>* active_call_kill_site_counter = nullptr;
+    bool edge_variant_call_kill = true;
+    switch (guest_pc) {
       case 0x8228778C:
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(0);
+        break;
       case 0x82287854:
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(1);
+        break;
       case 0x82287ED4:
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(2);
+        break;
       case 0x82287EDC:
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(3);
+        break;
       case 0x82287EE4:
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(4);
+        break;
       case 0x82288220:
-        EmitAtomicIncrement64(
-            backend->blue_dragon_edge_variant_call_kill_count());
-        {
-          auto& no_active_payload = NewCachedLabel();
-          ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
-                                            A64BackendContext,
-                                            blue_dragon_edge_variant_payload_active))));
-          cbz(w11, no_active_payload);
-          EmitAtomicIncrement64(
-              backend->blue_dragon_edge_variant_active_call_kill_count());
-          L(no_active_payload);
-        }
+        active_call_kill_site_counter =
+            backend->blue_dragon_edge_variant_active_call_kill_site_count(5);
         break;
       default:
+        edge_variant_call_kill = false;
         break;
+    }
+    if (edge_variant_call_kill) {
+      EmitAtomicIncrement64(
+          backend->blue_dragon_edge_variant_call_kill_count());
+      auto& no_active_payload = NewCachedLabel();
+      ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                        A64BackendContext,
+                                        blue_dragon_edge_variant_payload_active))));
+      cbz(w11, no_active_payload);
+      EmitAtomicIncrement64(
+          backend->blue_dragon_edge_variant_active_call_kill_count());
+      EmitAtomicIncrement64(active_call_kill_site_counter);
+      L(no_active_payload);
     }
   }
   if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit && instr &&

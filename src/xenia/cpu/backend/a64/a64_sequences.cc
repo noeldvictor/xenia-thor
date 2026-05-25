@@ -419,6 +419,51 @@ static void EmitBlueDragonEdgeVariantF1ReadAudit(A64Emitter& e,
   }
 
   auto* backend = e.backend();
+  std::atomic<uint64_t>* active_site_counter = nullptr;
+  switch (instr->GuestAddressFor()) {
+    case 0x82287798:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(0);
+      break;
+    case 0x82287828:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(1);
+      break;
+    case 0x82287A1C:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(2);
+      break;
+    case 0x82287A2C:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(3);
+      break;
+    case 0x82287AA4:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(4);
+      break;
+    case 0x82287CF8:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(5);
+      break;
+    case 0x82287D10:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(6);
+      break;
+    case 0x82287D8C:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(7);
+      break;
+    case 0x82287EA8:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(8);
+      break;
+    case 0x82287F1C:
+      active_site_counter =
+          backend->blue_dragon_edge_variant_active_f1_read_site_count(9);
+      break;
+    default:
+      break;
+  }
   auto& inactive = e.NewCachedLabel();
   auto& done = e.NewCachedLabel();
   e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
@@ -428,6 +473,9 @@ static void EmitBlueDragonEdgeVariantF1ReadAudit(A64Emitter& e,
   e.cbz(e.w11, inactive);
   e.EmitAtomicIncrement64(
       backend->blue_dragon_edge_variant_active_f1_read_count());
+  if (active_site_counter) {
+    e.EmitAtomicIncrement64(active_site_counter);
+  }
   e.b(done);
   e.L(inactive);
   e.EmitAtomicIncrement64(

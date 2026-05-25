@@ -277,6 +277,11 @@ $payloadScopeCounters =
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_marker_set_count') -and
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_read_count') -and
     (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_call_kill_count')
+$payloadPcCounters =
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_f1_read_site_count') -and
+    (Test-Pattern $edgeCounterSourceText 'blue_dragon_edge_variant_active_call_kill_site_count') -and
+    (Test-Pattern $edgeCounterSourceText 'active_f1_82287798') -and
+    (Test-Pattern $edgeCounterSourceText 'active_kill_8228778c')
 $directCallUsesNormalMachineCode =
     Test-Pattern $emitterText 'if \(fn->machine_code\(\)\).*?reinterpret_cast<uint64_t>\(fn->machine_code\(\)\).*?blr\(x9\);'
 $designAuditRequiresVariant =
@@ -294,6 +299,24 @@ $markerClears = Total-Optional $edgeCounters "marker_clears"
 $activeF1Reads = Total-Optional $edgeCounters "active_f1_reads"
 $inactiveF1Reads = Total-Optional $edgeCounters "inactive_f1_reads"
 $activeCallKills = Total-Optional $edgeCounters "active_call_kills"
+$activeF1SiteNames = @(
+    "active_f1_82287798",
+    "active_f1_82287828",
+    "active_f1_82287a1c",
+    "active_f1_82287a2c",
+    "active_f1_82287aa4",
+    "active_f1_82287cf8",
+    "active_f1_82287d10",
+    "active_f1_82287d8c",
+    "active_f1_82287ea8",
+    "active_f1_82287f1c")
+$activeKillSiteNames = @(
+    "active_kill_8228778c",
+    "active_kill_82287854",
+    "active_kill_82287ed4",
+    "active_kill_82287edc",
+    "active_kill_82287ee4",
+    "active_kill_82288220")
 
 $f1TotalReads = Get-FirstValue $stateFollowupText 'f1 total_reads=([0-9]+)' "unknown"
 $f1Fallbacks = Get-FirstValue $stateFollowupText 'f1 .*?fallback_total=([0-9]+)' "unknown"
@@ -327,6 +350,7 @@ Emit-SourceCheck "indirection_key_is_guest_address_only" $guestAddressOnlyIndire
 Emit-SourceCheck "direct_call_uses_normal_machine_code" $directCallUsesNormalMachineCode "a behavior patch needs explicit variant storage or caller-local dispatch"
 Emit-SourceCheck "edge_probe_is_counter_only" $edgeCounterOnlyPatch "current cvar produced audit rows but did not change generated behavior"
 Emit-SourceCheck "payload_scope_marker_is_counter_only" $payloadScopeCounters "marker tracks hot-edge lifetime but still does not materialize guest payload"
+Emit-SourceCheck "payload_pc_attribution_is_counter_only" $payloadPcCounters "per-PC counters attribute active reads/kills without changing guest payload or entry behavior"
 Emit-SourceCheck "design_audit_requires_variant_storage" $designAuditRequiresVariant "only caller-local or side-table storage fits the current contracts"
 Write-Output ""
 
@@ -340,6 +364,14 @@ Write-Output ("payload_scope marker_sets={0} marker_clears={1} active_f1_reads={
     $markerSets, $markerClears, $activeF1Reads, $inactiveF1Reads,
     $activeCallKills, (Format-Ratio $activeF1Reads $eligibleCalls),
     (Format-Ratio $activeCallKills $eligibleCalls))
+$f1Sites = foreach ($name in $activeF1SiteNames) {
+    "{0}={1}" -f $name, (Total-Optional $edgeCounters $name)
+}
+$killSites = foreach ($name in $activeKillSiteNames) {
+    "{0}={1}" -f $name, (Total-Optional $edgeCounters $name)
+}
+Write-Output ("payload_pc active_f1_sites={0}" -f ($f1Sites -join ","))
+Write-Output ("payload_pc active_kill_sites={0}" -f ($killSites -join ","))
 Write-Output ""
 
 Write-Output "## Prior Payload Evidence"
@@ -371,7 +403,7 @@ Write-Output ""
 
 Write-Output "## Decision"
 Write-Output "decision=no_generated_behavior_patch_yet"
-Write-Output "reason=edge is hot and storage is missing; f[1] is plausible but already missed as a narrow stack-slot speed patch, while fpscr still needs CFG-aware writeback proof"
-Write-Output "safe_next_patch=caller-local_or_side-table_skeleton_counter_only"
-Write-Output "alternate_next_patch=cfg_fpscr_writeback_audit_no_behavior_change"
-Write-Output "do_not_run=quiet_speed_ab_from_current_edge_counter_patch"
+Write-Output "reason=edge is hot and storage is missing; per-PC f[1] reads are real, but the current kill model is too broad for a read-only f[1] payload and fpscr still needs CFG-aware writeback proof"
+Write-Output "safe_next_patch=f1_payload_kill_taxonomy_source_review_counter_only"
+Write-Output "alternate_next_patch=broader_82282490_82287788_state_roundtrip_design"
+Write-Output "do_not_run=quiet_speed_ab_or_payload_materialization_from_current_audit_patch"

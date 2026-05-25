@@ -328,6 +328,16 @@ class A64Backend : public Backend {
   std::atomic<uint64_t>* blue_dragon_edge_variant_active_call_kill_count() {
     return &blue_dragon_edge_variant_active_call_kill_count_;
   }
+  static constexpr uint32_t kBlueDragonEdgeVariantF1ReadSiteCount = 10;
+  static constexpr uint32_t kBlueDragonEdgeVariantCallKillSiteCount = 6;
+  std::atomic<uint64_t>* blue_dragon_edge_variant_active_f1_read_site_count(
+      uint32_t index) {
+    return &blue_dragon_edge_variant_active_f1_read_site_counts_[index];
+  }
+  std::atomic<uint64_t>* blue_dragon_edge_variant_active_call_kill_site_count(
+      uint32_t index) {
+    return &blue_dragon_edge_variant_active_call_kill_site_counts_[index];
+  }
   std::atomic<uint64_t>* blue_dragon_fpscr_cfg_static_load_site_count() {
     return &blue_dragon_fpscr_cfg_static_load_site_count_;
   }
@@ -542,6 +552,12 @@ class A64Backend : public Backend {
   std::atomic<uint64_t> blue_dragon_edge_variant_active_f1_read_count_{0};
   std::atomic<uint64_t> blue_dragon_edge_variant_inactive_f1_read_count_{0};
   std::atomic<uint64_t> blue_dragon_edge_variant_active_call_kill_count_{0};
+  std::atomic<uint64_t>
+      blue_dragon_edge_variant_active_f1_read_site_counts_
+          [kBlueDragonEdgeVariantF1ReadSiteCount]{};
+  std::atomic<uint64_t>
+      blue_dragon_edge_variant_active_call_kill_site_counts_
+          [kBlueDragonEdgeVariantCallKillSiteCount]{};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_load_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_store_site_count_{0};
   std::atomic<uint64_t> blue_dragon_fpscr_cfg_static_cfg_transition_site_count_{
@@ -635,6 +651,10 @@ class A64Backend : public Backend {
   uint64_t last_blue_dragon_edge_variant_active_f1_read_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_inactive_f1_read_count_ = 0;
   uint64_t last_blue_dragon_edge_variant_active_call_kill_count_ = 0;
+  uint64_t last_blue_dragon_edge_variant_active_f1_read_site_counts_
+      [kBlueDragonEdgeVariantF1ReadSiteCount]{};
+  uint64_t last_blue_dragon_edge_variant_active_call_kill_site_counts_
+      [kBlueDragonEdgeVariantCallKillSiteCount]{};
   uint64_t last_blue_dragon_fpscr_cfg_static_load_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_store_site_count_ = 0;
   uint64_t last_blue_dragon_fpscr_cfg_static_cfg_transition_site_count_ = 0;

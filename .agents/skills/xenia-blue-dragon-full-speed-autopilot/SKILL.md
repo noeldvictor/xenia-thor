@@ -180,24 +180,25 @@ patch or quiet speed A/B. The final capture remained CPU/JIT-heavy
 (`82282490=31080764`, Main Thread `100%`, GPU Commands `7.6%`), so do not
 pivot to broad Vulkan work.
 
-Latest edge payload-scope audit:
-`docs/research/20260525-173225-edge-variant-payload-scope-audit.md`
-records a FullDeploy plus route-clean Thor capture for the default-off
-`arm64_blue_dragon_edge_variant_audit` payload-scope marker. It reached the
-visible opening sky / dragon-wing route on APK SHA
-`12E4BC4F69BA1D0C4A4A249F64C74BD81FB802569B46122644C9242A57DA8CB1`, with a
+Latest edge per-PC attribution:
+`docs/research/20260525-175612-edge-variant-pc-attribution.md`
+records a FullDeploy plus route-clean Thor retry capture for the default-off
+`arm64_blue_dragon_edge_variant_audit` per-PC counters. It reached the visible
+opening sky / dragon-wing route on APK SHA
+`FC9CE27AA7B7040CC741417B8B225B351A9624F43BCA444B4CA02480D57068E8`, with a
 clean fatal-marker search. The exact edge
-`82282490:82282598 -> 82287788` now has behavior-neutral scope counters:
-`eligible_calls=687023`, `normal_fallbacks=687023`,
-`payload_materializations=0`, `marker_sets=687023`,
-`marker_clears=687023`, `active_f1_reads=2050899`,
-`inactive_f1_reads=3250`, and `active_call_kills=1722545`. Treat this as
-storage-boundary proof only: `normal_fallback_share=100.00%`,
-`active_f1_reads_per_call=2.99`, and `active_call_kills_per_call=2.51`. Do not
-run a quiet speed A/B or materialize payloads from this audit-only patch. Next
-useful slice is per-PC active `f[1]` read / kill-window attribution for this
-marker, or broader `82282490` / `82287788` state-roundtrip design using the
-marker as caller-local scope proof.
+`82282490:82282598 -> 82287788` remains behavior-neutral:
+`eligible_calls=675279`, `normal_fallbacks=675279`,
+`payload_materializations=0`, `active_f1_reads=2015839`, and
+`active_call_kills=1693099`. Active `f[1]` read sites were
+`82287798=675279`, `82287828=333248`, `82287CF8=332673`,
+`82287D10=332673`, `82287D8C=332673`, `82287F1C=9293`, with
+`82287A1C/82287A2C/82287AA4/82287EA8=0`. Active kill sites were
+`8228778C=675279`, `82287854=333248`, `82287EDC=665986`,
+`82287EE4=9293`, `82288220=9293`, and `82287ED4=0`. Do not run a quiet speed
+A/B or materialize payloads from this audit-only patch. Next useful slice is a
+source-backed `f[1]` kill-taxonomy split: helper-preserved vs child/unknown-call
+kills, with `fpscr` kept out of the read-only `f[1]` lane.
 
 Previous residual audit capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`

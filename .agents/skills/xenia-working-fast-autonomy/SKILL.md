@@ -58,21 +58,22 @@ the heartbeat instead of editing code.
 ## Current Blue Dragon Target
 
 Latest capture:
-`docs/research/20260525-173225-edge-variant-payload-scope-audit.md`.
+`docs/research/20260525-175612-edge-variant-pc-attribution.md`.
 The default-off `arm64_blue_dragon_edge_variant_audit` now has route-clean,
-behavior-neutral payload-scope counters for exact edge
-`82282490:82282598 -> 82287788`: `eligible_calls=687023`,
-`normal_fallbacks=687023`, `payload_materializations=0`,
-`marker_sets=687023`, `marker_clears=687023`,
-`active_f1_reads=2050899`, `inactive_f1_reads=3250`, and
-`active_call_kills=1722545`. Treat this as storage-boundary proof, not a speed
-verdict: `normal_fallback_share=100.00%`,
-`active_f1_reads_per_call=2.99`, and `active_call_kills_per_call=2.51`.
+behavior-neutral per-PC counters for exact edge `82282490:82282598 -> 82287788`:
+`eligible_calls=675279`, `normal_fallbacks=675279`,
+`payload_materializations=0`, `active_f1_reads=2015839`, and
+`active_call_kills=1693099`. Active `f[1]` read sites were
+`82287798=675279`, `82287828=333248`, `82287CF8=332673`,
+`82287D10=332673`, `82287D8C=332673`, and `82287F1C=9293`; four audited
+read PCs were zero. Active kill sites were `8228778C=675279`,
+`82287854=333248`, `82287EDC=665986`, `82287EE4=9293`,
+`82288220=9293`, and `82287ED4=0`.
 
-Next useful worker slice: add per-PC active `f[1]` read / kill-window
-attribution for the same marker, or use the marker as safe caller-local scope
-proof in a broader `82282490` / `82287788` state-roundtrip design. Do not
-materialize payloads or run a quiet speed A/B from this audit-only patch.
+Next useful worker slice: source-backed `f[1]` kill-taxonomy split for the same
+edge, separating helper-preserved calls from child/unknown-call kills and
+keeping `fpscr` out of the read-only `f[1]` lane. Do not materialize payloads
+or run a quiet speed A/B from this audit-only patch.
 
 Previous residual register-cache capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`
