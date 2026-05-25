@@ -21,6 +21,25 @@ Use both sources of truth:
 Do not resurrect the removed helper mini-JIT unless the user explicitly asks for
 an archaeology comparison.
 
+## Mature Backend Checklist
+
+When speed work feels stuck, do not keep stacking Blue-Dragon-only cvars. First
+read `docs/research/20260525-143937-mature-a64-emulator-backend-patterns.md`,
+then classify the next patch by one mature A64 subsystem:
+
+- register cache / allocation / spill policy;
+- static host register contract for context, memory base, dispatch, downcount,
+  and scratch registers;
+- block cache, direct exit linking, recursive edge linking, and invalidation;
+- fastmem, memory aliasing, MMIO fallback, and fault/backpatch handling;
+- helper-call ABI, stackpoint, save/restore, and static-register discipline;
+- NEON vector lowering plus FPCR/FPSCR/NaN/denormal correctness;
+- deterministic backend tests or offline IR/codegen validation.
+
+Borrow the pattern, not the code, unless the donor import rules below are
+satisfied. Mature emulator sources are references for architecture and test
+shape; this fork still needs Xenia-specific correctness and license hygiene.
+
 ## First Checks
 
 ```powershell
@@ -55,6 +74,8 @@ For code changes, inspect the matching x64 implementation first:
 
 - Use `.agents/skills/xenia-a64-speed-hotpath/SKILL.md` for profiled speed
   runs before guessing at hot A64 changes.
+- If Main Thread/A64 body-time remains the wall, run the mature backend
+  checklist before another narrow PC-gated fastpath.
 - Treat `__savegprlr_*` and `__restgprlr_*` dominating the A64 speed profile as
   a call/ABI helper overhead problem until guest PPC evidence proves otherwise.
 - Treat high direct-call and entry deltas as a dispatch/direct-linking problem

@@ -118,6 +118,15 @@ the continuation, then pick exactly one next lane:
 
 ## Current Best Next Move
 
+Strategic override when the sprint is repeating narrow fastpaths:
+`docs/research/20260525-143937-mature-a64-emulator-backend-patterns.md`
+compares mature AArch64 emulator backends and updates the local rule: if the
+latest Thor capture still shows Main Thread/A64 generated-code as the wall,
+run the mature backend gate in
+`.agents/skills/xenia-a64-speed-hotpath/SKILL.md` before another risky
+title-specific codegen experiment. Keep Vulkan as a parallel evidence lane only
+until GPU Commands/present/submit/pipeline stalls overtake the CPU/JIT wall.
+
 Latest priority, superseding the older chronology below:
 `docs/research/20260524-184918-82287788-fpscr-cfg-writeback-plan.md`
 adds `tools/thor/thor_hir_fpscr_cfg_writeback_plan.ps1`. It wraps the prior

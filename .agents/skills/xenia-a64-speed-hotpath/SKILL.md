@@ -19,6 +19,34 @@ the imported aX360e/Edge-style A64 backend, not the removed helper mini-JIT.
   subsystem.
 - Keep trace-heavy correctness captures separate from trace-off speed captures.
 
+## Mature A64 Backend Gate
+
+Use this gate when the sprint has repeated narrow title-specific experiments,
+when a quiet A/B is inconclusive, or when the user asks why other emulators run
+better on AArch64. Read
+`docs/research/20260525-143937-mature-a64-emulator-backend-patterns.md` before
+another risky generated-code patch.
+
+Do not default to another one-PC cvar until a structural A64 check has answered
+these questions for the hot route:
+
+- Register cache: are guest GPR/FPR/vector/context loads and stores being kept
+  in host registers with dirty, spill, call-clobber, and flush rules?
+- Helper ABI: are helper calls forcing avoidable save/restore, stackpoint,
+  FPCR/FPSCR, or static-register churn?
+- Block linking: are direct exits, recursive edges, dispatcher returns, and
+  indirection paths patched or linked when safe?
+- Fastmem/addressing: are hot guest loads/stores going through the cheapest
+  legal path, with fault/backpatch or slow fallback coverage?
+- Vector/FP lowering: are NEON lowering, NaN/denormal/rounding, and FPSCR/FPCR
+  paths separated into proven-fast and proven-cold cases?
+- Harness: can the proposed backend behavior be tested offline before a Thor
+  route capture?
+
+If the answer points to a backend subsystem, make that the next lane. If the
+answer proves the issue is title/function-local, keep the patch default-off and
+gate it by title/function/PC with route-clean proof before quiet A/B.
+
 ## Baseline Run
 
 Build and deploy only when the native core changed:
