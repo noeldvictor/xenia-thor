@@ -151,7 +151,11 @@ Closed immediate lanes:
 Better next lanes:
 
 - A64 backend maturity: register allocation, guest-state cache design, helper
-  ABI, block linking, fastmem/addressing, and direct-call cost.
+  ABI, block linking, fastmem/addressing, and direct-call cost. As of
+  `docs/research/20260525-235500-a64-register-allocation-audit-skeleton.md`,
+  default-off `arm64_register_allocation_audit` exists; the next structural
+  proof should FullDeploy and route-capture `0x82282490` RA pressure before
+  allocator behavior changes.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
 - Mixed/static hot-function translation research only where guest-visible state,
@@ -194,6 +198,8 @@ Hardware lanes to pursue:
 
 - A64/JIT: structural register allocation, guest-state cache design, helper
   ABI, block linking, direct/indirect call dispatch, and fastmem/addressing.
+  `arm64_register_allocation_audit` can now capture per-function INT/FLOAT/VEC
+  allocation pressure and spills; use it before changing allocator behavior.
   Keep the exact `82282490:82282598 -> 82287788` edge-payload storage lane
   closed unless a future general entry/fallback model reopens it.
 - NEON/VMX128: exact 128-bit boolean, splat, permute, shift, compare, min/max,

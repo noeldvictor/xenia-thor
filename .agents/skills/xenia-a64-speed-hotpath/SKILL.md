@@ -63,6 +63,15 @@ Favor changes that can affect many dynamic instructions:
 - mixed/static hot-function variant experiments only when guest-visible state is
   explicit and normal entry remains correct.
 
+Current structural decision:
+`docs/research/20260525-235500-a64-register-allocation-audit-skeleton.md`
+adds default-off `arm64_register_allocation_audit` and Android/Thor launch
+plumbing. The next A64 backend proof should FullDeploy and route-capture
+`0x82282490` with `-Arm64RegisterAllocationAudit true` before allocator
+behavior changes. If the audit shows low spill pressure, close the RA-pressure
+lane for this route and move to helper ABI / block linking or PERMUTE /
+LOAD_VECTOR_SHL/SHR counters.
+
 For the VMX128/NEON lane, run this before behavior work:
 
 ```powershell

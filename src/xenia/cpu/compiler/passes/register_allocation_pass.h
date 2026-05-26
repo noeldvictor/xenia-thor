@@ -58,6 +58,8 @@ class RegisterAllocationPass : public CompilerPass {
   RegisterSetUsage* MarkRegUsed(const hir::RegAssignment& reg,
                                 hir::Value* value, hir::Value::Use* use);
   RegisterSetUsage* MarkRegAvailable(const hir::RegAssignment& reg);
+  uint32_t CountActiveRegisters(const RegisterSetUsage* usage_set) const;
+  uint32_t CountUpcomingUses(const RegisterSetUsage* usage_set) const;
 
   bool TryAllocateRegister(hir::Value* value,
                            const hir::RegAssignment& preferred_reg);

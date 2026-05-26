@@ -10,12 +10,24 @@
 #include "xenia/cpu/compiler/passes/register_allocation_pass.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
+
+DEFINE_bool(arm64_register_allocation_audit, false,
+            "Thor ARM64 research: log per-function register-allocation "
+            "pressure and spill counters without changing generated code. "
+            "Default-off audit only.",
+            "CPU");
+DEFINE_uint32(arm64_register_allocation_audit_function, 0,
+              "Optional guest function start address filter for "
+              "arm64_register_allocation_audit. 0 applies globally.",
+              "CPU");
 
 namespace xe {
 namespace cpu {
@@ -34,6 +46,106 @@ using xe::cpu::hir::TypeName;
 using xe::cpu::hir::Value;
 
 #define ASSERT_NO_CYCLES 0
+
+namespace {
+
+enum class RegisterAllocationAuditSetIndex {
+  kInt = 0,
+  kFloat = 1,
+  kVec = 2,
+  kCount = 3,
+};
+
+struct RegisterAllocationAuditSetStats {
+  uint64_t dest_values = 0;
+  uint64_t allocation_successes = 0;
+  uint64_t preferred_attempts = 0;
+  uint64_t preferred_hits = 0;
+  uint64_t preferred_fallbacks = 0;
+  uint64_t spill_requests = 0;
+  uint64_t spill_successes = 0;
+  uint64_t max_active_registers = 0;
+  uint64_t max_upcoming_uses = 0;
+};
+
+struct RegisterAllocationAuditStats {
+  uint32_t function_address = 0;
+  uint64_t blocks = 0;
+  uint64_t blocks_with_spills = 0;
+  uint64_t instructions = 0;
+  uint64_t dest_values = 0;
+  uint64_t local_slots_before = 0;
+  uint64_t local_slots_after = 0;
+  std::array<RegisterAllocationAuditSetStats,
+             static_cast<size_t>(RegisterAllocationAuditSetIndex::kCount)>
+      sets = {};
+};
+
+RegisterAllocationAuditSetIndex GetRegisterAllocationAuditSetIndex(
+    TypeName type) {
+  if (type <= INT64_TYPE) {
+    return RegisterAllocationAuditSetIndex::kInt;
+  }
+  if (type <= FLOAT64_TYPE) {
+    return RegisterAllocationAuditSetIndex::kFloat;
+  }
+  return RegisterAllocationAuditSetIndex::kVec;
+}
+
+const char* GetRegisterAllocationAuditSetName(
+    RegisterAllocationAuditSetIndex index) {
+  switch (index) {
+    case RegisterAllocationAuditSetIndex::kInt:
+      return "int";
+    case RegisterAllocationAuditSetIndex::kFloat:
+      return "float";
+    case RegisterAllocationAuditSetIndex::kVec:
+      return "vec";
+    default:
+      return "unknown";
+  }
+}
+
+uint32_t FindFirstSourceOffset(HIRBuilder* builder) {
+  for (auto block = builder->first_block(); block; block = block->next) {
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_SOURCE_OFFSET_info) {
+        return static_cast<uint32_t>(instr->src1.offset);
+      }
+    }
+  }
+  return 0;
+}
+
+void EmitRegisterAllocationAudit(const RegisterAllocationAuditStats& stats) {
+  uint64_t local_slots_added =
+      stats.local_slots_after >= stats.local_slots_before
+          ? stats.local_slots_after - stats.local_slots_before
+          : 0;
+  XELOGW(
+      "A64 register allocation audit fn {:08X}: blocks={} "
+      "blocks_with_spills={} instructions={} dest_values={} "
+      "locals_before={} locals_after={} local_slots_added={} "
+      "behavior_changed=0",
+      stats.function_address, stats.blocks, stats.blocks_with_spills,
+      stats.instructions, stats.dest_values, stats.local_slots_before,
+      stats.local_slots_after, local_slots_added);
+  for (size_t i = 0; i < stats.sets.size(); ++i) {
+    auto index = static_cast<RegisterAllocationAuditSetIndex>(i);
+    const auto& set = stats.sets[i];
+    XELOGW(
+        "A64 register allocation audit fn {:08X}: set={} dest_values={} "
+        "allocation_successes={} preferred_attempts={} preferred_hits={} "
+        "preferred_fallbacks={} spill_requests={} spill_successes={} "
+        "max_active_registers={} max_upcoming_uses={}",
+        stats.function_address, GetRegisterAllocationAuditSetName(index),
+        set.dest_values, set.allocation_successes, set.preferred_attempts,
+        set.preferred_hits, set.preferred_fallbacks, set.spill_requests,
+        set.spill_successes, set.max_active_registers, set.max_upcoming_uses);
+  }
+}
+
+}  // namespace
 
 RegisterAllocationPass::RegisterAllocationPass(const MachineInfo* machine_info)
     : CompilerPass() {
@@ -77,10 +189,27 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
   // Really, it'd just be nice to have someone who knew what they
   // were doing lower SSA and do this right.
 
+  const uint32_t function_address = FindFirstSourceOffset(builder);
+  const bool audit_enabled =
+      cvars::arm64_register_allocation_audit &&
+      (!cvars::arm64_register_allocation_audit_function ||
+       cvars::arm64_register_allocation_audit_function == function_address);
+  RegisterAllocationAuditStats audit_stats = {};
+  if (audit_enabled) {
+    audit_stats.function_address = function_address;
+    audit_stats.local_slots_before =
+        static_cast<uint64_t>(builder->locals().size());
+  }
+
   uint16_t block_ordinal = 0;
   uint32_t instr_ordinal = 0;
   auto block = builder->first_block();
   while (block) {
+    uint64_t block_spill_requests = 0;
+    if (audit_enabled) {
+      ++audit_stats.blocks;
+    }
+
     // Sequential block ordinals.
     block->ordinal = block_ordinal++;
 
@@ -100,6 +229,9 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     while (instr) {
       const auto info = instr->opcode;
       uint32_t signature = info->signature;
+      if (audit_enabled) {
+        ++audit_stats.instructions;
+      }
 
       // Update the register use heaps.
       AdvanceUses(instr);
@@ -128,6 +260,24 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
       if (GET_OPCODE_SIG_TYPE_DEST(signature) == OPCODE_SIG_TYPE_V) {
         // Must not have been set already.
         assert_null(instr->dest->reg.set);
+        const auto audit_set_index =
+            GetRegisterAllocationAuditSetIndex(instr->dest->type);
+        auto& audit_set =
+            audit_stats.sets[static_cast<size_t>(audit_set_index)];
+        if (audit_enabled) {
+          ++audit_stats.dest_values;
+          ++audit_set.dest_values;
+          RegisterSetUsage* usage_set = RegisterSetForValue(instr->dest);
+          audit_set.max_active_registers =
+              std::max<uint64_t>(audit_set.max_active_registers,
+                                 CountActiveRegisters(usage_set));
+          audit_set.max_upcoming_uses =
+              std::max<uint64_t>(audit_set.max_upcoming_uses,
+                                 CountUpcomingUses(usage_set));
+          if (has_preferred_reg) {
+            ++audit_set.preferred_attempts;
+          }
+        }
 
         // Sort the usage list. We depend on this in future uses of this
         // variable.
@@ -145,29 +295,69 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
           // spill and reuse an active one.
           allocated = TryAllocateRegister(instr->dest);
         }
+        if (audit_enabled && allocated) {
+          ++audit_set.allocation_successes;
+          if (has_preferred_reg) {
+            if (instr->dest->reg.set == preferred_reg.set &&
+                instr->dest->reg.index == preferred_reg.index) {
+              ++audit_set.preferred_hits;
+            } else {
+              ++audit_set.preferred_fallbacks;
+            }
+          }
+        }
         if (!allocated) {
           // Failed to allocate register -- need to spill and try again.
           // We spill only those registers we aren't using.
+          if (audit_enabled) {
+            ++audit_set.spill_requests;
+            ++block_spill_requests;
+          }
           if (!SpillOneRegister(builder, block, instr->dest->type)) {
             // Unable to spill anything - this shouldn't happen.
+            if (audit_enabled) {
+              audit_stats.local_slots_after =
+                  static_cast<uint64_t>(builder->locals().size());
+              EmitRegisterAllocationAudit(audit_stats);
+            }
             XELOGE("Unable to spill any registers");
             assert_always();
             return false;
+          }
+          if (audit_enabled) {
+            ++audit_set.spill_successes;
           }
 
           // Demand allocation.
           if (!TryAllocateRegister(instr->dest)) {
             // Boned.
+            if (audit_enabled) {
+              audit_stats.local_slots_after =
+                  static_cast<uint64_t>(builder->locals().size());
+              EmitRegisterAllocationAudit(audit_stats);
+            }
             XELOGE("Register allocation failed");
             assert_always();
             return false;
+          }
+          if (audit_enabled) {
+            ++audit_set.allocation_successes;
           }
         }
       }
 
       instr = instr->next;
     }
+    if (audit_enabled && block_spill_requests) {
+      ++audit_stats.blocks_with_spills;
+    }
     block = block->next;
+  }
+
+  if (audit_enabled) {
+    audit_stats.local_slots_after =
+        static_cast<uint64_t>(builder->locals().size());
+    EmitRegisterAllocationAudit(audit_stats);
   }
 
   return true;
@@ -291,6 +481,22 @@ RegisterAllocationPass::MarkRegAvailable(const hir::RegAssignment& reg) {
   }
   usage_set->availability.set(reg.index, true);
   return usage_set;
+}
+
+uint32_t RegisterAllocationPass::CountActiveRegisters(
+    const RegisterSetUsage* usage_set) const {
+  uint32_t active = 0;
+  for (uint32_t i = 0; i < usage_set->count; ++i) {
+    if (!usage_set->availability.test(i)) {
+      ++active;
+    }
+  }
+  return active;
+}
+
+uint32_t RegisterAllocationPass::CountUpcomingUses(
+    const RegisterSetUsage* usage_set) const {
+  return static_cast<uint32_t>(usage_set->upcoming_uses.size());
 }
 
 bool RegisterAllocationPass::TryAllocateRegister(
