@@ -262,7 +262,7 @@ if ($guardBlockerCount -eq 11 -and $guardInputCount -eq 8 -and
     -not $dirtyFlushCodePresent -and
     -not $fastEntryStubCodePresent) {
     Write-Output "decision=guard_protocol_source_ready_behavior_blocked"
-    Write-Output "safe_next_patch=payload_population_and_dirty_flush_codegen_design_only_or_lane_switch"
+    Write-Output "safe_next_patch=payload_flush_and_codegen_protocol_gates_present_continue_with_lane_switch_or_behavior_neutral_emitter_planning_audit"
     Write-Output "do_not_patch=callsite_branch;machine_code_pointer;global_indirection;payload_materialization;speed_ab"
 } else {
     Write-Output "decision=needs_manual_review_before_any_fast_entry_behavior"

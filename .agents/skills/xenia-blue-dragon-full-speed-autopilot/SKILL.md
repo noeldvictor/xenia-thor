@@ -287,6 +287,12 @@ and behavior is still unchanged: no callsite guard, payload population, dirty
 flush codegen, fast-entry stub codegen, normal-entry replacement, or global
 indirection rewrite. Next fast-entry work must be no-op codegen protocol
 helpers with generated behavior unchanged, or switch lanes.
+`docs/research/20260526-110000-a64-fast-entry-codegen-protocol.md` adds that
+no-op codegen protocol helper and audit. It proves the guard plus payload/flush
+planner can be composed as a single source gate, but codegen still does not use
+the gate and behavior is unchanged. Do not run speed A/B or patch callsites
+from this; switch lanes or keep the next fast-entry slice behavior-neutral
+inside emitter planning only.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

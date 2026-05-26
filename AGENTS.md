@@ -464,6 +464,14 @@ Better next lanes:
   absent. Do not run Thor speed A/B or patch generated behavior from this
   source-only state. Next fast-entry work must be no-op codegen protocol
   helpers with behavior unchanged, or a lane switch.
+  `docs/research/20260526-110000-a64-fast-entry-codegen-protocol.md` adds the
+  no-op codegen protocol gate and audit. It composes the direct-call guard and
+  payload/flush plan, but generated behavior is still unchanged: normal entry,
+  direct calls, global indirection, payload population, dirty flush codegen,
+  stub codegen, callsite guards, and stackpoint resume remain absent/unchanged.
+  Do not run Thor speed A/B or patch generated behavior from this source-only
+  state. Next work should switch lanes or stay behavior-neutral with emitter
+  planning only.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

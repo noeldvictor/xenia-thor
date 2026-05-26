@@ -155,7 +155,7 @@ if ($normalEntrySingleton -and $hostToGuestPassesOnlyReturn -and
     Write-Output "verdict=separate_fast_entry_data_model_present_behavior_absent"
     Write-Output "behavior_status=normal_entry_unchanged;global_indirection_unchanged;direct_calls_still_use_normal_entry"
     Write-Output "required_model=direct_callsite_guard;generated_fast_entry_stub_or_offset;explicit_argument_payload_for_r3_r10_lr;explicit_dirty_flush_to_PPCContext_before_barrier_helper_host_call_debug_trap_tail_return_exception;indirect_unresolved_extern_tail_normal_fallback"
-    Write-Output "recommended_next_slice=no-op codegen protocol helpers with generated behavior unchanged, or lane switch"
+    Write-Output "recommended_next_slice=lane switch or behavior-neutral emitter planning audit; do not generate fast-entry behavior yet"
 } elseif ($normalEntrySingleton -and $hostToGuestPassesOnlyReturn -and
     $directGuestCallPassesOnlyReturn -and $stackpointLongjmpRequired -and
     -not $fastEntryDataModelPresent -and -not $existingFastEntryBehavior) {

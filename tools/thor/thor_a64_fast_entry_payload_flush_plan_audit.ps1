@@ -225,7 +225,7 @@ if ($planBlockerCount -eq 6 -and $planInputCount -eq 8 -and
     -not $generatedDirtyFlushBehaviorPresent -and
     -not $fastEntryCallsiteBehaviorPresent) {
     Write-Output "decision=payload_flush_plan_source_ready_behavior_blocked"
-    Write-Output "safe_next_patch=noop_codegen_protocol_helpers_or_lane_switch"
+    Write-Output "safe_next_patch=codegen_protocol_gate_present_continue_with_lane_switch_or_behavior_neutral_emitter_planning_audit"
     Write-Output "do_not_patch=direct_callsites;machine_code_pointer;global_indirection;payload_materialization;dirty_flush_codegen;speed_ab"
 } else {
     Write-Output "decision=needs_manual_review_before_any_payload_or_dirty_flush_behavior"

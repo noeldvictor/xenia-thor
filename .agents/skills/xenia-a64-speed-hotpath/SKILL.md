@@ -412,6 +412,17 @@ global-indirection rewrite. Do not run Thor speed A/B from this source-only
 state. Next fast-entry work must be no-op codegen protocol helpers with
 behavior unchanged, or a lane switch.
 
+`docs/research/20260526-110000-a64-fast-entry-codegen-protocol.md` adds those
+source-only codegen protocol helpers and
+`tools/thor/thor_a64_fast_entry_codegen_protocol_audit.ps1`. The protocol
+composes the direct-call guard and payload/flush planner, preserves detailed
+blockers, and blocks behavior when guard emission, payload population, dirty
+flush emission, late-bound fallback, stackpoint resume, or debug/exception
+visibility codegen is missing. Generated behavior is still unchanged. Do not
+run Thor speed A/B or patch callsites from this; next work must either switch
+to another structural A64 lane or add a behavior-neutral emitter planning audit
+that still leaves generated code unchanged.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

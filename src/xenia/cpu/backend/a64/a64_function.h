@@ -86,6 +86,22 @@ enum A64GuestCallFastEntryPayloadFlushPlanBlocker : uint32_t {
   kA64GuestCallFastEntryPlanBlockerMissingDebugExceptionFlush = 1u << 5,
 };
 
+enum A64GuestCallFastEntryCodegenProtocolBlocker : uint32_t {
+  kA64GuestCallFastEntryCodegenBlockerBehaviorDisabled = 1u << 0,
+  kA64GuestCallFastEntryCodegenBlockerGuardBlocked = 1u << 1,
+  kA64GuestCallFastEntryCodegenBlockerPayloadFlushPlanBlocked = 1u << 2,
+  kA64GuestCallFastEntryCodegenBlockerMissingGuardEmission = 1u << 3,
+  kA64GuestCallFastEntryCodegenBlockerMissingPayloadPopulationEmission =
+      1u << 4,
+  kA64GuestCallFastEntryCodegenBlockerMissingDirtyFlushEmission = 1u << 5,
+  kA64GuestCallFastEntryCodegenBlockerMissingLateBoundFallbackEmission =
+      1u << 6,
+  kA64GuestCallFastEntryCodegenBlockerMissingStackpointResumeEmission =
+      1u << 7,
+  kA64GuestCallFastEntryCodegenBlockerMissingDebugExceptionVisibility =
+      1u << 8,
+};
+
 constexpr uint32_t kA64GuestCallFastEntryRequiredPayloadMask =
     kA64GuestCallFastEntryPayloadGpr3 |
     kA64GuestCallFastEntryPayloadGpr4 |
@@ -151,6 +167,25 @@ struct A64GuestCallFastEntryPayloadFlushPlan {
   }
 };
 
+struct A64GuestCallFastEntryCodegenProtocolInputs {
+  A64GuestCallFastEntryGuardInputs guard_inputs = {};
+  A64GuestCallFastEntryPayloadFlushPlanInputs payload_flush_inputs = {};
+  bool guard_emission_available = false;
+  bool payload_population_emission_available = false;
+  bool dirty_flush_emission_available = false;
+  bool late_bound_fallback_emission_available = false;
+  bool stackpoint_resume_emission_available = false;
+  bool debug_exception_visibility_available = false;
+};
+
+struct A64GuestCallFastEntryCodegenProtocolDecision {
+  uint32_t blockers = 0;
+  uint32_t guard_blockers = 0;
+  uint32_t payload_blockers = 0;
+  uint32_t dirty_flush_blockers = 0;
+  bool ready_for_behavior_codegen() const { return blockers == 0; }
+};
+
 A64GuestCallFastEntryContract MakeA64GuestCallFastEntryStubSkeletonContract();
 bool A64GuestCallFastEntryContractCoversStubSkeleton(
     const A64GuestCallFastEntryContract& contract);
@@ -164,6 +199,11 @@ A64GuestCallFastEntryPayloadFlushPlan
 BuildA64GuestCallFastEntryPayloadFlushPlan(
     const A64GuestCallFastEntryContract& contract,
     const A64GuestCallFastEntryPayloadFlushPlanInputs& inputs);
+A64GuestCallFastEntryCodegenProtocolDecision
+EvaluateA64GuestCallFastEntryCodegenProtocol(
+    const A64GuestCallFastEntryContract& contract,
+    const A64GuestCallFastEntryCodegenProtocolInputs& inputs,
+    const uint8_t* fast_entry_code);
 
 class A64Function : public GuestFunction {
  public:

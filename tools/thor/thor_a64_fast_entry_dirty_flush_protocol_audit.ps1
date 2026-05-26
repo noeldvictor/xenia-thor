@@ -271,7 +271,7 @@ if ($payloadBitCount -eq 9 -and $dirtyFlushBitCount -eq 8 -and
     -not $stubCodegenPresent) {
     Write-Output "decision=stub_skeleton_source_ready_but_behavior_blocked"
     Write-Output "behavior_status=unchanged"
-    Write-Output "safe_next_patch=direct_call_guard_and_payload_population_design_only_with_generated_behavior_unchanged"
+    Write-Output "safe_next_patch=guard_payload_flush_and_codegen_protocol_gates_present_continue_with_lane_switch_or_behavior_neutral_emitter_planning_audit"
     Write-Output "do_not_patch=direct_callsites;machine_code_pointer;global_indirection;payload_materialization;quiet_speed_ab"
 } else {
     Write-Output "decision=needs_manual_review_before_any_stub_or_behavior_patch"

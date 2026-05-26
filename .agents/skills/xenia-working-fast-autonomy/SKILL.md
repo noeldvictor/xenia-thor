@@ -215,6 +215,13 @@ Treat these as closed for immediate speed work:
   inputs exist, but the planner is unused by generated code and behavior is
   still unchanged. Do not run a speed A/B or patch callsites from this source
   state; continue only with no-op codegen protocol helpers or switch lanes.
+- `docs/research/20260526-110000-a64-fast-entry-codegen-protocol.md` adds the
+  no-op codegen protocol gate and audit. It composes the guard protocol and
+  payload/flush plan, but generated code still does not use it. Direct calls,
+  normal entry, global indirection, payload population, dirty flush codegen,
+  fast-entry stub codegen, and callsite behavior remain unchanged. Do not run
+  speed A/B or patch runtime behavior from this source-only evidence; switch
+  lanes or add only behavior-neutral emitter planning.
 
 ## Useful Output Bias
 

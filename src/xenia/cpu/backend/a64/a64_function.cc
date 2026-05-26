@@ -158,6 +158,63 @@ BuildA64GuestCallFastEntryPayloadFlushPlan(
   return plan;
 }
 
+A64GuestCallFastEntryCodegenProtocolDecision
+EvaluateA64GuestCallFastEntryCodegenProtocol(
+    const A64GuestCallFastEntryContract& contract,
+    const A64GuestCallFastEntryCodegenProtocolInputs& inputs,
+    const uint8_t* fast_entry_code) {
+  A64GuestCallFastEntryCodegenProtocolDecision decision = {};
+
+  A64GuestCallFastEntryGuardDecision guard =
+      EvaluateA64GuestCallFastEntryGuard(contract, inputs.guard_inputs,
+                                         fast_entry_code);
+  A64GuestCallFastEntryPayloadFlushPlan payload_flush_plan =
+      BuildA64GuestCallFastEntryPayloadFlushPlan(
+          contract, inputs.payload_flush_inputs);
+
+  decision.guard_blockers = guard.blockers;
+  decision.payload_blockers = payload_flush_plan.payload_blockers;
+  decision.dirty_flush_blockers = payload_flush_plan.dirty_flush_blockers;
+
+  if (!A64GuestCallFastEntryContractEnablesBehavior(contract)) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerBehaviorDisabled;
+  }
+  if (guard.blockers) {
+    decision.blockers |= kA64GuestCallFastEntryCodegenBlockerGuardBlocked;
+  }
+  if (!payload_flush_plan.ready_for_codegen()) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerPayloadFlushPlanBlocked;
+  }
+  if (!inputs.guard_emission_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingGuardEmission;
+  }
+  if (!inputs.payload_population_emission_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingPayloadPopulationEmission;
+  }
+  if (!inputs.dirty_flush_emission_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingDirtyFlushEmission;
+  }
+  if (!inputs.late_bound_fallback_emission_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingLateBoundFallbackEmission;
+  }
+  if (!inputs.stackpoint_resume_emission_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingStackpointResumeEmission;
+  }
+  if (!inputs.debug_exception_visibility_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryCodegenBlockerMissingDebugExceptionVisibility;
+  }
+
+  return decision;
+}
+
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_length_.store(machine_code_length, std::memory_order_relaxed);
   machine_code_.store(machine_code, std::memory_order_release);
