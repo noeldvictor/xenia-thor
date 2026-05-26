@@ -102,6 +102,13 @@ Treat these as closed for immediate speed work:
   `82281D28`. Do not design a fast-entry variant until broader route or
   file-backed callee HIR proves body-weighted volume and normal-entry fallback
   constraints.
+- The targeted coverage capture in
+  `docs/research/20260526-034500-guest-call-hir-coverage-capture.md` reduces
+  the blocker: corrected audit output is `callee_first_load_stores=247`,
+  `callee_hir_missing_stores=126`, and `normal_entry_fallback_required=81`.
+  Treat this as a fast-entry feasibility lane, not a behavior patch. Next slice
+  should source-audit A64 direct guest-call entry conventions and fallback
+  constraints before any runtime skeleton.
 
 ## Useful Output Bias
 

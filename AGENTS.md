@@ -227,6 +227,16 @@ Better next lanes:
   sample. Next useful work is broader route or file-backed HIR coverage for
   missing direct-call-heavy callees, followed by this audit to prove
   body-weighted callee-first-load volume and normal-entry fallback constraints.
+  `docs/research/20260526-034500-guest-call-hir-coverage-capture.md` ran that
+  coverage capture on Thor and fixed the audit so extra logs are callee-only.
+  Corrected coverage for `82281D28` is now `direct_ppc_bl_calls=81`,
+  `argument_store_fields=439`, `callee_first_load_stores=247`,
+  `callee_hir_missing_stores=126`, and
+  `normal_entry_fallback_required=81`. The body-weighted top call boundaries
+  are ABI-live, so this is not local store elision. Next useful work is a
+  source-level fast-entry feasibility audit for A64 direct guest calls,
+  function entry conventions, stackpoint/longjmp handling, debug/exception
+  visibility, and normal-entry fallback before any runtime skeleton.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

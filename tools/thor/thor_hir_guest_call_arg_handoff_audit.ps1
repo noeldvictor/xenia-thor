@@ -336,11 +336,12 @@ function Get-LastArgumentStoresBeforeCall {
 }
 
 $paths = @($LogPath) + $ExtraLogPath
+$callerFunctions = Read-HirLogs -Paths @($LogPath) -Phase $Phase
 $functions = Read-HirLogs -Paths $paths -Phase $Phase
 $blockProfiles = Read-BlockProfileRows -Paths @($LogPath)
 
 $functionFilter = $Function.ToUpperInvariant()
-$selectedFunctions = @($functions.Values | Where-Object {
+$selectedFunctions = @($callerFunctions.Values | Where-Object {
     [string]::IsNullOrWhiteSpace($functionFilter) -or $_.function -eq $functionFilter
 } | Sort-Object -Property function)
 

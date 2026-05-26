@@ -153,6 +153,14 @@ coverage for missing direct-call-heavy callees.
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_guest_call_arg_handoff_audit.ps1 -LogPath <route-speed-logcat> -ExtraLogPath <callee-hir-log> -Function 82281D28 -Phase OptHIR -Top 24
 ```
 
+`docs/research/20260526-034500-guest-call-hir-coverage-capture.md` improves
+the lane. A targeted Thor capture with broader callee HIR plus the corrected
+audit reports `callee_first_load_stores=247`, `callee_hir_missing_stores=126`,
+and `normal_entry_fallback_required=81`. The body-weighted top call boundaries
+are ABI-live. Next step is a source-level fast-entry feasibility audit for A64
+direct guest calls and normal-entry fallback; do not patch runtime behavior or
+run a quiet speed A/B yet.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

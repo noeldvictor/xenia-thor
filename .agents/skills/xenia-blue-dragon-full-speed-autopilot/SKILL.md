@@ -96,6 +96,13 @@ Pick one lane with a credible FPS path:
   (`callee_hir_missing_stores=364`) to justify fast-entry behavior. Next work
   should capture or provide broader route/file-backed callee HIR and rerun the
   tool before any ABI patch.
+  `docs/research/20260526-034500-guest-call-hir-coverage-capture.md` ran that
+  targeted coverage capture and fixed the audit's primary-vs-extra log split.
+  Corrected coverage is now `callee_first_load_stores=247` and
+  `callee_hir_missing_stores=126` for `82281D28`, with the body-weighted top
+  call boundaries ABI-live. Next work is a source-level fast-entry feasibility
+  audit for A64 direct guest-call ABI and normal-entry fallback, not runtime
+  behavior yet.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
