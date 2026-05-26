@@ -472,6 +472,15 @@ Better next lanes:
   Do not run Thor speed A/B or patch generated behavior from this source-only
   state. Next work should switch lanes or stay behavior-neutral with emitter
   planning only.
+  `docs/research/20260526-111500-a64-fast-entry-emitter-planning.md` adds that
+  emitter planning audit. It maps the direct-call, late-bound fallback,
+  stackpoint, debug, exception, and source-map attachment points, and confirms
+  normal entry, global indirection, direct callsites, payload population, dirty
+  flush codegen, and stub codegen are still unchanged/absent. Treat the
+  fast-entry source-only chain as closed for now; do not add another fast-entry
+  micro-audit unless it is a real generated-code behavior design with the
+  missing contracts solved. Prefer a lane switch or a compile-time
+  route-ranking audit for a different body-dominant A64 backend class.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -293,6 +293,14 @@ planner can be composed as a single source gate, but codegen still does not use
 the gate and behavior is unchanged. Do not run speed A/B or patch callsites
 from this; switch lanes or keep the next fast-entry slice behavior-neutral
 inside emitter planning only.
+`docs/research/20260526-111500-a64-fast-entry-emitter-planning.md` adds that
+emitter planning audit. It locates the direct-call, late-bound fallback,
+stackpoint, debug, exception, and source-map attachment points, and confirms
+normal entry, global indirection, payload population, dirty flush codegen, stub
+codegen, and callsite behavior are still unchanged/absent. Close the current
+fast-entry source-only chain for now; next useful work is a non-fast-entry
+structural lane or a compile-time route-ranking audit for a different
+body-dominant A64 backend class.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

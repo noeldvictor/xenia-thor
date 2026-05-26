@@ -423,6 +423,15 @@ run Thor speed A/B or patch callsites from this; next work must either switch
 to another structural A64 lane or add a behavior-neutral emitter planning audit
 that still leaves generated code unchanged.
 
+`docs/research/20260526-111500-a64-fast-entry-emitter-planning.md` adds
+`tools/thor/thor_a64_fast_entry_emitter_planning_audit.ps1`. It maps where a
+future guarded fast-entry codegen patch would attach, but verifies generated
+behavior is still unchanged: no guard emission, payload population, dirty flush
+codegen, stub codegen, direct-call alternate branch, normal-entry replacement,
+or global-indirection rewrite. Treat fast-entry source-only work as closed
+until the missing generated-code contracts are solved; prefer a lane switch or
+compile-time route-ranking audit for another body-dominant A64 backend class.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

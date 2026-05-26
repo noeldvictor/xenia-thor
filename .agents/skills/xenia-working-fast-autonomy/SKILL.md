@@ -222,6 +222,12 @@ Treat these as closed for immediate speed work:
   fast-entry stub codegen, and callsite behavior remain unchanged. Do not run
   speed A/B or patch runtime behavior from this source-only evidence; switch
   lanes or add only behavior-neutral emitter planning.
+- `docs/research/20260526-111500-a64-fast-entry-emitter-planning.md` adds that
+  emitter planning audit and closes the current fast-entry source-only chain.
+  The attachment points are mapped, but normal entry, global indirection,
+  payload population, dirty flush codegen, stub codegen, and callsite behavior
+  remain unchanged. Prefer a non-fast-entry structural lane or a compile-time
+  route-ranking audit for a different body-dominant A64 backend class.
 
 ## Useful Output Bias
 
