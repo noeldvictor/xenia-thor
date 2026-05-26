@@ -1589,6 +1589,7 @@ void A64Backend::LogSpeedProfile() {
     uint64_t body_ticks_total = 0;
     uint64_t body_ticks_delta = 0;
     uint64_t body_ticks_per_entry = 0;
+    A64ProfileBlockMetadata metadata = {};
   };
   struct CallEdgeSample {
     uint32_t function_address = 0;
@@ -1717,7 +1718,8 @@ void A64Backend::LogSpeedProfile() {
           BlockSample block_sample = {
               function->address(), function->profile_block_address(i),
               static_cast<uint16_t>(i), name, block_total, block_delta,
-              block_body_total, block_body_delta, block_ticks_per_entry};
+              block_body_total, block_body_delta, block_ticks_per_entry,
+              function->profile_block_metadata(i)};
           if (block_delta >= cvars::arm64_speed_profile_min_delta) {
             block_samples.push_back(block_sample);
           }
@@ -2511,10 +2513,17 @@ void A64Backend::LogSpeedProfile() {
     const auto& sample = block_samples[i];
     XELOGW(
         "A64 speed profile block top {:02}: fn {:08X} '{}' block={} "
-        "guest={:08X} delta={} total={}",
+        "guest={:08X} delta={} total={} first_source={:08X} "
+        "last_source={:08X} first_guest={:08X} last_guest={:08X} "
+        "first_comment={:08X} last_comment={:08X} label={:08X} "
+        "hir_instrs={}",
         i + 1, sample.function_address, sample.function_name,
         sample.block_ordinal, sample.block_address, sample.delta,
-        sample.total);
+        sample.total, sample.metadata.first_source_offset,
+        sample.metadata.last_source_offset, sample.metadata.first_guest_address,
+        sample.metadata.last_guest_address, sample.metadata.first_comment_address,
+        sample.metadata.last_comment_address, sample.metadata.first_label_address,
+        sample.metadata.hir_instr_count);
   }
 
   size_t block_body_top_count = std::min<size_t>(
@@ -2524,10 +2533,18 @@ void A64Backend::LogSpeedProfile() {
     XELOGW(
         "A64 speed profile block body top {:02}: fn {:08X} '{}' block={} "
         "guest={:08X} body_ticks_delta={} body_ticks_total={} "
-        "entries_delta={} ticks_per_entry={}",
+        "entries_delta={} ticks_per_entry={} first_source={:08X} "
+        "last_source={:08X} first_guest={:08X} last_guest={:08X} "
+        "first_comment={:08X} last_comment={:08X} label={:08X} "
+        "hir_instrs={}",
         i + 1, sample.function_address, sample.function_name,
         sample.block_ordinal, sample.block_address, sample.body_ticks_delta,
-        sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry);
+        sample.body_ticks_total, sample.delta, sample.body_ticks_per_entry,
+        sample.metadata.first_source_offset, sample.metadata.last_source_offset,
+        sample.metadata.first_guest_address, sample.metadata.last_guest_address,
+        sample.metadata.first_comment_address,
+        sample.metadata.last_comment_address, sample.metadata.first_label_address,
+        sample.metadata.hir_instr_count);
   }
 
   size_t call_edge_top_count = std::min<size_t>(

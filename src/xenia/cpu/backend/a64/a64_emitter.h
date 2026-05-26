@@ -41,6 +41,7 @@ using namespace arm64;
 class A64Backend;
 class A64CodeCache;
 class A64Function;
+struct A64ProfileBlockMetadata;
 
 enum class FPCRMode : uint32_t { Unknown, Fpu, Vmx };
 
@@ -162,6 +163,8 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void MaybeEmitEntryExitTimeProfilePrologEnd();
   void MaybeEmitEntryExitTimeProfileEpilogEndFromX15();
   uint32_t FindBlockGuestAddress(const hir::Block* block) const;
+  A64ProfileBlockMetadata CollectBlockProfileMetadata(
+      const hir::Block* block) const;
   void MaybeEmitBlockProfileEntry(const hir::Block* block);
   void MaybeLogContextTrafficAudit(hir::HIRBuilder* builder);
 

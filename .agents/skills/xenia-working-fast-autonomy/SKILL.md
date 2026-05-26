@@ -83,7 +83,9 @@ Treat these as closed for immediate speed work:
   the 2026-05-26 route counters; vector volume was not the dominant wall and
   mostly sat in closed local shapes.
 - `82281D28` weighted HIR/block-profile behavior from ordinal fallback: the
-  2026-05-26 join audit found `join_status=unsafe`.
+  2026-05-26 join audit found `join_status=unsafe`. The metadata mapper patch
+  exists, but needs FullDeploy plus a fresh route capture before it can justify
+  any behavior work.
 
 ## Useful Output Bias
 

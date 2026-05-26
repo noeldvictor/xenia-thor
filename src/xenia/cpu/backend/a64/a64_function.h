@@ -23,6 +23,18 @@ namespace a64 {
 
 class A64Backend;
 
+struct A64ProfileBlockMetadata {
+  uint32_t block_address = 0;
+  uint32_t first_source_offset = 0;
+  uint32_t last_source_offset = 0;
+  uint32_t first_guest_address = 0;
+  uint32_t last_guest_address = 0;
+  uint32_t first_comment_address = 0;
+  uint32_t last_comment_address = 0;
+  uint32_t first_label_address = 0;
+  uint32_t hir_instr_count = 0;
+};
+
 class A64Function : public GuestFunction {
  public:
   A64Function(Module* module, uint32_t address);
@@ -51,6 +63,9 @@ class A64Function : public GuestFunction {
   std::atomic<uint64_t>* profile_block_body_ticks(size_t ordinal);
   uint32_t profile_block_address(size_t ordinal) const;
   void set_profile_block_address(size_t ordinal, uint32_t address);
+  A64ProfileBlockMetadata profile_block_metadata(size_t ordinal) const;
+  void set_profile_block_metadata(size_t ordinal,
+                                  const A64ProfileBlockMetadata& metadata);
   void SetupProfileCallEdges(size_t count);
   size_t profile_call_edge_slot_count() const {
     return profile_call_edge_slot_count_;
@@ -76,6 +91,7 @@ class A64Function : public GuestFunction {
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_counts_;
   std::unique_ptr<std::atomic<uint64_t>[]> profile_block_body_ticks_;
   std::unique_ptr<uint32_t[]> profile_block_addresses_;
+  std::unique_ptr<A64ProfileBlockMetadata[]> profile_block_metadata_;
   size_t profile_block_count_count_ = 0;
   std::unique_ptr<std::atomic<uint64_t>[]> profile_call_edge_counts_;
   std::unique_ptr<std::atomic<uint64_t>[]> profile_call_edge_body_ticks_;

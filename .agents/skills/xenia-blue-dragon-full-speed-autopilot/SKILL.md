@@ -69,8 +69,10 @@ Pick one lane with a credible FPS path:
   Blue-Dragon-only one-PC cvars. Current next backend slice is tooling, not
   behavior: `docs/research/20260526-014000-82281d28-hir-block-profile-join.md`
   found the `82281D28` runtime block-profile to printed OptHIR join unsafe.
-  Add stable block metadata or a mapper before trusting weighted HIR joins for
-  `82281D28:8228233C`.
+  `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` added
+  stable block metadata and disabled ordinal fallback in the main HIR reports.
+  Next step is FullDeploy plus a route-clean `82281D28` metadata capture before
+  trusting weighted HIR joins for `82281D28:8228233C`.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

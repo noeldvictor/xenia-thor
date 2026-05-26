@@ -42,7 +42,8 @@ void A64Function::MarkProfileRegistered(A64Backend* backend) {
 
 void A64Function::SetupProfileBlockCounts(size_t count) {
   if (count == profile_block_count_count_ && profile_block_counts_ &&
-      profile_block_body_ticks_ && profile_block_addresses_) {
+      profile_block_body_ticks_ && profile_block_addresses_ &&
+      profile_block_metadata_) {
     return;
   }
 
@@ -50,11 +51,13 @@ void A64Function::SetupProfileBlockCounts(size_t count) {
   profile_block_body_ticks_ =
       std::make_unique<std::atomic<uint64_t>[]>(count);
   profile_block_addresses_ = std::make_unique<uint32_t[]>(count);
+  profile_block_metadata_ = std::make_unique<A64ProfileBlockMetadata[]>(count);
   profile_block_count_count_ = count;
   for (size_t i = 0; i < count; ++i) {
     profile_block_counts_[i].store(0, std::memory_order_relaxed);
     profile_block_body_ticks_[i].store(0, std::memory_order_relaxed);
     profile_block_addresses_[i] = 0;
+    profile_block_metadata_[i] = {};
   }
 }
 
@@ -85,6 +88,25 @@ void A64Function::set_profile_block_address(size_t ordinal, uint32_t address) {
     return;
   }
   profile_block_addresses_[ordinal] = address;
+}
+
+A64ProfileBlockMetadata A64Function::profile_block_metadata(
+    size_t ordinal) const {
+  if (!profile_block_metadata_ || ordinal >= profile_block_count_count_) {
+    return {};
+  }
+  return profile_block_metadata_[ordinal];
+}
+
+void A64Function::set_profile_block_metadata(
+    size_t ordinal, const A64ProfileBlockMetadata& metadata) {
+  if (!profile_block_metadata_ || ordinal >= profile_block_count_count_) {
+    return;
+  }
+  profile_block_metadata_[ordinal] = metadata;
+  if (profile_block_addresses_ && metadata.block_address) {
+    profile_block_addresses_[ordinal] = metadata.block_address;
+  }
 }
 
 void A64Function::SetupProfileCallEdges(size_t count) {

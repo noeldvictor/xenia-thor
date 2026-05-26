@@ -175,6 +175,42 @@ std::unordered_map<uint32_t, uint64_t>
     g_blue_dragon_stricmp_return_profile_lr_counts;
 std::atomic<uint32_t> g_a64_context_traffic_audit_count{0};
 
+uint32_t ParseEightHexAddress(std::string_view text, size_t offset = 0) {
+  if (text.size() < offset + 8) {
+    return 0;
+  }
+  for (size_t i = 0; i < 8; ++i) {
+    if (!std::isxdigit(static_cast<unsigned char>(text[offset + i]))) {
+      return 0;
+    }
+  }
+  uint32_t value = 0;
+  auto result = std::from_chars(text.data() + offset, text.data() + offset + 8,
+                                value, 16);
+  if (result.ec != std::errc() || result.ptr != text.data() + offset + 8) {
+    return 0;
+  }
+  return value;
+}
+
+uint32_t ParseLocLabelAddress(const char* name) {
+  if (!name) {
+    return 0;
+  }
+  std::string_view text(name);
+  if (text.size() < 12 || text.substr(0, 4) != "loc_") {
+    return 0;
+  }
+  return ParseEightHexAddress(text, 4);
+}
+
+uint32_t ParsePpcCommentAddress(const char* text) {
+  if (!text) {
+    return 0;
+  }
+  return ParseEightHexAddress(std::string_view(text), 0);
+}
+
 enum class ContextTrafficSlot {
   kOther,
   kThreadState,
@@ -2329,6 +2365,64 @@ uint32_t A64Emitter::FindBlockGuestAddress(const hir::Block* block) const {
   return 0;
 }
 
+A64ProfileBlockMetadata A64Emitter::CollectBlockProfileMetadata(
+    const hir::Block* block) const {
+  A64ProfileBlockMetadata metadata = {};
+  if (!block) {
+    return metadata;
+  }
+
+  metadata.block_address = FindBlockGuestAddress(block);
+
+  for (const hir::Label* label = block->label_head; label;
+       label = label->next) {
+    uint32_t label_address = ParseLocLabelAddress(label->name);
+    if (label_address) {
+      metadata.first_label_address = label_address;
+      break;
+    }
+  }
+
+  for (const hir::Instr* instr = block->instr_head; instr; instr = instr->next) {
+    const auto opcode = instr->GetOpcodeNum();
+    if (opcode == hir::OPCODE_SOURCE_OFFSET) {
+      const auto source_offset = static_cast<uint32_t>(instr->src1.offset);
+      if (!metadata.first_source_offset) {
+        metadata.first_source_offset = source_offset;
+      }
+      metadata.last_source_offset = source_offset;
+      continue;
+    }
+
+    if (opcode == hir::OPCODE_COMMENT) {
+      const auto comment_address =
+          ParsePpcCommentAddress(reinterpret_cast<const char*>(
+              instr->src1.offset));
+      if (comment_address) {
+        if (!metadata.first_comment_address) {
+          metadata.first_comment_address = comment_address;
+        }
+        metadata.last_comment_address = comment_address;
+      }
+      continue;
+    }
+
+    const uint32_t guest_address = instr->GuestAddressFor();
+    if (guest_address) {
+      if (!metadata.first_guest_address) {
+        metadata.first_guest_address = guest_address;
+      }
+      metadata.last_guest_address = guest_address;
+    }
+
+    if (!(instr->opcode->flags & hir::OPCODE_FLAG_HIDE)) {
+      ++metadata.hir_instr_count;
+    }
+  }
+
+  return metadata;
+}
+
 void A64Emitter::MaybeEmitBlockProfileEntry(const hir::Block* block) {
   if (!current_a64_function_ || !block || block->ordinal == UINT16_MAX) {
     return;
@@ -2339,8 +2433,8 @@ void A64Emitter::MaybeEmitBlockProfileEntry(const hir::Block* block) {
   if (!counter) {
     return;
   }
-  current_a64_function_->set_profile_block_address(
-      static_cast<size_t>(block->ordinal), FindBlockGuestAddress(block));
+  current_a64_function_->set_profile_block_metadata(
+      static_cast<size_t>(block->ordinal), CollectBlockProfileMetadata(block));
   EmitAtomicIncrement64(counter);
 }
 

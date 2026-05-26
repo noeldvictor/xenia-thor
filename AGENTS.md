@@ -180,7 +180,12 @@ Better next lanes:
   `SOURCE_OFFSET` block address, not a printed HIR label/comment, and ordinal
   fallback maps it to a different HIR label. Do not patch behavior from
   weighted `82281D28` HIR/block-profile joins until a deterministic mapper or
-  metadata dump proves the join safe. Prefer that mapper/tooling slice next.
+  metadata dump proves the join safe.
+  `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` adds
+  that metadata surface and disables ordinal fallback by default in the main HIR
+  profile reports. Next, FullDeploy and run a route-clean one-function
+  `82281D28` block-body/disassembly capture, then require metadata-backed join
+  proof before any `82281D28` behavior patch.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

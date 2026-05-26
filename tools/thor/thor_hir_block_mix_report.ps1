@@ -6,6 +6,7 @@ param(
     [ValidateSet("RawHIR", "OptHIR")]
     [string]$Phase = "OptHIR",
     [string]$BlockProfileLog = "",
+    [switch]$AllowOrdinalFallback,
     [int]$Top = 20
 )
 
@@ -246,19 +247,32 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     $resolvedProfile = (Resolve-Path -LiteralPath $BlockProfileLog).Path
     $profilePattern = "A64 speed profile block top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) delta=(?<delta>\d+) total=(?<total>\d+)"
     $bodyProfilePattern = "A64 speed profile block body top \d+: fn $functionPattern .* block=(?<block>\d+) guest=(?<guest>[0-9A-Fa-f]{8}) body_ticks_delta=(?<delta>\d+) body_ticks_total=(?<total>\d+) entries_delta=(?<entries>\d+) ticks_per_entry=(?<tpe>\d+)"
+    $profileGuestMatches = 0
+    $profileOrdinalFallbacks = 0
+    $profileUnmatched = 0
     Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
         if ($_ -match $profilePattern) {
             $guest = $Matches.guest.ToUpperInvariant()
             $row = $null
+            $matchedByGuest = $false
             if ($guest -ne "00000000") {
                 $row = $blocks | Where-Object { $_.guest -eq $guest } | Select-Object -First 1
+                $matchedByGuest = ($null -ne $row)
             }
             if ($null -eq $row) {
+                if (!$AllowOrdinalFallback) {
+                    $profileUnmatched += 1
+                    return
+                }
                 $index = [int]$Matches.block
                 if ($index -lt 0 -or $index -ge $blocks.Count) {
+                    $profileUnmatched += 1
                     return
                 }
                 $row = $blocks[$index]
+                $profileOrdinalFallbacks += 1
+            } elseif ($matchedByGuest) {
+                $profileGuestMatches += 1
             }
             $total = [int64]$Matches.total
             $delta = [int64]$Matches.delta
@@ -277,15 +291,25 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
         if ($_ -match $bodyProfilePattern) {
             $guest = $Matches.guest.ToUpperInvariant()
             $row = $null
+            $matchedByGuest = $false
             if ($guest -ne "00000000") {
                 $row = $blocks | Where-Object { $_.guest -eq $guest } | Select-Object -First 1
+                $matchedByGuest = ($null -ne $row)
             }
             if ($null -eq $row) {
+                if (!$AllowOrdinalFallback) {
+                    $profileUnmatched += 1
+                    return
+                }
                 $index = [int]$Matches.block
                 if ($index -lt 0 -or $index -ge $blocks.Count) {
+                    $profileUnmatched += 1
                     return
                 }
                 $row = $blocks[$index]
+                $profileOrdinalFallbacks += 1
+            } elseif ($matchedByGuest) {
+                $profileGuestMatches += 1
             }
             $total = [int64]$Matches.total
             $delta = [int64]$Matches.delta
@@ -305,6 +329,10 @@ if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
             return
         }
     }
+} else {
+    $profileGuestMatches = 0
+    $profileOrdinalFallbacks = 0
+    $profileUnmatched = 0
 }
 
 $totalInstructions = ($blocks | Measure-Object -Property instructions -Sum).Sum
@@ -318,6 +346,10 @@ Write-Output ""
 Write-Output "log=$resolvedLog"
 if (![string]::IsNullOrWhiteSpace($BlockProfileLog)) {
     Write-Output "block_profile_log=$((Resolve-Path -LiteralPath $BlockProfileLog).Path)"
+    Write-Output "profile_guest_matches=$profileGuestMatches"
+    Write-Output "profile_ordinal_fallbacks=$profileOrdinalFallbacks"
+    Write-Output "profile_unmatched=$profileUnmatched"
+    Write-Output "profile_allow_ordinal_fallback=$([int][bool]$AllowOrdinalFallback)"
 }
 Write-Output "function=$($Function.ToUpperInvariant())"
 Write-Output "phase=$Phase"
