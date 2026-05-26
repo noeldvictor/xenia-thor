@@ -152,10 +152,13 @@ Better next lanes:
 
 - A64 backend maturity: register allocation, guest-state cache design, helper
   ABI, block linking, fastmem/addressing, and direct-call cost. As of
-  `docs/research/20260525-235500-a64-register-allocation-audit-skeleton.md`,
-  default-off `arm64_register_allocation_audit` exists; the next structural
-  proof should FullDeploy and route-capture `0x82282490` RA pressure before
-  allocator behavior changes.
+  `docs/research/20260526-001500-a64-register-allocation-audit-capture.md`,
+  the default-off `arm64_register_allocation_audit` route capture found no
+  material allocator spill pressure in `0x82282490`:
+  `blocks_with_spills=0`, `local_slots_added=0`, and INT/FLOAT/VEC
+  `spill_requests=0`. Do not patch allocator spill behavior from this route;
+  prefer helper ABI / block linking or current VMX128 PERMUTE /
+  `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` counters next.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
 - Mixed/static hot-function translation research only where guest-visible state,
@@ -190,7 +193,8 @@ LSE-style atomics, but no `sve` / `sve2`. Optimize for the hardware actually
 present.
 
 Current priority remains CPU/JIT until captures change: the latest route-clean
-Blue Dragon sample ended with Main Thread `100%` and GPU Commands `11.5%`.
+Blue Dragon sample ended with Main Thread `92.3%`, GPU Commands `11.5%`, and
+Draw Thread `3.8%`.
 Do not move branchy PPC/JIT state traffic, fpscr writebacks, call-edge carriers,
 or helper-heavy VMX semantics to Vulkan compute.
 
@@ -199,7 +203,9 @@ Hardware lanes to pursue:
 - A64/JIT: structural register allocation, guest-state cache design, helper
   ABI, block linking, direct/indirect call dispatch, and fastmem/addressing.
   `arm64_register_allocation_audit` can now capture per-function INT/FLOAT/VEC
-  allocation pressure and spills; use it before changing allocator behavior.
+  allocation pressure and spills. Its first `0x82282490` route capture found
+  no spill pressure, so do not spend the next slice on allocator spill behavior
+  unless a broader function or route counter reopens it.
   Keep the exact `82282490:82282598 -> 82287788` edge-payload storage lane
   closed unless a future general entry/fallback model reopens it.
 - NEON/VMX128: exact 128-bit boolean, splat, permute, shift, compare, min/max,

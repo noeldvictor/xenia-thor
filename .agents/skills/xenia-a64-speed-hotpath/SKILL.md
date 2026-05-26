@@ -64,13 +64,14 @@ Favor changes that can affect many dynamic instructions:
   explicit and normal entry remains correct.
 
 Current structural decision:
-`docs/research/20260525-235500-a64-register-allocation-audit-skeleton.md`
-adds default-off `arm64_register_allocation_audit` and Android/Thor launch
-plumbing. The next A64 backend proof should FullDeploy and route-capture
-`0x82282490` with `-Arm64RegisterAllocationAudit true` before allocator
-behavior changes. If the audit shows low spill pressure, close the RA-pressure
-lane for this route and move to helper ABI / block linking or PERMUTE /
-LOAD_VECTOR_SHL/SHR counters.
+`docs/research/20260526-001500-a64-register-allocation-audit-capture.md`
+records FullDeploy plus a route-clean `0x82282490`
+`arm64_register_allocation_audit` capture. It found no material allocator spill
+pressure: `blocks_with_spills=0`, `local_slots_added=0`, and INT/FLOAT/VEC
+`spill_requests=0`. Do not patch allocator spill behavior or run a quiet speed
+A/B from this audit. Move next to helper ABI / block linking, or current
+route-stabilized PERMUTE / LOAD_VECTOR_SHL / LOAD_VECTOR_SHR counters before
+any VMX128 behavior patch.
 
 For the VMX128/NEON lane, run this before behavior work:
 
