@@ -305,6 +305,44 @@ function Read-FastEntryAuditRows {
     return $rows
 }
 
+function Read-FastEntryAuditTargetRows {
+    param([string[]]$Paths)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $pattern = "A64 guest-call fast-entry target\s+(?<index>\d+)\.(?<row>\d+):\s+fn\s+(?<function>[0-9A-Fa-f]{8})\s+target=(?<target>[0-9A-Fa-f]{8})\s+(?<rest>.*)$"
+    foreach ($path in $Paths) {
+        if (!(Test-Path -LiteralPath $path)) {
+            throw "FastEntryAuditLogPath not found: $path"
+        }
+        $resolved = (Resolve-Path -LiteralPath $path).Path
+        foreach ($line in (Get-Content -LiteralPath $resolved)) {
+            if ($line -notmatch $pattern) {
+                continue
+            }
+            $rowIndex = [int]$Matches.index
+            $rowNumber = [int]$Matches.row
+            $rowFunction = $Matches.function.ToUpperInvariant()
+            $rowTarget = $Matches.target.ToUpperInvariant()
+            $rowRest = $Matches.rest
+            $values = @{}
+            foreach ($token in ($rowRest -split "\s+")) {
+                if ($token -match "^(?<key>[A-Za-z0-9_]+)=(?<value>.*)$") {
+                    $values[$Matches.key] = $Matches.value
+                }
+            }
+            $rows.Add([pscustomobject][ordered]@{
+                function = $rowFunction
+                target = $rowTarget
+                index = $rowIndex
+                row = $rowNumber
+                values = $values
+                log = $resolved
+                text = $line
+            }) | Out-Null
+        }
+    }
+    return $rows
+}
+
 function New-TargetSummary {
     param([string]$Target)
     return [pscustomobject][ordered]@{
@@ -407,8 +445,10 @@ $callerFunctions = Read-HirLogs -Paths @($LogPath) -Phase $Phase
 $functions = Read-HirLogs -Paths $paths -Phase $Phase
 $blockProfiles = Read-BlockProfileRows -Paths @($LogPath)
 $fastEntryAuditRows = @()
+$fastEntryAuditTargetRows = @()
 if ($FastEntryAuditLogPath.Count -gt 0) {
     $fastEntryAuditRows = @(Read-FastEntryAuditRows -Paths $FastEntryAuditLogPath)
+    $fastEntryAuditTargetRows = @(Read-FastEntryAuditTargetRows -Paths $FastEntryAuditLogPath)
 }
 
 $functionFilter = $Function.ToUpperInvariant()
@@ -644,6 +684,44 @@ if ($fastEntryAuditRows.Count -gt 0) {
         Write-Output "none_for_function_filter=true"
     }
     Write-Output ""
+    $selectedTargetRows = @($fastEntryAuditTargetRows | Where-Object {
+        [string]::IsNullOrWhiteSpace($functionFilter) -or $_.function -eq $functionFilter
+    })
+    if ($selectedTargetRows.Count -gt 0) {
+        Write-Output "## Fast-Entry Runtime Target Rows"
+        foreach ($targetRow in ($selectedTargetRows |
+                Sort-Object -Property @{ Expression = { [int64](Get-HashValue $_.values "arg_store_fields") }; Descending = $true },
+                                      @{ Expression = { [int64](Get-HashValue $_.values "calls") }; Descending = $true },
+                                      @{ Expression = "target"; Ascending = $true } |
+                Select-Object -First $Top)) {
+            $values = $targetRow.values
+            Write-Output ("target=0x{0} calls={1} regular={2} conditional={3} tail={4} eligible_regular={5} already_compiled={6} unresolved={7} helper_blockers={8} normal_entry_fallback={9} stackpoint_sensitive={10} arg_store_calls={11} arg_store_fields={12} arg_store_bytes={13} parent_pre_call_flush_points={14} first_call={15} first_block={16} payload_materializations_allowed={17} behavior_changed={18} alternate_codegen={19} normal_entry={20} global_indirection={21} arg_store_top={22}" -f
+                $targetRow.target,
+                (Get-HashValue $values "calls"),
+                (Get-HashValue $values "regular"),
+                (Get-HashValue $values "conditional"),
+                (Get-HashValue $values "tail"),
+                (Get-HashValue $values "eligible_regular"),
+                (Get-HashValue $values "already_compiled"),
+                (Get-HashValue $values "unresolved"),
+                (Get-HashValue $values "helper_blockers"),
+                (Get-HashValue $values "normal_entry_fallback"),
+                (Get-HashValue $values "stackpoint_sensitive"),
+                (Get-HashValue $values "arg_store_calls"),
+                (Get-HashValue $values "arg_store_fields"),
+                (Get-HashValue $values "arg_store_bytes"),
+                (Get-HashValue $values "parent_pre_call_flush_points"),
+                (Get-HashValue $values "first_call" "00000000"),
+                (Get-HashValue $values "first_block" "00000000"),
+                (Get-HashValue $values "payload_materializations_allowed"),
+                (Get-HashValue $values "behavior_changed"),
+                (Get-HashValue $values "alternate_codegen"),
+                (Get-HashValue $values "normal_entry" "unknown"),
+                (Get-HashValue $values "global_indirection" "unknown"),
+                (Get-HashValue $values "arg_store_top" "-"))
+        }
+        Write-Output ""
+    }
 }
 Write-Output "## Target Summary"
 foreach ($summary in ($targetSummaries.Values |

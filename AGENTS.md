@@ -264,6 +264,14 @@ Better next lanes:
   slice must add default-off runtime per-target rows for direct guest calls and
   close the lane if those rows do not show broad known first-use traffic with
   manageable flush pressure.
+  `docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md`
+  adds those default-off runtime target rows and parser support. It is still
+  counter-only and behavior-neutral: no alternate codegen, normal entry
+  unchanged, global indirection unchanged, and no payload materialization. Next
+  useful work is FullDeploy plus a route-clean `0x82281D28` target-row capture,
+  then join those rows with the offline callee-aware HIR audit. Close
+  guest-call fast-entry behavior if target rows do not show broad known
+  first-use traffic with manageable flush pressure.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

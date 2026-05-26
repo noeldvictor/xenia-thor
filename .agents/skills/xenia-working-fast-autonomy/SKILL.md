@@ -131,6 +131,11 @@ Treat these as closed for immediate speed work:
   (`dirty_flush_points=268`, `flush_context_barrier=260`). Continue only with a
   runtime per-target row audit that has a hard close condition, or switch to a
   different structural A64 lane.
+- `docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md`
+  adds the default-off runtime target rows and parser support. It is a
+  counter-only patch. Next work is FullDeploy plus a route-clean capture for
+  `0x82281D28` with the existing fast-entry audit cvars. Do not run a quiet
+  speed A/B and do not patch behavior from the target-row skeleton alone.
 
 ## Useful Output Bias
 

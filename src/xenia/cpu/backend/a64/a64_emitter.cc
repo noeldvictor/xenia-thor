@@ -22,8 +22,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/clock.h"
@@ -737,6 +738,7 @@ bool ConsumeGuestCallFastEntryAuditBudget(uint32_t* out_index) {
 struct A64GuestCallFastEntryAuditStats {
   uint64_t blocks = 0;
   uint64_t instrs = 0;
+  uint64_t target_rows = 0;
   uint64_t direct_calls = 0;
   uint64_t direct_conditional_calls = 0;
   uint64_t direct_regular_calls = 0;
@@ -753,11 +755,33 @@ struct A64GuestCallFastEntryAuditStats {
   uint64_t return_flush_points = 0;
   uint64_t normal_entry_fallback_required = 0;
   uint64_t stackpoint_sensitive_calls = 0;
+  uint64_t parent_pre_call_flush_points = 0;
   uint64_t parent_arg_store_calls = 0;
   uint64_t parent_arg_store_fields = 0;
   uint64_t parent_arg_store_bytes = 0;
   uint64_t callee_first_use_known = 0;
   uint64_t callee_first_use_missing = 0;
+  std::array<uint64_t, 9> parent_arg_store_fields_by_slot{};
+};
+
+struct A64GuestCallFastEntryTargetAuditStats {
+  uint32_t target_address = 0;
+  uint32_t first_call_guest = 0;
+  uint32_t first_block_guest = 0;
+  uint64_t calls = 0;
+  uint64_t regular_calls = 0;
+  uint64_t conditional_calls = 0;
+  uint64_t tail_calls = 0;
+  uint64_t eligible_regular_calls = 0;
+  uint64_t already_compiled_targets = 0;
+  uint64_t unresolved_direct_targets = 0;
+  uint64_t helper_inline_blockers = 0;
+  uint64_t normal_entry_fallback_required = 0;
+  uint64_t stackpoint_sensitive_calls = 0;
+  uint64_t parent_pre_call_flush_points = 0;
+  uint64_t parent_arg_store_calls = 0;
+  uint64_t parent_arg_store_fields = 0;
+  uint64_t parent_arg_store_bytes = 0;
   std::array<uint64_t, 9> parent_arg_store_fields_by_slot{};
 };
 
@@ -2796,10 +2820,16 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
     return false;
   };
 
+  static constexpr size_t kMaxGuestCallFastEntryTargetRows = 32;
+
   A64GuestCallFastEntryAuditStats stats;
+  std::unordered_map<uint32_t, A64GuestCallFastEntryTargetAuditStats>
+      target_stats_by_address;
   for (auto block = builder->first_block(); block; block = block->next) {
     ++stats.blocks;
+    const uint32_t block_guest_address = FindBlockGuestAddress(block);
     std::array<uint8_t, 9> last_arg_store_bytes{};
+    uint64_t parent_pre_call_flush_points = 0;
     for (auto instr = block->instr_head; instr; instr = instr->next) {
       ++stats.instrs;
       const auto opcode = instr->GetOpcodeNum();
@@ -2830,11 +2860,21 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
               target && target->is_guest()
                   ? static_cast<GuestFunction*>(target)
                   : nullptr;
+          const uint32_t target_address = target ? target->address() : 0;
+          auto& target_stats = target_stats_by_address[target_address];
+          target_stats.target_address = target_address;
+          if (!target_stats.first_call_guest) {
+            target_stats.first_call_guest = instr->GuestAddressFor();
+            target_stats.first_block_guest = block_guest_address;
+          }
+          ++target_stats.calls;
           const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
           if (is_tail_call) {
             ++stats.direct_tail_calls;
+            ++target_stats.tail_calls;
           } else {
             ++stats.direct_regular_calls;
+            ++target_stats.regular_calls;
           }
 
           uint64_t arg_store_fields = 0;
@@ -2846,11 +2886,18 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
             ++arg_store_fields;
             arg_store_bytes += last_arg_store_bytes[i];
             ++stats.parent_arg_store_fields_by_slot[i];
+            ++target_stats.parent_arg_store_fields_by_slot[i];
           }
           if (arg_store_fields) {
             ++stats.parent_arg_store_calls;
             stats.parent_arg_store_fields += arg_store_fields;
             stats.parent_arg_store_bytes += arg_store_bytes;
+            stats.parent_pre_call_flush_points += parent_pre_call_flush_points;
+            ++target_stats.parent_arg_store_calls;
+            target_stats.parent_arg_store_fields += arg_store_fields;
+            target_stats.parent_arg_store_bytes += arg_store_bytes;
+            target_stats.parent_pre_call_flush_points +=
+                parent_pre_call_flush_points;
             // This compile-time audit has caller HIR only. Callee first-use is
             // intentionally left to the log-backed HIR coverage tool.
             stats.callee_first_use_missing += arg_store_fields;
@@ -2860,16 +2907,25 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
               is_inline_helper_candidate(instr, guest_target);
           if (helper_candidate) {
             ++stats.helper_inline_blockers;
+            ++target_stats.helper_inline_blockers;
           }
           if (guest_target && guest_target->machine_code()) {
             ++stats.already_compiled_targets;
+            ++target_stats.already_compiled_targets;
           } else {
             ++stats.unresolved_direct_targets;
+            ++target_stats.unresolved_direct_targets;
           }
           if (!is_tail_call && !helper_candidate) {
             ++stats.eligible_regular_calls;
             ++stats.normal_entry_fallback_required;
             ++stats.stackpoint_sensitive_calls;
+            ++target_stats.eligible_regular_calls;
+            ++target_stats.normal_entry_fallback_required;
+            ++target_stats.stackpoint_sensitive_calls;
+          }
+          if (opcode == hir::OPCODE_CALL_TRUE) {
+            ++target_stats.conditional_calls;
           }
           break;
         }
@@ -2878,23 +2934,28 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
           ++stats.indirect_call_blockers;
           if (instr->flags & hir::CALL_TAIL) {
             ++stats.indirect_tail_blockers;
+            ++parent_pre_call_flush_points;
           }
           break;
         case hir::OPCODE_CALL_EXTERN:
           ++stats.extern_host_call_blockers;
+          ++parent_pre_call_flush_points;
           break;
         case hir::OPCODE_CONTEXT_BARRIER:
           ++stats.context_barrier_flush_points;
+          ++parent_pre_call_flush_points;
           break;
         case hir::OPCODE_RETURN:
         case hir::OPCODE_RETURN_TRUE:
           ++stats.return_flush_points;
+          ++parent_pre_call_flush_points;
           break;
         case hir::OPCODE_DEBUG_BREAK:
         case hir::OPCODE_DEBUG_BREAK_TRUE:
         case hir::OPCODE_TRAP:
         case hir::OPCODE_TRAP_TRUE:
           ++stats.debug_trap_blockers;
+          ++parent_pre_call_flush_points;
           break;
         default:
           break;
@@ -2906,8 +2967,28 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
       stats.context_barrier_flush_points + stats.return_flush_points +
       stats.extern_host_call_blockers + stats.debug_trap_blockers +
       stats.direct_tail_calls + stats.indirect_tail_blockers;
+  std::vector<A64GuestCallFastEntryTargetAuditStats> target_rows;
+  target_rows.reserve(target_stats_by_address.size());
+  for (const auto& entry : target_stats_by_address) {
+    target_rows.push_back(entry.second);
+  }
+  std::sort(target_rows.begin(), target_rows.end(),
+            [](const A64GuestCallFastEntryTargetAuditStats& a,
+               const A64GuestCallFastEntryTargetAuditStats& b) {
+              if (a.parent_arg_store_fields != b.parent_arg_store_fields) {
+                return a.parent_arg_store_fields > b.parent_arg_store_fields;
+              }
+              if (a.calls != b.calls) {
+                return a.calls > b.calls;
+              }
+              return a.target_address < b.target_address;
+            });
+  stats.target_rows =
+      std::min<uint64_t>(target_rows.size(),
+                         static_cast<uint64_t>(kMaxGuestCallFastEntryTargetRows));
   XELOGW(
       "A64 guest-call fast-entry audit {:03}: fn {:08X} blocks={} instrs={} "
+      "target_rows={} "
       "direct_calls={} conditional_direct={} eligible_regular={} "
       "tail_blockers={} indirect_blockers={} extern_host_blockers={} "
       "unresolved_direct_targets={} helper_blockers={} "
@@ -2915,12 +2996,13 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
       "arg_store_calls={} arg_store_fields={} arg_store_bytes={} "
       "callee_first_use_known={} callee_first_use_missing={} "
       "dirty_flush_points={} flush_context_barrier={} flush_return={} "
+      "parent_pre_call_flush_points={} "
       "debug_trap_blockers={} already_compiled_targets={} "
       "payload_materializations_allowed=0 behavior_changed=0 "
       "alternate_codegen=0 normal_entry=unchanged global_indirection=unchanged "
       "arg_store_top={}",
       log_index, current_guest_function_, stats.blocks, stats.instrs,
-      stats.direct_calls, stats.direct_conditional_calls,
+      stats.target_rows, stats.direct_calls, stats.direct_conditional_calls,
       stats.eligible_regular_calls, stats.direct_tail_calls,
       stats.indirect_call_blockers, stats.extern_host_call_blockers,
       stats.unresolved_direct_targets, stats.helper_inline_blockers,
@@ -2929,8 +3011,33 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
       stats.parent_arg_store_bytes, stats.callee_first_use_known,
       stats.callee_first_use_missing, dirty_flush_points,
       stats.context_barrier_flush_points, stats.return_flush_points,
-      stats.debug_trap_blockers, stats.already_compiled_targets,
+      stats.parent_pre_call_flush_points, stats.debug_trap_blockers,
+      stats.already_compiled_targets,
       FormatGuestCallFastEntryArgSlots(stats.parent_arg_store_fields_by_slot));
+  for (size_t i = 0; i < target_rows.size() &&
+                     i < kMaxGuestCallFastEntryTargetRows;
+       ++i) {
+    const auto& row = target_rows[i];
+    XELOGW(
+        "A64 guest-call fast-entry target {:03}.{:02}: fn {:08X} "
+        "target={:08X} calls={} regular={} conditional={} tail={} "
+        "eligible_regular={} already_compiled={} unresolved={} "
+        "helper_blockers={} normal_entry_fallback={} stackpoint_sensitive={} "
+        "arg_store_calls={} arg_store_fields={} arg_store_bytes={} "
+        "parent_pre_call_flush_points={} first_call={:08X} "
+        "first_block={:08X} payload_materializations_allowed=0 "
+        "behavior_changed=0 alternate_codegen=0 normal_entry=unchanged "
+        "global_indirection=unchanged arg_store_top={}",
+        log_index, i + 1, current_guest_function_, row.target_address,
+        row.calls, row.regular_calls, row.conditional_calls, row.tail_calls,
+        row.eligible_regular_calls, row.already_compiled_targets,
+        row.unresolved_direct_targets, row.helper_inline_blockers,
+        row.normal_entry_fallback_required, row.stackpoint_sensitive_calls,
+        row.parent_arg_store_calls, row.parent_arg_store_fields,
+        row.parent_arg_store_bytes, row.parent_pre_call_flush_points,
+        row.first_call_guest, row.first_block_guest,
+        FormatGuestCallFastEntryArgSlots(row.parent_arg_store_fields_by_slot));
+  }
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {

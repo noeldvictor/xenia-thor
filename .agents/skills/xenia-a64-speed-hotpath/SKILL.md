@@ -198,6 +198,15 @@ lane continues, the next slice is a default-off runtime per-target row audit for
 direct guest calls. It must close the fast-entry behavior lane if target rows do
 not show broad known first-use traffic with manageable flush pressure.
 
+`docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md` adds
+that default-off runtime target-row audit plus parser support. It is not speed
+proof and changes no generated behavior: no alternate codegen, no normal-entry
+replacement, no global indirection replacement, and no payload materialization.
+Next work is FullDeploy plus a route-clean `0x82281D28` target-row capture using
+the existing fast-entry audit cvars, followed by a join with the offline
+callee-aware HIR audit. Close this lane if the target rows do not show broad
+known first-use traffic with manageable flush pressure.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

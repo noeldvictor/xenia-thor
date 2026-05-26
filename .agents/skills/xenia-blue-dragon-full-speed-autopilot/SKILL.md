@@ -123,6 +123,10 @@ Pick one lane with a credible FPS path:
   quiet speed A/B. If this lane continues, the next slice must add runtime
   per-target fast-entry rows and close the lane if flush pressure remains
   unmanageable.
+  `docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md`
+  adds those default-off runtime rows and parser support. It is still
+  behavior-neutral. Next work is a route-clean Thor capture with the existing
+  fast-entry audit cvars for `0x82281D28`, not a speed A/B.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
