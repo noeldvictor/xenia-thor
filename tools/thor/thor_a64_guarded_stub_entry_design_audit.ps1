@@ -116,8 +116,7 @@ $backendContextLine = Find-Line $backendHeader 'struct A64BackendContext'
 
 $normalEntrySingleton =
     (Test-Pattern $functionHeader 'std::atomic<uint8_t\*> machine_code_') -and
-    (Test-Pattern $functionSource 'machine_code_\.store') -and
-    -not (Test-Pattern $functionHeader 'fast_entry|alternate_entry|late_bound_entry|stub_entry')
+    (Test-Pattern $functionSource 'machine_code_\.store')
 
 $globalIndirectionSingleton =
     (Test-Pattern $assembler 'AddIndirection\(function->address\(\)') -and
@@ -157,6 +156,7 @@ $alternateEntryStoragePresent =
     (Test-Pattern $functionSource 'fast_entry|alternate_entry|late_bound_entry|stub_entry')
 
 $payloadAbiStoragePresent =
+    (Test-Pattern $functionHeader 'guest_call_fast_entry_payload|dirty_flush|A64GuestCallFastEntryContract') -or
     (Test-Pattern $backendHeader 'fast_entry_payload|guest_call_payload|arg_payload|dirty_payload') -or
     (Test-Pattern $emitter 'EmitGuestCallFastEntry|fast_entry_stub|late_bound_entry')
 
@@ -177,7 +177,7 @@ $runtimeBlockersPresent =
     ($runtimeDirtyFlushPoints -gt 0)
 
 Write-Output "audit=a64_guarded_stub_entry_design"
-Emit-Check "normal_entry_singleton" $normalEntrySingleton $functionHeader $machineCodeLine "A64Function still exposes one normal machine_code pointer and no alternate entry storage."
+Emit-Check "normal_entry_storage_unchanged" $normalEntrySingleton $functionHeader $machineCodeLine "A64Function still exposes the normal machine_code pointer and Setup path used by current entries."
 Emit-Check "global_indirection_singleton" $globalIndirectionSingleton $assembler $assemblerIndirectionLine "The assembler publishes one normal-entry target through the code-cache indirection table."
 Emit-Check "normal_entry_abi_only_return_x0" $normalEntryAbiOnlyReturnX0 $stackLayout $normalEntryDocLine "Normal guest entry receives only the PPC return address in x0."
 Emit-Check "direct_calls_use_normal_machine_code" $directCallsUseNormalMachineCode $emitter $directCallLine "Compiled direct calls load fn->machine_code(), load GUEST_CALL_RET_ADDR into x0, and branch to normal entry."
@@ -185,13 +185,26 @@ Emit-Check "late_bound_unresolved_stays_normal" $lateBoundUnresolvedStaysNormal 
 Emit-Check "stackpoint_reentry_contract" $stackpointReentryContract $emitter $pushStackpointLine "Guest frames push stackpoints and synchronize after calls, constraining any fast-entry frame shape."
 Emit-Check "host_debug_exception_boundaries" $hostDebugExceptionBoundaries $backend $guestToHostLine "Host callbacks, debug breaks, exceptions, and FPCR restore points require normal visibility unless an explicit flush model exists."
 Emit-Check "alternate_entry_storage_present" $alternateEntryStoragePresent $functionHeader $machineCodeLine "A separate guarded entry pointer/offset is required before behavior work."
-Emit-Check "payload_abi_storage_present" $payloadAbiStoragePresent $backendHeader $backendContextLine "No generic r3-r10/lr payload ABI or dirty-state storage exists for guarded stubs."
+Emit-Check "payload_abi_storage_present" $payloadAbiStoragePresent $backendHeader $backendContextLine "A generic r3-r10/lr payload and dirty-flush contract is required before guarded-stub behavior."
 Emit-Check "behavior_fast_entry_present" $behaviorFastEntryPresent $emitter $directCallLine "Current fast-entry support is audit-only; there is no alternate codegen path."
 
 Write-Output ("previous_runtime_report={0}" -f $FastEntryTargetRowReportPath)
 Write-Output ("previous_runtime_blockers unresolved_direct_targets={0} normal_entry_fallback={1} stackpoint_sensitive={2} dirty_flush_points={3} callee_first_use_known={4}" -f $runtimeUnresolvedTargets, $runtimeNormalFallback, $runtimeStackpointSensitive, $runtimeDirtyFlushPoints, $runtimeKnownFirstUse)
 
 if ($normalEntrySingleton -and $globalIndirectionSingleton -and
+    $directCallsUseNormalMachineCode -and $lateBoundUnresolvedStaysNormal -and
+    $stackpointReentryContract -and $alternateEntryStoragePresent -and
+    $payloadAbiStoragePresent -and -not $behaviorFastEntryPresent) {
+    Write-Output "decision=data_model_present_behavior_unchanged"
+    Write-Output "behavior_status=normal_entry_and_global_indirection_unchanged;alternate_entry_storage_not_used_by_codegen"
+    Write-Output "remaining_contracts=direct_callsite_guard_and_fallback;generated_fast_entry_stub;payload_population;dirty_flush_before_context_barrier_helper_host_call_debug_trap_tail_return_exception;late_bound_target_resolution_model;stackpoint_resume_protocol"
+    if ($runtimeBlockersPresent) {
+        Write-Output "runtime_blockers=present"
+    } else {
+        Write-Output "runtime_blockers=not_proven_from_report"
+    }
+    Write-Output "recommended_next_slice=source-only fast-entry contract audit or default-off stub skeleton with behavior unchanged;do_not_patch_callsite_behavior_until_dirty_flush_payload_protocol_is_explicit"
+} elseif ($normalEntrySingleton -and $globalIndirectionSingleton -and
     $directCallsUseNormalMachineCode -and $lateBoundUnresolvedStaysNormal -and
     $stackpointReentryContract -and -not $alternateEntryStoragePresent -and
     -not $payloadAbiStoragePresent -and -not $behaviorFastEntryPresent) {

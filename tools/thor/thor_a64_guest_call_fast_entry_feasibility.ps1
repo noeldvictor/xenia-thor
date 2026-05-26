@@ -100,8 +100,7 @@ $hostToGuestPassesOnlyReturn =
 $directGuestCallPassesOnlyReturn =
     (Test-Pattern $emitter 'fn->machine_code\(\)') -and
     (Test-Pattern $emitter 'StackLayout::GUEST_CALL_RET_ADDR') -and
-    (Test-Pattern $emitter 'blr\(x9\)') -and
-    -not (Test-Pattern $emitter 'guest_call_fast_entry|fast_entry')
+    (Test-Pattern $emitter 'blr\(x9\)')
 
 $tailAndIndirectNeedFallback =
     (Test-Pattern $emitter 'CALL_TAIL') -and
@@ -128,10 +127,14 @@ $fixedRegisterPressure =
     (Test-Pattern $backend 'x19=backend ctx, x20=context, x21=membase') -and
     (Test-Pattern $backend 'gpr_set\.count = A64Emitter::GPR_COUNT')
 
-$existingFastEntry =
-    (Test-Pattern $backend 'guest_call_fast_entry|fast_entry') -or
-    (Test-Pattern $emitter 'guest_call_fast_entry|fast_entry') -or
-    (Test-Pattern $functionHeader 'guest_call_fast_entry|fast_entry')
+$fastEntryDataModelPresent =
+    (Test-Pattern $functionHeader 'A64GuestCallFastEntryContract') -and
+    (Test-Pattern $functionHeader 'guest_call_fast_entry_code') -and
+    (Test-Pattern $functionHeader 'dirty_flush')
+
+$existingFastEntryBehavior =
+    (Test-Pattern $backend 'EmitGuestCallFastEntry|fast_entry_stub|late_bound_entry') -or
+    (Test-Pattern $emitter 'EmitGuestCallFastEntry|alternate_codegen=1|fast_entry_stub|late_bound_entry')
 
 Write-Output "audit=a64_guest_call_fast_entry_feasibility"
 Emit-Check "normal_entry_singleton" $normalEntrySingleton $functionHeader $machineCodeMemberLine "A64Function exposes one machine_code pointer and the code cache publishes one guest-address indirection target."
@@ -143,11 +146,19 @@ Emit-Check "stackpoint_longjmp_constraints_active" $stackpointLongjmpRequired $e
 Emit-Check "guest_to_host_boundary_clobbers_payload" $guestToHostBoundaryClobbers $backend $guestToHostLine "Host calls save/restore wide guest state and FPCR, so fast-entry state cannot cross host callbacks implicitly."
 Emit-Check "debug_exception_visibility_requires_normal_mapping" $debugExceptionVisibility $backend $exceptionLine "Breakpoints, traps, and source maps use normal machine-code mapping; variants must preserve debuggability/unwind assumptions."
 Emit-Check "fixed_register_pressure_is_real" $fixedRegisterPressure $backend $registerSetLine "x19/x20/x21 are fixed and only x22-x28 are allocatable GPRs in the current backend."
-Emit-Check "existing_fast_entry_skeleton_absent" (-not $existingFastEntry) $emitter 0 "No generic guest-call fast-entry skeleton exists before this audit."
+Emit-Check "fast_entry_data_model_present" $fastEntryDataModelPresent $functionHeader $machineCodeMemberLine "A64Function has separate fast-entry storage plus payload/dirty-flush contract metadata."
+Emit-Check "existing_fast_entry_behavior_absent" (-not $existingFastEntryBehavior) $emitter 0 "No generated fast-entry callsite behavior exists yet."
 
 if ($normalEntrySingleton -and $hostToGuestPassesOnlyReturn -and
     $directGuestCallPassesOnlyReturn -and $stackpointLongjmpRequired -and
-    -not $existingFastEntry) {
+    $fastEntryDataModelPresent -and -not $existingFastEntryBehavior) {
+    Write-Output "verdict=separate_fast_entry_data_model_present_behavior_absent"
+    Write-Output "behavior_status=normal_entry_unchanged;global_indirection_unchanged;direct_calls_still_use_normal_entry"
+    Write-Output "required_model=direct_callsite_guard;generated_fast_entry_stub_or_offset;explicit_argument_payload_for_r3_r10_lr;explicit_dirty_flush_to_PPCContext_before_barrier_helper_host_call_debug_trap_tail_return_exception;indirect_unresolved_extern_tail_normal_fallback"
+    Write-Output "recommended_next_slice=source-only dirty-flush payload protocol or default-off fast-entry stub skeleton that compiles no callsite behavior"
+} elseif ($normalEntrySingleton -and $hostToGuestPassesOnlyReturn -and
+    $directGuestCallPassesOnlyReturn -and $stackpointLongjmpRequired -and
+    -not $fastEntryDataModelPresent -and -not $existingFastEntryBehavior) {
     Write-Output "verdict=feasible_only_as_separate_fast_entry_path"
     Write-Output "blocked_behavior_patch=do_not_replace_A64Function_machine_code_or_global_indirection"
     Write-Output "required_model=normal_entry_unchanged; direct_callsite_guard; separate_fast_entry_stub_or_offset; explicit_argument_payload_for_r3_r10_lr; explicit_dirty_flush_to_PPCContext_before_barrier_helper_host_call_debug_trap_tail_return_exception; indirect_unresolved_extern_tail_normal_fallback"

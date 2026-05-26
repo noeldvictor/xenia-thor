@@ -35,6 +35,35 @@ struct A64ProfileBlockMetadata {
   uint32_t hir_instr_count = 0;
 };
 
+enum A64GuestCallFastEntryPayloadMask : uint32_t {
+  kA64GuestCallFastEntryPayloadGpr3 = 1u << 3,
+  kA64GuestCallFastEntryPayloadGpr4 = 1u << 4,
+  kA64GuestCallFastEntryPayloadGpr5 = 1u << 5,
+  kA64GuestCallFastEntryPayloadGpr6 = 1u << 6,
+  kA64GuestCallFastEntryPayloadGpr7 = 1u << 7,
+  kA64GuestCallFastEntryPayloadGpr8 = 1u << 8,
+  kA64GuestCallFastEntryPayloadGpr9 = 1u << 9,
+  kA64GuestCallFastEntryPayloadGpr10 = 1u << 10,
+  kA64GuestCallFastEntryPayloadLr = 1u << 31,
+};
+
+enum A64GuestCallFastEntryDirtyFlushMask : uint32_t {
+  kA64GuestCallFastEntryFlushContextBarrier = 1u << 0,
+  kA64GuestCallFastEntryFlushHelperCall = 1u << 1,
+  kA64GuestCallFastEntryFlushHostCall = 1u << 2,
+  kA64GuestCallFastEntryFlushDebugTrap = 1u << 3,
+  kA64GuestCallFastEntryFlushTailCall = 1u << 4,
+  kA64GuestCallFastEntryFlushReturn = 1u << 5,
+  kA64GuestCallFastEntryFlushException = 1u << 6,
+  kA64GuestCallFastEntryFlushUnresolvedTarget = 1u << 7,
+};
+
+struct A64GuestCallFastEntryContract {
+  uint32_t payload_gpr_mask = 0;
+  uint32_t dirty_flush_mask = 0;
+  uint32_t flags = 0;
+};
+
 class A64Function : public GuestFunction {
  public:
   A64Function(Module* module, uint32_t address);
@@ -48,6 +77,16 @@ class A64Function : public GuestFunction {
   }
 
   void Setup(uint8_t* machine_code, size_t machine_code_length);
+  uint8_t* guest_call_fast_entry_code() const {
+    return guest_call_fast_entry_code_.load(std::memory_order_acquire);
+  }
+  size_t guest_call_fast_entry_code_length() const {
+    return guest_call_fast_entry_code_length_.load(std::memory_order_acquire);
+  }
+  A64GuestCallFastEntryContract guest_call_fast_entry_contract() const;
+  void SetupGuestCallFastEntry(
+      uint8_t* machine_code, size_t machine_code_length,
+      const A64GuestCallFastEntryContract& contract);
   void MarkProfileRegistered(A64Backend* backend);
   std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
   std::atomic<uint64_t>* profile_body_ticks() { return &profile_body_ticks_; }
@@ -84,6 +123,11 @@ class A64Function : public GuestFunction {
  private:
   std::atomic<uint8_t*> machine_code_{nullptr};
   std::atomic<size_t> machine_code_length_{0};
+  std::atomic<uint8_t*> guest_call_fast_entry_code_{nullptr};
+  std::atomic<size_t> guest_call_fast_entry_code_length_{0};
+  std::atomic<uint32_t> guest_call_fast_entry_payload_gpr_mask_{0};
+  std::atomic<uint32_t> guest_call_fast_entry_dirty_flush_mask_{0};
+  std::atomic<uint32_t> guest_call_fast_entry_flags_{0};
   std::atomic<uint64_t> profile_entry_count_{0};
   std::atomic<uint64_t> profile_body_ticks_{0};
   std::atomic<uint64_t> profile_prolog_ticks_{0};

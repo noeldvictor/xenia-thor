@@ -422,6 +422,18 @@ Better next lanes:
   pressure. Do not rerun unchanged nonclosed-cache captures or patch generated
   behavior from this lane. Reopen guest-state caching only with a broader
   CFG/dataflow model.
+  `docs/research/20260526-093500-a64-fast-entry-data-model-rerank.md` then
+  ran the continual harness window and chose guarded-stub / fast-entry source
+  data modeling as the remaining speed-adjacent structural lane. `A64Function`
+  now has separate fast-entry storage and an explicit `r3-r10/lr` payload plus
+  dirty-flush contract, and the audits report
+  `fast_entry_data_model_present=true`,
+  `existing_fast_entry_behavior_absent=true`,
+  `alternate_entry_storage_present=true`, `payload_abi_storage_present=true`,
+  and `behavior_fast_entry_present=false`. Do not patch direct callsite
+  behavior yet; next fast-entry work must define the dirty-flush/payload
+  protocol or a default-off stub skeleton while normal `machine_code()` and
+  global indirection remain unchanged.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

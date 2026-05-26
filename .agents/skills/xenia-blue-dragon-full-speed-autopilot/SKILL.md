@@ -253,6 +253,15 @@ pressure. Do not rerun unchanged nonclosed-cache captures for `0x82282490` or
 `0x82287788`, and do not patch guest-state cache behavior without a broader
 CFG/dataflow model.
 
+`docs/research/20260526-093500-a64-fast-entry-data-model-rerank.md` runs the
+required harness rerank and reopens fast-entry only as behavior-neutral source
+data modeling. `A64Function` now has separate fast-entry storage and an
+explicit `r3-r10/lr` payload plus dirty-flush contract; current audits report
+the data model present and generated fast-entry behavior absent. Next
+fast-entry work must define the dirty-flush/payload protocol or a default-off
+stub skeleton with normal `machine_code()` and global indirection unchanged.
+Do not patch direct callsites from this data model alone.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

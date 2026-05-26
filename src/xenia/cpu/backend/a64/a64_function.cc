@@ -36,6 +36,31 @@ void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_.store(machine_code, std::memory_order_release);
 }
 
+A64GuestCallFastEntryContract A64Function::guest_call_fast_entry_contract()
+    const {
+  A64GuestCallFastEntryContract contract = {};
+  contract.payload_gpr_mask = guest_call_fast_entry_payload_gpr_mask_.load(
+      std::memory_order_acquire);
+  contract.dirty_flush_mask = guest_call_fast_entry_dirty_flush_mask_.load(
+      std::memory_order_acquire);
+  contract.flags =
+      guest_call_fast_entry_flags_.load(std::memory_order_acquire);
+  return contract;
+}
+
+void A64Function::SetupGuestCallFastEntry(
+    uint8_t* machine_code, size_t machine_code_length,
+    const A64GuestCallFastEntryContract& contract) {
+  guest_call_fast_entry_payload_gpr_mask_.store(contract.payload_gpr_mask,
+                                               std::memory_order_relaxed);
+  guest_call_fast_entry_dirty_flush_mask_.store(contract.dirty_flush_mask,
+                                               std::memory_order_relaxed);
+  guest_call_fast_entry_flags_.store(contract.flags, std::memory_order_relaxed);
+  guest_call_fast_entry_code_length_.store(machine_code_length,
+                                           std::memory_order_relaxed);
+  guest_call_fast_entry_code_.store(machine_code, std::memory_order_release);
+}
+
 void A64Function::MarkProfileRegistered(A64Backend* backend) {
   profile_registered_backend_.store(backend, std::memory_order_release);
 }

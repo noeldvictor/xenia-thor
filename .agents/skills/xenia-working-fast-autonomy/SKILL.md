@@ -184,6 +184,16 @@ Treat these as closed for immediate speed work:
   pointer/state GPRs `r31,r30,r29,r28,r27`. Do not patch behavior from this
   offline ranking; next work is a post-promotion counter-only audit with no
   store elision, no load replacement, and explicit flush/spill accounting.
+- `docs/research/20260526-092500-a64-nonclosed-gpr-cache-capture.md` closes
+  that post-promotion nonclosed-cache behavior for the current route:
+  `clean_hits_possible=0`, `dirty_hits_possible=0`, and high boundary/spill
+  pressure.
+- `docs/research/20260526-093500-a64-fast-entry-data-model-rerank.md` makes
+  the next speed-adjacent lane source-only fast-entry data modeling. A
+  separate fast-entry pointer plus `r3-r10/lr` payload/dirty-flush contract now
+  exists, but generated behavior is absent. Do not patch direct callsites until
+  dirty flushes, payload population, guard/fallback, late-bound target
+  behavior, and stackpoint resume are explicit.
 
 ## Useful Output Bias
 
