@@ -75,8 +75,14 @@ then found material dispatch volume in the warmed route:
 `resolve_misses_total=0`, and only `resolves_delta=5`. Do not target resolver
 behavior next. Use existing call-edge profiling on
 `82282490,82281D28,82287788` before any helper ABI or block-linking behavior
-patch, or fall back to current route-stabilized PERMUTE / LOAD_VECTOR_SHL /
-LOAD_VECTOR_SHR counters before VMX128 behavior work.
+patch. `docs/research/20260526-011000-a64-call-edge-recursion-capture.md`
+ran that capture and found `82282490` and `82281D28` dominated by
+self-recursive child body time, not caller-side dispatch overhead. Do not rerun
+unchanged call-edge captures or generic recursive-call/stackpoint probes. Move
+next to current route-stabilized PERMUTE / LOAD_VECTOR_SHL / LOAD_VECTOR_SHR
+counters before VMX128 behavior work, unless a static HIR/source audit proves a
+reusable direct-call or stackpoint rule beyond closed stack-sync and
+edge-payload lanes.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
@@ -84,6 +90,9 @@ whether a Thor call-edge capture is justified:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_a64_helper_block_link_audit.ps1
 ```
+
+Current helper/block-link decision: the call-edge capture is complete for this
+route and should not be repeated unchanged.
 
 For the VMX128/NEON lane, run this before behavior work:
 

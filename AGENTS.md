@@ -160,10 +160,15 @@ Better next lanes:
   `docs/research/20260526-004800-a64-helper-block-link-audit.md` then found
   `dispatch_delta_total=4216370` in the final interval, with
   `resolve_misses_total=0` and only `resolves_delta=5`. Do not make resolver
-  behavior the next warmed-route lane. Prefer a Thor capture with
-  `-Arm64SpeedProfileCallEdgeFilter "82282490,82281D28,82287788"` before any
-  helper ABI or block-linking behavior patch. If that lane stalls, use current
-  VMX128 PERMUTE / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` counters next.
+  behavior the next warmed-route lane. The follow-up
+  `docs/research/20260526-011000-a64-call-edge-recursion-capture.md` found
+  `82282490` and `82281D28` dominated by self-recursive child body time
+  (`69.62%` and `72.22%`), not mostly caller-side dispatch overhead. Do not run
+  another unchanged call-edge capture or generic recursive-call/stackpoint
+  probe. Prefer current VMX128 PERMUTE / `LOAD_VECTOR_SHL` /
+  `LOAD_VECTOR_SHR` route counters next, or a static HIR/source audit that
+  proves a reusable direct-call/stackpoint rule beyond closed stack-sync and
+  edge-payload lanes.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
 - Mixed/static hot-function translation research only where guest-visible state,
