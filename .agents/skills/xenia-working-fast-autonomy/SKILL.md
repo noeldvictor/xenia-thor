@@ -85,8 +85,9 @@ Treat these as closed for immediate speed work:
 - `82281D28` weighted HIR/block-profile behavior from ordinal fallback: the
   2026-05-26 join audit found `join_status=unsafe`. The metadata capture now
   exists, but `82281D28:block20 guest=8228233C` is still active and unmappable
-  to printed OptHIR. Do not run another unchanged metadata capture; add
-  per-block HIR text/source-span output first.
+  to printed OptHIR in old logs. `docs/research/20260526-023500-hir-block-profile-stamps.md`
+  adds per-block HIR source-span stamps; next capture must deploy that patch
+  and prove `hir_block_mappable_rows > 0` before behavior work.
 
 ## Useful Output Bias
 

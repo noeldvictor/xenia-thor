@@ -31,6 +31,20 @@ function Format-HexAddress {
     return ("{0:X8}" -f [uint32]$Value)
 }
 
+function Test-AddressInRange {
+    param(
+        [uint32]$Target,
+        [string]$First,
+        [string]$Last
+    )
+    if ($First -eq "00000000" -or $Last -eq "00000000") {
+        return $false
+    }
+    $firstAddress = Convert-HexAddress $First
+    $lastAddress = Convert-HexAddress $Last
+    return ($Target -ge $firstAddress -and $Target -le $lastAddress)
+}
+
 function Find-BeforeOrEqual {
     param(
         [uint32[]]$Addresses,
@@ -82,6 +96,7 @@ $hirLabelAddresses = New-Object System.Collections.Generic.List[uint32]
 $hirLabelSet = @{}
 $ppcCommentAddresses = New-Object System.Collections.Generic.List[uint32]
 $ppcCommentSet = @{}
+$hirBlockMetadataByOrdinal = @{}
 
 Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     if ($_ -notmatch $linePattern) {
@@ -89,6 +104,22 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     }
 
     $text = $Matches.text
+    if ($text -match "^\s*;\s+block_profile\s+ordinal=(?<block>\d+)\s+first_source=(?<first_source>[0-9A-Fa-f]{8})\s+last_source=(?<last_source>[0-9A-Fa-f]{8})\s+first_guest=(?<first_guest>[0-9A-Fa-f]{8})\s+last_guest=(?<last_guest>[0-9A-Fa-f]{8})\s+first_comment=(?<first_comment>[0-9A-Fa-f]{8})\s+last_comment=(?<last_comment>[0-9A-Fa-f]{8})\s+label=(?<label>[0-9A-Fa-f]{8})\s+hir_instrs=(?<hir_instrs>\d+)") {
+        $blockMatch = $Matches.Clone()
+        $hirBlockMetadataByOrdinal[[int]$blockMatch.block] = [pscustomobject][ordered]@{
+            block = [int]$blockMatch.block
+            first_source = $blockMatch.first_source.ToUpperInvariant()
+            last_source = $blockMatch.last_source.ToUpperInvariant()
+            first_guest = $blockMatch.first_guest.ToUpperInvariant()
+            last_guest = $blockMatch.last_guest.ToUpperInvariant()
+            first_comment = $blockMatch.first_comment.ToUpperInvariant()
+            last_comment = $blockMatch.last_comment.ToUpperInvariant()
+            label = $blockMatch.label.ToUpperInvariant()
+            hir_instrs = [int]$blockMatch.hir_instrs
+        }
+        return
+    }
+
     if ($text -match "^\s*(loc_([0-9A-Fa-f]{8})):\s*$") {
         $addressText = $Matches[2].ToUpperInvariant()
         $address = Convert-HexAddress $addressText
@@ -176,6 +207,32 @@ Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
     $metadataMappable = $metadataProfileSourceMatch -and
         ($metadataFirstCommentMatch -or $metadataLabelMatch)
 
+    $hirBlockMetadataPresent = $hirBlockMetadataByOrdinal.ContainsKey($blockOrdinal)
+    $hirBlockFirstSource = "-"
+    $hirBlockLastSource = "-"
+    $hirBlockFirstGuest = "-"
+    $hirBlockLastGuest = "-"
+    $hirBlockFirstComment = "-"
+    $hirBlockLastComment = "-"
+    $hirBlockLabel = "-"
+    $hirBlockInstrs = 0
+    $hirBlockMappable = $false
+    if ($hirBlockMetadataPresent) {
+        $hirBlockMetadata = $hirBlockMetadataByOrdinal[$blockOrdinal]
+        $hirBlockFirstSource = $hirBlockMetadata.first_source
+        $hirBlockLastSource = $hirBlockMetadata.last_source
+        $hirBlockFirstGuest = $hirBlockMetadata.first_guest
+        $hirBlockLastGuest = $hirBlockMetadata.last_guest
+        $hirBlockFirstComment = $hirBlockMetadata.first_comment
+        $hirBlockLastComment = $hirBlockMetadata.last_comment
+        $hirBlockLabel = $hirBlockMetadata.label
+        $hirBlockInstrs = $hirBlockMetadata.hir_instrs
+        $hirBlockMappable =
+            (Test-AddressInRange $guestAddress $hirBlockFirstSource $hirBlockLastSource) -or
+            (Test-AddressInRange $guestAddress $hirBlockFirstGuest $hirBlockLastGuest) -or
+            ($hirBlockLabel -ne "00000000" -and $guest -eq $hirBlockLabel)
+    }
+
     $profileRows.Add([pscustomobject][ordered]@{
         block = $blockOrdinal
         guest = $guest
@@ -201,6 +258,16 @@ Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
         last_comment = $lastComment
         label = $label
         hir_instrs = $hirInstrs
+        hir_block_metadata_present = $hirBlockMetadataPresent
+        hir_block_mappable = $hirBlockMappable
+        hir_block_first_source = $hirBlockFirstSource
+        hir_block_last_source = $hirBlockLastSource
+        hir_block_first_guest = $hirBlockFirstGuest
+        hir_block_last_guest = $hirBlockLastGuest
+        hir_block_first_comment = $hirBlockFirstComment
+        hir_block_last_comment = $hirBlockLastComment
+        hir_block_label = $hirBlockLabel
+        hir_block_instrs = $hirBlockInstrs
     }) | Out-Null
 }
 
@@ -216,12 +283,14 @@ $ordinalFallbackMismatches = @($rows | Where-Object {
 }).Count
 $metadataRows = @($rows | Where-Object { $_.metadata_present }).Count
 $metadataMappableRows = @($rows | Where-Object { $_.metadata_mappable }).Count
+$hirBlockMetadataRows = @($rows | Where-Object { $_.hir_block_metadata_present }).Count
+$hirBlockMappableRows = @($rows | Where-Object { $_.hir_block_mappable }).Count
 $activeRows = @($rows | Where-Object { $_.total -gt 0 -or $_.delta -gt 0 })
 $activeMetadataUnmappableRows = @($activeRows | Where-Object {
-    $_.metadata_present -and !$_.metadata_mappable
+    $_.metadata_present -and !$_.metadata_mappable -and !$_.hir_block_mappable
 }).Count
 $topActiveMetadataUnmappable = @($activeRows | Where-Object {
-    $_.metadata_present -and !$_.metadata_mappable
+    $_.metadata_present -and !$_.metadata_mappable -and !$_.hir_block_mappable
 } | Sort-Object -Property @{ Expression = "total"; Descending = $true },
                           @{ Expression = "block"; Ascending = $true } |
     Select-Object -First 1)
@@ -243,10 +312,12 @@ Write-Output "unmatched_profile_guests=$unmatchedGuests"
 Write-Output "ordinal_fallback_mismatches=$ordinalFallbackMismatches"
 Write-Output "metadata_rows=$metadataRows"
 Write-Output "metadata_mappable_rows=$metadataMappableRows"
+Write-Output "hir_block_metadata_rows=$hirBlockMetadataRows"
+Write-Output "hir_block_mappable_rows=$hirBlockMappableRows"
 Write-Output "active_rows=$($activeRows.Count)"
 Write-Output "active_metadata_unmappable_rows=$activeMetadataUnmappableRows"
 if ($topActiveMetadataUnmappable) {
-    Write-Output ("top_active_metadata_unmappable=block={0},guest={1},total={2},first_source={3},last_source={4},first_comment={5},last_comment={6},label={7}" -f
+    Write-Output ("top_active_metadata_unmappable=block={0},guest={1},total={2},first_source={3},last_source={4},first_comment={5},last_comment={6},label={7},hir_block_first_source={8},hir_block_last_source={9},hir_block_label={10}" -f
         $topActiveMetadataUnmappable.block,
         $topActiveMetadataUnmappable.guest,
         $topActiveMetadataUnmappable.total,
@@ -254,7 +325,10 @@ if ($topActiveMetadataUnmappable) {
         $topActiveMetadataUnmappable.last_source,
         $topActiveMetadataUnmappable.first_comment,
         $topActiveMetadataUnmappable.last_comment,
-        $topActiveMetadataUnmappable.label)
+        $topActiveMetadataUnmappable.label,
+        $topActiveMetadataUnmappable.hir_block_first_source,
+        $topActiveMetadataUnmappable.hir_block_last_source,
+        $topActiveMetadataUnmappable.hir_block_label)
 }
 Write-Output ""
 Write-Output "## Top Profile Rows"
@@ -262,7 +336,7 @@ if (!$rows) {
     Write-Output "(no profile rows)"
 } else {
     $rows | Select-Object -First $Top | ForEach-Object {
-        Write-Output ("block={0} guest={1} total={2} delta={3} entries={4} tpe={5} hir_label_match={6} ppc_comment_match={7} ordinal_label={8} ordinal_match={9} nearest_hir_before={10} nearest_hir_after={11} nearest_ppc_before={12} nearest_ppc_after={13} metadata={14} metadata_mappable={15} first_source={16} last_source={17} first_guest={18} last_guest={19} first_comment={20} last_comment={21} label={22} hir_instrs={23}" -f
+        Write-Output ("block={0} guest={1} total={2} delta={3} entries={4} tpe={5} hir_label_match={6} ppc_comment_match={7} ordinal_label={8} ordinal_match={9} nearest_hir_before={10} nearest_hir_after={11} nearest_ppc_before={12} nearest_ppc_after={13} metadata={14} metadata_mappable={15} first_source={16} last_source={17} first_guest={18} last_guest={19} first_comment={20} last_comment={21} label={22} hir_instrs={23} hir_block_metadata={24} hir_block_mappable={25} hir_block_first_source={26} hir_block_last_source={27} hir_block_first_guest={28} hir_block_last_guest={29} hir_block_label={30} hir_block_instrs={31}" -f
             $_.block, $_.guest, $_.total, $_.delta, $_.entries,
             $_.ticks_per_entry, [int]$_.hir_label_match,
             [int]$_.ppc_comment_match, $_.ordinal_label,
@@ -271,7 +345,10 @@ if (!$rows) {
             $_.nearest_ppc_comment_after, [int]$_.metadata_present,
             [int]$_.metadata_mappable, $_.first_source, $_.last_source,
             $_.first_guest, $_.last_guest, $_.first_comment, $_.last_comment,
-            $_.label, $_.hir_instrs)
+            $_.label, $_.hir_instrs, [int]$_.hir_block_metadata_present,
+            [int]$_.hir_block_mappable, $_.hir_block_first_source,
+            $_.hir_block_last_source, $_.hir_block_first_guest,
+            $_.hir_block_last_guest, $_.hir_block_label, $_.hir_block_instrs)
     }
 }
 
@@ -290,6 +367,10 @@ if ($activeMetadataUnmappableRows -gt 0) {
     Write-Output "join_status=metadata_required"
     Write-Output "reason=runtime block profile guests need explicit metadata rather than ordinal fallback; metadata maps at least one profile source to a printed HIR comment or label"
     Write-Output "next=use metadata fields for profile-to-HIR joins and keep ordinal fallback disabled unless a separate audit proves it safe"
+} elseif ($hirBlockMappableRows -gt 0) {
+    Write-Output "join_status=block_text_required"
+    Write-Output "reason=runtime block profile guests need explicit HIR block metadata rather than labels/comments or ordinal fallback"
+    Write-Output "next=use hir_block_* fields for profile-to-HIR joins and keep ordinal fallback disabled"
 } else {
     Write-Output "join_status=safe"
     Write-Output "reason=profile guests match HIR labels/comments and ordinal labels"

@@ -188,8 +188,13 @@ Better next lanes:
   metadata rows are present, but the active hot span
   `82281D28:8228233C-82282370` is still absent from the printed OptHIR stream:
   `active_metadata_unmappable_rows=88` and `join_status=unsafe`. Do not patch
-  `82281D28` behavior from weighted HIR/profile joins until file-backed or
-  log-backed per-block HIR text/source spans make that active block mappable.
+  `82281D28` behavior from weighted HIR/profile joins until per-block HIR text
+  and source spans make that active block mappable.
+  `docs/research/20260526-023500-hir-block-profile-stamps.md` adds
+  behavior-neutral `HIRBuilder::Dump()` block stamps and join-audit parsing for
+  `hir_block_*` fields. This is tooling proof only; next run should FullDeploy,
+  capture `82281D28` with disassembly and block body-time enabled, then require
+  `hir_block_mappable_rows > 0` and non-unsafe join status before behavior work.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

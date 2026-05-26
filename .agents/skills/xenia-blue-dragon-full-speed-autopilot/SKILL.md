@@ -75,8 +75,11 @@ Pick one lane with a credible FPS path:
   proved the metadata capture works but still cannot map the active hot span:
   `82281D28:block20 guest=8228233C`, source span `8228233C-82282370`,
   `active_metadata_unmappable_rows=88`, `join_status=unsafe`. Next step is
-  file-backed or log-backed per-block HIR text/source spans, not another
-  unchanged capture.
+  now to FullDeploy the behavior-neutral HIR block stamps from
+  `docs/research/20260526-023500-hir-block-profile-stamps.md`, capture
+  `82281D28` again with disassembly and block body-time enabled, and require
+  `hir_block_mappable_rows > 0` plus non-unsafe join status before behavior
+  work. Do not rerun the old metadata capture without this patch deployed.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
@@ -103,7 +106,9 @@ Pick one lane with a credible FPS path:
   context is the output; use one-function captures or add a file-backed dump.
 - Do not use ordinal fallback as proof that runtime block profile rows match
   printed HIR blocks. If `tools/thor/thor_hir_block_profile_join_audit.ps1`
-  reports `join_status=unsafe`, fix the metadata/dump first.
+  reports `join_status=unsafe`, fix the metadata/dump first. After
+  `docs/research/20260526-023500-hir-block-profile-stamps.md`, the expected
+  next proof is `hir_block_*` mapping in a fresh deployed log.
 - A speed A/B is only valid after behavior changes, audit counters are off, and
   the route/cvars/APK are matched.
 - When the loop feels circular, run

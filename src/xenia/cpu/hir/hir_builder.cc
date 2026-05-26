@@ -12,6 +12,7 @@
 #include <cinttypes>
 #include <cstdarg>
 #include <cstring>
+#include <string_view>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/profiling.h"
@@ -27,6 +28,120 @@
 namespace xe {
 namespace cpu {
 namespace hir {
+
+namespace {
+
+bool ParseHex8(std::string_view text, uint32_t* out_value) {
+  if (text.size() < 8) {
+    return false;
+  }
+
+  uint32_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    const char c = text[i];
+    uint32_t nibble = 0;
+    if (c >= '0' && c <= '9') {
+      nibble = static_cast<uint32_t>(c - '0');
+    } else if (c >= 'A' && c <= 'F') {
+      nibble = static_cast<uint32_t>(c - 'A' + 10);
+    } else if (c >= 'a' && c <= 'f') {
+      nibble = static_cast<uint32_t>(c - 'a' + 10);
+    } else {
+      return false;
+    }
+    value = (value << 4) | nibble;
+  }
+
+  *out_value = value;
+  return true;
+}
+
+uint32_t ParseLocLabelAddress(const char* label_name) {
+  if (!label_name) {
+    return 0;
+  }
+  std::string_view label(label_name);
+  uint32_t address = 0;
+  if (label.size() >= 12 && label.substr(0, 4) == "loc_" &&
+      ParseHex8(label.substr(4), &address)) {
+    return address;
+  }
+  return 0;
+}
+
+uint32_t ParsePpcCommentAddress(const char* comment) {
+  if (!comment) {
+    return 0;
+  }
+  uint32_t address = 0;
+  return ParseHex8(std::string_view(comment), &address) ? address : 0;
+}
+
+struct DumpBlockMetadata {
+  uint32_t first_source = 0;
+  uint32_t last_source = 0;
+  uint32_t first_guest = 0;
+  uint32_t last_guest = 0;
+  uint32_t first_comment = 0;
+  uint32_t last_comment = 0;
+  uint32_t first_label = 0;
+  uint32_t hir_instrs = 0;
+};
+
+DumpBlockMetadata CollectDumpBlockMetadata(const Block* block) {
+  DumpBlockMetadata metadata = {};
+  if (!block) {
+    return metadata;
+  }
+
+  for (const Label* label = block->label_head; label; label = label->next) {
+    const uint32_t label_address = ParseLocLabelAddress(label->name);
+    if (label_address) {
+      metadata.first_label = label_address;
+      break;
+    }
+  }
+
+  for (const Instr* instr = block->instr_head; instr; instr = instr->next) {
+    const auto opcode = instr->GetOpcodeNum();
+    if (opcode == OPCODE_SOURCE_OFFSET) {
+      const uint32_t source_offset = static_cast<uint32_t>(instr->src1.offset);
+      if (!metadata.first_source) {
+        metadata.first_source = source_offset;
+      }
+      metadata.last_source = source_offset;
+      continue;
+    }
+    if (opcode == OPCODE_COMMENT) {
+      const uint32_t comment_address =
+          ParsePpcCommentAddress(reinterpret_cast<const char*>(
+              instr->src1.offset));
+      if (comment_address) {
+        if (!metadata.first_comment) {
+          metadata.first_comment = comment_address;
+        }
+        metadata.last_comment = comment_address;
+      }
+      continue;
+    }
+
+    const uint32_t guest_address = instr->GuestAddressFor();
+    if (guest_address) {
+      if (!metadata.first_guest) {
+        metadata.first_guest = guest_address;
+      }
+      metadata.last_guest = guest_address;
+    }
+
+    if (!(instr->opcode->flags & OPCODE_FLAG_HIDE)) {
+      ++metadata.hir_instrs;
+    }
+  }
+
+  return metadata;
+}
+
+}  // namespace
 
 #define ASSERT_ADDRESS_TYPE(value) \
   assert_true((value->type) == INT32_TYPE || (value->type) == INT64_TYPE)
@@ -194,6 +309,15 @@ void HIRBuilder::Dump(StringBuffer* str) {
     } else if (!block->label_head) {
       str->AppendFormat("<block{}>:\n", block_ordinal);
     }
+
+    const DumpBlockMetadata metadata = CollectDumpBlockMetadata(block);
+    str->AppendFormat(
+        "  ; block_profile ordinal={} first_source={:08X} last_source={:08X} "
+        "first_guest={:08X} last_guest={:08X} first_comment={:08X} "
+        "last_comment={:08X} label={:08X} hir_instrs={}\n",
+        block->ordinal, metadata.first_source, metadata.last_source,
+        metadata.first_guest, metadata.last_guest, metadata.first_comment,
+        metadata.last_comment, metadata.first_label, metadata.hir_instrs);
     block_ordinal++;
 
     Label* label = block->label_head;

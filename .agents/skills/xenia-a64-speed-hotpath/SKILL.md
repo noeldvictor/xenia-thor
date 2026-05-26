@@ -104,12 +104,15 @@ printed OptHIR. The top active unmappable row is block `20`, guest
 Next structural tooling target:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath scratch\thor-debug\20260526-021159-speed-logcat.txt -Function 82281D28 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260526-021159-speed-logcat.txt -ProfileKind Body -Top 20
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -Mode LaunchBlueDragonSpeedCapture -DeviceSerial c3ca0370 -LiveCaptureSeconds 180 -PerfSampleSeconds "120,150,175" -DisassembleFunctionFilter "82281D28" -Arm64SpeedProfileBlockFilter "82281D28" -Arm64SpeedProfileBlockBodyTime true -Arm64SpeedProfileBodyTimeFilter "82282490,82281D28,82287788" -Arm64SpeedProfileBodyTimeAfterMs 120000 -Arm64SpeedProfileIntervalMs 15000 -Arm64SpeedProfileTopFunctions 30 -Arm64SpeedProfileMinDelta 1 -StopAppAfterCapture true
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath <new-speed-logcat> -Function 82281D28 -Phase OptHIR -BlockProfileLog <new-speed-logcat> -ProfileKind Body -Top 20
 ```
 
-Do not run another unchanged metadata capture. Add file-backed or log-backed
-per-block HIR text/source spans for active unmappable rows, starting with
-`82281D28` block `20` (`8228233C-82282370`), then rerun the audit.
+`docs/research/20260526-023500-hir-block-profile-stamps.md` adds the
+behavior-neutral HIR block stamps and join-audit parsing needed for that next
+capture. Do not patch `82281D28` behavior until the new log reports
+`hir_block_mappable_rows > 0` and `join_status` is no longer `unsafe`.
 
 Only use `82281D28` weighted HIR evidence after the join audit no longer reports
 `join_status=unsafe`. Do not use `-AllowOrdinalFallback` for behavior
