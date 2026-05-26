@@ -253,6 +253,21 @@ flushes, and unresolved targets. Prefer fastmem/addressing or A64 load/store
 codegen-floor counters for hot `LOAD_OFFSET` / `STORE_OFFSET` forms in
 `82281D28`.
 
+`docs/research/20260526-063600-82281d28-load-store-offset-audit.md` adds
+`tools/thor/thor_hir_load_store_offset_audit.ps1` and runs it against the latest
+route-clean `82281D28` log. The wall is scalar guest-stack offset traffic:
+`offset_ops=365`, `load_offset_ops=253`, `store_offset_ops=112`,
+`body_weighted_offset_ops=450860314`, `body_weighted_guest_stack_ops=411865334`,
+and `body_weighted_context_gpr_ops=38994980`. The dominant block remains
+`82281D28:8228233C-82282370`, led by `stw r11,0x64(r1)` and
+`ld r5-r10,0x170-0x198(r1)`. Do not patch behavior or run a quiet speed A/B
+from this offline audit. Next useful work is a source-level A64 memory-lowering
+feasibility audit for `ComputeMemoryAddress`, `AddGuestMemoryOffset`, and
+`OPCODE_LOAD_OFFSET` / `OPCODE_STORE_OFFSET`, especially `r1 + small constant`.
+Any candidate must preserve 32-bit guest address wrap, membase, byte-swap,
+MMIO/exception visibility, and fallback behavior. If no reusable legal lowering
+exists, close fastmem/addressing for the current `82281D28` lane.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

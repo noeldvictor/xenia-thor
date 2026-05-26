@@ -317,6 +317,21 @@ Better next lanes:
   unresolved targets. Next useful structural work is fastmem/addressing or A64
   load/store codegen-floor counters for hot `LOAD_OFFSET` / `STORE_OFFSET`
   forms in `82281D28`.
+  `docs/research/20260526-063600-82281d28-load-store-offset-audit.md` adds the
+  offline file-backed HIR/profile join via
+  `tools/thor/thor_hir_load_store_offset_audit.ps1`. The latest route-clean log
+  shows `offset_ops=365`, `load_offset_ops=253`, `store_offset_ops=112`,
+  `body_weighted_offset_ops=450860314`, and the work is dominated by guest-stack
+  `r1` forms: `body_weighted_guest_stack_ops=411865334` versus
+  `body_weighted_context_gpr_ops=38994980`. The dominant block is still
+  `82281D28:8228233C-82282370`, especially `stw r11,0x64(r1)` and
+  `ld r5-r10,0x170-0x198(r1)`. Do not patch behavior or run a quiet speed A/B
+  from this offline audit alone. Next work is a source-level A64 memory-lowering
+  feasibility audit of `ComputeMemoryAddress`, `AddGuestMemoryOffset`, and
+  `OPCODE_LOAD_OFFSET` / `OPCODE_STORE_OFFSET`, proving whether `r1 + small
+  constant` has a reusable legal lowering while preserving 32-bit guest wrap,
+  membase, byte-swap, MMIO/exception visibility, and fallback behavior. If not,
+  close this fastmem/addressing lane for `82281D28`.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

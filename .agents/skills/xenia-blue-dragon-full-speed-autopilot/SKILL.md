@@ -154,6 +154,22 @@ behavior-neutral and not speed proof. Next work is FullDeploy plus a route-clean
 `-Arm64GuestStackArgHandoffAuditBudget 16`, then parse it with
 `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. Do not run a quiet
 speed A/B or patch behavior from the skeleton alone.
+`docs/research/20260526-061637-guest-stack-arg-handoff-capture.md` closes that
+behavior lane: the route was clean, but `stack_arg_store_fields=87`,
+`estimated_avoidable_bytes=1360`, `unresolved_direct_targets=52`,
+`normal_entry_fallback=67`, `stackpoint_sensitive=67`,
+`dirty_flush_points=268`, and `flush_context_barrier=260`.
+`docs/research/20260526-063600-82281d28-load-store-offset-audit.md` then shows
+the broader hot traffic is ordinary guest-stack memory addressing, not a narrow
+handoff opportunity: `body_weighted_offset_ops=450860314`,
+`body_weighted_guest_stack_ops=411865334`, and the top block is
+`82281D28:8228233C-82282370` with `stw r11,0x64(r1)` plus
+`ld r5-r10,0x170-0x198(r1)`. Next work should be a source-level A64
+memory-lowering feasibility audit for `ComputeMemoryAddress`,
+`AddGuestMemoryOffset`, and `OPCODE_LOAD_OFFSET` / `OPCODE_STORE_OFFSET`,
+especially `r1 + small constant`. Do not patch behavior until the audit proves a
+reusable legal lowering that preserves 32-bit guest wrap, membase, byte-swap,
+MMIO/exception visibility, and fallback behavior.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
