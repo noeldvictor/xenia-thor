@@ -210,6 +210,11 @@ Treat these as closed for immediate speed work:
   helpers exist but are unused by codegen; direct callsites, payload
   population, dirty flush codegen, and stub codegen are still absent. Continue
   only with behavior-neutral payload/dirty-flush source design or switch lanes.
+- `docs/research/20260526-104000-a64-fast-entry-payload-flush-plan.md` adds
+  that behavior-neutral planner and audit. It proves payload/flush blockers and
+  inputs exist, but the planner is unused by generated code and behavior is
+  still unchanged. Do not run a speed A/B or patch callsites from this source
+  state; continue only with no-op codegen protocol helpers or switch lanes.
 
 ## Useful Output Bias
 

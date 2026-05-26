@@ -401,6 +401,17 @@ population, dirty flush codegen, and fast-entry stub codegen are absent.
 Continue only with payload-population / dirty-flush codegen design while keeping
 generated behavior unchanged, or switch lanes.
 
+`docs/research/20260526-104000-a64-fast-entry-payload-flush-plan.md` adds that
+behavior-neutral payload/flush planner and
+`tools/thor/thor_a64_fast_entry_payload_flush_plan_audit.ps1`. The planner
+conservatively blocks when source payloads, writable payload slots, dirty-flush
+coverage, context writeback, stackpoint resume flush, or debug/exception flush
+are missing. Generated behavior remains unchanged: no callsite guard, payload
+population, dirty flush codegen, stub codegen, normal-entry replacement, or
+global-indirection rewrite. Do not run Thor speed A/B from this source-only
+state. Next fast-entry work must be no-op codegen protocol helpers with
+behavior unchanged, or a lane switch.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

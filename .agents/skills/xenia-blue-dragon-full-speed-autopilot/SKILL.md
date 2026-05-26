@@ -281,6 +281,12 @@ exist for direct-call guards, payload population, dirty flush coverage,
 late-bound fallback, stackpoint resume, and debug/exception visibility, but
 codegen still does not use the guard and behavior is unchanged. Next fast-entry
 work is payload-population / dirty-flush source design only, or switch lanes.
+`docs/research/20260526-104000-a64-fast-entry-payload-flush-plan.md` adds that
+source-only planner and audit. It proves the payload/flush blocker model exists
+and behavior is still unchanged: no callsite guard, payload population, dirty
+flush codegen, fast-entry stub codegen, normal-entry replacement, or global
+indirection rewrite. Next fast-entry work must be no-op codegen protocol
+helpers with generated behavior unchanged, or switch lanes.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

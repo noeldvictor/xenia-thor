@@ -103,6 +103,61 @@ A64GuestCallFastEntryGuardDecision EvaluateA64GuestCallFastEntryGuard(
   return decision;
 }
 
+A64GuestCallFastEntryPayloadFlushPlan
+BuildA64GuestCallFastEntryPayloadFlushPlan(
+    const A64GuestCallFastEntryContract& contract,
+    const A64GuestCallFastEntryPayloadFlushPlanInputs& inputs) {
+  A64GuestCallFastEntryPayloadFlushPlan plan = {};
+  plan.required_payload_mask = kA64GuestCallFastEntryRequiredPayloadMask;
+  plan.required_dirty_flush_mask =
+      kA64GuestCallFastEntryRequiredDirtyFlushMask;
+
+  if (!A64GuestCallFastEntryContractCoversStubSkeleton(contract)) {
+    plan.payload_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingWritablePayloadSlots;
+    plan.dirty_flush_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingDirtyFlushCoverage;
+  }
+
+  if ((inputs.available_source_payload_mask &
+       kA64GuestCallFastEntryRequiredPayloadMask) !=
+      kA64GuestCallFastEntryRequiredPayloadMask) {
+    plan.payload_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingSourcePayload;
+  }
+  if (!inputs.payload_slots_writable ||
+      (inputs.writable_payload_mask &
+       kA64GuestCallFastEntryRequiredPayloadMask) !=
+          kA64GuestCallFastEntryRequiredPayloadMask) {
+    plan.payload_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingWritablePayloadSlots;
+  }
+
+  uint32_t dirty_payload_mask =
+      inputs.dirty_payload_mask & kA64GuestCallFastEntryRequiredPayloadMask;
+  if (dirty_payload_mask &&
+      (inputs.available_dirty_flush_mask &
+       kA64GuestCallFastEntryRequiredDirtyFlushMask) !=
+          kA64GuestCallFastEntryRequiredDirtyFlushMask) {
+    plan.dirty_flush_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingDirtyFlushCoverage;
+  }
+  if (!inputs.context_writeback_available) {
+    plan.dirty_flush_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingContextWriteback;
+  }
+  if (!inputs.stackpoint_resume_flush_available) {
+    plan.dirty_flush_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingStackpointResumeFlush;
+  }
+  if (!inputs.debug_exception_flush_available) {
+    plan.dirty_flush_blockers |=
+        kA64GuestCallFastEntryPlanBlockerMissingDebugExceptionFlush;
+  }
+
+  return plan;
+}
+
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_length_.store(machine_code_length, std::memory_order_relaxed);
   machine_code_.store(machine_code, std::memory_order_release);

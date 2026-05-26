@@ -454,6 +454,16 @@ Better next lanes:
   population and dirty flush codegen are absent, and no fast-entry stub codegen
   exists. Behavior remains blocked. Next work is payload-population and
   dirty-flush codegen design only, still behavior-neutral, or a lane switch.
+  `docs/research/20260526-104000-a64-fast-entry-payload-flush-plan.md` adds
+  that behavior-neutral source plan: payload/flush blocker bits, plan inputs,
+  `BuildA64GuestCallFastEntryPayloadFlushPlan`, and
+  `tools/thor/thor_a64_fast_entry_payload_flush_plan_audit.ps1`. It proves the
+  planner is present but unused by generated code. Direct calls still use
+  normal entry; payload population, dirty flush codegen, fast-entry callsite
+  behavior, normal-entry replacement, and global-indirection rewrite remain
+  absent. Do not run Thor speed A/B or patch generated behavior from this
+  source-only state. Next fast-entry work must be no-op codegen protocol
+  helpers with behavior unchanged, or a lane switch.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
