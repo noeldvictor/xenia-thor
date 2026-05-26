@@ -95,6 +95,13 @@ Treat these as closed for immediate speed work:
   callee and strict local promotion has zero safe wins. Next work must be a
   generic guest-call argument handoff audit or a different structural lane, not
   another local call/setup capture.
+- Generic guest-call argument handoff behavior is still blocked. The first
+  audit in `docs/research/20260526-033000-guest-call-arg-handoff-audit.md`
+  added `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1` and found
+  `callee_first_load_stores=62` but `callee_hir_missing_stores=364` for
+  `82281D28`. Do not design a fast-entry variant until broader route or
+  file-backed callee HIR proves body-weighted volume and normal-entry fallback
+  constraints.
 
 ## Useful Output Bias
 

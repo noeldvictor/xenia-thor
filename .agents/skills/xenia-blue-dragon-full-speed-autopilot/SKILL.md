@@ -90,6 +90,12 @@ Pick one lane with a credible FPS path:
   locally or rerun the same audit. Reopen as a generic guest-call argument
   handoff audit only if it counts broad direct-call volume and normal-entry
   fallback constraints.
+  `docs/research/20260526-033000-guest-call-arg-handoff-audit.md` adds
+  `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`; first pass on
+  `82281D28` found broad caller stores but too much missing callee HIR
+  (`callee_hir_missing_stores=364`) to justify fast-entry behavior. Next work
+  should capture or provide broader route/file-backed callee HIR and rerun the
+  tool before any ABI patch.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

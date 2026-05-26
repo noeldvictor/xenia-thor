@@ -216,6 +216,17 @@ Better next lanes:
   is a generic A64 guest-call argument handoff audit for direct guest calls
   that currently store `r3-r10/lr` to `PPCContext` before the callee reloads
   them.
+  `docs/research/20260526-033000-guest-call-arg-handoff-audit.md` adds that
+  reusable audit surface as
+  `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. First old-log pass
+  on `82281D28` found `direct_ppc_bl_calls=81`,
+  `argument_store_fields=439`, `callee_first_load_stores=62`, and
+  `callee_hir_missing_stores=364`. The two known hot call boundaries are
+  ABI-live, and most remaining candidates lack callee HIR coverage. Do not
+  design a guest-call fast-entry behavior patch from this single-function
+  sample. Next useful work is broader route or file-backed HIR coverage for
+  missing direct-call-heavy callees, followed by this audit to prove
+  body-weighted callee-first-load volume and normal-entry fallback constraints.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

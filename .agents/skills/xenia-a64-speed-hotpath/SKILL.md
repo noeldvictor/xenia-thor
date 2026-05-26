@@ -137,11 +137,21 @@ behavior patch: the `826BF770` call's `r3/r4/r5/lr` stores and the recursive
 `82281D28` call's `r3-r10/lr` stores are all `callee_live_in`; strict local
 promotion has zero safe wins. Do not patch local store elision, rerun this
 unchanged call/setup audit, or inline only this `826BF770` caller. The next
-useful structural slice is a generic default-off A64 guest-call argument
-handoff audit for direct guest calls, measuring parent `r3-r10/lr` stores,
-callee first-use reloads, tail/indirect/extern blockers, stackpoint/longjmp
-constraints, and estimated avoidable store/reload traffic before any fast-entry
-variant is designed.
+useful structural slice is broader evidence for the generic guest-call
+argument handoff lane, not a behavior patch.
+
+`docs/research/20260526-033000-guest-call-arg-handoff-audit.md` adds
+`tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. First pass:
+`direct_ppc_bl_calls=81`, `argument_store_fields=439`,
+`callee_first_load_stores=62`, `callee_hir_missing_stores=364`,
+`normal_entry_fallback_required=81`. The known hot call boundaries are
+ABI-live, and most candidate stores need missing callee HIR before a fast-entry
+design is defensible. Next run this tool on broader route or file-backed HIR
+coverage for missing direct-call-heavy callees.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_guest_call_arg_handoff_audit.ps1 -LogPath <route-speed-logcat> -ExtraLogPath <callee-hir-log> -Function 82281D28 -Phase OptHIR -Top 24
+```
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
