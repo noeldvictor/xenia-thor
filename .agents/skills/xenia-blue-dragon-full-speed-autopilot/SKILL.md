@@ -136,6 +136,16 @@ the same capture unchanged. Reopen fast-entry only with a source-level guarded
 stub / late-bound-entry design that handles normal-entry fallback, global
 indirection, stackpoint/debug/exception visibility, and dirty flushes; otherwise
 move to a hot-block A64 codegen-floor/disassembly audit.
+`docs/research/20260526-054200-82281d28-hot-block-codegen-floor.md` ran that
+audit. The mapped block `82281D28:8228233C-82282370` is scalar guest-stack
+argument handoff (`load_offset.1=6`, `store_context=13`) around calls to
+`0x826BF770` and recursive `0x82281D28`; it is not VMX/GPU work. ARM64 Capstone
+disassembly was unavailable, so this is HIR/source codegen-floor evidence only.
+Do not patch behavior from it. The next useful slice is a default-off
+counter-only guest-stack argument handoff audit for direct guest calls, counting
+`LOAD_OFFSET` from `r1 + constant` into `STORE_CONTEXT r3-r10/lr` before calls
+with target/callsite rows, body weighting, normal-entry fallback, and blocker
+classes.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

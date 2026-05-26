@@ -285,6 +285,19 @@ Better next lanes:
   preserves normal entry, global indirection, stackpoint/debug/exception
   visibility, and dirty flushes; otherwise move to a hot-block A64
   codegen-floor/disassembly audit.
+  `docs/research/20260526-054200-82281d28-hot-block-codegen-floor.md` ran that
+  mapped hot-block audit for `82281D28:8228233C-82282370`. It confirms this
+  block is scalar call / guest-stack argument setup, not VMX/vector/GPU work:
+  `store_context=13`, `load_offset.1=6`, `load_context=5`, `calls=2`, and
+  `context_barriers=2`. Literal A64 disassembly was unavailable because ARM64
+  Capstone is not present in the capture. Do not patch local store elision,
+  fast-entry behavior, VMX128, or GPU/Vulkan from this evidence. Next useful
+  work is a default-off counter-only guest-stack argument handoff audit for
+  direct guest calls: count `LOAD_OFFSET` from `r1 + constant` feeding
+  `STORE_CONTEXT r3-r10/lr` before direct calls, with target/callsite rows,
+  body-time weighting, resolved/compiled state, normal-entry fallback pressure,
+  context-barrier / stackpoint / debug / exception blockers, helper/extern/tail
+  blockers, and estimated avoidable guest stack load/context store traffic.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

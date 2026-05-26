@@ -222,6 +222,20 @@ stackpoint/debug/exception visibility, and dirty flushes. Otherwise prefer a
 hot-block A64 codegen-floor/disassembly audit for the mapped body-dominant
 blocks, starting with `82281D28:8228233C-82282370`.
 
+`docs/research/20260526-054200-82281d28-hot-block-codegen-floor.md` completes
+that audit for `82281D28:8228233C-82282370`. The hot block is scalar call /
+guest-stack argument setup: `store_context=13`, `load_offset.1=6`,
+`load_context=5`, `calls=2`, and `context_barriers=2`. It calls `0x826BF770`
+and recursive `0x82281D28`. ARM64 Capstone disassembly was unavailable in the
+capture, so this is HIR/source codegen-floor evidence, not machine-code
+disassembly. Do not patch local store elision, fast-entry behavior, VMX128, or
+GPU/Vulkan from this block. The next useful slice is a default-off counter-only
+guest-stack argument handoff audit for direct guest calls: count `LOAD_OFFSET`
+from `r1 + constant` feeding `STORE_CONTEXT r3-r10/lr` immediately before a
+direct call, with target/callsite rows, body-time weighting, resolved/compiled
+state, normal-entry fallback pressure, blocker classes, and estimated avoidable
+guest stack load / context store traffic.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 
