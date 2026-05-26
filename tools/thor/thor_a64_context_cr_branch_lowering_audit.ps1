@@ -8,7 +8,8 @@ param(
     [string]$SequencesPath = "src\xenia\cpu\backend\a64\a64_sequences.cc",
     [string]$BackendPath = "src\xenia\cpu\backend\a64\a64_backend.cc",
     [string]$EmitterPath = "src\xenia\cpu\backend\a64\a64_emitter.cc",
-    [string]$NegativeReportPath = "docs\research\20260521-153300-a64-context-cache-cr-branch-negative.md"
+    [string]$NegativeReportPath = "docs\research\20260521-153300-a64-context-cache-cr-branch-negative.md",
+    [string]$ScalarContextReportPath = "docs\research\20260526-115700-a64-scalar-context-load-store-lowering.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,16 @@ function Read-RequiredText {
     $resolved = Resolve-RepoPath $Path
     if (!(Test-Path -LiteralPath $resolved)) {
         throw "Required path not found: $Path"
+    }
+    return Get-Content -LiteralPath $resolved -Raw
+}
+
+function Read-OptionalText {
+    param([string]$Path)
+
+    $resolved = Resolve-RepoPath $Path
+    if (!(Test-Path -LiteralPath $resolved)) {
+        return ""
     }
     return Get-Content -LiteralPath $resolved -Raw
 }
@@ -192,6 +203,7 @@ $sequencesText = Read-RequiredText $SequencesPath
 $backendText = Read-RequiredText $BackendPath
 $emitterText = Read-RequiredText $EmitterPath
 $negativeText = Read-RequiredText $NegativeReportPath
+$scalarContextText = Read-OptionalText $ScalarContextReportPath
 
 $sourceChecks = [ordered]@{
     cr_triplet_selector_present = ($sequencesText -match 'TrySelectIntegerCrTripletCompareStores')
@@ -205,6 +217,7 @@ $sourceChecks = [ordered]@{
     context_traffic_cr_shape_counters_present = ($emitterText -match 'cr_update_triplets' -and $emitterText -match 'cr_gt_eq_pairs')
     select_sequence_uses_cr_selectors = ($sequencesText -match 'TrySelectIntegerCrTripletCompareStores\(e, i, new_tail\)' -and $sequencesText -match 'TrySelectUnsignedGtEqCompareStores\(e, i, new_tail\)')
     interleaved_store_order_present = ($sequencesText -match '(?s)cset\(lt_reg.*?strb\(lt_reg.*?cset\(gt_reg.*?strb\(gt_reg.*?cset\(eq_reg.*?strb\(eq_reg')
+    scalar_context_closure_present = ($scalarContextText -match 'decision=close_scalar_context_load_store_behavior_for_current_route')
 }
 
 $blocks = @()
@@ -265,7 +278,11 @@ $contextOnlyBlocks = @($blocks | Where-Object { $_.status -eq "context_state_not
 
 if ($allSourceSafe -and $blockedCrBlocks.Count -gt 0) {
     Write-Output "decision=close_cr_branch_behavior_keep_source_audit_only"
-    Write-Output "safe_next_patch=source_audit_scalar_context_load_store_lowering_without_cr_store_elide"
+    if ($sourceChecks.scalar_context_closure_present) {
+        Write-Output "safe_next_patch=lane_switch_or_broader_cfg_static_superblock_design_only"
+    } else {
+        Write-Output "safe_next_patch=source_audit_scalar_context_load_store_lowering_without_cr_store_elide"
+    }
     Write-Output "blocked_cr_blocks=$((($blockedCrBlocks | ForEach-Object { "{0}:{1}" -f $_.function,$_.slice }) -join ';'))"
     Write-Output "context_state_blocks=$((($contextOnlyBlocks | ForEach-Object { "{0}:{1}" -f $_.function,$_.slice }) -join ';'))"
     Write-Output "do_not_patch=arm64_cr_compare_branch_across_context_barrier;arm64_cr_store_elide_for_fused_branch;single_pc_barrier_fusion;speed_ab"

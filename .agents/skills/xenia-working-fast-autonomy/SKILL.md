@@ -174,6 +174,15 @@ Treat these as closed for immediate speed work:
 - `docs/research/20260526-083000-a64-no-wrap-memory-eligibility-audit.md`
   closes further fastmem/addressing behavior until a no-wrap range counter or
   static range analysis exists.
+- `docs/research/20260526-115700-a64-scalar-context-load-store-lowering.md`
+  closes the current scalar context load/store behavior lane. The source
+  already emits direct `x20 + offset` `LOAD_CONTEXT` / `STORE_CONTEXT`, A64
+  `CONTEXT_BARRIER` emits no instruction, `82281D28:8228233C-82282374`
+  stores are guest-call ABI live-ins, and guest-stack `LOAD_OFFSET` traffic is
+  already covered by the offset fastpath. Do not audit or patch one level
+  deeper in this lane; switch structural class unless the slice explicitly
+  introduces a broader CFG/static-superblock or alternate-entry visibility
+  contract.
 - `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes
   guest-call fast-entry behavior until the source has separate fast-entry
   storage plus a dirty-flush payload ABI. Do not patch behavior by replacing

@@ -445,6 +445,18 @@ peepholes are already in source; the larger CR branch/store wins require the
 known default-off crash cvars. Next work should audit scalar context load/store
 lowering without CR-store elide or barrier-branch fusion.
 
+`docs/research/20260526-115700-a64-scalar-context-load-store-lowering.md`
+closes that scalar context load/store behavior lane for the current wall
+cluster. `LOAD_CONTEXT` / `STORE_CONTEXT` already lower to direct
+`x20 + offset` loads/stores, `CONTEXT_BARRIER` is a no-op, the hot
+`82281D28:8228233C-82282374` stores are guest-call ABI live-ins, and the
+guest-stack `LOAD_OFFSET` side is already handled by the route-clean positive
+offset helper. Do not patch store elision, load replacement, barrier fusion,
+guest-stack handoff, fast-entry behavior, or host-pointer immediate fastmem
+from this lane. The next speed-adjacent A64 work must switch structural class
+or explicitly propose a broader CFG/static-superblock or alternate-entry design
+with guest-visible state and fallback solved.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

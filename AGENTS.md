@@ -497,6 +497,18 @@ Better next lanes:
   `82281D28:8228233C-82282374` has no CR branch shape. Next source-only lane is
   scalar context load/store lowering without CR-store elision or barrier-branch
   fusion.
+  `docs/research/20260526-115700-a64-scalar-context-load-store-lowering.md`
+  closes that scalar context load/store behavior lane for the current route:
+  A64 `LOAD_CONTEXT` / `STORE_CONTEXT` already emit direct `x20 + offset`
+  loads/stores, `CONTEXT_BARRIER` is a no-op in codegen, the hot
+  `82281D28:8228233C-82282374` stores are guest-call ABI live-ins, and the
+  guest-stack `LOAD_OFFSET` side is already covered by the route-clean,
+  locally positive offset helper. Do not patch `STORE_CONTEXT` elision,
+  `LOAD_CONTEXT` replacement, context-barrier fusion, CR store elision,
+  guest-stack handoff, fast-entry behavior, or host-pointer immediate fastmem
+  from this lane. Next work should switch lanes or propose a broader
+  CFG/static-superblock or alternate-entry design with visibility contracts
+  solved before behavior.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

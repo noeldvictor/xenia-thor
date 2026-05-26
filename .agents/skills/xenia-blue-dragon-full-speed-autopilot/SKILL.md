@@ -44,6 +44,17 @@ Do not continue the old chain with another narrow "first barrier" audit unless
 the next output is a general rule or a patch that changes the plan. The useful
 lesson is that this payload-storage shape has no route-surviving window.
 
+Latest route-structural closure:
+`docs/research/20260526-115700-a64-scalar-context-load-store-lowering.md`
+closes scalar context load/store behavior for the current mapped wall blocks.
+A64 context loads/stores already lower to direct `x20 + offset` memory ops,
+`CONTEXT_BARRIER` is a no-op in generated A64, `82281D28:8228233C-82282374`
+stores are guest-call ABI live-ins, and the guest-stack offset side is already
+covered by the route-clean positive offset helper. Do not continue this as
+`STORE_CONTEXT` elision, `LOAD_CONTEXT` replacement, context-barrier fusion,
+CR-store elision, guest-stack handoff, fast-entry behavior, or host-pointer
+immediate fastmem.
+
 ## Closed Lanes
 
 Do not spend the next sprint slice on these unless new evidence changes the
@@ -56,6 +67,9 @@ premise:
 - narrow stvewx lane folds, the three-PC `MUL_ADD_V128` shortcut, local-only
   `822824F0` vector peepholes, broad CR compare/barrier fusion, broad GPR
   caches, or old `f[1]`/fpscr behavior A/Bs;
+- current scalar context load/store lowering for the mapped wall blocks unless
+  a broader CFG/static-superblock or alternate-entry visibility contract is the
+  explicit slice;
 - broad Vulkan/RenderDoc/frame-pacing pivots while Main Thread remains the
   measured wall.
 

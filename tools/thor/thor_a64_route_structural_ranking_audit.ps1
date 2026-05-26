@@ -9,7 +9,9 @@ param(
     [string]$NoWrapReportPath = "docs\research\20260526-083000-a64-no-wrap-memory-eligibility-audit.md",
     [string]$NonclosedCacheReportPath = "docs\research\20260526-092500-a64-nonclosed-gpr-cache-capture.md",
     [string]$VmxRouteReportPath = "docs\research\20260526-012000-vmx128-route-stabilized-counters.md",
-    [string]$FastEntryReportPath = "docs\research\20260526-111500-a64-fast-entry-emitter-planning.md"
+    [string]$FastEntryReportPath = "docs\research\20260526-111500-a64-fast-entry-emitter-planning.md",
+    [string]$CrBranchReportPath = "docs\research\20260526-114200-a64-context-cr-branch-lowering-audit.md",
+    [string]$ScalarContextReportPath = "docs\research\20260526-115700-a64-scalar-context-load-store-lowering.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -239,6 +241,8 @@ $noWrapText = Read-OptionalText $NoWrapReportPath
 $nonclosedText = Read-OptionalText $NonclosedCacheReportPath
 $vmxText = Read-OptionalText $VmxRouteReportPath
 $fastEntryText = Read-OptionalText $FastEntryReportPath
+$crBranchText = Read-OptionalText $CrBranchReportPath
+$scalarContextText = Read-OptionalText $ScalarContextReportPath
 
 $fastmemBehaviorClosed =
     $noWrapText -match 'static_no_wrap_provable_rows=0' -and
@@ -253,6 +257,10 @@ $fastEntryClosed =
     $fastEntryText -match 'emitter_planning_source_ready_behavior_blocked' -and
     ($fastEntryText -match 'fast-entry source-only.*chain' -or
      $fastEntryText -match 'closes the current fast-entry')
+$crBranchClosed =
+    $crBranchText -match 'decision=close_cr_branch_behavior_keep_source_audit_only'
+$scalarContextClosed =
+    $scalarContextText -match 'decision=close_scalar_context_load_store_behavior_for_current_route'
 
 Write-Output "audit=a64_route_structural_ranking"
 Write-Output ("input_blocks={0} total_body_ticks={1} total_estimated_floor={2}" -f `
@@ -287,9 +295,15 @@ foreach ($row in ($classScores.GetEnumerator() |
     } elseif ($class -eq "direct_call_fast_entry" -and $fastEntryClosed) {
         $status = "closed_behavior"
         $reason = "fast-entry source-only chain closed until missing codegen contracts are solved"
+    } elseif ($class -eq "context_state" -and $nonclosedCacheClosed -and $scalarContextClosed) {
+        $status = "closed_behavior"
+        $reason = "post-promotion cache and scalar context load/store behavior are closed for current mapped blocks"
     } elseif ($class -eq "context_state" -and $nonclosedCacheClosed) {
         $status = "open_source_audit_only"
         $reason = "post-promotion cache behavior is closed, but scalar context load/store lowering can still be source-audited"
+    } elseif ($class -eq "scalar_cr_branch" -and $crBranchClosed) {
+        $status = "closed_behavior"
+        $reason = "CR branch behavior is blocked by default-off crash paths"
     } elseif ($class -eq "scalar_cr_branch") {
         $status = "open_source_audit_only"
         $reason = "dominant route class is scalar compare/branch/CR context traffic; behavior needs source proof beyond broad CR/cache closures"
@@ -303,17 +317,27 @@ foreach ($row in ($classScores.GetEnumerator() |
         $reason)
 }
 
-Write-Output ("route_flags fastmem_behavior_closed={0} nonclosed_cache_closed={1} vmx_behavior_closed={2} fast_entry_closed={3}" -f `
+Write-Output ("route_flags fastmem_behavior_closed={0} nonclosed_cache_closed={1} vmx_behavior_closed={2} fast_entry_closed={3} cr_branch_closed={4} scalar_context_closed={5}" -f `
     $fastmemBehaviorClosed.ToString().ToLowerInvariant(),
     $nonclosedCacheClosed.ToString().ToLowerInvariant(),
     $vmxBehaviorClosed.ToString().ToLowerInvariant(),
-    $fastEntryClosed.ToString().ToLowerInvariant())
+    $fastEntryClosed.ToString().ToLowerInvariant(),
+    $crBranchClosed.ToString().ToLowerInvariant(),
+    $scalarContextClosed.ToString().ToLowerInvariant())
 Write-Output ("weighted_context_barriers={0} weighted_cr_stores={1} weighted_gpr_stores={2}" -f `
     (Format-Score $barrierWeighted),
     (Format-Score $crStoreWeighted),
     (Format-Score $gprStoreWeighted))
 
 if ($classScores.ContainsKey("context_state") -and
+    $classScores.ContainsKey("scalar_cr_branch") -and
+    $fastmemBehaviorClosed -and $vmxBehaviorClosed -and $fastEntryClosed -and
+    $crBranchClosed -and $scalarContextClosed) {
+    Write-Output "decision=ranked_backend_lanes_closed_need_broader_design_or_lane_switch"
+    Write-Output "safe_next_patch=lane_switch_or_broader_cfg_static_superblock_design_only"
+    Write-Output "candidate_blocks=82282490:822825E0-822825F0;82281D28:8228233C-82282374;82287788:822877BC-82287864"
+    Write-Output "do_not_patch=fast_entry;host_pointer_immediate_fastmem_without_no_wrap;vmx128_closed_shapes;nonclosed_gpr_cache;scalar_context_load_store;cr_branch_barrier_fusion;single_pc_barrier_fusion;speed_ab"
+} elseif ($classScores.ContainsKey("context_state") -and
     $classScores.ContainsKey("scalar_cr_branch") -and
     $fastmemBehaviorClosed -and $vmxBehaviorClosed -and $fastEntryClosed) {
     Write-Output "decision=rank_context_cr_scalar_state_source_audit_next"
