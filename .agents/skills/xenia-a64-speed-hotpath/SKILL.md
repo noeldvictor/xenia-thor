@@ -432,6 +432,13 @@ or global-indirection rewrite. Treat fast-entry source-only work as closed
 until the missing generated-code contracts are solved; prefer a lane switch or
 compile-time route-ranking audit for another body-dominant A64 backend class.
 
+`docs/research/20260526-112900-a64-route-structural-ranking.md` adds that
+compile-time route-ranking audit. The ranking confirms closed fastmem, VMX128,
+fast-entry, and nonclosed-cache behavior and points next at source-only scalar
+context / CR compare / branch lowering around `82282490:822825E0-822825F0`,
+`82281D28:8228233C-82282374`, and `82287788:822877BC-82287864`. Do not patch
+behavior or run a Thor speed A/B from the ranking alone.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

@@ -228,6 +228,10 @@ Treat these as closed for immediate speed work:
   payload population, dirty flush codegen, stub codegen, and callsite behavior
   remain unchanged. Prefer a non-fast-entry structural lane or a compile-time
   route-ranking audit for a different body-dominant A64 backend class.
+- `docs/research/20260526-112900-a64-route-structural-ranking.md` adds the
+  route-ranking audit and sets the next lane to source-only A64 context / CR
+  compare / branch lowering for mapped body-dominant blocks. Do not turn this
+  ranking into behavior, Thor capture, or speed A/B by itself.
 
 ## Useful Output Bias
 

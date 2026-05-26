@@ -301,6 +301,14 @@ codegen, and callsite behavior are still unchanged/absent. Close the current
 fast-entry source-only chain for now; next useful work is a non-fast-entry
 structural lane or a compile-time route-ranking audit for a different
 body-dominant A64 backend class.
+`docs/research/20260526-112900-a64-route-structural-ranking.md` adds the
+compile-time route-ranking audit. It closes the ranking pass with
+`decision=rank_context_cr_scalar_state_source_audit_next`: context-state /
+scalar CR traffic is now the source-audit lane, while VMX128, fastmem host
+pointer/immediate, nonclosed GPR cache, and fast-entry behavior remain closed
+without fresh proof. Next work is source-only A64 context / CR compare /
+branch lowering audit for the mapped body-dominant blocks, not a Thor capture
+or speed A/B.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

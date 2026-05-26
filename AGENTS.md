@@ -481,6 +481,16 @@ Better next lanes:
   micro-audit unless it is a real generated-code behavior design with the
   missing contracts solved. Prefer a lane switch or a compile-time
   route-ranking audit for a different body-dominant A64 backend class.
+  `docs/research/20260526-112900-a64-route-structural-ranking.md` adds that
+  route-ranking audit. It ranks the mapped wall blocks as `context_state`
+  first, then closed `vmx_vector` and closed `memory_addressing`, then
+  `scalar_dataflow` and `scalar_cr_branch`. It confirms
+  `fastmem_behavior_closed=true`, `nonclosed_cache_closed=true`,
+  `vmx_behavior_closed=true`, and `fast_entry_closed=true`. The next lane is a
+  source-only A64 context / CR compare / branch lowering audit for
+  `82282490:822825E0-822825F0`, `82281D28:8228233C-82282374`, and
+  `82287788:822877BC-82287864`. Do not patch behavior or run a Thor speed A/B
+  from the ranking alone.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
