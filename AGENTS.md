@@ -233,10 +233,16 @@ Better next lanes:
   `argument_store_fields=439`, `callee_first_load_stores=247`,
   `callee_hir_missing_stores=126`, and
   `normal_entry_fallback_required=81`. The body-weighted top call boundaries
-  are ABI-live, so this is not local store elision. Next useful work is a
-  source-level fast-entry feasibility audit for A64 direct guest calls,
-  function entry conventions, stackpoint/longjmp handling, debug/exception
-  visibility, and normal-entry fallback before any runtime skeleton.
+  are ABI-live, so this is not local store elision.
+  `docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md`
+  adds `tools/thor/thor_a64_guest_call_fast_entry_feasibility.ps1` and proves
+  the source contract: fast-entry is feasible only as a separate guarded entry
+  path or stub. Do not replace `A64Function::machine_code()` or the global
+  indirection slot. Next useful work is a default-off counter-only
+  `arm64_guest_call_fast_entry_audit` skeleton that changes no generated
+  behavior and measures route-wide eligibility, fallback blockers, first-use
+  coverage, normal-entry fallback pressure, estimated avoidable context
+  store/load traffic, and required dirty flush points.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

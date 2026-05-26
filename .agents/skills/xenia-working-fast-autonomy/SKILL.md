@@ -106,9 +106,13 @@ Treat these as closed for immediate speed work:
   `docs/research/20260526-034500-guest-call-hir-coverage-capture.md` reduces
   the blocker: corrected audit output is `callee_first_load_stores=247`,
   `callee_hir_missing_stores=126`, and `normal_entry_fallback_required=81`.
-  Treat this as a fast-entry feasibility lane, not a behavior patch. Next slice
-  should source-audit A64 direct guest-call entry conventions and fallback
-  constraints before any runtime skeleton.
+- The follow-up source audit in
+  `docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md`
+  proves fast-entry is feasible only as a separate guarded entry path or stub.
+  Do not replace `A64Function::machine_code()` or the global indirection slot.
+  Next slice should be a default-off counter-only
+  `arm64_guest_call_fast_entry_audit` skeleton with no generated-behavior
+  change.
 
 ## Useful Output Bias
 

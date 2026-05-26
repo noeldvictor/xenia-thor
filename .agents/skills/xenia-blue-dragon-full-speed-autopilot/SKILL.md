@@ -100,9 +100,13 @@ Pick one lane with a credible FPS path:
   targeted coverage capture and fixed the audit's primary-vs-extra log split.
   Corrected coverage is now `callee_first_load_stores=247` and
   `callee_hir_missing_stores=126` for `82281D28`, with the body-weighted top
-  call boundaries ABI-live. Next work is a source-level fast-entry feasibility
-  audit for A64 direct guest-call ABI and normal-entry fallback, not runtime
-  behavior yet.
+  call boundaries ABI-live.
+  `docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md`
+  then proves fast-entry is source-feasible only as a separate guarded path or
+  stub. Do not replace normal `machine_code()` or the global indirection slot.
+  Next work is a default-off counter-only
+  `arm64_guest_call_fast_entry_audit` skeleton with no generated-behavior
+  change.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

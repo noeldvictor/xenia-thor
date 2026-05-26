@@ -157,8 +157,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_guest_ca
 the lane. A targeted Thor capture with broader callee HIR plus the corrected
 audit reports `callee_first_load_stores=247`, `callee_hir_missing_stores=126`,
 and `normal_entry_fallback_required=81`. The body-weighted top call boundaries
-are ABI-live. Next step is a source-level fast-entry feasibility audit for A64
-direct guest calls and normal-entry fallback; do not patch runtime behavior or
+are ABI-live.
+
+`docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md` adds
+`tools/thor/thor_a64_guest_call_fast_entry_feasibility.ps1`. It proves
+fast-entry is feasible only as a separate guarded entry path or stub: normal
+entry and global indirection must stay unchanged, direct callsites need explicit
+guards, and any payload for `r3-r10/lr` needs explicit dirty flushes before
+barriers, helpers, host calls, debug/trap visibility, tail calls, returns, and
+exceptions. Next step is a default-off counter-only
+`arm64_guest_call_fast_entry_audit` skeleton; do not patch runtime behavior or
 run a quiet speed A/B yet.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
