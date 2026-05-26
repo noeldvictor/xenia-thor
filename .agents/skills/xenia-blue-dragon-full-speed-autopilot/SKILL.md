@@ -67,6 +67,15 @@ and explicit FPS/proof parsing. Treat it as evidence refresh, not another A64
 micro-audit. Android controller/settings UX is a separate playability lane if
 the user prioritizes it.
 
+Latest proof refresh:
+`docs/research/20260526-130000-blue-dragon-quiet-route-proof-refresh.md`
+FullDeployed current `master` and ran that quiet route capture with the offset
+fastpath enabled. It reached visible opening sky / dragon-wing with zero
+focused fatal markers, but `tools/thor/thor_blue_dragon_speed_capture_summary.ps1`
+reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
+`96.1%`, GPU Commands `3.8%`, and the same A64 body-time wall cluster. Do not
+rerun this capture unchanged.
+
 ## Closed Lanes
 
 Do not spend the next sprint slice on these unless new evidence changes the
@@ -89,6 +98,9 @@ premise:
 - any A64/VMX/fastmem/helper/GPU behavior reopen unless a fresh clean route
   capture shows a different body-dominant wall outside the closed
   `82282490` / `82281D28` / `82287788` micro-lanes;
+- unchanged best-current quiet route proof refresh from
+  `20260526-124549`; it already proved no fatal crash, no FPS proof marker, and
+  unchanged Main Thread / A64 wall;
 - broad Vulkan/RenderDoc/frame-pacing pivots while Main Thread remains the
   measured wall.
 

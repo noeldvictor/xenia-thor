@@ -478,6 +478,13 @@ FPS/proof parsing. Treat it as fresh evidence, not another A64 micro-audit.
 Reopen A64 behavior only if that clean route shows a different body-dominant
 wall outside the closed `82282490` / `82281D28` / `82287788` cluster.
 
+`docs/research/20260526-130000-blue-dragon-quiet-route-proof-refresh.md`
+completed the refresh. The new summary tool reports zero fatal markers, zero
+FPS markers, Main Thread `96.1%`, GPU Commands `3.8%`, and final delayed
+body-time still at `82282490=27545622`, `82281D28=7174789`,
+`82287788=3120411`. This does not reopen the current A64 micro-lanes.
+Do not rerun the same quiet capture unchanged.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

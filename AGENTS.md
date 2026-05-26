@@ -531,6 +531,15 @@ Better next lanes:
   prioritizes playability. Do not reopen A64/VMX/fastmem/helper/GPU behavior
   until a new clean capture shows a different body-dominant wall outside the
   closed `82282490` / `82281D28` / `82287788` micro-lanes.
+  `docs/research/20260526-130000-blue-dragon-quiet-route-proof-refresh.md`
+  completes that proof refresh on commit `a7c855769` / APK SHA
+  `5320F722699CE8B9659BC3A942E5E892CCD01622AE2233F4C1E4D86CB7E3158B`.
+  The route reached visible opening sky / dragon-wing and had zero focused
+  fatal markers, but the new proof summary reports `fps_marker_count=0`,
+  `sustained_30fps_proof=false`, Main Thread `96.1%`, GPU Commands `3.8%`,
+  and final body-time still at `82282490=27545622`, `82281D28=7174789`,
+  `82287788=3120411`. Do not rerun this unchanged capture or reopen the
+  current A64 micro-lanes from it.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

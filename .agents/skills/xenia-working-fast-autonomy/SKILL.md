@@ -196,6 +196,11 @@ Treat these as closed for immediate speed work:
   Prefer a best-current quiet route proof refresh with
   `-Arm64OffsetMemoryAddressFastpath true` and audit tracing off, or Android
   controller/settings UX if the user prioritizes handheld playability.
+- `docs/research/20260526-130000-blue-dragon-quiet-route-proof-refresh.md`
+  completed that proof refresh. The run was route-clean with visible opening
+  sky / dragon-wing and zero focused fatal markers, but the proof summary found
+  no FPS markers, `sustained_30fps_proof=false`, and the wall stayed Main
+  Thread / A64 generated-code. Do not rerun the same capture unchanged.
 - `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes
   guest-call fast-entry behavior until the source has separate fast-entry
   storage plus a dirty-flush payload ABI. Do not patch behavior by replacing
