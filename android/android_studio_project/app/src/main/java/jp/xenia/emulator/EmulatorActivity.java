@@ -330,6 +330,11 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_guest_call_fast_entry_audit");
             copyIntExtra(intent, launchArguments, "arm64_guest_call_fast_entry_audit_function");
             copyIntExtra(intent, launchArguments, "arm64_guest_call_fast_entry_audit_budget");
+            copyBooleanExtra(intent, launchArguments, "arm64_guest_stack_arg_handoff_audit");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_guest_stack_arg_handoff_audit_function");
+            copyIntExtra(
+                    intent, launchArguments, "arm64_guest_stack_arg_handoff_audit_budget");
             copyBooleanExtra(
                     intent, launchArguments, "arm64_cr_compare_branch_across_context_barrier");
             copyBooleanExtra(intent, launchArguments, "arm64_cr_store_elide_for_fused_branch");

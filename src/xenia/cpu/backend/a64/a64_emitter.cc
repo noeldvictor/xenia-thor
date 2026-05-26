@@ -95,6 +95,9 @@ DECLARE_uint32(arm64_context_traffic_audit_budget);
 DECLARE_bool(arm64_guest_call_fast_entry_audit);
 DECLARE_uint32(arm64_guest_call_fast_entry_audit_function);
 DECLARE_uint32(arm64_guest_call_fast_entry_audit_budget);
+DECLARE_bool(arm64_guest_stack_arg_handoff_audit);
+DECLARE_uint32(arm64_guest_stack_arg_handoff_audit_function);
+DECLARE_uint32(arm64_guest_stack_arg_handoff_audit_budget);
 DECLARE_uint32(arm64_speed_profile_body_time_after_ms);
 DECLARE_bool(a64_rtl_leave_fastpath_audit);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -158,6 +161,8 @@ DEFINE_bool(a64_inline_vmx_helpers, true,
             "a64");
 
 namespace {
+namespace hir = xe::cpu::hir;
+
 std::atomic<int> g_a64_call_trace_budget{0};
 std::atomic<uint32_t> g_a64_call_trace_configured_budget{
     std::numeric_limits<uint32_t>::max()};
@@ -179,6 +184,7 @@ std::unordered_map<uint32_t, uint64_t>
     g_blue_dragon_stricmp_return_profile_lr_counts;
 std::atomic<uint32_t> g_a64_context_traffic_audit_count{0};
 std::atomic<uint32_t> g_a64_guest_call_fast_entry_audit_count{0};
+std::atomic<uint32_t> g_a64_guest_stack_arg_handoff_audit_count{0};
 
 uint32_t ParseEightHexAddress(std::string_view text, size_t offset = 0) {
   if (text.size() < offset + 8) {
@@ -735,6 +741,20 @@ bool ConsumeGuestCallFastEntryAuditBudget(uint32_t* out_index) {
   return false;
 }
 
+bool ConsumeGuestStackArgHandoffAuditBudget(uint32_t* out_index) {
+  uint32_t budget = cvars::arm64_guest_stack_arg_handoff_audit_budget;
+  uint32_t value = g_a64_guest_stack_arg_handoff_audit_count.load(
+      std::memory_order_relaxed);
+  while (value < budget) {
+    if (g_a64_guest_stack_arg_handoff_audit_count.compare_exchange_strong(
+            value, value + 1, std::memory_order_acq_rel)) {
+      *out_index = value + 1;
+      return true;
+    }
+  }
+  return false;
+}
+
 struct A64GuestCallFastEntryAuditStats {
   uint64_t blocks = 0;
   uint64_t instrs = 0;
@@ -821,6 +841,238 @@ std::string FormatGuestCallFastEntryArgSlots(
     text += fmt::format("{}={}", GuestCallFastEntryArgName(i), counts[i]);
   }
   return text.empty() ? "-" : text;
+}
+
+struct A64GuestStackArgLoad {
+  int64_t stack_offset = 0;
+  uint8_t size = 0;
+  uint32_t source_guest = 0;
+};
+
+struct A64GuestStackArgHandoffSlot {
+  bool valid = false;
+  A64GuestStackArgLoad load;
+};
+
+struct A64GuestStackArgHandoffAuditStats {
+  uint64_t blocks = 0;
+  uint64_t instrs = 0;
+  uint64_t target_rows = 0;
+  uint64_t direct_calls = 0;
+  uint64_t direct_conditional_calls = 0;
+  uint64_t direct_regular_calls = 0;
+  uint64_t direct_tail_calls = 0;
+  uint64_t eligible_regular_calls = 0;
+  uint64_t already_compiled_targets = 0;
+  uint64_t unresolved_direct_targets = 0;
+  uint64_t helper_inline_blockers = 0;
+  uint64_t indirect_call_blockers = 0;
+  uint64_t indirect_tail_blockers = 0;
+  uint64_t extern_host_call_blockers = 0;
+  uint64_t debug_trap_blockers = 0;
+  uint64_t context_barrier_flush_points = 0;
+  uint64_t return_flush_points = 0;
+  uint64_t normal_entry_fallback_required = 0;
+  uint64_t stackpoint_sensitive_calls = 0;
+  uint64_t parent_pre_call_flush_points = 0;
+  uint64_t load_offset_instrs = 0;
+  uint64_t stack_load_candidates = 0;
+  uint64_t stack_load_nonconstant_offsets = 0;
+  uint64_t non_stack_load_offsets = 0;
+  uint64_t overwritten_arg_store_fields = 0;
+  uint64_t stack_arg_store_calls = 0;
+  uint64_t stack_arg_store_fields = 0;
+  uint64_t stack_arg_store_bytes = 0;
+  uint64_t estimated_avoidable_bytes = 0;
+  std::array<uint64_t, 9> stack_arg_store_fields_by_slot{};
+  std::unordered_map<int64_t, uint64_t> stack_offset_counts;
+};
+
+struct A64GuestStackArgHandoffTargetAuditStats {
+  uint32_t target_address = 0;
+  uint32_t first_call_guest = 0;
+  uint32_t first_block_guest = 0;
+  uint64_t calls = 0;
+  uint64_t regular_calls = 0;
+  uint64_t conditional_calls = 0;
+  uint64_t tail_calls = 0;
+  uint64_t eligible_regular_calls = 0;
+  uint64_t already_compiled_targets = 0;
+  uint64_t unresolved_direct_targets = 0;
+  uint64_t helper_inline_blockers = 0;
+  uint64_t normal_entry_fallback_required = 0;
+  uint64_t stackpoint_sensitive_calls = 0;
+  uint64_t parent_pre_call_flush_points = 0;
+  uint64_t stack_arg_store_calls = 0;
+  uint64_t stack_arg_store_fields = 0;
+  uint64_t stack_arg_store_bytes = 0;
+  uint64_t estimated_avoidable_bytes = 0;
+  std::array<uint64_t, 9> stack_arg_store_fields_by_slot{};
+  std::unordered_map<int64_t, uint64_t> stack_offset_counts;
+};
+
+bool GetConstantI64(const hir::Value* value, int64_t* out_value) {
+  if (!value || !value->IsConstant() || !out_value) {
+    return false;
+  }
+  switch (value->type) {
+    case hir::INT8_TYPE:
+      *out_value = value->constant.i8;
+      return true;
+    case hir::INT16_TYPE:
+      *out_value = value->constant.i16;
+      return true;
+    case hir::INT32_TYPE:
+      *out_value = value->constant.i32;
+      return true;
+    case hir::INT64_TYPE:
+      *out_value = value->constant.i64;
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool IsGprContextSlot(uint32_t offset, size_t size, uint32_t gpr) {
+  using xe::cpu::ppc::PPCContext;
+  if (size != sizeof(uint64_t) || gpr >= 32) {
+    return false;
+  }
+  const uint32_t gpr_offset =
+      static_cast<uint32_t>(offsetof(PPCContext, r) +
+                            gpr * sizeof(uint64_t));
+  return offset == gpr_offset;
+}
+
+bool TryGetGuestStackAddressOffset(const hir::Value* value,
+                                   int64_t* out_stack_offset,
+                                   int depth = 0) {
+  if (!value || !out_stack_offset || !value->def || depth > 4) {
+    return false;
+  }
+  const hir::Instr* def = value->def;
+  switch (def->GetOpcodeNum()) {
+    case hir::OPCODE_LOAD_CONTEXT: {
+      size_t size = def->dest ? hir::GetTypeSize(def->dest->type) : 1;
+      if (IsGprContextSlot(static_cast<uint32_t>(def->src1.offset), size, 1)) {
+        *out_stack_offset = 0;
+        return true;
+      }
+      return false;
+    }
+    case hir::OPCODE_ASSIGN:
+      return TryGetGuestStackAddressOffset(def->src1.value, out_stack_offset,
+                                           depth + 1);
+    case hir::OPCODE_ADD: {
+      int64_t base_offset = 0;
+      int64_t constant_offset = 0;
+      if (TryGetGuestStackAddressOffset(def->src1.value, &base_offset,
+                                        depth + 1) &&
+          GetConstantI64(def->src2.value, &constant_offset)) {
+        *out_stack_offset = base_offset + constant_offset;
+        return true;
+      }
+      if (TryGetGuestStackAddressOffset(def->src2.value, &base_offset,
+                                        depth + 1) &&
+          GetConstantI64(def->src1.value, &constant_offset)) {
+        *out_stack_offset = base_offset + constant_offset;
+        return true;
+      }
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
+bool TryGetGuestStackArgLoad(
+    const hir::Instr* instr,
+    A64GuestStackArgLoad* out_load) {
+  if (!instr || !out_load || instr->GetOpcodeNum() != hir::OPCODE_LOAD_OFFSET ||
+      !instr->dest) {
+    return false;
+  }
+  int64_t base_offset = 0;
+  int64_t load_offset = 0;
+  if (!TryGetGuestStackAddressOffset(instr->src1.value, &base_offset) ||
+      !GetConstantI64(instr->src2.value, &load_offset)) {
+    return false;
+  }
+  out_load->stack_offset = base_offset + load_offset;
+  out_load->size = static_cast<uint8_t>(
+      std::min<size_t>(hir::GetTypeSize(instr->dest->type), 255));
+  out_load->source_guest = instr->GuestAddressFor();
+  return true;
+}
+
+bool TryResolveGuestStackArgLoadSource(
+    const hir::Value* value,
+    const std::unordered_map<const hir::Value*, A64GuestStackArgLoad>& loads,
+    A64GuestStackArgLoad* out_load, int depth = 0) {
+  if (!value || !out_load || depth > 4) {
+    return false;
+  }
+  auto it = loads.find(value);
+  if (it != loads.end()) {
+    *out_load = it->second;
+    return true;
+  }
+  if (!value->def) {
+    return false;
+  }
+  switch (value->def->GetOpcodeNum()) {
+    case hir::OPCODE_ASSIGN:
+    case hir::OPCODE_TRUNCATE:
+    case hir::OPCODE_ZERO_EXTEND:
+    case hir::OPCODE_SIGN_EXTEND:
+      return TryResolveGuestStackArgLoadSource(value->def->src1.value, loads,
+                                               out_load, depth + 1);
+    default:
+      return false;
+  }
+}
+
+std::string FormatGuestStackOffset(int64_t offset) {
+  if (offset < 0) {
+    return fmt::format("-{:X}", static_cast<uint64_t>(-offset));
+  }
+  return fmt::format("+{:X}", static_cast<uint64_t>(offset));
+}
+
+void AddGuestStackOffsetCount(std::unordered_map<int64_t, uint64_t>* counts,
+                              int64_t offset) {
+  if (!counts) {
+    return;
+  }
+  ++(*counts)[offset];
+}
+
+std::string FormatGuestStackOffsetCounts(
+    const std::unordered_map<int64_t, uint64_t>& counts, size_t limit = 8) {
+  if (counts.empty()) {
+    return "-";
+  }
+  std::vector<std::pair<int64_t, uint64_t>> rows;
+  rows.reserve(counts.size());
+  for (const auto& entry : counts) {
+    rows.emplace_back(entry.first, entry.second);
+  }
+  std::sort(rows.begin(), rows.end(),
+            [](const auto& a, const auto& b) {
+              if (a.second != b.second) {
+                return a.second > b.second;
+              }
+              return a.first < b.first;
+            });
+  std::string text;
+  for (size_t i = 0; i < rows.size() && i < limit; ++i) {
+    if (!text.empty()) {
+      text += ",";
+    }
+    text += fmt::format("{}={}", FormatGuestStackOffset(rows[i].first),
+                        rows[i].second);
+  }
+  return text;
 }
 
 bool AccessOverlaps(size_t offset, size_t size, size_t range_start,
@@ -2010,6 +2262,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     }
   }
   MaybeLogGuestCallFastEntryAudit(builder);
+  MaybeLogGuestStackArgHandoffAudit(builder);
   if ((cvars::arm64_blue_dragon_edge_variant_audit ||
        cvars::arm64_blue_dragon_edge_payload_storage_audit) &&
       current_guest_function_ == 0x82282490) {
@@ -3037,6 +3290,329 @@ void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
         row.parent_arg_store_bytes, row.parent_pre_call_flush_points,
         row.first_call_guest, row.first_block_guest,
         FormatGuestCallFastEntryArgSlots(row.parent_arg_store_fields_by_slot));
+  }
+}
+
+void A64Emitter::MaybeLogGuestStackArgHandoffAudit(hir::HIRBuilder* builder) {
+  if (!cvars::arm64_guest_stack_arg_handoff_audit || !builder) {
+    return;
+  }
+  uint32_t function_filter =
+      cvars::arm64_guest_stack_arg_handoff_audit_function;
+  if (function_filter && function_filter != current_guest_function_) {
+    return;
+  }
+
+  uint32_t log_index = 0;
+  if (!ConsumeGuestStackArgHandoffAuditBudget(&log_index)) {
+    return;
+  }
+
+  auto is_inline_helper_candidate = [&](const hir::Instr* instr,
+                                        GuestFunction* target) {
+    if (!instr || !target) {
+      return false;
+    }
+    const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
+
+    bool is_save = false;
+    int first_gpr = 0;
+    if (cvars::a64_inline_gprlr_helpers &&
+        ParseGprLrHelper(target, &is_save, &first_gpr)) {
+      return (is_save && !is_tail_call) || (!is_save && is_tail_call);
+    }
+
+    bool is_vmx = false;
+    int first_reg = 0;
+    int last_reg = 0;
+    if (!is_tail_call &&
+        ParseFprVmxHelper(target, &is_save, &is_vmx, &first_reg, &last_reg)) {
+      return (is_vmx && cvars::a64_inline_vmx_helpers) ||
+             (!is_vmx && cvars::a64_inline_fpr_helpers);
+    }
+
+    int32_t thread_offset = 0;
+    int32_t field_offset = 0;
+    if (!is_tail_call && cvars::a64_inline_ppc_thread_field_leaf_helpers &&
+        ParsePpcThreadFieldLeafHelper(processor_->memory(), target,
+                                      &thread_offset, &field_offset)) {
+      return true;
+    }
+
+    return false;
+  };
+
+  static constexpr size_t kMaxGuestStackArgHandoffTargetRows = 32;
+
+  A64GuestStackArgHandoffAuditStats stats;
+  std::unordered_map<uint32_t, A64GuestStackArgHandoffTargetAuditStats>
+      target_stats_by_address;
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    const uint32_t block_guest_address = FindBlockGuestAddress(block);
+    std::unordered_map<const hir::Value*, A64GuestStackArgLoad>
+        guest_stack_loads;
+    std::array<A64GuestStackArgHandoffSlot, 9> last_stack_arg_stores{};
+    uint64_t parent_pre_call_flush_points = 0;
+
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      ++stats.instrs;
+      const auto opcode = instr->GetOpcodeNum();
+
+      if (opcode == hir::OPCODE_LOAD_OFFSET) {
+        ++stats.load_offset_instrs;
+        A64GuestStackArgLoad load;
+        if (TryGetGuestStackArgLoad(instr, &load)) {
+          ++stats.stack_load_candidates;
+          guest_stack_loads[instr->dest] = load;
+        } else {
+          int64_t unused_stack_offset = 0;
+          if (TryGetGuestStackAddressOffset(instr->src1.value,
+                                            &unused_stack_offset)) {
+            ++stats.stack_load_nonconstant_offsets;
+          } else {
+            ++stats.non_stack_load_offsets;
+          }
+        }
+      }
+
+      if (opcode == hir::OPCODE_STORE_CONTEXT) {
+        auto* value = instr->src2.value;
+        size_t size = value ? hir::GetTypeSize(value->type) : 1;
+        int slot = GuestCallFastEntryArgSlot(
+            static_cast<uint32_t>(instr->src1.offset), size);
+        if (slot >= 0) {
+          A64GuestStackArgLoad load;
+          if (TryResolveGuestStackArgLoadSource(value, guest_stack_loads,
+                                                &load)) {
+            last_stack_arg_stores[static_cast<size_t>(slot)].valid = true;
+            last_stack_arg_stores[static_cast<size_t>(slot)].load = load;
+          } else {
+            if (last_stack_arg_stores[static_cast<size_t>(slot)].valid) {
+              ++stats.overwritten_arg_store_fields;
+            }
+            last_stack_arg_stores[static_cast<size_t>(slot)] = {};
+          }
+        }
+      }
+
+      switch (opcode) {
+        case hir::OPCODE_CALL:
+        case hir::OPCODE_CALL_TRUE: {
+          ++stats.direct_calls;
+          if (opcode == hir::OPCODE_CALL_TRUE) {
+            ++stats.direct_conditional_calls;
+          }
+
+          Function* target =
+              opcode == hir::OPCODE_CALL ? instr->src1.symbol
+                                          : instr->src2.symbol;
+          auto* guest_target =
+              target && target->is_guest()
+                  ? static_cast<GuestFunction*>(target)
+                  : nullptr;
+          const uint32_t target_address = target ? target->address() : 0;
+          auto& target_stats = target_stats_by_address[target_address];
+          target_stats.target_address = target_address;
+          if (!target_stats.first_call_guest) {
+            target_stats.first_call_guest = instr->GuestAddressFor();
+            target_stats.first_block_guest = block_guest_address;
+          }
+          ++target_stats.calls;
+
+          const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
+          if (is_tail_call) {
+            ++stats.direct_tail_calls;
+            ++target_stats.tail_calls;
+          } else {
+            ++stats.direct_regular_calls;
+            ++target_stats.regular_calls;
+          }
+          if (opcode == hir::OPCODE_CALL_TRUE) {
+            ++target_stats.conditional_calls;
+          }
+
+          uint64_t stack_arg_fields = 0;
+          uint64_t stack_arg_bytes = 0;
+          for (size_t i = 0; i < last_stack_arg_stores.size(); ++i) {
+            const auto& slot = last_stack_arg_stores[i];
+            if (!slot.valid) {
+              continue;
+            }
+            ++stack_arg_fields;
+            stack_arg_bytes += slot.load.size;
+            ++stats.stack_arg_store_fields_by_slot[i];
+            ++target_stats.stack_arg_store_fields_by_slot[i];
+            AddGuestStackOffsetCount(&stats.stack_offset_counts,
+                                     slot.load.stack_offset);
+            AddGuestStackOffsetCount(&target_stats.stack_offset_counts,
+                                     slot.load.stack_offset);
+          }
+          if (stack_arg_fields) {
+            ++stats.stack_arg_store_calls;
+            stats.stack_arg_store_fields += stack_arg_fields;
+            stats.stack_arg_store_bytes += stack_arg_bytes;
+            stats.estimated_avoidable_bytes += stack_arg_bytes * 2;
+            stats.parent_pre_call_flush_points += parent_pre_call_flush_points;
+            ++target_stats.stack_arg_store_calls;
+            target_stats.stack_arg_store_fields += stack_arg_fields;
+            target_stats.stack_arg_store_bytes += stack_arg_bytes;
+            target_stats.estimated_avoidable_bytes += stack_arg_bytes * 2;
+            target_stats.parent_pre_call_flush_points +=
+                parent_pre_call_flush_points;
+          }
+
+          const bool helper_candidate =
+              is_inline_helper_candidate(instr, guest_target);
+          if (helper_candidate) {
+            ++stats.helper_inline_blockers;
+            ++target_stats.helper_inline_blockers;
+          }
+          if (guest_target && guest_target->machine_code()) {
+            ++stats.already_compiled_targets;
+            ++target_stats.already_compiled_targets;
+          } else {
+            ++stats.unresolved_direct_targets;
+            ++target_stats.unresolved_direct_targets;
+          }
+          if (!is_tail_call && !helper_candidate) {
+            ++stats.eligible_regular_calls;
+            ++stats.normal_entry_fallback_required;
+            ++stats.stackpoint_sensitive_calls;
+            ++target_stats.eligible_regular_calls;
+            ++target_stats.normal_entry_fallback_required;
+            ++target_stats.stackpoint_sensitive_calls;
+          }
+
+          last_stack_arg_stores.fill({});
+          parent_pre_call_flush_points = 0;
+          break;
+        }
+        case hir::OPCODE_CALL_INDIRECT:
+        case hir::OPCODE_CALL_INDIRECT_TRUE:
+          ++stats.indirect_call_blockers;
+          if (instr->flags & hir::CALL_TAIL) {
+            ++stats.indirect_tail_blockers;
+            ++parent_pre_call_flush_points;
+          }
+          last_stack_arg_stores.fill({});
+          parent_pre_call_flush_points = 0;
+          break;
+        case hir::OPCODE_CALL_EXTERN:
+          ++stats.extern_host_call_blockers;
+          ++parent_pre_call_flush_points;
+          last_stack_arg_stores.fill({});
+          parent_pre_call_flush_points = 0;
+          break;
+        case hir::OPCODE_CONTEXT_BARRIER:
+          ++stats.context_barrier_flush_points;
+          ++parent_pre_call_flush_points;
+          break;
+        case hir::OPCODE_RETURN:
+        case hir::OPCODE_RETURN_TRUE:
+          ++stats.return_flush_points;
+          ++parent_pre_call_flush_points;
+          last_stack_arg_stores.fill({});
+          parent_pre_call_flush_points = 0;
+          break;
+        case hir::OPCODE_DEBUG_BREAK:
+        case hir::OPCODE_DEBUG_BREAK_TRUE:
+        case hir::OPCODE_TRAP:
+        case hir::OPCODE_TRAP_TRUE:
+          ++stats.debug_trap_blockers;
+          ++parent_pre_call_flush_points;
+          last_stack_arg_stores.fill({});
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  const uint64_t dirty_flush_points =
+      stats.context_barrier_flush_points + stats.return_flush_points +
+      stats.extern_host_call_blockers + stats.debug_trap_blockers +
+      stats.direct_tail_calls + stats.indirect_tail_blockers;
+  std::vector<A64GuestStackArgHandoffTargetAuditStats> target_rows;
+  target_rows.reserve(target_stats_by_address.size());
+  for (const auto& entry : target_stats_by_address) {
+    target_rows.push_back(entry.second);
+  }
+  std::sort(target_rows.begin(), target_rows.end(),
+            [](const A64GuestStackArgHandoffTargetAuditStats& a,
+               const A64GuestStackArgHandoffTargetAuditStats& b) {
+              if (a.stack_arg_store_fields != b.stack_arg_store_fields) {
+                return a.stack_arg_store_fields > b.stack_arg_store_fields;
+              }
+              if (a.calls != b.calls) {
+                return a.calls > b.calls;
+              }
+              return a.target_address < b.target_address;
+            });
+  stats.target_rows = std::min<uint64_t>(
+      target_rows.size(),
+      static_cast<uint64_t>(kMaxGuestStackArgHandoffTargetRows));
+
+  XELOGW(
+      "A64 guest-stack arg handoff audit {:03}: fn {:08X} blocks={} "
+      "instrs={} target_rows={} direct_calls={} conditional_direct={} "
+      "eligible_regular={} tail_blockers={} indirect_blockers={} "
+      "extern_host_blockers={} unresolved_direct_targets={} "
+      "helper_blockers={} normal_entry_fallback={} stackpoint_sensitive={} "
+      "load_offset_instrs={} stack_load_candidates={} "
+      "stack_load_nonconstant_offsets={} non_stack_load_offsets={} "
+      "overwritten_arg_store_fields={} stack_arg_store_calls={} "
+      "stack_arg_store_fields={} stack_arg_store_bytes={} "
+      "estimated_avoidable_bytes={} dirty_flush_points={} "
+      "flush_context_barrier={} flush_return={} "
+      "parent_pre_call_flush_points={} debug_trap_blockers={} "
+      "already_compiled_targets={} payload_materializations_allowed=0 "
+      "behavior_changed=0 alternate_codegen=0 normal_entry=unchanged "
+      "global_indirection=unchanged stack_offset_top={} arg_store_top={}",
+      log_index, current_guest_function_, stats.blocks, stats.instrs,
+      stats.target_rows, stats.direct_calls, stats.direct_conditional_calls,
+      stats.eligible_regular_calls, stats.direct_tail_calls,
+      stats.indirect_call_blockers, stats.extern_host_call_blockers,
+      stats.unresolved_direct_targets, stats.helper_inline_blockers,
+      stats.normal_entry_fallback_required, stats.stackpoint_sensitive_calls,
+      stats.load_offset_instrs, stats.stack_load_candidates,
+      stats.stack_load_nonconstant_offsets, stats.non_stack_load_offsets,
+      stats.overwritten_arg_store_fields, stats.stack_arg_store_calls,
+      stats.stack_arg_store_fields, stats.stack_arg_store_bytes,
+      stats.estimated_avoidable_bytes, dirty_flush_points,
+      stats.context_barrier_flush_points, stats.return_flush_points,
+      stats.parent_pre_call_flush_points, stats.debug_trap_blockers,
+      stats.already_compiled_targets,
+      FormatGuestStackOffsetCounts(stats.stack_offset_counts),
+      FormatGuestCallFastEntryArgSlots(stats.stack_arg_store_fields_by_slot));
+
+  for (size_t i = 0; i < target_rows.size() &&
+                     i < kMaxGuestStackArgHandoffTargetRows;
+       ++i) {
+    const auto& row = target_rows[i];
+    XELOGW(
+        "A64 guest-stack arg handoff target {:03}.{:02}: fn {:08X} "
+        "target={:08X} calls={} regular={} conditional={} tail={} "
+        "eligible_regular={} already_compiled={} unresolved={} "
+        "helper_blockers={} normal_entry_fallback={} stackpoint_sensitive={} "
+        "stack_arg_store_calls={} stack_arg_store_fields={} "
+        "stack_arg_store_bytes={} estimated_avoidable_bytes={} "
+        "parent_pre_call_flush_points={} first_call={:08X} "
+        "first_block={:08X} payload_materializations_allowed=0 "
+        "behavior_changed=0 alternate_codegen=0 normal_entry=unchanged "
+        "global_indirection=unchanged stack_offset_top={} arg_store_top={}",
+        log_index, i + 1, current_guest_function_, row.target_address,
+        row.calls, row.regular_calls, row.conditional_calls, row.tail_calls,
+        row.eligible_regular_calls, row.already_compiled_targets,
+        row.unresolved_direct_targets, row.helper_inline_blockers,
+        row.normal_entry_fallback_required, row.stackpoint_sensitive_calls,
+        row.stack_arg_store_calls, row.stack_arg_store_fields,
+        row.stack_arg_store_bytes, row.estimated_avoidable_bytes,
+        row.parent_pre_call_flush_points, row.first_call_guest,
+        row.first_block_guest,
+        FormatGuestStackOffsetCounts(row.stack_offset_counts),
+        FormatGuestCallFastEntryArgSlots(row.stack_arg_store_fields_by_slot));
   }
 }
 

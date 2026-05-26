@@ -298,6 +298,18 @@ Better next lanes:
   body-time weighting, resolved/compiled state, normal-entry fallback pressure,
   context-barrier / stackpoint / debug / exception blockers, helper/extern/tail
   blockers, and estimated avoidable guest stack load/context store traffic.
+  `docs/research/20260526-055500-guest-stack-arg-handoff-audit-skeleton.md`
+  adds that default-off counter-only audit plus Android/Thor launch plumbing
+  and parser support. It is not speed proof and changes no generated behavior:
+  `payload_materializations_allowed=0`, `behavior_changed=0`,
+  `alternate_codegen=0`, `normal_entry=unchanged`, and
+  `global_indirection=unchanged`. Next useful work is FullDeploy plus a
+  route-clean `0x82281D28` capture with
+  `-Arm64GuestStackArgHandoffAudit true`,
+  `-Arm64GuestStackArgHandoffAuditFunction 0x82281D28`, and
+  `-Arm64GuestStackArgHandoffAuditBudget 16`, then join the new log rows with
+  `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. Do not run a quiet
+  speed A/B or patch behavior from the skeleton alone.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

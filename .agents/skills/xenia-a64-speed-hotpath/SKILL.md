@@ -236,6 +236,16 @@ direct call, with target/callsite rows, body-time weighting, resolved/compiled
 state, normal-entry fallback pressure, blocker classes, and estimated avoidable
 guest stack load / context store traffic.
 
+`docs/research/20260526-055500-guest-stack-arg-handoff-audit-skeleton.md` adds
+that default-off counter-only audit plus Android/Thor launch plumbing and
+parser support. It changes no generated behavior and is not speed proof. Next
+work is FullDeploy plus a route-clean `0x82281D28` capture using
+`-Arm64GuestStackArgHandoffAudit true`,
+`-Arm64GuestStackArgHandoffAuditFunction 0x82281D28`, and
+`-Arm64GuestStackArgHandoffAuditBudget 16`, then parse it with
+`tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1
+-GuestStackArgHandoffAuditLogPath <new-speed-logcat>`.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

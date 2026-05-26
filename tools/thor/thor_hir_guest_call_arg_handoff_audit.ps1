@@ -3,6 +3,7 @@ param(
     [string]$LogPath,
     [string[]]$ExtraLogPath = @(),
     [string[]]$FastEntryAuditLogPath = @(),
+    [string[]]$GuestStackArgHandoffAuditLogPath = @(),
     [string]$Function = "",
     [ValidateSet("RawHIR", "OptHIR")]
     [string]$Phase = "OptHIR",
@@ -343,6 +344,89 @@ function Read-FastEntryAuditTargetRows {
     return $rows
 }
 
+function Read-GuestStackArgHandoffAuditRows {
+    param([string[]]$Paths)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $pattern = "A64 guest-stack arg handoff audit\s+(?<index>\d+):\s+fn\s+(?<function>[0-9A-Fa-f]{8})\s+(?<rest>.*)$"
+    foreach ($path in $Paths) {
+        if (!(Test-Path -LiteralPath $path)) {
+            throw "GuestStackArgHandoffAuditLogPath not found: $path"
+        }
+        $resolved = (Resolve-Path -LiteralPath $path).Path
+        foreach ($line in (Get-Content -LiteralPath $resolved)) {
+            if ($line -notmatch $pattern) {
+                continue
+            }
+            $values = @{}
+            foreach ($token in ($Matches.rest -split "\s+")) {
+                if ($token -match "^(?<key>[A-Za-z0-9_]+)=(?<value>.*)$") {
+                    $values[$Matches.key] = $Matches.value
+                }
+            }
+            $rows.Add([pscustomobject][ordered]@{
+                function = $Matches.function.ToUpperInvariant()
+                index = [int]$Matches.index
+                values = $values
+                log = $resolved
+                text = $line
+            }) | Out-Null
+        }
+    }
+    return $rows
+}
+
+function Read-GuestStackArgHandoffTargetRows {
+    param([string[]]$Paths)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $pattern = "A64 guest-stack arg handoff target\s+(?<index>\d+)\.(?<row>\d+):\s+fn\s+(?<function>[0-9A-Fa-f]{8})\s+target=(?<target>[0-9A-Fa-f]{8})\s+(?<rest>.*)$"
+    foreach ($path in $Paths) {
+        if (!(Test-Path -LiteralPath $path)) {
+            throw "GuestStackArgHandoffAuditLogPath not found: $path"
+        }
+        $resolved = (Resolve-Path -LiteralPath $path).Path
+        foreach ($line in (Get-Content -LiteralPath $resolved)) {
+            if ($line -notmatch $pattern) {
+                continue
+            }
+            $values = @{}
+            foreach ($token in ($Matches.rest -split "\s+")) {
+                if ($token -match "^(?<key>[A-Za-z0-9_]+)=(?<value>.*)$") {
+                    $values[$Matches.key] = $Matches.value
+                }
+            }
+            $rows.Add([pscustomobject][ordered]@{
+                function = $Matches.function.ToUpperInvariant()
+                target = $Matches.target.ToUpperInvariant()
+                index = [int]$Matches.index
+                row = [int]$Matches.row
+                values = $values
+                log = $resolved
+                text = $line
+            }) | Out-Null
+        }
+    }
+    return $rows
+}
+
+function Get-BlockProfileByFunctionGuest {
+    param(
+        [hashtable]$Functions,
+        [hashtable]$BlockProfiles
+    )
+    $table = @{}
+    foreach ($fn in $Functions.Values) {
+        foreach ($block in $fn.blocks) {
+            $blockKey = "{0}:{1}" -f $fn.function, $block.ordinal
+            if (!$BlockProfiles.ContainsKey($blockKey)) {
+                continue
+            }
+            $guestKey = "{0}:{1}" -f $fn.function, $block.first_guest
+            $table[$guestKey] = $BlockProfiles[$blockKey]
+        }
+    }
+    return $table
+}
+
 function New-TargetSummary {
     param([string]$Target)
     return [pscustomobject][ordered]@{
@@ -450,6 +534,12 @@ if ($FastEntryAuditLogPath.Count -gt 0) {
     $fastEntryAuditRows = @(Read-FastEntryAuditRows -Paths $FastEntryAuditLogPath)
     $fastEntryAuditTargetRows = @(Read-FastEntryAuditTargetRows -Paths $FastEntryAuditLogPath)
 }
+$guestStackArgHandoffAuditRows = @()
+$guestStackArgHandoffTargetRows = @()
+if ($GuestStackArgHandoffAuditLogPath.Count -gt 0) {
+    $guestStackArgHandoffAuditRows = @(Read-GuestStackArgHandoffAuditRows -Paths $GuestStackArgHandoffAuditLogPath)
+    $guestStackArgHandoffTargetRows = @(Read-GuestStackArgHandoffTargetRows -Paths $GuestStackArgHandoffAuditLogPath)
+}
 
 $functionFilter = $Function.ToUpperInvariant()
 $selectedFunctions = @($callerFunctions.Values | Where-Object {
@@ -464,6 +554,7 @@ $calleeFirstAccess = @{}
 foreach ($fn in $functions.Values) {
     $calleeFirstAccess[$fn.function] = Get-FirstAccessByOffset @(Get-ContextAccesses $fn.items)
 }
+$blockProfileByFunctionGuest = Get-BlockProfileByFunctionGuest -Functions $callerFunctions -BlockProfiles $blockProfiles
 
 $rows = New-Object System.Collections.Generic.List[object]
 $classCounts = @{}
@@ -723,6 +814,106 @@ if ($fastEntryAuditRows.Count -gt 0) {
         Write-Output ""
     }
 }
+if ($guestStackArgHandoffAuditRows.Count -gt 0 -or $guestStackArgHandoffTargetRows.Count -gt 0) {
+    Write-Output "## Guest-Stack Argument Handoff Runtime Rows"
+    $selectedStackRows = @($guestStackArgHandoffAuditRows | Where-Object {
+        [string]::IsNullOrWhiteSpace($functionFilter) -or $_.function -eq $functionFilter
+    })
+    foreach ($stackRow in $selectedStackRows) {
+        $values = $stackRow.values
+        Write-Output ("fn={0} direct_calls={1} eligible_regular={2} tail_blockers={3} indirect_blockers={4} extern_host_blockers={5} unresolved_direct_targets={6} helper_blockers={7} normal_entry_fallback={8} stackpoint_sensitive={9} load_offset_instrs={10} stack_load_candidates={11} stack_load_nonconstant_offsets={12} non_stack_load_offsets={13} overwritten_arg_store_fields={14} stack_arg_store_calls={15} stack_arg_store_fields={16} stack_arg_store_bytes={17} estimated_avoidable_bytes={18} dirty_flush_points={19} flush_context_barrier={20} flush_return={21} parent_pre_call_flush_points={22} debug_trap_blockers={23} already_compiled_targets={24} payload_materializations_allowed={25} behavior_changed={26} alternate_codegen={27} normal_entry={28} global_indirection={29} stack_offset_top={30} arg_store_top={31}" -f
+            $stackRow.function,
+            (Get-HashValue $values "direct_calls"),
+            (Get-HashValue $values "eligible_regular"),
+            (Get-HashValue $values "tail_blockers"),
+            (Get-HashValue $values "indirect_blockers"),
+            (Get-HashValue $values "extern_host_blockers"),
+            (Get-HashValue $values "unresolved_direct_targets"),
+            (Get-HashValue $values "helper_blockers"),
+            (Get-HashValue $values "normal_entry_fallback"),
+            (Get-HashValue $values "stackpoint_sensitive"),
+            (Get-HashValue $values "load_offset_instrs"),
+            (Get-HashValue $values "stack_load_candidates"),
+            (Get-HashValue $values "stack_load_nonconstant_offsets"),
+            (Get-HashValue $values "non_stack_load_offsets"),
+            (Get-HashValue $values "overwritten_arg_store_fields"),
+            (Get-HashValue $values "stack_arg_store_calls"),
+            (Get-HashValue $values "stack_arg_store_fields"),
+            (Get-HashValue $values "stack_arg_store_bytes"),
+            (Get-HashValue $values "estimated_avoidable_bytes"),
+            (Get-HashValue $values "dirty_flush_points"),
+            (Get-HashValue $values "flush_context_barrier"),
+            (Get-HashValue $values "flush_return"),
+            (Get-HashValue $values "parent_pre_call_flush_points"),
+            (Get-HashValue $values "debug_trap_blockers"),
+            (Get-HashValue $values "already_compiled_targets"),
+            (Get-HashValue $values "payload_materializations_allowed"),
+            (Get-HashValue $values "behavior_changed"),
+            (Get-HashValue $values "alternate_codegen"),
+            (Get-HashValue $values "normal_entry" "unknown"),
+            (Get-HashValue $values "global_indirection" "unknown"),
+            (Get-HashValue $values "stack_offset_top" "-"),
+            (Get-HashValue $values "arg_store_top" "-"))
+    }
+    $selectedStackTargetRows = @($guestStackArgHandoffTargetRows | Where-Object {
+        [string]::IsNullOrWhiteSpace($functionFilter) -or $_.function -eq $functionFilter
+    })
+    if ($selectedStackTargetRows.Count -gt 0) {
+        Write-Output ""
+        Write-Output "## Guest-Stack Argument Handoff Target Rows"
+        foreach ($targetRow in ($selectedStackTargetRows |
+                Sort-Object -Property @{ Expression = { [int64](Get-HashValue $_.values "stack_arg_store_fields") }; Descending = $true },
+                                      @{ Expression = { [int64](Get-HashValue $_.values "calls") }; Descending = $true },
+                                      @{ Expression = "target"; Ascending = $true } |
+                Select-Object -First $Top)) {
+            $values = $targetRow.values
+            $firstBlock = (Get-HashValue $values "first_block" "00000000").ToUpperInvariant()
+            $profileKey = "{0}:{1}" -f $targetRow.function, $firstBlock
+            $bodyTicksTotal = 0L
+            $entriesDelta = 0L
+            $ticksPerEntry = 0L
+            if ($blockProfileByFunctionGuest.ContainsKey($profileKey)) {
+                $profile = $blockProfileByFunctionGuest[$profileKey]
+                $bodyTicksTotal = [int64]$profile.body_ticks_total
+                $entriesDelta = [int64]$profile.entries_delta
+                $ticksPerEntry = [int64]$profile.ticks_per_entry
+            }
+            $fields = [int64](Get-HashValue $values "stack_arg_store_fields")
+            $weightedFields = $fields * $bodyTicksTotal
+            Write-Output ("target=0x{0} calls={1} regular={2} conditional={3} tail={4} eligible_regular={5} already_compiled={6} unresolved={7} helper_blockers={8} normal_entry_fallback={9} stackpoint_sensitive={10} stack_arg_store_calls={11} stack_arg_store_fields={12} stack_arg_store_bytes={13} estimated_avoidable_bytes={14} parent_pre_call_flush_points={15} first_call={16} first_block={17} block_body_ticks_total={18} block_entries_delta={19} block_ticks_per_entry={20} body_weighted_stack_arg_fields={21} payload_materializations_allowed={22} behavior_changed={23} alternate_codegen={24} normal_entry={25} global_indirection={26} stack_offset_top={27} arg_store_top={28}" -f
+                $targetRow.target,
+                (Get-HashValue $values "calls"),
+                (Get-HashValue $values "regular"),
+                (Get-HashValue $values "conditional"),
+                (Get-HashValue $values "tail"),
+                (Get-HashValue $values "eligible_regular"),
+                (Get-HashValue $values "already_compiled"),
+                (Get-HashValue $values "unresolved"),
+                (Get-HashValue $values "helper_blockers"),
+                (Get-HashValue $values "normal_entry_fallback"),
+                (Get-HashValue $values "stackpoint_sensitive"),
+                (Get-HashValue $values "stack_arg_store_calls"),
+                (Get-HashValue $values "stack_arg_store_fields"),
+                (Get-HashValue $values "stack_arg_store_bytes"),
+                (Get-HashValue $values "estimated_avoidable_bytes"),
+                (Get-HashValue $values "parent_pre_call_flush_points"),
+                (Get-HashValue $values "first_call" "00000000"),
+                $firstBlock,
+                $bodyTicksTotal,
+                $entriesDelta,
+                $ticksPerEntry,
+                $weightedFields,
+                (Get-HashValue $values "payload_materializations_allowed"),
+                (Get-HashValue $values "behavior_changed"),
+                (Get-HashValue $values "alternate_codegen"),
+                (Get-HashValue $values "normal_entry" "unknown"),
+                (Get-HashValue $values "global_indirection" "unknown"),
+                (Get-HashValue $values "stack_offset_top" "-"),
+                (Get-HashValue $values "arg_store_top" "-"))
+        }
+    }
+    Write-Output ""
+}
 Write-Output "## Target Summary"
 foreach ($summary in ($targetSummaries.Values |
         Sort-Object -Property @{ Expression = "body_weighted_argument_fields"; Descending = $true },
@@ -765,3 +956,4 @@ Write-Output "callee_first_store_stores and callee_absent_stores are known-calle
 Write-Output "callee_hir_missing_stores means the caller side is a candidate but the target function was not in the provided HIR logs; capture or provide that callee before any fast-entry design."
 Write-Output "normal_entry_fallback_required is the number of direct guest-call sites with argument stores that would need a normal-entry-compatible fallback if a future fast-entry variant passed arguments out-of-band."
 Write-Output "body_weighted_* values multiply field counts by the block body-time total when block profile data is available; they are ranking hints, not speed proof."
+Write-Output "Guest-stack argument handoff rows count only argument stores fed by LOAD_OFFSET from the current guest stack pointer plus a constant offset; they are counter-only and do not imply fast-entry behavior is safe."

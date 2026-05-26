@@ -452,6 +452,22 @@ DEFINE_uint32(
     "Thor ARM64 speed lane: maximum guest-call fast-entry audit function "
     "summaries to emit per process.",
     "a64");
+DEFINE_bool(
+    arm64_guest_stack_arg_handoff_audit, false,
+    "Thor ARM64 speed lane: log direct guest-call argument stores that are fed "
+    "by guest stack LOAD_OFFSET(r1 + const) values. Counter-only; does not "
+    "emit alternate code or change normal entry behavior.",
+    "a64");
+DEFINE_uint32(
+    arm64_guest_stack_arg_handoff_audit_function, 0,
+    "Thor ARM64 speed lane: optional exact guest function start address for "
+    "the guest-stack argument handoff audit. 0 logs all functions.",
+    "a64");
+DEFINE_uint32(
+    arm64_guest_stack_arg_handoff_audit_budget, 64,
+    "Thor ARM64 speed lane: maximum guest-stack argument handoff audit "
+    "function summaries to emit per process.",
+    "a64");
 DEFINE_uint32(
     arm64_speed_profile_interval_ms, 0,
     "Thor ARM64 speed lane: interval for low-noise A64 profile summaries. "
@@ -1554,6 +1570,12 @@ void A64Backend::StartSpeedProfiler() {
            "budget={} behavior_changed=0",
            cvars::arm64_guest_call_fast_entry_audit_function,
            cvars::arm64_guest_call_fast_entry_audit_budget);
+  }
+  if (cvars::arm64_guest_stack_arg_handoff_audit) {
+    XELOGW("A64 guest-stack arg handoff audit enabled: function={:08X} "
+           "budget={} behavior_changed=0",
+           cvars::arm64_guest_stack_arg_handoff_audit_function,
+           cvars::arm64_guest_stack_arg_handoff_audit_budget);
   }
   if (cvars::a64_rtl_leave_fastpath_audit) {
     XELOGW("A64 RtlLeave fastpath audit enabled");

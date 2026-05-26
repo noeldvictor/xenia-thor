@@ -146,6 +146,14 @@ counter-only guest-stack argument handoff audit for direct guest calls, counting
 `LOAD_OFFSET` from `r1 + constant` into `STORE_CONTEXT r3-r10/lr` before calls
 with target/callsite rows, body weighting, normal-entry fallback, and blocker
 classes.
+`docs/research/20260526-055500-guest-stack-arg-handoff-audit-skeleton.md`
+adds that audit surface plus Android/Thor plumbing and parser support. It is
+behavior-neutral and not speed proof. Next work is FullDeploy plus a route-clean
+`0x82281D28` capture with `-Arm64GuestStackArgHandoffAudit true`,
+`-Arm64GuestStackArgHandoffAuditFunction 0x82281D28`, and
+`-Arm64GuestStackArgHandoffAuditBudget 16`, then parse it with
+`tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. Do not run a quiet
+speed A/B or patch behavior from the skeleton alone.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

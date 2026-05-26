@@ -200,6 +200,9 @@ param(
     [string]$Arm64GuestCallFastEntryAudit = "",
     [string]$Arm64GuestCallFastEntryAuditFunction = "",
     [string]$Arm64GuestCallFastEntryAuditBudget = "",
+    [string]$Arm64GuestStackArgHandoffAudit = "",
+    [string]$Arm64GuestStackArgHandoffAuditFunction = "",
+    [string]$Arm64GuestStackArgHandoffAuditBudget = "",
     [string]$Arm64CrCompareBranchAcrossContextBarrier = "",
     [string]$Arm64CrStoreElideForFusedBranch = "",
     [string]$Arm64CrStoreElideForFusedBranchFunction = "",
@@ -1044,6 +1047,15 @@ function Start-XeniaEmulator {
     if ($Arm64GuestCallFastEntryAuditBudget) {
         $parts += "--ei arm64_guest_call_fast_entry_audit_budget $(ConvertTo-AdbIntText $Arm64GuestCallFastEntryAuditBudget)"
     }
+    if ($Arm64GuestStackArgHandoffAudit) {
+        $parts += "--ez arm64_guest_stack_arg_handoff_audit $(ConvertTo-BooleanText $Arm64GuestStackArgHandoffAudit)"
+    }
+    if ($Arm64GuestStackArgHandoffAuditFunction) {
+        $parts += "--ei arm64_guest_stack_arg_handoff_audit_function $(ConvertTo-AdbIntText $Arm64GuestStackArgHandoffAuditFunction)"
+    }
+    if ($Arm64GuestStackArgHandoffAuditBudget) {
+        $parts += "--ei arm64_guest_stack_arg_handoff_audit_budget $(ConvertTo-AdbIntText $Arm64GuestStackArgHandoffAuditBudget)"
+    }
     if ($Arm64CrCompareBranchAcrossContextBarrier) {
         $parts += "--ez arm64_cr_compare_branch_across_context_barrier $(ConvertTo-BooleanText $Arm64CrCompareBranchAcrossContextBarrier)"
     }
@@ -1272,6 +1284,9 @@ function Write-CaptureMetadata {
         "arm64_guest_call_fast_entry_audit=$Arm64GuestCallFastEntryAudit",
         "arm64_guest_call_fast_entry_audit_function=$Arm64GuestCallFastEntryAuditFunction",
         "arm64_guest_call_fast_entry_audit_budget=$Arm64GuestCallFastEntryAuditBudget",
+        "arm64_guest_stack_arg_handoff_audit=$Arm64GuestStackArgHandoffAudit",
+        "arm64_guest_stack_arg_handoff_audit_function=$Arm64GuestStackArgHandoffAuditFunction",
+        "arm64_guest_stack_arg_handoff_audit_budget=$Arm64GuestStackArgHandoffAuditBudget",
         "arm64_cr_compare_branch_across_context_barrier=$Arm64CrCompareBranchAcrossContextBarrier",
         "arm64_cr_store_elide_for_fused_branch=$Arm64CrStoreElideForFusedBranch",
         "arm64_cr_store_elide_for_fused_branch_function=$Arm64CrStoreElideForFusedBranchFunction",
@@ -1626,6 +1641,9 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditBudget" ""
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "A64EnableHostGuestStackSynchronization" "true"
@@ -1833,6 +1851,9 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditBudget" ""
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
