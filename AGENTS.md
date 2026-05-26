@@ -354,6 +354,17 @@ Better next lanes:
   `82282490,82281D28,82287788`. Treat that as route-safety proof only; no quiet
   speed A/B until the enabled path reaches visible opening sky / dragon-wing
   with clean fatal markers.
+  `docs/research/20260526-073440-a64-offset-address-fastpath-route-capture.md`
+  records that route-clean Thor proof on commit `1ed1dec66` / APK SHA
+  `3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`.
+  The enabled route reached visible opening sky / dragon-wing with a clean
+  fatal-marker search. Generated code sizes shrank in the wall cluster:
+  `82281D28 119908 -> 95724`, `82282490 87168 -> 86452`, and
+  `82287788 35732 -> 35712`. This is not speed proof. Next useful slice is a
+  same-APK quiet A/B or control sandwich comparing
+  `-Arm64OffsetMemoryAddressFastpath false` versus `true`; keep audits,
+  disassembly, and block tracing off and only claim speed if route-wide movement
+  beats noise.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

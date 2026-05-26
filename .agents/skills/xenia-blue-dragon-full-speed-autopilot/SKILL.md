@@ -190,6 +190,14 @@ next useful slice is FullDeploy plus a route-clean capture with
 quiet speed A/B until the enabled route reaches visible opening sky /
 dragon-wing with clean fatal markers.
 
+`docs/research/20260526-073440-a64-offset-address-fastpath-route-capture.md`
+records that route-clean enabled capture. It reached the visible opening
+sky / dragon-wing frame with clean fatal markers and shrank generated code sizes
+in the hot cluster, but it is not speed proof. Next useful work is a same-APK
+quiet A/B or control sandwich on APK SHA
+`3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`,
+comparing `-Arm64OffsetMemoryAddressFastpath false` versus `true`.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

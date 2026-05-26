@@ -158,6 +158,13 @@ Treat these as closed for immediate speed work:
   a route-clean `-Arm64OffsetMemoryAddressFastpath true` capture with delayed
   body-time comparators `82282490,82281D28,82287788`; no quiet speed A/B until
   that enabled route is clean.
+- `docs/research/20260526-073440-a64-offset-address-fastpath-route-capture.md`
+  proves route safety for the enabled cvar on commit `1ed1dec66` / APK SHA
+  `3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`. It
+  reached visible opening sky / dragon-wing with a clean fatal-marker search
+  and shrank hot generated code size, but it is not speed proof. Next work is a
+  same-APK quiet A/B or control sandwich comparing
+  `-Arm64OffsetMemoryAddressFastpath false` versus `true`.
 
 ## Useful Output Bias
 

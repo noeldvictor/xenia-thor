@@ -291,6 +291,16 @@ FullDeploy plus a route-clean capture with
 `82282490,82281D28,82287788`; no quiet speed A/B until that enabled route is
 clean.
 
+`docs/research/20260526-073440-a64-offset-address-fastpath-route-capture.md`
+records that route-clean enabled capture on commit `1ed1dec66` / APK SHA
+`3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`.
+It reached visible opening sky / dragon-wing with clean fatal markers and
+shrunk generated code sizes in the wall cluster (`82281D28 119908 -> 95724`,
+`82282490 87168 -> 86452`, `82287788 35732 -> 35712`). This is not speed proof.
+Next work is a same-APK quiet A/B or control sandwich with
+`-Arm64OffsetMemoryAddressFastpath false` versus `true`, audit/disassembly/block
+tracing off, and matched route/cvars.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 
