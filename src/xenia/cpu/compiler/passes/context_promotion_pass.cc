@@ -75,6 +75,17 @@ DEFINE_uint32(
     "Optional guest function start address filter for "
     "arm64_guest_state_register_cache_residual_audit. 0 applies globally.",
     "CPU");
+DEFINE_bool(arm64_guest_state_nonclosed_cache_audit, false,
+            "Thor ARM64 research: count remaining post-promotion "
+            "guest-state register-cache opportunities for non-closed PPC "
+            "GPRs r31/r30/r29/r28/r27, without changing generated code. "
+            "Default-off audit only.",
+            "CPU");
+DEFINE_uint32(
+    arm64_guest_state_nonclosed_cache_audit_function, 0,
+    "Optional guest function start address filter for "
+    "arm64_guest_state_nonclosed_cache_audit. 0 applies globally.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -96,6 +107,18 @@ constexpr size_t kPromotedGprOffsets[] = {
     offsetof(ppc::PPCContext, r) + 11 * sizeof(uint64_t),
 };
 constexpr size_t kPromotedGprSize = sizeof(uint64_t);
+constexpr uint32_t kNonClosedGuestStateCacheAuditSlots[] = {31, 30, 29,
+                                                            28, 27};
+constexpr size_t kNonClosedGuestStateCacheAuditSlotCount =
+    sizeof(kNonClosedGuestStateCacheAuditSlots) /
+    sizeof(kNonClosedGuestStateCacheAuditSlots[0]);
+constexpr size_t kNonClosedGuestStateCacheAuditOffsets[] = {
+    offsetof(ppc::PPCContext, r) + 31 * sizeof(uint64_t),
+    offsetof(ppc::PPCContext, r) + 30 * sizeof(uint64_t),
+    offsetof(ppc::PPCContext, r) + 29 * sizeof(uint64_t),
+    offsetof(ppc::PPCContext, r) + 28 * sizeof(uint64_t),
+    offsetof(ppc::PPCContext, r) + 27 * sizeof(uint64_t),
+};
 
 struct GprLocalSlotValue {
   Value* value = nullptr;
@@ -325,6 +348,201 @@ bool IsGuestStateRegisterCacheAuditTrap(Instr* instr) {
 bool RangesOverlap(size_t a_offset, size_t a_size, size_t b_offset,
                    size_t b_size) {
   return a_offset < b_offset + b_size && b_offset < a_offset + a_size;
+}
+
+enum class NonClosedGuestStateCacheAuditMissReason {
+  kEntry,
+  kMultiPred,
+  kLabel,
+  kCall,
+  kHelper,
+  kBranch,
+  kReturn,
+  kTrap,
+  kExternalVisibility,
+  kOverlap,
+  kVolatile,
+};
+
+struct NonClosedGuestStateCacheAuditSlotState {
+  bool known = false;
+  bool dirty = false;
+  NonClosedGuestStateCacheAuditMissReason miss_reason =
+      NonClosedGuestStateCacheAuditMissReason::kEntry;
+};
+
+struct NonClosedGuestStateCacheAuditStats {
+  uint32_t function_address = 0;
+  uint64_t blocks = 0;
+  uint64_t labeled_blocks = 0;
+  uint64_t multi_pred_blocks = 0;
+  uint64_t candidate_loads = 0;
+  uint64_t candidate_stores = 0;
+  uint64_t clean_hits_possible = 0;
+  uint64_t dirty_hits_possible = 0;
+  uint64_t miss_no_entry = 0;
+  uint64_t miss_multi_pred = 0;
+  uint64_t miss_after_label = 0;
+  uint64_t miss_after_call = 0;
+  uint64_t miss_after_helper = 0;
+  uint64_t miss_after_branch = 0;
+  uint64_t miss_after_return = 0;
+  uint64_t miss_after_trap = 0;
+  uint64_t miss_external_visibility = 0;
+  uint64_t miss_overlap = 0;
+  uint64_t miss_volatile = 0;
+  uint64_t flush_multi_pred = 0;
+  uint64_t flush_label = 0;
+  uint64_t flush_call = 0;
+  uint64_t flush_helper = 0;
+  uint64_t flush_branch = 0;
+  uint64_t flush_return = 0;
+  uint64_t flush_trap = 0;
+  uint64_t flush_external_visibility = 0;
+  uint64_t flush_overlap = 0;
+  uint64_t flush_volatile = 0;
+  uint64_t peak_live_slots = 0;
+  uint64_t estimated_spill_pressure = 0;
+  uint64_t normal_fallback = 0;
+  std::array<uint64_t, kNonClosedGuestStateCacheAuditSlotCount>
+      candidate_loads_by_slot = {};
+  std::array<uint64_t, kNonClosedGuestStateCacheAuditSlotCount>
+      candidate_stores_by_slot = {};
+  std::array<uint64_t, kNonClosedGuestStateCacheAuditSlotCount>
+      clean_hits_by_slot = {};
+  std::array<uint64_t, kNonClosedGuestStateCacheAuditSlotCount>
+      dirty_hits_by_slot = {};
+  std::array<uint64_t, kNonClosedGuestStateCacheAuditSlotCount>
+      fallback_by_slot = {};
+};
+
+int GetNonClosedGuestStateCacheAuditIndex(size_t offset, TypeName type) {
+  if (type != INT64_TYPE) {
+    return -1;
+  }
+  for (size_t n = 0; n < kNonClosedGuestStateCacheAuditSlotCount; ++n) {
+    if (offset == kNonClosedGuestStateCacheAuditOffsets[n]) {
+      return static_cast<int>(n);
+    }
+  }
+  return -1;
+}
+
+uint64_t CountLiveNonClosedGuestStateCacheAuditSlots(
+    const std::array<NonClosedGuestStateCacheAuditSlotState,
+                     kNonClosedGuestStateCacheAuditSlotCount>& current) {
+  uint64_t live = 0;
+  for (const auto& slot : current) {
+    if (slot.known) {
+      ++live;
+    }
+  }
+  return live;
+}
+
+void UpdateNonClosedGuestStateCacheAuditSpillPressure(
+    NonClosedGuestStateCacheAuditStats* stats,
+    const std::array<NonClosedGuestStateCacheAuditSlotState,
+                     kNonClosedGuestStateCacheAuditSlotCount>& current) {
+  uint64_t live = CountLiveNonClosedGuestStateCacheAuditSlots(current);
+  if (live > stats->peak_live_slots) {
+    stats->peak_live_slots = live;
+  }
+
+  // A conservative signal for this lane: after two cached GPRs, host GPR
+  // pressure is likely to compete with address, context, and scratch values.
+  uint64_t pressure = live > 2 ? live - 2 : 0;
+  if (pressure > stats->estimated_spill_pressure) {
+    stats->estimated_spill_pressure = pressure;
+  }
+}
+
+void CountNonClosedGuestStateCacheAuditMiss(
+    NonClosedGuestStateCacheAuditStats* stats,
+    NonClosedGuestStateCacheAuditMissReason reason) {
+  switch (reason) {
+    case NonClosedGuestStateCacheAuditMissReason::kMultiPred:
+      ++stats->miss_multi_pred;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kLabel:
+      ++stats->miss_after_label;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kCall:
+      ++stats->miss_after_call;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kHelper:
+      ++stats->miss_after_helper;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kBranch:
+      ++stats->miss_after_branch;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kReturn:
+      ++stats->miss_after_return;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kTrap:
+      ++stats->miss_after_trap;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kExternalVisibility:
+      ++stats->miss_external_visibility;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kOverlap:
+      ++stats->miss_overlap;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kVolatile:
+      ++stats->miss_volatile;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kEntry:
+    default:
+      ++stats->miss_no_entry;
+      break;
+  }
+}
+
+void FlushNonClosedGuestStateCacheAuditState(
+    NonClosedGuestStateCacheAuditStats* stats,
+    std::array<NonClosedGuestStateCacheAuditSlotState,
+               kNonClosedGuestStateCacheAuditSlotCount>* current,
+    NonClosedGuestStateCacheAuditMissReason reason) {
+  uint64_t live = CountLiveNonClosedGuestStateCacheAuditSlots(*current);
+  switch (reason) {
+    case NonClosedGuestStateCacheAuditMissReason::kMultiPred:
+      stats->flush_multi_pred += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kLabel:
+      stats->flush_label += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kCall:
+      stats->flush_call += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kHelper:
+      stats->flush_helper += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kBranch:
+      stats->flush_branch += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kReturn:
+      stats->flush_return += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kTrap:
+      stats->flush_trap += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kExternalVisibility:
+      stats->flush_external_visibility += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kOverlap:
+      stats->flush_overlap += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kVolatile:
+      stats->flush_volatile += live;
+      break;
+    case NonClosedGuestStateCacheAuditMissReason::kEntry:
+    default:
+      break;
+  }
+  for (auto& slot : *current) {
+    slot = {};
+    slot.miss_reason = reason;
+  }
 }
 
 Block* GetSingleDominatingPredecessor(Block* block) {
@@ -583,6 +801,11 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
           cvars::arm64_guest_state_register_cache_residual_audit_function)) {
     AuditGuestStateRegisterCache(builder, true);
   }
+  if (cvars::arm64_guest_state_nonclosed_cache_audit &&
+      ShouldRunGuestStateRegisterCacheAudit(
+          builder, cvars::arm64_guest_state_nonclosed_cache_audit_function)) {
+    AuditGuestStateNonClosedCache(builder);
+  }
 
   return true;
 }
@@ -762,6 +985,206 @@ void ContextPromotionPass::AuditGuestStateRegisterCache(HIRBuilder* builder,
       stats.candidate_loads_by_slot[1], stats.candidate_stores_by_slot[1],
       stats.clean_hits_by_slot[1], stats.dirty_hits_by_slot[1],
       stats.fallback_by_slot[1]);
+}
+
+void ContextPromotionPass::AuditGuestStateNonClosedCache(HIRBuilder* builder) {
+  NonClosedGuestStateCacheAuditStats stats;
+  stats.function_address = FindFirstSourceOffset(builder);
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    std::array<NonClosedGuestStateCacheAuditSlotState,
+               kNonClosedGuestStateCacheAuditSlotCount>
+        current = {};
+    NonClosedGuestStateCacheAuditMissReason entry_reason =
+        NonClosedGuestStateCacheAuditMissReason::kEntry;
+    if (block->label_head && block->incoming_edge_head) {
+      ++stats.labeled_blocks;
+      ++stats.flush_label;
+      entry_reason = NonClosedGuestStateCacheAuditMissReason::kLabel;
+    }
+    if (block->incoming_edge_head && block->incoming_edge_head->incoming_next) {
+      ++stats.multi_pred_blocks;
+      ++stats.flush_multi_pred;
+      entry_reason = NonClosedGuestStateCacheAuditMissReason::kMultiPred;
+    }
+    for (auto& slot : current) {
+      slot.miss_reason = entry_reason;
+    }
+
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        TypeName type = instr->dest ? instr->dest->type : MAX_TYPENAME;
+        int slot_index =
+            GetNonClosedGuestStateCacheAuditIndex(offset, type);
+        if (slot_index < 0) {
+          continue;
+        }
+
+        ++stats.candidate_loads;
+        ++stats.candidate_loads_by_slot[slot_index];
+        ++stats.normal_fallback;
+        ++stats.fallback_by_slot[slot_index];
+        auto& slot = current[slot_index];
+        if (slot.known) {
+          if (slot.dirty) {
+            ++stats.dirty_hits_possible;
+            ++stats.dirty_hits_by_slot[slot_index];
+          } else {
+            ++stats.clean_hits_possible;
+            ++stats.clean_hits_by_slot[slot_index];
+          }
+        } else {
+          CountNonClosedGuestStateCacheAuditMiss(&stats, slot.miss_reason);
+        }
+        slot.known = true;
+        slot.dirty = false;
+        slot.miss_reason = NonClosedGuestStateCacheAuditMissReason::kEntry;
+        UpdateNonClosedGuestStateCacheAuditSpillPressure(&stats, current);
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_STORE_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        Value* value = instr->src2.value;
+        TypeName type = value ? value->type : MAX_TYPENAME;
+        int slot_index = value
+                             ? GetNonClosedGuestStateCacheAuditIndex(offset,
+                                                                     type)
+                             : -1;
+        if (slot_index >= 0) {
+          ++stats.candidate_stores;
+          ++stats.candidate_stores_by_slot[slot_index];
+          ++stats.normal_fallback;
+          ++stats.fallback_by_slot[slot_index];
+          current[slot_index].known = true;
+          current[slot_index].dirty = true;
+          current[slot_index].miss_reason =
+              NonClosedGuestStateCacheAuditMissReason::kEntry;
+          UpdateNonClosedGuestStateCacheAuditSpillPressure(&stats, current);
+          continue;
+        }
+
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        for (size_t n = 0; n < current.size(); ++n) {
+          if (RangesOverlap(offset, size,
+                            kNonClosedGuestStateCacheAuditOffsets[n],
+                            kPromotedGprSize) &&
+              current[n].known) {
+            ++stats.flush_overlap;
+            current[n] = {};
+            current[n].miss_reason =
+                NonClosedGuestStateCacheAuditMissReason::kOverlap;
+          }
+        }
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_CONTEXT_BARRIER_info) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kExternalVisibility);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditCall(instr)) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kCall);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditHelper(instr)) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kHelper);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditReturn(instr)) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kReturn);
+        continue;
+      }
+
+      if (IsGuestStateRegisterCacheAuditTrap(instr)) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kTrap);
+        continue;
+      }
+
+      if (instr->opcode->flags & OPCODE_FLAG_BRANCH) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kBranch);
+        continue;
+      }
+
+      if (instr->opcode->flags & OPCODE_FLAG_VOLATILE) {
+        FlushNonClosedGuestStateCacheAuditState(
+            &stats, &current,
+            NonClosedGuestStateCacheAuditMissReason::kVolatile);
+      }
+    }
+  }
+
+  XELOGW(
+      "A64 guest-state nonclosed-cache post-promotion audit fn {:08X}: "
+      "target_slots=r31,r30,r29,r28,r27 blocks={} labeled_blocks={} "
+      "multi_pred_blocks={} candidate_loads={} candidate_stores={} "
+      "clean_hits_possible={} dirty_hits_possible={} normal_fallback={} "
+      "peak_live_slots={} estimated_spill_pressure={} "
+      "spill_pressure_model=live_slots_over_2 "
+      "payload_materializations_allowed=0 store_elision_allowed=0 "
+      "context_load_replacement_allowed=0 behavior_changed=0",
+      stats.function_address, stats.blocks, stats.labeled_blocks,
+      stats.multi_pred_blocks, stats.candidate_loads, stats.candidate_stores,
+      stats.clean_hits_possible, stats.dirty_hits_possible,
+      stats.normal_fallback, stats.peak_live_slots,
+      stats.estimated_spill_pressure);
+  XELOGW(
+      "A64 guest-state nonclosed-cache post-promotion audit fn {:08X}: "
+      "miss_no_entry={} miss_multi_pred={} miss_after_label={} "
+      "miss_after_call={} miss_after_helper={} miss_after_branch={} "
+      "miss_after_return={} miss_after_trap={} "
+      "miss_external_visibility={} miss_overlap={} miss_volatile={}",
+      stats.function_address, stats.miss_no_entry, stats.miss_multi_pred,
+      stats.miss_after_label, stats.miss_after_call, stats.miss_after_helper,
+      stats.miss_after_branch, stats.miss_after_return, stats.miss_after_trap,
+      stats.miss_external_visibility, stats.miss_overlap,
+      stats.miss_volatile);
+  XELOGW(
+      "A64 guest-state nonclosed-cache post-promotion audit fn {:08X}: "
+      "flush_multi_pred={} flush_label={} flush_call={} flush_helper={} "
+      "flush_branch={} flush_return={} flush_trap={} "
+      "flush_external_visibility={} flush_overlap={} flush_volatile={}",
+      stats.function_address, stats.flush_multi_pred, stats.flush_label,
+      stats.flush_call, stats.flush_helper, stats.flush_branch,
+      stats.flush_return, stats.flush_trap, stats.flush_external_visibility,
+      stats.flush_overlap, stats.flush_volatile);
+  XELOGW(
+      "A64 guest-state nonclosed-cache post-promotion audit fn {:08X}: "
+      "r31 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
+      "r30 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
+      "r29 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
+      "r28 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}; "
+      "r27 loads/stores/clean_hits/dirty_hits/fallback={}/{}/{}/{}/{}",
+      stats.function_address, stats.candidate_loads_by_slot[0],
+      stats.candidate_stores_by_slot[0], stats.clean_hits_by_slot[0],
+      stats.dirty_hits_by_slot[0], stats.fallback_by_slot[0],
+      stats.candidate_loads_by_slot[1], stats.candidate_stores_by_slot[1],
+      stats.clean_hits_by_slot[1], stats.dirty_hits_by_slot[1],
+      stats.fallback_by_slot[1], stats.candidate_loads_by_slot[2],
+      stats.candidate_stores_by_slot[2], stats.clean_hits_by_slot[2],
+      stats.dirty_hits_by_slot[2], stats.fallback_by_slot[2],
+      stats.candidate_loads_by_slot[3], stats.candidate_stores_by_slot[3],
+      stats.clean_hits_by_slot[3], stats.dirty_hits_by_slot[3],
+      stats.fallback_by_slot[3], stats.candidate_loads_by_slot[4],
+      stats.candidate_stores_by_slot[4], stats.clean_hits_by_slot[4],
+      stats.dirty_hits_by_slot[4], stats.fallback_by_slot[4]);
 }
 
 void ContextPromotionPass::PromoteBlock(Block* block) {

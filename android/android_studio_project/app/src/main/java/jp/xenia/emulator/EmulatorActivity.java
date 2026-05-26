@@ -326,6 +326,12 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent,
                     launchArguments,
                     "arm64_guest_state_register_cache_residual_audit_function");
+            copyBooleanExtra(
+                    intent, launchArguments, "arm64_guest_state_nonclosed_cache_audit");
+            copyIntExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_guest_state_nonclosed_cache_audit_function");
             copyBooleanExtra(intent, launchArguments, "arm64_register_allocation_audit");
             copyIntExtra(intent, launchArguments, "arm64_register_allocation_audit_function");
             copyBooleanExtra(intent, launchArguments, "arm64_guest_call_fast_entry_audit");

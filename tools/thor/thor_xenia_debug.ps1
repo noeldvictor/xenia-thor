@@ -196,6 +196,8 @@ param(
     [string]$Arm64GuestStateRegisterCacheAuditFunction = "",
     [string]$Arm64GuestStateRegisterCacheResidualAudit = "",
     [string]$Arm64GuestStateRegisterCacheResidualAuditFunction = "",
+    [string]$Arm64GuestStateNonclosedCacheAudit = "",
+    [string]$Arm64GuestStateNonclosedCacheAuditFunction = "",
     [string]$Arm64RegisterAllocationAudit = "",
     [string]$Arm64RegisterAllocationAuditFunction = "",
     [string]$Arm64GuestCallFastEntryAudit = "",
@@ -1036,6 +1038,12 @@ function Start-XeniaEmulator {
     if ($Arm64GuestStateRegisterCacheResidualAuditFunction) {
         $parts += "--ei arm64_guest_state_register_cache_residual_audit_function $(ConvertTo-AdbIntText $Arm64GuestStateRegisterCacheResidualAuditFunction)"
     }
+    if ($Arm64GuestStateNonclosedCacheAudit) {
+        $parts += "--ez arm64_guest_state_nonclosed_cache_audit $(ConvertTo-BooleanText $Arm64GuestStateNonclosedCacheAudit)"
+    }
+    if ($Arm64GuestStateNonclosedCacheAuditFunction) {
+        $parts += "--ei arm64_guest_state_nonclosed_cache_audit_function $(ConvertTo-AdbIntText $Arm64GuestStateNonclosedCacheAuditFunction)"
+    }
     if ($Arm64RegisterAllocationAudit) {
         $parts += "--ez arm64_register_allocation_audit $(ConvertTo-BooleanText $Arm64RegisterAllocationAudit)"
     }
@@ -1284,6 +1292,8 @@ function Write-CaptureMetadata {
         "arm64_guest_state_register_cache_audit_function=$Arm64GuestStateRegisterCacheAuditFunction",
         "arm64_guest_state_register_cache_residual_audit=$Arm64GuestStateRegisterCacheResidualAudit",
         "arm64_guest_state_register_cache_residual_audit_function=$Arm64GuestStateRegisterCacheResidualAuditFunction",
+        "arm64_guest_state_nonclosed_cache_audit=$Arm64GuestStateNonclosedCacheAudit",
+        "arm64_guest_state_nonclosed_cache_audit_function=$Arm64GuestStateNonclosedCacheAuditFunction",
         "arm64_register_allocation_audit=$Arm64RegisterAllocationAudit",
         "arm64_register_allocation_audit_function=$Arm64RegisterAllocationAuditFunction",
         "arm64_guest_call_fast_entry_audit=$Arm64GuestCallFastEntryAudit",
@@ -1555,6 +1565,7 @@ function Test-BlueDragonSpeedLogRowsRequested {
         "Arm64ContextPromotionGprLiveInR1Audit",
         "Arm64GuestStateRegisterCacheAudit",
         "Arm64GuestStateRegisterCacheResidualAudit",
+        "Arm64GuestStateNonclosedCacheAudit",
         "Arm64RegisterAllocationAudit",
         "Arm64ContextTrafficAudit",
         "Arm64SpeedProfileBlockBodyTime",
@@ -1601,6 +1612,7 @@ function Test-BlueDragonSpeedProfilerRowsRequested {
         "Arm64BlueDragonEdgeVariantAudit",
         "Arm64BlueDragonEdgePayloadStorageAudit",
         "Arm64BlueDragonFpscrCfgWritebackAudit",
+        "Arm64GuestStateNonclosedCacheAudit",
         "Arm64SpeedProfileBlockBodyTime",
         "Arm64SpeedProfileCallEdgeAuditOnly",
         "Arm64SpeedProfileThreadSnapshot",
@@ -1641,6 +1653,8 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStateNonclosedCacheAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStateNonclosedCacheAuditFunction" ""
     Set-DefaultIfNotBound "Arm64RegisterAllocationAudit" "false"
     Set-DefaultIfNotBound "Arm64RegisterAllocationAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
@@ -1851,6 +1865,8 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStateRegisterCacheResidualAuditFunction" ""
+    Set-DefaultIfNotBound "Arm64GuestStateNonclosedCacheAudit" "false"
+    Set-DefaultIfNotBound "Arm64GuestStateNonclosedCacheAuditFunction" ""
     Set-DefaultIfNotBound "Arm64RegisterAllocationAudit" "false"
     Set-DefaultIfNotBound "Arm64RegisterAllocationAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
@@ -2125,6 +2141,9 @@ done | head -50
         }
         if ($Arm64BlueDragonEdgePayloadStorageAudit) {
             Write-Output "A64 Blue Dragon edge payload storage audit: $(ConvertTo-BooleanText $Arm64BlueDragonEdgePayloadStorageAudit)"
+        }
+        if ($Arm64GuestStateNonclosedCacheAudit) {
+            Write-Output "A64 guest-state nonclosed-cache audit: $(ConvertTo-BooleanText $Arm64GuestStateNonclosedCacheAudit)"
         }
         if ($VulkanTracePerfCounters) {
             Write-Output "Vulkan perf counters: $(ConvertTo-BooleanText $VulkanTracePerfCounters)"

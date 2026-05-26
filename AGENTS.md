@@ -414,9 +414,13 @@ Better next lanes:
   `82281D28`, `82282490`, and `82287788`. Same-block context promotion already
   exists, the A64 emit-time cache resets per block, and A64 has real host GPR
   pressure. Do not patch generated behavior from this ranking; the next valid
-  guest-state slice is a default-off post-promotion non-closed GPR audit for
-  `r31,r30,r29,r28,r27` with no store elision, no load replacement, no payload
-  materialization, explicit miss/flush reasons, and spill-pressure estimates.
+  guest-state slice is now a route-clean Thor capture of
+  `docs/research/20260526-090500-a64-nonclosed-gpr-cache-audit-skeleton.md`.
+  The new `arm64_guest_state_nonclosed_cache_audit` skeleton is default-off and
+  counter-only: no store elision, no load replacement, no payload
+  materialization, normal fallback preserved, and generated behavior unchanged.
+  Capture one wall function first, starting with `0x82281D28`, before any
+  behavior design.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

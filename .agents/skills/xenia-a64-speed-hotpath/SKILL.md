@@ -349,11 +349,14 @@ fast-entry slots. The strict non-closed ranking is `r31=237`, `r30=175`,
 `r29=168`, `r28=152`, `r27=94`, and `r26=58` across the wall cluster. Source
 checks still block behavior: same-block context promotion already exists, the
 A64 emit-time cache resets per block, register allocation is per-block, and
-host GPR pressure is real. Next valid slice is a default-off, counter-only
-post-promotion non-closed GPR audit for `r31,r30,r29,r28,r27`; no store
-elision, load replacement, or payload materialization until route-clean
-counters prove material post-promotion volume with manageable flush/spill
-pressure.
+host GPR pressure is real.
+`docs/research/20260526-090500-a64-nonclosed-gpr-cache-audit-skeleton.md`
+adds the default-off, counter-only post-promotion audit for
+`r31,r30,r29,r28,r27`. It has Android/Thor cvar plumbing and preserves normal
+generated behavior: no store elision, no load replacement, no payload
+materialization. Next valid slice is FullDeploy plus a route-clean one-function
+capture, starting with `0x82281D28`, to prove whether post-promotion volume and
+flush/spill pressure justify behavior design.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
