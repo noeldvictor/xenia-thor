@@ -1,24 +1,29 @@
 ---
 name: xenia-continual-harness-refiner
-description: Use when adapting Continual Harness-style online refinement to xenia-thor, especially after repeated Blue Dragon stalls, rejected experiments, stale prompts, missing skills, or when Codex should refine AGENTS.md, repo-local skills, worklogs, research memory, and goal-loop prompts from a recent trajectory window.
+description: Use when adapting Continual Harness-style online refinement to xenia-thor, especially after repeated Blue Dragon stalls, rejected experiments, stale prompts, missing skills, or when Codex should refine AGENTS.md, repo-local skills, worklogs, research memory, tooling, and goal-loop prompts from a recent trajectory window.
 ---
 
 # Xenia Continual Harness Refiner
 
-Use this skill as a lightweight adaptation of Continual Harness for xenia-thor.
-It refines our repo-local harness from evidence; it does not replace the
-Stop-hook, heartbeat, or one-variable experiment gate.
+Use this skill as the hard reset valve for xenia-thor. It adapts the portable
+parts of Continual Harness: recent trajectory window, failure signatures,
+separate prompt/skill/memory/tool evolution passes, and conservative CRUD over
+the harness. It does not change emulator behavior directly.
 
 ## Trigger
 
 Run a refiner pass when any of these are true:
 
-- two recent slices in a row were inconclusive, black-idled, or repeated old
-  lanes;
+- two recent slices in a row were inconclusive, black-idled, or repeated the
+  same lane;
+- three consecutive slices produced only counter rows with no route-speed
+  decision;
+- the user says the work is slow, circular, stale, or asks to re-evaluate;
 - the current heartbeat/Stop-hook prompt points at stale evidence;
 - a capture reveals a new target and the local skills still point elsewhere;
-- the same manual analysis command is being rewritten repeatedly;
-- a new subsystem needs a local skill, parser, or durable memory note.
+- a skill or prompt has become a chronological ledger instead of a decision
+  surface;
+- a deterministic analysis command is being rewritten by hand repeatedly.
 
 ## Trajectory Window
 
@@ -30,37 +35,52 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_continual_ha
 
 Then read `scratch/thor-debug/continual-harness-window.md`.
 
-The window is the xenia-thor equivalent of Continual Harness trajectory
-history: recent worklogs, research notes, goal-loop prompt, git state, proof
-marker state, and capture metadata. Use it to identify failure signatures and
-stale harness instructions.
+The window is the xenia-thor trajectory history: recent worklogs, research
+notes, goal-loop prompt, git state, proof markers, capture metadata, and stale
+next-action text. Use it to identify the failure signature before editing.
 
-## Refiner Pass
+## Refiner Passes
 
-Make conservative CRUD edits:
+Run the passes separately. A failure in one pass should not block useful edits
+in another.
 
-- Prompt/contract: update `AGENTS.md`, `tools/thor/thor_codex_goal_loop.ps1`,
-  and the heartbeat prompt when the next action changes.
-- Skills: create or edit repo-local `.agents/skills/*/SKILL.md` when a
-  workflow is repeated or stale.
-- Memory: write a dated `docs/research/YYYYMMDD-HHMMSS-topic.md` when new
-  evidence changes strategy.
-- Tools: add or update `tools/thor/*.ps1` only when deterministic analysis is
-  being repeated manually.
-- Experiments: never mark a codegen idea as accepted without route proof.
+- **Prompt/plan:** compress `AGENTS.md`, `tools/thor/thor_codex_goal_loop.ps1`,
+  and heartbeat prompts to current facts, closed lanes, and next decision
+  rules. Remove chronology.
+- **Skills:** edit or create repo-local `.agents/skills/*/SKILL.md` for
+  repeated workflows. Keep skills procedural and short.
+- **Memory:** write a dated `docs/research/YYYYMMDD-HHMMSS-topic.md` for new
+  strategic evidence, source research, or lane closures.
+- **Tools:** add or update `tools/thor/*.ps1` only when repeated manual
+  analysis should become deterministic.
+- **Deletion/merge:** delete or merge a skill when it has no unique trigger,
+  duplicates another skill, mostly stores dated history, or cannot name a
+  durable output.
 
-Do not import Pokémon-specific code or assumptions. The portable idea is the
-online refinement loop: recent evidence -> failure signatures -> CRUD over the
-agent harness -> persisted bootstrap for the next slice.
+Do not import Pokemon-specific code or assumptions from Continual Harness. The
+portable idea is: recent evidence -> failure signatures -> CRUD over harness
+stores -> persisted bootstrap for the next slice.
 
 ## Guardrails
 
 - Keep all project skills repo-local.
+- Keep active prompts and skills concise; history belongs in research/worklogs.
 - Keep experiment cvars default-off until route proof justifies enabling them.
+- Never turn a counter-only audit into a speed claim.
+- Do not run a third same-lane counter-only slice without a harness refiner
+  pass.
 - Do not overwrite user edits or unrelated worktree changes.
 - Do not commit scratch windows, raw captures, screenshots, game files, keys,
   or extracted copyrighted content.
 - Commit/push only validated docs, tooling, or code changes on `master`.
+
+## Blue Dragon Reset Rule
+
+If the active next action is another narrow audit in a lane that has already
+failed to prove speed, first ask whether it can produce a reusable backend rule.
+If not, close the lane and move to a broader structural path: A64 backend
+maturity, VMX128/NEON lowering, mixed/static hot-function design, measured GPU
+bulk-work offload, or Android product UX.
 
 ## Output
 
@@ -68,4 +88,5 @@ Every refiner pass should leave one of:
 
 - a committed prompt/skill/tooling update;
 - a dated research note explaining why no harness change is needed;
-- a concrete blocker naming the stale or missing evidence.
+- a concrete blocker naming the stale or missing evidence and the skill/prompt
+  that must be changed next.

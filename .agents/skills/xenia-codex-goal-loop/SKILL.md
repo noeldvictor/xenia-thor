@@ -1,40 +1,38 @@
 ---
 name: xenia-codex-goal-loop
-description: Use for bounded Codex Desktop continuation loops for xenia-thor goals, including Stop-hook goal guards, heartbeat automation decisions, proof markers, Thor/Blue Dragon autonomous follow-up, and avoiding runaway "never stop" sessions.
+description: Use for bounded Codex Desktop continuation loops for xenia-thor goals, including Stop-hook goal guards, heartbeat automation decisions, proof markers, Thor/Blue Dragon autonomous follow-up, concise prompt re-arming, and avoiding runaway or circular sessions.
 ---
 
 # Xenia Codex Goal Loop
 
-Use this skill when the user wants Codex to keep working toward a concrete
-xenia-thor goal without manually re-prompting every turn.
+Use this skill when Codex should keep working toward a concrete xenia-thor goal
+without manual re-prompting every turn.
 
 ## Rule
 
 Use bounded continuation, not an unbounded loop:
 
-- opt in with an explicit config or flag;
 - define one proof marker that ends the loop;
 - cap Stop-hook attempts;
+- keep the active prompt short and current;
+- store history in worklogs/research, not in the loop prompt;
 - write a concrete blocker when proof is not reached;
-- keep dated worklogs and research notes current;
 - commit and push only validated progress on `master`.
 
-## Choose The Mechanism
+## Prompt Budget
 
-Use the project Stop hook for active-session continuation:
+The goal-loop prompt must be a decision surface, not a transcript. It should fit
+on one screen and include only:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonOpeningSpeed
-```
+- the proof condition;
+- the local skills to read;
+- current speed status and wall;
+- closed lanes that must not be repeated;
+- the next broad decision lanes;
+- validation, worklog, research, commit/push, and re-arm expectations.
 
-Use a Codex thread automation when the work should wake this same chat later
-on a schedule, especially after a long build, device run, download, or manual
-pause. The automation prompt must name the same proof marker and stop/blocker
-rules as the Stop hook.
-
-Do not use a background automation for tight build/deploy loops if the current
-thread can continue through the Stop hook; it adds latency and can collide with
-local edits.
+If the prompt grows into dated chronology, run the continual-harness refiner
+before re-arming it.
 
 ## Helper Commands
 
@@ -44,42 +42,11 @@ Status:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode Status
 ```
 
-Enable title proof loop:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonTitle
-```
-
-Enable current speed/opening loop:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonOpeningSpeed
-```
-
-Enable full-speed research loop:
+Enable full-speed Blue Dragon loop:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_codex_goal_loop.ps1 -Mode EnableBlueDragonFullSpeed -MaxAttempts 48
 ```
-
-For Blue Dragon full-speed work, also use
-`.agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md`. That skill is
-the higher-level contract for Stop-hook continuation, heartbeat wakeups, proof
-markers, and current sprint priorities. Use
-`.agents/skills/xenia-working-fast-autonomy/SKILL.md` as the concrete worker
-loop that makes each continuation produce code, capture evidence, analysis
-tooling, or a blocker with the next experiment.
-
-When the loop starts repeating stale experiments or a new capture changes the
-next target, use `.agents/skills/xenia-continual-harness-refiner/SKILL.md` and
-build a trajectory window:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_continual_harness_review.ps1 -Mode Window
-```
-
-Use the scratch window to make conservative prompt, skill, memory, or tooling
-CRUD updates before re-arming the loop.
 
 Disable:
 
@@ -106,37 +73,38 @@ tracks an intentionally sanitized artifact.
 
 ## Stop-Hook Output Contract
 
-The project hook `.codex/hooks/blue_dragon_stop.ps1` returns this shape while a
-goal is active and no proof marker exists:
+The project hook `.codex/hooks/blue_dragon_stop.ps1` returns a blocking
+decision while a goal is active and no proof marker exists. If the max attempt
+count is exceeded, the hook stops continuation and asks for a blocker summary.
 
-```json
-{
-  "decision": "block",
-  "reason": "Continue the configured goal..."
-}
+## Full-Speed Proof
+
+For Blue Dragon full speed, the proof marker must be backed by:
+
+- Disc 1 launched from the known Thor SD-card path;
+- visible title/opening/gameplay route evidence;
+- commit, APK hash, launch cvars, screenshot, and capture paths;
+- quiet speed capture with profiler data;
+- clean fatal-marker search;
+- sustained at least 30 FPS over a representative 180-second route segment.
+
+Track 60 FPS as a stretch target, not the definition of success.
+
+## Loop Breakers
+
+Before re-arming, check whether the last slices are repeating:
+
+- no third same-lane counter-only slice without a refiner pass;
+- no speed A/B from counter-only or route-clean-only evidence;
+- no narrow first-barrier or one-PC audit unless it yields a reusable backend
+  rule;
+- no broad Vulkan pivot while Main Thread remains the wall.
+
+If any breaker trips, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_continual_harness_review.ps1 -Mode Window
 ```
 
-That causes Codex to continue the turn with the reason as the next prompt. If
-the max attempt count is exceeded, the hook stops continuation and asks for a
-blocker summary.
-
-## Goal Prompt Checklist
-
-Every loop prompt should say:
-
-- which route or performance proof ends the loop;
-- which local skills to use;
-- which concrete worker output is required this slice;
-- whether to build, deploy, and capture on Thor;
-- which logs, screenshots, APK hashes, cvars, or FPS data prove progress;
-- when to stop and summarize a blocker instead of guessing again.
-
-For Blue Dragon full speed, define the stop condition concretely:
-
-- launch Disc 1 from the known Thor SD-card path;
-- show title/opening/gameplay route evidence;
-- record commit, APK hash, launch cvars, screenshot, and capture paths;
-- use a quiet speed capture with profiler data;
-- require sustained at least 30 FPS over a representative 180-second route
-  segment, with 60 FPS tracked as a stretch target when the game itself allows
-  it.
+Then use `.agents/skills/xenia-continual-harness-refiner/SKILL.md` to update
+the prompt, skills, memory, or tools before another risky Thor run.

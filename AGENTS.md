@@ -117,109 +117,65 @@ repo-local skills, `tools/thor/thor_codex_goal_loop.ps1`, dated research
 memory, and deterministic analysis tools. Do not import Pokemon-specific code or
 let a refiner pass change emulator behavior without the normal experiment gate.
 
-## Current Blue Dragon A64 Lane
+## Current Blue Dragon Plan Reset
 
-Latest route-clean audit:
-`docs/research/20260525-195600-edge-payload-lifetime-audit.md`.
-The default-off `arm64_blue_dragon_edge_payload_storage_audit` now includes
-counter-only lifetime/segment rows for exact edge
-`82282490:82282598 -> 82287788`. Capture
-`scratch/thor-debug/20260525-195142-*` used APK SHA
-`F19476F6E279449C5F155045F0662124941BACD66F60BC05809BF95D304BB72E`, reached
-the visible opening sky / dragon-wing route, and had a clean fatal-marker
-search. It stayed behavior-neutral: `payload_materializations_allowed=0`,
-`behavior_changed=0`, normal-entry fallback preserved, and no payload state was
-materialized.
+The sprint was starting to loop because active prompts and skills accumulated
+chronology instead of decision rules. Keep this file and repo-local skills
+short. Put detailed evidence in dated `docs/research/*` and `docs/worklogs/*`.
 
-Final lifetime counters block the current payload-storage speed patch:
-`segments_started=698767`, `segments_survived_no_kill=0`,
-`f1_reads_before_kill=0`, `f1_reads_after_kill=2085964`,
-`r3_reads_before_kill=0`, `r3_reads_after_kill=1426326`,
-`r3_writes_before_kill=0`, and `r3_writes_after_kill=2086964`.
-Every observed segment was first-killed by `CONTEXT_BARRIER`:
-`first_context_barrier=698767`; first-kill counters for external visibility,
-return/exit, required `fpscr` writeback, unknown call, and exception/trap were
-all `0`. Final perf stayed CPU/JIT-bound: `82282490=39940278`,
-`82281D28=8099644`, `82287788=6069873`, Main Thread `96.1%`,
-GPU Commands `11.5%`.
+Latest speed status:
 
-Do not materialize edge payload state and do not run a quiet speed A/B from
-this lane yet. Next useful slice is an offline HIR/source audit of the first
-`CONTEXT_BARRIER` in `82287788`, including its exact guest PC and surrounding
-state traffic. Decide whether the barrier is a conservative artifact that can
-safely preserve a read-only `f[1]` payload, or a required guest-visible boundary
-that blocks this payload-storage strategy.
+- No sustained 30 FPS proof exists on AYN Thor.
+- Current captures remain CPU/JIT-bound, not GPU-bound. Recent examples show
+  Main Thread near a full core while GPU Commands stays around `7.6%-11.5%`.
+- The recurring generated-code wall is still the `82282490`, `82281D28`,
+  `82287788` cluster.
 
-Previous route-clean audit:
-`docs/research/20260525-193245-edge-payload-storage-audit-capture.md`.
-The default-off `arm64_blue_dragon_edge_payload_storage_audit` skeleton now
-exists for exact edge `82282490:82282598 -> 82287788`, with Android/Thor launch
-plumbing. Capture `scratch/thor-debug/20260525-192928-*` used APK SHA
-`9DD345DCD8C404E0BDE50D3C67F72EF1CA105A2C9A4A3F7554462EF17BA567DF`, reached
-the visible opening sky / dragon-wing route, and had a clean fatal-marker
-search. It is behavior-neutral: `payload_materializations_allowed=0`,
-`behavior_changed=0`, normal-entry fallback is preserved, no normal
-`A64Function::machine_code()` replacement exists, and no global indirection-slot
-change exists.
+Closed immediate lanes:
 
-Final edge-payload counters show real volume:
-`eligible_edge_calls=910159`, `normal_entry_fallbacks=910159`,
-`indirection_fallbacks=910159`, `variant_misses=910159`,
-`payload_materializations=0`, `f1_active_reads_covered=2717039`,
-`f1_unknown_kills=0`, `fpscr_dirty_writes=2849260`,
-`fpscr_required_writebacks=922692`, and `r3_mutable_writes=2718234`.
-Flush pressure is also real: `context_barrier=11561589`,
-`external_visibility=48803`, `return_exit=910159`, and `unknown_call=0`.
-Final perf stayed CPU/JIT-bound: `82282490=51783317`, `82281D28=10283586`,
-`82287788=6836225`, Main Thread `103%`, GPU Commands `11.5%`.
+- Do not materialize edge payload state for
+  `82282490:82282598 -> 82287788`. The lifetime audit
+  `docs/research/20260525-195600-edge-payload-lifetime-audit.md` found
+  `segments_survived_no_kill=0`, `f1_reads_before_kill=0`, and every observed
+  segment first-killed by `CONTEXT_BARRIER`.
+- Do not run another quiet speed A/B from the f1/edge-payload, stvewx,
+  `MUL_ADD_V128`, fpscr, pre/post-promotion `r1`/`r11`, or local-only
+  `822824F0` lanes unless fresh evidence changes the premise.
+- Do not make the next default slice a narrow "first CONTEXT_BARRIER" audit
+  unless it produces a general backend rule or closes a broad class of
+  barriers. A one-off barrier proof is not enough.
+- Do not pivot the Blue Dragon speed sprint to broad Vulkan work until captures
+  show GPU Commands, present waits, queue submit stalls, pipeline compilation,
+  barriers, or texture/upload work overtaking CPU/JIT.
 
-Do not materialize payload state or run a quiet speed A/B from this first
-payload-storage audit. The follow-up lifetime audit above supersedes its next
-action and proves `CONTEXT_BARRIER` is the immediate blocker.
+Better next lanes:
 
-Previous route-clean audit:
-`docs/research/20260525-184957-edge-f1-kill-taxonomy.md`.
-Working tree based on commit `8d053566e` / APK SHA
-`DEDD20333729C3E6B44CC1E423357147F0A9149D034C6D0A2DB0237AB8BF5C61` reached the
-visible opening sky / dragon-wing route with a clean fatal-marker search. The
-default-off `arm64_blue_dragon_edge_variant_audit` now includes split log rows
-and per-PC `f[1]` call-kill taxonomy for exact edge
-`82282490:82282598 -> 82287788`. It remains behavior-neutral:
-`payload_materializations=0`, `normal_fallbacks=710511`, and
-`normal_fallback_share=100.00%`.
+- A64 backend maturity: register allocation, guest-state cache design, helper
+  ABI, block linking, fastmem/addressing, and direct-call cost.
+- VMX128-to-NEON lowering that improves broad opcode families, especially
+  permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
+- Mixed/static hot-function translation research only where guest-visible state,
+  entry fallback, invalidation, and exceptions are explicit.
+- Measured GPU offload only for Xenos-like bulk graphics work that can stay on
+  Adreno: resolves, format conversion, deswizzle/tile transforms, vertex fetch
+  unpack, clears, copies, and postprocess.
+- Android UX work such as controller mapping and settings can proceed as a
+  separate product lane, but it must not be confused with FPS proof.
 
-Final taxonomy counters were `helper_preserved_calls=720290`,
-`child_preserved_calls=350636`, `return_exit_calls=710511`, and
-`unknown_call_kills=0`. The active `f[1]` read sites were
-`82287798=710511`, `82287828=350636`, `82287CF8=350031`,
-`82287D10=350031`, `82287D8C=350031`, `82287F1C=9779`, with
-`82287A1C/82287A2C/82287AA4/82287EA8=0`. Active kill sites were
-`8228778C=710511`, `82287854=350636`, `82287ED4=0`,
-`82287EDC=700732`, `82287EE4=9779`, and `82288220=9779`.
+Harness rules from Continual Harness:
 
-Do not run a quiet speed A/B or materialize an `f[1]`-only edge payload from
-this audit-only patch. The previous standalone `f[1]` carrier was route-safe
-but did not prove speed.
-
-Previous offline design:
-`docs/research/20260525-190544-edge-payload-storage-design.md` adds
-`tools/thor/thor_a64_edge_payload_storage_design.ps1`. It converts the
-zero-unknown-kill `f[1]` taxonomy into the next implementation contract:
-the missing piece is a default-off, counter-only
-`arm64_blue_dragon_edge_payload_storage_audit` skeleton. Its first route proof
-must keep `payload_materializations_allowed=0`, `behavior_changed=0`, normal
-entry fallback preserved, no `A64Function::machine_code()` replacement, and no
-global indirection-slot change. Include `f[1]` as the first counted payload
-candidate, keep `fpscr` in the separate CFG-writeback lane, keep `r[3]`
-count-only until the `f[1]/fpscr` shape is known, and leave `lr` on the normal
-PPC call/return path. Do not run a quiet speed A/B or materialize payload state
-until route-clean counter rows prove useful hit volume and manageable flush
-pressure.
-
-The previous route-clean residual register-cache audit remains closed:
-`docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`.
-Do not implement stale same-block `r1` clean-load replacement, `r11` dirty
-caching, store elision, or a quiet speed A/B from that lane.
+- Use recent trajectory windows, not memory by accretion. Run
+  `tools/thor/thor_continual_harness_review.ps1 -Mode Window` after two
+  repeated or inconclusive slices, after any user "circles/slow/wtf" complaint,
+  or before re-arming a stale loop.
+- Make CRUD edits across separate stores: active prompt (`AGENTS.md` and
+  `tools/thor/thor_codex_goal_loop.ps1`), skills (`.agents/skills/*`), memory
+  (`docs/research/*`), deterministic tools (`tools/thor/*`), and worklogs.
+- Delete or merge a repo-local skill when it has no unique trigger, mostly
+  duplicates another skill, mostly stores dated chronology, or cannot name a
+  durable output. This pass keeps all skill directories because each still has
+  a distinct trigger, but it prunes chronology from the bloated ones.
+- Re-arm the goal loop only with a concise current decision prompt.
 
 ## Thor Hardware Acceleration Plan
 
