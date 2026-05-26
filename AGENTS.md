@@ -250,9 +250,20 @@ Better next lanes:
   `already_compiled_targets=32`, but `callee_first_use_known=0`,
   `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
   `flush_context_barrier=260`. Do not patch fast-entry behavior or rerun the
-  same capture unchanged. Next work must make this audit callee-aware, with
-  target/blocker rows and normal-entry fallback still explicit, or close the
-  lane and move to another structural A64 target.
+  same capture unchanged.
+  `docs/research/20260526-045000-guest-call-callee-aware-audit.md` makes the
+  offline HIR audit callee-aware and joins the compile-audit row. It reports
+  real known live-in volume (`callee_first_load_stores=247`,
+  `body_weighted_live_in_fields=690421033`) versus lower missing weighted volume
+  (`callee_hir_missing_stores=126`, `body_weighted_missing_fields=30011199`),
+  with top known targets `0x82281D28` and `0x826BF770`. Behavior still remains
+  blocked because the runtime compile audit has only summary knowledge
+  (`callee_first_use_known=0`) and high dirty flush / context-barrier pressure
+  (`dirty_flush_points=268`, `flush_context_barrier=260`). Do not patch
+  fast-entry behavior or run a quiet speed A/B. If this lane continues, the next
+  slice must add default-off runtime per-target rows for direct guest calls and
+  close the lane if those rows do not show broad known first-use traffic with
+  manageable flush pressure.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -120,7 +120,17 @@ Treat these as closed for immediate speed work:
   `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
   `flush_context_barrier=260`. Do not run a quiet speed A/B, do not patch
   fast-entry behavior, and do not rerun this capture unchanged. Next slice
-  must make the audit callee-aware with target/blocker rows or close the lane.
+  must not repeat the same counter capture.
+- `docs/research/20260526-045000-guest-call-callee-aware-audit.md` adds the
+  callee-aware offline join. It reports `callee_first_load_stores=247`,
+  `body_weighted_live_in_fields=690421033`, and
+  `body_weighted_missing_fields=30011199`, with top known targets
+  `0x82281D28` and `0x826BF770`. Behavior is still blocked because the runtime
+  compile audit has no per-target first-use knowledge
+  (`callee_first_use_known=0`) and high dirty flush pressure
+  (`dirty_flush_points=268`, `flush_context_barrier=260`). Continue only with a
+  runtime per-target row audit that has a hard close condition, or switch to a
+  different structural A64 lane.
 
 ## Useful Output Bias
 

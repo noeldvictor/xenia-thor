@@ -113,8 +113,16 @@ Pick one lane with a credible FPS path:
   `already_compiled_targets=32`, but `callee_first_use_known=0`,
   `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
   `flush_context_barrier=260`. Do not patch fast-entry behavior or rerun the
-  same capture unchanged. Next work must make this audit callee-aware with
-  target/blocker rows, or close the lane.
+  same capture unchanged.
+  `docs/research/20260526-045000-guest-call-callee-aware-audit.md` makes the
+  offline HIR audit callee-aware and joins the compile-audit row. It finds
+  material known live-in volume (`callee_first_load_stores=247`,
+  `body_weighted_live_in_fields=690421033`) but still blocks behavior because
+  the runtime compile audit has `callee_first_use_known=0` and high flush
+  pressure (`dirty_flush_points=268`, `flush_context_barrier=260`). Do not run a
+  quiet speed A/B. If this lane continues, the next slice must add runtime
+  per-target fast-entry rows and close the lane if flush pressure remains
+  unmanageable.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

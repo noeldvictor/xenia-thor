@@ -181,8 +181,22 @@ ran that route-clean Thor capture. It proves material caller traffic
 `callee_first_use_known=0`, `callee_first_use_missing=421`,
 `normal_entry_fallback=67`, and `flush_context_barrier=260`. Do not rerun the
 same capture unchanged, do not run a quiet speed A/B, and do not patch
-fast-entry behavior until a callee-aware audit reports body-weighted known
-first-use targets and manageable dirty flush pressure.
+fast-entry behavior.
+
+`docs/research/20260526-045000-guest-call-callee-aware-audit.md` adds that
+callee-aware offline report by extending
+`tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1` with
+`-FastEntryAuditLogPath` and per-target body-weighted summaries. It reports
+real known live-in volume for `82281D28`:
+`callee_first_load_stores=247`,
+`body_weighted_live_in_fields=690421033`, and
+`body_weighted_missing_fields=30011199`, with top known targets
+`0x82281D28` and `0x826BF770`. It still blocks behavior because the runtime
+compile audit has only summary knowledge (`callee_first_use_known=0`) and high
+flush pressure (`dirty_flush_points=268`, `flush_context_barrier=260`). If this
+lane continues, the next slice is a default-off runtime per-target row audit for
+direct guest calls. It must close the fast-entry behavior lane if target rows do
+not show broad known first-use traffic with manageable flush pressure.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
