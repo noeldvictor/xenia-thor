@@ -109,14 +109,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath <new-speed-logcat> -Function 82281D28 -Phase OptHIR -BlockProfileLog <new-speed-logcat> -ProfileKind Body -Top 20
 ```
 
-`docs/research/20260526-023500-hir-block-profile-stamps.md` adds the
-behavior-neutral HIR block stamps and join-audit parsing needed for that next
-capture. Do not patch `82281D28` behavior until the new log reports
-`hir_block_mappable_rows > 0` and `join_status` is no longer `unsafe`.
+`docs/research/20260526-023500-hir-block-profile-stamps.md` added the
+behavior-neutral HIR block stamps and join-audit parsing. The follow-up
+`docs/research/20260526-030200-82281d28-block-map-capture.md` FullDeployed it
+and proved the join usable after raising Thor logcat buffers to 64 MiB:
+`metadata_rows=88`, `metadata_mappable_rows=88`,
+`hir_block_metadata_rows=88`, `hir_block_mappable_rows=88`,
+`active_metadata_unmappable_rows=0`, `join_status=metadata_required`.
 
-Only use `82281D28` weighted HIR evidence after the join audit no longer reports
-`join_status=unsafe`. Do not use `-AllowOrdinalFallback` for behavior
+The mapped `82281D28:block20 guest=8228233C` hot block is scalar call setup:
+`context_loads=5`, `context_stores=13`, `memory_loads=6`, `memory_stores=1`,
+`calls=2`, `context_barriers=2`, and call targets `0x826BF770` plus recursive
+`0x82281D28`. Treat the mapper lane as complete for now. Do not rerun the
+unchanged mapper capture, and do not use `-AllowOrdinalFallback` for behavior
 decisions.
+
+Next structural target: offline/source audit
+`82281D28:8228233C-82282370` to classify `r3-r10`/`lr` context stores around
+`0x826BF770` and the recursive call, compare against stack-sync and memcpy
+fastpaths, and decide whether a reusable helper ABI, direct-call, or
+stack-argument rule exists before any behavior patch. Large one-function HIR
+captures need either file-backed output or `adb -s c3ca0370 logcat -G 64M`
+first.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:

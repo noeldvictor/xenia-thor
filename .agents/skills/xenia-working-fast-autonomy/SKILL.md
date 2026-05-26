@@ -59,7 +59,8 @@ Pick exactly one:
   lane closure.
 - No Thor run without a named hypothesis and expected decision.
 - No multi-function HIR dump through logcat when exact hot-block mapping is the
-  output; capture one large function at a time or improve the dump transport.
+  output; capture one large function at a time, use file-backed output, or set
+  Thor logcat buffers to 64 MiB before launch.
 - No behavior patch from runtime block-profile to HIR weighted joins unless
   `tools/thor/thor_hir_block_profile_join_audit.ps1` says the join is safe or
   a newer metadata dump proves the mapping.
@@ -82,12 +83,14 @@ Treat these as closed for immediate speed work:
 - Broad VMX128 `PERMUTE` / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` behavior from
   the 2026-05-26 route counters; vector volume was not the dominant wall and
   mostly sat in closed local shapes.
-- `82281D28` weighted HIR/block-profile behavior from ordinal fallback: the
-  2026-05-26 join audit found `join_status=unsafe`. The metadata capture now
-  exists, but `82281D28:block20 guest=8228233C` is still active and unmappable
-  to printed OptHIR in old logs. `docs/research/20260526-023500-hir-block-profile-stamps.md`
-  adds per-block HIR source-span stamps; next capture must deploy that patch
-  and prove `hir_block_mappable_rows > 0` before behavior work.
+- `82281D28` weighted HIR/block-profile behavior from ordinal fallback: never
+  use ordinal fallback for behavior decisions. The current mapper blocker is
+  resolved by `docs/research/20260526-030200-82281d28-block-map-capture.md`,
+  which reports `hir_block_mappable_rows=88` and
+  `active_metadata_unmappable_rows=0` after a 64 MiB logcat capture. Do not
+  rerun that mapper capture unchanged. The mapped hot block is
+  `82281D28:8228233C-82282370`; next work is offline/source call-setup audit,
+  not another mapper capture.
 
 ## Useful Output Bias
 

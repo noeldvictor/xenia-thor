@@ -192,9 +192,21 @@ Better next lanes:
   and source spans make that active block mappable.
   `docs/research/20260526-023500-hir-block-profile-stamps.md` adds
   behavior-neutral `HIRBuilder::Dump()` block stamps and join-audit parsing for
-  `hir_block_*` fields. This is tooling proof only; next run should FullDeploy,
-  capture `82281D28` with disassembly and block body-time enabled, then require
-  `hir_block_mappable_rows > 0` and non-unsafe join status before behavior work.
+  `hir_block_*` fields. The follow-up
+  `docs/research/20260526-030200-82281d28-block-map-capture.md` FullDeployed
+  that patch and proved the join safe after increasing Thor logcat buffers to
+  64 MiB: `metadata_rows=88`, `metadata_mappable_rows=88`,
+  `hir_block_metadata_rows=88`, `hir_block_mappable_rows=88`,
+  `active_metadata_unmappable_rows=0`, and
+  `join_status=metadata_required`. The mapped hot block is
+  `82281D28:block20 guest=8228233C`, source span `8228233C-82282370`,
+  with `context_loads=5`, `context_stores=13`, `memory_loads=6`,
+  `calls=2`, `context_barriers=2`, and call targets `0x826BF770` plus
+  recursive `0x82281D28`. This closes the mapper lane for now; do not rerun an
+  unchanged HIR mapper capture or use ordinal fallback for behavior decisions.
+  Next behavior-relevant work is an offline/source audit of that mapped
+  call/setup block to decide whether a reusable helper ABI, direct-call, or
+  stack-argument rule exists.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -72,14 +72,18 @@ Pick one lane with a credible FPS path:
   `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` added
   stable block metadata and disabled ordinal fallback in the main HIR reports.
   `docs/research/20260526-022000-82281d28-metadata-capture-blocker.md` then
-  proved the metadata capture works but still cannot map the active hot span:
-  `82281D28:block20 guest=8228233C`, source span `8228233C-82282370`,
-  `active_metadata_unmappable_rows=88`, `join_status=unsafe`. Next step is
-  now to FullDeploy the behavior-neutral HIR block stamps from
-  `docs/research/20260526-023500-hir-block-profile-stamps.md`, capture
-  `82281D28` again with disassembly and block body-time enabled, and require
-  `hir_block_mappable_rows > 0` plus non-unsafe join status before behavior
-  work. Do not rerun the old metadata capture without this patch deployed.
+  proved the metadata capture works but still could not map the active hot
+  span. `docs/research/20260526-023500-hir-block-profile-stamps.md` added
+  HIR block stamps, and
+  `docs/research/20260526-030200-82281d28-block-map-capture.md` FullDeployed
+  them and proved the join usable after raising Thor logcat buffers to 64 MiB:
+  `metadata_mappable_rows=88`, `hir_block_mappable_rows=88`,
+  `active_metadata_unmappable_rows=0`, `join_status=metadata_required`. The
+  mapped hot block `82281D28:8228233C-82282370` is scalar call setup around
+  `0x826BF770` and recursive `0x82281D28`, not VMX/GPU work. Do not rerun the
+  unchanged mapper capture. Next step is an offline/source call-setup audit
+  that can prove or reject a reusable helper ABI/direct-call/stack-argument
+  rule before behavior work.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
@@ -103,12 +107,13 @@ Pick one lane with a credible FPS path:
 - A Thor route capture must answer a named hypothesis. Do not capture just
   because the previous note says "next useful slice".
 - Do not dump multiple huge HIR functions through logcat when exact static
-  context is the output; use one-function captures or add a file-backed dump.
+  context is the output; use one-function captures, add a file-backed dump, or
+  raise Thor logcat buffers first with `adb -s c3ca0370 logcat -G 64M`.
 - Do not use ordinal fallback as proof that runtime block profile rows match
   printed HIR blocks. If `tools/thor/thor_hir_block_profile_join_audit.ps1`
-  reports `join_status=unsafe`, fix the metadata/dump first. After
-  `docs/research/20260526-023500-hir-block-profile-stamps.md`, the expected
-  next proof is `hir_block_*` mapping in a fresh deployed log.
+  reports `join_status=unsafe`, fix the metadata/dump first. As of
+  `docs/research/20260526-030200-82281d28-block-map-capture.md`, the current
+  `82281D28` mapper proof is complete; do not rerun it unchanged.
 - A speed A/B is only valid after behavior changes, audit counters are off, and
   the route/cvars/APK are matched.
 - When the loop feels circular, run
