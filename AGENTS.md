@@ -192,8 +192,10 @@ or helper-heavy VMX semantics to Vulkan compute.
 
 Hardware lanes to pursue:
 
-- A64/JIT: caller-local or side-table edge-variant payload storage for
-  `82282490:82282598 -> 82287788`, with normal-entry fallback and counters.
+- A64/JIT: structural register allocation, guest-state cache design, helper
+  ABI, block linking, direct/indirect call dispatch, and fastmem/addressing.
+  Keep the exact `82282490:82282598 -> 82287788` edge-payload storage lane
+  closed unless a future general entry/fallback model reopens it.
 - NEON/VMX128: exact 128-bit boolean, splat, permute, shift, compare, min/max,
   pack/unpack, vector-load-shift, and layout-transform lowering. Use dot/I8MM
   only for proven integer sum-of-products shapes, not VMX FP32.

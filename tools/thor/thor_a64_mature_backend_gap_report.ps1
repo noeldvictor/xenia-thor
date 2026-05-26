@@ -1,11 +1,13 @@
 param(
-    [string]$RouteDocPath = "docs\research\20260525-134556-82287788-fpscr-cfg-carrier-design.md",
+    [string]$RouteDocPath = "docs\research\20260525-203000-continual-harness-plan-reset.md",
+    [string]$ResetPlanDocPath = "docs\research\20260525-203000-continual-harness-plan-reset.md",
     [string]$MaturePatternsDocPath = "docs\research\20260525-143937-mature-a64-emulator-backend-patterns.md",
     [string]$WorklogPath = "docs\worklogs\20260525.md",
     [string]$A64EmitterHeaderPath = "src\xenia\cpu\backend\a64\a64_emitter.h",
     [string]$A64EmitterPath = "src\xenia\cpu\backend\a64\a64_emitter.cc",
     [string]$A64BackendPath = "src\xenia\cpu\backend\a64\a64_backend.cc",
     [string]$A64SequencesPath = "src\xenia\cpu\backend\a64\a64_sequences.cc",
+    [string]$A64VectorPath = "src\xenia\cpu\backend\a64\a64_seq_vector.cc",
     [string]$A64MemoryPath = "src\xenia\cpu\backend\a64\a64_seq_memory.cc",
     [string]$A64CodeCachePath = "src\xenia\cpu\backend\a64\a64_code_cache.cc",
     [string]$ContextPromotionPath = "src\xenia\cpu\compiler\passes\context_promotion_pass.cc",
@@ -115,15 +117,18 @@ function Emit-Check {
 }
 
 $routeDoc = Read-RequiredText $RouteDocPath
+$resetDoc = Read-RequiredText $ResetPlanDocPath
 $matureDoc = Read-RequiredText $MaturePatternsDocPath
 $worklog = Read-RequiredText $WorklogPath
-$routeEvidence = $routeDoc + "`n" + $worklog
+$routeEvidence = $routeDoc + "`n" + $resetDoc + "`n" + $worklog
 $emitterHeader = Read-RequiredText $A64EmitterHeaderPath
 $emitterHeaderLines = Read-RequiredLines $A64EmitterHeaderPath
 $emitter = Read-RequiredText $A64EmitterPath
 $emitterLines = Read-RequiredLines $A64EmitterPath
 $backend = Read-RequiredText $A64BackendPath
 $sequences = Read-RequiredText $A64SequencesPath
+$vector = Read-RequiredText $A64VectorPath
+$vectorLines = Read-RequiredLines $A64VectorPath
 $memory = Read-RequiredText $A64MemoryPath
 $codeCache = Read-RequiredText $A64CodeCachePath
 $contextPromotion = Read-RequiredText $ContextPromotionPath
@@ -144,6 +149,10 @@ $contextCacheLine = Find-Line $emitterLines 'class A64ContextValueCache'
 $pinnedR1Line = Find-Line $emitterLines 'pinned_r1'
 $contextPromotionLine = Find-Line (Read-RequiredLines $ContextPromotionPath) 'arm64_context_promotion_gpr_livein_r1'
 $regAllocLine = Find-Line (Read-RequiredLines $RegisterAllocationPath) 'Spill required'
+$permuteLine = Find-Line $vectorLines 'struct PERMUTE_V128'
+$loadVectorLine = Find-Line $vectorLines 'struct LOAD_VECTOR_SHL_I8'
+$extractLine = Find-Line $vectorLines 'struct EXTRACT_I32'
+$packLine = Find-Line $vectorLines 'struct PACK'
 
 $hasStaticRegs = $backendCtxLine -gt 0 -and $contextRegLine -gt 0 -and $membaseRegLine -gt 0
 $hasSmallAllocSet = $allocatableLine -gt 0
@@ -157,17 +166,27 @@ $hasInlineMmio = Test-Pattern $memory 'emit_inline_mmio_checks'
 $hasFpcrTracking = Test-Pattern $emitter 'ChangeFpcrMode' -and Test-Pattern $sequences 'FlushDenormals_V128'
 $hasFpscrCfgAudit = Test-Pattern $sequences 'EmitBlueDragonFpscrCfgWritebackLoadAudit'
 $hasCodeCacheOnlyBase = Test-Pattern $codeCache 'CodeCacheBase::Initialize\(\)'
+$vectorTblSites = Count-Pattern $vector '\.tbl\('
+$hasVectorTblHeavy = $vectorTblSites -ge 8
+$hasZipFastpath = Test-Pattern $vector 'arm64_permute_i32_zip_fastpath'
+$hasPackUnpackNeon = Test-Pattern $vector 'struct PACK' -and Test-Pattern $vector 'struct UNPACK'
+$edgePayloadClosed = Test-Pattern $routeEvidence 'segments_survived_no_kill=0' -and Test-Pattern $routeEvidence 'f1_reads_before_kill=0'
+$broadVulkanBlocked = Test-Pattern $routeEvidence 'not broad Vulkan bound' -or Test-Pattern $routeEvidence 'Do not pivot.*broad Vulkan'
 $hasRouteCpuWall = (
     (Test-Pattern $routeEvidence 'Main Thread.*92\.3%') -or
     (Test-Pattern $routeEvidence 'CPU/JIT') -or
+    (Test-Pattern $routeEvidence 'Main Thread/A64') -or
     (Test-Pattern $routeEvidence '82282490=33811022'))
 
 Write-Output "A64 Mature Backend Gap Report"
 Write-Output ("repo={0}" -f $RepoRoot)
 Write-Output ("route_doc={0}" -f $RouteDocPath)
+Write-Output ("reset_plan_doc={0}" -f $ResetPlanDocPath)
 Write-Output ("worklog={0}" -f $WorklogPath)
 Write-Output ("mature_patterns_doc={0}" -f $MaturePatternsDocPath)
 Write-Output ("route_cpu_wall={0}" -f $hasRouteCpuWall)
+Write-Output ("edge_payload_closed={0}" -f $edgePayloadClosed)
+Write-Output ("broad_vulkan_blocked_by_current_evidence={0}" -f $broadVulkanBlocked)
 Write-Output ""
 
 Emit-Check `
@@ -189,14 +208,14 @@ Emit-Check `
     -Status "partial_hot" `
     -Evidence "direct_call_site=$($callLine -gt 0); stackpoint_push=$($stackpointLine -gt 0); helper_inlining_sites=$(Count-Pattern $emitter 'TryEmit[A-Za-z0-9]+HelperCall'); direct_call_abi_guest_return_only=$hasDirectCall" `
     -Source (Format-Source $A64EmitterPath $callLine) `
-    -Next "Audit call-clobber and save/restore pressure for the 82282490 -> 82287788 edge; prefer caller-local/edge-variant storage only after proving payload lifetime and fallbacks."
+    -Next "Make the next helper ABI slice broad: count or reduce stackpoint/static-state save/restore cost across hot functions, not a one-edge f1 payload carrier."
 
 Emit-Check `
     -Subsystem "block_linking_and_dispatch" `
     -Status $(if ($hasDirectCall -and $hasResolveCall) { "partial_blocked_by_singleton_entry" } else { "missing" }) `
     -Evidence "direct_machine_code_calls=$hasDirectCall; resolve_function_path=$hasResolveCall; latest edge-variant audits say normal entry and indirection are guest-address singleton paths" `
     -Source (Format-Source $A64EmitterPath $directMachineCodeLine) `
-    -Next "Return to caller-local or side-table edge-variant storage for 82282490:82282598 -> 82287788 if the maturity report chooses block-linking over fpscr-local caching."
+    -Next "Investigate general block/direct-call linking and resolver/indirection overhead; keep edge-specific payload variants closed unless a reusable entry/fallback model appears."
 
 Emit-Check `
     -Subsystem "fastmem_and_fault_fallback" `
@@ -213,6 +232,13 @@ Emit-Check `
     -Next "Keep fpscr behavior unchanged until a carrier design proves normal-entry fallback, required writebacks, and payload materialization; no quiet A/B before nonzero intended payload."
 
 Emit-Check `
+    -Subsystem "vmx128_neon_lowering" `
+    -Status $(if ($hasVectorTblHeavy -and $hasPackUnpackNeon) { "hot_structural_candidate" } else { "needs_source_audit" }) `
+    -Evidence "tbl_sites=$vectorTblSites; permute_i32_zip_fastpath=$hasZipFastpath; pack_unpack_present=$hasPackUnpackNeon; load_vector_shl_line=$loadVectorLine; extract_i32_line=$extractLine" `
+    -Source (Format-Source $A64VectorPath $permuteLine) `
+    -Next "Prefer broad VMX128/NEON opcode-family audits or tests: PERMUTE, LOAD_VECTOR_SHL/SHR, EXTRACT/SPLAT, PACK/UNPACK. Do not reopen one-PC stvewx or three-PC MUL_ADD_V128."
+
+Emit-Check `
     -Subsystem "deterministic_backend_harness" `
     -Status "missing_for_mature_changes" `
     -Evidence "offline Thor reports exist, but no focused A64 backend unit harness is tied to register-cache/block-linking/fpscr carrier behavior yet" `
@@ -221,7 +247,11 @@ Emit-Check `
 
 Write-Output ""
 Write-Output "ranked_next_lanes:"
-Write-Output "1. register_cache_gap_report_for_82282490_82287788: largest maturity gap; current emit-time/local-slot probes were negative, so design before code."
-Write-Output "2. edge_variant_storage_design_for_82282490_82282598_to_82287788: directly matches hot edge, but needs caller-local/side-table storage and fallback proof."
-Write-Output "3. fpscr_cfg_carrier_skeleton: viable only as default-off counter/payload proof; behavior and quiet A/B remain blocked."
-Write-Output "4. fastmem_or_vulkan: not next unless fresh captures move the wall away from Main Thread/A64 generated code."
+Write-Output "1. structural_register_allocation_or_guest_state_cache: largest maturity gap, but design must operate before/with RA and must avoid stale r1/r11 emit-time caching."
+Write-Output "2. vmx128_neon_opcode_family_audit: broad enough to matter and aligned with Thor hardware; start with source/test coverage for PERMUTE, LOAD_VECTOR_SHL/SHR, EXTRACT/SPLAT, PACK/UNPACK."
+Write-Output "3. helper_abi_and_block_linking: audit general call/stackpoint/resolver overhead across hot functions before any edge-specific payload behavior."
+Write-Output "4. fastmem_memory_fallback: only after a hot-route counter shows memory/MMIO/fault fallback cost."
+Write-Output "5. gpu_vulkan_offload: not next while broad_vulkan_blocked_by_current_evidence is true."
+if ($edgePayloadClosed) {
+    Write-Output "closed_lane=edge_payload_storage_for_82282490_82282598_to_82287788"
+}
