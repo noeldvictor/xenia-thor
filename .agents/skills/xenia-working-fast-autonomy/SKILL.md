@@ -89,8 +89,12 @@ Treat these as closed for immediate speed work:
   which reports `hir_block_mappable_rows=88` and
   `active_metadata_unmappable_rows=0` after a 64 MiB logcat capture. Do not
   rerun that mapper capture unchanged. The mapped hot block is
-  `82281D28:8228233C-82282370`; next work is offline/source call-setup audit,
-  not another mapper capture.
+  `82281D28:8228233C-82282370`. The follow-up
+  `docs/research/20260526-032000-82281d28-call-setup-audit.md` closes local
+  store elision for that block because every setup store is live into the
+  callee and strict local promotion has zero safe wins. Next work must be a
+  generic guest-call argument handoff audit or a different structural lane, not
+  another local call/setup capture.
 
 ## Useful Output Bias
 

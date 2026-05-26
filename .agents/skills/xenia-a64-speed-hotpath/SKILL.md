@@ -132,6 +132,17 @@ stack-argument rule exists before any behavior patch. Large one-function HIR
 captures need either file-backed output or `adb -s c3ca0370 logcat -G 64M`
 first.
 
+`docs/research/20260526-032000-82281d28-call-setup-audit.md` closes the local
+behavior patch: the `826BF770` call's `r3/r4/r5/lr` stores and the recursive
+`82281D28` call's `r3-r10/lr` stores are all `callee_live_in`; strict local
+promotion has zero safe wins. Do not patch local store elision, rerun this
+unchanged call/setup audit, or inline only this `826BF770` caller. The next
+useful structural slice is a generic default-off A64 guest-call argument
+handoff audit for direct guest calls, measuring parent `r3-r10/lr` stores,
+callee first-use reloads, tail/indirect/extern blockers, stackpoint/longjmp
+constraints, and estimated avoidable store/reload traffic before any fast-entry
+variant is designed.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

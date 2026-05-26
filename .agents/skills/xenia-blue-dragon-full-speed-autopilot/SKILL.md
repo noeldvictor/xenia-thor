@@ -84,6 +84,12 @@ Pick one lane with a credible FPS path:
   unchanged mapper capture. Next step is an offline/source call-setup audit
   that can prove or reject a reusable helper ABI/direct-call/stack-argument
   rule before behavior work.
+  `docs/research/20260526-032000-82281d28-call-setup-audit.md` rejects local
+  store elision: both call boundaries are fully `callee_live_in`, and strict
+  local promotion for `r3-r10/lr` has zero safe wins. Do not patch that block
+  locally or rerun the same audit. Reopen as a generic guest-call argument
+  handoff audit only if it counts broad direct-call volume and normal-entry
+  fallback constraints.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

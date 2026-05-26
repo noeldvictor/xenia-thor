@@ -207,6 +207,15 @@ Better next lanes:
   Next behavior-relevant work is an offline/source audit of that mapped
   call/setup block to decide whether a reusable helper ABI, direct-call, or
   stack-argument rule exists.
+  `docs/research/20260526-032000-82281d28-call-setup-audit.md` ran that audit:
+  the `826BF770` call has four pre-call stores and all are `callee_live_in`;
+  the recursive `82281D28` call has nine pre-call stores and all are
+  `callee_live_in`; and strict local promotion for `r3-r10/lr` found zero
+  safe wins. Close local `82281D28:8228233C-82282370` store elision and
+  one-off `826BF770` caller inlining for now. The useful structural follow-up
+  is a generic A64 guest-call argument handoff audit for direct guest calls
+  that currently store `r3-r10/lr` to `PPCContext` before the callee reloads
+  them.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
