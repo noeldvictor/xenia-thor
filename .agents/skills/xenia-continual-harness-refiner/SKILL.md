@@ -82,6 +82,13 @@ If not, close the lane and move to a broader structural path: A64 backend
 maturity, VMX128/NEON lowering, mixed/static hot-function design, measured GPU
 bulk-work offload, or Android product UX.
 
+Current Blue Dragon refiner output:
+`docs/research/20260526-123000-continual-rerank-after-a64-closures.md` chooses
+evidence refresh, not another A64 micro-audit. Default next is a best-current
+quiet route proof refresh with the positive offset fastpath enabled, or Android
+controller/settings UX if the user prioritizes playability. Do not reopen A64
+micro-lanes until fresh route evidence changes the wall.
+
 ## Output
 
 Every refiner pass should leave one of:

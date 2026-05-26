@@ -521,6 +521,16 @@ Better next lanes:
   payload materialization, or speed A/B from this source-only lane. Run the
   continual harness rerank or switch structural class before another A64 speed
   micro-audit.
+  `docs/research/20260526-123000-continual-rerank-after-a64-closures.md` ran
+  that rerank and updated the stale mature-backend gap report. The current
+  decision is
+  `body_dominant_a64_micro_lanes_closed_need_fresh_route_proof_or_non_a64_lane`.
+  Next default slice should be a best-current quiet route proof refresh on
+  current `master` with `-Arm64OffsetMemoryAddressFastpath true` and audit
+  tracing off, or a separate Android controller/settings UX lane if the user
+  prioritizes playability. Do not reopen A64/VMX/fastmem/helper/GPU behavior
+  until a new clean capture shows a different body-dominant wall outside the
+  closed `82282490` / `82281D28` / `82287788` micro-lanes.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -116,3 +116,11 @@ route-ranking audit reports
 Do not re-arm another A64 speed micro-audit unless the prompt first reranks via
 the continual harness window or names a genuinely different structural class
 with fresh evidence.
+
+Current Blue Dragon rerank: after
+`docs/research/20260526-123000-continual-rerank-after-a64-closures.md`, the
+active prompt should point at best-current quiet route proof refresh or Android
+controller/settings UX, not another A64 micro-audit. The quiet proof refresh
+uses current `master`, `-Arm64OffsetMemoryAddressFastpath true`,
+audit/disassembly/block tracing off, delayed body-time comparators, clean
+fatal-marker search, and explicit FPS/proof parsing.

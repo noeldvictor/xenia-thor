@@ -57,6 +57,16 @@ fast-entry behavior, global indirection rewrites, state payload materialization,
 or speed A/B. Run the continual harness rerank or switch structural class before
 another A64 speed micro-audit.
 
+Latest rerank:
+`docs/research/20260526-123000-continual-rerank-after-a64-closures.md` updates
+the mature-backend gap report and sets the current decision to
+`body_dominant_a64_micro_lanes_closed_need_fresh_route_proof_or_non_a64_lane`.
+Next default slice is a best-current quiet route proof refresh with
+`-Arm64OffsetMemoryAddressFastpath true`, audit/disassembly/block tracing off,
+and explicit FPS/proof parsing. Treat it as evidence refresh, not another A64
+micro-audit. Android controller/settings UX is a separate playability lane if
+the user prioritizes it.
+
 ## Closed Lanes
 
 Do not spend the next sprint slice on these unless new evidence changes the
@@ -76,6 +86,9 @@ premise:
   blocks unless a new IR-level contract first solves per-PC source maps,
   normal-entry fallback, late-bound targets, stackpoint resume, debug/exception
   visibility, and dirty flushes;
+- any A64/VMX/fastmem/helper/GPU behavior reopen unless a fresh clean route
+  capture shows a different body-dominant wall outside the closed
+  `82282490` / `82281D28` / `82287788` micro-lanes;
 - broad Vulkan/RenderDoc/frame-pacing pivots while Main Thread remains the
   measured wall.
 

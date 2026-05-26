@@ -190,6 +190,12 @@ Treat these as closed for immediate speed work:
   entry, and stackpoint/source-map/debug/exception visibility are tied to that
   contract. Before another A64 speed micro-audit, run the continual harness
   rerank or switch structural class.
+- `docs/research/20260526-123000-continual-rerank-after-a64-closures.md` ran
+  the rerank and updated the mature-backend gap report. Current decision:
+  `body_dominant_a64_micro_lanes_closed_need_fresh_route_proof_or_non_a64_lane`.
+  Prefer a best-current quiet route proof refresh with
+  `-Arm64OffsetMemoryAddressFastpath true` and audit tracing off, or Android
+  controller/settings UX if the user prioritizes handheld playability.
 - `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes
   guest-call fast-entry behavior until the source has separate fast-entry
   storage plus a dirty-flush payload ABI. Do not patch behavior by replacing

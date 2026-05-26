@@ -468,6 +468,16 @@ direct-call fast-entry behavior, global indirection, state payload
 materialization, or speed A/B from this lane. Next work should run the
 continual harness rerank or switch structural class with fresh evidence.
 
+`docs/research/20260526-123000-continual-rerank-after-a64-closures.md` ran
+that rerank and updated the mature-backend gap report. Current decision:
+`body_dominant_a64_micro_lanes_closed_need_fresh_route_proof_or_non_a64_lane`.
+The next default runtime slice is a best-current quiet route proof refresh with
+`-Arm64OffsetMemoryAddressFastpath true`, audit/disassembly/block tracing off,
+delayed body-time comparators, clean fatal-marker search, and explicit
+FPS/proof parsing. Treat it as fresh evidence, not another A64 micro-audit.
+Reopen A64 behavior only if that clean route shows a different body-dominant
+wall outside the closed `82282490` / `82281D28` / `82287788` cluster.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

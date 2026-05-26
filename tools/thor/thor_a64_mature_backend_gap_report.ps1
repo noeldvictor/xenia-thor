@@ -1,8 +1,15 @@
 param(
-    [string]$RouteDocPath = "docs\research\20260525-203000-continual-harness-plan-reset.md",
+    [string]$RouteDocPath = "docs\research\20260526-121500-a64-static-superblock-feasibility.md",
     [string]$ResetPlanDocPath = "docs\research\20260525-203000-continual-harness-plan-reset.md",
     [string]$MaturePatternsDocPath = "docs\research\20260525-143937-mature-a64-emulator-backend-patterns.md",
-    [string]$WorklogPath = "docs\worklogs\20260525.md",
+    [string]$WorklogPath = "docs\worklogs\20260526.md",
+    [string]$OffsetFastpathReportPath = "docs\research\20260526-075500-a64-offset-address-fastpath-quiet-ab.md",
+    [string]$NoWrapReportPath = "docs\research\20260526-083000-a64-no-wrap-memory-eligibility-audit.md",
+    [string]$NonclosedCacheReportPath = "docs\research\20260526-092500-a64-nonclosed-gpr-cache-capture.md",
+    [string]$VmxRouteReportPath = "docs\research\20260526-012000-vmx128-route-stabilized-counters.md",
+    [string]$FastEntryReportPath = "docs\research\20260526-111500-a64-fast-entry-emitter-planning.md",
+    [string]$ScalarContextReportPath = "docs\research\20260526-115700-a64-scalar-context-load-store-lowering.md",
+    [string]$StaticSuperblockReportPath = "docs\research\20260526-121500-a64-static-superblock-feasibility.md",
     [string]$A64EmitterHeaderPath = "src\xenia\cpu\backend\a64\a64_emitter.h",
     [string]$A64EmitterPath = "src\xenia\cpu\backend\a64\a64_emitter.cc",
     [string]$A64BackendPath = "src\xenia\cpu\backend\a64\a64_backend.cc",
@@ -48,6 +55,16 @@ function Read-RequiredLines {
         throw "Path not found: $Path"
     }
     return @(Get-Content -LiteralPath $resolved)
+}
+
+function Read-OptionalText {
+    param([string]$Path)
+
+    $resolved = Resolve-RepoPath $Path
+    if (!(Test-Path -LiteralPath $resolved)) {
+        return ""
+    }
+    return Get-Content -Raw -LiteralPath $resolved
 }
 
 function Test-Pattern {
@@ -120,7 +137,17 @@ $routeDoc = Read-RequiredText $RouteDocPath
 $resetDoc = Read-RequiredText $ResetPlanDocPath
 $matureDoc = Read-RequiredText $MaturePatternsDocPath
 $worklog = Read-RequiredText $WorklogPath
-$routeEvidence = $routeDoc + "`n" + $resetDoc + "`n" + $worklog
+$offsetFastpathDoc = Read-OptionalText $OffsetFastpathReportPath
+$noWrapDoc = Read-OptionalText $NoWrapReportPath
+$nonclosedCacheDoc = Read-OptionalText $NonclosedCacheReportPath
+$vmxRouteDoc = Read-OptionalText $VmxRouteReportPath
+$fastEntryDoc = Read-OptionalText $FastEntryReportPath
+$scalarContextDoc = Read-OptionalText $ScalarContextReportPath
+$staticSuperblockDoc = Read-OptionalText $StaticSuperblockReportPath
+$routeEvidence = $routeDoc + "`n" + $resetDoc + "`n" + $worklog + "`n" +
+    $offsetFastpathDoc + "`n" + $noWrapDoc + "`n" + $nonclosedCacheDoc + "`n" +
+    $vmxRouteDoc + "`n" + $fastEntryDoc + "`n" + $scalarContextDoc + "`n" +
+    $staticSuperblockDoc
 $emitterHeader = Read-RequiredText $A64EmitterHeaderPath
 $emitterHeaderLines = Read-RequiredLines $A64EmitterHeaderPath
 $emitter = Read-RequiredText $A64EmitterPath
@@ -172,6 +199,16 @@ $hasZipFastpath = Test-Pattern $vector 'arm64_permute_i32_zip_fastpath'
 $hasPackUnpackNeon = Test-Pattern $vector 'struct PACK' -and Test-Pattern $vector 'struct UNPACK'
 $edgePayloadClosed = Test-Pattern $routeEvidence 'segments_survived_no_kill=0' -and Test-Pattern $routeEvidence 'f1_reads_before_kill=0'
 $broadVulkanBlocked = Test-Pattern $routeEvidence 'not broad Vulkan bound' -or Test-Pattern $routeEvidence 'Do not pivot.*broad Vulkan'
+$offsetFastpathPositive = Test-Pattern $routeEvidence 'locally positive' -or Test-Pattern $routeEvidence 'both ON captures below OFF body ticks'
+$fastmemBehaviorClosed = Test-Pattern $routeEvidence 'static_no_wrap_provable_rows=0' -and Test-Pattern $routeEvidence 'runtime_no_wrap_proven_rows=0'
+$nonclosedCacheClosed = Test-Pattern $routeEvidence 'clean_hits_possible=0' -and Test-Pattern $routeEvidence 'dirty_hits_possible=0'
+$vmxRouteClosed = Test-Pattern $routeEvidence 'Do not patch broad VMX128' -or Test-Pattern $routeEvidence 'Current route counters do not justify a broad VMX128 behavior patch'
+$fastEntryClosed = Test-Pattern $routeEvidence 'closes the current fast-entry source-only planning chain' -or Test-Pattern $routeEvidence 'generated behavior still does not use them'
+$scalarContextClosed = Test-Pattern $routeEvidence 'decision=close_scalar_context_load_store_behavior_for_current_route'
+$staticSuperblockBlocked = Test-Pattern $routeEvidence 'decision=static_superblock_behavior_blocked_pending_ir_level_design'
+$bodyDominantMicroLanesClosed =
+    $fastmemBehaviorClosed -and $nonclosedCacheClosed -and $vmxRouteClosed -and
+    $fastEntryClosed -and $scalarContextClosed -and $staticSuperblockBlocked
 $hasRouteCpuWall = (
     (Test-Pattern $routeEvidence 'Main Thread.*92\.3%') -or
     (Test-Pattern $routeEvidence 'CPU/JIT') -or
@@ -187,6 +224,15 @@ Write-Output ("mature_patterns_doc={0}" -f $MaturePatternsDocPath)
 Write-Output ("route_cpu_wall={0}" -f $hasRouteCpuWall)
 Write-Output ("edge_payload_closed={0}" -f $edgePayloadClosed)
 Write-Output ("broad_vulkan_blocked_by_current_evidence={0}" -f $broadVulkanBlocked)
+Write-Output ("offset_fastpath_positive={0}" -f $offsetFastpathPositive)
+Write-Output ("body_dominant_micro_lanes_closed={0}" -f $bodyDominantMicroLanesClosed)
+Write-Output ("closure_flags fastmem={0} nonclosed_cache={1} vmx={2} fast_entry={3} scalar_context={4} static_superblock={5}" -f `
+    $fastmemBehaviorClosed,
+    $nonclosedCacheClosed,
+    $vmxRouteClosed,
+    $fastEntryClosed,
+    $scalarContextClosed,
+    $staticSuperblockBlocked)
 Write-Output ""
 
 Emit-Check `
@@ -247,11 +293,25 @@ Emit-Check `
 
 Write-Output ""
 Write-Output "ranked_next_lanes:"
-Write-Output "1. structural_register_allocation_or_guest_state_cache: largest maturity gap, but design must operate before/with RA and must avoid stale r1/r11 emit-time caching."
-Write-Output "2. vmx128_neon_opcode_family_audit: broad enough to matter and aligned with Thor hardware; start with source/test coverage for PERMUTE, LOAD_VECTOR_SHL/SHR, EXTRACT/SPLAT, PACK/UNPACK."
-Write-Output "3. helper_abi_and_block_linking: audit general call/stackpoint/resolver overhead across hot functions before any edge-specific payload behavior."
-Write-Output "4. fastmem_memory_fallback: only after a hot-route counter shows memory/MMIO/fault fallback cost."
-Write-Output "5. gpu_vulkan_offload: not next while broad_vulkan_blocked_by_current_evidence is true."
+if ($bodyDominantMicroLanesClosed) {
+    Write-Output "1. best_current_quiet_route_proof_refresh: FullDeploy current master, launch the known route with -Arm64OffsetMemoryAddressFastpath true, audits off, delayed body-time comparators, and explicit FPS/proof parsing. This is fresh evidence, not another A64 micro-audit."
+    Write-Output "2. android_controller_settings_ux: separate playability lane if user prioritizes handheld usability; do not count it as FPS progress."
+    Write-Output "3. new_structural_class_only_with_fresh_route_evidence: reopen A64/VMX/fastmem/helper/GPU only if a new clean capture shows a different body-dominant wall outside the closed 82282490/82281D28/82287788 micro-lanes."
+    Write-Output "4. gpu_vulkan_offload: not next while broad_vulkan_blocked_by_current_evidence is true."
+    Write-Output "decision=body_dominant_a64_micro_lanes_closed_need_fresh_route_proof_or_non_a64_lane"
+    Write-Output "safe_next_patch=best_current_quiet_route_proof_refresh_or_android_ux"
+} else {
+    Write-Output "1. structural_register_allocation_or_guest_state_cache: largest maturity gap, but design must operate before/with RA and must avoid stale r1/r11 emit-time caching."
+    Write-Output "2. vmx128_neon_opcode_family_audit: broad enough to matter and aligned with Thor hardware; start with source/test coverage for PERMUTE, LOAD_VECTOR_SHL/SHR, EXTRACT/SPLAT, PACK/UNPACK."
+    Write-Output "3. helper_abi_and_block_linking: audit general call/stackpoint/resolver overhead across hot functions before any edge-specific payload behavior."
+    Write-Output "4. fastmem_memory_fallback: only after a hot-route counter shows memory/MMIO/fault fallback cost."
+    Write-Output "5. gpu_vulkan_offload: not next while broad_vulkan_blocked_by_current_evidence is true."
+    Write-Output "decision=needs_manual_mature_backend_review"
+    Write-Output "safe_next_patch=inspect_unclosed_mature_backend_gap"
+}
 if ($edgePayloadClosed) {
     Write-Output "closed_lane=edge_payload_storage_for_82282490_82282598_to_82287788"
+}
+if ($bodyDominantMicroLanesClosed) {
+    Write-Output "closed_lane=body_dominant_a64_micro_lanes_for_current_route_window"
 }
