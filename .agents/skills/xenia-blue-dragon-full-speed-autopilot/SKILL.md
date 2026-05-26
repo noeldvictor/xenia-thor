@@ -226,6 +226,17 @@ using `-Arm64OffsetMemoryAddressFastpath true` in future Blue Dragon captures,
 but do not make the next slice another fastmem/addressing probe unless it adds
 an explicit no-wrap range counter or static range analysis.
 
+`docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes the
+current guest-call fast-entry behavior lane. The source contract is still a
+single normal `A64Function::machine_code` entry and single global indirection
+target; direct calls branch to normal entry with only `x0` as the guest return
+address, and unresolved/indirection, stackpoint, debug/exception, and host-call
+paths require normal fallback. There is no alternate-entry storage, no generic
+`r3-r10/lr` payload ABI, and no behavior codegen path. Runtime blockers from
+the target-row capture remain material. Do not patch fast-entry behavior unless
+a new slice first adds the missing alternate-entry and dirty-flush payload data
+model with generated behavior still unchanged.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

@@ -171,6 +171,14 @@ Treat these as closed for immediate speed work:
   still not sustained 30 FPS proof. Keep the cvar globally default-off, enable
   `-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon
   speed captures, and do not repeat this unchanged A/B.
+- `docs/research/20260526-083000-a64-no-wrap-memory-eligibility-audit.md`
+  closes further fastmem/addressing behavior until a no-wrap range counter or
+  static range analysis exists.
+- `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes
+  guest-call fast-entry behavior until the source has separate fast-entry
+  storage plus a dirty-flush payload ABI. Do not patch behavior by replacing
+  `A64Function::machine_code`, rewriting global indirection, or materializing
+  `r3-r10/lr` payloads from the existing audit-only evidence.
 
 ## Useful Output Bias
 

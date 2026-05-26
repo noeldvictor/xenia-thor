@@ -328,6 +328,21 @@ implement host pointer + immediate addressing from guest-GPR bases without a
 new range proof surface. Keep the existing offset helper for future Blue Dragon
 captures, but move the sprint to a different structural A64 lane.
 
+`docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes the
+current guest-call fast-entry behavior lane. The source audit confirms there is
+still only one normal `A64Function::machine_code` entry and one global
+indirection target; normal entry receives only `x0=guest_return_address`;
+direct calls branch to `fn->machine_code()`; and unresolved/indirection,
+stackpoint, debug/exception, and host-call visibility all require normal-entry
+fallback. It also confirms no separate fast-entry pointer/offset, no generic
+`r3-r10/lr` payload ABI, and no behavior codegen path exists. Combined with the
+prior runtime blockers (`unresolved_direct_targets=52`,
+`normal_entry_fallback=67`, `stackpoint_sensitive=67`,
+`dirty_flush_points=268`, `callee_first_use_known=0`), do not patch fast-entry
+behavior. Reopen this lane only as an explicit source/data-model patch for
+alternate-entry storage plus dirty-flush payload contracts, with generated
+behavior still unchanged.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

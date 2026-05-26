@@ -390,6 +390,22 @@ Better next lanes:
   `-Arm64OffsetMemoryAddressFastpath true` in future Blue Dragon captures, but
   do not spend the next slice on fastmem/addressing unless a new route counter
   or static range analysis is explicitly the goal.
+  `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes the
+  current guest-call fast-entry behavior lane. The deterministic source audit
+  confirms the normal entry is still singular (`machine_code_` plus one global
+  indirection slot), normal guest entry receives only the return address in
+  `x0`, direct calls branch to `fn->machine_code()`, unresolved/indirection
+  paths land at normal entry, and stackpoint/debug/exception/host-call
+  visibility must be preserved. It also confirms the missing contracts:
+  `alternate_entry_storage_present=false`, `payload_abi_storage_present=false`,
+  and `behavior_fast_entry_present=false`; prior target-row runtime blockers
+  remain `unresolved_direct_targets=52`, `normal_entry_fallback=67`,
+  `stackpoint_sensitive=67`, `dirty_flush_points=268`, and
+  `callee_first_use_known=0`. Do not patch guest-call fast-entry behavior,
+  replace `A64Function::machine_code`, rewrite global indirection, or
+  materialize `r3-r10/lr` payloads unless a new slice first adds an explicit
+  alternate-entry storage model and payload/dirty-flush ABI with generated
+  behavior still unchanged.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
