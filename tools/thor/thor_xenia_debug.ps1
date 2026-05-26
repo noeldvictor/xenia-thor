@@ -203,6 +203,7 @@ param(
     [string]$Arm64GuestCallFastEntryAudit = "",
     [string]$Arm64GuestCallFastEntryAuditFunction = "",
     [string]$Arm64GuestCallFastEntryAuditBudget = "",
+    [string]$Arm64GuestCallFastEntryStubSkeleton = "",
     [string]$Arm64GuestStackArgHandoffAudit = "",
     [string]$Arm64GuestStackArgHandoffAuditFunction = "",
     [string]$Arm64GuestStackArgHandoffAuditBudget = "",
@@ -1059,6 +1060,9 @@ function Start-XeniaEmulator {
     if ($Arm64GuestCallFastEntryAuditBudget) {
         $parts += "--ei arm64_guest_call_fast_entry_audit_budget $(ConvertTo-AdbIntText $Arm64GuestCallFastEntryAuditBudget)"
     }
+    if ($Arm64GuestCallFastEntryStubSkeleton) {
+        $parts += "--ez arm64_guest_call_fast_entry_stub_skeleton $(ConvertTo-BooleanText $Arm64GuestCallFastEntryStubSkeleton)"
+    }
     if ($Arm64GuestStackArgHandoffAudit) {
         $parts += "--ez arm64_guest_stack_arg_handoff_audit $(ConvertTo-BooleanText $Arm64GuestStackArgHandoffAudit)"
     }
@@ -1299,6 +1303,7 @@ function Write-CaptureMetadata {
         "arm64_guest_call_fast_entry_audit=$Arm64GuestCallFastEntryAudit",
         "arm64_guest_call_fast_entry_audit_function=$Arm64GuestCallFastEntryAuditFunction",
         "arm64_guest_call_fast_entry_audit_budget=$Arm64GuestCallFastEntryAuditBudget",
+        "arm64_guest_call_fast_entry_stub_skeleton=$Arm64GuestCallFastEntryStubSkeleton",
         "arm64_guest_stack_arg_handoff_audit=$Arm64GuestStackArgHandoffAudit",
         "arm64_guest_stack_arg_handoff_audit_function=$Arm64GuestStackArgHandoffAuditFunction",
         "arm64_guest_stack_arg_handoff_audit_budget=$Arm64GuestStackArgHandoffAuditBudget",
@@ -1660,6 +1665,7 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditBudget" ""
+    Set-DefaultIfNotBound "Arm64GuestCallFastEntryStubSkeleton" "false"
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
@@ -1872,6 +1878,7 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestCallFastEntryAuditBudget" ""
+    Set-DefaultIfNotBound "Arm64GuestCallFastEntryStubSkeleton" "false"
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAudit" "false"
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditFunction" ""
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""

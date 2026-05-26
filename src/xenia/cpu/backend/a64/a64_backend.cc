@@ -453,6 +453,12 @@ DEFINE_uint32(
     "summaries to emit per process.",
     "a64");
 DEFINE_bool(
+    arm64_guest_call_fast_entry_stub_skeleton, false,
+    "Thor ARM64 speed lane: expose behavior-neutral guest-call fast-entry "
+    "stub protocol helpers. Default-off source scaffold only; does not emit "
+    "alternate entry code or change normal direct calls.",
+    "a64");
+DEFINE_bool(
     arm64_guest_stack_arg_handoff_audit, false,
     "Thor ARM64 speed lane: log direct guest-call argument stores that are fed "
     "by guest stack LOAD_OFFSET(r1 + const) values. Counter-only; does not "
@@ -1570,6 +1576,11 @@ void A64Backend::StartSpeedProfiler() {
            "budget={} behavior_changed=0",
            cvars::arm64_guest_call_fast_entry_audit_function,
            cvars::arm64_guest_call_fast_entry_audit_budget);
+  }
+  if (cvars::arm64_guest_call_fast_entry_stub_skeleton) {
+    XELOGW("A64 guest-call fast-entry stub skeleton enabled: "
+           "alternate_codegen=0 direct_calls=unchanged "
+           "global_indirection=unchanged behavior_changed=0");
   }
   if (cvars::arm64_guest_stack_arg_handoff_audit) {
     XELOGW("A64 guest-stack arg handoff audit enabled: function={:08X} "

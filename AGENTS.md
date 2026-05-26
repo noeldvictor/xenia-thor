@@ -435,6 +435,17 @@ Better next lanes:
   if this lane continues, must be a default-off stub skeleton or no-op codegen
   protocol helper with normal `machine_code()` and global indirection still
   unchanged.
+  `docs/research/20260526-101000-a64-fast-entry-stub-skeleton.md` adds that
+  behavior-neutral skeleton: required payload/flush masks, skeleton-vs-behavior
+  flags, no-op contract helpers, `SetupGuestCallFastEntryStubSkeleton`, the
+  default-off `arm64_guest_call_fast_entry_stub_skeleton` cvar, Android/Thor
+  launch plumbing, and an updated protocol audit. Generated behavior is still
+  absent: direct calls, normal `machine_code()`, global indirection, payload
+  population, dirty flush codegen, stub codegen, callsite guards, and
+  stackpoint resume remain unchanged. Next work must be source design for
+  direct-call guards, payload population, dirty flushes, late-bound fallback,
+  and stackpoint resume; do not run Thor speed A/B or patch behavior from the
+  skeleton alone.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

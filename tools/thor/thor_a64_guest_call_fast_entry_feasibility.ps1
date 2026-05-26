@@ -133,7 +133,7 @@ $fastEntryDataModelPresent =
     (Test-Pattern $functionHeader 'dirty_flush')
 
 $existingFastEntryBehavior =
-    (Test-Pattern $backend 'EmitGuestCallFastEntry|fast_entry_stub|late_bound_entry') -or
+    (Test-Pattern $backend 'EmitGuestCallFastEntry|late_bound_entry|alternate_codegen=1') -or
     (Test-Pattern $emitter 'EmitGuestCallFastEntry|alternate_codegen=1|fast_entry_stub|late_bound_entry')
 
 Write-Output "audit=a64_guest_call_fast_entry_feasibility"

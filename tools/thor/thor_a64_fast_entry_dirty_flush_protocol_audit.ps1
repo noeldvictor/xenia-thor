@@ -158,6 +158,21 @@ $contractStorage =
     (Test-Pattern $functionHeader 'guest_call_fast_entry_flags_') -and
     (Test-Pattern $functionSource 'guest_call_fast_entry_contract')
 
+$stubSkeletonProtocol =
+    (Test-Pattern $functionHeader 'kA64GuestCallFastEntryFlagStubSkeleton') -and
+    (Test-Pattern $functionHeader 'kA64GuestCallFastEntryFlagBehaviorEnabled') -and
+    (Test-Pattern $functionHeader 'kA64GuestCallFastEntryRequiredPayloadMask') -and
+    (Test-Pattern $functionHeader 'kA64GuestCallFastEntryRequiredDirtyFlushMask') -and
+    (Test-Pattern $functionHeader 'MakeA64GuestCallFastEntryStubSkeletonContract') -and
+    (Test-Pattern $functionHeader 'A64GuestCallFastEntryContractCoversStubSkeleton') -and
+    (Test-Pattern $functionSource 'SetupGuestCallFastEntryStubSkeleton') -and
+    (Test-Pattern $functionSource 'A64GuestCallFastEntryContractEnablesBehavior')
+
+$stubSkeletonDefaultOffCvar =
+    (Test-Pattern $backend 'DEFINE_bool\(\s*arm64_guest_call_fast_entry_stub_skeleton,\s*false') -and
+    (Test-Pattern $backend 'alternate_codegen=0 direct_calls=unchanged') -and
+    (Test-Pattern $backend 'global_indirection=unchanged behavior_changed=0')
+
 $normalEntryStillOnlyReturnX0 =
     (Test-Pattern $stackLayout 'x0 holds the guest PPC return') -and
     (Test-Pattern $backend 'Pass guest return address in x0') -and
@@ -198,6 +213,8 @@ $payloadLine = Find-Line $functionHeader 'enum A64GuestCallFastEntryPayloadMask'
 $dirtyLine = Find-Line $functionHeader 'enum A64GuestCallFastEntryDirtyFlushMask'
 $storageLine = Find-Line $functionHeader 'guest_call_fast_entry_code_'
 $contractLine = Find-Line $functionHeader 'A64GuestCallFastEntryContract'
+$stubSkeletonLine = Find-Line $functionHeader 'MakeA64GuestCallFastEntryStubSkeletonContract'
+$stubSkeletonCvarLine = Find-Line $backend 'arm64_guest_call_fast_entry_stub_skeleton'
 $directCallLine = Find-Line $emitter 'reinterpret_cast<uint64_t>\(fn->machine_code\(\)\)'
 $indirectionLine = Find-Line $emitter 'Load host code address from indirection table'
 $stackpointLine = Find-Line $emitter 'PushStackpoint'
@@ -219,6 +236,8 @@ Emit-Check "payload_mask_covers_r3_r10_lr" ($payloadBitCount -eq 9) $functionHea
 Emit-Check "dirty_flush_mask_covers_required_boundaries" ($dirtyFlushBitCount -eq 8) $functionHeader $dirtyLine "Dirty payloads need named flush causes for barrier, helper, host call, debug, tail, return, exception, and unresolved target."
 Emit-Check "fast_entry_storage_present" $fastEntryStorage $functionHeader $storageLine "A64Function has separate fast-entry code storage without changing normal machine_code()."
 Emit-Check "payload_contract_storage_present" $contractStorage $functionHeader $contractLine "A64Function stores payload mask, dirty-flush mask, and flags for a future guarded entry."
+Emit-Check "stub_skeleton_protocol_present" $stubSkeletonProtocol $functionHeader $stubSkeletonLine "Source has a no-op contract helper that covers r3-r10/lr payloads and dirty-flush boundaries while behavior remains disabled."
+Emit-Check "stub_skeleton_default_off_cvar_present" $stubSkeletonDefaultOffCvar $backend $stubSkeletonCvarLine "The launchable skeleton cvar is default-off and logs unchanged direct calls, indirection, and behavior."
 Emit-Check "normal_entry_abi_still_return_x0_only" $normalEntryStillOnlyReturnX0 $stackLayout (Find-Line $stackLayout 'Convention: at guest function entry, x0 holds') "Normal entry still receives only the guest return address in x0."
 Emit-Check "direct_calls_still_use_normal_entry" $directCallsStillUseNormalEntry $emitter $directCallLine "Direct calls still branch to fn->machine_code() and do not consume payload metadata."
 Emit-Check "late_bound_paths_still_use_normal_entry" $globalIndirectionStillNormal $emitter $indirectionLine "Indirection and resolve paths still resolve to the normal entry."
@@ -244,14 +263,15 @@ Write-Output "required_protocol_before_behavior=payload_population_from_parent_c
 
 if ($payloadBitCount -eq 9 -and $dirtyFlushBitCount -eq 8 -and
     $fastEntryStorage -and $contractStorage -and
+    $stubSkeletonProtocol -and $stubSkeletonDefaultOffCvar -and
     $normalEntryStillOnlyReturnX0 -and $directCallsStillUseNormalEntry -and
     $globalIndirectionStillNormal -and
     -not $payloadPopulationCodePresent -and
     -not $dirtyFlushCodePresent -and
     -not $stubCodegenPresent) {
-    Write-Output "decision=data_model_sufficient_for_protocol_source_work_but_behavior_blocked"
+    Write-Output "decision=stub_skeleton_source_ready_but_behavior_blocked"
     Write-Output "behavior_status=unchanged"
-    Write-Output "safe_next_patch=default_off_stub_skeleton_or_noop_codegen_protocol_helpers_only"
+    Write-Output "safe_next_patch=direct_call_guard_and_payload_population_design_only_with_generated_behavior_unchanged"
     Write-Output "do_not_patch=direct_callsites;machine_code_pointer;global_indirection;payload_materialization;quiet_speed_ab"
 } else {
     Write-Output "decision=needs_manual_review_before_any_stub_or_behavior_patch"

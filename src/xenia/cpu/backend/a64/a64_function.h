@@ -58,11 +58,43 @@ enum A64GuestCallFastEntryDirtyFlushMask : uint32_t {
   kA64GuestCallFastEntryFlushUnresolvedTarget = 1u << 7,
 };
 
+enum A64GuestCallFastEntryFlags : uint32_t {
+  kA64GuestCallFastEntryFlagStubSkeleton = 1u << 0,
+  kA64GuestCallFastEntryFlagBehaviorEnabled = 1u << 1,
+};
+
+constexpr uint32_t kA64GuestCallFastEntryRequiredPayloadMask =
+    kA64GuestCallFastEntryPayloadGpr3 |
+    kA64GuestCallFastEntryPayloadGpr4 |
+    kA64GuestCallFastEntryPayloadGpr5 |
+    kA64GuestCallFastEntryPayloadGpr6 |
+    kA64GuestCallFastEntryPayloadGpr7 |
+    kA64GuestCallFastEntryPayloadGpr8 |
+    kA64GuestCallFastEntryPayloadGpr9 |
+    kA64GuestCallFastEntryPayloadGpr10 |
+    kA64GuestCallFastEntryPayloadLr;
+
+constexpr uint32_t kA64GuestCallFastEntryRequiredDirtyFlushMask =
+    kA64GuestCallFastEntryFlushContextBarrier |
+    kA64GuestCallFastEntryFlushHelperCall |
+    kA64GuestCallFastEntryFlushHostCall |
+    kA64GuestCallFastEntryFlushDebugTrap |
+    kA64GuestCallFastEntryFlushTailCall |
+    kA64GuestCallFastEntryFlushReturn |
+    kA64GuestCallFastEntryFlushException |
+    kA64GuestCallFastEntryFlushUnresolvedTarget;
+
 struct A64GuestCallFastEntryContract {
   uint32_t payload_gpr_mask = 0;
   uint32_t dirty_flush_mask = 0;
   uint32_t flags = 0;
 };
+
+A64GuestCallFastEntryContract MakeA64GuestCallFastEntryStubSkeletonContract();
+bool A64GuestCallFastEntryContractCoversStubSkeleton(
+    const A64GuestCallFastEntryContract& contract);
+bool A64GuestCallFastEntryContractEnablesBehavior(
+    const A64GuestCallFastEntryContract& contract);
 
 class A64Function : public GuestFunction {
  public:
@@ -87,6 +119,7 @@ class A64Function : public GuestFunction {
   void SetupGuestCallFastEntry(
       uint8_t* machine_code, size_t machine_code_length,
       const A64GuestCallFastEntryContract& contract);
+  void SetupGuestCallFastEntryStubSkeleton();
   void MarkProfileRegistered(A64Backend* backend);
   std::atomic<uint64_t>* profile_entry_count() { return &profile_entry_count_; }
   std::atomic<uint64_t>* profile_body_ticks() { return &profile_body_ticks_; }

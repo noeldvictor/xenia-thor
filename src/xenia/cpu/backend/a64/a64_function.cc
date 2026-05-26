@@ -31,6 +31,31 @@ A64Function::~A64Function() {
   // machine_code_ is freed by code cache.
 }
 
+A64GuestCallFastEntryContract MakeA64GuestCallFastEntryStubSkeletonContract() {
+  A64GuestCallFastEntryContract contract = {};
+  contract.payload_gpr_mask = kA64GuestCallFastEntryRequiredPayloadMask;
+  contract.dirty_flush_mask = kA64GuestCallFastEntryRequiredDirtyFlushMask;
+  contract.flags = kA64GuestCallFastEntryFlagStubSkeleton;
+  return contract;
+}
+
+bool A64GuestCallFastEntryContractEnablesBehavior(
+    const A64GuestCallFastEntryContract& contract) {
+  return (contract.flags & kA64GuestCallFastEntryFlagBehaviorEnabled) != 0;
+}
+
+bool A64GuestCallFastEntryContractCoversStubSkeleton(
+    const A64GuestCallFastEntryContract& contract) {
+  return (contract.payload_gpr_mask &
+          kA64GuestCallFastEntryRequiredPayloadMask) ==
+             kA64GuestCallFastEntryRequiredPayloadMask &&
+         (contract.dirty_flush_mask &
+          kA64GuestCallFastEntryRequiredDirtyFlushMask) ==
+             kA64GuestCallFastEntryRequiredDirtyFlushMask &&
+         (contract.flags & kA64GuestCallFastEntryFlagStubSkeleton) != 0 &&
+         !A64GuestCallFastEntryContractEnablesBehavior(contract);
+}
+
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_length_.store(machine_code_length, std::memory_order_relaxed);
   machine_code_.store(machine_code, std::memory_order_release);
@@ -59,6 +84,11 @@ void A64Function::SetupGuestCallFastEntry(
   guest_call_fast_entry_code_length_.store(machine_code_length,
                                            std::memory_order_relaxed);
   guest_call_fast_entry_code_.store(machine_code, std::memory_order_release);
+}
+
+void A64Function::SetupGuestCallFastEntryStubSkeleton() {
+  SetupGuestCallFastEntry(nullptr, 0,
+                          MakeA64GuestCallFastEntryStubSkeletonContract());
 }
 
 void A64Function::MarkProfileRegistered(A64Backend* backend) {

@@ -380,6 +380,17 @@ behavior-neutral: a default-off stub skeleton or no-op codegen protocol helper
 while normal `machine_code()`, direct calls, and global indirection stay
 unchanged.
 
+`docs/research/20260526-101000-a64-fast-entry-stub-skeleton.md` adds the
+behavior-neutral skeleton: required payload/flush masks, skeleton and behavior
+flags, no-op contract helpers, `SetupGuestCallFastEntryStubSkeleton`, the
+default-off `arm64_guest_call_fast_entry_stub_skeleton` cvar, Android/Thor
+launch plumbing, and protocol-audit checks. It still has no generated behavior:
+direct calls, normal `machine_code()`, global indirection, payload population,
+dirty flush codegen, stub codegen, callsite guards, and stackpoint resume stay
+unchanged. Do not run a Thor speed A/B from this source-only patch. Continue
+only with source design for direct-call guards, payload population, dirty
+flushes, late-bound fallback, and stackpoint resume, or switch lanes.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

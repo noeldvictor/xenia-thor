@@ -266,6 +266,15 @@ must be a default-off stub skeleton or no-op codegen protocol helper with
 normal `machine_code()` and global indirection unchanged. Do not patch direct
 callsites from this data model alone.
 
+`docs/research/20260526-101000-a64-fast-entry-stub-skeleton.md` adds that
+source skeleton and launch plumbing while preserving generated behavior. The
+protocol audit now reports the skeleton and default-off cvar present, but
+payload population, dirty flush codegen, stub codegen, callsite guards, normal
+entry, direct calls, global indirection, and stackpoint resume are unchanged.
+Do not run a speed A/B or behavior patch from this source-only state. Continue
+only with direct-call guard / payload-population / dirty-flush / late-bound
+fallback / stackpoint-resume design work, or switch lanes.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

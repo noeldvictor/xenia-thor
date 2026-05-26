@@ -199,6 +199,12 @@ Treat these as closed for immediate speed work:
   unless a later default-off stub/protocol-helper patch makes dirty flushes,
   payload population, guard/fallback, late-bound target behavior, and
   stackpoint resume explicit with normal entry unchanged.
+- `docs/research/20260526-101000-a64-fast-entry-stub-skeleton.md` adds that
+  default-off skeleton and keeps behavior unchanged. The protocol audit now
+  reports `stub_skeleton_source_ready_but_behavior_blocked`, with direct calls,
+  normal entry, global indirection, payload population, dirty flush codegen,
+  stub codegen, callsite guards, and stackpoint resume all unchanged. Do not
+  run speed A/B or patch runtime behavior from this source-only evidence.
 
 ## Useful Output Bias
 
