@@ -371,9 +371,14 @@ capture. `A64Function` now has separate fast-entry storage and an explicit
 `existing_fast_entry_behavior_absent=true`,
 `alternate_entry_storage_present=true`, `payload_abi_storage_present=true`,
 and `behavior_fast_entry_present=false`. Do not patch direct callsite behavior
-or run speed A/B from this. The next fast-entry slice must be behavior-neutral:
-define the dirty-flush/payload protocol or a default-off stub skeleton while
-normal `machine_code()`, direct calls, and global indirection stay unchanged.
+or run speed A/B from this. The follow-up
+`docs/research/20260526-094500-a64-fast-entry-dirty-flush-protocol.md`
+confirms the metadata covers `r3-r10/lr` plus all required flush boundaries,
+but generated payload population, dirty flush, stub codegen, callsite guards,
+and stackpoint resume remain absent. The next fast-entry slice must be
+behavior-neutral: a default-off stub skeleton or no-op codegen protocol helper
+while normal `machine_code()`, direct calls, and global indirection stay
+unchanged.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:

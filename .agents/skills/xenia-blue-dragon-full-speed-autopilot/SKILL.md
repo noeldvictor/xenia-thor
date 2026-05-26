@@ -257,10 +257,14 @@ CFG/dataflow model.
 required harness rerank and reopens fast-entry only as behavior-neutral source
 data modeling. `A64Function` now has separate fast-entry storage and an
 explicit `r3-r10/lr` payload plus dirty-flush contract; current audits report
-the data model present and generated fast-entry behavior absent. Next
-fast-entry work must define the dirty-flush/payload protocol or a default-off
-stub skeleton with normal `machine_code()` and global indirection unchanged.
-Do not patch direct callsites from this data model alone.
+the data model present and generated fast-entry behavior absent.
+`docs/research/20260526-094500-a64-fast-entry-dirty-flush-protocol.md`
+confirms the metadata covers `r3-r10/lr` and all required dirty-flush
+boundaries, but payload population, dirty flush codegen, stub codegen, callsite
+guards, and stackpoint resume are still absent. Next fast-entry work, if any,
+must be a default-off stub skeleton or no-op codegen protocol helper with
+normal `machine_code()` and global indirection unchanged. Do not patch direct
+callsites from this data model alone.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

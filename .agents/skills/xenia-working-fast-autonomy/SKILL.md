@@ -191,9 +191,14 @@ Treat these as closed for immediate speed work:
 - `docs/research/20260526-093500-a64-fast-entry-data-model-rerank.md` makes
   the next speed-adjacent lane source-only fast-entry data modeling. A
   separate fast-entry pointer plus `r3-r10/lr` payload/dirty-flush contract now
-  exists, but generated behavior is absent. Do not patch direct callsites until
-  dirty flushes, payload population, guard/fallback, late-bound target
-  behavior, and stackpoint resume are explicit.
+  exists, but generated behavior is absent.
+- `docs/research/20260526-094500-a64-fast-entry-dirty-flush-protocol.md`
+  confirms the metadata covers every intended payload slot and flush boundary,
+  while payload population, dirty flush codegen, stub codegen, callsite guards,
+  and fast-entry stackpoint resume remain absent. Do not patch direct callsites
+  unless a later default-off stub/protocol-helper patch makes dirty flushes,
+  payload population, guard/fallback, late-bound target behavior, and
+  stackpoint resume explicit with normal entry unchanged.
 
 ## Useful Output Bias
 

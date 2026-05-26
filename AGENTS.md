@@ -426,14 +426,15 @@ Better next lanes:
   ran the continual harness window and chose guarded-stub / fast-entry source
   data modeling as the remaining speed-adjacent structural lane. `A64Function`
   now has separate fast-entry storage and an explicit `r3-r10/lr` payload plus
-  dirty-flush contract, and the audits report
-  `fast_entry_data_model_present=true`,
-  `existing_fast_entry_behavior_absent=true`,
-  `alternate_entry_storage_present=true`, `payload_abi_storage_present=true`,
-  and `behavior_fast_entry_present=false`. Do not patch direct callsite
-  behavior yet; next fast-entry work must define the dirty-flush/payload
-  protocol or a default-off stub skeleton while normal `machine_code()` and
-  global indirection remain unchanged.
+  dirty-flush contract, and the audits report behavior still absent.
+  `docs/research/20260526-094500-a64-fast-entry-dirty-flush-protocol.md`
+  confirms the source metadata covers all payload slots (`r3-r10/lr`) and all
+  required dirty-flush boundaries, while generated payload population, dirty
+  flush, stub codegen, callsite guards, and fast-entry stackpoint resume remain
+  absent. Do not patch direct callsite behavior yet. The next fast-entry patch,
+  if this lane continues, must be a default-off stub skeleton or no-op codegen
+  protocol helper with normal `machine_code()` and global indirection still
+  unchanged.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
