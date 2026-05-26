@@ -69,9 +69,21 @@ records FullDeploy plus a route-clean `0x82282490`
 `arm64_register_allocation_audit` capture. It found no material allocator spill
 pressure: `blocks_with_spills=0`, `local_slots_added=0`, and INT/FLOAT/VEC
 `spill_requests=0`. Do not patch allocator spill behavior or run a quiet speed
-A/B from this audit. Move next to helper ABI / block linking, or current
-route-stabilized PERMUTE / LOAD_VECTOR_SHL / LOAD_VECTOR_SHR counters before
-any VMX128 behavior patch.
+A/B from this audit. `docs/research/20260526-004800-a64-helper-block-link-audit.md`
+then found material dispatch volume in the warmed route:
+`dispatch_delta_total=4216370`, `dispatch_delta_per_entry_delta=1.10`,
+`resolve_misses_total=0`, and only `resolves_delta=5`. Do not target resolver
+behavior next. Use existing call-edge profiling on
+`82282490,82281D28,82287788` before any helper ABI or block-linking behavior
+patch, or fall back to current route-stabilized PERMUTE / LOAD_VECTOR_SHL /
+LOAD_VECTOR_SHR counters before VMX128 behavior work.
+
+For the helper ABI / block-linking lane, run this offline audit before deciding
+whether a Thor call-edge capture is justified:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_a64_helper_block_link_audit.ps1
+```
 
 For the VMX128/NEON lane, run this before behavior work:
 

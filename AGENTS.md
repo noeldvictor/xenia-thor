@@ -157,8 +157,13 @@ Better next lanes:
   material allocator spill pressure in `0x82282490`:
   `blocks_with_spills=0`, `local_slots_added=0`, and INT/FLOAT/VEC
   `spill_requests=0`. Do not patch allocator spill behavior from this route;
-  prefer helper ABI / block linking or current VMX128 PERMUTE /
-  `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` counters next.
+  `docs/research/20260526-004800-a64-helper-block-link-audit.md` then found
+  `dispatch_delta_total=4216370` in the final interval, with
+  `resolve_misses_total=0` and only `resolves_delta=5`. Do not make resolver
+  behavior the next warmed-route lane. Prefer a Thor capture with
+  `-Arm64SpeedProfileCallEdgeFilter "82282490,82281D28,82287788"` before any
+  helper ABI or block-linking behavior patch. If that lane stalls, use current
+  VMX128 PERMUTE / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` counters next.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
 - Mixed/static hot-function translation research only where guest-visible state,
