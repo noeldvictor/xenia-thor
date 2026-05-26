@@ -379,6 +379,17 @@ Better next lanes:
   The next fastmem/addressing slice must prove a broader reusable no-wrap /
   normal-memory eligibility rule for hot `LOAD_OFFSET` / `STORE_OFFSET` route
   blocks, or close the current fastmem/addressing lane.
+  `docs/research/20260526-083000-a64-no-wrap-memory-eligibility-audit.md`
+  closes that fastmem/addressing lane for now. The deterministic audit reports
+  material route volume (`offset_ops_total=609`,
+  `body_weighted_offset_ops_total=585213030`) but no proof surface for host
+  pointer + immediate addressing: `runtime_no_wrap_counter_present=0`,
+  `static_range_analysis_present=0`, `static_no_wrap_provable_rows=0`, and
+  `runtime_no_wrap_proven_rows=0`. Top weighted bases are guest-GPR derived,
+  so HIR/profile evidence cannot prove 32-bit no-wrap. Keep using
+  `-Arm64OffsetMemoryAddressFastpath true` in future Blue Dragon captures, but
+  do not spend the next slice on fastmem/addressing unless a new route counter
+  or static range analysis is explicitly the goal.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

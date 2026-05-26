@@ -216,6 +216,16 @@ unchanged codegen-floor capture. If fastmem/addressing continues, require a
 broader no-wrap / normal-memory eligibility rule for hot `LOAD_OFFSET` /
 `STORE_OFFSET` route blocks; otherwise close the lane.
 
+`docs/research/20260526-083000-a64-no-wrap-memory-eligibility-audit.md` closes
+the current fastmem/addressing lane. The route reports still have material
+offset volume (`offset_ops_total=609`, `body_weighted_offset_ops_total=585213030`),
+but there is no proof surface for host pointer + immediate addressing:
+`runtime_no_wrap_counter_present=0`, `static_range_analysis_present=0`,
+`static_no_wrap_provable_rows=0`, and `runtime_no_wrap_proven_rows=0`. Keep
+using `-Arm64OffsetMemoryAddressFastpath true` in future Blue Dragon captures,
+but do not make the next slice another fastmem/addressing probe unless it adds
+an explicit no-wrap range counter or static range analysis.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

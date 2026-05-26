@@ -318,6 +318,16 @@ capture. Continue fastmem/addressing only with a broader no-wrap /
 normal-memory eligibility rule for hot `LOAD_OFFSET` / `STORE_OFFSET` route
 blocks; otherwise close the lane.
 
+`docs/research/20260526-083000-a64-no-wrap-memory-eligibility-audit.md` closes
+the current fastmem/addressing lane. The joined route reports show material
+offset traffic (`offset_ops_total=609`,
+`body_weighted_offset_ops_total=585213030`) but zero no-wrap proof:
+`runtime_no_wrap_counter_present=0`, `static_range_analysis_present=0`,
+`static_no_wrap_provable_rows=0`, and `runtime_no_wrap_proven_rows=0`. Do not
+implement host pointer + immediate addressing from guest-GPR bases without a
+new range proof surface. Keep the existing offset helper for future Blue Dragon
+captures, but move the sprint to a different structural A64 lane.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 
