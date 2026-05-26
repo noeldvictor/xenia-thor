@@ -232,6 +232,10 @@ Treat these as closed for immediate speed work:
   route-ranking audit and sets the next lane to source-only A64 context / CR
   compare / branch lowering for mapped body-dominant blocks. Do not turn this
   ranking into behavior, Thor capture, or speed A/B by itself.
+- `docs/research/20260526-114200-a64-context-cr-branch-lowering-audit.md`
+  closes CR branch behavior for this route. Continue only with source-only
+  scalar context load/store lowering, not branch-across-barrier or CR-store
+  elision.
 
 ## Useful Output Bias
 

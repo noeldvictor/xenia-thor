@@ -439,6 +439,12 @@ context / CR compare / branch lowering around `82282490:822825E0-822825F0`,
 `82281D28:8228233C-82282374`, and `82287788:822877BC-82287864`. Do not patch
 behavior or run a Thor speed A/B from the ranking alone.
 
+`docs/research/20260526-114200-a64-context-cr-branch-lowering-audit.md` closes
+CR branch behavior for the current route. Existing safe CR compare-store
+peepholes are already in source; the larger CR branch/store wins require the
+known default-off crash cvars. Next work should audit scalar context load/store
+lowering without CR-store elide or barrier-branch fusion.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

@@ -491,6 +491,12 @@ Better next lanes:
   `82282490:822825E0-822825F0`, `82281D28:8228233C-82282374`, and
   `82287788:822877BC-82287864`. Do not patch behavior or run a Thor speed A/B
   from the ranking alone.
+  `docs/research/20260526-114200-a64-context-cr-branch-lowering-audit.md`
+  closes CR branch behavior for this route: the CR blocks require the known
+  default-off branch-across-barrier / CR-store-elide crash paths, while
+  `82281D28:8228233C-82282374` has no CR branch shape. Next source-only lane is
+  scalar context load/store lowering without CR-store elision or barrier-branch
+  fusion.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

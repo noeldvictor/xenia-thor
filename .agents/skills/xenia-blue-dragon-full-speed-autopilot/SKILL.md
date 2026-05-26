@@ -309,6 +309,12 @@ pointer/immediate, nonclosed GPR cache, and fast-entry behavior remain closed
 without fresh proof. Next work is source-only A64 context / CR compare /
 branch lowering audit for the mapped body-dominant blocks, not a Thor capture
 or speed A/B.
+`docs/research/20260526-114200-a64-context-cr-branch-lowering-audit.md`
+closes the CR branch behavior part of that lane. The CR blocks need the known
+default-off branch-across-barrier or CR-store-elide paths that previously
+crashed Blue Dragon; the `82281D28` block is scalar GPR/context traffic, not a
+CR branch shape. Next source-only work is scalar context load/store lowering
+without CR-store elision or barrier-branch fusion.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
