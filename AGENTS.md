@@ -359,12 +359,12 @@ it proof-gated.
   state/vector traffic reduction.
 - Current VMX128 audit tool:
   `tools/thor/thor_a64_vmx128_neon_family_audit.ps1`. As of
-  `docs/research/20260525-230900-vmx128-pack-unpack-coverage-complete.md`,
-  PACK/UNPACK unit coverage is complete (`9/9` PACK and `9/9` UNPACK). Do not
-  patch VMX128 behavior from coverage alone; require fresh route-volume
-  counters proving broad non-closed usage first. PERMUTE and
-  LOAD_VECTOR_SHL/SHR still need current route counts; exact stvewx and
-  three-PC `MUL_ADD_V128` remain closed.
+  `docs/research/20260525-233000-vmx128-route-volume-audit.md`, PACK/UNPACK
+  unit coverage is complete but PACK is absent and UNPACK had zero weighted
+  hot-block volume in the available route profiles. Do not patch PACK/UNPACK
+  behavior now. PERMUTE and LOAD_VECTOR_SHL/SHR have stronger dynamic evidence
+  and need a current route-stabilized counter capture before behavior work;
+  exact stvewx and three-PC `MUL_ADD_V128` remain closed.
 - Use ARM dot-product/I8MM only when the VMX opcode is an integer
   sum-of-products shape and signedness, lane order, saturation, endianness, and
   accumulation semantics are proven. Do not apply `SDOT` / `UDOT` to FP32 VMX

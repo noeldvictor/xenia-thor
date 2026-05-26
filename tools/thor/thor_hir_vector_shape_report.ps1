@@ -42,6 +42,27 @@ function Get-TopPairs {
         ForEach-Object { "{0}:{1}" -f $_.Name, $_.Value }) -join ",")
 }
 
+function Get-WeightedTotal {
+    param(
+        [object[]]$Rows,
+        [string]$Property
+    )
+
+    $total = [int64]0
+    foreach ($row in $Rows) {
+        $profileTotal = [int64]$row.profile_total
+        if ($profileTotal -le 0) {
+            continue
+        }
+        $count = [int64]$row.$Property
+        if ($count -le 0) {
+            continue
+        }
+        $total += ($profileTotal * $count)
+    }
+    return $total
+}
+
 function New-BlockRow {
     param(
         [int]$Index,
@@ -69,6 +90,8 @@ function New-BlockRow {
         store1 = 0
         mul_add = 0
         permute = 0
+        pack = 0
+        unpack = 0
         load_vector_shl = 0
         load_vector_shr = 0
         lvx128 = 0
@@ -165,6 +188,12 @@ Get-Content -LiteralPath $resolvedLog | ForEach-Object {
     if ($text -match "\bpermute\b") {
         $current.permute += 1
     }
+    if ($text -match "\bpack\b") {
+        $current.pack += 1
+    }
+    if ($text -match "\bunpack\b") {
+        $current.unpack += 1
+    }
     if ($text -match "\bmul_add\b") {
         $current.mul_add += 1
     }
@@ -259,8 +288,16 @@ $totalStvewxStore1 = ($blocks | Measure-Object -Property stvewx_store1 -Sum).Sum
 $totalStvewxDynamicExtract = ($blocks | Measure-Object -Property stvewx_dynamic_extract -Sum).Sum
 $totalMulAdd = ($blocks | Measure-Object -Property mul_add -Sum).Sum
 $totalPermute = ($blocks | Measure-Object -Property permute -Sum).Sum
+$totalPack = ($blocks | Measure-Object -Property pack -Sum).Sum
+$totalUnpack = ($blocks | Measure-Object -Property unpack -Sum).Sum
 $totalLoadVectorShl = ($blocks | Measure-Object -Property load_vector_shl -Sum).Sum
 $totalLoadVectorShr = ($blocks | Measure-Object -Property load_vector_shr -Sum).Sum
+$weightedMulAdd = Get-WeightedTotal $blocks "mul_add"
+$weightedPermute = Get-WeightedTotal $blocks "permute"
+$weightedPack = Get-WeightedTotal $blocks "pack"
+$weightedUnpack = Get-WeightedTotal $blocks "unpack"
+$weightedLoadVectorShl = Get-WeightedTotal $blocks "load_vector_shl"
+$weightedLoadVectorShr = Get-WeightedTotal $blocks "load_vector_shr"
 
 Write-Output "# HIR Vector Shape Report"
 Write-Output ""
@@ -282,8 +319,16 @@ Write-Output "stvewx_store1=$totalStvewxStore1"
 Write-Output "stvewx_dynamic_extract=$totalStvewxDynamicExtract"
 Write-Output "mul_add=$totalMulAdd"
 Write-Output "permute=$totalPermute"
+Write-Output "pack=$totalPack"
+Write-Output "unpack=$totalUnpack"
 Write-Output "load_vector_shl=$totalLoadVectorShl"
 Write-Output "load_vector_shr=$totalLoadVectorShr"
+Write-Output "weighted_mul_add=$weightedMulAdd"
+Write-Output "weighted_permute=$weightedPermute"
+Write-Output "weighted_pack=$weightedPack"
+Write-Output "weighted_unpack=$weightedUnpack"
+Write-Output "weighted_load_vector_shl=$weightedLoadVectorShl"
+Write-Output "weighted_load_vector_shr=$weightedLoadVectorShr"
 
 Write-Output ""
 Write-Output "## Dynamic Hot Vector Blocks"
@@ -295,12 +340,12 @@ if (!$dynamicRows) {
     Write-Output "(no block profile data supplied)"
 } else {
     $dynamicRows | ForEach-Object {
-        Write-Output ("block={0} guest={1} total={2} peak_delta={3} instr={4} stvewx={5}/{6}/{7} extract={8}/{9}/{10} splat={11} x2s={12} mul_add={13} perm={14} lv_shl={15} lv_shr={16} ppc={17}" -f
+        Write-Output ("block={0} guest={1} total={2} peak_delta={3} instr={4} stvewx={5}/{6}/{7} extract={8}/{9}/{10} splat={11} x2s={12} mul_add={13} perm={14} pack={15} unpack={16} lv_shl={17} lv_shr={18} ppc={19}" -f
             $_.index, $_.guest, $_.profile_total, $_.profile_peak_delta,
             $_.instructions, $_.stvewx, $_.stvewx_store1,
             $_.stvewx_dynamic_extract, $_.extract, $_.extract_dynamic,
             $_.extract_constant, $_.splat, $_.extract_then_splat,
-            $_.mul_add, $_.permute, $_.load_vector_shl,
+            $_.mul_add, $_.permute, $_.pack, $_.unpack, $_.load_vector_shl,
             $_.load_vector_shr, (Get-TopPairs $_.ppc 8))
     }
 }
@@ -346,21 +391,23 @@ if (!$extractRows) {
 Write-Output ""
 Write-Output "## Static Vector Shape Blocks"
 $blocks |
-    Sort-Object -Property @{ Expression = { $_.stvewx + $_.extract + $_.splat + $_.mul_add + $_.permute + $_.load_vector_shl + $_.load_vector_shr }; Descending = $true },
+    Sort-Object -Property @{ Expression = { $_.stvewx + $_.extract + $_.splat + $_.mul_add + $_.permute + $_.pack + $_.unpack + $_.load_vector_shl + $_.load_vector_shr }; Descending = $true },
                           @{ Expression = "index"; Ascending = $true } |
     Select-Object -First $Top |
     ForEach-Object {
-        Write-Output ("block={0} guest={1} instr={2} stvewx={3}/{4}/{5} extract={6}/{7}/{8} splat={9} x2s={10} mul_add={11} perm={12} lv_shl={13} lv_shr={14} ppc={15}" -f
+        Write-Output ("block={0} guest={1} instr={2} stvewx={3}/{4}/{5} extract={6}/{7}/{8} splat={9} x2s={10} mul_add={11} perm={12} pack={13} unpack={14} lv_shl={15} lv_shr={16} ppc={17}" -f
             $_.index, $_.guest, $_.instructions, $_.stvewx,
             $_.stvewx_store1, $_.stvewx_dynamic_extract, $_.extract,
             $_.extract_dynamic, $_.extract_constant, $_.splat,
-            $_.extract_then_splat, $_.mul_add, $_.permute,
-            $_.load_vector_shl, $_.load_vector_shr, (Get-TopPairs $_.ppc 8))
+            $_.extract_then_splat, $_.mul_add, $_.permute, $_.pack,
+            $_.unpack, $_.load_vector_shl, $_.load_vector_shr,
+            (Get-TopPairs $_.ppc 8))
     }
 
 Write-Output ""
 Write-Output "## A64 Codegen Audit Anchors"
 Write-Output "extract_dynamic_path=src/xenia/cpu/backend/a64/a64_seq_vector.cc EXTRACT_I32 non-constant index builds TBL control with scalar ops before tbl+umov"
 Write-Output "splat_i32_path=src/xenia/cpu/backend/a64/a64_seq_vector.cc SPLAT_I32 variable source lowers to dup"
+Write-Output "pack_unpack_path=src/xenia/cpu/backend/a64/a64_seq_vector.cc PACK/UNPACK lower through NEON/bitfield paths; use route-volume counters before behavior work"
 Write-Output "store_i32_path=src/xenia/cpu/backend/a64/a64_seq_memory.cc STORE_I32 handles byte-swap with rev+str and store watches after address computation"
 Write-Output "stvewx_hir_shape=PPC stvewx generally appears as masked word address + byte-lane index + dynamic extract + store.1"
