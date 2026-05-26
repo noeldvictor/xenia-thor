@@ -45,15 +45,17 @@ the next output is a general rule or a patch that changes the plan. The useful
 lesson is that this payload-storage shape has no route-surviving window.
 
 Latest route-structural closure:
-`docs/research/20260526-115700-a64-scalar-context-load-store-lowering.md`
-closes scalar context load/store behavior for the current mapped wall blocks.
-A64 context loads/stores already lower to direct `x20 + offset` memory ops,
-`CONTEXT_BARRIER` is a no-op in generated A64, `82281D28:8228233C-82282374`
-stores are guest-call ABI live-ins, and the guest-stack offset side is already
-covered by the route-clean positive offset helper. Do not continue this as
-`STORE_CONTEXT` elision, `LOAD_CONTEXT` replacement, context-barrier fusion,
-CR-store elision, guest-stack handoff, fast-entry behavior, or host-pointer
-immediate fastmem.
+`docs/research/20260526-121500-a64-static-superblock-feasibility.md` closes the
+immediate CFG/static-superblock behavior lane for the mapped wall blocks.
+Source checks show normal `machine_code()` is still the only generated entry,
+fast-entry storage is source-only, direct/late-bound calls land on normal
+entry, and stackpoint/longjmp plus source-map/debug/trap/exception visibility
+are tied to normal generated-code contracts. The mapped blocks contain calls,
+branches, context barriers, CR stores, or already-closed VMX local shapes. Do
+not continue this as multi-block fusion, alternate-entry behavior, direct-call
+fast-entry behavior, global indirection rewrites, state payload materialization,
+or speed A/B. Run the continual harness rerank or switch structural class before
+another A64 speed micro-audit.
 
 ## Closed Lanes
 
@@ -70,6 +72,10 @@ premise:
 - current scalar context load/store lowering for the mapped wall blocks unless
   a broader CFG/static-superblock or alternate-entry visibility contract is the
   explicit slice;
+- current CFG/static-superblock or alternate-entry behavior for the mapped wall
+  blocks unless a new IR-level contract first solves per-PC source maps,
+  normal-entry fallback, late-bound targets, stackpoint resume, debug/exception
+  visibility, and dirty flushes;
 - broad Vulkan/RenderDoc/frame-pacing pivots while Main Thread remains the
   measured wall.
 

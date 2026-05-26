@@ -108,3 +108,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_continual_ha
 
 Then use `.agents/skills/xenia-continual-harness-refiner/SKILL.md` to update
 the prompt, skills, memory, or tools before another risky Thor run.
+
+Current Blue Dragon loop breaker: after
+`docs/research/20260526-121500-a64-static-superblock-feasibility.md`, the
+route-ranking audit reports
+`decision=body_dominant_a64_micro_lanes_closed_need_refiner_or_new_evidence`.
+Do not re-arm another A64 speed micro-audit unless the prompt first reranks via
+the continual harness window or names a genuinely different structural class
+with fresh evidence.

@@ -11,7 +11,8 @@ param(
     [string]$VmxRouteReportPath = "docs\research\20260526-012000-vmx128-route-stabilized-counters.md",
     [string]$FastEntryReportPath = "docs\research\20260526-111500-a64-fast-entry-emitter-planning.md",
     [string]$CrBranchReportPath = "docs\research\20260526-114200-a64-context-cr-branch-lowering-audit.md",
-    [string]$ScalarContextReportPath = "docs\research\20260526-115700-a64-scalar-context-load-store-lowering.md"
+    [string]$ScalarContextReportPath = "docs\research\20260526-115700-a64-scalar-context-load-store-lowering.md",
+    [string]$StaticSuperblockReportPath = "docs\research\20260526-121500-a64-static-superblock-feasibility.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -243,6 +244,7 @@ $vmxText = Read-OptionalText $VmxRouteReportPath
 $fastEntryText = Read-OptionalText $FastEntryReportPath
 $crBranchText = Read-OptionalText $CrBranchReportPath
 $scalarContextText = Read-OptionalText $ScalarContextReportPath
+$staticSuperblockText = Read-OptionalText $StaticSuperblockReportPath
 
 $fastmemBehaviorClosed =
     $noWrapText -match 'static_no_wrap_provable_rows=0' -and
@@ -261,6 +263,8 @@ $crBranchClosed =
     $crBranchText -match 'decision=close_cr_branch_behavior_keep_source_audit_only'
 $scalarContextClosed =
     $scalarContextText -match 'decision=close_scalar_context_load_store_behavior_for_current_route'
+$staticSuperblockBlocked =
+    $staticSuperblockText -match 'decision=static_superblock_behavior_blocked_pending_ir_level_design'
 
 Write-Output "audit=a64_route_structural_ranking"
 Write-Output ("input_blocks={0} total_body_ticks={1} total_estimated_floor={2}" -f `
@@ -317,19 +321,28 @@ foreach ($row in ($classScores.GetEnumerator() |
         $reason)
 }
 
-Write-Output ("route_flags fastmem_behavior_closed={0} nonclosed_cache_closed={1} vmx_behavior_closed={2} fast_entry_closed={3} cr_branch_closed={4} scalar_context_closed={5}" -f `
+Write-Output ("route_flags fastmem_behavior_closed={0} nonclosed_cache_closed={1} vmx_behavior_closed={2} fast_entry_closed={3} cr_branch_closed={4} scalar_context_closed={5} static_superblock_blocked={6}" -f `
     $fastmemBehaviorClosed.ToString().ToLowerInvariant(),
     $nonclosedCacheClosed.ToString().ToLowerInvariant(),
     $vmxBehaviorClosed.ToString().ToLowerInvariant(),
     $fastEntryClosed.ToString().ToLowerInvariant(),
     $crBranchClosed.ToString().ToLowerInvariant(),
-    $scalarContextClosed.ToString().ToLowerInvariant())
+    $scalarContextClosed.ToString().ToLowerInvariant(),
+    $staticSuperblockBlocked.ToString().ToLowerInvariant())
 Write-Output ("weighted_context_barriers={0} weighted_cr_stores={1} weighted_gpr_stores={2}" -f `
     (Format-Score $barrierWeighted),
     (Format-Score $crStoreWeighted),
     (Format-Score $gprStoreWeighted))
 
 if ($classScores.ContainsKey("context_state") -and
+    $classScores.ContainsKey("scalar_cr_branch") -and
+    $fastmemBehaviorClosed -and $vmxBehaviorClosed -and $fastEntryClosed -and
+    $crBranchClosed -and $scalarContextClosed -and $staticSuperblockBlocked) {
+    Write-Output "decision=body_dominant_a64_micro_lanes_closed_need_refiner_or_new_evidence"
+    Write-Output "safe_next_patch=run_continual_harness_rerank_or_switch_structural_class"
+    Write-Output "candidate_blocks=82282490:822825E0-822825F0;82281D28:8228233C-82282374;82287788:822877BC-82287864"
+    Write-Output "do_not_patch=fast_entry;static_superblock_behavior;host_pointer_immediate_fastmem_without_no_wrap;vmx128_closed_shapes;nonclosed_gpr_cache;scalar_context_load_store;cr_branch_barrier_fusion;single_pc_barrier_fusion;speed_ab"
+} elseif ($classScores.ContainsKey("context_state") -and
     $classScores.ContainsKey("scalar_cr_branch") -and
     $fastmemBehaviorClosed -and $vmxBehaviorClosed -and $fastEntryClosed -and
     $crBranchClosed -and $scalarContextClosed) {

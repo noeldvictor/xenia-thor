@@ -509,6 +509,18 @@ Better next lanes:
   from this lane. Next work should switch lanes or propose a broader
   CFG/static-superblock or alternate-entry design with visibility contracts
   solved before behavior.
+  `docs/research/20260526-121500-a64-static-superblock-feasibility.md` closes
+  that broader CFG/static-superblock behavior lane for the current route
+  window. The mapped body-dominant blocks contain guest calls, branches,
+  context barriers, CR stores, or already-closed VMX local shapes; current A64
+  source has one normal `machine_code()` entry, fast-entry storage is source
+  only, direct/late-bound calls land on normal entry, and source-map,
+  stackpoint/longjmp, debug/trap/exception visibility are tied to normal
+  generated-code contracts. Do not patch multi-block fusion, alternate-entry
+  behavior, direct-call fast-entry behavior, global indirection rewrites, state
+  payload materialization, or speed A/B from this source-only lane. Run the
+  continual harness rerank or switch structural class before another A64 speed
+  micro-audit.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

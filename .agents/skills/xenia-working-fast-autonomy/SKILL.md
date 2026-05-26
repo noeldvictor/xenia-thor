@@ -183,6 +183,13 @@ Treat these as closed for immediate speed work:
   deeper in this lane; switch structural class unless the slice explicitly
   introduces a broader CFG/static-superblock or alternate-entry visibility
   contract.
+- `docs/research/20260526-121500-a64-static-superblock-feasibility.md` closes
+  that immediate broader CFG/static-superblock behavior lane too. The mapped
+  wall blocks require calls, branches, barriers, CR visibility, or already
+  closed VMX local behavior; normal `machine_code()` remains the only generated
+  entry, and stackpoint/source-map/debug/exception visibility are tied to that
+  contract. Before another A64 speed micro-audit, run the continual harness
+  rerank or switch structural class.
 - `docs/research/20260526-084500-a64-guarded-stub-entry-design.md` closes
   guest-call fast-entry behavior until the source has separate fast-entry
   storage plus a dirty-flush payload ABI. Do not patch behavior by replacing

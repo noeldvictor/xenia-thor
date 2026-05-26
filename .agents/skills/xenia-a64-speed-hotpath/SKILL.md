@@ -457,6 +457,17 @@ from this lane. The next speed-adjacent A64 work must switch structural class
 or explicitly propose a broader CFG/static-superblock or alternate-entry design
 with guest-visible state and fallback solved.
 
+`docs/research/20260526-121500-a64-static-superblock-feasibility.md` adds that
+broader source-only audit and closes immediate static-superblock /
+alternate-entry behavior for the current route. Normal `machine_code()` remains
+the only generated entry, direct and late-bound guest calls enter normal code,
+fast-entry storage is source-only, no static-superblock storage exists, and
+stackpoint/longjmp plus source-map/debug/trap/exception visibility are normal
+entry contracts. Do not patch multi-block fusion, alternate-entry behavior,
+direct-call fast-entry behavior, global indirection, state payload
+materialization, or speed A/B from this lane. Next work should run the
+continual harness rerank or switch structural class with fresh evidence.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 
