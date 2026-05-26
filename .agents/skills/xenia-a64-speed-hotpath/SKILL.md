@@ -307,6 +307,17 @@ evidence, not sustained 30 FPS proof. Keep the cvar globally default-off, use
 `-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon speed
 captures, and do not repeat this unchanged A/B.
 
+`docs/research/20260526-081300-82282490-82287788-codegen-floor-capture.md`
+records the follow-up mapped OptHIR / block-body capture with the offset
+fastpath enabled for `82282490` and `82287788`. It is route-clean but blocks an
+immediate second addressing patch: the dominant `82282490:822825E0-822825F0`
+block is scalar context/CR work with one offset load, the next `82282490`
+weight is the already-closed stvewx / MUL_ADD_V128 / fpscr local shape, and
+`82287788` has only `3` offset ops. Do not rerun this unchanged codegen-floor
+capture. Continue fastmem/addressing only with a broader no-wrap /
+normal-memory eligibility rule for hot `LOAD_OFFSET` / `STORE_OFFSET` route
+blocks; otherwise close the lane.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

@@ -368,6 +368,17 @@ Better next lanes:
   sustained 30 FPS proof exists. Keep the cvar globally default-off, use
   `-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon
   speed captures, and do not repeat this unchanged A/B.
+  `docs/research/20260526-081300-82282490-82287788-codegen-floor-capture.md`
+  records a route-clean mapped OptHIR / block-body capture with the offset
+  fastpath enabled for `82282490` and `82287788`. It did not open a behavior
+  patch: `82282490:822825E0-822825F0` is a tiny scalar context/CR block
+  (`store_context=5`, `load_context=2`, `load_offset.1=1`), the
+  `82282490:8228252C-822825C4` weight is the already-closed
+  stvewx / MUL_ADD_V128 / fpscr neighborhood, and `82287788` offset traffic is
+  small. Do not rerun unchanged `82282490` / `82287788` codegen-floor captures.
+  The next fastmem/addressing slice must prove a broader reusable no-wrap /
+  normal-memory eligibility rule for hot `LOAD_OFFSET` / `STORE_OFFSET` route
+  blocks, or close the current fastmem/addressing lane.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

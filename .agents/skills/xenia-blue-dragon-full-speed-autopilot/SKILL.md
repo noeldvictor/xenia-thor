@@ -206,6 +206,16 @@ Keep the cvar globally default-off, use
 `-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon speed
 captures, and do not repeat this unchanged A/B.
 
+`docs/research/20260526-081300-82282490-82287788-codegen-floor-capture.md`
+records a route-clean mapped OptHIR / block-body capture with the offset
+fastpath enabled for `82282490` and `82287788`. It does not justify another
+behavior patch: `82282490:822825E0-822825F0` is scalar context/CR traffic,
+`82282490:8228252C-822825C4` is the already-closed stvewx / MUL_ADD_V128 /
+fpscr local shape, and `82287788` offset traffic is small. Do not rerun this
+unchanged codegen-floor capture. If fastmem/addressing continues, require a
+broader no-wrap / normal-memory eligibility rule for hot `LOAD_OFFSET` /
+`STORE_OFFSET` route blocks; otherwise close the lane.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
