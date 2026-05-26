@@ -63,6 +63,17 @@ Favor changes that can affect many dynamic instructions:
 - mixed/static hot-function variant experiments only when guest-visible state is
   explicit and normal entry remains correct.
 
+For the VMX128/NEON lane, run this before behavior work:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_a64_vmx128_neon_family_audit.ps1
+```
+
+Current decision: PACK/UNPACK needs missing unit coverage first; PERMUTE and
+LOAD_VECTOR_SHL/SHR need fresh route-volume counts; non-stvewx EXTRACT/SPLAT
+needs either SPLAT tests or broad route volume. Do not reopen exact stvewx or
+three-PC `MUL_ADD_V128` from this lane.
+
 ## Thor Hardware
 
 The Thor lane can use NEON/Advanced SIMD, dot-product, I8MM, BF16/FHM/FCMA,

@@ -357,6 +357,13 @@ it proof-gated.
 - Good first-class NEON targets: direct 128-bit boolean ops, splats, permutes,
   shifts, compares, min/max, pack/unpack, vector load-shift joins, and local
   state/vector traffic reduction.
+- Current VMX128 audit tool:
+  `tools/thor/thor_a64_vmx128_neon_family_audit.ps1`. As of
+  `docs/research/20260525-210145-vmx128-neon-family-audit.md`, do not patch
+  VMX128 behavior without either expanded unit coverage for the chosen family
+  or fresh route-volume counters proving broad non-closed usage. PACK/UNPACK
+  should start with missing test coverage; PERMUTE and LOAD_VECTOR_SHL/SHR need
+  current route counts; exact stvewx and three-PC `MUL_ADD_V128` remain closed.
 - Use ARM dot-product/I8MM only when the VMX opcode is an integer
   sum-of-products shape and signedness, lane order, saturation, endianness, and
   accumulation semantics are proven. Do not apply `SDOT` / `UDOT` to FP32 VMX
