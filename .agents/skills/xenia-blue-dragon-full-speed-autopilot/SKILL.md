@@ -170,6 +170,16 @@ memory-lowering feasibility audit for `ComputeMemoryAddress`,
 especially `r1 + small constant`. Do not patch behavior until the audit proves a
 reusable legal lowering that preserves 32-bit guest wrap, membase, byte-swap,
 MMIO/exception visibility, and fallback behavior.
+
+`docs/research/20260526-070000-a64-memory-lowering-feasibility.md` proves that
+candidate exists but must stay constrained: add no behavior from the audit
+alone, do not run a quiet speed A/B, and only consider a default-off
+offset-aware helper modeled on x64 `ComputeMemoryAddressOffset`. It must keep
+`x0` as the final 32-bit guest address, preserve byte swap, MMIO / exception
+visibility, store-watch `x0`, large-page threshold semantics, and fallback
+behavior. Host pointer plus immediate addressing is blocked without a no-wrap
+proof.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

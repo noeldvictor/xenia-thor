@@ -268,6 +268,18 @@ Any candidate must preserve 32-bit guest address wrap, membase, byte-swap,
 MMIO/exception visibility, and fallback behavior. If no reusable legal lowering
 exists, close fastmem/addressing for the current `82281D28` lane.
 
+`docs/research/20260526-070000-a64-memory-lowering-feasibility.md` adds that
+source audit and `tools/thor/thor_a64_memory_lowering_feasibility.ps1`. It
+finds the fastmem/addressing lane is still viable as a constrained backend
+helper: model A64 on x64 `ComputeMemoryAddressOffset`, keep `x0` as the final
+32-bit guest address, apply membase only after guest address math, preserve
+byte swap and store-watch behavior, and leave MMIO / inline-MMIO paths on the
+existing safe path unless equivalence is proven. Do not use host pointer plus
+load/store immediate addressing without a no-wrap proof. Next useful work is a
+default-off offset-aware helper prototype or source-tested codegen audit for
+constant-offset normal `LOAD_OFFSET` / `STORE_OFFSET` paths, not a quiet speed
+A/B.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

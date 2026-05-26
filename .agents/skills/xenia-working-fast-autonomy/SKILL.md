@@ -136,6 +136,21 @@ Treat these as closed for immediate speed work:
   counter-only patch. Next work is FullDeploy plus a route-clean capture for
   `0x82281D28` with the existing fast-entry audit cvars. Do not run a quiet
   speed A/B and do not patch behavior from the target-row skeleton alone.
+- The target-row capture in
+  `docs/research/20260526-053600-a64-guest-call-fast-entry-target-row-capture.md`
+  keeps fast-entry behavior blocked by unresolved targets, normal-entry
+  fallback, stackpoint sensitivity, and dirty/context-barrier flush pressure.
+- `docs/research/20260526-061637-guest-stack-arg-handoff-capture.md` closes
+  the narrow stack-argument handoff behavior lane. The stack-specific subset
+  was too small and still had unresolved / fallback / flush blockers.
+- `docs/research/20260526-063600-82281d28-load-store-offset-audit.md` shows
+  the broader hot work is guest-stack `LOAD_OFFSET` / `STORE_OFFSET` traffic,
+  not a direct handoff lane.
+- `docs/research/20260526-070000-a64-memory-lowering-feasibility.md` keeps the
+  fastmem/addressing lane open only as a constrained backend helper: preserve
+  32-bit guest wrap in `x0`, byte swap, MMIO / exception visibility,
+  store-watch expectations, large-page threshold semantics, and fallback
+  behavior. Do not run a quiet speed A/B from this source audit alone.
 
 ## Useful Output Bias
 

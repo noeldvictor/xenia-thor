@@ -332,6 +332,17 @@ Better next lanes:
   constant` has a reusable legal lowering while preserving 32-bit guest wrap,
   membase, byte-swap, MMIO/exception visibility, and fallback behavior. If not,
   close this fastmem/addressing lane for `82281D28`.
+  `docs/research/20260526-070000-a64-memory-lowering-feasibility.md` adds that
+  source audit via `tools/thor/thor_a64_memory_lowering_feasibility.ps1`. It
+  keeps behavior unchanged and finds the fastmem/addressing lane is still
+  viable, but only as a constrained backend rule: model an A64 offset-aware
+  helper on x64 `ComputeMemoryAddressOffset`, first for normal non-MMIO
+  constant-offset paths, keeping `x0` as the final 32-bit guest address before
+  membase. Do not use host pointer plus immediate addressing without a no-wrap
+  proof. Preserve byte swap, MMIO / exception visibility, store-watch `x0`, and
+  the `allocation_granularity() > 0x1000` threshold semantics. Next useful slice
+  is a default-off helper prototype or source-tested codegen audit, not a quiet
+  speed A/B.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen
