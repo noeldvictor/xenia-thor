@@ -207,6 +207,21 @@ the existing fast-entry audit cvars, followed by a join with the offline
 callee-aware HIR audit. Close this lane if the target rows do not show broad
 known first-use traffic with manageable flush pressure.
 
+`docs/research/20260526-053600-a64-guest-call-fast-entry-target-row-capture.md`
+records that route-clean Thor capture. The joined HIR result shows real broad
+known live-in volume (`callee_first_load_stores=247`,
+`body_weighted_live_in_fields=690421033`), but the runtime target rows do not
+meet the behavior threshold: `unresolved_direct_targets=52`,
+`normal_entry_fallback=67`, `stackpoint_sensitive=67`,
+`dirty_flush_points=268`, `flush_context_barrier=260`, and
+`parent_pre_call_flush_points=195`. Do not patch fast-entry behavior, run a
+quiet speed A/B, or rerun the same target-row capture unchanged. Reopen this
+lane only with a source-level guarded-stub / late-bound-entry design that
+explicitly preserves normal entry, global indirection,
+stackpoint/debug/exception visibility, and dirty flushes. Otherwise prefer a
+hot-block A64 codegen-floor/disassembly audit for the mapped body-dominant
+blocks, starting with `82281D28:8228233C-82282370`.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

@@ -272,6 +272,19 @@ Better next lanes:
   then join those rows with the offline callee-aware HIR audit. Close
   guest-call fast-entry behavior if target rows do not show broad known
   first-use traffic with manageable flush pressure.
+  `docs/research/20260526-053600-a64-guest-call-fast-entry-target-row-capture.md`
+  FullDeployed and captured those rows. The joined HIR result confirms broad
+  known live-in volume (`callee_first_load_stores=247`,
+  `body_weighted_live_in_fields=690421033`), but runtime behavior remains
+  blocked: `unresolved_direct_targets=52`, `normal_entry_fallback=67`,
+  `stackpoint_sensitive=67`, `dirty_flush_points=268`,
+  `flush_context_barrier=260`, and `parent_pre_call_flush_points=195`.
+  Do not patch guest-call fast-entry behavior, do not run a quiet speed A/B,
+  and do not rerun this target-row capture unchanged. Reopen fast-entry only
+  with a source-level guarded-stub / late-bound-entry design that explicitly
+  preserves normal entry, global indirection, stackpoint/debug/exception
+  visibility, and dirty flushes; otherwise move to a hot-block A64
+  codegen-floor/disassembly audit.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

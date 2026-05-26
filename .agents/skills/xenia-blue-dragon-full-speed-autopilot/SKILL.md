@@ -123,10 +123,19 @@ Pick one lane with a credible FPS path:
   quiet speed A/B. If this lane continues, the next slice must add runtime
   per-target fast-entry rows and close the lane if flush pressure remains
   unmanageable.
-  `docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md`
-  adds those default-off runtime rows and parser support. It is still
-  behavior-neutral. Next work is a route-clean Thor capture with the existing
-  fast-entry audit cvars for `0x82281D28`, not a speed A/B.
+`docs/research/20260526-051000-a64-guest-call-fast-entry-target-rows.md`
+adds those default-off runtime rows and parser support. It is still
+behavior-neutral. Next work is a route-clean Thor capture with the existing
+fast-entry audit cvars for `0x82281D28`, not a speed A/B.
+`docs/research/20260526-053600-a64-guest-call-fast-entry-target-row-capture.md`
+captures that route. It confirms broad known live-in volume in the joined HIR
+audit, but runtime target rows still have high unresolved-target, normal-entry
+fallback, stackpoint, and dirty/context-barrier flush pressure. Do not patch
+guest-call fast-entry behavior, do not run a quiet speed A/B, and do not rerun
+the same capture unchanged. Reopen fast-entry only with a source-level guarded
+stub / late-bound-entry design that handles normal-entry fallback, global
+indirection, stackpoint/debug/exception visibility, and dirty flushes; otherwise
+move to a hot-block A64 codegen-floor/disassembly audit.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
