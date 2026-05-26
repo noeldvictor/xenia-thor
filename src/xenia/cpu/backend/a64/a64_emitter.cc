@@ -91,6 +91,9 @@ DECLARE_bool(arm64_context_pinned_gpr_r1_audit);
 DECLARE_bool(arm64_context_traffic_audit);
 DECLARE_uint32(arm64_context_traffic_audit_function);
 DECLARE_uint32(arm64_context_traffic_audit_budget);
+DECLARE_bool(arm64_guest_call_fast_entry_audit);
+DECLARE_uint32(arm64_guest_call_fast_entry_audit_function);
+DECLARE_uint32(arm64_guest_call_fast_entry_audit_budget);
 DECLARE_uint32(arm64_speed_profile_body_time_after_ms);
 DECLARE_bool(a64_rtl_leave_fastpath_audit);
 DEFINE_bool(a64_inline_gprlr_helpers, true,
@@ -174,6 +177,7 @@ std::mutex g_blue_dragon_stricmp_return_profile_counts_mutex;
 std::unordered_map<uint32_t, uint64_t>
     g_blue_dragon_stricmp_return_profile_lr_counts;
 std::atomic<uint32_t> g_a64_context_traffic_audit_count{0};
+std::atomic<uint32_t> g_a64_guest_call_fast_entry_audit_count{0};
 
 uint32_t ParseEightHexAddress(std::string_view text, size_t offset = 0) {
   if (text.size() < offset + 8) {
@@ -714,6 +718,85 @@ bool ConsumeContextTrafficAuditBudget(uint32_t* out_index) {
     }
   }
   return false;
+}
+
+bool ConsumeGuestCallFastEntryAuditBudget(uint32_t* out_index) {
+  uint32_t budget = cvars::arm64_guest_call_fast_entry_audit_budget;
+  uint32_t value = g_a64_guest_call_fast_entry_audit_count.load(
+      std::memory_order_relaxed);
+  while (value < budget) {
+    if (g_a64_guest_call_fast_entry_audit_count.compare_exchange_strong(
+            value, value + 1, std::memory_order_acq_rel)) {
+      *out_index = value + 1;
+      return true;
+    }
+  }
+  return false;
+}
+
+struct A64GuestCallFastEntryAuditStats {
+  uint64_t blocks = 0;
+  uint64_t instrs = 0;
+  uint64_t direct_calls = 0;
+  uint64_t direct_conditional_calls = 0;
+  uint64_t direct_regular_calls = 0;
+  uint64_t direct_tail_calls = 0;
+  uint64_t eligible_regular_calls = 0;
+  uint64_t already_compiled_targets = 0;
+  uint64_t unresolved_direct_targets = 0;
+  uint64_t helper_inline_blockers = 0;
+  uint64_t indirect_call_blockers = 0;
+  uint64_t indirect_tail_blockers = 0;
+  uint64_t extern_host_call_blockers = 0;
+  uint64_t debug_trap_blockers = 0;
+  uint64_t context_barrier_flush_points = 0;
+  uint64_t return_flush_points = 0;
+  uint64_t normal_entry_fallback_required = 0;
+  uint64_t stackpoint_sensitive_calls = 0;
+  uint64_t parent_arg_store_calls = 0;
+  uint64_t parent_arg_store_fields = 0;
+  uint64_t parent_arg_store_bytes = 0;
+  uint64_t callee_first_use_known = 0;
+  uint64_t callee_first_use_missing = 0;
+  std::array<uint64_t, 9> parent_arg_store_fields_by_slot{};
+};
+
+const char* GuestCallFastEntryArgName(size_t slot) {
+  static constexpr std::array<const char*, 9> kNames = {
+      "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "lr"};
+  return slot < kNames.size() ? kNames[slot] : "?";
+}
+
+int GuestCallFastEntryArgSlot(uint32_t offset, size_t size) {
+  using xe::cpu::ppc::PPCContext;
+  if (size != sizeof(uint64_t)) {
+    return -1;
+  }
+  const uint32_t gpr_base = static_cast<uint32_t>(offsetof(PPCContext, r));
+  for (uint32_t gpr = 3; gpr <= 10; ++gpr) {
+    if (offset == gpr_base + gpr * sizeof(uint64_t)) {
+      return static_cast<int>(gpr - 3);
+    }
+  }
+  if (offset == static_cast<uint32_t>(offsetof(PPCContext, lr))) {
+    return 8;
+  }
+  return -1;
+}
+
+std::string FormatGuestCallFastEntryArgSlots(
+    const std::array<uint64_t, 9>& counts) {
+  std::string text;
+  for (size_t i = 0; i < counts.size(); ++i) {
+    if (!counts[i]) {
+      continue;
+    }
+    if (!text.empty()) {
+      text += " ";
+    }
+    text += fmt::format("{}={}", GuestCallFastEntryArgName(i), counts[i]);
+  }
+  return text.empty() ? "-" : text;
 }
 
 bool AccessOverlaps(size_t offset, size_t size, size_t range_start,
@@ -1902,6 +1985,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
       current_a64_function_ = a64_function;
     }
   }
+  MaybeLogGuestCallFastEntryAudit(builder);
   if ((cvars::arm64_blue_dragon_edge_variant_audit ||
        cvars::arm64_blue_dragon_edge_payload_storage_audit) &&
       current_guest_function_ == 0x82282490) {
@@ -2649,6 +2733,204 @@ void A64Emitter::MaybeLogContextTrafficAudit(hir::HIRBuilder* builder) {
       stats.cr_update_triplets_unsigned, stats.cr_gt_eq_pairs,
       stats.cr_gt_eq_pairs_strict, stats.cr6_update_shapes,
       stats.cr6_update_shapes_strict);
+}
+
+void A64Emitter::MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder) {
+  if (!cvars::arm64_guest_call_fast_entry_audit || !builder) {
+    return;
+  }
+  uint32_t function_filter = cvars::arm64_guest_call_fast_entry_audit_function;
+  if (function_filter && function_filter != current_guest_function_) {
+    return;
+  }
+
+  uint32_t log_index = 0;
+  if (!ConsumeGuestCallFastEntryAuditBudget(&log_index)) {
+    return;
+  }
+
+  auto is_inline_helper_candidate = [&](const hir::Instr* instr,
+                                        GuestFunction* target) {
+    if (!instr || !target) {
+      return false;
+    }
+    const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
+
+    bool is_save = false;
+    int first_gpr = 0;
+    if (cvars::a64_inline_gprlr_helpers &&
+        ParseGprLrHelper(target, &is_save, &first_gpr)) {
+      return (is_save && !is_tail_call) || (!is_save && is_tail_call);
+    }
+
+    bool is_vmx = false;
+    int first_reg = 0;
+    int last_reg = 0;
+    if (!is_tail_call &&
+        ParseFprVmxHelper(target, &is_save, &is_vmx, &first_reg, &last_reg)) {
+      return (is_vmx && cvars::a64_inline_vmx_helpers) ||
+             (!is_vmx && cvars::a64_inline_fpr_helpers);
+    }
+
+    int32_t thread_offset = 0;
+    int32_t field_offset = 0;
+    if (!is_tail_call && cvars::a64_inline_ppc_thread_field_leaf_helpers &&
+        ParsePpcThreadFieldLeafHelper(processor_->memory(), target,
+                                      &thread_offset, &field_offset)) {
+      return true;
+    }
+
+    if (!is_tail_call && cvars::arm64_blue_dragon_draw_wait_fastpath &&
+        cvars::arm64_blue_dragon_draw_wait_inline_in_caller &&
+        current_guest_function_ == 0x8246E618 &&
+        target->address() == 0x8246B408) {
+      return true;
+    }
+
+    if (cvars::arm64_blue_dragon_jump_table_fastpath &&
+        cvars::arm64_blue_dragon_jump_table_inline_in_caller &&
+        target->address() == 0x827294CC) {
+      return true;
+    }
+
+    return false;
+  };
+
+  A64GuestCallFastEntryAuditStats stats;
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    std::array<uint8_t, 9> last_arg_store_bytes{};
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      ++stats.instrs;
+      const auto opcode = instr->GetOpcodeNum();
+
+      if (opcode == hir::OPCODE_STORE_CONTEXT) {
+        auto* value = instr->src2.value;
+        size_t size = value ? hir::GetTypeSize(value->type) : 1;
+        int slot = GuestCallFastEntryArgSlot(
+            static_cast<uint32_t>(instr->src1.offset), size);
+        if (slot >= 0) {
+          last_arg_store_bytes[static_cast<size_t>(slot)] =
+              static_cast<uint8_t>(size);
+        }
+      }
+
+      switch (opcode) {
+        case hir::OPCODE_CALL:
+        case hir::OPCODE_CALL_TRUE: {
+          ++stats.direct_calls;
+          if (opcode == hir::OPCODE_CALL_TRUE) {
+            ++stats.direct_conditional_calls;
+          }
+
+          Function* target =
+              opcode == hir::OPCODE_CALL ? instr->src1.symbol
+                                          : instr->src2.symbol;
+          auto* guest_target =
+              target && target->is_guest()
+                  ? static_cast<GuestFunction*>(target)
+                  : nullptr;
+          const bool is_tail_call = (instr->flags & hir::CALL_TAIL) != 0;
+          if (is_tail_call) {
+            ++stats.direct_tail_calls;
+          } else {
+            ++stats.direct_regular_calls;
+          }
+
+          uint64_t arg_store_fields = 0;
+          uint64_t arg_store_bytes = 0;
+          for (size_t i = 0; i < last_arg_store_bytes.size(); ++i) {
+            if (!last_arg_store_bytes[i]) {
+              continue;
+            }
+            ++arg_store_fields;
+            arg_store_bytes += last_arg_store_bytes[i];
+            ++stats.parent_arg_store_fields_by_slot[i];
+          }
+          if (arg_store_fields) {
+            ++stats.parent_arg_store_calls;
+            stats.parent_arg_store_fields += arg_store_fields;
+            stats.parent_arg_store_bytes += arg_store_bytes;
+            // This compile-time audit has caller HIR only. Callee first-use is
+            // intentionally left to the log-backed HIR coverage tool.
+            stats.callee_first_use_missing += arg_store_fields;
+          }
+
+          const bool helper_candidate =
+              is_inline_helper_candidate(instr, guest_target);
+          if (helper_candidate) {
+            ++stats.helper_inline_blockers;
+          }
+          if (guest_target && guest_target->machine_code()) {
+            ++stats.already_compiled_targets;
+          } else {
+            ++stats.unresolved_direct_targets;
+          }
+          if (!is_tail_call && !helper_candidate) {
+            ++stats.eligible_regular_calls;
+            ++stats.normal_entry_fallback_required;
+            ++stats.stackpoint_sensitive_calls;
+          }
+          break;
+        }
+        case hir::OPCODE_CALL_INDIRECT:
+        case hir::OPCODE_CALL_INDIRECT_TRUE:
+          ++stats.indirect_call_blockers;
+          if (instr->flags & hir::CALL_TAIL) {
+            ++stats.indirect_tail_blockers;
+          }
+          break;
+        case hir::OPCODE_CALL_EXTERN:
+          ++stats.extern_host_call_blockers;
+          break;
+        case hir::OPCODE_CONTEXT_BARRIER:
+          ++stats.context_barrier_flush_points;
+          break;
+        case hir::OPCODE_RETURN:
+        case hir::OPCODE_RETURN_TRUE:
+          ++stats.return_flush_points;
+          break;
+        case hir::OPCODE_DEBUG_BREAK:
+        case hir::OPCODE_DEBUG_BREAK_TRUE:
+        case hir::OPCODE_TRAP:
+        case hir::OPCODE_TRAP_TRUE:
+          ++stats.debug_trap_blockers;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  const uint64_t dirty_flush_points =
+      stats.context_barrier_flush_points + stats.return_flush_points +
+      stats.extern_host_call_blockers + stats.debug_trap_blockers +
+      stats.direct_tail_calls + stats.indirect_tail_blockers;
+  XELOGW(
+      "A64 guest-call fast-entry audit {:03}: fn {:08X} blocks={} instrs={} "
+      "direct_calls={} conditional_direct={} eligible_regular={} "
+      "tail_blockers={} indirect_blockers={} extern_host_blockers={} "
+      "unresolved_direct_targets={} helper_blockers={} "
+      "normal_entry_fallback={} stackpoint_sensitive={} "
+      "arg_store_calls={} arg_store_fields={} arg_store_bytes={} "
+      "callee_first_use_known={} callee_first_use_missing={} "
+      "dirty_flush_points={} flush_context_barrier={} flush_return={} "
+      "debug_trap_blockers={} already_compiled_targets={} "
+      "payload_materializations_allowed=0 behavior_changed=0 "
+      "alternate_codegen=0 normal_entry=unchanged global_indirection=unchanged "
+      "arg_store_top={}",
+      log_index, current_guest_function_, stats.blocks, stats.instrs,
+      stats.direct_calls, stats.direct_conditional_calls,
+      stats.eligible_regular_calls, stats.direct_tail_calls,
+      stats.indirect_call_blockers, stats.extern_host_call_blockers,
+      stats.unresolved_direct_targets, stats.helper_inline_blockers,
+      stats.normal_entry_fallback_required, stats.stackpoint_sensitive_calls,
+      stats.parent_arg_store_calls, stats.parent_arg_store_fields,
+      stats.parent_arg_store_bytes, stats.callee_first_use_known,
+      stats.callee_first_use_missing, dirty_flush_points,
+      stats.context_barrier_flush_points, stats.return_flush_points,
+      stats.debug_trap_blockers, stats.already_compiled_targets,
+      FormatGuestCallFastEntryArgSlots(stats.parent_arg_store_fields_by_slot));
 }
 
 bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {

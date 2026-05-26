@@ -167,6 +167,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
       const hir::Block* block) const;
   void MaybeEmitBlockProfileEntry(const hir::Block* block);
   void MaybeLogContextTrafficAudit(hir::HIRBuilder* builder);
+  void MaybeLogGuestCallFastEntryAudit(hir::HIRBuilder* builder);
 
   // Backend context register = x19.
   // Points to A64BackendContext (immediately before PPCContext in memory).

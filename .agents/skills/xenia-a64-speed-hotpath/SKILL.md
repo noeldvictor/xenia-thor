@@ -167,7 +167,12 @@ guards, and any payload for `r3-r10/lr` needs explicit dirty flushes before
 barriers, helpers, host calls, debug/trap visibility, tail calls, returns, and
 exceptions. Next step is a default-off counter-only
 `arm64_guest_call_fast_entry_audit` skeleton; do not patch runtime behavior or
-run a quiet speed A/B yet.
+run a quiet speed A/B yet. The skeleton now exists in
+`docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
+and only logs compile-time HIR summaries. Next work is FullDeploy plus a
+route-clean capture with `-Arm64GuestCallFastEntryAudit true
+-Arm64GuestCallFastEntryAuditFunction 0x82281D28
+-Arm64GuestCallFastEntryAuditBudget 16`.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:

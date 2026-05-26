@@ -238,11 +238,14 @@ Better next lanes:
   adds `tools/thor/thor_a64_guest_call_fast_entry_feasibility.ps1` and proves
   the source contract: fast-entry is feasible only as a separate guarded entry
   path or stub. Do not replace `A64Function::machine_code()` or the global
-  indirection slot. Next useful work is a default-off counter-only
-  `arm64_guest_call_fast_entry_audit` skeleton that changes no generated
-  behavior and measures route-wide eligibility, fallback blockers, first-use
-  coverage, normal-entry fallback pressure, estimated avoidable context
-  store/load traffic, and required dirty flush points.
+  indirection slot.
+  `docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
+  adds the default-off counter-only `arm64_guest_call_fast_entry_audit`
+  skeleton plus Android/Thor launch plumbing. It changes no generated
+  behavior: no alternate codegen, normal entry unchanged, global indirection
+  unchanged, and `payload_materializations_allowed=0`. Next runtime work is
+  FullDeploy plus a route-clean 82281D28 capture with that audit enabled; do
+  not run a quiet speed A/B from the skeleton alone.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -110,9 +110,11 @@ Treat these as closed for immediate speed work:
   `docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md`
   proves fast-entry is feasible only as a separate guarded entry path or stub.
   Do not replace `A64Function::machine_code()` or the global indirection slot.
-  Next slice should be a default-off counter-only
-  `arm64_guest_call_fast_entry_audit` skeleton with no generated-behavior
-  change.
+- `docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
+  adds the default-off counter-only `arm64_guest_call_fast_entry_audit`
+  skeleton with Android/Thor launch plumbing. It is not speed proof. Next
+  slice should FullDeploy and capture route-clean audit rows for `0x82281D28`;
+  do not run a quiet speed A/B from this counter-only patch.
 
 ## Useful Output Bias
 

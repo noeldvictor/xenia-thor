@@ -104,9 +104,10 @@ Pick one lane with a credible FPS path:
   `docs/research/20260526-040500-a64-guest-call-fast-entry-feasibility.md`
   then proves fast-entry is source-feasible only as a separate guarded path or
   stub. Do not replace normal `machine_code()` or the global indirection slot.
-  Next work is a default-off counter-only
-  `arm64_guest_call_fast_entry_audit` skeleton with no generated-behavior
-  change.
+  `docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
+  adds that default-off counter-only skeleton. It is not speed proof and does
+  not change generated behavior. Next work is FullDeploy plus a route-clean
+  82281D28 capture with `arm64_guest_call_fast_entry_audit` enabled.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
