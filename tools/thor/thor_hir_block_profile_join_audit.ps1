@@ -129,9 +129,10 @@ Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
         return
     }
 
-    $guest = $Matches.guest.ToUpperInvariant()
+    $profileMatch = $Matches.Clone()
+    $guest = $profileMatch.guest.ToUpperInvariant()
     $guestAddress = Convert-HexAddress $guest
-    $blockOrdinal = [int]$Matches.block
+    $blockOrdinal = [int]$profileMatch.block
     $ordinalLabel = $null
     if ($blockOrdinal -ge 0 -and $blockOrdinal -lt $labelArray.Count) {
         $ordinalLabel = $labelArray[$blockOrdinal].guest
@@ -178,10 +179,10 @@ Get-Content -LiteralPath $resolvedProfile | ForEach-Object {
     $profileRows.Add([pscustomobject][ordered]@{
         block = $blockOrdinal
         guest = $guest
-        delta = [int64]$Matches.delta
-        total = [int64]$Matches.total
-        entries = if ($ProfileKind -eq "Body") { [int64]$Matches.entries } else { 0 }
-        ticks_per_entry = if ($ProfileKind -eq "Body") { [int64]$Matches.tpe } else { 0 }
+        delta = [int64]$profileMatch.delta
+        total = [int64]$profileMatch.total
+        entries = if ($ProfileKind -eq "Body") { [int64]$profileMatch.entries } else { 0 }
+        ticks_per_entry = if ($ProfileKind -eq "Body") { [int64]$profileMatch.tpe } else { 0 }
         hir_label_match = $labelMatch
         ppc_comment_match = $commentMatch
         ordinal_label = if ($null -ne $ordinalLabel) { $ordinalLabel } else { "-" }
@@ -215,6 +216,15 @@ $ordinalFallbackMismatches = @($rows | Where-Object {
 }).Count
 $metadataRows = @($rows | Where-Object { $_.metadata_present }).Count
 $metadataMappableRows = @($rows | Where-Object { $_.metadata_mappable }).Count
+$activeRows = @($rows | Where-Object { $_.total -gt 0 -or $_.delta -gt 0 })
+$activeMetadataUnmappableRows = @($activeRows | Where-Object {
+    $_.metadata_present -and !$_.metadata_mappable
+}).Count
+$topActiveMetadataUnmappable = @($activeRows | Where-Object {
+    $_.metadata_present -and !$_.metadata_mappable
+} | Sort-Object -Property @{ Expression = "total"; Descending = $true },
+                          @{ Expression = "block"; Ascending = $true } |
+    Select-Object -First 1)
 
 Write-Output "# HIR Block/Profile Join Audit"
 Write-Output ""
@@ -233,6 +243,19 @@ Write-Output "unmatched_profile_guests=$unmatchedGuests"
 Write-Output "ordinal_fallback_mismatches=$ordinalFallbackMismatches"
 Write-Output "metadata_rows=$metadataRows"
 Write-Output "metadata_mappable_rows=$metadataMappableRows"
+Write-Output "active_rows=$($activeRows.Count)"
+Write-Output "active_metadata_unmappable_rows=$activeMetadataUnmappableRows"
+if ($topActiveMetadataUnmappable) {
+    Write-Output ("top_active_metadata_unmappable=block={0},guest={1},total={2},first_source={3},last_source={4},first_comment={5},last_comment={6},label={7}" -f
+        $topActiveMetadataUnmappable.block,
+        $topActiveMetadataUnmappable.guest,
+        $topActiveMetadataUnmappable.total,
+        $topActiveMetadataUnmappable.first_source,
+        $topActiveMetadataUnmappable.last_source,
+        $topActiveMetadataUnmappable.first_comment,
+        $topActiveMetadataUnmappable.last_comment,
+        $topActiveMetadataUnmappable.label)
+}
 Write-Output ""
 Write-Output "## Top Profile Rows"
 if (!$rows) {
@@ -254,7 +277,11 @@ if (!$rows) {
 
 Write-Output ""
 Write-Output "## Decision"
-if (($unmatchedGuests -gt 0 -or $ordinalFallbackMismatches -gt 0) -and
+if ($activeMetadataUnmappableRows -gt 0) {
+    Write-Output "join_status=unsafe"
+    Write-Output "reason=active runtime profile rows have metadata, but no printed HIR label/comment span that can be joined safely"
+    Write-Output "next=emit file-backed or log-backed per-block HIR text/source spans for unmappable active rows before using weighted HIR counters for behavior patches"
+} elseif (($unmatchedGuests -gt 0 -or $ordinalFallbackMismatches -gt 0) -and
     $metadataMappableRows -eq 0) {
     Write-Output "join_status=unsafe"
     Write-Output "reason=at least one runtime block profile guest is missing from HIR labels/comments or would map to a different HIR label through ordinal fallback"

@@ -71,8 +71,12 @@ Pick one lane with a credible FPS path:
   found the `82281D28` runtime block-profile to printed OptHIR join unsafe.
   `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` added
   stable block metadata and disabled ordinal fallback in the main HIR reports.
-  Next step is FullDeploy plus a route-clean `82281D28` metadata capture before
-  trusting weighted HIR joins for `82281D28:8228233C`.
+  `docs/research/20260526-022000-82281d28-metadata-capture-blocker.md` then
+  proved the metadata capture works but still cannot map the active hot span:
+  `82281D28:block20 guest=8228233C`, source span `8228233C-82282370`,
+  `active_metadata_unmappable_rows=88`, `join_status=unsafe`. Next step is
+  file-backed or log-backed per-block HIR text/source spans, not another
+  unchanged capture.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

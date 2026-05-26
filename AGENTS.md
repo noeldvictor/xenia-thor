@@ -181,11 +181,15 @@ Better next lanes:
   fallback maps it to a different HIR label. Do not patch behavior from
   weighted `82281D28` HIR/block-profile joins until a deterministic mapper or
   metadata dump proves the join safe.
-  `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` adds
-  that metadata surface and disables ordinal fallback by default in the main HIR
-  profile reports. Next, FullDeploy and run a route-clean one-function
-  `82281D28` block-body/disassembly capture, then require metadata-backed join
-  proof before any `82281D28` behavior patch.
+  `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` added
+  that metadata surface and disabled ordinal fallback by default in the main
+  HIR profile reports. The follow-up capture in
+  `docs/research/20260526-022000-82281d28-metadata-capture-blocker.md` proved
+  metadata rows are present, but the active hot span
+  `82281D28:8228233C-82282370` is still absent from the printed OptHIR stream:
+  `active_metadata_unmappable_rows=88` and `join_status=unsafe`. Do not patch
+  `82281D28` behavior from weighted HIR/profile joins until file-backed or
+  log-backed per-block HIR text/source spans make that active block mappable.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -95,23 +95,25 @@ metadata dump proves the join safe.
 `docs/research/20260526-015900-a64-block-profile-metadata-mapper.md` adds the
 metadata surface and disables ordinal fallback by default in the vector,
 block-mix, and call-path reports. It passed `NativeCore`; it is not speed proof.
+The deployed follow-up in
+`docs/research/20260526-022000-82281d28-metadata-capture-blocker.md` found
+metadata rows for `82281D28`, but all active rows remained unmappable to
+printed OptHIR. The top active unmappable row is block `20`, guest
+`8228233C`, total `47409053`, source span `8228233C-82282370`.
 
-Next structural capture target:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
-```
-
-Then run a route-clean one-function `82281D28` capture with block body-time and
-disassembly enabled, and audit it with:
+Next structural tooling target:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath <new-logcat> -Function 82281D28 -Phase OptHIR -BlockProfileLog <new-logcat> -ProfileKind Body -Top 20
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath scratch\thor-debug\20260526-021159-speed-logcat.txt -Function 82281D28 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260526-021159-speed-logcat.txt -ProfileKind Body -Top 20
 ```
 
-Only use `82281D28` weighted HIR evidence if the new log has metadata rows and
-the join audit says the mapping is metadata-backed. Do not use
-`-AllowOrdinalFallback` for behavior decisions.
+Do not run another unchanged metadata capture. Add file-backed or log-backed
+per-block HIR text/source spans for active unmappable rows, starting with
+`82281D28` block `20` (`8228233C-82282370`), then rerun the audit.
+
+Only use `82281D28` weighted HIR evidence after the join audit no longer reports
+`join_status=unsafe`. Do not use `-AllowOrdinalFallback` for behavior
+decisions.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:

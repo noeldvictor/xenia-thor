@@ -83,9 +83,10 @@ Treat these as closed for immediate speed work:
   the 2026-05-26 route counters; vector volume was not the dominant wall and
   mostly sat in closed local shapes.
 - `82281D28` weighted HIR/block-profile behavior from ordinal fallback: the
-  2026-05-26 join audit found `join_status=unsafe`. The metadata mapper patch
-  exists, but needs FullDeploy plus a fresh route capture before it can justify
-  any behavior work.
+  2026-05-26 join audit found `join_status=unsafe`. The metadata capture now
+  exists, but `82281D28:block20 guest=8228233C` is still active and unmappable
+  to printed OptHIR. Do not run another unchanged metadata capture; add
+  per-block HIR text/source-span output first.
 
 ## Useful Output Bias
 
