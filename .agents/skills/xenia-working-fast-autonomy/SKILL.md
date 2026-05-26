@@ -151,6 +151,13 @@ Treat these as closed for immediate speed work:
   32-bit guest wrap in `x0`, byte swap, MMIO / exception visibility,
   store-watch expectations, large-page threshold semantics, and fallback
   behavior. Do not run a quiet speed A/B from this source audit alone.
+- `docs/research/20260526-071500-a64-offset-address-helper-prototype.md` adds
+  the default-off `arm64_offset_memory_address_fastpath` prototype and launch
+  plumbing. It passed `NativeCore`, `ApkShell`, parser checks, and the updated
+  feasibility audit, but has no Thor route proof. Next work is FullDeploy plus
+  a route-clean `-Arm64OffsetMemoryAddressFastpath true` capture with delayed
+  body-time comparators `82282490,82281D28,82287788`; no quiet speed A/B until
+  that enabled route is clean.
 
 ## Useful Output Bias
 

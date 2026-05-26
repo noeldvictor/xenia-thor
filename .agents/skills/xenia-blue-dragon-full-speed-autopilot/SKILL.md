@@ -180,6 +180,16 @@ visibility, store-watch `x0`, large-page threshold semantics, and fallback
 behavior. Host pointer plus immediate addressing is blocked without a no-wrap
 proof.
 
+`docs/research/20260526-071500-a64-offset-address-helper-prototype.md` adds the
+default-off `arm64_offset_memory_address_fastpath` prototype with Android/Thor
+launch plumbing. Validation passed (`NativeCore`, `ApkShell`, parser checks,
+and the updated feasibility audit), but there is no Thor route proof yet. The
+next useful slice is FullDeploy plus a route-clean capture with
+`-Arm64OffsetMemoryAddressFastpath true` and delayed body-time comparators
+`82282490,82281D28,82287788`. Treat it as route-safety proof only; do not run a
+quiet speed A/B until the enabled route reaches visible opening sky /
+dragon-wing with clean fatal markers.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

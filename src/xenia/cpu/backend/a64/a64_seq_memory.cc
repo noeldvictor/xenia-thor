@@ -32,6 +32,10 @@ DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
             "a64");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline A64 MMIO checks for memory accesses.", "a64");
+DEFINE_bool(arm64_offset_memory_address_fastpath, false,
+            "Use offset-aware A64 guest memory address lowering for normal "
+            "LOAD_OFFSET/STORE_OFFSET paths.",
+            "a64");
 DEFINE_string(arm64_guest_store_watch, "",
               "Comma-separated guest address/range watch list for A64 stores.",
               "a64");
@@ -55,6 +59,15 @@ volatile int anchor_memory = 0;
 namespace {
 
 std::atomic<int32_t> guest_store_watch_log_count{0};
+
+template <typename OffsetOp>
+XReg ComputeOffsetMemoryAddress(A64Emitter& e, const I64Op& guest,
+                                const OffsetOp& offset) {
+  if (cvars::arm64_offset_memory_address_fastpath) {
+    return ComputeMemoryAddressOffset(e, guest, offset);
+  }
+  return AddGuestMemoryOffset(e, ComputeMemoryAddress(e, guest), offset);
+}
 
 void SkipStoreWatchDelimiters(const char*& p) {
   while (*p == ' ' || *p == '\t' || *p == ',' || *p == ';') {
@@ -720,14 +733,14 @@ EMITTER_OPCODE_TABLE(OPCODE_LOAD_CLOCK, LOAD_CLOCK);
 struct LOAD_OFFSET_I8
     : Sequence<LOAD_OFFSET_I8, I<OPCODE_LOAD_OFFSET, I8Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     e.ldrb(i.dest, ptr(e.GetMembaseReg(), e.x0));
   }
 };
 struct LOAD_OFFSET_I16
     : Sequence<LOAD_OFFSET_I16, I<OPCODE_LOAD_OFFSET, I16Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     e.ldrh(i.dest, ptr(e.GetMembaseReg(), e.x0));
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev16(i.dest, i.dest);
@@ -798,7 +811,7 @@ struct LOAD_OFFSET_I32
       e.b(done);
       e.L(normal_access);
       {
-        AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+        ComputeOffsetMemoryAddress(e, i.src1, i.src2);
         e.ldr(i.dest, ptr(e.GetMembaseReg(), e.x0));
         if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
           e.rev(i.dest, i.dest);
@@ -806,7 +819,7 @@ struct LOAD_OFFSET_I32
       }
       e.L(done);
     } else {
-      AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+      ComputeOffsetMemoryAddress(e, i.src1, i.src2);
       e.ldr(i.dest, ptr(e.GetMembaseReg(), e.x0));
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         e.rev(i.dest, i.dest);
@@ -817,7 +830,7 @@ struct LOAD_OFFSET_I32
 struct LOAD_OFFSET_I64
     : Sequence<LOAD_OFFSET_I64, I<OPCODE_LOAD_OFFSET, I64Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     e.ldr(i.dest, ptr(e.GetMembaseReg(), e.x0));
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev(i.dest, i.dest);
@@ -831,7 +844,7 @@ struct STORE_OFFSET_I8
     : Sequence<STORE_OFFSET_I8,
                I<OPCODE_STORE_OFFSET, VoidOp, I64Op, I64Op, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     if (i.src3.is_constant) {
       e.mov(e.w17, static_cast<uint64_t>(i.src3.constant() & 0xFF));
       e.strb(e.w17, ptr(e.GetMembaseReg(), e.x0));
@@ -844,7 +857,7 @@ struct STORE_OFFSET_I16
     : Sequence<STORE_OFFSET_I16,
                I<OPCODE_STORE_OFFSET, VoidOp, I64Op, I64Op, I16Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       if (i.src3.is_constant) {
         uint16_t val = xe::byte_swap(static_cast<uint16_t>(i.src3.constant()));
@@ -935,7 +948,7 @@ struct STORE_OFFSET_I32
       e.b(done);
       e.L(normal_access);
       {
-        AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+        ComputeOffsetMemoryAddress(e, i.src1, i.src2);
         if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
           if (i.src3.is_constant) {
             uint32_t val =
@@ -958,7 +971,7 @@ struct STORE_OFFSET_I32
       EmitGuestStoreWatch(e, i.instr, e.x0, 4);
       e.L(done);
     } else {
-      AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+      ComputeOffsetMemoryAddress(e, i.src1, i.src2);
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         if (i.src3.is_constant) {
           uint32_t val =
@@ -985,7 +998,7 @@ struct STORE_OFFSET_I64
     : Sequence<STORE_OFFSET_I64,
                I<OPCODE_STORE_OFFSET, VoidOp, I64Op, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    AddGuestMemoryOffset(e, ComputeMemoryAddress(e, i.src1), i.src2);
+    ComputeOffsetMemoryAddress(e, i.src1, i.src2);
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       if (i.src3.is_constant) {
         uint64_t val = xe::byte_swap(static_cast<uint64_t>(i.src3.constant()));

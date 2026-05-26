@@ -280,6 +280,17 @@ default-off offset-aware helper prototype or source-tested codegen audit for
 constant-offset normal `LOAD_OFFSET` / `STORE_OFFSET` paths, not a quiet speed
 A/B.
 
+`docs/research/20260526-071500-a64-offset-address-helper-prototype.md` adds the
+default-off `arm64_offset_memory_address_fastpath` prototype. It introduces
+`ComputeMemoryAddressOffset`, keeps `x0` as the final 32-bit guest address,
+falls back for non-constant offsets and `allocation_granularity() > 0x1000`,
+and wires Android/Thor launch metadata. `NativeCore`, `ApkShell`, parser checks,
+and the updated feasibility audit pass. This is not speed proof. Next work is
+FullDeploy plus a route-clean capture with
+`-Arm64OffsetMemoryAddressFastpath true` and delayed body-time comparators
+`82282490,82281D28,82287788`; no quiet speed A/B until that enabled route is
+clean.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

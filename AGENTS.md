@@ -343,6 +343,17 @@ Better next lanes:
   the `allocation_granularity() > 0x1000` threshold semantics. Next useful slice
   is a default-off helper prototype or source-tested codegen audit, not a quiet
   speed A/B.
+  `docs/research/20260526-071500-a64-offset-address-helper-prototype.md` adds
+  that default-off `arm64_offset_memory_address_fastpath` prototype plus
+  Android/Thor launch plumbing. The helper keeps `x0` as the final 32-bit guest
+  address and falls back for non-constant offsets or
+  `allocation_granularity() > 0x1000`. `NativeCore`, `ApkShell`, parser checks,
+  and the updated feasibility audit pass, but there is no Thor route proof yet.
+  Next work is FullDeploy plus a route-clean capture with
+  `-Arm64OffsetMemoryAddressFastpath true` and delayed body-time comparators
+  `82282490,82281D28,82287788`. Treat that as route-safety proof only; no quiet
+  speed A/B until the enabled path reaches visible opening sky / dragon-wing
+  with clean fatal markers.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

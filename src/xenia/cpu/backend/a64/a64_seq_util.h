@@ -323,6 +323,37 @@ inline XReg AddGuestMemoryOffset(A64Emitter& e, const XReg& base,
   return e.x0;
 }
 
+template <typename OffsetOp>
+inline XReg ComputeMemoryAddressOffset(A64Emitter& e, const I64Op& guest,
+                                       const OffsetOp& offset) {
+  // Keep the existing two-step path when large-page physical mapping
+  // compensation is required; this helper only folds 4 KB mapping cases.
+  if (!offset.is_constant || xe::memory::allocation_granularity() > 0x1000) {
+    return AddGuestMemoryOffset(e, ComputeMemoryAddress(e, guest), offset);
+  }
+
+  uint32_t value = static_cast<uint32_t>(offset.constant());
+  if (guest.is_constant) {
+    uint32_t address = static_cast<uint32_t>(guest.constant()) + value;
+    e.mov(e.x0, static_cast<uint64_t>(address));
+    return e.x0;
+  }
+
+  WReg source(guest.reg().getIdx());
+  if (value == 0) {
+    e.mov(e.w0, source);
+  } else if (value <= 4095) {
+    e.add(e.w0, source, value);
+  } else if ((value & 0xFFFu) == 0 && (value >> 12) <= 4095) {
+    e.add(e.w0, source, value >> 12, 12);
+  } else {
+    e.mov(e.w0, source);
+    e.mov(e.w17, static_cast<uint64_t>(value));
+    e.add(e.w0, e.w0, e.w17);
+  }
+  return e.x0;
+}
+
 // Flush denormal float32 lanes to zero in a NEON register (in-place).
 // A float32 is denormal when 0 < abs(val) < 0x00800000.
 // vreg must not equal sa or sb.

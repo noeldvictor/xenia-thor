@@ -108,6 +108,7 @@ param(
     [string]$Arm64GuestStoreWatch = "",
     [string]$Arm64GuestStoreWatchBudget = "",
     [string]$Arm64GlobalReservationHelpers = "",
+    [string]$Arm64OffsetMemoryAddressFastpath = "",
     [string]$Arm64CompiledCallTraceInterval = "",
     [string]$Arm64CompiledCallTraceMinCount = "",
     [string]$Arm64CompiledCallTraceBudget = "",
@@ -764,6 +765,9 @@ function Start-XeniaEmulator {
     if ($Arm64GlobalReservationHelpers) {
         $parts += "--ez arm64_global_reservation_helpers $(ConvertTo-BooleanText $Arm64GlobalReservationHelpers)"
     }
+    if ($Arm64OffsetMemoryAddressFastpath) {
+        $parts += "--ez arm64_offset_memory_address_fastpath $(ConvertTo-BooleanText $Arm64OffsetMemoryAddressFastpath)"
+    }
     if ($Arm64CompiledCallTraceInterval) {
         $parts += "--ei arm64_compiled_call_trace_interval $Arm64CompiledCallTraceInterval"
     }
@@ -1219,6 +1223,7 @@ function Write-CaptureMetadata {
         "a64_kf_lower_irql_apc_guard_audit=$A64KfLowerIrqlApcGuardAudit",
         "a64_kf_lower_irql_apc_guard_native_poll_interval=$A64KfLowerIrqlApcGuardNativePollInterval",
         "arm64_global_reservation_helpers=$Arm64GlobalReservationHelpers",
+        "arm64_offset_memory_address_fastpath=$Arm64OffsetMemoryAddressFastpath",
         "arm64_blue_dragon_draw_wait_probe=$Arm64BlueDragonDrawWaitProbe",
         "arm64_blue_dragon_draw_wait_probe_stride=$Arm64BlueDragonDrawWaitProbeStride",
         "arm64_blue_dragon_draw_wait_inline_tick_step=$Arm64BlueDragonDrawWaitInlineTickStep",
