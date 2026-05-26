@@ -244,10 +244,14 @@ Behavior is still blocked because same-block promotion already exists and the
 current emit-time cache resets per block.
 `docs/research/20260526-090500-a64-nonclosed-gpr-cache-audit-skeleton.md`
 adds that default-off post-promotion audit with Android/Thor plumbing. It is
-counter-only and changes no generated behavior. Next useful work is FullDeploy
-plus a route-clean audit capture for one wall function, starting with
-`0x82281D28`, using `-Arm64GuestStateNonclosedCacheAudit true` and
-`-Arm64OffsetMemoryAddressFastpath true`.
+counter-only and changes no generated behavior.
+`docs/research/20260526-092500-a64-nonclosed-gpr-cache-capture.md` captured it
+route-clean for `0x82281D28` and closes current behavior work:
+`candidate_loads=181`, `candidate_stores=75`, but
+`clean_hits_possible=0`, `dirty_hits_possible=0`, and high boundary/spill
+pressure. Do not rerun unchanged nonclosed-cache captures for `0x82282490` or
+`0x82287788`, and do not patch guest-state cache behavior without a broader
+CFG/dataflow model.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

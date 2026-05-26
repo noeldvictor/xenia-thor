@@ -354,9 +354,13 @@ host GPR pressure is real.
 adds the default-off, counter-only post-promotion audit for
 `r31,r30,r29,r28,r27`. It has Android/Thor cvar plumbing and preserves normal
 generated behavior: no store elision, no load replacement, no payload
-materialization. Next valid slice is FullDeploy plus a route-clean one-function
-capture, starting with `0x82281D28`, to prove whether post-promotion volume and
-flush/spill pressure justify behavior design.
+materialization. `docs/research/20260526-092500-a64-nonclosed-gpr-cache-capture.md`
+FullDeployed and captured it route-clean for `0x82281D28`. The result closes
+current behavior work: `candidate_loads=181`, `candidate_stores=75`,
+`clean_hits_possible=0`, `dirty_hits_possible=0`, `normal_fallback=256`,
+`peak_live_slots=5`, and `estimated_spill_pressure=3`. Do not rerun unchanged
+nonclosed-cache captures or patch guest-state cache behavior unless a broader
+CFG/dataflow model is added first.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
