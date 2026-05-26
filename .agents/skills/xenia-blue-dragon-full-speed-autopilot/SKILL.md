@@ -106,8 +106,15 @@ Pick one lane with a credible FPS path:
   stub. Do not replace normal `machine_code()` or the global indirection slot.
   `docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
   adds that default-off counter-only skeleton. It is not speed proof and does
-  not change generated behavior. Next work is FullDeploy plus a route-clean
-  82281D28 capture with `arm64_guest_call_fast_entry_audit` enabled.
+  not change generated behavior. The follow-up
+  `docs/research/20260526-043900-a64-guest-call-fast-entry-audit-capture.md`
+  FullDeployed and route-tested it for `0x82281D28`: `direct_calls=84`,
+  `eligible_regular=67`, `arg_store_fields=421`, and
+  `already_compiled_targets=32`, but `callee_first_use_known=0`,
+  `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
+  `flush_context_barrier=260`. Do not patch fast-entry behavior or rerun the
+  same capture unchanged. Next work must make this audit callee-aware with
+  target/blocker rows, or close the lane.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

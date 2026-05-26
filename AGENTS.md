@@ -243,9 +243,16 @@ Better next lanes:
   adds the default-off counter-only `arm64_guest_call_fast_entry_audit`
   skeleton plus Android/Thor launch plumbing. It changes no generated
   behavior: no alternate codegen, normal entry unchanged, global indirection
-  unchanged, and `payload_materializations_allowed=0`. Next runtime work is
-  FullDeploy plus a route-clean 82281D28 capture with that audit enabled; do
-  not run a quiet speed A/B from the skeleton alone.
+  unchanged, and `payload_materializations_allowed=0`.
+  `docs/research/20260526-043900-a64-guest-call-fast-entry-audit-capture.md`
+  FullDeployed and route-tested it for `0x82281D28`: `direct_calls=84`,
+  `eligible_regular=67`, `arg_store_fields=421`, and
+  `already_compiled_targets=32`, but `callee_first_use_known=0`,
+  `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
+  `flush_context_barrier=260`. Do not patch fast-entry behavior or rerun the
+  same capture unchanged. Next work must make this audit callee-aware, with
+  target/blocker rows and normal-entry fallback still explicit, or close the
+  lane and move to another structural A64 target.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

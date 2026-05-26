@@ -112,9 +112,15 @@ Treat these as closed for immediate speed work:
   Do not replace `A64Function::machine_code()` or the global indirection slot.
 - `docs/research/20260526-041500-a64-guest-call-fast-entry-audit-skeleton.md`
   adds the default-off counter-only `arm64_guest_call_fast_entry_audit`
-  skeleton with Android/Thor launch plumbing. It is not speed proof. Next
-  slice should FullDeploy and capture route-clean audit rows for `0x82281D28`;
-  do not run a quiet speed A/B from this counter-only patch.
+  skeleton with Android/Thor launch plumbing. It is not speed proof. The
+  route-clean follow-up in
+  `docs/research/20260526-043900-a64-guest-call-fast-entry-audit-capture.md`
+  found `direct_calls=84`, `eligible_regular=67`, `arg_store_fields=421`,
+  and `already_compiled_targets=32`, but also `callee_first_use_known=0`,
+  `callee_first_use_missing=421`, `normal_entry_fallback=67`, and
+  `flush_context_barrier=260`. Do not run a quiet speed A/B, do not patch
+  fast-entry behavior, and do not rerun this capture unchanged. Next slice
+  must make the audit callee-aware with target/blocker rows or close the lane.
 
 ## Useful Output Bias
 

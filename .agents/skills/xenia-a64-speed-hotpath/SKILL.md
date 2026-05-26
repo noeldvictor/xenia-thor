@@ -174,6 +174,16 @@ route-clean capture with `-Arm64GuestCallFastEntryAudit true
 -Arm64GuestCallFastEntryAuditFunction 0x82281D28
 -Arm64GuestCallFastEntryAuditBudget 16`.
 
+`docs/research/20260526-043900-a64-guest-call-fast-entry-audit-capture.md`
+ran that route-clean Thor capture. It proves material caller traffic
+(`direct_calls=84`, `eligible_regular=67`, `arg_store_fields=421`,
+`already_compiled_targets=32`) but blocks behavior for now:
+`callee_first_use_known=0`, `callee_first_use_missing=421`,
+`normal_entry_fallback=67`, and `flush_context_barrier=260`. Do not rerun the
+same capture unchanged, do not run a quiet speed A/B, and do not patch
+fast-entry behavior until a callee-aware audit reports body-weighted known
+first-use targets and manageable dirty flush pressure.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 
