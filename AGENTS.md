@@ -303,13 +303,20 @@ Better next lanes:
   and parser support. It is not speed proof and changes no generated behavior:
   `payload_materializations_allowed=0`, `behavior_changed=0`,
   `alternate_codegen=0`, `normal_entry=unchanged`, and
-  `global_indirection=unchanged`. Next useful work is FullDeploy plus a
-  route-clean `0x82281D28` capture with
-  `-Arm64GuestStackArgHandoffAudit true`,
-  `-Arm64GuestStackArgHandoffAuditFunction 0x82281D28`, and
-  `-Arm64GuestStackArgHandoffAuditBudget 16`, then join the new log rows with
-  `tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1`. Do not run a quiet
-  speed A/B or patch behavior from the skeleton alone.
+  `global_indirection=unchanged`.
+  `docs/research/20260526-061637-guest-stack-arg-handoff-capture.md`
+  FullDeployed and captured that audit on Thor. The route was clean and reached
+  visible opening sky / dragon-wing, but the stack-specific subset is too
+  narrow and blocked for behavior: `stack_arg_store_fields=87`,
+  `estimated_avoidable_bytes=1360`, `unresolved_direct_targets=52`,
+  `normal_entry_fallback=67`, `stackpoint_sensitive=67`,
+  `dirty_flush_points=268`, and `flush_context_barrier=260`. Close the current
+  guest-stack argument handoff behavior lane. Reopen only inside a broader
+  guarded-stub / late-bound-entry design that handles normal entry, global
+  indirection, stackpoint/debug/exception visibility, dirty flushes, and
+  unresolved targets. Next useful structural work is fastmem/addressing or A64
+  load/store codegen-floor counters for hot `LOAD_OFFSET` / `STORE_OFFSET`
+  forms in `82281D28`.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

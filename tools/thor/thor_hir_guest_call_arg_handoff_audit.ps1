@@ -357,6 +357,8 @@ function Read-GuestStackArgHandoffAuditRows {
             if ($line -notmatch $pattern) {
                 continue
             }
+            $rowFunction = $Matches.function.ToUpperInvariant()
+            $rowIndex = [int]$Matches.index
             $values = @{}
             foreach ($token in ($Matches.rest -split "\s+")) {
                 if ($token -match "^(?<key>[A-Za-z0-9_]+)=(?<value>.*)$") {
@@ -364,8 +366,8 @@ function Read-GuestStackArgHandoffAuditRows {
                 }
             }
             $rows.Add([pscustomobject][ordered]@{
-                function = $Matches.function.ToUpperInvariant()
-                index = [int]$Matches.index
+                function = $rowFunction
+                index = $rowIndex
                 values = $values
                 log = $resolved
                 text = $line
@@ -388,6 +390,10 @@ function Read-GuestStackArgHandoffTargetRows {
             if ($line -notmatch $pattern) {
                 continue
             }
+            $rowFunction = $Matches.function.ToUpperInvariant()
+            $rowTarget = $Matches.target.ToUpperInvariant()
+            $rowIndex = [int]$Matches.index
+            $rowNumber = [int]$Matches.row
             $values = @{}
             foreach ($token in ($Matches.rest -split "\s+")) {
                 if ($token -match "^(?<key>[A-Za-z0-9_]+)=(?<value>.*)$") {
@@ -395,10 +401,10 @@ function Read-GuestStackArgHandoffTargetRows {
                 }
             }
             $rows.Add([pscustomobject][ordered]@{
-                function = $Matches.function.ToUpperInvariant()
-                target = $Matches.target.ToUpperInvariant()
-                index = [int]$Matches.index
-                row = [int]$Matches.row
+                function = $rowFunction
+                target = $rowTarget
+                index = $rowIndex
+                row = $rowNumber
                 values = $values
                 log = $resolved
                 text = $line

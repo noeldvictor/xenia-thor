@@ -238,13 +238,20 @@ guest stack load / context store traffic.
 
 `docs/research/20260526-055500-guest-stack-arg-handoff-audit-skeleton.md` adds
 that default-off counter-only audit plus Android/Thor launch plumbing and
-parser support. It changes no generated behavior and is not speed proof. Next
-work is FullDeploy plus a route-clean `0x82281D28` capture using
-`-Arm64GuestStackArgHandoffAudit true`,
-`-Arm64GuestStackArgHandoffAuditFunction 0x82281D28`, and
-`-Arm64GuestStackArgHandoffAuditBudget 16`, then parse it with
-`tools/thor/thor_hir_guest_call_arg_handoff_audit.ps1
--GuestStackArgHandoffAuditLogPath <new-speed-logcat>`.
+parser support. It changes no generated behavior and is not speed proof.
+
+`docs/research/20260526-061637-guest-stack-arg-handoff-capture.md` FullDeploys
+and captures that audit on Thor. The route was clean, but the stack-specific
+subset is too narrow and blocked for behavior: `stack_arg_store_fields=87`,
+`estimated_avoidable_bytes=1360`, `unresolved_direct_targets=52`,
+`normal_entry_fallback=67`, `stackpoint_sensitive=67`,
+`dirty_flush_points=268`, and `flush_context_barrier=260`. Do not patch
+guest-stack argument handoff behavior or run a quiet speed A/B from this lane.
+Reopen only inside a broader guarded-stub / late-bound-entry design that handles
+normal entry, global indirection, stackpoint/debug/exception visibility, dirty
+flushes, and unresolved targets. Prefer fastmem/addressing or A64 load/store
+codegen-floor counters for hot `LOAD_OFFSET` / `STORE_OFFSET` forms in
+`82281D28`.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
