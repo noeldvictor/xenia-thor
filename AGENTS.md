@@ -446,6 +446,14 @@ Better next lanes:
   direct-call guards, payload population, dirty flushes, late-bound fallback,
   and stackpoint resume; do not run Thor speed A/B or patch behavior from the
   skeleton alone.
+  `docs/research/20260526-102500-a64-fast-entry-guard-protocol.md` adds the
+  behavior-neutral guard protocol: guard blocker bits, guard inputs,
+  decisions, and `EvaluateA64GuestCallFastEntryGuard`, plus a deterministic
+  audit. It proves the source guard model is present but unused by generated
+  code: direct calls still use normal entry, guard codegen is absent, payload
+  population and dirty flush codegen are absent, and no fast-entry stub codegen
+  exists. Behavior remains blocked. Next work is payload-population and
+  dirty-flush codegen design only, still behavior-neutral, or a lane switch.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

@@ -52,8 +52,55 @@ bool A64GuestCallFastEntryContractCoversStubSkeleton(
          (contract.dirty_flush_mask &
           kA64GuestCallFastEntryRequiredDirtyFlushMask) ==
              kA64GuestCallFastEntryRequiredDirtyFlushMask &&
-         (contract.flags & kA64GuestCallFastEntryFlagStubSkeleton) != 0 &&
-         !A64GuestCallFastEntryContractEnablesBehavior(contract);
+         (contract.flags & kA64GuestCallFastEntryFlagStubSkeleton) != 0;
+}
+
+A64GuestCallFastEntryGuardDecision EvaluateA64GuestCallFastEntryGuard(
+    const A64GuestCallFastEntryContract& contract,
+    const A64GuestCallFastEntryGuardInputs& inputs,
+    const uint8_t* fast_entry_code) {
+  A64GuestCallFastEntryGuardDecision decision = {};
+  decision.required_dirty_flush_mask =
+      kA64GuestCallFastEntryRequiredDirtyFlushMask;
+
+  if (!A64GuestCallFastEntryContractEnablesBehavior(contract)) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerBehaviorDisabled;
+  }
+  if (!A64GuestCallFastEntryContractCoversStubSkeleton(contract)) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerContractIncomplete;
+  }
+  if (!fast_entry_code) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerMissingFastEntryCode;
+  }
+  if (!inputs.direct_guest_call) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerNotDirectGuestCall;
+  }
+  if (!inputs.target_resolved) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerTargetUnresolved;
+  }
+  if (!inputs.payload_population_available) {
+    decision.blockers |=
+        kA64GuestCallFastEntryBlockerPayloadPopulationMissing;
+  }
+  if (!inputs.dirty_flush_codegen_available) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerDirtyFlushMissing;
+  }
+  if ((inputs.available_dirty_flush_mask &
+       kA64GuestCallFastEntryRequiredDirtyFlushMask) !=
+      kA64GuestCallFastEntryRequiredDirtyFlushMask) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerDirtyFlushIncomplete;
+  }
+  if (!inputs.late_bound_fallback_available) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerLateBoundFallbackMissing;
+  }
+  if (!inputs.stackpoint_resume_supported) {
+    decision.blockers |= kA64GuestCallFastEntryBlockerStackpointResumeMissing;
+  }
+  if (inputs.crosses_debug_or_exception_boundary) {
+    decision.blockers |=
+        kA64GuestCallFastEntryBlockerDebugExceptionVisibility;
+  }
+  return decision;
 }
 
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {

@@ -391,6 +391,16 @@ unchanged. Do not run a Thor speed A/B from this source-only patch. Continue
 only with source design for direct-call guards, payload population, dirty
 flushes, late-bound fallback, and stackpoint resume, or switch lanes.
 
+`docs/research/20260526-102500-a64-fast-entry-guard-protocol.md` adds the
+behavior-neutral direct-call guard protocol: blocker bits, guard inputs,
+decision output, and `EvaluateA64GuestCallFastEntryGuard`, plus
+`tools/thor/thor_a64_fast_entry_guard_protocol_audit.ps1`. It reports the guard
+model source-ready but still behavior-blocked: generated code does not call the
+guard evaluator, direct callsites still use normal entry, and payload
+population, dirty flush codegen, and fast-entry stub codegen are absent.
+Continue only with payload-population / dirty-flush codegen design while keeping
+generated behavior unchanged, or switch lanes.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

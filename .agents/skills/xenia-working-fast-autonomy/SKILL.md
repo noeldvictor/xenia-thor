@@ -205,6 +205,11 @@ Treat these as closed for immediate speed work:
   normal entry, global indirection, payload population, dirty flush codegen,
   stub codegen, callsite guards, and stackpoint resume all unchanged. Do not
   run speed A/B or patch runtime behavior from this source-only evidence.
+- `docs/research/20260526-102500-a64-fast-entry-guard-protocol.md` adds a
+  source-only guard model and audit. It proves guard blockers/inputs/decision
+  helpers exist but are unused by codegen; direct callsites, payload
+  population, dirty flush codegen, and stub codegen are still absent. Continue
+  only with behavior-neutral payload/dirty-flush source design or switch lanes.
 
 ## Useful Output Bias
 

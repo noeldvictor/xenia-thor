@@ -275,6 +275,13 @@ Do not run a speed A/B or behavior patch from this source-only state. Continue
 only with direct-call guard / payload-population / dirty-flush / late-bound
 fallback / stackpoint-resume design work, or switch lanes.
 
+`docs/research/20260526-102500-a64-fast-entry-guard-protocol.md` adds the
+source-only guard model and audit. It proves blocker classes and guard inputs
+exist for direct-call guards, payload population, dirty flush coverage,
+late-bound fallback, stackpoint resume, and debug/exception visibility, but
+codegen still does not use the guard and behavior is unchanged. Next fast-entry
+work is payload-population / dirty-flush source design only, or switch lanes.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

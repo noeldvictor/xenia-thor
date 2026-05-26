@@ -63,6 +63,20 @@ enum A64GuestCallFastEntryFlags : uint32_t {
   kA64GuestCallFastEntryFlagBehaviorEnabled = 1u << 1,
 };
 
+enum A64GuestCallFastEntryGuardBlocker : uint32_t {
+  kA64GuestCallFastEntryBlockerBehaviorDisabled = 1u << 0,
+  kA64GuestCallFastEntryBlockerContractIncomplete = 1u << 1,
+  kA64GuestCallFastEntryBlockerMissingFastEntryCode = 1u << 2,
+  kA64GuestCallFastEntryBlockerNotDirectGuestCall = 1u << 3,
+  kA64GuestCallFastEntryBlockerTargetUnresolved = 1u << 4,
+  kA64GuestCallFastEntryBlockerPayloadPopulationMissing = 1u << 5,
+  kA64GuestCallFastEntryBlockerDirtyFlushMissing = 1u << 6,
+  kA64GuestCallFastEntryBlockerDirtyFlushIncomplete = 1u << 7,
+  kA64GuestCallFastEntryBlockerLateBoundFallbackMissing = 1u << 8,
+  kA64GuestCallFastEntryBlockerStackpointResumeMissing = 1u << 9,
+  kA64GuestCallFastEntryBlockerDebugExceptionVisibility = 1u << 10,
+};
+
 constexpr uint32_t kA64GuestCallFastEntryRequiredPayloadMask =
     kA64GuestCallFastEntryPayloadGpr3 |
     kA64GuestCallFastEntryPayloadGpr4 |
@@ -90,11 +104,32 @@ struct A64GuestCallFastEntryContract {
   uint32_t flags = 0;
 };
 
+struct A64GuestCallFastEntryGuardInputs {
+  bool direct_guest_call = false;
+  bool target_resolved = false;
+  bool payload_population_available = false;
+  bool dirty_flush_codegen_available = false;
+  bool late_bound_fallback_available = false;
+  bool stackpoint_resume_supported = false;
+  bool crosses_debug_or_exception_boundary = false;
+  uint32_t available_dirty_flush_mask = 0;
+};
+
+struct A64GuestCallFastEntryGuardDecision {
+  uint32_t blockers = 0;
+  uint32_t required_dirty_flush_mask = 0;
+  bool can_use_fast_entry() const { return blockers == 0; }
+};
+
 A64GuestCallFastEntryContract MakeA64GuestCallFastEntryStubSkeletonContract();
 bool A64GuestCallFastEntryContractCoversStubSkeleton(
     const A64GuestCallFastEntryContract& contract);
 bool A64GuestCallFastEntryContractEnablesBehavior(
     const A64GuestCallFastEntryContract& contract);
+A64GuestCallFastEntryGuardDecision EvaluateA64GuestCallFastEntryGuard(
+    const A64GuestCallFastEntryContract& contract,
+    const A64GuestCallFastEntryGuardInputs& inputs,
+    const uint8_t* fast_entry_code);
 
 class A64Function : public GuestFunction {
  public:
