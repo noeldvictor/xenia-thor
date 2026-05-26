@@ -193,10 +193,18 @@ dragon-wing with clean fatal markers.
 `docs/research/20260526-073440-a64-offset-address-fastpath-route-capture.md`
 records that route-clean enabled capture. It reached the visible opening
 sky / dragon-wing frame with clean fatal markers and shrank generated code sizes
-in the hot cluster, but it is not speed proof. Next useful work is a same-APK
-quiet A/B or control sandwich on APK SHA
-`3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`,
-comparing `-Arm64OffsetMemoryAddressFastpath false` versus `true`.
+in the hot cluster, but it is not speed proof.
+
+`docs/research/20260526-075500-a64-offset-address-fastpath-quiet-ab.md`
+records the same-APK ON/OFF/ON sandwich on commit `5ffe7d20b` / APK SHA
+`3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`. The
+enabled cvar is route-clean and locally positive for code size/body-time:
+`82282490 87168 -> 86452`, `82281D28 96908 -> 95724`, and
+`82287788 35732 -> 35712`, with both ON captures below OFF body ticks. It is
+still not sustained 30 FPS proof because Main Thread remains near a full core.
+Keep the cvar globally default-off, use
+`-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon speed
+captures, and do not repeat this unchanged A/B.
 
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and

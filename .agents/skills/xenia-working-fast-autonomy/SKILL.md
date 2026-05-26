@@ -162,9 +162,15 @@ Treat these as closed for immediate speed work:
   proves route safety for the enabled cvar on commit `1ed1dec66` / APK SHA
   `3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`. It
   reached visible opening sky / dragon-wing with a clean fatal-marker search
-  and shrank hot generated code size, but it is not speed proof. Next work is a
-  same-APK quiet A/B or control sandwich comparing
-  `-Arm64OffsetMemoryAddressFastpath false` versus `true`.
+  and shrank hot generated code size, but it is not speed proof.
+- `docs/research/20260526-075500-a64-offset-address-fastpath-quiet-ab.md`
+  records the same-APK ON/OFF/ON sandwich on commit `5ffe7d20b`. The enabled
+  path is route-clean and locally positive for generated-code/body-time:
+  `82282490 87168 -> 86452`, `82281D28 96908 -> 95724`, and
+  `82287788 35732 -> 35712`, with both ON captures below OFF body ticks. It is
+  still not sustained 30 FPS proof. Keep the cvar globally default-off, enable
+  `-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon
+  speed captures, and do not repeat this unchanged A/B.
 
 ## Useful Output Bias
 

@@ -295,11 +295,17 @@ clean.
 records that route-clean enabled capture on commit `1ed1dec66` / APK SHA
 `3195B62E66ABCE289187F6A0C4A67E621AE2A32931BBD98B790CD32CB0E33AB9`.
 It reached visible opening sky / dragon-wing with clean fatal markers and
-shrunk generated code sizes in the wall cluster (`82281D28 119908 -> 95724`,
-`82282490 87168 -> 86452`, `82287788 35732 -> 35712`). This is not speed proof.
-Next work is a same-APK quiet A/B or control sandwich with
-`-Arm64OffsetMemoryAddressFastpath false` versus `true`, audit/disassembly/block
-tracing off, and matched route/cvars.
+shrunk generated code sizes in the wall cluster, but this is not speed proof.
+
+`docs/research/20260526-075500-a64-offset-address-fastpath-quiet-ab.md`
+records the same-APK ON/OFF/ON sandwich on commit `5ffe7d20b` with audit,
+disassembly, block body-time, and call-edge tracing off. The authoritative
+control deltas are `82282490 87168 -> 86452`, `82281D28 96908 -> 95724`, and
+`82287788 35732 -> 35712`; both ON captures had lower final body ticks than
+OFF. Main Thread still stayed near a full core, so this is local codegen/body
+evidence, not sustained 30 FPS proof. Keep the cvar globally default-off, use
+`-Arm64OffsetMemoryAddressFastpath true` explicitly in future Blue Dragon speed
+captures, and do not repeat this unchanged A/B.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
