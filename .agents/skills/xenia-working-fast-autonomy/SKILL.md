@@ -60,6 +60,9 @@ Pick exactly one:
 - No Thor run without a named hypothesis and expected decision.
 - No multi-function HIR dump through logcat when exact hot-block mapping is the
   output; capture one large function at a time or improve the dump transport.
+- No behavior patch from runtime block-profile to HIR weighted joins unless
+  `tools/thor/thor_hir_block_profile_join_audit.ps1` says the join is safe or
+  a newer metadata dump proves the mapping.
 - No quiet speed A/B for counter-only patches.
 - No one-PC or one-span fastpath unless it plausibly affects route FPS and has
   route-clean proof.
@@ -79,12 +82,16 @@ Treat these as closed for immediate speed work:
 - Broad VMX128 `PERMUTE` / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` behavior from
   the 2026-05-26 route counters; vector volume was not the dominant wall and
   mostly sat in closed local shapes.
+- `82281D28` weighted HIR/block-profile behavior from ordinal fallback: the
+  2026-05-26 join audit found `join_status=unsafe`.
 
 ## Useful Output Bias
 
 Prefer work that changes the slope:
 
 - structural A64 register allocation/helper/call-linking/fastmem work;
+- deterministic profiling/HIR metadata tools when current evidence cannot be
+  safely joined;
 - opcode-level VMX128/NEON lowering with tests and broad hit volume;
 - Android controller/settings/profile UX when the user prioritizes playability;
 - GPU offload only after counters identify CPU-side Xenos bulk transforms.

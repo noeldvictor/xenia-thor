@@ -66,7 +66,11 @@ Pick one lane with a credible FPS path:
 - **Backend maturity lane:** inspect A64 register allocation, helper ABI,
   block linking, direct/indirect call dispatch, fastmem/addressing, and
   guest-state caching as structural systems. Prefer generic backend fixes over
-  Blue-Dragon-only one-PC cvars.
+  Blue-Dragon-only one-PC cvars. Current next backend slice is tooling, not
+  behavior: `docs/research/20260526-014000-82281d28-hir-block-profile-join.md`
+  found the `82281D28` runtime block-profile to printed OptHIR join unsafe.
+  Add stable block metadata or a mapper before trusting weighted HIR joins for
+  `82281D28:8228233C`.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters
@@ -91,6 +95,9 @@ Pick one lane with a credible FPS path:
   because the previous note says "next useful slice".
 - Do not dump multiple huge HIR functions through logcat when exact static
   context is the output; use one-function captures or add a file-backed dump.
+- Do not use ordinal fallback as proof that runtime block profile rows match
+  printed HIR blocks. If `tools/thor/thor_hir_block_profile_join_audit.ps1`
+  reports `join_status=unsafe`, fix the metadata/dump first.
 - A speed A/B is only valid after behavior changes, audit counters are off, and
   the route/cvars/APK are matched.
 - When the loop feels circular, run

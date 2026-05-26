@@ -147,6 +147,9 @@ Closed immediate lanes:
 - Do not pivot the Blue Dragon speed sprint to broad Vulkan work until captures
   show GPU Commands, present waits, queue submit stalls, pipeline compilation,
   barriers, or texture/upload work overtaking CPU/JIT.
+- Do not use ordinal fallback to join `82281D28` runtime block profiles to
+  OptHIR for behavior decisions. The current profile guests are source-offset
+  addresses missing from printed HIR labels/comments.
 
 Better next lanes:
 
@@ -170,10 +173,14 @@ Better next lanes:
   `LOAD_VECTOR_SHR` behavior for now: `PACK` stayed absent, `UNPACK` stayed
   zero weighted, active `82282490` / `82281D28` vector volume was concentrated
   in already-closed stvewx/vmaddfp shapes, and `82287788` vector work did not
-  dominate its function body time. Prefer a hot-block codegen-floor/source
-  audit with reliable one-function or file-backed HIR dumps next, especially
-  recovering `82281D28:8228233C`, before any scalar/context-barrier/helper ABI
-  or direct-call stackpoint behavior patch.
+  dominate its function body time. The follow-up
+  `docs/research/20260526-014000-82281d28-hir-block-profile-join.md`
+  recovered a one-function `82281D28` OptHIR dump but found the current
+  runtime block-profile to HIR join unsafe: `8228233C` is a runtime
+  `SOURCE_OFFSET` block address, not a printed HIR label/comment, and ordinal
+  fallback maps it to a different HIR label. Do not patch behavior from
+  weighted `82281D28` HIR/block-profile joins until a deterministic mapper or
+  metadata dump proves the join safe. Prefer that mapper/tooling slice next.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

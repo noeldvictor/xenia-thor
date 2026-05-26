@@ -84,10 +84,24 @@ the current VMX128 route counters and closed broad PERMUTE /
 LOAD_VECTOR_SHL / LOAD_VECTOR_SHR behavior for now: PACK stayed absent,
 UNPACK stayed zero weighted, `82282490` / `82281D28` vector volume sat in
 closed stvewx/vmaddfp shapes, and `82287788` vector work was not the dominant
-body-time wall. Prefer a hot-block codegen-floor/source audit with reliable
-one-function or file-backed HIR dumps next, especially to recover
-`82281D28:8228233C`, before any scalar/context-barrier/helper ABI or
-direct-call stackpoint behavior patch.
+body-time wall. `docs/research/20260526-014000-82281d28-hir-block-profile-join.md`
+then recovered a one-function `82281D28` OptHIR dump and found the current
+block-profile/HIR join unsafe: runtime profile guests such as `8228233C` are
+not printed HIR labels/comments, and ordinal fallback maps hot rows to the
+wrong HIR label. Do not patch scalar/context-barrier/helper ABI or direct-call
+behavior from weighted `82281D28` HIR joins until a deterministic mapper or
+metadata dump proves the join safe.
+
+Next structural tooling target:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_hir_block_profile_join_audit.ps1 -LogPath scratch\thor-debug\20260526-013226-speed-logcat.txt -Function 82281D28 -Phase OptHIR -BlockProfileLog scratch\thor-debug\20260526-013226-speed-logcat.txt -ProfileKind Body -Top 20
+```
+
+If it reports `join_status=unsafe`, improve runtime block metadata first:
+runtime ordinal, `FindBlockGuestAddress`, first `SOURCE_OFFSET`, first printed
+PPC comment, HIR label if any, and source span. Update analysis scripts to
+refuse ordinal fallback unless that metadata proves it safe.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
