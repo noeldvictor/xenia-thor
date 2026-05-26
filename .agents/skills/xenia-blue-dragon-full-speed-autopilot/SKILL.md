@@ -237,6 +237,13 @@ the target-row capture remain material. Do not patch fast-entry behavior unless
 a new slice first adds the missing alternate-entry and dirty-flush payload data
 model with generated behavior still unchanged.
 
+`docs/research/20260526-085500-a64-nonclosed-guest-state-cache-audit.md` ranks
+the remaining guest-state/cache opportunity after excluding closed `r1`/`r11`
+and call-argument overlap. The strict targets are `r31,r30,r29,r28,r27`.
+Behavior is still blocked because same-block promotion already exists and the
+current emit-time cache resets per block. Next useful work is a default-off
+post-promotion non-closed GPR audit for those slots with behavior unchanged.
+
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
   counters show broad hit volume and correctness tests exist. Current counters

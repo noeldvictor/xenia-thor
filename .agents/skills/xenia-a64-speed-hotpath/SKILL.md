@@ -343,6 +343,18 @@ behavior. Reopen this lane only as an explicit source/data-model patch for
 alternate-entry storage plus dirty-flush payload contracts, with generated
 behavior still unchanged.
 
+`docs/research/20260526-085500-a64-nonclosed-guest-state-cache-audit.md` keeps
+the guest-state/cache lane alive without reopening closed `r1`/`r11` or
+fast-entry slots. The strict non-closed ranking is `r31=237`, `r30=175`,
+`r29=168`, `r28=152`, `r27=94`, and `r26=58` across the wall cluster. Source
+checks still block behavior: same-block context promotion already exists, the
+A64 emit-time cache resets per block, register allocation is per-block, and
+host GPR pressure is real. Next valid slice is a default-off, counter-only
+post-promotion non-closed GPR audit for `r31,r30,r29,r28,r27`; no store
+elision, load replacement, or payload materialization until route-clean
+counters prove material post-promotion volume with manageable flush/spill
+pressure.
+
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
 

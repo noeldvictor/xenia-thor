@@ -406,6 +406,17 @@ Better next lanes:
   materialize `r3-r10/lr` payloads unless a new slice first adds an explicit
   alternate-entry storage model and payload/dirty-flush ABI with generated
   behavior still unchanged.
+  `docs/research/20260526-085500-a64-nonclosed-guest-state-cache-audit.md`
+  keeps the guest-state/cache lane open, but only for non-closed pointer/state
+  GPRs. The current strict ranking excludes closed `r1` / `r11` and treats
+  `r3-r10` as call-argument overlap; remaining candidates are `r31=237`,
+  `r30=175`, `r29=168`, `r28=152`, `r27=94`, and `r26=58` across
+  `82281D28`, `82282490`, and `82287788`. Same-block context promotion already
+  exists, the A64 emit-time cache resets per block, and A64 has real host GPR
+  pressure. Do not patch generated behavior from this ranking; the next valid
+  guest-state slice is a default-off post-promotion non-closed GPR audit for
+  `r31,r30,r29,r28,r27` with no store elision, no load replacement, no payload
+  materialization, explicit miss/flush reasons, and spill-pressure estimates.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
   Current route counters do not justify a broad VMX128 behavior patch; reopen

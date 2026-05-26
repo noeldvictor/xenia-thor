@@ -179,6 +179,11 @@ Treat these as closed for immediate speed work:
   storage plus a dirty-flush payload ABI. Do not patch behavior by replacing
   `A64Function::machine_code`, rewriting global indirection, or materializing
   `r3-r10/lr` payloads from the existing audit-only evidence.
+- `docs/research/20260526-085500-a64-nonclosed-guest-state-cache-audit.md`
+  identifies the only still-plausible guest-state/cache targets as non-closed
+  pointer/state GPRs `r31,r30,r29,r28,r27`. Do not patch behavior from this
+  offline ranking; next work is a post-promotion counter-only audit with no
+  store elision, no load replacement, and explicit flush/spill accounting.
 
 ## Useful Output Bias
 
