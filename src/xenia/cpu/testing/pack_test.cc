@@ -111,3 +111,52 @@ TEST_CASE("PACK_SHORT_2", "[instr]") {
         REQUIRE(result == vec128i(0, 0, 0, 0x80018001));
       });
 }
+
+TEST_CASE("PACK_SHORT_4", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3, b.Pack(LoadVR(b, 4), PACK_TYPE_SHORT_4));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] =
+            vec128i(0x40407FFFu, 0x403F8001u, 0x40401234u, 0x40405678u);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        REQUIRE(result == vec128i(0, 0, 0x7FFF8001u, 0x12345678u));
+      });
+}
+
+TEST_CASE("PACK_UINT_2101010", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3, b.Pack(LoadVR(b, 4), PACK_TYPE_UINT_2101010));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] =
+            vec128i(0x40400001u, 0x40400002u, 0x40400003u, 0x3F800001u);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        REQUIRE(result.u32[3] == 0x40300801u);
+      });
+}
+
+TEST_CASE("PACK_ULONG_4202020", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3, b.Pack(LoadVR(b, 4), PACK_TYPE_ULONG_4202020));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] =
+            vec128i(0x40400001u, 0x40400002u, 0x40400003u, 0x3F800001u);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        REQUIRE(result.u32[2] == 0x10000300u);
+        REQUIRE(result.u32[3] == 0x00200001u);
+      });
+}

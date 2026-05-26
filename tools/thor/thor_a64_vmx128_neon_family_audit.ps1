@@ -214,13 +214,25 @@ $expectedPackModes = @(
 
 $packCoverage = New-Object System.Collections.Generic.List[string]
 $unpackCoverage = New-Object System.Collections.Generic.List[string]
+$packMissing = New-Object System.Collections.Generic.List[string]
+$unpackMissing = New-Object System.Collections.Generic.List[string]
 foreach ($mode in $expectedPackModes) {
-    $packCoverage.Add(("{0}:{1}" -f $mode, (Count-ActiveTests $testText ('"PACK_' + [regex]::Escape($mode))))) | Out-Null
-    $unpackCoverage.Add(("{0}:{1}" -f $mode, (Count-ActiveTests $testText ('"UNPACK_' + [regex]::Escape($mode))))) | Out-Null
+    $packModeTests = Count-ActiveTests $testText ('"PACK_' + [regex]::Escape($mode))
+    $unpackModeTests = Count-ActiveTests $testText ('"UNPACK_' + [regex]::Escape($mode))
+    $packCoverage.Add(("{0}:{1}" -f $mode, $packModeTests)) | Out-Null
+    $unpackCoverage.Add(("{0}:{1}" -f $mode, $unpackModeTests)) | Out-Null
+    if ($packModeTests -eq 0) {
+        $packMissing.Add($mode) | Out-Null
+    }
+    if ($unpackModeTests -eq 0) {
+        $unpackMissing.Add($mode) | Out-Null
+    }
 }
 
 $x64PackLineCount = Count-Pattern $x64Vector 'struct PACK'
 $x64UnpackLineCount = Count-Pattern $x64Vector 'struct UNPACK'
+$packMissingText = if ($packMissing.Count -gt 0) { $packMissing -join "," } else { "none" }
+$unpackMissingText = if ($unpackMissing.Count -gt 0) { $unpackMissing -join "," } else { "none" }
 
 Write-Output "# A64 VMX128/NEON Opcode-Family Audit"
 Write-Output ("repo={0}" -f $RepoRoot)
@@ -270,7 +282,7 @@ Emit-Family `
         $packTests, $expectedPackModes.Count, ($packCoverage -join ","),
         $unpackTests, ($unpackCoverage -join ","), $commentedUnpackTests) `
     -Source (Format-Source $A64VectorPath $packLine) `
-    -Next "Before optimizing PACK/UNPACK, expand missing tests for SHORT_4, UINT_2101010, ULONG_4202020, 8_IN_16, and 16_IN_32; then audit route volume."
+    -Next "Before optimizing PACK/UNPACK, close missing test modes pack=[$packMissingText] unpack=[$unpackMissingText]; then audit route volume."
 
 Emit-Family `
     -Name "lvl_lvr_vector_loads" `
@@ -290,7 +302,7 @@ Emit-Family `
 
 Write-Output ""
 Write-Output "ranked_vmx128_neon_next:"
-Write-Output "1. pack_unpack_test_coverage: widest semantic surface, current active tests cover only 4 of 9 pack modes and 4 of 9 unpack modes."
+Write-Output ("1. pack_unpack_test_coverage: widest semantic surface, current active tests cover {0} of {1} pack modes and {2} of {1} unpack modes; remaining pack=[{3}] unpack=[{4}]." -f $packTests, $expectedPackModes.Count, $unpackTests, $packMissingText, $unpackMissingText)
 Write-Output "2. permute_route_volume_audit: TBL-heavy and broad; requires current route dynamic counts before adding more fastpaths."
 Write-Output "3. load_vector_shift_control_materialization: current lowering rebuilds constants per op; route volume must be proven before codegen work."
 Write-Output "4. extract_splat_non_stvewx_volume: dynamic extract is costly, but exact stvewx lane-fold is closed and SPLAT has no active unit tests."
