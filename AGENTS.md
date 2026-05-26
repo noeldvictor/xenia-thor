@@ -165,12 +165,20 @@ Better next lanes:
   `82282490` and `82281D28` dominated by self-recursive child body time
   (`69.62%` and `72.22%`), not mostly caller-side dispatch overhead. Do not run
   another unchanged call-edge capture or generic recursive-call/stackpoint
-  probe. Prefer current VMX128 PERMUTE / `LOAD_VECTOR_SHL` /
-  `LOAD_VECTOR_SHR` route counters next, or a static HIR/source audit that
-  proves a reusable direct-call/stackpoint rule beyond closed stack-sync and
-  edge-payload lanes.
+  probe. `docs/research/20260526-012000-vmx128-route-stabilized-counters.md`
+  then closed broad VMX128 `PERMUTE` / `LOAD_VECTOR_SHL` /
+  `LOAD_VECTOR_SHR` behavior for now: `PACK` stayed absent, `UNPACK` stayed
+  zero weighted, active `82282490` / `82281D28` vector volume was concentrated
+  in already-closed stvewx/vmaddfp shapes, and `82287788` vector work did not
+  dominate its function body time. Prefer a hot-block codegen-floor/source
+  audit with reliable one-function or file-backed HIR dumps next, especially
+  recovering `82281D28:8228233C`, before any scalar/context-barrier/helper ABI
+  or direct-call stackpoint behavior patch.
 - VMX128-to-NEON lowering that improves broad opcode families, especially
   permute/load-shift/splat/compare/pack/unpack and exact vector memory shapes.
+  Current route counters do not justify a broad VMX128 behavior patch; reopen
+  this only with fresh body-dominant route volume outside the closed
+  stvewx/vmaddfp local shapes.
 - Mixed/static hot-function translation research only where guest-visible state,
   entry fallback, invalidation, and exceptions are explicit.
 - Measured GPU offload only for Xenos-like bulk graphics work that can stay on
@@ -384,9 +392,11 @@ it proof-gated.
   `docs/research/20260525-233000-vmx128-route-volume-audit.md`, PACK/UNPACK
   unit coverage is complete but PACK is absent and UNPACK had zero weighted
   hot-block volume in the available route profiles. Do not patch PACK/UNPACK
-  behavior now. PERMUTE and LOAD_VECTOR_SHL/SHR have stronger dynamic evidence
-  and need a current route-stabilized counter capture before behavior work;
-  exact stvewx and three-PC `MUL_ADD_V128` remain closed.
+  behavior now. `docs/research/20260526-012000-vmx128-route-stabilized-counters.md`
+  then checked current PERMUTE / LOAD_VECTOR_SHL/SHR route volume and closed
+  broad behavior work for now: route volume was not body-dominant and mostly
+  aligned with closed local shapes. Exact stvewx and three-PC `MUL_ADD_V128`
+  remain closed.
 - Use ARM dot-product/I8MM only when the VMX opcode is an integer
   sum-of-products shape and signedness, lane order, saturation, endianness, and
   accumulation semantics are proven. Do not apply `SDOT` / `UDOT` to FP32 VMX

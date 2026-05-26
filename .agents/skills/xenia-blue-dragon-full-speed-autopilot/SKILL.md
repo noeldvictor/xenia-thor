@@ -69,7 +69,10 @@ Pick one lane with a credible FPS path:
   Blue-Dragon-only one-PC cvars.
 - **VMX128/NEON lane:** harvest hot VMX/vector patterns from the current route,
   then implement opcode-level NEON improvements only when source review and
-  counters show broad hit volume and correctness tests exist.
+  counters show broad hit volume and correctness tests exist. Current counters
+  close broad `PERMUTE` / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` behavior for
+  now; reopen only with fresh body-dominant route volume outside closed
+  stvewx/vmaddfp local shapes.
 - **Hybrid/static lane:** use the research notes on mixed execution/static
   translation as design pressure for hot function variants, but require normal
   entry fallback and no hidden guest-visible state.
@@ -86,6 +89,8 @@ Pick one lane with a credible FPS path:
   behavior patch candidate or a written lane closure.
 - A Thor route capture must answer a named hypothesis. Do not capture just
   because the previous note says "next useful slice".
+- Do not dump multiple huge HIR functions through logcat when exact static
+  context is the output; use one-function captures or add a file-backed dump.
 - A speed A/B is only valid after behavior changes, audit counters are off, and
   the route/cvars/APK are matched.
 - When the loop feels circular, run

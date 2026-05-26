@@ -58,6 +58,8 @@ Pick exactly one:
 - No third counter-only slice in the same lane without a behavior candidate or
   lane closure.
 - No Thor run without a named hypothesis and expected decision.
+- No multi-function HIR dump through logcat when exact hot-block mapping is the
+  output; capture one large function at a time or improve the dump transport.
 - No quiet speed A/B for counter-only patches.
 - No one-PC or one-span fastpath unless it plausibly affects route FPS and has
   route-clean proof.
@@ -74,6 +76,9 @@ Treat these as closed for immediate speed work:
   no useful clean/dirty hits.
 - Narrow stvewx, three-PC `MUL_ADD_V128`, standalone `f[1]`, fpscr dirty-cache,
   local-only `822824F0`, broad CR/GPR caches, and broad Vulkan pivots.
+- Broad VMX128 `PERMUTE` / `LOAD_VECTOR_SHL` / `LOAD_VECTOR_SHR` behavior from
+  the 2026-05-26 route counters; vector volume was not the dominant wall and
+  mostly sat in closed local shapes.
 
 ## Useful Output Bias
 

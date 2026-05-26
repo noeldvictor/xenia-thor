@@ -78,11 +78,16 @@ behavior next. Use existing call-edge profiling on
 patch. `docs/research/20260526-011000-a64-call-edge-recursion-capture.md`
 ran that capture and found `82282490` and `82281D28` dominated by
 self-recursive child body time, not caller-side dispatch overhead. Do not rerun
-unchanged call-edge captures or generic recursive-call/stackpoint probes. Move
-next to current route-stabilized PERMUTE / LOAD_VECTOR_SHL / LOAD_VECTOR_SHR
-counters before VMX128 behavior work, unless a static HIR/source audit proves a
-reusable direct-call or stackpoint rule beyond closed stack-sync and
-edge-payload lanes.
+unchanged call-edge captures or generic recursive-call/stackpoint probes.
+`docs/research/20260526-012000-vmx128-route-stabilized-counters.md` then ran
+the current VMX128 route counters and closed broad PERMUTE /
+LOAD_VECTOR_SHL / LOAD_VECTOR_SHR behavior for now: PACK stayed absent,
+UNPACK stayed zero weighted, `82282490` / `82281D28` vector volume sat in
+closed stvewx/vmaddfp shapes, and `82287788` vector work was not the dominant
+body-time wall. Prefer a hot-block codegen-floor/source audit with reliable
+one-function or file-backed HIR dumps next, especially to recover
+`82281D28:8228233C`, before any scalar/context-barrier/helper ABI or
+direct-call stackpoint behavior patch.
 
 For the helper ABI / block-linking lane, run this offline audit before deciding
 whether a Thor call-edge capture is justified:
@@ -103,11 +108,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_a64_vmx128_n
 Current decision: PACK/UNPACK unit coverage is complete, and the route-volume
 audit in `docs/research/20260525-233000-vmx128-route-volume-audit.md` closes
 PACK/UNPACK for immediate behavior work: PACK is absent in the checked hot
-functions, and UNPACK has zero weighted hot-block volume. If continuing VMX128,
-prefer current route-stabilized counters for PERMUTE and LOAD_VECTOR_SHL/SHR
-before any behavior patch. Non-stvewx EXTRACT/SPLAT needs either SPLAT tests or
-broad route volume. Do not reopen exact stvewx or three-PC `MUL_ADD_V128` from
-this lane.
+functions, and UNPACK has zero weighted hot-block volume. The current
+route-stabilized counter pass in
+`docs/research/20260526-012000-vmx128-route-stabilized-counters.md` also closes
+broad PERMUTE / LOAD_VECTOR_SHL / LOAD_VECTOR_SHR behavior for now. Reopen
+VMX128 behavior only with fresh body-dominant route volume outside the closed
+stvewx/vmaddfp local shapes, plus explicit fallback/correctness coverage.
+Non-stvewx EXTRACT/SPLAT needs either SPLAT tests or broad route volume. Do not
+reopen exact stvewx or three-PC `MUL_ADD_V128` from this lane.
 
 ## Thor Hardware
 
