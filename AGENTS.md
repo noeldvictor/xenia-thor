@@ -120,6 +120,37 @@ let a refiner pass change emulator behavior without the normal experiment gate.
 ## Current Blue Dragon A64 Lane
 
 Latest route-clean audit:
+`docs/research/20260525-195600-edge-payload-lifetime-audit.md`.
+The default-off `arm64_blue_dragon_edge_payload_storage_audit` now includes
+counter-only lifetime/segment rows for exact edge
+`82282490:82282598 -> 82287788`. Capture
+`scratch/thor-debug/20260525-195142-*` used APK SHA
+`F19476F6E279449C5F155045F0662124941BACD66F60BC05809BF95D304BB72E`, reached
+the visible opening sky / dragon-wing route, and had a clean fatal-marker
+search. It stayed behavior-neutral: `payload_materializations_allowed=0`,
+`behavior_changed=0`, normal-entry fallback preserved, and no payload state was
+materialized.
+
+Final lifetime counters block the current payload-storage speed patch:
+`segments_started=698767`, `segments_survived_no_kill=0`,
+`f1_reads_before_kill=0`, `f1_reads_after_kill=2085964`,
+`r3_reads_before_kill=0`, `r3_reads_after_kill=1426326`,
+`r3_writes_before_kill=0`, and `r3_writes_after_kill=2086964`.
+Every observed segment was first-killed by `CONTEXT_BARRIER`:
+`first_context_barrier=698767`; first-kill counters for external visibility,
+return/exit, required `fpscr` writeback, unknown call, and exception/trap were
+all `0`. Final perf stayed CPU/JIT-bound: `82282490=39940278`,
+`82281D28=8099644`, `82287788=6069873`, Main Thread `96.1%`,
+GPU Commands `11.5%`.
+
+Do not materialize edge payload state and do not run a quiet speed A/B from
+this lane yet. Next useful slice is an offline HIR/source audit of the first
+`CONTEXT_BARRIER` in `82287788`, including its exact guest PC and surrounding
+state traffic. Decide whether the barrier is a conservative artifact that can
+safely preserve a read-only `f[1]` payload, or a required guest-visible boundary
+that blocks this payload-storage strategy.
+
+Previous route-clean audit:
 `docs/research/20260525-193245-edge-payload-storage-audit-capture.md`.
 The default-off `arm64_blue_dragon_edge_payload_storage_audit` skeleton now
 exists for exact edge `82282490:82282598 -> 82287788`, with Android/Thor launch
@@ -143,12 +174,8 @@ Final perf stayed CPU/JIT-bound: `82282490=51783317`, `82281D28=10283586`,
 `82287788=6836225`, Main Thread `103%`, GPU Commands `11.5%`.
 
 Do not materialize payload state or run a quiet speed A/B from this first
-payload-storage audit. Next useful slice is a counter-only payload
-lifetime/segment audit for the same edge: measure usable `f[1]` / `r[3]` reads
-before the first context barrier, external visibility point, return/exit, or
-required `fpscr` writeback. Keep `fpscr` in its separate CFG-writeback lane,
-keep `r[3]` count-only until lifetime is proven, and leave `lr` on the normal
-PPC call/return path.
+payload-storage audit. The follow-up lifetime audit above supersedes its next
+action and proves `CONTEXT_BARRIER` is the immediate blocker.
 
 Previous route-clean audit:
 `docs/research/20260525-184957-edge-f1-kill-taxonomy.md`.

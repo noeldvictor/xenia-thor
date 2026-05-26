@@ -2237,6 +2237,12 @@ void A64Backend::LogSpeedProfile() {
     auto r3_seed = load_delta(
         blue_dragon_edge_payload_storage_r3_seed_candidate_count_,
         last_blue_dragon_edge_payload_storage_r3_seed_candidate_count_);
+    auto r3_active_read = load_delta(
+        blue_dragon_edge_payload_storage_r3_active_read_covered_count_,
+        last_blue_dragon_edge_payload_storage_r3_active_read_covered_count_);
+    auto r3_inactive_read = load_delta(
+        blue_dragon_edge_payload_storage_r3_inactive_read_count_,
+        last_blue_dragon_edge_payload_storage_r3_inactive_read_count_);
     auto r3_mutable_write = load_delta(
         blue_dragon_edge_payload_storage_r3_mutable_write_count_,
         last_blue_dragon_edge_payload_storage_r3_mutable_write_count_);
@@ -2261,6 +2267,48 @@ void A64Backend::LogSpeedProfile() {
     auto external_visibility = load_delta(
         blue_dragon_edge_payload_storage_external_visibility_count_,
         last_blue_dragon_edge_payload_storage_external_visibility_count_);
+    auto lifetime_segment_started = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_segment_started_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_segment_started_count_);
+    auto lifetime_segment_survived = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_segment_survived_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_segment_survived_count_);
+    auto lifetime_f1_read_before_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_f1_read_before_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_f1_read_before_kill_count_);
+    auto lifetime_f1_read_after_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_f1_read_after_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_f1_read_after_kill_count_);
+    auto lifetime_r3_read_before_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_r3_read_before_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_r3_read_before_kill_count_);
+    auto lifetime_r3_read_after_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_r3_read_after_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_r3_read_after_kill_count_);
+    auto lifetime_r3_write_before_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_r3_write_before_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_r3_write_before_kill_count_);
+    auto lifetime_r3_write_after_kill = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_r3_write_after_kill_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_r3_write_after_kill_count_);
+    auto lifetime_first_kill_context_barrier = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_context_barrier_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_context_barrier_count_);
+    auto lifetime_first_kill_external_visibility = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_external_visibility_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_external_visibility_count_);
+    auto lifetime_first_kill_return_exit = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_return_exit_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_return_exit_count_);
+    auto lifetime_first_kill_fpscr_writeback = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count_);
+    auto lifetime_first_kill_unknown_call = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_unknown_call_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_unknown_call_count_);
+    auto lifetime_first_kill_exception_or_trap = load_delta(
+        blue_dragon_edge_payload_storage_lifetime_first_kill_exception_or_trap_count_,
+        last_blue_dragon_edge_payload_storage_lifetime_first_kill_exception_or_trap_count_);
     XELOGW(
         "A64 Blue Dragon edge-payload-storage audit: "
         "eligible_edge_compiles={}/{} variant_codegen_skipped={}/{} "
@@ -2286,14 +2334,16 @@ void A64Backend::LogSpeedProfile() {
         "f1_inactive_reads={}/{} f1_unknown_kills={}/{} "
         "fpscr_seed_candidates={}/{} fpscr_dirty_writes={}/{} "
         "fpscr_required_writebacks={}/{} r3_seed_candidates={}/{} "
+        "r3_active_reads_covered={}/{} r3_inactive_reads={}/{} "
         "r3_mutable_writes={}/{}",
         f1_seed.second, f1_seed.first, f1_active_read.second,
         f1_active_read.first, f1_inactive_read.second, f1_inactive_read.first,
         f1_unknown_kill.second, f1_unknown_kill.first, fpscr_seed.second,
         fpscr_seed.first, fpscr_dirty_write.second, fpscr_dirty_write.first,
         fpscr_required_writeback.second, fpscr_required_writeback.first,
-        r3_seed.second, r3_seed.first, r3_mutable_write.second,
-        r3_mutable_write.first);
+        r3_seed.second, r3_seed.first, r3_active_read.second,
+        r3_active_read.first, r3_inactive_read.second, r3_inactive_read.first,
+        r3_mutable_write.second, r3_mutable_write.first);
     XELOGW(
         "A64 Blue Dragon edge-payload-storage audit flush: "
         "helper_preserved={}/{} child_preserved={}/{} return_exit={}/{} "
@@ -2305,6 +2355,43 @@ void A64Backend::LogSpeedProfile() {
         context_barrier.first, exception_or_trap.second,
         exception_or_trap.first, external_visibility.second,
         external_visibility.first);
+    XELOGW(
+        "A64 Blue Dragon edge-payload-storage audit lifetime: "
+        "segments_started={}/{} segments_survived_no_kill={}/{} "
+        "f1_reads_before_kill={}/{} f1_reads_after_kill={}/{} "
+        "r3_reads_before_kill={}/{} r3_reads_after_kill={}/{} "
+        "r3_writes_before_kill={}/{} r3_writes_after_kill={}/{}",
+        lifetime_segment_started.second, lifetime_segment_started.first,
+        lifetime_segment_survived.second, lifetime_segment_survived.first,
+        lifetime_f1_read_before_kill.second,
+        lifetime_f1_read_before_kill.first,
+        lifetime_f1_read_after_kill.second,
+        lifetime_f1_read_after_kill.first,
+        lifetime_r3_read_before_kill.second,
+        lifetime_r3_read_before_kill.first,
+        lifetime_r3_read_after_kill.second,
+        lifetime_r3_read_after_kill.first,
+        lifetime_r3_write_before_kill.second,
+        lifetime_r3_write_before_kill.first,
+        lifetime_r3_write_after_kill.second,
+        lifetime_r3_write_after_kill.first);
+    XELOGW(
+        "A64 Blue Dragon edge-payload-storage audit lifetime-kill: "
+        "first_context_barrier={}/{} first_external_visibility={}/{} "
+        "first_return_exit={}/{} first_fpscr_writeback={}/{} "
+        "first_unknown_call={}/{} first_exception_or_trap={}/{}",
+        lifetime_first_kill_context_barrier.second,
+        lifetime_first_kill_context_barrier.first,
+        lifetime_first_kill_external_visibility.second,
+        lifetime_first_kill_external_visibility.first,
+        lifetime_first_kill_return_exit.second,
+        lifetime_first_kill_return_exit.first,
+        lifetime_first_kill_fpscr_writeback.second,
+        lifetime_first_kill_fpscr_writeback.first,
+        lifetime_first_kill_unknown_call.second,
+        lifetime_first_kill_unknown_call.first,
+        lifetime_first_kill_exception_or_trap.second,
+        lifetime_first_kill_exception_or_trap.first);
   }
   if (cvars::arm64_blue_dragon_fpscr_cfg_writeback_audit) {
     auto static_load_sites = load_delta(

@@ -100,10 +100,25 @@ Counters show useful volume but high lifetime pressure:
 `f1_unknown_kills=0`, `fpscr_dirty_writes=2849260`,
 `fpscr_required_writebacks=922692`, `r3_mutable_writes=2718234`,
 `context_barrier=11561589`, and `unknown_call=0`. Do not materialize payload
-state or run a quiet speed A/B yet. The next worker slice should be a
-counter-only payload lifetime/segment audit for the same edge, measuring usable
-`f[1]` / `r[3]` reads before the first barrier, external visibility point,
-return/exit, or required `fpscr` writeback.
+state or run a quiet speed A/B yet. The follow-up lifetime capture below
+supersedes this next action.
+
+Latest lifetime capture:
+`docs/research/20260525-195600-edge-payload-lifetime-audit.md`.
+The lifetime audit is route-clean and behavior-neutral on
+`scratch/thor-debug/20260525-195142-*` with APK SHA
+`F19476F6E279449C5F155045F0662124941BACD66F60BC05809BF95D304BB72E`.
+Final observed counters show the current payload-storage lane is blocked:
+`segments_started=698767`, `segments_survived_no_kill=0`,
+`f1_reads_before_kill=0`, `f1_reads_after_kill=2085964`,
+`r3_reads_before_kill=0`, `r3_reads_after_kill=1426326`,
+`r3_writes_before_kill=0`, `r3_writes_after_kill=2086964`, and
+`first_context_barrier=698767`. First-kill external visibility, return/exit,
+`fpscr` writeback, unknown call, and exception/trap stayed zero. Do not
+materialize edge payload state and do not run a quiet speed A/B from this lane.
+The next worker slice should offline-audit the first `CONTEXT_BARRIER` in
+`82287788` and its surrounding HIR/source state traffic, then decide whether the
+barrier can safely preserve read-only `f[1]` or blocks this strategy.
 
 Previous residual register-cache capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`

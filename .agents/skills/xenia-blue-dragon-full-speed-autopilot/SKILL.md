@@ -214,6 +214,31 @@ payload candidate; keep `fpscr` in the separate CFG-writeback lane; keep
 quiet speed A/B or materialize payload state until route-clean counter rows
 prove useful hit volume and manageable flush pressure.
 
+Latest edge payload lifetime audit:
+`docs/research/20260525-195600-edge-payload-lifetime-audit.md`.
+The default-off `arm64_blue_dragon_edge_payload_storage_audit` now has
+counter-only lifetime/segment rows for exact edge
+`82282490:82282598 -> 82287788`. Capture
+`scratch/thor-debug/20260525-195142-*` used APK SHA
+`F19476F6E279449C5F155045F0662124941BACD66F60BC05809BF95D304BB72E`, reached
+visible opening sky / dragon-wing, and had a clean fatal-marker search.
+Behavior remained unchanged: `payload_materializations_allowed=0`,
+`behavior_changed=0`, normal-entry fallback preserved, and no payload state was
+materialized.
+
+Final observed lifetime counters were decisive:
+`segments_started=698767`, `segments_survived_no_kill=0`,
+`f1_reads_before_kill=0`, `f1_reads_after_kill=2085964`,
+`r3_reads_before_kill=0`, `r3_reads_after_kill=1426326`,
+`r3_writes_before_kill=0`, and `r3_writes_after_kill=2086964`.
+All observed segments were first-killed by `CONTEXT_BARRIER`
+(`first_context_barrier=698767`); first-kill external visibility, return/exit,
+`fpscr` writeback, unknown call, and exception/trap stayed zero. Do not
+materialize edge payload state and do not run a quiet speed A/B from this lane.
+Next useful slice is an offline HIR/source audit of the first
+`CONTEXT_BARRIER` in `82287788`, including exact guest PC and surrounding state
+traffic, to decide whether read-only `f[1]` can legally survive it.
+
 Latest edge payload-storage audit capture:
 `docs/research/20260525-193245-edge-payload-storage-audit-capture.md`.
 The default-off `arm64_blue_dragon_edge_payload_storage_audit` skeleton now has
@@ -232,10 +257,8 @@ Final route counters show useful edge volume but high lifetime pressure:
 `fpscr_required_writebacks=922692`, `r3_mutable_writes=2718234`,
 `context_barrier=11561589`, `external_visibility=48803`, and
 `unknown_call=0`. Do not materialize payload state or run a quiet speed A/B
-from this first audit. Next useful slice is a counter-only payload
-lifetime/segment audit for the same edge, measuring usable `f[1]` / `r[3]`
-reads before the first barrier, external visibility point, return/exit, or
-required `fpscr` writeback.
+from this first audit. The lifetime audit above supersedes its next action and
+proves `CONTEXT_BARRIER` is the immediate blocker.
 
 Previous residual audit capture:
 `docs/research/20260525-170307-arm64-register-cache-residual-audit-capture.md`

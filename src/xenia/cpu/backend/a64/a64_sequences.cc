@@ -493,6 +493,7 @@ static void EmitBlueDragonEdgePayloadStorageF1ReadAudit(
 
   auto* backend = e.backend();
   auto& inactive = e.NewCachedLabel();
+  auto& after_kill = e.NewCachedLabel();
   auto& done = e.NewCachedLabel();
   e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
                    static_cast<uint32_t>(offsetof(
@@ -501,10 +502,61 @@ static void EmitBlueDragonEdgePayloadStorageF1ReadAudit(
   e.cbz(e.w11, inactive);
   e.EmitAtomicIncrement64(
       backend->blue_dragon_edge_payload_storage_f1_active_read_covered_count());
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_lifetime_live))));
+  e.cbz(e.w11, after_kill);
+  e.EmitAtomicIncrement64(
+      backend
+          ->blue_dragon_edge_payload_storage_lifetime_f1_read_before_kill_count());
+  e.b(done);
+  e.L(after_kill);
+  e.EmitAtomicIncrement64(
+      backend
+          ->blue_dragon_edge_payload_storage_lifetime_f1_read_after_kill_count());
   e.b(done);
   e.L(inactive);
   e.EmitAtomicIncrement64(
       backend->blue_dragon_edge_payload_storage_f1_inactive_read_count());
+  e.L(done);
+}
+
+static void EmitBlueDragonEdgePayloadStorageR3ReadAudit(
+    A64Emitter& e, const hir::Instr* instr, uint32_t offset) {
+  if (!cvars::arm64_blue_dragon_edge_payload_storage_audit || !instr ||
+      e.current_guest_function() != 0x82287788 || offset != 56) {
+    return;
+  }
+
+  auto* backend = e.backend();
+  auto& inactive = e.NewCachedLabel();
+  auto& after_kill = e.NewCachedLabel();
+  auto& done = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_active))));
+  e.cbz(e.w11, inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_payload_storage_r3_active_read_covered_count());
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_lifetime_live))));
+  e.cbz(e.w11, after_kill);
+  e.EmitAtomicIncrement64(
+      backend
+          ->blue_dragon_edge_payload_storage_lifetime_r3_read_before_kill_count());
+  e.b(done);
+  e.L(after_kill);
+  e.EmitAtomicIncrement64(
+      backend
+          ->blue_dragon_edge_payload_storage_lifetime_r3_read_after_kill_count());
+  e.b(done);
+  e.L(inactive);
+  e.EmitAtomicIncrement64(
+      backend->blue_dragon_edge_payload_storage_r3_inactive_read_count());
   e.L(done);
 }
 
@@ -533,6 +585,52 @@ static void EmitBlueDragonEdgePayloadStorageActiveCounter(
     e.EmitAtomicIncrement64(secondary_counter);
   }
   e.L(inactive);
+}
+
+static void EmitBlueDragonEdgePayloadStorageLifetimeSplitCounter(
+    A64Emitter& e, std::atomic<uint64_t>* before_kill_counter,
+    std::atomic<uint64_t>* after_kill_counter) {
+  auto& inactive = e.NewCachedLabel();
+  auto& after_kill = e.NewCachedLabel();
+  auto& done = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_active))));
+  e.cbz(e.w11, inactive);
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_lifetime_live))));
+  e.cbz(e.w11, after_kill);
+  e.EmitAtomicIncrement64(before_kill_counter);
+  e.b(done);
+  e.L(after_kill);
+  e.EmitAtomicIncrement64(after_kill_counter);
+  e.b(done);
+  e.L(inactive);
+  e.L(done);
+}
+
+static void EmitBlueDragonEdgePayloadStorageFirstKill(
+    A64Emitter& e, std::atomic<uint64_t>* first_kill_counter) {
+  auto& done = e.NewCachedLabel();
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_active))));
+  e.cbz(e.w11, done);
+  e.ldr(e.w11, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_lifetime_live))));
+  e.cbz(e.w11, done);
+  e.EmitAtomicIncrement64(first_kill_counter);
+  e.str(e.wzr, ptr(e.GetBackendCtxReg(),
+                   static_cast<uint32_t>(offsetof(
+                       A64BackendContext,
+                       blue_dragon_edge_payload_storage_lifetime_live))));
+  e.L(done);
 }
 
 static void EmitBlueDragonEdgePayloadStorageStoreAudit(
@@ -567,9 +665,20 @@ static void EmitBlueDragonEdgePayloadStorageStoreAudit(
         IsBlueDragonEdgePayloadStorageFpscrExternalStorePc(guest_pc)
             ? backend->blue_dragon_edge_payload_storage_external_visibility_count()
             : nullptr);
+    if (IsBlueDragonEdgePayloadStorageFpscrExternalStorePc(guest_pc)) {
+      EmitBlueDragonEdgePayloadStorageFirstKill(
+          e, backend
+                 ->blue_dragon_edge_payload_storage_lifetime_first_kill_external_visibility_count());
+    }
   } else if (offset == 56) {
     EmitBlueDragonEdgePayloadStorageActiveCounter(
         e, backend->blue_dragon_edge_payload_storage_r3_mutable_write_count());
+    EmitBlueDragonEdgePayloadStorageLifetimeSplitCounter(
+        e,
+        backend
+            ->blue_dragon_edge_payload_storage_lifetime_r3_write_before_kill_count(),
+        backend
+            ->blue_dragon_edge_payload_storage_lifetime_r3_write_after_kill_count());
   }
 }
 
@@ -967,6 +1076,9 @@ struct CONTEXT_BARRIER
       EmitBlueDragonEdgePayloadStorageActiveCounter(
           e, e.backend()
                  ->blue_dragon_edge_payload_storage_context_barrier_count());
+      EmitBlueDragonEdgePayloadStorageFirstKill(
+          e, e.backend()
+                 ->blue_dragon_edge_payload_storage_lifetime_first_kill_context_barrier_count());
     }
     // No-op on ARM64 (context is always in x20).
   }
@@ -1082,6 +1194,7 @@ struct LOAD_CONTEXT_I32
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
     EmitBlueDragonStateCarrierDesignLoadAudit(e, i.instr, offset);
+    EmitBlueDragonEdgePayloadStorageR3ReadAudit(e, i.instr, offset);
     EmitBlueDragonFpscrCfgWritebackLoadAudit(e, i.instr, offset);
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
@@ -1090,6 +1203,7 @@ struct LOAD_CONTEXT_I64
     : Sequence<LOAD_CONTEXT_I64, I<OPCODE_LOAD_CONTEXT, I64Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    EmitBlueDragonEdgePayloadStorageR3ReadAudit(e, i.instr, offset);
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };

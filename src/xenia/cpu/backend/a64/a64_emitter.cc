@@ -4543,6 +4543,7 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     auto* backend = backend_;
     const uint32_t guest_pc = instr->GuestAddressFor();
     std::atomic<uint64_t>* flush_counter = nullptr;
+    std::atomic<uint64_t>* first_kill_counter = nullptr;
     bool fpscr_required_writeback = false;
     bool unknown_call = false;
     switch (guest_pc) {
@@ -4558,24 +4559,39 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
         flush_counter =
             backend->blue_dragon_edge_payload_storage_child_preserved_count();
         fpscr_required_writeback = true;
+        first_kill_counter =
+            backend
+                ->blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count();
         break;
       case 0x82287EDC:
         flush_counter =
             backend->blue_dragon_edge_payload_storage_return_exit_count();
         fpscr_required_writeback = true;
+        first_kill_counter =
+            backend
+                ->blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count();
         break;
       case 0x82287EE4:
         flush_counter =
             backend->blue_dragon_edge_payload_storage_helper_preserved_count();
         fpscr_required_writeback = true;
+        first_kill_counter =
+            backend
+                ->blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count();
         break;
       case 0x82288220:
         flush_counter =
             backend->blue_dragon_edge_payload_storage_return_exit_count();
         fpscr_required_writeback = true;
+        first_kill_counter =
+            backend
+                ->blue_dragon_edge_payload_storage_lifetime_first_kill_fpscr_writeback_count();
         break;
       default:
         unknown_call = true;
+        first_kill_counter =
+            backend
+                ->blue_dragon_edge_payload_storage_lifetime_first_kill_unknown_call_count();
         break;
     }
     auto& inactive_payload = NewCachedLabel();
@@ -4595,6 +4611,18 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
           backend->blue_dragon_edge_payload_storage_unknown_call_count());
       EmitAtomicIncrement64(
           backend->blue_dragon_edge_payload_storage_f1_unknown_kill_count());
+    }
+    if (first_kill_counter) {
+      auto& lifetime_already_killed = NewCachedLabel();
+      ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                        A64BackendContext,
+                                        blue_dragon_edge_payload_storage_lifetime_live))));
+      cbz(w11, lifetime_already_killed);
+      EmitAtomicIncrement64(first_kill_counter);
+      str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                         A64BackendContext,
+                                         blue_dragon_edge_payload_storage_lifetime_live))));
+      L(lifetime_already_killed);
     }
     L(inactive_payload);
   }
@@ -4687,13 +4715,35 @@ void A64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
     str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                       A64BackendContext,
                                       blue_dragon_edge_payload_storage_active))));
+    str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_payload_storage_lifetime_live))));
     EmitAtomicIncrement64(
         backend_->blue_dragon_edge_payload_storage_marker_set_count());
+    EmitAtomicIncrement64(
+        backend_
+            ->blue_dragon_edge_payload_storage_lifetime_segment_started_count());
   };
   auto emit_blue_dragon_edge_payload_storage_marker_clear = [&]() {
     if (!blue_dragon_edge_payload_storage_marker_allowed) {
       return;
     }
+    auto& lifetime_not_survived = NewCachedLabel();
+    ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_payload_storage_active))));
+    cbz(w11, lifetime_not_survived);
+    ldr(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                      A64BackendContext,
+                                      blue_dragon_edge_payload_storage_lifetime_live))));
+    cbz(w11, lifetime_not_survived);
+    EmitAtomicIncrement64(
+        backend_
+            ->blue_dragon_edge_payload_storage_lifetime_segment_survived_count());
+    L(lifetime_not_survived);
+    str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
+                                       A64BackendContext,
+                                       blue_dragon_edge_payload_storage_lifetime_live))));
     str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                        A64BackendContext,
                                        blue_dragon_edge_payload_storage_active))));
