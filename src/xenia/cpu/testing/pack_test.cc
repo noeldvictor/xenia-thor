@@ -15,6 +15,17 @@ using namespace xe::cpu::hir;
 using namespace xe::cpu::testing;
 using xe::cpu::ppc::PPCContext;
 
+namespace {
+
+constexpr uint32_t kPack8In16SignedSignedSaturate =
+    PACK_TYPE_8_IN_16 | PACK_TYPE_IN_SIGNED | PACK_TYPE_OUT_SIGNED |
+    PACK_TYPE_OUT_SATURATE;
+constexpr uint32_t kPack16In32SignedSignedSaturate =
+    PACK_TYPE_16_IN_32 | PACK_TYPE_IN_SIGNED | PACK_TYPE_OUT_SIGNED |
+    PACK_TYPE_OUT_SATURATE;
+
+}  // namespace
+
 TEST_CASE("PACK_D3DCOLOR", "[instr]") {
   TestFunction test([](HIRBuilder& b) {
     StoreVR(b, 3, b.Pack(LoadVR(b, 4), PACK_TYPE_D3DCOLOR));
@@ -158,5 +169,43 @@ TEST_CASE("PACK_ULONG_4202020", "[instr]") {
         auto result = ctx->v[3];
         REQUIRE(result.u32[2] == 0x10000300u);
         REQUIRE(result.u32[3] == 0x00200001u);
+      });
+}
+
+TEST_CASE("PACK_8_IN_16", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 6,
+            b.Pack(LoadVR(b, 4), LoadVR(b, 5),
+                   kPack8In16SignedSignedSaturate));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] = vec128s(1, 2, 3, 4, 5, 6, 7, 8);
+        ctx->v[5] = vec128s(9, 10, 11, 12, 13, 14, 15, 16);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[6];
+        REQUIRE(result ==
+                vec128b(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+                        14, 15, 16));
+      });
+}
+
+TEST_CASE("PACK_16_IN_32", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 6,
+            b.Pack(LoadVR(b, 4), LoadVR(b, 5),
+                   kPack16In32SignedSignedSaturate));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] = vec128i(1, 2, 3, 4);
+        ctx->v[5] = vec128i(5, 6, 7, 8);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[6];
+        REQUIRE(result == vec128s(1, 2, 3, 4, 5, 6, 7, 8));
       });
 }

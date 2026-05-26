@@ -69,10 +69,11 @@ For the VMX128/NEON lane, run this before behavior work:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_a64_vmx128_neon_family_audit.ps1
 ```
 
-Current decision: PACK/UNPACK needs missing unit coverage first; PERMUTE and
-LOAD_VECTOR_SHL/SHR need fresh route-volume counts; non-stvewx EXTRACT/SPLAT
-needs either SPLAT tests or broad route volume. Do not reopen exact stvewx or
-three-PC `MUL_ADD_V128` from this lane.
+Current decision: PACK/UNPACK unit coverage is complete, but coverage alone is
+not speed evidence. Run fresh route-volume counters before any PACK/UNPACK
+behavior work. PERMUTE and LOAD_VECTOR_SHL/SHR also need fresh route-volume
+counts; non-stvewx EXTRACT/SPLAT needs either SPLAT tests or broad route
+volume. Do not reopen exact stvewx or three-PC `MUL_ADD_V128` from this lane.
 
 ## Thor Hardware
 

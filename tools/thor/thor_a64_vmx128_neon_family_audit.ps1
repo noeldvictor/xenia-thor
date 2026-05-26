@@ -233,6 +233,22 @@ $x64PackLineCount = Count-Pattern $x64Vector 'struct PACK'
 $x64UnpackLineCount = Count-Pattern $x64Vector 'struct UNPACK'
 $packMissingText = if ($packMissing.Count -gt 0) { $packMissing -join "," } else { "none" }
 $unpackMissingText = if ($unpackMissing.Count -gt 0) { $unpackMissing -join "," } else { "none" }
+$packUnpackCoverageComplete = ($packMissing.Count -eq 0) -and ($unpackMissing.Count -eq 0)
+$packUnpackStatus = if ($packUnpackCoverageComplete) {
+    "coverage_complete_needs_route_volume"
+} else {
+    "broad_candidate_but_test_coverage_first"
+}
+$packUnpackNext = if ($packUnpackCoverageComplete) {
+    "PACK/UNPACK unit coverage is complete; run fresh route-volume counters before any behavior work."
+} else {
+    "Before optimizing PACK/UNPACK, close missing test modes pack=[$packMissingText] unpack=[$unpackMissingText]; then audit route volume."
+}
+$packUnpackRankedNext = if ($packUnpackCoverageComplete) {
+    "1. pack_unpack_route_volume: unit coverage is complete for $($expectedPackModes.Count) of $($expectedPackModes.Count) pack modes and $($expectedPackModes.Count) of $($expectedPackModes.Count) unpack modes; next proof is route dynamic counts before behavior work."
+} else {
+    "1. pack_unpack_test_coverage: widest semantic surface, current active tests cover $packTests of $($expectedPackModes.Count) pack modes and $unpackTests of $($expectedPackModes.Count) unpack modes; remaining pack=[$packMissingText] unpack=[$unpackMissingText]."
+}
 
 Write-Output "# A64 VMX128/NEON Opcode-Family Audit"
 Write-Output ("repo={0}" -f $RepoRoot)
@@ -276,13 +292,13 @@ Emit-Family `
 
 Emit-Family `
     -Name "pack_unpack" `
-    -Status "broad_candidate_but_test_coverage_first" `
+    -Status $packUnpackStatus `
     -Evidence "pack_line=$packLine; unpack_line=$unpackLine; x64_pack_structs=$x64PackLineCount; x64_unpack_structs=$x64UnpackLineCount; A64 has scalar-heavy 20-bit/half paths and NEON pack/unpack paths" `
     -Coverage ("pack_tests={0}/{1} [{2}]; unpack_tests={3}/{1} [{4}]; commented_unpack_tests={5}" -f
         $packTests, $expectedPackModes.Count, ($packCoverage -join ","),
         $unpackTests, ($unpackCoverage -join ","), $commentedUnpackTests) `
     -Source (Format-Source $A64VectorPath $packLine) `
-    -Next "Before optimizing PACK/UNPACK, close missing test modes pack=[$packMissingText] unpack=[$unpackMissingText]; then audit route volume."
+    -Next $packUnpackNext
 
 Emit-Family `
     -Name "lvl_lvr_vector_loads" `
@@ -302,10 +318,10 @@ Emit-Family `
 
 Write-Output ""
 Write-Output "ranked_vmx128_neon_next:"
-Write-Output ("1. pack_unpack_test_coverage: widest semantic surface, current active tests cover {0} of {1} pack modes and {2} of {1} unpack modes; remaining pack=[{3}] unpack=[{4}]." -f $packTests, $expectedPackModes.Count, $unpackTests, $packMissingText, $unpackMissingText)
+Write-Output $packUnpackRankedNext
 Write-Output "2. permute_route_volume_audit: TBL-heavy and broad; requires current route dynamic counts before adding more fastpaths."
 Write-Output "3. load_vector_shift_control_materialization: current lowering rebuilds constants per op; route volume must be proven before codegen work."
 Write-Output "4. extract_splat_non_stvewx_volume: dynamic extract is costly, but exact stvewx lane-fold is closed and SPLAT has no active unit tests."
 Write-Output "5. lvl_lvr_family: possible broad load-left/right target only if fresh HIR shows volume outside closed local peepholes."
 Write-Output ""
-Write-Output "decision=do_not_patch_vmx128_behavior_next_without either expanded unit coverage for the chosen opcode family or fresh route-volume counters proving broad non-closed usage."
+Write-Output "decision=do_not_patch_vmx128_behavior_next_without fresh route-volume counters proving broad non-closed usage; complete unit coverage alone is not speed evidence."
