@@ -57,6 +57,113 @@ function Get-Long {
     return [Int64]0
 }
 
+function Format-DoubleInvariant {
+    param(
+        [double]$Value,
+        [string]$Format = "F3"
+    )
+
+    return $Value.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-SurfaceLatencySummaryMap {
+    param([string[]]$Lines)
+
+    $map = @{}
+    $refreshNs = ""
+    $actualPresentTimes = New-Object System.Collections.Generic.List[Int64]
+    $rejectedRows = 0
+    $sentinelLimit = [Int64]::MaxValue - 1024
+
+    foreach ($line in $Lines) {
+        $trimmed = $line.Trim()
+        if (!$refreshNs -and $trimmed -match "^[0-9]+$") {
+            $refreshNs = $trimmed
+            continue
+        }
+
+        $match = [regex]::Match($trimmed, "^(?<desired>[0-9]+)\s+(?<actual>[0-9]+)\s+(?<ready>[0-9]+)$")
+        if (!$match.Success) {
+            continue
+        }
+
+        [Int64]$actual = 0
+        if (![Int64]::TryParse($match.Groups["actual"].Value, [ref]$actual)) {
+            $rejectedRows += 1
+            continue
+        }
+        if ($actual -le 0 -or $actual -ge $sentinelLimit) {
+            $rejectedRows += 1
+            continue
+        }
+        [void]$actualPresentTimes.Add($actual)
+    }
+
+    $actualPresentTimes.Sort()
+    $intervals = New-Object System.Collections.Generic.List[Int64]
+    for ($i = 1; $i -lt $actualPresentTimes.Count; $i += 1) {
+        $delta = [Int64]$actualPresentTimes[$i] - [Int64]$actualPresentTimes[$i - 1]
+        if ($delta -gt 0) {
+            [void]$intervals.Add($delta)
+        }
+    }
+
+    $spanMs = 0.0
+    if ($actualPresentTimes.Count -gt 1) {
+        $spanMs = ([double]([Int64]$actualPresentTimes[$actualPresentTimes.Count - 1] - [Int64]$actualPresentTimes[0])) / 1000000.0
+    }
+
+    $avgMs = 0.0
+    $maxMs = 0.0
+    if ($intervals.Count -gt 0) {
+        $avgMs = [double](($intervals | Measure-Object -Average).Average) / 1000000.0
+        $maxMs = [double](($intervals | Measure-Object -Maximum).Maximum) / 1000000.0
+    }
+
+    $over33 = @($intervals | Where-Object { $_ -gt 33333333 }).Count
+    $over50 = @($intervals | Where-Object { $_ -gt 50000000 }).Count
+
+    if ($refreshNs) {
+        $map["refresh_ns"] = $refreshNs
+    }
+    $map["valid_frames"] = [string]$actualPresentTimes.Count
+    $map["interval_count"] = [string]$intervals.Count
+    $map["span_ms"] = Format-DoubleInvariant $spanMs
+    $map["interval_avg_ms"] = Format-DoubleInvariant $avgMs
+    $map["interval_max_ms"] = Format-DoubleInvariant $maxMs
+    $map["intervals_over_33ms"] = [string]$over33
+    $map["intervals_over_50ms"] = [string]$over50
+    $map["rejected_rows"] = [string]$rejectedRows
+    if ($actualPresentTimes.Count -gt 1 -and $intervals.Count -gt 0) {
+        $map["decision"] = "surface_latency_valid"
+    } else {
+        $map["decision"] = "surface_latency_missing_or_insufficient"
+    }
+    return $map
+}
+
+function Get-SurfaceLatencyMap {
+    param([string]$SamplerText)
+
+    $surfaceLatency = @{}
+    foreach ($match in [regex]::Matches($SamplerText, "^surface_latency_(?<key>[A-Za-z0-9_]+)=(?<value>.*)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+        $surfaceLatency[$match.Groups["key"].Value] = $match.Groups["value"].Value.Trim()
+    }
+
+    $rawLines = New-Object System.Collections.Generic.List[string]
+    foreach ($match in [regex]::Matches($SamplerText, "^surface_latency=(?<value>.*)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+        [void]$rawLines.Add($match.Groups["value"].Value.Trim())
+    }
+    if ($rawLines.Count -gt 0) {
+        $rawSummary = Get-SurfaceLatencySummaryMap @($rawLines)
+        foreach ($key in $rawSummary.Keys) {
+            $surfaceLatency[$key] = $rawSummary[$key]
+        }
+    }
+
+    return $surfaceLatency
+}
+
 function Add-LongField {
     param(
         [hashtable]$Map,
@@ -246,15 +353,20 @@ if ($samplerText -match "(?m)^gfxinfo=Total frames rendered:\s*(?<frames>[0-9]+)
 if ($samplerText -match "(?m)^gfxinfo=Janky frames:\s*(?<jank>[0-9]+(?:\s+\([^)]+\))?)") {
     $gfxJankyFrames = $Matches.jank
 }
-$surfaceLatency = @{}
-foreach ($match in [regex]::Matches($samplerText, "^surface_latency_(?<key>[A-Za-z0-9_]+)=(?<value>.*)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
-    $surfaceLatency[$match.Groups["key"].Value] = $match.Groups["value"].Value
-}
+$surfaceLatency = Get-SurfaceLatencyMap $samplerText
 $surfaceLatencyValidFrames = 0
 if ($surfaceLatency.ContainsKey("valid_frames")) {
     $surfaceLatencyValidFrames = Get-Long $surfaceLatency["valid_frames"]
 }
-$hasSurfaceLatency = $surfaceLatencyValidFrames -gt 1
+$surfaceLatencyIntervalCount = 0
+if ($surfaceLatency.ContainsKey("interval_count")) {
+    $surfaceLatencyIntervalCount = Get-Long $surfaceLatency["interval_count"]
+}
+$surfaceLatencyDecision = ""
+if ($surfaceLatency.ContainsKey("decision")) {
+    $surfaceLatencyDecision = $surfaceLatency["decision"]
+}
+$hasSurfaceLatency = $surfaceLatencyValidFrames -gt 1 -and $surfaceLatencyIntervalCount -gt 0 -and $surfaceLatencyDecision -eq "surface_latency_valid"
 
 $classTotals = @{}
 foreach ($row in $rankedTop) {
@@ -326,7 +438,7 @@ if ($samplerText) {
     if ($gfxJankyFrames) {
         [void]$lines.Add(("sampler_gfxinfo_janky_frames={0}" -f $gfxJankyFrames))
     }
-    foreach ($key in @("layer", "layer_source", "decision", "valid_frames", "interval_count", "span_ms", "interval_avg_ms", "interval_max_ms", "intervals_over_33ms", "intervals_over_50ms")) {
+    foreach ($key in @("layer", "layer_source", "decision", "valid_frames", "interval_count", "span_ms", "interval_avg_ms", "interval_max_ms", "intervals_over_33ms", "intervals_over_50ms", "rejected_rows")) {
         if ($surfaceLatency.ContainsKey($key)) {
             [void]$lines.Add(("surface_latency_{0}={1}" -f $key, $surfaceLatency[$key]))
         }

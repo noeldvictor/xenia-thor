@@ -131,15 +131,16 @@ Latest speed status:
 - The recurring generated-code wall is still the `82282490`, `82281D28`,
   `82287788` cluster.
 - Latest reset note:
-  `docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`.
-  The route-engine sampler capture reached the visible opening sky /
-  dragon-wing route with focused `fatal_marker_count=0`, but still had no FPS
-  markers and remained Main Thread / A64-bound. The follow-up tooling now
-  auto-selects the game `SurfaceView` layer and records SurfaceFlinger latency
-  summaries. The next useful runtime slice is a route capture with
-  `-FrameCpuSampler true -FrameCpuSamplerAutoSurfaceLayer true`, followed by
-  the proof summary and route-engine report. Do not reopen closed A64
-  micro-lanes or kernel/HLE behavior until present intervals exist.
+  `docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`.
+  The route-engine SurfaceFlinger capture reached visible opening sky /
+  dragon-wing with focused `fatal_marker_count=0`, but still had
+  `fps_marker_count=0` and `sustained_30fps_proof=false`. The corrected
+  report proves bad game `SurfaceView` present cadence
+  (`126` valid presents over `55.150s`, average interval `441.196ms`, max
+  `2361.047ms`) while Main Thread / A64 remains the wall. The next useful
+  slice is time-aligned present/jank attribution against kernel/HLE, XMA, A64,
+  and Vulkan activity. Do not reopen closed A64 micro-lanes or patch
+  kernel/HLE behavior from aggregate latency evidence alone.
 
 Closed immediate lanes:
 

@@ -161,8 +161,9 @@ function Select-SurfaceLatencyLayer {
 
     foreach ($candidate in $candidates) {
         foreach ($layer in $Layers) {
-            if ($layer -match $candidate.pattern -and $layer -notmatch $candidate.exclude) {
-                return $layer
+            $trimmedLayer = $layer.Trim()
+            if ($trimmedLayer -match $candidate.pattern -and $trimmedLayer -notmatch $candidate.exclude) {
+                return $trimmedLayer
             }
         }
     }
@@ -178,6 +179,8 @@ function Write-SurfaceLatencySummary {
 
     $refreshNs = ""
     $actualPresentTimes = New-Object System.Collections.Generic.List[Int64]
+    $rejectedRows = 0
+    $sentinelLimit = [Int64]::MaxValue - 1024
     foreach ($line in $Lines) {
         $trimmed = $line.Trim()
         if (!$refreshNs -and $trimmed -match "^[0-9]+$") {
@@ -189,11 +192,14 @@ function Write-SurfaceLatencySummary {
             continue
         }
         $actual = [Int64]$match.Groups["actual"].Value
-        if ($actual -gt 0) {
-            [void]$actualPresentTimes.Add($actual)
+        if ($actual -le 0 -or $actual -ge $sentinelLimit) {
+            $rejectedRows += 1
+            continue
         }
+        [void]$actualPresentTimes.Add($actual)
     }
 
+    $actualPresentTimes.Sort()
     $intervals = New-Object System.Collections.Generic.List[Int64]
     for ($i = 1; $i -lt $actualPresentTimes.Count; $i += 1) {
         $delta = [Int64]$actualPresentTimes[$i] - [Int64]$actualPresentTimes[$i - 1]
@@ -222,12 +228,13 @@ function Write-SurfaceLatencySummary {
     }
     Write-Line ("surface_latency_valid_frames={0}" -f $actualPresentTimes.Count)
     Write-Line ("surface_latency_interval_count={0}" -f $intervals.Count)
-    Write-Line ("surface_latency_span_ms={0:N3}" -f $spanMs)
-    Write-Line ("surface_latency_interval_avg_ms={0:N3}" -f $avgMs)
-    Write-Line ("surface_latency_interval_max_ms={0:N3}" -f $maxMs)
+    Write-Line ("surface_latency_span_ms={0:F3}" -f $spanMs)
+    Write-Line ("surface_latency_interval_avg_ms={0:F3}" -f $avgMs)
+    Write-Line ("surface_latency_interval_max_ms={0:F3}" -f $maxMs)
     Write-Line ("surface_latency_intervals_over_33ms={0}" -f $over33)
     Write-Line ("surface_latency_intervals_over_50ms={0}" -f $over50)
-    if ($actualPresentTimes.Count -gt 1) {
+    Write-Line ("surface_latency_rejected_rows={0}" -f $rejectedRows)
+    if ($actualPresentTimes.Count -gt 1 -and $intervals.Count -gt 0) {
         Write-Line "surface_latency_decision=surface_latency_valid"
     } else {
         Write-Line "surface_latency_decision=surface_latency_missing_or_insufficient"

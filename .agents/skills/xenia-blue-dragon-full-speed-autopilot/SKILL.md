@@ -77,14 +77,16 @@ reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
 rerun this capture unchanged.
 
 Latest route-engine reset:
-`docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`
-adds automatic `SurfaceView` layer selection and SurfaceFlinger latency
-summaries to the frame/CPU sampler. The next automatic slice should FullDeploy
-current branch, run the known 180-second Blue Dragon route with
-`-FrameCpuSampler true -FrameCpuSamplerAutoSurfaceLayer true`, then run the
-proof summary and route-engine report. Audit kernel/HLE churn only after
-present evidence can say whether the lock/IRQL helpers align with missed
-frames. Do not default back to another closed A64 wall-block micro-audit.
+`docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`
+ran the automatic `SurfaceView` SurfaceFlinger path. It reached visible opening
+sky / dragon-wing with focused `fatal_marker_count=0`, but still had
+`fps_marker_count=0` and no sustained 30 FPS proof. Corrected latency parsing
+now shows the actual game layer presenting badly: `126` valid presents over
+`55.150s`, average interval `441.196ms`, max `2361.047ms`, and all intervals
+over `33ms` / `50ms`. The next automatic slice should time-align present gaps
+with kernel/HLE helpers, XMA, A64 wall bursts, or Vulkan pacing. Do not default
+back to another closed A64 wall-block micro-audit or patch kernel/HLE from
+aggregate evidence alone.
 
 ## Closed Lanes
 
