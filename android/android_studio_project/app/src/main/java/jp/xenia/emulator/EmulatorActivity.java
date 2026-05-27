@@ -462,6 +462,14 @@ public class EmulatorActivity extends WindowedAppActivity {
                         XeniaInputMapping.mapAndroidKeyCode(this, event.getKeyCode()));
                 refreshInGameMenu();
             }
+            if (event != null && event.getAction() == KeyEvent.ACTION_UP
+                    && isControllerActivateKey(event.getKeyCode())) {
+                final View focused = getCurrentFocus();
+                if (focused != null && focused.isEnabled()) {
+                    focused.performClick();
+                    return true;
+                }
+            }
             return super.dispatchKeyEvent(event);
         }
         if (handleGamepadKeyEvent(event)) {
@@ -518,6 +526,14 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static boolean isGamepadKeyCode(final int keyCode) {
         return XeniaInputMapping.isBindableKeyCode(keyCode);
+    }
+
+    private static boolean isControllerActivateKey(final int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_BUTTON_A
+                || keyCode == KeyEvent.KEYCODE_BUTTON_START
+                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER;
     }
 
     private boolean handleGamepadKeyEvent(final KeyEvent event) {
@@ -895,17 +911,19 @@ public class EmulatorActivity extends WindowedAppActivity {
         final TextView titleView = findViewById(R.id.emulator_osd_title);
         final TextView subtitleView = findViewById(R.id.emulator_osd_subtitle);
         final TextView warningView = findViewById(R.id.emulator_osd_warning);
-        if (launchArguments == null
-                || launchArguments.getBoolean("android_hide_osd", true)) {
-            if (topBar != null) {
-                topBar.setVisibility(View.GONE);
-            }
-            if (warningView != null) {
-                warningView.setVisibility(View.GONE);
-            }
+        if (topBar != null) {
+            topBar.setVisibility(View.GONE);
+        }
+        if (warningView != null) {
+            warningView.setVisibility(View.GONE);
+        }
+        if (launchArguments == null) {
             return;
         }
-        if (titleView == null || subtitleView == null || warningView == null) {
+        if (launchArguments.getBoolean("android_hide_osd", true)) {
+            return;
+        }
+        if (titleView == null || subtitleView == null) {
             return;
         }
 
@@ -913,7 +931,6 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (launchArguments != null) {
             target = launchArguments.getString("target");
         }
-        warningView.setText(R.string.osd_a64_research_active);
         if (target == null || target.isEmpty()) {
             titleView.setText(R.string.osd_default_title);
             subtitleView.setText(R.string.osd_app_title);

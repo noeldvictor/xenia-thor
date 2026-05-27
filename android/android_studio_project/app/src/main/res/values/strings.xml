@@ -11,6 +11,9 @@
     <string name="launcher_status_arm64">ARM64</string>
     <string name="launcher_status_unstable">Unstable</string>
     <string name="launcher_game_detail">ISO / XEX</string>
+    <string name="launcher_last_game_title">Launch Last Game</string>
+    <string name="launcher_last_game_empty">Pick a game once to enable quick launch</string>
+    <string name="launcher_last_game_unknown">Saved game</string>
     <string name="launcher_settings_detail">Profiles, GPU, audio, input</string>
     <string name="launcher_trace_detail">Frame capture analysis</string>
     <string name="launcher_demo_detail">Vulkan surface test</string>

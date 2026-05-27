@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Status", "Enable", "EnableBlueDragonTitle", "EnableBlueDragonOpeningSpeed", "EnableBlueDragonFullSpeed", "Disable", "Reset", "MarkProof", "ClearProof")]
+    [ValidateSet("Status", "Enable", "EnableBlueDragonTitle", "EnableBlueDragonOpeningSpeed", "EnableBlueDragonFullSpeed", "EnableAndroidUsability", "Disable", "Reset", "MarkProof", "ClearProof")]
     [string]$Mode = "Status",
 
     [string]$GoalName = "xenia-thor-goal",
@@ -101,6 +101,19 @@ function New-BlueDragonFullSpeedPrompt {
     return ($parts -join " ")
 }
 
+function New-AndroidUsabilityPrompt {
+    $parts = @(
+        "Continue the xenia-thor Android usability and compatibility sprint, not the old Blue Dragon speed loop.",
+        "First read AGENTS.md, .agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md, the AYN Thor/Xenia debug skill, docs/worklogs/20260527.md or newer, docs/research/20260527-144000-android-game-launch-crash-and-controller-mapping.md, docs/research/20260527-151500-android-ingame-menu-overlay-controller-start.md, docs/research/20260527-152100-android-osd-exit-to-menu.md, and scratch/thor-debug/codex-goal-loop.json if present.",
+        "Before starting, check for active build, deploy, capture, git, or active Codex slice work; ignore short-lived read-only status probes after confirming they are not commit, push, merge, rebase, build, deploy, or logcat capture work.",
+        "Current product priority: make the Android APK usable on AYN Thor. Investigate game launches through the actual app picker, capture crash and black-screen classes across several legally owned titles, improve physical Thor controller mapping, keep the in-game OSD usable with FPS and Exit to menu, remove stale donor/fork messaging, and document root cause plus fix path.",
+        "Blue Dragon full-speed remains unsolved but paused unless the user explicitly reprioritizes speed; do not run a Blue Dragon 180-second speed capture from this loop.",
+        "Known Android usability evidence: docs/research/20260527-144000-android-game-launch-crash-and-controller-mapping.md fixed document-URI launch target resolution, MAP_FAILED detection, two assertion-abort classes, and visual controller remapping. docs/research/20260527-151500-android-ingame-menu-overlay-controller-start.md added fullscreen, FPS OSD, Back-as-menu, controller help, and Thor Menu-to-Xbox Select mapping. docs/research/20260527-152100-android-osd-exit-to-menu.md added Exit to menu with LauncherActivity in the separate :launcher process.",
+        "Each slice must leave a validated patch, route or device capture, crash report, research note, or concrete blocker. Update dated worklogs and research, re-arm this Android usability loop, then commit and push validated progress on the current branch."
+    )
+    return ($parts -join " ")
+}
+
 switch ($Mode) {
     "EnableBlueDragonTitle" {
         $prompt = "Continue the Blue Dragon title milestone. Read repo-local xenia-thor skills, build/deploy only if needed, launch Blue Dragon from the Thor SD-card path, capture screenshot/logcat, inspect fatal/GPU/ARM64 fallback lines, update dated worklog/research if needed, and stop only after writing scratch/thor-debug/latest-title-proof.json or recording a concrete blocker."
@@ -114,6 +127,10 @@ switch ($Mode) {
 
     "EnableBlueDragonFullSpeed" {
         Enable-GoalLoop -Name "blue-dragon-full-speed" -Prompt (New-BlueDragonFullSpeedPrompt) -Proof "scratch/thor-debug/latest-blue-dragon-full-speed-proof.json" -Attempts $MaxAttempts
+    }
+
+    "EnableAndroidUsability" {
+        Enable-GoalLoop -Name "android-usability-compat" -Prompt (New-AndroidUsabilityPrompt) -Proof "scratch/thor-debug/latest-android-usability-proof.json" -Attempts $MaxAttempts
     }
 
     "Enable" {

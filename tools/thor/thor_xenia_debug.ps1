@@ -29,7 +29,7 @@ param(
     [string]$HidNopButtonSequence = "",
     [string]$HidNopButtonsDelayMs = "",
     [string]$HidNopButtonsHoldMs = "",
-    [string]$HideAndroidOsd = "false",
+    [string]$HideAndroidOsd = "true",
     [string]$DumpShaders = "",
     [string]$RenderTargetPathVulkan = "",
     [string]$BreakOnDebugbreak = "",

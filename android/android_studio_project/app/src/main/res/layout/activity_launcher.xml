@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/launcher_background"
-    android:gravity="center_horizontal"
-    android:orientation="vertical"
-    android:paddingStart="24dp"
-    android:paddingTop="16dp"
-    android:paddingEnd="24dp"
-    android:paddingBottom="16dp"
+    android:fillViewport="true"
     tools:context="jp.xenia.emulator.LauncherActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -94,6 +99,7 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/launcher_launch_game_card"
             android:layout_width="match_parent"
             android:layout_height="74dp"
             android:layout_marginTop="18dp"
@@ -143,6 +149,63 @@
                     android:layout_marginTop="3dp"
                     android:letterSpacing="0"
                     android:text="@string/launcher_game_detail"
+                    android:textColor="@color/xenia_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/launcher_last_game_card"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/launcher_card"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:onClick="onLaunchLastGameClick"
+            android:orientation="horizontal"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp">
+
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:background="@drawable/launcher_icon_plate">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@string/launcher_last_game_title"
+                    android:src="@drawable/ic_action_play" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_last_game_title"
+                    android:textColor="@color/xenia_text"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/launcher_last_game_detail"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_last_game_empty"
                     android:textColor="@color/xenia_text_secondary"
                     android:textSize="12sp" />
             </LinearLayout>
@@ -312,4 +375,5 @@
                     android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
-</LinearLayout>
+    </LinearLayout>
+</ScrollView>
