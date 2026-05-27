@@ -14,7 +14,7 @@
     <string name="launcher_last_game_title">Launch Last Game</string>
     <string name="launcher_last_game_empty">Pick a game once to enable quick launch</string>
     <string name="launcher_last_game_unknown">Saved game</string>
-    <string name="launcher_settings_detail">Profiles, GPU, audio, input</string>
+    <string name="launcher_settings_detail">Profiles, video, audio, input</string>
     <string name="launcher_trace_detail">Frame capture analysis</string>
     <string name="launcher_demo_detail">Vulkan surface test</string>
     <string name="osd_app_title">Xenia Thor</string>
@@ -34,7 +34,7 @@
     <string name="emulator_menu_no_input">none yet</string>
     <string name="emulator_menu_input_format">%1$s -> %2$s</string>
     <string name="emulator_menu_controls_note">Back opens or closes this menu. Exit returns to the Xenia Thor menu. Use Controller map to remap any physical Thor button.</string>
-    <string name="settings_subtitle">Thor profiles and launch options</string>
+    <string name="settings_subtitle">Thor profiles, video, and launch options</string>
     <string name="settings_profile">Profile</string>
     <string name="settings_profile_balanced">Thor balanced</string>
     <string name="settings_profile_performance">Performance</string>
@@ -43,6 +43,10 @@
     <string name="settings_gpu">GPU</string>
     <string name="settings_gpu_vulkan">Vulkan</string>
     <string name="settings_gpu_null">Null renderer</string>
+    <string name="settings_internal_resolution">Internal resolution</string>
+    <string name="settings_internal_resolution_480p">480p (720 x 480)</string>
+    <string name="settings_internal_resolution_720p">720p (1280 x 720)</string>
+    <string name="settings_internal_resolution_1080p">1080p (1920 x 1080)</string>
     <string name="settings_audio">Audio</string>
     <string name="settings_audio_disabled">Disabled</string>
     <string name="settings_audio_auto">Auto</string>

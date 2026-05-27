@@ -19,6 +19,7 @@ import android.widget.Toast;
 public class SettingsActivity extends Activity {
     private RadioGroup mProfileGroup;
     private RadioGroup mGpuGroup;
+    private RadioGroup mResolutionGroup;
     private RadioGroup mAudioGroup;
     private RadioGroup mInputGroup;
     private CheckBox mMuteAudio;
@@ -56,6 +57,15 @@ public class SettingsActivity extends Activity {
                 {getString(R.string.settings_gpu_vulkan), XeniaAndroidSettings.GPU_VULKAN},
                 {getString(R.string.settings_gpu_null), XeniaAndroidSettings.GPU_NULL},
         });
+        mResolutionGroup = addRadioGroup(root, R.string.settings_internal_resolution,
+                new String[][] {
+                        {getString(R.string.settings_internal_resolution_480p),
+                                XeniaAndroidSettings.RESOLUTION_480P},
+                        {getString(R.string.settings_internal_resolution_720p),
+                                XeniaAndroidSettings.RESOLUTION_720P},
+                        {getString(R.string.settings_internal_resolution_1080p),
+                                XeniaAndroidSettings.RESOLUTION_1080P},
+                });
         mAudioGroup = addRadioGroup(root, R.string.settings_audio, new String[][] {
                 {getString(R.string.settings_audio_disabled), XeniaAndroidSettings.APU_NOP},
                 {getString(R.string.settings_audio_auto), XeniaAndroidSettings.APU_ANY},
@@ -191,12 +201,14 @@ public class SettingsActivity extends Activity {
         final RadioGroup.OnCheckedChangeListener customListener =
                 (group, checkedId) -> markCustom();
         mGpuGroup.setOnCheckedChangeListener(customListener);
+        mResolutionGroup.setOnCheckedChangeListener(customListener);
         mAudioGroup.setOnCheckedChangeListener(customListener);
         mInputGroup.setOnCheckedChangeListener(customListener);
         final CompoundButton.OnCheckedChangeListener customToggleListener =
                 (button, checked) -> markCustom();
         mMuteAudio.setOnCheckedChangeListener(customToggleListener);
         mHideOsd.setOnCheckedChangeListener(customToggleListener);
+        mShowFps.setOnCheckedChangeListener(customToggleListener);
         mVulkanCounters.setOnCheckedChangeListener(customToggleListener);
     }
 
@@ -207,6 +219,9 @@ public class SettingsActivity extends Activity {
                 XeniaAndroidSettings.KEY_PROFILE, XeniaAndroidSettings.PROFILE_BALANCED));
         selectByValue(mGpuGroup, preferences.getString(
                 XeniaAndroidSettings.KEY_GPU_DRIVER, XeniaAndroidSettings.GPU_VULKAN));
+        selectByValue(mResolutionGroup, preferences.getString(
+                XeniaAndroidSettings.KEY_INTERNAL_RESOLUTION,
+                XeniaAndroidSettings.RESOLUTION_720P));
         selectByValue(mAudioGroup, preferences.getString(
                 XeniaAndroidSettings.KEY_APU_DRIVER, XeniaAndroidSettings.APU_NOP));
         selectByValue(mInputGroup, preferences.getString(
@@ -224,6 +239,9 @@ public class SettingsActivity extends Activity {
         final SharedPreferences.Editor editor = XeniaAndroidSettings.getPreferences(this).edit();
         editor.putString(XeniaAndroidSettings.KEY_PROFILE, getCheckedValue(mProfileGroup));
         editor.putString(XeniaAndroidSettings.KEY_GPU_DRIVER, getCheckedValue(mGpuGroup));
+        editor.putString(
+                XeniaAndroidSettings.KEY_INTERNAL_RESOLUTION,
+                getCheckedValue(mResolutionGroup));
         editor.putString(XeniaAndroidSettings.KEY_APU_DRIVER, getCheckedValue(mAudioGroup));
         editor.putString(XeniaAndroidSettings.KEY_HID_DRIVER, getCheckedValue(mInputGroup));
         editor.putBoolean(XeniaAndroidSettings.KEY_MUTE_AUDIO, mMuteAudio.isChecked());
@@ -239,6 +257,7 @@ public class SettingsActivity extends Activity {
         mUpdatingControls = true;
         if (XeniaAndroidSettings.PROFILE_PERFORMANCE.equals(profile)) {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
+            selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_480P);
             selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(true);
@@ -247,6 +266,7 @@ public class SettingsActivity extends Activity {
             mVulkanCounters.setChecked(false);
         } else if (XeniaAndroidSettings.PROFILE_RESEARCH.equals(profile)) {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
+            selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_720P);
             selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);
@@ -255,6 +275,7 @@ public class SettingsActivity extends Activity {
             mVulkanCounters.setChecked(true);
         } else {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
+            selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_720P);
             selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);

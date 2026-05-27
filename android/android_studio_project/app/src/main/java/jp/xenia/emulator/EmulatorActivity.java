@@ -72,6 +72,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             final Bundle launchArguments = new Bundle();
             copyStringExtra(intent, launchArguments, "target");
             copyStringExtra(intent, launchArguments, "gpu");
+            copyStringExtra(intent, launchArguments, "kernel_display_resolution");
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "apu");
             copyBooleanExtra(intent, launchArguments, "mute");

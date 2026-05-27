@@ -9,6 +9,9 @@
 
 #include "xenia/kernel/xboxkrnl/xboxkrnl_video.h"
 
+#include <cstring>
+#include <string>
+
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/gpu/gpu_flags.h"
@@ -31,6 +34,12 @@ UPDATE_from_uint32(kernel_display_gamma_type, 2020, 12, 31, 13, 1);
 DEFINE_double(kernel_display_gamma_power, 2.22222233,
               "Display gamma to use with kernel_display_gamma_type 3.",
               "Kernel");
+DEFINE_string(
+    kernel_display_resolution, "720p",
+    "Guest video mode reported by VdQueryVideoMode. Supported values: 480p "
+    "(720x480), 720p (1280x720), 1080p (1920x1080). This changes the "
+    "resolution games see, not Vulkan render-target upscaling.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -135,11 +144,20 @@ DECLARE_XBOXKRNL_EXPORT1(VdGetCurrentDisplayInformation, kVideo, kStub);
 void VdQueryVideoMode(X_VIDEO_MODE* video_mode) {
   // TODO(benvanik): get info from actual display.
   std::memset(video_mode, 0, sizeof(X_VIDEO_MODE));
-  video_mode->display_width = 1280;
-  video_mode->display_height = 720;
+  const std::string& resolution = cvars::kernel_display_resolution;
+  if (resolution == "480p") {
+    video_mode->display_width = 720;
+    video_mode->display_height = 480;
+  } else if (resolution == "1080p") {
+    video_mode->display_width = 1920;
+    video_mode->display_height = 1080;
+  } else {
+    video_mode->display_width = 1280;
+    video_mode->display_height = 720;
+  }
   video_mode->is_interlaced = 0;
   video_mode->is_widescreen = 1;
-  video_mode->is_hi_def = 1;
+  video_mode->is_hi_def = video_mode->display_height >= 720 ? 1 : 0;
   video_mode->refresh_rate = 60.0f;
   video_mode->video_standard = 1;  // NTSC
   video_mode->unknown_0x8a = 0x4A;

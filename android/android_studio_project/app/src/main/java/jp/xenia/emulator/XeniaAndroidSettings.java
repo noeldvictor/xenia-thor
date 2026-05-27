@@ -11,6 +11,7 @@ public final class XeniaAndroidSettings {
 
     public static final String KEY_PROFILE = "profile";
     public static final String KEY_GPU_DRIVER = "gpu_driver";
+    public static final String KEY_INTERNAL_RESOLUTION = "internal_resolution";
     public static final String KEY_APU_DRIVER = "apu_driver";
     public static final String KEY_HID_DRIVER = "hid_driver";
     public static final String KEY_MUTE_AUDIO = "mute_audio";
@@ -29,6 +30,9 @@ public final class XeniaAndroidSettings {
 
     public static final String GPU_VULKAN = "vulkan";
     public static final String GPU_NULL = "null";
+    public static final String RESOLUTION_480P = "480p";
+    public static final String RESOLUTION_720P = "720p";
+    public static final String RESOLUTION_1080P = "1080p";
     public static final String APU_NOP = "nop";
     public static final String APU_ANY = "any";
     public static final String HID_ANDROID = "android";
@@ -69,6 +73,9 @@ public final class XeniaAndroidSettings {
         final Bundle launchArguments = new Bundle();
         launchArguments.putString("target", resolveLaunchTarget(context, target));
         launchArguments.putString("gpu", preferences.getString(KEY_GPU_DRIVER, GPU_VULKAN));
+        launchArguments.putString(
+                "kernel_display_resolution",
+                preferences.getString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P));
         launchArguments.putString("cpu", CPU_ARM64);
         launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_NOP));
         launchArguments.putString("hid", preferences.getString(KEY_HID_DRIVER, HID_ANDROID));
@@ -118,6 +125,7 @@ public final class XeniaAndroidSettings {
         editor.putString(KEY_PROFILE, profile);
         if (PROFILE_PERFORMANCE.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
+            editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_480P);
             editor.putString(KEY_APU_DRIVER, APU_NOP);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, true);
@@ -129,6 +137,7 @@ public final class XeniaAndroidSettings {
         }
         if (PROFILE_RESEARCH.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
+            editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P);
             editor.putString(KEY_APU_DRIVER, APU_NOP);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, false);
@@ -139,6 +148,7 @@ public final class XeniaAndroidSettings {
             return editor;
         }
         editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
+        editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P);
         editor.putString(KEY_APU_DRIVER, APU_NOP);
         editor.putString(KEY_HID_DRIVER, HID_ANDROID);
         editor.putBoolean(KEY_MUTE_AUDIO, false);
