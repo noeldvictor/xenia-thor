@@ -23,6 +23,7 @@ public class SettingsActivity extends Activity {
     private RadioGroup mInputGroup;
     private CheckBox mMuteAudio;
     private CheckBox mHideOsd;
+    private CheckBox mShowFps;
     private CheckBox mVulkanCounters;
     private boolean mUpdatingControls;
 
@@ -124,6 +125,7 @@ public class SettingsActivity extends Activity {
         root.addView(sectionTitle(R.string.settings_runtime), matchWrapWithTopMargin(12));
         mMuteAudio = addCheckBox(root, R.string.settings_mute_audio);
         mHideOsd = addCheckBox(root, R.string.settings_hide_osd);
+        mShowFps = addCheckBox(root, R.string.settings_show_fps);
         mVulkanCounters = addCheckBox(root, R.string.settings_vulkan_counters);
     }
 
@@ -211,7 +213,8 @@ public class SettingsActivity extends Activity {
                 XeniaAndroidSettings.KEY_HID_DRIVER, XeniaAndroidSettings.HID_ANDROID));
         mMuteAudio.setChecked(preferences.getBoolean(
                 XeniaAndroidSettings.KEY_MUTE_AUDIO, false));
-        mHideOsd.setChecked(preferences.getBoolean(XeniaAndroidSettings.KEY_HIDE_OSD, false));
+        mHideOsd.setChecked(preferences.getBoolean(XeniaAndroidSettings.KEY_HIDE_OSD, true));
+        mShowFps.setChecked(preferences.getBoolean(XeniaAndroidSettings.KEY_SHOW_FPS, true));
         mVulkanCounters.setChecked(preferences.getBoolean(
                 XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS, false));
         mUpdatingControls = false;
@@ -225,6 +228,7 @@ public class SettingsActivity extends Activity {
         editor.putString(XeniaAndroidSettings.KEY_HID_DRIVER, getCheckedValue(mInputGroup));
         editor.putBoolean(XeniaAndroidSettings.KEY_MUTE_AUDIO, mMuteAudio.isChecked());
         editor.putBoolean(XeniaAndroidSettings.KEY_HIDE_OSD, mHideOsd.isChecked());
+        editor.putBoolean(XeniaAndroidSettings.KEY_SHOW_FPS, mShowFps.isChecked());
         editor.putBoolean(
                 XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS, mVulkanCounters.isChecked());
         editor.putInt(XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60);
@@ -239,6 +243,7 @@ public class SettingsActivity extends Activity {
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(true);
             mHideOsd.setChecked(true);
+            mShowFps.setChecked(true);
             mVulkanCounters.setChecked(false);
         } else if (XeniaAndroidSettings.PROFILE_RESEARCH.equals(profile)) {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
@@ -246,13 +251,15 @@ public class SettingsActivity extends Activity {
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);
             mHideOsd.setChecked(false);
+            mShowFps.setChecked(true);
             mVulkanCounters.setChecked(true);
         } else {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
             selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);
-            mHideOsd.setChecked(false);
+            mHideOsd.setChecked(true);
+            mShowFps.setChecked(true);
             mVulkanCounters.setChecked(false);
         }
         mUpdatingControls = false;

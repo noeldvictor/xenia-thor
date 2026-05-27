@@ -102,6 +102,7 @@ public final class XeniaInputMapping {
             case KeyEvent.KEYCODE_BUTTON_START:
             case KeyEvent.KEYCODE_BUTTON_SELECT:
             case KeyEvent.KEYCODE_BUTTON_MODE:
+            case KeyEvent.KEYCODE_MENU:
                 return true;
             default:
                 return false;
@@ -117,6 +118,9 @@ public final class XeniaInputMapping {
             if (getPhysicalKeyCode(preferences, action) == physicalKeyCode) {
                 return action.targetKeyCode;
             }
+        }
+        if (physicalKeyCode == KeyEvent.KEYCODE_MENU) {
+            return KeyEvent.KEYCODE_BUTTON_SELECT;
         }
         return physicalKeyCode;
     }

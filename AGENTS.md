@@ -577,8 +577,9 @@ Better next lanes:
 - Measured GPU offload only for Xenos-like bulk graphics work that can stay on
   Adreno: resolves, format conversion, deswizzle/tile transforms, vertex fetch
   unpack, clears, copies, and postprocess.
-- Android UX work such as controller mapping and settings can proceed as a
-  separate product lane, but it must not be confused with FPS proof.
+- Android UX work such as controller mapping, in-game menu/OSD, and settings
+  can proceed as a separate product lane, but it must not be confused with FPS
+  proof.
 
 Harness rules from Continual Harness:
 
@@ -2203,7 +2204,13 @@ it proof-gated.
   surface, so the presenter is not the current wall. Next probes should link
   render target state, resolve output, candidate format, and official
   frontbuffer clearing/population.
-- The visible OSD badge now reports `aX360e A64 backend research`.
+- The visible Android launch OSD must be hidden by default for normal play and,
+  when enabled for research, must use Xenia Thor wording instead of donor fork
+  branding. Back in `EmulatorActivity` should open the in-game Xenia Thor menu
+  rather than finishing the emulator activity. The top-left FPS badge is a
+  persistent Android/OSD setting backed by `Choreographer` display callbacks;
+  do not treat it as exact guest `VdSwap` FPS until a native present counter is
+  wired in.
 - Strategy as of 2026-05-18 14:12 EDT: stop using Thor as the only unit test.
   Run a broad x64-to-ARM64 conversion pass first, then use Thor/Blue Dragon as
   milestone evidence.

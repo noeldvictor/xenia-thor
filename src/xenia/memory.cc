@@ -37,7 +37,7 @@ DEFINE_uint32(
     mmap_address_high, 0,
     "ARM64/Android research: optionally try to map guest memory at "
     "mmap_address_high << 32. 0 keeps the normal search path; 1-124 mirrors "
-    "the aX360e fixed high-memory layout.",
+    "the fixed high-memory layout.",
     "Memory");
 
 namespace xe {
@@ -146,7 +146,7 @@ bool Memory::Initialize() {
     return false;
   }
 
-  // Attempt the aX360e-style fixed high mapping first when requested. This
+  // Attempt the fixed high mapping first when requested. This
   // keeps ARM64 guest memory, code cache, and indirection tables in predictable
   // high 32-bit windows for future native AArch64 emitter work.
   mapping_base_ = 0;
@@ -167,8 +167,8 @@ bool Memory::Initialize() {
       }
     } else {
       XELOGW(
-          "Ignoring mmap_address_high={} outside supported aX360e-style "
-          "range 1-124",
+          "Ignoring mmap_address_high={} outside supported fixed-high range "
+          "1-124",
           cvars::mmap_address_high);
     }
   }

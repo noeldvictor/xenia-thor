@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Xenia</string>
+    <string name="app_name">Xenia Thor</string>
     <string name="activity_label_emulator">Launch Game</string>
     <string name="activity_label_settings">Settings</string>
     <string name="activity_label_controller_mapping">Controller Mapping</string>
@@ -16,8 +16,20 @@
     <string name="launcher_demo_detail">Vulkan surface test</string>
     <string name="osd_app_title">Xenia Thor</string>
     <string name="osd_runtime_status">Vulkan / ARM64</string>
-    <string name="osd_a64_research_active">aX360e A64 backend research</string>
+    <string name="osd_a64_research_active">Xenia Thor Android build</string>
     <string name="osd_default_title">Xbox 360 content</string>
+    <string name="emulator_menu_title">Xenia Thor</string>
+    <string name="emulator_menu_subtitle">Game menu</string>
+    <string name="emulator_menu_resume">Resume</string>
+    <string name="emulator_menu_controller_mapping">Controller map</string>
+    <string name="emulator_menu_settings">Settings</string>
+    <string name="emulator_menu_show_fps">Show FPS</string>
+    <string name="emulator_fps_initial">FPS --</string>
+    <string name="emulator_menu_help_title">Controller Help</string>
+    <string name="emulator_menu_status">Last input: %1$s</string>
+    <string name="emulator_menu_no_input">none yet</string>
+    <string name="emulator_menu_input_format">%1$s -> %2$s</string>
+    <string name="emulator_menu_controls_note">Back opens or closes this menu. Use Controller map to remap any physical Thor button.</string>
     <string name="settings_subtitle">Thor profiles and launch options</string>
     <string name="settings_profile">Profile</string>
     <string name="settings_profile_balanced">Thor balanced</string>
@@ -36,7 +48,8 @@
     <string name="settings_controller_mapping">View / remap controller</string>
     <string name="settings_runtime">Runtime</string>
     <string name="settings_mute_audio">Mute audio</string>
-    <string name="settings_hide_osd">Hide overlay</string>
+    <string name="settings_hide_osd">Hide launch overlay</string>
+    <string name="settings_show_fps">Show FPS overlay</string>
     <string name="settings_vulkan_counters">Vulkan counters</string>
     <string name="settings_reset">Reset</string>
     <string name="settings_save">Save</string>

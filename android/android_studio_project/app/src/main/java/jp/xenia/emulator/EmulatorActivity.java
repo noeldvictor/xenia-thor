@@ -3,19 +3,48 @@ package jp.xenia.emulator;
 import android.content.Intent;
 import android.util.Log;
 import android.view.InputDevice;
+import android.view.Choreographer;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.TextView;
 
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Locale;
 
 public class EmulatorActivity extends WindowedAppActivity {
     private static final String TAG = "XeniaInput";
     private static final float AXIS_DEADZONE = 0.05f;
     private static int sGamepadLogBudget = 24;
+
+    private View mInGameMenu;
+    private TextView mFpsOverlay;
+    private CheckBox mInGameMenuShowFps;
+    private TextView mInGameMenuInputStatus;
+    private TextView mInGameMenuControllerHelp;
+    private String mLastInputSummary;
+    private boolean mShowFps;
+    private boolean mUpdatingMenuControls;
+    private boolean mRefreshFpsFromPreferencesOnResume;
+    private boolean mFpsCallbackScheduled;
+    private long mFpsWindowStartNs;
+    private int mFpsFrameCount;
+    private final Choreographer.FrameCallback mFpsFrameCallback =
+            new Choreographer.FrameCallback() {
+                @Override
+                public void doFrame(final long frameTimeNanos) {
+                    if (!mFpsCallbackScheduled) {
+                        return;
+                    }
+                    updateFpsCounter(frameTimeNanos);
+                    Choreographer.getInstance().postFrameCallback(this);
+                }
+            };
 
     private static native void nativeOnAndroidGamepadKey(
             int keyCode, boolean pressed, int repeatCount, int deviceId);
@@ -59,6 +88,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_delay_ms");
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_hold_ms");
             copyBooleanExtra(intent, launchArguments, "android_hide_osd");
+            copyBooleanExtra(intent, launchArguments, "android_show_fps");
             copyBooleanExtra(intent, launchArguments, "break_on_debugbreak");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
@@ -394,10 +424,46 @@ public class EmulatorActivity extends WindowedAppActivity {
             surfaceView.requestFocus();
         }
         updateOsd(getLaunchArguments(intent));
+        setupFpsOverlay(getLaunchArguments(intent));
+        setupInGameMenu();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mRefreshFpsFromPreferencesOnResume) {
+            mRefreshFpsFromPreferencesOnResume = false;
+            setShowFps(XeniaAndroidSettings.getPreferences(this).getBoolean(
+                    XeniaAndroidSettings.KEY_SHOW_FPS, true));
+            refreshInGameMenu();
+        }
+        startFpsTickerIfNeeded();
+    }
+
+    @Override
+    protected void onPause() {
+        stopFpsTicker();
+        super.onPause();
     }
 
     @Override
     public boolean dispatchKeyEvent(final KeyEvent event) {
+        if (event != null && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                toggleInGameMenu();
+            }
+            return true;
+        }
+        if (isInGameMenuVisible()) {
+            if (event != null && event.getAction() == KeyEvent.ACTION_DOWN
+                    && isGamepadKeyCode(event.getKeyCode())) {
+                updateLastInputSummary(
+                        event.getKeyCode(),
+                        XeniaInputMapping.mapAndroidKeyCode(this, event.getKeyCode()));
+                refreshInGameMenu();
+            }
+            return super.dispatchKeyEvent(event);
+        }
         if (handleGamepadKeyEvent(event)) {
             return true;
         }
@@ -406,10 +472,18 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     @Override
     public boolean dispatchGenericMotionEvent(final MotionEvent event) {
+        if (isInGameMenuVisible()) {
+            return super.dispatchGenericMotionEvent(event);
+        }
         if (handleGamepadMotionEvent(event)) {
             return true;
         }
         return super.dispatchGenericMotionEvent(event);
+    }
+
+    @Override
+    public void onBackPressed() {
+        toggleInGameMenu();
     }
 
     private static boolean isGamepadSource(final int source) {
@@ -456,6 +530,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
         final InputDevice device = event.getDevice();
         final int mappedKeyCode = XeniaInputMapping.mapAndroidKeyCode(this, event.getKeyCode());
+        updateLastInputSummary(event.getKeyCode(), mappedKeyCode);
         nativeOnAndroidGamepadKey(
                 mappedKeyCode,
                 action == KeyEvent.ACTION_DOWN,
@@ -618,13 +693,195 @@ public class EmulatorActivity extends WindowedAppActivity {
         return intent != null ? intent.getBundleExtra(EXTRA_CVARS) : null;
     }
 
+    private void setupInGameMenu() {
+        mInGameMenu = findViewById(R.id.emulator_in_game_menu);
+        mInGameMenuShowFps = findViewById(R.id.emulator_menu_show_fps);
+        mInGameMenuInputStatus = findViewById(R.id.emulator_menu_input_status);
+        mInGameMenuControllerHelp = findViewById(R.id.emulator_menu_controller_help);
+
+        final Button resumeButton = findViewById(R.id.emulator_menu_resume);
+        if (resumeButton != null) {
+            resumeButton.setOnClickListener(view -> hideInGameMenu());
+        }
+
+        final Button controllerButton = findViewById(R.id.emulator_menu_controller_mapping);
+        if (controllerButton != null) {
+            controllerButton.setOnClickListener(view ->
+                    startActivity(new Intent(this, ControllerMappingActivity.class)));
+        }
+
+        final Button settingsButton = findViewById(R.id.emulator_menu_settings);
+        if (settingsButton != null) {
+            settingsButton.setOnClickListener(view -> {
+                mRefreshFpsFromPreferencesOnResume = true;
+                startActivity(new Intent(this, SettingsActivity.class));
+            });
+        }
+
+        if (mInGameMenuShowFps != null) {
+            mInGameMenuShowFps.setOnCheckedChangeListener((buttonView, checked) -> {
+                if (mUpdatingMenuControls) {
+                    return;
+                }
+                XeniaAndroidSettings.getPreferences(this)
+                        .edit()
+                        .putBoolean(XeniaAndroidSettings.KEY_SHOW_FPS, checked)
+                        .apply();
+                setShowFps(checked);
+            });
+        }
+
+        refreshInGameMenu();
+    }
+
+    private boolean isInGameMenuVisible() {
+        return mInGameMenu != null && mInGameMenu.getVisibility() == View.VISIBLE;
+    }
+
+    private void toggleInGameMenu() {
+        if (isInGameMenuVisible()) {
+            hideInGameMenu();
+            return;
+        }
+        showInGameMenu();
+    }
+
+    private void showInGameMenu() {
+        if (mInGameMenu == null) {
+            return;
+        }
+        refreshInGameMenu();
+        mInGameMenu.setVisibility(View.VISIBLE);
+        mInGameMenu.requestFocus();
+        final Button resumeButton = findViewById(R.id.emulator_menu_resume);
+        if (resumeButton != null) {
+            resumeButton.requestFocus();
+        }
+    }
+
+    private void hideInGameMenu() {
+        if (mInGameMenu == null) {
+            return;
+        }
+        mInGameMenu.setVisibility(View.GONE);
+        final WindowSurfaceView surfaceView = findViewById(R.id.emulator_surface_view);
+        if (surfaceView != null) {
+            surfaceView.requestFocus();
+        }
+        enterImmersiveMode();
+    }
+
+    private void refreshInGameMenu() {
+        if (mInGameMenuShowFps != null) {
+            mUpdatingMenuControls = true;
+            mInGameMenuShowFps.setChecked(mShowFps);
+            mUpdatingMenuControls = false;
+        }
+        if (mInGameMenuInputStatus != null) {
+            final String input = mLastInputSummary != null
+                    ? mLastInputSummary
+                    : getString(R.string.emulator_menu_no_input);
+            mInGameMenuInputStatus.setText(getString(R.string.emulator_menu_status, input));
+        }
+        if (mInGameMenuControllerHelp != null) {
+            mInGameMenuControllerHelp.setText(buildControllerHelpText());
+        }
+    }
+
+    private String buildControllerHelpText() {
+        final StringBuilder text = new StringBuilder();
+        for (final XeniaInputMapping.ButtonAction action :
+                XeniaInputMapping.getButtonActions()) {
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append(action.label)
+                    .append("  ->  ")
+                    .append(physicalLabelForAction(action));
+        }
+        return text.toString();
+    }
+
+    private String physicalLabelForAction(final XeniaInputMapping.ButtonAction action) {
+        String label = XeniaInputMapping.keyName(
+                XeniaInputMapping.getPhysicalKeyCode(this, action));
+        if ("back".equals(action.id) && !label.equals(XeniaInputMapping.keyName(
+                KeyEvent.KEYCODE_MENU))) {
+            label += " / " + XeniaInputMapping.keyName(KeyEvent.KEYCODE_MENU);
+        }
+        return label;
+    }
+
+    private void updateLastInputSummary(final int physicalKeyCode, final int mappedKeyCode) {
+        mLastInputSummary = getString(
+                R.string.emulator_menu_input_format,
+                XeniaInputMapping.keyName(physicalKeyCode),
+                XeniaInputMapping.keyName(mappedKeyCode));
+    }
+
+    private void setupFpsOverlay(final Bundle launchArguments) {
+        mFpsOverlay = findViewById(R.id.emulator_fps_overlay);
+        final boolean showFps = launchArguments != null
+                ? launchArguments.getBoolean("android_show_fps", true)
+                : XeniaAndroidSettings.getPreferences(this).getBoolean(
+                        XeniaAndroidSettings.KEY_SHOW_FPS, true);
+        setShowFps(showFps);
+    }
+
+    private void setShowFps(final boolean showFps) {
+        mShowFps = showFps;
+        mFpsWindowStartNs = 0;
+        mFpsFrameCount = 0;
+        if (mFpsOverlay == null) {
+            return;
+        }
+        mFpsOverlay.setVisibility(showFps ? View.VISIBLE : View.GONE);
+        if (showFps) {
+            mFpsOverlay.setText(R.string.emulator_fps_initial);
+            startFpsTickerIfNeeded();
+        } else {
+            stopFpsTicker();
+        }
+    }
+
+    private void startFpsTickerIfNeeded() {
+        if (!mShowFps || mFpsCallbackScheduled) {
+            return;
+        }
+        mFpsCallbackScheduled = true;
+        Choreographer.getInstance().postFrameCallback(mFpsFrameCallback);
+    }
+
+    private void stopFpsTicker() {
+        mFpsCallbackScheduled = false;
+    }
+
+    private void updateFpsCounter(final long nowNs) {
+        if (!mShowFps || mFpsOverlay == null) {
+            return;
+        }
+        if (mFpsWindowStartNs == 0) {
+            mFpsWindowStartNs = nowNs;
+            mFpsFrameCount = 0;
+        }
+        mFpsFrameCount++;
+        final long elapsedNs = nowNs - mFpsWindowStartNs;
+        if (elapsedNs < 500000000L) {
+            return;
+        }
+        final double fps = (mFpsFrameCount * 1000000000.0) / elapsedNs;
+        mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
+        mFpsWindowStartNs = nowNs;
+        mFpsFrameCount = 0;
+    }
+
     private void updateOsd(final Bundle launchArguments) {
         final View topBar = findViewById(R.id.emulator_osd_top_bar);
         final TextView titleView = findViewById(R.id.emulator_osd_title);
         final TextView subtitleView = findViewById(R.id.emulator_osd_subtitle);
         final TextView warningView = findViewById(R.id.emulator_osd_warning);
-        if (launchArguments != null
-                && launchArguments.getBoolean("android_hide_osd", false)) {
+        if (launchArguments == null
+                || launchArguments.getBoolean("android_hide_osd", true)) {
             if (topBar != null) {
                 topBar.setVisibility(View.GONE);
             }

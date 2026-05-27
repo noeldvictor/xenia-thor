@@ -99,12 +99,17 @@ public abstract class WindowedAppActivity extends Activity {
         if (mWindowSurfaceView == null) {
             return;
         }
+        onWindowSurfaceFrameRequested();
         mWindowSurfaceView.postInvalidate();
+    }
+
+    protected void onWindowSurfaceFrameRequested() {
     }
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        enterImmersiveMode();
 
         final String windowedAppIdentifier = getWindowedAppIdentifier();
         mAppContext = initializeWindowedAppOnCreate(windowedAppIdentifier, getAssets());
@@ -116,6 +121,20 @@ public abstract class WindowedAppActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        enterImmersiveMode();
+    }
+
+    @Override
+    public void onWindowFocusChanged(final boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            enterImmersiveMode();
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         setWindowSurfaceView(null);
         if (mAppContext != 0) {
@@ -123,6 +142,18 @@ public abstract class WindowedAppActivity extends Activity {
         }
         mAppContext = 0;
         super.onDestroy();
+    }
+
+    @SuppressWarnings("deprecation")
+    protected final void enterImmersiveMode() {
+        final View decorView = getWindow().getDecorView();
+        decorView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     private class WindowSurfaceListener implements

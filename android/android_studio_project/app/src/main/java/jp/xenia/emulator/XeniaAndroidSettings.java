@@ -15,6 +15,9 @@ public final class XeniaAndroidSettings {
     public static final String KEY_HID_DRIVER = "hid_driver";
     public static final String KEY_MUTE_AUDIO = "mute_audio";
     public static final String KEY_HIDE_OSD = "hide_osd";
+    private static final String KEY_HIDE_OSD_DEFAULT_MIGRATED =
+            "hide_osd_default_migrated_v2";
+    public static final String KEY_SHOW_FPS = "show_fps";
     public static final String KEY_VULKAN_PERF_COUNTERS = "vulkan_perf_counters";
     public static final String KEY_VULKAN_PERF_COUNTERS_INTERVAL =
             "vulkan_perf_counters_interval";
@@ -45,7 +48,18 @@ public final class XeniaAndroidSettings {
     public static void ensureInitialized(final Context context) {
         final SharedPreferences preferences = getPreferences(context);
         if (!preferences.contains(KEY_PROFILE)) {
-            writePreset(preferences.edit(), PROFILE_BALANCED).apply();
+            writePreset(preferences.edit(), PROFILE_BALANCED)
+                    .putBoolean(KEY_HIDE_OSD_DEFAULT_MIGRATED, true)
+                    .apply();
+            return;
+        }
+        if (!preferences.getBoolean(KEY_HIDE_OSD_DEFAULT_MIGRATED, false)) {
+            final String profile = preferences.getString(KEY_PROFILE, PROFILE_BALANCED);
+            final SharedPreferences.Editor editor = preferences.edit();
+            if (!PROFILE_RESEARCH.equals(profile)) {
+                editor.putBoolean(KEY_HIDE_OSD, true);
+            }
+            editor.putBoolean(KEY_HIDE_OSD_DEFAULT_MIGRATED, true).apply();
         }
     }
 
@@ -62,9 +76,10 @@ public final class XeniaAndroidSettings {
         if (preferences.getBoolean(KEY_MUTE_AUDIO, false)) {
             launchArguments.putBoolean("mute", true);
         }
-        if (preferences.getBoolean(KEY_HIDE_OSD, false)) {
-            launchArguments.putBoolean("android_hide_osd", true);
-        }
+        launchArguments.putBoolean(
+                "android_hide_osd", preferences.getBoolean(KEY_HIDE_OSD, true));
+        launchArguments.putBoolean(
+                "android_show_fps", preferences.getBoolean(KEY_SHOW_FPS, true));
         if (preferences.getBoolean(KEY_VULKAN_PERF_COUNTERS, false)) {
             launchArguments.putBoolean("vulkan_trace_perf_counters", true);
             launchArguments.putInt(
@@ -107,6 +122,7 @@ public final class XeniaAndroidSettings {
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, true);
             editor.putBoolean(KEY_HIDE_OSD, true);
+            editor.putBoolean(KEY_SHOW_FPS, true);
             editor.putBoolean(KEY_VULKAN_PERF_COUNTERS, false);
             editor.putInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60);
             return editor;
@@ -117,6 +133,7 @@ public final class XeniaAndroidSettings {
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, false);
             editor.putBoolean(KEY_HIDE_OSD, false);
+            editor.putBoolean(KEY_SHOW_FPS, true);
             editor.putBoolean(KEY_VULKAN_PERF_COUNTERS, true);
             editor.putInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60);
             return editor;
@@ -125,7 +142,8 @@ public final class XeniaAndroidSettings {
         editor.putString(KEY_APU_DRIVER, APU_NOP);
         editor.putString(KEY_HID_DRIVER, HID_ANDROID);
         editor.putBoolean(KEY_MUTE_AUDIO, false);
-        editor.putBoolean(KEY_HIDE_OSD, false);
+        editor.putBoolean(KEY_HIDE_OSD, true);
+        editor.putBoolean(KEY_SHOW_FPS, true);
         editor.putBoolean(KEY_VULKAN_PERF_COUNTERS, false);
         editor.putInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60);
         return editor;
