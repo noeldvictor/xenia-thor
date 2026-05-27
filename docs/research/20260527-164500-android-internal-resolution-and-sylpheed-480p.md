@@ -43,16 +43,17 @@ hardcoded to 1x draw resolution.
   - `scratch/thor-debug/20260527-project-sylpheed-480p-sanity/project-sylpheed-480p.png`
   - `scratch/thor-debug/20260527-project-sylpheed-480p-sanity/project-sylpheed-480p-logcat.txt`
 
-The 480p capture reached a centered Square Enix logo instead of the earlier
-lower-right quarter-logo symptom. The scaler trace showed the game still
-presented a 1280x720 front buffer while the scaler output was 720x480:
+Correction from live retest: the Square Enix logo is movie-path evidence, not
+title/menu proof. Do not use it to claim the Project Sylpheed title/menu
+geometry is fixed. The scaler trace still showed the game presenting a 1280x720
+front buffer while the scaler output was 720x480:
 
 ```text
 VdInitializeScalerCommandBuffer ... src_wh=050002D0 out_wh=02D001E0 front_wh=050002D0
 ```
 
-This is enough to prove the new setting changes the guest video/scaler path and
-can improve the Project Sylpheed fit symptom.
+This is enough to prove the new setting changes the guest video/scaler path, but
+it is not proof that the title/menu positioning bug is fixed.
 
 ## Remaining Compatibility Problem
 
