@@ -237,6 +237,7 @@ param(
     [string]$FrameCpuSampler = "false",
     [int]$FrameCpuSamplerIntervalMs = 1000,
     [string]$FrameCpuSamplerSurfaceLayer = "",
+    [string]$FrameCpuSamplerAutoSurfaceLayer = "true",
     [string]$Simpleperf = "false",
     [int]$SimpleperfStartSecond = 70,
     [int]$SimpleperfSeconds = 12,
@@ -1209,6 +1210,7 @@ function Write-CaptureMetadata {
         "frame_cpu_sampler=$FrameCpuSampler",
         "frame_cpu_sampler_interval_ms=$FrameCpuSamplerIntervalMs",
         "frame_cpu_sampler_surface_layer=$FrameCpuSamplerSurfaceLayer",
+        "frame_cpu_sampler_auto_surface_layer=$FrameCpuSamplerAutoSurfaceLayer",
         "simpleperf=$Simpleperf",
         "simpleperf_start_second=$SimpleperfStartSecond",
         "simpleperf_seconds=$SimpleperfSeconds",
@@ -2108,7 +2110,7 @@ done | head -50
         Write-Output "Launching target: $launchTarget"
         Write-Output "Speed sample seconds: $($sampleSeconds -join ',')"
         if ($frameCpuSamplerEnabled) {
-            Write-Output "Frame/CPU sampler: interval=${FrameCpuSamplerIntervalMs}ms path=$FrameCpuSamplerPath"
+            Write-Output "Frame/CPU sampler: interval=${FrameCpuSamplerIntervalMs}ms autoSurfaceLayer=$FrameCpuSamplerAutoSurfaceLayer path=$FrameCpuSamplerPath"
         }
         if ($simpleperfEnabled) {
             Write-Output "Simpleperf: start=${SimpleperfStartSecond}s duration=${SimpleperfSeconds}s event=$SimpleperfEvent freq=$SimpleperfFrequency callgraph=$SimpleperfCallGraph"
@@ -2184,6 +2186,7 @@ done | head -50
                     "-PackageName", $PackageName,
                     "-Seconds", $LiveCaptureSeconds,
                     "-IntervalMs", $FrameCpuSamplerIntervalMs,
+                    "-AutoSurfaceLayer", $FrameCpuSamplerAutoSurfaceLayer,
                     "-OutPath", $FrameCpuSamplerPath
                 )
                 if ($FrameCpuSamplerSurfaceLayer) {

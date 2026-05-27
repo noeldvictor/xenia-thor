@@ -246,6 +246,15 @@ if ($samplerText -match "(?m)^gfxinfo=Total frames rendered:\s*(?<frames>[0-9]+)
 if ($samplerText -match "(?m)^gfxinfo=Janky frames:\s*(?<jank>[0-9]+(?:\s+\([^)]+\))?)") {
     $gfxJankyFrames = $Matches.jank
 }
+$surfaceLatency = @{}
+foreach ($match in [regex]::Matches($samplerText, "^surface_latency_(?<key>[A-Za-z0-9_]+)=(?<value>.*)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+    $surfaceLatency[$match.Groups["key"].Value] = $match.Groups["value"].Value
+}
+$surfaceLatencyValidFrames = 0
+if ($surfaceLatency.ContainsKey("valid_frames")) {
+    $surfaceLatencyValidFrames = Get-Long $surfaceLatency["valid_frames"]
+}
+$hasSurfaceLatency = $surfaceLatencyValidFrames -gt 1
 
 $classTotals = @{}
 foreach ($row in $rankedTop) {
@@ -267,8 +276,10 @@ if ($entryDeltaTotal -gt 0 -and $classTotals.ContainsKey("tiny_hot_leaf_or_helpe
 }
 
 $decision = "need_live_frame_cpu_residency_sampler_before_next_behavior_lane"
-if ($samplerText -and $kernelShare -ge 0.05) {
-    $decision = "add_frametimeline_present_attribution_then_kernel_hle_churn_audit"
+if ($hasSurfaceLatency -and $kernelShare -ge 0.05) {
+    $decision = "join_surface_latency_with_kernel_hle_churn"
+} elseif ($samplerText -and $kernelShare -ge 0.05) {
+    $decision = "capture_surface_latency_or_frametimeline_then_kernel_hle_churn_audit"
 } elseif ($kernelShare -ge 0.05) {
     $decision = "investigate_kernel_hle_churn_with_frame_cpu_residency_sampler"
 } elseif ($tinyHelperShare -ge 0.05) {
@@ -315,6 +326,11 @@ if ($samplerText) {
     if ($gfxJankyFrames) {
         [void]$lines.Add(("sampler_gfxinfo_janky_frames={0}" -f $gfxJankyFrames))
     }
+    foreach ($key in @("layer", "layer_source", "decision", "valid_frames", "interval_count", "span_ms", "interval_avg_ms", "interval_max_ms", "intervals_over_33ms", "intervals_over_50ms")) {
+        if ($surfaceLatency.ContainsKey($key)) {
+            [void]$lines.Add(("surface_latency_{0}={1}" -f $key, $surfaceLatency[$key]))
+        }
+    }
     foreach ($row in ($samplerThreadRows | Sort-Object -Property @{ Expression = { [Int64]$_.jiffies }; Descending = $true } | Select-Object -First 12)) {
         [void]$lines.Add(("sampler_thread tid={0} name={1} jiffies={2}" -f $row.tid, $row.name, $row.jiffies))
     }
@@ -344,7 +360,9 @@ foreach ($row in $rankedBody | Select-Object -First $Top) {
 
 [void]$lines.Add(("kernel_hle_churn_share={0:N4}" -f $kernelShare))
 [void]$lines.Add(("tiny_helper_share={0:N4}" -f $tinyHelperShare))
-if ($samplerText) {
+if ($hasSurfaceLatency) {
+    [void]$lines.Add("route_engine_gap=missing_frametimeline_jank_source_attribution")
+} elseif ($samplerText) {
     [void]$lines.Add("route_engine_gap=missing_frametimeline_present_attribution")
 } else {
     [void]$lines.Add("route_engine_gap=missing_time_series_frame_present_cpu_core_frequency_thermal_join")

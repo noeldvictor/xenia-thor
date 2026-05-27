@@ -6,6 +6,7 @@ param(
     [int]$IntervalMs = 1000,
     [string]$OutPath = "",
     [string]$SurfaceLayer = "",
+    [string]$AutoSurfaceLayer = "true",
     [switch]$IncludeIdleThreads
 )
 
@@ -52,6 +53,22 @@ function Write-Line {
     if ($script:OutPath) {
         $Line | Out-File -Encoding utf8 -Append $script:OutPath
     }
+}
+
+function ConvertTo-Bool {
+    param([string]$Value)
+
+    if (!$Value) {
+        return $false
+    }
+    $lower = $Value.Trim().ToLowerInvariant()
+    return @("1", "true", "yes", "y", "on").Contains($lower)
+}
+
+function ConvertTo-ShellSingleQuoted {
+    param([string]$Value)
+
+    return "'" + ($Value -replace "'", "'\\''") + "'"
 }
 
 function Resolve-TargetPid {
@@ -133,8 +150,88 @@ function Read-SurfaceLayers {
     return @(Invoke-AdbShell $command)
 }
 
+function Select-SurfaceLatencyLayer {
+    param([string[]]$Layers)
+
+    $candidates = @(
+        @{ pattern = "SurfaceView\[.*\]\(BLAST\)#"; exclude = "Background|Bounds|InputSink" },
+        @{ pattern = "^SurfaceView\[.*\]#"; exclude = "Background|Bounds|InputSink" },
+        @{ pattern = [regex]::Escape($PackageName) + ".*#"; exclude = "Background|Bounds|InputSink|ActivityRecordInputSink" }
+    )
+
+    foreach ($candidate in $candidates) {
+        foreach ($layer in $Layers) {
+            if ($layer -match $candidate.pattern -and $layer -notmatch $candidate.exclude) {
+                return $layer
+            }
+        }
+    }
+    return ""
+}
+
 function Read-GfxInfoBrief {
     return @(Invoke-AdbShell "dumpsys gfxinfo $PackageName 2>/dev/null | grep -E 'Total frames rendered|Janky frames|90th percentile|95th percentile|99th percentile|Number Missed Vsync|Number High input latency|Number Slow UI thread|Number Slow bitmap uploads|Number Slow issue draw commands' | head -80")
+}
+
+function Write-SurfaceLatencySummary {
+    param([string[]]$Lines)
+
+    $refreshNs = ""
+    $actualPresentTimes = New-Object System.Collections.Generic.List[Int64]
+    foreach ($line in $Lines) {
+        $trimmed = $line.Trim()
+        if (!$refreshNs -and $trimmed -match "^[0-9]+$") {
+            $refreshNs = $trimmed
+            continue
+        }
+        $match = [regex]::Match($trimmed, "^(?<desired>[0-9]+)\s+(?<actual>[0-9]+)\s+(?<ready>[0-9]+)$")
+        if (!$match.Success) {
+            continue
+        }
+        $actual = [Int64]$match.Groups["actual"].Value
+        if ($actual -gt 0) {
+            [void]$actualPresentTimes.Add($actual)
+        }
+    }
+
+    $intervals = New-Object System.Collections.Generic.List[Int64]
+    for ($i = 1; $i -lt $actualPresentTimes.Count; $i += 1) {
+        $delta = [Int64]$actualPresentTimes[$i] - [Int64]$actualPresentTimes[$i - 1]
+        if ($delta -gt 0) {
+            [void]$intervals.Add($delta)
+        }
+    }
+
+    $over33 = @($intervals | Where-Object { $_ -gt 33333333 }).Count
+    $over50 = @($intervals | Where-Object { $_ -gt 50000000 }).Count
+    $avgMs = 0.0
+    $maxMs = 0.0
+    if ($intervals.Count -gt 0) {
+        $avgNs = (($intervals | Measure-Object -Average).Average)
+        $maxNs = (($intervals | Measure-Object -Maximum).Maximum)
+        $avgMs = [double]$avgNs / 1000000.0
+        $maxMs = [double]$maxNs / 1000000.0
+    }
+    $spanMs = 0.0
+    if ($actualPresentTimes.Count -gt 1) {
+        $spanMs = ([double]([Int64]$actualPresentTimes[$actualPresentTimes.Count - 1] - [Int64]$actualPresentTimes[0])) / 1000000.0
+    }
+
+    if ($refreshNs) {
+        Write-Line ("surface_latency_refresh_ns={0}" -f $refreshNs)
+    }
+    Write-Line ("surface_latency_valid_frames={0}" -f $actualPresentTimes.Count)
+    Write-Line ("surface_latency_interval_count={0}" -f $intervals.Count)
+    Write-Line ("surface_latency_span_ms={0:N3}" -f $spanMs)
+    Write-Line ("surface_latency_interval_avg_ms={0:N3}" -f $avgMs)
+    Write-Line ("surface_latency_interval_max_ms={0:N3}" -f $maxMs)
+    Write-Line ("surface_latency_intervals_over_33ms={0}" -f $over33)
+    Write-Line ("surface_latency_intervals_over_50ms={0}" -f $over50)
+    if ($actualPresentTimes.Count -gt 1) {
+        Write-Line "surface_latency_decision=surface_latency_valid"
+    } else {
+        Write-Line "surface_latency_decision=surface_latency_missing_or_insufficient"
+    }
 }
 
 $script:AdbPath = Resolve-AdbPath
@@ -157,21 +254,34 @@ Write-Line ("package={0}" -f $PackageName)
 Write-Line ("pid={0}" -f $targetPid)
 Write-Line ("seconds={0}" -f $Seconds)
 Write-Line ("interval_ms={0}" -f $IntervalMs)
+Write-Line ("auto_surface_layer={0}" -f $AutoSurfaceLayer)
 
 if (!$targetPid) {
     Write-Line "decision=process_not_running"
     exit 0
 }
 
+$surfaceLayers = @(Read-SurfaceLayers)
 Write-Line "surface_layers_begin"
-foreach ($line in (Read-SurfaceLayers)) {
+foreach ($line in $surfaceLayers) {
     Write-Line ("surface_layer={0}" -f $line)
 }
 Write-Line "surface_layers_end"
 
-if ($SurfaceLayer) {
-    Invoke-AdbShell "dumpsys SurfaceFlinger --latency-clear '$SurfaceLayer' >/dev/null 2>&1" | Out-Null
-    Write-Line ("surface_latency_layer={0}" -f $SurfaceLayer)
+$latencyLayer = $SurfaceLayer
+$latencyLayerSource = "explicit"
+if (!$latencyLayer -and (ConvertTo-Bool $AutoSurfaceLayer)) {
+    $latencyLayer = Select-SurfaceLatencyLayer $surfaceLayers
+    $latencyLayerSource = "auto"
+}
+if ($latencyLayer) {
+    $quotedLayer = ConvertTo-ShellSingleQuoted $latencyLayer
+    Invoke-AdbShell "dumpsys SurfaceFlinger --latency-clear $quotedLayer >/dev/null 2>&1" | Out-Null
+    Write-Line ("surface_latency_layer={0}" -f $latencyLayer)
+    Write-Line ("surface_latency_layer_source={0}" -f $latencyLayerSource)
+} else {
+    Write-Line "surface_latency_layer="
+    Write-Line "surface_latency_layer_source=none"
 }
 
 $previousTotals = @{}
@@ -245,12 +355,17 @@ foreach ($line in (Read-GfxInfoBrief)) {
 }
 Write-Line "gfxinfo_brief_end"
 
-if ($SurfaceLayer) {
+if ($latencyLayer) {
+    $quotedLayer = ConvertTo-ShellSingleQuoted $latencyLayer
     Write-Line "surface_latency_begin"
-    foreach ($line in (Invoke-AdbShell "dumpsys SurfaceFlinger --latency '$SurfaceLayer' 2>/dev/null | head -260")) {
+    $latencyLines = @(Invoke-AdbShell "dumpsys SurfaceFlinger --latency $quotedLayer 2>/dev/null | head -260")
+    foreach ($line in $latencyLines) {
         Write-Line ("surface_latency={0}" -f $line)
     }
     Write-Line "surface_latency_end"
+    Write-SurfaceLatencySummary $latencyLines
+} else {
+    Write-Line "surface_latency_decision=no_surface_layer"
 }
 
 Write-Line "decision=sampler_complete"

@@ -83,11 +83,12 @@ maturity, VMX128/NEON lowering, mixed/static hot-function design, measured GPU
 bulk-work offload, or Android product UX.
 
 Current Blue Dragon refiner output:
-`docs/research/20260526-123000-continual-rerank-after-a64-closures.md` chooses
-evidence refresh, not another A64 micro-audit. Default next is a best-current
-quiet route proof refresh with the positive offset fastpath enabled, or Android
-controller/settings UX if the user prioritizes playability. Do not reopen A64
-micro-lanes until fresh route evidence changes the wall.
+`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
+completed the evidence refresh. It did not produce 30 FPS proof, did not move
+the wall off Main Thread / A64, and did not implicate poor core placement. The
+current missing evidence is FrameTimeline / SurfaceFlinger present attribution
+for the actual game SurfaceView. Do not reopen A64 micro-lanes until fresh
+route evidence changes the wall.
 
 ## Output
 

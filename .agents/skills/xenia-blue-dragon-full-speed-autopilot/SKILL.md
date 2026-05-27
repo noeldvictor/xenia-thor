@@ -77,14 +77,16 @@ reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
 rerun this capture unchanged.
 
 Latest route-engine reset:
-`docs/research/20260526-210735-blue-dragon-route-engine-reset.md` adds
-`tools/thor/thor_blue_dragon_route_engine_reset_report.ps1`,
-`tools/thor/thor_android_frame_cpu_sampler.ps1`, and
-`LaunchBlueDragonSpeedCapture -FrameCpuSampler true`. The next automatic speed
-slice should collect route-level frame/CPU residency evidence and then decide
-between Android scheduling/core residency, kernel/HLE churn, region/early-exit
-quality, or a real GPU/frame-pacing lane. Do not default back to another closed
-A64 wall-block micro-audit.
+`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
+completed the route-level frame/CPU residency capture. It reached visible
+opening sky / dragon-wing with focused `fatal_marker_count=0`, but still had
+`fps_marker_count=0`; Main Thread stayed near a full core and was sampled mostly
+on core 7. `gfxinfo` saw only three app frames, so it is not enough for Vulkan
+SurfaceView pacing. The next automatic slice should add route-clean
+FrameTimeline / SurfaceFlinger present-attribution capture support. Audit
+kernel/HLE churn only after present evidence can say whether the lock/IRQL
+helpers align with missed frames. Do not default back to another closed A64
+wall-block micro-audit.
 
 ## Closed Lanes
 

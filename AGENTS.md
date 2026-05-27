@@ -131,15 +131,14 @@ Latest speed status:
 - The recurring generated-code wall is still the `82282490`, `82281D28`,
   `82287788` cluster.
 - Latest reset note:
-  `docs/research/20260526-210735-blue-dragon-route-engine-reset.md`.
-  The next useful runtime slice is a route-engine evidence capture, not another
-  closed A64 micro-audit: run Blue Dragon with
-  `-Arm64OffsetMemoryAddressFastpath true`, audit/disassembly off, delayed
-  body-time comparators, `-FrameCpuSampler true`, and then parse both
-  `thor_blue_dragon_speed_capture_summary.ps1` and
-  `thor_blue_dragon_route_engine_reset_report.ps1`. Use the result to decide
-  between Android scheduling/core residency, kernel/HLE churn, region/early-exit
-  quality, or real GPU/frame pacing work.
+  `docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`.
+  The route-engine sampler capture reached the visible opening sky /
+  dragon-wing route with focused `fatal_marker_count=0`, but still had no FPS
+  markers and remained Main Thread / A64-bound. The sampler showed Main Thread
+  mostly on core 7, while `gfxinfo` only saw three app frames. The next useful
+  slice is tooling for FrameTimeline / SurfaceFlinger present attribution for
+  the actual game SurfaceView layer, not another closed A64 micro-audit or
+  another unchanged quiet speed capture.
 
 Closed immediate lanes:
 

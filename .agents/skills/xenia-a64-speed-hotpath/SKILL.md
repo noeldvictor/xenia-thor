@@ -17,11 +17,11 @@ Vulkan the main sprint lane until counters show present/submit/pipeline/GPU
 work overtaking A64.
 
 The current reset is route-level instrumentation, not another isolated A64
-micro-lane. `docs/research/20260526-210735-blue-dragon-route-engine-reset.md`
-adds a route-engine report plus a live Android frame/CPU sampler. Use those to
-separate generated-code body walls from Android scheduler/core residency,
-kernel/HLE churn, region/early-exit quality, and real frame pacing before
-patching behavior.
+micro-lane. `docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
+shows the first sampler capture is complete: Main Thread remained the wall and
+was mostly on core 7, while `gfxinfo` did not expose the Vulkan SurfaceView
+present stream. Add or use FrameTimeline / SurfaceFlinger present attribution
+before reopening GPU, kernel/HLE churn, or any closed generated-code lane.
 
 ## Mature Backend Gate
 

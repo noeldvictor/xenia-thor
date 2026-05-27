@@ -125,9 +125,11 @@ uses current `master`, `-Arm64OffsetMemoryAddressFastpath true`,
 audit/disassembly/block tracing off, delayed body-time comparators, clean
 fatal-marker search, and explicit FPS/proof parsing.
 
-Current proof refresh: after
-`docs/research/20260526-130000-blue-dragon-quiet-route-proof-refresh.md`, that
-refresh is complete and should not be repeated unchanged. The active prompt
-should now state that no sustained 30 FPS proof exists, the wall stayed
-Main Thread / A64 generated-code, and the next automatic slice needs a genuinely
-new structural class or a user-prioritized Android UX lane.
+Current route-engine sampler capture: after
+`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`,
+the evidence refresh is complete and should not be repeated unchanged. No
+sustained 30 FPS proof exists. Main Thread stayed the wall, mostly on core 7,
+and `gfxinfo` was insufficient for Vulkan SurfaceView pacing. The active prompt
+should point next at FrameTimeline / SurfaceFlinger present-attribution tooling,
+then kernel/HLE churn analysis only if present evidence aligns it with missed
+frames.
