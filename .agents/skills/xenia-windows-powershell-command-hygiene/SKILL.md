@@ -44,6 +44,11 @@ Get-Content -LiteralPath "C:\path with spaces\file.txt" -Raw
   verify paths first; use native PowerShell cmdlets with `-LiteralPath`.
 - Use `Set-Content` / `Add-Content` only for generated artifacts when
   `apply_patch` is not the right tool. For repo edits, use `apply_patch`.
+- For ADB commands, pass arguments as arrays when scripting and include
+  `-DeviceSerial` / `adb -s <serial>` whenever more than one device could exist.
+- For screenshots and binary ADB streams, use the repo helper or a known-safe
+  `cmd /c "adb exec-out screencap -p > file.png"` pattern; do not pipe binary
+  PNG data through PowerShell text cmdlets.
 
 ## Common Replacements
 

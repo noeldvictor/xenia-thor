@@ -36,6 +36,7 @@ half-built ARM64 questions upstream unless independently reproduced upstream.
 For command-heavy Android work, read:
 
 - `.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md`
+- `.agents/skills/xenia-thor-remote-debug/SKILL.md`
 - `C:\Users\leanerdesigner\.codex\skills\ayn-thor-xenia-debug\SKILL.md`
 - `scratch/thor-debug/codex-goal-loop.json` if present
 - the one most relevant dated research note for the active bug
@@ -51,6 +52,18 @@ work or the active task directly needs it.
 - Use `apply_patch` for repo edits.
 - Use PowerShell-native path handling with `-LiteralPath` for paths with spaces.
 - Before long build/deploy/capture/git work, check for active overlapping work.
+
+## Remote Debugging
+
+- Use USB ADB for installs, logcat, screenshots, and bugreports; use wireless
+  only as a convenience after USB authorization is stable.
+- Use scrcpy or Android Studio device mirroring for live control, but keep ADB
+  `screencap`, `screenrecord`, `logcat`, and metadata as the proof packet.
+- When the user says "check now" or reports a fresh crash, capture the current
+  screen and log before force-stopping or clearing logcat.
+- Use `adb bugreport` only for reproducible crash/system issues; use Perfetto
+  only for scheduler, input, SurfaceFlinger, FrameTimeline, or present-attribution
+  questions that screenshots/logcat cannot answer.
 
 ## Git
 
@@ -88,6 +101,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -M
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode ApkShell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -DeviceSerial c3ca0370 -Mode Capture
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Status
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenshot
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenrecord -Seconds 30
 ```
 
 ## Useful Current Notes
@@ -98,5 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.
   `docs/research/20260527-171500-android-recent-games-status-list.md`.
 - Project Sylpheed title geometry fix:
   `docs/research/20260527-184700-project-sylpheed-title-geometry-fix.md`.
+- Remote debugging/testing reset:
+  `docs/research/20260527-190000-android-remote-debug-test-rig.md`.
 - Blue Dragon route-engine reset, if restarted:
   `docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`.

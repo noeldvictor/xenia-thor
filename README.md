@@ -1,14 +1,14 @@
 # xenia-thor
 
-`xenia-thor` is a personal, vibecoded, agentic-AI experiment around bringing a
-native Android ARM64 Xenia-derived research build to the AYN Thor Max.
+`xenia-thor` is a personal, agentic-AI research fork exploring a native Android
+ARM64 Xenia-derived build on AYN Thor / Thor Max.
 
-It is **EXTREMELY UNSTABLE**.
+It is **extremely unstable**.
 
 This is not an official Xenia build, not a compatibility fork, not a release
-channel, and not a supportable emulator for normal users. It is a messy local
-research playground for learning, debugging, automation, and riding the vibes
-while trying to make an Android ARM64 path move forward.
+channel, and not a supportable emulator for normal users. It is a local research
+playground for Android ARM64 bring-up, handheld usability, Vulkan debugging,
+controller UX, and game-specific failure triage.
 
 ## No Support
 
@@ -29,94 +29,86 @@ Huge thanks to the original Xenia developers and contributors. Their years of
 research, engineering, documentation, and open-source work made this experiment
 possible at all.
 
-Original project:
-
 - [xenia-project/xenia](https://github.com/xenia-project/xenia)
 - [xenia.jp](https://xenia.jp/)
 
 Please respect their time. This fork is not their responsibility.
 
-## Current Experiment
+## Current Focus
 
 Target device:
 
-- AYN Thor Max
-- Android ARM64
-- Vulkan on Adreno
+- AYN Thor / Thor Max
+- Android ARM64, `arm64-v8a`
+- Snapdragon 8 Gen 2-class / Adreno 740
+- Vulkan first
 
-Current focus:
+Current product priority:
 
-- Android native shell and game picker flow.
-- Thor-specific ADB build, deploy, launch, and capture scripts.
-- ARM64 CPU backend/JIT research.
-- Vulkan bring-up and future RenderDoc/AGI lanes.
-- Blue Dragon Disc 1 as a legally owned local test case.
+- Make the Android APK usable on the real Thor.
+- Validate game launching through the actual Android app picker.
+- Improve controller mapping, OSD, FPS visibility, exit-to-menu, recent-game
+  status, and handheld-friendly settings.
+- Classify crashes with repeatable proof packets instead of one-off guesses.
 
-Current state as of 2026-05-24:
+Blue Dragon full-speed work is paused unless explicitly restarted. The current
+active Android usability state includes launcher/app-picker proof, visual
+controller remapping, Back-as-OSD, FPS badge, Exit to menu, recent game status,
+internal-resolution setting, and the user-confirmed Project Sylpheed title/menu
+geometry fix. Project Sylpheed's remaining known issue is a guest/runtime heap
+and `RtlRaiseException` compatibility class, not the old title positioning bug.
 
-- The Android Vulkan window/demo path runs on the Thor.
-- The emulator activity can launch Blue Dragon Disc 1 from the SD card.
-- The earlier helper-backed ARM64 mini-JIT scaffold has been removed.
-- The active ARM64 CPU path is now a hard aX360e/Edge-style A64 backend import.
-- Blue Dragon can progress through sound-bank initialization and later pack-file
-  loading without the earlier null-thunk crash.
-- A KTHREAD timer issue was fixed enough for the Blue Dragon draw wait loop to
-  move past a zero-uptime stall.
-- GPU ring read/write pointers are now mirrored into guest-visible CP registers;
-  the game's D3D dump now sees drained matching ring pointers.
-- The donor A64 backend now compiles into the Android native core for
-  `arm64-v8a` and `x86_64`, which is build progress, not a compatibility
-  claim.
-- Blue Dragon reaches the visible `press START` title prompt on Thor with
-  `vulkan_debug_texture_fetch_disable_exp_adjust=false` after fixing the SPIR-V
-  texture fetch result exponent source from fetch constant dword 4 to dword 3.
-  This is title-screen progress, not a compatibility claim.
-- Sequenced nop HID pulses can press START, select English on the language
-  screen, and reach the opening scene.
-- It is currently extremely slow. Early evidence points to CPU/JIT/audio/debug
-  overhead as the main speed wall, not an Adreno device-lost failure.
-- A quiet speed-capture lane now exists for Blue Dragon on Thor; it removes the
-  old XMA/GPU log spam from speed samples and captures timed CPU/thread
-  snapshots. It still points at the main guest CPU/A64 backend as the real
-  bottleneck.
-- The A64 backend now inlines PPC `__savegprlr_*` / `__restgprlr_*` compiler
-  helpers with a runtime LR mismatch fallback. This removes those helpers from
-  the Blue Dragon top profile, but the game is still far too slow.
-- An opt-in XMA fast-silence experiment can reach the opening scene, but it is
-  not an audio correctness fix and does not make the game playable.
-- It still is not playable gameplay.
-- The normal Android launcher path now defaults to the real Thor/Android
-  controller bridge (`hid=android`); `hid=nop` remains for scripted research
-  captures. The Android bridge is device-aware for the Thor/Odin built-in pad,
-  including keyboard-source D-pad events and `BUTTON_C` / `BUTTON_Z` fallbacks.
-  The next main lanes are longer input routes, A64 backend hot-path profiling,
-  and reducing remaining research-only Vulkan fallback knobs.
-- It is not a compatibility result.
+## Remote Debugging And Testing
+
+Use the repo-local remote debug stack for AYN Thor work:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Status
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenshot
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenrecord -Seconds 30
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode UiDump
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode CrashBundle
+```
+
+Use USB ADB for installs, screenshots, videos, logcat, and bugreports. scrcpy or
+Android Studio device mirroring is useful for live control, but durable proof
+should still be captured through ADB into `scratch/thor-debug/`.
+
+For a title, menu, input, or crash claim, keep a compact packet:
+
+- branch and commit or dirty-state note,
+- APK hash if device-tested,
+- launch path and settings/cvars,
+- screenshot or short video of the failing or fixed screen,
+- full logcat plus focused fatal/crash filter,
+- UI dump for launcher/settings/OSD focus bugs,
+- bugreport or Perfetto trace only when logcat/screens/video are not enough.
+
+## Common Commands
+
+```powershell
+git status --short --branch
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode NativeCore
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode ApkShell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -DeviceSerial c3ca0370 -Mode LaunchLauncher
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -DeviceSerial c3ca0370 -Mode Capture
+```
 
 ## Local Notes
 
-Useful repo docs for this fork:
+Useful current docs:
 
-- [Android ARM64 Thor Max Port Plan](docs/porting/android-arm64-thor-plan.md)
-- [Android Thor Debug Automation](docs/porting/android-thor-debug-automation.md)
-- [Thor Smart Debug System](docs/porting/thor-smart-debug-system.md)
-- [Thor Fast Dev Loop Options](docs/research/20260517-195019-thor-fast-dev-loop-options.md)
-- [ARM64 Port Tooling and Skills](docs/research/20260517-195621-arm64-port-tooling-skills.md)
-- [Faster ARM64 Port OODA Loop](docs/research/20260517-210216-faster-arm64-port-ooda-loop.md)
-- [Xenia ARM64 / Android Fork Audit](docs/research/20260517-183520-xenia-arm64-fork-audit.md)
-- [Blue Dragon ARM64 Mini-JIT Vector Wall](docs/research/20260518-111343-blue-dragon-arm64-mini-jit-vector-wall.md)
-- [Blue Dragon ARM64 Vec128 Fallback-Zero Capture](docs/research/20260518-115238-blue-dragon-arm64-vec128-mini-jit-fallback-zero.md)
-- [Blue Dragon KTHREAD Timer And GPU Watchdog](docs/research/20260518-133100-blue-dragon-kthread-gpu-watchdog.md)
-- [ARM64 JIT Gap Device Checkpoint](docs/research/20260518-134832-arm64-jit-gap-device-checkpoint.md)
-- [aX360e A64 Hard Swap](docs/research/20260518-164150-ax360e-a64-hard-swap.md)
-- [Blue Dragon Title Exp-Adjust Probe](docs/research/20260519-022333-blue-dragon-title-exp-adjust-probe.md)
-- [Blue Dragon Dword3 Texture Exponent Title Fix](docs/research/20260519-133516-blue-dragon-dword3-title-fix.md)
-- [Codex Hooks For The Blue Dragon Loop](docs/research/20260519-133516-codex-hooks-blue-dragon-loop.md)
-- [Blue Dragon Nop HID Sequence](docs/research/20260519-144858-blue-dragon-nop-hid-sequence.md)
-- [Blue Dragon Performance Triage](docs/research/20260519-151305-blue-dragon-performance-triage.md)
-- [Blue Dragon Quiet Speed Lane](docs/research/20260519-154636-blue-dragon-speed-lane.md)
-- [A64 Speed Profile Counters](docs/research/20260519-162000-a64-speed-profile-counters.md)
-- [A64 GPR/LR Helper Inline](docs/research/20260519-170744-a64-gprlr-helper-inline.md)
+- [Agent Instructions](AGENTS.md)
+- [PowerShell Command Hygiene](.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md)
+- [Thor Remote Debug Skill](.agents/skills/xenia-thor-remote-debug/SKILL.md)
+- [Android Game Launch and Controller Mapping](docs/research/20260527-144000-android-game-launch-crash-and-controller-mapping.md)
+- [Android In-Game Menu and Overlay Cleanup](docs/research/20260527-151500-android-ingame-menu-overlay-controller-start.md)
+- [Android OSD Exit To Menu](docs/research/20260527-152100-android-osd-exit-to-menu.md)
+- [Android Internal Resolution and Project Sylpheed 480p](docs/research/20260527-164500-android-internal-resolution-and-sylpheed-480p.md)
+- [Android Recent Games Status List](docs/research/20260527-171500-android-recent-games-status-list.md)
+- [Project Sylpheed Title Geometry Fix](docs/research/20260527-184700-project-sylpheed-title-geometry-fix.md)
+- [Android Remote Debug Test Rig](docs/research/20260527-190000-android-remote-debug-test-rig.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 
@@ -126,5 +118,4 @@ This fork is for emulator research and legally owned test content only. Do not
 use it for piracy, bypassing access controls, redistributing game content, or
 posting copyrighted assets.
 
-Again: experimental fork, no support, no promises. Just agentic AI, Android
-ARM64 research, and vibes.
+Again: experimental fork, no support, no promises.

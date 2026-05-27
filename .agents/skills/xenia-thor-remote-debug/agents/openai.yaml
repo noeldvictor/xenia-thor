@@ -1,0 +1,4 @@
+interface:
+  display_name: "Xenia Thor Remote Debug"
+  short_description: "Capture ADB screenshots, videos, UI dumps, crash bundles, and live-mirror evidence for xenia-thor Android work."
+  default_prompt: "Use $xenia-thor-remote-debug before remote ADB, scrcpy, Android mirroring, crash, screen, input, OSD, or app-picker testing on AYN Thor."
