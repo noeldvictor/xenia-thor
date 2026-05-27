@@ -126,8 +126,9 @@ audit/disassembly/block tracing off, delayed body-time comparators, clean
 fatal-marker search, and explicit FPS/proof parsing.
 
 Current route-engine sampler capture:
-`docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`
-shows no sustained 30 FPS proof, Main Thread / A64 still as the wall, and valid
-game `SurfaceView` latency with bad present cadence. The active prompt should
-point next at time-aligned present/jank attribution, then kernel/HLE churn
-analysis only if lock/IRQL helpers align with the long present gaps.
+`docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`
+shows no sustained 30 FPS proof and closes the old SurfaceFlinger capture for
+attribution because it lacked device monotonic sampler timestamps. The active
+prompt should point next at a fresh timestamped route capture plus the
+present/jank attribution report, then kernel/HLE churn analysis only if
+lock/IRQL helpers align with the long present gaps.

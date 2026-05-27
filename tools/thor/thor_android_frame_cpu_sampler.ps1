@@ -46,6 +46,17 @@ function Invoke-AdbShell {
     Invoke-Adb @("shell", $Command)
 }
 
+function Read-DeviceMonotonicNs {
+    $uptimeLine = ((Invoke-AdbShell "cat /proc/uptime 2>/dev/null") -join " ").Trim()
+    if ($uptimeLine -match "^(?<seconds>[0-9]+(?:\.[0-9]+)?)") {
+        [double]$seconds = 0.0
+        if ([double]::TryParse($Matches.seconds, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$seconds)) {
+            return [Int64][Math]::Round($seconds * 1000000000.0)
+        }
+    }
+    return ""
+}
+
 function Write-Line {
     param([string]$Line)
 
@@ -262,6 +273,7 @@ Write-Line ("pid={0}" -f $targetPid)
 Write-Line ("seconds={0}" -f $Seconds)
 Write-Line ("interval_ms={0}" -f $IntervalMs)
 Write-Line ("auto_surface_layer={0}" -f $AutoSurfaceLayer)
+Write-Line ("start_device_monotonic_ns={0}" -f (Read-DeviceMonotonicNs))
 
 if (!$targetPid) {
     Write-Line "decision=process_not_running"
@@ -298,9 +310,10 @@ $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $sampleIndex = 0
 while ($stopwatch.Elapsed.TotalSeconds -lt $Seconds) {
     $hostTime = Get-Date -Format o
+    $deviceMonotonicNs = Read-DeviceMonotonicNs
     $freqs = Read-CpuFreqs
     $thermals = Read-Thermals
-    Write-Line ("sample index={0} elapsed_ms={1} host_time={2}" -f $sampleIndex, [int]$stopwatch.ElapsedMilliseconds, $hostTime)
+    Write-Line ("sample index={0} elapsed_ms={1} host_time={2} device_monotonic_ns={3}" -f $sampleIndex, [int]$stopwatch.ElapsedMilliseconds, $hostTime, $deviceMonotonicNs)
     Write-Line ("cpu_freq {0}" -f $freqs)
     Write-Line ("thermal {0}" -f $thermals)
 
@@ -364,6 +377,7 @@ Write-Line "gfxinfo_brief_end"
 
 if ($latencyLayer) {
     $quotedLayer = ConvertTo-ShellSingleQuoted $latencyLayer
+    Write-Line ("surface_latency_capture_device_monotonic_ns={0}" -f (Read-DeviceMonotonicNs))
     Write-Line "surface_latency_begin"
     $latencyLines = @(Invoke-AdbShell "dumpsys SurfaceFlinger --latency $quotedLayer 2>/dev/null | head -260")
     foreach ($line in $latencyLines) {

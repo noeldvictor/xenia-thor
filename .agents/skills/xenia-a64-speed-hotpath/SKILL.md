@@ -18,10 +18,11 @@ work overtaking A64.
 
 The current reset is route-level instrumentation, not another isolated A64
 micro-lane.
-`docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`
-shows valid game `SurfaceView` latency with very poor present cadence, while
-the Main Thread / A64 wall remains. Use time-aligned present/jank attribution
-before reopening GPU, kernel/HLE churn, or any closed generated-code lane.
+`docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`
+adds the device monotonic sampler bridge needed to time-align valid game
+`SurfaceView` latency with sampler and speed-profile evidence. Use a fresh
+timestamped route capture and the attribution report before reopening GPU,
+kernel/HLE churn, or any closed generated-code lane.
 
 ## Mature Backend Gate
 

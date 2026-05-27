@@ -77,16 +77,17 @@ reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
 rerun this capture unchanged.
 
 Latest route-engine reset:
-`docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`
-ran the automatic `SurfaceView` SurfaceFlinger path. It reached visible opening
-sky / dragon-wing with focused `fatal_marker_count=0`, but still had
-`fps_marker_count=0` and no sustained 30 FPS proof. Corrected latency parsing
-now shows the actual game layer presenting badly: `126` valid presents over
-`55.150s`, average interval `441.196ms`, max `2361.047ms`, and all intervals
-over `33ms` / `50ms`. The next automatic slice should time-align present gaps
-with kernel/HLE helpers, XMA, A64 wall bursts, or Vulkan pacing. Do not default
-back to another closed A64 wall-block micro-audit or patch kernel/HLE from
-aggregate evidence alone.
+`docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`
+adds the missing timestamp bridge for present/jank attribution. The old
+SurfaceFlinger capture proves bad game-layer present cadence, but it cannot be
+joined to sampler or logcat time because sampler rows lacked device monotonic
+timestamps. The sampler now writes `device_monotonic_ns`, and
+`tools/thor/thor_blue_dragon_present_jank_attribution.ps1` fails closed on old
+captures. The next automatic slice should FullDeploy current branch, run the
+same route with `-FrameCpuSampler true -FrameCpuSamplerAutoSurfaceLayer true`,
+then run the proof summary, route report, and present/jank attribution report.
+Do not default back to another closed A64 wall-block micro-audit or patch
+kernel/HLE from aggregate evidence alone.
 
 ## Closed Lanes
 

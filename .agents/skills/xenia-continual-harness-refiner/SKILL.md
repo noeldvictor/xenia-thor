@@ -83,9 +83,10 @@ maturity, VMX128/NEON lowering, mixed/static hot-function design, measured GPU
 bulk-work offload, or Android product UX.
 
 Current Blue Dragon refiner output:
-`docs/research/20260527-131500-blue-dragon-surface-latency-route-capture.md`
-uses the SurfaceFlinger path and proves bad game-layer present cadence, but the
-evidence is still aggregate. The current missing evidence is time-aligned
+`docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`
+adds the missing device monotonic sampler bridge. The old SurfaceFlinger
+capture proves bad game-layer present cadence but cannot be time-joined. The
+current missing evidence is a fresh timestamped route capture plus
 present/jank attribution. Do not reopen A64 micro-lanes or kernel/HLE behavior
 until fresh route evidence changes the wall or shows present interval spikes
 aligned with helper churn.
