@@ -75,6 +75,7 @@ function Write-Metadata {
     $lines = @(
         "created_at=$(Get-Date -Format o)",
         "mode=$Mode",
+        "clear_logcat=$ClearLogcat",
         "device_serial=$DeviceSerial",
         "package=$PackageName",
         "device_model=$deviceModel",
@@ -97,12 +98,18 @@ function Save-Logcat {
 
     $logPath = Join-Path $Directory "logcat.txt"
     $focusedPath = Join-Path $Directory "logcat-focused.txt"
+    $statusPath = Join-Path $Directory "status-report.txt"
     $logcat = Invoke-Adb @("logcat", "-d", "-v", "threadtime")
     $logcat | Out-File -Encoding utf8 -FilePath $logPath
     $logcat |
         Select-String -Pattern "xenia|Xenia|AndroidRuntime|FATAL|fatal|tombstone|signal|backtrace|crash|RtlRaiseException|assert|Vulkan|Adreno" |
         ForEach-Object { $_.Line } |
         Out-File -Encoding utf8 -FilePath $focusedPath
+    $reportScript = Join-Path $PSScriptRoot "thor_android_game_status_report.ps1"
+    if (Test-Path -LiteralPath $reportScript) {
+        & $reportScript -LogPath $logPath -OutPath $statusPath | Out-Null
+        return @($logPath, $focusedPath, $statusPath)
+    }
     return @($logPath, $focusedPath)
 }
 

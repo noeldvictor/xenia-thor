@@ -29,6 +29,8 @@ Create one timestamped directory under `scratch/thor-debug/` containing:
   launch path, settings/cvars, and exact repro steps.
 - `screen.png` or short `screen.mp4`.
 - full `logcat.txt` plus a focused fatal/crash filter.
+- `status-report.txt` from `thor_android_game_status_report.ps1` when logcat
+  is available.
 - `ui.xml` when Android view focus, button reachability, or launcher layout is
   part of the bug.
 - `bugreport*.zip` only for reproducible app/process/system crashes where
@@ -46,6 +48,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remo
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenrecord -Seconds 30
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode UiDump
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode CrashBundle
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_game_status_report.ps1 -LogPath scratch\thor-debug\some-logcat.txt
 ```
 
 Use `-Mode Mirror` only for interactive live control. Do not treat the mirror

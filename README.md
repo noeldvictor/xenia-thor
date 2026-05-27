@@ -80,7 +80,7 @@ For a title, menu, input, or crash claim, keep a compact packet:
 - APK hash if device-tested,
 - launch path and settings/cvars,
 - screenshot or short video of the failing or fixed screen,
-- full logcat plus focused fatal/crash filter,
+- full logcat plus focused fatal/crash filter and `status-report.txt`,
 - UI dump for launcher/settings/OSD focus bugs,
 - bugreport or Perfetto trace only when logcat/screens/video are not enough.
 
@@ -109,6 +109,7 @@ Useful current docs:
 - [Android Recent Games Status List](docs/research/20260527-171500-android-recent-games-status-list.md)
 - [Project Sylpheed Title Geometry Fix](docs/research/20260527-184700-project-sylpheed-title-geometry-fix.md)
 - [Android Remote Debug Test Rig](docs/research/20260527-190000-android-remote-debug-test-rig.md)
+- [Android Game Status Classifier](docs/research/20260527-193200-android-game-status-classifier.md)
 
 Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
 
