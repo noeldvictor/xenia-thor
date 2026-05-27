@@ -131,14 +131,15 @@ Latest speed status:
 - The recurring generated-code wall is still the `82282490`, `82281D28`,
   `82287788` cluster.
 - Latest reset note:
-  `docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`.
+  `docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`.
   The route-engine sampler capture reached the visible opening sky /
   dragon-wing route with focused `fatal_marker_count=0`, but still had no FPS
-  markers and remained Main Thread / A64-bound. The sampler showed Main Thread
-  mostly on core 7, while `gfxinfo` only saw three app frames. The next useful
-  slice is tooling for FrameTimeline / SurfaceFlinger present attribution for
-  the actual game SurfaceView layer, not another closed A64 micro-audit or
-  another unchanged quiet speed capture.
+  markers and remained Main Thread / A64-bound. The follow-up tooling now
+  auto-selects the game `SurfaceView` layer and records SurfaceFlinger latency
+  summaries. The next useful runtime slice is a route capture with
+  `-FrameCpuSampler true -FrameCpuSamplerAutoSurfaceLayer true`, followed by
+  the proof summary and route-engine report. Do not reopen closed A64
+  micro-lanes or kernel/HLE behavior until present intervals exist.
 
 Closed immediate lanes:
 

@@ -17,11 +17,10 @@ Vulkan the main sprint lane until counters show present/submit/pipeline/GPU
 work overtaking A64.
 
 The current reset is route-level instrumentation, not another isolated A64
-micro-lane. `docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
-shows the first sampler capture is complete: Main Thread remained the wall and
-was mostly on core 7, while `gfxinfo` did not expose the Vulkan SurfaceView
-present stream. Add or use FrameTimeline / SurfaceFlinger present attribution
-before reopening GPU, kernel/HLE churn, or any closed generated-code lane.
+micro-lane. `docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`
+adds automatic SurfaceFlinger latency capture for the game `SurfaceView`. Use a
+route capture with that present-attribution path before reopening GPU,
+kernel/HLE churn, or any closed generated-code lane.
 
 ## Mature Backend Gate
 

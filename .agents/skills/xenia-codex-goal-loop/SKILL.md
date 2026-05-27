@@ -126,10 +126,9 @@ audit/disassembly/block tracing off, delayed body-time comparators, clean
 fatal-marker search, and explicit FPS/proof parsing.
 
 Current route-engine sampler capture: after
-`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`,
-the evidence refresh is complete and should not be repeated unchanged. No
-sustained 30 FPS proof exists. Main Thread stayed the wall, mostly on core 7,
-and `gfxinfo` was insufficient for Vulkan SurfaceView pacing. The active prompt
-should point next at FrameTimeline / SurfaceFlinger present-attribution tooling,
-then kernel/HLE churn analysis only if present evidence aligns it with missed
-frames.
+`docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`,
+the present-attribution tooling exists. No sustained 30 FPS proof exists. Main
+Thread stayed the wall, mostly on core 7, and `gfxinfo` was insufficient for
+Vulkan SurfaceView pacing. The active prompt should point next at a route
+capture with `-FrameCpuSamplerAutoSurfaceLayer true`, then kernel/HLE churn
+analysis only if present evidence aligns it with missed frames.

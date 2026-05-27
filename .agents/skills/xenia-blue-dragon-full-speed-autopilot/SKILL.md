@@ -77,16 +77,14 @@ reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
 rerun this capture unchanged.
 
 Latest route-engine reset:
-`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
-completed the route-level frame/CPU residency capture. It reached visible
-opening sky / dragon-wing with focused `fatal_marker_count=0`, but still had
-`fps_marker_count=0`; Main Thread stayed near a full core and was sampled mostly
-on core 7. `gfxinfo` saw only three app frames, so it is not enough for Vulkan
-SurfaceView pacing. The next automatic slice should add route-clean
-FrameTimeline / SurfaceFlinger present-attribution capture support. Audit
-kernel/HLE churn only after present evidence can say whether the lock/IRQL
-helpers align with missed frames. Do not default back to another closed A64
-wall-block micro-audit.
+`docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`
+adds automatic `SurfaceView` layer selection and SurfaceFlinger latency
+summaries to the frame/CPU sampler. The next automatic slice should FullDeploy
+current branch, run the known 180-second Blue Dragon route with
+`-FrameCpuSampler true -FrameCpuSamplerAutoSurfaceLayer true`, then run the
+proof summary and route-engine report. Audit kernel/HLE churn only after
+present evidence can say whether the lock/IRQL helpers align with missed
+frames. Do not default back to another closed A64 wall-block micro-audit.
 
 ## Closed Lanes
 

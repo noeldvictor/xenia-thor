@@ -83,12 +83,11 @@ maturity, VMX128/NEON lowering, mixed/static hot-function design, measured GPU
 bulk-work offload, or Android product UX.
 
 Current Blue Dragon refiner output:
-`docs/research/20260527-110500-blue-dragon-route-engine-sampler-capture.md`
-completed the evidence refresh. It did not produce 30 FPS proof, did not move
-the wall off Main Thread / A64, and did not implicate poor core placement. The
-current missing evidence is FrameTimeline / SurfaceFlinger present attribution
-for the actual game SurfaceView. Do not reopen A64 micro-lanes until fresh
-route evidence changes the wall.
+`docs/research/20260527-123500-blue-dragon-surface-latency-capture-path.md`
+adds the missing SurfaceFlinger present-attribution path. The current missing
+evidence is a clean route capture using that path. Do not reopen A64 micro-lanes
+or kernel/HLE behavior until fresh route evidence changes the wall or shows
+present interval spikes aligned with helper churn.
 
 ## Output
 
