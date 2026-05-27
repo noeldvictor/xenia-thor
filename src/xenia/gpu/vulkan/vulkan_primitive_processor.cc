@@ -15,6 +15,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/platform.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
@@ -30,9 +31,19 @@ bool VulkanPrimitiveProcessor::Initialize() {
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
+  // Project Sylpheed title/menu quads on Adreno 740 have been observed as a
+  // lower-right quarter image when expanded through Vulkan geometry shaders.
+  // Prefer the existing CPU quad-list conversion on Android; it keeps the
+  // generated pixel/vertex shaders unchanged and avoids that fragile GS path.
+#if XE_PLATFORM_ANDROID
+  constexpr bool kUseGeometryShaderQuadLists = false;
+#else
+  constexpr bool kUseGeometryShaderQuadLists = true;
+#endif
   if (!InitializeCommon(
           device_properties.fullDrawIndexUint32, device_properties.triangleFans,
-          false, device_properties.geometryShader,
+          false,
+          kUseGeometryShaderQuadLists && device_properties.geometryShader,
           device_properties.geometryShader, device_properties.geometryShader)) {
     Shutdown();
     return false;

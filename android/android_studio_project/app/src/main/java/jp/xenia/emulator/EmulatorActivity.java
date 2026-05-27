@@ -102,6 +102,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
+            copyBooleanExtra(
+                    intent, launchArguments, "gpu_use_vd_scaler_output_for_swap");
+            copyBooleanExtra(
+                    intent, launchArguments, "present_trace_guest_output_geometry");
+            copyIntExtra(
+                    intent, launchArguments, "present_trace_guest_output_geometry_budget");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_texture_cache_actions");
             copyIntExtra(intent, launchArguments, "gpu_unknown_register_log_budget");
             copyIntExtra(

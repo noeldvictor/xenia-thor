@@ -45,6 +45,27 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+namespace {
+
+uint32_t VdWidthFromPackedWh(uint32_t wh) { return wh >> 16; }
+uint32_t VdHeightFromPackedWh(uint32_t wh) { return wh & 0xFFFFu; }
+
+struct VdScalerSwapState {
+  uint32_t source_width = 0;
+  uint32_t source_height = 0;
+  uint32_t output_x = 0;
+  uint32_t output_y = 0;
+  uint32_t output_width = 0;
+  uint32_t output_height = 0;
+  uint32_t frontbuffer_width = 0;
+  uint32_t frontbuffer_height = 0;
+  bool valid = false;
+};
+
+VdScalerSwapState g_vd_scaler_swap_state;
+
+}  // namespace
+
 // https://web.archive.org/web/20150805074003/https://www.tweakoz.com/orkid/
 // http://www.tweakoz.com/orkid/dox/d3/d52/xb360init_8cpp_source.html
 // https://github.com/Free60Project/xenosfb/
@@ -330,6 +351,26 @@ dword_result_t VdInitializeScalerCommandBuffer_entry(
                         // sources from.
     dword_t dest_count  // Count in words.
 ) {
+  g_vd_scaler_swap_state.source_width =
+      VdWidthFromPackedWh(uint32_t(scaler_source_wh));
+  g_vd_scaler_swap_state.source_height =
+      VdHeightFromPackedWh(uint32_t(scaler_source_wh));
+  g_vd_scaler_swap_state.output_x = uint32_t(scaled_output_xy) & 0xFFFFu;
+  g_vd_scaler_swap_state.output_y = uint32_t(scaled_output_xy) >> 16;
+  g_vd_scaler_swap_state.output_width =
+      VdWidthFromPackedWh(uint32_t(scaled_output_wh));
+  g_vd_scaler_swap_state.output_height =
+      VdHeightFromPackedWh(uint32_t(scaled_output_wh));
+  g_vd_scaler_swap_state.frontbuffer_width =
+      VdWidthFromPackedWh(uint32_t(front_buffer_wh));
+  g_vd_scaler_swap_state.frontbuffer_height =
+      VdHeightFromPackedWh(uint32_t(front_buffer_wh));
+  g_vd_scaler_swap_state.valid =
+      g_vd_scaler_swap_state.output_width != 0 &&
+      g_vd_scaler_swap_state.output_height != 0 &&
+      g_vd_scaler_swap_state.frontbuffer_width != 0 &&
+      g_vd_scaler_swap_state.frontbuffer_height != 0;
+
   // We could fake the commands here, but I'm not sure the game checks for
   // anything but success (non-zero ret).
   // For now, we just fill it with NOPs.
@@ -499,12 +540,38 @@ void VdSwap_entry(
   dwords[offset++] = gpu_fetch.dword_4;
   dwords[offset++] = gpu_fetch.dword_5;
 
-  dwords[offset++] = xenos::MakePacketType3(xenos::PM4_XE_SWAP, 4);
+  const uint32_t frontbuffer_width = *width;
+  const uint32_t frontbuffer_height = *height;
+  uint32_t swap_display_width = frontbuffer_width;
+  uint32_t swap_display_height = frontbuffer_height;
+  bool using_vd_scaler_output = false;
+  if (cvars::gpu_use_vd_scaler_output_for_swap &&
+      g_vd_scaler_swap_state.valid &&
+      g_vd_scaler_swap_state.output_x == 0 &&
+      g_vd_scaler_swap_state.output_y == 0 &&
+      g_vd_scaler_swap_state.frontbuffer_width == frontbuffer_width &&
+      g_vd_scaler_swap_state.frontbuffer_height == frontbuffer_height &&
+      g_vd_scaler_swap_state.output_width <= frontbuffer_width &&
+      g_vd_scaler_swap_state.output_height <= frontbuffer_height) {
+    swap_display_width = g_vd_scaler_swap_state.output_width;
+    swap_display_height = g_vd_scaler_swap_state.output_height;
+    using_vd_scaler_output =
+        swap_display_width != frontbuffer_width ||
+        swap_display_height != frontbuffer_height;
+  }
+
+  dwords[offset++] =
+      xenos::MakePacketType3(xenos::PM4_XE_SWAP,
+                             using_vd_scaler_output ? 6 : 4);
   dwords[offset++] = xe::gpu::xenos::kSwapSignature;
   dwords[offset++] = frontbuffer_physical_address;
 
-  dwords[offset++] = *width;
-  dwords[offset++] = *height;
+  dwords[offset++] = frontbuffer_width;
+  dwords[offset++] = frontbuffer_height;
+  if (using_vd_scaler_output) {
+    dwords[offset++] = swap_display_width;
+    dwords[offset++] = swap_display_height;
+  }
 
   // Fill the rest of the buffer with NOP packets.
   for (uint32_t i = offset; i < 64; i++) {
@@ -513,11 +580,12 @@ void VdSwap_entry(
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: VdSwap commands buffer={:08X} pa={:08X} "
-        "dwords={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},"
-        "{:08X},{:08X},{:08X},{:08X}",
-        buffer_ptr.guest_address(), buffer_physical_address, dwords[0],
-        dwords[1], dwords[2], dwords[3], dwords[4], dwords[5], dwords[6],
-        dwords[7], dwords[8], dwords[9], dwords[10], dwords[11]);
+        "swap_display={}x{} vd_scaler={} dwords={:08X},{:08X},{:08X},"
+        "{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+        buffer_ptr.guest_address(), buffer_physical_address,
+        swap_display_width, swap_display_height, using_vd_scaler_output,
+        dwords[0], dwords[1], dwords[2], dwords[3], dwords[4], dwords[5],
+        dwords[6], dwords[7], dwords[8], dwords[9], dwords[10], dwords[11]);
   }
 }
 DECLARE_XBOXKRNL_EXPORT2(VdSwap, kVideo, kImplemented, kImportant);

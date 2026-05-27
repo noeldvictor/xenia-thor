@@ -61,6 +61,12 @@ DEFINE_bool(gpu_trace_swap, false,
             "GPU");
 DEFINE_int32(gpu_trace_packet_budget, 128,
              "Maximum packet-level GPU swap trace lines.", "GPU");
+DEFINE_bool(gpu_use_vd_scaler_output_for_swap, false,
+            "Use the most recent VdInitializeScalerCommandBuffer output size "
+            "as the guest output size for the next VdSwap when it matches the "
+            "frontbuffer. Compatibility probe for games relying on the Xbox "
+            "video scaler.",
+            "GPU");
 DEFINE_bool(gpu_trace_texture_cache_actions, false,
             "Trace texture cache create/load actions. Very noisy in games.",
             "GPU");

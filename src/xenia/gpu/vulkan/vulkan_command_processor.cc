@@ -1817,7 +1817,9 @@ void VulkanCommandProcessor::TraceVertexFetchSources(
 
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                        uint32_t frontbuffer_width,
-                                       uint32_t frontbuffer_height) {
+                                       uint32_t frontbuffer_height,
+                                       uint32_t display_width,
+                                       uint32_t display_height) {
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
@@ -1886,9 +1888,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     }
     XELOGI(
         "GPU swap trace: Vulkan IssueSwap begin frontbuffer={:08X} "
-        "guest_size={}x{} frame_current={} frame_completed={} submission={}",
-        frontbuffer_ptr, frontbuffer_width, frontbuffer_height, frame_current_,
-        frame_completed_, GetCurrentSubmission());
+        "guest_size={}x{} display={}x{} frame_current={} frame_completed={} "
+        "submission={}",
+        frontbuffer_ptr, frontbuffer_width, frontbuffer_height, display_width,
+        display_height, frame_current_, frame_completed_, GetCurrentSubmission());
   }
 
   ui::Presenter* presenter = graphics_system_->presenter();
@@ -2033,15 +2036,30 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: Vulkan IssueSwap texture view={} scaled_size={}x{} "
-        "format={}",
+        "format={} display={}x{}",
         reinterpret_cast<uint64_t>(swap_texture_view), frontbuffer_width_scaled,
-        frontbuffer_height_scaled, static_cast<uint32_t>(frontbuffer_format));
+        frontbuffer_height_scaled, static_cast<uint32_t>(frontbuffer_format),
+        display_width, display_height);
+  }
+
+  const uint32_t guest_output_width = frontbuffer_width_scaled;
+  const uint32_t guest_output_height = frontbuffer_height_scaled;
+  if (cvars::gpu_trace_swap && display_width && display_height &&
+      (display_width != frontbuffer_width ||
+       display_height != frontbuffer_height)) {
+    XELOGI(
+        "GPU swap trace: Vulkan IssueSwap kept guest output at source size "
+        "{}x{} for display request {}x{}; swap gamma pass is not a scaler",
+        guest_output_width, guest_output_height, display_width,
+        display_height);
   }
 
   presenter->RefreshGuestOutput(
-      frontbuffer_width_scaled, frontbuffer_height_scaled, 1280, 720,
+      guest_output_width, guest_output_height, frontbuffer_width,
+      frontbuffer_height,
       [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
-       frontbuffer_format, swap_texture_view](
+       guest_output_width, guest_output_height, frontbuffer_format,
+       swap_texture_view](
           ui::Presenter::GuestOutputRefreshContext& context) -> bool {
         // In case the swap command is the only one in the frame.
         if (!BeginSubmission(true)) {
@@ -2060,10 +2078,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         if (cvars::gpu_trace_swap) {
           XELOGI(
               "GPU swap trace: Vulkan guest output callback image_version={} "
-              "image_ever_written={} scaled_size={}x{} format={}",
+              "image_ever_written={} source_size={}x{} output_size={}x{} "
+              "format={}",
               guest_output_image_version,
               vulkan_context.image_ever_written_previously(),
               frontbuffer_width_scaled, frontbuffer_height_scaled,
+              guest_output_width, guest_output_height,
               static_cast<uint32_t>(frontbuffer_format));
         }
 
@@ -2228,8 +2248,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               swap_apply_gamma_render_pass_;
           swap_framebuffer_create_info.attachmentCount = 1;
           swap_framebuffer_create_info.pAttachments = &guest_output_image_view;
-          swap_framebuffer_create_info.width = frontbuffer_width_scaled;
-          swap_framebuffer_create_info.height = frontbuffer_height_scaled;
+          swap_framebuffer_create_info.width = guest_output_width;
+          swap_framebuffer_create_info.height = guest_output_height;
           swap_framebuffer_create_info.layers = 1;
           if (dfn.vkCreateFramebuffer(
                   device, &swap_framebuffer_create_info, nullptr,
@@ -2280,9 +2300,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         render_pass_begin_info.renderArea.offset.x = 0;
         render_pass_begin_info.renderArea.offset.y = 0;
         render_pass_begin_info.renderArea.extent.width =
-            frontbuffer_width_scaled;
+            guest_output_width;
         render_pass_begin_info.renderArea.extent.height =
-            frontbuffer_height_scaled;
+            guest_output_height;
         render_pass_begin_info.clearValueCount = 0;
         render_pass_begin_info.pClearValues = nullptr;
         deferred_command_buffer_.CmdVkBeginRenderPass(
@@ -2299,8 +2319,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           VkClearRect solid_clear_rect;
           solid_clear_rect.rect.offset.x = 0;
           solid_clear_rect.rect.offset.y = 0;
-          solid_clear_rect.rect.extent.width = frontbuffer_width_scaled;
-          solid_clear_rect.rect.extent.height = frontbuffer_height_scaled;
+          solid_clear_rect.rect.extent.width = guest_output_width;
+          solid_clear_rect.rect.extent.height = guest_output_height;
           solid_clear_rect.baseArrayLayer = 0;
           solid_clear_rect.layerCount = 1;
           deferred_command_buffer_.CmdVkClearAttachments(
@@ -2328,16 +2348,16 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         VkViewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
-        viewport.width = float(frontbuffer_width_scaled);
-        viewport.height = float(frontbuffer_height_scaled);
+        viewport.width = float(guest_output_width);
+        viewport.height = float(guest_output_height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         SetViewport(viewport);
         VkRect2D scissor;
         scissor.offset.x = 0;
         scissor.offset.y = 0;
-        scissor.extent.width = frontbuffer_width_scaled;
-        scissor.extent.height = frontbuffer_height_scaled;
+        scissor.extent.width = guest_output_width;
+        scissor.extent.height = guest_output_height;
         SetScissor(scissor);
 
         BindExternalGraphicsPipeline(

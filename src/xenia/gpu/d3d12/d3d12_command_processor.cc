@@ -1635,7 +1635,9 @@ void D3D12CommandProcessor::OnGammaRampPWLValueWritten() {
 
 void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                       uint32_t frontbuffer_width,
-                                      uint32_t frontbuffer_height) {
+                                      uint32_t frontbuffer_height,
+                                      uint32_t display_width,
+                                      uint32_t display_height) {
   SCOPE_profile_cpu_f("gpu");
 
   ui::Presenter* presenter = graphics_system_->presenter();

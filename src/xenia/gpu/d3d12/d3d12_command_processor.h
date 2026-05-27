@@ -212,7 +212,8 @@ class D3D12CommandProcessor : public CommandProcessor {
   void OnGammaRampPWLValueWritten() override;
 
   void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
-                 uint32_t frontbuffer_height) override;
+                 uint32_t frontbuffer_height, uint32_t display_width,
+                 uint32_t display_height) override;
 
   void OnPrimaryBufferEnd() override;
 

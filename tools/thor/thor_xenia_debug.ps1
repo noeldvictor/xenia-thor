@@ -18,6 +18,8 @@ param(
     [string]$OutDir = "",
     [string]$Target = "",
     [string]$TimeScalar = "",
+    [ValidateSet("", "480p", "720p", "1080p")]
+    [string]$KernelDisplayResolution = "",
     [string]$Arm64MiniJit = "true",
     [string]$LogLevel = "",
     [string]$XmaTraceContextState = "false",
@@ -44,6 +46,9 @@ param(
     [string]$GpuTraceInterrupts = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
+    [string]$GpuUseVdScalerOutputForSwap = "false",
+    [string]$PresentTraceGuestOutputGeometry = "false",
+    [string]$PresentTraceGuestOutputGeometryBudget = "",
     [string]$GpuTraceTextureCacheActions = "false",
     [string]$GpuUnknownRegisterLogBudget = "",
     [string]$XboxkrnlNtCreateFileFailLogBudget = "",
@@ -594,6 +599,8 @@ function Start-XeniaEmulator {
         "--ez gpu_trace_interrupts $(ConvertTo-BooleanText $GpuTraceInterrupts)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
+        "--ez gpu_use_vd_scaler_output_for_swap $(ConvertTo-BooleanText $GpuUseVdScalerOutputForSwap)",
+        "--ez present_trace_guest_output_geometry $(ConvertTo-BooleanText $PresentTraceGuestOutputGeometry)",
         "--ez gpu_trace_texture_cache_actions $(ConvertTo-BooleanText $GpuTraceTextureCacheActions)",
         "--ez gpu_trace_swap_frontbuffer_checksum $(ConvertTo-BooleanText $GpuTraceSwapFrontbufferChecksum)",
         "--ez gpu_trace_swap_render_targets $(ConvertTo-BooleanText $GpuTraceSwapRenderTargets)",
@@ -619,6 +626,9 @@ function Start-XeniaEmulator {
         "--ez vulkan_debug_texture_fetch_disable_exp_adjust $(ConvertTo-BooleanText $VulkanDebugTextureFetchDisableExpAdjust)",
         "--ez gpu_early_primary_read_pointer_writeback $(ConvertTo-BooleanText $GpuEarlyPrimaryReadPointerWriteback)",
         "--ez discord false")
+    if ($KernelDisplayResolution) {
+        $parts += "--es kernel_display_resolution $(ConvertTo-AdbShellSingleQuote $KernelDisplayResolution)"
+    }
     if ($TimeScalar) {
         $parts += "--es time_scalar $(ConvertTo-AdbShellSingleQuote $TimeScalar)"
     }
@@ -666,6 +676,9 @@ function Start-XeniaEmulator {
     }
     if ($GpuTracePacketBudget) {
         $parts += "--ei gpu_trace_packet_budget $GpuTracePacketBudget"
+    }
+    if ($PresentTraceGuestOutputGeometryBudget) {
+        $parts += "--ei present_trace_guest_output_geometry_budget $PresentTraceGuestOutputGeometryBudget"
     }
     if ($GpuTraceSwapFrontbufferChecksumBudget) {
         $parts += "--ei gpu_trace_swap_frontbuffer_checksum_budget $GpuTraceSwapFrontbufferChecksumBudget"
@@ -1780,6 +1793,7 @@ function Use-BlueDragonSpeedDefaults {
         "GpuTraceInterrupts",
         "GpuBlueDragonKickWaitToken",
         "GpuTraceSwap",
+        "GpuUseVdScalerOutputForSwap",
         "GpuTraceTextureCacheActions",
         "GpuTraceSwapFrontbufferChecksum",
         "GpuTraceSwapRenderTargets",

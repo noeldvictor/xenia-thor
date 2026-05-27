@@ -54,6 +54,54 @@ public final class XeniaAndroidSettings {
     public static final String APU_ANY = "any";
     public static final String HID_ANDROID = "android";
     public static final String HID_NOP = "nop";
+
+    private static final String[] STABLE_LAUNCH_FALSE_CVARS = {
+        "gpu_use_vd_scaler_output_for_swap",
+        "a64_rtl_enter_free_first",
+        "arm64_add_i64_wrapped_imm_fastpath",
+        "arm64_blue_dragon_call_boundary_state_audit",
+        "arm64_blue_dragon_call_boundary_state_suppress_dead_stores",
+        "arm64_blue_dragon_draw_wait_fastpath",
+        "arm64_blue_dragon_draw_wait_fastpath_host_counter_time",
+        "arm64_blue_dragon_draw_wait_inline_in_caller",
+        "arm64_blue_dragon_draw_wait_caller_profile",
+        "arm64_blue_dragon_draw_wait_probe",
+        "arm64_blue_dragon_edge_payload_storage_audit",
+        "arm64_blue_dragon_edge_variant_audit",
+        "arm64_blue_dragon_f1_carrier_audit",
+        "arm64_blue_dragon_f1_carrier_fastpath",
+        "arm64_blue_dragon_fpscr_cfg_writeback_audit",
+        "arm64_blue_dragon_jump_table_fastpath",
+        "arm64_blue_dragon_jump_table_inline_in_caller",
+        "arm64_blue_dragon_memcpy_fastpath",
+        "arm64_blue_dragon_mul_add_v128_audit",
+        "arm64_blue_dragon_mul_add_v128_fastpath",
+        "arm64_blue_dragon_state_carrier_design_audit",
+        "arm64_blue_dragon_stricmp_deferred_cr_fastpath",
+        "arm64_blue_dragon_stricmp_fastpath",
+        "arm64_blue_dragon_stricmp_return_profile",
+        "arm64_blue_dragon_stvewx_stack_lane_audit",
+        "arm64_blue_dragon_stvewx_stack_lane_fastpath",
+        "arm64_blue_dragon_vmx_copy_loop_fastpath",
+        "arm64_blue_dragon_word_copy_loop_fastpath",
+        "arm64_context_value_cache",
+        "arm64_context_value_cache_fallthrough",
+        "arm64_context_value_cache_preserve_barrier",
+        "arm64_context_pinned_gpr_r1",
+        "arm64_context_pinned_gpr_r1_fallthrough",
+        "arm64_context_promotion_gpr_livein_r1",
+        "arm64_context_promotion_gpr_local_slots",
+        "arm64_cr_compare_branch_across_context_barrier",
+        "arm64_cr_store_elide_for_fused_branch",
+        "arm64_guest_call_fast_entry_stub_skeleton",
+        "arm64_guest_state_nonclosed_cache_audit",
+        "arm64_guest_state_register_cache_audit",
+        "arm64_guest_state_register_cache_residual_audit",
+        "arm64_guest_stack_arg_handoff_audit",
+        "arm64_permute_i32_zip_fastpath",
+        "arm64_offset_memory_address_fastpath",
+        "arm64_vmx_dot_f32_fastpath",
+    };
     public static final String LAST_RUN_STATE_RUNNING = "running";
     public static final String LAST_RUN_STATE_EXITED_TO_MENU = "exited_to_menu";
 
@@ -85,13 +133,22 @@ public final class XeniaAndroidSettings {
             }
             editor.putBoolean(KEY_HIDE_OSD_DEFAULT_MIGRATED, true).apply();
         }
+        if (!preferences.contains(KEY_INTERNAL_RESOLUTION)) {
+            preferences.edit()
+                    .putString(
+                            KEY_INTERNAL_RESOLUTION,
+                            getPresetInternalResolution(
+                                    preferences.getString(KEY_PROFILE, PROFILE_BALANCED)))
+                    .apply();
+        }
     }
 
     public static Bundle createLaunchArguments(final Context context, final Uri target) {
         ensureInitialized(context);
         final SharedPreferences preferences = getPreferences(context);
         final Bundle launchArguments = new Bundle();
-        launchArguments.putString("target", resolveLaunchTarget(context, target));
+        final String resolvedTarget = resolveLaunchTarget(context, target);
+        launchArguments.putString("target", resolvedTarget);
         launchArguments.putString("gpu", preferences.getString(KEY_GPU_DRIVER, GPU_VULKAN));
         launchArguments.putString(
                 "kernel_display_resolution",
@@ -113,7 +170,21 @@ public final class XeniaAndroidSettings {
                     "vulkan_trace_perf_counters_log_interval",
                     preferences.getInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60));
         }
+        putStableLaunchOverrides(launchArguments);
         return launchArguments;
+    }
+
+    private static String getPresetInternalResolution(final String profile) {
+        if (PROFILE_PERFORMANCE.equals(profile)) {
+            return RESOLUTION_480P;
+        }
+        return RESOLUTION_720P;
+    }
+
+    private static void putStableLaunchOverrides(final Bundle launchArguments) {
+        for (final String cvar : STABLE_LAUNCH_FALSE_CVARS) {
+            launchArguments.putBoolean(cvar, false);
+        }
     }
 
     public static String resolveLaunchTarget(final Context context, final Uri target) {
@@ -310,7 +381,7 @@ public final class XeniaAndroidSettings {
         editor.putString(KEY_PROFILE, profile);
         if (PROFILE_PERFORMANCE.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
-            editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_480P);
+            editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
             editor.putString(KEY_APU_DRIVER, APU_NOP);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, true);
@@ -322,7 +393,7 @@ public final class XeniaAndroidSettings {
         }
         if (PROFILE_RESEARCH.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
-            editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P);
+            editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
             editor.putString(KEY_APU_DRIVER, APU_NOP);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, false);
@@ -333,7 +404,7 @@ public final class XeniaAndroidSettings {
             return editor;
         }
         editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
-        editor.putString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P);
+        editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
         editor.putString(KEY_APU_DRIVER, APU_NOP);
         editor.putString(KEY_HID_DRIVER, HID_ANDROID);
         editor.putBoolean(KEY_MUTE_AUDIO, false);

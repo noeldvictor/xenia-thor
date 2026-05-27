@@ -46,6 +46,8 @@
 
 // For implementation use.
 DECLARE_bool(present_render_pass_clear);
+DECLARE_bool(present_trace_guest_output_geometry);
+DECLARE_int32(present_trace_guest_output_geometry_budget);
 
 namespace xe {
 namespace ui {

@@ -101,7 +101,9 @@ class CommandProcessor {
   // screen right in the beginning of 4D530AA4 is not a resolved render target,
   // for instance).
   virtual void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
-                         uint32_t frontbuffer_height) = 0;
+                         uint32_t frontbuffer_height,
+                         uint32_t display_width,
+                         uint32_t display_height) = 0;
 
   // May be called not only from the command processor thread when the command
   // processor is paused, and the termination of this function may be explicitly

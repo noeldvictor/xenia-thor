@@ -1301,13 +1301,23 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   uint32_t frontbuffer_ptr = reader->ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_width = reader->ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_height = reader->ReadAndSwap<uint32_t>();
-  reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+  uint32_t display_width = frontbuffer_width;
+  uint32_t display_height = frontbuffer_height;
+  if (count >= 6) {
+    display_width = reader->ReadAndSwap<uint32_t>();
+    display_height = reader->ReadAndSwap<uint32_t>();
+    reader->AdvanceRead((count - 6) * sizeof(uint32_t));
+  } else if (count > 4) {
+    reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+  }
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: XE_SWAP packet magic={:08X} frontbuffer={:08X} "
-        "size={}x{} count={} read_ptr={:08X} read_offset={:08X}",
-        magic, frontbuffer_ptr, frontbuffer_width, frontbuffer_height, count,
-        uint32_t(reader->read_ptr()), uint32_t(reader->read_offset()));
+        "size={}x{} display={}x{} count={} read_ptr={:08X} "
+        "read_offset={:08X}",
+        magic, frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
+        display_width, display_height, count, uint32_t(reader->read_ptr()),
+        uint32_t(reader->read_offset()));
   }
   TraceSwapProbeCvarsOnce();
   TraceSwapFrontbufferChecksum(memory_, frontbuffer_ptr, frontbuffer_width,
@@ -1315,7 +1325,8 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   TraceSwapRenderTargets(register_file_, frontbuffer_ptr, frontbuffer_width,
                          frontbuffer_height);
 
-  IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
+  IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
+            display_width, display_height);
 
   ++counter_;
   if (ShouldTraceGpuInterruptPacket()) {

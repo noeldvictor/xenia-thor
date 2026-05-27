@@ -11,10 +11,10 @@ half-built ARM64 questions upstream unless independently reproduced upstream.
 
 - Product priority: Android usability and compatibility on AYN Thor.
 - Blue Dragon full-speed work is paused unless the user explicitly restarts it.
-- Current live problem: Project Sylpheed movie playback is normal, but the
-  title/menu can show the top-left quadrant of the game image in the lower-right
-  of the screen. Treat this as an unresolved scaler/presenter geometry bug.
-- Do not treat the Square Enix movie logo as title/menu proof.
+- Project Sylpheed title/menu geometry is fixed and user-confirmed. Do not
+  reopen the old lower-right quadrant lane without fresh title/menu evidence.
+- Do not treat the Square Enix movie logo as title/menu proof for future
+  regressions.
 - Current crash class for Project Sylpheed is guest/runtime heap failure with
   `BaseHeap`, `PhysicalHeap`, and `RtlRaiseException`, not an Android Java crash.
 - Keep `-Arm64OffsetMemoryAddressFastpath true` for future Blue Dragon speed
@@ -96,7 +96,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.
   `docs/research/20260527-144000-android-game-launch-crash-and-controller-mapping.md`.
 - Recent games/status UI:
   `docs/research/20260527-171500-android-recent-games-status-list.md`.
-- Project Sylpheed title geometry is still open; old 480p/Square Enix movie
-  evidence is not title/menu proof.
+- Project Sylpheed title geometry fix:
+  `docs/research/20260527-184700-project-sylpheed-title-geometry-fix.md`.
 - Blue Dragon route-engine reset, if restarted:
   `docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`.

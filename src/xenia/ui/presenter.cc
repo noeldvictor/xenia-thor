@@ -10,6 +10,7 @@
 #include "xenia/ui/presenter.h"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include "xenia/base/assert.h"
@@ -71,8 +72,37 @@ DEFINE_int32(
     "maintain aspect ratio without letterboxing or stretching.",
     "Display");
 
+DEFINE_bool(
+    present_trace_guest_output_geometry, false,
+    "Trace guest-output presenter geometry, including the host render target, "
+    "surface size, front buffer, aspect ratio, final output rectangle, and "
+    "paint effect sizes. Default-off Android/Thor diagnostic.",
+    "Display");
+DEFINE_int32(present_trace_guest_output_geometry_budget, 120,
+             "Maximum guest-output geometry trace rows to write. <= 0 logs "
+             "all rows while present_trace_guest_output_geometry is enabled.",
+             "Display");
+
 namespace xe {
 namespace ui {
+
+namespace {
+
+std::atomic<int32_t> g_present_trace_guest_output_geometry_rows{0};
+
+bool ShouldTraceGuestOutputGeometry() {
+  if (!cvars::present_trace_guest_output_geometry) {
+    return false;
+  }
+  if (cvars::present_trace_guest_output_geometry_budget <= 0) {
+    return true;
+  }
+  int32_t row = g_present_trace_guest_output_geometry_rows.fetch_add(
+      1, std::memory_order_relaxed);
+  return row < cvars::present_trace_guest_output_geometry_budget;
+}
+
+}  // namespace
 
 void Presenter::FatalErrorHostGpuLossCallback(
     [[maybe_unused]] bool is_responsible,
@@ -822,6 +852,18 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
   if (!output_width || !output_height || output_right <= 0 ||
       output_bottom <= 0 || flow.output_x >= int32_t(host_rt_width) ||
       flow.output_y >= int32_t(host_rt_height)) {
+    if (ShouldTraceGuestOutputGeometry()) {
+      XELOGI(
+          "Presenter geometry trace: culled active={} host={}x{} surface={}x{} "
+          "max={}x{} front={}x{} aspect={}x{} output={}x{}@{},{} right={} "
+          "bottom={}",
+          properties.IsActive(), host_rt_width, host_rt_height,
+          surface_width_in_paint_connection_, surface_height_in_paint_connection_,
+          max_rt_width, max_rt_height, properties.frontbuffer_width,
+          properties.frontbuffer_height, properties.display_aspect_ratio_x,
+          properties.display_aspect_ratio_y, output_width, output_height,
+          flow.output_x, flow.output_y, output_right, output_bottom);
+    }
     return flow;
   }
 
@@ -971,6 +1013,26 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
   // Calculate the letterbox geometry.
   if (flow.effect_count) {
     flow.letterbox_clear_rectangle_count = 0;
+
+    if (ShouldTraceGuestOutputGeometry()) {
+      uint32_t final_effect_width = 0;
+      uint32_t final_effect_height = 0;
+      const std::pair<uint32_t, uint32_t>& final_effect_size =
+          flow.effect_output_sizes[flow.effect_count - 1];
+      final_effect_width = final_effect_size.first;
+      final_effect_height = final_effect_size.second;
+      XELOGI(
+          "Presenter geometry trace: active={} host={}x{} surface={}x{} "
+          "max={}x{} front={}x{} aspect={}x{} output={}x{}@{},{} effects={} "
+          "final_effect={}x{} config_effect={}",
+          properties.IsActive(), host_rt_width, host_rt_height,
+          surface_width_in_paint_connection_, surface_height_in_paint_connection_,
+          max_rt_width, max_rt_height, properties.frontbuffer_width,
+          properties.frontbuffer_height, properties.display_aspect_ratio_x,
+          properties.display_aspect_ratio_y, output_width, output_height,
+          flow.output_x, flow.output_y, flow.effect_count, final_effect_width,
+          final_effect_height, size_t(config.GetEffect()));
+    }
     uint32_t letterbox_mid_top = uint32_t(std::max(flow.output_y, int32_t(0)));
     // Top.
     if (letterbox_mid_top) {
