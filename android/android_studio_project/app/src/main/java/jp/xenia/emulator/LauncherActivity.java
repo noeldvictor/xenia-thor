@@ -10,6 +10,7 @@ import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.view.KeyEvent;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public class LauncherActivity extends Activity {
@@ -32,6 +33,7 @@ public class LauncherActivity extends Activity {
         XeniaAndroidSettings.ensureInitialized(this);
         refreshLastGameCard();
         refreshLastRunStatus();
+        refreshRecentGames();
         final View launchGameCard = findViewById(R.id.launcher_launch_game_card);
         if (launchGameCard != null) {
             launchGameCard.requestFocus();
@@ -56,6 +58,7 @@ public class LauncherActivity extends Activity {
         super.onResume();
         refreshLastGameCard();
         refreshLastRunStatus();
+        refreshRecentGames();
     }
 
     @Override
@@ -142,10 +145,12 @@ public class LauncherActivity extends Activity {
         final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
         final Bundle emulatorLaunchArguments =
                 XeniaAndroidSettings.createLaunchArguments(this, uri);
+        rememberLastGame(uri);
         XeniaAndroidSettings.recordLaunchStarted(
                 this,
                 getDisplayName(uri),
-                emulatorLaunchArguments.getString("target", uri.toString()));
+                emulatorLaunchArguments.getString("target", uri.toString()),
+                uri.toString());
         emulatorIntent.putExtra(
                 WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
         startActivity(emulatorIntent);
@@ -203,6 +208,68 @@ public class LauncherActivity extends Activity {
             status.setText(getString(R.string.launcher_last_run_unknown, title));
         }
         status.setVisibility(View.VISIBLE);
+    }
+
+    private void refreshRecentGames() {
+        final LinearLayout section = findViewById(R.id.launcher_recent_games_section);
+        final LinearLayout list = findViewById(R.id.launcher_recent_games_list);
+        if (section == null || list == null) {
+            return;
+        }
+        list.removeAllViews();
+        final java.util.List<XeniaAndroidSettings.RecentGame> games =
+                XeniaAndroidSettings.getRecentGames(this);
+        if (games.isEmpty()) {
+            section.setVisibility(View.GONE);
+            return;
+        }
+        section.setVisibility(View.VISIBLE);
+        for (final XeniaAndroidSettings.RecentGame game : games) {
+            if (game.launchUri == null || game.launchUri.isEmpty()) {
+                continue;
+            }
+            final TextView row = new TextView(this);
+            row.setText(buildRecentGameText(game));
+            row.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
+            row.setTextSize(12);
+            row.setLetterSpacing(0);
+            row.setFocusable(true);
+            row.setClickable(true);
+            row.setMinHeight(dp(44));
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(6), dp(12), dp(6));
+            row.setBackgroundResource(R.drawable.launcher_chip);
+            row.setOnClickListener(view -> launchGame(Uri.parse(game.launchUri)));
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.topMargin = dp(6);
+            list.addView(row, params);
+        }
+        if (list.getChildCount() == 0) {
+            section.setVisibility(View.GONE);
+        }
+    }
+
+    private String buildRecentGameText(final XeniaAndroidSettings.RecentGame game) {
+        final String title = game.title != null && !game.title.isEmpty()
+                ? game.title
+                : getString(R.string.launcher_last_game_unknown);
+        return getString(R.string.launcher_recent_game_row, title, labelForState(game.state));
+    }
+
+    private String labelForState(final String state) {
+        if (XeniaAndroidSettings.LAST_RUN_STATE_EXITED_TO_MENU.equals(state)) {
+            return getString(R.string.launcher_recent_game_exited);
+        }
+        if (XeniaAndroidSettings.LAST_RUN_STATE_RUNNING.equals(state)) {
+            return getString(R.string.launcher_recent_game_maybe_crashed);
+        }
+        return getString(R.string.launcher_recent_game_unknown);
+    }
+
+    private int dp(final int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private String getDisplayName(final Uri uri) {

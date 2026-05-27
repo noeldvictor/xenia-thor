@@ -17,6 +17,11 @@
     <string name="launcher_last_run_exited">Last run: exited to menu - %1$s</string>
     <string name="launcher_last_run_maybe_crashed">Last run: may have crashed or closed - %1$s</string>
     <string name="launcher_last_run_unknown">Last run: unknown - %1$s</string>
+    <string name="launcher_recent_games_title">Recent games</string>
+    <string name="launcher_recent_game_row">%1$s - %2$s</string>
+    <string name="launcher_recent_game_exited">Exited to menu</string>
+    <string name="launcher_recent_game_maybe_crashed">May have crashed/closed</string>
+    <string name="launcher_recent_game_unknown">Unknown</string>
     <string name="launcher_settings_detail">Profiles, video, audio, input</string>
     <string name="launcher_trace_detail">Frame capture analysis</string>
     <string name="launcher_demo_detail">Vulkan surface test</string>

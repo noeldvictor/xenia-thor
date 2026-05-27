@@ -228,6 +228,30 @@
             tools:text="Last run: may have crashed - Saved game" />
 
         <LinearLayout
+            android:id="@+id/launcher_recent_games_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0"
+                android:text="@string/launcher_recent_games_title"
+                android:textColor="@color/xenia_text"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:id="@+id/launcher_recent_games_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="64dp"
             android:layout_marginTop="10dp"

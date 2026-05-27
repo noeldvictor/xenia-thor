@@ -6,6 +6,13 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+
 public final class XeniaAndroidSettings {
     public static final String PREFS_NAME = "xenia_android_settings";
 
@@ -31,6 +38,7 @@ public final class XeniaAndroidSettings {
             "launcher_last_run_started_at_ms";
     public static final String KEY_LAST_RUN_FINISHED_AT_MS =
             "launcher_last_run_finished_at_ms";
+    public static final String KEY_RECENT_GAMES_JSON = "launcher_recent_games_json";
 
     public static final String PROFILE_BALANCED = "thor_balanced";
     public static final String PROFILE_PERFORMANCE = "thor_performance";
@@ -52,6 +60,7 @@ public final class XeniaAndroidSettings {
     private static final String CPU_ARM64 = "arm64";
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
+    private static final int RECENT_GAME_LIMIT = 5;
 
     private XeniaAndroidSettings() {
     }
@@ -131,8 +140,40 @@ public final class XeniaAndroidSettings {
         return target.toString();
     }
 
+    public static final class RecentGame {
+        public final String launchUri;
+        public final String title;
+        public final String target;
+        public final String state;
+        public final long startedAtMs;
+        public final long finishedAtMs;
+
+        private RecentGame(
+                final String launchUri,
+                final String title,
+                final String target,
+                final String state,
+                final long startedAtMs,
+                final long finishedAtMs) {
+            this.launchUri = launchUri;
+            this.title = title;
+            this.target = target;
+            this.state = state;
+            this.startedAtMs = startedAtMs;
+            this.finishedAtMs = finishedAtMs;
+        }
+    }
+
     public static void recordLaunchStarted(
             final Context context, final String title, final String target) {
+        recordLaunchStarted(context, title, target, target);
+    }
+
+    public static void recordLaunchStarted(
+            final Context context,
+            final String title,
+            final String target,
+            final String launchUri) {
         final long nowMs = System.currentTimeMillis();
         getPreferences(context).edit()
                 .putString(KEY_LAST_RUN_TITLE, title != null ? title : "")
@@ -141,13 +182,127 @@ public final class XeniaAndroidSettings {
                 .putLong(KEY_LAST_RUN_STARTED_AT_MS, nowMs)
                 .remove(KEY_LAST_RUN_FINISHED_AT_MS)
                 .commit();
+        upsertRecentGame(
+                context,
+                title,
+                target,
+                launchUri,
+                LAST_RUN_STATE_RUNNING,
+                nowMs,
+                0);
     }
 
     public static void recordLaunchExitedToMenu(final Context context) {
-        getPreferences(context).edit()
+        final SharedPreferences preferences = getPreferences(context);
+        final String title = preferences.getString(KEY_LAST_RUN_TITLE, "");
+        final String target = preferences.getString(KEY_LAST_RUN_TARGET, "");
+        final long startedAtMs = preferences.getLong(KEY_LAST_RUN_STARTED_AT_MS, 0);
+        final long finishedAtMs = System.currentTimeMillis();
+        preferences.edit()
                 .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_EXITED_TO_MENU)
-                .putLong(KEY_LAST_RUN_FINISHED_AT_MS, System.currentTimeMillis())
+                .putLong(KEY_LAST_RUN_FINISHED_AT_MS, finishedAtMs)
                 .commit();
+        upsertRecentGame(
+                context,
+                title,
+                target,
+                target,
+                LAST_RUN_STATE_EXITED_TO_MENU,
+                startedAtMs,
+                finishedAtMs);
+    }
+
+    public static List<RecentGame> getRecentGames(final Context context) {
+        final ArrayList<RecentGame> games = new ArrayList<>();
+        final JSONArray array = readRecentGames(getPreferences(context));
+        for (int i = 0; i < array.length(); i++) {
+            final JSONObject object = array.optJSONObject(i);
+            if (object == null) {
+                continue;
+            }
+            games.add(new RecentGame(
+                    object.optString("launch_uri", ""),
+                    object.optString("title", ""),
+                    object.optString("target", ""),
+                    object.optString("state", ""),
+                    object.optLong("started_at_ms", 0),
+                    object.optLong("finished_at_ms", 0)));
+        }
+        return games;
+    }
+
+    private static void upsertRecentGame(
+            final Context context,
+            final String title,
+            final String target,
+            final String launchUri,
+            final String state,
+            final long startedAtMs,
+            final long finishedAtMs) {
+        final SharedPreferences preferences = getPreferences(context);
+        final JSONArray oldGames = readRecentGames(preferences);
+        final JSONArray newGames = new JSONArray();
+        final String normalizedLaunchUri = nonNull(launchUri);
+        final String normalizedTarget = nonNull(target);
+        if (normalizedLaunchUri.isEmpty() && normalizedTarget.isEmpty()) {
+            return;
+        }
+        try {
+            newGames.put(createRecentGameObject(
+                    title, target, launchUri, state, startedAtMs, finishedAtMs));
+            for (int i = 0; i < oldGames.length()
+                    && newGames.length() < RECENT_GAME_LIMIT; i++) {
+                final JSONObject oldGame = oldGames.optJSONObject(i);
+                if (oldGame == null) {
+                    continue;
+                }
+                final String oldLaunchUri = oldGame.optString("launch_uri", "");
+                final String oldTarget = oldGame.optString("target", "");
+                if ((!normalizedLaunchUri.isEmpty()
+                                && normalizedLaunchUri.equals(oldLaunchUri))
+                        || (!normalizedTarget.isEmpty()
+                                && normalizedTarget.equals(oldTarget))) {
+                    continue;
+                }
+                newGames.put(oldGame);
+            }
+        } catch (final JSONException ignored) {
+            return;
+        }
+        preferences.edit().putString(KEY_RECENT_GAMES_JSON, newGames.toString()).apply();
+    }
+
+    private static JSONObject createRecentGameObject(
+            final String title,
+            final String target,
+            final String launchUri,
+            final String state,
+            final long startedAtMs,
+            final long finishedAtMs) throws JSONException {
+        final JSONObject object = new JSONObject();
+        object.put("launch_uri", nonNull(launchUri));
+        object.put("title", nonNull(title));
+        object.put("target", nonNull(target));
+        object.put("state", nonNull(state));
+        object.put("started_at_ms", startedAtMs);
+        object.put("finished_at_ms", finishedAtMs);
+        return object;
+    }
+
+    private static JSONArray readRecentGames(final SharedPreferences preferences) {
+        final String json = preferences.getString(KEY_RECENT_GAMES_JSON, "[]");
+        if (json == null || json.isEmpty()) {
+            return new JSONArray();
+        }
+        try {
+            return new JSONArray(json);
+        } catch (final JSONException ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private static String nonNull(final String value) {
+        return value != null ? value : "";
     }
 
     public static SharedPreferences.Editor writePreset(
