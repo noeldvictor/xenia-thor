@@ -4,6 +4,7 @@ param(
     [string]$MetaPath = "",
     [string]$PerfPath = "",
     [string]$ProofSummaryPath = "",
+    [string]$FrameCpuSamplerPath = "",
     [string]$OutPath = "",
     [int]$Top = 24
 )
@@ -137,10 +138,12 @@ $LogPath = (Resolve-Path -LiteralPath $LogPath).Path
 $MetaPath = Resolve-OptionalCapturePath $MetaPath "-meta.txt"
 $PerfPath = Resolve-OptionalCapturePath $PerfPath "-perf-final.txt"
 $ProofSummaryPath = Resolve-OptionalCapturePath $ProofSummaryPath "-speed-proof-summary.txt"
+$FrameCpuSamplerPath = Resolve-OptionalCapturePath $FrameCpuSamplerPath "-frame-cpu-sampler.txt"
 
 $logText = Read-OptionalText $LogPath
 $metaText = Read-OptionalText $MetaPath
 $perfText = Read-OptionalText $PerfPath
+$samplerText = Read-OptionalText $FrameCpuSamplerPath
 $meta = Get-MetaMap $metaText
 $proofLines = @(Get-ProofLines $ProofSummaryPath)
 
@@ -213,6 +216,37 @@ $entryDeltaTotal = [Int64]$summaryTotals.entry_delta
 $rankedTop = @($topRows.Values | Sort-Object -Property @{ Expression = { [Int64]$_.top_delta_sum }; Descending = $true })
 $rankedBody = @($bodyRows.Values | Sort-Object -Property @{ Expression = { [Int64]$_.total }; Descending = $true })
 
+$samplerThreadRows = New-Object System.Collections.Generic.List[object]
+foreach ($match in [regex]::Matches($samplerText, "^summary_thread\s+tid=(?<tid>\S+)\s+name=(?<name>.*?)\s+jiffies=(?<jiffies>[0-9]+)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+    [void]$samplerThreadRows.Add([pscustomobject][ordered]@{
+        tid = $match.Groups["tid"].Value
+        name = $match.Groups["name"].Value
+        jiffies = Get-Long $match.Groups["jiffies"].Value
+    })
+}
+$samplerCoreRows = New-Object System.Collections.Generic.List[object]
+foreach ($match in [regex]::Matches($samplerText, "^summary_core\s+tid=(?<tid>\S+)\s+name=(?<name>.*?)\s+core=(?<core>\S+)\s+samples=(?<samples>[0-9]+)\r?$", [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+    [void]$samplerCoreRows.Add([pscustomobject][ordered]@{
+        tid = $match.Groups["tid"].Value
+        name = $match.Groups["name"].Value
+        core = $match.Groups["core"].Value
+        samples = Get-Long $match.Groups["samples"].Value
+    })
+}
+$samplerSampleCount = @([regex]::Matches($samplerText, "^sample\s+index=", [System.Text.RegularExpressions.RegexOptions]::Multiline)).Count
+$samplerDecision = ""
+if ($samplerText -match "(?m)^decision=(?<decision>\S+)") {
+    $samplerDecision = $Matches.decision
+}
+$gfxTotalFrames = ""
+$gfxJankyFrames = ""
+if ($samplerText -match "(?m)^gfxinfo=Total frames rendered:\s*(?<frames>[0-9]+)") {
+    $gfxTotalFrames = $Matches.frames
+}
+if ($samplerText -match "(?m)^gfxinfo=Janky frames:\s*(?<jank>[0-9]+(?:\s+\([^)]+\))?)") {
+    $gfxJankyFrames = $Matches.jank
+}
+
 $classTotals = @{}
 foreach ($row in $rankedTop) {
     $share = 0.0
@@ -233,7 +267,9 @@ if ($entryDeltaTotal -gt 0 -and $classTotals.ContainsKey("tiny_hot_leaf_or_helpe
 }
 
 $decision = "need_live_frame_cpu_residency_sampler_before_next_behavior_lane"
-if ($kernelShare -ge 0.05) {
+if ($samplerText -and $kernelShare -ge 0.05) {
+    $decision = "add_frametimeline_present_attribution_then_kernel_hle_churn_audit"
+} elseif ($kernelShare -ge 0.05) {
     $decision = "investigate_kernel_hle_churn_with_frame_cpu_residency_sampler"
 } elseif ($tinyHelperShare -ge 0.05) {
     $decision = "investigate_tiny_hot_helper_or_leaf_cluster"
@@ -247,6 +283,7 @@ $lines = New-Object System.Collections.Generic.List[string]
 [void]$lines.Add("meta=$MetaPath")
 [void]$lines.Add("perf_final=$PerfPath")
 [void]$lines.Add("proof_summary=$ProofSummaryPath")
+[void]$lines.Add("frame_cpu_sampler=$FrameCpuSamplerPath")
 foreach ($key in @("head", "apk_sha256", "target", "live_capture_seconds", "arm64_offset_memory_address_fastpath")) {
     if ($meta.ContainsKey($key)) {
         [void]$lines.Add(("{0}={1}" -f $key, $meta[$key]))
@@ -267,6 +304,23 @@ foreach ($entry in ($classTotals.GetEnumerator() | Sort-Object -Property Value -
         $share = [double]$entry.Value / [double]$entryDeltaTotal
     }
     [void]$lines.Add(("class class={0} top_delta_sum={1} share={2:N4}" -f $entry.Key, $entry.Value, $share))
+}
+
+if ($samplerText) {
+    [void]$lines.Add(("sampler_decision={0}" -f $samplerDecision))
+    [void]$lines.Add(("sampler_samples={0}" -f $samplerSampleCount))
+    if ($gfxTotalFrames) {
+        [void]$lines.Add(("sampler_gfxinfo_total_frames={0}" -f $gfxTotalFrames))
+    }
+    if ($gfxJankyFrames) {
+        [void]$lines.Add(("sampler_gfxinfo_janky_frames={0}" -f $gfxJankyFrames))
+    }
+    foreach ($row in ($samplerThreadRows | Sort-Object -Property @{ Expression = { [Int64]$_.jiffies }; Descending = $true } | Select-Object -First 12)) {
+        [void]$lines.Add(("sampler_thread tid={0} name={1} jiffies={2}" -f $row.tid, $row.name, $row.jiffies))
+    }
+    foreach ($row in ($samplerCoreRows | Where-Object { $_.name -match "Main Thread|GPU Commands|XMA Decoder|Draw Thread|Audio Worker" } | Sort-Object name, core)) {
+        [void]$lines.Add(("sampler_core name={0} core={1} samples={2}" -f $row.name, $row.core, $row.samples))
+    }
 }
 
 $i = 0
@@ -290,7 +344,11 @@ foreach ($row in $rankedBody | Select-Object -First $Top) {
 
 [void]$lines.Add(("kernel_hle_churn_share={0:N4}" -f $kernelShare))
 [void]$lines.Add(("tiny_helper_share={0:N4}" -f $tinyHelperShare))
-[void]$lines.Add("route_engine_gap=missing_time_series_frame_present_cpu_core_frequency_thermal_join")
+if ($samplerText) {
+    [void]$lines.Add("route_engine_gap=missing_frametimeline_present_attribution")
+} else {
+    [void]$lines.Add("route_engine_gap=missing_time_series_frame_present_cpu_core_frequency_thermal_join")
+}
 [void]$lines.Add("closed_repeat_guard=do_not_rerun_same_quiet_capture_or_closed_a64_micro_lanes")
 [void]$lines.Add(("decision={0}" -f $decision))
 

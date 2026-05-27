@@ -128,7 +128,17 @@ $perfText = Read-OptionalText $PerfPath
 $meta = Get-MetaMap $metaText
 $fpsMarkers = @(Get-FpsMarkers $logText)
 $fatalPattern = "AndroidRuntime|FATAL|fatal|crash|tombstone|signal [0-9]|backtrace|assert|Check failed|segfault|SIGSEGV|SIGABRT"
-$fatalMatches = @([regex]::Matches($logText, $fatalPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+$fatalExclusionPattern = "Process\s+[0-9]+\s+exited due to signal 9 \(Killed\)|iportPostJsonRequest"
+$fatalRawMatches = @()
+$fatalMatches = @()
+foreach ($line in ($logText -split "\r?\n")) {
+    if ($line -match $fatalPattern) {
+        $fatalRawMatches += $line
+        if ($line -notmatch $fatalExclusionPattern) {
+            $fatalMatches += $line
+        }
+    }
+}
 $skipped = Get-SkippedFrameStats $logText
 $threads = Get-ThreadCpu $perfText
 $bodyRows = Get-LastBodyRows $logText
@@ -177,6 +187,10 @@ foreach ($key in @("timestamp", "head", "apk_sha256", "target", "live_capture_se
     }
 }
 Write-Output ("fatal_marker_count={0}" -f $fatalMatches.Count)
+if ($fatalRawMatches.Count -ne $fatalMatches.Count) {
+    Write-Output ("fatal_marker_raw_count={0}" -f $fatalRawMatches.Count)
+    Write-Output ("fatal_marker_excluded_count={0}" -f ($fatalRawMatches.Count - $fatalMatches.Count))
+}
 Write-Output ("fps_marker_count={0}" -f $fpsMarkers.Count)
 if ($fpsMarkers.Count -gt 0) {
     Write-Output ("fps_marker_min={0}" -f $fpsMin)
