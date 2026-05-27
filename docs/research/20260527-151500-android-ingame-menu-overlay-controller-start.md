@@ -32,9 +32,11 @@ help/remap entry point, not donor branding or Cemu-specific functionality.
     `VdSwap` FPS yet.
 - Added an in-game Xenia Thor menu to `EmulatorActivity`:
   - Back toggles the menu instead of finishing the emulator activity.
-  - Menu buttons: Resume, Controller map, Settings.
+  - Menu buttons: Resume, Controller map, Settings, Exit to menu.
   - Controller Help panel shows current physical-to-XInput mappings.
   - Last input panel shows what Android reported and what Xenia maps it to.
+  - Exit to menu starts `LauncherActivity` and finishes `EmulatorActivity` so
+    direct emulator launches also return to the Xenia Thor launcher menu.
 - Added `KEYCODE_MENU` as a bindable Android key and fallback-mapped it to
   `KEYCODE_BUTTON_SELECT`, because the Thor Menu button should act as Xbox
   Back/Select.
@@ -74,6 +76,8 @@ help/remap entry point, not donor branding or Cemu-specific functionality.
   bars or the launch OSD.
 - The top-left FPS badge showed a live value in-game, and the in-game menu
   exposed the persistent `Show FPS` OSD setting.
+- A follow-up pass added `Exit to menu` as the explicit game-exit action while
+  leaving Back as the menu toggle.
 - `git diff --check` passed with normal CRLF warnings only after docs.
 
 ## Follow-Up

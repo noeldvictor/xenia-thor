@@ -32,7 +32,8 @@
 
         <activity
             android:name="jp.xenia.emulator.LauncherActivity"
-            android:exported="true">
+            android:exported="true"
+            android:process=":launcher">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

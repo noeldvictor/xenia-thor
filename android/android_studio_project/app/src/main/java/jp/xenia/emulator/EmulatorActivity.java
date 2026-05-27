@@ -718,6 +718,11 @@ public class EmulatorActivity extends WindowedAppActivity {
             });
         }
 
+        final Button exitButton = findViewById(R.id.emulator_menu_exit_game);
+        if (exitButton != null) {
+            exitButton.setOnClickListener(view -> exitGameToLauncher());
+        }
+
         if (mInGameMenuShowFps != null) {
             mInGameMenuShowFps.setOnCheckedChangeListener((buttonView, checked) -> {
                 if (mUpdatingMenuControls) {
@@ -769,6 +774,16 @@ public class EmulatorActivity extends WindowedAppActivity {
             surfaceView.requestFocus();
         }
         enterImmersiveMode();
+    }
+
+    private void exitGameToLauncher() {
+        if (mInGameMenu != null) {
+            mInGameMenu.setVisibility(View.GONE);
+        }
+        final Intent launcherIntent = new Intent(this, LauncherActivity.class);
+        launcherIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(launcherIntent);
+        finish();
     }
 
     private void refreshInGameMenu() {
