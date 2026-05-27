@@ -424,8 +424,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             surfaceView.setFocusableInTouchMode(true);
             surfaceView.requestFocus();
         }
-        updateOsd(getLaunchArguments(intent));
-        setupFpsOverlay(getLaunchArguments(intent));
+        final Bundle launchArguments = getLaunchArguments(intent);
+        recordLaunchStarted(launchArguments);
+        updateOsd(launchArguments);
+        setupFpsOverlay(launchArguments);
         setupInGameMenu();
     }
 
@@ -710,6 +712,18 @@ public class EmulatorActivity extends WindowedAppActivity {
         return intent != null ? intent.getBundleExtra(EXTRA_CVARS) : null;
     }
 
+    private void recordLaunchStarted(final Bundle launchArguments) {
+        if (launchArguments == null) {
+            return;
+        }
+        final String target = launchArguments.getString("target", "");
+        if (target == null || target.isEmpty()) {
+            return;
+        }
+        XeniaAndroidSettings.recordLaunchStarted(
+                this, getDisplayNameForTarget(target), target);
+    }
+
     private void setupInGameMenu() {
         mInGameMenu = findViewById(R.id.emulator_in_game_menu);
         mInGameMenuShowFps = findViewById(R.id.emulator_menu_show_fps);
@@ -797,6 +811,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (mInGameMenu != null) {
             mInGameMenu.setVisibility(View.GONE);
         }
+        XeniaAndroidSettings.recordLaunchExitedToMenu(this);
         final Intent launcherIntent = new Intent(this, LauncherActivity.class);
         launcherIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(launcherIntent);

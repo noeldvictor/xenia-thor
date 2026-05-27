@@ -211,6 +211,22 @@
             </LinearLayout>
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/launcher_last_run_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/launcher_chip"
+            android:letterSpacing="0"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:textColor="@color/xenia_text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="Last run: may have crashed - Saved game" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="64dp"

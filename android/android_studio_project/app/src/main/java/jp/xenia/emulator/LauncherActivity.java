@@ -13,9 +13,6 @@ import android.view.View;
 import android.widget.TextView;
 
 public class LauncherActivity extends Activity {
-    private static final String KEY_LAST_GAME_URI = "launcher_last_game_uri";
-    private static final String KEY_LAST_GAME_TITLE = "launcher_last_game_title";
-
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
     private static final String THOR_XBOX360_DOCUMENT_ID =
@@ -34,6 +31,7 @@ public class LauncherActivity extends Activity {
         setContentView(R.layout.activity_launcher);
         XeniaAndroidSettings.ensureInitialized(this);
         refreshLastGameCard();
+        refreshLastRunStatus();
         final View launchGameCard = findViewById(R.id.launcher_launch_game_card);
         if (launchGameCard != null) {
             launchGameCard.requestFocus();
@@ -57,6 +55,7 @@ public class LauncherActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshLastGameCard();
+        refreshLastRunStatus();
     }
 
     @Override
@@ -91,7 +90,7 @@ public class LauncherActivity extends Activity {
 
     public void onLaunchLastGameClick(final View view) {
         final String lastGameUri = XeniaAndroidSettings.getPreferences(this)
-                .getString(KEY_LAST_GAME_URI, "");
+                .getString(XeniaAndroidSettings.KEY_LAST_GAME_URI, "");
         if (lastGameUri == null || lastGameUri.isEmpty()) {
             return;
         }
@@ -143,6 +142,10 @@ public class LauncherActivity extends Activity {
         final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
         final Bundle emulatorLaunchArguments =
                 XeniaAndroidSettings.createLaunchArguments(this, uri);
+        XeniaAndroidSettings.recordLaunchStarted(
+                this,
+                getDisplayName(uri),
+                emulatorLaunchArguments.getString("target", uri.toString()));
         emulatorIntent.putExtra(
                 WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
         startActivity(emulatorIntent);
@@ -150,8 +153,8 @@ public class LauncherActivity extends Activity {
 
     private void rememberLastGame(final Uri uri) {
         XeniaAndroidSettings.getPreferences(this).edit()
-                .putString(KEY_LAST_GAME_URI, uri.toString())
-                .putString(KEY_LAST_GAME_TITLE, getDisplayName(uri))
+                .putString(XeniaAndroidSettings.KEY_LAST_GAME_URI, uri.toString())
+                .putString(XeniaAndroidSettings.KEY_LAST_GAME_TITLE, getDisplayName(uri))
                 .apply();
         refreshLastGameCard();
     }
@@ -163,16 +166,43 @@ public class LauncherActivity extends Activity {
             return;
         }
         final SharedPreferences preferences = XeniaAndroidSettings.getPreferences(this);
-        final String lastGameUri = preferences.getString(KEY_LAST_GAME_URI, "");
+        final String lastGameUri = preferences.getString(
+                XeniaAndroidSettings.KEY_LAST_GAME_URI, "");
         final boolean hasLastGame = lastGameUri != null && !lastGameUri.isEmpty();
         card.setEnabled(hasLastGame);
         card.setAlpha(hasLastGame ? 1.0f : 0.55f);
         if (hasLastGame) {
             detail.setText(preferences.getString(
-                    KEY_LAST_GAME_TITLE, getString(R.string.launcher_last_game_unknown)));
+                    XeniaAndroidSettings.KEY_LAST_GAME_TITLE,
+                    getString(R.string.launcher_last_game_unknown)));
         } else {
             detail.setText(R.string.launcher_last_game_empty);
         }
+    }
+
+    private void refreshLastRunStatus() {
+        final TextView status = findViewById(R.id.launcher_last_run_status);
+        if (status == null) {
+            return;
+        }
+        final SharedPreferences preferences = XeniaAndroidSettings.getPreferences(this);
+        final String state = preferences.getString(
+                XeniaAndroidSettings.KEY_LAST_RUN_STATE, "");
+        if (state == null || state.isEmpty()) {
+            status.setVisibility(View.GONE);
+            return;
+        }
+        final String title = preferences.getString(
+                XeniaAndroidSettings.KEY_LAST_RUN_TITLE,
+                getString(R.string.launcher_last_game_unknown));
+        if (XeniaAndroidSettings.LAST_RUN_STATE_EXITED_TO_MENU.equals(state)) {
+            status.setText(getString(R.string.launcher_last_run_exited, title));
+        } else if (XeniaAndroidSettings.LAST_RUN_STATE_RUNNING.equals(state)) {
+            status.setText(getString(R.string.launcher_last_run_maybe_crashed, title));
+        } else {
+            status.setText(getString(R.string.launcher_last_run_unknown, title));
+        }
+        status.setVisibility(View.VISIBLE);
     }
 
     private String getDisplayName(final Uri uri) {

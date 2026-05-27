@@ -22,6 +22,15 @@ public final class XeniaAndroidSettings {
     public static final String KEY_VULKAN_PERF_COUNTERS = "vulkan_perf_counters";
     public static final String KEY_VULKAN_PERF_COUNTERS_INTERVAL =
             "vulkan_perf_counters_interval";
+    public static final String KEY_LAST_GAME_URI = "launcher_last_game_uri";
+    public static final String KEY_LAST_GAME_TITLE = "launcher_last_game_title";
+    public static final String KEY_LAST_RUN_TITLE = "launcher_last_run_title";
+    public static final String KEY_LAST_RUN_TARGET = "launcher_last_run_target";
+    public static final String KEY_LAST_RUN_STATE = "launcher_last_run_state";
+    public static final String KEY_LAST_RUN_STARTED_AT_MS =
+            "launcher_last_run_started_at_ms";
+    public static final String KEY_LAST_RUN_FINISHED_AT_MS =
+            "launcher_last_run_finished_at_ms";
 
     public static final String PROFILE_BALANCED = "thor_balanced";
     public static final String PROFILE_PERFORMANCE = "thor_performance";
@@ -37,6 +46,8 @@ public final class XeniaAndroidSettings {
     public static final String APU_ANY = "any";
     public static final String HID_ANDROID = "android";
     public static final String HID_NOP = "nop";
+    public static final String LAST_RUN_STATE_RUNNING = "running";
+    public static final String LAST_RUN_STATE_EXITED_TO_MENU = "exited_to_menu";
 
     private static final String CPU_ARM64 = "arm64";
     private static final String EXTERNAL_STORAGE_PROVIDER =
@@ -118,6 +129,25 @@ public final class XeniaAndroidSettings {
             }
         }
         return target.toString();
+    }
+
+    public static void recordLaunchStarted(
+            final Context context, final String title, final String target) {
+        final long nowMs = System.currentTimeMillis();
+        getPreferences(context).edit()
+                .putString(KEY_LAST_RUN_TITLE, title != null ? title : "")
+                .putString(KEY_LAST_RUN_TARGET, target != null ? target : "")
+                .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_RUNNING)
+                .putLong(KEY_LAST_RUN_STARTED_AT_MS, nowMs)
+                .remove(KEY_LAST_RUN_FINISHED_AT_MS)
+                .commit();
+    }
+
+    public static void recordLaunchExitedToMenu(final Context context) {
+        getPreferences(context).edit()
+                .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_EXITED_TO_MENU)
+                .putLong(KEY_LAST_RUN_FINISHED_AT_MS, System.currentTimeMillis())
+                .commit();
     }
 
     public static SharedPreferences.Editor writePreset(
