@@ -99,14 +99,12 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     case XFileXctdCompressionInformation: {
-      XELOGE(
-          "NtQueryInformationFile(XFileXctdCompressionInformation) "
-          "unimplemented");
       // Files that are XCTD compressed begin with the magic 0x0FF512ED but we
       // shouldn't detect this that way. There's probably a flag somewhere
       // (attributes?) that defines if it's compressed or not.
-      status = X_STATUS_INVALID_PARAMETER;
-      out_length = 0;
+      auto info = info_ptr.as<X_FILE_XCTD_COMPRESSION_INFORMATION*>();
+      info->unknown = 0;
+      out_length = sizeof(*info);
       break;
     };
     case XFileNetworkOpenInformation: {
@@ -338,10 +336,15 @@ dword_result_t NtQueryVolumeInformationFile_entry(
       }
       break;
     }
-    case XFileFsDeviceInformation:
+    case XFileFsDeviceInformation: {
+      auto info = info_ptr.as<uint32_t*>();
+      info[0] = 0;
+      info[1] = 0;
+      out_length = 8;
+      break;
+    }
     default: {
-      // Unsupported, for now.
-      assert_always();
+      status = X_STATUS_INVALID_INFO_CLASS;
       out_length = 0;
       break;
     }

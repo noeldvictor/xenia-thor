@@ -1,6 +1,7 @@
 package jp.xenia.emulator;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -62,6 +63,7 @@ public class SettingsActivity extends Activity {
                 {getString(R.string.settings_input_android), XeniaAndroidSettings.HID_ANDROID},
                 {getString(R.string.settings_input_none), XeniaAndroidSettings.HID_NOP},
         });
+        addControllerMappingButton(root);
 
         addToggles(root);
         addButtons(root);
@@ -107,6 +109,15 @@ public class SettingsActivity extends Activity {
         }
         root.addView(group, matchWrap());
         return group;
+    }
+
+    private void addControllerMappingButton(final LinearLayout root) {
+        final Button button = new Button(this);
+        button.setText(R.string.settings_controller_mapping);
+        button.setAllCaps(false);
+        button.setOnClickListener(view ->
+                startActivity(new Intent(this, ControllerMappingActivity.class)));
+        root.addView(button, matchWrapWithTopMargin(8));
     }
 
     private void addToggles(final LinearLayout root) {

@@ -47,6 +47,13 @@
             android:theme="@style/Theme.XeniaThor" />
 
         <activity
+            android:name="jp.xenia.emulator.ControllerMappingActivity"
+            android:exported="false"
+            android:label="@string/activity_label_controller_mapping"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Theme.XeniaThor" />
+
+        <activity
             android:name="jp.xenia.emulator.GpuTraceViewerActivity"
             android:exported="true"
             android:label="@string/activity_label_gpu_trace_viewer"

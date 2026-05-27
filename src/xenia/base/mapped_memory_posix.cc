@@ -58,7 +58,7 @@ class PosixMappedMemory : public MappedMemory {
 
     void* data =
         mmap(0, map_length, protection, MAP_SHARED, file_descriptor, offset);
-    if (!data) {
+    if (data == MAP_FAILED) {
       close(file_descriptor);
       return nullptr;
     }

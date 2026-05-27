@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 
 public final class XeniaAndroidSettings {
     public static final String PREFS_NAME = "xenia_android_settings";
@@ -31,6 +32,8 @@ public final class XeniaAndroidSettings {
     public static final String HID_NOP = "nop";
 
     private static final String CPU_ARM64 = "arm64";
+    private static final String EXTERNAL_STORAGE_PROVIDER =
+            "com.android.externalstorage.documents";
 
     private XeniaAndroidSettings() {
     }
@@ -50,7 +53,7 @@ public final class XeniaAndroidSettings {
         ensureInitialized(context);
         final SharedPreferences preferences = getPreferences(context);
         final Bundle launchArguments = new Bundle();
-        launchArguments.putString("target", target.toString());
+        launchArguments.putString("target", resolveLaunchTarget(context, target));
         launchArguments.putString("gpu", preferences.getString(KEY_GPU_DRIVER, GPU_VULKAN));
         launchArguments.putString("cpu", CPU_ARM64);
         launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_NOP));
@@ -69,6 +72,30 @@ public final class XeniaAndroidSettings {
                     preferences.getInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60));
         }
         return launchArguments;
+    }
+
+    public static String resolveLaunchTarget(final Context context, final Uri target) {
+        if (target == null) {
+            return "";
+        }
+        if ("file".equalsIgnoreCase(target.getScheme())) {
+            final String path = target.getPath();
+            return path != null ? path : target.toString();
+        }
+        if (EXTERNAL_STORAGE_PROVIDER.equals(target.getAuthority())
+                && DocumentsContract.isDocumentUri(context, target)) {
+            final String documentId = DocumentsContract.getDocumentId(target);
+            final int separator = documentId.indexOf(':');
+            if (separator > 0 && separator + 1 < documentId.length()) {
+                final String volume = documentId.substring(0, separator);
+                final String relativePath = documentId.substring(separator + 1);
+                if ("primary".equalsIgnoreCase(volume)) {
+                    return "/storage/emulated/0/" + relativePath;
+                }
+                return "/storage/" + volume + "/" + relativePath;
+            }
+        }
+        return target.toString();
     }
 
     public static SharedPreferences.Editor writePreset(

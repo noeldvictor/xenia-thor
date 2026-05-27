@@ -2,6 +2,7 @@
     <string name="app_name">Xenia</string>
     <string name="activity_label_emulator">Launch Game</string>
     <string name="activity_label_settings">Settings</string>
+    <string name="activity_label_controller_mapping">Controller Mapping</string>
     <string name="activity_label_gpu_trace_viewer">GPU Trace Viewer</string>
     <string name="activity_label_window_demo">Window Demo</string>
     <string name="launcher_title">Xenia Thor</string>
@@ -32,6 +33,7 @@
     <string name="settings_input">Controller</string>
     <string name="settings_input_android">Android / AYN Thor</string>
     <string name="settings_input_none">No input</string>
+    <string name="settings_controller_mapping">View / remap controller</string>
     <string name="settings_runtime">Runtime</string>
     <string name="settings_mute_audio">Mute audio</string>
     <string name="settings_hide_osd">Hide overlay</string>
@@ -40,4 +42,12 @@
     <string name="settings_save">Save</string>
     <string name="settings_saved">Settings saved</string>
     <string name="settings_reset_saved">Default settings restored</string>
+    <string name="controller_mapping_subtitle">Tap an Xbox control, then press the Thor button that should drive it.</string>
+    <string name="controller_mapping_ready">Tap a control to remap it.</string>
+    <string name="controller_mapping_last_input_empty">Last input: none</string>
+    <string name="controller_mapping_axis_title">Analog mapping</string>
+    <string name="controller_mapping_button_title">Button mapping</string>
+    <string name="controller_mapping_reset">Reset buttons</string>
+    <string name="controller_mapping_done">Done</string>
+    <string name="controller_mapping_defaults_restored">Default controller mapping restored</string>
 </resources>

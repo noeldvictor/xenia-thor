@@ -11,7 +11,7 @@ public class LauncherActivity extends Activity {
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
     private static final String THOR_XBOX360_DOCUMENT_ID =
-            "2664-21DE:roms/xbox360";
+            "2664-21DE:Roms/xbox360";
     private static final Uri THOR_XBOX360_INITIAL_URI =
             DocumentsContract.buildDocumentUri(
                     EXTERNAL_STORAGE_PROVIDER, THOR_XBOX360_DOCUMENT_ID);

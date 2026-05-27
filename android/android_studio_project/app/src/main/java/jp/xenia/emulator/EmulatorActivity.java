@@ -443,30 +443,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     }
 
     private static boolean isGamepadKeyCode(final int keyCode) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_DPAD_UP:
-            case KeyEvent.KEYCODE_DPAD_DOWN:
-            case KeyEvent.KEYCODE_DPAD_LEFT:
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-            case KeyEvent.KEYCODE_BUTTON_A:
-            case KeyEvent.KEYCODE_BUTTON_B:
-            case KeyEvent.KEYCODE_BUTTON_C:
-            case KeyEvent.KEYCODE_BUTTON_X:
-            case KeyEvent.KEYCODE_BUTTON_Y:
-            case KeyEvent.KEYCODE_BUTTON_Z:
-            case KeyEvent.KEYCODE_BUTTON_L1:
-            case KeyEvent.KEYCODE_BUTTON_R1:
-            case KeyEvent.KEYCODE_BUTTON_L2:
-            case KeyEvent.KEYCODE_BUTTON_R2:
-            case KeyEvent.KEYCODE_BUTTON_THUMBL:
-            case KeyEvent.KEYCODE_BUTTON_THUMBR:
-            case KeyEvent.KEYCODE_BUTTON_START:
-            case KeyEvent.KEYCODE_BUTTON_SELECT:
-            case KeyEvent.KEYCODE_BUTTON_MODE:
-                return true;
-            default:
-                return false;
-        }
+        return XeniaInputMapping.isBindableKeyCode(keyCode);
     }
 
     private boolean handleGamepadKeyEvent(final KeyEvent event) {
@@ -478,13 +455,15 @@ public class EmulatorActivity extends WindowedAppActivity {
             return false;
         }
         final InputDevice device = event.getDevice();
+        final int mappedKeyCode = XeniaInputMapping.mapAndroidKeyCode(this, event.getKeyCode());
         nativeOnAndroidGamepadKey(
-                event.getKeyCode(),
+                mappedKeyCode,
                 action == KeyEvent.ACTION_DOWN,
                 event.getRepeatCount(),
                 event.getDeviceId());
         logGamepadEvent("key", device, event.getSource(),
-                KeyEvent.keyCodeToString(event.getKeyCode()) + " "
+                KeyEvent.keyCodeToString(event.getKeyCode()) + "->"
+                        + KeyEvent.keyCodeToString(mappedKeyCode) + " "
                         + (action == KeyEvent.ACTION_DOWN ? "down" : "up"));
         return true;
     }

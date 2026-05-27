@@ -27,7 +27,14 @@ DECLARE_XBOXKRNL_EXPORT1(XAudioGetSpeakerConfig, kAudio, kImplemented);
 
 dword_result_t XAudioGetVoiceCategoryVolumeChangeMask_entry(
     lpunknown_t driver_ptr, lpdword_t out_ptr) {
-  assert_true((driver_ptr.guest_address() & 0xFFFF0000) == 0x41550000);
+  if ((driver_ptr.guest_address() & 0xFFFF0000) != 0x41550000) {
+    XELOGW(
+        "XAudioGetVoiceCategoryVolumeChangeMask: unexpected driver pointer "
+        "{:08X}",
+        driver_ptr.guest_address());
+    *out_ptr = 0;
+    return X_ERROR_INVALID_PARAMETER;
+  }
 
   xe::threading::MaybeYield();
 
@@ -74,7 +81,11 @@ DECLARE_XBOXKRNL_EXPORT1(XAudioRegisterRenderDriverClient, kAudio,
 
 dword_result_t XAudioUnregisterRenderDriverClient_entry(
     lpunknown_t driver_ptr) {
-  assert_true((driver_ptr.guest_address() & 0xFFFF0000) == 0x41550000);
+  if ((driver_ptr.guest_address() & 0xFFFF0000) != 0x41550000) {
+    XELOGW("XAudioUnregisterRenderDriverClient: unexpected driver pointer {:08X}",
+           driver_ptr.guest_address());
+    return X_ERROR_INVALID_PARAMETER;
+  }
 
   auto audio_system = kernel_state()->emulator()->audio_system();
   audio_system->UnregisterClient(driver_ptr.guest_address() & 0x0000FFFF);
@@ -85,7 +96,11 @@ DECLARE_XBOXKRNL_EXPORT1(XAudioUnregisterRenderDriverClient, kAudio,
 
 dword_result_t XAudioSubmitRenderDriverFrame_entry(lpunknown_t driver_ptr,
                                                    lpunknown_t samples_ptr) {
-  assert_true((driver_ptr.guest_address() & 0xFFFF0000) == 0x41550000);
+  if ((driver_ptr.guest_address() & 0xFFFF0000) != 0x41550000) {
+    XELOGW("XAudioSubmitRenderDriverFrame: unexpected driver pointer {:08X}",
+           driver_ptr.guest_address());
+    return X_ERROR_INVALID_PARAMETER;
+  }
 
   auto audio_system = kernel_state()->emulator()->audio_system();
   audio_system->SubmitFrame(driver_ptr.guest_address() & 0x0000FFFF,
