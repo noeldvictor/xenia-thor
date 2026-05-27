@@ -76,6 +76,16 @@ reports `fps_marker_count=0`, `sustained_30fps_proof=false`, Main Thread
 `96.1%`, GPU Commands `3.8%`, and the same A64 body-time wall cluster. Do not
 rerun this capture unchanged.
 
+Latest route-engine reset:
+`docs/research/20260526-210735-blue-dragon-route-engine-reset.md` adds
+`tools/thor/thor_blue_dragon_route_engine_reset_report.ps1`,
+`tools/thor/thor_android_frame_cpu_sampler.ps1`, and
+`LaunchBlueDragonSpeedCapture -FrameCpuSampler true`. The next automatic speed
+slice should collect route-level frame/CPU residency evidence and then decide
+between Android scheduling/core residency, kernel/HLE churn, region/early-exit
+quality, or a real GPU/frame-pacing lane. Do not default back to another closed
+A64 wall-block micro-audit.
+
 ## Closed Lanes
 
 Do not spend the next sprint slice on these unless new evidence changes the

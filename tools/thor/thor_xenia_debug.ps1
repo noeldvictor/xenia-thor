@@ -234,6 +234,9 @@ param(
     [string]$PerfSampleSeconds = "60,120",
     [string]$TitleScreenshotSeconds = "0",
     [int]$PerfTopThreadCount = 80,
+    [string]$FrameCpuSampler = "false",
+    [int]$FrameCpuSamplerIntervalMs = 1000,
+    [string]$FrameCpuSamplerSurfaceLayer = "",
     [string]$Simpleperf = "false",
     [int]$SimpleperfStartSecond = 70,
     [int]$SimpleperfSeconds = 12,
@@ -1203,6 +1206,9 @@ function Write-CaptureMetadata {
         "live_capture_seconds=$LiveCaptureSeconds",
         "title_screenshot_seconds=$TitleScreenshotSeconds",
         "stop_app_after_capture=$StopAppAfterCapture",
+        "frame_cpu_sampler=$FrameCpuSampler",
+        "frame_cpu_sampler_interval_ms=$FrameCpuSamplerIntervalMs",
+        "frame_cpu_sampler_surface_layer=$FrameCpuSamplerSurfaceLayer",
         "simpleperf=$Simpleperf",
         "simpleperf_start_second=$SimpleperfStartSecond",
         "simpleperf_seconds=$SimpleperfSeconds",
@@ -2087,17 +2093,23 @@ done | head -50
         $FilteredLogPath = Join-Path $OutDir "$Stamp-speed-logcat-filtered.txt"
         $MetaPath = Join-Path $OutDir "$Stamp-meta.txt"
         $ScreenshotPath = Join-Path $OutDir "$Stamp-screenshot.png"
+        $FrameCpuSamplerPath = Join-Path $OutDir "$Stamp-frame-cpu-sampler.txt"
         $launchTarget = Resolve-BlueDragonLaunchTarget
         $sampleSeconds = @(Get-PerfSampleSecondValues $PerfSampleSeconds $LiveCaptureSeconds)
         $perfPaths = @()
         $simpleperfPaths = @()
         $simpleperfEnabled = (ConvertTo-BooleanText $Simpleperf) -eq "true"
+        $frameCpuSamplerEnabled = (ConvertTo-BooleanText $FrameCpuSampler) -eq "true"
+        $frameCpuSamplerProcess = $null
         $simpleperfRan = $false
         $elapsedSeconds = 0
 
         Use-BlueDragonSpeedDefaults
         Write-Output "Launching target: $launchTarget"
         Write-Output "Speed sample seconds: $($sampleSeconds -join ',')"
+        if ($frameCpuSamplerEnabled) {
+            Write-Output "Frame/CPU sampler: interval=${FrameCpuSamplerIntervalMs}ms path=$FrameCpuSamplerPath"
+        }
         if ($simpleperfEnabled) {
             Write-Output "Simpleperf: start=${SimpleperfStartSecond}s duration=${SimpleperfSeconds}s event=$SimpleperfEvent freq=$SimpleperfFrequency callgraph=$SimpleperfCallGraph"
         }
@@ -2162,6 +2174,24 @@ done | head -50
             Invoke-Adb @("shell", "am", "force-stop", $PackageName) | Out-Null
             Invoke-Adb @("logcat", "-c") | Out-Null
             Start-XeniaEmulator $launchTarget -SkipForceStop -SkipLogcatClear
+            if ($frameCpuSamplerEnabled) {
+                $samplerScript = Join-Path $RepoRoot "tools\thor\thor_android_frame_cpu_sampler.ps1"
+                $samplerArgs = @(
+                    "-NoProfile",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", $samplerScript,
+                    "-DeviceSerial", $DeviceSerial,
+                    "-PackageName", $PackageName,
+                    "-Seconds", $LiveCaptureSeconds,
+                    "-IntervalMs", $FrameCpuSamplerIntervalMs,
+                    "-OutPath", $FrameCpuSamplerPath
+                )
+                if ($FrameCpuSamplerSurfaceLayer) {
+                    $samplerArgs += @("-SurfaceLayer", $FrameCpuSamplerSurfaceLayer)
+                }
+                $samplerArgLine = ($samplerArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " "
+                $frameCpuSamplerProcess = Start-Process -FilePath "powershell" -ArgumentList $samplerArgLine -PassThru -WindowStyle Hidden
+            }
 
             foreach ($sampleSecond in $sampleSeconds) {
                 if ($simpleperfEnabled -and !$simpleperfRan -and
@@ -2202,7 +2232,16 @@ done | head -50
             Write-FilteredLog $LogPath $FilteredLogPath
             Write-CaptureMetadata $Stamp $MetaPath $launchTarget
             Invoke-AdbExecOutToFile "screencap -p" $ScreenshotPath
+            if ($frameCpuSamplerProcess) {
+                Wait-Process -Id $frameCpuSamplerProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
+                if (!$frameCpuSamplerProcess.HasExited) {
+                    Stop-Process -Id $frameCpuSamplerProcess.Id -Force -ErrorAction SilentlyContinue
+                }
+            }
         } finally {
+            if ($frameCpuSamplerProcess -and !$frameCpuSamplerProcess.HasExited) {
+                Stop-Process -Id $frameCpuSamplerProcess.Id -Force -ErrorAction SilentlyContinue
+            }
             Stop-XeniaAfterCapture "speed capture complete" $MetaPath
         }
         Write-Output "Log: $LogPath"
@@ -2211,6 +2250,9 @@ done | head -50
         Write-Output "Screenshot: $ScreenshotPath"
         foreach ($perfPath in $perfPaths) {
             Write-Output "Perf: $perfPath"
+        }
+        if ($frameCpuSamplerEnabled) {
+            Write-Output "Frame/CPU sampler: $FrameCpuSamplerPath"
         }
         foreach ($simpleperfPath in $simpleperfPaths) {
             Write-Output "Simpleperf data: $($simpleperfPath.Data)"

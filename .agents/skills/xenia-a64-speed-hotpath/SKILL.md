@@ -16,6 +16,13 @@ body-time rows while GPU Commands stays well below the main thread. Do not make
 Vulkan the main sprint lane until counters show present/submit/pipeline/GPU
 work overtaking A64.
 
+The current reset is route-level instrumentation, not another isolated A64
+micro-lane. `docs/research/20260526-210735-blue-dragon-route-engine-reset.md`
+adds a route-engine report plus a live Android frame/CPU sampler. Use those to
+separate generated-code body walls from Android scheduler/core residency,
+kernel/HLE churn, region/early-exit quality, and real frame pacing before
+patching behavior.
+
 ## Mature Backend Gate
 
 Before another title-specific micro-fastpath, answer these from source,
