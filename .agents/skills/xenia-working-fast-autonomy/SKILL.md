@@ -27,12 +27,23 @@ Run or inspect:
 Test-Path scratch\thor-debug\latest-blue-dragon-full-speed-proof.json
 git status --short --branch
 Get-Content -Raw AGENTS.md
+Get-Content -Raw .agents\skills\xenia-windows-powershell-command-hygiene\SKILL.md
 Get-Content -Raw scratch\thor-debug\codex-goal-loop.json
 ```
 
 Read the newest `docs/worklogs/YYYYMMDD.md` entry and its freshest research
 note. If a build/deploy/capture/real git operation is active, do not start a
 parallel slice.
+
+## Command Hygiene
+
+- Assume Windows PowerShell 5.1 for shell commands.
+- Do not use Bash `&&`, `||`, here-docs, `export`, `rm -rf`, or Bash path
+  syntax.
+- Prefer one command per tool call. Use `multi_tool_use.parallel` for
+  independent reads and follow-up tool calls for dependent steps.
+- For dependent multi-step PowerShell commands, use newline-separated
+  statements with explicit `$LASTEXITCODE` checks.
 
 ## Choose One Lane
 

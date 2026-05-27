@@ -26,6 +26,7 @@ on one screen and include only:
 
 - the proof condition;
 - the local skills to read;
+- the Windows PowerShell hygiene skill for command-heavy continuations;
 - current speed status and wall;
 - closed lanes that must not be repeated;
 - the next broad decision lanes;
@@ -33,6 +34,11 @@ on one screen and include only:
 
 If the prompt grows into dated chronology, run the continual-harness refiner
 before re-arming it.
+
+Command prompts must assume Windows PowerShell 5.1. Include
+`.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md` in the
+startup read list when the loop will run build, deploy, capture, Git, ADB, or
+PowerShell tooling.
 
 ## Helper Commands
 

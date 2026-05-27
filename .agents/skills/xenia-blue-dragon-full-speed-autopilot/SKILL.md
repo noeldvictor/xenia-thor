@@ -15,7 +15,8 @@ the loop, not become a research archive. Detailed history belongs in
    `Test-Path scratch\thor-debug\latest-blue-dragon-full-speed-proof.json`.
 2. Read `AGENTS.md`, this skill,
    `.agents/skills/xenia-working-fast-autonomy/SKILL.md`, and
-   `.agents/skills/xenia-codex-goal-loop/SKILL.md`.
+   `.agents/skills/xenia-codex-goal-loop/SKILL.md`, plus
+   `.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md`.
 3. Read the latest dated worklog and the research note it names as freshest.
 4. Run `git status --short --branch` and check for active build/deploy/capture
    or real git operations before editing.

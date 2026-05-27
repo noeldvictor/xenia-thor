@@ -85,7 +85,7 @@ function Enable-GoalLoop {
 function New-BlueDragonFullSpeedPrompt {
     $parts = @(
         "Continue the xenia-thor Blue Dragon full-speed sprint with the reset plan, not the old chronology.",
-        "First read AGENTS.md, .agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md, .agents/skills/xenia-working-fast-autonomy/SKILL.md, .agents/skills/xenia-a64-speed-hotpath/SKILL.md, .agents/skills/xenia-codex-goal-loop/SKILL.md, .agents/skills/xenia-continual-harness-refiner/SKILL.md, docs/worklogs/20260527.md or newer, and scratch/thor-debug/codex-goal-loop.json.",
+        "First read AGENTS.md, .agents/skills/xenia-blue-dragon-full-speed-autopilot/SKILL.md, .agents/skills/xenia-working-fast-autonomy/SKILL.md, .agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md, .agents/skills/xenia-a64-speed-hotpath/SKILL.md, .agents/skills/xenia-codex-goal-loop/SKILL.md, .agents/skills/xenia-continual-harness-refiner/SKILL.md, docs/worklogs/20260527.md or newer, and scratch/thor-debug/codex-goal-loop.json.",
         "If scratch/thor-debug/latest-blue-dragon-full-speed-proof.json exists, summarize the proof and recommend pausing this loop.",
         "Before starting, check for another build, deploy, Blue Dragon capture, real git operation, or active Codex slice; ignore short-lived read-only status probes after confirming they are not commit/push/merge/rebase work.",
         "Current truth: no sustained 30 FPS proof exists. Latest Blue Dragon captures are still Main Thread / A64 generated-code bound, not broad Vulkan bound; the recurring wall is 82282490, 82281D28, and 82287788.",

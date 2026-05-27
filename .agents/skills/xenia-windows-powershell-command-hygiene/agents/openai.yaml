@@ -1,0 +1,4 @@
+interface:
+  display_name: "Xenia PowerShell Command Hygiene"
+  short_description: "Avoid Bash syntax and fragile path handling in xenia-thor Windows PowerShell work."
+  default_prompt: "Use $xenia-windows-powershell-command-hygiene before composing shell commands in xenia-thor on Windows PowerShell."

@@ -33,6 +33,22 @@ official upstream build.
   Do not create or update global skills for xenia-thor unless the user explicitly
   reverses this rule.
 
+## Windows PowerShell Command Rules
+
+- This workspace normally runs in Windows PowerShell 5.1. Do not compose Bash
+  commands unless a tool explicitly starts a Bash shell.
+- Read `.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md`
+  before command-heavy work, heartbeat continuations, build/deploy/capture
+  slices, or after any shell syntax failure.
+- Do not use Bash chaining such as `&&` or `||`. Prefer one command per tool
+  call; use `multi_tool_use.parallel` for independent reads; use a second tool
+  call for dependent steps after checking the first result.
+- When a single PowerShell command must run multiple dependent steps, use
+  newline-separated PowerShell statements with explicit `$LASTEXITCODE` checks.
+- Use native PowerShell path handling: quote paths with spaces, prefer
+  `-LiteralPath`, and never mix PowerShell path enumeration with another shell
+  for destructive file operations.
+
 Primary target:
 
 - Device: AYN Thor Max.
