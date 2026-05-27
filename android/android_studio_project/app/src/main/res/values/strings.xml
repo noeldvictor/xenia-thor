@@ -15,11 +15,15 @@
     <string name="launcher_last_game_empty">Pick a game once to enable quick launch</string>
     <string name="launcher_last_game_unknown">Saved game</string>
     <string name="launcher_last_run_exited">Last run: exited to menu - %1$s</string>
+    <string name="launcher_last_run_guest_crash">Last run: guest crashed - %1$s</string>
+    <string name="launcher_last_run_guest_heap">Last run: guest heap / exception - %1$s</string>
     <string name="launcher_last_run_maybe_crashed">Last run: may have crashed or closed - %1$s</string>
     <string name="launcher_last_run_unknown">Last run: unknown - %1$s</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
     <string name="launcher_recent_game_exited">Exited to menu</string>
+    <string name="launcher_recent_game_guest_crash">Guest crash</string>
+    <string name="launcher_recent_game_guest_heap">Guest heap / exception</string>
     <string name="launcher_recent_game_maybe_crashed">May have crashed/closed</string>
     <string name="launcher_recent_game_unknown">Unknown</string>
     <string name="launcher_settings_detail">Profiles, video, audio, input</string>

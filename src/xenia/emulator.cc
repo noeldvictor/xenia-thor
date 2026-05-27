@@ -1317,6 +1317,21 @@ bool Emulator::ExceptionCallback(Exception* ex) {
            context->v[i].u32[3]);
   }
 
+  if (display_window_) {
+    const uint32_t title_id_value = title_id();
+    const bool is_project_sylpheed_heap_exception =
+        title_id_value == 0x535107D4 && guest_pc >= 0x8245BD80 &&
+        guest_pc <= 0x8245BE64;
+    display_window_->app_context().NotifyGuestCrash(
+        is_project_sylpheed_heap_exception
+            ? "project_sylpheed_guest_heap_rtlraiseexception"
+            : "xenia_guest_crash",
+        fmt::format(
+            "title_id={:08X};pc={:08X};function=0x{:08X}-0x{:08X};lr={:08X}",
+            title_id_value, guest_pc, guest_function->address(),
+            guest_function->end_address(), uint32_t(context->lr)));
+  }
+
   // Display a dialog telling the user the guest has crashed.
   if (display_window_ && imgui_drawer_) {
     display_window_->app_context().CallInUIThreadSynchronous([this]() {

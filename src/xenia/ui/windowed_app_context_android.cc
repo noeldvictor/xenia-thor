@@ -21,6 +21,8 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <utility>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
@@ -64,6 +66,42 @@ void AndroidWindowedAppContext::PostInvalidateWindowSurface() {
   }
   jni_env->CallVoidMethod(activity_,
                           activity_method_post_invalidate_window_surface_);
+}
+
+void AndroidWindowedAppContext::NotifyGuestCrash(
+    std::string_view classification, std::string_view details) {
+  if (!activity_ || !activity_method_on_native_guest_crash_) {
+    return;
+  }
+  auto notify = [this, classification = std::string(classification),
+                 details = std::string(details)]() {
+    jstring classification_string =
+        ui_thread_jni_env_->NewStringUTF(classification.c_str());
+    jstring details_string = ui_thread_jni_env_->NewStringUTF(details.c_str());
+    if (!classification_string || !details_string) {
+      if (classification_string) {
+        ui_thread_jni_env_->DeleteLocalRef(classification_string);
+      }
+      if (details_string) {
+        ui_thread_jni_env_->DeleteLocalRef(details_string);
+      }
+      return;
+    }
+    ui_thread_jni_env_->CallVoidMethod(
+        activity_, activity_method_on_native_guest_crash_,
+        classification_string, details_string);
+    if (ui_thread_jni_env_->ExceptionCheck()) {
+      ui_thread_jni_env_->ExceptionDescribe();
+      ui_thread_jni_env_->ExceptionClear();
+    }
+    ui_thread_jni_env_->DeleteLocalRef(classification_string);
+    ui_thread_jni_env_->DeleteLocalRef(details_string);
+  };
+  if (IsInUIThread()) {
+    notify();
+    return;
+  }
+  CallInUIThread(std::move(notify));
 }
 
 AndroidWindowedAppContext*
@@ -389,6 +427,11 @@ bool AndroidWindowedAppContext::Initialize(JNIEnv* ui_thread_jni_env,
            ui_thread_jni_env_->GetMethodID(
                activity_class_, "postInvalidateWindowSurface", "()V")) !=
       nullptr;
+  activity_ids_obtained &=
+      (activity_method_on_native_guest_crash_ =
+           ui_thread_jni_env_->GetMethodID(
+               activity_class_, "onNativeGuestCrash",
+               "(Ljava/lang/String;Ljava/lang/String;)V")) != nullptr;
   if (!activity_ids_obtained) {
     XELOGE("AndroidWindowedAppContext: Failed to get the activity class IDs");
     Shutdown();
@@ -458,6 +501,7 @@ void AndroidWindowedAppContext::Shutdown() {
   }
 
   activity_method_post_invalidate_window_surface_ = nullptr;
+  activity_method_on_native_guest_crash_ = nullptr;
   activity_method_finish_ = nullptr;
   if (activity_) {
     ui_thread_jni_env_->DeleteGlobalRef(activity_);

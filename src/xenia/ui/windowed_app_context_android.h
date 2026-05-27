@@ -48,6 +48,9 @@ class AndroidWindowedAppContext final : public WindowedAppContext {
 
   void PlatformQuitFromUIThread() override;
 
+  void NotifyGuestCrash(std::string_view classification,
+                        std::string_view details) override;
+
   JNIEnv* ui_thread_jni_env() const { return ui_thread_jni_env_; }
 
   uint32_t GetPixelDensity() const {
@@ -142,6 +145,7 @@ class AndroidWindowedAppContext final : public WindowedAppContext {
   jobject activity_ = nullptr;
   jmethodID activity_method_finish_ = nullptr;
   jmethodID activity_method_post_invalidate_window_surface_ = nullptr;
+  jmethodID activity_method_on_native_guest_crash_ = nullptr;
 
   // May be read by non-UI threads in NotifyUILoopOfPendingFunctions.
   ALooper* ui_thread_looper_ = nullptr;

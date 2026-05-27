@@ -66,6 +66,11 @@ public class EmulatorActivity extends WindowedAppActivity {
     }
 
     @Override
+    public void onNativeGuestCrash(final String classification, final String details) {
+        XeniaAndroidSettings.recordLaunchGuestCrash(this, classification, details);
+    }
+
+    @Override
     protected void onCreate(final Bundle savedInstanceState) {
         final Intent intent = getIntent();
         if (intent != null && intent.getBundleExtra(EXTRA_CVARS) == null) {

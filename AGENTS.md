@@ -118,5 +118,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remo
   `docs/research/20260527-190000-android-remote-debug-test-rig.md`.
 - Android game status classifier:
   `docs/research/20260527-193200-android-game-status-classifier.md`.
+- Native guest crash launcher status:
+  `docs/research/20260527-194800-android-native-guest-crash-status.md`.
 - Blue Dragon route-engine reset, if restarted:
   `docs/research/20260527-132500-blue-dragon-present-jank-attribution.md`.

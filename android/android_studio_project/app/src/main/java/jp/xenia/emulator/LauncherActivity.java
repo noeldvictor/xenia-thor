@@ -13,6 +13,8 @@ import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.Locale;
+
 public class LauncherActivity extends Activity {
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
@@ -202,6 +204,14 @@ public class LauncherActivity extends Activity {
                 getString(R.string.launcher_last_game_unknown));
         if (XeniaAndroidSettings.LAST_RUN_STATE_EXITED_TO_MENU.equals(state)) {
             status.setText(getString(R.string.launcher_last_run_exited, title));
+        } else if (XeniaAndroidSettings.LAST_RUN_STATE_GUEST_CRASH.equals(state)) {
+            final String diagnostic = preferences.getString(
+                    XeniaAndroidSettings.KEY_LAST_RUN_DIAGNOSTIC, "");
+            if (isGuestHeapDiagnostic(diagnostic)) {
+                status.setText(getString(R.string.launcher_last_run_guest_heap, title));
+            } else {
+                status.setText(getString(R.string.launcher_last_run_guest_crash, title));
+            }
         } else if (XeniaAndroidSettings.LAST_RUN_STATE_RUNNING.equals(state)) {
             status.setText(getString(R.string.launcher_last_run_maybe_crashed, title));
         } else {
@@ -255,7 +265,16 @@ public class LauncherActivity extends Activity {
         final String title = game.title != null && !game.title.isEmpty()
                 ? game.title
                 : getString(R.string.launcher_last_game_unknown);
-        return getString(R.string.launcher_recent_game_row, title, labelForState(game.state));
+        return getString(R.string.launcher_recent_game_row, title, labelForGame(game));
+    }
+
+    private String labelForGame(final XeniaAndroidSettings.RecentGame game) {
+        if (XeniaAndroidSettings.LAST_RUN_STATE_GUEST_CRASH.equals(game.state)) {
+            return isGuestHeapDiagnostic(game.diagnostic)
+                    ? getString(R.string.launcher_recent_game_guest_heap)
+                    : getString(R.string.launcher_recent_game_guest_crash);
+        }
+        return labelForState(game.state);
     }
 
     private String labelForState(final String state) {
@@ -266,6 +285,14 @@ public class LauncherActivity extends Activity {
             return getString(R.string.launcher_recent_game_maybe_crashed);
         }
         return getString(R.string.launcher_recent_game_unknown);
+    }
+
+    private boolean isGuestHeapDiagnostic(final String diagnostic) {
+        if (diagnostic == null) {
+            return false;
+        }
+        final String lower = diagnostic.toLowerCase(Locale.US);
+        return lower.contains("heap") || lower.contains("rtlraiseexception");
     }
 
     private int dp(final int value) {

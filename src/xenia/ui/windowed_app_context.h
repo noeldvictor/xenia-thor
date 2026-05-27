@@ -14,6 +14,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <string_view>
 #include <thread>
 
 #include "xenia/base/assert.h"
@@ -121,6 +122,11 @@ class WindowedAppContext {
   void RequestDeferredQuit() {
     CallInUIThreadDeferred([this] { QuitFromUIThread(); });
   }
+
+  // Platform-specific shells may use this to persist user-visible diagnostics
+  // such as Android launcher recent-game status. Default platforms ignore it.
+  virtual void NotifyGuestCrash(std::string_view classification,
+                                std::string_view details) {}
 
  protected:
   WindowedAppContext() : ui_thread_id_(std::this_thread::get_id()) {}

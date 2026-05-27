@@ -106,6 +106,11 @@ public abstract class WindowedAppActivity extends Activity {
     protected void onWindowSurfaceFrameRequested() {
     }
 
+    // Used from the native WindowedAppContext when guest code faults.
+    @SuppressWarnings("UnusedDeclaration")
+    public void onNativeGuestCrash(final String classification, final String details) {
+    }
+
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

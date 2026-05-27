@@ -33,7 +33,12 @@ public final class XeniaAndroidSettings {
     public static final String KEY_LAST_GAME_TITLE = "launcher_last_game_title";
     public static final String KEY_LAST_RUN_TITLE = "launcher_last_run_title";
     public static final String KEY_LAST_RUN_TARGET = "launcher_last_run_target";
+    public static final String KEY_LAST_RUN_LAUNCH_URI =
+            "launcher_last_run_launch_uri";
     public static final String KEY_LAST_RUN_STATE = "launcher_last_run_state";
+    public static final String KEY_LAST_RUN_DIAGNOSTIC =
+            "launcher_last_run_diagnostic";
+    public static final String KEY_LAST_RUN_DETAILS = "launcher_last_run_details";
     public static final String KEY_LAST_RUN_STARTED_AT_MS =
             "launcher_last_run_started_at_ms";
     public static final String KEY_LAST_RUN_FINISHED_AT_MS =
@@ -104,6 +109,7 @@ public final class XeniaAndroidSettings {
     };
     public static final String LAST_RUN_STATE_RUNNING = "running";
     public static final String LAST_RUN_STATE_EXITED_TO_MENU = "exited_to_menu";
+    public static final String LAST_RUN_STATE_GUEST_CRASH = "guest_crash";
 
     private static final String CPU_ARM64 = "arm64";
     private static final String EXTERNAL_STORAGE_PROVIDER =
@@ -216,6 +222,8 @@ public final class XeniaAndroidSettings {
         public final String title;
         public final String target;
         public final String state;
+        public final String diagnostic;
+        public final String details;
         public final long startedAtMs;
         public final long finishedAtMs;
 
@@ -224,12 +232,16 @@ public final class XeniaAndroidSettings {
                 final String title,
                 final String target,
                 final String state,
+                final String diagnostic,
+                final String details,
                 final long startedAtMs,
                 final long finishedAtMs) {
             this.launchUri = launchUri;
             this.title = title;
             this.target = target;
             this.state = state;
+            this.diagnostic = diagnostic;
+            this.details = details;
             this.startedAtMs = startedAtMs;
             this.finishedAtMs = finishedAtMs;
         }
@@ -249,8 +261,11 @@ public final class XeniaAndroidSettings {
         getPreferences(context).edit()
                 .putString(KEY_LAST_RUN_TITLE, title != null ? title : "")
                 .putString(KEY_LAST_RUN_TARGET, target != null ? target : "")
+                .putString(KEY_LAST_RUN_LAUNCH_URI, launchUri != null ? launchUri : "")
                 .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_RUNNING)
                 .putLong(KEY_LAST_RUN_STARTED_AT_MS, nowMs)
+                .remove(KEY_LAST_RUN_DIAGNOSTIC)
+                .remove(KEY_LAST_RUN_DETAILS)
                 .remove(KEY_LAST_RUN_FINISHED_AT_MS)
                 .commit();
         upsertRecentGame(
@@ -259,6 +274,8 @@ public final class XeniaAndroidSettings {
                 target,
                 launchUri,
                 LAST_RUN_STATE_RUNNING,
+                "",
+                "",
                 nowMs,
                 0);
     }
@@ -267,18 +284,51 @@ public final class XeniaAndroidSettings {
         final SharedPreferences preferences = getPreferences(context);
         final String title = preferences.getString(KEY_LAST_RUN_TITLE, "");
         final String target = preferences.getString(KEY_LAST_RUN_TARGET, "");
+        final String launchUri = preferences.getString(KEY_LAST_RUN_LAUNCH_URI, target);
         final long startedAtMs = preferences.getLong(KEY_LAST_RUN_STARTED_AT_MS, 0);
         final long finishedAtMs = System.currentTimeMillis();
         preferences.edit()
                 .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_EXITED_TO_MENU)
+                .remove(KEY_LAST_RUN_DIAGNOSTIC)
+                .remove(KEY_LAST_RUN_DETAILS)
                 .putLong(KEY_LAST_RUN_FINISHED_AT_MS, finishedAtMs)
                 .commit();
         upsertRecentGame(
                 context,
                 title,
                 target,
-                target,
+                launchUri,
                 LAST_RUN_STATE_EXITED_TO_MENU,
+                "",
+                "",
+                startedAtMs,
+                finishedAtMs);
+    }
+
+    public static void recordLaunchGuestCrash(
+            final Context context, final String classification, final String details) {
+        final SharedPreferences preferences = getPreferences(context);
+        final String title = preferences.getString(KEY_LAST_RUN_TITLE, "");
+        final String target = preferences.getString(KEY_LAST_RUN_TARGET, "");
+        final String launchUri = preferences.getString(KEY_LAST_RUN_LAUNCH_URI, target);
+        final long startedAtMs = preferences.getLong(KEY_LAST_RUN_STARTED_AT_MS, 0);
+        final long finishedAtMs = System.currentTimeMillis();
+        final String diagnostic = nonNull(classification);
+        final String detailText = nonNull(details);
+        preferences.edit()
+                .putString(KEY_LAST_RUN_STATE, LAST_RUN_STATE_GUEST_CRASH)
+                .putString(KEY_LAST_RUN_DIAGNOSTIC, diagnostic)
+                .putString(KEY_LAST_RUN_DETAILS, detailText)
+                .putLong(KEY_LAST_RUN_FINISHED_AT_MS, finishedAtMs)
+                .commit();
+        upsertRecentGame(
+                context,
+                title,
+                target,
+                launchUri,
+                LAST_RUN_STATE_GUEST_CRASH,
+                diagnostic,
+                detailText,
                 startedAtMs,
                 finishedAtMs);
     }
@@ -296,6 +346,8 @@ public final class XeniaAndroidSettings {
                     object.optString("title", ""),
                     object.optString("target", ""),
                     object.optString("state", ""),
+                    object.optString("diagnostic", ""),
+                    object.optString("details", ""),
                     object.optLong("started_at_ms", 0),
                     object.optLong("finished_at_ms", 0)));
         }
@@ -308,6 +360,8 @@ public final class XeniaAndroidSettings {
             final String target,
             final String launchUri,
             final String state,
+            final String diagnostic,
+            final String details,
             final long startedAtMs,
             final long finishedAtMs) {
         final SharedPreferences preferences = getPreferences(context);
@@ -320,7 +374,8 @@ public final class XeniaAndroidSettings {
         }
         try {
             newGames.put(createRecentGameObject(
-                    title, target, launchUri, state, startedAtMs, finishedAtMs));
+                    title, target, launchUri, state, diagnostic, details,
+                    startedAtMs, finishedAtMs));
             for (int i = 0; i < oldGames.length()
                     && newGames.length() < RECENT_GAME_LIMIT; i++) {
                 final JSONObject oldGame = oldGames.optJSONObject(i);
@@ -348,6 +403,8 @@ public final class XeniaAndroidSettings {
             final String target,
             final String launchUri,
             final String state,
+            final String diagnostic,
+            final String details,
             final long startedAtMs,
             final long finishedAtMs) throws JSONException {
         final JSONObject object = new JSONObject();
@@ -355,6 +412,8 @@ public final class XeniaAndroidSettings {
         object.put("title", nonNull(title));
         object.put("target", nonNull(target));
         object.put("state", nonNull(state));
+        object.put("diagnostic", nonNull(diagnostic));
+        object.put("details", nonNull(details));
         object.put("started_at_ms", startedAtMs);
         object.put("finished_at_ms", finishedAtMs);
         return object;
