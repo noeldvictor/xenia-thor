@@ -23,6 +23,7 @@ if (!(Test-Path -LiteralPath $LogPath)) {
 
 $lines = Get-Content -LiteralPath $LogPath
 $text = ($lines -join "`n")
+$packagePattern = "jp\.xenia\.emulator"
 
 function First-MatchValue {
     param(
@@ -59,6 +60,66 @@ function Count-Matches {
     return @($Lines | Select-String -Pattern $Pattern).Count
 }
 
+function Get-LogcatPid {
+    param([string]$Line)
+    if ($Line -match "^\S+\s+\S+\s+(?<pid>\d+)\s+\d+\s+\S\s+") {
+        return [int]$Matches["pid"]
+    }
+    return $null
+}
+
+function Count-ScopedMatches {
+    param(
+        [string[]]$Lines,
+        [string]$Pattern,
+        [hashtable]$ScopedPids,
+        [string]$PackagePattern
+    )
+    $count = 0
+    foreach ($line in $Lines) {
+        if (!($line -match $Pattern)) {
+            continue
+        }
+        $linePid = Get-LogcatPid $line
+        if (($linePid -ne $null -and $ScopedPids.ContainsKey($linePid)) -or
+                $line -match $PackagePattern) {
+            ++$count
+        }
+    }
+    return $count
+}
+
+function New-PidSet {
+    $set = @{}
+    return $set
+}
+
+$xeniaPids = New-PidSet
+$packagePids = New-PidSet
+foreach ($line in $lines) {
+    $linePid = Get-LogcatPid $line
+    if ($linePid -ne $null -and $line -match "\s+xenia\s+:") {
+        $xeniaPids[$linePid] = $true
+    }
+    if ($line -match "Start proc (?<pid>\d+):$packagePattern" -or
+            $line -match "pid:\s*(?<pid>\d+).+>>>\s*$packagePattern") {
+        $packagePids[[int]$Matches["pid"]] = $true
+    }
+    if ($linePid -ne $null -and
+            ($line -match "Cmdline:\s*$packagePattern" -or
+            $line -match "Process:\s*$packagePattern")) {
+        $packagePids[$linePid] = $true
+    }
+}
+
+$scopedCrashPids = New-PidSet
+foreach ($key in $xeniaPids.Keys) {
+    $scopedCrashPids[$key] = $true
+}
+foreach ($key in $packagePids.Keys) {
+    $scopedCrashPids[$key] = $true
+}
+
 $titleId = First-MatchValue $lines "Title ID:\s*(?<value>[0-9A-Fa-f]{8})"
 $mediaId = First-MatchValue $lines "Media ID:\s*(?<value>[0-9A-Fa-f]{8})"
 $rtlException = First-MatchValue $lines "RtlRaiseException\((?<value>.*)\)"
@@ -73,8 +134,10 @@ $baseHeapReleaseAddress = First-MatchValue $lines "BaseHeap::Release failed .* a
 $physicalHeapReleaseAddress = First-MatchValue $lines "PhysicalHeap::Release failed .*physical_address=(?<value>[0-9A-Fa-f]{8})"
 $physicalHeapParentAddress = First-MatchValue $lines "PhysicalHeap::Release failed .*parent_address=(?<value>[0-9A-Fa-f]{8})"
 $launchModuleCount = Count-Matches $lines "Launching module"
-$androidRuntimeCount = Count-Matches $lines "AndroidRuntime|FATAL EXCEPTION"
-$nativeSignalCount = Count-Matches $lines "signal [0-9]+|SIGSEGV|SIGABRT|tombstone|backtrace:"
+$androidRuntimeTotalCount = Count-Matches $lines "AndroidRuntime|FATAL EXCEPTION"
+$nativeSignalTotalCount = Count-Matches $lines "signal [0-9]+|SIGSEGV|SIGABRT|tombstone|backtrace:"
+$androidRuntimeCount = Count-ScopedMatches $lines "AndroidRuntime|FATAL EXCEPTION" $scopedCrashPids $packagePattern
+$nativeSignalCount = Count-ScopedMatches $lines "Fatal signal|signal [0-9]+|SIGSEGV|SIGABRT|tombstone|backtrace:|Abort message:|>>> $packagePattern" $scopedCrashPids $packagePattern
 $guestCrashCount = Count-Matches $lines "==== CRASH DUMP ====|The guest has crashed|Xenia has now paused itself"
 $baseHeapReleaseCount = Count-Matches $lines "BaseHeap::Release failed"
 $baseHeapAllocCount = Count-Matches $lines "BaseHeap::Alloc page count too big|BaseHeap::Alloc failed"
@@ -111,6 +174,12 @@ if ($titleId -eq "535107D4" -and $classification -eq "android_or_native_process_
     $reason = "Project Sylpheed title ID plus BaseHeap/PhysicalHeap failure and native abort"
 }
 
+if ($titleId -eq "535107D4" -and $classification -eq "unknown" -and
+        ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
+    $classification = "project_sylpheed_heap_release_failures_no_crash_marker"
+    $reason = "Project Sylpheed heap release failures present, but no Xenia package crash marker was found"
+}
+
 if ($classification -eq "unknown" -and $launchModuleCount -gt 0) {
     $classification = "launched_no_crash_marker"
     $reason = "module launched but no crash marker was found"
@@ -128,8 +197,12 @@ $report = @(
     "title_id=$titleId",
     "media_id=$mediaId",
     "launch_module_count=$launchModuleCount",
+    "xenia_pid_count=$($xeniaPids.Count)",
+    "package_pid_count=$($packagePids.Count)",
     "android_runtime_count=$androidRuntimeCount",
+    "android_runtime_total_count=$androidRuntimeTotalCount",
     "native_signal_count=$nativeSignalCount",
+    "native_signal_total_count=$nativeSignalTotalCount",
     "guest_crash_count=$guestCrashCount",
     "rtl_raise_exception=$rtlException",
     "native_abort_message=$nativeAbortMessage",
