@@ -193,6 +193,8 @@ public class LauncherActivity extends Activity {
         if (intent == null) {
             return overrides;
         }
+        copyBooleanExtra(intent, overrides, "xboxkrnl_physical_memory_audit");
+        copyIntExtra(intent, overrides, "xboxkrnl_physical_memory_audit_budget");
         copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_reenter_audit_budget");
         copyStringExtra(intent, overrides, "xboxkrnl_reenter_audit_guest_tids");

@@ -234,6 +234,8 @@ param(
     [string]$XboxkrnlEventTrace = "false",
     [string]$XboxkrnlEventTraceBudget = "",
     [string]$XboxkrnlEventTraceObjects = "",
+    [string]$XboxkrnlPhysicalMemoryAudit = "false",
+    [string]$XboxkrnlPhysicalMemoryAuditBudget = "",
     [string]$XboxkrnlReenterAudit = "false",
     [string]$XboxkrnlReenterAuditBudget = "",
     [string]$XboxkrnlReenterAuditGuestTids = "",
@@ -1158,6 +1160,12 @@ function Start-XeniaEmulator {
     if ($XboxkrnlEventTraceObjects) {
         $parts += "--es xboxkrnl_event_trace_objects $(ConvertTo-AdbShellSingleQuote $XboxkrnlEventTraceObjects)"
     }
+    if ($XboxkrnlPhysicalMemoryAudit) {
+        $parts += "--ez xboxkrnl_physical_memory_audit $(ConvertTo-BooleanText $XboxkrnlPhysicalMemoryAudit)"
+    }
+    if ($XboxkrnlPhysicalMemoryAuditBudget) {
+        $parts += "--ei xboxkrnl_physical_memory_audit_budget $XboxkrnlPhysicalMemoryAuditBudget"
+    }
     if ($XboxkrnlReenterAudit) {
         $parts += "--ez xboxkrnl_reenter_audit $(ConvertTo-BooleanText $XboxkrnlReenterAudit)"
     }
@@ -1355,6 +1363,8 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_call_edge_audit_only=$Arm64SpeedProfileCallEdgeAuditOnly",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
+        "xboxkrnl_physical_memory_audit=$XboxkrnlPhysicalMemoryAudit",
+        "xboxkrnl_physical_memory_audit_budget=$XboxkrnlPhysicalMemoryAuditBudget",
         "xboxkrnl_reenter_audit=$XboxkrnlReenterAudit",
         "xboxkrnl_reenter_audit_budget=$XboxkrnlReenterAuditBudget",
         "xboxkrnl_reenter_audit_guest_tids=$XboxkrnlReenterAuditGuestTids",
@@ -1707,6 +1717,8 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "XboxkrnlPhysicalMemoryAudit" "false"
+    Set-DefaultIfNotBound "XboxkrnlPhysicalMemoryAuditBudget" ""
     Set-DefaultIfNotBound "XboxkrnlReenterAudit" "false"
     Set-DefaultIfNotBound "XboxkrnlReenterAuditBudget" ""
     Set-DefaultIfNotBound "XboxkrnlReenterAuditGuestTids" ""
@@ -1834,7 +1846,8 @@ function Use-BlueDragonSpeedDefaults {
         "VulkanDebugTextureFetchDisableExpAdjust",
         "GpuEarlyPrimaryReadPointerWriteback",
         "XboxkrnlThreadWaitTrace",
-        "XboxkrnlEventTrace"
+        "XboxkrnlEventTrace",
+        "XboxkrnlPhysicalMemoryAudit"
     )) {
         Set-Variable -Name $name -Scope Script -Value "false"
     }
@@ -1886,7 +1899,8 @@ function Use-BlueDragonSpeedDefaults {
         "XboxkrnlThreadWaitTraceAfterMs",
         "XboxkrnlThreadWaitTraceGuestTids",
         "XboxkrnlEventTraceBudget",
-        "XboxkrnlEventTraceObjects"
+        "XboxkrnlEventTraceObjects",
+        "XboxkrnlPhysicalMemoryAuditBudget"
     )) {
         Set-Variable -Name $name -Scope Script -Value ""
     }
@@ -1924,6 +1938,8 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "XboxkrnlPhysicalMemoryAudit" "false"
+    Set-DefaultIfNotBound "XboxkrnlPhysicalMemoryAuditBudget" ""
     Set-DefaultIfNotBound "XboxkrnlReenterAudit" "false"
     Set-DefaultIfNotBound "XboxkrnlReenterAuditBudget" ""
     Set-DefaultIfNotBound "XboxkrnlReenterAuditGuestTids" ""
@@ -2011,6 +2027,19 @@ done | head -50
             $launcherArgs += @(
                 "--es", "xboxkrnl_reenter_audit_guest_tids",
                 $XboxkrnlReenterAuditGuestTids
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlPhysicalMemoryAudit")) {
+            $launcherArgs += @(
+                "--ez", "xboxkrnl_physical_memory_audit",
+                (ConvertTo-BooleanText $XboxkrnlPhysicalMemoryAudit)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlPhysicalMemoryAuditBudget") -and
+            $XboxkrnlPhysicalMemoryAuditBudget) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_physical_memory_audit_budget",
+                $XboxkrnlPhysicalMemoryAuditBudget
             )
         }
         Invoke-Adb $launcherArgs

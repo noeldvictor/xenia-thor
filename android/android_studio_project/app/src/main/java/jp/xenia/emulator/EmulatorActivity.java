@@ -444,6 +444,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_event_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_event_trace_budget");
             copyStringExtra(intent, launchArguments, "xboxkrnl_event_trace_objects");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_physical_memory_audit");
+            copyIntExtra(intent, launchArguments, "xboxkrnl_physical_memory_audit_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_reenter_audit");
             copyIntExtra(intent, launchArguments, "xboxkrnl_reenter_audit_budget");
             copyStringExtra(intent, launchArguments, "xboxkrnl_reenter_audit_guest_tids");

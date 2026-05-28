@@ -7,7 +7,9 @@
  ******************************************************************************
  */
 
+#include <atomic>
 #include <cstring>
+#include <limits>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -17,6 +19,7 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
 DEFINE_bool(
@@ -24,11 +27,25 @@ DEFINE_bool(
     "Research bring-up: log nonzero DebugMemory flags in Nt*VirtualMemory "
     "calls and handle them as normal guest memory instead of asserting.",
     "Kernel");
+DEFINE_bool(
+    xboxkrnl_physical_memory_audit, false,
+    "Thor Android compatibility: trace physical memory allocation/free "
+    "ownership without changing behavior.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_physical_memory_audit_budget, 256,
+    "Thor Android compatibility: maximum physical memory ownership audit rows "
+    "to emit.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 namespace {
+
+std::atomic<int> g_physical_memory_audit_budget{0};
+std::atomic<uint32_t> g_physical_memory_audit_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
 
 bool CheckDebugMemoryArgument(const char* export_name, uint32_t debug_memory) {
   if (!debug_memory) {
@@ -41,6 +58,216 @@ bool CheckDebugMemoryArgument(const char* export_name, uint32_t debug_memory) {
   }
   XELOGE("{} received unsupported DebugMemory={}", export_name, debug_memory);
   return false;
+}
+
+void ConfigurePhysicalMemoryAuditBudget() {
+  uint32_t budget = cvars::xboxkrnl_physical_memory_audit_budget;
+  uint32_t configured_budget =
+      g_physical_memory_audit_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_physical_memory_audit_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_physical_memory_audit_budget.store(clamped_budget,
+                                         std::memory_order_release);
+  }
+}
+
+bool ConsumePhysicalMemoryAuditBudget() {
+  if (!cvars::xboxkrnl_physical_memory_audit) {
+    return false;
+  }
+
+  ConfigurePhysicalMemoryAuditBudget();
+  int value = g_physical_memory_audit_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_physical_memory_audit_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const char* HeapTypeName(HeapType type) {
+  switch (type) {
+    case HeapType::kGuestVirtual:
+      return "guest_virtual";
+    case HeapType::kGuestXex:
+      return "guest_xex";
+    case HeapType::kGuestPhysical:
+      return "guest_physical";
+    case HeapType::kHostPhysical:
+      return "host_physical";
+    default:
+      return "unknown";
+  }
+}
+
+struct PhysicalMemoryThreadAuditContext {
+  uint32_t thread_id = 0;
+  uint32_t lr = 0;
+  uint32_t ctr = 0;
+  uint32_t r1 = 0;
+};
+
+PhysicalMemoryThreadAuditContext GetPhysicalMemoryThreadAuditContext() {
+  PhysicalMemoryThreadAuditContext result = {};
+  XThread* thread = XThread::GetCurrentThread();
+  if (!thread) {
+    return result;
+  }
+
+  result.thread_id = thread->thread_id();
+  auto thread_state = thread->thread_state();
+  auto context = thread_state ? thread_state->context() : nullptr;
+  if (!context) {
+    return result;
+  }
+
+  result.lr = static_cast<uint32_t>(context->lr);
+  result.ctr = static_cast<uint32_t>(context->ctr);
+  result.r1 = static_cast<uint32_t>(context->r[1]);
+  return result;
+}
+
+struct HeapRegionAuditInfo {
+  bool valid = false;
+  uint32_t allocation_base = 0;
+  uint32_t allocation_size = 0;
+  uint32_t region_size = 0;
+  uint32_t state = 0;
+  uint32_t protect = 0;
+};
+
+HeapRegionAuditInfo QueryHeapRegionAuditInfo(BaseHeap* heap,
+                                             uint32_t address) {
+  HeapRegionAuditInfo result = {};
+  if (!heap) {
+    return result;
+  }
+
+  HeapAllocationInfo info = {};
+  if (!heap->QueryRegionInfo(address, &info)) {
+    return result;
+  }
+
+  result.valid = true;
+  result.allocation_base = heap->heap_base() + info.allocation_base;
+  result.allocation_size = info.allocation_size;
+  result.region_size = info.region_size;
+  result.state = info.state;
+  result.protect = info.protect;
+  return result;
+}
+
+void LogPhysicalMemoryAllocateAudit(
+    uint32_t flags, uint32_t requested_size, uint32_t protect_bits,
+    uint32_t min_addr_range, uint32_t max_addr_range, uint32_t alignment,
+    uint32_t page_size, uint32_t adjusted_size, uint32_t adjusted_alignment,
+    uint32_t heap_min_addr, uint32_t heap_max_addr, PhysicalHeap* heap,
+    uint32_t result) {
+  if (!ConsumePhysicalMemoryAuditBudget()) {
+    return;
+  }
+
+  auto thread_context = GetPhysicalMemoryThreadAuditContext();
+  uint32_t parent_address =
+      result && heap ? heap->GetPhysicalAddress(result) : UINT32_MAX;
+  HeapRegionAuditInfo physical_info =
+      result ? QueryHeapRegionAuditInfo(heap, result) : HeapRegionAuditInfo{};
+  BaseHeap* parent_heap =
+      parent_address != UINT32_MAX ? kernel_memory()->LookupHeap(parent_address)
+                                   : nullptr;
+  HeapRegionAuditInfo parent_info =
+      parent_heap ? QueryHeapRegionAuditInfo(parent_heap, parent_address)
+                  : HeapRegionAuditInfo{};
+
+  XELOGI(
+      "Xboxkrnl physical memory audit allocate thid {:08X} lr {:08X} ctr "
+      "{:08X} r1 {:08X} flags {:08X} requested_size {:08X} protect_bits "
+      "{:08X} min_addr {:08X} max_addr {:08X} alignment {:08X} page_size "
+      "{:X} adjusted_size {:08X} adjusted_alignment {:08X} heap_base {:08X} "
+      "heap_size {:08X} heap_min {:08X} heap_max {:08X} result {:08X} "
+      "parent_address {:08X} physical_allocation_base {:08X} "
+      "physical_allocation_size {:08X} physical_region_size {:08X} "
+      "physical_state {} physical_protect {} parent_allocation_base {:08X} "
+      "parent_allocation_size {:08X} parent_region_size {:08X} parent_state "
+      "{} parent_protect {} behavior_changed 0",
+      thread_context.thread_id, thread_context.lr, thread_context.ctr,
+      thread_context.r1, flags, requested_size, protect_bits, min_addr_range,
+      max_addr_range, alignment, page_size, adjusted_size, adjusted_alignment,
+      heap ? heap->heap_base() : 0, heap ? heap->heap_size() : 0,
+      heap_min_addr, heap_max_addr, result, parent_address,
+      physical_info.allocation_base, physical_info.allocation_size,
+      physical_info.region_size, physical_info.state, physical_info.protect,
+      parent_info.allocation_base, parent_info.allocation_size,
+      parent_info.region_size, parent_info.state, parent_info.protect);
+}
+
+void LogPhysicalMemoryFreeAudit(const char* phase, uint32_t type,
+                                uint32_t base_address, BaseHeap* heap,
+                                bool result_known, bool result,
+                                uint32_t returned_region_size) {
+  if (!ConsumePhysicalMemoryAuditBudget()) {
+    return;
+  }
+
+  auto thread_context = GetPhysicalMemoryThreadAuditContext();
+  HeapType heap_type = heap ? heap->heap_type() : HeapType::kGuestVirtual;
+  PhysicalHeap* physical_heap =
+      heap && heap_type == HeapType::kGuestPhysical
+          ? static_cast<PhysicalHeap*>(heap)
+          : nullptr;
+  uint32_t parent_address = physical_heap
+                                ? physical_heap->GetPhysicalAddress(base_address)
+                                : UINT32_MAX;
+  HeapRegionAuditInfo physical_info =
+      heap ? QueryHeapRegionAuditInfo(heap, base_address) : HeapRegionAuditInfo{};
+  BaseHeap* parent_heap =
+      parent_address != UINT32_MAX ? kernel_memory()->LookupHeap(parent_address)
+                                   : nullptr;
+  HeapRegionAuditInfo parent_info =
+      parent_heap ? QueryHeapRegionAuditInfo(parent_heap, parent_address)
+                  : HeapRegionAuditInfo{};
+  uint32_t heap_page_size = heap ? heap->page_size() : 0;
+  uint32_t parent_page_size = parent_heap ? parent_heap->page_size() : 0;
+
+  XELOGI(
+      "Xboxkrnl physical memory audit free phase {} thid {:08X} lr {:08X} "
+      "ctr {:08X} r1 {:08X} type {} base_address {:08X} heap_present {} "
+      "heap_type {} heap_base {:08X} heap_page_size {:X} parent_address "
+      "{:08X} physical_allocation_base {:08X} physical_allocation_size "
+      "{:08X} physical_region_size {:08X} physical_state {} "
+      "physical_protect {} physical_region_start {} physical_page_aligned {} "
+      "parent_allocation_base {:08X} parent_allocation_size {:08X} "
+      "parent_region_size {:08X} parent_state {} parent_protect {} "
+      "parent_region_start {} parent_page_aligned {} result_known {} result "
+      "{} returned_region_size {:08X} behavior_changed 0",
+      phase, thread_context.thread_id, thread_context.lr, thread_context.ctr,
+      thread_context.r1, type, base_address, heap ? 1 : 0,
+      heap ? HeapTypeName(heap_type) : "none", heap ? heap->heap_base() : 0,
+      heap_page_size, parent_address, physical_info.allocation_base,
+      physical_info.allocation_size, physical_info.region_size,
+      physical_info.state, physical_info.protect,
+      physical_info.valid && base_address == physical_info.allocation_base ? 1
+                                                                           : 0,
+      heap_page_size && (base_address % heap_page_size) == 0 ? 1 : 0,
+      parent_info.allocation_base, parent_info.allocation_size,
+      parent_info.region_size, parent_info.state, parent_info.protect,
+      parent_info.valid && parent_address == parent_info.allocation_base ? 1
+                                                                         : 0,
+      parent_page_size && parent_address != UINT32_MAX &&
+              (parent_address % parent_page_size) == 0
+          ? 1
+          : 0,
+      result_known ? 1 : 0, result ? 1 : 0, returned_region_size);
 }
 
 }  // namespace
@@ -415,10 +642,18 @@ dword_result_t MmAllocatePhysicalMemoryEx_entry(
   if (!heap->AllocRange(heap_min_addr, heap_max_addr, adjusted_size,
                         adjusted_alignment, allocation_type, protect, top_down,
                         &base_address)) {
+    LogPhysicalMemoryAllocateAudit(
+        flags, region_size, protect_bits, min_addr_range, max_addr_range,
+        alignment, page_size, adjusted_size, adjusted_alignment, heap_min_addr,
+        heap_max_addr, heap, 0);
     // Failed - assume no memory available.
     return 0;
   }
   XELOGD("MmAllocatePhysicalMemoryEx = {:08X}", base_address);
+  LogPhysicalMemoryAllocateAudit(
+      flags, region_size, protect_bits, min_addr_range, max_addr_range,
+      alignment, page_size, adjusted_size, adjusted_alignment, heap_min_addr,
+      heap_max_addr, heap, base_address);
 
   return base_address;
 }
@@ -439,11 +674,19 @@ void MmFreePhysicalMemory_entry(dword_t type, dword_t base_address) {
 
   auto heap = kernel_state()->memory()->LookupHeap(base_address);
   if (!heap) {
+    LogPhysicalMemoryFreeAudit("request", type, base_address, nullptr, false,
+                               false, 0);
     XELOGE("MmFreePhysicalMemory failed: no heap for type={} base_address={:08X}",
            type, base_address);
     return;
   }
-  if (!heap->Release(base_address)) {
+  LogPhysicalMemoryFreeAudit("request", type, base_address, heap, false, false,
+                             0);
+  uint32_t released_region_size = 0;
+  bool released = heap->Release(base_address, &released_region_size);
+  LogPhysicalMemoryFreeAudit("result", type, base_address, heap, true, released,
+                             released_region_size);
+  if (!released) {
     XELOGE(
         "MmFreePhysicalMemory failed: type={} base_address={:08X} "
         "heap_type={} heap_base={:08X} page_size={:X}",

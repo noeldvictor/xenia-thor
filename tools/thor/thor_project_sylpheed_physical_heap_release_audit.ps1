@@ -166,6 +166,14 @@ $mmFreeLogCount = Count-Matches $lines "MmFreePhysicalMemory failed"
 $baseReleaseAfterLongjmpLines = Count-AfterIndex $lines $firstLongjmpIndex "BaseHeap::Release failed"
 $physicalReleaseAfterLongjmpLines = Count-AfterIndex $lines $firstLongjmpIndex "PhysicalHeap::Release failed"
 $mmFreeAfterLongjmpLines = Count-AfterIndex $lines $firstLongjmpIndex "MmFreePhysicalMemory failed"
+$physicalMemoryAuditAllocateCount =
+    Count-Matches $lines "Xboxkrnl physical memory audit allocate"
+$physicalMemoryAuditFreeRequestCount =
+    Count-Matches $lines "Xboxkrnl physical memory audit free phase request"
+$physicalMemoryAuditFreeResultCount =
+    Count-Matches $lines "Xboxkrnl physical memory audit free phase result"
+$physicalMemoryAuditInteriorFreeRequestCount =
+    Count-Matches $lines "Xboxkrnl physical memory audit free phase request .*parent_region_start 0"
 
 $basePattern = "^(?<date>\S+)\s+(?<time>\S+)\s+(?<pid>\d+)\s+(?<tid>\d+)\s+\S\s+xenia\s+:\s+!>\s+(?<handle>[0-9A-Fa-f]{8})\s+BaseHeap::Release failed because address (?<address>[0-9A-Fa-f]{8}) is not a region start \(heap_base=(?<heap_base>[0-9A-Fa-f]{8}), page_size=(?<page_size>[0-9A-Fa-f]+), page=(?<page>[0-9A-Fa-f]+), region_base=(?<region_base>[0-9A-Fa-f]{8}), region_pages=(?<region_pages>\d+), state=(?<state>\d+), raw=(?<raw>[0-9A-Fa-f]{16})\)"
 $rows = @()
@@ -353,6 +361,10 @@ $report = @(
     "base_release_after_longjmp_lines=$baseReleaseAfterLongjmpLines",
     "physical_release_after_longjmp_lines=$physicalReleaseAfterLongjmpLines",
     "mmfree_after_longjmp_lines=$mmFreeAfterLongjmpLines",
+    "physical_memory_audit_allocate_count=$physicalMemoryAuditAllocateCount",
+    "physical_memory_audit_free_request_count=$physicalMemoryAuditFreeRequestCount",
+    "physical_memory_audit_free_result_count=$physicalMemoryAuditFreeResultCount",
+    "physical_memory_audit_interior_free_request_count=$physicalMemoryAuditInteriorFreeRequestCount",
     "parsed_triplet_count=$($rows.Count)",
     "parsed_triplets_after_longjmp=$afterLongjmpTripletCount",
     "distinct_parent_address_count=$($distinctParentAddresses.Count)",
