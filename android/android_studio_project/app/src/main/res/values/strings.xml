@@ -27,6 +27,8 @@
     <string name="launcher_game_library_empty">No games scanned yet. Add a folder or scan common ROM paths.</string>
     <string name="launcher_game_library_row">%1$s\n%2$s - %3$s</string>
     <string name="launcher_game_library_unknown_kind">GAME</string>
+    <string name="launcher_game_library_ready">Ready</string>
+    <string name="launcher_recent_game_badge">Recent</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
     <string name="launcher_recent_game_exited">Exited to menu</string>

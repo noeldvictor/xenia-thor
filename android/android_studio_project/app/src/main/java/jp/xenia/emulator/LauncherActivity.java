@@ -4,10 +4,13 @@ import android.app.Activity;
 import android.content.SharedPreferences;
 import android.content.Intent;
 import android.database.Cursor;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -36,14 +39,12 @@ public class LauncherActivity extends Activity {
 
         setContentView(R.layout.activity_launcher);
         XeniaAndroidSettings.ensureInitialized(this);
+        promoteLibrarySections();
         refreshLastGameCard();
         refreshLastRunStatus();
         refreshGameLibrary();
         refreshRecentGames();
-        final View scanGamesCard = findViewById(R.id.launcher_scan_games_card);
-        if (scanGamesCard != null) {
-            scanGamesCard.requestFocus();
-        }
+        focusPrimaryLauncherTarget();
     }
 
     @Override
@@ -320,18 +321,7 @@ public class LauncherActivity extends Activity {
             if (game.launchUri == null || game.launchUri.isEmpty()) {
                 continue;
             }
-            final TextView row = new TextView(this);
-            row.setText(buildRecentGameText(game));
-            row.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
-            row.setTextSize(12);
-            row.setLetterSpacing(0);
-            row.setFocusable(true);
-            row.setClickable(true);
-            row.setMinHeight(dp(44));
-            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(12), dp(6), dp(12), dp(6));
-            row.setBackgroundResource(R.drawable.launcher_chip);
-            row.setOnClickListener(view -> launchGame(Uri.parse(game.launchUri)));
+            final View row = buildRecentGameRow(game);
             final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -347,6 +337,7 @@ public class LauncherActivity extends Activity {
         final List<XeniaAndroidSettings.GameLibraryEntry> entries =
                 XeniaAndroidSettings.scanGameLibrary(this);
         refreshGameLibrary();
+        focusPrimaryLauncherTarget();
         Toast.makeText(
                 this,
                 getResources().getQuantityString(
@@ -379,18 +370,7 @@ public class LauncherActivity extends Activity {
             if (entry.launchUri == null || entry.launchUri.isEmpty()) {
                 continue;
             }
-            final TextView row = new TextView(this);
-            row.setText(buildGameLibraryText(entry));
-            row.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
-            row.setTextSize(12);
-            row.setLetterSpacing(0);
-            row.setFocusable(true);
-            row.setClickable(true);
-            row.setMinHeight(dp(46));
-            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(12), dp(6), dp(12), dp(6));
-            row.setBackgroundResource(R.drawable.launcher_chip);
-            row.setOnClickListener(view -> launchGame(Uri.parse(entry.launchUri), entry.title));
+            final View row = buildGameLibraryRow(entry);
             final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -399,24 +379,168 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private String buildGameLibraryText(final XeniaAndroidSettings.GameLibraryEntry entry) {
+    private void promoteLibrarySections() {
+        final LinearLayout root = findViewById(R.id.launcher_root);
+        if (root == null) {
+            return;
+        }
+        moveChildToIndex(root, R.id.launcher_recent_games_section, 2);
+        moveChildToIndex(root, R.id.launcher_game_library_section, 2);
+    }
+
+    private void moveChildToIndex(
+            final LinearLayout root, final int childId, final int targetIndex) {
+        final View child = findViewById(childId);
+        if (child == null || child.getParent() != root) {
+            return;
+        }
+        final int safeIndex = Math.max(0, Math.min(targetIndex, root.getChildCount() - 1));
+        final int currentIndex = root.indexOfChild(child);
+        if (currentIndex == safeIndex) {
+            return;
+        }
+        root.removeView(child);
+        root.addView(child, safeIndex);
+    }
+
+    private void focusPrimaryLauncherTarget() {
+        final LinearLayout libraryList = findViewById(R.id.launcher_game_library_list);
+        if (libraryList != null && libraryList.getChildCount() > 0) {
+            libraryList.getChildAt(0).requestFocus();
+            return;
+        }
+        final View scanGamesCard = findViewById(R.id.launcher_scan_games_card);
+        if (scanGamesCard != null) {
+            scanGamesCard.requestFocus();
+        }
+    }
+
+    private View buildGameLibraryRow(final XeniaAndroidSettings.GameLibraryEntry entry) {
         final String title = entry.title != null && !entry.title.isEmpty()
                 ? entry.title
                 : getString(R.string.launcher_last_game_unknown);
         final String kind = entry.kind != null && !entry.kind.isEmpty()
-                ? entry.kind
+                ? entry.kind.toUpperCase(Locale.US)
                 : getString(R.string.launcher_game_library_unknown_kind);
         final String path = entry.path != null && !entry.path.isEmpty()
                 ? entry.path
                 : entry.launchUri;
-        return getString(R.string.launcher_game_library_row, title, kind, path);
+        return makeGameRow(
+                kind,
+                title,
+                compactPath(path),
+                getString(R.string.launcher_game_library_ready),
+                view -> launchGame(Uri.parse(entry.launchUri), title));
     }
 
-    private String buildRecentGameText(final XeniaAndroidSettings.RecentGame game) {
+    private View buildRecentGameRow(final XeniaAndroidSettings.RecentGame game) {
         final String title = game.title != null && !game.title.isEmpty()
                 ? game.title
                 : getString(R.string.launcher_last_game_unknown);
-        return getString(R.string.launcher_recent_game_row, title, labelForGame(game));
+        final String status = labelForGame(game);
+        return makeGameRow(
+                getString(R.string.launcher_recent_game_badge),
+                title,
+                status,
+                status,
+                view -> launchGame(Uri.parse(game.launchUri)));
+    }
+
+    private View makeGameRow(
+            final String coverText,
+            final String title,
+            final String detail,
+            final String status,
+            final View.OnClickListener clickListener) {
+        final LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(76));
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setBackgroundResource(R.drawable.launcher_game_tile);
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setOnClickListener(clickListener);
+
+        final TextView cover = new TextView(this);
+        cover.setBackgroundResource(R.drawable.launcher_cover_placeholder);
+        cover.setGravity(Gravity.CENTER);
+        cover.setText(coverText);
+        cover.setTextColor(getResources().getColor(R.color.xenia_blue));
+        cover.setTextSize(11);
+        cover.setTypeface(Typeface.DEFAULT_BOLD);
+        cover.setLetterSpacing(0);
+        final LinearLayout.LayoutParams coverParams =
+                new LinearLayout.LayoutParams(dp(56), dp(56));
+        row.addView(cover, coverParams);
+
+        final LinearLayout textColumn = new LinearLayout(this);
+        textColumn.setOrientation(LinearLayout.VERTICAL);
+        textColumn.setGravity(Gravity.CENTER_VERTICAL);
+        final LinearLayout.LayoutParams textParams =
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        textParams.leftMargin = dp(12);
+        row.addView(textColumn, textParams);
+
+        final TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(getResources().getColor(R.color.xenia_text));
+        titleView.setTextSize(15);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setLetterSpacing(0);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        textColumn.addView(titleView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        final TextView detailView = new TextView(this);
+        detailView.setText(detail);
+        detailView.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
+        detailView.setTextSize(11);
+        detailView.setLetterSpacing(0);
+        detailView.setSingleLine(true);
+        detailView.setEllipsize(TextUtils.TruncateAt.END);
+        final LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        detailParams.topMargin = dp(3);
+        textColumn.addView(detailView, detailParams);
+
+        final TextView statusView = new TextView(this);
+        statusView.setBackgroundResource(R.drawable.launcher_status_badge);
+        statusView.setGravity(Gravity.CENTER);
+        statusView.setMinWidth(dp(64));
+        statusView.setPadding(dp(9), 0, dp(9), 0);
+        statusView.setText(status);
+        statusView.setTextColor(getResources().getColor(R.color.xenia_green_soft));
+        statusView.setTextSize(11);
+        statusView.setTypeface(Typeface.DEFAULT_BOLD);
+        statusView.setSingleLine(true);
+        statusView.setEllipsize(TextUtils.TruncateAt.END);
+        final LinearLayout.LayoutParams statusParams =
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, dp(30));
+        statusParams.leftMargin = dp(10);
+        row.addView(statusView, statusParams);
+
+        return row;
+    }
+
+    private String compactPath(final String path) {
+        if (path == null || path.isEmpty()) {
+            return "";
+        }
+        final String normalized = path.replace('\\', '/');
+        final int lastSlash = normalized.lastIndexOf('/');
+        if (lastSlash <= 0 || lastSlash >= normalized.length() - 1) {
+            return normalized;
+        }
+        final int previousSlash = normalized.lastIndexOf('/', lastSlash - 1);
+        if (previousSlash < 0 || previousSlash >= lastSlash - 1) {
+            return normalized.substring(lastSlash + 1);
+        }
+        return normalized.substring(previousSlash + 1);
     }
 
     private String labelForGame(final XeniaAndroidSettings.RecentGame game) {
