@@ -118,6 +118,7 @@ public final class XeniaAndroidSettings {
         "arm64_permute_i32_zip_fastpath",
         "arm64_offset_memory_address_fastpath",
         "arm64_vmx_dot_f32_fastpath",
+        "xboxkrnl_reenter_audit",
     };
     public static final String LAST_RUN_STATE_RUNNING = "running";
     public static final String LAST_RUN_STATE_EXITED_TO_MENU = "exited_to_menu";

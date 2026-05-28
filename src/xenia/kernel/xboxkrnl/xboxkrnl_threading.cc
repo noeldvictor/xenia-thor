@@ -69,6 +69,20 @@ DEFINE_string(
     "Thor ARM64 bring-up: optional comma/semicolon/space separated event "
     "handles or guest object addresses to trace.",
     "Kernel");
+DEFINE_bool(
+    xboxkrnl_reenter_audit, false,
+    "Thor Android compatibility: trace KeSetCurrentStackPointers reenter "
+    "attempts without changing behavior.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_reenter_audit_budget, 64,
+    "Thor Android compatibility: maximum reenter audit lines to emit.",
+    "Kernel");
+DEFINE_string(
+    xboxkrnl_reenter_audit_guest_tids, "",
+    "Thor Android compatibility: optional comma/semicolon/space separated "
+    "guest thread ids or inclusive ranges to trace for reenter attempts.",
+    "Kernel");
 
 namespace {
 
@@ -78,6 +92,9 @@ std::atomic<uint32_t> g_thread_wait_trace_configured_budget{
 std::atomic<uint64_t> g_thread_wait_trace_first_host_ms{0};
 std::atomic<int> g_event_trace_budget{0};
 std::atomic<uint32_t> g_event_trace_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+std::atomic<int> g_reenter_audit_budget{0};
+std::atomic<uint32_t> g_reenter_audit_configured_budget{
     std::numeric_limits<uint32_t>::max()};
 
 std::string_view TrimTraceToken(std::string_view value) {
@@ -216,6 +233,35 @@ bool ConsumeEventTraceBudget() {
   return false;
 }
 
+void ConfigureReenterAuditBudget() {
+  uint32_t budget = cvars::xboxkrnl_reenter_audit_budget;
+  uint32_t configured_budget =
+      g_reenter_audit_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_reenter_audit_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_reenter_audit_budget.store(clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumeReenterAuditBudget() {
+  int value = g_reenter_audit_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_reenter_audit_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const char* TraceObjectTypeName(XObject::Type type) {
   switch (type) {
     case XObject::Type::Event:
@@ -318,6 +364,53 @@ void LogEventTrace(const char* api, XEvent* event, uint32_t object_ref,
       "ctr {:08X} r1 {:08X} thread '{}'",
       api, thread_id, object_handle, guest_object, increment, wait, status,
       previous_state, lr, ctr, r1, thread ? thread->thread_name() : "");
+}
+
+void LogReenterAudit(XThread* current_thread, pointer_t<X_KTHREAD> thread,
+                     lpvoid_t stack_ptr, lpvoid_t stack_alloc_base,
+                     lpvoid_t stack_base, lpvoid_t stack_limit,
+                     bool will_reenter) {
+  if (!cvars::xboxkrnl_reenter_audit || !current_thread) {
+    return;
+  }
+
+  uint32_t thread_id = current_thread->thread_id();
+  if (!TraceFilterMatches(thread_id,
+                          cvars::xboxkrnl_reenter_audit_guest_tids)) {
+    return;
+  }
+
+  ConfigureReenterAuditBudget();
+  if (!ConsumeReenterAuditBudget()) {
+    return;
+  }
+
+  auto thread_state = current_thread->thread_state();
+  auto context = thread_state ? thread_state->context() : nullptr;
+  uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
+  uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
+  uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+  uint32_t r13 = context ? static_cast<uint32_t>(context->r[13]) : 0;
+  uint32_t target_guest_object = thread.guest_address();
+  uint32_t target_tid = thread ? static_cast<uint32_t>(thread->thread_id) : 0;
+  uint32_t fiber_ptr = thread ? static_cast<uint32_t>(thread->fiber_ptr) : 0;
+  int32_t apc_disable_count = thread ? thread->apc_disable_count : 0;
+
+  XELOGI(
+      "Xboxkrnl reenter audit KeSetCurrentStackPointers current_thid {:08X} "
+      "current_handle {:08X} current_guest_object {:08X} target_thid {:08X} "
+      "target_guest_object {:08X} same_thread {} will_reenter {} fiber_ptr "
+      "{:08X} lr {:08X} ctr {:08X} r1_before {:08X} r13 {:08X} stack_ptr "
+      "{:08X} stack_alloc_base {:08X} stack_base {:08X} stack_limit {:08X} "
+      "apc_disable_count {} throws_exception {} generated_code_unwind_required "
+      "{} behavior_changed {}",
+      thread_id, current_thread->handle(), current_thread->guest_object(),
+      target_tid, target_guest_object,
+      current_thread->guest_object() == target_guest_object ? 1 : 0,
+      will_reenter ? 1 : 0, fiber_ptr, lr, ctr, r1, r13,
+      stack_ptr.guest_address(), stack_alloc_base.guest_address(),
+      stack_base.guest_address(), stack_limit.guest_address(),
+      apc_disable_count, will_reenter ? 1 : 0, will_reenter ? 1 : 0, 0);
 }
 
 }  // namespace
@@ -516,12 +609,15 @@ void KeSetCurrentStackPointers_entry(lpvoid_t stack_ptr,
   thread->stack_limit = stack_limit.value();
   pcr->stack_base_ptr = stack_base.guest_address();
   pcr->stack_end_ptr = stack_limit.guest_address();
-  context->r[1] = stack_ptr.guest_address();
 
   // If a fiber is set, and the thread matches, reenter to avoid issues with
   // host stack overflowing.
-  if (thread->fiber_ptr &&
-      current_thread->guest_object() == thread.guest_address()) {
+  bool will_reenter = thread->fiber_ptr &&
+                      current_thread->guest_object() == thread.guest_address();
+  LogReenterAudit(current_thread, thread, stack_ptr, stack_alloc_base,
+                  stack_base, stack_limit, will_reenter);
+  context->r[1] = stack_ptr.guest_address();
+  if (will_reenter) {
     current_thread->Reenter(static_cast<uint32_t>(context->lr));
   }
 }

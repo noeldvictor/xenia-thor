@@ -444,6 +444,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_event_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_event_trace_budget");
             copyStringExtra(intent, launchArguments, "xboxkrnl_event_trace_objects");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_reenter_audit");
+            copyIntExtra(intent, launchArguments, "xboxkrnl_reenter_audit_budget");
+            copyStringExtra(intent, launchArguments, "xboxkrnl_reenter_audit_guest_tids");
             copyBooleanExtra(
                     intent, launchArguments, "xboxkrnl_ignore_guest_debug_breakpoints");
             if (intent.hasExtra("discord")) {

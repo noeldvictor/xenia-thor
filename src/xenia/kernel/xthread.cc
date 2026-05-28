@@ -36,6 +36,10 @@ DEFINE_bool(ignore_thread_affinities, true,
 namespace xe {
 namespace kernel {
 
+namespace xboxkrnl {
+DECLARE_bool(xboxkrnl_reenter_audit);
+}  // namespace xboxkrnl
+
 const uint32_t XAPC::kSize;
 const uint32_t XAPC::kDummyKernelRoutine;
 const uint32_t XAPC::kDummyRundownRoutine;
@@ -564,6 +568,17 @@ void XThread::Reenter(uint32_t address) {
   // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/longjmp#remarks
   // On Windows with /EH, setjmp/longjmp do stack unwinding.
   // Is there a better solution than exceptions for stack unwinding?
+  if (xboxkrnl::cvars::xboxkrnl_reenter_audit) {
+    auto context = thread_state_ ? thread_state_->context() : nullptr;
+    uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
+    uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
+    uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+    XELOGI(
+        "Xboxkrnl reenter audit XThread::Reenter thid {:08X} handle {:08X} "
+        "guest_object {:08X} target_address {:08X} lr {:08X} ctr {:08X} "
+        "r1 {:08X} throws_exception {} behavior_changed {}",
+        thread_id(), handle(), guest_object(), address, lr, ctr, r1, 1, 0);
+  }
   throw reenter_exception(address);
 }
 

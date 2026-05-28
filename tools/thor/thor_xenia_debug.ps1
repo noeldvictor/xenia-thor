@@ -234,6 +234,9 @@ param(
     [string]$XboxkrnlEventTrace = "false",
     [string]$XboxkrnlEventTraceBudget = "",
     [string]$XboxkrnlEventTraceObjects = "",
+    [string]$XboxkrnlReenterAudit = "false",
+    [string]$XboxkrnlReenterAuditBudget = "",
+    [string]$XboxkrnlReenterAuditGuestTids = "",
     [string]$XboxkrnlIgnoreGuestDebugBreakpoints = "false",
     [int]$LiveCaptureSeconds = 75,
     [string]$PerfSampleSeconds = "60,120",
@@ -1155,6 +1158,15 @@ function Start-XeniaEmulator {
     if ($XboxkrnlEventTraceObjects) {
         $parts += "--es xboxkrnl_event_trace_objects $(ConvertTo-AdbShellSingleQuote $XboxkrnlEventTraceObjects)"
     }
+    if ($XboxkrnlReenterAudit) {
+        $parts += "--ez xboxkrnl_reenter_audit $(ConvertTo-BooleanText $XboxkrnlReenterAudit)"
+    }
+    if ($XboxkrnlReenterAuditBudget) {
+        $parts += "--ei xboxkrnl_reenter_audit_budget $XboxkrnlReenterAuditBudget"
+    }
+    if ($XboxkrnlReenterAuditGuestTids) {
+        $parts += "--es xboxkrnl_reenter_audit_guest_tids $(ConvertTo-AdbShellSingleQuote $XboxkrnlReenterAuditGuestTids)"
+    }
     if ($XboxkrnlIgnoreGuestDebugBreakpoints) {
         $parts += "--ez xboxkrnl_ignore_guest_debug_breakpoints $(ConvertTo-BooleanText $XboxkrnlIgnoreGuestDebugBreakpoints)"
     }
@@ -1343,6 +1355,9 @@ function Write-CaptureMetadata {
         "arm64_speed_profile_call_edge_audit_only=$Arm64SpeedProfileCallEdgeAuditOnly",
         "arm64_speed_profile_thread_snapshot=$Arm64SpeedProfileThreadSnapshot",
         "arm64_speed_profile_thread_snapshot_on_idle=$Arm64SpeedProfileThreadSnapshotOnIdle",
+        "xboxkrnl_reenter_audit=$XboxkrnlReenterAudit",
+        "xboxkrnl_reenter_audit_budget=$XboxkrnlReenterAuditBudget",
+        "xboxkrnl_reenter_audit_guest_tids=$XboxkrnlReenterAuditGuestTids",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
@@ -1692,6 +1707,9 @@ function Use-BlueDragonA64SpeedPack {
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "XboxkrnlReenterAudit" "false"
+    Set-DefaultIfNotBound "XboxkrnlReenterAuditBudget" ""
+    Set-DefaultIfNotBound "XboxkrnlReenterAuditGuestTids" ""
     Set-DefaultIfNotBound "A64EnableHostGuestStackSynchronization" "true"
     Set-DefaultIfNotBound "A64InlinePpcThreadFieldLeafHelpers" "true"
     Set-DefaultIfNotBound "Arm64BlueDragonDrawWaitProbe" "true"
@@ -1906,6 +1924,9 @@ function Use-BlueDragonTitleDefaults {
     Set-DefaultIfNotBound "Arm64GuestStackArgHandoffAuditBudget" ""
     Set-DefaultIfNotBound "Arm64CrCompareBranchAcrossContextBarrier" "false"
     Set-DefaultIfNotBound "Arm64CrStoreElideForFusedBranch" "false"
+    Set-DefaultIfNotBound "XboxkrnlReenterAudit" "false"
+    Set-DefaultIfNotBound "XboxkrnlReenterAuditBudget" ""
+    Set-DefaultIfNotBound "XboxkrnlReenterAuditGuestTids" ""
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneFastpath" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonStvewxStackLaneAudit" "false"
     Set-DefaultIfNotBound "Arm64BlueDragonMulAddV128Fastpath" "false"
