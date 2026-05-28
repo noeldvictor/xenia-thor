@@ -12,9 +12,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingStart="18dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="18dp"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="16dp"
         android:paddingBottom="18dp">
 
         <LinearLayout
@@ -24,15 +24,15 @@
             android:orientation="horizontal">
 
             <ImageView
-                android:layout_width="42dp"
-                android:layout_height="42dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:contentDescription="@string/app_name"
                 android:src="@drawable/ic_xenia_thor_mark" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -43,16 +43,7 @@
                     android:letterSpacing="0"
                     android:text="@string/launcher_title"
                     android:textColor="@color/xenia_text"
-                    android:textSize="20sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:letterSpacing="0"
-                    android:text="@string/launcher_subtitle"
-                    android:textColor="@color/xenia_text_secondary"
-                    android:textSize="11sp" />
+                    android:textSize="17sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -63,86 +54,102 @@
 
                 <TextView
                     android:layout_width="wrap_content"
-                    android:layout_height="24dp"
+                    android:layout_height="20dp"
                     android:background="@drawable/launcher_chip"
                     android:gravity="center"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:text="@string/launcher_status_vulkan"
                     android:textColor="@color/xenia_green_soft"
-                    android:textSize="12sp" />
+                    android:textSize="10sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
-                    android:layout_height="24dp"
-                    android:layout_marginStart="8dp"
+                    android:layout_height="20dp"
+                    android:layout_marginStart="6dp"
                     android:background="@drawable/launcher_chip"
                     android:gravity="center"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:text="@string/launcher_status_arm64"
                     android:textColor="@color/xenia_green_soft"
-                    android:textSize="12sp" />
+                    android:textSize="10sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
-                    android:layout_height="24dp"
-                    android:layout_marginStart="8dp"
+                    android:layout_height="20dp"
+                    android:layout_marginStart="6dp"
                     android:background="@drawable/launcher_chip"
                     android:gravity="center"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:text="@string/launcher_status_unstable"
                     android:textColor="@color/xenia_warning"
-                    android:textSize="12sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="30dp"
-            android:layout_marginTop="10dp"
+            android:layout_height="26dp"
+            android:layout_marginTop="6dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <TextView
-                android:layout_width="86dp"
+                android:id="@+id/launcher_games_tab"
+                android:layout_width="78dp"
                 android:layout_height="match_parent"
                 android:background="@drawable/launcher_menu_tab"
+                android:clickable="true"
+                android:focusable="true"
                 android:gravity="center"
+                android:onClick="onLauncherGamesTabClick"
                 android:text="@string/launcher_tab_games"
                 android:textColor="@color/xenia_green_soft"
                 android:textSize="11sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:layout_width="86dp"
+                android:id="@+id/launcher_recent_tab"
+                android:layout_width="78dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="6dp"
                 android:background="@drawable/launcher_menu_tab"
+                android:clickable="true"
+                android:focusable="true"
                 android:gravity="center"
+                android:onClick="onLauncherRecentTabClick"
                 android:text="@string/launcher_tab_recent"
                 android:textColor="@color/xenia_text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:layout_width="86dp"
+                android:id="@+id/launcher_browse_tab"
+                android:layout_width="78dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="6dp"
                 android:background="@drawable/launcher_menu_tab"
+                android:clickable="true"
+                android:focusable="true"
                 android:gravity="center"
+                android:onClick="onLauncherBrowseTabClick"
                 android:text="@string/launcher_tab_browse"
                 android:textColor="@color/xenia_text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:layout_width="86dp"
+                android:id="@+id/launcher_tools_tab"
+                android:layout_width="78dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="6dp"
                 android:background="@drawable/launcher_menu_tab"
+                android:clickable="true"
+                android:focusable="true"
                 android:gravity="center"
+                android:onClick="onLauncherToolsTabClick"
                 android:text="@string/launcher_tab_tools"
                 android:textColor="@color/xenia_text_secondary"
                 android:textSize="11sp"
@@ -152,7 +159,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="6dp"
             android:baselineAligned="false"
             android:orientation="horizontal">
 
@@ -168,12 +175,12 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/launcher_chip"
                     android:letterSpacing="0"
-                    android:paddingStart="14dp"
-                    android:paddingTop="8dp"
-                    android:paddingEnd="14dp"
-                    android:paddingBottom="8dp"
+                    android:paddingStart="10dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="10dp"
+                    android:paddingBottom="5dp"
                     android:textColor="@color/xenia_text_secondary"
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:visibility="gone"
                     tools:text="Last run: may have crashed - Saved game" />
 
@@ -190,23 +197,23 @@
                         android:letterSpacing="0"
                         android:text="@string/launcher_game_library_title"
                         android:textColor="@color/xenia_text"
-                        android:textSize="16sp" />
+                        android:textSize="14sp" />
 
                     <TextView
                         android:id="@+id/launcher_game_library_status"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="2dp"
                         android:letterSpacing="0"
                         android:text="@string/launcher_game_library_empty"
                         android:textColor="@color/xenia_text_secondary"
-                        android:textSize="12sp" />
+                        android:textSize="10sp" />
 
                     <LinearLayout
                         android:id="@+id/launcher_game_library_list"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="4dp"
                         android:orientation="vertical" />
                 </LinearLayout>
 
@@ -214,7 +221,7 @@
                     android:id="@+id/launcher_recent_games_section"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
+                    android:layout_marginTop="10dp"
                     android:orientation="vertical"
                     android:visibility="gone">
 
@@ -225,7 +232,7 @@
                         android:letterSpacing="0"
                         android:text="@string/launcher_recent_games_title"
                         android:textColor="@color/xenia_text"
-                        android:textSize="16sp" />
+                        android:textSize="14sp" />
 
                     <LinearLayout
                         android:id="@+id/launcher_recent_games_list"
@@ -237,6 +244,7 @@
             </LinearLayout>
 
             <LinearLayout
+                android:id="@+id/launcher_action_rail"
                 android:layout_width="244dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
@@ -308,6 +316,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/launcher_add_game_folder_card"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
                     android:layout_marginTop="6dp"
@@ -363,6 +372,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/launcher_browse_game_card"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
                     android:layout_marginTop="6dp"
@@ -418,63 +428,7 @@
                 </LinearLayout>
 
                 <LinearLayout
-                    android:id="@+id/launcher_last_game_card"
-                    android:layout_width="match_parent"
-                    android:layout_height="50dp"
-                    android:layout_marginTop="6dp"
-                    android:background="@drawable/launcher_card"
-                    android:clickable="true"
-                    android:elevation="2dp"
-                    android:focusable="true"
-                    android:foreground="?android:attr/selectableItemBackground"
-                    android:gravity="center_vertical"
-                    android:onClick="onLaunchLastGameClick"
-                    android:orientation="horizontal"
-                    android:paddingStart="16dp"
-                    android:paddingEnd="16dp">
-
-                    <FrameLayout
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="@drawable/launcher_icon_plate">
-
-                        <ImageView
-                            android:layout_width="20dp"
-                            android:layout_height="20dp"
-                            android:layout_gravity="center"
-                            android:contentDescription="@string/launcher_last_game_title"
-                            android:src="@drawable/ic_action_play" />
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:fontFamily="sans-serif-medium"
-                            android:letterSpacing="0"
-                            android:text="@string/launcher_last_game_title"
-                            android:textColor="@color/xenia_text"
-                            android:textSize="13sp" />
-
-                        <TextView
-                            android:id="@+id/launcher_last_game_detail"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:letterSpacing="0"
-                            android:text="@string/launcher_last_game_empty"
-                            android:textColor="@color/xenia_text_secondary"
-                            android:textSize="10sp" />
-                    </LinearLayout>
-                </LinearLayout>
-
-                <LinearLayout
+                    android:id="@+id/launcher_settings_card"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
                     android:layout_marginTop="6dp"
@@ -530,6 +484,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/launcher_gpu_trace_card"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
                     android:layout_marginTop="6dp"
@@ -585,6 +540,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/launcher_window_demo_card"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
                     android:layout_marginTop="6dp"

@@ -1,6 +1,7 @@
 package jp.xenia.emulator;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.content.Intent;
 import android.database.Cursor;
@@ -19,6 +20,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -37,8 +40,25 @@ public class LauncherActivity extends Activity {
     private static final int REQUEST_OPEN_GAME_FOLDER = 2;
     private static final int REQUEST_OPEN_GPU_TRACE_VIEWER = 0;
     private static final int GAME_TILE_COLUMNS = 4;
+    private static final int LAUNCHER_TAB_GAMES = 0;
+    private static final int LAUNCHER_TAB_RECENT = 1;
+    private static final int LAUNCHER_TAB_BROWSE = 2;
+    private static final int LAUNCHER_TAB_TOOLS = 3;
     private static final Pattern DISC_PATTERN = Pattern.compile(
             "(?i)(?:disc|disk|cd)\\s*([0-9]+)");
+    private int activeLauncherTab = LAUNCHER_TAB_GAMES;
+
+    private static final class GameLibraryGroup {
+        public final String title;
+        public String kind;
+        public String coverLookupPath;
+        public final ArrayList<XeniaAndroidSettings.GameLibraryEntry> entries =
+                new ArrayList<>();
+
+        public GameLibraryGroup(final String title) {
+            this.title = title;
+        }
+    }
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -47,10 +67,10 @@ public class LauncherActivity extends Activity {
         setContentView(R.layout.activity_launcher);
         XeniaAndroidSettings.ensureInitialized(this);
         promoteLibrarySections();
-        refreshLastGameCard();
         refreshLastRunStatus();
         refreshGameLibrary();
         refreshRecentGames();
+        setLauncherTab(activeLauncherTab);
         focusPrimaryLauncherTarget();
     }
 
@@ -70,10 +90,10 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        refreshLastGameCard();
         refreshLastRunStatus();
         refreshGameLibrary();
         refreshRecentGames();
+        setLauncherTab(activeLauncherTab);
     }
 
     @Override
@@ -122,15 +142,6 @@ public class LauncherActivity extends Activity {
         startActivityForResult(intent, REQUEST_OPEN_GAME_FOLDER);
     }
 
-    public void onLaunchLastGameClick(final View view) {
-        final String lastGameUri = XeniaAndroidSettings.getPreferences(this)
-                .getString(XeniaAndroidSettings.KEY_LAST_GAME_URI, "");
-        if (lastGameUri == null || lastGameUri.isEmpty()) {
-            return;
-        }
-        launchGame(Uri.parse(lastGameUri));
-    }
-
     public void onLaunchGpuTraceViewerClick(final View view) {
         final Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -144,6 +155,26 @@ public class LauncherActivity extends Activity {
 
     public void onLaunchWindowDemoClick(final View view) {
         startActivity(new Intent(this, WindowDemoActivity.class));
+    }
+
+    public void onLauncherGamesTabClick(final View view) {
+        setLauncherTab(LAUNCHER_TAB_GAMES);
+        focusPrimaryLauncherTarget();
+    }
+
+    public void onLauncherRecentTabClick(final View view) {
+        setLauncherTab(LAUNCHER_TAB_RECENT);
+        focusPrimaryLauncherTarget();
+    }
+
+    public void onLauncherBrowseTabClick(final View view) {
+        setLauncherTab(LAUNCHER_TAB_BROWSE);
+        focusPrimaryLauncherTarget();
+    }
+
+    public void onLauncherToolsTabClick(final View view) {
+        setLauncherTab(LAUNCHER_TAB_TOOLS);
+        focusPrimaryLauncherTarget();
     }
 
     private static boolean isControllerActivateKey(final int keyCode) {
@@ -253,28 +284,6 @@ public class LauncherActivity extends Activity {
                 .putString(XeniaAndroidSettings.KEY_LAST_GAME_URI, uri.toString())
                 .putString(XeniaAndroidSettings.KEY_LAST_GAME_TITLE, displayTitle)
                 .apply();
-        refreshLastGameCard();
-    }
-
-    private void refreshLastGameCard() {
-        final View card = findViewById(R.id.launcher_last_game_card);
-        final TextView detail = findViewById(R.id.launcher_last_game_detail);
-        if (card == null || detail == null) {
-            return;
-        }
-        final SharedPreferences preferences = XeniaAndroidSettings.getPreferences(this);
-        final String lastGameUri = preferences.getString(
-                XeniaAndroidSettings.KEY_LAST_GAME_URI, "");
-        final boolean hasLastGame = lastGameUri != null && !lastGameUri.isEmpty();
-        card.setEnabled(hasLastGame);
-        card.setAlpha(hasLastGame ? 1.0f : 0.55f);
-        if (hasLastGame) {
-            detail.setText(preferences.getString(
-                    XeniaAndroidSettings.KEY_LAST_GAME_TITLE,
-                    getString(R.string.launcher_last_game_unknown)));
-        } else {
-            detail.setText(R.string.launcher_last_game_empty);
-        }
     }
 
     private void refreshLastRunStatus() {
@@ -340,10 +349,40 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    private void setLauncherTab(final int tab) {
+        activeLauncherTab = tab;
+        final LinearLayout librarySection = findViewById(R.id.launcher_game_library_section);
+        final LinearLayout recentSection = findViewById(R.id.launcher_recent_games_section);
+        final LinearLayout recentList = findViewById(R.id.launcher_recent_games_list);
+        if (librarySection != null) {
+            librarySection.setVisibility(tab == LAUNCHER_TAB_RECENT ? View.GONE : View.VISIBLE);
+        }
+        if (recentSection != null) {
+            final boolean hasRecent = recentList != null && recentList.getChildCount() > 0;
+            recentSection.setVisibility(
+                    tab == LAUNCHER_TAB_RECENT && hasRecent ? View.VISIBLE : View.GONE);
+        }
+        updateLauncherTab(R.id.launcher_games_tab, tab == LAUNCHER_TAB_GAMES);
+        updateLauncherTab(R.id.launcher_recent_tab, tab == LAUNCHER_TAB_RECENT);
+        updateLauncherTab(R.id.launcher_browse_tab, tab == LAUNCHER_TAB_BROWSE);
+        updateLauncherTab(R.id.launcher_tools_tab, tab == LAUNCHER_TAB_TOOLS);
+    }
+
+    private void updateLauncherTab(final int viewId, final boolean active) {
+        final TextView tab = findViewById(viewId);
+        if (tab == null) {
+            return;
+        }
+        tab.setTextColor(getResources().getColor(
+                active ? R.color.xenia_green_soft : R.color.xenia_text_secondary));
+        tab.setAlpha(active ? 1.0f : 0.78f);
+    }
+
     private void scanAndRefreshGameLibrary() {
         final List<XeniaAndroidSettings.GameLibraryEntry> entries =
                 XeniaAndroidSettings.scanGameLibrary(this);
         refreshGameLibrary();
+        setLauncherTab(LAUNCHER_TAB_GAMES);
         focusPrimaryLauncherTarget();
         Toast.makeText(
                 this,
@@ -369,16 +408,25 @@ public class LauncherActivity extends Activity {
             status.setText(R.string.launcher_game_library_empty);
             return;
         }
-        status.setText(getResources().getQuantityString(
-                R.plurals.launcher_game_library_count,
-                entries.size(),
-                entries.size()));
+        final List<GameLibraryGroup> groups = buildGameLibraryGroups(entries);
+        if (groups.isEmpty()) {
+            status.setText(R.string.launcher_game_library_empty);
+            return;
+        }
+        if (groups.size() == entries.size()) {
+            status.setText(getResources().getQuantityString(
+                    R.plurals.launcher_game_library_count,
+                    groups.size(),
+                    groups.size()));
+        } else {
+            status.setText(getString(
+                    R.string.launcher_game_library_group_count,
+                    groups.size(),
+                    entries.size()));
+        }
         LinearLayout currentRow = null;
         int column = 0;
-        for (final XeniaAndroidSettings.GameLibraryEntry entry : entries) {
-            if (entry.launchUri == null || entry.launchUri.isEmpty()) {
-                continue;
-            }
+        for (final GameLibraryGroup group : groups) {
             if (currentRow == null || column >= GAME_TILE_COLUMNS) {
                 currentRow = new LinearLayout(this);
                 currentRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -389,7 +437,7 @@ public class LauncherActivity extends Activity {
                 list.addView(currentRow, rowParams);
                 column = 0;
             }
-            final View tile = buildGameLibraryTile(entry);
+            final View tile = buildGameLibraryTile(group);
             final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     0,
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -439,6 +487,25 @@ public class LauncherActivity extends Activity {
     }
 
     private void focusPrimaryLauncherTarget() {
+        if (activeLauncherTab == LAUNCHER_TAB_RECENT) {
+            final LinearLayout recentList = findViewById(R.id.launcher_recent_games_list);
+            if (recentList != null && recentList.getChildCount() > 0) {
+                recentList.getChildAt(0).requestFocus();
+                return;
+            }
+        } else if (activeLauncherTab == LAUNCHER_TAB_BROWSE) {
+            final View scanGamesCard = findViewById(R.id.launcher_scan_games_card);
+            if (scanGamesCard != null) {
+                scanGamesCard.requestFocus();
+                return;
+            }
+        } else if (activeLauncherTab == LAUNCHER_TAB_TOOLS) {
+            final View settingsCard = findViewById(R.id.launcher_settings_card);
+            if (settingsCard != null) {
+                settingsCard.requestFocus();
+                return;
+            }
+        }
         final LinearLayout libraryList = findViewById(R.id.launcher_game_library_list);
         if (libraryList != null && libraryList.getChildCount() > 0) {
             final View firstRow = libraryList.getChildAt(0);
@@ -456,24 +523,107 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private View buildGameLibraryTile(final XeniaAndroidSettings.GameLibraryEntry entry) {
-        final String title = entry.title != null && !entry.title.isEmpty()
-                ? entry.title
+    private void showDiscPicker(final GameLibraryGroup group) {
+        final String[] labels = new String[group.entries.size()];
+        for (int i = 0; i < group.entries.size(); ++i) {
+            final XeniaAndroidSettings.GameLibraryEntry entry = group.entries.get(i);
+            String discLabel = discBadgeFor(entry.title + " " + entry.path + " " + entry.launchUri);
+            if (discLabel.isEmpty()) {
+                discLabel = "Disc " + (i + 1);
+            }
+            final String kind = entry.kind != null && !entry.kind.isEmpty()
+                    ? entry.kind.toUpperCase(Locale.US)
+                    : getString(R.string.launcher_game_library_unknown_kind);
+            labels[i] = discLabel + " - " + kind;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(group.title)
+                .setItems(labels, (dialog, which) -> {
+                    final XeniaAndroidSettings.GameLibraryEntry entry = group.entries.get(which);
+                    final String discLabel = discBadgeFor(
+                            entry.title + " " + entry.path + " " + entry.launchUri);
+                    final String launchTitle = discLabel.isEmpty()
+                            ? group.title
+                            : group.title + " - " + discLabel;
+                    launchGame(Uri.parse(entry.launchUri), launchTitle);
+                })
+                .show();
+    }
+
+    private List<GameLibraryGroup> buildGameLibraryGroups(
+            final List<XeniaAndroidSettings.GameLibraryEntry> entries) {
+        final LinkedHashMap<String, GameLibraryGroup> groups = new LinkedHashMap<>();
+        for (final XeniaAndroidSettings.GameLibraryEntry entry : entries) {
+            if (entry.launchUri == null || entry.launchUri.isEmpty()) {
+                continue;
+            }
+            final String rawTitle = entry.title != null && !entry.title.isEmpty()
+                    ? entry.title
+                    : getString(R.string.launcher_last_game_unknown);
+            final String discBadge = discBadgeFor(
+                    rawTitle + " " + entry.path + " " + entry.launchUri);
+            final String displayTitle = displayTitleWithoutDisc(rawTitle);
+            final String normalizedTitle = normalizedGameGroupKey(displayTitle);
+            final String key = discBadge.isEmpty()
+                    ? normalizedTitle + "|" + entry.launchUri
+                    : normalizedTitle;
+            GameLibraryGroup group = groups.get(key);
+            if (group == null) {
+                group = new GameLibraryGroup(displayTitle);
+                groups.put(key, group);
+            }
+            if (group.kind == null || group.kind.isEmpty()) {
+                group.kind = entry.kind != null && !entry.kind.isEmpty()
+                        ? entry.kind.toUpperCase(Locale.US)
+                        : getString(R.string.launcher_game_library_unknown_kind);
+            }
+            if (group.coverLookupPath == null || group.coverLookupPath.isEmpty()) {
+                group.coverLookupPath = entry.path != null && !entry.path.isEmpty()
+                        ? entry.path
+                        : entry.launchUri;
+            }
+            group.entries.add(entry);
+        }
+        return new ArrayList<>(groups.values());
+    }
+
+    private View buildGameLibraryTile(final GameLibraryGroup group) {
+        final XeniaAndroidSettings.GameLibraryEntry firstEntry = group.entries.get(0);
+        final String title = group.title != null && !group.title.isEmpty()
+                ? group.title
                 : getString(R.string.launcher_last_game_unknown);
-        final String kind = entry.kind != null && !entry.kind.isEmpty()
-                ? entry.kind.toUpperCase(Locale.US)
+        final String kind = group.kind != null && !group.kind.isEmpty()
+                ? group.kind
                 : getString(R.string.launcher_game_library_unknown_kind);
-        final String path = entry.path != null && !entry.path.isEmpty()
-                ? entry.path
-                : entry.launchUri;
-        final String discBadge = discBadgeFor(title + " " + path);
+        final String path = group.coverLookupPath != null && !group.coverLookupPath.isEmpty()
+                ? group.coverLookupPath
+                : firstEntry.launchUri;
+        final String discBadge = discBadgeFor(
+                firstEntry.title + " " + firstEntry.path + " " + firstEntry.launchUri);
+        final boolean multiDisc = group.entries.size() > 1;
         return makeGameTile(
                 kind,
-                displayTitleWithoutDisc(title),
-                discBadge.isEmpty() ? getString(R.string.launcher_game_library_ready) : discBadge,
-                discBadge.isEmpty() ? kind : kind + " / " + discBadge,
+                title,
+                multiDisc
+                        ? getResources().getQuantityString(
+                        R.plurals.launcher_game_library_disc_count,
+                        group.entries.size(),
+                        group.entries.size())
+                        : discBadge.isEmpty()
+                                ? getString(R.string.launcher_game_library_ready)
+                                : discBadge,
+                multiDisc
+                        ? kind + " / "
+                                + getString(R.string.launcher_game_library_disc_picker_detail)
+                        : discBadge.isEmpty() ? kind : kind + " / " + discBadge,
                 path,
-                view -> launchGame(Uri.parse(entry.launchUri), title));
+                view -> {
+                    if (multiDisc) {
+                        showDiscPicker(group);
+                    } else {
+                        launchGame(Uri.parse(firstEntry.launchUri), title);
+                    }
+                });
     }
 
     private View buildRecentGameRow(final XeniaAndroidSettings.RecentGame game) {
@@ -705,10 +855,17 @@ public class LauncherActivity extends Activity {
             return "";
         }
         String title = DISC_PATTERN.matcher(value).replaceAll("");
-        title = title.replaceAll("(?i)\\s*\\([^\\)]*\\)\\s*$", "");
+        title = title.replaceAll("(?i)\\s*\\([^\\)]*\\)", " ");
+        title = title.replaceAll("(?i)\\s*\\[[^\\]]*\\]", " ");
         title = title.replaceAll("\\s*-\\s*$", "");
         title = title.replaceAll("\\s{2,}", " ").trim();
         return title.isEmpty() ? value : title;
+    }
+
+    private String normalizedGameGroupKey(final String value) {
+        final String base = value == null ? "" : value.toLowerCase(Locale.US);
+        final String normalized = base.replaceAll("[^a-z0-9]+", " ").trim();
+        return normalized.isEmpty() ? base : normalized;
     }
 
     private String labelForGame(final XeniaAndroidSettings.RecentGame game) {

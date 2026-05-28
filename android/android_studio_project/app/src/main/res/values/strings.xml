@@ -14,7 +14,7 @@
     <string name="launcher_tab_recent">Recent</string>
     <string name="launcher_tab_browse">Browse</string>
     <string name="launcher_tab_tools">Tools</string>
-    <string name="launcher_quick_actions_title">Actions</string>
+    <string name="launcher_quick_actions_title">Library tools</string>
     <string name="launcher_scan_games">Scan Games</string>
     <string name="launcher_scan_games_detail">Find Xbox 360 games in your ROM folders</string>
     <string name="launcher_add_game_folder">Add Game Folder</string>
@@ -33,6 +33,8 @@
     <string name="launcher_game_library_row">%1$s\n%2$s - %3$s</string>
     <string name="launcher_game_library_unknown_kind">GAME</string>
     <string name="launcher_game_library_ready">Ready</string>
+    <string name="launcher_game_library_group_count">%1$d games / %2$d files</string>
+    <string name="launcher_game_library_disc_picker_detail">Choose disc</string>
     <string name="launcher_recent_game_badge">Recent</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
@@ -102,6 +104,10 @@
     <plurals name="launcher_game_library_count">
         <item quantity="one">%d game found</item>
         <item quantity="other">%d games found</item>
+    </plurals>
+    <plurals name="launcher_game_library_disc_count">
+        <item quantity="one">%d disc</item>
+        <item quantity="other">%d discs</item>
     </plurals>
     <plurals name="launcher_game_library_scan_result">
         <item quantity="one">Found %d game</item>

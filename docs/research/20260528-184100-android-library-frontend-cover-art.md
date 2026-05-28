@@ -60,3 +60,26 @@ frontend immediately.
 The first PPSSPP-style pass still wasted space with large row cards. The current
 version uses a compact four-column shelf and surfaces disc-set entries directly
 with `Disc 1`, `Disc 2`, etc. badges on each tile.
+
+## Follow-up: compact tabs and disc groups
+
+The next density pass reduces the header chrome again, makes the top categories
+focusable/clickable, removes `Launch Last Game` from the right rail, and renames
+that rail from `Actions` to `Library tools`.
+
+Multi-disc files are now collapsed into one displayed game tile when a disc
+number is present in the title/path. Selecting that tile opens a disc chooser
+instead of launching immediately.
+
+Proof:
+
+- Library screen:
+  `scratch/thor-debug/remote-debug-20260528-190143/screen.png`
+- Blue Dragon disc picker:
+  `scratch/thor-debug/remote-debug-20260528-190223/screen.png`
+- Recent tab:
+  `scratch/thor-debug/remote-debug-20260528-190301/screen.png`
+
+Observed on-device result: the library reports `12 games / 19 files`, Blue
+Dragon renders as one tile with a `3 discs` badge, and the dialog exposes
+`Disc 1 - ISO`, `Disc 2 - ISO`, and `Disc 3 - ISO`.
