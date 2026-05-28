@@ -2042,6 +2042,66 @@ done | head -50
                 $XboxkrnlPhysicalMemoryAuditBudget
             )
         }
+        if ($script:RootBoundParameters.ContainsKey("Arm64SpeedProfileIntervalMs") -and
+            $Arm64SpeedProfileIntervalMs) {
+            $launcherArgs += @(
+                "--ei", "arm64_speed_profile_interval_ms",
+                $Arm64SpeedProfileIntervalMs
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("Arm64SpeedProfileTopFunctions") -and
+            $Arm64SpeedProfileTopFunctions) {
+            $launcherArgs += @(
+                "--ei", "arm64_speed_profile_top_functions",
+                $Arm64SpeedProfileTopFunctions
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("Arm64SpeedProfileMinDelta") -and
+            $Arm64SpeedProfileMinDelta) {
+            $launcherArgs += @(
+                "--ei", "arm64_speed_profile_min_delta",
+                $Arm64SpeedProfileMinDelta
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("Arm64SpeedProfileThreadSnapshot")) {
+            $launcherArgs += @(
+                "--ez", "arm64_speed_profile_thread_snapshot",
+                (ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshot)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("Arm64SpeedProfileThreadSnapshotOnIdle")) {
+            $launcherArgs += @(
+                "--ez", "arm64_speed_profile_thread_snapshot_on_idle",
+                (ConvertTo-BooleanText $Arm64SpeedProfileThreadSnapshotOnIdle)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlThreadWaitTrace")) {
+            $launcherArgs += @(
+                "--ez", "xboxkrnl_thread_wait_trace",
+                (ConvertTo-BooleanText $XboxkrnlThreadWaitTrace)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlThreadWaitTraceBudget") -and
+            $XboxkrnlThreadWaitTraceBudget) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_thread_wait_trace_budget",
+                $XboxkrnlThreadWaitTraceBudget
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlThreadWaitTraceAfterMs") -and
+            $XboxkrnlThreadWaitTraceAfterMs) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_thread_wait_trace_after_ms",
+                $XboxkrnlThreadWaitTraceAfterMs
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlThreadWaitTraceGuestTids") -and
+            $XboxkrnlThreadWaitTraceGuestTids) {
+            $launcherArgs += @(
+                "--es", "xboxkrnl_thread_wait_trace_guest_tids",
+                $XboxkrnlThreadWaitTraceGuestTids
+            )
+        }
         Invoke-Adb $launcherArgs
         Start-Sleep -Seconds 2
         Invoke-Adb @("shell", "pidof", $PackageName)

@@ -193,6 +193,15 @@ public class LauncherActivity extends Activity {
         if (intent == null) {
             return overrides;
         }
+        copyIntExtra(intent, overrides, "arm64_speed_profile_interval_ms");
+        copyIntExtra(intent, overrides, "arm64_speed_profile_top_functions");
+        copyIntExtra(intent, overrides, "arm64_speed_profile_min_delta");
+        copyBooleanExtra(intent, overrides, "arm64_speed_profile_thread_snapshot");
+        copyBooleanExtra(intent, overrides, "arm64_speed_profile_thread_snapshot_on_idle");
+        copyBooleanExtra(intent, overrides, "xboxkrnl_thread_wait_trace");
+        copyIntExtra(intent, overrides, "xboxkrnl_thread_wait_trace_budget");
+        copyIntExtra(intent, overrides, "xboxkrnl_thread_wait_trace_after_ms");
+        copyStringExtra(intent, overrides, "xboxkrnl_thread_wait_trace_guest_tids");
         copyBooleanExtra(intent, overrides, "xboxkrnl_physical_memory_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_physical_memory_audit_budget");
         copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");

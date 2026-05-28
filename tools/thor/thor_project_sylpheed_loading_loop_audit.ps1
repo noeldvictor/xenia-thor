@@ -227,6 +227,73 @@ function Parse-TopThreads {
     return [pscustomobject]$result
 }
 
+function Measure-A64ThreadSnapshots {
+    param([string[]]$Lines)
+
+    $count = 0
+    $threadSet = @{}
+    $lastFnCounts = @{}
+    $lastRetCounts = @{}
+    $sampleLines = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in $Lines) {
+        if ($line -notmatch 'A64 thread snapshot tid=(?<tid>[0-9A-Fa-f]+).*?state=(?<state>\w+)\s+last_fn=(?<last_fn>[0-9A-Fa-f]+)\s+last_ret=(?<last_ret>[0-9A-Fa-f]+)') {
+            continue
+        }
+
+        ++$count
+        $threadSet[$Matches.tid.ToUpperInvariant()] = $true
+        $lastFn = $Matches.last_fn.ToUpperInvariant()
+        $lastRet = $Matches.last_ret.ToUpperInvariant()
+        if (!$lastFnCounts.ContainsKey($lastFn)) {
+            $lastFnCounts[$lastFn] = 0
+        }
+        ++$lastFnCounts[$lastFn]
+        if (!$lastRetCounts.ContainsKey($lastRet)) {
+            $lastRetCounts[$lastRet] = 0
+        }
+        ++$lastRetCounts[$lastRet]
+        if ($sampleLines.Count -lt 6) {
+            $sampleLines.Add((
+                    "tid={0},state={1},last_fn={2},last_ret={3}" -f
+                    $Matches.tid.ToUpperInvariant(),
+                    $Matches.state,
+                    $lastFn,
+                    $lastRet))
+        }
+    }
+
+    $topLastFn = ""
+    $topLastFnCount = 0
+    foreach ($entry in $lastFnCounts.GetEnumerator()) {
+        if ($entry.Value -gt $topLastFnCount) {
+            $topLastFn = $entry.Key
+            $topLastFnCount = $entry.Value
+        }
+    }
+
+    $topLastRet = ""
+    $topLastRetCount = 0
+    foreach ($entry in $lastRetCounts.GetEnumerator()) {
+        if ($entry.Value -gt $topLastRetCount) {
+            $topLastRet = $entry.Key
+            $topLastRetCount = $entry.Value
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        Count = $count
+        ThreadCount = $threadSet.Count
+        UniqueLastFnCount = $lastFnCounts.Count
+        UniqueLastRetCount = $lastRetCounts.Count
+        TopLastFn = $topLastFn
+        TopLastFnCount = $topLastFnCount
+        TopLastRet = $topLastRet
+        TopLastRetCount = $topLastRetCount
+        SampleLines = @($sampleLines)
+    }
+}
+
 if ($PacketDir) {
     $PacketDir = (Resolve-Path -LiteralPath $PacketDir).Path
 }
@@ -243,6 +310,7 @@ $top = Parse-TopThreads $topThreads
 
 $vdSwap = Measure-LogcatSpan $logLines "\bVdSwap\("
 $waitTrace = Measure-LogcatSpan $logLines "Xboxkrnl wait trace"
+$a64ThreadSnapshots = Measure-A64ThreadSnapshots $logLines
 $longjmpReenterCount = Count-Matches $logLines "longjmp_reenter\s+1"
 $throwsExceptionCount = Count-Matches $logLines "throws_exception\s+1"
 $heapReleaseCount = Count-Matches $logLines "BaseHeap::Release failed|PhysicalHeap::Release failed|MmFreePhysicalMemory failed"
@@ -273,6 +341,11 @@ if ($waitTrace.Count -gt 0) {
     $kernelWaitEvidence = "xboxkrnl_thread_wait_trace_present"
 }
 
+$guestProgressEvidence = "missing_a64_thread_snapshot"
+if ($a64ThreadSnapshots.Count -gt 0) {
+    $guestProgressEvidence = "a64_thread_snapshot_present"
+}
+
 $presentationEvidence = "missing_vdswap"
 if ($vdSwap.Count -ge $LiveVdSwapThreshold) {
     $presentationEvidence = "vdswap_continuing"
@@ -299,8 +372,16 @@ $decision = "capture_with_xboxkrnl_thread_wait_trace_and_guest_pc_sampler"
 if ($kernelWaitEvidence -eq "xboxkrnl_thread_wait_trace_present") {
     $decision = "join_wait_trace_with_guest_pc_or_presentation_next"
 }
+if ($kernelWaitEvidence -eq "xboxkrnl_thread_wait_trace_present" -and
+        $guestProgressEvidence -eq "a64_thread_snapshot_present") {
+    $decision = "interpret_wait_trace_and_guest_progress_next"
+}
 if ($classification -eq "project_sylpheed_live_loading_guest_cpu_vdswap_no_crash") {
     $decision = "add_guest_pc_or_progress_counter_for_cpu_spinning_loading_loop"
+}
+if ($classification -eq "project_sylpheed_live_loading_guest_cpu_vdswap_no_crash" -and
+        $guestProgressEvidence -eq "a64_thread_snapshot_present") {
+    $decision = "interpret_a64_thread_snapshot_progress_next"
 }
 
 $report = @(
@@ -316,6 +397,7 @@ $report = @(
     "visual_classification=$visualClassification",
     "presentation_evidence=$presentationEvidence",
     "guest_execution_evidence=$guestExecutionEvidence",
+    "guest_progress_evidence=$guestProgressEvidence",
     "kernel_wait_evidence=$kernelWaitEvidence",
     "vdswap_count=$($vdSwap.Count)",
     "vdswap_span_seconds=$($vdSwap.SpanSeconds.ToString('0.000'))",
@@ -323,6 +405,14 @@ $report = @(
     "vdswap_thread_ids=$($vdSwap.ThreadIds)",
     "wait_trace_count=$($waitTrace.Count)",
     "wait_trace_span_seconds=$($waitTrace.SpanSeconds.ToString('0.000'))",
+    "a64_thread_snapshot_count=$($a64ThreadSnapshots.Count)",
+    "a64_thread_snapshot_thread_count=$($a64ThreadSnapshots.ThreadCount)",
+    "a64_thread_snapshot_unique_last_fn_count=$($a64ThreadSnapshots.UniqueLastFnCount)",
+    "a64_thread_snapshot_top_last_fn=$($a64ThreadSnapshots.TopLastFn)",
+    "a64_thread_snapshot_top_last_fn_count=$($a64ThreadSnapshots.TopLastFnCount)",
+    "a64_thread_snapshot_unique_last_ret_count=$($a64ThreadSnapshots.UniqueLastRetCount)",
+    "a64_thread_snapshot_top_last_ret=$($a64ThreadSnapshots.TopLastRet)",
+    "a64_thread_snapshot_top_last_ret_count=$($a64ThreadSnapshots.TopLastRetCount)",
     "top_total_threads=$($top.TotalThreads)",
     "top_running_threads=$($top.RunningThreads)",
     "top_sleeping_threads=$($top.SleepingThreads)",
@@ -346,6 +436,12 @@ $topIndex = 0
 foreach ($row in $top.TopRows) {
     ++$topIndex
     $report += "top_row_$($topIndex)=$($row.Tid),$($row.State),$($row.Cpu.ToString('0.0')),$($row.Thread)"
+}
+
+$snapshotSampleIndex = 0
+foreach ($line in $a64ThreadSnapshots.SampleLines) {
+    ++$snapshotSampleIndex
+    $report += "a64_thread_snapshot_sample_$($snapshotSampleIndex)=$line"
 }
 
 if ($OutPath) {
