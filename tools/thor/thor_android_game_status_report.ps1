@@ -163,13 +163,18 @@ if ($rtlException -and ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 
     $reason = "BaseHeap/PhysicalHeap markers align with RtlRaiseException"
 }
 
+if ($classification -eq "android_or_native_process_crash" -and
+        ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
+    $classification = "guest_heap_native_abort"
+    $reason = "BaseHeap/PhysicalHeap failure aligns with native process abort"
+}
+
 if ($titleId -eq "535107D4" -and $classification -eq "guest_heap_rtlraiseexception") {
     $classification = "project_sylpheed_guest_heap_rtlraiseexception"
     $reason = "Project Sylpheed title ID plus heap failure and RtlRaiseException"
 }
 
-if ($titleId -eq "535107D4" -and $classification -eq "android_or_native_process_crash" -and
-        ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
+if ($titleId -eq "535107D4" -and $classification -eq "guest_heap_native_abort") {
     $classification = "project_sylpheed_heap_native_abort"
     $reason = "Project Sylpheed title ID plus BaseHeap/PhysicalHeap failure and native abort"
 }
