@@ -194,6 +194,52 @@ function Parse-PhysicalMemoryAuditFreeRow {
     }
 }
 
+function Parse-PhysicalMemoryAuditAllocateRow {
+    param(
+        [string]$Line,
+        [int]$LineIndex
+    )
+
+    $pattern = "Xboxkrnl physical memory audit allocate thid (?<thid>[0-9A-Fa-f]{8}) lr (?<lr>[0-9A-Fa-f]{8}) ctr (?<ctr>[0-9A-Fa-f]{8}) r1 (?<r1>[0-9A-Fa-f]{8}) flags (?<flags>[0-9A-Fa-f]{8}) requested_size (?<requested_size>[0-9A-Fa-f]{8}) protect_bits (?<protect_bits>[0-9A-Fa-f]{8}) min_addr (?<min_addr>[0-9A-Fa-f]{8}) max_addr (?<max_addr>[0-9A-Fa-f]{8}) alignment (?<alignment>[0-9A-Fa-f]{8}) page_size (?<page_size>[0-9A-Fa-f]+) adjusted_size (?<adjusted_size>[0-9A-Fa-f]{8}) adjusted_alignment (?<adjusted_alignment>[0-9A-Fa-f]{8}) heap_base (?<heap_base>[0-9A-Fa-f]{8}) heap_size (?<heap_size>[0-9A-Fa-f]{8}) heap_min (?<heap_min>[0-9A-Fa-f]{8}) heap_max (?<heap_max>[0-9A-Fa-f]{8}) result (?<result>[0-9A-Fa-f]{8}) parent_address (?<parent>[0-9A-Fa-f]{8}) physical_allocation_base (?<physical_allocation_base>[0-9A-Fa-f]{8}) physical_allocation_size (?<physical_allocation_size>[0-9A-Fa-f]{8}) physical_region_size (?<physical_region_size>[0-9A-Fa-f]{8}) physical_state (?<physical_state>\d+) physical_protect (?<physical_protect>\d+) parent_allocation_base (?<parent_allocation_base>[0-9A-Fa-f]{8}) parent_allocation_size (?<parent_allocation_size>[0-9A-Fa-f]{8}) parent_region_size (?<parent_region_size>[0-9A-Fa-f]{8}) parent_state (?<parent_state>\d+) parent_protect (?<parent_protect>\d+) behavior_changed (?<behavior_changed>\d+)"
+    if (!($Line -match $pattern)) {
+        return $null
+    }
+
+    return [pscustomobject][ordered]@{
+        LineIndex = $LineIndex
+        ThreadId = $Matches["thid"].ToUpperInvariant()
+        Lr = $Matches["lr"].ToUpperInvariant()
+        Ctr = $Matches["ctr"].ToUpperInvariant()
+        R1 = $Matches["r1"].ToUpperInvariant()
+        Flags = $Matches["flags"].ToUpperInvariant()
+        RequestedSize = $Matches["requested_size"].ToUpperInvariant()
+        ProtectBits = $Matches["protect_bits"].ToUpperInvariant()
+        MinAddress = $Matches["min_addr"].ToUpperInvariant()
+        MaxAddress = $Matches["max_addr"].ToUpperInvariant()
+        Alignment = $Matches["alignment"].ToUpperInvariant()
+        PageSize = $Matches["page_size"].ToUpperInvariant()
+        AdjustedSize = $Matches["adjusted_size"].ToUpperInvariant()
+        AdjustedAlignment = $Matches["adjusted_alignment"].ToUpperInvariant()
+        HeapBase = $Matches["heap_base"].ToUpperInvariant()
+        HeapSize = $Matches["heap_size"].ToUpperInvariant()
+        HeapMin = $Matches["heap_min"].ToUpperInvariant()
+        HeapMax = $Matches["heap_max"].ToUpperInvariant()
+        Result = $Matches["result"].ToUpperInvariant()
+        ParentAddress = $Matches["parent"].ToUpperInvariant()
+        PhysicalAllocationBase = $Matches["physical_allocation_base"].ToUpperInvariant()
+        PhysicalAllocationSize = $Matches["physical_allocation_size"].ToUpperInvariant()
+        PhysicalRegionSize = $Matches["physical_region_size"].ToUpperInvariant()
+        PhysicalState = [int]$Matches["physical_state"]
+        PhysicalProtect = [int]$Matches["physical_protect"]
+        ParentAllocationBase = $Matches["parent_allocation_base"].ToUpperInvariant()
+        ParentAllocationSize = $Matches["parent_allocation_size"].ToUpperInvariant()
+        ParentRegionSize = $Matches["parent_region_size"].ToUpperInvariant()
+        ParentState = [int]$Matches["parent_state"]
+        ParentProtect = [int]$Matches["parent_protect"]
+        BehaviorChanged = [int]$Matches["behavior_changed"]
+    }
+}
+
 function Find-AuditFreeRowNear {
     param(
         [object[]]$Rows,
@@ -254,7 +300,13 @@ $physicalMemoryAuditInteriorFreeRequestCount =
     Count-Matches $lines "Xboxkrnl physical memory audit free phase request .*parent_region_start 0"
 
 $physicalMemoryAuditFreeRows = @()
+$physicalMemoryAuditAllocateRows = @()
 for ($i = 0; $i -lt $lines.Count; ++$i) {
+    $auditAllocateRow = Parse-PhysicalMemoryAuditAllocateRow $lines[$i] $i
+    if ($auditAllocateRow -ne $null) {
+        $physicalMemoryAuditAllocateRows += $auditAllocateRow
+    }
+
     $auditFreeRow = Parse-PhysicalMemoryAuditFreeRow $lines[$i] $i
     if ($auditFreeRow -ne $null) {
         $physicalMemoryAuditFreeRows += $auditFreeRow
@@ -285,6 +337,23 @@ $physicalMemoryAuditFailedInteriorRows = @(
         $_.PhysicalAllocationBase -ne "00000000"
     }
 )
+$physicalMemoryAuditAllocationResults = @{}
+foreach ($allocationRow in $physicalMemoryAuditAllocateRows) {
+    if ($allocationRow.Result -and $allocationRow.Result -ne "00000000" -and
+            !$physicalMemoryAuditAllocationResults.ContainsKey($allocationRow.Result)) {
+        $physicalMemoryAuditAllocationResults[$allocationRow.Result] = $allocationRow
+    }
+}
+$physicalMemoryAuditFreeExactAllocationResultCount = @(
+    $physicalMemoryAuditFreeRequestRows | Where-Object {
+        $physicalMemoryAuditAllocationResults.ContainsKey($_.BaseAddress)
+    }
+).Count
+$physicalMemoryAuditFailedInteriorExactAllocationResultCount = @(
+    $physicalMemoryAuditFailedInteriorRows | Where-Object {
+        $physicalMemoryAuditAllocationResults.ContainsKey($_.BaseAddress)
+    }
+).Count
 
 $basePattern = "^(?<date>\S+)\s+(?<time>\S+)\s+(?<pid>\d+)\s+(?<tid>\d+)\s+\S\s+xenia\s+:\s+!>\s+(?<handle>[0-9A-Fa-f]{8})\s+BaseHeap::Release failed because address (?<address>[0-9A-Fa-f]{8}) is not a region start \(heap_base=(?<heap_base>[0-9A-Fa-f]{8}), page_size=(?<page_size>[0-9A-Fa-f]+), page=(?<page>[0-9A-Fa-f]+), region_base=(?<region_base>[0-9A-Fa-f]{8}), region_pages=(?<region_pages>\d+), state=(?<state>\d+), raw=(?<raw>[0-9A-Fa-f]{16})\)"
 $rows = @()
@@ -398,6 +467,7 @@ $maxRegionSize = [UInt64]0
 $maxRegionPages = [UInt64]0
 $maxRegionKey = ""
 $failedInteriorOwnerGroups = @{}
+$failedInteriorOwnerAllocationMatches = @{}
 $topFailedInteriorOwnerKey = ""
 $topFailedInteriorOwnerCount = 0
 
@@ -442,6 +512,10 @@ foreach ($row in $rows) {
             $failedInteriorOwnerGroups[$ownerKey] = $failedInteriorOwnerGroups[$ownerKey] + 1
         } else {
             $failedInteriorOwnerGroups[$ownerKey] = 1
+        }
+        if ($physicalMemoryAuditAllocationResults.ContainsKey($row.AuditPhysicalAllocationBase)) {
+            $failedInteriorOwnerAllocationMatches[$ownerKey] =
+                $physicalMemoryAuditAllocationResults[$row.AuditPhysicalAllocationBase]
         }
     }
 }
@@ -514,6 +588,8 @@ $report = @(
     "physical_memory_audit_free_request_count=$physicalMemoryAuditFreeRequestCount",
     "physical_memory_audit_free_result_count=$physicalMemoryAuditFreeResultCount",
     "physical_memory_audit_interior_free_request_count=$physicalMemoryAuditInteriorFreeRequestCount",
+    "physical_memory_audit_parsed_allocate_count=$($physicalMemoryAuditAllocateRows.Count)",
+    "physical_memory_audit_allocation_result_count=$($physicalMemoryAuditAllocationResults.Count)",
     "physical_memory_audit_parsed_free_request_count=$physicalMemoryAuditParsedRequestCount",
     "physical_memory_audit_parsed_free_result_count=$physicalMemoryAuditParsedResultCount",
     "physical_memory_audit_request_region_start_count=$physicalMemoryAuditRequestRegionStartCount",
@@ -522,6 +598,8 @@ $report = @(
     "physical_memory_audit_result_success_count=$physicalMemoryAuditResultSuccessCount",
     "physical_memory_audit_result_failure_count=$physicalMemoryAuditResultFailureCount",
     "physical_memory_audit_failed_interior_result_count=$($physicalMemoryAuditFailedInteriorRows.Count)",
+    "physical_memory_audit_free_exact_allocation_result_count=$physicalMemoryAuditFreeExactAllocationResultCount",
+    "physical_memory_audit_failed_interior_exact_allocation_result_count=$physicalMemoryAuditFailedInteriorExactAllocationResultCount",
     "physical_memory_audit_behavior_changed_count=$physicalMemoryAuditBehaviorChangedCount",
     "parsed_triplet_count=$($rows.Count)",
     "parsed_triplets_after_longjmp=$afterLongjmpTripletCount",
@@ -543,6 +621,22 @@ $report = @(
     "top_failed_interior_owner_group_count=$topFailedInteriorOwnerCount",
     "top_row_count=$($topRows.Count)"
 )
+
+if ($topFailedInteriorOwnerKey -and $failedInteriorOwnerAllocationMatches.ContainsKey($topFailedInteriorOwnerKey)) {
+    $ownerAllocationRow = $failedInteriorOwnerAllocationMatches[$topFailedInteriorOwnerKey]
+    $report += ("top_failed_interior_owner_allocation=line_index={0} thread={1} lr={2} ctr={3} requested_size={4} adjusted_size={5} protect_bits={6} result={7} parent={8} physical_allocation_size={9} behavior_changed={10}" -f
+        $ownerAllocationRow.LineIndex,
+        $ownerAllocationRow.ThreadId,
+        $ownerAllocationRow.Lr,
+        $ownerAllocationRow.Ctr,
+        $ownerAllocationRow.RequestedSize,
+        $ownerAllocationRow.AdjustedSize,
+        $ownerAllocationRow.ProtectBits,
+        $ownerAllocationRow.Result,
+        $ownerAllocationRow.ParentAddress,
+        $ownerAllocationRow.PhysicalAllocationSize,
+        $ownerAllocationRow.BehaviorChanged)
+}
 
 $rowIndex = 0
 foreach ($row in $topRows) {

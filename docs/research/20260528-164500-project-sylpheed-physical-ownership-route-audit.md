@@ -69,6 +69,8 @@ Key rows:
 classification=project_sylpheed_single_owner_interior_physical_heap_frees
 decision=design_explicit_physical_suballocation_free_contract_or_owner_refcount; do_not_round_down_parent_region
 physical_memory_audit_allocate_count=43
+physical_memory_audit_parsed_allocate_count=43
+physical_memory_audit_allocation_result_count=42
 physical_memory_audit_parsed_free_request_count=20
 physical_memory_audit_parsed_free_result_count=20
 physical_memory_audit_request_region_start_count=5
@@ -76,10 +78,13 @@ physical_memory_audit_request_interior_count=15
 physical_memory_audit_result_success_count=5
 physical_memory_audit_result_failure_count=15
 physical_memory_audit_failed_interior_result_count=15
+physical_memory_audit_free_exact_allocation_result_count=4
+physical_memory_audit_failed_interior_exact_allocation_result_count=0
 parsed_triplet_count=15
 failed_interior_owner_group_count=1
 top_failed_interior_owner_group=BC220000:03A80000
 top_failed_interior_owner_group_count=15
+top_failed_interior_owner_allocation=line_index=886 thread=00000006 lr=824A88B4 ctr=8280C420 requested_size=03A723D0 adjusted_size=03A80000 protect_bits=20000004 result=BC220000 parent=1C220000 physical_allocation_size=03A80000 behavior_changed=0
 round_down_region_key=00000000:1000:1C220000:14976
 round_down_region_size_max_hex=03A80000
 ```
@@ -89,6 +94,9 @@ The important contrast is:
 - region-start physical frees exist and succeed in the same packet;
 - all 15 failures are non-page-aligned interior frees;
 - all 15 failures belong to physical allocation `BC220000` size `03A80000`;
+- none of the 15 failed interior frees is an exact allocation result;
+- the owner allocation itself is the `MmAllocatePhysicalMemoryEx` result
+  `BC220000`, requested as `03A723D0` and rounded to `03A80000`;
 - the translated parent addresses are all inside `1C220000-1FCA0000`;
 - `behavior_changed=0` for all audit rows.
 
