@@ -1150,9 +1150,23 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
 
   // Given address must be a region base address.
   uint32_t base_page_number = (base_address - heap_base_) / page_size_;
+  if (base_page_number >= page_table_.size()) {
+    XELOGE(
+        "BaseHeap::Release failed because address {:08X} is out of heap range "
+        "(heap_base={:08X}, heap_size={:08X}, page_size={:X})",
+        base_address, heap_base_, heap_size_, page_size_);
+    return false;
+  }
   auto base_page_entry = page_table_[base_page_number];
   if (base_page_entry.base_address != base_page_number) {
-    XELOGE("BaseHeap::Release failed because address is not a region start");
+    XELOGE(
+        "BaseHeap::Release failed because address {:08X} is not a region "
+        "start (heap_base={:08X}, page_size={:X}, page={:X}, "
+        "region_base={:08X}, region_pages={}, state={}, raw={:016X})",
+        base_address, heap_base_, page_size_, base_page_number,
+        heap_base_ + base_page_entry.base_address * page_size_,
+        base_page_entry.region_page_count, base_page_entry.state,
+        base_page_entry.qword);
     return false;
   }
 
@@ -1578,7 +1592,11 @@ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
 
   uint32_t parent_base_address = GetPhysicalAddress(base_address);
   if (!parent_heap_->Release(parent_base_address, out_region_size)) {
-    XELOGE("PhysicalHeap::Release failed due to parent heap failure");
+    XELOGE(
+        "PhysicalHeap::Release failed due to parent heap failure "
+        "(physical_address={:08X}, parent_address={:08X}, heap_base={:08X}, "
+        "page_size={:X})",
+        base_address, parent_base_address, heap_base_, page_size_);
     return false;
   }
 

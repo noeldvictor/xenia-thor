@@ -438,7 +438,18 @@ void MmFreePhysicalMemory_entry(dword_t type, dword_t base_address) {
   assert_true((base_address & 0x1F) == 0);
 
   auto heap = kernel_state()->memory()->LookupHeap(base_address);
-  heap->Release(base_address);
+  if (!heap) {
+    XELOGE("MmFreePhysicalMemory failed: no heap for type={} base_address={:08X}",
+           type, base_address);
+    return;
+  }
+  if (!heap->Release(base_address)) {
+    XELOGE(
+        "MmFreePhysicalMemory failed: type={} base_address={:08X} "
+        "heap_type={} heap_base={:08X} page_size={:X}",
+        type, base_address, static_cast<int>(heap->heap_type()),
+        heap->heap_base(), heap->page_size());
+  }
 }
 DECLARE_XBOXKRNL_EXPORT1(MmFreePhysicalMemory, kMemory, kImplemented);
 

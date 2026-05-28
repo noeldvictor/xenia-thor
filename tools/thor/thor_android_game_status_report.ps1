@@ -38,6 +38,19 @@ function First-MatchValue {
     return ""
 }
 
+function First-MatchLine {
+    param(
+        [string[]]$Lines,
+        [string]$Pattern
+    )
+    foreach ($line in $Lines) {
+        if ($line -match $Pattern) {
+            return $line
+        }
+    }
+    return ""
+}
+
 function Count-Matches {
     param(
         [string[]]$Lines,
@@ -51,6 +64,14 @@ $mediaId = First-MatchValue $lines "Media ID:\s*(?<value>[0-9A-Fa-f]{8})"
 $rtlException = First-MatchValue $lines "RtlRaiseException\((?<value>.*)\)"
 $crashPc = First-MatchValue $lines "PC:\s*0x(?<value>[0-9A-Fa-f]{8})"
 $crashFunction = First-MatchValue $lines "Function:\s*(?<value>0x[0-9A-Fa-f]{8}-0x[0-9A-Fa-f]{8})"
+$nativeAbortMessage = First-MatchValue $lines "Abort message:\s*'(?<value>.*)'"
+$crashThread = First-MatchValue $lines "name:\s*(?<value>[^>]+)\s*>>>"
+$baseHeapReleaseFirst = First-MatchLine $lines "BaseHeap::Release failed"
+$physicalHeapReleaseFirst = First-MatchLine $lines "PhysicalHeap::Release failed"
+$mmFreePhysicalFirst = First-MatchLine $lines "MmFreePhysicalMemory failed"
+$baseHeapReleaseAddress = First-MatchValue $lines "BaseHeap::Release failed .* address (?<value>[0-9A-Fa-f]{8})"
+$physicalHeapReleaseAddress = First-MatchValue $lines "PhysicalHeap::Release failed .*physical_address=(?<value>[0-9A-Fa-f]{8})"
+$physicalHeapParentAddress = First-MatchValue $lines "PhysicalHeap::Release failed .*parent_address=(?<value>[0-9A-Fa-f]{8})"
 $launchModuleCount = Count-Matches $lines "Launching module"
 $androidRuntimeCount = Count-Matches $lines "AndroidRuntime|FATAL EXCEPTION"
 $nativeSignalCount = Count-Matches $lines "signal [0-9]+|SIGSEGV|SIGABRT|tombstone|backtrace:"
@@ -111,11 +132,19 @@ $report = @(
     "native_signal_count=$nativeSignalCount",
     "guest_crash_count=$guestCrashCount",
     "rtl_raise_exception=$rtlException",
+    "native_abort_message=$nativeAbortMessage",
+    "crash_thread=$crashThread",
     "crash_pc=$crashPc",
     "crash_function=$crashFunction",
+    "base_heap_release_first=$baseHeapReleaseFirst",
+    "base_heap_release_address=$baseHeapReleaseAddress",
     "base_heap_release_count=$baseHeapReleaseCount",
     "base_heap_alloc_count=$baseHeapAllocCount",
+    "physical_heap_release_first=$physicalHeapReleaseFirst",
+    "physical_heap_release_address=$physicalHeapReleaseAddress",
+    "physical_heap_parent_address=$physicalHeapParentAddress",
     "physical_heap_count=$physicalHeapCount",
+    "mm_free_physical_first=$mmFreePhysicalFirst",
     "vulkan_swapchain_count=$vulkanSwapchainCount"
 )
 
