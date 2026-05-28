@@ -94,7 +94,11 @@ project("xenia-app")
 
   filter("platforms:Android-*")
     links({
+      "xenia-apu-android",
       "xenia-hid-android",
+    })
+    links({
+      "aaudio",
     })
 
   filter("platforms:not Android-*")

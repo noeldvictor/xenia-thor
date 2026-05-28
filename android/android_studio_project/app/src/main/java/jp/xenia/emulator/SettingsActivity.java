@@ -65,10 +65,11 @@ public class SettingsActivity extends Activity {
                                 XeniaAndroidSettings.RESOLUTION_720P},
                         {getString(R.string.settings_internal_resolution_1080p),
                                 XeniaAndroidSettings.RESOLUTION_1080P},
-                });
+        });
         mAudioGroup = addRadioGroup(root, R.string.settings_audio, new String[][] {
-                {getString(R.string.settings_audio_disabled), XeniaAndroidSettings.APU_NOP},
+                {getString(R.string.settings_audio_android), XeniaAndroidSettings.APU_ANDROID},
                 {getString(R.string.settings_audio_auto), XeniaAndroidSettings.APU_ANY},
+                {getString(R.string.settings_audio_disabled), XeniaAndroidSettings.APU_NOP},
         });
         mInputGroup = addRadioGroup(root, R.string.settings_input, new String[][] {
                 {getString(R.string.settings_input_android), XeniaAndroidSettings.HID_ANDROID},

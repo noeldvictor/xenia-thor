@@ -8,8 +8,8 @@ android {
 
     defaultConfig {
         applicationId 'jp.xenia.emulator'
-        // 24 (7.0) - Vulkan.
-        minSdkVersion 24
+        // 26 (8.0) - Vulkan plus native AAudio.
+        minSdkVersion 26
         targetSdkVersion 33
         versionCode 1
         versionName 'Prototype'

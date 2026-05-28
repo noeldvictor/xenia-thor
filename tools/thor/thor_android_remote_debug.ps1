@@ -37,13 +37,35 @@ function Invoke-Adb {
         $allArgs += @("-s", $DeviceSerial)
     }
     $allArgs += $Arguments
-    & $script:AdbPath @allArgs 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $script:AdbPath @allArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "adb failed with exit code $exitCode`: $($Arguments -join ' ')"
+    }
+    $output
 }
 
 function Invoke-AdbNoSerial {
     param([string[]]$Arguments)
 
-    & $script:AdbPath @Arguments 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $script:AdbPath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "adb failed with exit code $exitCode`: $($Arguments -join ' ')"
+    }
+    $output
 }
 
 function New-OutputDirectory {

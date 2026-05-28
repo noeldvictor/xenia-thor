@@ -138,7 +138,7 @@ filter({"platforms:Linux", "language:C++", "toolset:clang", "files:*.cc or *.cpp
 
 filter("platforms:Android-*")
   system("android")
-  systemversion("24")
+  systemversion("26")
   cppstl("c++")
   staticruntime("On")
   -- Imported from the aX360e Android build shape: keep native frames and
@@ -293,6 +293,9 @@ workspace("xenia")
   include("src/xenia/app/discord")
   include("src/xenia/apu")
   include("src/xenia/apu/nop")
+  if os.istarget("android") then
+    include("src/xenia/apu/android")
+  end
   include("src/xenia/base")
   include("src/xenia/cpu")
   include("src/xenia/cpu/backend/arm64")

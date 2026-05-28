@@ -24,6 +24,8 @@ param(
     [string]$LogLevel = "",
     [string]$XmaTraceContextState = "false",
     [string]$XmaFastSilence = "false",
+    [ValidateSet("android", "any", "nop", "sdl", "xaudio2")]
+    [string]$ApuDriver = "any",
     [ValidateSet("android", "any", "nop", "sdl", "winkey", "xinput")]
     [string]$HidDriver = "android",
     [string]$HidNopConnected = "false",
@@ -588,7 +590,7 @@ function Start-XeniaEmulator {
         "-n $(ConvertTo-AdbShellSingleQuote $component)",
         "--es gpu vulkan",
         "--es cpu arm64",
-        "--es apu nop",
+        "--es apu $(ConvertTo-AdbShellSingleQuote $ApuDriver)",
         "--ez xma_trace_context_state $(ConvertTo-BooleanText $XmaTraceContextState)",
         "--ez xma_fast_silence $(ConvertTo-BooleanText $XmaFastSilence)",
         "--es hid $(ConvertTo-AdbShellSingleQuote $HidDriver)",

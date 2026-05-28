@@ -69,6 +69,7 @@ public final class XeniaAndroidSettings {
     public static final String RESOLUTION_1080P = "1080p";
     public static final String APU_NOP = "nop";
     public static final String APU_ANY = "any";
+    public static final String APU_ANDROID = "android";
     public static final String HID_ANDROID = "android";
     public static final String HID_NOP = "nop";
 

@@ -46,6 +46,9 @@
 
 // Available audio systems:
 #include "xenia/apu/nop/nop_audio_system.h"
+#if XE_PLATFORM_ANDROID
+#include "xenia/apu/android/android_audio_system.h"
+#endif  // XE_PLATFORM_ANDROID
 #if !XE_PLATFORM_ANDROID
 #include "xenia/apu/sdl/sdl_audio_system.h"
 #endif  // !XE_PLATFORM_ANDROID
@@ -75,7 +78,8 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 
-DEFINE_string(apu, "any", "Audio system. Use: [any, nop, sdl, xaudio2]", "APU");
+DEFINE_string(apu, "any",
+              "Audio system. Use: [any, android, nop, sdl, xaudio2]", "APU");
 DEFINE_string(gpu, "any", "Graphics system. Use: [any, d3d12, vulkan, null]",
               "GPU");
 DEFINE_string(hid, "any",
@@ -340,6 +344,9 @@ std::unique_ptr<apu::AudioSystem> EmulatorApp::CreateAudioSystem(
 #if XE_PLATFORM_WIN32
   factory.Add<apu::xaudio2::XAudio2AudioSystem>("xaudio2");
 #endif  // XE_PLATFORM_WIN32
+#if XE_PLATFORM_ANDROID
+  factory.Add<apu::android::AndroidAudioSystem>("android");
+#endif  // XE_PLATFORM_ANDROID
 #if !XE_PLATFORM_ANDROID
   factory.Add<apu::sdl::SDLAudioSystem>("sdl");
 #endif  // !XE_PLATFORM_ANDROID

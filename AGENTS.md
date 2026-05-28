@@ -15,8 +15,12 @@ half-built ARM64 questions upstream unless independently reproduced upstream.
   reopen the old lower-right quadrant lane without fresh title/menu evidence.
 - Do not treat the Square Enix movie logo as title/menu proof for future
   regressions.
-- Current crash class for Project Sylpheed is guest/runtime heap failure with
-  `BaseHeap`, `PhysicalHeap`, and `RtlRaiseException`, not an Android Java crash.
+- Project Sylpheed reenter, pthread_join, title geometry, and XMA decoder abort
+  classes have fixes/proofs; direct-launch proof still exposes a guest heap /
+  `RtlRaiseException` class separate from the audio backend.
+- Android audio now has a native AAudio backend; `apu=any` should not fall
+  through to `NopAudioSystem`. Audible-output claims still need a route that
+  logs an Android audio driver open.
 - Keep `-Arm64OffsetMemoryAddressFastpath true` for future Blue Dragon speed
   captures only; it remains globally default-off.
 
