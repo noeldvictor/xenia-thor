@@ -13,12 +13,16 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class LauncherActivity extends Activity {
     private static final String EXTERNAL_STORAGE_PROVIDER =
@@ -32,6 +36,9 @@ public class LauncherActivity extends Activity {
     private static final int REQUEST_OPEN_GAME = 1;
     private static final int REQUEST_OPEN_GAME_FOLDER = 2;
     private static final int REQUEST_OPEN_GPU_TRACE_VIEWER = 0;
+    private static final int GAME_TILE_COLUMNS = 4;
+    private static final Pattern DISC_PATTERN = Pattern.compile(
+            "(?i)(?:disc|disk|cd)\\s*([0-9]+)");
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -366,16 +373,44 @@ public class LauncherActivity extends Activity {
                 R.plurals.launcher_game_library_count,
                 entries.size(),
                 entries.size()));
+        LinearLayout currentRow = null;
+        int column = 0;
         for (final XeniaAndroidSettings.GameLibraryEntry entry : entries) {
             if (entry.launchUri == null || entry.launchUri.isEmpty()) {
                 continue;
             }
-            final View row = buildGameLibraryRow(entry);
+            if (currentRow == null || column >= GAME_TILE_COLUMNS) {
+                currentRow = new LinearLayout(this);
+                currentRow.setOrientation(LinearLayout.HORIZONTAL);
+                final LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT);
+                rowParams.topMargin = dp(8);
+                list.addView(currentRow, rowParams);
+                column = 0;
+            }
+            final View tile = buildGameLibraryTile(entry);
             final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.topMargin = dp(6);
-            list.addView(row, params);
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1);
+            if (column > 0) {
+                params.leftMargin = dp(8);
+            }
+            currentRow.addView(tile, params);
+            column++;
+        }
+        if (currentRow != null) {
+            while (column > 0 && column < GAME_TILE_COLUMNS) {
+                final View spacer = new View(this);
+                final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        0,
+                        1,
+                        1);
+                params.leftMargin = dp(8);
+                currentRow.addView(spacer, params);
+                column++;
+            }
         }
     }
 
@@ -406,7 +441,13 @@ public class LauncherActivity extends Activity {
     private void focusPrimaryLauncherTarget() {
         final LinearLayout libraryList = findViewById(R.id.launcher_game_library_list);
         if (libraryList != null && libraryList.getChildCount() > 0) {
-            libraryList.getChildAt(0).requestFocus();
+            final View firstRow = libraryList.getChildAt(0);
+            if (firstRow instanceof LinearLayout
+                    && ((LinearLayout) firstRow).getChildCount() > 0) {
+                ((LinearLayout) firstRow).getChildAt(0).requestFocus();
+                return;
+            }
+            firstRow.requestFocus();
             return;
         }
         final View scanGamesCard = findViewById(R.id.launcher_scan_games_card);
@@ -415,7 +456,7 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private View buildGameLibraryRow(final XeniaAndroidSettings.GameLibraryEntry entry) {
+    private View buildGameLibraryTile(final XeniaAndroidSettings.GameLibraryEntry entry) {
         final String title = entry.title != null && !entry.title.isEmpty()
                 ? entry.title
                 : getString(R.string.launcher_last_game_unknown);
@@ -425,11 +466,13 @@ public class LauncherActivity extends Activity {
         final String path = entry.path != null && !entry.path.isEmpty()
                 ? entry.path
                 : entry.launchUri;
-        return makeGameRow(
+        final String discBadge = discBadgeFor(title + " " + path);
+        return makeGameTile(
                 kind,
-                title,
-                compactPath(path),
-                getString(R.string.launcher_game_library_ready),
+                displayTitleWithoutDisc(title),
+                discBadge.isEmpty() ? getString(R.string.launcher_game_library_ready) : discBadge,
+                discBadge.isEmpty() ? kind : kind + " / " + discBadge,
+                path,
                 view -> launchGame(Uri.parse(entry.launchUri), title));
     }
 
@@ -443,7 +486,96 @@ public class LauncherActivity extends Activity {
                 title,
                 status,
                 status,
+                game.target,
                 view -> launchGame(Uri.parse(game.launchUri)));
+    }
+
+    private View makeGameTile(
+            final String coverText,
+            final String title,
+            final String status,
+            final String detail,
+            final String coverLookupPath,
+            final View.OnClickListener clickListener) {
+        final LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setGravity(Gravity.CENTER_HORIZONTAL);
+        tile.setMinimumHeight(dp(192));
+        tile.setPadding(dp(8), dp(8), dp(8), dp(8));
+        tile.setBackgroundResource(R.drawable.launcher_game_tile);
+        tile.setFocusable(true);
+        tile.setClickable(true);
+        tile.setOnClickListener(clickListener);
+
+        final FrameLayout coverFrame = new FrameLayout(this);
+        coverFrame.setBackgroundResource(R.drawable.launcher_cover_placeholder);
+        tile.addView(coverFrame, new LinearLayout.LayoutParams(dp(94), dp(124)));
+
+        final ImageView coverImage = new ImageView(this);
+        coverImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        coverImage.setVisibility(View.GONE);
+        coverFrame.addView(coverImage, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        final TextView cover = new TextView(this);
+        cover.setGravity(Gravity.CENTER);
+        cover.setText(coverText);
+        cover.setTextColor(getResources().getColor(R.color.xenia_blue));
+        cover.setTextSize(11);
+        cover.setTypeface(Typeface.DEFAULT_BOLD);
+        cover.setLetterSpacing(0);
+        coverFrame.addView(cover, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+        XeniaCoverArt.loadInto(this, coverImage, cover, title, coverLookupPath);
+
+        final TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(getResources().getColor(R.color.xenia_text));
+        titleView.setTextSize(12);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setLetterSpacing(0);
+        titleView.setMaxLines(2);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        final LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        titleParams.topMargin = dp(7);
+        tile.addView(titleView, titleParams);
+
+        final TextView statusView = new TextView(this);
+        statusView.setBackgroundResource(R.drawable.launcher_status_badge);
+        statusView.setGravity(Gravity.CENTER);
+        statusView.setPadding(dp(8), 0, dp(8), 0);
+        statusView.setText(status);
+        statusView.setTextColor(getResources().getColor(R.color.xenia_green_soft));
+        statusView.setTextSize(10);
+        statusView.setTypeface(Typeface.DEFAULT_BOLD);
+        statusView.setSingleLine(true);
+        statusView.setEllipsize(TextUtils.TruncateAt.END);
+        final LinearLayout.LayoutParams statusParams =
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, dp(24));
+        statusParams.topMargin = dp(6);
+        tile.addView(statusView, statusParams);
+
+        final TextView detailView = new TextView(this);
+        detailView.setText(detail);
+        detailView.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
+        detailView.setTextSize(10);
+        detailView.setLetterSpacing(0);
+        detailView.setSingleLine(true);
+        detailView.setGravity(Gravity.CENTER);
+        detailView.setEllipsize(TextUtils.TruncateAt.END);
+        final LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        detailParams.topMargin = dp(4);
+        tile.addView(detailView, detailParams);
+
+        return tile;
     }
 
     private View makeGameRow(
@@ -451,41 +583,55 @@ public class LauncherActivity extends Activity {
             final String title,
             final String detail,
             final String status,
+            final String coverLookupPath,
             final View.OnClickListener clickListener) {
         final LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(dp(76));
-        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setMinimumHeight(dp(108));
+        row.setPadding(dp(12), dp(8), dp(12), dp(8));
         row.setBackgroundResource(R.drawable.launcher_game_tile);
         row.setFocusable(true);
         row.setClickable(true);
         row.setOnClickListener(clickListener);
 
+        final FrameLayout coverFrame = new FrameLayout(this);
+        coverFrame.setBackgroundResource(R.drawable.launcher_cover_placeholder);
+        final LinearLayout.LayoutParams coverParams =
+                new LinearLayout.LayoutParams(dp(74), dp(94));
+        row.addView(coverFrame, coverParams);
+
+        final ImageView coverImage = new ImageView(this);
+        coverImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        coverImage.setVisibility(View.GONE);
+        coverFrame.addView(coverImage, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
         final TextView cover = new TextView(this);
-        cover.setBackgroundResource(R.drawable.launcher_cover_placeholder);
         cover.setGravity(Gravity.CENTER);
         cover.setText(coverText);
         cover.setTextColor(getResources().getColor(R.color.xenia_blue));
         cover.setTextSize(11);
         cover.setTypeface(Typeface.DEFAULT_BOLD);
         cover.setLetterSpacing(0);
-        final LinearLayout.LayoutParams coverParams =
-                new LinearLayout.LayoutParams(dp(56), dp(56));
-        row.addView(cover, coverParams);
+        coverFrame.addView(cover, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+        XeniaCoverArt.loadInto(this, coverImage, cover, title, coverLookupPath);
 
         final LinearLayout textColumn = new LinearLayout(this);
         textColumn.setOrientation(LinearLayout.VERTICAL);
         textColumn.setGravity(Gravity.CENTER_VERTICAL);
         final LinearLayout.LayoutParams textParams =
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        textParams.leftMargin = dp(12);
+        textParams.leftMargin = dp(14);
         row.addView(textColumn, textParams);
 
         final TextView titleView = new TextView(this);
         titleView.setText(title);
         titleView.setTextColor(getResources().getColor(R.color.xenia_text));
-        titleView.setTextSize(15);
+        titleView.setTextSize(16);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
         titleView.setLetterSpacing(0);
         titleView.setSingleLine(true);
@@ -497,7 +643,7 @@ public class LauncherActivity extends Activity {
         final TextView detailView = new TextView(this);
         detailView.setText(detail);
         detailView.setTextColor(getResources().getColor(R.color.xenia_text_secondary));
-        detailView.setTextSize(11);
+        detailView.setTextSize(12);
         detailView.setLetterSpacing(0);
         detailView.setSingleLine(true);
         detailView.setEllipsize(TextUtils.TruncateAt.END);
@@ -541,6 +687,28 @@ public class LauncherActivity extends Activity {
             return normalized.substring(lastSlash + 1);
         }
         return normalized.substring(previousSlash + 1);
+    }
+
+    private String discBadgeFor(final String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        final Matcher matcher = DISC_PATTERN.matcher(value);
+        if (matcher.find()) {
+            return "Disc " + matcher.group(1);
+        }
+        return "";
+    }
+
+    private String displayTitleWithoutDisc(final String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        String title = DISC_PATTERN.matcher(value).replaceAll("");
+        title = title.replaceAll("(?i)\\s*\\([^\\)]*\\)\\s*$", "");
+        title = title.replaceAll("\\s*-\\s*$", "");
+        title = title.replaceAll("\\s{2,}", " ").trim();
+        return title.isEmpty() ? value : title;
     }
 
     private String labelForGame(final XeniaAndroidSettings.RecentGame game) {

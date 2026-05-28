@@ -10,6 +10,11 @@
     <string name="launcher_status_vulkan">Vulkan</string>
     <string name="launcher_status_arm64">ARM64</string>
     <string name="launcher_status_unstable">Unstable</string>
+    <string name="launcher_tab_games">Games</string>
+    <string name="launcher_tab_recent">Recent</string>
+    <string name="launcher_tab_browse">Browse</string>
+    <string name="launcher_tab_tools">Tools</string>
+    <string name="launcher_quick_actions_title">Actions</string>
     <string name="launcher_scan_games">Scan Games</string>
     <string name="launcher_scan_games_detail">Find Xbox 360 games in your ROM folders</string>
     <string name="launcher_add_game_folder">Add Game Folder</string>

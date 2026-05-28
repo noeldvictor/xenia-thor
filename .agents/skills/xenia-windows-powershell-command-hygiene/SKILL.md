@@ -32,6 +32,17 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\script.ps1 -Mode Example
 ```
 
+- For Android Java/XML/resource-only launcher changes, prefer the fast shell
+  build first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode ApkShell -NoSubst
+```
+
+  Use `-NoSubst` for this UI loop if Gradle resource merge fails only through
+  the temporary no-space drive with `!directory.isDirectory`; reserve the
+  default subst path for native builds that still need no-space protection.
+
 - Quote paths with spaces by passing arguments, `-LiteralPath`, or call
   operator syntax:
 
