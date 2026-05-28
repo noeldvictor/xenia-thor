@@ -7,6 +7,7 @@ param(
     [int]$Step = 8,
     [int]$BlackLumaThreshold = 16,
     [double]$BlackShareThreshold = 0.97,
+    [int]$LiveVdSwapThreshold = 1000,
     [int]$IgnoreTopLeftWidth = 260,
     [int]$IgnoreTopLeftHeight = 140
 )
@@ -183,6 +184,7 @@ $heapReleaseAfterLongjmp = Count-AfterIndex $logLines $firstLongjmpIndex "BaseHe
 $longjmpReenterCount = Count-Matches $logLines "longjmp_reenter\s+1"
 $throwsExceptionCount = Count-Matches $logLines "throws_exception\s+1"
 $nativeAbortCount = Count-Matches $logLines "Abort message:|Fatal signal|SIGABRT|AndroidRuntime|FATAL EXCEPTION"
+$invalidPthreadJoinCount = Count-Matches $logLines "invalid pthread_t.*pthread_join"
 $nopAudioCount = Count-Matches $logLines "NopAudioSystem created silent audio driver"
 
 $blackFrameLikely =
@@ -194,6 +196,15 @@ $reason = "screen has visible non-black content"
 if ($blackFrameLikely) {
     $classification = "black_frame_likely"
     $reason = "screen is almost entirely near-black after ignoring the FPS OSD corner"
+}
+if ($blackFrameLikely -and
+        $vdSwapCount -ge $LiveVdSwapThreshold -and
+        $longjmpReenterCount -eq 0 -and
+        $heapReleaseCount -eq 0 -and
+        $nativeAbortCount -eq 0 -and
+        $invalidPthreadJoinCount -eq 0) {
+    $classification = "project_sylpheed_live_loading_vdswap_loop_no_crash"
+    $reason = "near-black loading-style screen with continued VdSwap activity and no scoped crash, reenter, heap, or pthread abort markers"
 }
 if ($blackFrameLikely -and $longjmpReenterCount -gt 0 -and $nativeAbortCount -eq 0) {
     $classification = "project_sylpheed_black_frame_after_reenter_no_crash"
@@ -217,6 +228,9 @@ if ($classification -eq "project_sylpheed_black_frame_after_reenter_no_crash") {
 if ($classification -eq "project_sylpheed_live_black_frame_after_reenter") {
     $decision = "join_vd_swap_present_and_heap_release_next"
 }
+if ($classification -eq "project_sylpheed_live_loading_vdswap_loop_no_crash") {
+    $decision = "join_guest_execution_kernel_wait_and_present_next"
+}
 if ($classification -eq "visual_not_black_frame") {
     $decision = "packet_is_visual_control_or_non_black_screen"
 }
@@ -233,6 +247,7 @@ $report = @(
     "screen_width=$($screenStats.Width)",
     "screen_height=$($screenStats.Height)",
     "sample_step=$([Math]::Max(1, $Step))",
+    "live_vdswap_threshold=$LiveVdSwapThreshold",
     "ignored_top_left=$IgnoreTopLeftWidth,$IgnoreTopLeftHeight",
     "near_black_pixels=$($screenStats.NearBlackPixels)",
     "sample_count=$($screenStats.Samples)",
@@ -247,6 +262,7 @@ $report = @(
     "heap_release_count=$heapReleaseCount",
     "heap_release_after_longjmp=$heapReleaseAfterLongjmp",
     "native_abort_marker_count=$nativeAbortCount",
+    "invalid_pthread_join_count=$invalidPthreadJoinCount",
     "nop_audio_count=$nopAudioCount"
 )
 
