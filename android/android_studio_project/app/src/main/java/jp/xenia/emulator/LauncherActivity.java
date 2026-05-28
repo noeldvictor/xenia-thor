@@ -196,6 +196,8 @@ public class LauncherActivity extends Activity {
         copyIntExtra(intent, overrides, "arm64_speed_profile_interval_ms");
         copyIntExtra(intent, overrides, "arm64_speed_profile_top_functions");
         copyIntExtra(intent, overrides, "arm64_speed_profile_min_delta");
+        copyBooleanExtra(intent, overrides, "disassemble_functions");
+        copyStringExtra(intent, overrides, "disassemble_function_filter");
         copyBooleanExtra(intent, overrides, "arm64_speed_profile_thread_snapshot");
         copyBooleanExtra(intent, overrides, "arm64_speed_profile_thread_snapshot_on_idle");
         copyBooleanExtra(intent, overrides, "xboxkrnl_thread_wait_trace");

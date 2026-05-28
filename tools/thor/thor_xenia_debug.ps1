@@ -2011,6 +2011,19 @@ done | head -50
         $launcherArgs = @(
             "shell", "am", "start", "-n", "$PackageName/$LauncherActivity"
         )
+        if ($script:RootBoundParameters.ContainsKey("DisassembleFunctions")) {
+            $launcherArgs += @(
+                "--ez", "disassemble_functions",
+                (ConvertTo-BooleanText $DisassembleFunctions)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("DisassembleFunctionFilter") -and
+            $DisassembleFunctionFilter) {
+            $launcherArgs += @(
+                "--es", "disassemble_function_filter",
+                $DisassembleFunctionFilter
+            )
+        }
         if ($script:RootBoundParameters.ContainsKey("XboxkrnlReenterAudit")) {
             $launcherArgs += @(
                 "--ez", "xboxkrnl_reenter_audit",
