@@ -18,9 +18,9 @@ half-built ARM64 questions upstream unless independently reproduced upstream.
 - Project Sylpheed reenter, pthread_join, title geometry, and XMA decoder abort
   classes have fixes/proofs; direct-launch proof still exposes a guest heap /
   `RtlRaiseException` class separate from the audio backend.
-- Android audio now has a native AAudio backend; `apu=any` should not fall
-  through to `NopAudioSystem`. Audible-output claims still need a route that
-  logs an Android audio driver open.
+- Android audio now has a native AAudio backend, and a real launcher path opens
+  `AndroidAudioDriver` on device. By-ear audible-output confirmation still
+  needs the user present on the handheld.
 - Keep `-Arm64OffsetMemoryAddressFastpath true` for future Blue Dragon speed
   captures only; it remains globally default-off.
 
