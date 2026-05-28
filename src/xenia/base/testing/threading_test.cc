@@ -944,6 +944,16 @@ TEST_CASE("Create and Run Thread", "[thread]") {
     REQUIRE(result == WaitResult::kSuccess);
   }
 
+  SECTION("Wait on completed thread twice") {
+    fence = 0;
+    thread = Thread::Create(params, func);
+    fence++;
+    result = Wait(thread.get(), false, 1s);
+    REQUIRE(result == WaitResult::kSuccess);
+    result = Wait(thread.get(), false, 1s);
+    REQUIRE(result == WaitResult::kSuccess);
+  }
+
   SECTION("Add thread name") {
     fence = 0;
     std::string new_name = "Test thread name";

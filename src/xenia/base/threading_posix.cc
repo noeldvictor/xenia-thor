@@ -779,7 +779,12 @@ class PosixCondition<Thread> : public PosixConditionBase {
   inline bool signaled() const override { return signaled_; }
   inline void post_execution() override {
     if (thread_) {
-      pthread_join(thread_, nullptr);
+      auto thread_to_join = thread_;
+      thread_ = pthread_t();
+      if (pthread_join(thread_to_join, nullptr) != 0) {
+        thread_ = thread_to_join;
+        assert_always();
+      }
     }
   }
   pthread_t thread_;

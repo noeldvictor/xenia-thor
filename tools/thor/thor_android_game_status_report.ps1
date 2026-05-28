@@ -142,6 +142,7 @@ $guestCrashCount = Count-Matches $lines "==== CRASH DUMP ====|The guest has cras
 $baseHeapReleaseCount = Count-Matches $lines "BaseHeap::Release failed"
 $baseHeapAllocCount = Count-Matches $lines "BaseHeap::Alloc page count too big|BaseHeap::Alloc failed"
 $physicalHeapCount = Count-Matches $lines "PhysicalHeap::Release failed|PhysicalHeap::Alloc unable"
+$invalidPthreadJoinCount = Count-Matches $lines "invalid pthread_t .*pthread_join"
 $xeniaLineCount = Count-Matches $lines "xenia"
 $vulkanSwapchainCount = Count-Matches $lines "VulkanPresenter: Created .* swapchain|swapchain"
 
@@ -156,6 +157,11 @@ if ($androidRuntimeCount -gt 0 -or $nativeSignalCount -gt 0) {
 if ($guestCrashCount -gt 0 -or $crashPc) {
     $classification = "xenia_guest_crash"
     $reason = "Xenia guest crash dump or guest PC marker present"
+}
+
+if ($invalidPthreadJoinCount -gt 0) {
+    $classification = "android_pthread_join_invalid_thread_abort"
+    $reason = "Android bionic aborted after pthread_join was called for an invalid or already-joined pthread"
 }
 
 if ($rtlException -and ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
@@ -222,6 +228,7 @@ $report = @(
     "physical_heap_release_address=$physicalHeapReleaseAddress",
     "physical_heap_parent_address=$physicalHeapParentAddress",
     "physical_heap_count=$physicalHeapCount",
+    "invalid_pthread_join_count=$invalidPthreadJoinCount",
     "mm_free_physical_first=$mmFreePhysicalFirst",
     "vulkan_swapchain_count=$vulkanSwapchainCount"
 )
