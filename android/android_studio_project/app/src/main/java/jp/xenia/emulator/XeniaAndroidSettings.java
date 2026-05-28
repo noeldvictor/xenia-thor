@@ -476,11 +476,22 @@ public final class XeniaAndroidSettings {
 
     public static List<RecentGame> getRecentGames(final Context context) {
         final ArrayList<RecentGame> games = new ArrayList<>();
+        final ArrayList<String> seenKeys = new ArrayList<>();
         final JSONArray array = readRecentGames(getPreferences(context));
         for (int i = 0; i < array.length(); i++) {
             final JSONObject object = array.optJSONObject(i);
             if (object == null) {
                 continue;
+            }
+            final String key = recentGameIdentityKey(
+                    object.optString("title", ""),
+                    object.optString("launch_uri", ""),
+                    object.optString("target", ""));
+            if (!key.isEmpty() && seenKeys.contains(key)) {
+                continue;
+            }
+            if (!key.isEmpty()) {
+                seenKeys.add(key);
             }
             games.add(new RecentGame(
                     object.optString("launch_uri", ""),
@@ -680,6 +691,8 @@ public final class XeniaAndroidSettings {
         final JSONArray newGames = new JSONArray();
         final String normalizedLaunchUri = nonNull(launchUri);
         final String normalizedTarget = nonNull(target);
+        final String newIdentityKey =
+                recentGameIdentityKey(title, normalizedLaunchUri, normalizedTarget);
         if (normalizedLaunchUri.isEmpty() && normalizedTarget.isEmpty()) {
             return;
         }
@@ -695,10 +708,14 @@ public final class XeniaAndroidSettings {
                 }
                 final String oldLaunchUri = oldGame.optString("launch_uri", "");
                 final String oldTarget = oldGame.optString("target", "");
+                final String oldIdentityKey = recentGameIdentityKey(
+                        oldGame.optString("title", ""), oldLaunchUri, oldTarget);
                 if ((!normalizedLaunchUri.isEmpty()
                                 && normalizedLaunchUri.equals(oldLaunchUri))
                         || (!normalizedTarget.isEmpty()
-                                && normalizedTarget.equals(oldTarget))) {
+                                && normalizedTarget.equals(oldTarget))
+                        || (!newIdentityKey.isEmpty()
+                                && newIdentityKey.equals(oldIdentityKey))) {
                     continue;
                 }
                 newGames.put(oldGame);
@@ -732,6 +749,40 @@ public final class XeniaAndroidSettings {
 
     private static JSONArray readRecentGames(final SharedPreferences preferences) {
         return readJsonArray(preferences.getString(KEY_RECENT_GAMES_JSON, "[]"));
+    }
+
+    private static String recentGameIdentityKey(
+            final String title, final String launchUri, final String target) {
+        final String normalizedTitle = normalizeRecentGameTitle(title);
+        if (!normalizedTitle.isEmpty()) {
+            return "title:" + normalizedTitle;
+        }
+        final String normalizedLaunchUri = nonNull(launchUri).trim().toLowerCase(
+                java.util.Locale.US);
+        if (!normalizedLaunchUri.isEmpty()) {
+            return "uri:" + normalizedLaunchUri;
+        }
+        final String normalizedTarget = nonNull(target).trim().toLowerCase(
+                java.util.Locale.US);
+        return normalizedTarget.isEmpty() ? "" : "target:" + normalizedTarget;
+    }
+
+    private static String normalizeRecentGameTitle(final String title) {
+        String value = nonNull(title).toLowerCase(java.util.Locale.US).trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        final int slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf(':'));
+        if (slash >= 0 && slash + 1 < value.length()) {
+            value = value.substring(slash + 1);
+        }
+        value = value.replaceAll("\\.[a-z0-9]{2,4}$", "");
+        value = value.replaceAll("(?:disc|disk|cd)\\s*[0-9]+", " ");
+        value = value.replaceAll("\\([^\\)]*\\)", " ");
+        value = value.replaceAll("\\[[^\\]]*\\]", " ");
+        value = value.replace('_', ' ');
+        value = value.replaceAll("[^a-z0-9]+", " ").trim();
+        return value;
     }
 
     private static JSONArray readJsonArray(final String json) {
