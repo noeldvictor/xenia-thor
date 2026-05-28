@@ -172,6 +172,7 @@ public class LauncherActivity extends Activity {
         final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
         final Bundle emulatorLaunchArguments =
                 XeniaAndroidSettings.createLaunchArguments(this, uri);
+        emulatorLaunchArguments.putAll(getDebugLaunchOverrides());
         rememberLastGame(uri, displayTitle);
         XeniaAndroidSettings.recordLaunchStarted(
                 this,
@@ -181,6 +182,45 @@ public class LauncherActivity extends Activity {
         emulatorIntent.putExtra(
                 WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
         startActivity(emulatorIntent);
+    }
+
+    private Bundle getDebugLaunchOverrides() {
+        final Bundle overrides = new Bundle();
+        if (!BuildConfig.DEBUG) {
+            return overrides;
+        }
+        final Intent intent = getIntent();
+        if (intent == null) {
+            return overrides;
+        }
+        copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");
+        copyIntExtra(intent, overrides, "xboxkrnl_reenter_audit_budget");
+        copyStringExtra(intent, overrides, "xboxkrnl_reenter_audit_guest_tids");
+        return overrides;
+    }
+
+    private static void copyBooleanExtra(
+            final Intent intent, final Bundle bundle, final String name) {
+        if (intent.hasExtra(name)) {
+            bundle.putBoolean(name, intent.getBooleanExtra(name, false));
+        }
+    }
+
+    private static void copyIntExtra(
+            final Intent intent, final Bundle bundle, final String name) {
+        if (intent.hasExtra(name)) {
+            bundle.putInt(name, intent.getIntExtra(name, 0));
+        }
+    }
+
+    private static void copyStringExtra(
+            final Intent intent, final Bundle bundle, final String name) {
+        if (intent.hasExtra(name)) {
+            final String value = intent.getStringExtra(name);
+            if (value != null) {
+                bundle.putString(name, value);
+            }
+        }
     }
 
     private void rememberLastGame(final Uri uri) {

@@ -1990,7 +1990,30 @@ done | head -50
     "LaunchLauncher" {
         Invoke-Adb @("logcat", "-c")
         Set-LastLaunchTarget "LauncherActivity"
-        Invoke-Adb @("shell", "am", "start", "-n", "$PackageName/$LauncherActivity")
+        $launcherArgs = @(
+            "shell", "am", "start", "-n", "$PackageName/$LauncherActivity"
+        )
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlReenterAudit")) {
+            $launcherArgs += @(
+                "--ez", "xboxkrnl_reenter_audit",
+                (ConvertTo-BooleanText $XboxkrnlReenterAudit)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlReenterAuditBudget") -and
+            $XboxkrnlReenterAuditBudget) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_reenter_audit_budget",
+                $XboxkrnlReenterAuditBudget
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlReenterAuditGuestTids") -and
+            $XboxkrnlReenterAuditGuestTids) {
+            $launcherArgs += @(
+                "--es", "xboxkrnl_reenter_audit_guest_tids",
+                $XboxkrnlReenterAuditGuestTids
+            )
+        }
+        Invoke-Adb $launcherArgs
         Start-Sleep -Seconds 2
         Invoke-Adb @("shell", "pidof", $PackageName)
     }

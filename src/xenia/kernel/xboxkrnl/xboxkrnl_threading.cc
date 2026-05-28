@@ -74,6 +74,12 @@ DEFINE_bool(
     "Thor Android compatibility: trace KeSetCurrentStackPointers reenter "
     "attempts without changing behavior.",
     "Kernel");
+DEFINE_bool(
+    xboxkrnl_android_reenter_longjmp, XE_PLATFORM_ANDROID,
+    "Thor Android compatibility: use longjmp instead of C++ exceptions for "
+    "guest reenter so generated A64 code doesn't need to unwind host C++ "
+    "frames.",
+    "Kernel");
 DEFINE_uint32(
     xboxkrnl_reenter_audit_budget, 64,
     "Thor Android compatibility: maximum reenter audit lines to emit.",
@@ -395,6 +401,9 @@ void LogReenterAudit(XThread* current_thread, pointer_t<X_KTHREAD> thread,
   uint32_t target_tid = thread ? static_cast<uint32_t>(thread->thread_id) : 0;
   uint32_t fiber_ptr = thread ? static_cast<uint32_t>(thread->fiber_ptr) : 0;
   int32_t apc_disable_count = thread ? thread->apc_disable_count : 0;
+  bool non_throw_reenter =
+      will_reenter && XE_PLATFORM_ANDROID &&
+      cvars::xboxkrnl_android_reenter_longjmp;
 
   XELOGI(
       "Xboxkrnl reenter audit KeSetCurrentStackPointers current_thid {:08X} "
@@ -403,14 +412,16 @@ void LogReenterAudit(XThread* current_thread, pointer_t<X_KTHREAD> thread,
       "{:08X} lr {:08X} ctr {:08X} r1_before {:08X} r13 {:08X} stack_ptr "
       "{:08X} stack_alloc_base {:08X} stack_base {:08X} stack_limit {:08X} "
       "apc_disable_count {} throws_exception {} generated_code_unwind_required "
-      "{} behavior_changed {}",
+      "{} longjmp_reenter {} behavior_changed {}",
       thread_id, current_thread->handle(), current_thread->guest_object(),
       target_tid, target_guest_object,
       current_thread->guest_object() == target_guest_object ? 1 : 0,
       will_reenter ? 1 : 0, fiber_ptr, lr, ctr, r1, r13,
       stack_ptr.guest_address(), stack_alloc_base.guest_address(),
       stack_base.guest_address(), stack_limit.guest_address(),
-      apc_disable_count, will_reenter ? 1 : 0, will_reenter ? 1 : 0, 0);
+      apc_disable_count, non_throw_reenter ? 0 : (will_reenter ? 1 : 0),
+      non_throw_reenter ? 0 : (will_reenter ? 1 : 0),
+      non_throw_reenter ? 1 : 0, non_throw_reenter ? 1 : 0);
 }
 
 }  // namespace

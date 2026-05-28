@@ -10,6 +10,7 @@
 #include "xenia/kernel/xthread.h"
 
 #include <cstring>
+#include <setjmp.h>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/byte_stream.h"
@@ -37,6 +38,7 @@ namespace xe {
 namespace kernel {
 
 namespace xboxkrnl {
+DECLARE_bool(xboxkrnl_android_reenter_longjmp);
 DECLARE_bool(xboxkrnl_reenter_audit);
 }  // namespace xboxkrnl
 
@@ -502,6 +504,42 @@ class reenter_exception {
   uint32_t address_;
 };
 
+#if XE_PLATFORM_ANDROID
+struct ReenterLongJumpState {
+  jmp_buf jump_buffer;
+  XThread* thread = nullptr;
+  uint32_t address = 0;
+};
+
+thread_local ReenterLongJumpState* current_reenter_long_jump_state = nullptr;
+
+template <typename ExecuteFn>
+uint32_t ExecuteWithAndroidReenterLongJump(XThread* thread,
+                                           ExecuteFn&& execute) {
+  ReenterLongJumpState state;
+  state.thread = thread;
+  auto previous_state = current_reenter_long_jump_state;
+  current_reenter_long_jump_state = &state;
+
+  if (setjmp(state.jump_buffer) == 0) {
+    try {
+      execute();
+    } catch (const reenter_exception& ree) {
+      current_reenter_long_jump_state = previous_state;
+      return ree.address();
+    } catch (...) {
+      current_reenter_long_jump_state = previous_state;
+      throw;
+    }
+    current_reenter_long_jump_state = previous_state;
+    return 0;
+  }
+
+  current_reenter_long_jump_state = previous_state;
+  return state.address;
+}
+#endif  // XE_PLATFORM_ANDROID
+
 void XThread::Execute() {
   XELOGKERNEL("XThread::Execute thid {} (handle={:08X}, '{}', native={:08X})",
               thread_id_, handle(), thread_name_, thread_->system_id());
@@ -537,24 +575,47 @@ void XThread::Execute() {
   }
 
   uint32_t next_address;
-  try {
-    exit_code = static_cast<int>(kernel_state()->processor()->Execute(
-        thread_state_, address, args.data(), args.size()));
-    next_address = 0;
-  } catch (const reenter_exception& ree) {
-    next_address = ree.address();
+#if XE_PLATFORM_ANDROID
+  if (xboxkrnl::cvars::xboxkrnl_android_reenter_longjmp) {
+    next_address = ExecuteWithAndroidReenterLongJump(this, [&]() {
+      exit_code = static_cast<int>(kernel_state()->processor()->Execute(
+          thread_state_, address, args.data(), args.size()));
+    });
+  } else
+#endif  // XE_PLATFORM_ANDROID
+  {
+    try {
+      exit_code = static_cast<int>(kernel_state()->processor()->Execute(
+          thread_state_, address, args.data(), args.size()));
+      next_address = 0;
+    } catch (const reenter_exception& ree) {
+      next_address = ree.address();
+    }
   }
 
   // See XThread::Reenter comments.
   while (next_address != 0) {
-    try {
-      kernel_state()->processor()->ExecuteRaw(thread_state_, next_address);
-      next_address = 0;
-      if (want_exit_code) {
-        exit_code = static_cast<int>(thread_state_->context()->r[3]);
+#if XE_PLATFORM_ANDROID
+    if (xboxkrnl::cvars::xboxkrnl_android_reenter_longjmp) {
+      uint32_t reenter_address = next_address;
+      next_address = ExecuteWithAndroidReenterLongJump(this, [&]() {
+        kernel_state()->processor()->ExecuteRaw(thread_state_, reenter_address);
+        if (want_exit_code) {
+          exit_code = static_cast<int>(thread_state_->context()->r[3]);
+        }
+      });
+    } else
+#endif  // XE_PLATFORM_ANDROID
+    {
+      try {
+        kernel_state()->processor()->ExecuteRaw(thread_state_, next_address);
+        next_address = 0;
+        if (want_exit_code) {
+          exit_code = static_cast<int>(thread_state_->context()->r[3]);
+        }
+      } catch (const reenter_exception& ree) {
+        next_address = ree.address();
       }
-    } catch (const reenter_exception& ree) {
-      next_address = ree.address();
     }
   }
 
@@ -568,17 +629,39 @@ void XThread::Reenter(uint32_t address) {
   // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/longjmp#remarks
   // On Windows with /EH, setjmp/longjmp do stack unwinding.
   // Is there a better solution than exceptions for stack unwinding?
+#if XE_PLATFORM_ANDROID
+  bool can_long_jump =
+      xboxkrnl::cvars::xboxkrnl_android_reenter_longjmp &&
+      current_reenter_long_jump_state &&
+      current_reenter_long_jump_state->thread == this;
+#endif  // XE_PLATFORM_ANDROID
   if (xboxkrnl::cvars::xboxkrnl_reenter_audit) {
     auto context = thread_state_ ? thread_state_->context() : nullptr;
     uint32_t lr = context ? static_cast<uint32_t>(context->lr) : 0;
     uint32_t ctr = context ? static_cast<uint32_t>(context->ctr) : 0;
     uint32_t r1 = context ? static_cast<uint32_t>(context->r[1]) : 0;
+#if XE_PLATFORM_ANDROID
+    int throws_exception = can_long_jump ? 0 : 1;
+    int longjmp_reenter = can_long_jump ? 1 : 0;
+    int behavior_changed = can_long_jump ? 1 : 0;
+#else
+    int throws_exception = 1;
+    int longjmp_reenter = 0;
+    int behavior_changed = 0;
+#endif  // XE_PLATFORM_ANDROID
     XELOGI(
         "Xboxkrnl reenter audit XThread::Reenter thid {:08X} handle {:08X} "
         "guest_object {:08X} target_address {:08X} lr {:08X} ctr {:08X} "
-        "r1 {:08X} throws_exception {} behavior_changed {}",
-        thread_id(), handle(), guest_object(), address, lr, ctr, r1, 1, 0);
+        "r1 {:08X} throws_exception {} longjmp_reenter {} behavior_changed {}",
+        thread_id(), handle(), guest_object(), address, lr, ctr, r1,
+        throws_exception, longjmp_reenter, behavior_changed);
   }
+#if XE_PLATFORM_ANDROID
+  if (can_long_jump) {
+    current_reenter_long_jump_state->address = address;
+    longjmp(current_reenter_long_jump_state->jump_buffer, 1);
+  }
+#endif  // XE_PLATFORM_ANDROID
   throw reenter_exception(address);
 }
 
