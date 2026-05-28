@@ -18,7 +18,7 @@
     <string name="launcher_last_game_title">Launch Last Game</string>
     <string name="launcher_last_game_empty">Pick a game once to enable quick launch</string>
     <string name="launcher_last_game_unknown">Saved game</string>
-    <string name="launcher_last_run_exited">Last run: exited to menu - %1$s</string>
+    <string name="launcher_last_run_exited">Last run: exited game - %1$s</string>
     <string name="launcher_last_run_guest_crash">Last run: guest crashed - %1$s</string>
     <string name="launcher_last_run_guest_heap">Last run: guest heap / exception - %1$s</string>
     <string name="launcher_last_run_maybe_crashed">Last run: may have crashed or closed - %1$s</string>
@@ -31,7 +31,7 @@
     <string name="launcher_recent_game_badge">Recent</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
-    <string name="launcher_recent_game_exited">Exited to menu</string>
+    <string name="launcher_recent_game_exited">Exited game</string>
     <string name="launcher_recent_game_guest_crash">Guest crash</string>
     <string name="launcher_recent_game_guest_heap">Guest heap / exception</string>
     <string name="launcher_recent_game_maybe_crashed">May have crashed/closed</string>
@@ -48,14 +48,14 @@
     <string name="emulator_menu_resume">Resume</string>
     <string name="emulator_menu_controller_mapping">Controller map</string>
     <string name="emulator_menu_settings">Settings</string>
-    <string name="emulator_menu_exit_game">Exit to menu</string>
+    <string name="emulator_menu_exit_game">Exit game</string>
     <string name="emulator_menu_show_fps">Show FPS</string>
     <string name="emulator_fps_initial">FPS --</string>
     <string name="emulator_menu_help_title">Controller Help</string>
     <string name="emulator_menu_status">Last input: %1$s</string>
     <string name="emulator_menu_no_input">none yet</string>
     <string name="emulator_menu_input_format">%1$s -> %2$s</string>
-    <string name="emulator_menu_controls_note">Back opens or closes this menu. Exit returns to the Xenia Thor menu. Use Controller map to remap any physical Thor button.</string>
+    <string name="emulator_menu_controls_note">Back opens or closes this menu. Exit game closes the running title. Use Controller map to remap any physical Thor button.</string>
     <string name="settings_subtitle">Thor profiles, video, and launch options</string>
     <string name="settings_profile">Profile</string>
     <string name="settings_profile_balanced">Thor balanced</string>
