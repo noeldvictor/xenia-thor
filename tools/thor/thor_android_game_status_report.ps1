@@ -185,6 +185,11 @@ if ($titleId -eq "535107D4" -and $classification -eq "guest_heap_native_abort") 
     $reason = "Project Sylpheed title ID plus BaseHeap/PhysicalHeap failure and native abort"
 }
 
+if ($titleId -eq "535107D4" -and $nativeAbortMessage -match "xma_context\.cc|XmaContext::GetNextFrame|XMA") {
+    $classification = "project_sylpheed_xma_decoder_native_abort"
+    $reason = "Project Sylpheed title ID plus XMA decoder assertion/native abort"
+}
+
 if ($titleId -eq "535107D4" -and $classification -eq "unknown" -and
         ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
     $classification = "project_sylpheed_heap_release_failures_no_crash_marker"

@@ -782,18 +782,13 @@ size_t XmaContext::GetNextFrame(uint8_t* block, size_t size,
   }
 
   uint64_t len = stream.Read(15);
+  if (len < 16) {
+    return 0;
+  }
   if ((len - 15) > stream.BitsRemaining()) {
-    assert_always("TODO");
-    // *bit_offset = next_packet;
-    // return false;
-    // return next_packet;
     return 0;
   } else if (len >= xma::kMaxFrameLength) {
-    assert_always("TODO");
-    // *bit_offset = next_packet;
-    // return false;
     return 0;
-    // return next_packet;
   }
 
   stream.Advance(len - (15 + 1));
@@ -853,6 +848,9 @@ std::tuple<int, int> XmaContext::GetFrameNumber(uint8_t* block, size_t size,
     }
 
     uint64_t size = stream.Read(15);
+    if (size < 16) {
+      break;
+    }
     if ((size - 15) > stream.BitsRemaining()) {
       // Last frame.
       break;
@@ -890,10 +888,12 @@ std::tuple<int, bool> XmaContext::GetPacketFrameCount(uint8_t* packet) {
     }
 
     uint64_t size = stream.Read(15);
+    if (size < 16) {
+      return {frame_count, true};
+    }
     if ((size - 15) > stream.BitsRemaining()) {
       return {frame_count, true};
     } else if (size == 0x7FFF) {
-      assert_always();
       return {frame_count, true};
     }
 
