@@ -48,11 +48,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remo
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenrecord -Seconds 30
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode UiDump
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode CrashBundle
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_debug_gamepad_input.ps1 -DeviceSerial c3ca0370 -Button A
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_game_status_report.ps1 -LogPath scratch\thor-debug\some-logcat.txt
 ```
 
 Use `-Mode Mirror` only for interactive live control. Do not treat the mirror
 window itself as the only evidence.
+
+`thor_android_debug_gamepad_input.ps1` requires a debug APK with the emulator
+activity running. It sends a package-scoped broadcast into the app and calls the
+same native gamepad path as controller input, avoiding flaky generic
+`adb shell input keyevent` behavior.
 
 ## Tool Choice
 

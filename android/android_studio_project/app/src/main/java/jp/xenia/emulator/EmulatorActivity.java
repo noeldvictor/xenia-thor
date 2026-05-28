@@ -1,6 +1,10 @@
 package jp.xenia.emulator;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.Choreographer;
@@ -20,6 +24,12 @@ import java.util.Locale;
 public class EmulatorActivity extends WindowedAppActivity {
     private static final String TAG = "XeniaInput";
     private static final float AXIS_DEADZONE = 0.05f;
+    private static final String ACTION_DEBUG_GAMEPAD_KEY =
+            BuildConfig.APPLICATION_ID + ".DEBUG_GAMEPAD_KEY";
+    private static final String EXTRA_DEBUG_GAMEPAD_KEY_CODE = "key_code";
+    private static final String EXTRA_DEBUG_GAMEPAD_HOLD_MS = "hold_ms";
+    private static final String EXTRA_DEBUG_GAMEPAD_ALREADY_MAPPED = "already_mapped";
+    private static final int DEBUG_GAMEPAD_DEVICE_ID = -1000;
     private static int sGamepadLogBudget = 24;
 
     private View mInGameMenu;
@@ -34,6 +44,26 @@ public class EmulatorActivity extends WindowedAppActivity {
     private boolean mFpsCallbackScheduled;
     private long mFpsWindowStartNs;
     private int mFpsFrameCount;
+    private boolean mDebugGamepadReceiverRegistered;
+    private final BroadcastReceiver mDebugGamepadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(final Context context, final Intent intent) {
+            if (!BuildConfig.DEBUG || intent == null
+                    || !ACTION_DEBUG_GAMEPAD_KEY.equals(intent.getAction())) {
+                return;
+            }
+            final int keyCode = intent.getIntExtra(
+                    EXTRA_DEBUG_GAMEPAD_KEY_CODE, KeyEvent.KEYCODE_BUTTON_A);
+            final boolean alreadyMapped = intent.getBooleanExtra(
+                    EXTRA_DEBUG_GAMEPAD_ALREADY_MAPPED, true);
+            final int mappedKeyCode = alreadyMapped
+                    ? keyCode : XeniaInputMapping.mapAndroidKeyCode(
+                            EmulatorActivity.this, keyCode);
+            final int holdMs = Math.max(1, Math.min(2000,
+                    intent.getIntExtra(EXTRA_DEBUG_GAMEPAD_HOLD_MS, 80)));
+            injectDebugGamepadKey(mappedKeyCode, holdMs);
+        }
+    };
     private final Choreographer.FrameCallback mFpsFrameCallback =
             new Choreographer.FrameCallback() {
                 @Override
@@ -440,6 +470,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         updateOsd(launchArguments);
         setupFpsOverlay(launchArguments);
         setupInGameMenu();
+        registerDebugGamepadReceiver();
     }
 
     @Override
@@ -458,6 +489,12 @@ public class EmulatorActivity extends WindowedAppActivity {
     protected void onPause() {
         stopFpsTicker();
         super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        unregisterDebugGamepadReceiver();
+        super.onDestroy();
     }
 
     @Override
@@ -540,6 +577,53 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static boolean isGamepadKeyCode(final int keyCode) {
         return XeniaInputMapping.isBindableKeyCode(keyCode);
+    }
+
+    private void registerDebugGamepadReceiver() {
+        if (!BuildConfig.DEBUG || mDebugGamepadReceiverRegistered) {
+            return;
+        }
+        final IntentFilter filter = new IntentFilter(ACTION_DEBUG_GAMEPAD_KEY);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(mDebugGamepadReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(mDebugGamepadReceiver, filter);
+        }
+        mDebugGamepadReceiverRegistered = true;
+        Log.i(TAG, "debug-gamepad receiver registered action="
+                + ACTION_DEBUG_GAMEPAD_KEY);
+    }
+
+    private void unregisterDebugGamepadReceiver() {
+        if (!mDebugGamepadReceiverRegistered) {
+            return;
+        }
+        unregisterReceiver(mDebugGamepadReceiver);
+        mDebugGamepadReceiverRegistered = false;
+    }
+
+    private void injectDebugGamepadKey(final int mappedKeyCode, final int holdMs) {
+        if (!isGamepadKeyCode(mappedKeyCode)) {
+            Log.w(TAG, "debug-gamepad rejected non-bindable key="
+                    + KeyEvent.keyCodeToString(mappedKeyCode));
+            return;
+        }
+        updateLastInputSummary(mappedKeyCode, mappedKeyCode);
+        nativeOnAndroidGamepadKey(mappedKeyCode, true, 0, DEBUG_GAMEPAD_DEVICE_ID);
+        Log.i(TAG, "debug-gamepad "
+                + KeyEvent.keyCodeToString(mappedKeyCode) + " down holdMs=" + holdMs);
+        final View decorView = getWindow() != null ? getWindow().getDecorView() : null;
+        if (decorView == null) {
+            nativeOnAndroidGamepadKey(mappedKeyCode, false, 0, DEBUG_GAMEPAD_DEVICE_ID);
+            Log.i(TAG, "debug-gamepad "
+                    + KeyEvent.keyCodeToString(mappedKeyCode) + " up");
+            return;
+        }
+        decorView.postDelayed(() -> {
+            nativeOnAndroidGamepadKey(mappedKeyCode, false, 0, DEBUG_GAMEPAD_DEVICE_ID);
+            Log.i(TAG, "debug-gamepad "
+                    + KeyEvent.keyCodeToString(mappedKeyCode) + " up");
+        }, holdMs);
     }
 
     private static boolean isControllerActivateKey(final int keyCode) {

@@ -44,7 +44,8 @@ Get-Content -LiteralPath "C:\path with spaces\file.txt" -Raw
   verify paths first; use native PowerShell cmdlets with `-LiteralPath`.
 - Avoid variable names that differ only by case from built-ins. For example,
   `$HOME` is read-only and PowerShell variables are case-insensitive, so `$home`
-  will fail too; use names like `$codexHome` or `$repoRoot`.
+  will fail too; use names like `$codexHome` or `$repoRoot`. `$PID` is also
+  read-only; use names like `$processIdText` or `$targetPid`.
 - Use `Set-Content` / `Add-Content` only for generated artifacts when
   `apply_patch` is not the right tool. For repo edits, use `apply_patch`.
 - For ADB commands, pass arguments as arrays when scripting and include
