@@ -21,6 +21,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -102,6 +103,75 @@ void AndroidWindowedAppContext::NotifyGuestCrash(
     return;
   }
   CallInUIThread(std::move(notify));
+}
+
+bool AndroidWindowedAppContext::ShowKeyboardInputDialog(
+    std::string_view title, std::string_view description,
+    std::string_view default_text, size_t max_length, std::string& text_out,
+    bool& cancelled_out) {
+  text_out.clear();
+  cancelled_out = true;
+  if (!activity_ ||
+      !activity_method_show_xam_keyboard_input_dialog_blocking_) {
+    return false;
+  }
+
+  JNIEnv* jni_env = GetAndroidThreadJniEnv();
+  if (!jni_env) {
+    return false;
+  }
+
+  auto make_string = [jni_env](std::string_view text) -> jstring {
+    return jni_env->NewStringUTF(std::string(text).c_str());
+  };
+
+  jstring title_string = make_string(title);
+  jstring description_string = make_string(description);
+  jstring default_text_string = make_string(default_text);
+  if (!title_string || !description_string || !default_text_string) {
+    if (title_string) {
+      jni_env->DeleteLocalRef(title_string);
+    }
+    if (description_string) {
+      jni_env->DeleteLocalRef(description_string);
+    }
+    if (default_text_string) {
+      jni_env->DeleteLocalRef(default_text_string);
+    }
+    return false;
+  }
+
+  const jint java_max_length =
+      max_length > size_t(std::numeric_limits<jint>::max())
+          ? std::numeric_limits<jint>::max()
+          : jint(max_length);
+  auto result_string = reinterpret_cast<jstring>(jni_env->CallObjectMethod(
+      activity_, activity_method_show_xam_keyboard_input_dialog_blocking_,
+      title_string, description_string, default_text_string, java_max_length));
+  jni_env->DeleteLocalRef(title_string);
+  jni_env->DeleteLocalRef(description_string);
+  jni_env->DeleteLocalRef(default_text_string);
+  if (jni_env->ExceptionCheck()) {
+    jni_env->ExceptionDescribe();
+    jni_env->ExceptionClear();
+    return false;
+  }
+
+  if (!result_string) {
+    cancelled_out = true;
+    return true;
+  }
+
+  const char* result_chars = jni_env->GetStringUTFChars(result_string, nullptr);
+  if (!result_chars) {
+    jni_env->DeleteLocalRef(result_string);
+    return false;
+  }
+  text_out = result_chars;
+  jni_env->ReleaseStringUTFChars(result_string, result_chars);
+  jni_env->DeleteLocalRef(result_string);
+  cancelled_out = false;
+  return true;
 }
 
 AndroidWindowedAppContext*
@@ -432,6 +502,12 @@ bool AndroidWindowedAppContext::Initialize(JNIEnv* ui_thread_jni_env,
            ui_thread_jni_env_->GetMethodID(
                activity_class_, "onNativeGuestCrash",
                "(Ljava/lang/String;Ljava/lang/String;)V")) != nullptr;
+  activity_ids_obtained &=
+      (activity_method_show_xam_keyboard_input_dialog_blocking_ =
+           ui_thread_jni_env_->GetMethodID(
+               activity_class_, "showXamKeyboardInputDialogBlocking",
+               "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)"
+               "Ljava/lang/String;")) != nullptr;
   if (!activity_ids_obtained) {
     XELOGE("AndroidWindowedAppContext: Failed to get the activity class IDs");
     Shutdown();
@@ -502,6 +578,7 @@ void AndroidWindowedAppContext::Shutdown() {
 
   activity_method_post_invalidate_window_surface_ = nullptr;
   activity_method_on_native_guest_crash_ = nullptr;
+  activity_method_show_xam_keyboard_input_dialog_blocking_ = nullptr;
   activity_method_finish_ = nullptr;
   if (activity_) {
     ui_thread_jni_env_->DeleteGlobalRef(activity_);

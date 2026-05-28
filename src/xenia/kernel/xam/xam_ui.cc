@@ -19,6 +19,9 @@
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
+#if XE_PLATFORM_ANDROID
+#include "xenia/ui/windowed_app_context_android.h"
+#endif  // XE_PLATFORM_ANDROID
 #include "xenia/xbox.h"
 
 namespace xe {
@@ -432,6 +435,46 @@ dword_result_t XamShowKeyboardUI_entry(
     };
     result = xeXamDispatchHeadless(run, overlapped);
   } else {
+#if XE_PLATFORM_ANDROID
+    std::string android_title = title ? xe::to_utf8(title.value()) : "";
+    std::string android_description =
+        description ? xe::to_utf8(description.value()) : "";
+    std::string android_default_text =
+        default_text ? xe::to_utf8(default_text.value()) : "";
+    auto run = [buffer, buffer_length, android_title, android_description,
+                android_default_text](uint32_t& extended_error,
+                                      uint32_t& length) -> X_RESULT {
+      auto display_window = kernel_state()->emulator()->display_window();
+      if (!display_window) {
+        extended_error = X_ERROR_FUNCTION_FAILED;
+        length = 0;
+        return X_ERROR_FUNCTION_FAILED;
+      }
+      auto& android_app_context =
+          static_cast<xe::ui::AndroidWindowedAppContext&>(
+              display_window->app_context());
+      std::string text;
+      bool cancelled = true;
+      if (!android_app_context.ShowKeyboardInputDialog(
+              android_title, android_description, android_default_text,
+              buffer_length, text, cancelled)) {
+        extended_error = X_ERROR_FUNCTION_FAILED;
+        length = 0;
+        return X_ERROR_FUNCTION_FAILED;
+      }
+      if (cancelled) {
+        extended_error = X_ERROR_CANCELLED;
+        length = 0;
+        return X_ERROR_SUCCESS;
+      }
+      auto text_utf16 = xe::to_utf16(text);
+      string_util::copy_and_swap_truncating(buffer, text_utf16, buffer_length);
+      extended_error = X_ERROR_SUCCESS;
+      length = 0;
+      return X_ERROR_SUCCESS;
+    };
+    result = xeXamDispatchHeadlessEx(run, overlapped);
+#else
     auto close = [buffer, buffer_length](KeyboardInputDialog* dialog,
                                          uint32_t& extended_error,
                                          uint32_t& length) -> X_RESULT {
@@ -457,6 +500,7 @@ dword_result_t XamShowKeyboardUI_entry(
             default_text ? xe::to_utf8(default_text.value()) : "",
             buffer_length),
         close, overlapped);
+#endif  // XE_PLATFORM_ANDROID
   }
   return result;
 }

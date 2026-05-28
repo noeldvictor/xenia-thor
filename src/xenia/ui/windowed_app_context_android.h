@@ -17,6 +17,8 @@
 #include <jni.h>
 #include <array>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "xenia/ui/windowed_app_context.h"
 
@@ -50,6 +52,11 @@ class AndroidWindowedAppContext final : public WindowedAppContext {
 
   void NotifyGuestCrash(std::string_view classification,
                         std::string_view details) override;
+  bool ShowKeyboardInputDialog(std::string_view title,
+                               std::string_view description,
+                               std::string_view default_text,
+                               size_t max_length, std::string& text_out,
+                               bool& cancelled_out);
 
   JNIEnv* ui_thread_jni_env() const { return ui_thread_jni_env_; }
 
@@ -146,6 +153,7 @@ class AndroidWindowedAppContext final : public WindowedAppContext {
   jmethodID activity_method_finish_ = nullptr;
   jmethodID activity_method_post_invalidate_window_surface_ = nullptr;
   jmethodID activity_method_on_native_guest_crash_ = nullptr;
+  jmethodID activity_method_show_xam_keyboard_input_dialog_blocking_ = nullptr;
 
   // May be read by non-UI threads in NotifyUILoopOfPendingFunctions.
   ALooper* ui_thread_looper_ = nullptr;

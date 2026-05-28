@@ -2,14 +2,27 @@ package jp.xenia.emulator;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.res.AssetManager;
 import android.os.Bundle;
+import android.os.Looper;
+import android.text.InputFilter;
+import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.EditText;
 
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import jp.xenia.XeniaRuntimeException;
 
@@ -109,6 +122,107 @@ public abstract class WindowedAppActivity extends Activity {
     // Used from the native WindowedAppContext when guest code faults.
     @SuppressWarnings("UnusedDeclaration")
     public void onNativeGuestCrash(final String classification, final String details) {
+    }
+
+    @Nullable
+    @SuppressWarnings("UnusedDeclaration")
+    public String showXamKeyboardInputDialogBlocking(
+            @Nullable final String title,
+            @Nullable final String description,
+            @Nullable final String defaultText,
+            final int maxLength) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return null;
+        }
+
+        final CountDownLatch done = new CountDownLatch(1);
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        final AtomicReference<String> result = new AtomicReference<>(null);
+
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) {
+                done.countDown();
+                return;
+            }
+
+            final EditText input = new EditText(this);
+            input.setSingleLine(true);
+            input.setSelectAllOnFocus(true);
+            input.setInputType(InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+            input.setText(defaultText != null ? defaultText : "");
+            final int maxChars = Math.max(0, maxLength - 1);
+            if (maxChars > 0) {
+                input.setFilters(new InputFilter[] { new InputFilter.LengthFilter(maxChars) });
+            }
+
+            final AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                    .setTitle(title != null && !title.isEmpty() ? title : "Keyboard Input")
+                    .setView(input)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .setNegativeButton(android.R.string.cancel, null);
+            if (description != null && !description.isEmpty()) {
+                builder.setMessage(description);
+            }
+
+            final AlertDialog dialog = builder.create();
+            final Runnable cancel = () -> {
+                if (completed.compareAndSet(false, true)) {
+                    result.set(null);
+                    done.countDown();
+                }
+            };
+            final Runnable accept = () -> {
+                if (completed.compareAndSet(false, true)) {
+                    result.set(input.getText().toString());
+                    done.countDown();
+                    dialog.dismiss();
+                }
+            };
+            input.setOnEditorActionListener((view, actionId, event) -> {
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    accept.run();
+                    return true;
+                }
+                return false;
+            });
+            dialog.setOnCancelListener(dialogInterface -> cancel.run());
+            dialog.setOnDismissListener(dialogInterface -> cancel.run());
+            dialog.setOnShowListener(dialogInterface -> {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener(view -> accept.run());
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                        .setOnClickListener(view -> {
+                            cancel.run();
+                            dialog.dismiss();
+                        });
+                input.requestFocus();
+                final Window window = dialog.getWindow();
+                if (window != null) {
+                    window.setSoftInputMode(
+                            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+                }
+                input.postDelayed(() -> {
+                    final InputMethodManager inputMethodManager =
+                            (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                    if (inputMethodManager != null) {
+                        inputMethodManager.showSoftInput(
+                                input, InputMethodManager.SHOW_IMPLICIT);
+                    }
+                }, 100);
+            });
+            dialog.show();
+        });
+
+        try {
+            done.await();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+        return result.get();
     }
 
     @Override
