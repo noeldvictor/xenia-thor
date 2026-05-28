@@ -2,6 +2,7 @@ package jp.xenia.emulator;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
@@ -10,7 +11,11 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 public final class XeniaAndroidSettings {
@@ -25,6 +30,8 @@ public final class XeniaAndroidSettings {
     public static final String KEY_HIDE_OSD = "hide_osd";
     private static final String KEY_HIDE_OSD_DEFAULT_MIGRATED =
             "hide_osd_default_migrated_v2";
+    private static final String KEY_APU_DEFAULT_MIGRATED =
+            "apu_default_migrated_v2";
     public static final String KEY_SHOW_FPS = "show_fps";
     public static final String KEY_VULKAN_PERF_COUNTERS = "vulkan_perf_counters";
     public static final String KEY_VULKAN_PERF_COUNTERS_INTERVAL =
@@ -44,6 +51,11 @@ public final class XeniaAndroidSettings {
     public static final String KEY_LAST_RUN_FINISHED_AT_MS =
             "launcher_last_run_finished_at_ms";
     public static final String KEY_RECENT_GAMES_JSON = "launcher_recent_games_json";
+    public static final String KEY_GAME_LIBRARY_JSON = "launcher_game_library_json";
+    public static final String KEY_GAME_LIBRARY_FOLDER_URIS_JSON =
+            "launcher_game_library_folder_uris_json";
+    public static final String KEY_GAME_LIBRARY_SCANNED_AT_MS =
+            "launcher_game_library_scanned_at_ms";
 
     public static final String PROFILE_BALANCED = "thor_balanced";
     public static final String PROFILE_PERFORMANCE = "thor_performance";
@@ -115,6 +127,21 @@ public final class XeniaAndroidSettings {
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
     private static final int RECENT_GAME_LIMIT = 5;
+    private static final int GAME_LIBRARY_LIMIT = 300;
+    private static final int GAME_LIBRARY_MAX_DEPTH = 7;
+    private static final String[] GAME_LIBRARY_COMMON_DIRS = {
+        "/storage/2664-21DE/Roms/xbox360",
+        "/storage/2664-21DE/roms/xbox360",
+        "/storage/emulated/0/Roms/xbox360",
+        "/storage/emulated/0/roms/xbox360",
+        "/sdcard/Roms/xbox360",
+        "/sdcard/roms/xbox360",
+    };
+    private static final String[] GAME_LIBRARY_EXTENSIONS = {
+        ".iso",
+        ".xex",
+        ".m3u",
+    };
 
     private XeniaAndroidSettings() {
     }
@@ -128,6 +155,7 @@ public final class XeniaAndroidSettings {
         if (!preferences.contains(KEY_PROFILE)) {
             writePreset(preferences.edit(), PROFILE_BALANCED)
                     .putBoolean(KEY_HIDE_OSD_DEFAULT_MIGRATED, true)
+                    .putBoolean(KEY_APU_DEFAULT_MIGRATED, true)
                     .apply();
             return;
         }
@@ -147,6 +175,14 @@ public final class XeniaAndroidSettings {
                                     preferences.getString(KEY_PROFILE, PROFILE_BALANCED)))
                     .apply();
         }
+        if (!preferences.getBoolean(KEY_APU_DEFAULT_MIGRATED, false)) {
+            final SharedPreferences.Editor editor = preferences.edit();
+            if (APU_NOP.equals(preferences.getString(KEY_APU_DRIVER, APU_NOP))) {
+                editor.putString(KEY_APU_DRIVER, APU_ANY);
+                editor.putBoolean(KEY_MUTE_AUDIO, false);
+            }
+            editor.putBoolean(KEY_APU_DEFAULT_MIGRATED, true).apply();
+        }
     }
 
     public static Bundle createLaunchArguments(final Context context, final Uri target) {
@@ -160,7 +196,7 @@ public final class XeniaAndroidSettings {
                 "kernel_display_resolution",
                 preferences.getString(KEY_INTERNAL_RESOLUTION, RESOLUTION_720P));
         launchArguments.putString("cpu", CPU_ARM64);
-        launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_NOP));
+        launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_ANY));
         launchArguments.putString("hid", preferences.getString(KEY_HID_DRIVER, HID_ANDROID));
         launchArguments.putBoolean("discord", false);
         if (preferences.getBoolean(KEY_MUTE_AUDIO, false)) {
@@ -245,6 +281,104 @@ public final class XeniaAndroidSettings {
             this.startedAtMs = startedAtMs;
             this.finishedAtMs = finishedAtMs;
         }
+    }
+
+    public static final class GameLibraryEntry {
+        public final String launchUri;
+        public final String title;
+        public final String path;
+        public final String kind;
+        public final long sizeBytes;
+        public final long lastModifiedMs;
+
+        private GameLibraryEntry(
+                final String launchUri,
+                final String title,
+                final String path,
+                final String kind,
+                final long sizeBytes,
+                final long lastModifiedMs) {
+            this.launchUri = launchUri;
+            this.title = title;
+            this.path = path;
+            this.kind = kind;
+            this.sizeBytes = sizeBytes;
+            this.lastModifiedMs = lastModifiedMs;
+        }
+    }
+
+    public static void addGameLibraryFolder(final Context context, final Uri folderUri) {
+        if (folderUri == null) {
+            return;
+        }
+        final SharedPreferences preferences = getPreferences(context);
+        final JSONArray folders = readJsonArray(
+                preferences.getString(KEY_GAME_LIBRARY_FOLDER_URIS_JSON, "[]"));
+        final String folder = folderUri.toString();
+        for (int i = 0; i < folders.length(); ++i) {
+            if (folder.equals(folders.optString(i, ""))) {
+                return;
+            }
+        }
+        folders.put(folder);
+        preferences.edit()
+                .putString(KEY_GAME_LIBRARY_FOLDER_URIS_JSON, folders.toString())
+                .apply();
+    }
+
+    public static List<GameLibraryEntry> getGameLibrary(final Context context) {
+        final ArrayList<GameLibraryEntry> entries = new ArrayList<>();
+        final JSONArray array = readJsonArray(
+                getPreferences(context).getString(KEY_GAME_LIBRARY_JSON, "[]"));
+        for (int i = 0; i < array.length(); ++i) {
+            final JSONObject object = array.optJSONObject(i);
+            if (object == null) {
+                continue;
+            }
+            final String launchUri = object.optString("launch_uri", "");
+            if (launchUri.isEmpty()) {
+                continue;
+            }
+            entries.add(new GameLibraryEntry(
+                    launchUri,
+                    object.optString("title", ""),
+                    object.optString("path", ""),
+                    object.optString("kind", ""),
+                    object.optLong("size_bytes", 0),
+                    object.optLong("last_modified_ms", 0)));
+        }
+        return entries;
+    }
+
+    public static long getGameLibraryScannedAtMs(final Context context) {
+        return getPreferences(context).getLong(KEY_GAME_LIBRARY_SCANNED_AT_MS, 0);
+    }
+
+    public static List<GameLibraryEntry> scanGameLibrary(final Context context) {
+        final LinkedHashMap<String, GameLibraryEntry> entries = new LinkedHashMap<>();
+        for (final String path : GAME_LIBRARY_COMMON_DIRS) {
+            scanFileDirectory(context, new File(path), entries, 0);
+        }
+
+        final JSONArray folders = readJsonArray(
+                getPreferences(context).getString(KEY_GAME_LIBRARY_FOLDER_URIS_JSON, "[]"));
+        for (int i = 0; i < folders.length(); ++i) {
+            final String folderUri = folders.optString(i, "");
+            if (!folderUri.isEmpty()) {
+                scanDocumentTree(context, Uri.parse(folderUri), entries);
+            }
+        }
+
+        final ArrayList<GameLibraryEntry> sortedEntries = new ArrayList<>(entries.values());
+        Collections.sort(sortedEntries, new Comparator<GameLibraryEntry>() {
+            @Override
+            public int compare(
+                    final GameLibraryEntry left, final GameLibraryEntry right) {
+                return safeLower(left.title).compareTo(safeLower(right.title));
+            }
+        });
+        saveGameLibrary(context, sortedEntries);
+        return sortedEntries;
     }
 
     public static void recordLaunchStarted(
@@ -354,6 +488,176 @@ public final class XeniaAndroidSettings {
         return games;
     }
 
+    private static void scanFileDirectory(
+            final Context context,
+            final File directory,
+            final LinkedHashMap<String, GameLibraryEntry> entries,
+            final int depth) {
+        if (directory == null
+                || entries.size() >= GAME_LIBRARY_LIMIT
+                || depth > GAME_LIBRARY_MAX_DEPTH
+                || !directory.isDirectory()) {
+            return;
+        }
+        final File[] children = directory.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (final File child : children) {
+            if (entries.size() >= GAME_LIBRARY_LIMIT) {
+                return;
+            }
+            if (child == null || child.isHidden()) {
+                continue;
+            }
+            if (child.isDirectory()) {
+                scanFileDirectory(context, child, entries, depth + 1);
+            } else if (isGameFileName(child.getName())) {
+                final Uri launchUri = Uri.fromFile(child);
+                addGameLibraryEntry(entries, new GameLibraryEntry(
+                        launchUri.toString(),
+                        titleFromFileName(child.getName()),
+                        child.getAbsolutePath(),
+                        kindFromFileName(child.getName()),
+                        child.length(),
+                        child.lastModified()));
+            }
+        }
+    }
+
+    private static void scanDocumentTree(
+            final Context context,
+            final Uri treeUri,
+            final LinkedHashMap<String, GameLibraryEntry> entries) {
+        try {
+            scanDocumentTree(
+                    context,
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri),
+                    entries,
+                    0);
+        } catch (final RuntimeException ignored) {
+            // Folder grants can expire or point at unavailable removable storage.
+        }
+    }
+
+    private static void scanDocumentTree(
+            final Context context,
+            final Uri treeUri,
+            final String documentId,
+            final LinkedHashMap<String, GameLibraryEntry> entries,
+            final int depth) {
+        if (treeUri == null
+                || documentId == null
+                || entries.size() >= GAME_LIBRARY_LIMIT
+                || depth > GAME_LIBRARY_MAX_DEPTH) {
+            return;
+        }
+        final Uri childrenUri =
+                DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId);
+        final String[] projection = {
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        };
+        try (Cursor cursor = context.getContentResolver().query(
+                childrenUri, projection, null, null, null)) {
+            if (cursor == null) {
+                return;
+            }
+            while (cursor.moveToNext() && entries.size() < GAME_LIBRARY_LIMIT) {
+                final String childDocumentId = cursor.getString(0);
+                final String displayName = cursor.getString(1);
+                final String mimeType = cursor.getString(2);
+                final long sizeBytes = cursor.isNull(3) ? 0 : cursor.getLong(3);
+                final long lastModifiedMs = cursor.isNull(4) ? 0 : cursor.getLong(4);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
+                    scanDocumentTree(context, treeUri, childDocumentId, entries, depth + 1);
+                } else if (isGameFileName(displayName)) {
+                    final Uri launchUri =
+                            DocumentsContract.buildDocumentUriUsingTree(
+                                    treeUri, childDocumentId);
+                    addGameLibraryEntry(entries, new GameLibraryEntry(
+                            launchUri.toString(),
+                            titleFromFileName(displayName),
+                            resolveLaunchTarget(context, launchUri),
+                            kindFromFileName(displayName),
+                            sizeBytes,
+                            lastModifiedMs));
+                }
+            }
+        } catch (final RuntimeException ignored) {
+            // Keep the library usable even if one tree node cannot be read.
+        }
+    }
+
+    private static void addGameLibraryEntry(
+            final LinkedHashMap<String, GameLibraryEntry> entries,
+            final GameLibraryEntry entry) {
+        if (entry == null || entry.launchUri == null || entry.launchUri.isEmpty()) {
+            return;
+        }
+        final String key = !entry.path.isEmpty() ? entry.path : entry.launchUri;
+        final String normalizedKey = key.toLowerCase(java.util.Locale.US);
+        if (!entries.containsKey(normalizedKey)) {
+            entries.put(normalizedKey, entry);
+        }
+    }
+
+    private static void saveGameLibrary(
+            final Context context, final List<GameLibraryEntry> entries) {
+        final JSONArray array = new JSONArray();
+        try {
+            for (final GameLibraryEntry entry : entries) {
+                final JSONObject object = new JSONObject();
+                object.put("launch_uri", nonNull(entry.launchUri));
+                object.put("title", nonNull(entry.title));
+                object.put("path", nonNull(entry.path));
+                object.put("kind", nonNull(entry.kind));
+                object.put("size_bytes", entry.sizeBytes);
+                object.put("last_modified_ms", entry.lastModifiedMs);
+                array.put(object);
+            }
+        } catch (final JSONException ignored) {
+            return;
+        }
+        getPreferences(context).edit()
+                .putString(KEY_GAME_LIBRARY_JSON, array.toString())
+                .putLong(KEY_GAME_LIBRARY_SCANNED_AT_MS, System.currentTimeMillis())
+                .apply();
+    }
+
+    private static boolean isGameFileName(final String name) {
+        if (name == null) {
+            return false;
+        }
+        final String lower = safeLower(name);
+        for (final String extension : GAME_LIBRARY_EXTENSIONS) {
+            if (lower.endsWith(extension)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String titleFromFileName(final String name) {
+        final String value = nonNull(name);
+        final int dot = value.lastIndexOf('.');
+        final String withoutExtension = dot > 0 ? value.substring(0, dot) : value;
+        return withoutExtension.replace('_', ' ').trim();
+    }
+
+    private static String kindFromFileName(final String name) {
+        final String value = nonNull(name);
+        final int dot = value.lastIndexOf('.');
+        if (dot < 0 || dot + 1 >= value.length()) {
+            return "GAME";
+        }
+        return value.substring(dot + 1).toUpperCase(java.util.Locale.US);
+    }
+
     private static void upsertRecentGame(
             final Context context,
             final String title,
@@ -420,7 +724,10 @@ public final class XeniaAndroidSettings {
     }
 
     private static JSONArray readRecentGames(final SharedPreferences preferences) {
-        final String json = preferences.getString(KEY_RECENT_GAMES_JSON, "[]");
+        return readJsonArray(preferences.getString(KEY_RECENT_GAMES_JSON, "[]"));
+    }
+
+    private static JSONArray readJsonArray(final String json) {
         if (json == null || json.isEmpty()) {
             return new JSONArray();
         }
@@ -435,15 +742,19 @@ public final class XeniaAndroidSettings {
         return value != null ? value : "";
     }
 
+    private static String safeLower(final String value) {
+        return nonNull(value).toLowerCase(java.util.Locale.US);
+    }
+
     public static SharedPreferences.Editor writePreset(
             final SharedPreferences.Editor editor, final String profile) {
         editor.putString(KEY_PROFILE, profile);
         if (PROFILE_PERFORMANCE.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
             editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
-            editor.putString(KEY_APU_DRIVER, APU_NOP);
+            editor.putString(KEY_APU_DRIVER, APU_ANY);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
-            editor.putBoolean(KEY_MUTE_AUDIO, true);
+            editor.putBoolean(KEY_MUTE_AUDIO, false);
             editor.putBoolean(KEY_HIDE_OSD, true);
             editor.putBoolean(KEY_SHOW_FPS, true);
             editor.putBoolean(KEY_VULKAN_PERF_COUNTERS, false);
@@ -453,7 +764,7 @@ public final class XeniaAndroidSettings {
         if (PROFILE_RESEARCH.equals(profile)) {
             editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
             editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
-            editor.putString(KEY_APU_DRIVER, APU_NOP);
+            editor.putString(KEY_APU_DRIVER, APU_ANY);
             editor.putString(KEY_HID_DRIVER, HID_ANDROID);
             editor.putBoolean(KEY_MUTE_AUDIO, false);
             editor.putBoolean(KEY_HIDE_OSD, false);
@@ -464,7 +775,7 @@ public final class XeniaAndroidSettings {
         }
         editor.putString(KEY_GPU_DRIVER, GPU_VULKAN);
         editor.putString(KEY_INTERNAL_RESOLUTION, getPresetInternalResolution(profile));
-        editor.putString(KEY_APU_DRIVER, APU_NOP);
+        editor.putString(KEY_APU_DRIVER, APU_ANY);
         editor.putString(KEY_HID_DRIVER, HID_ANDROID);
         editor.putBoolean(KEY_MUTE_AUDIO, false);
         editor.putBoolean(KEY_HIDE_OSD, true);

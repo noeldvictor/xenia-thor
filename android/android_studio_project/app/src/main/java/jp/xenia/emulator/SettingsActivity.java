@@ -223,7 +223,7 @@ public class SettingsActivity extends Activity {
                 XeniaAndroidSettings.KEY_INTERNAL_RESOLUTION,
                 XeniaAndroidSettings.RESOLUTION_720P));
         selectByValue(mAudioGroup, preferences.getString(
-                XeniaAndroidSettings.KEY_APU_DRIVER, XeniaAndroidSettings.APU_NOP));
+                XeniaAndroidSettings.KEY_APU_DRIVER, XeniaAndroidSettings.APU_ANY));
         selectByValue(mInputGroup, preferences.getString(
                 XeniaAndroidSettings.KEY_HID_DRIVER, XeniaAndroidSettings.HID_ANDROID));
         mMuteAudio.setChecked(preferences.getBoolean(
@@ -258,16 +258,16 @@ public class SettingsActivity extends Activity {
         if (XeniaAndroidSettings.PROFILE_PERFORMANCE.equals(profile)) {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
             selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_480P);
-            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
+            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_ANY);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
-            mMuteAudio.setChecked(true);
+            mMuteAudio.setChecked(false);
             mHideOsd.setChecked(true);
             mShowFps.setChecked(true);
             mVulkanCounters.setChecked(false);
         } else if (XeniaAndroidSettings.PROFILE_RESEARCH.equals(profile)) {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
             selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_720P);
-            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
+            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_ANY);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);
             mHideOsd.setChecked(false);
@@ -276,7 +276,7 @@ public class SettingsActivity extends Activity {
         } else {
             selectByValue(mGpuGroup, XeniaAndroidSettings.GPU_VULKAN);
             selectByValue(mResolutionGroup, XeniaAndroidSettings.RESOLUTION_720P);
-            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_NOP);
+            selectByValue(mAudioGroup, XeniaAndroidSettings.APU_ANY);
             selectByValue(mInputGroup, XeniaAndroidSettings.HID_ANDROID);
             mMuteAudio.setChecked(false);
             mHideOsd.setChecked(true);

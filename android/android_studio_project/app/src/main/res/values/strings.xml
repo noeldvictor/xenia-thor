@@ -10,6 +10,10 @@
     <string name="launcher_status_vulkan">Vulkan</string>
     <string name="launcher_status_arm64">ARM64</string>
     <string name="launcher_status_unstable">Unstable</string>
+    <string name="launcher_scan_games">Scan Games</string>
+    <string name="launcher_scan_games_detail">Find Xbox 360 games in your ROM folders</string>
+    <string name="launcher_add_game_folder">Add Game Folder</string>
+    <string name="launcher_add_game_folder_detail">Choose a folder to include in the library</string>
     <string name="launcher_game_detail">ISO / XEX</string>
     <string name="launcher_last_game_title">Launch Last Game</string>
     <string name="launcher_last_game_empty">Pick a game once to enable quick launch</string>
@@ -19,6 +23,10 @@
     <string name="launcher_last_run_guest_heap">Last run: guest heap / exception - %1$s</string>
     <string name="launcher_last_run_maybe_crashed">Last run: may have crashed or closed - %1$s</string>
     <string name="launcher_last_run_unknown">Last run: unknown - %1$s</string>
+    <string name="launcher_game_library_title">Game library</string>
+    <string name="launcher_game_library_empty">No games scanned yet. Add a folder or scan common ROM paths.</string>
+    <string name="launcher_game_library_row">%1$s\n%2$s - %3$s</string>
+    <string name="launcher_game_library_unknown_kind">GAME</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
     <string name="launcher_recent_game_exited">Exited to menu</string>
@@ -83,4 +91,12 @@
     <string name="controller_mapping_reset">Reset buttons</string>
     <string name="controller_mapping_done">Done</string>
     <string name="controller_mapping_defaults_restored">Default controller mapping restored</string>
+    <plurals name="launcher_game_library_count">
+        <item quantity="one">%d game found</item>
+        <item quantity="other">%d games found</item>
+    </plurals>
+    <plurals name="launcher_game_library_scan_result">
+        <item quantity="one">Found %d game</item>
+        <item quantity="other">Found %d games</item>
+    </plurals>
 </resources>

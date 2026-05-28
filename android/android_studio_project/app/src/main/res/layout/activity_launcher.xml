@@ -99,7 +99,7 @@
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/launcher_launch_game_card"
+            android:id="@+id/launcher_scan_games_card"
             android:layout_width="match_parent"
             android:layout_height="74dp"
             android:layout_marginTop="18dp"
@@ -109,7 +109,7 @@
             android:focusable="true"
             android:foreground="?android:attr/selectableItemBackground"
             android:gravity="center_vertical"
-            android:onClick="onLaunchGameClick"
+            android:onClick="onScanGamesClick"
             android:orientation="horizontal"
             android:paddingStart="18dp"
             android:paddingEnd="18dp">
@@ -122,6 +122,116 @@
                 <ImageView
                     android:layout_width="28dp"
                     android:layout_height="28dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@string/launcher_scan_games"
+                    android:src="@drawable/ic_action_trace" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_scan_games"
+                    android:textColor="@color/xenia_text"
+                    android:textSize="18sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_scan_games_detail"
+                    android:textColor="@color/xenia_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/launcher_card"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:onClick="onAddGameFolderClick"
+            android:orientation="horizontal"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp">
+
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:background="@drawable/launcher_icon_plate">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@string/launcher_add_game_folder"
+                    android:src="@drawable/ic_action_settings" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_add_game_folder"
+                    android:textColor="@color/xenia_text"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:letterSpacing="0"
+                    android:text="@string/launcher_add_game_folder_detail"
+                    android:textColor="@color/xenia_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/launcher_card"
+            android:clickable="true"
+            android:elevation="2dp"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:onClick="onLaunchGameClick"
+            android:orientation="horizontal"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp">
+
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:background="@drawable/launcher_icon_plate">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:contentDescription="@string/activity_label_emulator"
                     android:src="@drawable/ic_action_play" />
@@ -141,12 +251,12 @@
                     android:letterSpacing="0"
                     android:text="@string/activity_label_emulator"
                     android:textColor="@color/xenia_text"
-                    android:textSize="18sp" />
+                    android:textSize="16sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:letterSpacing="0"
                     android:text="@string/launcher_game_detail"
                     android:textColor="@color/xenia_text_secondary"
@@ -226,6 +336,39 @@
             android:textSize="12sp"
             android:visibility="gone"
             tools:text="Last run: may have crashed - Saved game" />
+
+        <LinearLayout
+            android:id="@+id/launcher_game_library_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0"
+                android:text="@string/launcher_game_library_title"
+                android:textColor="@color/xenia_text"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/launcher_game_library_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:letterSpacing="0"
+                android:text="@string/launcher_game_library_empty"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/launcher_game_library_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/launcher_recent_games_section"

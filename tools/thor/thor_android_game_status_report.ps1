@@ -84,6 +84,12 @@ if ($titleId -eq "535107D4" -and $classification -eq "guest_heap_rtlraiseexcepti
     $reason = "Project Sylpheed title ID plus heap failure and RtlRaiseException"
 }
 
+if ($titleId -eq "535107D4" -and $classification -eq "android_or_native_process_crash" -and
+        ($baseHeapReleaseCount -gt 0 -or $baseHeapAllocCount -gt 0 -or $physicalHeapCount -gt 0)) {
+    $classification = "project_sylpheed_heap_native_abort"
+    $reason = "Project Sylpheed title ID plus BaseHeap/PhysicalHeap failure and native abort"
+}
+
 if ($classification -eq "unknown" -and $launchModuleCount -gt 0) {
     $classification = "launched_no_crash_marker"
     $reason = "module launched but no crash marker was found"
