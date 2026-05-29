@@ -74,6 +74,7 @@ public final class XeniaAndroidSettings {
     public static final String HID_NOP = "nop";
 
     private static final String[] STABLE_LAUNCH_FALSE_CVARS = {
+        "gpu_trace_vd_swap",
         "gpu_use_vd_scaler_output_for_swap",
         "a64_rtl_enter_free_first",
         "arm64_add_i64_wrapped_imm_fastpath",

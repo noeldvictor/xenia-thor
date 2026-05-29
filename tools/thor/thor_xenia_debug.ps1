@@ -48,6 +48,7 @@ param(
     [string]$GpuTraceInterrupts = "false",
     [string]$GpuBlueDragonKickWaitToken = "false",
     [string]$GpuTraceSwap = "false",
+    [string]$GpuTraceVdSwap = "false",
     [string]$GpuUseVdScalerOutputForSwap = "false",
     [string]$PresentTraceGuestOutputGeometry = "false",
     [string]$PresentTraceGuestOutputGeometryBudget = "",
@@ -608,6 +609,7 @@ function Start-XeniaEmulator {
         "--ez gpu_trace_interrupts $(ConvertTo-BooleanText $GpuTraceInterrupts)",
         "--ez gpu_blue_dragon_kick_wait_token $(ConvertTo-BooleanText $GpuBlueDragonKickWaitToken)",
         "--ez gpu_trace_swap $(ConvertTo-BooleanText $GpuTraceSwap)",
+        "--ez gpu_trace_vd_swap $(ConvertTo-BooleanText $GpuTraceVdSwap)",
         "--ez gpu_use_vd_scaler_output_for_swap $(ConvertTo-BooleanText $GpuUseVdScalerOutputForSwap)",
         "--ez present_trace_guest_output_geometry $(ConvertTo-BooleanText $PresentTraceGuestOutputGeometry)",
         "--ez gpu_trace_texture_cache_actions $(ConvertTo-BooleanText $GpuTraceTextureCacheActions)",
@@ -1380,6 +1382,10 @@ function Write-CaptureMetadata {
         "xboxkrnl_reenter_audit=$XboxkrnlReenterAudit",
         "xboxkrnl_reenter_audit_budget=$XboxkrnlReenterAuditBudget",
         "xboxkrnl_reenter_audit_guest_tids=$XboxkrnlReenterAuditGuestTids",
+        "gpu_trace_swap=$GpuTraceSwap",
+        "gpu_trace_vd_swap=$GpuTraceVdSwap",
+        "gpu_trace_swap_frontbuffer_checksum=$GpuTraceSwapFrontbufferChecksum",
+        "gpu_trace_swap_render_targets=$GpuTraceSwapRenderTargets",
         "xma_fast_silence=$XmaFastSilence",
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
@@ -1836,6 +1842,7 @@ function Use-BlueDragonSpeedDefaults {
         "GpuInterruptOnSwap",
         "GpuTraceInterrupts",
         "GpuBlueDragonKickWaitToken",
+        "GpuTraceVdSwap",
         "GpuTraceSwap",
         "GpuUseVdScalerOutputForSwap",
         "GpuTraceTextureCacheActions",
@@ -2144,6 +2151,12 @@ done | head -50
             $launcherArgs += @(
                 "--es", "xboxkrnl_thread_wait_trace_guest_tids",
                 $XboxkrnlThreadWaitTraceGuestTids
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("GpuTraceVdSwap")) {
+            $launcherArgs += @(
+                "--ez", "gpu_trace_vd_swap",
+                (ConvertTo-BooleanText $GpuTraceVdSwap)
             )
         }
         Invoke-Adb $launcherArgs

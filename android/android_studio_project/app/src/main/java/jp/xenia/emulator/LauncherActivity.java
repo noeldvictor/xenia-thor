@@ -259,6 +259,7 @@ public class LauncherActivity extends Activity {
         copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_reenter_audit_budget");
         copyStringExtra(intent, overrides, "xboxkrnl_reenter_audit_guest_tids");
+        copyBooleanExtra(intent, overrides, "gpu_trace_vd_swap");
         copyBooleanExtra(intent, overrides, "android_xam_keyboard_ime");
         return overrides;
     }
