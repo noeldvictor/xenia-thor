@@ -42,7 +42,7 @@ void VulkanPerfCountersRecordPresentSubmit(uint64_t start_ticks,
                                            uint32_t command_buffer_count,
                                            int32_t result);
 void VulkanPerfCountersRecordPresent(uint64_t start_ticks, int32_t result);
-void VulkanPerfCountersLogSnapshot(const char* reason);
+void VulkanPerfCountersLogSnapshot(const char* reason, bool force = false);
 
 }  // namespace vulkan
 }  // namespace ui

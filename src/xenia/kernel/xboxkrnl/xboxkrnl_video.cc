@@ -21,7 +21,9 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_error.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
 // BT.709 on modern monitors and TVs looks the closest to the Xbox 360 connected
@@ -63,6 +65,23 @@ struct VdScalerSwapState {
 };
 
 VdScalerSwapState g_vd_scaler_swap_state;
+
+uint32_t GetVdSwapTraceCaller() {
+  const auto* thread = XThread::GetCurrentThread();
+  auto* thread_state = thread ? thread->thread_state() : nullptr;
+  auto* context = thread_state ? thread_state->context() : nullptr;
+  return context ? static_cast<uint32_t>(context->r[3]) : 0;
+}
+
+void VdSwapTraceStatus(uint32_t caller, uint32_t status) {
+  if (!status) {
+    XELOGI("{:08X} xeRtlNtStatusToDosError 00000000 => 00000000", caller);
+    return;
+  }
+  const uint32_t mapped = xeRtlNtStatusToDosError(status);
+  XELOGI("{:08X} xeRtlNtStatusToDosError {:08X} => {:08X}", caller, status,
+         mapped);
+}
 
 }  // namespace
 
@@ -504,6 +523,19 @@ void VdSwap_entry(
   assert_true(color_space == 0);  // RGB(0)
   assert_true(*width == 1 + gpu_fetch.size_2d.width);
   assert_true(*height == 1 + gpu_fetch.size_2d.height);
+  const bool trace_vd_swap = cvars::gpu_trace_vd_swap;
+  const uint32_t vd_swap_trace_caller = GetVdSwapTraceCaller();
+  if (trace_vd_swap) {
+    XELOGI(
+        "VdSwap({:08X}, {:08X}, {:08X}, {:08X}, {:08X}, {:08X}, {:08X}, "
+        "{:08X}, {:08X}, {:08X}) caller={:08X}",
+        buffer_ptr.guest_address(), fetch_ptr.guest_address(),
+        unk2.guest_address(), unk3.guest_address(), unk4.guest_address(),
+        frontbuffer_virtual_address, frontbuffer_physical_address,
+        static_cast<uint32_t>(texture_format), color_space, *width, *height,
+        vd_swap_trace_caller);
+    VdSwapTraceStatus(vd_swap_trace_caller, 0x00000103);
+  }
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: VdSwap buffer={:08X} buffer_pa={:08X} fetch={:08X} syswb={:08X} "
@@ -586,6 +618,11 @@ void VdSwap_entry(
         swap_display_width, swap_display_height, using_vd_scaler_output,
         dwords[0], dwords[1], dwords[2], dwords[3], dwords[4], dwords[5],
         dwords[6], dwords[7], dwords[8], dwords[9], dwords[10], dwords[11]);
+  }
+  if (trace_vd_swap) {
+    VdSwapTraceStatus(vd_swap_trace_caller, 0);
+    XELOGI("VdSwap finished caller={:08X} pa={:08X}",
+           vd_swap_trace_caller, buffer_physical_address);
   }
 }
 DECLARE_XBOXKRNL_EXPORT2(VdSwap, kVideo, kImplemented, kImportant);

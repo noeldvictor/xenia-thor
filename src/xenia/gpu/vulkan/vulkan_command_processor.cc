@@ -2054,7 +2054,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         display_height);
   }
 
-  presenter->RefreshGuestOutput(
+  const bool guest_output_refreshed = presenter->RefreshGuestOutput(
       guest_output_width, guest_output_height, frontbuffer_width,
       frontbuffer_height,
       [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
@@ -2432,6 +2432,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // End the frame even if did not present for any reason (the image refresher
   // was not called), to prevent leaking per-frame resources.
   EndSubmission(true);
+  if (cvars::gpu_trace_vd_swap) {
+    XELOGI(
+        "VulkanPresenter: IssueSwap compact state refreshed={} "
+        "frame_current={} frame_completed={} submission={}",
+        guest_output_refreshed ? 1 : 0, frame_current_, frame_completed_,
+        GetCurrentSubmission());
+    ui::vulkan::VulkanPerfCountersLogSnapshot("vdswap", true);
+  }
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: Vulkan IssueSwap end frame_current={} "

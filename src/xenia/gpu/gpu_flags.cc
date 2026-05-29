@@ -59,6 +59,10 @@ DEFINE_bool(gpu_trace_swap, false,
             "Trace guest video swap setup, PM4 XE_SWAP packets, and host "
             "present/swap paths.",
             "GPU");
+DEFINE_bool(gpu_trace_vd_swap, false,
+            "Trace VdSwap enter/exit and compact presenter/GPU state snapshots "
+            "for black-screen triage.",
+            "GPU");
 DEFINE_int32(gpu_trace_packet_budget, 128,
              "Maximum packet-level GPU swap trace lines.", "GPU");
 DEFINE_bool(gpu_use_vd_scaler_output_for_swap, false,

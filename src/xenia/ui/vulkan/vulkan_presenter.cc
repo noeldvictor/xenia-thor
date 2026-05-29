@@ -301,8 +301,8 @@ void VulkanPerfCountersRecordPresent(uint64_t start_ticks, int32_t result) {
   AddTicks(vulkan_perf_counter_state.present_ticks, ElapsedTicks(start_ticks));
 }
 
-void VulkanPerfCountersLogSnapshot(const char* reason) {
-  if (!VulkanPerfCountersEnabled()) {
+void VulkanPerfCountersLogSnapshot(const char* reason, bool force) {
+  if (!force && !VulkanPerfCountersEnabled()) {
     return;
   }
   const uint64_t request =
