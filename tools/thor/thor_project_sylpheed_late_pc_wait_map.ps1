@@ -76,10 +76,54 @@ function Add-Count {
     ++$Table[$normalized]
 }
 
+function Add-NestedCount {
+    param(
+        [hashtable]$Table,
+        [string]$Outer,
+        [string]$Inner
+    )
+
+    if (!$Outer) {
+        return
+    }
+    if (!$Inner) {
+        $Inner = ""
+    }
+
+    $outer = $Outer.ToUpperInvariant()
+    $inner = $Inner.ToUpperInvariant()
+    if (!$Table.ContainsKey($outer)) {
+        $Table[$outer] = @{}
+    }
+    if (!$Table[$outer].ContainsKey($inner)) {
+        $Table[$outer][$inner] = 0
+    }
+    ++$Table[$outer][$inner]
+}
+
 function Join-Keys {
     param([hashtable]$Table)
 
     return (@($Table.Keys | Sort-Object) -join ",")
+}
+
+function Parse-LogHeader {
+    param([string]$Line)
+
+    if ($Line -notmatch '^(?<month>\d{2})-(?<day>\d{2})\s+(?<clock>\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+') {
+        return $null
+    }
+
+    $time = Try-ParseLogcatTimestamp $Line
+    if (!$time) {
+        return $null
+    }
+
+    return [pscustomobject][ordered]@{
+        Timestamp = $time
+        Pid = [int]$Matches.pid
+        Tid = [int]$Matches.tid
+    }
 }
 
 function Top-Counts {
@@ -87,6 +131,32 @@ function Top-Counts {
         [hashtable]$Table,
         [int]$Limit = 4
     )
+
+    $rows = @()
+    foreach ($key in $Table.Keys) {
+        $rows += [pscustomobject]@{
+            Key = $key
+            Count = [int]$Table[$key]
+        }
+    }
+
+    return (@(
+            $rows |
+                Sort-Object -Property @{ Expression = "Count"; Descending = $true }, @{ Expression = "Key"; Descending = $false } |
+                Select-Object -First $Limit |
+                ForEach-Object { "{0}:{1}" -f $_.Key, $_.Count }
+        ) -join ",")
+}
+
+function Format-ChildCounts {
+    param(
+        [hashtable]$Table,
+        [int]$Limit = 4
+    )
+
+    if (!$Table -or $Table.Count -eq 0) {
+        return ""
+    }
 
     $rows = @()
     foreach ($key in $Table.Keys) {
@@ -157,15 +227,12 @@ function Get-RoundedTraceDelayMs {
         return 0
     }
 
-    $deltaMs = [int][Math]::Round(($LastFailedFreeTimestamp - $FirstWaitTimestamp).TotalMilliseconds)
+    $deltaMs = [int][Math]::Round(($FirstWaitTimestamp - $LastFailedFreeTimestamp).TotalMilliseconds)
     if ($deltaMs -le 15000) {
         return 0
     }
 
-    # Start a few seconds before the failed-free/black-loop window, and round
-    # down so repeated captures use stable command lines.
-    $candidate = [Math]::Max(0, $deltaMs - 5000)
-    return [int]([Math]::Floor($candidate / 5000) * 5000)
+    return [int]([Math]::Max(0, $deltaMs - 5000))
 }
 
 function Parse-WaitRow {
@@ -185,11 +252,63 @@ function Parse-WaitRow {
         Api = $Matches.api
         Phase = $Matches.phase
         ThreadId = $Matches.thid.ToUpperInvariant()
+        Handle = $Matches.handle.ToUpperInvariant()
+        GuestObject = $Matches.guest_object.ToUpperInvariant()
         Status = $Matches.status.ToUpperInvariant()
         Lr = $Matches.lr.ToUpperInvariant()
         Ctr = $Matches.ctr.ToUpperInvariant()
         R1 = $Matches.r1.ToUpperInvariant()
         Name = $Matches.name
+    }
+}
+
+function Parse-VdSwapRow {
+    param(
+        [string]$Line,
+        [int]$LineIndex
+    )
+
+    $header = Parse-LogHeader $Line
+    if (!$header) {
+        return $null
+    }
+
+    if ($Line -notmatch 'i>\s+(?<caller>[0-9A-Fa-f]{8})\s+VdSwap\(') {
+        return $null
+    }
+
+    return [pscustomobject][ordered]@{
+        LineIndex = $LineIndex
+        Timestamp = $header.Timestamp
+        Pid = $header.Pid
+        Tid = $header.Tid
+        Caller = $Matches.caller.ToUpperInvariant()
+    }
+}
+
+function Parse-NtStatusRow {
+    param(
+        [string]$Line,
+        [int]$LineIndex
+    )
+
+    $header = Parse-LogHeader $Line
+    if (!$header) {
+        return $null
+    }
+
+    if ($Line -notmatch 'i>\s+(?<caller>[0-9A-Fa-f]{8})\s+xeRtlNtStatusToDosError\s+(?<status>[0-9A-Fa-f]{1,8})\s+=>\s+(?<mapped>[0-9A-Fa-f]{1,8})') {
+        return $null
+    }
+
+    return [pscustomobject][ordered]@{
+        LineIndex = $LineIndex
+        Timestamp = $header.Timestamp
+        Pid = $header.Pid
+        Tid = $header.Tid
+        Caller = $Matches.caller.ToUpperInvariant()
+        Status = $Matches.status.ToUpperInvariant().PadLeft(8, "0")
+        Mapped = $Matches.mapped.ToUpperInvariant().PadLeft(8, "0")
     }
 }
 
@@ -286,14 +405,29 @@ foreach ($pc in $TargetPc) {
 $waitRows = @()
 $snapshotRows = @()
 $freeRows = @()
+$vdSwapRows = @()
+$statusRows = @()
 $filteredDumpSeen = @{}
 
 for ($index = 0; $index -lt $lines.Count; ++$index) {
     $line = $lines[$index]
+    $lineNumber = $index + 1
 
     $waitRow = Parse-WaitRow -Line $line -LineIndex ($index + 1)
     if ($waitRow) {
         $waitRows += $waitRow
+        continue
+    }
+
+    $vdSwapRow = Parse-VdSwapRow -Line $line -LineIndex $lineNumber
+    if ($vdSwapRow) {
+        $vdSwapRows += $vdSwapRow
+        continue
+    }
+
+    $statusRow = Parse-NtStatusRow -Line $line -LineIndex $lineNumber
+    if ($statusRow) {
+        $statusRows += $statusRow
         continue
     }
 
@@ -348,6 +482,12 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
     $waitThreads = @{}
     $waitApis = @{}
     $waitStatuses = @{}
+    $waitHandleRows = @{}
+    $waitHandleGuestObjects = @{}
+    $waitHandleStatusRows = @{}
+    $waitHandleThreadRows = @{}
+    $waitHandleNameRows = @{}
+    $waitHandlePostFailedRows = @{}
     $snapshotThreads = @{}
     $snapshotLastFns = @{}
     $snapshotCtrs = @{}
@@ -368,6 +508,17 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
             Add-Count $waitThreads $row.ThreadId
             Add-Count $waitApis $row.Api
             Add-Count $waitStatuses $row.Status
+            Add-Count $waitHandleRows $row.Handle
+            Add-NestedCount $waitHandleGuestObjects $row.Handle $row.GuestObject
+            Add-NestedCount $waitHandleStatusRows $row.Handle $row.Status
+            Add-NestedCount $waitHandleThreadRows $row.Handle $row.ThreadId
+            Add-NestedCount $waitHandleNameRows $row.Handle $row.Name
+            if (!$waitHandlePostFailedRows.ContainsKey($row.Handle.ToUpperInvariant())) {
+                $waitHandlePostFailedRows[$row.Handle.ToUpperInvariant()] = 0
+            }
+            if ($lastFailedFree -and $row.Timestamp -and $row.Timestamp -gt $lastFailedFree) {
+                ++$waitHandlePostFailedRows[$row.Handle.ToUpperInvariant()]
+            }
             if ($row.Timestamp) {
                 if (!$firstSeen -or $row.Timestamp -lt $firstSeen) {
                     $firstSeen = $row.Timestamp
@@ -437,12 +588,77 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
         SnapshotThreads = Join-Keys $snapshotThreads
         SnapshotLastFns = Top-Counts $snapshotLastFns
         SnapshotCtrs = Top-Counts $snapshotCtrs
+        WaitHandleRows = $waitHandleRows
+        WaitHandleGuestObjects = $waitHandleGuestObjects
+        WaitHandleStatusRows = $waitHandleStatusRows
+        WaitHandleThreadRows = $waitHandleThreadRows
+        WaitHandleNameRows = $waitHandleNameRows
+        WaitHandlePostFailedRows = $waitHandlePostFailedRows
     }
 }
 
 $missingDumpRows = @($targetRows | Where-Object { $_.FilteredDumpPresent -eq 0 -and (($_.WaitLr + $_.WaitCtr + $_.SnapshotLastFn + $_.SnapshotLastRet + $_.SnapshotLr + $_.SnapshotCtr) -gt 0) })
 $firstWaitTrace = ($waitRows | Where-Object { $_.Timestamp } | Sort-Object Timestamp | Select-Object -First 1).Timestamp
 $waitTraceLast = ($waitRows | Where-Object { $_.Timestamp } | Sort-Object Timestamp | Select-Object -Last 1).Timestamp
+$lastVdSwap = $null
+if ($vdSwapRows.Count -gt 0) {
+    $lastVdSwap = @($vdSwapRows | Sort-Object LineIndex | Select-Object -Last 1)[0]
+}
+$lastVdSwapBeforeStatus = ""
+$lastVdSwapAfterStatus = ""
+$secondsFromLastVdSwapToFirstWait = ""
+$vdswapToFirstWaitSummary = ""
+if ($lastVdSwap -and $lastVdSwap.Timestamp) {
+    if ($firstWaitTrace) {
+        $secondsFromLastVdSwapToFirstWait = [Math]::Max(0.0, ($firstWaitTrace - $lastVdSwap.Timestamp).TotalSeconds)
+    }
+
+    $sameThreadStatus = @($statusRows | Where-Object {
+            $_.Pid -eq $lastVdSwap.Pid -and $_.Tid -eq $lastVdSwap.Tid
+        } | Sort-Object LineIndex)
+    if ($sameThreadStatus.Count -gt 0) {
+        $statusBefore = @($sameThreadStatus | Where-Object { $_.LineIndex -le $lastVdSwap.LineIndex } | Sort-Object LineIndex | Select-Object -Last 1)
+        $statusAfter = @($sameThreadStatus | Where-Object { $_.LineIndex -ge $lastVdSwap.LineIndex } | Sort-Object LineIndex | Select-Object -First 1)
+        if ($statusBefore.Count -gt 0) {
+            $delta = ""
+            if ($statusBefore[0].Timestamp -and $lastVdSwap.Timestamp) {
+                $delta = [Math]::Max(0.0, ($lastVdSwap.Timestamp - $statusBefore[0].Timestamp).TotalMilliseconds)
+            }
+            $lastVdSwapBeforeStatus = ("caller={0} status={1} mapped={2} line={3} time={4} delta_ms={5}" -f
+                $statusBefore[0].Caller, $statusBefore[0].Status, $statusBefore[0].Mapped, $statusBefore[0].LineIndex,
+                (Format-TimeOnly $statusBefore[0].Timestamp), $delta.ToString("0.0"))
+        }
+        if ($statusAfter.Count -gt 0 -and $statusAfter[0].LineIndex -ne $statusBefore[0].LineIndex) {
+            $delta = ""
+            if ($statusAfter[0].Timestamp -and $lastVdSwap.Timestamp) {
+                $delta = [Math]::Max(0.0, ($statusAfter[0].Timestamp - $lastVdSwap.Timestamp).TotalMilliseconds)
+            }
+            $lastVdSwapAfterStatus = ("caller={0} status={1} mapped={2} line={3} time={4} delta_ms={5}" -f
+                $statusAfter[0].Caller, $statusAfter[0].Status, $statusAfter[0].Mapped, $statusAfter[0].LineIndex,
+                (Format-TimeOnly $statusAfter[0].Timestamp), $delta.ToString("0.0"))
+        }
+    }
+    $firstWaitAfterVdSwap = @(
+            $waitRows |
+                Where-Object { $_.Timestamp -and $_.Timestamp -ge $lastVdSwap.Timestamp } |
+                Sort-Object Timestamp
+        )[0]
+    if ($firstWaitAfterVdSwap) {
+        $vdswapToFirstWaitSummary = ("pc={0} handle={1} guest_object={2} status={3} thread={4} api={5} line={6} time={7}" -f
+            $firstWaitAfterVdSwap.Lr,
+            $firstWaitAfterVdSwap.Handle,
+            $firstWaitAfterVdSwap.GuestObject,
+            $firstWaitAfterVdSwap.Status,
+            $firstWaitAfterVdSwap.ThreadId,
+            $firstWaitAfterVdSwap.Api,
+            $firstWaitAfterVdSwap.LineIndex,
+            (Format-TimeOnly $firstWaitAfterVdSwap.Timestamp))
+    }
+}
+$vdswapTime = ""
+if ($lastVdSwap -and $lastVdSwap.Timestamp) {
+    $vdswapTime = Format-TimeOnly $lastVdSwap.Timestamp
+}
 $lateSnapshotRows = @()
 if ($lastFailedFree) {
     $lateSnapshotRows = @($snapshotRows | Where-Object { $_.Timestamp -and $_.Timestamp -gt $lastFailedFree })
@@ -495,12 +711,16 @@ $classification = "project_sylpheed_late_pc_wait_map_needs_capture"
 $decision = "capture_filtered_ppc_hir_for_late_pcs_and_extend_wait_trace_into_black_loop"
 if ($missingDumpRows.Count -eq 0 -and $targetRows.Count -gt 0) {
     $classification = "project_sylpheed_late_pc_wait_map_has_filtered_dumps"
+    $reason = "all target PCs are visible in wait/snapshot evidence, and filtered PPC/HIR dumps are present."
     $decision = "analyze_filtered_late_pc_flows_before_behavior"
+}
+else {
+    $reason = "target PCs are visible in wait/snapshot evidence, but filtered PPC/HIR dumps are still missing for $($missingDumpRows.Count) active target(s)"
 }
 
 $report = New-Object System.Collections.Generic.List[string]
 $report.Add(("classification={0}" -f $classification))
-$report.Add(("reason=target PCs are visible in wait/snapshot evidence, but filtered PPC/HIR dumps are still missing for {0} active target(s)" -f $missingDumpRows.Count))
+$report.Add(("reason={0}" -f $reason))
 $report.Add(("decision={0}" -f $decision))
 $report.Add(("log_path={0}" -f $resolvedLogPath))
 $report.Add(("line_count={0}" -f $lines.Count))
@@ -509,6 +729,12 @@ $report.Add(("recommended_disassemble_function_filter={0}" -f (@($missingDumpRow
 $report.Add(("wait_trace_count={0}" -f $waitRows.Count))
 $report.Add(("wait_trace_first_time={0}" -f (Format-TimeOnly $firstWaitTrace)))
 $report.Add(("wait_trace_last_time={0}" -f (Format-TimeOnly $waitTraceLast)))
+$report.Add(("vdswap_last_time={0}" -f $vdswapTime))
+$report.Add(("vdswap_last_caller={0}" -f $($lastVdSwap.Caller)))
+$report.Add(("vdswap_last_status_before={0}" -f $lastVdSwapBeforeStatus))
+$report.Add(("vdswap_last_status_after={0}" -f $lastVdSwapAfterStatus))
+$report.Add(("seconds_from_last_vdswap_to_first_wait={0}" -f $secondsFromLastVdSwapToFirstWait))
+$report.Add(("vdswap_to_first_wait={0}" -f $vdswapToFirstWaitSummary))
 $report.Add(("physical_free_audit_rows={0}" -f $freeRows.Count))
 $report.Add(("failed_physical_free_rows={0}" -f $failedFreeRows.Count))
 $report.Add(("last_failed_free_time={0}" -f (Format-TimeOnly $lastFailedFree)))
@@ -523,6 +749,14 @@ $report.Add(("recommended_capture_command={0}" -f $recommendedCaptureCommand))
 
 $rowIndex = 0
 foreach ($row in $targetRows) {
+    $handleRows = @()
+    if ($row.WaitHandleRows -and $row.WaitHandleRows.Count -gt 0) {
+        $handleRows = @($row.WaitHandleRows.Keys | Sort-Object {
+                $row.WaitHandleRows[$_]
+            } -Descending)
+    }
+
+    $report.Add((("target_pc[{0}]_handle_count={1}" -f $rowIndex, $handleRows.Count)))
     $report.Add((
             "target_pc[{0}]={1} wait_lr={2} wait_ctr={3} snapshot_last_fn={4} snapshot_last_ret={5} snapshot_lr={6} snapshot_ctr={7} post_failed_snapshot_last_ret={8} filtered_dump_present={9} first={10} last={11} wait_threads={12} wait_apis={13} wait_statuses={14} snapshot_threads={15} snapshot_last_fns={16} snapshot_ctrs={17}" -f
             $rowIndex,
@@ -544,6 +778,39 @@ foreach ($row in $targetRows) {
             $row.SnapshotLastFns,
             $row.SnapshotCtrs
         ))
+
+    $handleIndex = 0
+    foreach ($handle in $handleRows) {
+        $guestObjectSummary = ""
+        if ($row.WaitHandleGuestObjects.ContainsKey($handle)) {
+            $guestObjectSummary = Format-ChildCounts $row.WaitHandleGuestObjects[$handle]
+        }
+        $statusSummary = ""
+        if ($row.WaitHandleStatusRows.ContainsKey($handle)) {
+            $statusSummary = Format-ChildCounts $row.WaitHandleStatusRows[$handle]
+        }
+        $threadSummary = ""
+        if ($row.WaitHandleThreadRows.ContainsKey($handle)) {
+            $threadSummary = Format-ChildCounts $row.WaitHandleThreadRows[$handle]
+        }
+        $nameSummary = ""
+        if ($row.WaitHandleNameRows.ContainsKey($handle)) {
+            $nameSummary = Format-ChildCounts $row.WaitHandleNameRows[$handle]
+        }
+        $report.Add((
+                "target_pc[{0}]_wait_handle[{1}]=handle={2} rows={3} guest_objects={4} statuses={5} threads={6} names={7} post_failed_rows={8}" -f
+                $rowIndex,
+                $handleIndex,
+                $handle,
+                $row.WaitHandleRows[$handle],
+                $guestObjectSummary,
+                $statusSummary,
+                $threadSummary,
+                $nameSummary,
+                $row.WaitHandlePostFailedRows[$handle]
+            ))
+        ++$handleIndex
+    }
     ++$rowIndex
 }
 
