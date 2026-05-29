@@ -43,7 +43,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     private boolean mRefreshFpsFromPreferencesOnResume;
     private boolean mFpsCallbackScheduled;
     private long mFpsWindowStartNs;
-    private int mFpsFrameCount;
+    private long mFpsLastGuestSwapCount;
     private boolean mDebugGamepadReceiverRegistered;
     private final BroadcastReceiver mDebugGamepadReceiver = new BroadcastReceiver() {
         @Override
@@ -89,6 +89,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             float rightTrigger,
             float hatX,
             float hatY);
+
+    private static native long nativeGetGuestSwapCount();
 
     @Override
     protected String getWindowedAppIdentifier() {
@@ -979,7 +981,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     private void setShowFps(final boolean showFps) {
         mShowFps = showFps;
         mFpsWindowStartNs = 0;
-        mFpsFrameCount = 0;
+        mFpsLastGuestSwapCount = 0;
         if (mFpsOverlay == null) {
             return;
         }
@@ -1010,17 +1012,20 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
         if (mFpsWindowStartNs == 0) {
             mFpsWindowStartNs = nowNs;
-            mFpsFrameCount = 0;
+            mFpsLastGuestSwapCount = nativeGetGuestSwapCount();
+            mFpsOverlay.setText(R.string.emulator_fps_initial);
+            return;
         }
-        mFpsFrameCount++;
         final long elapsedNs = nowNs - mFpsWindowStartNs;
         if (elapsedNs < 500000000L) {
             return;
         }
-        final double fps = (mFpsFrameCount * 1000000000.0) / elapsedNs;
+        final long guestSwapCount = nativeGetGuestSwapCount();
+        final long guestSwapDelta = Math.max(0, guestSwapCount - mFpsLastGuestSwapCount);
+        final double fps = (guestSwapDelta * 1000000000.0) / elapsedNs;
         mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
         mFpsWindowStartNs = nowNs;
-        mFpsFrameCount = 0;
+        mFpsLastGuestSwapCount = guestSwapCount;
     }
 
     private void updateOsd(final Bundle launchArguments) {

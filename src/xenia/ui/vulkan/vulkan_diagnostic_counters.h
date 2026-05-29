@@ -20,6 +20,7 @@ bool VulkanPerfCountersEnabled();
 uint64_t VulkanPerfCountersNow();
 
 void VulkanPerfCountersRecordIssueSwap();
+uint64_t VulkanPerfCountersGetIssueSwapCount();
 void VulkanPerfCountersRecordGraphicsPipelineCacheHit();
 void VulkanPerfCountersRecordGraphicsPipelineCreate(uint64_t start_ticks,
                                                     int32_t result);

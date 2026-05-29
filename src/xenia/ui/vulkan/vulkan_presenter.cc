@@ -148,11 +148,16 @@ bool VulkanPerfCountersEnabled() { return cvars::vulkan_trace_perf_counters; }
 uint64_t VulkanPerfCountersNow() { return xe::Clock::QueryHostTickCount(); }
 
 void VulkanPerfCountersRecordIssueSwap() {
+  vulkan_perf_counter_state.issue_swap_count.fetch_add(
+      1, std::memory_order_relaxed);
   if (!VulkanPerfCountersEnabled()) {
     return;
   }
-  vulkan_perf_counter_state.issue_swap_count.fetch_add(
-      1, std::memory_order_relaxed);
+}
+
+uint64_t VulkanPerfCountersGetIssueSwapCount() {
+  return vulkan_perf_counter_state.issue_swap_count.load(
+      std::memory_order_relaxed);
 }
 
 void VulkanPerfCountersRecordGraphicsPipelineCacheHit() {

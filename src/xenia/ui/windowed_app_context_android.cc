@@ -28,6 +28,7 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/main_android.h"
+#include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/window_android.h"
 #include "xenia/ui/windowed_app.h"
 
@@ -764,6 +765,12 @@ JNIEXPORT void JNICALL Java_jp_xenia_emulator_WindowedAppActivity_paintWindow(
     jboolean force_paint) {
   reinterpret_cast<xe::ui::AndroidWindowedAppContext*>(app_context_ptr)
       ->JniActivityPaintWindow(bool(force_paint));
+}
+
+JNIEXPORT jlong JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestSwapCount(
+    JNIEnv* jni_env, jclass clazz) {
+  return jlong(xe::ui::vulkan::VulkanPerfCountersGetIssueSwapCount());
 }
 
 }  // extern "C"
