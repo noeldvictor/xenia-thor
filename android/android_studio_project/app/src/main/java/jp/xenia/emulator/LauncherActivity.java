@@ -20,7 +20,13 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +52,7 @@ public class LauncherActivity extends Activity {
     private static final int LAUNCHER_TAB_TOOLS = 3;
     private static final Pattern DISC_PATTERN = Pattern.compile(
             "(?i)(?:disc|disk|cd)\\s*([0-9]+)");
+    private static final Pattern TITLE_ID_PATTERN = Pattern.compile("^[0-9A-Fa-f]{8}$");
     private int activeLauncherTab = LAUNCHER_TAB_GAMES;
 
     private static final class GameLibraryGroup {
@@ -235,6 +242,7 @@ public class LauncherActivity extends Activity {
         copyIntExtra(intent, overrides, "arm64_speed_profile_interval_ms");
         copyIntExtra(intent, overrides, "arm64_speed_profile_top_functions");
         copyIntExtra(intent, overrides, "arm64_speed_profile_min_delta");
+        copyIntExtra(intent, overrides, "log_level");
         copyBooleanExtra(intent, overrides, "disassemble_functions");
         copyStringExtra(intent, overrides, "disassemble_function_filter");
         copyBooleanExtra(intent, overrides, "arm64_speed_profile_thread_snapshot");
@@ -248,6 +256,7 @@ public class LauncherActivity extends Activity {
         copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_reenter_audit_budget");
         copyStringExtra(intent, overrides, "xboxkrnl_reenter_audit_guest_tids");
+        copyBooleanExtra(intent, overrides, "android_xam_keyboard_ime");
         return overrides;
     }
 
@@ -545,7 +554,7 @@ public class LauncherActivity extends Activity {
                     final String launchTitle = discLabel.isEmpty()
                             ? group.title
                             : group.title + " - " + discLabel;
-                    launchGame(Uri.parse(entry.launchUri), launchTitle);
+                    showGameActions(entry, launchTitle);
                 })
                 .show();
     }
@@ -621,7 +630,7 @@ public class LauncherActivity extends Activity {
                     if (multiDisc) {
                         showDiscPicker(group);
                     } else {
-                        launchGame(Uri.parse(firstEntry.launchUri), title);
+                        showGameActions(firstEntry, title);
                     }
                 });
     }
@@ -637,7 +646,208 @@ public class LauncherActivity extends Activity {
                 status,
                 status,
                 game.target,
-                view -> launchGame(Uri.parse(game.launchUri)));
+                view -> showGameActions(
+                        Uri.parse(game.launchUri), title, game.target, game.launchUri));
+    }
+
+    private void showGameActions(
+            final XeniaAndroidSettings.GameLibraryEntry entry,
+            final String displayTitle) {
+        if (entry == null || entry.launchUri == null || entry.launchUri.isEmpty()) {
+            return;
+        }
+        showGameActions(
+                Uri.parse(entry.launchUri),
+                displayTitle,
+                entry.path,
+                entry.launchUri);
+    }
+
+    private void showGameActions(
+            final Uri launchUri,
+            final String displayTitle,
+            final String path,
+            final String launchUriText) {
+        final String title = displayTitle != null && !displayTitle.isEmpty()
+                ? displayTitle
+                : getDisplayName(launchUri);
+        final String titleId = resolveTitleIdForSaveTools(title, path, launchUriText);
+        final ArrayList<String> labels = new ArrayList<>();
+        labels.add(getString(R.string.launcher_game_action_start));
+        if (!titleId.isEmpty()) {
+            labels.add(getString(R.string.launcher_game_action_backup_save));
+            labels.add(getString(R.string.launcher_game_action_reset_save));
+        }
+        final String[] items = labels.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(items, (dialog, which) -> {
+                    if (which == 0) {
+                        launchGame(launchUri, title);
+                    } else if (which == 1) {
+                        backupSaveData(titleId, title);
+                    } else if (which == 2) {
+                        confirmResetSaveData(titleId, title);
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private String resolveTitleIdForSaveTools(
+            final String title,
+            final String path,
+            final String launchUri) {
+        final String titleId = XeniaCoverArt.findCachedTitleId(
+                this, title, path + " " + launchUri);
+        if (!titleId.isEmpty() && TITLE_ID_PATTERN.matcher(titleId).matches()) {
+            return titleId.toUpperCase(Locale.US);
+        }
+        final String lookup = (title + " " + path + " " + launchUri).toLowerCase(Locale.US);
+        if (lookup.contains("burnout revenge")) {
+            return "454107DC";
+        }
+        if (lookup.contains("project sylpheed")) {
+            return "535107D4";
+        }
+        return "";
+    }
+
+    private void backupSaveData(final String titleId, final String title) {
+        final File source = getSaveDataDirectory(titleId);
+        if (!source.isDirectory()) {
+            Toast.makeText(this, R.string.launcher_game_save_missing, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final File destination = getSaveBackupDirectory(titleId, title);
+        try {
+            copyDirectory(source, destination);
+            Toast.makeText(this, R.string.launcher_game_save_backed_up, Toast.LENGTH_SHORT)
+                    .show();
+        } catch (final IOException exception) {
+            Toast.makeText(this, R.string.launcher_game_save_backup_failed, Toast.LENGTH_SHORT)
+                    .show();
+        }
+    }
+
+    private void confirmResetSaveData(final String titleId, final String title) {
+        final File source = getSaveDataDirectory(titleId);
+        if (!source.isDirectory()) {
+            Toast.makeText(this, R.string.launcher_game_save_missing, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.launcher_game_action_reset_save)
+                .setMessage(getString(R.string.launcher_game_save_reset_message, title))
+                .setPositiveButton(R.string.launcher_game_save_reset_confirm,
+                        (dialog, which) -> resetSaveData(titleId, title))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void resetSaveData(final String titleId, final String title) {
+        final File source = getSaveDataDirectory(titleId);
+        if (!source.isDirectory()) {
+            Toast.makeText(this, R.string.launcher_game_save_missing, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final File backup = getSaveBackupDirectory(titleId, title);
+        final File parent = backup.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            Toast.makeText(this, R.string.launcher_game_save_reset_failed, Toast.LENGTH_SHORT)
+                    .show();
+            return;
+        }
+        if (!source.renameTo(backup)) {
+            try {
+                copyDirectory(source, backup);
+                deleteRecursively(source);
+            } catch (final IOException exception) {
+                Toast.makeText(this, R.string.launcher_game_save_reset_failed,
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+        Toast.makeText(this, R.string.launcher_game_save_reset_done, Toast.LENGTH_SHORT).show();
+    }
+
+    private File getSaveDataDirectory(final String titleId) {
+        return new File(new File(getFilesDir(), "content"), titleId);
+    }
+
+    private File getSaveBackupDirectory(final String titleId, final String title) {
+        final SimpleDateFormat format =
+                new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US);
+        final String safeTitle = sanitizeFileName(title);
+        final String name = titleId + "-"
+                + (safeTitle.isEmpty() ? "save" : safeTitle)
+                + "-" + format.format(new Date());
+        return new File(new File(getFilesDir(), "save-backups"), name);
+    }
+
+    private static void copyDirectory(final File source, final File destination)
+            throws IOException {
+        if (source.isDirectory()) {
+            if (!destination.isDirectory() && !destination.mkdirs()) {
+                throw new IOException("Unable to create " + destination);
+            }
+            final File[] children = source.listFiles();
+            if (children == null) {
+                return;
+            }
+            for (final File child : children) {
+                copyDirectory(child, new File(destination, child.getName()));
+            }
+            return;
+        }
+        final File parent = destination.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("Unable to create " + parent);
+        }
+        final FileInputStream input = new FileInputStream(source);
+        try {
+            final FileOutputStream output = new FileOutputStream(destination);
+            try {
+                final byte[] buffer = new byte[16 * 1024];
+                while (true) {
+                    final int read = input.read(buffer);
+                    if (read < 0) {
+                        break;
+                    }
+                    output.write(buffer, 0, read);
+                }
+            } finally {
+                output.close();
+            }
+        } finally {
+            input.close();
+        }
+    }
+
+    private static void deleteRecursively(final File file) throws IOException {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            final File[] children = file.listFiles();
+            if (children != null) {
+                for (final File child : children) {
+                    deleteRecursively(child);
+                }
+            }
+        }
+        if (!file.delete() && file.exists()) {
+            throw new IOException("Unable to delete " + file);
+        }
+    }
+
+    private static String sanitizeFileName(final String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        return value.replaceAll("[^A-Za-z0-9._-]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_+|_+$", "");
     }
 
     private View makeGameTile(

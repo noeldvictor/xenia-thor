@@ -35,6 +35,16 @@
     <string name="launcher_game_library_ready">Ready</string>
     <string name="launcher_game_library_group_count">%1$d games / %2$d files</string>
     <string name="launcher_game_library_disc_picker_detail">Choose disc</string>
+    <string name="launcher_game_action_start">Start game</string>
+    <string name="launcher_game_action_backup_save">Back up save data</string>
+    <string name="launcher_game_action_reset_save">Reset save data</string>
+    <string name="launcher_game_save_missing">No save data found for this game</string>
+    <string name="launcher_game_save_backed_up">Save data backed up</string>
+    <string name="launcher_game_save_backup_failed">Could not back up save data</string>
+    <string name="launcher_game_save_reset_message">Move %1$s save data to a backup and start fresh?</string>
+    <string name="launcher_game_save_reset_confirm">Reset save</string>
+    <string name="launcher_game_save_reset_done">Save data moved to backup</string>
+    <string name="launcher_game_save_reset_failed">Could not reset save data</string>
     <string name="launcher_recent_game_badge">Recent</string>
     <string name="launcher_recent_games_title">Recent games</string>
     <string name="launcher_recent_game_row">%1$s - %2$s</string>
@@ -63,6 +73,8 @@
     <string name="emulator_menu_no_input">none yet</string>
     <string name="emulator_menu_input_format">%1$s -> %2$s</string>
     <string name="emulator_menu_controls_note">Back opens or closes this menu. Exit game closes the running title. Use Controller map to remap any physical Thor button.</string>
+    <string name="xam_keyboard_title">Keyboard Input</string>
+    <string name="xam_keyboard_description">Enter text</string>
     <string name="settings_subtitle">Thor profiles, video, and launch options</string>
     <string name="settings_profile">Profile</string>
     <string name="settings_profile_balanced">Thor balanced</string>

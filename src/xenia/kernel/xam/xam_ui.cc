@@ -8,6 +8,7 @@
  */
 
 #include "third_party/imgui/imgui.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
 #include "xenia/emulator.h"
@@ -23,6 +24,13 @@
 #include "xenia/ui/windowed_app_context_android.h"
 #endif  // XE_PLATFORM_ANDROID
 #include "xenia/xbox.h"
+
+#if XE_PLATFORM_ANDROID
+DEFINE_bool(android_xam_keyboard_ime, true,
+            "Use Android's native IME dialog for XamShowKeyboardUI instead of "
+            "the compatibility ImGui keyboard.",
+            "Android");
+#endif  // XE_PLATFORM_ANDROID
 
 namespace xe {
 namespace kernel {
@@ -436,71 +444,89 @@ dword_result_t XamShowKeyboardUI_entry(
     result = xeXamDispatchHeadless(run, overlapped);
   } else {
 #if XE_PLATFORM_ANDROID
-    std::string android_title = title ? xe::to_utf8(title.value()) : "";
-    std::string android_description =
-        description ? xe::to_utf8(description.value()) : "";
-    std::string android_default_text =
-        default_text ? xe::to_utf8(default_text.value()) : "";
-    auto run = [buffer, buffer_length, android_title, android_description,
-                android_default_text](uint32_t& extended_error,
-                                      uint32_t& length) -> X_RESULT {
-      auto display_window = kernel_state()->emulator()->display_window();
-      if (!display_window) {
-        extended_error = X_ERROR_FUNCTION_FAILED;
-        length = 0;
-        return X_ERROR_FUNCTION_FAILED;
-      }
-      auto& android_app_context =
-          static_cast<xe::ui::AndroidWindowedAppContext&>(
-              display_window->app_context());
-      std::string text;
-      bool cancelled = true;
-      if (!android_app_context.ShowKeyboardInputDialog(
-              android_title, android_description, android_default_text,
-              buffer_length, text, cancelled)) {
-        extended_error = X_ERROR_FUNCTION_FAILED;
-        length = 0;
-        return X_ERROR_FUNCTION_FAILED;
-      }
-      if (cancelled) {
-        extended_error = X_ERROR_CANCELLED;
-        length = 0;
-        return X_ERROR_SUCCESS;
-      }
-      auto text_utf16 = xe::to_utf16(text);
-      string_util::copy_and_swap_truncating(buffer, text_utf16, buffer_length);
-      extended_error = X_ERROR_SUCCESS;
-      length = 0;
-      return X_ERROR_SUCCESS;
-    };
-    result = xeXamDispatchHeadlessEx(run, overlapped);
-#else
-    auto close = [buffer, buffer_length](KeyboardInputDialog* dialog,
-                                         uint32_t& extended_error,
-                                         uint32_t& length) -> X_RESULT {
-      if (dialog->cancelled()) {
-        extended_error = X_ERROR_CANCELLED;
-        length = 0;
-        return X_ERROR_SUCCESS;
-      } else {
-        // Zero the output buffer.
-        auto text = xe::to_utf16(dialog->text());
-        string_util::copy_and_swap_truncating(buffer, text, buffer_length);
+    if (cvars::android_xam_keyboard_ime) {
+      XELOGI(
+          "XamShowKeyboardUI: using Android IME path; title=\"{}\" "
+          "description=\"{}\" buffer_length={}",
+          title ? xe::to_utf8(title.value()) : "",
+          description ? xe::to_utf8(description.value()) : "",
+          uint32_t(buffer_length));
+      std::string android_title = title ? xe::to_utf8(title.value()) : "";
+      std::string android_description =
+          description ? xe::to_utf8(description.value()) : "";
+      std::string android_default_text =
+          default_text ? xe::to_utf8(default_text.value()) : "";
+      auto run = [buffer, buffer_length, android_title, android_description,
+                  android_default_text](uint32_t& extended_error,
+                                        uint32_t& length) -> X_RESULT {
+        auto display_window = kernel_state()->emulator()->display_window();
+        if (!display_window) {
+          extended_error = X_ERROR_FUNCTION_FAILED;
+          length = 0;
+          return X_ERROR_FUNCTION_FAILED;
+        }
+        auto& android_app_context =
+            static_cast<xe::ui::AndroidWindowedAppContext&>(
+                display_window->app_context());
+        std::string text;
+        bool cancelled = true;
+        if (!android_app_context.ShowKeyboardInputDialog(
+                android_title, android_description, android_default_text,
+                buffer_length, text, cancelled)) {
+          extended_error = X_ERROR_FUNCTION_FAILED;
+          length = 0;
+          return X_ERROR_FUNCTION_FAILED;
+        }
+        if (cancelled) {
+          extended_error = X_ERROR_CANCELLED;
+          length = 0;
+          return X_ERROR_SUCCESS;
+        }
+        auto text_utf16 = xe::to_utf16(text);
+        string_util::copy_and_swap_truncating(buffer, text_utf16,
+                                              buffer_length);
         extended_error = X_ERROR_SUCCESS;
         length = 0;
         return X_ERROR_SUCCESS;
-      }
-    };
-    const Emulator* emulator = kernel_state()->emulator();
-    ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
-    result = xeXamDispatchDialogEx<KeyboardInputDialog>(
-        new KeyboardInputDialog(
-            imgui_drawer, title ? xe::to_utf8(title.value()) : "",
-            description ? xe::to_utf8(description.value()) : "",
-            default_text ? xe::to_utf8(default_text.value()) : "",
-            buffer_length),
-        close, overlapped);
+      };
+      result = xeXamDispatchHeadlessEx(run, overlapped);
+    } else
 #endif  // XE_PLATFORM_ANDROID
+    {
+#if XE_PLATFORM_ANDROID
+      XELOGI(
+          "XamShowKeyboardUI: using ImGui compatibility keyboard; title=\"{}\" "
+          "description=\"{}\" buffer_length={}",
+          title ? xe::to_utf8(title.value()) : "",
+          description ? xe::to_utf8(description.value()) : "",
+          uint32_t(buffer_length));
+#endif  // XE_PLATFORM_ANDROID
+      auto close = [buffer, buffer_length](KeyboardInputDialog* dialog,
+                                           uint32_t& extended_error,
+                                           uint32_t& length) -> X_RESULT {
+        if (dialog->cancelled()) {
+          extended_error = X_ERROR_CANCELLED;
+          length = 0;
+          return X_ERROR_SUCCESS;
+        } else {
+          // Zero the output buffer.
+          auto text = xe::to_utf16(dialog->text());
+          string_util::copy_and_swap_truncating(buffer, text, buffer_length);
+          extended_error = X_ERROR_SUCCESS;
+          length = 0;
+          return X_ERROR_SUCCESS;
+        }
+      };
+      const Emulator* emulator = kernel_state()->emulator();
+      ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
+      result = xeXamDispatchDialogEx<KeyboardInputDialog>(
+          new KeyboardInputDialog(
+              imgui_drawer, title ? xe::to_utf8(title.value()) : "",
+              description ? xe::to_utf8(description.value()) : "",
+              default_text ? xe::to_utf8(default_text.value()) : "",
+              buffer_length),
+          close, overlapped);
+    }
   }
   return result;
 }

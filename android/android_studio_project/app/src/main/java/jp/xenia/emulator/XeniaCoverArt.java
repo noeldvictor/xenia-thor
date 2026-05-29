@@ -102,6 +102,29 @@ public final class XeniaCoverArt {
         });
     }
 
+    public static String findCachedTitleId(
+            final Context context,
+            final String title,
+            final String path) {
+        final String titleId = findTitleId(title + " " + path);
+        if (!titleId.isEmpty()) {
+            return titleId;
+        }
+        if (context == null) {
+            return "";
+        }
+        final File databaseFile =
+                new File(context.getCacheDir(), "x360db-games.json");
+        if (!databaseFile.isFile()) {
+            return "";
+        }
+        try {
+            return findTitleIdInDatabase(readText(databaseFile), title, path);
+        } catch (final IOException | JSONException ignored) {
+            return "";
+        }
+    }
+
     private static void applyCover(
             final ImageView coverImage,
             final TextView placeholder,
@@ -177,6 +200,37 @@ public final class XeniaCoverArt {
         } catch (final IOException | JSONException ignored) {
             return "";
         }
+    }
+
+    private static String findTitleIdInDatabase(
+            final String json,
+            final String title,
+            final String path) throws JSONException {
+        final String normalizedTitle = normalizeTitle(title);
+        String fuzzyMatch = "";
+        final JSONArray games = new JSONArray(json);
+        for (int i = 0; i < games.length(); ++i) {
+            final JSONObject game = games.optJSONObject(i);
+            if (game == null) {
+                continue;
+            }
+            final String gameId = game.optString("id", "").toUpperCase(Locale.US);
+            if (gameId.isEmpty()) {
+                continue;
+            }
+            final String gameTitle = normalizeTitle(game.optString("title", ""));
+            if (!normalizedTitle.isEmpty() && normalizedTitle.equals(gameTitle)) {
+                return gameId;
+            }
+            if (fuzzyMatch.isEmpty()
+                    && normalizedTitle.length() >= 6
+                    && gameTitle.length() >= 6
+                    && (normalizedTitle.contains(gameTitle)
+                    || gameTitle.contains(normalizedTitle))) {
+                fuzzyMatch = gameId;
+            }
+        }
+        return fuzzyMatch;
     }
 
     private static boolean matchesAlternativeId(

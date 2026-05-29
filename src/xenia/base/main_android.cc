@@ -161,7 +161,32 @@ JNIEnv* GetAndroidThreadJniEnv() {
   if (!android_java_vm_) {
     return nullptr;
   }
-  return static_cast<JNIEnv*>(pthread_getspecific(android_thread_jni_env_key_));
+  JNIEnv* jni_env =
+      static_cast<JNIEnv*>(pthread_getspecific(android_thread_jni_env_key_));
+  if (jni_env) {
+    return jni_env;
+  }
+
+  void* raw_jni_env = nullptr;
+  const jint get_env_result =
+      android_java_vm_->GetEnv(&raw_jni_env, JNI_VERSION_1_6);
+  if (get_env_result == JNI_OK) {
+    jni_env = static_cast<JNIEnv*>(raw_jni_env);
+  } else if (get_env_result == JNI_EDETACHED) {
+    if (android_java_vm_->AttachCurrentThread(&jni_env, nullptr) != JNI_OK) {
+      return nullptr;
+    }
+  } else {
+    return nullptr;
+  }
+
+  if (pthread_setspecific(android_thread_jni_env_key_, jni_env)) {
+    if (jni_env != android_main_thread_jni_env_) {
+      android_java_vm_->DetachCurrentThread();
+    }
+    return nullptr;
+  }
+  return jni_env;
 }
 
 jobject GetAndroidApplicationContext() { return android_application_context_; }

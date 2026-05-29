@@ -125,6 +125,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "hid_nop_buttons_hold_ms");
             copyBooleanExtra(intent, launchArguments, "android_hide_osd");
             copyBooleanExtra(intent, launchArguments, "android_show_fps");
+            copyBooleanExtra(intent, launchArguments, "android_xam_keyboard_ime");
             copyBooleanExtra(intent, launchArguments, "break_on_debugbreak");
             copyBooleanExtra(intent, launchArguments, "disassemble_functions");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");

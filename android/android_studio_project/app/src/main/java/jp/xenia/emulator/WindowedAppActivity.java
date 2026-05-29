@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.util.Log;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.view.MotionEvent;
@@ -16,7 +17,9 @@ import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -27,6 +30,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import jp.xenia.XeniaRuntimeException;
 
 public abstract class WindowedAppActivity extends Activity {
+    private static final String XAM_KEYBOARD_TAG = "XeniaKeyboard";
+
     // The EXTRA_CVARS value literal is also used in the native code.
 
     /**
@@ -132,6 +137,7 @@ public abstract class WindowedAppActivity extends Activity {
             @Nullable final String defaultText,
             final int maxLength) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(XAM_KEYBOARD_TAG, "Rejecting synchronous XAM keyboard request on UI thread");
             return null;
         }
 
@@ -141,22 +147,19 @@ public abstract class WindowedAppActivity extends Activity {
 
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) {
+                Log.w(XAM_KEYBOARD_TAG, "Dropping XAM keyboard request while activity is closing");
                 done.countDown();
                 return;
             }
 
-            final EditText input = new EditText(this);
-            input.setSingleLine(true);
-            input.setSelectAllOnFocus(true);
-            input.setInputType(InputType.TYPE_CLASS_TEXT
-                    | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            input.setImeOptions(EditorInfo.IME_ACTION_DONE);
-            input.setText(defaultText != null ? defaultText : "");
-            final int maxChars = Math.max(0, maxLength - 1);
-            if (maxChars > 0) {
-                input.setFilters(new InputFilter[] { new InputFilter.LengthFilter(maxChars) });
+            if (showXamKeyboardOverlay(
+                    title, description, defaultText, maxLength,
+                    completed, result, done)) {
+                return;
             }
+
+            final EditText input = new EditText(this);
+            configureXamKeyboardInput(input, defaultText, maxLength);
 
             final AlertDialog.Builder builder = new AlertDialog.Builder(this)
                     .setTitle(title != null && !title.isEmpty() ? title : "Keyboard Input")
@@ -170,12 +173,14 @@ public abstract class WindowedAppActivity extends Activity {
             final AlertDialog dialog = builder.create();
             final Runnable cancel = () -> {
                 if (completed.compareAndSet(false, true)) {
+                    Log.i(XAM_KEYBOARD_TAG, "AlertDialog cancelled");
                     result.set(null);
                     done.countDown();
                 }
             };
             final Runnable accept = () -> {
                 if (completed.compareAndSet(false, true)) {
+                    Log.i(XAM_KEYBOARD_TAG, "AlertDialog accepted");
                     result.set(input.getText().toString());
                     done.countDown();
                     dialog.dismiss();
@@ -202,18 +207,14 @@ public abstract class WindowedAppActivity extends Activity {
                 final Window window = dialog.getWindow();
                 if (window != null) {
                     window.setSoftInputMode(
-                            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+                            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                                    | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
                 }
-                input.postDelayed(() -> {
-                    final InputMethodManager inputMethodManager =
-                            (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                    if (inputMethodManager != null) {
-                        inputMethodManager.showSoftInput(
-                                input, InputMethodManager.SHOW_IMPLICIT);
-                    }
-                }, 100);
+                input.post(() -> showXamKeyboardInputMethod(input));
+                input.postDelayed(() -> showXamKeyboardInputMethod(input), 150);
             });
             dialog.show();
+            Log.i(XAM_KEYBOARD_TAG, "Showing fallback AlertDialog keyboard");
         });
 
         try {
@@ -223,6 +224,115 @@ public abstract class WindowedAppActivity extends Activity {
             return null;
         }
         return result.get();
+    }
+
+    private boolean showXamKeyboardOverlay(
+            @Nullable final String title,
+            @Nullable final String description,
+            @Nullable final String defaultText,
+            final int maxLength,
+            final AtomicBoolean completed,
+            final AtomicReference<String> result,
+            final CountDownLatch done) {
+        final View overlay = findViewById(R.id.emulator_xam_keyboard_overlay);
+        final TextView titleView = findViewById(R.id.emulator_xam_keyboard_title);
+        final TextView descriptionView =
+                findViewById(R.id.emulator_xam_keyboard_description);
+        final EditText input = findViewById(R.id.emulator_xam_keyboard_input);
+        final Button okButton = findViewById(R.id.emulator_xam_keyboard_ok);
+        final Button cancelButton = findViewById(R.id.emulator_xam_keyboard_cancel);
+        if (overlay == null || titleView == null || descriptionView == null
+                || input == null || okButton == null || cancelButton == null) {
+            return false;
+        }
+
+        titleView.setText(title != null && !title.isEmpty() ? title : "Keyboard Input");
+        if (description != null && !description.isEmpty()) {
+            descriptionView.setText(description);
+            descriptionView.setVisibility(View.VISIBLE);
+        } else {
+            descriptionView.setText("");
+            descriptionView.setVisibility(View.GONE);
+        }
+        configureXamKeyboardInput(input, defaultText, maxLength);
+
+        final Runnable cancel = () -> {
+            if (completed.compareAndSet(false, true)) {
+                Log.i(XAM_KEYBOARD_TAG, "Overlay cancelled");
+                hideXamKeyboardOverlay(overlay, input);
+                result.set(null);
+                done.countDown();
+            }
+        };
+        final Runnable accept = () -> {
+            if (completed.compareAndSet(false, true)) {
+                Log.i(XAM_KEYBOARD_TAG, "Overlay accepted");
+                hideXamKeyboardOverlay(overlay, input);
+                result.set(input.getText().toString());
+                done.countDown();
+            }
+        };
+
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                accept.run();
+                return true;
+            }
+            return false;
+        });
+        okButton.setOnClickListener(view -> accept.run());
+        cancelButton.setOnClickListener(view -> cancel.run());
+
+        overlay.setVisibility(View.VISIBLE);
+        overlay.bringToFront();
+        overlay.requestFocus();
+        input.requestFocus();
+        input.post(() -> showXamKeyboardInputMethod(input));
+        input.postDelayed(() -> showXamKeyboardInputMethod(input), 150);
+        Log.i(XAM_KEYBOARD_TAG, "Showing overlay keyboard title=\""
+                + (title != null ? title : "") + "\" maxLength=" + maxLength);
+        return true;
+    }
+
+    private void configureXamKeyboardInput(
+            final EditText input,
+            @Nullable final String defaultText,
+            final int maxLength) {
+        input.setSingleLine(true);
+        input.setSelectAllOnFocus(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        input.setText(defaultText != null ? defaultText : "");
+        final int maxChars = Math.max(0, maxLength - 1);
+        if (maxChars > 0) {
+            input.setFilters(new InputFilter[] { new InputFilter.LengthFilter(maxChars) });
+        } else {
+            input.setFilters(new InputFilter[0]);
+        }
+    }
+
+    private void hideXamKeyboardOverlay(final View overlay, final EditText input) {
+        hideXamKeyboardInputMethod(input);
+        input.setOnEditorActionListener(null);
+        overlay.setVisibility(View.GONE);
+    }
+
+    private void showXamKeyboardInputMethod(final EditText input) {
+        final InputMethodManager inputMethodManager =
+                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (inputMethodManager != null) {
+            inputMethodManager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        }
+    }
+
+    private void hideXamKeyboardInputMethod(final EditText input) {
+        final InputMethodManager inputMethodManager =
+                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (inputMethodManager != null) {
+            inputMethodManager.hideSoftInputFromWindow(input.getWindowToken(), 0);
+        }
     }
 
     @Override

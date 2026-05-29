@@ -10,9 +10,11 @@
 #include "xenia/kernel/xam/content_manager.h"
 
 #include <string>
+#include <system_error>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/filesystem.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/string.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xfile.h"
@@ -28,6 +30,42 @@ static const char* kThumbnailFileName = "__thumbnail.png";
 static const char* kGameUserContentDirName = "profile";
 
 static int content_device_id_ = 0;
+
+bool IsSavedGameContent(const XCONTENT_AGGREGATE_DATA& data) {
+  return data.content_type == XContentType::kSavedGame;
+}
+
+bool IsIncompleteSavedGamePackagePath(const std::filesystem::path& path) {
+  std::error_code ec;
+  if (!std::filesystem::exists(path, ec) ||
+      !std::filesystem::is_directory(path, ec)) {
+    return false;
+  }
+
+  bool saw_entry = false;
+  bool saw_regular_file = false;
+  std::filesystem::recursive_directory_iterator it(
+      path, std::filesystem::directory_options::skip_permission_denied, ec);
+  const std::filesystem::recursive_directory_iterator end;
+  while (!ec && it != end) {
+    saw_entry = true;
+    const auto entry_path = it->path();
+    if (std::filesystem::is_directory(entry_path, ec)) {
+      it.increment(ec);
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(entry_path, ec)) {
+      return false;
+    }
+    saw_regular_file = true;
+    if (std::filesystem::file_size(entry_path, ec) != 0) {
+      return false;
+    }
+    it.increment(ec);
+  }
+
+  return !ec && (saw_regular_file || !saw_entry);
+}
 
 ContentPackage::ContentPackage(KernelState* kernel_state,
                                const std::string_view root_name,
@@ -101,6 +139,12 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
     content_data.set_display_name(xe::path_to_utf16(file_info.name));
     content_data.set_file_name(xe::path_to_utf8(file_info.name));
     content_data.title_id = title_id;
+    if (!IsContentOpen(content_data) && IsSavedGameContent(content_data) &&
+        IsIncompleteSavedGamePackagePath(file_info.path)) {
+      XELOGI("Skipping incomplete saved-game content package: {}",
+             xe::path_to_utf8(file_info.path));
+      continue;
+    }
     result.emplace_back(std::move(content_data));
   }
 
@@ -123,7 +167,16 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
 
 bool ContentManager::ContentExists(const XCONTENT_AGGREGATE_DATA& data) {
   auto path = ResolvePackagePath(data);
-  return std::filesystem::exists(path);
+  if (!std::filesystem::exists(path)) {
+    return false;
+  }
+  if (IsContentOpen(data)) {
+    return true;
+  }
+  if (IsSavedGameContent(data) && IsIncompleteSavedGamePackagePath(path)) {
+    return false;
+  }
+  return true;
 }
 
 X_RESULT ContentManager::CreateContent(const std::string_view root_name,
@@ -137,8 +190,19 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
 
   auto package_path = ResolvePackagePath(data);
   if (std::filesystem::exists(package_path)) {
-    // Exists, must not!
-    return X_ERROR_ALREADY_EXISTS;
+    if (!IsContentOpen(data) && IsSavedGameContent(data) &&
+        IsIncompleteSavedGamePackagePath(package_path)) {
+      XELOGI("Removing incomplete saved-game content package before create: {}",
+             xe::path_to_utf8(package_path));
+      std::error_code ec;
+      std::filesystem::remove_all(package_path, ec);
+      if (ec) {
+        return X_ERROR_ACCESS_DENIED;
+      }
+    } else {
+      // Exists, must not!
+      return X_ERROR_ALREADY_EXISTS;
+    }
   }
 
   if (!std::filesystem::create_directories(package_path)) {

@@ -213,6 +213,7 @@ public final class XeniaAndroidSettings {
                 "android_hide_osd", preferences.getBoolean(KEY_HIDE_OSD, true));
         launchArguments.putBoolean(
                 "android_show_fps", preferences.getBoolean(KEY_SHOW_FPS, true));
+        launchArguments.putBoolean("android_xam_keyboard_ime", true);
         if (preferences.getBoolean(KEY_VULKAN_PERF_COUNTERS, false)) {
             launchArguments.putBoolean("vulkan_trace_perf_counters", true);
             launchArguments.putInt(
