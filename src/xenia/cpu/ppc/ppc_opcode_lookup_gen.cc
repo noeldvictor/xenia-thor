@@ -15,7 +15,7 @@ constexpr uint32_t ExtractBits(uint32_t v, uint32_t a, uint32_t b) {
   return (v >> (32 - 1 - b)) & ((1 << (b - a + 1)) - 1);
 }
 
-#define PPC_DECODER_MISS assert_always(); return PPCOpcode::kInvalid
+#define PPC_DECODER_MISS return PPCOpcode::kInvalid
 #define PPC_DECODER_HIT(name) return PPCOpcode::name;
 
 PPCOpcode LookupOpcode(uint32_t code) {

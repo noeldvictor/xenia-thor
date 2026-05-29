@@ -216,6 +216,7 @@ public class LauncherActivity extends Activity {
 
     private void launchGame(final Uri uri, final String displayTitle) {
         final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
+        emulatorIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         final Bundle emulatorLaunchArguments =
                 XeniaAndroidSettings.createLaunchArguments(this, uri);
         emulatorLaunchArguments.putAll(getDebugLaunchOverrides());

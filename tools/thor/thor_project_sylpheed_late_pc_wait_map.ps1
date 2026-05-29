@@ -244,6 +244,16 @@ function Parse-PhysicalFreeRow {
     }
 }
 
+function Convert-HexAddress {
+    param([string]$Text)
+
+    try {
+        return [Convert]::ToUInt32($Text, 16)
+    } catch {
+        return $null
+    }
+}
+
 function New-RoleCounts {
     return [ordered]@{
         WaitLr = 0
@@ -261,9 +271,15 @@ $resolvedLogPath = Resolve-LogPath -ExplicitPath $LogPath -PacketPath $PacketDir
 $lines = Get-Content -LiteralPath $resolvedLogPath
 
 $targetSet = @{}
+$targetValues = @{}
 foreach ($pc in $TargetPc) {
     if ($pc) {
-        $targetSet[$pc.ToUpperInvariant()] = $true
+        $normalizedPc = $pc.ToUpperInvariant()
+        $targetSet[$normalizedPc] = $true
+        $value = Convert-HexAddress $normalizedPc
+        if ($null -ne $value) {
+            $targetValues[$normalizedPc] = $value
+        }
     }
 }
 
@@ -293,9 +309,29 @@ for ($index = 0; $index -lt $lines.Count; ++$index) {
         continue
     }
 
-    foreach ($pc in $targetSet.Keys) {
-        if ($line -match ("Filtered function dump {0}" -f $pc)) {
-            $filteredDumpSeen[$pc] = $true
+    if ($line -match "Filtered function dump") {
+        if ($line -match "Filtered function dump (?<start>[0-9A-Fa-f]{8})-(?<end>[0-9A-Fa-f]{8})") {
+            $rangeStart = Convert-HexAddress $Matches.start
+            $rangeEnd = Convert-HexAddress $Matches.end
+            if ($null -ne $rangeStart -and $null -ne $rangeEnd) {
+                if ($rangeStart -gt $rangeEnd) {
+                    $tmp = $rangeStart
+                    $rangeStart = $rangeEnd
+                    $rangeEnd = $tmp
+                }
+                foreach ($pc in $targetValues.Keys) {
+                    $value = [uint32]$targetValues[$pc]
+                    if ($value -ge $rangeStart -and $value -le $rangeEnd) {
+                        $filteredDumpSeen[$pc] = $true
+                    }
+                }
+            }
+        }
+
+        foreach ($pc in $targetSet.Keys) {
+            if ($line -match ("\b{0}\b" -f [Regex]::Escape($pc))) {
+                $filteredDumpSeen[$pc] = $true
+            }
         }
     }
 }

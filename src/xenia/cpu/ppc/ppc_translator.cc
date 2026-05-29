@@ -258,6 +258,8 @@ bool PPCTranslator::Translate(GuestFunction* function,
   xe::make_reset_scope(&string_buffer_);
 
   // NOTE: we only want to do this when required, as it's expensive to build.
+  const bool has_disassembly_filter =
+      !cvars::disassemble_function_filter.empty();
   bool filtered_disassembly =
       FunctionMatchesFilter(function, cvars::disassemble_function_filter);
   if (cvars::disassemble_functions || filtered_disassembly) {
@@ -283,6 +285,17 @@ bool PPCTranslator::Translate(GuestFunction* function,
   // Scan the function to find its extents and gather debug data.
   if (!scanner_->Scan(function, debug_info.get())) {
     return false;
+  }
+  if (has_disassembly_filter && !filtered_disassembly) {
+    filtered_disassembly =
+        FunctionMatchesFilter(function, cvars::disassemble_function_filter);
+    if (filtered_disassembly) {
+      debug_info_flags |= DebugInfoFlags::kDebugInfoAllDisasm;
+      debug_info.reset(new FunctionDebugInfo());
+      if (!scanner_->Scan(function, debug_info.get())) {
+        return false;
+      }
+    }
   }
 
   // Setup trace data, if needed.
