@@ -311,6 +311,71 @@ function Format-HandleLifecycleSummary {
     )
 }
 
+function Limit-Text {
+    param(
+        [string]$Text,
+        [int]$MaxLength = 180
+    )
+
+    if (!$Text) {
+        return ""
+    }
+
+    $singleLine = ($Text -replace '\s+', ' ').Trim()
+    if ($singleLine.Length -le $MaxLength) {
+        return $singleLine
+    }
+
+    return $singleLine.Substring(0, $MaxLength)
+}
+
+function Format-StatusReference {
+    param(
+        [pscustomobject]$Row,
+        $ReferenceTimestamp
+    )
+
+    if (!$Row) {
+        return ""
+    }
+
+    $deltaText = ""
+    if ($Row.Timestamp -and $ReferenceTimestamp) {
+        $deltaText = (($Row.Timestamp - $ReferenceTimestamp).TotalMilliseconds).ToString("0.0")
+    }
+
+    return ("caller={0} status={1} mapped={2} line={3} time={4} delta_ms={5}" -f
+        $Row.Caller,
+        $Row.Status,
+        $Row.Mapped,
+        $Row.LineIndex,
+        (Format-TimeOnly $Row.Timestamp),
+        $deltaText)
+}
+
+function Format-PresenterGpuReference {
+    param(
+        [pscustomobject]$Row,
+        $ReferenceTimestamp
+    )
+
+    if (!$Row) {
+        return ""
+    }
+
+    $deltaText = ""
+    if ($Row.Timestamp -and $ReferenceTimestamp) {
+        $deltaText = (($Row.Timestamp - $ReferenceTimestamp).TotalMilliseconds).ToString("0.0")
+    }
+
+    return ("kind={0} line={1} time={2} delta_ms={3} text={4}" -f
+        $Row.Kind,
+        $Row.LineIndex,
+        (Format-TimeOnly $Row.Timestamp),
+        $deltaText,
+        (Limit-Text $Row.Text 180))
+}
+
 function Add-CsvKeys {
     param(
         [hashtable]$Table,
@@ -431,7 +496,7 @@ function Parse-VdSwapRow {
         return $null
     }
 
-    if ($Line -notmatch 'i>\s+(?<caller>[0-9A-Fa-f]{8})\s+VdSwap\(') {
+    if ($Line -notmatch 'i>\s+(?<caller>[0-9A-Fa-f]{8})\s+VdSwap\((?<args>.*)\)') {
         return $null
     }
 
@@ -441,6 +506,7 @@ function Parse-VdSwapRow {
         Pid = $header.Pid
         Tid = $header.Tid
         Caller = $Matches.caller.ToUpperInvariant()
+        Args = $Matches.args
     }
 }
 
@@ -467,6 +533,49 @@ function Parse-NtStatusRow {
         Caller = $Matches.caller.ToUpperInvariant()
         Status = $Matches.status.ToUpperInvariant().PadLeft(8, "0")
         Mapped = $Matches.mapped.ToUpperInvariant().PadLeft(8, "0")
+    }
+}
+
+function Parse-PresenterGpuRow {
+    param(
+        [string]$Line,
+        [int]$LineIndex
+    )
+
+    if ($Line -notmatch 'VulkanPresenter|Vulkan device|VK_KHR_swapchain|GPU:|VulkanTextureCache|SurfaceSyncer|swapchain') {
+        return $null
+    }
+
+    $header = Parse-LogHeader $Line
+    if (!$header) {
+        return $null
+    }
+
+    $kind = "PresenterGpu"
+    if ($Line -match 'VulkanPresenter') {
+        $kind = "VulkanPresenter"
+    } elseif ($Line -match 'GPU:') {
+        $kind = "Gpu"
+    } elseif ($Line -match 'SurfaceSyncer') {
+        $kind = "SurfaceSyncer"
+    } elseif ($Line -match 'VulkanTextureCache') {
+        $kind = "VulkanTextureCache"
+    } elseif ($Line -match 'swapchain|VK_KHR_swapchain|Vulkan device') {
+        $kind = "VulkanSetup"
+    }
+
+    $text = $Line
+    if ($Line -match '^\d{2}-\d{2}\s+\S+\s+\d+\s+\d+\s+\S\s+(?<message>.*)$') {
+        $text = $Matches.message
+    }
+
+    return [pscustomobject][ordered]@{
+        LineIndex = $LineIndex
+        Timestamp = $header.Timestamp
+        Pid = $header.Pid
+        Tid = $header.Tid
+        Kind = $kind
+        Text = $text
     }
 }
 
@@ -566,6 +675,7 @@ $freeRows = @()
 $vdSwapRows = @()
 $statusRows = @()
 $handleLifecycleRows = @()
+$presenterGpuRows = @()
 $filteredDumpSeen = @{}
 $postFailedHandleRows = @{}
 
@@ -606,6 +716,12 @@ for ($index = 0; $index -lt $lines.Count; ++$index) {
     $freeRow = Parse-PhysicalFreeRow -Line $line -LineIndex ($index + 1)
     if ($freeRow) {
         $freeRows += $freeRow
+        continue
+    }
+
+    $presenterGpuRow = Parse-PresenterGpuRow -Line $line -LineIndex $lineNumber
+    if ($presenterGpuRow) {
+        $presenterGpuRows += $presenterGpuRow
         continue
     }
 
@@ -683,6 +799,8 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
     $snapshotThreads = @{}
     $snapshotLastFns = @{}
     $snapshotCtrs = @{}
+    $snapshotR3s = @{}
+    $postFailedSnapshotR3s = @{}
     $firstSeen = $null
     $lastSeen = $null
 
@@ -747,6 +865,10 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
             Add-Count $snapshotThreads $row.ThreadId
             Add-Count $snapshotLastFns $row.LastFn
             Add-Count $snapshotCtrs $row.Ctr
+            Add-Count $snapshotR3s $row.R3
+            if ($lastFailedFree -and $row.Timestamp -and $row.Timestamp -gt $lastFailedFree) {
+                Add-Count $postFailedSnapshotR3s $row.R3
+            }
             if ($row.Timestamp) {
                 if (!$firstSeen -or $row.Timestamp -lt $firstSeen) {
                     $firstSeen = $row.Timestamp
@@ -780,6 +902,8 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
         SnapshotThreads = Join-Keys $snapshotThreads
         SnapshotLastFns = Top-Counts $snapshotLastFns
         SnapshotCtrs = Top-Counts $snapshotCtrs
+        SnapshotR3s = Top-Counts $snapshotR3s 8
+        PostFailedSnapshotR3s = Top-Counts $postFailedSnapshotR3s 8
         WaitHandleRows = $waitHandleRows
         WaitHandleGuestObjects = $waitHandleGuestObjects
         WaitHandleStatusRows = $waitHandleStatusRows
@@ -796,6 +920,18 @@ $lastVdSwap = $null
 if ($vdSwapRows.Count -gt 0) {
     $lastVdSwap = @($vdSwapRows | Sort-Object LineIndex | Select-Object -Last 1)[0]
 }
+$vdSwapCallerCounts = @{}
+foreach ($row in $vdSwapRows) {
+    Add-Count $vdSwapCallerCounts $row.Caller
+}
+$lastVdSwapCallerSummary = ""
+$lastVdSwapCallerStatusBefore = ""
+$lastVdSwapCallerStatusAfter = ""
+$lastVdSwapCallerStatusCount = 0
+$presenterGpuAfterLastVdSwap = @()
+$presenterGpuLastBeforeVdSwapSummary = ""
+$presenterGpuFirstAfterVdSwapSummary = ""
+$presentationStopContext = "missing_last_vdswap"
 $lastVdSwapBeforeStatus = ""
 $lastVdSwapAfterStatus = ""
 $secondsFromLastVdSwapToFirstWait = ""
@@ -830,6 +966,59 @@ if ($lastVdSwap -and $lastVdSwap.Timestamp) {
                 (Format-TimeOnly $statusAfter[0].Timestamp), $delta.ToString("0.0"))
         }
     }
+    $sameCallerStatus = @($statusRows | Where-Object {
+            $_.Caller -eq $lastVdSwap.Caller
+        } | Sort-Object LineIndex)
+    $lastVdSwapCallerStatusCount = $sameCallerStatus.Count
+    if ($sameCallerStatus.Count -gt 0) {
+        $statusBefore = @($sameCallerStatus | Where-Object { $_.LineIndex -le $lastVdSwap.LineIndex } | Sort-Object LineIndex | Select-Object -Last 1)
+        $statusAfter = @($sameCallerStatus | Where-Object { $_.LineIndex -ge $lastVdSwap.LineIndex } | Sort-Object LineIndex | Select-Object -First 1)
+        if ($statusBefore.Count -gt 0) {
+            $lastVdSwapCallerStatusBefore = Format-StatusReference -Row $statusBefore[0] -ReferenceTimestamp $lastVdSwap.Timestamp
+        }
+        if ($statusAfter.Count -gt 0) {
+            $lastVdSwapCallerStatusAfter = Format-StatusReference -Row $statusAfter[0] -ReferenceTimestamp $lastVdSwap.Timestamp
+        }
+    }
+
+    $lastCallerRows = @($vdSwapRows | Where-Object { $_.Caller -eq $lastVdSwap.Caller } | Sort-Object LineIndex)
+    if ($lastCallerRows.Count -gt 0) {
+        $firstCallerRow = $lastCallerRows[0]
+        $lastCallerRow = $lastCallerRows[$lastCallerRows.Count - 1]
+        $lastVdSwapCallerSummary = ("rows={0} first={1}:{2} last={3}:{4}" -f
+            $lastCallerRows.Count,
+            (Format-TimeOnly $firstCallerRow.Timestamp),
+            $firstCallerRow.LineIndex,
+            (Format-TimeOnly $lastCallerRow.Timestamp),
+            $lastCallerRow.LineIndex)
+    }
+
+    $presenterGpuBeforeLastVdSwap = @(
+        $presenterGpuRows |
+            Where-Object { $_.Timestamp -and $_.Timestamp -le $lastVdSwap.Timestamp } |
+            Sort-Object LineIndex
+    )
+    $presenterGpuAfterLastVdSwap = @(
+        $presenterGpuRows |
+            Where-Object { $_.Timestamp -and $_.Timestamp -gt $lastVdSwap.Timestamp } |
+            Sort-Object LineIndex
+    )
+    if ($presenterGpuBeforeLastVdSwap.Count -gt 0) {
+        $presenterGpuLastBeforeVdSwapSummary = Format-PresenterGpuReference -Row $presenterGpuBeforeLastVdSwap[$presenterGpuBeforeLastVdSwap.Count - 1] -ReferenceTimestamp $lastVdSwap.Timestamp
+    }
+    if ($presenterGpuAfterLastVdSwap.Count -gt 0) {
+        $presenterGpuFirstAfterVdSwapSummary = Format-PresenterGpuReference -Row $presenterGpuAfterLastVdSwap[0] -ReferenceTimestamp $lastVdSwap.Timestamp
+    }
+
+    $presentationStopContext = "vdswap_stop_needs_more_state"
+    if ($lastVdSwapCallerStatusCount -eq 0 -and $presenterGpuAfterLastVdSwap.Count -eq 0) {
+        $presentationStopContext = "last_vdswap_has_no_same_caller_status_and_no_later_presenter_gpu_rows"
+    } elseif ($lastVdSwapCallerStatusCount -eq 0) {
+        $presentationStopContext = "last_vdswap_has_no_same_caller_status"
+    } elseif ($presenterGpuAfterLastVdSwap.Count -eq 0) {
+        $presentationStopContext = "no_later_presenter_gpu_rows_after_last_vdswap"
+    }
+
     $firstWaitAfterVdSwap = @(
             $waitRows |
                 Where-Object { $_.Timestamp -and $_.Timestamp -ge $lastVdSwap.Timestamp } |
@@ -921,12 +1110,23 @@ $report.Add(("recommended_disassemble_function_filter={0}" -f (@($missingDumpRow
 $report.Add(("wait_trace_count={0}" -f $waitRows.Count))
 $report.Add(("wait_trace_first_time={0}" -f (Format-TimeOnly $firstWaitTrace)))
 $report.Add(("wait_trace_last_time={0}" -f (Format-TimeOnly $waitTraceLast)))
+$report.Add(("presentation_stop_context={0}" -f $presentationStopContext))
 $report.Add(("vdswap_last_time={0}" -f $vdswapTime))
 $report.Add(("vdswap_last_caller={0}" -f $($lastVdSwap.Caller)))
+$report.Add(("vdswap_last_args={0}" -f $(if ($lastVdSwap) { Limit-Text $lastVdSwap.Args 220 } else { "" })))
+$report.Add(("vdswap_caller_counts={0}" -f (Format-ChildCounts $vdSwapCallerCounts 8)))
+$report.Add(("vdswap_last_caller_rows={0}" -f $lastVdSwapCallerSummary))
+$report.Add(("vdswap_last_caller_status_count={0}" -f $lastVdSwapCallerStatusCount))
+$report.Add(("vdswap_last_caller_status_before={0}" -f $lastVdSwapCallerStatusBefore))
+$report.Add(("vdswap_last_caller_status_after={0}" -f $lastVdSwapCallerStatusAfter))
 $report.Add(("vdswap_last_status_before={0}" -f $lastVdSwapBeforeStatus))
 $report.Add(("vdswap_last_status_after={0}" -f $lastVdSwapAfterStatus))
 $report.Add(("seconds_from_last_vdswap_to_first_wait={0}" -f $secondsFromLastVdSwapToFirstWait))
 $report.Add(("vdswap_to_first_wait={0}" -f $vdswapToFirstWaitSummary))
+$report.Add(("gpu_presenter_event_count={0}" -f $presenterGpuRows.Count))
+$report.Add(("gpu_presenter_after_last_vdswap_count={0}" -f $presenterGpuAfterLastVdSwap.Count))
+$report.Add(("gpu_presenter_last_before_vdswap={0}" -f $presenterGpuLastBeforeVdSwapSummary))
+$report.Add(("gpu_presenter_first_after_vdswap={0}" -f $presenterGpuFirstAfterVdSwapSummary))
 $report.Add(("physical_free_audit_rows={0}" -f $freeRows.Count))
 $report.Add(("failed_physical_free_rows={0}" -f $failedFreeRows.Count))
 $report.Add(("last_failed_free_time={0}" -f (Format-TimeOnly $lastFailedFree)))
@@ -1027,7 +1227,7 @@ foreach ($row in $targetRows) {
 
     $report.Add((("target_pc[{0}]_handle_count={1}" -f $rowIndex, $handleRows.Count)))
     $report.Add((
-            "target_pc[{0}]={1} wait_lr={2} wait_ctr={3} snapshot_last_fn={4} snapshot_last_ret={5} snapshot_lr={6} snapshot_ctr={7} post_failed_snapshot_last_ret={8} filtered_dump_present={9} first={10} last={11} wait_threads={12} wait_apis={13} wait_statuses={14} snapshot_threads={15} snapshot_last_fns={16} snapshot_ctrs={17}" -f
+            "target_pc[{0}]={1} wait_lr={2} wait_ctr={3} snapshot_last_fn={4} snapshot_last_ret={5} snapshot_lr={6} snapshot_ctr={7} post_failed_snapshot_last_ret={8} filtered_dump_present={9} first={10} last={11} wait_threads={12} wait_apis={13} wait_statuses={14} snapshot_threads={15} snapshot_last_fns={16} snapshot_ctrs={17} snapshot_r3s={18} post_failed_snapshot_r3s={19}" -f
             $rowIndex,
             $row.Pc,
             $row.WaitLr,
@@ -1045,7 +1245,9 @@ foreach ($row in $targetRows) {
             $row.WaitStatuses,
             $row.SnapshotThreads,
             $row.SnapshotLastFns,
-            $row.SnapshotCtrs
+            $row.SnapshotCtrs,
+            $row.SnapshotR3s,
+            $row.PostFailedSnapshotR3s
         ))
 
     $handleIndex = 0
