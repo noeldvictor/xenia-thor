@@ -29,6 +29,10 @@ public class EmulatorActivity extends WindowedAppActivity {
     private static final String EXTRA_DEBUG_GAMEPAD_KEY_CODE = "key_code";
     private static final String EXTRA_DEBUG_GAMEPAD_HOLD_MS = "hold_ms";
     private static final String EXTRA_DEBUG_GAMEPAD_ALREADY_MAPPED = "already_mapped";
+    private static final String ACTION_SET_CVAR =
+            BuildConfig.APPLICATION_ID + ".SET_CVAR";
+    private static final String EXTRA_CVAR_NAME = "cvar_name";
+    private static final String EXTRA_CVAR_VALUE = "cvar_value";
     private static final int DEBUG_GAMEPAD_DEVICE_ID = -1000;
     private static int sGamepadLogBudget = 24;
 
@@ -48,8 +52,21 @@ public class EmulatorActivity extends WindowedAppActivity {
     private final BroadcastReceiver mDebugGamepadReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(final Context context, final Intent intent) {
-            if (!BuildConfig.DEBUG || intent == null
-                    || !ACTION_DEBUG_GAMEPAD_KEY.equals(intent.getAction())) {
+            if (!BuildConfig.DEBUG || intent == null) {
+                return;
+            }
+            final String action = intent.getAction();
+            if (ACTION_SET_CVAR.equals(action)) {
+                final String cvarName = intent.getStringExtra(EXTRA_CVAR_NAME);
+                final String cvarValue = intent.getStringExtra(EXTRA_CVAR_VALUE);
+                if (cvarName != null && cvarValue != null) {
+                    final boolean applied = nativeSetConfigVar(cvarName, cvarValue);
+                    Log.i(TAG, "SET_CVAR " + cvarName + "=" + cvarValue
+                            + (applied ? " applied" : " (unknown cvar)"));
+                }
+                return;
+            }
+            if (!ACTION_DEBUG_GAMEPAD_KEY.equals(action)) {
                 return;
             }
             final int keyCode = intent.getIntExtra(
@@ -91,6 +108,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             float hatY);
 
     private static native long nativeGetGuestSwapCount();
+
+    private static native boolean nativeSetConfigVar(String name, String value);
 
     @Override
     protected String getWindowedAppIdentifier() {
@@ -141,6 +160,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_blue_dragon_kick_wait_token");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_vd_swap");
+            copyBooleanExtra(intent, launchArguments, "gpu_uma_direct_shared_memory");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_use_vd_scaler_output_for_swap");
             copyBooleanExtra(
@@ -595,6 +615,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             return;
         }
         final IntentFilter filter = new IntentFilter(ACTION_DEBUG_GAMEPAD_KEY);
+        filter.addAction(ACTION_SET_CVAR);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(mDebugGamepadReceiver, filter, Context.RECEIVER_EXPORTED);
         } else {

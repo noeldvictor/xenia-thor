@@ -35,6 +35,25 @@ void PrintHelpAndExit() {
   exit(0);
 }
 
+bool SetCommandVarFromString(const std::string& name,
+                             const std::string& value) {
+  if (ConfigVars) {
+    auto it = ConfigVars->find(name);
+    if (it != ConfigVars->end()) {
+      it->second->SetValueFromString(value);
+      return true;
+    }
+  }
+  if (CmdVars) {
+    auto it = CmdVars->find(name);
+    if (it != CmdVars->end()) {
+      it->second->SetValueFromString(value);
+      return true;
+    }
+  }
+  return false;
+}
+
 void ParseLaunchArguments(int& argc, char**& argv,
                           const std::string_view positional_help,
                           const std::vector<std::string>& positional_options) {

@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/main_android.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
@@ -771,6 +772,30 @@ JNIEXPORT jlong JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestSwapCount(
     JNIEnv* jni_env, jclass clazz) {
   return jlong(xe::ui::vulkan::VulkanPerfCountersGetIssueSwapCount());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeSetConfigVar(
+    JNIEnv* jni_env, jclass clazz, jstring name_jstring,
+    jstring value_jstring) {
+  if (!name_jstring || !value_jstring) {
+    return JNI_FALSE;
+  }
+  const char* name_chars = jni_env->GetStringUTFChars(name_jstring, nullptr);
+  const char* value_chars = jni_env->GetStringUTFChars(value_jstring, nullptr);
+  bool applied = false;
+  if (name_chars && value_chars) {
+    applied = cvar::SetCommandVarFromString(name_chars, value_chars);
+    XELOGI("nativeSetConfigVar: {}={} -> {}", name_chars, value_chars,
+           applied ? "applied" : "unknown cvar");
+  }
+  if (value_chars) {
+    jni_env->ReleaseStringUTFChars(value_jstring, value_chars);
+  }
+  if (name_chars) {
+    jni_env->ReleaseStringUTFChars(name_jstring, name_chars);
+  }
+  return applied ? JNI_TRUE : JNI_FALSE;
 }
 
 }  // extern "C"

@@ -39,6 +39,9 @@ class ICommandVar {
   virtual const std::string& name() const = 0;
   virtual const std::string& description() const = 0;
   virtual void UpdateValue() = 0;
+  // Sets the value at runtime from a string (command-line priority, takes
+  // effect immediately). Returns false if the string could not be applied.
+  virtual bool SetValueFromString(const std::string& value) = 0;
   virtual void AddToLaunchOptions(cxxopts::Options* options) = 0;
   virtual void LoadFromLaunchOptions(cxxopts::ParseResult* result) = 0;
 };
@@ -62,6 +65,7 @@ class CommandVar : virtual public ICommandVar {
   void AddToLaunchOptions(cxxopts::Options* options) override;
   void LoadFromLaunchOptions(cxxopts::ParseResult* result) override;
   void SetCommandLineValue(T val);
+  bool SetValueFromString(const std::string& value) override;
   T* current_value() { return current_value_; }
 
  protected:
@@ -259,6 +263,11 @@ void CommandVar<T>::SetCommandLineValue(const T val) {
   UpdateValue();
 }
 template <class T>
+bool CommandVar<T>::SetValueFromString(const std::string& value) {
+  SetCommandLineValue(this->Convert(value));
+  return true;
+}
+template <class T>
 void ConfigVar<T>::SetConfigValue(T val) {
   config_value_ = std::make_unique<T>(val);
   UpdateValue();
@@ -302,6 +311,10 @@ inline void AddCommandVar(ICommandVar* cv) {
 void ParseLaunchArguments(int& argc, char**& argv,
                           const std::string_view positional_help,
                           const std::vector<std::string>& positional_options);
+// Sets a config or command var by name from a string at runtime. Returns false
+// if no variable with that name exists. Used by the Android live-tuning
+// broadcast to flip cvars without relaunching.
+bool SetCommandVarFromString(const std::string& name, const std::string& value);
 #if XE_PLATFORM_ANDROID
 void ParseLaunchArgumentsFromAndroidBundle(jobject bundle);
 #endif  // XE_PLATFORM_ANDROID
