@@ -254,6 +254,8 @@ public class LauncherActivity extends Activity {
         copyStringExtra(intent, overrides, "xboxkrnl_thread_wait_trace_guest_tids");
         copyBooleanExtra(intent, overrides, "xboxkrnl_physical_memory_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_physical_memory_audit_budget");
+        copyBooleanExtra(intent, overrides, "xboxkrnl_physical_suballocation_audit");
+        copyIntExtra(intent, overrides, "xboxkrnl_physical_suballocation_audit_budget");
         copyBooleanExtra(intent, overrides, "xboxkrnl_reenter_audit");
         copyIntExtra(intent, overrides, "xboxkrnl_reenter_audit_budget");
         copyStringExtra(intent, overrides, "xboxkrnl_reenter_audit_guest_tids");

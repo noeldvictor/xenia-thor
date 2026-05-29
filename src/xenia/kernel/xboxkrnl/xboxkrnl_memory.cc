@@ -7,9 +7,13 @@
  ******************************************************************************
  */
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -37,6 +41,16 @@ DEFINE_uint32(
     "Thor Android compatibility: maximum physical memory ownership audit rows "
     "to emit.",
     "Kernel");
+DEFINE_bool(
+    xboxkrnl_physical_suballocation_audit, false,
+    "Thor Android compatibility: trace interior physical frees as "
+    "suballocation-owner ledger rows without changing behavior.",
+    "Kernel");
+DEFINE_uint32(
+    xboxkrnl_physical_suballocation_audit_budget, 256,
+    "Thor Android compatibility: maximum physical suballocation ownership "
+    "audit rows to emit.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -46,6 +60,28 @@ namespace {
 std::atomic<int> g_physical_memory_audit_budget{0};
 std::atomic<uint32_t> g_physical_memory_audit_configured_budget{
     std::numeric_limits<uint32_t>::max()};
+std::atomic<int> g_physical_suballocation_audit_budget{0};
+std::atomic<uint32_t> g_physical_suballocation_audit_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
+
+struct PhysicalSuballocationAuditOwner {
+  uint32_t physical_base = 0;
+  uint32_t physical_size = 0;
+  uint32_t parent_base = 0;
+  uint32_t page_size = 0;
+  uint32_t protect = 0;
+  uint32_t region_start_free_count = 0;
+  uint32_t interior_free_count = 0;
+  uint32_t duplicate_interior_free_count = 0;
+  uint32_t min_child_offset = std::numeric_limits<uint32_t>::max();
+  uint32_t max_child_offset = 0;
+  bool owner_region_start_free_seen = false;
+  std::vector<uint32_t> child_offsets;
+};
+
+std::mutex g_physical_suballocation_audit_mutex;
+std::vector<PhysicalSuballocationAuditOwner>
+    g_physical_suballocation_audit_owners;
 
 bool CheckDebugMemoryArgument(const char* export_name, uint32_t debug_memory) {
   if (!debug_memory) {
@@ -88,6 +124,43 @@ bool ConsumePhysicalMemoryAuditBudget() {
   int value = g_physical_memory_audit_budget.load(std::memory_order_relaxed);
   while (value > 0) {
     if (g_physical_memory_audit_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ConfigurePhysicalSuballocationAuditBudget() {
+  uint32_t budget = cvars::xboxkrnl_physical_suballocation_audit_budget;
+  uint32_t configured_budget =
+      g_physical_suballocation_audit_configured_budget.load(
+          std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+
+  if (g_physical_suballocation_audit_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_physical_suballocation_audit_budget.store(clamped_budget,
+                                                std::memory_order_release);
+  }
+}
+
+bool ConsumePhysicalSuballocationAuditBudget() {
+  if (!cvars::xboxkrnl_physical_suballocation_audit) {
+    return false;
+  }
+
+  ConfigurePhysicalSuballocationAuditBudget();
+  int value =
+      g_physical_suballocation_audit_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_physical_suballocation_audit_budget.compare_exchange_strong(
             value, value - 1, std::memory_order_acq_rel)) {
       return true;
     }
@@ -268,6 +341,159 @@ void LogPhysicalMemoryFreeAudit(const char* phase, uint32_t type,
           ? 1
           : 0,
       result_known ? 1 : 0, result ? 1 : 0, returned_region_size);
+}
+
+void LogPhysicalSuballocationFreeAudit(const char* phase, uint32_t type,
+                                       uint32_t base_address, BaseHeap* heap,
+                                       bool result_known, bool result,
+                                       uint32_t returned_region_size) {
+  if (!ConsumePhysicalSuballocationAuditBudget()) {
+    return;
+  }
+
+  auto thread_context = GetPhysicalMemoryThreadAuditContext();
+  HeapType heap_type = heap ? heap->heap_type() : HeapType::kGuestVirtual;
+  PhysicalHeap* physical_heap =
+      heap && heap_type == HeapType::kGuestPhysical
+          ? static_cast<PhysicalHeap*>(heap)
+          : nullptr;
+  uint32_t parent_address = physical_heap
+                                ? physical_heap->GetPhysicalAddress(base_address)
+                                : UINT32_MAX;
+  HeapRegionAuditInfo physical_info =
+      heap ? QueryHeapRegionAuditInfo(heap, base_address) : HeapRegionAuditInfo{};
+  BaseHeap* parent_heap =
+      parent_address != UINT32_MAX ? kernel_memory()->LookupHeap(parent_address)
+                                   : nullptr;
+  HeapRegionAuditInfo parent_info =
+      parent_heap ? QueryHeapRegionAuditInfo(parent_heap, parent_address)
+                  : HeapRegionAuditInfo{};
+  uint32_t heap_page_size = heap ? heap->page_size() : 0;
+  uint32_t parent_page_size = parent_heap ? parent_heap->page_size() : 0;
+  bool owner_valid =
+      physical_heap && physical_info.valid && physical_info.allocation_size;
+  bool request_region_start =
+      owner_valid && base_address == physical_info.allocation_base;
+  bool request_interior = owner_valid && !request_region_start;
+  bool update_ledger = std::strcmp(phase, "request") == 0;
+  uint32_t owner_offset = 0;
+  uint32_t span_to_owner_end = 0;
+  if (owner_valid && base_address >= physical_info.allocation_base) {
+    owner_offset = base_address - physical_info.allocation_base;
+    if (owner_offset < physical_info.allocation_size) {
+      span_to_owner_end = physical_info.allocation_size - owner_offset;
+    }
+  }
+
+  uint32_t ledger_region_start_free_count = 0;
+  uint32_t ledger_interior_free_count = 0;
+  uint32_t ledger_interior_unique_count = 0;
+  uint32_t ledger_interior_duplicate_count = 0;
+  uint32_t ledger_min_offset = 0;
+  uint32_t ledger_max_offset = 0;
+  uint32_t ledger_bounds_span = 0;
+  bool ledger_owner_region_start_free_seen = false;
+  bool ledger_owner_fully_released_by_bounds = false;
+  if (owner_valid) {
+    std::lock_guard<std::mutex> lock(g_physical_suballocation_audit_mutex);
+    auto owner_it = std::find_if(
+        g_physical_suballocation_audit_owners.begin(),
+        g_physical_suballocation_audit_owners.end(),
+        [&](const PhysicalSuballocationAuditOwner& owner) {
+          return owner.physical_base == physical_info.allocation_base &&
+                 owner.physical_size == physical_info.allocation_size &&
+                 owner.parent_base == parent_info.allocation_base;
+        });
+    if (owner_it == g_physical_suballocation_audit_owners.end()) {
+      PhysicalSuballocationAuditOwner owner = {};
+      owner.physical_base = physical_info.allocation_base;
+      owner.physical_size = physical_info.allocation_size;
+      owner.parent_base = parent_info.allocation_base;
+      owner.page_size = heap_page_size;
+      owner.protect = physical_info.protect;
+      g_physical_suballocation_audit_owners.push_back(std::move(owner));
+      owner_it = g_physical_suballocation_audit_owners.end() - 1;
+    }
+
+    if (update_ledger && request_region_start) {
+      owner_it->owner_region_start_free_seen = true;
+      ++owner_it->region_start_free_count;
+    } else if (update_ledger && request_interior) {
+      ++owner_it->interior_free_count;
+      auto child_it = std::find(owner_it->child_offsets.begin(),
+                                owner_it->child_offsets.end(), owner_offset);
+      if (child_it == owner_it->child_offsets.end()) {
+        owner_it->child_offsets.push_back(owner_offset);
+        owner_it->min_child_offset =
+            std::min(owner_it->min_child_offset, owner_offset);
+        owner_it->max_child_offset =
+            std::max(owner_it->max_child_offset, owner_offset);
+      } else {
+        ++owner_it->duplicate_interior_free_count;
+      }
+    }
+
+    ledger_region_start_free_count = owner_it->region_start_free_count;
+    ledger_interior_free_count = owner_it->interior_free_count;
+    ledger_interior_unique_count =
+        static_cast<uint32_t>(owner_it->child_offsets.size());
+    ledger_interior_duplicate_count = owner_it->duplicate_interior_free_count;
+    ledger_owner_region_start_free_seen =
+        owner_it->owner_region_start_free_seen;
+    if (!owner_it->child_offsets.empty()) {
+      ledger_min_offset = owner_it->min_child_offset;
+      ledger_max_offset = owner_it->max_child_offset;
+      ledger_bounds_span =
+          (ledger_max_offset - ledger_min_offset) +
+          std::max<uint32_t>(owner_it->page_size, 1);
+      ledger_owner_fully_released_by_bounds =
+          ledger_min_offset == 0 && ledger_bounds_span >= owner_it->physical_size;
+    }
+  }
+
+  bool current_parent_release_would_succeed =
+      parent_info.valid && parent_address == parent_info.allocation_base;
+  bool current_physical_release_would_succeed =
+      request_region_start && current_parent_release_would_succeed;
+  bool current_callback_would_fire = current_physical_release_would_succeed;
+  bool callback_query_unsafe_for_child = request_interior;
+
+  XELOGI(
+      "Xboxkrnl physical suballocation audit free phase {} thid {:08X} lr "
+      "{:08X} ctr {:08X} r1 {:08X} type {} base_address {:08X} "
+      "heap_present {} heap_type {} heap_base {:08X} heap_page_size {:X} "
+      "parent_address {:08X} parent_page_size {:X} owner_physical_base {:08X} "
+      "owner_parent_base {:08X} owner_size {:08X} owner_protect {} "
+      "request_offset {:08X} span_to_owner_end {:08X} request_interior {} "
+      "request_region_start {} request_page_aligned {} "
+      "ledger_region_start_free_count {} ledger_interior_free_count {} "
+      "ledger_interior_unique_count {} ledger_interior_duplicate_count {} "
+      "ledger_min_offset {:08X} ledger_max_offset {:08X} "
+      "ledger_bounds_span {:08X} ledger_owner_region_start_free_seen {} "
+      "ledger_owner_fully_released_by_bounds {} "
+      "current_parent_release_would_succeed {} "
+      "current_physical_release_would_succeed {} "
+      "current_callback_would_fire {} callback_query_unsafe_for_child {} "
+      "result_known {} result {} returned_region_size {:08X} behavior_changed 0",
+      phase, thread_context.thread_id, thread_context.lr, thread_context.ctr,
+      thread_context.r1, type, base_address, heap ? 1 : 0,
+      heap ? HeapTypeName(heap_type) : "none", heap ? heap->heap_base() : 0,
+      heap_page_size, parent_address, parent_page_size,
+      physical_info.allocation_base, parent_info.allocation_base,
+      physical_info.allocation_size, physical_info.protect, owner_offset,
+      span_to_owner_end, request_interior ? 1 : 0,
+      request_region_start ? 1 : 0,
+      heap_page_size && (base_address % heap_page_size) == 0 ? 1 : 0,
+      ledger_region_start_free_count, ledger_interior_free_count,
+      ledger_interior_unique_count, ledger_interior_duplicate_count,
+      ledger_min_offset, ledger_max_offset, ledger_bounds_span,
+      ledger_owner_region_start_free_seen ? 1 : 0,
+      ledger_owner_fully_released_by_bounds ? 1 : 0,
+      current_parent_release_would_succeed ? 1 : 0,
+      current_physical_release_would_succeed ? 1 : 0,
+      current_callback_would_fire ? 1 : 0,
+      callback_query_unsafe_for_child ? 1 : 0, result_known ? 1 : 0,
+      result ? 1 : 0, returned_region_size);
 }
 
 }  // namespace
@@ -676,12 +902,16 @@ void MmFreePhysicalMemory_entry(dword_t type, dword_t base_address) {
   if (!heap) {
     LogPhysicalMemoryFreeAudit("request", type, base_address, nullptr, false,
                                false, 0);
+    LogPhysicalSuballocationFreeAudit("request", type, base_address, nullptr,
+                                      false, false, 0);
     XELOGE("MmFreePhysicalMemory failed: no heap for type={} base_address={:08X}",
            type, base_address);
     return;
   }
   LogPhysicalMemoryFreeAudit("request", type, base_address, heap, false, false,
                              0);
+  LogPhysicalSuballocationFreeAudit("request", type, base_address, heap, false,
+                                    false, 0);
   uint32_t released_region_size = 0;
   bool released = heap->Release(base_address, &released_region_size);
   LogPhysicalMemoryFreeAudit("result", type, base_address, heap, true, released,

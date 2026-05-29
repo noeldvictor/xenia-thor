@@ -485,6 +485,7 @@ if ($recommendedThreadIdList) {
     $recommendedLaunchCommand += " -XboxkrnlThreadWaitTraceGuestTids ""$recommendedThreadIdList"""
 }
 $recommendedLaunchCommand += " -XboxkrnlPhysicalMemoryAudit true -XboxkrnlPhysicalMemoryAuditBudget 512"
+$recommendedLaunchCommand += " -XboxkrnlPhysicalSuballocationAudit true -XboxkrnlPhysicalSuballocationAuditBudget 512"
 $recommendedCaptureCommand = (
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 " +
     "-DeviceSerial c3ca0370 -Mode Screenshot -LogcatTailLines $recommendedRemoteDebugTail"
