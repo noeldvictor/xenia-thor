@@ -55,6 +55,9 @@ param(
     [string]$GpuTraceTextureCacheActions = "false",
     [string]$GpuUnknownRegisterLogBudget = "",
     [string]$XboxkrnlNtCreateFileFailLogBudget = "",
+    [string]$XboxkrnlFileIoTrace = "false",
+    [string]$XboxkrnlFileIoTraceBudget = "",
+    [string]$XboxkrnlFileIoStatusLogBudget = "",
     [string]$GpuTraceSwapFrontbufferChecksum = "false",
     [string]$GpuTraceSwapRenderTargets = "false",
     [string]$VulkanTraceResolve = "false",
@@ -681,6 +684,15 @@ function Start-XeniaEmulator {
     }
     if ($XboxkrnlNtCreateFileFailLogBudget) {
         $parts += "--ei xboxkrnl_nt_create_file_fail_log_budget $XboxkrnlNtCreateFileFailLogBudget"
+    }
+    if ($script:RootBoundParameters.ContainsKey("XboxkrnlFileIoTrace")) {
+        $parts += "--ez xboxkrnl_file_io_trace $(ConvertTo-BooleanText $XboxkrnlFileIoTrace)"
+    }
+    if ($XboxkrnlFileIoTraceBudget) {
+        $parts += "--ei xboxkrnl_file_io_trace_budget $XboxkrnlFileIoTraceBudget"
+    }
+    if ($XboxkrnlFileIoStatusLogBudget) {
+        $parts += "--ei xboxkrnl_file_io_status_log_budget $XboxkrnlFileIoStatusLogBudget"
     }
     if ($GpuTraceInterruptsBudget) {
         $parts += "--ei gpu_trace_interrupts_budget $GpuTraceInterruptsBudget"
@@ -1390,6 +1402,9 @@ function Write-CaptureMetadata {
         "log_level=$LogLevel",
         "gpu_unknown_register_log_budget=$GpuUnknownRegisterLogBudget",
         "xboxkrnl_nt_create_file_fail_log_budget=$XboxkrnlNtCreateFileFailLogBudget",
+        "xboxkrnl_file_io_trace=$XboxkrnlFileIoTrace",
+        "xboxkrnl_file_io_trace_budget=$XboxkrnlFileIoTraceBudget",
+        "xboxkrnl_file_io_status_log_budget=$XboxkrnlFileIoStatusLogBudget",
         "hide_android_osd=$HideAndroidOsd",
         "hid_driver=$HidDriver",
         "hid_nop_connected=$HidNopConnected",
@@ -2157,6 +2172,26 @@ done | head -50
             $launcherArgs += @(
                 "--ez", "gpu_trace_vd_swap",
                 (ConvertTo-BooleanText $GpuTraceVdSwap)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlFileIoTrace")) {
+            $launcherArgs += @(
+                "--ez", "xboxkrnl_file_io_trace",
+                (ConvertTo-BooleanText $XboxkrnlFileIoTrace)
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlFileIoTraceBudget") -and
+            $XboxkrnlFileIoTraceBudget) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_file_io_trace_budget",
+                $XboxkrnlFileIoTraceBudget
+            )
+        }
+        if ($script:RootBoundParameters.ContainsKey("XboxkrnlFileIoStatusLogBudget") -and
+            $XboxkrnlFileIoStatusLogBudget) {
+            $launcherArgs += @(
+                "--ei", "xboxkrnl_file_io_status_log_budget",
+                $XboxkrnlFileIoStatusLogBudget
             )
         }
         Invoke-Adb $launcherArgs

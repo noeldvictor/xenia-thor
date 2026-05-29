@@ -547,6 +547,7 @@ dword_result_t XamShowDeviceSelectorUI_entry(
 DECLARE_XAM_EXPORT1(XamShowDeviceSelectorUI, kUI, kImplemented);
 
 void XamShowDirtyDiscErrorUI_entry(dword_t user_index) {
+  XELOGE("XamShowDirtyDiscErrorUI: user_index={}", uint32_t(user_index));
   if (cvars::headless) {
     assert_always();
     exit(1);

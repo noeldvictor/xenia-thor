@@ -16,6 +16,7 @@
 #include "xenia/base/mutex.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/info/file.h"
+#include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -42,6 +43,12 @@ namespace {
 std::atomic<int32_t> nt_create_file_fail_log_count{0};
 std::atomic<int32_t> nt_create_file_fail_log_configured_budget{
     std::numeric_limits<int32_t>::min()};
+std::atomic<int32_t> file_io_trace_log_count{0};
+std::atomic<int32_t> file_io_trace_log_configured_budget{
+    std::numeric_limits<int32_t>::min()};
+std::atomic<int32_t> file_io_status_log_count{0};
+std::atomic<int32_t> file_io_status_log_configured_budget{
+    std::numeric_limits<int32_t>::min()};
 
 bool ShouldLogNtCreateFileFailure() {
   int32_t budget = cvars::xboxkrnl_nt_create_file_fail_log_budget;
@@ -58,6 +65,46 @@ bool ShouldLogNtCreateFileFailure() {
     return false;
   }
   return nt_create_file_fail_log_count.fetch_add(1) < budget;
+}
+
+bool ShouldTraceFileIo() {
+  if (!::cvars::xboxkrnl_file_io_trace) {
+    return false;
+  }
+  int32_t budget = ::cvars::xboxkrnl_file_io_trace_budget;
+  if (budget < 0) {
+    return true;
+  }
+  int32_t configured_budget = file_io_trace_log_configured_budget.load();
+  if (configured_budget != budget &&
+      file_io_trace_log_configured_budget.compare_exchange_strong(
+          configured_budget, budget)) {
+    file_io_trace_log_count.store(0);
+  }
+  if (budget == 0) {
+    return false;
+  }
+  return file_io_trace_log_count.fetch_add(1) < budget;
+}
+
+bool ShouldLogFileIoStatus(X_STATUS status) {
+  if (status == X_STATUS_SUCCESS) {
+    return false;
+  }
+  int32_t budget = ::cvars::xboxkrnl_file_io_status_log_budget;
+  if (budget < 0) {
+    return true;
+  }
+  int32_t configured_budget = file_io_status_log_configured_budget.load();
+  if (configured_budget != budget &&
+      file_io_status_log_configured_budget.compare_exchange_strong(
+          configured_budget, budget)) {
+    file_io_status_log_count.store(0);
+  }
+  if (budget == 0) {
+    return false;
+  }
+  return file_io_status_log_count.fetch_add(1) < budget;
 }
 
 }  // namespace
@@ -228,6 +275,18 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
           uint32_t(file_action), uint32_t(handle));
     }
   }
+  if (ShouldTraceFileIo()) {
+    XELOGI(
+        "NtCreateFile trace: path='{}' root={:08X} root_entry='{}' "
+        "desired={:08X} disposition={} options={:08X} directory={} "
+        "non_directory={} action={} handle={:08X} status={:08X}",
+        target_path, uint32_t(object_attrs->root_directory),
+        root_entry ? root_entry->absolute_path() : "", uint32_t(desired_access),
+        uint32_t(creation_disposition), uint32_t(create_options),
+        (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
+        (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0,
+        uint32_t(file_action), uint32_t(handle), uint32_t(result));
+  }
 
   if (io_status_block) {
     io_status_block->status = result;
@@ -289,6 +348,28 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
             uint32_t(buffer_length), requested_offset, position_before,
             bytes_read, uint32_t(result), uint32_t(buffer.guest_address()),
             file->position());
+      }
+      if (ShouldTraceFileIo()) {
+        XELOGI(
+            "NtReadFile trace: path='{}' handle={:08X} event={:08X} "
+            "request={} requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} buffer={:08X} position_after={} synchronous={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(event_handle), uint32_t(buffer_length), requested_offset,
+            position_before, bytes_read, uint32_t(result),
+            uint32_t(buffer.guest_address()), file->position(),
+            file->is_synchronous());
+      }
+      if (ShouldLogFileIoStatus(result)) {
+        XELOGW(
+            "NtReadFile status: path='{}' handle={:08X} event={:08X} "
+            "request={} requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} buffer={:08X} position_after={} synchronous={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(event_handle), uint32_t(buffer_length), requested_offset,
+            position_before, bytes_read, uint32_t(result),
+            uint32_t(buffer.guest_address()), file->position(),
+            file->is_synchronous());
       }
       if (io_status_block) {
         io_status_block->status = result;
@@ -385,6 +466,28 @@ dword_result_t NtReadFileScatter_entry(
             uint32_t(length), requested_offset, position_before, bytes_read,
             uint32_t(result), uint32_t(segment_array.guest_address()),
             file->position());
+      }
+      if (ShouldTraceFileIo()) {
+        XELOGI(
+            "NtReadFileScatter trace: path='{}' handle={:08X} event={:08X} "
+            "request={} requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} segments={:08X} position_after={} synchronous={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(event_handle), uint32_t(length), requested_offset,
+            position_before, bytes_read, uint32_t(result),
+            uint32_t(segment_array.guest_address()), file->position(),
+            file->is_synchronous());
+      }
+      if (ShouldLogFileIoStatus(result)) {
+        XELOGW(
+            "NtReadFileScatter status: path='{}' handle={:08X} event={:08X} "
+            "request={} requested_offset={} position_before={} bytes_read={} "
+            "status={:08X} segments={:08X} position_after={} synchronous={}",
+            file->entry()->absolute_path(), uint32_t(file_handle),
+            uint32_t(event_handle), uint32_t(length), requested_offset,
+            position_before, bytes_read, uint32_t(result),
+            uint32_t(segment_array.guest_address()), file->position(),
+            file->is_synchronous());
       }
       if (io_status_block) {
         io_status_block->status = result;
@@ -633,9 +736,26 @@ dword_result_t NtQueryFullAttributesFile_entry(
     file_info->end_of_file = entry->size();
     file_info->attributes = entry->attributes();
 
+    if (ShouldTraceFileIo()) {
+      XELOGI(
+          "NtQueryFullAttributesFile trace: path='{}' status={:08X} size={} "
+          "allocation={} attributes={:08X}",
+          target_path, uint32_t(X_STATUS_SUCCESS), uint64_t(entry->size()),
+          uint64_t(entry->allocation_size()), uint32_t(entry->attributes()));
+    }
     return X_STATUS_SUCCESS;
   }
 
+  if (ShouldTraceFileIo()) {
+    XELOGI(
+        "NtQueryFullAttributesFile trace: path='{}' status={:08X} missing=1",
+        target_path, uint32_t(X_STATUS_NO_SUCH_FILE));
+  }
+  if (ShouldLogFileIoStatus(X_STATUS_NO_SUCH_FILE)) {
+    XELOGW(
+        "NtQueryFullAttributesFile status: path='{}' status={:08X} missing=1",
+        target_path, uint32_t(X_STATUS_NO_SUCH_FILE));
+  }
   return X_STATUS_NO_SUCH_FILE;
 }
 DECLARE_XBOXKRNL_EXPORT1(NtQueryFullAttributesFile, kFileSystem, kImplemented);
@@ -678,6 +798,23 @@ dword_result_t NtQueryDirectoryFile_entry(
   if (io_status_block) {
     io_status_block->status = result;
     io_status_block->information = info;
+  }
+
+  if (ShouldTraceFileIo()) {
+    XELOGI(
+        "NtQueryDirectoryFile trace: path='{}' handle={:08X} event={:08X} "
+        "pattern='{}' restart={} length={} status={:08X} info={}",
+        file ? file->entry()->absolute_path() : "", uint32_t(file_handle),
+        uint32_t(event_handle), name, restart_scan != 0, uint32_t(length),
+        uint32_t(result), info);
+  }
+  if (ShouldLogFileIoStatus(result)) {
+    XELOGW(
+        "NtQueryDirectoryFile status: path='{}' handle={:08X} event={:08X} "
+        "pattern='{}' restart={} length={} status={:08X} info={}",
+        file ? file->entry()->absolute_path() : "", uint32_t(file_handle),
+        uint32_t(event_handle), name, restart_scan != 0, uint32_t(length),
+        uint32_t(result), info);
   }
 
   return result;
