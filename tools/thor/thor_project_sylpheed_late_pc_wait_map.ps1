@@ -227,6 +227,90 @@ function Format-HandleSamples {
     return $lines
 }
 
+function Format-HandleLifecycleSamples {
+    param(
+        [pscustomobject[]]$Rows,
+        [int]$MaxSamples = 4
+    )
+
+    $lines = @()
+    if (!$Rows -or $Rows.Count -eq 0) {
+        return $lines
+    }
+
+    $ordered = @($Rows | Sort-Object LineIndex)
+    $samples = @()
+    $limit = [Math]::Max(1, [Math]::Min($MaxSamples, $ordered.Count))
+
+    $head = @($ordered | Select-Object -First ([Math]::Ceiling($limit / 2)))
+    $tailCount = $limit - $head.Count
+    $tail = @()
+    if ($tailCount -gt 0) {
+        $tail = @($ordered | Select-Object -Last $tailCount)
+    }
+
+    $seen = @{}
+    foreach ($row in $head) {
+        if (!$seen.ContainsKey($row.LineIndex)) {
+            $samples += $row
+            $seen[$row.LineIndex] = $true
+        }
+    }
+    foreach ($row in $tail) {
+        if (!$seen.ContainsKey($row.LineIndex)) {
+            $samples += $row
+            $seen[$row.LineIndex] = $true
+        }
+    }
+
+    $samples = @($samples | Sort-Object LineIndex)
+    foreach ($sample in $samples) {
+        $lines += ("line={0} time={1} action={2} owner={3} type={4}" -f
+            $sample.LineIndex,
+            (Format-TimeOnly $sample.Timestamp),
+            $sample.Action,
+            $sample.Owner,
+            $sample.Type
+        )
+    }
+
+    return $lines
+}
+
+function Format-HandleLifecycleSummary {
+    param(
+        [pscustomobject[]]$Rows
+    )
+
+    if (!$Rows -or $Rows.Count -eq 0) {
+        return "lifecycle_rows=0"
+    }
+
+    $ordered = @($Rows | Sort-Object LineIndex)
+    $first = $ordered[0]
+    $last = $ordered[$ordered.Count - 1]
+
+    $actions = @{}
+    $types = @{}
+    $owners = @{}
+    foreach ($row in $ordered) {
+        Add-Count $actions $row.Action
+        Add-Count $types $row.Type
+        Add-Count $owners $row.Owner
+    }
+
+    return ("lifecycle_rows={0} actions={1} types={2} owners={3} first={4}:{5} last={6}:{7}" -f
+        $Rows.Count,
+        (Format-ChildCounts $actions),
+        (Format-ChildCounts $types),
+        (Format-ChildCounts $owners),
+        (Format-TimeOnly $first.Timestamp),
+        $first.LineIndex,
+        (Format-TimeOnly $last.Timestamp),
+        $last.LineIndex
+    )
+}
+
 function Add-CsvKeys {
     param(
         [hashtable]$Table,
@@ -312,6 +396,27 @@ function Parse-WaitRow {
         Ctr = $Matches.ctr.ToUpperInvariant()
         R1 = $Matches.r1.ToUpperInvariant()
         Name = $Matches.name
+    }
+}
+
+function Parse-HandleLifecycleRow {
+    param(
+        [string]$Line,
+        [int]$LineIndex
+    )
+
+    $pattern = "i>\s+(?<owner>[0-9A-Fa-f]{8}) (?<action>Added|Removed) handle:(?<handle>[0-9A-Fa-f]{8}) for (?<type>\S+)"
+    if ($Line -notmatch $pattern) {
+        return $null
+    }
+
+    return [pscustomobject][ordered]@{
+        LineIndex = $LineIndex
+        Timestamp = Try-ParseLogcatTimestamp $Line
+        Owner = $Matches.owner.ToUpperInvariant()
+        Action = $Matches.action.ToUpperInvariant()
+        Handle = $Matches.handle.ToUpperInvariant()
+        Type = $Matches.type
     }
 }
 
@@ -460,12 +565,19 @@ $snapshotRows = @()
 $freeRows = @()
 $vdSwapRows = @()
 $statusRows = @()
+$handleLifecycleRows = @()
 $filteredDumpSeen = @{}
 $postFailedHandleRows = @{}
 
 for ($index = 0; $index -lt $lines.Count; ++$index) {
     $line = $lines[$index]
     $lineNumber = $index + 1
+
+    $handleLifecycleRow = Parse-HandleLifecycleRow -Line $line -LineIndex $lineNumber
+    if ($handleLifecycleRow) {
+        $handleLifecycleRows += $handleLifecycleRow
+        continue
+    }
 
     $waitRow = Parse-WaitRow -Line $line -LineIndex ($index + 1)
     if ($waitRow) {
@@ -546,6 +658,14 @@ if ($lastFailedFree) {
         }
         $postFailedHandleRows[$handle] += $row
     }
+}
+
+$handleLifecycleByHandle = @{}
+foreach ($row in $handleLifecycleRows) {
+    if (!$handleLifecycleByHandle.ContainsKey($row.Handle)) {
+        $handleLifecycleByHandle[$row.Handle] = @()
+    }
+    $handleLifecycleByHandle[$row.Handle] += $row
 }
 
 $targetRows = @()
@@ -844,6 +964,11 @@ if ($postFailedHandleRows.Count -gt 0) {
         $phases = @{}
         $firstRow = $null
         $lastRow = $null
+        $handleLifeRows = @()
+        if ($handleLifecycleByHandle.ContainsKey($handle)) {
+            $handleLifeRows = @($handleLifecycleByHandle[$handle])
+        }
+        $handleLifeSummary = Format-HandleLifecycleSummary -Rows $handleLifeRows
 
         foreach ($row in $rowsForHandle) {
             Add-Count $threads $row.ThreadId
@@ -859,7 +984,7 @@ if ($postFailedHandleRows.Count -gt 0) {
         }
 
         $report.Add((
-                "post_failed_target_handle[{0}]=handle={1} rows={2} threads={3} statuses={4} apis={5} phases={6} first={7}:{8} last={9}:{10}" -f
+                "post_failed_target_handle[{0}]=handle={1} rows={2} threads={3} statuses={4} apis={5} phases={6} first={7}:{8} last={9}:{10} {11}" -f
                 $targetHandleIndex,
                 $handle,
                 $rowsForHandle.Count,
@@ -870,7 +995,8 @@ if ($postFailedHandleRows.Count -gt 0) {
                 (Format-TimeOnly $firstRow.Timestamp),
                 $firstRow.LineIndex,
                 (Format-TimeOnly $lastRow.Timestamp),
-                $lastRow.LineIndex
+                $lastRow.LineIndex,
+                $handleLifeSummary
             ))
 
         $sampleRows = Format-HandleSamples -Rows $rowsForHandle -MaxSamples 4
@@ -878,6 +1004,13 @@ if ($postFailedHandleRows.Count -gt 0) {
         foreach ($sampleLine in $sampleRows) {
             $report.Add(("post_failed_target_handle[{0}]_sample[{1}]={2}" -f $targetHandleIndex, $sampleIndex, $sampleLine))
             ++$sampleIndex
+        }
+
+        $handleLifeSamples = Format-HandleLifecycleSamples -Rows $handleLifeRows -MaxSamples 4
+        $lifeSampleIndex = 0
+        foreach ($sampleLine in $handleLifeSamples) {
+            $report.Add(("post_failed_target_handle[{0}]_lifecycle_sample[{1}]={2}" -f $targetHandleIndex, $lifeSampleIndex, $sampleLine))
+            ++$lifeSampleIndex
         }
         ++$targetHandleIndex
     }
@@ -933,8 +1066,13 @@ foreach ($row in $targetRows) {
         if ($row.WaitHandleNameRows.ContainsKey($handle)) {
             $nameSummary = Format-ChildCounts $row.WaitHandleNameRows[$handle]
         }
+        $handleLifeRows = @()
+        if ($handleLifecycleByHandle.ContainsKey($handle)) {
+            $handleLifeRows = @($handleLifecycleByHandle[$handle])
+        }
+        $handleLifeSummary = Format-HandleLifecycleSummary -Rows $handleLifeRows
         $report.Add((
-                "target_pc[{0}]_wait_handle[{1}]=handle={2} rows={3} guest_objects={4} statuses={5} threads={6} names={7} post_failed_rows={8}" -f
+                "target_pc[{0}]_wait_handle[{1}]=handle={2} rows={3} guest_objects={4} statuses={5} threads={6} names={7} post_failed_rows={8} {9}" -f
                 $rowIndex,
                 $handleIndex,
                 $handle,
@@ -943,8 +1081,15 @@ foreach ($row in $targetRows) {
                 $statusSummary,
                 $threadSummary,
                 $nameSummary,
-                $row.WaitHandlePostFailedRows[$handle]
+                $row.WaitHandlePostFailedRows[$handle],
+                $handleLifeSummary
             ))
+        $handleLifeSamples = Format-HandleLifecycleSamples -Rows $handleLifeRows -MaxSamples 4
+        $sampleIndex = 0
+        foreach ($sampleLine in $handleLifeSamples) {
+            $report.Add(("target_pc[{0}]_wait_handle[{1}]_lifecycle_sample[{2}]={3}" -f $rowIndex, $handleIndex, $sampleIndex, $sampleLine))
+            ++$sampleIndex
+        }
         ++$handleIndex
     }
     ++$rowIndex
