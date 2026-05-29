@@ -582,13 +582,27 @@ foreach ($wait in $waitRows) {
 $classification = "project_sylpheed_free_site_flow_join_incomplete"
 $reason = "missing failed physical frees or filtered PPC target matches"
 $decision = "rerun_with_physical_memory_audit_and_filtered_free_site_dump"
+$offsetUnmatchedCount = $failedTargets.Count - $offsetMatchCount
 if ($failedFreeRows.Count -gt 0 -and $ppcMatchCount -eq $failedTargets.Count -and
-        $offsetMatchCount -eq $failedTargets.Count -and $failedTargets.Count -gt 0) {
-    $classification = "project_sylpheed_guest_suballocator_offsets_mapped"
-    $reason = "all failed interior frees map to filtered PPC table blocks whose computed r30 offsets match the failed owner offsets"
-    $decision = "do_not_round_down_or_hide_physical_frees; join late guest PCs and wait/presentation before behavior"
+        $failedTargets.Count -gt 0) {
+    if ($offsetMatchCount -eq $failedTargets.Count) {
+        $classification = "project_sylpheed_guest_suballocator_offsets_mapped"
+        $reason = "all failed interior frees map to filtered PPC table blocks whose computed r30 offsets match the failed owner offsets"
+    } elseif ($offsetMatchCount -gt 0) {
+        $classification = "project_sylpheed_guest_suballocator_table_mapped_partial_offsets"
+        $reason = "all failed interior frees map to filtered PPC table blocks, with most computed r30 offsets matching the failed owner offsets"
+    }
+    if ($classification -ne "project_sylpheed_free_site_flow_join_incomplete") {
+        $decision = "do_not_round_down_or_hide_physical_frees; inspect suballocation table and late wait/presentation before behavior"
+    }
 }
-if ($classification -eq "project_sylpheed_guest_suballocator_offsets_mapped" -and
+if ($classification -ne "project_sylpheed_free_site_flow_join_incomplete" -and
+        $waitAfterLast.Count -gt 0 -and $vdSwapAfterLast.Count -gt 0 -and
+        $snapshotAfterLast.Count -gt 0) {
+    $classification = "project_sylpheed_guest_suballocator_table_with_live_wait_loop"
+    $reason = "free-site table rows are mapped, wait trace covers the post-free window, and VdSwap/A64 snapshots continue afterward"
+    $decision = "design_explicit_physical_suballocation_release_or_prove_presentation_stall_independence_before_behavior"
+} elseif ($classification -ne "project_sylpheed_free_site_flow_join_incomplete" -and
         $waitBudgetBeforeLastFailed -eq 1 -and $vdSwapRows.Count -gt 100 -and
         $snapshotAfterLast.Count -gt 0) {
     $classification = "project_sylpheed_guest_suballocator_offsets_with_unattributed_live_black_loop"
@@ -607,6 +621,7 @@ $report = @(
     "failed_ctr_target_count=$($failedTargets.Count)",
     "ppc_target_match_count=$ppcMatchCount",
     "offset_match_count=$offsetMatchCount",
+    "offset_unmatched_count=$offsetUnmatchedCount",
     "next_case_offset_match_count=$nextCaseOffsetMatchCount",
     "first_failed_free_time=$(Format-TimeValue $firstFailed)",
     "last_failed_free_time=$(Format-TimeValue $lastFailed)",
