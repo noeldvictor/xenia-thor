@@ -6,6 +6,7 @@ param(
     [string]$TopThreadPath = "",
     [string]$OutPath = "",
     [int]$LiveVdSwapThreshold = 1000,
+    [double]$StaleVdSwapSeconds = 10.0,
     [double]$GuestCpuThreshold = 30.0
 )
 
@@ -64,6 +65,24 @@ function Read-KeyValueReport {
         $values[$key] = $value
     }
     return $values
+}
+
+function Try-ParseIsoTimestamp {
+    param([string]$Text)
+
+    if (!$Text) {
+        return $null
+    }
+
+    $parsed = [DateTime]::MinValue
+    if ([DateTime]::TryParse(
+            $Text,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeLocal,
+            [ref]$parsed)) {
+        return $parsed
+    }
+    return $null
 }
 
 function Try-ParseLogcatTimestamp {
@@ -302,10 +321,12 @@ $log = Resolve-PacketPath $LogPath "logcat.txt" -Required
 $status = Resolve-PacketPath $StatusPath "status-report.txt"
 $visual = Resolve-PacketPath $VisualPath "visual-status.txt"
 $topThreads = Resolve-PacketPath $TopThreadPath "top-threads-live.txt"
+$meta = Resolve-PacketPath "" "meta.txt"
 
 $logLines = Get-Content -LiteralPath $log
 $statusValues = Read-KeyValueReport $status
 $visualValues = Read-KeyValueReport $visual
+$metaValues = Read-KeyValueReport $meta
 $top = Parse-TopThreads $topThreads
 
 $vdSwap = Measure-LogcatSpan $logLines "\bVdSwap\("
@@ -324,6 +345,16 @@ if ($visualValues.ContainsKey("classification")) {
 $statusClassification = ""
 if ($statusValues.ContainsKey("classification")) {
     $statusClassification = $statusValues["classification"]
+}
+
+$packetCreatedAt = $null
+if ($metaValues.ContainsKey("created_at")) {
+    $packetCreatedAt = Try-ParseIsoTimestamp $metaValues["created_at"]
+}
+
+$secondsSinceLastVdSwap = -1.0
+if ($packetCreatedAt -and $vdSwap.Last) {
+    $secondsSinceLastVdSwap = [Math]::Max(0.0, ($packetCreatedAt - $vdSwap.Last).TotalSeconds)
 }
 
 $classification = "project_sylpheed_loading_loop_needs_more_evidence"
@@ -350,6 +381,9 @@ $presentationEvidence = "missing_vdswap"
 if ($vdSwap.Count -ge $LiveVdSwapThreshold) {
     $presentationEvidence = "vdswap_continuing"
 }
+if ($vdSwap.Count -gt 0 -and $secondsSinceLastVdSwap -ge $StaleVdSwapSeconds) {
+    $presentationEvidence = "vdswap_stale_no_present"
+}
 
 if ($presentationEvidence -eq "vdswap_continuing" -and
         $guestExecutionEvidence -eq "guest_xthreads_consuming_cpu" -and
@@ -359,6 +393,14 @@ if ($presentationEvidence -eq "vdswap_continuing" -and
         $heapReleaseCount -eq 0) {
     $classification = "project_sylpheed_live_loading_guest_cpu_vdswap_no_crash"
     $reason = "near-black loading loop still has active guest XThread CPU and ongoing VdSwap with no crash, reenter, pthread, or heap-release markers"
+}
+
+if ($presentationEvidence -eq "vdswap_stale_no_present" -and
+        $nativeAbortCount -eq 0 -and
+        $invalidPthreadJoinCount -eq 0 -and
+        $longjmpReenterCount -eq 0) {
+    $classification = "project_sylpheed_black_no_present_stall_no_scoped_crash"
+    $reason = "guest swaps stopped before the screenshot, with no scoped native abort, reenter, or pthread failure"
 }
 
 if ($presentationEvidence -eq "vdswap_continuing" -and
@@ -383,6 +425,9 @@ if ($classification -eq "project_sylpheed_live_loading_guest_cpu_vdswap_no_crash
         $guestProgressEvidence -eq "a64_thread_snapshot_present") {
     $decision = "interpret_a64_thread_snapshot_progress_next"
 }
+if ($classification -eq "project_sylpheed_black_no_present_stall_no_scoped_crash") {
+    $decision = "join_stale_present_stop_with_post_free_wait_trace_and_a64_thread_snapshots"
+}
 
 $report = @(
     "classification=$classification",
@@ -395,11 +440,15 @@ $report = @(
     "top_thread_path=$topThreads",
     "status_classification=$statusClassification",
     "visual_classification=$visualClassification",
+    "packet_created_at=$($metaValues['created_at'])",
     "presentation_evidence=$presentationEvidence",
     "guest_execution_evidence=$guestExecutionEvidence",
     "guest_progress_evidence=$guestProgressEvidence",
     "kernel_wait_evidence=$kernelWaitEvidence",
     "vdswap_count=$($vdSwap.Count)",
+    "vdswap_first_time=$(if ($vdSwap.First) { $vdSwap.First.ToString('HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture) } else { '' })",
+    "vdswap_last_time=$(if ($vdSwap.Last) { $vdSwap.Last.ToString('HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture) } else { '' })",
+    "seconds_since_last_vdswap=$($secondsSinceLastVdSwap.ToString('0.000'))",
     "vdswap_span_seconds=$($vdSwap.SpanSeconds.ToString('0.000'))",
     "vdswap_rate_per_second=$($vdSwap.Rate.ToString('0.000'))",
     "vdswap_thread_ids=$($vdSwap.ThreadIds)",
