@@ -104,6 +104,70 @@ function Top-Counts {
         ) -join ",")
 }
 
+function Add-CsvKeys {
+    param(
+        [hashtable]$Table,
+        [string]$Csv
+    )
+
+    if (!$Csv) {
+        return
+    }
+    foreach ($rawKey in ($Csv -split ",")) {
+        $key = $rawKey.Trim().ToUpperInvariant()
+        if (!$key) {
+            continue
+        }
+        if (!$Table.ContainsKey($key)) {
+            $Table[$key] = 0
+        }
+        ++$Table[$key]
+    }
+}
+
+function Join-RecommendedThreadIds {
+    param(
+        [hashtable]$Table,
+        [int]$Limit = 8
+    )
+
+    $rows = @()
+    foreach ($key in $Table.Keys) {
+        $rows += [pscustomobject]@{
+            Key = $key
+            Count = [int]$Table[$key]
+        }
+    }
+
+    return (@(
+            $rows |
+                Sort-Object -Property @{ Expression = "Count"; Descending = $true }, @{ Expression = "Key"; Descending = $false } |
+                Select-Object -First $Limit |
+                ForEach-Object { $_.Key }
+        ) -join ",")
+}
+
+function Get-RoundedTraceDelayMs {
+    param(
+        $FirstWaitTimestamp,
+        $LastFailedFreeTimestamp
+    )
+
+    if (!$FirstWaitTimestamp -or !$LastFailedFreeTimestamp) {
+        return 0
+    }
+
+    $deltaMs = [int][Math]::Round(($LastFailedFreeTimestamp - $FirstWaitTimestamp).TotalMilliseconds)
+    if ($deltaMs -le 15000) {
+        return 0
+    }
+
+    # Start a few seconds before the failed-free/black-loop window, and round
+    # down so repeated captures use stable command lines.
+    $candidate = [Math]::Max(0, $deltaMs - 5000)
+    return [int]([Math]::Floor($candidate / 5000) * 5000)
+}
+
 function Parse-WaitRow {
     param(
         [string]$Line,
@@ -341,11 +405,54 @@ foreach ($pc in @($targetSet.Keys | Sort-Object)) {
 }
 
 $missingDumpRows = @($targetRows | Where-Object { $_.FilteredDumpPresent -eq 0 -and (($_.WaitLr + $_.WaitCtr + $_.SnapshotLastFn + $_.SnapshotLastRet + $_.SnapshotLr + $_.SnapshotCtr) -gt 0) })
+$firstWaitTrace = ($waitRows | Where-Object { $_.Timestamp } | Sort-Object Timestamp | Select-Object -First 1).Timestamp
 $waitTraceLast = ($waitRows | Where-Object { $_.Timestamp } | Sort-Object Timestamp | Select-Object -Last 1).Timestamp
 $lateSnapshotRows = @()
 if ($lastFailedFree) {
     $lateSnapshotRows = @($snapshotRows | Where-Object { $_.Timestamp -and $_.Timestamp -gt $lastFailedFree })
 }
+
+$recommendedThreadIds = @{}
+foreach ($row in $targetRows) {
+    if (($row.WaitLr + $row.WaitCtr) -gt 0) {
+        Add-CsvKeys $recommendedThreadIds $row.WaitThreads
+    }
+    if ($row.SnapshotLastFn -gt 0) {
+        Add-CsvKeys $recommendedThreadIds $row.SnapshotThreads
+    }
+}
+if ($recommendedThreadIds.Count -eq 0) {
+    foreach ($row in $targetRows) {
+        Add-CsvKeys $recommendedThreadIds $row.SnapshotThreads
+    }
+}
+$recommendedThreadIdList = Join-RecommendedThreadIds $recommendedThreadIds
+$recommendedAfterMs = Get-RoundedTraceDelayMs -FirstWaitTimestamp $firstWaitTrace -LastFailedFreeTimestamp $lastFailedFree
+$recommendedWaitTraceBudget = 2048
+$recommendedRemoteDebugTail = 200000
+$recommendedFilter = (@($missingDumpRows | ForEach-Object { $_.Pc }) -join ",")
+if (!$recommendedFilter) {
+    $recommendedFilter = (@($targetSet.Keys | Sort-Object) -join ",")
+}
+$recommendedLaunchCommand = (
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 " +
+    "-DeviceSerial c3ca0370 -Mode LaunchLauncher " +
+    "-DisassembleFunctionFilter ""$recommendedFilter"" " +
+    "-Arm64SpeedProfileIntervalMs 5000 " +
+    "-Arm64SpeedProfileThreadSnapshot true " +
+    "-Arm64SpeedProfileThreadSnapshotOnIdle true " +
+    "-XboxkrnlThreadWaitTrace true " +
+    "-XboxkrnlThreadWaitTraceBudget $recommendedWaitTraceBudget " +
+    "-XboxkrnlThreadWaitTraceAfterMs $recommendedAfterMs"
+)
+if ($recommendedThreadIdList) {
+    $recommendedLaunchCommand += " -XboxkrnlThreadWaitTraceGuestTids ""$recommendedThreadIdList"""
+}
+$recommendedLaunchCommand += " -XboxkrnlPhysicalMemoryAudit true -XboxkrnlPhysicalMemoryAuditBudget 512"
+$recommendedCaptureCommand = (
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 " +
+    "-DeviceSerial c3ca0370 -Mode Screenshot -LogcatTailLines $recommendedRemoteDebugTail"
+)
 
 $classification = "project_sylpheed_late_pc_wait_map_needs_capture"
 $decision = "capture_filtered_ppc_hir_for_late_pcs_and_extend_wait_trace_into_black_loop"
@@ -363,12 +470,19 @@ $report.Add(("line_count={0}" -f $lines.Count))
 $report.Add(("target_pcs={0}" -f (@($targetSet.Keys | Sort-Object) -join ",")))
 $report.Add(("recommended_disassemble_function_filter={0}" -f (@($missingDumpRows | ForEach-Object { $_.Pc }) -join ",")))
 $report.Add(("wait_trace_count={0}" -f $waitRows.Count))
+$report.Add(("wait_trace_first_time={0}" -f (Format-TimeOnly $firstWaitTrace)))
 $report.Add(("wait_trace_last_time={0}" -f (Format-TimeOnly $waitTraceLast)))
 $report.Add(("physical_free_audit_rows={0}" -f $freeRows.Count))
 $report.Add(("failed_physical_free_rows={0}" -f $failedFreeRows.Count))
 $report.Add(("last_failed_free_time={0}" -f (Format-TimeOnly $lastFailedFree)))
 $report.Add(("a64_snapshot_count={0}" -f $snapshotRows.Count))
 $report.Add(("a64_snapshots_after_last_failed_free={0}" -f $lateSnapshotRows.Count))
+$report.Add(("recommended_wait_trace_guest_tids={0}" -f $recommendedThreadIdList))
+$report.Add(("recommended_wait_trace_after_ms={0}" -f $recommendedAfterMs))
+$report.Add(("recommended_wait_trace_budget={0}" -f $recommendedWaitTraceBudget))
+$report.Add(("recommended_remote_debug_logcat_tail_lines={0}" -f $recommendedRemoteDebugTail))
+$report.Add(("recommended_launcher_command={0}" -f $recommendedLaunchCommand))
+$report.Add(("recommended_capture_command={0}" -f $recommendedCaptureCommand))
 
 $rowIndex = 0
 foreach ($row in $targetRows) {
