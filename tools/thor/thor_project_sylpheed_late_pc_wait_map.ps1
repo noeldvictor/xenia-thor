@@ -174,6 +174,59 @@ function Format-ChildCounts {
         ) -join ",")
 }
 
+function Format-HandleSamples {
+    param(
+        [pscustomobject[]]$Rows,
+        [int]$MaxSamples = 4
+    )
+
+    $lines = @()
+    if (!$Rows -or $Rows.Count -eq 0) {
+        return $lines
+    }
+
+    $ordered = @($Rows | Sort-Object LineIndex)
+    $samples = @()
+    $limit = [Math]::Max(1, [Math]::Min($MaxSamples, $ordered.Count))
+
+    $head = @($ordered | Select-Object -First ([Math]::Ceiling($limit / 2)))
+    $tailCount = $limit - $head.Count
+    $tail = @()
+    if ($tailCount -gt 0) {
+        $tail = @($ordered | Select-Object -Last $tailCount)
+    }
+
+    $seen = @{}
+    foreach ($row in $head) {
+        if (!$seen.ContainsKey($row.LineIndex)) {
+            $samples += $row
+            $seen[$row.LineIndex] = $true
+        }
+    }
+    foreach ($row in $tail) {
+        if (!$seen.ContainsKey($row.LineIndex)) {
+            $samples += $row
+            $seen[$row.LineIndex] = $true
+        }
+    }
+
+    $samples = @($samples | Sort-Object LineIndex)
+    foreach ($sample in $samples) {
+        $lines += ("line={0} time={1} api={2} phase={3} status={4} thread={5} guest_object={6} name={7}" -f
+            $sample.LineIndex,
+            (Format-TimeOnly $sample.Timestamp),
+            $sample.Api,
+            $sample.Phase,
+            $sample.Status,
+            $sample.ThreadId,
+            $sample.GuestObject,
+            $sample.Name
+        )
+    }
+
+    return $lines
+}
+
 function Add-CsvKeys {
     param(
         [hashtable]$Table,
@@ -408,6 +461,7 @@ $freeRows = @()
 $vdSwapRows = @()
 $statusRows = @()
 $filteredDumpSeen = @{}
+$postFailedHandleRows = @{}
 
 for ($index = 0; $index -lt $lines.Count; ++$index) {
     $line = $lines[$index]
@@ -474,6 +528,24 @@ $failedFreeRows = @($freeRows | Where-Object { $_.ResultKnown -eq 1 -and $_.Resu
 $lastFailedFree = $null
 if ($failedFreeRows.Count -gt 0) {
     $lastFailedFree = ($failedFreeRows | Where-Object { $_.Timestamp } | Sort-Object Timestamp | Select-Object -Last 1).Timestamp
+}
+
+$postFailedHandleRows = @{}
+if ($lastFailedFree) {
+    foreach ($row in $waitRows) {
+        if (!$row.Timestamp -or $row.Timestamp -le $lastFailedFree) {
+            continue
+        }
+        if (!$targetSet.ContainsKey($row.Lr) -and !$targetSet.ContainsKey($row.Ctr)) {
+            continue
+        }
+
+        $handle = $row.Handle.ToUpperInvariant()
+        if (!$postFailedHandleRows.ContainsKey($handle)) {
+            $postFailedHandleRows[$handle] = @()
+        }
+        $postFailedHandleRows[$handle] += $row
+    }
 }
 
 $targetRows = @()
@@ -746,6 +818,70 @@ $report.Add(("recommended_wait_trace_budget={0}" -f $recommendedWaitTraceBudget)
 $report.Add(("recommended_remote_debug_logcat_tail_lines={0}" -f $recommendedRemoteDebugTail))
 $report.Add(("recommended_launcher_command={0}" -f $recommendedLaunchCommand))
 $report.Add(("recommended_capture_command={0}" -f $recommendedCaptureCommand))
+$report.Add(("post_failed_target_wait_handle_count={0}" -f $postFailedHandleRows.Count))
+
+if ($postFailedHandleRows.Count -gt 0) {
+    $postFailedHandleSummaryRows = @()
+    foreach ($handle in $postFailedHandleRows.Keys) {
+        $postFailedHandleSummaryRows += [pscustomobject]@{
+            Handle = $handle
+            Count = [int]$postFailedHandleRows[$handle].Count
+        }
+    }
+
+    $postFailedHandleOrder = @(
+        $postFailedHandleSummaryRows |
+        Sort-Object -Property @{ Expression = "Count"; Descending = $true }, @{ Expression = "Handle"; Descending = $false } |
+        ForEach-Object { $_.Handle }
+    )
+
+    $targetHandleIndex = 0
+    foreach ($handle in $postFailedHandleOrder) {
+        $rowsForHandle = $postFailedHandleRows[$handle]
+        $threads = @{}
+        $statuses = @{}
+        $apis = @{}
+        $phases = @{}
+        $firstRow = $null
+        $lastRow = $null
+
+        foreach ($row in $rowsForHandle) {
+            Add-Count $threads $row.ThreadId
+            Add-Count $statuses $row.Status
+            Add-Count $apis $row.Api
+            Add-Count $phases $row.Phase
+            if (!$firstRow -or $row.LineIndex -lt $firstRow.LineIndex) {
+                $firstRow = $row
+            }
+            if (!$lastRow -or $row.LineIndex -gt $lastRow.LineIndex) {
+                $lastRow = $row
+            }
+        }
+
+        $report.Add((
+                "post_failed_target_handle[{0}]=handle={1} rows={2} threads={3} statuses={4} apis={5} phases={6} first={7}:{8} last={9}:{10}" -f
+                $targetHandleIndex,
+                $handle,
+                $rowsForHandle.Count,
+                (Join-Keys $threads),
+                (Format-ChildCounts $statuses),
+                (Join-Keys $apis),
+                (Join-Keys $phases),
+                (Format-TimeOnly $firstRow.Timestamp),
+                $firstRow.LineIndex,
+                (Format-TimeOnly $lastRow.Timestamp),
+                $lastRow.LineIndex
+            ))
+
+        $sampleRows = Format-HandleSamples -Rows $rowsForHandle -MaxSamples 4
+        $sampleIndex = 0
+        foreach ($sampleLine in $sampleRows) {
+            $report.Add(("post_failed_target_handle[{0}]_sample[{1}]={2}" -f $targetHandleIndex, $sampleIndex, $sampleLine))
+            ++$sampleIndex
+        }
+        ++$targetHandleIndex
+    }
+}
 
 $rowIndex = 0
 foreach ($row in $targetRows) {
