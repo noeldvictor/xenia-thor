@@ -77,6 +77,19 @@ class VulkanSharedMemory : public SharedMemory {
   // Single for non-sparse, every allocation so far for sparse.
   std::vector<VkDeviceMemory> buffer_memory_;
 
+  // Unified-memory direct-write path (gpu_uma_direct_shared_memory). On an
+  // integrated GPU the buffer memory can be HOST_VISIBLE | DEVICE_LOCAL, so it
+  // is persistently mapped and guest pages are written straight into the GPU
+  // buffer with no staging buffer and no transfer copy. Only used on the
+  // non-sparse buffer path.
+  bool buffer_host_visible_ = false;
+  bool buffer_host_coherent_ = false;
+  void* buffer_host_mapping_ = nullptr;
+
+  // Direct (host-visible) variant of UploadRanges.
+  bool UploadRangesDirect(const std::vector<std::pair<uint32_t, uint32_t>>&
+                              upload_page_ranges);
+
   Usage last_usage_;
   std::pair<uint32_t, uint32_t> last_written_range_;
 

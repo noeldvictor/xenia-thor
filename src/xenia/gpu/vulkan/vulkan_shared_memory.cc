@@ -28,6 +28,16 @@ DEFINE_bool(vulkan_sparse_shared_memory, true,
             "allows graphics debuggers that don't support sparse binding to "
             "work.",
             "Vulkan");
+DEFINE_bool(
+    gpu_uma_direct_shared_memory, false,
+    "Unified-memory optimization for integrated GPUs (e.g. mobile Adreno on "
+    "AYN Thor). When the device exposes a HOST_VISIBLE | DEVICE_LOCAL memory "
+    "type, back the shared-memory buffer with it and write guest pages "
+    "directly into the GPU buffer, skipping the staging upload buffer and the "
+    "vkCmdCopyBuffer transfer. Forces a non-sparse 512 MB buffer. "
+    "Experimental - validate rendering per title on device before trusting it; "
+    "a coherency bug here shows up as corrupted or black frames.",
+    "Vulkan");
 
 namespace xe {
 namespace gpu {
@@ -68,7 +78,10 @@ bool VulkanSharedMemory::Initialize() {
   buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   buffer_create_info.queueFamilyIndexCount = 0;
   buffer_create_info.pQueueFamilyIndices = nullptr;
+  // The unified-memory direct-write path needs a single persistently mapped
+  // allocation, so it always uses the non-sparse buffer below.
   if (cvars::vulkan_sparse_shared_memory &&
+      !cvars::gpu_uma_direct_shared_memory &&
       vulkan_device->properties().sparseResidencyBuffer) {
     if (dfn.vkCreateBuffer(device, &buffer_create_info, nullptr, &buffer_) ==
         VK_SUCCESS) {
@@ -128,14 +141,41 @@ bool VulkanSharedMemory::Initialize() {
     VkMemoryRequirements buffer_memory_requirements;
     dfn.vkGetBufferMemoryRequirements(device, buffer_,
                                       &buffer_memory_requirements);
-    if (!xe::bit_scan_forward(buffer_memory_requirements.memoryTypeBits &
-                                  vulkan_device->memory_types().device_local,
-                              &buffer_memory_type_)) {
-      XELOGE(
-          "Shared memory: Failed to get a device-local Vulkan memory type for "
-          "the buffer");
-      Shutdown();
-      return false;
+    const ui::vulkan::VulkanDevice::MemoryTypes& memory_types =
+        vulkan_device->memory_types();
+    // Prefer HOST_VISIBLE | DEVICE_LOCAL memory for the unified-memory direct
+    // path so guest pages can be written straight into the GPU buffer.
+    const uint32_t host_visible_device_local =
+        buffer_memory_requirements.memoryTypeBits & memory_types.device_local &
+        memory_types.host_visible;
+    buffer_host_visible_ = cvars::gpu_uma_direct_shared_memory &&
+                           host_visible_device_local != 0;
+    if (buffer_host_visible_) {
+      xe::bit_scan_forward(host_visible_device_local, &buffer_memory_type_);
+      buffer_host_coherent_ =
+          (memory_types.host_coherent & (uint32_t(1) << buffer_memory_type_)) !=
+          0;
+      XELOGGPU(
+          "Shared memory: using unified-memory direct-write path (memory type "
+          "{}, {})",
+          buffer_memory_type_,
+          buffer_host_coherent_ ? "host-coherent" : "needs explicit flush");
+    } else {
+      if (cvars::gpu_uma_direct_shared_memory) {
+        XELOGW(
+            "Shared memory: gpu_uma_direct_shared_memory requested but no "
+            "HOST_VISIBLE | DEVICE_LOCAL memory type is available; falling "
+            "back to the staged device-local path");
+      }
+      if (!xe::bit_scan_forward(buffer_memory_requirements.memoryTypeBits &
+                                    memory_types.device_local,
+                                &buffer_memory_type_)) {
+        XELOGE(
+            "Shared memory: Failed to get a device-local Vulkan memory type "
+            "for the buffer");
+        Shutdown();
+        return false;
+      }
     }
     VkMemoryAllocateInfo buffer_memory_allocate_info;
     VkMemoryAllocateInfo* buffer_memory_allocate_info_last =
@@ -175,6 +215,17 @@ bool VulkanSharedMemory::Initialize() {
       Shutdown();
       return false;
     }
+    if (buffer_host_visible_) {
+      if (dfn.vkMapMemory(device, buffer_memory, 0, VK_WHOLE_SIZE, 0,
+                          &buffer_host_mapping_) != VK_SUCCESS) {
+        XELOGE(
+            "Shared memory: Failed to map the unified-memory shared buffer; "
+            "disable gpu_uma_direct_shared_memory");
+        buffer_host_mapping_ = nullptr;
+        Shutdown();
+        return false;
+      }
+    }
   }
 
   // The first usage will likely be uploading.
@@ -200,6 +251,10 @@ void VulkanSharedMemory::Shutdown(bool from_destructor) {
   const VkDevice device = vulkan_device->device();
 
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device, buffer_);
+  // vkFreeMemory implicitly unmaps any persistent mapping.
+  buffer_host_mapping_ = nullptr;
+  buffer_host_visible_ = false;
+  buffer_host_coherent_ = false;
   for (VkDeviceMemory memory : buffer_memory_) {
     dfn.vkFreeMemory(device, memory, nullptr);
   }
@@ -377,6 +432,9 @@ bool VulkanSharedMemory::UploadRanges(
   if (upload_page_ranges.empty()) {
     return true;
   }
+  if (buffer_host_visible_) {
+    return UploadRangesDirect(upload_page_ranges);
+  }
   // upload_page_ranges are sorted, use them to determine the range for the
   // ordering barrier.
   Use(Usage::kTransferDestination,
@@ -445,6 +503,64 @@ bool VulkanSharedMemory::UploadRanges(
     upload_regions_.clear();
   }
   return successful;
+}
+
+bool VulkanSharedMemory::UploadRangesDirect(
+    const std::vector<std::pair<uint32_t, uint32_t>>& upload_page_ranges) {
+  // Unified-memory path: buffer_ memory is HOST_VISIBLE | DEVICE_LOCAL and
+  // persistently mapped, so guest pages are copied straight into the GPU
+  // buffer. No staging buffer, no vkCmdCopyBuffer, no transfer barrier.
+  assert_not_null(buffer_host_mapping_);
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  uint8_t* const buffer_mapping =
+      reinterpret_cast<uint8_t*>(buffer_host_mapping_);
+  const uint32_t page_size_log2_local = page_size_log2();
+
+  // upload_page_ranges are sorted; bound the barrier to the touched span.
+  const VkDeviceSize barrier_first_byte =
+      VkDeviceSize(upload_page_ranges.front().first) << page_size_log2_local;
+  const VkDeviceSize barrier_end_byte =
+      VkDeviceSize(upload_page_ranges.back().first +
+                   upload_page_ranges.back().second)
+      << page_size_log2_local;
+
+  for (auto upload_range : upload_page_ranges) {
+    uint32_t start_byte = upload_range.first << page_size_log2_local;
+    uint32_t length_bytes = upload_range.second << page_size_log2_local;
+    trace_writer_.WriteMemoryRead(start_byte, length_bytes);
+    MakeRangeValid(start_byte, length_bytes, false);
+    std::memcpy(buffer_mapping + start_byte,
+                memory().TranslatePhysical(start_byte), length_bytes);
+  }
+
+  // Make the host writes visible to the device. Flushing the whole buffer
+  // avoids nonCoherentAtomSize alignment handling on the touched subranges.
+  if (!buffer_host_coherent_) {
+    VkMappedMemoryRange flush_range;
+    flush_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    flush_range.pNext = nullptr;
+    flush_range.memory = buffer_memory_.front();
+    flush_range.offset = 0;
+    flush_range.size = VK_WHOLE_SIZE;
+    dfn.vkFlushMappedMemoryRanges(device, 1, &flush_range);
+  }
+
+  // Host-write -> guest-read availability/visibility barrier. The buffer is
+  // consumed as index buffer / vfetch / shader storage by guest stages.
+  command_processor_.PushBufferMemoryBarrier(
+      buffer_, barrier_first_byte, barrier_end_byte - barrier_first_byte,
+      VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | guest_shader_pipeline_stages_,
+      VK_ACCESS_HOST_WRITE_BIT,
+      VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+  // The buffer now holds valid data visible to read stages.
+  last_usage_ = Usage::kRead;
+  last_written_range_ = std::make_pair(uint32_t(0), uint32_t(0));
+
+  return true;
 }
 
 void VulkanSharedMemory::GetUsageMasks(Usage usage,
