@@ -5,7 +5,9 @@ param(
     [string]$PackageName = "jp.xenia.emulator.github.debug",
     [string]$OutDir = "",
     [int]$Seconds = 30,
+    [int]$LogcatTailLines = 50000,
     [string]$ScrcpyPath = "scrcpy",
+    [switch]$FullLogcat,
     [switch]$ClearLogcat
 )
 
@@ -68,6 +70,41 @@ function Invoke-AdbNoSerial {
     $output
 }
 
+function Invoke-AdbToFile {
+    param(
+        [string[]]$Arguments,
+        [string]$OutputPath
+    )
+
+    $allArgs = @()
+    if ($DeviceSerial) {
+        $allArgs += @("-s", $DeviceSerial)
+    }
+    $allArgs += $Arguments
+    $errorPath = "$OutputPath.err.txt"
+    if (Test-Path -LiteralPath $OutputPath) {
+        Remove-Item -LiteralPath $OutputPath -Force
+    }
+    if (Test-Path -LiteralPath $errorPath) {
+        Remove-Item -LiteralPath $errorPath -Force
+    }
+
+    $process = Start-Process -FilePath $script:AdbPath -ArgumentList $allArgs `
+        -RedirectStandardOutput $OutputPath -RedirectStandardError $errorPath `
+        -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        $errorText = ""
+        if (Test-Path -LiteralPath $errorPath) {
+            $errorText = (Get-Content -LiteralPath $errorPath -Raw)
+        }
+        throw "adb failed with exit code $($process.ExitCode): $($Arguments -join ' ') $errorText"
+    }
+    if ((Test-Path -LiteralPath $errorPath) -and
+        ((Get-Item -LiteralPath $errorPath).Length -eq 0)) {
+        Remove-Item -LiteralPath $errorPath -Force
+    }
+}
+
 function New-OutputDirectory {
     if ($script:OutDir) {
         New-Item -ItemType Directory -Force -Path $script:OutDir | Out-Null
@@ -102,6 +139,8 @@ function Write-Metadata {
         "package=$PackageName",
         "device_model=$deviceModel",
         "android_sdk=$sdk",
+        "full_logcat=$FullLogcat",
+        "logcat_tail_lines=$LogcatTailLines",
         "branch=$branch",
         "commit=$commit",
         "dirty_state=$([bool]$dirty)",
@@ -121,10 +160,14 @@ function Save-Logcat {
     $logPath = Join-Path $Directory "logcat.txt"
     $focusedPath = Join-Path $Directory "logcat-focused.txt"
     $statusPath = Join-Path $Directory "status-report.txt"
-    $logcat = Invoke-Adb @("logcat", "-d", "-v", "threadtime")
-    $logcat | Out-File -Encoding utf8 -FilePath $logPath
-    $logcat |
-        Select-String -Pattern "xenia|Xenia|AndroidRuntime|FATAL|fatal|tombstone|signal|backtrace|crash|RtlRaiseException|assert|Vulkan|Adreno" |
+
+    $logcatArgs = @("logcat", "-d", "-v", "threadtime")
+    if (!$FullLogcat -and $LogcatTailLines -gt 0) {
+        $logcatArgs += @("-t", $LogcatTailLines.ToString())
+    }
+    Invoke-AdbToFile -Arguments $logcatArgs -OutputPath $logPath
+
+    Select-String -Path $logPath -Pattern "xenia|Xenia|AndroidRuntime|FATAL|fatal|tombstone|Fatal signal|signal [0-9]+|SIGABRT|SIGSEGV|backtrace|crash|RtlRaiseException|assert|Vulkan|Adreno|XeniaInput|DEBUG_GAMEPAD|VdSwap" |
         ForEach-Object { $_.Line } |
         Out-File -Encoding utf8 -FilePath $focusedPath
     $reportScript = Join-Path $PSScriptRoot "thor_android_game_status_report.ps1"
