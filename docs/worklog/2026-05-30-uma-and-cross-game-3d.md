@@ -84,6 +84,45 @@ Test plan: launch Burnout uma=true + gpu_uma_strong_coherency=true xN; if the ~5
 TDR disappears -> coherency confirmed, then narrow (flush-only vs barrier-only) to
 the minimal fix and consider making it the default for host-visible buffers.
 
+RESULT batch1 (6 runs): 5 RUNNING / 1 HUNG - looked promising but was a lucky streak.
+RESULT batch2 (8 runs): 4 RUN / 4 HUNG (runs 9,10,13,14 hung @1190-1197).
+COMBINED: 9 RUNNING / 5 HUNG of 14 = ~36% hang. Statistically indistinguishable
+from the ~50% baseline. => EXPERIMENT (b) REFUTED. Maximal host->device coherency
+(whole-buffer flush even when HOST_COHERENT + ALL_COMMANDS/MEMORY_READ barrier over
+the whole buffer) does NOT fix the TDR. So the fault is NOT a host-write
+coherency/visibility gap either.
+
+## Elimination summary (what the UMA TDR is NOT)
+Proven on device this session:
+- NOT a prior-submission CPU-write-vs-deferred-read race (serialize: still hung)
+- NOT non-sparse / buffer size / storage-buffer split (exp a: device-local
+  non-sparse staging = 5/5 stable)
+- NOT a host-write coherency/visibility gap (exp b: maximal flush+barrier = still
+  ~36% hung)
+- IS specific to HOST_VISIBLE|DEVICE_LOCAL memory (exp a: only the memory type
+  differs between the stable staging path and the faulting UMA path)
+- ALWAYS freezes at the same VdSwap ~1190-1203 boundary
+=> The signature (memory-type-specific + fixed boundary + survives both
+serialization and maximal coherency) points away from our Vulkan sync and toward the
+Adreno driver/hardware itself faulting on sustained GPU access to a large
+persistently-mapped HOST_VISIBLE|DEVICE_LOCAL buffer. Either a driver limitation/bug
+with this heap type under continuous read load, or this heap is not actually safe
+for the way we use it (whole-guest-RAM buffer read every frame) on this Adreno.
+
+## NEXT directions (pick one next session)
+1. HYBRID UMA: keep the buffer DEVICE_LOCAL non-sparse (proven 5/5 stable) but write
+   via a SMALL host-visible staging ring + vkCmdCopyBuffer ONLY for changed pages.
+   Keeps most of the UMA win (no full re-upload, GPU-timeline-ordered copies) WITHOUT
+   the host-visible-device-local read hazard. This is the most promising path to a
+   STABLE fast UMA.
+2. Try a DIFFERENT host-visible memory type (host-visible + host-cached, NOT
+   device-local) for the direct buffer; test if the TDR is specific to the
+   device-local+host-visible combo vs host-visible generally.
+3. Capture the exact kgsl fault address/status at the ~1190 boundary (needs root or
+   a kgsl trace) to confirm driver vs our usage.
+Recommendation: (1) hybrid - it sidesteps the proven-bad memory type while keeping
+the copy-elimination benefit for unchanged pages.
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
