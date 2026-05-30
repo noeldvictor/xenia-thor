@@ -12,9 +12,10 @@ only uses `size` + `out_ptr`, allocating from the system heap), so a nonzero
 APK `C5F75B10...`. Gears 3 launched deterministically via `-InputSequence`
 (`hid_nop`) — packet `scratch/thor-debug/game-pass-gears3-xamfix-20260529-211614`:
 
-- `crash_dump=0`, `abort_msg=0` — no abort/crash dump.
-- `XamAlloc: nonzero unk ...` softening log fired **11x** — Gears calls XamAlloc
-  with nonzero unk 11 times, all now handled instead of aborting.
+- `crash_dump=0`, `abort_msg=0` — no abort/crash dump (was the proof that matters).
+- `XamAlloc: nonzero unk=10000000 ...` softening log fired (one-shot — the static
+  flag suppresses repeats, so it logs once regardless of call count). Gears passes
+  a nonzero unk and is now handled instead of aborting.
 
 So the intermittent `xam_info.cc:344 XamAlloc "unk == 0"` crash (which had been
 killing Gears 3 mid-test, e.g. during the UMA A/B) is resolved. Combined with the
