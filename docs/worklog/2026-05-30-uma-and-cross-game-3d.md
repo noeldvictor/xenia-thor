@@ -368,6 +368,30 @@ in-game fps; read a frame to confirm no rendering regression (textures still
 correct). Expect a large GPU-Commands-thread CPU drop if consecutive draws share
 bindings.
 
+### B12 — descriptor cache VERIFIED (lands, sound) but fps UNCHANGED; B10 misattributed
+A/B on Blue Dragon in-game: CACHE-ON 2.4fps vs CACHE-OFF 2.3fps = within noise, NO
+fps change. Re-profiled (31607 samples): vkUpdateDescriptorSets NO LONGER in the top
+symbols (was 0.47% before) - so the cache DOES reduce descriptor writes - BUT the
+dominant cost is unchanged. So descriptor churn was real but MINOR; my B10 claim that
+the ~25% unknown[+2a...] driver time was vkUpdateDescriptorSets was WRONG.
+RELIABLE re-symbolization (new binary a7db03fa, caller callgraph): the dominant time
+is xe::gpu::CommandProcessor::ExecutePacketType0 + xe::RingBuffer::ReadAndSwap<u32> /
+RingBuffer::Read / min - i.e. the guest PM4 TYPE0 (register-write) packet parser
+reading the command stream dword-by-dword. The unknown[+2a...] addresses are NOT
+descriptor updates (they persist with the cache on); likely mis-symbolized JIT/guest
+or memcpy. memcpy_opt ~1.1% is the staging copy.
+=> TRUE fps bottleneck = raw PM4 command-stream parse throughput: the guest pushes a
+huge volume of register writes per frame and ExecutePacketType0's per-dword
+ReadAndSwap loop dominates the GPU Commands thread. This is a different, deeper lever
+than descriptor caching.
+STATUS of the descriptor fix: KEPT (default on) - it is correct, removes real per-draw
+work, and helps draw-heavy scenes even though it doesn't move THIS scene's fps. Not a
+regression (frame must still be checked for visual correctness next - PENDING read).
+NEXT lever (fps): optimize ExecutePacketType0 - it reads N registers via a per-dword
+ReadAndSwap; if the ring is contiguous, bulk-read + bulk register-write (or fast-path
+contiguous register ranges) could cut the dominant cost. Read ExecutePacketType0 +
+WriteRegister to see the per-dword overhead.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
