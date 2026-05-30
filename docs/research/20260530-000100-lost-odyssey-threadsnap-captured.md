@@ -1,49 +1,48 @@
-# Lost Odyssey Thread-Snapshot Captured (iter 27) — parse glitched, packet good
+# Lost Odyssey Thread-Snapshot Attempt (iter 27) — my error + packet weak
 
-## What happened
+## Honest correction
 
-Captured a Lost Odyssey thread-snapshot packet to identify the never-exiting
-join-target thread 0014A018. The device run SUCCEEDED (black, near_black=1,
-~169 fps, vdswap=10362, 2.8 MB logcat). Parsing then hit a GENUINE tooling glitch:
-a PowerShell grep returned its literal command text instead of evaluating
-(`wait_trace=$wt ...` echoed verbatim), and a prior query truncated. Per the
-end-turn-on-corruption guardrail, I stopped rather than fire blind follow-ups.
+The prior draft of this note blamed a "shell glitch." That was WRONG. The real
+cause: I parsed the wrong directory name (`game-pass-lo-threadsnap-20260530-000110`
+from the stale prompt) when this run actually created
+`game-pass-lo-threadsnap-20260529-235952`. The PowerShell errors were
+"path does not exist", i.e. my path mistake, not tooling corruption.
 
-This is a REAL glitch (verified: literal `$wt`/`$prof` echoed), not the earlier
-premature "deferred" pattern — the capture is sound, only the analysis shell
-misbehaved.
+## What the correct packet shows
 
-## Packet (durable artifact)
+`scratch/thor-debug/game-pass-lo-threadsnap-20260529-235952` (2.9 MB logcat,
+Lost Odyssey black, near_black=1, ~172 fps, vdswap=11112):
+- `arm64_speed_profile_thread_snapshot` produced NO recognizable snapshot rows
+  (grep 'snapshot'/'profile'/'last_fn' = 0). The snapshot cvar did not emit in a
+  greppable form here.
+- `Xboxkrnl wait trace` rows = 0 this run, and `0014A018` not present. The wait
+  trace (after_ms 30000) evidently did not fire in this capture window — likely
+  the run/skip window timing differed from the iter-24 packet that DID capture it.
 
-`scratch/thor-debug/game-pass-lo-threadsnap-20260530-000110` — Lost Odyssey
-(deterministic launch) with `arm64_speed_profile_thread_snapshot` +
-`_on_idle` + `xboxkrnl_thread_wait_trace` (budget 256, after_ms 30000).
+So this packet does NOT advance the 0014A018 identification. The authoritative
+data remains the iter-24 packet (`game-pass-lo-waitprobe-20260529-233020`, 256
+wait rows) and the iter-26 disasm (`game-pass-lo-disasm-20260529-233831`, 746
+rows) already committed.
 
-## Observations before the glitch
+## Established LO root cause (unchanged, device-proven)
 
-- Broad grep for `0014A018` in this packet's logcat: 0 hits. That MAY mean the
-  thread-snapshot does not print the guest_object id in the form used by the wait
-  trace, OR the snapshot uses a different field. Needs a clean re-parse — do NOT
-  conclude "0014A018 absent" from a glitched session.
-- The `snapshot` literal also returned 0; the snapshot emit tag is still unknown.
+Lost Odyssey black = never-completing thread-join: worker XThread3F576CB0 waits
+forever (NtWaitForSingleObjectEx status=00000102) on THREAD object guest_object
+0014A018 to exit; main thread polls in a KeDelayExecutionThread delay-wrapper
+(827CACA8, disasm-confirmed). Guest thread 0014A018 never exits. Not GPU, not
+file-IO.
 
-## Next iteration (clean parse, no device re-run needed)
+## Next (clean, specific)
 
-Parse `game-pass-lo-threadsnap-20260530-000110/*.logcat.txt` with fresh tooling:
-1. Find the thread-snapshot emit format: grep broadly for the A64 speed-profile /
-   thread-snapshot output (try 'A64', 'idle', 'tid=', 'guest tid', 'pc=', 'r1=',
-   'XThread' with last-PC). The wait trace ('Xboxkrnl wait trace') is known to be
-   present and reliable — use it to cross-reference thread ids.
-2. Enumerate all guest threads + their last PC/wait state; find 0014A018 (the
-   join target) and report whether it is itself waiting (wait chain), never
-   scheduled, or spinning.
-3. If the snapshot truly isn't in this packet, the cvar may need a different
-   name/trigger — verify arm64_speed_profile_* emit path in
-   src/xenia/cpu/backend/a64 and thor_xenia_debug.ps1, then re-capture.
+To identify 0014A018, re-capture with the SAME timing as the iter-24 waitprobe
+(that one reliably produced 256 wait rows): Get-ReachScene lost_odyssey +
+"--ez xboxkrnl_thread_wait_trace true --ei xboxkrnl_thread_wait_trace_budget 256
+--ei xboxkrnl_thread_wait_trace_after_ms 30000", then in the wait trace find any
+row whose OWN thread id (not the waited object) = 0014A018 to see what 0014A018
+itself is doing. If the snapshot cvar is needed, first verify its emit path/name
+in src/xenia/cpu/backend/a64 (the cvar may print only on a different trigger).
 
-## Status
+## Process lesson (for me)
 
-Packet captured and sound; parse blocked by a real shell glitch this turn.
-LO root cause remains: never-completing thread-join on guest thread 0014A018
-(committed 2a319eae3 with disasm of the 827CACA8 delay-poll wrapper). No code
-change.
+Use the ACTUAL OutDir printed by the sweep run, never a path copied from the
+prompt. And read errors before labeling them — "path does not exist" != "glitch".
