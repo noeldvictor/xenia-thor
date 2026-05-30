@@ -304,6 +304,46 @@ a clean callgraph to the exact draw-setup call site, then fix (cache/reuse
 descriptor sets instead of vkUpdateDescriptorSets per draw; or push descriptors).
 This descriptor-churn fix is the biggest fps lever and is cross-game.
 
+### B10 — RELIABLE symbolization (correct binary) -> full root-cause call chain
+Build-id check: local obj .so = a9f4912c (WRONG), but merged_native_libs .so =
+90ad331b which has full .symtab + .debug_info AND is the binary packaged into the
+installed APK. simpleperf 'libxenia-app.so[+off]' offsets are valid against 90ad...
+Re-ran addr2line against the MERGED .so - now everything symbolizes COHERENTLY:
+Flat hot offsets:
+  +d6f794/d6f7b4/d6f758 = xe::RingBuffer::ReadAndSwap<uint32_t> (PM4 stream read)
+  +dadde8 = xe::gpu::RegisterFile::GetRegisterInfo (register lookup)
+Deep callchain (GPU Commands thread, 49.7% children):
+  ThreadStartRoutine -> XThread::Create -> XHostThread::Execute
+  -> CommandProcessor::Initialize lambda (GPU worker loop)
+  -> CommandProcessor::ExecutePrimaryBuffer   <-- per-frame guest cmd executor
+  -> ExecutePacketType3 -> ReadAndSwap / GetRegisterInfo
+  -> (per draw) Adreno driver vkUpdateDescriptorSets (~25% total) + memcpy_opt.
+
+ROOT CAUSE OF SLOWNESS (reliable, cross-game):
+The GPU Commands thread is 100% CPU executing the guest PM4 stream in
+ExecutePrimaryBuffer, and the dominant cost is the Adreno driver's
+vkUpdateDescriptorSets called per-draw (descriptor/state churn) plus memcpy_opt (the
+shared-memory staging copy). NOT a spin (B8 retracted), NOT resolve thrash (B7
+retracted), NOT swapchain (B6 retracted). It is genuine per-draw CPU work dominated
+by driver descriptor updates.
+
+FIX LEVERS (in impact order, cross-game):
+1. Descriptor-set caching/reuse: avoid vkUpdateDescriptorSets every draw. Cache by
+   (shared-mem binding, textures, samplers) and only update when the set actually
+   changes; or use push descriptors / a persistent bindless-ish set for the
+   shared-memory buffer (which is bound once and indexed). Biggest win.
+2. memcpy_opt (staging copy) = exactly what UMA removes. UMA-direct TDRs, but the
+   THOR-CLEVER angle: the staging memcpy cost is real and measurable here. A bounded
+   host-visible *staging ring* (small, not the 512MB device buffer) already exists;
+   ensure we're not re-copying unchanged pages (RequestRange already dirty-tracks -
+   verify the per-frame copied-bytes is minimal, else fix the dirty tracking).
+3. PM4 parse overhead (ReadAndSwap/GetRegisterInfo) - micro, lower priority.
+
+NEXT: read the Vulkan draw-submit path (vulkan_command_processor IssueDraw ->
+descriptor set write) to implement #1. Profiling method is now repeatable:
+run-as <pkg> simpleperf record -e cpu-clock -t <tids> -g -o spin.data; addr2line
+against merged_native_libs .so (build-id must match installed).
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
