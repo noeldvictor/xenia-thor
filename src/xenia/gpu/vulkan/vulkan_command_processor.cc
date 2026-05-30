@@ -1826,13 +1826,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
-        "skipped_no_rast={} copy={}",
+        "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
+        "avg_vertices={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
-        draw_outcomes_skipped_no_rast_, draw_outcomes_copy_);
+        draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
+        draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
+        draw_outcomes_rendered_
+            ? (draw_outcomes_total_vertices_ / draw_outcomes_rendered_)
+            : 0);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
+    draw_outcomes_total_vertices_ = 0;
+    draw_outcomes_max_vertices_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -3654,6 +3661,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  draw_outcomes_total_vertices_ +=
+      primitive_processing_result.host_draw_vertex_count;
+  draw_outcomes_max_vertices_ =
+      std::max(draw_outcomes_max_vertices_,
+               primitive_processing_result.host_draw_vertex_count);
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;
   trace_last_draw_ps_hash_ = pixel_shader_hash;

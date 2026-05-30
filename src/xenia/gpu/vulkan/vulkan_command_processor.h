@@ -762,6 +762,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_skipped_no_vs_ = 0;
   uint32_t draw_outcomes_skipped_no_rast_ = 0;
   uint32_t draw_outcomes_copy_ = 0;
+  uint64_t draw_outcomes_total_vertices_ = 0;
+  uint32_t draw_outcomes_max_vertices_ = 0;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.
