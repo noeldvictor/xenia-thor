@@ -12,11 +12,39 @@ worker chain to finish before it proceeds to scene render. That is the unmet
 dependency behind the black screen (no color draws): a guest thread that was
 created but never completes.
 
-## Disassembly extraction failed — why (tooling limit, not glitch)
+## CORRECTION: disassembly WAS captured (746 rows)
 
-Tried `disassemble_functions` + `disassemble_function_filter '827CACFC,822C5358'`
-in packet game-pass-lo-disasm-20260529-233831: ZERO disasm rows in logcat. Two
-real reasons:
+An earlier draft of this note wrongly said disasm extraction failed. It did NOT —
+the packet has 746 `Filtered function dump` rows. The filter resolved
+`827CACFC` to its containing function `827CACA8-827CAD30` and dumped full PPC.
+
+Key disasm of the main-thread spin function `827CACA8` (LR 827CACFC sits at
+`loc_827CACFC` inside it):
+```
+827CACA8 mfspr r12,256 / stw / std r30,r31 / stwu r1,-0x70   ; prologue
+827CACBC or    r31, r4, r4                                    ; save arg
+827CACC0 cmpi  crf6, 0, r3, -0x1                              ; r3 == -1 ?
+827CACC4 beq   crf6, 0x827CACD8
+827CACC8 rldicl r11, r3, 0, 32
+827CACCC mulli  r11, r11, -0x2710                             ; * -10000 (100ns->ms scale)
+827CACD0 std    r11, 0x50(r1)
+... loc_827CACFC ...                                          ; the LR the main thread returns to
+```
+The `* -10000` constant and the small frame are the signature of a
+**timeout/delay wrapper around KeDelayExecutionThread** (10000 = 100ns ticks per
+ms). So the main thread is repeatedly calling this delay-with-timeout helper and
+returning to `827CACFC` — i.e. polling with a timed sleep, consistent with the
+iter-24 wait trace (179 KeDelayExecutionThread). This CONFIRMS (with disassembly,
+not inference) that 827CACFC is a poll/delay loop, not a blocking wait.
+
+(The 822C5358 worker-wait function disasm is also in the 746 rows; not yet
+extracted in detail — next pass.)
+
+The original "failed" reasoning below is RETAINED ONLY as a caution for cases
+where disasm truly is missing (LR-vs-function-start, compile-time roll-off); it
+did not apply here.
+
+## (retained caution) When disasm IS missing — why
 1. **Wrong address kind**: 827CACFC and 822C5358 are LR (return-address) values
    from the wait trace, NOT function START addresses. The filter matches function
    entry points, so LR values match nothing. Need the containing function's start
