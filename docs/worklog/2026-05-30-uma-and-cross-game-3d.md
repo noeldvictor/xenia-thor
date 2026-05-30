@@ -174,6 +174,46 @@ Net for SPEED: UMA is NOT the current lever on this device. The real visible-spe
 blocker is the cross-game black-3D + low-fps (EDRAM resolve on fbo path). Pivot
 there.
 
+## CROSS-GAME BLACK-3D investigation (Blue Dragon, UMA off)
+
+### B1 — EDRAM resolve WORKS; scene IS resolved to RAM (overturns "never resolves")
+With vulkan_trace_resolve: abundant correct resolves fire in-game, incl. full
+1280x720 Full32bpp scene resolves, a 1024x1024 render-to-texture (dest_format=22),
+and 672x720/640x360/320x184 buffers. dest_base values cluster in 0x1C-0x1F range
+(1DC14000 x26, 1C2C8000 x15, ...). So EDRAM->RAM resolve is NOT the break.
+
+### B2 — present reads a different address than the scene resolves to
+VdSwap frontbuffer ptr = FCDB3000/FCA1B000 (alternating double-buffer, 0xFC range).
+Scene resolves land in 0x1C-0x1F. So the 3D scene must be SAMPLED BACK as a texture
+into the composited frontbuffer - the classic "sample resolved RT as RAM texture"
+path - and that's where it's lost.
+
+### B3 — format link: scene resolves use dest_format=7 = TextureFormat k_2_10_10_10
+xenos.h: TextureFormat k_2_10_10_10 = 7 (and k_24_8 = 22 = depth). Device reports
+"k_2_10_10_10 (signed) is not supported" (preferred Vulkan fmt 65 =
+A2B10G10R10_UNORM). So scene textures resolved as 2_10_10_10 hit the unsupported
+path. There are ALREADY two cvar fallbacks for this (vulkan_texture_cache.cc:1874,
+1897), both default-off + in the Android allow-list (built earlier for this triage).
+
+### B4 — tested BOTH fallbacks on device (read frames). Partial effect, NOT a fix:
+- vulkan_force_signed_2101010_unorm_fallback=true: confirmed active. Background
+  shifted blue->darker, a "loading" spinner appeared, but 3D world STILL not
+  visible; reverted to flat bg+HUD. NOT the fix.
+- vulkan_force_2101010_rgba8_fallback=true: confirmed active. Background flat-blue
+  -> BLACK, loading spinner + HUD now render CRISPLY (sharp dots/circle), fps
+  2.0 -> 3.9. So the 2_10_10_10 path DOES affect real rendering (the flat-blue was a
+  broken constant-decode of a 2_10_10_10 texture; RGBA8 decodes UI correctly). But
+  the 3D GEOMETRY is STILL missing.
+=> CONCLUSION: black-3D has (at least) TWO parts: (a) a 2_10_10_10 texture decode
+issue (real, affects UI/overlay; partially changed by fallbacks) and (b) the 3D
+world geometry itself not appearing in the composite - NOT fixed by either format
+fallback. The geometry-missing part is the main blocker and is still unexplained.
+NEXT: trace draws in-game (vulkan_trace_draw_state) to see if world geometry draws
+are issued at all and into which RT; and whether the composite samples the scene RT
+base (0x1Cxxxxxx). Distinguish "geometry not drawn" vs "drawn but not composited".
+~2-4fps throughout = separate perf problem (lots of resolves/frame, likely the
+many 1280x720 Full32bpp resolves = resolve thrash).
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
