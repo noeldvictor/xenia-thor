@@ -531,6 +531,38 @@ CAVEAT: this scene = 267 draws @30fps is already fine; need to recapture the hea
 ~10,600-draw field scene (walk into town/battle) to validate the batching target.
 The avg_vertices=3 finding holds regardless of scene.
 
+### B19 — CORRECTS B18: heavy scene is REAL geometry; bottleneck = per-draw CPU ~40us/draw
+iter6 result, HEAVY field scene (the ~2.4fps one):
+  rendered=10597 avg_vertices=112 total_vertices=1,194,300 max_vertices=6263
+  pipeline_binds=1086 descriptor_binds=14749 copy=23
+- avg 112 verts/draw (NOT 3 - that was the LIGHT 267-draw scene in B18). So the heavy
+  scene is REAL geometry, ~1.19M verts/frame. B18's "tiny degenerate draws" was
+  scene-specific; simple consecutive-merge batching is NOT the heavy-scene lever.
+- THE bottleneck is per-draw CPU: 10,597 draws x 2.4fps = ~25,400 draws/sec, and
+  1.19M verts x 2.4 = ~2.86M verts/sec. Both are LOW for Snapdragon 8 Gen 2 (does
+  1M+ draws/sec, hundreds of M verts/sec). => NOT vertex/fill bound; we are
+  DRAW-CALL-CPU-BOUND at ~400ms/10597 draws = ~38us per draw. That ~38us/draw is the
+  enemy.
+- Batchability: pipeline stable (~10 draws/pipeline bind), but descriptor_binds
+  (14,749) > draws because the CONSTANTS set (fetch/float constants) is rewritten +
+  rebound EVERY draw, plus texture sets change often. So merging is blocked by
+  per-draw constant changes, not pipeline.
+WHERE THE 38us/draw GOES (from prior simpleperf B12/iter4, this same scene): Adreno
+driver (~25%, descriptor binds + cmd recording) + our PM4 parse (RingBuffer::
+ReadAndSwap per dword, byte_swap, RegisterFile::GetRegisterInfo, WriteRegister
+per-register logic). No single 80% hotspot - it is broad per-draw overhead.
+NEXT (iter7): attack the largest REDUCIBLE per-draw host cost. Candidates, pick by
+re-profiling THIS scene with the matched binary:
+  (a) descriptor BIND dedup - skip CmdVkBindDescriptorSets when the set handle is
+      already bound (the constants set rebinds every draw; if the VkDescriptorSet is
+      reused via the uniform pool it may be the same handle).
+  (b) WriteRegister hot path - it runs a scratch-range check + COHER switch on EVERY
+      register write; fast-path the common case.
+  (c) ExecutePacketType0 - bulk-read contiguous register blocks instead of per-dword
+      ReadAndSwap + per-register WriteRegister.
+Honest: this is incremental (no single big win); target a measurable % at 10,597
+draws. The descriptor-write cache (shipped) was step 1; keep stacking per-draw cuts.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
