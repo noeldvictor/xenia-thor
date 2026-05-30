@@ -392,6 +392,17 @@ ReadAndSwap; if the ring is contiguous, bulk-read + bulk register-write (or fast
 contiguous register ranges) could cut the dominant cost. Read ExecutePacketType0 +
 WriteRegister to see the per-dword overhead.
 
+### B13 — descriptor cache: NO visual regression + framerate is STATE-DEPENDENT
+Cache-ON fresh launch, read frame: a "loading" screen renders CRISPLY at 31.6 FPS
+(sharp spinner, no texture corruption / no garbled UI). So (a) descriptor caching
+causes NO visual regression on UI, and (b) framerate is highly STATE-DEPENDENT -
+loading screen = ~31fps, in-field state = ~2.5fps. This reinforces B12: the field
+slowness is driven by PM4 register-write VOLUME (ExecutePacketType0), which is high
+in the field and low on the loading screen. The pipeline runs fast when command
+volume is low.
+NOTE: ADB dropped mid-session ('device not found'); recovered with `adb reconnect`
+(device returned). Known intermittent on this rig.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
