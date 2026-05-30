@@ -106,6 +106,56 @@ B) ROOT (make UMA safe so the GPU stops hanging): the GPU faults reading the
      submission), which the submission-level guard does not cover.
    Validate each on device (UMA-on, watch dmesg for "GPU hang detected").
 
+## EVIDENCE LEDGER (experiments run on device 2026-05-30) — what UMA hang is NOT
+Treat this as hardware research, not app debugging. Hypotheses RULED OUT by device
+evidence:
+1. Coherency / missing host flush -> NO. Device log: shared buffer is "memory type
+   6, host-coherent". GPU sees CPU writes.
+2. 512MB exceeds GPU heap/budget -> NO. vkAllocateMemory(512MB
+   host-visible-device-local) SUCCEEDS. (256MB BAR is AMD-discrete; Adreno is UMA.)
+3. CPU-write-vs-deferred-GPU-read RACE (overwriting pages an in-flight tiler draw
+   still reads) -> REFUTED by experiment. Added cvar gpu_uma_serialize_before_write
+   (waits for ALL prior GPU work before every direct memcpy). Burnout STILL hung
+   3/5 runs at the same VdSwap ~1200. Full serialization would have killed a race;
+   it didn't. So the buffer content is settled when the faulting draw runs and the
+   GPU faults anyway -> it's an ADDRESS fault, not torn data.
+4. maxStorageBufferRange (128MB) overflow on the 512MB buffer -> NO (and not a
+   UMA-vs-staging difference anyway). vulkan_command_processor.cc:417-421,537-548
+   already split the shared buffer into 128MB STORAGE_BUFFER descriptors
+   (shared_memory_binding_count) for BOTH paths. maxStorageBufferRange=134217728
+   confirmed in device log. robustBufferAccess IS enabled (device log "* 
+   robustBufferAccess"), so in-range OOB is guarded.
+
+CONFIRMED FACTS:
+- Hang is a real Adreno GPU TDR: "adreno-gen7-gmu: MISC: GPU hang detected ...
+  ctx_type VK ... Suspended GMU" (captured earlier; dmesg ring has no root to -c).
+- ~50% of launches, frozen at a strikingly CONSISTENT VdSwap 1191-1203 (~20s in).
+  Fixed frame-count + coin-flip => a specific draw/resource reached ~20s that
+  intermittently makes the GPU fault, NOT random memory timing.
+- Driver: Qualcomm Adreno Vulkan, Build 69e13475cb. maxStorageBufferRange 128MB.
+
+## REMAINING STRUCTURAL DIFFERENCE (next experiment)
+The one forced difference between the IMMUNE staging path and the FAULTING UMA path
+that survives all the above: the staging buffer is SPARSE
+(VK_BUFFER_CREATE_SPARSE_BINDING|RESIDENCY, vulkan_shared_memory.cc:66-86) while the
+UMA buffer is forced NON-SPARSE single 512MB allocation (the direct path needs one
+persistent mapping). On a SPARSE residency buffer, reads of unbound/partially-bound
+pages are DEFINED (return zero, no fault). On the fully-bound non-sparse buffer,
+there is no such safety net AND the memory is host-visible-device-local (different
+cache/MMU treatment on Adreno). Hypotheses to test next, in order:
+ (a) Is the fault tied to host-visible-device-local specifically? TEST: force the
+     UMA buffer's memory type to plain DEVICE_LOCAL (non-host-visible) but keep it
+     NON-SPARSE + still use the staging copy. If it faults too -> non-sparse is the
+     problem; if not -> host-visible-device-local memory is the problem.
+ (b) Is it the persistent HOST mapping being read by the GPU while the CPU holds it
+     mapped/writes it? TEST: per-frame vkFlush is already done; try mapping/unmapping
+     or a stronger barrier (VK_PIPELINE_STAGE_ALL_COMMANDS) around the write.
+ (c) Adreno UMA + storage-buffer + index-buffer ALIASING: the same buffer is bound
+     BOTH as STORAGE_BUFFER (vfetch) and used as INDEX_BUFFER. On host-visible
+     memory the driver may treat these differently. TEST: rebuild with only one
+     usage at a time (hard - needs guest to not need the other).
+Each needs a build+device cycle; (a) is the cleanest discriminator.
+
 ## Net for "get the speed"
 At menus/movies both UMA on and off are vsync-capped ~60fps, so the user-visible
 speed there is NOT gated on UMA. UMA's win is throughput on heavy guest-memory
