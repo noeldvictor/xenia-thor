@@ -60,6 +60,27 @@ NEXT: get the real size of `ovid/BG1_N.xmv` inside the Burnout ISO and compare t
 the game asks for 94 MB+, it's the game over-reading; if our reader truncated it,
 fix the size/extent path. Do NOT edit any file-IO code until this is answered.
 
+## Code path (READ, not edited — xboxkrnl_io.cc is a do-not-touch dirty file)
+NtReadFile_entry (src/xenia/kernel/xboxkrnl/xboxkrnl_io.cc:313):
+- Line 332 `if (true || file->is_synchronous())` — a debug override forces EVERY
+  read through the synchronous branch (the async branch at :397 is stubbed/dead).
+- `result = file->Read(...)` returns C0000011 (EOF); io_status_block->status is set
+  to C0000011, information = bytes_read = 0.
+- Line 390 `if (!file->is_synchronous()) result = X_STATUS_PENDING;` overwrites the
+  return to 0x103. That 0x103 is the logged `xeRtlNtStatusToDosError 103 => 3E5`
+  (ERROR_IO_PENDING). The event is then Set() at :424.
+So the kernel returns PENDING + signals the event + reports EOF in the status
+block. That is plausible behavior, NOT an obvious kernel bug. The infinite loop is
+on the GUEST side: Burnout's .xmv streamer keeps queuing read-ahead chunks past
+EOF and never stops. Whether real HW would also return EOF here (making this a true
+game expectation we must satisfy some other way) vs. whether our reported file size
+is wrong (false EOF) is STILL the open question — and needs the real file size.
+
+## DO-NOT-TOUCH note
+xboxkrnl_io.cc is a pre-existing dirty file per standing instructions; the
+`if (true || ...)` override is NOT mine and must not be reverted/committed without
+explicit direction. No edit made.
+
 ## NOT claimed
 No fps figure beyond the OSD's literal 0.0; no fix. Two behavioral claims, both
 log-backed: (1) the present pipeline is stalled (frozen VdSwap count + age +
