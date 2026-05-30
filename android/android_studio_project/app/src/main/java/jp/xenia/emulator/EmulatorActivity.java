@@ -162,6 +162,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_vd_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_direct_shared_memory");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_serialize_before_write");
+            copyBooleanExtra(intent, launchArguments, "vulkan_sparse_shared_memory");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_use_vd_scaler_output_for_swap");
             copyBooleanExtra(
