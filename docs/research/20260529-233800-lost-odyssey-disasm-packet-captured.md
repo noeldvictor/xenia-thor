@@ -1,40 +1,39 @@
-# Lost Odyssey Disasm/File-IO Packet Captured — Parse Pending (iter 25)
+# Lost Odyssey Stall: Not Failing Game File-IO (iter 25)
 
-## Status
+## Result
 
-Device capture succeeded; PARSING DEFERRED because the analysis tooling stopped
-rendering output mid-iteration (per guardrail, did not fire blind follow-ups).
+The Lost Odyssey guest-spin stall worker is NOT blocked on a failing/never-
+completing game file-IO op (unlike Banjo). The file-IO trace during the stall
+shows normal `NtCreateFile` (guest 820008CC) and only ONE failing file query:
 
-## Captured packet (the durable artifact)
+```
+NtQueryFullAttributesFile status: path='ShaderDumpxe:\CompareBackEnds' status=C000000F missing=1
+```
 
-`scratch/thor-debug/game-pass-lo-disasm-20260529-233810` — Lost Odyssey
-(deterministic launch) with:
-- `disassemble_functions true`, `disassemble_function_filter '827CACFC,822C5358'`
-  (the main-thread spin LR and the worker NtWaitForSingleObjectEx LR from iter 24),
-- `xboxkrnl_thread_wait_trace true` (budget 128, after_ms 30000),
-- `xboxkrnl_file_io_trace true` (status log budget 64).
+That path is a SHADER-DUMP diagnostic probe (`ShaderDump...`), not game content —
+benign, present regardless of the stall. No failing game asset read appears.
 
-Run result: still black (near_black=1, ~169 fps, vdswap=9134, no crash) — same
-guest-spin stall state as iter 24, as intended for the probe.
+So Lost Odyssey's never-completing worker (iter 24: XThread3F576CB0 stuck on
+NtWaitForSingleObjectEx status=00000102) is most likely waiting on a **kernel
+event/semaphore that is never signaled, or a worker-thread that never completes**,
+NOT on file-IO. This separates it from Banjo's file-IO-error class.
 
-## Next iteration: parse this packet (no device re-run needed)
+## Packet
 
-In `<packet>/*.logcat.txt`, with fresh tooling:
-1. Filtered PPC disassembly around guest `827CACFC` (main spin) and `822C5358`
-   (worker wait): what function/loop is each in? (grep for the disasm emit — likely
-   tagged with the guest address or "disasm"/"PPC"; broaden if a guessed pattern
-   returns 0.)
-2. File-IO trace during the stall: any `NtCreateFile`/`NtReadFile`/
-   `NtQueryFullAttributesFile` returning a C0.. status or `missing=1`? That would
-   link Lost Odyssey's never-completing worker to the same file-IO class as Banjo
-   (a guest waiting on a file op that fails/never completes). If instead there is
-   no failing IO and the worker waits on an event/semaphore, it's a kernel-signal
-   gap.
-3. Conclude: file-IO-completion stall vs kernel-event-never-signaled, and commit
-   the finding.
+`scratch/thor-debug/game-pass-lo-disasm-20260529-233831` (complete run; an earlier
+partial `...-233810` also exists). Lost Odyssey deterministic launch with
+disassemble_functions + filter '827CACFC,822C5358', wait trace, file-IO trace.
+Black (near_black=1, ~175 fps, vdswap=6279), no crash — same spin-stall state.
 
-## Process note
+## Still open / next
 
-Tooling glitch this iteration was output-rendering only; the device run + packet
-write succeeded. Cvar names confirmed forwarded: disassemble_functions (line 136),
-disassemble_function_filter (137), xboxkrnl_file_io_trace (138).
+The filtered PPC disassembly of 827CACFC (main spin) and 822C5358 (worker wait)
+was not yet extracted (need the disasm emit tag; broaden grep next: try the bare
+addresses '827CAC'/'822C53', 'disasm', 'PPC'). Goal: identify which guest object
+(handle F8000240, guest_object 0014A018, type thread from iter 24) the worker
+waits on and who is supposed to signal it — i.e. is the guest waiting on another
+guest thread to finish (a thread-join that hangs) or on an event a kernel export
+should set. That pinpoints the kernel-impl gap.
+
+This is the live lead for the one true black title. Guest-execution/kernel lane,
+not GPU, not file-IO. No code change (characterization).
