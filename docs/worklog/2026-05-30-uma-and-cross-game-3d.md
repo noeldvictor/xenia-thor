@@ -505,6 +505,32 @@ BLACK-3D (separate track): draws render (skipped=0) but not visible -> downstrea
 resolve/sample-back or offscreen-RT-never-composited; revisit after a perf win makes
 iteration faster.
 
+### B18 — ROOT CAUSE NAILED: tiny degenerate draws (avg 3 verts/draw) + draws gate fps
+iter5 result. Per-frame counter with vertex stats, Blue Dragon:
+  rendered=267 skipped=0 copy=24 total_vertices=852 max_vertices=6 avg_vertices=3
+  @ ~30fps (timestamps ~33ms apart) in THIS scene.
+- avg_vertices=3, max_vertices=6 => the guest issues DRAWS OF 1-2 TRIANGLES EACH.
+  Tiny degenerate draws. (Earlier heavier scene = ~10,600 such draws/frame @2.4fps.)
+- DRAWS GATE FPS DIRECTLY: 267 tiny draws -> 30fps; ~10,600 -> 2.4fps. Linear-ish in
+  draw count, confirming per-draw host+driver overhead is the cost (not vertex/pixel
+  work - only 852 verts total/frame here).
+ROOT CAUSE (high-confidence, novel lever): Blue Dragon submits enormous numbers of
+TINY draws (avg 3 verts). Real Xbox360 had a hardware command processor + predicated
+tiling that ate these ~free; we pay full host IssueDraw + Adreno driver cost per
+draw. The fix that gets to full speed = DRAW BATCHING/MERGING: coalesce consecutive
+guest draws that share pipeline + render state + descriptors + vertex/index buffer
+layout into one host draw (or instanced/multi-draw). This is THE lever for Blue
+Dragon full speed and is cross-game (many 360 titles draw this way).
+NEXT (iter6): characterize batchability - do consecutive tiny draws share
+state/pipeline (mergeable) or alternate state (need state-sorting)? Add per-frame
+counters: pipeline-bind count, descriptor-bind count, render-state-change count per
+frame vs draw count. If state changes << draws, simple consecutive-merge wins big.
+Then design the merge in IssueDraw (accumulate vertices while state stable, flush on
+state change / swap).
+CAVEAT: this scene = 267 draws @30fps is already fine; need to recapture the heavy
+~10,600-draw field scene (walk into town/battle) to validate the batching target.
+The avg_vertices=3 finding holds regardless of scene.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
