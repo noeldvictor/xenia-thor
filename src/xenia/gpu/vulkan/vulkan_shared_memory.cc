@@ -305,6 +305,14 @@ void VulkanSharedMemory::Use(Usage usage,
         false);
   }
   last_written_range_ = written_range;
+
+  // UMA direct-write race guard: remember the submission in which the buffer is
+  // read by the guest, so a later direct write can wait for it to finish before
+  // overwriting pages. kRead and kGuestDrawReadWrite both read the buffer.
+  if (buffer_host_visible_ &&
+      (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite)) {
+    direct_last_read_submission_ = command_processor_.GetCurrentSubmission();
+  }
 }
 
 bool VulkanSharedMemory::InitializeTraceSubmitDownloads() {
@@ -531,6 +539,27 @@ bool VulkanSharedMemory::UploadRangesDirect(
   uint8_t* const buffer_mapping =
       reinterpret_cast<uint8_t*>(buffer_host_mapping_);
   const uint32_t page_size_log2_local = page_size_log2();
+
+  // Race guard: the staging path is safe because its upload-pool buffers are
+  // submission-tagged and reused only after the GPU finishes reading them. The
+  // direct path writes in place, so before overwriting we must ensure no
+  // PRIOR, still-in-flight submission is reading the buffer. We wait for the
+  // last submission in which the buffer was read to complete - but ONLY if it
+  // is strictly older than the currently open submission. Reads recorded in the
+  // open submission haven't been queued to the GPU yet (RequestRange/
+  // UploadRanges run during draw setup, before that submission is submitted),
+  // so no GPU read of these pages is in flight for the open submission, and we
+  // must NOT end it here. Without this guard the host memcpy raced prior
+  // in-flight reads -> corruption -> intermittent present hang during movies.
+  // (Conservative: waits for the whole prior submission rather than per page;
+  // simple and correct, refine to per-range later if it costs throughput.)
+  const uint64_t current_submission = command_processor_.GetCurrentSubmission();
+  if (direct_last_read_submission_ &&
+      direct_last_read_submission_ < current_submission &&
+      direct_last_read_submission_ >
+          command_processor_.GetCompletedSubmission()) {
+    command_processor_.AwaitSubmissionCompletion(direct_last_read_submission_);
+  }
 
   // upload_page_ranges are sorted; bound the barrier to the touched span.
   const VkDeviceSize barrier_first_byte =

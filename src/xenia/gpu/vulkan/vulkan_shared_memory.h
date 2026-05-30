@@ -93,6 +93,17 @@ class VulkanSharedMemory : public SharedMemory {
   Usage last_usage_;
   std::pair<uint32_t, uint32_t> last_written_range_;
 
+  // UMA direct-write race guard. The direct path memcpys guest pages straight
+  // into the persistently-mapped GPU buffer at command-recording time. If a
+  // prior, still-in-flight submission's draws are reading the buffer, that
+  // memcpy would overwrite data mid-read -> corruption -> present wedges. The
+  // staging path is safe because its pool buffers are submission-tagged and
+  // reused only after the GPU finishes. We mirror that: record the submission
+  // in which the buffer was last read, and before a direct write wait for any
+  // such prior submission to complete. Set in Use() on read usages; consumed in
+  // UploadRangesDirect. Only meaningful when buffer_host_visible_.
+  uint64_t direct_last_read_submission_ = 0;
+
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> upload_buffer_pool_;
   std::vector<VkBufferCopy> upload_regions_;
 

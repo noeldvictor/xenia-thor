@@ -163,6 +163,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t GetCompletedSubmission() const {
     return completion_timeline_.GetCompletedSubmissionFromLastUpdate();
   }
+  // Blocks (polling fences) until the given submission has completed on the GPU.
+  // Safe to call with any submission index: it clamps to a submission that can
+  // actually complete (ending the open submission if asked to wait on the
+  // current/upcoming one). Used by the UMA direct-write shared-memory path to
+  // avoid overwriting pages a still-in-flight submission is reading.
+  void AwaitSubmissionCompletion(uint64_t await_submission) {
+    CheckSubmissionCompletionAndDeviceLoss(await_submission);
+  }
 
   // Sparse binds are:
   // - In a single submission, all submitted in one vkQueueBindSparse.
