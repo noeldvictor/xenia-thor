@@ -44,3 +44,17 @@ stride.
 - Next: verify Gears: Judgment (shares the identical assert PC) reaches title
   with this build; then try pressing Start to advance Gears 3 past the title into
   menu/campaign; then continue the goal queue (RPG sweep, UMA quantification).
+
+## Cluster confirmation (iter 4) — Gears: Judgment also fixed
+
+Ran Gears: Judgment on the same APK
+(`game-pass-judgment-stridefix-20260529-202613`). It reaches its **title screen**
+("GEARS OF WAR JUDGMENT / PRESS START") at ~21.7 FPS, `vdswap=1821` (was 829 in
+the pre-fix sweep). The fix's `zero-stride new binding (fetch constant 93)` XELOGW
+fired — **same fetch constant 93 as Gears 3** — and there is no stride assertion,
+no CRASH DUMP, no abort. So the single `shader_translator.cc` change unblocks both
+UE3 Gears titles (the true shared cluster). `crash=3` were RtlRaiseException noise.
+
+(Both runs also showed transient `adb: device not found` blips mid-capture — the
+Thor's USB ADB is intermittently dropping; captures still completed. Worth a
+stable-cable/port check, not a code issue.)
