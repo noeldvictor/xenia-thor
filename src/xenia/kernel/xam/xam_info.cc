@@ -341,7 +341,17 @@ dword_result_t XamSwapDisc_entry(dword_t r3, dword_t r4, dword_t r5,
 DECLARE_XAM_EXPORT2(XamSwapDisc, kNone, kStub, kSketchy);
 
 dword_result_t XamAlloc_entry(dword_t unk, dword_t size, lpdword_t out_ptr) {
-  assert_true(unk == 0);
+  // unk is unused below (only size/out_ptr matter), so a nonzero unk is harmless;
+  // it previously aborted the emulator (observed crashing Gears 3 intermittently).
+  // Log once and continue instead of asserting.
+  if (unk != 0) {
+    static bool xam_alloc_unk_logged = false;
+    if (!xam_alloc_unk_logged) {
+      xam_alloc_unk_logged = true;
+      XELOGW("XamAlloc: nonzero unk={:08X} (ignored; allocating size only)",
+             uint32_t(unk));
+    }
+  }
 
   // Allocate from the heap. Not sure why XAM does this specially, perhaps
   // it keeps stuff in a separate heap?
