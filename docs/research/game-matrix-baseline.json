@@ -1,0 +1,54 @@
+﻿[
+    {
+        "game":  "burnout",
+        "tier":  3,
+        "tier_name":  "Ingame",
+        "classification":  "rendering",
+        "near_black":  0.4469,
+        "fps_recent":  59.4,
+        "vdswap_recent":  485,
+        "fatal_count":  0,
+        "in_emulator":  true,
+        "png_sha256":  "E4A6B5678652DEE06641A3F144DE2EDBD750D1F81AACFA39C7DE4D6B1B7F7D8B",
+        "png_path":  "C:\\Users\\leanerdesigner\\Documents\\New project 8\\xenia-thor\\scratch\\thor-debug\\matrix-20260530-125952\\burnout\\screen.png"
+    },
+    {
+        "game":  "banjo",
+        "tier":  1,
+        "tier_name":  "Loadable",
+        "classification":  "no_present_recent",
+        "near_black":  0,
+        "fps_recent":  0,
+        "vdswap_recent":  0,
+        "fatal_count":  0,
+        "in_emulator":  true,
+        "png_sha256":  "781853CE1236C7B5F2A26684C37CD0331B3B209AFE51DF56FB6B61C727AA1C14",
+        "png_path":  "C:\\Users\\leanerdesigner\\Documents\\New project 8\\xenia-thor\\scratch\\thor-debug\\matrix-20260530-125952\\banjo\\screen.png"
+    },
+    {
+        "game":  "bluedragon",
+        "tier":  4,
+        "tier_name":  "Playable",
+        "classification":  "rendering",
+        "near_black":  0,
+        "fps_recent":  29.9,
+        "vdswap_recent":  238,
+        "fatal_count":  0,
+        "in_emulator":  true,
+        "png_sha256":  "31695FAE724C7A2D27C1014D584F39F0D41EEA9DF569D5292F1A06F47F36CC1A",
+        "png_path":  "C:\\Users\\leanerdesigner\\Documents\\New project 8\\xenia-thor\\scratch\\thor-debug\\matrix-20260530-125952\\bluedragon\\screen.png"
+    },
+    {
+        "game":  "lostodyssey",
+        "tier":  2,
+        "tier_name":  "Ingame-black",
+        "classification":  "present_but_black",
+        "near_black":  1,
+        "fps_recent":  162.9,
+        "vdswap_recent":  1289,
+        "fatal_count":  0,
+        "in_emulator":  true,
+        "png_sha256":  "168EA60E1E3A192CC1C55D9CD48ADE48FE408BB28616FD8EEA91154207014F1E",
+        "png_path":  "C:\\Users\\leanerdesigner\\Documents\\New project 8\\xenia-thor\\scratch\\thor-debug\\matrix-20260530-125952\\lostodyssey\\screen.png"
+    }
+]
