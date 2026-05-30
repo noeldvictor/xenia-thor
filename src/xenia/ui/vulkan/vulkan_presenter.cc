@@ -108,6 +108,14 @@ struct VulkanPerfCounterState {
   std::atomic<uint64_t> present_fail_count{0};
   std::atomic<uint64_t> present_ticks{0};
 
+  // Shared-memory upload path (UMA direct-write vs staging copy). Lets the
+  // gpu_uma_direct_shared_memory A/B be measured cap-independently: the staging
+  // path copies bytes via vkCmdCopyBuffer, the UMA path writes them directly.
+  std::atomic<uint64_t> shared_memory_staging_copy_count{0};
+  std::atomic<uint64_t> shared_memory_staging_copy_bytes{0};
+  std::atomic<uint64_t> shared_memory_direct_write_count{0};
+  std::atomic<uint64_t> shared_memory_direct_write_bytes{0};
+
   std::atomic<uint64_t> snapshot_request_count{0};
 };
 
@@ -197,6 +205,26 @@ void VulkanPerfCountersRecordImageBarrier() {
   }
   vulkan_perf_counter_state.image_barrier_count.fetch_add(
       1, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordSharedMemoryStagingCopy(uint64_t bytes) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.shared_memory_staging_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+  vulkan_perf_counter_state.shared_memory_staging_copy_bytes.fetch_add(
+      bytes, std::memory_order_relaxed);
+}
+
+void VulkanPerfCountersRecordSharedMemoryDirectWrite(uint64_t bytes) {
+  if (!VulkanPerfCountersEnabled()) {
+    return;
+  }
+  vulkan_perf_counter_state.shared_memory_direct_write_count.fetch_add(
+      1, std::memory_order_relaxed);
+  vulkan_perf_counter_state.shared_memory_direct_write_bytes.fetch_add(
+      bytes, std::memory_order_relaxed);
 }
 
 void VulkanPerfCountersRecordBarrierSubmit(uint32_t barrier_group_count,
@@ -326,7 +354,9 @@ void VulkanPerfCountersLogSnapshot(const char* reason, bool force) {
       "present_acquires={} present_acquire_failures={} present_acquire_us={} "
       "present_submits={} present_submit_failures={} present_submit_us={} "
       "present_submit_cmd_buffers={} presents={} present_failures={} "
-      "present_us={}",
+      "present_us={} shared_memory_staging_copies={} "
+      "shared_memory_staging_copy_bytes={} shared_memory_direct_writes={} "
+      "shared_memory_direct_write_bytes={}",
       reason ? reason : "unknown", request,
       vulkan_perf_counter_state.issue_swap_count.load(
           std::memory_order_relaxed),
@@ -381,7 +411,15 @@ void VulkanPerfCountersLogSnapshot(const char* reason, bool force) {
       vulkan_perf_counter_state.present_fail_count.load(
           std::memory_order_relaxed),
       TicksToMicroseconds(vulkan_perf_counter_state.present_ticks.load(
-          std::memory_order_relaxed)));
+          std::memory_order_relaxed)),
+      vulkan_perf_counter_state.shared_memory_staging_copy_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.shared_memory_staging_copy_bytes.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.shared_memory_direct_write_count.load(
+          std::memory_order_relaxed),
+      vulkan_perf_counter_state.shared_memory_direct_write_bytes.load(
+          std::memory_order_relaxed));
 }
 
 // Generated with `xb buildshaders`.

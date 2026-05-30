@@ -20,6 +20,7 @@
 #include "xenia/base/math.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
+#include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 DEFINE_bool(vulkan_sparse_shared_memory, true,
@@ -475,6 +476,12 @@ bool VulkanSharedMemory::UploadRanges(
           upload_buffer_size);
       if (upload_buffer_previous != upload_buffer && !upload_regions_.empty()) {
         assert_true(upload_buffer_previous != VK_NULL_HANDLE);
+        uint64_t staging_copy_bytes = 0;
+        for (const VkBufferCopy& region : upload_regions_) {
+          staging_copy_bytes += uint64_t(region.size);
+        }
+        ui::vulkan::VulkanPerfCountersRecordSharedMemoryStagingCopy(
+            staging_copy_bytes);
         command_buffer.CmdVkCopyBuffer(upload_buffer_previous, buffer_,
                                        uint32_t(upload_regions_.size()),
                                        upload_regions_.data());
@@ -497,6 +504,12 @@ bool VulkanSharedMemory::UploadRanges(
   }
   if (!upload_regions_.empty()) {
     assert_true(upload_buffer_previous != VK_NULL_HANDLE);
+    uint64_t staging_copy_bytes = 0;
+    for (const VkBufferCopy& region : upload_regions_) {
+      staging_copy_bytes += uint64_t(region.size);
+    }
+    ui::vulkan::VulkanPerfCountersRecordSharedMemoryStagingCopy(
+        staging_copy_bytes);
     command_buffer.CmdVkCopyBuffer(upload_buffer_previous, buffer_,
                                    uint32_t(upload_regions_.size()),
                                    upload_regions_.data());
@@ -534,6 +547,8 @@ bool VulkanSharedMemory::UploadRangesDirect(
     MakeRangeValid(start_byte, length_bytes, false);
     std::memcpy(buffer_mapping + start_byte,
                 memory().TranslatePhysical(start_byte), length_bytes);
+    ui::vulkan::VulkanPerfCountersRecordSharedMemoryDirectWrite(
+        uint64_t(length_bytes));
   }
 
   // Make the host writes visible to the device. Flushing the whole buffer

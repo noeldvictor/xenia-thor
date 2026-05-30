@@ -26,6 +26,8 @@ void VulkanPerfCountersRecordGraphicsPipelineCreate(uint64_t start_ticks,
                                                     int32_t result);
 void VulkanPerfCountersRecordBufferBarrier();
 void VulkanPerfCountersRecordImageBarrier();
+void VulkanPerfCountersRecordSharedMemoryStagingCopy(uint64_t bytes);
+void VulkanPerfCountersRecordSharedMemoryDirectWrite(uint64_t bytes);
 void VulkanPerfCountersRecordBarrierSubmit(uint32_t barrier_group_count,
                                            uint32_t buffer_barrier_count,
                                            uint32_t image_barrier_count,
