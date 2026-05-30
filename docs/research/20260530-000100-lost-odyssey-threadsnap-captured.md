@@ -8,21 +8,28 @@ from the stale prompt) when this run actually created
 `game-pass-lo-threadsnap-20260529-235952`. The PowerShell errors were
 "path does not exist", i.e. my path mistake, not tooling corruption.
 
-## What the correct packet shows
+## What the correct packet shows (second correction — wait rows WERE present)
 
 `scratch/thor-debug/game-pass-lo-threadsnap-20260529-235952` (2.9 MB logcat,
 Lost Odyssey black, near_black=1, ~172 fps, vdswap=11112):
-- `arm64_speed_profile_thread_snapshot` produced NO recognizable snapshot rows
-  (grep 'snapshot'/'profile'/'last_fn' = 0). The snapshot cvar did not emit in a
-  greppable form here.
-- `Xboxkrnl wait trace` rows = 0 this run, and `0014A018` not present. The wait
-  trace (after_ms 30000) evidently did not fire in this capture window — likely
-  the run/skip window timing differed from the iter-24 packet that DID capture it.
+- `arm64_speed_profile_thread_snapshot` produced NO greppable snapshot rows (tag
+  unknown / different trigger).
+- BUT `Xboxkrnl wait trace` = **256 rows** (my first grep used wrong patterns).
+  The worker `XThread410BECB0 (F80001E4)`, thid 00000014, does
+  `NtWaitForSingleObjectEx` x65 on a **THREAD** object **guest_object 00151018**
+  (handle F8000248), status 00000102, LR **822C5358** — the SAME wait site as
+  iter-24, but the waited thread object id is **00151018 this run vs 0014A018 in
+  iter-24**.
 
-So this packet does NOT advance the 0014A018 identification. The authoritative
-data remains the iter-24 packet (`game-pass-lo-waitprobe-20260529-233020`, 256
-wait rows) and the iter-26 disasm (`game-pass-lo-disasm-20260529-233831`, 746
-rows) already committed.
+### Key new insight: reproducible pattern, fresh thread id per launch
+
+The never-completing thread-join reproduces every launch, but the target thread's
+guest_object differs run-to-run (0014A018 -> 00151018). Same waiter thid
+(00000014), same LR (822C5358), same status (0102). So this is a STRUCTURAL bug:
+the guest always spawns a worker thread and joins it, and that worker never exits
+— it's not tied to one fixed object address. That makes the fix target clear:
+find why the spawned guest worker thread never terminates (or is never scheduled
+to completion) in the emulator's thread/scheduler path.
 
 ## Established LO root cause (unchanged, device-proven)
 
