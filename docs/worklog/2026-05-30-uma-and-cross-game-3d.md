@@ -279,6 +279,31 @@ Draw Thread and GPU Commands while pinned at 100%. wchan 0 = NOT in any kernel w
 next: `simpleperf record -t <tid> --duration 3` + report, to get the userspace
 call stack and name the spin.)
 
+### B9 — simpleperf WORKS (run-as, no root); slowness is CPU-bound IN THE ADRENO DRIVER
+Got simpleperf running via: run-as jp.xenia.emulator.github.debug simpleperf record
+-e cpu-clock -t <draw_tid>,<gpucmd_tid> -g --duration 3 -o spin.data (writes to app
+cwd /data/user/0/<pkg>). perf_event_paranoid=1 blocks shell+--app, but run-as as the
+app uid is paranoid-exempt for its own threads. 23,719 samples, 0 lost.
+RELIABLE flat-profile hot symbols (simpleperf's own symbolization):
+- ~25%+ total in Adreno driver funcs: unknown[+2a0a450ac] 8.54%, +2a0106084 4.03%,
+  +2a0a45068 3.79%, +2a0106038 3.10%, ... (driver build 69e13475cb) - clustered in
+  ~2 driver routines.
+- vkUpdateDescriptorSets (qglinternal) explicit - per-draw descriptor churn.
+- memcpy_opt 1.00% - the shared-memory staging copy (what UMA would remove).
+- driven via CommandProcessor::ExecutePacketType3 (guest PM4 executor) - reliable.
+So the ~2.5fps is NOT a dumb spin (refines B8): the Draw/GPU-Commands threads are
+CPU-bound executing guest commands, with the dominant cost INSIDE the Adreno Vulkan
+driver (descriptor-set updates) + our memcpy. Classic mobile-Vulkan per-draw
+descriptor/state-update thrash.
+CAVEAT: addr2line on the local obj .so gave PARTIALLY MISMATCHED names (some
+plausible: ExecutePacketType3/InitializeRingBuffer; some nonsense: XThread::Create
+lambda) => installed APK .so != local obj .so build. So the deep callgraph
+attribution to OUR code is NOT yet reliable; only the simpleperf-named symbols above
+are trusted. NEXT: rebuild + reinstall so the on-device .so matches, re-profile, get
+a clean callgraph to the exact draw-setup call site, then fix (cache/reuse
+descriptor sets instead of vkUpdateDescriptorSets per draw; or push descriptors).
+This descriptor-churn fix is the biggest fps lever and is cross-game.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
