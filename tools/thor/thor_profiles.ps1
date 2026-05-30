@@ -24,9 +24,9 @@ $script:ThorGameProfiles = @{
         Title   = "Burnout Revenge"
         TitleId = "454107DC"
         Iso     = "/storage/2664-21DE/Roms/xbox360/Burnout Revenge (USA).iso"
-        Status  = "Boots, skips movies, reaches SAVE/LOAD player-file menu + garage/vehicle screens @~59fps (verified read). 3D scenes render in some scenes @~59fps; framerate collapses to ~7-10fps in others (scene-dependent, under investigation). Full in-race playability not yet confirmed."
-        Cvars   = @{}   # no per-game cvar validated yet; defaults
-        Reach   = "movie-skip stepper -> SAVE/LOAD player-file -> select slot/Create; gameplay gated behind player-file."
+        Status  = "REGRESSION FOUND+WORKAROUND (2026-05-30, A/B device-verified): with gpu_uma_direct_shared_memory ON (default) the present pipeline HANGS during the movie chain (VdSwap freezes, unresponsive). With it OFF, Burnout runs ~63fps straight through movies (EA->EAHD->CRRW->BG1) to a live menu. See docs/research/20260530-burnout-ingame-hard-hang.md."
+        Cvars   = @{ gpu_uma_direct_shared_memory = $false }  # VALIDATED: ON wedges present on Burnout; OFF runs ~60fps past movies
+        Reach   = "launch with gpu_uma_direct_shared_memory=false; movie chain auto-plays to menu @~60fps; then navigate."
     }
     "bluedragon" = @{
         Title   = "Blue Dragon"
