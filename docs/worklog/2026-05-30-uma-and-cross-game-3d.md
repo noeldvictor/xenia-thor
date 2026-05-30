@@ -72,3 +72,17 @@ an unsupported RT format (proper fallback vs silent drop). Vulkan format 65 =
 VK_FORMAT_A2B10G10R10_UNORM_PACK32 (unsigned) is the preferred substitute; the
 SIGNED 2_10_10_10 has no direct unorm equivalent -> likely the gap.
 NEXT: read VulkanTextureCache / render-target format fallback for signed 2_10_10_10.
+
+### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
+Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
+k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
+a universally supported 8bpp format. So the RENDER TARGETS render fine. The
+"k_2_10_10_10 (signed) not supported" log was from VulkanTextureCache (sampling
+textures), NOT render targets. So that is NOT obviously the black-3D cause - do not
+chase it as the RT bug. (Caught before over-claiming.)
+=> The black-3D cause is NOT RT-format mapping. It's deeper: either the EDRAM
+ownership-transfer / resolve-to-texture step, or the guest draws into the RT but the
+result isn't sampled back as the scene texture. Localizing this needs draw-level
+tracing (--ez vulkan_trace_draw_state true / vulkan_trace_resolve true) and reading
+the resolve + texture-load path - a multi-cycle investigation of its own. Flagged,
+not yet root-caused. fbo path + EDRAM tile store is the area (per upstream notes).
