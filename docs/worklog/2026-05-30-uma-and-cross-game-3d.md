@@ -28,3 +28,24 @@ it (EmulatorActivity.java). Needs a build. Test matrix once built:
 - NON-SPARSE staging:      uma=false, sparse=false        -> if it TDRs, NON-SPARSE
   alone is the trigger; if stable, host-visible-device-local memory is the trigger.
 - UMA direct (ref):        uma=true                       -> ~50% TDR (known)
+
+### E2 — Experiment (a) RESULT: non-sparse is NOT the trigger; host-visible-device-local IS
+Ran NON-SPARSE + DEVICE_LOCAL + staging copy (uma=false, sparse=false) x5 on Burnout:
+ALL 5 RUNNING ~61fps, zero hangs (nonsparse_msg=1 confirms the non-sparse buffer was
+actually used). 
+=> The single 512MB NON-SPARSE allocation is fine. The TDR is NOT caused by
+non-sparse, NOT by buffer size, NOT by the storage-buffer split.
+=> The ONLY remaining difference vs UMA-direct (~50% TDR) is the MEMORY TYPE:
+HOST_VISIBLE|DEVICE_LOCAL + persistent CPU mapping + CPU writes that the GPU then
+reads. That is now the pinned cause class.
+Combined with E (serialize) refuting the timing race, the leading mechanism is:
+Adreno GPU reads from HOST_VISIBLE|DEVICE_LOCAL memory have a coherency/visibility
+requirement our barrier+flush isn't satisfying for the GPU's MMU/cache, intermittently
+faulting. Even though the type reports HOST_COHERENT, Adreno's GPU-side cache view of
+host-written pages in this heap may need an explicit invalidate/availability op the
+desktop path never needed.
+NEXT (experiment b): keep UMA buffer host-visible BUT strengthen the host->device
+visibility: try (b1) a full vkDeviceWaitIdle is overkill - instead (b2) widen the
+host-write barrier to srcStage=HOST + a VK_ACCESS_MEMORY_READ over the WHOLE buffer
+with dstStage=ALL_COMMANDS, and (b3) test whether a non-coherent host-cached type +
+explicit vkFlushMappedMemoryRanges behaves differently than the host-coherent type.
