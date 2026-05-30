@@ -64,6 +64,48 @@ Mirror the staging pool's submission-tracking for the direct path:
 This keeps the UMA perf win (no staging copy) while making it safe. Until verified,
 keep default OFF.
 
+## ROOT CAUSE — CONFIRMED HARDWARE GPU HANG (dmesg, 2026-05-30)
+The freeze is a REAL Adreno GPU hang (TDR), NOT a CPU-logic deadlock. Kernel log
+during a UMA-on Burnout run (proc pid 13184, ctx_type VK):
+```
+adreno-gen7-gmu 3d68000.qcom,gmu: MISC: GPU hang detected
+kgsl kgsl-3d0: or.github.debug[13184]: ctx 15 ctx_type VK ts 937 status 00E704E7
+              rb 00e6/025e ib1 ...6AF11324 ib2 ...6AE48F04
+adreno-gen7-gmu 3d68000.qcom,gmu: Suspended GMU
+```
+So the GPU itself faults/hangs while consuming the UMA direct-write buffer, ~50% of
+runs. The chain to the app freeze:
+1. UMA direct path -> GPU hangs (TDR) drawing from the persistently-mapped
+   HOST_VISIBLE|DEVICE_LOCAL shared-memory buffer (intermittent = torn read /
+   coherency / access-pattern race at the hardware level).
+2. That submission's fence NEVER signals (GPU dead).
+3. Every fence wait is vkWaitForFences(UINT64_MAX) with NO device-lost recovery on
+   the wait path (vulkan_gpu_completion_timeline.cc AwaitSubmissionImpl) -> the CPU
+   threads (GPU Commands / GPU VSync / Main XThread) hang forever too.
+
+CORRECTION: a subagent analysis blamed my AwaitSubmissionCompletion read-guard
+(vulkan_shared_memory.cc:561) as "THE culprit." That is WRONG - the same ~1190
+hang happened BEFORE that code (commit 4beaeca65 added it; hangs predate it). The
+read-guard is at most an additional infinite-wait SITE, not the trigger. The
+trigger is the GPU TDR.
+
+## FIX DIRECTIONS (two layers, neither yet implemented)
+A) DEFENSIVE (stops the permanent freeze, doesn't make UMA correct): give the
+   fence waits a FINITE timeout + handle VK_ERROR_DEVICE_LOST / timeout (mark device
+   lost, surface it) instead of vkWaitForFences(UINT64_MAX). Then a GPU hang ends the
+   session cleanly instead of wedging forever. Applies beyond UMA.
+B) ROOT (make UMA safe so the GPU stops hanging): the GPU faults reading the
+   512MB HOST_VISIBLE|DEVICE_LOCAL buffer. Hypotheses to test, in order:
+   - Heap-budget / BAR window: a 512MB DEVICE_LOCAL+HOST_VISIBLE allocation may
+     exceed the Adreno host-visible-device-local budget; check
+     VkPhysicalDeviceMemoryBudget vs 512MB; if over budget, GPU access can fault.
+   - Coherency/flush: confirm nonCoherentAtomSize handling + that the host write is
+     fully flushed AND made available before the GPU read (the barrier covers
+     access masks but verify HOST_WRITE visibility timing vs the actual submit).
+   - Access-pattern: CPU writing pages the GPU may touch in the SAME frame (intra-
+     submission), which the submission-level guard does not cover.
+   Validate each on device (UMA-on, watch dmesg for "GPU hang detected").
+
 ## Net for "get the speed"
 At menus/movies both UMA on and off are vsync-capped ~60fps, so the user-visible
 speed there is NOT gated on UMA. UMA's win is throughput on heavy guest-memory
