@@ -214,6 +214,38 @@ base (0x1Cxxxxxx). Distinguish "geometry not drawn" vs "drawn but not composited
 ~2-4fps throughout = separate perf problem (lots of resolves/frame, likely the
 many 1280x720 Full32bpp resolves = resolve thrash).
 
+### B5 — draw-state trace: geometry IS drawn; world RTs are k_2_10_10_10_FLOAT
+vulkan_trace_draw_state in-game: 249 draw lines. Distribution at one in-game moment:
+- ps_hash: 50x zero (no pixel shader), 6x 2E372EA28CC404B7 (a real world shader)
+- color_mask: 100x 0000 (no color write = depth/setup/occlusion passes), 6x FFFF
+  (full color), 6x 000F
+- rt color0 fmt: 26x fmt=0, 24x fmt=12 (k_2_10_10_10_FLOAT_AS_16_16_16_16), 6x fmt=3
+  (k_2_10_10_10_FLOAT)
+=> The world IS being drawn (real shaded color draws exist) into k_2_10_10_10_FLOAT
+render targets (fmt 3/12). GetColorVulkanFormat maps k_2_10_10_10_FLOAT ->
+R16G16B16A16_SFLOAT (supported), so the RT renders. The suspect is now the
+RESOLVE+SAMPLE-BACK of a k_2_10_10_10_FLOAT surface as a TEXTURE (the float variant,
+NOT the signed-int k_2_10_10_10 I tested in B4 - different format path). Verify the
+texture-cache host format for k_2_10_10_10_FLOAT and whether resolve writes the
+float bits in a layout the sample-back decodes.
+
+### B6 — SEPARATE perf finding: Android swapchain dequeue/queue stall (the ~2fps)
+The draw trace run also logged Android "OpenGLRenderer: Davey!" frames with
+DequeueBufferDuration up to 696ms and QueueBufferDuration up to 516ms per frame.
+So a big chunk of the ~2fps is NOT guest GPU work - it's the Android surface
+buffer dequeue/queue stalling for hundreds of ms. Likely swapchain present-mode /
+buffer-count / vsync interaction on the Thor compositor. This is an independent,
+high-value perf lever (could lift fps a lot even before the 3D shows). NEXT for
+this: check the Vulkan presenter swapchain present mode + image count
+(vulkan_presenter.cc) - prefer MAILBOX/IMMEDIATE + >=3 images if not already.
+
+## Session stop point (cross-game black-3D)
+Real progress: ruled IN that geometry draws + EDRAM resolves both happen; localized
+the loss to resolve->sample-back of k_2_10_10_10[_FLOAT] surfaces; found a separate
+Android-surface present stall driving much of the ~2fps. Two concrete next levers:
+(1) k_2_10_10_10_FLOAT texture-sample-back path, (2) swapchain present-mode/buffers.
+Both are bounded next-session tasks. Device left stable UMA-off.
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
