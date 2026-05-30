@@ -616,6 +616,33 @@ they sample, and is that texture's data the resolved 3D scene? Use vulkan_trace_
 _state filtered to draws whose RT base = frontbuffer, inspect their bound textures.
 This is THE fix for Blue Dragon full-speed-AND-visible.
 
+### B22 — present-selection experiment: all 3 modes show CLEAR colors, none show 3D
+iter8. Tested the present-surface-selection cvars live on the heavy Blue Dragon scene
+(read each frame):
+- default (none):                  flat BLUE + HUD
+- vulkan_present_recent_resolve_on_swap=true:  flat YELLOW, no HUD
+- vulkan_present_scored_resolve_on_swap=true:  pure BLACK, 0.0fps
+=> Three different CLEAR colors (blue/yellow/black), NONE shows the 3D geometry. The
+present machinery DOES change the output (it's wired), but every candidate surface it
+can pick is a CLEAR-COLOR surface, not the composited 3D scene. So the 3D geometry -
+which IS drawn (10,597 draws) and resolved (1280x720 Full32bpp, B1) - is NOT present
+in any surface the swap selects. Most likely: the geometry resolves to a surface that
+is later RE-CLEARED before the swap, OR the scene RT is never resolved to the exact
+frontbuffer the guest points the swap at (the guest may expect us to present the EDRAM
+render-target contents directly, not a resolved copy).
+CONCLUSION for the iteration: black-3D is a PRESENT/RESOLVE-TARGET mismatch - the
+presented frontbuffer surface holds only a clear, while the real scene lives in an
+EDRAM render target (or a different resolved surface) that we never composite/present.
+NEXT (iter9): trace, for ONE frame, the FULL sequence of (a) clears to the frontbuffer
+addr 1CA1C000/1CDB4000, (b) resolves with dest_base = those addrs, (c) the draw/RT
+that holds the actual scene, in timestamp order. Find whether a clear to 1CA1C000
+happens AFTER the scene resolve to 1CA1C000 (overwrite bug), or the scene resolves
+elsewhere and 1CA1C000 only ever gets a clear (wrong-frontbuffer bug). That names the
+fix. The forced-resolve cvars (vulkan_present_forced_resolve_address/width/height/
+pitch/format) let us TEST presenting a specific surface address once we know which one
+holds the scene.
+Device left with default present (cvars off).
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
