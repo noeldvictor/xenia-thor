@@ -49,3 +49,26 @@ visibility: try (b1) a full vkDeviceWaitIdle is overkill - instead (b2) widen th
 host-write barrier to srcStage=HOST + a VK_ACCESS_MEMORY_READ over the WHOLE buffer
 with dstStage=ALL_COMMANDS, and (b3) test whether a non-coherent host-cached type +
 explicit vkFlushMappedMemoryRanges behaves differently than the host-coherent type.
+
+## Cross-game black-3D investigation (Blue Dragon, UMA off)
+
+### E3 — render target PATH = fbo (kHostRenderTargets), NOT fsi
+Device log: "VulkanRenderTargetCache: render_target_path_vulkan='' selected=fbo".
+So 3D is drawn into host framebuffer images; bug is in EDRAM-RT -> sampleable
+texture/frontbuffer resolve on the fbo path (matches upstream notes: fbo path has
+limited pixel-format support; "couldn't see the world" w/ EDRAM sharing).
+
+### E4 — UNSUPPORTED FORMAT lead (concrete, cross-game candidate)
+Device log at GPU init:
+  "VulkanTextureCache: Format k_2_10_10_10 (signed) is not supported by the device
+   (preferred Vulkan format is 65)"
+  "... k_2_10_10_10_AS_16_16_16_16 (signed) is not supported ..."
+k_2_10_10_10 is a VERY common Xbox360 color/RT/vertex format. In-game Blue Dragon
+renders into 320x8192 / 160x4096 MSAA color+depth RTs (EDRAM-tiled layouts) with
+"guest format 0" and "guest format 3". If the world is rendered into a
+k_2_10_10_10 target the Adreno can't represent, the resolve/sample yields nothing
+=> black 3D while the simpler-format HUD shows. Need to verify how the code handles
+an unsupported RT format (proper fallback vs silent drop). Vulkan format 65 =
+VK_FORMAT_A2B10G10R10_UNORM_PACK32 (unsigned) is the preferred substitute; the
+SIGNED 2_10_10_10 has no direct unorm equivalent -> likely the gap.
+NEXT: read VulkanTextureCache / render-target format fallback for signed 2_10_10_10.
