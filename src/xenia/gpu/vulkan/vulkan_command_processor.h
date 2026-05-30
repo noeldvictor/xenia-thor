@@ -740,6 +740,21 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
       current_samplers_pixel_;
 
+  // Texture/sampler descriptor reuse (vulkan_cache_texture_descriptors): a
+  // signature of the image views and samplers bound for the vertex/pixel
+  // texture descriptor sets on the last draw that wrote them. If the next draw
+  // produces an identical signature, the previously written descriptor set is
+  // reused instead of allocating + vkUpdateDescriptorSets again (per-draw
+  // descriptor churn dominates the GPU command thread on Adreno). Reset
+  // whenever the descriptor set bit goes out of date for another reason (frame
+  // start, pipeline layout change). A hash collision would only ever cause a
+  // skipped-but-needed rewrite; the contents are tiny, so the signature stores
+  // the exact handles, not a hash, to be exact.
+  std::vector<uint64_t> texture_descriptor_signature_vertex_;
+  std::vector<uint64_t> texture_descriptor_signature_pixel_;
+  bool texture_descriptor_signature_vertex_valid_ = false;
+  bool texture_descriptor_signature_pixel_valid_ = false;
+
   // Cache render pass currently started in the command buffer with the
   // framebuffer.
   VkRenderPass current_render_pass_;

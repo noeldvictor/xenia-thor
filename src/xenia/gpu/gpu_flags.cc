@@ -264,6 +264,15 @@ DEFINE_bool(vulkan_debug_texture_fetch_disable_exp_adjust, false,
             "adjustment to 1.0. This is incorrect for gameplay and isolates "
             "2_10_10_10_FLOAT resolve/fetch fallback darkening.",
             "GPU");
+DEFINE_bool(
+    vulkan_cache_texture_descriptors, true,
+    "Reuse the texture/sampler descriptor sets across consecutive draws when "
+    "the bound image views and samplers have not changed, instead of "
+    "allocating and writing a fresh transient descriptor set every draw. Big "
+    "CPU win on mobile drivers (Adreno) where vkUpdateDescriptorSets per draw "
+    "dominates the GPU command thread. Set false to restore the per-draw "
+    "rewrite (e.g. to isolate a descriptor-caching regression).",
+    "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

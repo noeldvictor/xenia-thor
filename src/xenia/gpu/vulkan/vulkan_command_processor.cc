@@ -4107,6 +4107,11 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     current_graphics_descriptor_set_values_up_to_date_ =
         UINT32_C(1)
         << SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram;
+    // The transient texture/sampler descriptor sets are reclaimed across
+    // submissions, so any previously written set the signature referred to is
+    // gone - invalidate the reuse signature so the next draw rewrites.
+    texture_descriptor_signature_vertex_valid_ = false;
+    texture_descriptor_signature_pixel_valid_ = false;
 
     // Reclaim pool pages - no need to do this every small submission since some
     // may be reused.
@@ -5355,10 +5360,78 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     sampler_count_pixel = 0;
     texture_count_pixel = 0;
   }
-  // TODO(Triang3l): Reuse texture and sampler bindings if not changed.
-  current_graphics_descriptor_set_values_up_to_date_ &=
-      ~((UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
-        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
+  // Reuse texture and sampler bindings if not changed since the last draw
+  // (vulkan_cache_texture_descriptors). Allocating a transient descriptor set
+  // and calling vkUpdateDescriptorSets for the textures/samplers on every draw
+  // is the dominant CPU cost on the Adreno command thread; most consecutive
+  // draws bind the exact same image views and samplers, so a fresh write is
+  // wasted work. Build a signature of the would-be contents (image views and
+  // samplers, plus counts which encode the descriptor set layout) and only mark
+  // the descriptor set out of date - forcing the existing rewrite path below -
+  // when the signature actually changes. The signature stores exact handles
+  // (not a hash), so it is precise. When caching is disabled, fall back to the
+  // original unconditional rewrite.
+  if (cvars::vulkan_cache_texture_descriptors) {
+    auto build_texture_signature =
+        [this](bool is_vertex, uint32_t texture_count, uint32_t sampler_count,
+               const std::vector<VulkanShader::TextureBinding>* textures,
+               const std::vector<
+                   std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>&
+                   samplers,
+               std::vector<uint64_t>& signature_out) {
+          signature_out.clear();
+          signature_out.push_back((uint64_t(texture_count) << 32) |
+                                  uint64_t(sampler_count));
+          if (texture_count && textures) {
+            for (const VulkanShader::TextureBinding& texture_binding :
+                 *textures) {
+              signature_out.push_back(reinterpret_cast<uint64_t>(
+                  texture_cache_->GetActiveBindingOrNullImageView(
+                      texture_binding.fetch_constant, texture_binding.dimension,
+                      bool(texture_binding.is_signed))));
+            }
+          }
+          if (sampler_count) {
+            for (const std::pair<VulkanTextureCache::SamplerParameters,
+                                 VkSampler>& sampler_pair : samplers) {
+              signature_out.push_back(
+                  reinterpret_cast<uint64_t>(sampler_pair.second));
+            }
+          }
+        };
+    // Vertex textures/samplers.
+    if (texture_count_vertex || sampler_count_vertex) {
+      std::vector<uint64_t> new_signature;
+      build_texture_signature(true, texture_count_vertex, sampler_count_vertex,
+                              &textures_vertex, current_samplers_vertex_,
+                              new_signature);
+      if (!texture_descriptor_signature_vertex_valid_ ||
+          new_signature != texture_descriptor_signature_vertex_) {
+        current_graphics_descriptor_set_values_up_to_date_ &= ~(
+            UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex);
+        texture_descriptor_signature_vertex_ = std::move(new_signature);
+        texture_descriptor_signature_vertex_valid_ = true;
+      }
+    }
+    // Pixel textures/samplers.
+    if (texture_count_pixel || sampler_count_pixel) {
+      std::vector<uint64_t> new_signature;
+      build_texture_signature(false, texture_count_pixel, sampler_count_pixel,
+                              textures_pixel,
+                              current_samplers_pixel_, new_signature);
+      if (!texture_descriptor_signature_pixel_valid_ ||
+          new_signature != texture_descriptor_signature_pixel_) {
+        current_graphics_descriptor_set_values_up_to_date_ &= ~(
+            UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
+        texture_descriptor_signature_pixel_ = std::move(new_signature);
+        texture_descriptor_signature_pixel_valid_ = true;
+      }
+    }
+  } else {
+    current_graphics_descriptor_set_values_up_to_date_ &=
+        ~((UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
+          (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
+  }
 
   // Make sure new descriptor sets are bound to the command buffer.
 

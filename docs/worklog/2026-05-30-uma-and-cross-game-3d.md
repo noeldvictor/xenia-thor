@@ -344,6 +344,30 @@ descriptor set write) to implement #1. Profiling method is now repeatable:
 run-as <pkg> simpleperf record -e cpu-clock -t <tids> -g -o spin.data; addr2line
 against merged_native_libs .so (build-id must match installed).
 
+### B11 — FIX: descriptor-set caching (acts on B10 root cause)
+Found the exact cause in code: vulkan_command_processor.cc had an upstream TODO
+"Reuse texture and sampler bindings if not changed" immediately followed by code
+that UNCONDITIONALLY clears the texture-descriptor up-to-date bits EVERY draw -> a
+fresh transient descriptor set alloc + vkUpdateDescriptorSets per draw = the ~25%
+Adreno-driver cost B10 measured.
+Fix (cvar vulkan_cache_texture_descriptors, default ON): each draw build a precise
+signature of the would-be texture descriptor contents = (texture_count,
+sampler_count) + the exact bound image-view handles (GetActiveBindingOrNullImageView)
++ the exact VkSampler handles, for vertex and pixel sets separately. Only clear the
+descriptor-set-out-of-date bit (forcing the existing rewrite path) when the
+signature differs from the last draw's. Counts are in the signature and the
+descriptor-set-layout key is (texture_count, sampler_count, is_vertex), so a matching
+signature guarantees a compatible layout -> reuse is safe. Signature stores exact
+handles (not a hash) so no false-positive skips. Invalidated at submission start
+(where transient descriptors are reclaimed) so a stale set is never rebound. Falls
+back to the original per-draw rewrite when the cvar is off (clean A/B).
+Files: gpu_flags.{h,cc} (cvar), vulkan_command_processor.{h,cc} (signature members +
+logic + submission-start invalidation). Building now. VERIFY PLAN: re-run the B9/B10
+simpleperf method with cache ON vs OFF and compare vkUpdateDescriptorSets share +
+in-game fps; read a frame to confirm no rendering regression (textures still
+correct). Expect a large GPU-Commands-thread CPU drop if consecutive draws share
+bindings.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
