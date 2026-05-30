@@ -39,6 +39,16 @@ DEFINE_bool(
     "Experimental - validate rendering per title on device before trusting it; "
     "a coherency bug here shows up as corrupted or black frames.",
     "Vulkan");
+DEFINE_bool(
+    gpu_uma_serialize_before_write, false,
+    "DIAGNOSTIC for the Adreno UMA GPU-hang (TDR): before each direct in-place "
+    "write of guest pages into the persistently-mapped shared-memory buffer, "
+    "wait for ALL previously submitted GPU work to complete, so no in-flight "
+    "(deferred tiler) draw can still be reading pages we are about to overwrite. "
+    "Heavy-handed (serializes CPU and GPU); only for confirming the "
+    "CPU-write-vs-deferred-GPU-read race hypothesis. Has no effect unless "
+    "gpu_uma_direct_shared_memory is on.",
+    "Vulkan");
 
 namespace xe {
 namespace gpu {
@@ -305,14 +315,6 @@ void VulkanSharedMemory::Use(Usage usage,
         false);
   }
   last_written_range_ = written_range;
-
-  // UMA direct-write race guard: remember the submission in which the buffer is
-  // read by the guest, so a later direct write can wait for it to finish before
-  // overwriting pages. kRead and kGuestDrawReadWrite both read the buffer.
-  if (buffer_host_visible_ &&
-      (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite)) {
-    direct_last_read_submission_ = command_processor_.GetCurrentSubmission();
-  }
 }
 
 bool VulkanSharedMemory::InitializeTraceSubmitDownloads() {
@@ -540,25 +542,32 @@ bool VulkanSharedMemory::UploadRangesDirect(
       reinterpret_cast<uint8_t*>(buffer_host_mapping_);
   const uint32_t page_size_log2_local = page_size_log2();
 
-  // Race guard: the staging path is safe because its upload-pool buffers are
-  // submission-tagged and reused only after the GPU finishes reading them. The
-  // direct path writes in place, so before overwriting we must ensure no
-  // PRIOR, still-in-flight submission is reading the buffer. We wait for the
-  // last submission in which the buffer was read to complete - but ONLY if it
-  // is strictly older than the currently open submission. Reads recorded in the
-  // open submission haven't been queued to the GPU yet (RequestRange/
-  // UploadRanges run during draw setup, before that submission is submitted),
-  // so no GPU read of these pages is in flight for the open submission, and we
-  // must NOT end it here. Without this guard the host memcpy raced prior
-  // in-flight reads -> corruption -> intermittent present hang during movies.
-  // (Conservative: waits for the whole prior submission rather than per page;
-  // simple and correct, refine to per-range later if it costs throughput.)
-  const uint64_t current_submission = command_processor_.GetCurrentSubmission();
-  if (direct_last_read_submission_ &&
-      direct_last_read_submission_ < current_submission &&
-      direct_last_read_submission_ >
-          command_processor_.GetCompletedSubmission()) {
-    command_processor_.AwaitSubmissionCompletion(direct_last_read_submission_);
+  // Adreno is a tile-based DEFERRED renderer: vertex/index buffer reads happen
+  // during binning + per-tile passes that execute long after a draw is recorded
+  // (A7xx even bins concurrently with rendering). The direct path writes guest
+  // pages IN PLACE into the single shared buffer on the CPU timeline, so an
+  // in-flight prior submission can still be reading pages we overwrite -> torn
+  // index -> out-of-bounds vertex fetch -> GPU MMU fault (the captured
+  // "adreno-gen7-gmu: GPU hang detected" TDR). The staging path is immune
+  // because every upload is an immutable per-submission copy.
+  //
+  // DIAGNOSTIC (gpu_uma_serialize_before_write): wait for ALL previously
+  // submitted GPU work to finish before overwriting, so nothing in flight can be
+  // reading these pages. This is the decisive test of the race hypothesis: if
+  // the TDR disappears with this on, the hang IS the CPU-write-vs-deferred-read
+  // race and the real fix is a correct per-page in-flight guard; if it still
+  // TDRs, the fault is intra-frame and lives elsewhere.
+  // (direct_last_read_submission_ was a single scalar clobbered to the open
+  // submission by every Use(kRead), so the previous "< current" guard never
+  // fired - it was effectively dead. Replaced by this explicit experiment.)
+  if (cvars::gpu_uma_serialize_before_write) {
+    const uint64_t current_submission =
+        command_processor_.GetCurrentSubmission();
+    if (current_submission > 1 &&
+        command_processor_.GetCompletedSubmission() < current_submission - 1) {
+      // Wait for everything submitted so far (current_submission - 1) to drain.
+      command_processor_.AwaitSubmissionCompletion(current_submission - 1);
+    }
   }
 
   // upload_page_ranges are sorted; bound the barrier to the touched span.
