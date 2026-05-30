@@ -32,9 +32,9 @@ $script:ThorGameProfiles = @{
         Title   = "Blue Dragon"
         TitleId = "4D5307DF"
         Iso     = "/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso"
-        Status  = "Boots to 'press START' title @~31fps (verified read). In a prior run reached an in-game HUD/field (party + HP/MP) but slow (~2fps). 3D DOES reach the frontbuffer for this title (contrast vs Burnout/LO black-3D)."
-        Cvars   = @{}
-        Reach   = "press START at title; multi-disc .m3u (Disc 1)."
+        Status  = "Reaches ACTUAL IN-GAME (2026-05-30 verified, UMA off): in-field party HUD (char 'Shu' HP40/MP30). BUT 3D world does NOT reach frontbuffer (flat light-blue, only HUD composites) and ~2.0fps. Guest IS rendering (log: 320x8192 + 160x4096 MSAA color/depth RTs created) -> our MSAA-RT resolve->frontbuffer path is the suspect, shared with Burnout in-race black-3D. See docs/research/20260530-bluedragon-ingame-black3d-2fps.md."
+        Cvars   = @{ gpu_uma_direct_shared_memory = $false }
+        Reach   = "multi-disc .m3u (Disc 1); auto-reaches in-game field HUD; 3D-black + 2fps blocker."
     }
     "lostodyssey" = @{
         Title   = "Lost Odyssey"
