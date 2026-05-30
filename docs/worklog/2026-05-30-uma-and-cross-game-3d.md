@@ -458,6 +458,30 @@ handler dominates). If it's EVENT_WRITE / MakeCoherent / vertex-fetch setup, opt
 that. Also: 73 INDIRECT_BUFFER/frame with ~0 draws suggests the guest submits work
 whose draws we DROP (cull/skip) - cross-check with black-3D (draws not reaching RT).
 
+### B16 — PIVOTAL: ~10,600 REAL draws PER FRAME (not zero!). Overturns "near-zero draws"
+24h-auto iter2 result. Per-frame draw-outcome counter (budget-free) in field state:
+  rendered=~10597  skipped_no_vs=0  skipped_no_rast=0  copy=23   (every frame)
+=> The earlier "near-zero draws" (B14/B15) was a TRACE-BUDGET ARTIFACT (vulkan_trace_
+draw_state has a one-shot global budget exhausted during boot). REALITY: ~10,600
+draws ACTUALLY RENDER every frame, zero skipped. At ~2.4fps that is ~25,000 host
+draws/sec.
+This reframes BOTH problems:
+- SLOWNESS: 10,600 draws/frame is pathological for an RPG field (should be hundreds).
+  Per-draw host overhead x 10,600 = the 100%-CPU GPU-Commands/Draw threads. The fix
+  is to find WHY so many draws: (a) the guest command buffer being executed multiple
+  times per frame, (b) each guest draw exploding into many host draws, or (c) the
+  guest genuinely issues huge geometry we should batch/instance. The slow decrement
+  10597->10594 over frames suggests a near-constant huge workload, not runaway growth.
+- BLACK-3D: draws are NOT dropped at IssueDraw (skipped=0) - so geometry renders.
+  The loss is DOWNSTREAM (resolve/sample-back, or everything renders to an offscreen
+  RT that never composites to the frontbuffer).
+NEXT (iter3): determine if 10,600 is real guest work or our duplication. Check
+ExecutePrimaryBuffer / INDIRECT_BUFFER handling - are we re-walking the same command
+buffer? Count guest draw packets (PM4 DRAW_INDX) per frame vs our rendered=10600: if
+guest issues ~10,600 draw packets, it's real (need batching/perf); if guest issues
+few but we render 10,600, we have a command-replay bug (huge win to fix). Use a
+per-frame counter of Type3 DRAW_INDX/DRAW_INDX_2 opcodes in command_processor.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
