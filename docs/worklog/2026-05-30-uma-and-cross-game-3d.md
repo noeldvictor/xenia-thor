@@ -403,6 +403,41 @@ volume is low.
 NOTE: ADB dropped mid-session ('device not found'); recovered with `adb reconnect`
 (device returned). Known intermittent on this rig.
 
+### B14 — RETRY-LOOP THEORY: tested, partly confirmed, refined to a sharp anomaly
+Field-state measurements (Blue Dragon, UMA off, descriptor cache on):
+- Frame is BYTE-IDENTICAL across 5s (md5 0D9E895E both, size 94339) while both host
+  GPU threads sit at 100% CPU the whole time.
+- VdSwap IS genuinely advancing (~2.6fps): frontbuffer ptr alternates
+  FCDB3000<->FCA1B000 (proper double-buffer) and climbs. So the GUEST itself runs at
+  ~2.6fps - it is NOT our host re-presenting a stale frame.
+- Guest CPU threads (Main Thread, all XThreads) are IDLE (<=3.8%). Only host
+  "Draw Thread" + "GPU Commands" are pinned 100%.
+- In a 3s window: 8 VdSwaps, but ZERO G> GPU lines (no draws, no resolves, no
+  render-target creates).
+THE ANOMALY (sharp, novel): the guest advances its frame loop ~2.6x/sec issuing
+ALMOST NO draws, while our host GPU-emulation threads burn 100% CPU - and B12 showed
+that CPU is in ExecutePacketType0 (register writes) + RingBuffer reads. So the guest
+is submitting HUGE volumes of REGISTER WRITES with almost no actual draws per frame.
+That is not normal rendering; it smells like the guest spinning a GPU-side loop
+(writing/polling registers) waiting on a condition we satisfy slowly or never -
+combined with the FIXME at command_processor.cc:522 ("supposed to process the
+WAIT_UNTIL register") and the scratch-register->guest-memory writeback path (:654)
+that games busy-poll for CPU/GPU sync.
+NOT a host reprocessing bug (VdSwap advances, double-buffer cycles). NOT a guest-CPU
+spin (guest threads idle). It is host GPU-command-thread bound on register-write
+volume the guest keeps generating.
+
+NEXT PROBE (clean, decisive): the PM4 packet trace gate
+(ShouldTraceGpuPacket = gpu_trace_swap && global fetch_add < budget) is ONE-SHOT
+from process start - the budget is exhausted during boot/movies, so it logs nothing
+in the field state. To see the field-state packet/opcode mix, add a small probe
+that counts PM4 packet types + Type3 opcodes PER FRAME (reset at VdSwap) behind a
+cvar, or reset gpu_packet_trace_count at swap. Then we'll SEE whether it's a
+WAIT_UNTIL/WAIT_REG_MEM poll, a scratch-register sync spin, or genuine huge
+register-set churn - which names the fix (e.g. honor WAIT_UNTIL so the guest stops
+re-polling, or fast-path the poll). This unifies the ~2.5fps AND likely the
+black-3D (guest stuck pre-draw) into ONE root cause.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
