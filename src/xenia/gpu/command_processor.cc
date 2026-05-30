@@ -644,7 +644,17 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
 
   // Volatile for the WAIT_REG_MEM loop.
   const_cast<volatile uint32_t&>(regs.values[index]) = value;
-  if (!regs.GetRegisterInfo(index) &&
+  // GetRegisterInfo is a large switch executed on EVERY register write, and the
+  // guest issues a huge volume of these (~10,600 draws/frame in Blue Dragon).
+  // It is only needed to gate the unknown-register warning. When that logging is
+  // suppressed (budget == 0) skip the lookup entirely. With logging enabled the
+  // behavior is unchanged: the lookup runs, and the rate-limit budget is only
+  // consumed (atomic fetch_add) for actually-unknown registers as before.
+  // (Minor win - only removes the per-write lookup when budget==0; the cost is
+  // inherent to the unknown-register check otherwise. The dominant per-frame
+  // cost is the sheer draw volume, not this.)
+  if (cvars::gpu_unknown_register_log_budget != 0 &&
+      !regs.GetRegisterInfo(index) &&
       ShouldLogUnknownGpuRegister(gpu_unknown_register_write_log_count)) {
     XELOGW("GPU: Write to unknown register ({:04X} = {:08X})", index, value);
   }
