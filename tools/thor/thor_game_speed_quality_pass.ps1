@@ -20,6 +20,8 @@ param(
     [string[]]$Targets = @(),
     [string]$OutDir = "",
     [string]$ExtraIntent = "",
+    [string]$InputSequence = "",
+    [string]$TimeScalar = "",
     [string]$Label = "baseline",
     [int]$BootWaitSec = 28,
     [int]$SkipWindowSec = 55,
@@ -89,19 +91,34 @@ foreach ($target in $Targets) {
     & $Adb -s $DeviceSerial logcat -c | Out-Null
 
     $tEsc = $target -replace "'", "'\\''"
-    $intent = "am start -W -n $component --es gpu vulkan --es cpu arm64 --es apu android --es hid android --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true"
+    # Input: deterministic guest-side hid_nop button sequence (reproducible, no
+    # movie-randomness) when -InputSequence is given; else Android keyevent taps.
+    if ($InputSequence) {
+        $seqEsc = $InputSequence -replace "'", "'\\''"
+        $hidPart = "--es hid nop --es hid_nop_button_sequence '$seqEsc'"
+    } else {
+        $hidPart = "--es hid android"
+    }
+    $intent = "am start -W -n $component --es gpu vulkan --es cpu arm64 --es apu android $hidPart --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true"
+    if ($TimeScalar) { $intent += " --es time_scalar $TimeScalar" }
     if ($ExtraIntent) { $intent += " $ExtraIntent" }
     $intent += " --es target '$tEsc'"
     Invoke-AdbShell $intent | Out-Null
 
     Start-Sleep -Seconds $BootWaitSec
-    # Skip intro movies / advance menus: tap Start (108) and A (96) repeatedly.
-    $elapsed = 0
-    while ($elapsed -lt $SkipWindowSec) {
-        & $Adb -s $DeviceSerial shell input keyevent 108 | Out-Null
-        & $Adb -s $DeviceSerial shell input keyevent 96  | Out-Null
-        Start-Sleep -Seconds $SkipEverySec
-        $elapsed += $SkipEverySec
+    if ($InputSequence) {
+        # The hid_nop sequence drives guest input on its own (emulator-start-relative)
+        # schedule; just wait out the window, no Android keyevents.
+        Start-Sleep -Seconds $SkipWindowSec
+    } else {
+        # Skip intro movies / advance menus: tap Start (108) and A (96) repeatedly.
+        $elapsed = 0
+        while ($elapsed -lt $SkipWindowSec) {
+            & $Adb -s $DeviceSerial shell input keyevent 108 | Out-Null
+            & $Adb -s $DeviceSerial shell input keyevent 96  | Out-Null
+            Start-Sleep -Seconds $SkipEverySec
+            $elapsed += $SkipEverySec
+        }
     }
     Start-Sleep -Seconds $SettleSec
 
