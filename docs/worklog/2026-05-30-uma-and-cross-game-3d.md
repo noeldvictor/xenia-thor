@@ -239,6 +239,22 @@ high-value perf lever (could lift fps a lot even before the 3D shows). NEXT for
 this: check the Vulkan presenter swapchain present mode + image count
 (vulkan_presenter.cc) - prefer MAILBOX/IMMEDIATE + >=3 images if not already.
 
+### B7 — SLOWNESS root cause: CPU-bound on host GPU-emulation threads (NOT swapchain)
+CORRECTION to B6: the Android "Davey!" 696ms dequeue stalls were an ARTIFACT of my
+heavy vulkan_trace_draw_state logcat flooding. Clean untraced run = still ~2.5fps,
+so slowness is real. Present mode is MAILBOX (mode=1, confirmed in swapchain log) -
+NOT a FIFO vsync cap, NOT a swapchain problem.
+top -H on a clean in-game run: TWO host threads pinned at 100% CPU:
+  - "Draw Thread"   100%
+  - "GPU Commands"  100%
+everything else idle (519%/800% idle). => the ~2.5fps is CPU-bound on host GPU
+command translation/recording, not GPU execution and not present. Prime suspect:
+the many full 1280x720 Full32bpp EDRAM resolves per frame seen in B1 (resolve-copy
+shader dispatches + barriers on every resolve) = resolve thrash on the GPU Commands
+thread, plus host Vulkan command recording on the Draw Thread. NEXT: count
+resolves+draws per frame and see if resolve count is pathological; check if
+render-target/resolve caching is missing so the same surfaces re-resolve every frame.
+
 ## Session stop point (cross-game black-3D)
 Real progress: ruled IN that geometry draws + EDRAM resolves both happen; localized
 the loss to resolve->sample-back of k_2_10_10_10[_FLOAT] surfaces; found a separate
