@@ -15,6 +15,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/byte_order.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/trace_writer.h"
@@ -608,7 +609,19 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         }
       } break;
       default: {
-        assert_unhandled_case(vector_opcode);
+        // The CPU-side interpreter should not abort the whole emulator on an
+        // unimplemented vector opcode (observed crashing Gears 3 / Judgment).
+        // vector_result is zero-initialized, so leaving it produces zero and
+        // execution continues. Log the opcode once for follow-up.
+        static bool vector_opcode_unhandled_logged = false;
+        if (!vector_opcode_unhandled_logged) {
+          vector_opcode_unhandled_logged = true;
+          XELOGE(
+              "ShaderInterpreter: unhandled ALU vector opcode {}; returning "
+              "zero and continuing instead of aborting (further occurrences "
+              "suppressed)",
+              uint32_t(vector_opcode));
+        }
       }
     }
     if (replicate_vector_result_x) {
@@ -895,7 +908,17 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     case ucode::AluScalarOpcode::kRetainPrev: {
     } break;
     default: {
-      assert_unhandled_case(scalar_opcode);
+      // Do not abort the emulator on an unimplemented scalar opcode; retain the
+      // previous scalar (like kRetainPrev) and continue. Log once for follow-up.
+      static bool scalar_opcode_unhandled_logged = false;
+      if (!scalar_opcode_unhandled_logged) {
+        scalar_opcode_unhandled_logged = true;
+        XELOGE(
+            "ShaderInterpreter: unhandled ALU scalar opcode {}; retaining "
+            "previous and continuing instead of aborting (further occurrences "
+            "suppressed)",
+            uint32_t(scalar_opcode));
+      }
     }
   }
 
