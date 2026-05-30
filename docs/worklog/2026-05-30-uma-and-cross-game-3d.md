@@ -588,6 +588,34 @@ update) instead of a full rebind per draw. Read the constants descriptor path +
 uniform_buffer_pool_ to see if dynamic-offset binding is feasible = real driver-cost
 cut at 10,597 draws/frame.
 
+### B21 — UNIFYING INSIGHT: the 10,600-draw heavy scene IS the black-3D scene
+Captured the heavy ~2.4fps / 10,597-draw scene: it shows FLAT BLUE + HUD only (the
+black-3D state, same frame md5 family as before). So:
+- The guest renders the FULL 3D world every frame: 10,597 draws, 1.19M verts, real
+  geometry (avg 112 verts/draw). It is NOT idle/stuck/degenerate.
+- That entire render produces NOTHING visible - only the 2D HUD composites. The 3D
+  result never reaches the frontbuffer (black-3D bug).
+- We pay full per-draw CPU (~38us x 10,597) for geometry the player never sees ->
+  2.0fps.
+=> BLACK-3D and SLOWNESS are the SAME problem's two faces. The world is rendered but
+discarded at the resolve/composite step. Fixing the 3D-not-reaching-frontbuffer path
+is the highest-leverage move: it makes the world VISIBLE and is the prerequisite to
+any meaningful perf judgement (right now we cannot even tell if 10,600 draws is
+"correct" because we never see the output). Also constant-buffer invalidation is
+already minimal (WriteRegister:1321-1352 only dirties constants the guest actually
+writes + that the shader uses) - so descriptor binds are genuinely needed; no easy
+win there. Per-draw micro-opts (~10% ceiling) are NOT the path.
+PIVOT (iter8): go back to the resolve->frontbuffer/composite path with FULL force.
+Known: render targets ARE created + resolved (B1), draws DO render (B16), formats
+map OK for RTs (k_2_10_10_10_FLOAT->R16G16B16A16_SFLOAT). The 3D resolves to guest
+RAM at 0x1C-0x1F but the SWAP reads frontbuffer 0xFC (B2). The missing link = the
+guest composites the resolved 3D scene texture into the frontbuffer via a draw that
+SAMPLES the 0x1C-resolved surface - and that sample reads black/empty. NEXT: trace
+the FINAL frame's draws (the ones writing to the 0xFC frontbuffer) - what texture do
+they sample, and is that texture's data the resolved 3D scene? Use vulkan_trace_draw
+_state filtered to draws whose RT base = frontbuffer, inspect their bound textures.
+This is THE fix for Blue Dragon full-speed-AND-visible.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
