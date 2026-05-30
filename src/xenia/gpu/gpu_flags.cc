@@ -274,6 +274,15 @@ DEFINE_bool(
     "rewrite (e.g. to isolate a descriptor-caching regression).",
     "GPU");
 DEFINE_bool(
+    vulkan_push_descriptors, true,
+    "Use VK_KHR_push_descriptor (when supported) to push the per-draw texture and "
+    "sampler descriptors inline into the command buffer, instead of allocating a "
+    "transient descriptor set, writing it with vkUpdateDescriptorSets, and binding "
+    "it every draw. Large per-draw CPU win on mobile drivers (Adreno) where "
+    "descriptor binds dominate the GPU command thread. Set false to use the "
+    "transient-descriptor-set path (e.g. to isolate a push-descriptor regression).",
+    "GPU");
+DEFINE_bool(
     vulkan_trace_draw_outcomes_per_frame, false,
     "Diagnostic: at each guest swap, log a one-line summary of the draw "
     "outcomes accumulated during the frame - how many IssueDraw calls actually "

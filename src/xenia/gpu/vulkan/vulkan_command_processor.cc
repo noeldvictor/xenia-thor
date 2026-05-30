@@ -291,6 +291,19 @@ bool VulkanCommandProcessor::SetupContext() {
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
 
+  // Push descriptors (VK_KHR_push_descriptor) let the per-draw texture/sampler
+  // descriptors be pushed inline into the command buffer, avoiding a transient
+  // descriptor set allocation + vkUpdateDescriptorSets + vkCmdBindDescriptorSets
+  // every draw. Only used for the texture sets (small binding counts, well within
+  // maxPushDescriptors). Requires the texture set layouts to be created with the
+  // push-descriptor flag, so this must be decided before any layout creation.
+  push_descriptors_active_ =
+      cvars::vulkan_push_descriptors &&
+      vulkan_device->extensions().ext_KHR_push_descriptor &&
+      vulkan_device->functions().vkCmdPushDescriptorSetKHR != nullptr;
+  XELOGGPU("VulkanCommandProcessor: push descriptors {}",
+           push_descriptors_active_ ? "ENABLED" : "disabled");
+
   // The unconditional inclusion of the vertex shader stage also covers the case
   // of manual index / factor buffer fetch (the system constants and the shared
   // memory are needed for that) in the tessellation vertex shader when
@@ -2786,6 +2799,12 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
   descriptor_set_layout_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   descriptor_set_layout_create_info.pNext = nullptr;
+  // TODO(push-descriptors): when the per-draw push path lands (deferred command
+  // buffer CmdVkPushDescriptorSetKHR + IssueDraw push instead of alloc/write/bind),
+  // set VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR here when
+  // push_descriptors_active_. NOT set yet - applying it without the push path
+  // would make the transient alloc+bind of this set illegal. push_descriptors_
+  // active_ is currently observe-only (extension enabled + limit logged).
   descriptor_set_layout_create_info.flags = 0;
   descriptor_set_layout_create_info.bindingCount = uint32_t(binding_count);
   descriptor_set_layout_create_info.pBindings =

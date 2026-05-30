@@ -202,6 +202,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // #237.
       XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION(KHR_spirv_1_4, 1, 2)
     }
+    // #81. Push descriptors - eliminate per-draw descriptor set alloc + update +
+    // bind by pushing descriptors inline into the command buffer.
+    XE_UI_VULKAN_STRUCT_EXTENSION(KHR_push_descriptor)
   }
 
 #undef XE_UI_VULKAN_STRUCT_EXTENSION
@@ -309,6 +312,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceNonSeamlessCubeMapFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT>
       features_EXT_non_seamless_cube_map;
+  VkPhysicalDevicePushDescriptorPropertiesKHR
+      properties_KHR_push_descriptor = {
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
 
   if (get_physical_device_properties2_supported) {
     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
@@ -341,6 +347,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (ext_EXT_non_seamless_cube_map) {
       features_EXT_non_seamless_cube_map.Link(supported_features_2,
                                               device_create_info);
+    }
+    if (device->extensions_.ext_KHR_push_descriptor) {
+      properties_KHR_push_descriptor.pNext = properties_2.pNext;
+      properties_2.pNext = &properties_KHR_push_descriptor;
     }
     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
@@ -704,6 +714,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
   }
 
+  if (device->extensions_.ext_KHR_push_descriptor) {
+    device->extensions_.max_push_descriptors =
+        properties_KHR_push_descriptor.maxPushDescriptors;
+    XELOGI("* VK_KHR_push_descriptor (maxPushDescriptors: {})",
+           properties_KHR_push_descriptor.maxPushDescriptors);
+  }
+
 #undef XE_UI_VULKAN_LIMIT
 #undef XE_UI_VULKAN_ENUM_LIMIT
 #undef XE_UI_VULKAN_FEATURE
@@ -771,6 +788,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (device->extensions_.ext_KHR_swapchain) {
 #include "xenia/ui/vulkan/functions/device_khr_swapchain.inc"
+  }
+  if (device->extensions_.ext_KHR_push_descriptor) {
+#include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
   }
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 

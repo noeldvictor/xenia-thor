@@ -734,6 +734,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool dynamic_stencil_reference_front_update_needed_;
   bool dynamic_stencil_reference_back_update_needed_;
 
+  // Whether VK_KHR_push_descriptor is enabled + active (cvar on, extension
+  // supported, function loaded). Decided in SetupContext before any descriptor
+  // set layout is created, since push-descriptor layouts need a creation flag.
+  bool push_descriptors_active_ = false;
+
   // Currently used samplers.
   std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
       current_samplers_vertex_;

@@ -175,6 +175,14 @@ class VulkanDevice {
     bool ext_EXT_memory_budget = false;                 // #238
     // Has optional features not implied by this being true.
     bool ext_1_3_KHR_maintenance4 = false;  // #414
+    // #81. Push descriptors - inline descriptor writes into the command buffer,
+    // avoiding per-draw descriptor set allocation + vkUpdateDescriptorSets +
+    // vkCmdBindDescriptorSets. Big per-draw CPU win on Adreno.
+    bool ext_KHR_push_descriptor = false;  // #81
+    // Max descriptors pushable per push (from
+    // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
+    // extension is unavailable.
+    uint32_t max_push_descriptors = 0;
   };
 
   const Extensions& extensions() const { return extensions_; }
@@ -194,6 +202,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_1_1_khr_bind_memory2.inc"
     // VK_KHR_maintenance4 (#414, promoted to 1.3)
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
+    // VK_KHR_push_descriptor (#81)
+#include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 #undef XE_UI_VULKAN_FUNCTION
   };
