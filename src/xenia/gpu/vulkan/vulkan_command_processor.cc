@@ -1827,19 +1827,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
-        "avg_vertices={}",
+        "avg_vertices={} pipeline_binds={} descriptor_binds={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
         draw_outcomes_rendered_
             ? (draw_outcomes_total_vertices_ / draw_outcomes_rendered_)
-            : 0);
+            : 0,
+        draw_outcomes_pipeline_binds_, draw_outcomes_descriptor_binds_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
     draw_outcomes_total_vertices_ = 0;
     draw_outcomes_max_vertices_ = 0;
+    draw_outcomes_pipeline_binds_ = 0;
+    draw_outcomes_descriptor_binds_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -3334,6 +3337,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                                pipeline);
     current_guest_graphics_pipeline_ = pipeline;
     current_external_graphics_pipeline_ = VK_NULL_HANDLE;
+    ++draw_outcomes_pipeline_binds_;
   }
   auto pipeline_layout =
       static_cast<const PipelineLayout*>(pipeline_layout_provider);
@@ -5664,6 +5668,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
         descriptor_set_index, descriptor_set_mask_tzcnt - descriptor_set_index,
         current_graphics_descriptor_sets_ + descriptor_set_index, 0, nullptr);
+    ++draw_outcomes_descriptor_binds_;
     if (descriptor_set_mask_tzcnt >= 32) {
       break;
     }
