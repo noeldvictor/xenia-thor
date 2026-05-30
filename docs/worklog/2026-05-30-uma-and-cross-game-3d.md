@@ -73,6 +73,17 @@ VK_FORMAT_A2B10G10R10_UNORM_PACK32 (unsigned) is the preferred substitute; the
 SIGNED 2_10_10_10 has no direct unorm equivalent -> likely the gap.
 NEXT: read VulkanTextureCache / render-target format fallback for signed 2_10_10_10.
 
+### E6 — Experiment (b): gpu_uma_strong_coherency (maximal host->device coherency)
+Built a cvar that, on the UMA direct path: (1) ALWAYS vkFlushMappedMemoryRanges even
+when the heap is HOST_COHERENT (Adreno host-visible-device-local heaps are often
+write-combining; the coherent flag may not fully cover the GPU-side view), and (2)
+widens the host-write->guest-read barrier to the WHOLE buffer with
+ALL_COMMANDS/MEMORY_READ (in case the span-bounded HOST->VERTEX_INPUT|shader barrier
+under-covers what the deferred tiler reads). Added to EmulatorActivity allow-list.
+Test plan: launch Burnout uma=true + gpu_uma_strong_coherency=true xN; if the ~50%
+TDR disappears -> coherency confirmed, then narrow (flush-only vs barrier-only) to
+the minimal fix and consider making it the default for host-visible buffers.
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -

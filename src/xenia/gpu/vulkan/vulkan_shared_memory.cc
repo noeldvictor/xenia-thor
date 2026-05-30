@@ -49,6 +49,18 @@ DEFINE_bool(
     "CPU-write-vs-deferred-GPU-read race hypothesis. Has no effect unless "
     "gpu_uma_direct_shared_memory is on.",
     "Vulkan");
+DEFINE_bool(
+    gpu_uma_strong_coherency, false,
+    "EXPERIMENT (b) for the Adreno UMA GPU-hang (TDR): when writing guest pages "
+    "directly into the persistently-mapped HOST_VISIBLE|DEVICE_LOCAL shared "
+    "buffer, apply maximal host->device coherency: (1) always "
+    "vkFlushMappedMemoryRanges even if the heap reports HOST_COHERENT (covers "
+    "write-combining-marked-coherent driver quirks), and (2) widen the "
+    "host-write->guest-read barrier to the WHOLE buffer with "
+    "ALL_COMMANDS/MEMORY_READ instead of the span-bounded HOST->read barrier. "
+    "Tests whether the intermittent GPU MMU fault is a coherency/visibility gap "
+    "the desktop path never hit. No effect unless gpu_uma_direct_shared_memory.",
+    "Vulkan");
 
 namespace xe {
 namespace gpu {
@@ -591,7 +603,11 @@ bool VulkanSharedMemory::UploadRangesDirect(
 
   // Make the host writes visible to the device. Flushing the whole buffer
   // avoids nonCoherentAtomSize alignment handling on the touched subranges.
-  if (!buffer_host_coherent_) {
+  // EXPERIMENT (b): with gpu_uma_strong_coherency, flush even when the heap
+  // reports HOST_COHERENT - some Adreno host-visible-device-local heaps are
+  // write-combining and the "coherent" flag does not fully cover the GPU-side
+  // view, which is the leading suspect for the intermittent MMU-fault TDR.
+  if (!buffer_host_coherent_ || cvars::gpu_uma_strong_coherency) {
     VkMappedMemoryRange flush_range;
     flush_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
     flush_range.pNext = nullptr;
@@ -603,12 +619,22 @@ bool VulkanSharedMemory::UploadRangesDirect(
 
   // Host-write -> guest-read availability/visibility barrier. The buffer is
   // consumed as index buffer / vfetch / shader storage by guest stages.
-  command_processor_.PushBufferMemoryBarrier(
-      buffer_, barrier_first_byte, barrier_end_byte - barrier_first_byte,
-      VK_PIPELINE_STAGE_HOST_BIT,
-      VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | guest_shader_pipeline_stages_,
-      VK_ACCESS_HOST_WRITE_BIT,
-      VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+  // EXPERIMENT (b): gpu_uma_strong_coherency widens this to the WHOLE buffer
+  // with ALL_COMMANDS / MEMORY_READ, in case the span-bounded HOST->read barrier
+  // under-covers what the deferred tiler actually reads (and when).
+  if (cvars::gpu_uma_strong_coherency) {
+    command_processor_.PushBufferMemoryBarrier(
+        buffer_, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_HOST_WRITE_BIT,
+        VK_ACCESS_MEMORY_READ_BIT);
+  } else {
+    command_processor_.PushBufferMemoryBarrier(
+        buffer_, barrier_first_byte, barrier_end_byte - barrier_first_byte,
+        VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | guest_shader_pipeline_stages_,
+        VK_ACCESS_HOST_WRITE_BIT,
+        VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+  }
   // The buffer now holds valid data visible to read stages.
   last_usage_ = Usage::kRead;
   last_written_range_ = std::make_pair(uint32_t(0), uint32_t(0));
