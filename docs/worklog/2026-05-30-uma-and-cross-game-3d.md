@@ -272,6 +272,12 @@ DECISIVE NEXT PROBE: native stack sample of the two hot threads (debuggerd -b <t
 or `adb shell cat /proc/<pid>/task/<tid>/stack`, or simpleperf) to see exactly what
 they spin on. That names the fix (e.g. a guest ring-buffer wait that should block,
 or a host fence poll). Don't guess the fix before reading the stack.
+CONFIRMED via wchan (no root needed): /proc/<pid>/task/<tid>/wchan = 0 for BOTH
+Draw Thread and GPU Commands while pinned at 100%. wchan 0 = NOT in any kernel wait
+=> they spin in USERSPACE, not blocked on a syscall/fence/futex. Pure busy-loop.
+(/proc/.../stack needs root - not available; use simpleperf on the debuggable APK
+next: `simpleperf record -t <tid> --duration 3` + report, to get the userspace
+call stack and name the spin.)
 
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
