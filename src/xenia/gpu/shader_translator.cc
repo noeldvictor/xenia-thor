@@ -426,7 +426,20 @@ void Shader::GatherVertexFetchInformation(
     }
   }
   if (!attrib) {
-    assert_not_zero(fetch_instr.attributes.stride);
+    // Gears 3 / Judgment issue a vfetch that creates a NEW binding with a zero
+    // stride, which previously aborted the emulator here. The existing-binding
+    // path above (the assert_true on stride) already tolerates a zero stride, so
+    // allow it here too instead of aborting; warn once for visibility.
+    if (!fetch_instr.attributes.stride) {
+      static bool zero_stride_binding_logged = false;
+      if (!zero_stride_binding_logged) {
+        zero_stride_binding_logged = true;
+        XELOGW(
+            "Shader vertex fetch: zero-stride new binding (fetch constant {}); "
+            "allowing instead of asserting (further occurrences suppressed)",
+            op.fetch_constant_index());
+      }
+    }
     VertexBinding vertex_binding;
     vertex_binding.binding_index = int(vertex_bindings_.size());
     vertex_binding.fetch_constant = op.fetch_constant_index();
