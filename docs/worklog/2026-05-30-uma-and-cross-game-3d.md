@@ -438,6 +438,26 @@ register-set churn - which names the fix (e.g. honor WAIT_UNTIL so the guest sto
 re-polling, or fast-path the poll). This unifies the ~2.5fps AND likely the
 black-3D (guest stuck pre-draw) into ONE root cause.
 
+### B15 — WAIT_REG_MEM spin REFUTED; field-state PM4 command profile captured
+24h autonomous goal: Blue Dragon playable at full speed. Iteration 1.
+gpu_trace_swap in field state (Blue Dragon, ~2.3fps, 7 frames/3s):
+- WAIT_REG_MEM: 385 events in 3s, ALL loops=0 (match immediately, ZERO spinning).
+  So the 100% CPU is NOT the WAIT_REG_MEM busy-loop. Hypothesis B14 (register poll
+  spin) REFUTED.
+- Per-frame PM4 mix (3s window, /7 frames): INDIRECT_BUFFER 511 (~73/frame),
+  WAIT_REG_MEM 377 (~54/frame), EVENT_WRITE_SHD 210 (~30/frame), plus 1022 'E',
+  659 'C', 56 'V' (truncated opcode names). 7 XE_SWAP.
+=> Not a spin; genuine high command-stream VOLUME: ~73 indirect-buffer jumps/frame +
+heavy event/wait/coherency packets, yet near-zero actual draws (B14). The guest walks
+a big command-buffer tree every frame doing sync/event work. Host GPU Commands thread
+is throughput-bound executing this volume.
+NEXT (iter 2): identify the 'E'/'C'/'V' opcodes (likely EVENT_WRITE/COND/VIZ-query)
+and WHERE the per-frame CPU actually goes now that WAIT_REG_MEM is out - re-run the
+simpleperf method but break down ExecutePacketType3 by opcode handler (which Type3
+handler dominates). If it's EVENT_WRITE / MakeCoherent / vertex-fetch setup, optimize
+that. Also: 73 INDIRECT_BUFFER/frame with ~0 draws suggests the guest submits work
+whose draws we DROP (cull/skip) - cross-check with black-3D (draws not reaching RT).
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
