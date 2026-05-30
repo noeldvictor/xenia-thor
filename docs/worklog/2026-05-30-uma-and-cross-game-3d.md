@@ -255,12 +255,35 @@ thread, plus host Vulkan command recording on the Draw Thread. NEXT: count
 resolves+draws per frame and see if resolve count is pathological; check if
 render-target/resolve caching is missing so the same surfaces re-resolve every frame.
 
-## Session stop point (cross-game black-3D)
-Real progress: ruled IN that geometry draws + EDRAM resolves both happen; localized
-the loss to resolve->sample-back of k_2_10_10_10[_FLOAT] surfaces; found a separate
-Android-surface present stall driving much of the ~2fps. Two concrete next levers:
-(1) k_2_10_10_10_FLOAT texture-sample-back path, (2) swapchain present-mode/buffers.
-Both are bounded next-session tasks. Device left stable UMA-off.
+### B8 — slowness is a 100%-CPU SPIN producing NO GPU work (not draw/resolve volume)
+Measured a settled in-game state over 6s windows (clean, then traced):
+  - 0 EDRAM resolves, 0 draws (GPU draw trace count = 0 for the whole run), yet
+    14-15 VdSwaps (~2.5fps).
+  - top -H: "Draw Thread" 100% (R) and "GPU Commands" 100% (R), all else idle.
+=> The two host GPU threads are pinned at 100% CPU while the guest issues NO draws
+and NO resolves. A 100%-CPU thread producing no output = a SPIN/BUSY-WAIT, not real
+work. So the ~2.5fps slowness (at least in this state) is NOT resolve thrash and NOT
+draw volume - it's the Draw Thread / GPU Commands threads busy-spinning (polling a
+fence / ring buffer / each other) instead of sleeping. This also means the "black 3D"
+in this state may partly be that the guest is wedged in a loop issuing no geometry,
+not only a sample-back bug. (Contrast B5 where draws DID flow - so the guest moves
+between an active-draw state and this spinning state.)
+DECISIVE NEXT PROBE: native stack sample of the two hot threads (debuggerd -b <tid>,
+or `adb shell cat /proc/<pid>/task/<tid>/stack`, or simpleperf) to see exactly what
+they spin on. That names the fix (e.g. a guest ring-buffer wait that should block,
+or a host fence poll). Don't guess the fix before reading the stack.
+
+## Session stop point (cross-game black-3D + slowness)
+Progress this session:
+- UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
+  TDR; external_memory_host unsupported); staging is the stable ceiling. Default off.
+- Black-3D: EDRAM resolve works, geometry draws (when active) into k_2_10_10_10_FLOAT
+  RTs; loss localized to resolve->sample-back of that float format.
+- Slowness: NOT swapchain (MAILBOX), NOT resolve/draw volume - it's Draw Thread +
+  GPU Commands spinning at 100% CPU with no GPU output in the steady state.
+Next levers (bounded): (1) stack-sample the two spinning threads -> fix the spin
+(biggest fps win), (2) k_2_10_10_10_FLOAT texture sample-back -> world visibility.
+Device left stable UMA-off.
 
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
