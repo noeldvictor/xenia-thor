@@ -145,6 +145,35 @@ NOTE: avoid `git add -A` - it normalized CRLF on the protected dirty files
 were already in HEAD; diagnostics intact, 15 refs in xboxkrnl_io.cc). Use targeted
 `git add <path>` only.
 
+### E8 — DEVICE EXTENSION PROBE RESULT: VK_EXT_external_memory_host NOT supported
+Dumped all 113 supported device extensions on the Thor Adreno. VK_EXT_external_memory_host
+is NOT present (exact grep: NOT PRESENT). So the only genuinely-new zero-copy hybrid
+(import guest RAM directly as Vulkan memory) is UNAVAILABLE on this hardware. Hard
+constraint, not codeable-around.
+Memory-import-relevant extensions that ARE present:
+- VK_KHR_external_memory, VK_KHR_external_memory_fd
+- VK_ANDROID_external_memory_android_hardware_buffer (AHardwareBuffer - the Android
+  native CPU+GPU shared-memory path; standard zero-copy on Adreno)
+- VK_KHR_external_semaphore/fence (+fd variants)
+
+## CONCLUSION on UMA (solution space fully mapped)
+Pure zero-copy UMA on this Thor Adreno is a DEAD END via the two routes we have:
+1. host-visible-device-local mapped buffer (gpu_uma_direct_shared_memory) -> ~50%
+   GPU TDR; ruled out coherency, race, non-sparse, size as causes; it's the memory
+   type itself the driver faults on under sustained read. REFUTED as shippable.
+2. VK_EXT_external_memory_host (import guest RAM) -> NOT SUPPORTED by the driver.
+The staging path (DEVICE_LOCAL buffer + changed-page-only vkCmdCopyBuffer) is the
+PERFORMANCE CEILING here and is STABLE (5/5). It already eliminates re-uploading
+unchanged pages. The remaining theoretical win (skip the changed-page memcpy) is
+exactly what faults.
+=> UMA-direct stays DEFAULT OFF (it already is). Staging is the right default.
+A future AHardwareBuffer-backed shared-memory redesign COULD give true zero-copy,
+but it's a large new subsystem (allocate guest RAM as AHB up front, import as both
+host ptr and Vulkan memory) - flag for design, not a quick fix.
+Net for SPEED: UMA is NOT the current lever on this device. The real visible-speed
+blocker is the cross-game black-3D + low-fps (EDRAM resolve on fbo path). Pivot
+there.
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
