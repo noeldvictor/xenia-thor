@@ -273,6 +273,16 @@ DEFINE_bool(
     "dominates the GPU command thread. Set false to restore the per-draw "
     "rewrite (e.g. to isolate a descriptor-caching regression).",
     "GPU");
+DEFINE_bool(
+    vulkan_trace_draw_outcomes_per_frame, false,
+    "Diagnostic: at each guest swap, log a one-line summary of the draw "
+    "outcomes accumulated during the frame - how many IssueDraw calls actually "
+    "rendered vs were skipped (no vertex shader, no rasterization/no memexport, "
+    "copy), plus indirect-buffer count. Budget-free and reset per frame, unlike "
+    "vulkan_trace_draw_state. Used to find whether real geometry draws are being "
+    "silently dropped (black 3D) and how much per-frame work has no visible "
+    "effect (slowness).",
+    "GPU");
 DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "Experimental Android bring-up: update the primary ring read "
             "pointer before executing long indirect buffers, matching hardware "

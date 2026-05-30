@@ -1823,6 +1823,18 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    XELOGI(
+        "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
+        "skipped_no_rast={} copy={}",
+        draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
+        draw_outcomes_skipped_no_rast_, draw_outcomes_copy_);
+    draw_outcomes_rendered_ = 0;
+    draw_outcomes_skipped_no_vs_ = 0;
+    draw_outcomes_skipped_no_rast_ = 0;
+    draw_outcomes_copy_ = 0;
+  }
+
   if (cvars::gpu_trace_swap) {
     static std::atomic<bool> logged_vulkan_swap_cvars{false};
     if (!logged_vulkan_swap_cvars.exchange(true)) {
@@ -3034,6 +3046,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
   if (edram_mode == xenos::EdramMode::kCopy) {
     // Special copy handling.
+    ++draw_outcomes_copy_;
     return IssueCopy();
   }
 
@@ -3046,6 +3059,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   auto vertex_shader = static_cast<VulkanShader*>(active_vertex_shader());
   if (!vertex_shader) {
     // Always need a vertex shader.
+    ++draw_outcomes_skipped_no_vs_;
     if (ShouldTraceVulkanDrawStateForShaders(0, 0)) {
       XELOGI(
           "GPU draw trace: skipped no vertex shader prim={} index_count={} "
@@ -3088,6 +3102,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // cache.
     if (memexport_ranges_.empty()) {
       // This draw has no effect.
+      ++draw_outcomes_skipped_no_rast_;
       if (ShouldTraceVulkanDrawStateForShaders(vertex_shader_hash, 0)) {
         XELOGI(
             "GPU draw trace: skipped no rasterization/no memexport prim={} "
@@ -3638,6 +3653,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
   }
 
+  ++draw_outcomes_rendered_;
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;
   trace_last_draw_ps_hash_ = pixel_shader_hash;

@@ -755,6 +755,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool texture_descriptor_signature_vertex_valid_ = false;
   bool texture_descriptor_signature_pixel_valid_ = false;
 
+  // Per-frame draw-outcome counters (vulkan_trace_draw_outcomes_per_frame).
+  // Accumulated across a guest frame, logged and reset at the swap. Used to find
+  // silently dropped geometry (black 3D) and per-frame work with no effect.
+  uint32_t draw_outcomes_rendered_ = 0;
+  uint32_t draw_outcomes_skipped_no_vs_ = 0;
+  uint32_t draw_outcomes_skipped_no_rast_ = 0;
+  uint32_t draw_outcomes_copy_ = 0;
+
   // Cache render pass currently started in the command buffer with the
   // framebuffer.
   VkRenderPass current_render_pass_;
