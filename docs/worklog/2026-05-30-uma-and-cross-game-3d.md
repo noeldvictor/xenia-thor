@@ -482,6 +482,29 @@ guest issues ~10,600 draw packets, it's real (need batching/perf); if guest issu
 few but we render 10,600, we have a command-replay bug (huge win to fix). Use a
 per-frame counter of Type3 DRAW_INDX/DRAW_INDX_2 opcodes in command_processor.
 
+### B17 — CONFIRMED: ~10,600 draws/frame is REAL guest work, not host amplification
+iter3. Read the draw path: ExecutePacketType3_DRAW_INDX / _DRAW_INDX_2 -> each
+calls ExecutePacketType3Draw ONCE, which calls IssueDraw ONCE per packet (no loop
+multiplying). So guest PM4 draw packets ~= rendered ~= 10,600/frame. It is genuinely
+the GUEST issuing ~10,600 draw calls per frame (an unbatched per-object/per-tile
+engine), NOT our command-replay duplicating. ~25,000 host draws/sec at 2.4fps.
+=> ROOT CAUSE OF SLOWNESS (confirmed): pathological guest draw-call volume. The only
+path to full speed is slashing PER-DRAW host overhead (can't reduce the count; that's
+the guest). Per-draw costs to attack (from profile + IssueDraw code), in order:
+  1. State/dynamic-state re-application per draw (viewport, scissor, depth bias,
+     blend, stencil) - dedup when unchanged (many already have *_update_needed_
+     flags; verify they're not force-set every draw like the descriptor bits were).
+  2. CmdVkBindDescriptorSets every draw even when sets unchanged (the binding, separate
+     from the write the descriptor cache already deduped).
+  3. Pipeline (re)bind dedup (current_guest_graphics_pipeline_ check exists).
+  4. Per-draw register/shader analysis (AnalyzeShaderUcode) - ensure cached.
+NEXT iter4: profile again (simpleperf, matched binary) to see the per-draw hot
+functions now that descriptor-WRITE is cached, and dedup the biggest remaining
+per-draw op. Target a measurable fps gain at 10,600 draws/frame.
+BLACK-3D (separate track): draws render (skipped=0) but not visible -> downstream
+resolve/sample-back or offscreen-RT-never-composited; revisit after a perf win makes
+iteration faster.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
