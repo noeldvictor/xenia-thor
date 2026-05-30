@@ -232,6 +232,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
         return nullptr;
       }
       assert_true(supported_extension_count == supported_extensions.size());
+      // Diagnostic: log every supported device extension so we can check on-device
+      // for routes like VK_EXT_external_memory_host (zero-copy guest-RAM import,
+      // the only remaining hybrid-UMA option that avoids host-visible-device-local).
+      for (const VkExtensionProperties& supported_extension :
+           supported_extensions) {
+        XELOGI("Vulkan device supported extension: {}",
+               supported_extension.extensionName);
+      }
       for (const VkExtensionProperties& supported_extension :
            supported_extensions) {
         const auto requested_extension_it =

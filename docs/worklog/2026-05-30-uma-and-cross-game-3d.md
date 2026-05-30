@@ -123,6 +123,28 @@ for the way we use it (whole-guest-RAM buffer read every frame) on this Adreno.
 Recommendation: (1) hybrid - it sidesteps the proven-bad memory type while keeping
 the copy-elimination benefit for unchanged pages.
 
+### E7 — "hybrid UMA" decision: the proposed hybrid ALREADY EXISTS as the staging path
+Read RequestRange (shared_memory.cc:341-411): it already builds upload ranges of
+ONLY changed/invalid pages (scans system_page_flags_.valid) and the Vulkan staging
+path copies just those into a DEVICE_LOCAL buffer via submission-ordered
+vkCmdCopyBuffer. That IS "device-local + changed-page-only upload" - exactly the
+hybrid I proposed, and exp (a) proved it 5/5 stable. So there's nothing new to build
+there; the only thing pure-UMA-direct removed was the staging memcpy, which is the
+part that TDRs on Adreno.
+=> The ONLY genuinely-new zero-copy hybrid is VK_EXT_external_memory_host: import
+the guest's own RAM pages as Vulkan memory (no copy AND not host-visible-device-local
+BAR memory - it's plain host system RAM, so likely no GMU fault). Not referenced in
+our code; device support unknown from docs. Added a diagnostic that logs ALL
+supported device extensions (vulkan_device.cc) to check on-device. Build + capture
+"Vulkan device supported extension:" lines, grep for external_memory_host. If
+present -> prototype the import path; if absent -> staging is the ceiling on this
+device and UMA-direct is a dead end here.
+
+NOTE: avoid `git add -A` - it normalized CRLF on the protected dirty files
+(kernel_flags.*, xam_ui.cc, xboxkrnl_io.cc). Verified NO content lost (those mods
+were already in HEAD; diagnostics intact, 15 refs in xboxkrnl_io.cc). Use targeted
+`git add <path>` only.
+
 ### E5 — CORRECTION: render-target k_2_10_10_10 is FINE; texture-sample format is a separate concern
 Read GetColorVulkanFormat (vulkan_render_target_cache.cc:1690-1692): RT color format
 k_2_10_10_10 / k_2_10_10_10_AS_10_10_10_10 maps to VK_FORMAT_A8B8G8R8_UNORM_PACK32 -
