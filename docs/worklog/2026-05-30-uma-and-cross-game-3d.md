@@ -563,6 +563,31 @@ re-profiling THIS scene with the matched binary:
 Honest: this is incremental (no single big win); target a measurable % at 10,597
 draws. The descriptor-write cache (shipped) was step 1; keep stacking per-draw cuts.
 
+### B20 — iter7 profile (matched binary): ~25% Adreno driver (irreducible) + ~10% flat PM4 parse
+Heavy scene, 31,686 samples. Split:
+- Adreno driver (unknown[+2a..] cluster): top 8.77% + 4.18 + 3.78 + 2.89 + 1.83 +
+  1.52 + 1.48 + ... = ~25% total. This is the driver consuming our submitted command
+  volume (descriptor binds, cmd buffer recording). Not reducible from our side
+  EXCEPT by submitting fewer/cheaper commands.
+- Our code: very FLAT tail, each <1%: ReadAndSwap, GetRegisterInfo (~0.85% across 2
+  sites - STILL runs because default log budget=128>0, so iter4 reorder only helps
+  with logging off), ExecutePacketType0, RingBuffer::Read, byte_swap, WriteRegister
+  (base + vulkan virtual override - a virtual call per register write). Sum ~8-10%.
+HONEST CONCLUSION: even eliminating ALL our PM4-parse overhead would gain only
+~10%; the dominant ~25% is the Adreno driver processing the command VOLUME. So
+micro-opts won't reach full speed. The real lever is REDUCING the work submitted to
+the driver - i.e. fewer/cheaper descriptor binds + draws. descriptor_binds=14749 >
+10597 draws => the per-draw CONSTANTS rebind is extra driver work every draw.
+NEXT (iter7-fix): the highest-value reducible driver cost = the per-draw descriptor
+BIND of the constants set. The descriptor-WRITE cache (shipped) stopped re-writing,
+but we still CmdVkBindDescriptorSets the constants set when its uniform-buffer
+sub-allocation offset changes each draw. Investigate: are constants actually
+changing every draw, or do we rebind a same-handle set needlessly? If the constants
+buffer uses dynamic offsets, we could bind once + use dynamic offset (1 cheap
+update) instead of a full rebind per draw. Read the constants descriptor path +
+uniform_buffer_pool_ to see if dynamic-offset binding is feasible = real driver-cost
+cut at 10,597 draws/frame.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
