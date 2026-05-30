@@ -21,26 +21,47 @@ not a low framerate.
   → ~127+ seconds with ZERO new VdSwaps while the app is foreground and showing a
   rendered frame = the present pipeline is fully stalled (guest hung).
 
-## Interpretation
-This is the real blocker for Burnout being "fast/playable": at this point it is a
-**complete hang AFTER reaching the in-game scene**, not a framerate that is merely
-low. The earlier user observation (~7-9 fps, black-except-HUD in-race) is a related
-collapse; here the captured state is a fully-rendered frame frozen at 0 fps.
+## ROOT CAUSE (now verified from the xenia log tail, lines quoted)
+The hang is an **infinite EOF read-loop on a background video file**, NOT an
+exception/GPU stall. The last xenia lines before the present-stall (proc 12433
+thread 12459), repeating ~5x/sec:
 
-The reach-scene library note for burnout says it "eventually [hits an]
-RtlRaiseException gameplay path." That is a PLAUSIBLE cause but was NOT confirmed
-this session — the post-stall logcat tail did not return in tool output, so the
-hang's root cause is **UNVERIFIED**. Do not assume RtlRaiseException without
-reading the log lines after timestamp 1780162299.898.
+```
+w> F80000FC NtReadFile status: path='\Device\Cdrom0\ovid\BG1_N.xmv'
+   handle=F8000084 ... request=131072 requested_offset=93454336
+   position_before=93342056 bytes_read=0 status=C0000011
+   position_after=93342056 synchronous=false
+i> F80000FC xeRtlNtStatusToDosError 103 => 3E5
+```
+and successive lines with requested_offset = 93585408, 93716480, 93847552,
+93978624, 94109696 (each +131072 = +0x20000), ALWAYS bytes_read=0,
+status=**C0000011 (STATUS_END_OF_FILE)**, position frozen at **93342056**.
 
-## Next step (concrete)
-Read logcat from just after epoch 1780162299.898: look for RtlRaiseException,
-an unhandled guest exception, a kernel wait that never returns, a GPU/JIT error,
-or a thread going zombie (cf. Lost Odyssey zombie-join). That localizes whether
-the hang is CPU/JIT (guest threw + handler looped), kernel-wait, or GPU-submit.
-Only then propose a fix.
+Reading: the game streams the `.xmv` (Xbox Media Video) background movie in 128 KiB
+async chunks. It keeps issuing reads at offsets PAST the file's end; each returns
+EOF with 0 bytes; the demuxer never treats EOF as "done" and re-requests forever.
+The frozen on-screen frame is the last decoded movie frame. (`ovid` = opening/
+background video; `BG1_N` ~ background loop.) xeRtlNtStatusToDosError 103=>3E5:
+0x3E5 = ERROR_IO_PENDING (consistent with synchronous=false async reads).
+
+## Why this matters across games (cross-compat lever)
+`.xmv` background/intro/menu movies are ubiquitous on Xbox 360. If our EOF
+semantics for the guest CdRom/STFS file path differ from real hardware (e.g. real
+HW returns a short read with bytes_read>0 up to the true end, or the game expects
+a specific status), every movie-heavy title can wedge the same way. This is
+directly the "skip movies is paramount" problem in engine form.
+
+## OPEN QUESTION (must verify before any fix)
+Is the read genuinely past a CORRECT end-of-file (game bug it should self-handle by
+looping — then our job is just to not hang), OR did our ISO/file extent reader
+report a WRONG (too-small) size so the game reads past a FALSE EOF at 93342056?
+NEXT: get the real size of `ovid/BG1_N.xmv` inside the Burnout ISO and compare to
+93342056 / the offsets being requested (~94 MB). If the file truly is ~93.3 MB and
+the game asks for 94 MB+, it's the game over-reading; if our reader truncated it,
+fix the size/extent path. Do NOT edit any file-IO code until this is answered.
 
 ## NOT claimed
-No fps figure beyond the OSD's literal 0.0; no root cause; no fix. The hang itself
-is the only behavioral claim, and it is backed by the frozen VdSwap count + age +
-identical-byte screenshots above.
+No fps figure beyond the OSD's literal 0.0; no fix. Two behavioral claims, both
+log-backed: (1) the present pipeline is stalled (frozen VdSwap count + age +
+identical-byte screenshots); (2) the proximate cause is an infinite EOF read-loop
+on ovid/BG1_N.xmv (quoted C0000011 lines). The size/extent question is OPEN.
