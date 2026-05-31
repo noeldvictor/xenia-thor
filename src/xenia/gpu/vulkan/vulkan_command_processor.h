@@ -794,6 +794,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t merge_pipe_same_ = 0;
   uint32_t merge_consts_same_ = 0;
   uint32_t merge_consts_changed_ = 0;
+  // vfetch contiguity (per frame): for consecutive same-pipeline draws, is the
+  // primary vertex-fetch source the SAME address (identical geometry ->
+  // instanceable), CONTIGUOUS with the previous (addr==prev_addr+prev_size ->
+  // concatenable into one draw), or SCATTERED (neither). Decides merge strategy.
+  uint32_t merge_vf_last_addr_ = 0;
+  uint32_t merge_vf_last_end_ = 0;
+  uint32_t merge_vf_same_ = 0;
+  uint32_t merge_vf_contig_ = 0;
+  uint32_t merge_vf_scattered_ = 0;
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.

@@ -1912,7 +1912,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
-        "merge[pipe_same={} consts_same={} consts_changed={}]",
+        "merge[pipe_same={} consts_same={} consts_changed={}] "
+        "vf[same={} contig={} scattered={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1954,7 +1955,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPolygon)],
         draw_vtx_bucket_[0], draw_vtx_bucket_[1], draw_vtx_bucket_[2],
         draw_vtx_bucket_[3], merge_pipe_same_, merge_consts_same_,
-        merge_consts_changed_);
+        merge_consts_changed_, merge_vf_same_, merge_vf_contig_,
+        merge_vf_scattered_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1966,6 +1968,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_pipe_same_ = 0;
     merge_consts_same_ = 0;
     merge_consts_changed_ = 0;
+    merge_vf_same_ = 0;
+    merge_vf_contig_ = 0;
+    merge_vf_scattered_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
