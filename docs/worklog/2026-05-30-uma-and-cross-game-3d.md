@@ -1623,3 +1623,21 @@ NEXT (real Stage 1, no corruption): reduce the dominant break causes - hoist/bat
 memory upload buffer barriers + ~42 texture shader-read barriers out of the per-draw path so
 consecutive same-state draws don't each end the pass. Validate with the guest_ms-matched harness +
 pixel-identity screenshots (Blue Dragon + Burnout). Diagnostics shipped this iteration are default-off.
+
+### B58 — *** load/store = 3% (B53 FULLY REFUTED). GPU is ~85% RENDERING/FILL-bound, not tiler-traffic ***
+Using the validated guest_ms-CONTENT-MATCHED harness (rendered counts equal => identical frame),
+A/B'd gpu_edram_passes_dont_care (skip ALL tile load/store) OFF vs ON:
+  median gpu_ms OFF=25.7  ON=24.9  => ON/OFF=0.97 = ONLY ~3% of GPU time is tile load/store.
+*** B53's "89% / 9x ceiling" was ENTIRELY scene-confounding and is RETRACTED. *** Combined with the
+break gate (skip-transfers, breaks 40->32 = ~12%): NEITHER tile load/store (~3%) NOR pass breaks
+(~12%) is the bottleneck. => ~85% of GPU time is the ACTUAL RENDERING (fill/shading/overdraw/vertex),
+consistent with the superlinear draw-count scaling (925 draws=310ms, 2136=942ms).
+*** IMPLICATION: the entire tiler-rewrite premise (reduce passes/barriers/transfers = synthesis
+Layers A-D, the workflow design) targets only ~15% of the GPU. The REAL cost is rendering pixels. ***
+A flagship Adreno 740 taking 943ms to render ~2000 simple 720p draws => pathological FILL/SHADING:
+either massive OVERDRAW, bloated translated pixel shaders, or huge per-draw pixel coverage.
+PIVOT (accuracy-for-speed, the right lever now): reduce FILL/SHADING work. Primary = INTERNAL
+RESOLUTION reduction (fewer pixels -> proportionally less fill; xenia only supports >=1x scale today,
+so this needs a downscale path + EDRAM tile-math care). Secondary = shader cost / overdraw. TEST FIRST
+(decisive): draw_resolution_scale=2 (4x pixels) - if gpu_ms ~4x at matched guest_ms, fill-bound is
+CONFIRMED and resolution is THE lever. Method = the guest_ms-content-matched harness (now trustworthy).
