@@ -11,6 +11,7 @@
 #define XENIA_BASE_RING_BUFFER_H_
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -72,11 +73,25 @@ class RingBuffer {
     return Read(reinterpret_cast<uint8_t*>(buffer), count);
   }
 
+  // Fast inline read of a single fundamental value. The PM4 command stream is
+  // parsed almost entirely through this (millions of dword reads per frame in
+  // ExecutePacketType0), so avoid the full Read() path (function call, bounds
+  // checks, std::min, a 4-byte memcpy) for the overwhelmingly common case where
+  // the value does not wrap the ring - read it directly from the buffer.
   template <typename T>
   T Read() {
     static_assert(std::is_fundamental<T>::value,
                   "Immediate read only supports basic types!");
-
+    if (read_offset_ + sizeof(T) <= capacity_) {
+      T imm;
+      std::memcpy(&imm, buffer_ + read_offset_, sizeof(T));
+      read_offset_ += sizeof(T);
+      if (read_offset_ == capacity_) {
+        read_offset_ = 0;
+      }
+      return imm;
+    }
+    // Rare wrap-around (or sizeof(T) > capacity) - use the general path.
     T imm;
     size_t read = Read(reinterpret_cast<uint8_t*>(&imm), sizeof(T));
     assert_true(read == sizeof(T));
@@ -85,14 +100,7 @@ class RingBuffer {
 
   template <typename T>
   T ReadAndSwap() {
-    static_assert(std::is_fundamental<T>::value,
-                  "Immediate read only supports basic types!");
-
-    T imm;
-    size_t read = Read(reinterpret_cast<uint8_t*>(&imm), sizeof(T));
-    assert_true(read == sizeof(T));
-    imm = xe::byte_swap(imm);
-    return imm;
+    return xe::byte_swap(Read<T>());
   }
 
   size_t Write(const uint8_t* buffer, size_t count);
