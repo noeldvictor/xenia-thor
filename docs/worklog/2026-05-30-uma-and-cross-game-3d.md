@@ -1680,3 +1680,22 @@ STALLED during the frame, not compute-bound on any dimension I can toggle from c
 localized further without a GPU-VENDOR TIMELINE PROFILER (Snapdragon Profiler / Android GPU Inspector)
 captured on the AYN Thor. That is the required next step; code-side cvar/counter attribution is
 exhausted. The shipped harness (guest_ms content-matching + gpu_frame_us) remains the validation tool.
+
+### B60 — *** GPU busy% measured = 78% on heavy scene -> GPU-BOUND on geometry, NOT stalled (B59b corrected) ***
+The AYN Thor exposes Adreno KGSL sysfs + on-device perfetto over ADB (no GUI). DECISIVE reading =
+GPU busy% on the LIVE heavy 3D scene: /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage = 77-79% (28
+samples, two polls, stable) @ clock_mhz=615 (max 680).
+*** CORRECTS B59b. *** B59b's "GPU mostly idle/stalling (3%)" was read at a MENU - a measurement
+error. On the real heavy field scene the GPU is GENUINELY ~78% BUSY at near-max clock = real
+GPU-BOUND work, not idle/stall. Reconciles with all content-matched data: resolution-independent
+(B58 2x=0%), load/store ~3% (B58), breaks ~12% (B57), super-linear in geometry/draws (B59). => the
+GPU spends ~78% of the frame grinding GEOMETRY / per-draw / BINNING / STATE front-end work (~2000
+tiny draws/frame, avg ~136 verts, ~2000 descriptor binds/frame) on the tiler. NOT fill, NOT
+load/store, NOT pass-breaks, NOT a pure stall.
+SHIPPED: skill .agents/skills/xenia-thor-gpu-profile/SKILL.md = headless Adreno GPU profiling over
+ADB (busy%/clock triage + perfetto gpu_work_period capture verified working + Snapdragon Profiler/
+AGI GUI fallback for the binning-vs-rendering split the on-device render-stages producer omits).
+NEXT (real lever, correctly aimed): reduce per-draw/geometry/binning GPU cost - cut draw count +
+state changes, reduce binning/parameter-buffer pressure from ~2000 tiny draws, check if xenia
+geometry/primitive processing inflates GPU vertex/binning work. Precise binning-vs-rendering split =
+one Snapdragon Profiler GPU Metrics capture (worth asking the user for).
