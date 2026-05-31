@@ -1306,3 +1306,29 @@ solved. Remaining micro-fastpaths (memcpy ruled out; f1_carrier@82287788, stricm
 untested) are small and measurement-blocked. The structural gate is CP-thread PM4 throughput
 (10,752 draws/frame = guest behavior). Diminishing returns on per-function fastpaths; the
 high-value next work is reach-gameplay infrastructure (save-state) or CP-thread parallelism.
+
+### B46 — Reached REAL field gameplay; profiled true hot path (no single dominator)
+Long wait (~200s) + extended hid_nop skips finally reached FIELD GAMEPLAY on the clean config
+(read screenshot: explorable 3D desert/canyon - windmill, building, terrain, foliage, player
+character on a ledge; fully rendered, no corruption). Heavy field scene fps = ~1.08 (heavier
+than the 2-6fps intros). True gameplay a64_speed_profile (device-read):
+  entry_delta=328,022
+  top01 8246B408 (draw-wait spin) delta=97,344 (30%) code_size=488 - BOUNDED by the shipped
+        fastpath (was 92%/21.3M on polluted config; fastpath holds it ~bounded)
+  top02 822870D8 7575 | top03 820DFA50 6159 | top04 82274DB0 5992 | top05 82287788 5898
+        (code_size 35568) | top06 826BF770 4939 (memcpy helper)
+  top07 KeRaiseIrqlToDpcLevel 4490 | top09 KeAcquireSpinLockAtRaisedIrql 4118 |
+        top10 KeReleaseSpinLockFromRaisedIrql 4118  <- notable GUEST KERNEL SPINLOCK/IRQL traffic
+  Draw Thread F80002A0: last_fn=8273EF04 (kernel area), not pinned in the spin.
+=> NO single non-spin dominator at gameplay. Work is distributed across rendering helpers +
+guest kernel synchronization (Ke* spinlocks/IRQL). The fps gate is total WORK VOLUME (CP-thread
+PM4 for ~10k draws/frame + distributed guest rendering + kernel sync), not one hot function.
+This CONFIRMS the B45 strategic read: the easy single-function fastpath wins are exhausted.
+POSSIBLE micro-candidate: a64_inline_kf_lower_irql (was =true in the old TOML, now default-false)
+given the Ke*-IRQL prominence - but risky + fps-noisy; unproven.
+HONEST STATE: shipped wins (PM4 +9.7%, draw-wait +27%/spin bounded) + black-3D solved are the
+substantial gains. Blue Dragon now RENDERS its 3D world (intro 2-6fps, heavy field ~1fps). Path
+to true FULL SPEED needs STRUCTURAL work beyond 10-min micro-iterations: (1) CP-thread PM4
+throughput / parallelism for ~10k draws/frame (the structural gate), (2) save-state primitive to
+make gameplay scenes reachable/measurable, (3) reduce guest kernel-sync overhead. Flag for user:
+these are larger multi-session efforts, not autonomous micro-fastpaths.
