@@ -777,6 +777,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_copy_ = 0;
   uint64_t draw_outcomes_total_vertices_ = 0;
   uint32_t draw_outcomes_max_vertices_ = 0;
+  // Per-frame draw composition (what the ~2000 draws ARE): histogram of guest
+  // PrimitiveType (index = uint32_t(prim_type) & 0xF) and host-vertex-count
+  // size buckets (tiny<16, small<64, med<256, big>=256). Tells whether the
+  // draws are tiny triangle-list spam, strips, rect/quad lists, etc., and how
+  // batchable they are. Logged at swap under vulkan_trace_draw_outcomes_per_frame.
+  uint32_t draw_prim_counts_[16] = {};
+  uint32_t draw_vtx_bucket_[4] = {};
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.

@@ -1909,7 +1909,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "gpu_frame_us={} msaa={} surf_pitch={} "
-        "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={}",
+        "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
+        "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
+        "vtx[tiny={} sm={} med={} big={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1939,13 +1941,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
-        brk_img_other_, xe::Clock::QueryGuestUptimeMillis());
+        brk_img_other_, xe::Clock::QueryGuestUptimeMillis(),
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPointList)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kLineList)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kLineStrip)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kTriangleList)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kTriangleFan)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kTriangleStrip)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kRectangleList)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kQuadList)],
+        draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPolygon)],
+        draw_vtx_bucket_[0], draw_vtx_bucket_[1], draw_vtx_bucket_[2],
+        draw_vtx_bucket_[3]);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
     draw_outcomes_total_vertices_ = 0;
     draw_outcomes_max_vertices_ = 0;
+    std::memset(draw_prim_counts_, 0, sizeof(draw_prim_counts_));
+    std::memset(draw_vtx_bucket_, 0, sizeof(draw_vtx_bucket_));
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
@@ -3895,6 +3910,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   draw_outcomes_max_vertices_ =
       std::max(draw_outcomes_max_vertices_,
                primitive_processing_result.host_draw_vertex_count);
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    ++draw_prim_counts_[uint32_t(prim_type) & 0xF];
+    uint32_t hv = primitive_processing_result.host_draw_vertex_count;
+    ++draw_vtx_bucket_[hv < 16 ? 0 : hv < 64 ? 1 : hv < 256 ? 2 : 3];
+  }
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;
   trace_last_draw_ps_hash_ = pixel_shader_hash;

@@ -1699,3 +1699,24 @@ NEXT (real lever, correctly aimed): reduce per-draw/geometry/binning GPU cost - 
 state changes, reduce binning/parameter-buffer pressure from ~2000 tiny draws, check if xenia
 geometry/primitive processing inflates GPU vertex/binning work. Precise binning-vs-rendering split =
 one Snapdragon Profiler GPU Metrics capture (worth asking the user for).
+
+### B61 — Draw composition: ~1200 TINY triangle-list draws/frame (death by a thousand draws)
+Instrumented per-frame draw composition (prim type histogram + host-vertex-count buckets in the
+draw-outcomes log). Blue Dragon heavy 3D scene (rendered=1197, avg_vertices=30, GPU busy 77-79%@615):
+  prim: triangle_list=931 (78%), triangle_strip=266 (22%), all others=0 (no points/lines/rects/quads).
+  vtx size: TINY(<16)=719 (60%), small(16-63)=448 (37%), med(64-255)=26, big(>=256)=4.
+=> The frame is ~1200 MICROSCOPIC triangle-list/strip draws (avg 30 verts, 60% under 16 verts). The
+Adreno tiler pays full per-draw binning + state setup ~1200x/frame for batches of a dozen triangles.
+This IS the geometry/binning front-end bottleneck (B60): "death by a thousand tiny draws", not big
+meshes, not fill (resolution 0%, B58), not load/store (3%) or pass-breaks (12%).
+BATCHING HEADROOM (already measured): pipeline_binds~262 for ~1200 draws => ~78% of draws REUSE the
+previous pipeline; descriptor_binds~1200 (per-draw). So consecutive tiny triangle-list draws that
+share pipeline + state are mergeable into far fewer, larger host draws.
+NEXT LEVER (concrete): merge consecutive same-pipeline/same-state triangle-list draws into one
+vkCmdDraw(Indexed) - cuts the ~1200 per-draw binning/setup events the GPU front-end is choking on.
+Hard parts: only safe when guest render state (pipeline, descriptors/constants, scissor, vertex/index
+buffers) is identical across the run, and index/vertex streams must be concatenable; needs care that
+per-draw constants (transforms) aren't changing (if each tiny draw has a different transform constant,
+they are NOT trivially mergeable - that would explain why the guest issues them separately, and the
+fix shifts to instanced draws or a draw-indirect/multidraw batch). VERIFY whether per-draw float
+constants change between these tiny draws before designing the batch.
