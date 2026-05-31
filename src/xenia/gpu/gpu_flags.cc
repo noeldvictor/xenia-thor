@@ -274,6 +274,14 @@ DEFINE_bool(
     "rewrite (e.g. to isolate a descriptor-caching regression).",
     "GPU");
 DEFINE_bool(
+    vulkan_coalesce_edram_transfers, false,
+    "EXPERIMENTAL (default off, EDRAM core): coalesce EDRAM render-target ownership "
+    "transfers so format-compatible transfers share one render pass instead of one "
+    "per destination RT, to cut Adreno tile flushes (render-pass begin/end). High "
+    "risk - validate rendering per title before enabling. Off = the proven "
+    "per-dest-RT transfer path.",
+    "GPU");
+DEFINE_bool(
     vulkan_push_descriptors, true,
     "Use VK_KHR_push_descriptor (when supported) to push the per-draw texture and "
     "sampler descriptors inline into the command buffer, instead of allocating a "

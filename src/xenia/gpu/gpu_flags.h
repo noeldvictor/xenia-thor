@@ -84,6 +84,7 @@ DECLARE_bool(vulkan_force_signed_2101010_unorm_fallback);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);
+DECLARE_bool(vulkan_coalesce_edram_transfers);
 DECLARE_bool(vulkan_trace_draw_outcomes_per_frame);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 

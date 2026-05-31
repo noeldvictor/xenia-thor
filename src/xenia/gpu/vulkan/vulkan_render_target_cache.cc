@@ -4854,6 +4854,16 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     // framebuffer configuration in a single pass, to load / store only once.
     RenderPassKey transfer_render_pass_key;
     transfer_render_pass_key.msaa_samples = dest_rt_key.msaa_samples;
+    // When the color transfer format is identical to the draw format (no integer
+    // reinterpretation needed, e.g. R8G8B8A8_UNORM / A2B10G10R10), the transfer
+    // pass key matches the guest draw pass key for this RT, so it doesn't need
+    // color_rts_use_transfer_formats. Leaving that bit off (under
+    // vulkan_coalesce_edram_transfers) makes the transfer pass key equal to a
+    // guest pass key, so if that guest pass is already current the per-draw enter
+    // can early-return without an end/begin -> no Adreno tile flush. Only safe
+    // for same-format color transfers; depth + integer-reinterpret stay on the
+    // dedicated transfer-format pass.
+    bool transfer_color_same_format = false;
     if (dest_rt_key.is_depth) {
       transfer_render_pass_key.depth_and_color_used = 0b1;
       transfer_render_pass_key.depth_format = dest_rt_key.GetDepthFormat();
@@ -4861,7 +4871,13 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       transfer_render_pass_key.depth_and_color_used = 0b1 << 1;
       transfer_render_pass_key.color_0_view_format =
           dest_rt_key.GetColorFormat();
-      transfer_render_pass_key.color_rts_use_transfer_formats = 1;
+      bool is_integer = false;
+      GetColorOwnershipTransferVulkanFormat(dest_rt_key.GetColorFormat(),
+                                            &is_integer);
+      transfer_color_same_format =
+          !is_integer && cvars::vulkan_coalesce_edram_transfers;
+      transfer_render_pass_key.color_rts_use_transfer_formats =
+          transfer_color_same_format ? 0 : 1;
     }
     // Instrumentation: is this transfer's render pass FORMAT-COMPATIBLE with the
     // guest draw pass (so it could reuse it and avoid a tile flush)? Color: the
