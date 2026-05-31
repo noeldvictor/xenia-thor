@@ -839,6 +839,37 @@ calls (the ~55 source) + the base transfer-generation to spot redundancy. Instru
 confirmed: transfers ARE the lever (corrects B28's "under half" - they cause the
 internal breaks too, just not at the enter path).
 
+### B30 — transfer mechanism fully characterized; 2 grounded fixes (impl = fresh iteration)
+PerformTransfersAndResolveClears uses a SEPARATE transfer_render_pass
+(vulkan_render_target_cache.cc:5035 SubmitBarriersAndEnterRenderTargetCacheRenderPass
+(transfer_render_pass...)) per destination RT in its loop. So each Update needing
+transfers does: end guest pass -> enter transfer pass -> transfer draws -> (next real
+draw) end transfer pass -> re-enter guest pass = 2 tile flushes per transfer batch,
+looped per dest RT = the ~55 internal breaks/frame.
+Transfer generation (base render_target_cache.cc:879-886): ChangeOwnership() fills
+last_update_transfers_ only when EDRAM ownership changes (guarded by
+WouldOwnershipChangeRequireTransfers). So transfers are ownership-driven, not blindly
+per draw - but 45/frame means ownership changes ~45x/frame (frequent RT/EDRAM reuse).
+TWO GROUNDED FIXES (next iteration, EDRAM core - delicate, build+verify carefully):
+ 1. REUSE GUEST RENDER PASS FOR TRANSFERS (explicit upstream TODO at vulkan_render_
+    target_cache.cc:4847 "Reuse the guest render pass for transfers where possible").
+    If transfers can run in the already-open guest render pass instead of a separate
+    transfer_render_pass, the end+begin around each transfer disappears -> kills most
+    of the ~55 internal breaks. Highest value, but needs the transfer render pass to
+    be compatible with the guest one.
+ 2. COALESCE: batch all of an Update's per-RT transfers into ONE pass-end + re-begin
+    instead of one per dest RT.
+DECISION: stop at characterization this iteration (EDRAM transfer system = the most
+fragile GPU subsystem; a blind change risks rendering regressions + the scene is
+black-3D so visual validation is already hard). Implement fix #1 or #2 in a focused
+iteration with before/after vulkan_trace_perf_counters (render_pass_begins +
+barrier_force_end_render_pass) + fps, on a scene we can SEE (Burnout menu renders
+correctly - use it to verify no regression, Blue Dragon to measure fps).
+FULL CHAIN NOW PROVEN: 2.4fps <- ~98 render-pass breaks/frame (tile flushes on Adreno)
+<- ~55 internal transfer-pass switches + 27 RT-reconfig + 16 upload-barrier <- 45
+EDRAM ownership transfers/frame (Xbox360 10MB EDRAM reuse) using a separate transfer
+render pass. NOT descriptors, NOT draw count, NOT UMA, NOT uploads.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
