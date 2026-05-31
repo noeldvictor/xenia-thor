@@ -991,6 +991,34 @@ correct, default off) but it's not the fps fix.
 KEEP: vulkan_coalesce_edram_transfers is correct + reduces real GPU work (-34% pass
 begins); leave default off pending broader validation, but it's a legit optimization.
 
+### B36 — *** REFRAME: it's NOT the GPU driver. ~50% is in UNKNOWN (unmapped) memory ***
+simpleperf --sort dso (GPU Commands + Draw threads, coalesce on, 31646 samples):
+- unknown (the 0x2a... addresses): 49.72%
+- libxenia-app.so (our code): 44.22%
+- libc.so: 2.72%
+- vulkan.adreno.so (the ACTUAL GPU DRIVER): only 1.53%   <-- NOT the bottleneck!
+- libllvm-qgl.so: 0.54%
+So the unknown[+2a0a450ac] cluster I kept calling "the Adreno driver" is NOT the
+driver (driver is 1.5%). The 0x2a... region is UNMAPPED memory simpleperf can't
+attribute - reached via the callgraph from ExecutePacketType0 -> RingBuffer::Read ->
+ReadAndSwap. Most likely a large memcpy/memmove (RingBuffer::Read copies command data)
+landing in an unsymbolized libc fast-path, OR executable JIT/scratch memory.
+=> The fps bottleneck is CPU-side COMMAND-STREAM PROCESSING (our code + this unknown
+copy region), ~94% combined, NOT GPU driver work and NOT render-pass management (B35).
+The whole "tile flush" line of investigation (B24-B35), while it found real costs, was
+not the fps gate. The gate is the sheer cost of parsing/copying the guest PM4 stream:
+ExecutePacketType0 (register writes) + RingBuffer::Read (bulk copy).
+NEXT (the real lever, finally located): 
+ 1. Identify the 0x2a... unknown region precisely - is RingBuffer::Read doing a huge
+    per-call memcpy? Read RingBuffer::Read. If the guest ring is contiguous, the copy
+    may be avoidable (read in place). If it wraps, the copy is the wrap-handling.
+ 2. ExecutePacketType0 volume: how many register-write dwords/frame? If millions, the
+    per-dword ReadAndSwap loop dominates - bulk-process contiguous register runs.
+ This is CPU/JIT-domain, finally the right domain (matches "Thor 10-20x CPU" premise:
+ we are CPU-bound in our own command processor, not GPU-bound).
+KEEP coalesce (correct, -34% pass begins, default off) - real GPU-side win for later,
+just not THIS bottleneck.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
