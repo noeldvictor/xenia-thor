@@ -1452,3 +1452,33 @@ ownership-transfer draws/copies, (c) the resolves, logged per frame - to see whe
 GPU ms actually go. Then reduce the dominant GPU work: keep render targets resident to avoid
 store/restore round-trips, cut resolve/copy volume, or break GPU serialization. Alternatively use
 the Adreno/Snapdragon GPU profiler. This is GPU-path engineering, the genuine path to speed.
+
+### B51 — *** DATA-BACKED ROOT CAUSE: ~98 barrier-forced render-pass ends/frame = tile flushes (GPU) ***
+Used the EXISTING vulkan_trace_perf_counters (no build) on a 3D scene. Diffed 2 snapshots
+(issue_swaps 1010->1020 = 10 frames), PER FRAME:
+  queue_submits = 1/frame (NOT submission-serialized - only ONE submit per frame)
+  queue_submit_us=78us  present_acquire_us=25us  present_submit_us=66us  present_us=178us
+  => SUM of ALL instrumented host Vulkan calls = ~0.35 ms/frame. Frame @2fps = ~500ms.
+  barrier_force_end_render_pass = ~98/frame; render_pass_begins = ~75/frame;
+  barriers = ~146/frame (buffer ~145 + image ~150); staging copies ~7/frame (~30KB).
+CONCLUSION: 99.9% of the ~500ms frame is NOT in any CPU-side Vulkan call (submit/acquire/present
+all tiny, 1 submit/frame). The CPU blocks on the frame-completion FENCE (untimed) while the GPU
+executes the single command buffer for ~500ms. The only pathological content in that buffer:
+~98 barrier-forced render-pass END/BEGIN cycles. On the Adreno 740 (tile-based deferred renderer)
+each render-pass end = store the whole framebuffer (color+depth, 720p, multiple RTs) from tile
+memory to main RAM, each begin = load it back. ~98x store+reload/frame = hundreds of MB-GB of tile
+traffic = the ~500ms. *** This is the Xenos-EDRAM-on-a-tiler mismatch, pinpointed. ***
+WHY B35 COALESCE FAILED (important): coalesce reduced render_pass_BEGINS (~74->~49) but the gate is
+the ~98 BARRIER-FORCED ENDS (driven by ~146 barriers/frame from EDRAM ownership transfers +
+per-draw barriers). Coalesce never reduced those, so tile-flush count was ~unchanged -> fps
+unchanged. I was optimizing the wrong counter.
+SUPPORTING EVIDENCE: title/loading screens (little RT juggling) = ~31fps; 3D scenes (heavy EDRAM
+transfers -> ~98 pass-ends) = 1-2fps. The delta IS the tile-flush tax.
+THE ARCHITECTURAL FIX (the real work): cut the ~146 barriers / ~98 render-pass ends so the frame
+uses FEW render passes (few tile flushes). Levers: (1) hoist/batch EDRAM ownership transfers out of
+the per-draw path so they don't interleave with rendering and force pass-ends; (2) use Adreno-
+friendly in-pass EDRAM read-modify-write (subpasses / dynamic rendering local reads / framebuffer-
+fetch / VK_EXT_rasterization_order_attachment_access) instead of end-pass+barrier+copy+begin-pass;
+(3) keep render targets resident to avoid ownership transfers. NEXT: build GPU timestamp queries
+(vkCmdWriteTimestamp) to CONFIRM GPU frame time ~= 500ms and attribute it across the render passes
+vs transfers, then do the EDRAM-transfer barrier/pass-break refactor. Target = Thor/Adreno 740 only.
