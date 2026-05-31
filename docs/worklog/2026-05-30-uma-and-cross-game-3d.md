@@ -1394,3 +1394,27 @@ render state since the last draw and SKIP/cache the redundant per-draw computati
 analysis + pipeline lookup are prime - they recompute identical results). Big, careful change to
 the core draw path; gate behind a cvar, verify rendering, measure cpu_issuedraw_us drop + fps.
 Instrumentation shipped this iteration (the buckets); the skip/cache optimization is next.
+
+### B49 — Finer IssueDraw breakdown: UpdateBindings (~31%) is the biggest named per-draw phase
+Added finer per-draw CPU sub-phase buckets to IssueDraw (cpu_tex/rt/pipe/bind/other_us in the
+draw-outcomes log, same chrono pattern, gated by vulkan_trace_draw_outcomes_per_frame). DEVICE-
+MEASURED (Blue Dragon, rendered=~2114 draws/frame, 4 consecutive frames, % of cpu_issuedraw):
+  other   ~40%  (~17-21 ms/frame) - unattributed rest: shader analysis (AnalyzeShaderUcode,
+                 IsRasterizationPotentiallyDone, interpolator mask), shader modifications +
+                 GetOrCreateTranslation, the 2x sampler binding loop, dynamic state, system
+                 constants, vertex residency, barriers, draw submit
+  bind    ~31%  (~13-16.7 ms/frame) UpdateBindings (uniform buffers + descriptor sets); runs on
+                 ~94% of draws (descriptor_binds 1982/2114) <- BIGGEST SINGLE NAMED PHASE
+  rt      ~14%  (~5.4-7.4 ms) render_target_cache_->Update
+  tex     ~8%   (~3-4.5 ms)  texture_cache_->RequestTextures
+  process ~5%   (~2.2-2.7 ms) PrimitiveProcessor::Process (confirms B48 - not the hog)
+  pipe    ~3%   (~1.2-1.5 ms) pipeline_cache_->ConfigurePipeline
+=> Two targets: UpdateBindings (~31%, single function) + the distributed "other" (~40%).
+NEXT: attack UpdateBindings - it re-uploads uniform buffers (system/float/bool-loop constants) +
+re-writes/binds descriptor sets every draw. If constants/bindings are UNCHANGED since the prior
+draw (likely for the ~88% of draws that reuse the pipeline), much of this is redundant. Read
+UpdateBindings, find what recomputes identical results per draw, skip when guest constant
+registers + binding state are unchanged. Gate by cvar, verify rendering, measure cpu_bind_us
+drop + cpu_issuedraw_us drop + fps. (Texture descriptor caching already exists -
+vulkan_cache_texture_descriptors; the uniform-buffer constant re-upload is the likely remaining
+redundancy.) "other" 40% would then need its own sub-split next.

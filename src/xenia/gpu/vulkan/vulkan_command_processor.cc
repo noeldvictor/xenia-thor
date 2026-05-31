@@ -1845,7 +1845,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
-        "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={}",
+        "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
+        "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1859,6 +1860,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
+            : 0,
+        draw_cpu_textures_ns_ / 1000, draw_cpu_rt_ns_ / 1000,
+        draw_cpu_pipeline_ns_ / 1000, draw_cpu_bindings_ns_ / 1000,
+        (draw_cpu_total_ns_ >
+         (draw_cpu_process_ns_ + draw_cpu_textures_ns_ + draw_cpu_rt_ns_ +
+          draw_cpu_pipeline_ns_ + draw_cpu_bindings_ns_))
+            ? (draw_cpu_total_ns_ -
+               (draw_cpu_process_ns_ + draw_cpu_textures_ns_ +
+                draw_cpu_rt_ns_ + draw_cpu_pipeline_ns_ +
+                draw_cpu_bindings_ns_)) /
+                  1000
             : 0);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
@@ -1877,6 +1889,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_transfer_diff_format_ = 0;
     draw_cpu_total_ns_ = 0;
     draw_cpu_process_ns_ = 0;
+    draw_cpu_textures_ns_ = 0;
+    draw_cpu_rt_ns_ = 0;
+    draw_cpu_pipeline_ns_ = 0;
+    draw_cpu_bindings_ns_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -3365,7 +3381,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                               : 0;
   uint32_t used_texture_mask =
       used_texture_mask_vertex | used_texture_mask_pixel;
+  std::chrono::steady_clock::time_point tex_t0;
+  if (trace_draw_cpu) {
+    tex_t0 = std::chrono::steady_clock::now();
+  }
   texture_cache_->RequestTextures(used_texture_mask);
+  if (trace_draw_cpu) {
+    draw_cpu_textures_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - tex_t0)
+            .count());
+  }
   if (pixel_shader && normalized_color_mask &&
       cvars::vulkan_trace_texture_source_checksum) {
     if (used_texture_mask_vertex &&
@@ -3380,9 +3406,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
   }
 
-  if (!render_target_cache_->Update(is_rasterization_done,
-                                    normalized_depth_control,
-                                    normalized_color_mask, *vertex_shader)) {
+  std::chrono::steady_clock::time_point rt_t0;
+  if (trace_draw_cpu) {
+    rt_t0 = std::chrono::steady_clock::now();
+  }
+  bool rt_update_ok = render_target_cache_->Update(
+      is_rasterization_done, normalized_depth_control, normalized_color_mask,
+      *vertex_shader);
+  if (trace_draw_cpu) {
+    draw_cpu_rt_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - rt_t0)
+            .count());
+  }
+  if (!rt_update_ok) {
     return false;
   }
 
@@ -3390,12 +3427,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // cache.
   VkPipeline pipeline;
   const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
-  if (!pipeline_cache_->ConfigurePipeline(
-          vertex_shader_translation, pixel_shader_translation,
-          primitive_processing_result, normalized_depth_control,
-          normalized_color_mask,
-          render_target_cache_->last_update_render_pass_key(), pipeline,
-          pipeline_layout_provider)) {
+  std::chrono::steady_clock::time_point pipe_t0;
+  if (trace_draw_cpu) {
+    pipe_t0 = std::chrono::steady_clock::now();
+  }
+  bool configure_pipeline_ok = pipeline_cache_->ConfigurePipeline(
+      vertex_shader_translation, pixel_shader_translation,
+      primitive_processing_result, normalized_depth_control,
+      normalized_color_mask,
+      render_target_cache_->last_update_render_pass_key(), pipeline,
+      pipeline_layout_provider);
+  if (trace_draw_cpu) {
+    draw_cpu_pipeline_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - pipe_t0)
+            .count());
+  }
+  if (!configure_pipeline_ok) {
     return false;
   }
 
@@ -3604,7 +3652,18 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 
   // Update uniform buffers and descriptor sets after binding the pipeline with
   // the new layout.
-  if (!UpdateBindings(vertex_shader, pixel_shader)) {
+  std::chrono::steady_clock::time_point bind_t0;
+  if (trace_draw_cpu) {
+    bind_t0 = std::chrono::steady_clock::now();
+  }
+  bool update_bindings_ok = UpdateBindings(vertex_shader, pixel_shader);
+  if (trace_draw_cpu) {
+    draw_cpu_bindings_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - bind_t0)
+            .count());
+  }
+  if (!update_bindings_ok) {
     return false;
   }
 

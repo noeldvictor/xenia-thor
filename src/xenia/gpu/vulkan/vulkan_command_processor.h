@@ -789,6 +789,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // vulkan_trace_draw_outcomes_per_frame; logged+reset at swap.
   uint64_t draw_cpu_total_ns_ = 0;
   uint64_t draw_cpu_process_ns_ = 0;
+  // Finer IssueDraw sub-phase buckets (ns/frame) to pinpoint the dominant part
+  // of the per-draw cost: texture RequestTextures, render-target cache Update,
+  // pipeline ConfigurePipeline, and descriptor UpdateBindings. "Other" = total
+  // minus these + process.
+  uint64_t draw_cpu_textures_ns_ = 0;
+  uint64_t draw_cpu_rt_ns_ = 0;
+  uint64_t draw_cpu_pipeline_ns_ = 0;
+  uint64_t draw_cpu_bindings_ns_ = 0;
 
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
