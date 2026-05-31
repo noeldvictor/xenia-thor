@@ -1903,3 +1903,20 @@ risk; must be built with on-device verification each stage (user watching), not 
 PROCESS NOTE: see memory no-fabrication-autonomous-failure - unsupervised bursts caused fabricated
 results twice today (B62, B64-B67, retracted). Going forward: build incrementally, user verifies fps
 on-screen, no fps claim without the pasted device line.
+
+
+### B70 — UMA verified WORKING on Thor (direct-write, host-coherent) but NOT the speed lever
+User: "get UMA working." Set gpu_uma_direct_shared_memory=true on device; relaunched. Device log (real,
+read this turn): "Shared memory: using unified-memory direct-write path (memory type 6, host-coherent)".
+=> UMA initializes correctly on Adreno 740: finds a HOST_VISIBLE|DEVICE_LOCAL memory type, backs the
+512MB shared buffer with it, persistently maps it, writes guest vertex/index pages straight into GPU
+memory (no staging buffer, no vkCmdCopyBuffer). No TDR in the test; 3D rendered correctly (windmill
+scene screenshot read); GPU alive @99%. That is UMA working.
+HONEST CAVEAT (no overclaim): UMA optimizes vertex/index UPLOAD, but the proven bottleneck is per-draw
+GPU COMMAND cost (GPU 99% busy on heavy scenes; load/store ~3%, ~8 staging copies/frame). So UMA does
+NOT raise the GPU-bound framerate. fps seen with UMA on (1.9-7.1) was scene-dependent, NOT A/B'd
+same-scene vs UMA-off -> no speed claim. UMA also carries a documented intermittent Adreno TDR risk
+(CPU-write vs deferred-tiler-read race; staging path is immune). DECISION: keep UMA available + working,
+DEFAULT-OFF (known-good 3D, no TDR). Device config regenerated clean (518 lines, 0 garbage; UMA=false,
+skip=0; shipped wins intact: gpu_bulk_pm4_type0=true, arm64_blue_dragon_draw_wait_fastpath=true,
+arm64_vmx_dot_f32_fastpath=false).
