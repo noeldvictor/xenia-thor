@@ -848,6 +848,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_pass_break_rt_change_ = 0;
   uint32_t rt_transfer_same_format_ = 0;
   uint32_t rt_transfer_diff_format_ = 0;
+  // Per-frame attribution of WHAT barriers actually end an open render pass
+  // (the tiler-killing breaks). Tallied in SubmitBarriers when it ends a live
+  // pass: how many such break-flushes, and the composition of the flushed
+  // barriers (buffer = shared-memory/upload hazards; image split by target
+  // layout: shader-read = texture sampling hazards, vs other = RT/transfer).
+  // This tells the rewrite which barrier source to coalesce/hoist first.
+  uint32_t brk_open_breaks_ = 0;
+  uint32_t brk_buffer_barriers_ = 0;
+  uint32_t brk_img_shaderread_ = 0;
+  uint32_t brk_img_other_ = 0;
+  // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
+  // for confound-free GPU A/B on an identical frame).
+  bool gpu_scene_lock_frozen_ = false;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.

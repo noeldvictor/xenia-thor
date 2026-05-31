@@ -336,6 +336,15 @@ DEFINE_bool(
     "performance-mode experiment; measure via gpu_frame_us + read the frame.",
     "GPU");
 
+DEFINE_uint32(
+    gpu_freeze_at_guest_ms, 0,
+    "Thor measurement harness: once the guest uptime reaches this many "
+    "milliseconds, near-freeze the guest clock (time_scalar->0.0001) so the "
+    "rendered scene becomes static and identical across configs (guest content "
+    "is a function of guest uptime). Enables confound-free gpu_frame_us A/B on "
+    "the same frame. 0 disables.",
+    "GPU");
+
 DEFINE_bool(
     non_seamless_cube_map, true,
     "Disable filtering between cube map faces near edges where possible "

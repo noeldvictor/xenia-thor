@@ -23,6 +23,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/byte_order.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -1856,6 +1857,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  // Optional hard freeze (for genuinely static scenes like menus). NOTE: for
+  // animated cinematics this does NOT produce a static frame (the engine keeps
+  // evolving the scene regardless of the guest clock), so the primary clean-A/B
+  // tool is the guest_ms key logged below: guest content is a function of guest
+  // uptime, so comparing gpu_frame_us at the SAME guest_ms across configs gives
+  // identical content with no scene-timing confound.
+  if (cvars::gpu_freeze_at_guest_ms != 0 && !gpu_scene_lock_frozen_ &&
+      xe::Clock::QueryGuestUptimeMillis() >= cvars::gpu_freeze_at_guest_ms) {
+    gpu_scene_lock_frozen_ = true;
+    xe::Clock::set_guest_time_scalar(0.0001);
+    XELOGI("GPU scene-lock: froze guest at uptime {} ms (time_scalar->0.0001)",
+           xe::Clock::QueryGuestUptimeMillis());
+  }
+
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     // Read back the newest GPU-timestamp pair from a frame that has completed
     // and whose slot hasn't been reused by an in-flight frame (no host stall).
@@ -1893,7 +1908,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
-        "gpu_frame_us={} msaa={} surf_pitch={}",
+        "gpu_frame_us={} msaa={} surf_pitch={} "
+        "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1921,7 +1937,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             : 0,
         gpu_frame_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
-        uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch));
+        uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
+        brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
+        brk_img_other_, xe::Clock::QueryGuestUptimeMillis());
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1935,6 +1953,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_clears_ = 0;
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
+    brk_open_breaks_ = 0;
+    brk_buffer_barriers_ = 0;
+    brk_img_shaderread_ = 0;
+    brk_img_other_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
     draw_cpu_total_ns_ = 0;
@@ -2721,6 +2743,24 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
       EndRenderPass();
     }
     return false;
+  }
+  // Attribution: this SubmitBarriers is ending a LIVE render pass to flush
+  // barriers (a tiler break). Tally what kinds of barriers forced it so the
+  // tiler rewrite targets the real cause (buffer/shared-memory vs texture
+  // shader-read vs RT/other image transitions).
+  if (cvars::vulkan_trace_draw_outcomes_per_frame &&
+      current_render_pass_ != VK_NULL_HANDLE) {
+    ++brk_open_breaks_;
+    brk_buffer_barriers_ +=
+        uint32_t(pending_barriers_buffer_memory_barriers_.size());
+    for (const VkImageMemoryBarrier& imb :
+         pending_barriers_image_memory_barriers_) {
+      if (imb.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        ++brk_img_shaderread_;
+      } else {
+        ++brk_img_other_;
+      }
+    }
   }
   EndRenderPass();
   for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend();

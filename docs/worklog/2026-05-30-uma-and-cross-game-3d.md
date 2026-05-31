@@ -1592,3 +1592,34 @@ METHODOLOGY FIX (next): SCENE-LOCKED measurement - freeze the guest at a FIXED g
 read a stable gpu_frame_us. Only then can I cleanly attribute GPU cost (toggle resolution scale /
 loadOp / transfers on the SAME frame) and trust the result. Until then, treat B53's 9x as unproven.
 gpu_skip_edram_transfers + gpu_edram_passes_dont_care kept as default-off diagnostics.
+
+### B57 — Tiler rewrite kickoff: workflow design + scene-locked measurement + GATE VALIDATED
+Ran a multi-agent design workflow (map backend -> 3-angle tiler-native design panel -> synthesis ->
+adversarial review). Synthesis = 4-layer "Thor tiler-native RT path" (A: structural defrag/barrier
+coalesce; B: VK_EXT_load_store_op_none smart load/store; C: hazard-driven pass batcher; D: transient/
+dynamic_rendering), all GATED, never touching the base EDRAM ownership model. ADVERSARY verdict =
+needs-rework: the proposed Stage-1 premise (discard "no-op RT layout barriers") was FALSE - xenia
+already drops steady-state RT self-transitions (skip_if_equal). Demanded: INSTRUMENT what the breaks
+actually are first, and use scene-LOCKED measurement.
+
+DID BOTH (built measurement harness, all gated, default-off/no-op):
+1. Barrier-break attribution (brk_open/brk_buf/brk_img_sr/brk_img_oth in draw-outcomes log): heavy
+   scene = brk_open~48-51 real pass-ending breaks, composed of ~37 BUFFER barriers (shared-memory/
+   upload hazards) + ~42 SHADER_READ image barriers (texture-sampling hazards) + ~21 other image.
+   => breaks are REAL read-after-write hazards (uploads + texture samples), NOT no-op RT transitions.
+2. Scene-lock by GUEST_MS: guest content is a function of guest uptime; log guest_ms/frame and compare
+   gpu_frame_us at the SAME guest_ms across configs (identical content, no scene drift). (A hard
+   time_scalar freeze does NOT work - the engine keeps evolving the scene; guest_ms-matching does.)
+   Also added gpu_freeze_at_guest_ms cvar (optional, for truly static menus).
+
+*** GATE TEST (the decision for the whole rewrite), content-matched via guest_ms: skip-transfers
+OFF vs ON on IDENTICAL frames (rendered counts equal): breaks ~40->~32 gave gpu_frame_us ~25ms->~22ms
+= ~12% faster, ~0.37 ms/break. So REDUCING RENDER-PASS BREAKS DOES REDUCE GPU TIME (content-matched).
+This OVERTURNS B56's "breaks don't matter" (that was scene-confounded) and VALIDATES the rewrite
+direction. B53's 9x was overstated/confounded; realistic per-break cost ~0.37ms on light scenes
+(larger on full-720p heavy scenes), so a full break reduction (~44->~5) is a real, worthwhile win
+without the corruption that skip-transfers causes. ***
+NEXT (real Stage 1, no corruption): reduce the dominant break causes - hoist/batch the ~37 shared-
+memory upload buffer barriers + ~42 texture shader-read barriers out of the per-draw path so
+consecutive same-state draws don't each end the pass. Validate with the guest_ms-matched harness +
+pixel-identity screenshots (Blue Dragon + Burnout). Diagnostics shipped this iteration are default-off.
