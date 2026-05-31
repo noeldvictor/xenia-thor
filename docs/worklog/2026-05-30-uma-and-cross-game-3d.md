@@ -1529,3 +1529,27 @@ resident / avoid re-deriving framebuffers; (b) barrier breaks - defer/batch barr
 tiler-safe in-pass sync (subpasses, VK_EXT_rasterization_order_attachment_access, dynamic-rendering
 local reads, framebuffer-fetch) so EDRAM read-modify-write happens INSIDE one pass. Validate each
 step: gpu_frame_us must fall from ~337ms toward ~37ms. Target Thor/Adreno 740 only.
+
+### B54 — FSI architectural shortcut RULED OUT (Adreno 740 lacks fragment_shader_interlock)
+Tested xenia's alternative EDRAM path: --es render_target_path_vulkan fsi. Device LOG:
+"render_target_path_vulkan='fsi' selected=fbo" + fallback reason:
+"sample_interlock=FALSE pixel_interlock=FALSE fragment_stores_atomics=true sample_rate_shading=
+true standard_sample_locations=true". => Adreno 740 / Thor driver does NOT expose
+VK_EXT_fragment_shader_interlock (neither sample nor pixel interlock). The FSI backend (which would
+keep EDRAM in-shader and avoid per-draw ownership transfers + pass breaks entirely) is UNAVAILABLE
+on Thor. gpu_frame_us stayed ~270ms (fbo). So the one-cvar architectural shortcut is dead; the fix
+must live in the host-render-target (fbo) path.
+THE REMAINING FIX (host-RT path, scoped): cut the per-pass tile LOAD/STORE (B53: 89% of GPU, 9x
+ceiling) while preserving correctness. The render pass is LOAD/STORE on all attachments
+unconditionally (GetRenderPass 1558/1591). Correctness-preserving levers:
+ 1. loadOp LIVENESS: when entering a render pass for an RT whose EDRAM content is NOT live at entry
+    (freshly cleared, or about to be fully overwritten - xenia's RenderTargetCache tracks ownership
+    /clears + last_update_transfers()), use loadOp=DONT_CARE/CLEAR instead of LOAD -> skip the tile
+    reload. Needs a load-variant bit in the render-pass key + deriving per-entry liveness.
+ 2. storeOp LIVENESS: when an RT won't be sampled/resolved before being overwritten, storeOp=
+    DONT_CARE -> skip the tile store.
+ 3. Fewer breaks: the deeper structural reduction (keep RTs resident across the ~27 RT-change
+    breaks; defer/batch the ~17 barrier breaks).
+Validate every step with gpu_frame_us (target ~337ms -> toward ~37ms). Thor/Adreno 740 only.
+This is a careful EDRAM-core refactor (corruption risk) - the next focused work, now fully targeted
+and measurable via the shipped gpu_frame_us + gpu_edram_passes_dont_care harness.
