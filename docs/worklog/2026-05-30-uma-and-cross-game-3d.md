@@ -920,6 +920,33 @@ that; if the source is bound, must still break. Measure: xfer pass breaks should
 by up to ~24/frame, render_pass_begins + barrier_force_end_render_pass fall, fps rise;
 verify Burnout menu still renders correctly.
 
+### B33 — fix 1a is MORE SUBTLE than "reuse when same format" (two real constraints)
+Before coding 1a, verified two constraints that reshape it:
+1. ORDERING: PerformTransfersAndResolveClears runs FIRST in Update (render_target_
+   cache.cc:1401); the NEW draw's guest render pass is entered AFTER Update returns
+   (IssueDraw:3646). So during transfers the open pass is the PREVIOUS draw's, not the
+   destination's. "Reuse the guest pass" isn't a simple swap - the transfer's dest
+   framebuffer is being set up by this very Update. The real win = order transfers to
+   share ONE pass with the upcoming draw when compatible (TODO 2nd half = coalesce),
+   not just match formats.
+2. FEEDBACK LOOP: transfer shaders SAMPLE the source RT as a texture; Vulkan forbids
+   sampling an attachment bound in the current render pass. So reuse is only safe when
+   the source RT is not also an attachment.
+=> Fix 1a as naively scoped ("reuse guest pass when same color format") is NOT safe/
+simple. The genuinely correct, lower-risk win is the COALESCE direction (fix 1b / TODO
+2nd half): within ONE PerformTransfersAndResolveClears call, batch all same-format
+dest-RT transfers into a SINGLE transfer render pass (one end+begin) instead of one
+per dest RT. That removes the per-dest-RT pass churn without the ordering/feedback
+hazards. The 24 same-format passes/frame collapse toward the number of distinct
+framebuffer configs (far fewer). 
+DECISION: this is the implementation target, but it is a careful EDRAM-core change
+needing a deliberate design pass (group transfers by compatible framebuffer, emit one
+pass, handle feedback by keeping cross-copy transfers separate). NOT a high-cadence
+blind edit. Homework complete + durable: sized (24/frame eligible), constraints known,
+correct fix direction = coalesce same-format transfers into one pass.
+NEXT: design + implement the coalesce in PerformTransfersAndResolveClears behind a
+cvar; A/B with perf counters + fps + Burnout no-regression.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
