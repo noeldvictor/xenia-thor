@@ -1286,3 +1286,23 @@ NEXT CANDIDATES: (1) arm64_blue_dragon_memcpy_fastpath (826BF770 byte-copy -> ho
 built, default-off) - A/B for a win; (2) reach a STEADY field scene reliably (save-state or
 longer/auto skip) so clean-config fps A/B becomes possible; (3) CP-thread PM4 throughput remains
 the structural gate (10,752 draws/frame is guest behavior).
+
+### B45 — memcpy_fastpath RULED OUT (correct but no win); measurement blocker noted
+A/B'd arm64_blue_dragon_memcpy_fastpath=true on the clean config (profiler on). The fastpath
+IS active (826BF770 code_size 5156->248 = body replaced by host memmove) and rendering is
+intact (read: MS Game Studios windmill intro, full 3D, no corruption). But NO measurable win:
+  fps: 3.5/2.75 (memcpy on) vs B44 3.5/2.83 (off) - identical within scene noise.
+  826BF770 profile: total/delta 3.41M/9113 vs 3.39M/9001 - unchanged.
+=> 826BF770 is entered often but the copies in the reachable (intro) scene are small, so
+host-memmove ~= the guest byte-loop. DECISION: keep default-off (no win, though correct). It
+*might* help in a heavy field scene with large copies, but that's unproven and unreachable now.
+MEASUREMENT BLOCKER (recurring): on the clean config at 2-6fps the intros play out slowly, so
+~90-95s + extra skips still lands in the "Microsoft Game Studios" windmill INTRO, not field
+gameplay. Clean-config gameplay fps A/B needs either (a) much longer waits (minutes, bad for a
+10-min loop), (b) a save-state primitive (none exists - flagged before), or (c) the heavy field
+reached via the slower vmx_dot=true path (but that's black-3D + different hot path).
+STRATEGIC STATE: two real fps wins shipped (PM4 +9.7%, draw-wait +27%/spin 222x) + black-3D
+solved. Remaining micro-fastpaths (memcpy ruled out; f1_carrier@82287788, stricmp@826C5620
+untested) are small and measurement-blocked. The structural gate is CP-thread PM4 throughput
+(10,752 draws/frame = guest behavior). Diminishing returns on per-function fastpaths; the
+high-value next work is reach-gameplay infrastructure (save-state) or CP-thread parallelism.
