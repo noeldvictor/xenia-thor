@@ -766,6 +766,31 @@ which: (a/b) may be reducible by keeping RTs resident / better EDRAM layout trac
 (c) by deferring the sample. This is the real, deep Blue Dragon lever - get the
 attribution right before changing code.
 
+### B27 — LOCATED: per-draw EDRAM transfers in PerformTransfersAndResolveClears
+VulkanRenderTargetCache::Update (vulkan_render_target_cache.cc:1380) runs per draw
+(from IssueDraw:3332) and calls PerformTransfersAndResolveClears(... last_update_
+transfers()) EVERY draw (line 1401). The base RenderTargetCache::Update computes
+last_update_transfers() = the EDRAM ownership transfers needed when the render-target
+config / EDRAM tile ownership changes. Each transfer issues image barriers + a
+transfer draw/compute -> ends the render pass -> tile flush. This is the ~149 image
+barriers / ~98 forced-ends per frame.
+WHY on Xbox360/Blue Dragon: 10MB EDRAM is reused constantly; when a draw targets an
+EDRAM region previously owned by a different RT, the contents must be transferred
+(restored) to the host RT image first = a transfer with barriers. Frequent RT/EDRAM
+reconfiguration = frequent transfers = frequent render-pass breaks.
+NEXT (clean iteration): instrument transfers-per-frame (count last_update_transfers()
+size + PerformTransfersAndResolveClears non-empty calls per frame, log at swap).
+Confirm it tracks the ~98 force-ends. THEN the fix options:
+ - reduce redundant transfers (are we transferring when ownership did NOT actually
+   change? check the ownership-range dirty logic in base RenderTargetCache::Update).
+ - batch/coalesce transfers for a frame.
+ - keep more RTs resident to avoid restore.
+This is the real lever; instrument-then-fix, do not guess.
+Also note: this is fundamental EDRAM emulation - a known-hard area; realistic goal
+may be a large fps gain (e.g. 2.4 -> 10-15fps) by cutting redundant transfers, not
+necessarily instant 30fps. Measure each change with vulkan_trace_perf_counters
+(render_pass_begins + barrier_force_end_render_pass deltas) + fps.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
