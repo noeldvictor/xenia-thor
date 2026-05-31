@@ -1019,6 +1019,38 @@ NEXT (the real lever, finally located):
 KEEP coalesce (correct, -34% pass begins, default off) - real GPU-side win for later,
 just not THIS bottleneck.
 
+### B37 — *** THE ANSWER: 50% is JIT'd GUEST CODE (code cache), not GPU, not our C++ ***
+RingBuffer fast-read shipped + measured: fps 2.4->2.5 (noise), profile UNCHANGED
+(unknown[+2a0a450ac] still 8.6%, unknown dso still 50%). So the unknown region is NOT
+the RingBuffer memcpy - I misattributed it (the callgraph showed ReadAndSwap CALLING
+INTO 2a0a450ac, but that target is something else).
+IDENTIFIED via /proc/PID/maps:
+  2a0000000-2b0000000 rwxs ... /dev/ashmem/xenia_code_cache (deleted)
+The 0x2a... region is the JIT CODE CACHE (rwx, executable). So the ~50% 'unknown' is
+the JIT-COMPILED PPC->ARM64 GUEST CODE EXECUTING (simpleperf can't symbolize runtime-
+generated code). THE BOTTLENECK IS GUEST CPU EMULATION (the JIT), NOT THE GPU.
+This explains EVERYTHING:
+- Every GPU-side fix (descriptors B23, push, coalesce B35, render-pass) did nothing to
+  fps because the GPU was NEVER the gate (real Adreno driver = 1.5%, B36).
+- Both GPU-Commands + Draw threads CPU-pinned = running JIT'd guest code (these threads
+  execute guest memexport vertex shaders / guest callbacks on CPU, or the profile's
+  thread attribution includes guest code invoked from command processing).
+- Matches the user's "Thor is 10-20x CPU" premise: we're CPU/JIT-bound, not GPU-bound.
+TRUE LEVER = guest CPU/JIT performance. NEXT:
+ 1. Confirm WHICH thread runs the 50% JIT: profile the GUEST CPU threads (the "XThread*"
+    / PPCThread worker threads), not just GPU-Commands/Draw - the guest game logic +
+    vertex processing likely dominates. top -H earlier showed XThreads mostly idle in
+    THIS scene though - so the JIT in the GPU-commands thread may be vertex-shader-on-
+    CPU (memexport / draw_util EstimateMaxY ExecuteUnclippedDrawVSOnCpu) or PM4 indirect
+    execution. Check cvars: execute_unclipped_draw_vs_on_cpu_for_psi_render_backend,
+    and whether vertex shaders are being run on CPU.
+ 2. simpleperf the whole process (-a or all tids) to see total JIT vs everything.
+ 3. If guest game logic is the gate, JIT quality (a64 backend) is the lever - but that
+    is deep. If it's vertex-shader-on-CPU, moving it to GPU is the lever.
+RETRACTS the entire GPU-bottleneck line (B24-B35) as the FPS gate - those were real GPU
+costs but the gate is GUEST CPU/JIT execution. Keep the shipped GPU opts (correct,
+default-off/safe) but pivot the fps hunt to CPU/JIT.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
