@@ -1893,7 +1893,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
-        "gpu_frame_us={}",
+        "gpu_frame_us={} msaa={} surf_pitch={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1919,7 +1919,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                 draw_cpu_bindings_ns_)) /
                   1000
             : 0,
-        gpu_frame_us_);
+        gpu_frame_us_,
+        uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
+        uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch));
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;

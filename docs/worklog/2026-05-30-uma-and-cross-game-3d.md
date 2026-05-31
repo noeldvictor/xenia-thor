@@ -1553,3 +1553,21 @@ unconditionally (GetRenderPass 1558/1591). Correctness-preserving levers:
 Validate every step with gpu_frame_us (target ~337ms -> toward ~37ms). Thor/Adreno 740 only.
 This is a careful EDRAM-core refactor (corruption risk) - the next focused work, now fully targeted
 and measurable via the shipped gpu_frame_us + gpu_edram_passes_dont_care harness.
+
+### B55 — MSAA ruled out (msaa=1x); all shortcuts exhausted -> full win = EDRAM ownership rework
+Added msaa + surf_pitch to the draw-outcomes log. Blue Dragon 3D scene: msaa=0 (k1X, NO MSAA),
+surf_pitch=1280. So there is NO MSAA multiplier on the tile traffic - the ~308-942ms GPU is
+1-sample, 1280-wide RT store/load x ~44 main-pass breaks (+25 transfer +23 copy passes).
+*** ALL SHORTCUTS NOW RULED OUT WITH DATA: FSI path (Adreno lacks fragment_shader_interlock, B54);
+MSAA reduction (already 1x, B55); render-pass coalesce (no fps effect, B50); loadOp/storeOp
+liveness (only helps the minority of breaks whose content is dead). *** The ONLY remaining lever
+is REDUCING THE ~44 RENDER-PASS BREAKS (27 RT-change from 25 EDRAM ownership transfers + 17 barrier),
+which requires reworking xenia's EDRAM ownership-transfer architecture (render_target_cache.cc) to be
+tiler-aware: keep host render targets resident and avoid the per-ownership-change transfer+pass-break
+ping-pong that Blue Dragon triggers 25x/frame. This is xenia's most delicate subsystem (affects every
+game's rendering correctness) - a major, high-risk, multi-session refactor, NOT a contained change.
+COMPLETE FOUNDATION DELIVERED THIS SESSION: GPU-bound proven (gpu_frame_us 550-942ms vs cpu ~40ms);
+89% is render-pass tile LOAD/STORE (9x ceiling ~37ms/~27fps, B53); root cause = ~44 breaks +
+transfers/copies on the Adreno tiler; reusable harness (gpu_frame_us, gpu_edram_passes_dont_care,
+per-phase cpu buckets, pass-break counters). The rework must be staged + tested across multiple
+games (not just Blue Dragon) to avoid broad corruption.
