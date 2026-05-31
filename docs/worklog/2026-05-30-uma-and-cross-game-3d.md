@@ -670,6 +670,37 @@ pass or inserting a barrier PER DRAW? On a tiler that forces a tile flush per dr
 the real 10,600x cost. Grep IssueDraw / render-pass management for per-draw
 SubmitBarriers / render-pass transitions. THIS is likely the true Blue Dragon lever.
 
+### B24 — *** ROOT CAUSE OF SLOWNESS FOUND *** : ~170 render-pass begin/end (tile flush) PER FRAME
+vulkan_trace_perf_counters snapshot deltas (Blue Dragon heavy scene, 30 frames apart,
+issue_swaps 750->780):
+- render_pass_begins: 44597->46829 = +2232 = ~74 PER FRAME
+- barrier_force_end_render_pass: 73818->76759 = +2941 = ~98 PER FRAME
+- barrier_submits ~145/frame, buffer_barriers ~145/frame, image_barriers ~149/frame
+- pipeline_create_us = 11.9 SECONDS cumulative (56 creates) - one-time-ish, not per frame
+- shared_memory_staging_copies ~8/frame (small) - NOT the issue
+ADRENO IS A TILING GPU: every vkCmdBeginRenderPass = load the whole tile from memory,
+every End = store it back (+ any resolve). ~74 begins + ~98 forced-ends per frame =
+the GPU FLUSHES + RELOADS the entire framebuffer tile memory ~170 TIMES PER FRAME.
+THAT is the ~25% driver cost (unknown[+2a0a450ac] = tile load/store) and the true
+~2.4fps bottleneck - NOT descriptors (B23), NOT draw count alone, NOT UMA.
+The trigger is explicit: barrier_force_end_render_pass=98/frame - barriers inserted
+between draws (buffer/image, ~145/frame) FORCE the render pass to end (Vulkan
+disallows most barriers inside a render pass), then the next draw re-begins it =
+end+begin = full tile flush each time. On desktop GPUs render-pass changes are cheap;
+on a tiler they are the most expensive thing possible. This is THE Blue Dragon
+full-speed lever.
+NEXT (high value): reduce render-pass breaks. Investigate what inserts ~145
+barriers + forces ~98 render-pass ends per frame:
+- shared-memory upload barriers between draws? (guest updates vertex/index/constants
+  mid-frame -> upload -> barrier -> forced end). If uploads were batched at frame/pass
+  start instead of per-draw, the render pass would stay open.
+- texture/RT transition barriers per draw.
+- Check SubmitBarriers / PushBufferMemoryBarrier callers and whether the shared-memory
+  Use(kRead) before each draw forces a barrier that ends the pass.
+Target: collapse ~170 tile flushes/frame toward a handful. THIS should move fps hugely.
+Grep: barrier_force_end_render_pass increment site + what calls SubmitBarriers(true)
+or inserts buffer barriers during the draw loop.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
