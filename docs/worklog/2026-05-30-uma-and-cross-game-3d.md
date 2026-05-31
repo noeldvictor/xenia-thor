@@ -643,6 +643,33 @@ pitch/format) let us TEST presenting a specific surface address once we know whi
 holds the scene.
 Device left with default present (cvars off).
 
+### B23 — push descriptors IMPLEMENTED + rendering-correct, but NO fps change (descriptors ruled out)
+Implemented VK_KHR_push_descriptor end-to-end (device enable + maxPushDescriptors=32
+verified on device; deferred_command_buffer CmdVkPushDescriptorSetKHR record/replay;
+IssueDraw pushes texture/sampler sets inline instead of alloc+update+bind). Burnout:
+textures render PERFECTLY (full 3D scene, correct textures) - push path is
+rendering-correct, no regression. cvar vulkan_push_descriptors default on.
+A/B on Blue Dragon heavy scene: PUSH-OFF 2.2fps vs PUSH-ON 2.2fps = NO CHANGE.
+Re-profiled PUSH-ON (31,594 samples): VIRTUALLY IDENTICAL to the push-off baseline
+(B20) - Adreno driver unknown[+2a0a450ac] 9.15% (was 8.77%), same ~25% driver
+cluster, same flat tail. So the descriptor alloc+update+bind was NEVER a significant
+cost (vkUpdateDescriptorSets was <0.5%). Push descriptors removes real CPU work and
+is correct, but the bottleneck is elsewhere.
+=> DESCRIPTORS ARE RULED OUT as the perf lever (both descriptor-cache iter6 AND
+push-descriptor B23 = no fps change). The dominant cost is the Adreno driver
+function unknown[+2a0a450ac] (~9% alone, ~25% with its cluster) which is NOT
+descriptor work (persists across all 3 descriptor strategies: transient/cache/push).
+KEPT: push descriptors (correct, removes real work, default on) - good hygiene even
+if not the fps lever; helps draw-heavy scenes that ARE descriptor-bound.
+NEXT (iter): identify what unknown[+2a0a450ac] in the Adreno driver actually IS - it
+is reached per-draw or per-command and dominates. Hypotheses: pipeline/state
+validation per draw, render-pass load/store or tile flush per draw (if each draw is
+its own subpass/renderpass = catastrophic on a tiler), or descriptor-set/binding
+validation independent of how we update them. Check: are we starting/ending a render
+pass or inserting a barrier PER DRAW? On a tiler that forces a tile flush per draw =
+the real 10,600x cost. Grep IssueDraw / render-pass management for per-draw
+SubmitBarriers / render-pass transitions. THIS is likely the true Blue Dragon lever.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
