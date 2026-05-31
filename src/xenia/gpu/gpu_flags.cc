@@ -307,6 +307,15 @@ DEFINE_bool(gpu_early_primary_read_pointer_writeback, false,
             "GPU");
 
 DEFINE_bool(
+    gpu_bulk_pm4_type0, true,
+    "Bulk-process contiguous PM4 type-0 register-write runs: byte-swap the "
+    "whole dword run at once (NEON-vectorized on ARM64) instead of one "
+    "ReadAndSwap per dword, then still call WriteRegister per register so all "
+    "per-register side effects are preserved. Reduces per-dword overhead on "
+    "the command-processor thread for draw-heavy guests. Disable to A/B test.",
+    "GPU");
+
+DEFINE_bool(
     non_seamless_cube_map, true,
     "Disable filtering between cube map faces near edges where possible "
     "(Vulkan with VK_EXT_non_seamless_cube_map) to reproduce the Direct3D 9 "

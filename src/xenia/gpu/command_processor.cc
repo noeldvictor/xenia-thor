@@ -1011,10 +1011,43 @@ bool CommandProcessor::ExecutePacketType0(RingBuffer* reader, uint32_t packet) {
 
   uint32_t base_index = (packet & 0x7FFF);
   uint32_t write_one_reg = (packet >> 15) & 0x1;
-  for (uint32_t m = 0; m < count; m++) {
-    uint32_t reg_data = reader->ReadAndSwap<uint32_t>();
-    uint32_t target_index = write_one_reg ? base_index : base_index + m;
-    WriteRegister(target_index, reg_data);
+  if (cvars::gpu_bulk_pm4_type0 && !write_one_reg) {
+    // Hot path for draw-heavy guests (e.g. Blue Dragon, ~10k draws/frame): the
+    // contiguous register run dominates. Byte-swap the whole dword run at once
+    // with the NEON-vectorized copy_and_swap (vqtbl, 4 dwords/iter on ARM64)
+    // instead of paying the per-dword ReadAndSwap overhead. WriteRegister still
+    // runs per register so all per-register side effects are preserved (scratch
+    // writeback, COHER dirty, and the Vulkan override's constant/texture
+    // invalidation).
+    uint32_t swapped[256];
+    uint32_t remaining = count;
+    uint32_t reg = base_index;
+    while (remaining) {
+      uint32_t chunk = std::min<uint32_t>(remaining, 256);
+      size_t chunk_bytes = chunk * sizeof(uint32_t);
+      if (reader->read_offset() + chunk_bytes <= reader->capacity()) {
+        // No ring wrap: read the contiguous dword block directly and bulk-swap.
+        xe::copy_and_swap_32_unaligned(
+            swapped, reinterpret_cast<const void*>(reader->read_ptr()), chunk);
+        reader->AdvanceRead(chunk_bytes);
+      } else {
+        // Block straddles the ring tail; fall back to per-dword read for it.
+        for (uint32_t m = 0; m < chunk; ++m) {
+          swapped[m] = reader->ReadAndSwap<uint32_t>();
+        }
+      }
+      for (uint32_t m = 0; m < chunk; ++m) {
+        WriteRegister(reg + m, swapped[m]);
+      }
+      reg += chunk;
+      remaining -= chunk;
+    }
+  } else {
+    for (uint32_t m = 0; m < count; m++) {
+      uint32_t reg_data = reader->ReadAndSwap<uint32_t>();
+      uint32_t target_index = write_one_reg ? base_index : base_index + m;
+      WriteRegister(target_index, reg_data);
+    }
   }
 
   trace_writer_.WritePacketEnd();
