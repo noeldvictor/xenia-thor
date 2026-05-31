@@ -967,6 +967,30 @@ EDRAM regression. NOTE: this is the conservative version - it only helps when th
 same-format transfer's dest matches the CURRENTLY-OPEN guest pass; the full coalesce
 (group all same-format transfers in one pass regardless) is a later step if this wins.
 
+### B35 — COALESCE WORKS (render_pass_begins -34%) but fps UNCHANGED -> render-pass breaks are NOT the fps wall
+A/B on device (Blue Dragon heavy):
+- coalesce OFF: fps 2.4, pass_break_rt_change=27, render_pass_begins ~74/frame (B24),
+  force_end ~98/frame.
+- coalesce ON: fps 2.4, pass_break_rt_change=19 (-8 at the per-draw enter), and the
+  GROUND-TRUTH perf counter: render_pass_begins ~49/frame (-25, -34%!), force_end ~95.
+=> The coalesce DOES work - render-pass BEGINS fell 34% (74->49). But FPS DID NOT MOVE
+(2.4->2.4). THEREFORE render-pass breaks / tile flushes are NOT the fps bottleneck,
+despite being a real ~25% driver cost. B24's "tile flush = the wall" hypothesis is
+WRONG as the fps lever. (Cutting 25 begins/frame, ~34%, changed nothing measurable.)
+This is a hard pivot - the biggest theory of the last ~12 iterations doesn't gate fps.
+WHAT THIS MEANS: the GPU command thread is ~100% CPU but the work that matters isn't
+the render-pass management. Re-examine the simpleperf flat profile (B20/iter7): ~25%
+Adreno driver (unknown[+2a0a450ac]) + flat PM4 parse. If render-pass begins aren't it,
+the driver 25% must be something else per-draw/per-command. OR the bottleneck is NOT
+the GPU-commands thread at all in this state - recheck which thread is the gate at
+2.4fps (top -H) and whether it's CPU-bound or waiting.
+NEXT: re-profile with coalesce ON (simpleperf, matched binary) - does the 25% driver
+cost change? And top -H: is GPU Commands still 100%, or is something else now the gate?
+Do NOT assume render-pass; the data just killed that. Keep coalesce (it's a real win,
+correct, default off) but it's not the fps fix.
+KEEP: vulkan_coalesce_edram_transfers is correct + reduces real GPU work (-34% pass
+begins); leave default off pending broader validation, but it's a legit optimization.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
