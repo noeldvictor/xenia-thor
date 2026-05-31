@@ -4556,6 +4556,22 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     const Transfer::Rectangle* resolve_clear_rectangle) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
+  // Per-frame instrumentation: total EDRAM transfers processed this call (the
+  // suspected source of per-draw render-pass breaks on the tiler).
+  {
+    uint32_t transfer_count = 0;
+    if (render_target_transfers) {
+      for (uint32_t i = 0; i < render_target_count; ++i) {
+        if (render_targets[i]) {
+          transfer_count += uint32_t(render_target_transfers[i].size());
+        }
+      }
+    }
+    command_processor_.AddRenderTargetTransferStats(
+        transfer_count, render_target_resolve_clear_values != nullptr &&
+                            resolve_clear_rectangle != nullptr);
+  }
+
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   uint64_t current_submission = command_processor_.GetCurrentSubmission();

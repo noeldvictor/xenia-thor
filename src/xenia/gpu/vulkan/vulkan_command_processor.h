@@ -783,6 +783,28 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_pipeline_binds_ = 0;
   uint32_t draw_outcomes_descriptor_binds_ = 0;
 
+  // EDRAM render-target transfer counters (per frame), the suspected source of
+  // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
+  // render target cache; logged + reset at swap. transfer_calls = times
+  // PerformTransfersAndResolveClears ran with >=1 transfer; transfers = total
+  // Transfer entries processed; resolve_clears = resolve-clear invocations.
+ public:
+  void AddRenderTargetTransferStats(uint32_t transfer_count,
+                                    bool resolve_clear) {
+    if (transfer_count) {
+      ++rt_transfer_calls_;
+      rt_transfers_ += transfer_count;
+    }
+    if (resolve_clear) {
+      ++rt_resolve_clears_;
+    }
+  }
+
+ private:
+  uint32_t rt_transfer_calls_ = 0;
+  uint32_t rt_transfers_ = 0;
+  uint32_t rt_resolve_clears_ = 0;
+
   // Cache render pass currently started in the command buffer with the
   // framebuffer.
   VkRenderPass current_render_pass_;
