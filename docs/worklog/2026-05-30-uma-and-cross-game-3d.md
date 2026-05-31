@@ -1802,3 +1802,20 @@ COMBINED VERDICT (B60/B61/B63): GPU 99%@max, geometry/binning-bound (resolution 
 breaks 12%, super-linear in draws), ~1200 tiny draws/frame, ~70-99% merge-eligible (B62-corrected).
 Fix = cut per-draw/geometry GPU work via draw merging. To use SP cleanly: give SP sole adb ownership
 (adb kill-server on the SDK side) OR run headless without SP attached - the two adb servers fight.
+
+### B64 — *** PRIZE SIZED: tiny draws (<16 verts) = 50-76% of GPU on heavy scenes ***
+Added gpu_skip_draws_below_verts (skip the GPU draw cmd for draws below a vertex threshold; all CPU
+state setup still runs). Content-matched (guest_ms) A/B, threshold=16, HEAVY frames:
+  1148 draws: 690ms -> 165ms (-76%)   812 draws: 320ms -> 96ms (-69%)   1197 draws: 940ms -> 470ms (-50%)
+(light intro frames ~no change; median diluted by them). Screenshot: main scene intact (windmill,
+terrain, character, buildings), only small foliage/particle/detail props vanish.
+=> The ~700 tiny draws/frame are ~0.7 ms of GPU EACH despite <16 verts = pathological PER-DRAW FIXED
+GPU overhead (not vertex throughput - 700x15=~10K verts is nothing; not fill - resolution 0% B58).
+Classic Adreno per-draw serialization (context rolls / per-draw state). *** Fewer draws = proportion-
+ally less GPU. The draw-MERGER is the correct fix and is worth 50-76% on heavy scenes. ***
+Two products from this:
+ (1) gpu_skip_draws_below_verts is ALSO a usable accuracy-for-speed "performance mode" TODAY (drop
+     tiny detail for ~2x on heavy scenes) - gated, default 0.
+ (2) NEXT: build the draw-merger - coalesce consecutive same-pipeline+same-constants(+same-descriptor)
+     draws with concatenable vertex/index ranges into one vkCmdDraw[Indexed], preserving visuals while
+     removing the per-draw overhead. B62-corrected: 70-99% of consecutive draws share pipeline+consts.
