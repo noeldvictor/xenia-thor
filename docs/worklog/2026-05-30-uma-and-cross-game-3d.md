@@ -1137,3 +1137,30 @@ result isn't sampled back as the scene texture. Localizing this needs draw-level
 tracing (--ez vulkan_trace_draw_state true / vulkan_trace_resolve true) and reading
 the resolve + texture-load path - a multi-cycle investigation of its own. Flagged,
 not yet root-caused. fbo path + EDRAM tile store is the area (per upstream notes).
+
+### B40 — Bulk PM4 type-0 register-write parse: implemented, default on, +9.7% device-measured
+Implemented the one actionable single-iteration CPU win from B39 (PM4-parse half,
+symbolizable, ours). ExecutePacketType0 (command_processor.cc ~997) bulked the
+READ+SWAP: when the contiguous register run doesn't wrap the ring, read the whole
+dword block via read_ptr() and byte-swap it with copy_and_swap_32_unaligned (NEON
+vqtbl, 4 dwords/iter on ARM64), then AdvanceRead once - instead of per-dword
+ReadAndSwap. WriteRegister STILL called per register (side effects preserved:
+scratch writeback, COHER dirty, vulkan override's constant/texture invalidation).
+Ring-wrap tail + write_one_reg fall back to the per-dword path. Output byte-identical
+to the old loop. Gated by cvar gpu_bulk_pm4_type0 (default on, read every packet ->
+live A/B via SET_CVAR). Commit e816cdde7 (pushed).
+
+MEASURED (device c3ca0370, same-scene live A/B, Blue Dragon heavy field scene =
+rendered=10752 draws/frame, 1.19M verts, avg 111 v/draw - confirmed via per-frame
+draw-outcomes line; cvar toggle confirmed "applied" each way in logcat). Guest VdSwap
+rate counted over clean 12s windows:
+  bulk ON  (default): 34 swaps/12s = 2.83 fps
+  bulk OFF:           31 swaps/12s = 2.58 fps
+  bulk ON  again:     34 swaps/12s = 2.83 fps
+=> reproducible ~+9.7% (delta 3 swaps > +-1-swap noise; ON twice identical). Matches
+the B21/B39 prediction that the PM4-parse half tops out ~10%. Verify-gate screenshot
+read: HUD (portrait/weapon/HP/MP) renders, 3D world still black (pre-existing black-3D,
+unchanged by this commit), scene live (not crashed/frozen). No-regression evidence:
+the bulk path produced byte-identical register writes through a 10,752-draw frame.
+The deeper ~half (guest 'Draw Thread' PPC->ARM64 JIT in the code cache) remains the
+larger lever - a64 codegen quality - and is a separate, harder track.
