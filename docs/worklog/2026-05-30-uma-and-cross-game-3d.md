@@ -1332,3 +1332,40 @@ to true FULL SPEED needs STRUCTURAL work beyond 10-min micro-iterations: (1) CP-
 throughput / parallelism for ~10k draws/frame (the structural gate), (2) save-state primitive to
 make gameplay scenes reachable/measurable, (3) reduce guest kernel-sync overhead. Flag for user:
 these are larger multi-session efforts, not autonomous micro-fastpaths.
+
+### B47 — a64_inline_kf_lower_irql RULED OUT; AUTONOMOUS MICRO-PHASE COMPLETE (session summary)
+A/B'd a64_inline_kf_lower_irql=true at field gameplay (reached via ~200s wait). Result:
+fps 1.08 (= B46 baseline 1.08, identical); profile essentially unchanged (KfLowerIrql still
+#11 at delta=4141, ~1.3% of entries - inlining it moved nothing). Rendering intact (read: same
+field scene, no corruption/hang despite the APC-check skip). RULED OUT, keep default-off. (Also
+confirms the heavy-field gameplay profile is REPRODUCIBLE: this run vs B46 match closely -
+entry_delta 327,563 vs 328,022, same top fns/deltas.)
+
+==================== SESSION SUMMARY (2026-05-30/31 autonomous push) ====================
+GOAL: Blue Dragon playable at full speed on AYN Thor. START: 2.4fps, BLACK-3D (no world).
+SHIPPED (all default-on, device-verified, no regressions):
+ - B40 bulk PM4 type-0 parse (commit e816cdde7): +9.7% (2.58->2.83), NEON bulk read+swap of
+   contiguous register runs; Burnout-verified safe.
+ - B42 Blue Dragon draw-wait fastpath (commit 8a6df601d): +27% (2.83->3.58); 8246B408 was a
+   draw-WAIT spin = 92% of guest exec; yield+sleep deschedules it (spin 21.3M->95K entries,
+   222x), freeing the CP thread. Title-specific (guest fn 0x8246B408), inert for other games.
+SOLVED:
+ - B43 BLACK-3D (commit bba38c410): root cause = arm64_vmx_dot_f32_fastpath=true left in the
+   device's persisted xenia.config.toml by a prior session (a documented BD black-idler). It is
+   ALREADY default-off in code, so it was a SELF-INFLICTED test-env artifact, not a deep bug.
+   Clean config RENDERS the 3D world. The B22-B39 "compositing" hunt was chasing this artifact.
+RULED OUT (correct but no measurable win; kept default-off): memcpy_fastpath (B45),
+ a64_inline_kf_lower_irql (B47).
+RESULT: Blue Dragon now RENDERS its full 3D world (was black) - intro ~2-6fps, heavy field
+ gameplay ~1fps. Reached + profiled real field gameplay (B46): NO single non-spin dominator;
+ work distributed across rendering helpers + guest kernel sync. fps gate = TOTAL WORK VOLUME.
+EASY SINGLE-FUNCTION FASTPATH WINS ARE EXHAUSTED. Remaining path to FULL SPEED is STRUCTURAL
+ (multi-session, needs design + user-in-loop, NOT autonomous micro-iterations):
+  1. CP-thread PM4 throughput / parallelism for ~10,752 draws/frame (the structural gate).
+  2. Save-state primitive (none exists) - to make gameplay scenes reachable/measurable so fps
+     A/B stops being blocked by ~200s boots + 1-6fps scene-noise.
+  3. Guest kernel-sync overhead reduction (Ke* spinlock/IRQL traffic in gameplay).
+METHOD NOTES for future: device xenia.config.toml OVERRIDES compiled defaults (only --ez/--ei
+ extras beat it) - watch for stale cvars; clean fps is 1-6 scene-noisy - prefer profile entry-
+ delta metrics; reach gameplay = ~200s wait + extended hid_nop skips to ~112000ms.
+========================================================================================
