@@ -1641,3 +1641,28 @@ RESOLUTION reduction (fewer pixels -> proportionally less fill; xenia only suppo
 so this needs a downscale path + EDRAM tile-math care). Secondary = shader cost / overdraw. TEST FIRST
 (decisive): draw_resolution_scale=2 (4x pixels) - if gpu_ms ~4x at matched guest_ms, fill-bound is
 CONFIRMED and resolution is THE lever. Method = the guest_ms-content-matched harness (now trustworthy).
+
+### B59 — *** REWRITE PREMISE REFUTED: bottleneck is GPU GEOMETRY/BINNING, not tiler fragmentation ***
+Continued the content-matched (guest_ms) harness investigation. Decisive results:
+- gpu_edram_passes_dont_care (skip ALL tile load/store), content-matched: ON/OFF=0.97 => load/store
+  is ~3% of GPU (B53's 9x/89% RETRACTED - pure scene-confound).
+- skip-transfers (breaks 44->32), content-matched: ~12% of GPU.
+- draw_resolution_scale 1x vs 2x (4x PIXELS), content-matched: ratio 1.00x = ZERO change. The GPU is
+  NOT fill/fragment/overdraw-bound at all.
+- gpu_frame_us correlates with total_vertices (0.88) AND draw count (0.85) [collinear], SUPER-linear:
+  ~25ms fixed floor; ~100k verts->227ms; ~200k verts->818ms (2x geometry -> 3.6x GPU). Pixel-independent.
+CONCLUSION: ~85% of GPU time is GEOMETRY/VERTEX/BINNING/STATE processing that scales super-linearly
+with scene complexity and is independent of resolution. Fingerprint = Adreno TILER BINNING cost /
+parameter-buffer (visibility stream) pressure from heavy geometry: ~1.19M host vertices/frame across
+~2136 draws (note host total_vertices/rendered ~= 558 vs guest avg_vertices 136 => xenia primitive
+conversion may be AMPLIFYING vertex counts). NOT the pass/barrier/transfer fragmentation.
+*** THE ENTIRE TILER-REWRITE PLAN (workflow synthesis Layers A-D: coalesce passes/barriers/transfers,
+smart load/store, transient attachments) TARGETS ONLY ~15% OF THE GPU AND WOULD NOT FIX THIS. ***
+The real levers (geometry/binning): (1) reduce host vertex count - investigate xenia primitive-
+conversion vertex amplification (PrimitiveProcessor) for Blue Dragon's primitive types; (2) reduce
+per-draw/per-primitive tiler binning overhead / pipeline-state churn; (3) position-only binning vertex
+shader; (4) reduce draw count via batching (guest-driven, hard). Precise localization (binning vs
+vertex-shader vs parameter-buffer-overflow vs state) REQUIRES a GPU-VENDOR PROFILER on the device
+(Snapdragon Profiler / Android GPU Inspector) - I have exhausted code-side cvar/counter attribution.
+HARNESS (trustworthy, shipped, all default-off): guest_ms content-matching, gpu_frame_us timestamps,
+barrier-break attribution, per-phase CPU buckets, gpu_edram_passes_dont_care/skip_edram_transfers.
