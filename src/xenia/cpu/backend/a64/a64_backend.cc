@@ -115,10 +115,14 @@ DEFINE_uint32(
     "host clock updater. Research-only wait accelerator.",
     "a64");
 DEFINE_bool(
-    arm64_blue_dragon_draw_wait_fastpath, false,
-    "Thor ARM64 bring-up: replace Blue Dragon's known 8246B408 draw-wait "
-    "function body with a narrow hand-emitted A64 path. Research-only and "
-    "title-specific.",
+    arm64_blue_dragon_draw_wait_fastpath, true,
+    "Thor ARM64: replace Blue Dragon's known 8246B408 draw-wait function body "
+    "with a narrow hand-emitted A64 path that faithfully reproduces the guest "
+    "wait predicate (token/owner refresh, elapsed<timeout). Title-specific "
+    "(only emitted for guest fn 0x8246B408, so inert for other games). Default "
+    "on with the native yield/sleep below: device-measured Blue Dragon heavy "
+    "field scene 2.83->3.58 fps (+27%) by descheduling the ~21M/frame spin so "
+    "the command-processor thread runs unconstrained. Pass false to disable.",
     "a64");
 DEFINE_bool(
     arm64_blue_dragon_draw_wait_fastpath_host_counter_time, false,
@@ -127,16 +131,19 @@ DEFINE_bool(
     "Research-only and title-specific.",
     "a64");
 DEFINE_uint32(
-    arm64_blue_dragon_draw_wait_fastpath_native_yield_stride, 0,
-    "Thor ARM64 bring-up: in the Blue Dragon draw-wait fastpath, call the "
-    "host scheduler yield helper every N wait-return hits. 0 disables it. "
-    "Research-only and title-specific.",
+    arm64_blue_dragon_draw_wait_fastpath_native_yield_stride, 16,
+    "Thor ARM64: in the Blue Dragon draw-wait fastpath, call the host "
+    "scheduler yield helper every N wait-return hits. 0 disables it. Default "
+    "16 (with native_sleep_us below) deschedules the spin enough to free the "
+    "command-processor thread; this is what produces the measured +27% fps. "
+    "Title-specific.",
     "a64");
 DEFINE_uint32(
-    arm64_blue_dragon_draw_wait_fastpath_native_sleep_us, 0,
-    "Thor ARM64 bring-up: sleep this many host microseconds in the Blue Dragon "
-    "draw-wait native yield helper. 0 uses sched_yield only. Research-only and "
-    "title-specific.",
+    arm64_blue_dragon_draw_wait_fastpath_native_sleep_us, 100,
+    "Thor ARM64: sleep this many host microseconds in the Blue Dragon draw-wait "
+    "native yield helper. 0 uses sched_yield only. Default 100 (with "
+    "yield_stride 16) frees the core for the command-processor thread; ~100us "
+    "is far below frame time so wait-exit latency is negligible. Title-specific.",
     "a64");
 DEFINE_uint32(
     arm64_blue_dragon_draw_wait_fastpath_timeout_ms, 5000,

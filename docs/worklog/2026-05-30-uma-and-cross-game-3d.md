@@ -1164,3 +1164,76 @@ unchanged by this commit), scene live (not crashed/frozen). No-regression eviden
 the bulk path produced byte-identical register writes through a 10,752-draw frame.
 The deeper ~half (guest 'Draw Thread' PPC->ARM64 JIT in the code cache) remains the
 larger lever - a64 codegen quality - and is a separate, harder track.
+
+### B41 — a64 speed profile: Draw Thread is a draw-WAIT SPIN (8246B408 = 92% of guest exec)
+Enabled the existing arm64_speed_profile (interval_ms=1000, top=24, thread_snapshot) on
+the Blue Dragon heavy field scene (no rebuild - already in the binary). Device-read
+report (HEAD e816cdde7):
+  summary: funcs=5921 entry_delta=23,125,480 direct=22.8M
+  top 01: fn 8246B408 delta=21,315,111 (=92% of ALL guest entry delta!) code_size=1396
+  top 02: 822870D8 delta=103,712  (#2 is ~200x smaller)
+  ... rest all tens-of-thousands.
+  thread snapshot tid=00000013 handle=F80002A0 (the B39 'Draw Thread') last_fn=8246B408
+    ctr=820DFA50 (=top04). r1=703FE440.
+=> The guest Draw Thread is NOT doing 21M units of render work - it is SPINNING in
+8246B408, which the codebase already names "Blue Dragon's known 8246B408 draw-wait
+function" (a64_backend.cc:119,156). It is a TIMED WAIT: polls KTHREAD+0x58 (kernel
+thread time) and the draw-object token (draw+0x2A10) vs wait_state+0x8, returns 1
+(keep waiting) while elapsed < timeout (5000ms), else 0. The guest spins ~21M times
+between frames waiting for GPU/token progress. So optimizing its *codegen* won't raise
+fps (it would just spin faster for the same wall-clock wait); the fps gate is the WAIT
+itself / what it polls. This RE-FRAMES the B39 'guest JIT half': ~half the CPU is a
+SPIN-WAIT, not useful compute.
+LEVERS already built (default-off, a64_emitter.cc EmitBlueDragonDrawWaitFastpathBody
+@4812): arm64_blue_dragon_draw_wait_fastpath (hand-emit the predicate),
++_native_yield_stride (yield host sched while spinning - behavior-preserving, cuts the
+spin's CPU + cache-coherency contention on the CP-written token), +_probe/_inline_tick_
+step/_host_counter_time (advance KTHREAD+0x58 -> shorten the wait; SEMANTICS-CHANGING,
+risk skipping frames). NOTE prior fastpaths here have black-screened BD before
+(arm64_vmx_dot_f32 note), so VERIFY rendering on every A/B. A/B in progress.
+
+### B42 — SHIPPED draw-wait fastpath default-on (+27% measured); + MAJOR black-3D lead
+Acting on B41 (8246B408 = a draw-WAIT spin = 92% of guest exec), A/B'd the pre-built
+arm64_blue_dragon_draw_wait_fastpath on the Blue Dragon heavy field scene (device c3ca0370,
+VdSwap/12s windows). The fastpath hand-emits the guest wait predicate faithfully (verified
+rendering identical = correct). Results:
+  baseline (fastpath off):                              2.83 fps
+  fastpath ON, bare (no yield/sleep):                   2.67 fps  (no win - tighter spin)
+  fastpath ON + native_yield_stride=16 + sleep_us=100:  3.67 fps  (first run)
+  repro (fresh launch, 2 windows):                      3.58 / 3.58 fps
+=> reproducible +27% (2.83->3.58). The win is from DESCHEDULING the ~21M/frame spin (yield+
+sleep) so the command-processor thread runs unconstrained - NOT from tighter spin codegen.
+Rendering verified intact each config (screenshot read: same HUD, black-3D unchanged).
+Title-specific (gated on guest fn 0x8246B408 => inert for all other games), so safe default-on.
+SHIPPED: flipped 3 compiled DEFINE defaults in a64_backend.cc:
+  arm64_blue_dragon_draw_wait_fastpath false->true
+  arm64_blue_dragon_draw_wait_fastpath_native_yield_stride 0->16
+  arm64_blue_dragon_draw_wait_fastpath_native_sleep_us 0->100
+Built (incremental ~15s), installed. NOTE: device persists a global files/xenia.config.toml
+that OVERRIDES compiled defaults (only --ez/--ei extras beat it). So default-launch still read
+the OLD false/0 from the stale TOML (=2.83). Confirmed the SHIP works by deleting the device
+TOML (backed up to _xenia.config.backup.toml) -> xenia regenerated it from the new compiled
+defaults (verified true/16/100 in the regenerated file) -> default launch now picks them up.
+
+*** MAJOR CONFOUNDED LEAD (must isolate next): fresh TOML -> Blue Dragon RENDERS THE 3D WORLD ***
+After deleting the stale TOML, the default-launch screenshot is a real 3D night scene (moon,
+lens flares, ship) at ~5.9fps - NOT the black-3D HUD-only field scene. CANNOT attribute to the
+draw-wait change (that only alters spin scheduling, not compositing). Cause: deleting the TOML
+reset ALL global cvars to compiled defaults. diff(old backup TOML, fresh) shows prior sessions
+had left these NON-default in the device TOML:
+  arm64_vmx_dot_f32_fastpath        true->false  (*** its own cvar doc: "black-IDLED Blue Dragon on 2026-05-21" ***)
+  arm64_context_value_cache         true->false
+  arm64_cr_compare_branch_across_context_barrier true->false
+  a64_inline_kf_lower_irql          true->false
+  a64_rtl_enter_free_first          true->false
+  arm64_add_i64_wrapped_imm_fastpath false->true
+=> The black-3D I (and prior sessions) chased may be partly a TEST-ENV ARTIFACT: the stale
+device TOML had arm64_vmx_dot_f32_fastpath=true (a documented BD black-idler) plus other
+experimental cvars left enabled. A fresh/clean config renders the 3D world. ALL this session's
+baselines (lever#1 +9.7%, draw-wait +27%) were measured on that polluted config - the A/Bs are
+still valid (same base both sides) but the absolute baseline was degraded.
+NEXT ITERATION: isolate which reset cvar restored 3D - relaunch clean + toggle ONLY
+arm64_vmx_dot_f32_fastpath (and the others) to pin the black-3D cause. If vmx_dot_f32=true is
+it, that's the black-3D explanation (a self-inflicted cvar), and clean Blue Dragon both renders
+AND benefits from the shipped draw-wait fastpath - re-measure draw-wait on the CLEAN config too
+(its +27% is so far proven only on the black-3D config). Device left on fresh TOML (better state).
