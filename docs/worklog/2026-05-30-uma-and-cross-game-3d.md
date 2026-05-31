@@ -1418,3 +1418,37 @@ registers + binding state are unchanged. Gate by cvar, verify rendering, measure
 drop + cpu_issuedraw_us drop + fps. (Texture descriptor caching already exists -
 vulkan_cache_texture_descriptors; the uniform-buffer constant re-upload is the likely remaining
 redundancy.) "other" 40% would then need its own sub-split next.
+
+### B50 — *** CRITICAL RE-DIAGNOSIS: Blue Dragon is GPU-BOUND, not CPU-bound (B39 premise was wrong) ***
+Triggered by: "why is the intro still 1-2fps after hours of work." Checked frame-time vs CPU on the
+CLEAN (rendering) config - something I should have done immediately after the black-3D fix.
+KEY MATH: cpu_issuedraw_us (B48/B49) = 42-54 ms/frame, but at 2fps the frame is ~500ms. So IssueDraw
+(the thing I spent 2 iterations instrumenting) is only ~10% of the frame.
+top -H (steady, 3 samples) on the rendering config: 665-713% idle of 800% (~84-89% IDLE). NO thread
+pegged. Hottest = XMA Decoder ~26-31%, GPU Commands 7-27% (bursts then sleeps), Draw Thread 0-2%,
+everything else ~0. => the frame is ~500ms of WAITING, not computing.
+RULED OUT as the gate (device A/B on the rendering config):
+ - render-pass count / tile flushes: vulkan_coalesce_edram_transfers on vs off = 3.6/3/2.4 vs
+   3.5/3/2.4 (NO change). (B24-B35 render-pass theory is NOT the gate even now that 3D renders.)
+ - audio: apu nop (off) = 0.8/0.7/1.3 - WORSE, not better. Not audio-gated.
+ - draw-wait spin: arm64_blue_dragon_draw_wait_fastpath off = 3.8/3.1/2.6 vs on 3.6/2.9/2.4 -
+   off is equal/slightly-better. *** The draw-wait +27% (B42) was measured on the BLACK-3D bug
+   config; on the corrected rendering game it is ~neutral/slightly-negative. That win was largely
+   ILLUSORY (an artifact of the black state, which itself was the vmx_dot stale-config bug). ***
+CONCLUSION: CPU is 84% idle; NO CPU-side lever (PM4 parse +9.7% real but tiny slice, draw-wait,
+audio, render-pass coalesce) moves fps because the CPU is NOT the bottleneck. *** Blue Dragon is
+GPU-BOUND: the Adreno 740 spends the whole ~300-500ms frame on xenia's render work while the CPU
+waits. *** For a 2007 game on an Adreno 740 that is pathological -> points at xenia's EDRAM
+emulation GPU cost (RT store/restore copies + resolves + serializing barriers / GPU pipeline
+bubbles), NOT raw shading (coalescing pass COUNT didn't help, but the transfer/resolve WORK +
+barriers between them may serialize the GPU).
+HONEST STATE: this session delivered real DIAGNOSIS + the black-3D fix (correctness, big) + a small
+real CPU win (PM4 +9.7%), but did NOT improve the visible-game fps, because I misdiagnosed the gate
+as CPU (B39, measured on the black screen) and only corrected it here. The draw-wait "+27%" should
+be considered moot (bug-state artifact); consider reverting its default-on.
+NEXT (the REAL lever, needs GPU-side timing - new approach): instrument GPU time with Vulkan
+timestamp queries (vkCmdWriteTimestamp) around (a) the main guest render pass(es), (b) the EDRAM
+ownership-transfer draws/copies, (c) the resolves, logged per frame - to see where the ~300-500ms
+GPU ms actually go. Then reduce the dominant GPU work: keep render targets resident to avoid
+store/restore round-trips, cut resolve/copy volume, or break GPU serialization. Alternatively use
+the Adreno/Snapdragon GPU profiler. This is GPU-path engineering, the genuine path to speed.
