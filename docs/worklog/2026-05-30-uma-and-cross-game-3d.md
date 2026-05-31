@@ -740,6 +740,32 @@ barrier may be firing even when no new upload happened (last_written_range_ stal
 CHECK: is Use(kRead) emitting a barrier every draw even with NO upload? If yes, that's
 a cheap fix (only barrier when an upload actually occurred this draw).
 
+### B26 — CORRECTS B25: uploads are NOT the barrier source (only 8/frame). It's IMAGE barriers (~149/frame)
+Before implementing the "batch uploads" fix, recomputed the perf-counter deltas
+precisely (30 frames):
+- buffer_barriers ~145/frame, IMAGE_barriers ~149/frame, barrier_submits ~146/frame,
+  barrier_force_end_render_pass ~98/frame, render_pass_begins ~74/frame
+- shared_memory_staging_copies ONLY ~8/frame  <-- uploads are NOT the driver!
+=> B25's "batch uploads to stop render-pass breaks" targets the WRONG thing (8 != 98).
+The render-pass breaks are driven by ~149 IMAGE barriers/frame = render-target /
+EDRAM / texture-usage TRANSITIONS, not shared-memory uploads. Verified the obvious
+per-draw barriers ARE guarded (texture->kSwapSampled transition only fires on usage
+change, vulkan_texture_cache.cc:1026; Use(kRead) only on write->read transition). So
+the ~149 come from render-target/EDRAM management: vulkan_render_target_cache.cc has
+many PushImageMemoryBarrier sites (1488,4633,4714,4746,4764,4817,4979,5002) for EDRAM
+tile store/restore + RT ownership transfers. Xbox360 has only 10MB EDRAM -> games
+constantly store/restore render targets -> each transfer = barriers + compute
+dispatches BETWEEN draws -> ends the render pass -> tile flush. This is EDRAM-tile
+emulation cost, the hardest/most fundamental part.
+GOOD CATCH: verifying the numbers BEFORE coding saved a wasted build on the wrong fix.
+NEXT: attribute the ~149 image barriers precisely - are they (a) render-target
+ownership transfers (RT base/format reused mid-frame), (b) EDRAM store/restore, or (c)
+texture<->RT pingpong (render-to-texture then sample)? Add a cheap per-frame counter
+tagging barrier source, OR read the render-target-cache trace. The fix depends on
+which: (a/b) may be reducible by keeping RTs resident / better EDRAM layout tracking;
+(c) by deferring the sample. This is the real, deep Blue Dragon lever - get the
+attribution right before changing code.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
