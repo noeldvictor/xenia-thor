@@ -804,6 +804,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_transfer_calls_ = 0;
   uint32_t rt_transfers_ = 0;
   uint32_t rt_resolve_clears_ = 0;
+  // Per-frame attribution of render-pass breaks at the per-draw enter point:
+  // _barrier = ended to flush a pending barrier; _rt_change = ended because the
+  // render pass / framebuffer changed (RT reconfiguration).
+  uint32_t rt_pass_break_barrier_ = 0;
+  uint32_t rt_pass_break_rt_change_ = 0;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.

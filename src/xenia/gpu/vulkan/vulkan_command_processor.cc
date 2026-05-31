@@ -1841,7 +1841,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
         "avg_vertices={} pipeline_binds={} descriptor_binds={} "
-        "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={}",
+        "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
+        "pass_break_barrier={} pass_break_rt_change={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1849,7 +1850,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             ? (draw_outcomes_total_vertices_ / draw_outcomes_rendered_)
             : 0,
         draw_outcomes_pipeline_binds_, draw_outcomes_descriptor_binds_,
-        rt_transfer_calls_, rt_transfers_, rt_resolve_clears_);
+        rt_transfer_calls_, rt_transfers_, rt_resolve_clears_,
+        rt_pass_break_barrier_, rt_pass_break_rt_change_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1861,6 +1863,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
     rt_resolve_clears_ = 0;
+    rt_pass_break_barrier_ = 0;
+    rt_pass_break_rt_change_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -2681,12 +2685,22 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
 void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     VkRenderPass render_pass,
     const VulkanRenderTargetCache::Framebuffer* framebuffer) {
+  // Instrumentation: attribute per-draw render-pass breaks. A break here is
+  // caused either by SubmitBarriers ending the pass for a pending barrier, or by
+  // the render pass / framebuffer changing (RT reconfiguration).
+  bool was_in_render_pass = current_render_pass_ != VK_NULL_HANDLE;
   SubmitBarriers(false);
+  if (was_in_render_pass && current_render_pass_ == VK_NULL_HANDLE) {
+    // SubmitBarriers ended the pass to emit a pending barrier.
+    ++rt_pass_break_barrier_;
+  }
   if (current_render_pass_ == render_pass &&
       current_framebuffer_ == framebuffer) {
     return;
   }
   if (current_render_pass_ != VK_NULL_HANDLE) {
+    // Ending because the render pass / framebuffer changed (RT reconfig).
+    ++rt_pass_break_rt_change_;
     deferred_command_buffer_.CmdVkEndRenderPass();
   }
   current_render_pass_ = render_pass;
