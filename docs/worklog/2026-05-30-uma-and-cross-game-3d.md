@@ -947,6 +947,26 @@ correct fix direction = coalesce same-format transfers into one pass.
 NEXT: design + implement the coalesce in PerformTransfersAndResolveClears behind a
 cvar; A/B with perf counters + fps + Burnout no-regression.
 
+### B34 — IMPLEMENTED same-format transfer pass-reuse (gated, correctness-verified, building)
+Found a SAFE slice of the fix that avoids the multi-attachment-framebuffer refactor:
+for color transfers whose transfer format == draw format (is_integer==false), set
+color_rts_use_transfer_formats=0 so the transfer render-pass KEY becomes identical to
+the GUEST draw pass key for that RT. Then SubmitBarriersAndEnterRenderTargetCacheRender
+Pass early-returns (no end/begin) when that guest pass is already open = no Adreno tile
+flush, for the ~24/frame same-format transfers (B32).
+VERIFIED COHERENT before committing (no blind edit): transfer frag shader emits
+type_float when !dest_color_is_uint (render_target_cache.cc:2333); framebuffer uses
+view_depth_color (native) when flag off (2172); pass attachment native format - all
+three agree, so flipping the flag for same-format is correct, not a format mismatch.
+Gated behind cvar vulkan_coalesce_edram_transfers (default OFF, in allowlist). Depth +
+integer-reinterpret transfers unchanged. HEAD 69663c952, building (b2zyl3pm4).
+A/B PLAN (when built): Blue Dragon, coalesce on vs off - per-frame pass_break_rt_change
++ perf-counter barrier_force_end_render_pass/render_pass_begins deltas should DROP (up
+to ~24/frame), fps RISE. THEN verify Burnout menu renders correctly (read frame) = no
+EDRAM regression. NOTE: this is the conservative version - it only helps when the
+same-format transfer's dest matches the CURRENTLY-OPEN guest pass; the full coalesce
+(group all same-format transfers in one pass regardless) is a later step if this wins.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
