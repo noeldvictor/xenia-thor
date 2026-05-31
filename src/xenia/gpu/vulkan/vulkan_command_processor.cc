@@ -1842,7 +1842,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
         "avg_vertices={} pipeline_binds={} descriptor_binds={} "
         "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
-        "pass_break_barrier={} pass_break_rt_change={}",
+        "pass_break_barrier={} pass_break_rt_change={} "
+        "xfer_same_fmt={} xfer_diff_fmt={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1851,7 +1852,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             : 0,
         draw_outcomes_pipeline_binds_, draw_outcomes_descriptor_binds_,
         rt_transfer_calls_, rt_transfers_, rt_resolve_clears_,
-        rt_pass_break_barrier_, rt_pass_break_rt_change_);
+        rt_pass_break_barrier_, rt_pass_break_rt_change_,
+        rt_transfer_same_format_, rt_transfer_diff_format_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1865,6 +1867,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_clears_ = 0;
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
+    rt_transfer_same_format_ = 0;
+    rt_transfer_diff_format_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {

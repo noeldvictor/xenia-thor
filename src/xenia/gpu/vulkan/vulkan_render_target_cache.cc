@@ -4863,6 +4863,22 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
           dest_rt_key.GetColorFormat();
       transfer_render_pass_key.color_rts_use_transfer_formats = 1;
     }
+    // Instrumentation: is this transfer's render pass FORMAT-COMPATIBLE with the
+    // guest draw pass (so it could reuse it and avoid a tile flush)? Color: the
+    // transfer format == draw format exactly when the ownership-transfer format
+    // is not an integer reinterpretation (is_integer == false). Depth: the
+    // transfer always reads via a texture and may use a host depth encoding, so
+    // count it as not-reusable for this sizing pass.
+    {
+      bool same_format = false;
+      if (!dest_rt_key.is_depth) {
+        bool is_integer = false;
+        GetColorOwnershipTransferVulkanFormat(dest_rt_key.GetColorFormat(),
+                                              &is_integer);
+        same_format = !is_integer;
+      }
+      command_processor_.AddTransferFormatStats(same_format);
+    }
     VkRenderPass transfer_render_pass =
         GetHostRenderTargetsRenderPass(transfer_render_pass_key);
     if (transfer_render_pass == VK_NULL_HANDLE) {

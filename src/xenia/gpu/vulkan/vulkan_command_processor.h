@@ -799,6 +799,15 @@ class VulkanCommandProcessor : public CommandProcessor {
       ++rt_resolve_clears_;
     }
   }
+  // Per dest-RT transfer pass: would it be format-compatible with the guest
+  // draw pass (eligible for render-pass reuse to avoid a tile flush)?
+  void AddTransferFormatStats(bool same_format_as_guest_pass) {
+    if (same_format_as_guest_pass) {
+      ++rt_transfer_same_format_;
+    } else {
+      ++rt_transfer_diff_format_;
+    }
+  }
 
  private:
   uint32_t rt_transfer_calls_ = 0;
@@ -809,6 +818,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   // render pass / framebuffer changed (RT reconfiguration).
   uint32_t rt_pass_break_barrier_ = 0;
   uint32_t rt_pass_break_rt_change_ = 0;
+  uint32_t rt_transfer_same_format_ = 0;
+  uint32_t rt_transfer_diff_format_ = 0;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.
