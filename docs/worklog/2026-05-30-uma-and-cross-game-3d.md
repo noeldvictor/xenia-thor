@@ -1819,3 +1819,20 @@ Two products from this:
  (2) NEXT: build the draw-merger - coalesce consecutive same-pipeline+same-constants(+same-descriptor)
      draws with concatenable vertex/index ranges into one vkCmdDraw[Indexed], preserving visuals while
      removing the per-draw overhead. B62-corrected: 70-99% of consecutive draws share pipeline+consts.
+
+### B65 — Merge strategy data: 720/1192 draws are SCATTERED (need multidraw-indirect, not plain merge)
+vfetch contiguity instrumentation, heavy frame (1192 draws, prim tl=917 pt=144 ts=131 quad=111):
+  merge[pipe_same=965 consts_same=689 consts_changed=276]
+  vf[same=212 contig=33 scattered=720]
+=> Of consecutive same-pipeline draws: 212 read the SAME vertex address (instanceable, 18%), 33
+contiguous (concatenable, 3%), 720 SCATTERED (different non-contiguous meshes, 60%). So plain
+draw-concatenation covers only ~3%, instancing ~18%; the BULK (720 scattered distinct objects each
+with its own transform) needs MULTI-DRAW-INDIRECT (one CP command, N draws from a param buffer, no
+per-draw context roll) + a shader-side draw-index to pick the per-draw transform (VK_KHR_shader_draw_
+parameters / firstInstance). xenia does NOT currently probe multiDrawIndirect/drawIndirectFirstInstance/
+shaderDrawParameters - need to verify Adreno 740 support. This is a deep shader-translator + draw-path
+change (multi-day). The narrow clean wins (212 instanceable + 33 contiguous = ~20%) are easier but
+won't reach full speed alone.
+PARALLEL TRACK: validate end-to-end that cutting GPU work raises FPS (not just gpu_frame_us), and if so
+ship gpu_skip_draws_below_verts as an opt-in PERFORMANCE MODE (50-76% GPU cut = playable now at reduced
+detail) while the multidraw merger is built.
