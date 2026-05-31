@@ -1237,3 +1237,29 @@ arm64_vmx_dot_f32_fastpath (and the others) to pin the black-3D cause. If vmx_do
 it, that's the black-3D explanation (a self-inflicted cvar), and clean Blue Dragon both renders
 AND benefits from the shipped draw-wait fastpath - re-measure draw-wait on the CLEAN config too
 (its +27% is so far proven only on the black-3D config). Device left on fresh TOML (better state).
+
+### B43 — *** BLACK-3D ROOT-CAUSED: arm64_vmx_dot_f32_fastpath=true (stale-config artifact) ***
+Isolated the B42 lead with a clean controlled A/B (device c3ca0370, fresh/correct TOML,
+identical launch + hid_nop seq; the ONLY difference is the one cvar):
+  RUN A  clean default (vmx_dot_f32_fastpath=FALSE, the compiled default):
+         -> renders the FULL 3D WORLD (night scene: moon/lens-flares/ship), 5.67 fps,
+            screenshot 1.04 MB. (read)
+  RUN B  clean + --ez arm64_vmx_dot_f32_fastpath TRUE:
+         -> BLACK-3D field scene (char HUD portrait/HP/MP, black 3D world), 3.58 fps,
+            screenshot 50 KB. (read)
+=> Toggling ONLY arm64_vmx_dot_f32_fastpath flips 3D-renders<->black-3D AND 5.67<->3.58 fps.
+CONCLUSION: arm64_vmx_dot_f32_fastpath=true is THE black-3D cause (its own cvar doc already
+warned "the broad path black-idled Blue Dragon on 2026-05-21"). It is ALREADY default-OFF in
+code, so a fresh install never black-3Ds. The black-3D that B22-B39 chased as a deep
+compositing/resolve bug was largely a SELF-INFLICTED TEST-ENV ARTIFACT: a prior session left
+this known-broken diagnostic cvar =true in the device's persisted files/xenia.config.toml,
+and every subsequent launch (which reads the TOML over compiled defaults) inherited black-3D.
+NO CODE CHANGE NEEDED - the default is already correct. Fix = keep the bad cvar off (device now
+on the correct TOML; do NOT restore _xenia.config.backup.toml which has it =true).
+IMPACT: with correct defaults Blue Dragon now RENDERS its 3D world at ~5.67 fps - up from the
+2.4fps black-3D that started this whole investigation (and the shipped bulk-PM4 + draw-wait
+fastpath defaults contribute on top). Caveat: run A/run B landed at slightly different game
+points (A faster so further along) but the cvar is the only changed input and the fps delta
+alone (5.67 vs 3.58) cannot be scene-timing; conclusion is solid.
+NEXT: re-measure the draw-wait fastpath contribution on the CLEAN (3D-rendering) config
+(A/B draw_wait on vs off at 5.67 baseline); continue fps optimization now that 3D renders.
