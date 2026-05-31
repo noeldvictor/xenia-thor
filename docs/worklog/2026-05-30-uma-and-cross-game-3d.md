@@ -898,6 +898,28 @@ Loop iteration. Two findings that sharpen the fix:
 NEXT: instrument same-format-vs-different-format transfer split to size fix (1a)
 before implementing. Keep instrument-then-fix discipline.
 
+### B32 — SIZED fix 1a: 24/38 transfer passes/frame are SAME-FORMAT (reusable, ~63%)
+Device (Blue Dragon heavy): xfer_same_fmt=24/frame, xfer_diff_fmt=14/frame (38 dest-RT
+transfer-pass setups; ~25 rt_transfer_calls, 45 rt_transfers). pass_break_barrier~17,
+pass_break_rt_change~27.
+=> ~63% of transfer passes are FORMAT-COMPATIBLE with the guest draw pass = eligible
+for fix 1a (reuse the guest render pass instead of a separate transfer pass = no
+end/begin = no tile flush). 14/frame are float/UINT-reinterpret (k_16_16*/k_32*),
+not 1a-eligible. So fix 1a can remove a majority of the internal transfer tile flushes
+for FREE (same format = pass-compatible, zero correctness risk).
+CONFIRMED WORTH IMPLEMENTING. Next: implement 1a behind a cvar
+(vulkan_reuse_guest_pass_for_transfers, default off until A/B'd): in
+PerformTransfersAndResolveClears, when (a) not depth, (b) the dest color transfer
+format == draw format (is_integer==false), AND (c) the guest render pass is currently
+open with a framebuffer that already contains this dest RT as an attachment, skip the
+separate transfer_render_pass and record the transfer draws into the CURRENT guest
+pass. CAVEAT to verify: the transfer draws sample the SOURCE RT as a texture - can't
+sample an attachment that's currently bound in the same render pass (feedback loop).
+So 1a is only safe when the source RT is NOT also a current attachment. Need to check
+that; if the source is bound, must still break. Measure: xfer pass breaks should drop
+by up to ~24/frame, render_pass_begins + barrier_force_end_render_pass fall, fps rise;
+verify Burnout menu still renders correctly.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
