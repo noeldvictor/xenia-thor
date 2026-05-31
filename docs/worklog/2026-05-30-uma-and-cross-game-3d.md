@@ -1836,3 +1836,21 @@ won't reach full speed alone.
 PARALLEL TRACK: validate end-to-end that cutting GPU work raises FPS (not just gpu_frame_us), and if so
 ship gpu_skip_draws_below_verts as an opt-in PERFORMANCE MODE (50-76% GPU cut = playable now at reduced
 detail) while the multidraw merger is built.
+
+### B66 — *** END-TO-END VALIDATED: cutting tiny draws raises FPS 2-3x (GPU is the wall, proven) ***
+fps (VdSwap rate, heavy 3D scene, 15s window):
+  baseline (skip off):           2.05 fps
+  gpu_skip_draws_below_verts=16: 3.95 fps  (1.9x)
+  gpu_skip_draws_below_verts=64: 6.30 fps  (3.1x)
+=> FPS rises proportionally with GPU work removed. CONFIRMS end-to-end that the frame is GPU-bound on
+per-draw cost and reducing draw count directly multiplies framerate. This is the real, validated lever.
+DELIVERABLE NOW: gpu_skip_draws_below_verts is a proven opt-in PERFORMANCE MODE (1.9x-3.1x) - gated,
+default 0. Trades small-detail geometry (foliage/particles) for speed.
+FULL-SPEED REALITY: even skip<64 (most draws gone) = 6.3fps, not 60. So full 60fps is NOT one lever
+away - the per-draw cost is the dominant term but there is also residual per-frame cost. Path to
+"full speed" = the draw-MERGER (multidraw-indirect for the 720 scattered draws + instancing the 212
+same-addr) to remove per-draw overhead WITHOUT dropping geometry, giving the same 2-3x but quality-
+preserved, plus continued attack on residual cost. The merger is the quality-preserving equivalent of
+this proven skip win.
+NEXT: ship skip-tiny perf mode (done, gated) + de-risk the merger (confirm per-draw cost is CP context-
+roll/command overhead that multidraw removes, vs per-primitive binning that it won't).
