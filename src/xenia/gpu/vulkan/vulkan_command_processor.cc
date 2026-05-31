@@ -1911,7 +1911,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "gpu_frame_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
-        "vtx[tiny={} sm={} med={} big={}]",
+        "vtx[tiny={} sm={} med={} big={}] "
+        "merge[pipe_same={} consts_same={} consts_changed={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1952,7 +1953,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kQuadList)],
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPolygon)],
         draw_vtx_bucket_[0], draw_vtx_bucket_[1], draw_vtx_bucket_[2],
-        draw_vtx_bucket_[3]);
+        draw_vtx_bucket_[3], merge_pipe_same_, merge_consts_same_,
+        merge_consts_changed_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1961,6 +1963,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_max_vertices_ = 0;
     std::memset(draw_prim_counts_, 0, sizeof(draw_prim_counts_));
     std::memset(draw_vtx_bucket_, 0, sizeof(draw_vtx_bucket_));
+    merge_pipe_same_ = 0;
+    merge_consts_same_ = 0;
+    merge_consts_changed_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
@@ -5454,6 +5459,25 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
+
+  // Merge-eligibility attribution: at this point current_guest_graphics_pipeline_
+  // is this draw's pipeline (set in IssueDraw before this call) and
+  // current_constant_buffers_up_to_date_ still reflects what the guest
+  // invalidated since the previous draw. Count consecutive same-pipeline draws
+  // and whether their vertex float constants (per-mesh transforms) changed.
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    if (current_guest_graphics_pipeline_ != VK_NULL_HANDLE &&
+        current_guest_graphics_pipeline_ == merge_last_pipeline_) {
+      ++merge_pipe_same_;
+      if (current_constant_buffers_up_to_date_ &
+          (UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFloatVertex)) {
+        ++merge_consts_same_;
+      } else {
+        ++merge_consts_changed_;
+      }
+    }
+    merge_last_pipeline_ = current_guest_graphics_pipeline_;
+  }
 
   // Invalidate constant buffers and descriptors for changed data.
 

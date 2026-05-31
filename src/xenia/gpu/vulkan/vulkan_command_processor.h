@@ -784,6 +784,16 @@ class VulkanCommandProcessor : public CommandProcessor {
   // batchable they are. Logged at swap under vulkan_trace_draw_outcomes_per_frame.
   uint32_t draw_prim_counts_[16] = {};
   uint32_t draw_vtx_bucket_[4] = {};
+  // Merge-eligibility (per frame): of consecutive draws, how many reuse the
+  // previous draw's pipeline, and of those, how many had vertex float constants
+  // UNCHANGED since the previous draw (trivially mergeable) vs CHANGED (need
+  // instancing, since each tiny draw has its own transform). Decides
+  // merge-vs-instance for the tiny-draw batching work. Updated at UpdateBindings
+  // entry under vulkan_trace_draw_outcomes_per_frame.
+  VkPipeline merge_last_pipeline_ = VK_NULL_HANDLE;
+  uint32_t merge_pipe_same_ = 0;
+  uint32_t merge_consts_same_ = 0;
+  uint32_t merge_consts_changed_ = 0;
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.
