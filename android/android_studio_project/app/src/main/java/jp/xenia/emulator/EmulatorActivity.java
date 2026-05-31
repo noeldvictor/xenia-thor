@@ -193,6 +193,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "vulkan_trace_draw_shader_filter");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_pipeline_creation");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_perf_counters");
+            copyBooleanExtra(intent, launchArguments, "gpu_edram_passes_dont_care");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");

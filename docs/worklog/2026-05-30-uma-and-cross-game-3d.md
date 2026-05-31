@@ -1506,3 +1506,26 @@ so the frame uses FEW render passes: hoist EDRAM ownership transfers out of the 
 keep RTs resident, and/or use Adreno in-pass read-modify-write (subpasses / dynamic-rendering local
 reads / framebuffer-fetch / VK_EXT_rasterization_order_attachment_access) instead of
 end-pass+barrier+copy+begin-pass. Validate each step with gpu_frame_us. Target Thor/Adreno 740 only.
+
+### B53 — *** QUANTIFIED: ~89% of GPU frame time is render-pass tile LOAD/STORE (9x ceiling) ***
+The main EDRAM render pass (vulkan_render_target_cache.cc GetRenderPass) uses loadOp=LOAD +
+storeOp=STORE on every color+depth attachment (lines 1558/1591). On the Adreno tiler each render-
+pass BEGIN reloads the whole framebuffer into tile memory, each END stores it back. With ~98
+breaks/frame that is ~98 full-framebuffer round-trips. Added a diagnostic cvar
+gpu_edram_passes_dont_care (forces DONT_CARE; corrupts rendering - measurement only) and A/B'd
+gpu_frame_us on a Blue Dragon 3D scene:
+  LOAD/STORE (default): gpu_frame_us ~335,000-340,000 us (~337 ms), ~900 draws
+  DONT_CARE:            gpu_frame_us ~37,400 us (~37 ms), ~1194 draws (MORE draws, 9x less GPU time)
+=> ~89% of the GPU frame time is the per-pass tile reload/store traffic. Eliminating it = ~9x GPU
+speedup, ~37ms (~27fps) for MORE rendering. *** This is the quantified proof + the ceiling. ***
+DONT_CARE is NOT shippable (loses EDRAM contents across breaks -> corruption). The real fix that
+keeps correctness AND kills the traffic: DON'T BREAK THE RENDER PASS. ~98 breaks (B48 split: ~27
+RT-change + ~17 barrier in a lighter scene; more in heavy) -> reduce to a handful so LOAD/STORE
+happens a few times instead of ~98. Each break preserved content because the pass stayed open
+(tile memory retained), so no corruption.
+NEXT (the refactor, now perfectly targeted + measurable via gpu_frame_us): reduce render-pass
+breaks. Sources: (a) RT-change breaks from EDRAM ownership-transfer framebuffer churn - keep RTs
+resident / avoid re-deriving framebuffers; (b) barrier breaks - defer/batch barriers or use
+tiler-safe in-pass sync (subpasses, VK_EXT_rasterization_order_attachment_access, dynamic-rendering
+local reads, framebuffer-fetch) so EDRAM read-modify-write happens INSIDE one pass. Validate each
+step: gpu_frame_us must fall from ~337ms toward ~37ms. Target Thor/Adreno 740 only.

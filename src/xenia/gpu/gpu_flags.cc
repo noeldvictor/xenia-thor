@@ -316,6 +316,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_edram_passes_dont_care, false,
+    "Thor/Adreno DIAGNOSTIC: force EDRAM render-pass attachments to "
+    "loadOp/storeOp=DONT_CARE instead of LOAD/STORE. This skips the per-pass "
+    "full-framebuffer tile reload+store on the tiler. EXPECTED to corrupt "
+    "rendering (contents not preserved across pass breaks) - used only to "
+    "measure how much of the GPU frame time is tile load/store traffic via "
+    "gpu_frame_us. NOT a shippable fix; the real fix is reducing pass breaks.",
+    "GPU");
+
+DEFINE_bool(
     non_seamless_cube_map, true,
     "Disable filtering between cube map faces near edges where possible "
     "(Vulkan with VK_EXT_non_seamless_cube_map) to reproduce the Direct3D 9 "

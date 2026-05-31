@@ -1555,10 +1555,15 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     attachment.flags = 0;
     attachment.format = GetDepthVulkanFormat(key.depth_format);
     attachment.samples = samples;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+    const bool dont_care = cvars::gpu_edram_passes_dont_care;
+    attachment.loadOp = dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                  : VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.storeOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
+                                   : VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                         : VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.stencilStoreOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
+                                          : VK_ATTACHMENT_STORE_OP_STORE;
     attachment.initialLayout = VulkanRenderTarget::kDepthDrawLayout;
     attachment.finalLayout = VulkanRenderTarget::kDepthDrawLayout;
   }
@@ -1588,8 +1593,12 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
             ? GetColorOwnershipTransferVulkanFormat(color_format)
             : GetColorVulkanFormat(color_format);
     attachment.samples = samples;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.loadOp = cvars::gpu_edram_passes_dont_care
+                            ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                            : VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.storeOp = cvars::gpu_edram_passes_dont_care
+                             ? VK_ATTACHMENT_STORE_OP_DONT_CARE
+                             : VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VulkanRenderTarget::kColorDrawLayout;
