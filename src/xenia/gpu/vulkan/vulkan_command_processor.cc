@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1843,7 +1844,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "avg_vertices={} pipeline_binds={} descriptor_binds={} "
         "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
         "pass_break_barrier={} pass_break_rt_change={} "
-        "xfer_same_fmt={} xfer_diff_fmt={}",
+        "xfer_same_fmt={} xfer_diff_fmt={} "
+        "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1853,7 +1855,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_pipeline_binds_, draw_outcomes_descriptor_binds_,
         rt_transfer_calls_, rt_transfers_, rt_resolve_clears_,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
-        rt_transfer_same_format_, rt_transfer_diff_format_);
+        rt_transfer_same_format_, rt_transfer_diff_format_,
+        draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
+        draw_cpu_total_ns_
+            ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
+            : 0);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1869,6 +1875,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_pass_break_rt_change_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
+    draw_cpu_total_ns_ = 0;
+    draw_cpu_process_ns_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -3095,6 +3103,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 
   const RegisterFile& regs = *register_file_;
 
+  // Per-draw CPU timing (command-processor throughput diagnostic). Captures the
+  // whole IssueDraw cost (accumulated only for rendered draws) and the
+  // PrimitiveProcessor::Process sub-step, to localize the per-draw gate.
+  const bool trace_draw_cpu = cvars::vulkan_trace_draw_outcomes_per_frame;
+  std::chrono::steady_clock::time_point draw_cpu_t0;
+  if (trace_draw_cpu) {
+    draw_cpu_t0 = std::chrono::steady_clock::now();
+  }
+
   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
   if (edram_mode == xenos::EdramMode::kCopy) {
     // Special copy handling.
@@ -3201,7 +3218,18 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
 
     // Process primitives.
-    if (!primitive_processor_->Process(primitive_processing_result)) {
+    std::chrono::steady_clock::time_point proc_t0;
+    if (trace_draw_cpu) {
+      proc_t0 = std::chrono::steady_clock::now();
+    }
+    bool process_ok = primitive_processor_->Process(primitive_processing_result);
+    if (trace_draw_cpu) {
+      draw_cpu_process_ns_ += uint64_t(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - proc_t0)
+              .count());
+    }
+    if (!process_ok) {
       return false;
     }
     if (!primitive_processing_result.host_draw_vertex_count) {
@@ -3707,6 +3735,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  if (trace_draw_cpu) {
+    draw_cpu_total_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - draw_cpu_t0)
+            .count());
+  }
   draw_outcomes_total_vertices_ +=
       primitive_processing_result.host_draw_vertex_count;
   draw_outcomes_max_vertices_ =

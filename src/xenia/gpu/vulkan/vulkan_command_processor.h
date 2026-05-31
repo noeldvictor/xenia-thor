@@ -782,6 +782,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // share state and can be merged into far fewer host draws.
   uint32_t draw_outcomes_pipeline_binds_ = 0;
   uint32_t draw_outcomes_descriptor_binds_ = 0;
+  // Per-frame CPU time (ns) spent on the GPU-Commands thread inside IssueDraw,
+  // and the PrimitiveProcessor::Process sub-step, to localize where the
+  // per-draw command-processor throughput cost goes (the structural gate for
+  // draw-heavy guests like Blue Dragon, ~10k draws/frame). Gated by
+  // vulkan_trace_draw_outcomes_per_frame; logged+reset at swap.
+  uint64_t draw_cpu_total_ns_ = 0;
+  uint64_t draw_cpu_process_ns_ = 0;
 
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the

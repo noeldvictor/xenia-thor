@@ -1369,3 +1369,28 @@ METHOD NOTES for future: device xenia.config.toml OVERRIDES compiled defaults (o
  extras beat it) - watch for stale cvars; clean fps is 1-6 scene-noisy - prefer profile entry-
  delta metrics; reach gameplay = ~200s wait + extended hid_nop skips to ~112000ms.
 ========================================================================================
+
+### B48 — CP-throughput attack: localized the per-draw gate (IssueDraw overhead, NOT PrimitiveProcessor)
+User directed: attack CP-thread PM4 throughput for the ~10k draws/frame. Added per-frame CPU
+timing buckets to VulkanCommandProcessor::IssueDraw (std::chrono, gated by
+vulkan_trace_draw_outcomes_per_frame, logged at swap): cpu_issuedraw_us (whole IssueDraw, rendered
+draws) + cpu_process_us (PrimitiveProcessor::Process). DEVICE-MEASURED (Blue Dragon, rendered=
+~2133 draws/frame scene, 4 consecutive frames):
+  cpu_issuedraw_us = 40,465 / 43,313 / 40,685 / 51,657   (~40-52 ms/frame in IssueDraw alone!)
+  cpu_process_us   = 1,612 / 1,822 / 2,103 / 2,288        (PrimitiveProcessor::Process)
+  cpu_process_pct  = 3 / 4 / 5 / 4 %
+=> ~20 us PER DRAW in IssueDraw; PrimitiveProcessor::Process is only 3-5% (the B37/B39 worklog
+hypothesis that PrimitiveProcessor index-conversion is the ~50% hog is REFUTED). The per-draw gate
+is the REST of IssueDraw (shader analysis AnalyzeShaderUcode, IsRasterizationPotentiallyDone,
+interpolator mask, pipeline lookup/config, render-target Update, descriptor setup, draw submit).
+Math checks out: heavy field 10,752 draws x ~20us ~= 215 ms/frame ~= 4.6 fps (matches observed
+~1-5fps); 2133-draw scene x ~20us ~= 43ms ~= 23fps IssueDraw ceiling. *** IssueDraw per-draw
+overhead IS the structural fps gate for draw-heavy guests. ***
+*** REDUNDANCY LEVER (next): pipeline_binds=262 for 2133 draws (~12%) - 88% of draws REUSE the
+previous pipeline, yet IssueDraw runs the FULL per-draw path (shader analysis, pipeline config,
+RT update) every draw. descriptor_binds=2006/2133 (~94%). So most per-draw IssueDraw work is
+REDUNDANT across consecutive same-state draws. The CP-throughput win = detect unchanged guest
+render state since the last draw and SKIP/cache the redundant per-draw computation (shader
+analysis + pipeline lookup are prime - they recompute identical results). Big, careful change to
+the core draw path; gate behind a cvar, verify rendering, measure cpu_issuedraw_us drop + fps.
+Instrumentation shipped this iteration (the buckets); the skip/cache optimization is next.
