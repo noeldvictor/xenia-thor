@@ -701,6 +701,45 @@ Target: collapse ~170 tile flushes/frame toward a handful. THIS should move fps 
 Grep: barrier_force_end_render_pass increment site + what calls SubmitBarriers(true)
 or inserts buffer barriers during the draw loop.
 
+### B25 — MECHANISM CONFIRMED: per-draw shared-memory UPLOAD forces render-pass end -> tile flush
+Traced the ~98 forced render-pass-ends/frame to the exact code:
+- IssueDraw calls shared_memory_->RequestRange(vertex/index) per draw (vulkan_command_
+  processor.cc:3593) -> if pages are dirty, UploadRanges does a kTransferDestination
+  write (staging vkCmdCopyBuffer, or UMA memcpy).
+- Then Use(kRead) (3640) transitions usage write->read -> VulkanSharedMemory::Use
+  (vulkan_shared_memory.cc:305) emits a buffer barrier (fires when last_usage_!=usage
+  OR last_written_range_.second, i.e. after ANY write).
+- That barrier is queued; SubmitBarriersAndEnterRenderTargetCacheRenderPass ->
+  SubmitBarriers(false) -> SubmitBarriers ENDS THE RENDER PASS whenever barriers are
+  pending (vulkan_command_processor.cc:2638), then re-begins it.
+=> every draw that uploads fresh vertex/index/constant data = 1 buffer barrier = 1
+render-pass end+begin = 1 full TILE FLUSH on Adreno. ~98 such draws/frame -> ~170
+tile load/stores/frame -> the dominant cost. Staging uploads (vkCmdCopyBuffer) legally
+CANNOT be inside a render pass, so the break is structural to the per-draw demand-
+upload design.
+TWO FIX PATHS:
+(A) BATCH UPLOADS: hoist all shared-memory RequestRange/upload for a frame (or a
+    render-pass span) to BEFORE the render pass, so no transfer/barrier interrupts the
+    pass. Big architectural change (decouple upload from per-draw setup) but the true
+    fix - would collapse ~98 flushes toward ~1.
+(B) UMA DIRECT-WRITE re-examined: the direct path writes via CPU memcpy + a HOST->
+    shader barrier (NOT a transfer). A HOST-stage barrier may still force the pass end
+    via the same SubmitBarriers path, BUT there is no vkCmdCopyBuffer, so IF the
+    host-write visibility can be guaranteed without a per-draw barrier inside the pass
+    (e.g. one flush at submission), UMA could avoid the per-draw break entirely. This
+    re-frames UMA: its value is NOT just skipping the copy, but potentially avoiding
+    the render-pass-breaking transfer barrier - a tiler-specific win we missed. (UMA
+    still has the intermittent GPU-hang from earlier, but THIS is a strong reason to
+    revisit making it stable.)
+RECOMMEND next: measure (A) feasibility - can uploads be batched at frame start? Most
+guest vertex/index data for a frame is known when the command buffer is parsed.
+Alternatively prototype: does suppressing the per-draw Use(kRead) barrier (when the
+range was already valid/uploaded earlier in the frame) reduce barrier_force_end_render
+_pass? The MakeRangeValid dirty-tracking means most ranges are uploaded ONCE - so the
+barrier may be firing even when no new upload happened (last_written_range_ stale?).
+CHECK: is Use(kRead) emitting a barrier every draw even with NO upload? If yes, that's
+a cheap fix (only barrier when an upload actually occurred this draw).
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
