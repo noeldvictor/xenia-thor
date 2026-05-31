@@ -4581,6 +4581,17 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
                             resolve_clear_rectangle != nullptr);
   }
 
+  // Accuracy-for-speed (Thor/Adreno): skip the EDRAM ownership-transfer GPU
+  // work to cut the render-pass breaks / tile store-reload that dominate the
+  // GPU frame time. Redirect to an empty per-RT transfer array so the transfer
+  // loops below do nothing; resolve-clears (separate params) still run. Aliased
+  // EDRAM content is NOT preserved -> may glitch. Gated, default off.
+  static const std::vector<Transfer>
+      kNoTransfers[1 + xenos::kMaxColorRenderTargets] = {};
+  if (cvars::gpu_skip_edram_transfers) {
+    render_target_transfers = kNoTransfers;
+  }
+
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   uint64_t current_submission = command_processor_.GetCurrentSubmission();

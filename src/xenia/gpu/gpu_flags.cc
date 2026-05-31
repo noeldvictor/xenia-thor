@@ -326,6 +326,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_skip_edram_transfers, false,
+    "Thor/Adreno accuracy-for-speed: skip EDRAM ownership-transfer GPU work "
+    "(the per-draw copies that move EDRAM range contents between host render "
+    "targets when the guest aliases EDRAM). These transfers force render-pass "
+    "breaks = tiler tile store/reload (the dominant GPU cost). Skipping them "
+    "cuts tile traffic but does NOT preserve aliased EDRAM content, so it may "
+    "cause rendering glitches. Resolve-clears are still performed. Diagnostic / "
+    "performance-mode experiment; measure via gpu_frame_us + read the frame.",
+    "GPU");
+
+DEFINE_bool(
     non_seamless_cube_map, true,
     "Disable filtering between cube map faces near edges where possible "
     "(Vulkan with VK_EXT_non_seamless_cube_map) to reproduce the Direct3D 9 "

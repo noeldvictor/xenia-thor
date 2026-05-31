@@ -1571,3 +1571,24 @@ COMPLETE FOUNDATION DELIVERED THIS SESSION: GPU-bound proven (gpu_frame_us 550-9
 transfers/copies on the Adreno tiler; reusable harness (gpu_frame_us, gpu_edram_passes_dont_care,
 per-phase cpu buckets, pass-break counters). The rework must be staged + tested across multiple
 games (not just Blue Dragon) to avoid broad corruption.
+
+### B56 — Stage 1 (skip-transfers) RESULT + methodology correction (B53 was scene-confounded)
+Added gpu_skip_edram_transfers (default off, allowlisted): skips EDRAM ownership-transfer GPU work.
+A/B (Blue Dragon windmill intro):
+  OFF : gpu_frame_us ~310ms, rendered=925,  breaks barrier=17 rt_change=27 (44), renders correctly
+  SKIP: gpu_frame_us ~327ms, rendered=1217, breaks barrier=2  rt_change=10 (12), DOUBLED/corrupted img
+=> Skipping transfers CUT breaks 44->12 (-73%) but gpu_frame_us did NOT drop, and it corrupted
+rendering (duplicated windmill). So render-pass BREAKS / transfers are NOT the dominant GPU cost.
+*** This CONTRADICTS B53's "89% is tile LOAD/STORE, 9x ceiling". B53 is now SUSPECT: the DONT_CARE
+run hit 37ms but a faster config RACES FURTHER into the deterministic cinematic and lands on a
+lighter frame - I read the 37ms number but never read that frame. SCENE-TIMING CONFOUND. ***
+HONEST STATE: GPU-bound is SOLID (gpu_frame_us = frame time, CPU idle). But the ATTRIBUTION (load/
+store vs shading/fill vs transfers) is NOT reliably established - every relaunch A/B drifts scenes
+because changing speed changes which cinematic frame you're on. gpu_frame_us scales strongly with
+draw count/scene complexity (925->2136 draws = 310->942ms, superlinear), which points to REAL
+rendering work (fill/overdraw/shading), where RESOLUTION reduction would be the lever - NOT breaks.
+METHODOLOGY FIX (next): SCENE-LOCKED measurement - freeze the guest at a FIXED guest-frame count
+(e.g. set time_scalar~0 after exactly N VdSwaps) so every config renders the IDENTICAL frame, then
+read a stable gpu_frame_us. Only then can I cleanly attribute GPU cost (toggle resolution scale /
+loadOp / transfers on the SAME frame) and trust the result. Until then, treat B53's 9x as unproven.
+gpu_skip_edram_transfers + gpu_edram_passes_dont_care kept as default-off diagnostics.

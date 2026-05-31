@@ -89,6 +89,7 @@ DECLARE_bool(vulkan_trace_draw_outcomes_per_frame);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 DECLARE_bool(gpu_bulk_pm4_type0);
 DECLARE_bool(gpu_edram_passes_dont_care);
+DECLARE_bool(gpu_skip_edram_transfers);
 
 DECLARE_bool(non_seamless_cube_map);
 
