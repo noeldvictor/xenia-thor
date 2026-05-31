@@ -1720,3 +1720,18 @@ per-draw constants (transforms) aren't changing (if each tiny draw has a differe
 they are NOT trivially mergeable - that would explain why the guest issues them separately, and the
 fix shifts to instanced draws or a draw-indirect/multidraw batch). VERIFY whether per-draw float
 constants change between these tiny draws before designing the batch.
+
+### B61b — Draw composition confirmed across a 2nd (lighter) scene: avg 3 verts, point sprites + quads
+A second capture landed on a LIGHTER scene (GPU-busy ramped 1->3->73->79% as it loaded; frame =
+rendered=267, gpu_frame_us~26ms). Its composition is even more extreme and CONFIRMS the "tiny draws"
+finding from a different angle:
+  prim: pt(point_list)=144, quad(quad_list)=111, rect=8, ts(tri_strip)=4, tl=0.
+  vtx size: TINY(<16)=267 (100%). avg_vertices=3, max_vertices=6.
+=> avg 3 VERTICES PER DRAW, 144 of them point sprites, 111 quads. Across both scenes (heavy: ~1200
+draws avg 30v, 78% tri_list; light: 267 draws avg 3v, point/quad) the constant is: HUNDREDS-TO-1200
+microscopic draws/frame, and the GPU front-end (binning + per-draw state) pays full freight on each.
+This is the geometry/binning bottleneck, dual-confirmed. (Worklog/memory B61 numbers were the heavy
+scene; both are valid - the bottleneck shape is the same.)
+The fix direction is unchanged: collapse the per-draw count via batching/instancing of consecutive
+same-state tiny draws; verify per-draw constant stability first. Point sprites (pt=144) and quad lists
+in particular are prime batch/instance candidates.
