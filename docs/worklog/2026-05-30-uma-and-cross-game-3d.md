@@ -1666,3 +1666,17 @@ vertex-shader vs parameter-buffer-overflow vs state) REQUIRES a GPU-VENDOR PROFI
 (Snapdragon Profiler / Android GPU Inspector) - I have exhausted code-side cvar/counter attribution.
 HARNESS (trustworthy, shipped, all default-off): guest_ms content-matching, gpu_frame_us timestamps,
 barrier-break attribution, per-phase CPU buckets, gpu_edram_passes_dont_care/skip_edram_transfers.
+
+### B59b — CORRECTION: it's GPU STALLS, not vertex throughput (and no vertex amplification)
+Re-checked: host total_vertices/rendered ~= avg_vertices ~= 100-138 (= guest); the "558/amplification"
+in B59 was an arithmetic error mixing scenes. RETRACT the amplification claim. Crucially the per-unit
+math disproves "vertex-bound" too: ~200k verts -> ~800ms = ~4 microseconds PER VERTEX, ~4000x slower
+than any GPU's real vertex throughput. Likewise ~0.4 ms/draw. So the GPU is NOT doing real vertex/
+fill/load-store work - it is STALLING (pipeline bubbles) repeatedly, scaling super-linearly with scene
+complexity, pixel-independent, and NOT removed by the load/store (3%) or break (12%) cvars.
+NET HONEST CONCLUSION (after exhaustive content-matched attribution): the Adreno 740 is mostly IDLE/
+STALLED during the frame, not compute-bound on any dimension I can toggle from code. The stall source
+(per-draw/per-state GPU serialization, GMEM/binning behavior, or a driver slow-path) cannot be
+localized further without a GPU-VENDOR TIMELINE PROFILER (Snapdragon Profiler / Android GPU Inspector)
+captured on the AYN Thor. That is the required next step; code-side cvar/counter attribution is
+exhausted. The shipped harness (guest_ms content-matching + gpu_frame_us) remains the validation tool.
