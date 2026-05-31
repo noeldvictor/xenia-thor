@@ -870,6 +870,34 @@ FULL CHAIN NOW PROVEN: 2.4fps <- ~98 render-pass breaks/frame (tile flushes on A
 EDRAM ownership transfers/frame (Xbox360 10MB EDRAM reuse) using a separate transfer
 render pass. NOT descriptors, NOT draw count, NOT UMA, NOT uploads.
 
+### B31 — transfers are NON-redundant (ChangeOwnership optimal); pass-reuse is FORMAT-conditional
+Loop iteration. Two findings that sharpen the fix:
+1. ChangeOwnership (render_target_cache.cc:1513) is ALREADY optimal: skips ranges
+   already IsOwnedBy(dest), only transfers when owner differs (transfer_source !=
+   dest), merges adjacent transfers. So the 45 transfers/frame are GENUINELY NEEDED
+   ownership changes - NOT redundant. "Fewer transfers via redundancy elimination" is
+   a dead end. The transfers are real EDRAM reuse.
+2. WHY the transfer pass is separate (the cost): PerformTransfersAndResolveClears sets
+   transfer_render_pass_key.color_rts_use_transfer_formats=1 (vulkan_render_target_
+   cache.cc:4864) - transfers reinterpret the RT through a DIFFERENT Vulkan format for
+   bit-exact EDRAM copy (e.g. R16G16B16A16_SFLOAT RT accessed as _UINT). A VkRenderPass
+   is format-specific, so the transfer pass CANNOT equal the guest draw pass when the
+   formats differ -> mandatory end+begin (the ~55 internal tile flushes). The upstream
+   TODO@4847 says reuse is possible ONLY when the draw format == transfer format (e.g.
+   R8G8B8A8_UNORM uses the same for both).
+=> SHARPENED FIX (next impl iteration):
+   (1a) Reuse the guest render pass for transfers WHEN dest color format uses the same
+        Vulkan format for draw and transfer (GetColorVulkanFormat ==
+        GetColorOwnershipTransferVulkanFormat). For those RTs, no pass switch ->
+        removes a chunk of the ~55 internal breaks for free, no correctness risk
+        (same format = same pass compatibility). Measure how many of the 45
+        transfers/frame are same-format (instrument: count transfers where draw fmt ==
+        transfer fmt) to size the win first.
+   (1b) Coalesce: do all transfers for one framebuffer config in ONE transfer pass
+        (load/store once) instead of per-dest-RT (TODO 2nd half).
+NEXT: instrument same-format-vs-different-format transfer split to size fix (1a)
+before implementing. Keep instrument-then-fix discipline.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
