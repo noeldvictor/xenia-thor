@@ -814,6 +814,31 @@ non-transfer bucket is the next target. Likely candidate: texture LoadTextureDat
 (IssueCopy) per frame. rt_resolve_clears is only 2 so resolve-clears aren't it.
 Hypothesis to test: per-draw texture streaming (LoadTextureData) barriers.
 
+### B29 — SPLIT MEASURED: per-draw breaks=43/frame (barrier 16 + rt_change 27); ~55 INSIDE transfers
+Device (Blue Dragon heavy): pass_break_barrier=16/frame, pass_break_rt_change=27/frame
+= 43 per-draw-enter breaks. But perf counter = ~98 force_end/frame. RECONCILES:
+the other ~55 force-ends happen INSIDE PerformTransfersAndResolveClears, which calls
+SubmitBarriers(true) internally per transfer step (25 transfer_calls x ~2 internal
+barrier-submits ~= 55) + 43 at the enter = ~98. ✓
+=> The DOMINANT render-pass-break source IS the EDRAM transfer machinery after all,
+but via its INTERNAL per-transfer SubmitBarriers(true) (~55/frame) + the RT-reconfig
+it implies (rt_change=27). So EDRAM transfers cause ~55(internal) + most of 27(rt
+reconfig) + ~3-barriers-each. The 45 transfers/frame are the root, NOT the per-draw
+upload barrier (pass_break_barrier is only 16).
+TARGET (now well-grounded): cut EDRAM transfers (45/frame) AND/OR their internal
+render-pass breaks. Two angles:
+ 1. FEWER TRANSFERS: are the 45 transfers/frame partly REDUNDANT - re-transferring
+    EDRAM ranges whose ownership didn't change? Check base RenderTargetCache::Update
+    transfer-generation + whether last_update_accumulated_render_targets_ thrashes.
+ 2. FEWER BREAKS PER TRANSFER: PerformTransfersAndResolveClears does the transfers as
+    draws/dispatches needing the render pass ended; if multiple transfers in one
+    Update were batched into ONE pass-end + ONE re-begin (instead of ~2 each), ~55 ->
+    ~25. Coalesce the transfer barriers.
+NEXT: read PerformTransfersAndResolveClears internal SubmitBarriers(true)/EndRenderPass
+calls (the ~55 source) + the base transfer-generation to spot redundancy. Instrument-
+confirmed: transfers ARE the lever (corrects B28's "under half" - they cause the
+internal breaks too, just not at the enter path).
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
