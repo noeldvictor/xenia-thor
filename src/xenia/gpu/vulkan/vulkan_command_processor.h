@@ -514,6 +514,14 @@ class VulkanCommandProcessor : public CommandProcessor {
       const VkDescriptorImageInfo* sampler_image_info,
       VkWriteDescriptorSet* descriptor_set_writes_out);
 
+  // Like WriteTransientTextureBindings but for push descriptors: builds the
+  // write array only (no descriptor set allocation, dstSet null).
+  uint32_t WritePushTextureBindings(
+      uint32_t texture_count, uint32_t sampler_count,
+      const VkDescriptorImageInfo* texture_image_info,
+      const VkDescriptorImageInfo* sampler_image_info,
+      VkWriteDescriptorSet* descriptor_set_writes_out);
+
   bool device_lost_ = false;
 
   bool cache_clear_requested_ = false;

@@ -236,6 +236,33 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
                                    sizeof(ArgsVkPushConstants));
       } break;
 
+      case Command::kVkPushDescriptorSetKHR: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkPushDescriptorSetKHR*>(stream);
+        size_t writes_offset = xe::align(sizeof(ArgsVkPushDescriptorSetKHR),
+                                         alignof(VkWriteDescriptorSet));
+        auto writes = reinterpret_cast<VkWriteDescriptorSet*>(
+            const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(stream)) +
+            writes_offset);
+        size_t image_infos_offset = xe::align(
+            writes_offset +
+                sizeof(VkWriteDescriptorSet) * args.descriptor_write_count,
+            alignof(VkDescriptorImageInfo));
+        const VkDescriptorImageInfo* image_infos =
+            reinterpret_cast<const VkDescriptorImageInfo*>(
+                reinterpret_cast<const uint8_t*>(stream) + image_infos_offset);
+        // Re-point each write's pImageInfo (stored as an index placeholder at
+        // record time) into the replayed image-info array.
+        for (uint32_t i = 0; i < args.descriptor_write_count; ++i) {
+          uintptr_t image_info_index =
+              reinterpret_cast<uintptr_t>(writes[i].pImageInfo);
+          writes[i].pImageInfo = image_infos + image_info_index;
+        }
+        dfn.vkCmdPushDescriptorSetKHR(command_buffer, args.pipeline_bind_point,
+                                      args.layout, args.set,
+                                      args.descriptor_write_count, writes);
+      } break;
+
       case Command::kVkSetBlendConstants: {
         auto& args = *reinterpret_cast<const ArgsVkSetBlendConstants*>(stream);
         dfn.vkCmdSetBlendConstants(command_buffer, args.blend_constants);

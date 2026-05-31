@@ -2799,13 +2799,13 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
   descriptor_set_layout_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   descriptor_set_layout_create_info.pNext = nullptr;
-  // TODO(push-descriptors): when the per-draw push path lands (deferred command
-  // buffer CmdVkPushDescriptorSetKHR + IssueDraw push instead of alloc/write/bind),
-  // set VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR here when
-  // push_descriptors_active_. NOT set yet - applying it without the push path
-  // would make the transient alloc+bind of this set illegal. push_descriptors_
-  // active_ is currently observe-only (extension enabled + limit logged).
-  descriptor_set_layout_create_info.flags = 0;
+  // Texture/sampler sets are pushed inline (vkCmdPushDescriptorSetKHR) when push
+  // descriptors are active, which requires this layout flag and means the set is
+  // never allocated from a pool or bound normally.
+  descriptor_set_layout_create_info.flags =
+      push_descriptors_active_
+          ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR
+          : 0;
   descriptor_set_layout_create_info.bindingCount = uint32_t(binding_count);
   descriptor_set_layout_create_info.pBindings =
       descriptor_set_layout_bindings_.data();
@@ -5610,45 +5610,94 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
   // Vertex shader textures and samplers.
   if (write_vertex_textures) {
-    VkWriteDescriptorSet* write_textures =
-        write_descriptor_sets.data() + write_descriptor_set_count;
-    uint32_t texture_descriptor_set_write_count = WriteTransientTextureBindings(
-        true, texture_count_vertex, sampler_count_vertex,
-        current_guest_graphics_pipeline_layout_
-            ->descriptor_set_layout_textures_vertex_ref(),
-        descriptor_write_image_info_.data() + vertex_texture_image_info_offset,
-        descriptor_write_image_info_.data() + vertex_sampler_image_info_offset,
-        write_textures);
-    if (!texture_descriptor_set_write_count) {
-      return false;
+    if (push_descriptors_active_) {
+      // Push the texture/sampler descriptors inline - no transient set alloc, no
+      // separate write+bind. The push is recorded into the deferred command
+      // buffer before the draw; mark the set both value- and bound-up-to-date so
+      // the transient write/bind paths below skip it.
+      std::array<VkWriteDescriptorSet, 2> push_writes;
+      uint32_t push_write_count = WritePushTextureBindings(
+          texture_count_vertex, sampler_count_vertex,
+          descriptor_write_image_info_.data() +
+              vertex_texture_image_info_offset,
+          descriptor_write_image_info_.data() +
+              vertex_sampler_image_info_offset,
+          push_writes.data());
+      deferred_command_buffer_.CmdVkPushDescriptorSetKHR(
+          VK_PIPELINE_BIND_POINT_GRAPHICS,
+          current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
+          SpirvShaderTranslator::kDescriptorSetTexturesVertex, push_write_count,
+          push_writes.data());
+      current_graphics_descriptor_set_values_up_to_date_ |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
+      current_graphics_descriptor_sets_bound_up_to_date_ |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
+    } else {
+      VkWriteDescriptorSet* write_textures =
+          write_descriptor_sets.data() + write_descriptor_set_count;
+      uint32_t texture_descriptor_set_write_count =
+          WriteTransientTextureBindings(
+              true, texture_count_vertex, sampler_count_vertex,
+              current_guest_graphics_pipeline_layout_
+                  ->descriptor_set_layout_textures_vertex_ref(),
+              descriptor_write_image_info_.data() +
+                  vertex_texture_image_info_offset,
+              descriptor_write_image_info_.data() +
+                  vertex_sampler_image_info_offset,
+              write_textures);
+      if (!texture_descriptor_set_write_count) {
+        return false;
+      }
+      write_descriptor_set_count += texture_descriptor_set_write_count;
+      write_descriptor_set_bits |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
+      current_graphics_descriptor_sets_
+          [SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
+              write_textures[0].dstSet;
     }
-    write_descriptor_set_count += texture_descriptor_set_write_count;
-    write_descriptor_set_bits |=
-        UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
-    current_graphics_descriptor_sets_
-        [SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
-            write_textures[0].dstSet;
   }
   // Pixel shader textures and samplers.
   if (write_pixel_textures) {
-    VkWriteDescriptorSet* write_textures =
-        write_descriptor_sets.data() + write_descriptor_set_count;
-    uint32_t texture_descriptor_set_write_count = WriteTransientTextureBindings(
-        false, texture_count_pixel, sampler_count_pixel,
-        current_guest_graphics_pipeline_layout_
-            ->descriptor_set_layout_textures_pixel_ref(),
-        descriptor_write_image_info_.data() + pixel_texture_image_info_offset,
-        descriptor_write_image_info_.data() + pixel_sampler_image_info_offset,
-        write_textures);
-    if (!texture_descriptor_set_write_count) {
-      return false;
+    if (push_descriptors_active_) {
+      std::array<VkWriteDescriptorSet, 2> push_writes;
+      uint32_t push_write_count = WritePushTextureBindings(
+          texture_count_pixel, sampler_count_pixel,
+          descriptor_write_image_info_.data() + pixel_texture_image_info_offset,
+          descriptor_write_image_info_.data() +
+              pixel_sampler_image_info_offset,
+          push_writes.data());
+      deferred_command_buffer_.CmdVkPushDescriptorSetKHR(
+          VK_PIPELINE_BIND_POINT_GRAPHICS,
+          current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
+          SpirvShaderTranslator::kDescriptorSetTexturesPixel, push_write_count,
+          push_writes.data());
+      current_graphics_descriptor_set_values_up_to_date_ |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
+      current_graphics_descriptor_sets_bound_up_to_date_ |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
+    } else {
+      VkWriteDescriptorSet* write_textures =
+          write_descriptor_sets.data() + write_descriptor_set_count;
+      uint32_t texture_descriptor_set_write_count =
+          WriteTransientTextureBindings(
+              false, texture_count_pixel, sampler_count_pixel,
+              current_guest_graphics_pipeline_layout_
+                  ->descriptor_set_layout_textures_pixel_ref(),
+              descriptor_write_image_info_.data() +
+                  pixel_texture_image_info_offset,
+              descriptor_write_image_info_.data() +
+                  pixel_sampler_image_info_offset,
+              write_textures);
+      if (!texture_descriptor_set_write_count) {
+        return false;
+      }
+      write_descriptor_set_count += texture_descriptor_set_write_count;
+      write_descriptor_set_bits |=
+          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
+      current_graphics_descriptor_sets_
+          [SpirvShaderTranslator::kDescriptorSetTexturesPixel] =
+              write_textures[0].dstSet;
     }
-    write_descriptor_set_count += texture_descriptor_set_write_count;
-    write_descriptor_set_bits |=
-        UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
-    current_graphics_descriptor_sets_
-        [SpirvShaderTranslator::kDescriptorSetTexturesPixel] =
-            write_textures[0].dstSet;
   }
   // Write.
   if (write_descriptor_set_count) {
@@ -5778,6 +5827,45 @@ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
     descriptor_set_write.pTexelBufferView = nullptr;
   }
   assert_not_zero(descriptor_set_write_count);
+  return descriptor_set_write_count;
+}
+
+uint32_t VulkanCommandProcessor::WritePushTextureBindings(
+    uint32_t texture_count, uint32_t sampler_count,
+    const VkDescriptorImageInfo* texture_image_info,
+    const VkDescriptorImageInfo* sampler_image_info,
+    VkWriteDescriptorSet* descriptor_set_writes_out) {
+  // Builds VkWriteDescriptorSet entries for vkCmdPushDescriptorSetKHR: no
+  // descriptor set is allocated, dstSet is left null (ignored by push).
+  uint32_t descriptor_set_write_count = 0;
+  if (texture_count) {
+    VkWriteDescriptorSet& descriptor_set_write =
+        descriptor_set_writes_out[descriptor_set_write_count++];
+    descriptor_set_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptor_set_write.pNext = nullptr;
+    descriptor_set_write.dstSet = VK_NULL_HANDLE;
+    descriptor_set_write.dstBinding = 0;
+    descriptor_set_write.dstArrayElement = 0;
+    descriptor_set_write.descriptorCount = texture_count;
+    descriptor_set_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    descriptor_set_write.pImageInfo = texture_image_info;
+    descriptor_set_write.pBufferInfo = nullptr;
+    descriptor_set_write.pTexelBufferView = nullptr;
+  }
+  if (sampler_count) {
+    VkWriteDescriptorSet& descriptor_set_write =
+        descriptor_set_writes_out[descriptor_set_write_count++];
+    descriptor_set_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptor_set_write.pNext = nullptr;
+    descriptor_set_write.dstSet = VK_NULL_HANDLE;
+    descriptor_set_write.dstBinding = texture_count;
+    descriptor_set_write.dstArrayElement = 0;
+    descriptor_set_write.descriptorCount = sampler_count;
+    descriptor_set_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    descriptor_set_write.pImageInfo = sampler_image_info;
+    descriptor_set_write.pBufferInfo = nullptr;
+    descriptor_set_write.pTexelBufferView = nullptr;
+  }
   return descriptor_set_write_count;
 }
 

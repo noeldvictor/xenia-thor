@@ -295,6 +295,59 @@ class DeferredCommandBuffer {
     std::memcpy(args.blend_constants, blend_constants, sizeof(float) * 4);
   }
 
+  // Records a push-descriptor set update. Only image-info writes are supported
+  // (the texture/sampler sets): every write must reference VkDescriptorImageInfo
+  // entries, which are flattened into one array and re-pointed at execution.
+  void CmdVkPushDescriptorSetKHR(VkPipelineBindPoint pipeline_bind_point,
+                                 VkPipelineLayout layout, uint32_t set,
+                                 uint32_t descriptor_write_count,
+                                 const VkWriteDescriptorSet* descriptor_writes) {
+    uint32_t image_info_count = 0;
+    for (uint32_t i = 0; i < descriptor_write_count; ++i) {
+      image_info_count += descriptor_writes[i].descriptorCount;
+    }
+    size_t arguments_size = xe::align(sizeof(ArgsVkPushDescriptorSetKHR),
+                                      alignof(VkWriteDescriptorSet));
+    size_t writes_offset = arguments_size;
+    arguments_size += sizeof(VkWriteDescriptorSet) * descriptor_write_count;
+    arguments_size = xe::align(arguments_size, alignof(VkDescriptorImageInfo));
+    size_t image_infos_offset = arguments_size;
+    arguments_size += sizeof(VkDescriptorImageInfo) * image_info_count;
+    uint8_t* args_ptr = reinterpret_cast<uint8_t*>(
+        WriteCommand(Command::kVkPushDescriptorSetKHR, arguments_size));
+    auto& args = *reinterpret_cast<ArgsVkPushDescriptorSetKHR*>(args_ptr);
+    args.pipeline_bind_point = pipeline_bind_point;
+    args.layout = layout;
+    args.set = set;
+    args.descriptor_write_count = descriptor_write_count;
+    args.image_info_count = image_info_count;
+    auto writes_out =
+        reinterpret_cast<VkWriteDescriptorSet*>(args_ptr + writes_offset);
+    auto image_infos_out =
+        reinterpret_cast<VkDescriptorImageInfo*>(args_ptr + image_infos_offset);
+    uint32_t image_info_index = 0;
+    for (uint32_t i = 0; i < descriptor_write_count; ++i) {
+      VkWriteDescriptorSet& write_out = writes_out[i];
+      write_out = descriptor_writes[i];
+      // dstSet is ignored for push; null the pointers we don't serialize.
+      write_out.dstSet = VK_NULL_HANDLE;
+      write_out.pBufferInfo = nullptr;
+      write_out.pTexelBufferView = nullptr;
+      // Store the image-info array index in pImageInfo as an offset placeholder;
+      // re-pointed to the replayed array in Execute (can't store the final
+      // pointer here as the command stream may be reallocated).
+      write_out.pImageInfo = reinterpret_cast<const VkDescriptorImageInfo*>(
+          static_cast<uintptr_t>(image_info_index));
+      if (descriptor_writes[i].descriptorCount && descriptor_writes[i].pImageInfo) {
+        std::memcpy(image_infos_out + image_info_index,
+                    descriptor_writes[i].pImageInfo,
+                    sizeof(VkDescriptorImageInfo) *
+                        descriptor_writes[i].descriptorCount);
+      }
+      image_info_index += descriptor_writes[i].descriptorCount;
+    }
+  }
+
   void CmdVkSetDepthBias(float depth_bias_constant_factor,
                          float depth_bias_clamp,
                          float depth_bias_slope_factor) {
@@ -375,6 +428,7 @@ class DeferredCommandBuffer {
     kVkEndRenderPass,
     kVkPipelineBarrier,
     kVkPushConstants,
+    kVkPushDescriptorSetKHR,
     kVkSetBlendConstants,
     kVkSetDepthBias,
     kVkSetScissor,
@@ -505,6 +559,21 @@ class DeferredCommandBuffer {
     uint32_t offset;
     uint32_t size;
     // Followed by `size` bytes of values.
+  };
+
+  struct ArgsVkPushDescriptorSetKHR {
+    VkPipelineBindPoint pipeline_bind_point;
+    VkPipelineLayout layout;
+    uint32_t set;
+    uint32_t descriptor_write_count;
+    uint32_t image_info_count;
+    // Followed by aligned VkWriteDescriptorSet[descriptor_write_count], then
+    // VkDescriptorImageInfo[image_info_count]. Only image-info writes (sampled
+    // images / samplers) are supported - each write's pImageInfo is re-pointed
+    // into the replayed image-info array at execution time, pBufferInfo and
+    // pTexelBufferView are null. dstSet is ignored by vkCmdPushDescriptorSetKHR.
+    static_assert(alignof(VkWriteDescriptorSet) <= alignof(uintmax_t));
+    static_assert(alignof(VkDescriptorImageInfo) <= alignof(uintmax_t));
   };
 
   struct ArgsVkSetBlendConstants {
