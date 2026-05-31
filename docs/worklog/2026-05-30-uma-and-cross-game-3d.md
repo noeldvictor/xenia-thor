@@ -1079,6 +1079,39 @@ This is the real, final bottleneck: ~half CPU = our PM4 parse (GPU Commands), ~h
 guest JIT on the Draw Thread. Blue Dragon full speed requires cutting the Draw Thread
 guest-JIT cost.
 
+### B39 — *** FINAL ROOT CAUSE: guest game's own "Draw Thread" running JIT'd PPC at 100% ***
+Confirmed via logcat: 'Draw Thread (F80002A0)' is a GUEST XThread - Blue Dragon
+created it and named it; XThread::Execute thid 19, handle F80002A0. It runs 99.85% in
+the JIT code cache (B38). So the dominant fps cost is THE GAME'S OWN ENGINE CODE
+(render-submission logic) executing as JIT'd PPC->ARM64, NOT Xenia GPU emulation.
+COMPLETE PICTURE of Blue Dragon 2.4fps:
+- ~half CPU: GPU Commands thread = our C++ PM4 parsing (10,600 draws/frame to process).
+- ~half CPU: guest "Draw Thread" = the game's PPC render code (building those draws),
+  run by our JIT at 100%.
+=> THE LEVER IS JIT QUALITY (PPC->ARM64 a64 backend) + raw guest-CPU throughput. Faster
+JIT of the guest's draw-building code = higher fps. This is the "Thor 10-20x CPU"
+domain exactly - and it's the DEEPEST/HARDEST lever (improving generated code quality
+of the a64 JIT), not a localized hot-spot fix.
+WHY all prior fixes failed (now fully explained): B23-B35 optimized GPU (1.5% of cost);
+the gate is guest-PPC-JIT + our PM4 parse, both CPU.
+IMPLICATIONS / realistic next steps (each a deliberate iteration):
+ 1. a64 JIT codegen quality: profile which guest opcodes/sequences dominate (can't
+    symbolize JIT directly, but can instrument the JIT to count hot guest blocks, or
+    use the a64 backend's own stats). Improve codegen for the hottest sequences.
+ 2. Reduce PM4 parse cost on GPU Commands (the half we CAN symbolize): it is flat
+    (RingBuffer::Read fast path already in; byte_swap/memcpy each ~2%). Bulk-process
+    contiguous register writes in ExecutePacketType0 (read N dwords, swap with NEON
+    vrev, write a contiguous register range) instead of per-dword - could shave the
+    parse half.
+ 3. The guest issues 10,600 draws/frame - if the game is CPU-limited on real HW too,
+    30fps may require both halves optimized. The draw COUNT itself is guest behavior
+    we can't change.
+HONEST STATUS: investigation COMPLETE - root cause fully and correctly identified
+(guest PPC JIT + PM4 parse, both CPU; GPU is 1.5%). The remaining work is deep CPU/JIT
+optimization, not a quick fix. Shipped GPU opts are correct+safe (keep, default-safe).
+The user's "Thor is 10-20x CPU, should be fast in pure physics" is RIGHT - the gap is
+JIT efficiency turning that raw CPU into guest throughput.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
