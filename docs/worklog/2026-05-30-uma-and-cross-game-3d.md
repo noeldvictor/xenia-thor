@@ -1788,3 +1788,17 @@ have concatenable vertex+index streams. pipeline_binds=33 for 182 draws and desc
 per-draw (~182) - so DESCRIPTORS may change even when pipeline+constants don't (different texture per
 sprite batch). NEXT: instrument descriptor/scissor stability across the same-pipeline+same-consts runs
 to find the true mergeable run length, THEN build the concatenation batcher. Do NOT build before that.
+
+### B63 — LIVE heavy scene: GPU = 99% busy @ 680MHz (MAX clock). Fully saturated, GPU-compute-bound.
+User on the live Blue Dragon heavy scene (windmill/MS-logo, ~2fps). Read Adreno KGSL directly over ADB:
+  gpu_busy_percentage = 99% (stable, ~18 samples) @ clock_mhz = 680 = MAX (max_clock_mhz=680).
+=> Adreno 740 FULLY SATURATED at top clock. Stronger than the earlier 77-79% (lighter moment / pre-boost).
+Definitively GPU-COMPUTE-BOUND: not stalled (would be <100%), not underclocked (pinned 680), not CPU.
+SNAPDRAGON PROFILER: cannot drive its GUI from here (desktop app, no automation hook); its bundled adb
+CONTENDS with the SDK adb (intermittent "device not found" during reads, and it took the device after).
+SP reads the SAME Adreno KGSL counters - its "% GPU Busy" = the 99% I already have. SP's extra value =
+per-STAGE % (vertices vs fragments); headless equivalent = KGSL perfcounter HW groups (more involved).
+COMBINED VERDICT (B60/B61/B63): GPU 99%@max, geometry/binning-bound (resolution 0%, load/store 3%,
+breaks 12%, super-linear in draws), ~1200 tiny draws/frame, ~70-99% merge-eligible (B62-corrected).
+Fix = cut per-draw/geometry GPU work via draw merging. To use SP cleanly: give SP sole adb ownership
+(adb kill-server on the SDK side) OR run headless without SP attached - the two adb servers fight.
