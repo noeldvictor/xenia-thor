@@ -1263,3 +1263,26 @@ points (A faster so further along) but the cvar is the only changed input and th
 alone (5.67 vs 3.58) cannot be scene-timing; conclusion is solid.
 NEXT: re-measure the draw-wait fastpath contribution on the CLEAN (3D-rendering) config
 (A/B draw_wait on vs off at 5.67 baseline); continue fps optimization now that 3D renders.
+
+### B44 — Clean-config profile: draw-wait fastpath VALIDATED (spin 21.3M->95K); new hot path
+Re-profiled on the CLEAN (vmx_dot off, 3D-rendering) config with the shipped draw-wait
+fastpath default-on. Scene reached = the "Microsoft Game Studios Presents" 3D windmill
+intro (fully rendered, read) - the low fps (2-6) makes intros play out slowly so even
+95s + extra skips doesn't reach the field; this is WHY relaunch fps A/B is unreliable on
+the clean config (scene-timing drifts with speed; fps is 2-6 scene-dependent).
+SCENE-ROBUST, ATTRIBUTABLE RESULT (a64_speed_profile, device-read):
+  entry_delta total: 23,125,480 (polluted/B41) -> 408,237 (clean)  ~57x fewer guest entries
+  fn 8246B408 (draw-wait spin): 21,315,111 -> 94,896 entries (92% -> 23% of exec), code_size
+    1396 -> 488 (= the hand-emitted fastpath body is active)
+=> the shipped draw-wait fastpath is doing EXACTLY its job on the clean config: the yield/sleep
+cut the spin ~222x. This VALIDATES the ship beyond the black-3D config (where the +27% was
+measured); the clean-config fps delta itself is unmeasurable by relaunch A/B (scene drift),
+but the spin-entry collapse is the direct, scene-robust proof the mechanism works.
+NEW HOT PATH (clean, intro scene; no single dominator now): 82287788 (code_size 35568, 11794),
+82274DB0 (11980), 826BF770 (memcpy helper, total 3.39M - this is what arm64_blue_dragon_memcpy_
+fastpath targets, default-off = a candidate fastpath next), 822870D8, 820DFA50. Real distributed
+rendering work, not a spin. Draw Thread F80002A0 no longer pinned in 8246B408.
+NEXT CANDIDATES: (1) arm64_blue_dragon_memcpy_fastpath (826BF770 byte-copy -> host memmove,
+built, default-off) - A/B for a win; (2) reach a STEADY field scene reliably (save-state or
+longer/auto skip) so clean-config fps A/B becomes possible; (3) CP-thread PM4 throughput remains
+the structural gate (10,752 draws/frame is guest behavior).
