@@ -305,6 +305,22 @@ bool VulkanCommandProcessor::SetupContext() {
   XELOGGPU("VulkanCommandProcessor: push descriptors {}",
            push_descriptors_active_ ? "ENABLED" : "disabled");
 
+  // GPU-side frame-time timestamp queries (Thor/Adreno bring-up diagnostic).
+  gpu_timestamp_period_ns_ = device_properties.timestampPeriod;
+  if (gpu_timestamp_period_ns_ > 0.0f) {
+    VkQueryPoolCreateInfo query_pool_create_info = {};
+    query_pool_create_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    query_pool_create_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    query_pool_create_info.queryCount = 2 * kMaxFramesInFlight;
+    if (dfn.vkCreateQueryPool(device, &query_pool_create_info, nullptr,
+                              &gpu_timestamp_pool_) != VK_SUCCESS) {
+      gpu_timestamp_pool_ = VK_NULL_HANDLE;
+    }
+  }
+  XELOGGPU("VulkanCommandProcessor: GPU timestamps {} (period {} ns)",
+           gpu_timestamp_pool_ != VK_NULL_HANDLE ? "ENABLED" : "disabled",
+           gpu_timestamp_period_ns_);
+
   // The unconditional inclusion of the vertex shader stage also covers the case
   // of manual index / factor buffer fetch (the system constants and the shared
   // memory are needed for that) in the tessellation vertex shader when
@@ -1192,6 +1208,9 @@ void VulkanCommandProcessor::ShutdownContext() {
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyQueryPool, device,
+                                         gpu_timestamp_pool_);
+
   DestroyScratchBuffer();
 
   for (SwapFramebuffer& swap_framebuffer : swap_framebuffers_) {
@@ -1838,6 +1857,33 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    // Read back the newest GPU-timestamp pair from a frame that has completed
+    // and whose slot hasn't been reused by an in-flight frame (no host stall).
+    if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
+      const uint64_t completed = GetCompletedFrame();
+      uint64_t best_frame = 0;
+      int best_slot = -1;
+      for (uint32_t s = 0; s < kMaxFramesInFlight; ++s) {
+        uint64_t wf = gpu_timestamp_frame_written_[s];
+        if (wf != 0 && wf <= completed && wf >= best_frame) {
+          best_frame = wf;
+          best_slot = int(s);
+        }
+      }
+      if (best_slot >= 0) {
+        uint64_t ts[2] = {};
+        const ui::vulkan::VulkanDevice::Functions& ts_dfn =
+            GetVulkanDevice()->functions();
+        if (ts_dfn.vkGetQueryPoolResults(
+                GetVulkanDevice()->device(), gpu_timestamp_pool_,
+                2u * uint32_t(best_slot), 2, sizeof(ts), ts, sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
+            ts[1] > ts[0]) {
+          gpu_frame_us_ = uint64_t(double(ts[1] - ts[0]) *
+                                   double(gpu_timestamp_period_ns_) / 1000.0);
+        }
+      }
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -1846,7 +1892,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
-        "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={}",
+        "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
+        "gpu_frame_us={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1871,7 +1918,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                 draw_cpu_rt_ns_ + draw_cpu_pipeline_ns_ +
                 draw_cpu_bindings_ns_)) /
                   1000
-            : 0);
+            : 0,
+        gpu_frame_us_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -4478,7 +4526,27 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       XELOGE("Failed to begin a Vulkan command buffer");
       return false;
     }
+    // GPU frame-time bracket: TOP-of-pipe timestamp before the frame's work,
+    // BOTTOM-of-pipe after. Reset precedes the writes (required). Read back
+    // deferred at swap. For >1 submission/frame the last submission's span wins
+    // (Blue Dragon measured 1 submit/frame).
+    uint32_t gpu_ts_base = 0;
+    if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
+      gpu_ts_base = 2u * uint32_t(frame_current_ % kMaxFramesInFlight);
+      dfn.vkCmdResetQueryPool(command_buffer.buffer, gpu_timestamp_pool_,
+                              gpu_ts_base, 2);
+      dfn.vkCmdWriteTimestamp(command_buffer.buffer,
+                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                              gpu_timestamp_pool_, gpu_ts_base);
+      gpu_timestamp_frame_written_[frame_current_ % kMaxFramesInFlight] =
+          frame_current_;
+    }
     deferred_command_buffer_.Execute(command_buffer.buffer);
+    if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
+      dfn.vkCmdWriteTimestamp(command_buffer.buffer,
+                              VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                              gpu_timestamp_pool_, gpu_ts_base + 1);
+    }
     if (dfn.vkEndCommandBuffer(command_buffer.buffer) != VK_SUCCESS) {
       XELOGE("Failed to end a Vulkan command buffer");
       return false;

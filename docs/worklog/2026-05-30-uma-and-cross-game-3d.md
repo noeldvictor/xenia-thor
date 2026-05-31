@@ -1482,3 +1482,27 @@ fetch / VK_EXT_rasterization_order_attachment_access) instead of end-pass+barrie
 (3) keep render targets resident to avoid ownership transfers. NEXT: build GPU timestamp queries
 (vkCmdWriteTimestamp) to CONFIRM GPU frame time ~= 500ms and attribute it across the render passes
 vs transfers, then do the EDRAM-transfer barrier/pass-break refactor. Target = Thor/Adreno 740 only.
+
+### B52 — GPU TIMESTAMP INSTRUMENTATION built; CONFIRMS ~550ms GPU/frame (100% GPU-bound)
+Built Vulkan timestamp-query GPU-time instrumentation (the "gpu assistance"): added 5 core query
+fns to device_1_0.inc (vkCreateQueryPool/vkDestroyQueryPool/vkGetQueryPoolResults/
+vkCmdResetQueryPool/vkCmdWriteTimestamp), exposed limits.timestampPeriod in VulkanDevice::Properties,
+created a 2*kMaxFramesInFlight VK_QUERY_TYPE_TIMESTAMP pool, write TOP/BOTTOM-of-pipe timestamps
+around each frame's submitted command buffer in EndSubmission, read back deferred (a completed,
+non-reused slot, no host stall) and log gpu_frame_us in the draw-outcomes line. Gated by
+vulkan_trace_draw_outcomes_per_frame. Thor/Adreno (timestampPeriod=52.08ns).
+DEVICE-MEASURED (Blue Dragon 3D scene, ~2000 draws/frame, 4 frames):
+  gpu_frame_us = 550,597 / 557,666 / 563,011 / 568,500  (~550-570 MS of GPU per frame)
+  cpu_issuedraw_us = ~39-44 ms (CPU = ~7% of frame)
+=> The frame (~1.8fps, ~560ms) is ~100% GPU EXECUTION TIME. CPU is idle waiting on the GPU fence.
+~550ms GPU for ~2000 simple draws = ~275 us/draw on the GPU - impossible for raw raster on an
+Adreno 740 -> it is the ~98 barrier-forced render-pass END/BEGIN tile store+reload cycles (EDRAM
+emulation), exactly as B51 predicted. *** GPU-bound is now PROVEN with a direct GPU measurement,
+not inference. *** The B39 "CPU-bound" premise is fully dead.
+NEXT (the architectural fix): cut the GPU tile-flush cost. (1) Add per-category GPU timestamps
+(around the EDRAM transfer passes vs the main guest render passes vs resolves) to attribute the
+550ms - confirms which passes to eliminate. (2) Then restructure the EDRAM/render-target-cache path
+so the frame uses FEW render passes: hoist EDRAM ownership transfers out of the per-draw interleave,
+keep RTs resident, and/or use Adreno in-pass read-modify-write (subpasses / dynamic-rendering local
+reads / framebuffer-fetch / VK_EXT_rasterization_order_attachment_access) instead of
+end-pass+barrier+copy+begin-pass. Validate each step with gpu_frame_us. Target Thor/Adreno 740 only.

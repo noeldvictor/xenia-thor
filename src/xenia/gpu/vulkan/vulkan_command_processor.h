@@ -798,6 +798,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t draw_cpu_pipeline_ns_ = 0;
   uint64_t draw_cpu_bindings_ns_ = 0;
 
+  // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
+  // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command
+  // buffer; the result is read back deferred (a completed frame) and logged at
+  // swap. This is the decisive measure of whether the frame is GPU-bound (the
+  // ~98 tile-flushes/frame hypothesis). 2 timestamps per kMaxFramesInFlight.
+  VkQueryPool gpu_timestamp_pool_ = VK_NULL_HANDLE;
+  float gpu_timestamp_period_ns_ = 0.0f;
+  // Per-frame bookkeeping: which frame index last wrote each slot pair, so the
+  // readback only trusts a slot it actually wrote.
+  uint64_t gpu_timestamp_frame_written_[kMaxFramesInFlight] = {};
+  // Last successfully read GPU frame time (microseconds), logged at swap.
+  uint64_t gpu_frame_us_ = 0;
+
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
   // render target cache; logged + reset at swap. transfer_calls = times

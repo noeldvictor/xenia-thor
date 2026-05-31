@@ -96,6 +96,7 @@ class VulkanDevice {
     VkDeviceSize optimalBufferCopyOffsetAlignment = 1;
     VkDeviceSize optimalBufferCopyRowPitchAlignment = 1;
     VkDeviceSize nonCoherentAtomSize = 256;
+    float timestampPeriod = 0.0f;
 
     bool robustBufferAccess = false;
     bool fullDrawIndexUint32 = false;
