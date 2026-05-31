@@ -791,6 +791,29 @@ may be a large fps gain (e.g. 2.4 -> 10-15fps) by cutting redundant transfers, n
 necessarily instant 30fps. Measure each change with vulkan_trace_perf_counters
 (render_pass_begins + barrier_force_end_render_pass deltas) + fps.
 
+### B28 — MEASURED: EDRAM transfers = only ~45/frame, < half the ~98 force-ends
+Instrumented per-frame (Blue Dragon heavy, both logs correlated, 30-frame deltas):
+- rt_transfer_calls=25/frame, rt_transfers=45/frame, rt_resolve_clears=2/frame
+- barrier_force_end_render_pass ~98/frame, render_pass_begins ~75/frame
+- image_barriers ~149/frame, buffer_barriers ~145/frame
+- descriptor_binds=10464/frame (~1/draw), pipeline_binds=1086/frame
+=> EDRAM transfers (45) account for AT MOST ~45 of the ~98 force-ends - UNDER HALF.
+B27's "reduce EDRAM transfers" would only address <50%. Good that I instrumented
+before coding it.
+KEY RATIO: 45 transfers but ~145 buffer + ~149 image barriers = ~3 barriers PER
+TRANSFER (source-image->transfer-read, edram buffer use, dest->attachment). And ~98
+force-ends ~ 25 transfer_calls*~? + other SubmitBarriers(true) sites. So each EDRAM
+transfer is EXPENSIVE (multiple barriers, each batch ending the pass), AND there are
+~53 OTHER force-ends/frame from non-transfer SubmitBarriers(true) callers.
+NEXT: instrument the force-end SOURCE. SubmitBarriers(true) callers (from earlier grep
+vulkan_command_processor.cc:1427,2208,2324,4345 + render_target_cache resolve/transfer
+paths). Add a per-call-site counter (or a single force_end counter per subsystem) to
+split the ~98 into: EDRAM-transfer vs resolve vs texture-load vs other. The biggest
+non-transfer bucket is the next target. Likely candidate: texture LoadTextureData
+(uploading sampled textures) does transfer-dest writes + SubmitBarriers; OR resolves
+(IssueCopy) per frame. rt_resolve_clears is only 2 so resolve-clears aren't it.
+Hypothesis to test: per-draw texture streaming (LoadTextureData) barriers.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
