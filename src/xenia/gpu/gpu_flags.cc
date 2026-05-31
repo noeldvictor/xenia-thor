@@ -336,6 +336,16 @@ DEFINE_bool(
     "performance-mode experiment; measure via gpu_frame_us + read the frame.",
     "GPU");
 
+DEFINE_int32(
+    gpu_skip_draws_below_verts, 0,
+    "Thor/Adreno measurement+perf: skip emitting the GPU draw command for draws "
+    "whose host vertex count is below this threshold (all CPU-side state setup "
+    "still runs). 0 disables. Diagnostic: sizes how much GPU time the tiny draws "
+    "themselves cost (Blue Dragon heavy scene is ~1200 tiny draws, GPU 99% busy). "
+    "Also a crude accuracy-for-speed lever (drops tiny geometry). Measure via "
+    "gpu_frame_us + read the frame.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

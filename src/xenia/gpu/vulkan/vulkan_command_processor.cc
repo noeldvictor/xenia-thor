@@ -3868,9 +3868,18 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       render_target_cache_->last_update_framebuffer());
 
   // Draw.
-  if (primitive_processing_result.index_buffer_type ==
-          PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
-      shader_32bit_index_dma) {
+  // Measurement/perf lever: optionally skip the GPU draw command for tiny draws
+  // (all state setup already done above). Sizes the GPU cost of the ~1200 tiny
+  // draws/frame and acts as a crude accuracy-for-speed lever.
+  const bool skip_tiny_draw =
+      cvars::gpu_skip_draws_below_verts > 0 &&
+      primitive_processing_result.host_draw_vertex_count <
+          uint32_t(cvars::gpu_skip_draws_below_verts);
+  if (skip_tiny_draw) {
+    // Emit nothing; fall through to the per-frame bookkeeping below.
+  } else if (primitive_processing_result.index_buffer_type ==
+                 PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
+             shader_32bit_index_dma) {
     deferred_command_buffer_.CmdVkDraw(
         primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
   } else {
