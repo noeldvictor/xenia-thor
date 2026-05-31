@@ -1051,6 +1051,34 @@ RETRACTS the entire GPU-bottleneck line (B24-B35) as the FPS gate - those were r
 costs but the gate is GUEST CPU/JIT execution. Keep the shipped GPU opts (correct,
 default-off/safe) but pivot the fps hunt to CPU/JIT.
 
+### B38 — PINNED: the "Draw Thread" is 99.85% JIT code-cache (guest code on CPU)
+Profiled the two hot threads SEPARATELY (per-thread simpleperf, this run):
+- GPU Commands thread: 85.9% libxenia (OUR C++), flat PM4-parse (RingBuffer::Read now
+  the fast inline path + byte_swap + memcpy_opt, each ~2%, no single hotspot), 3.5%
+  Adreno driver. ~half the total CPU.
+- "Draw Thread": **99.85% unknown = the 0x2a JIT CODE CACHE** (top: 2a0a3f47c 18%,
+  2a0106084 9%, ...). Almost ZERO libxenia/driver. = running JIT-compiled GUEST code
+  ~100% of the time. This is the dominant 'unknown' from the combined profile (B36).
+=> CONFIRMED: the fps gate is the "Draw Thread" executing guest JIT code nonstop. A
+thread named "Draw Thread" running 100% guest JIT = Xenia is doing GUEST GPU WORK ON
+THE CPU - almost certainly guest VERTEX SHADERS / geometry executed on CPU (memexport
+emulation, or a vertex/primitive path that can't go on the GPU), per draw, x10,600
+draws/frame. That gates fps and is invisible to GPU optimization (why B23-B35 = 0).
+NEXT (the fix domain, finally exact):
+ 1. Identify what the "Draw Thread" is - grep thread creation for "Draw Thread" name
+    in the gpu/cpu backend; find what guest code it JIT-runs. Likely the memexport or
+    CPU-vertex-shader path, or the PPC interpreter/JIT worker for a guest-side draw
+    helper the game calls per draw.
+ 2. simpleperf can't symbolize JIT, BUT: enable any "trace memexport" / VS-on-CPU
+    counter, OR check cvars for forcing that work onto the GPU. If it's memexport
+    vertex shaders run on CPU because vertexPipelineStoresAndAtomics is unsupported -
+    check that device feature; if supported, ensure the GPU path is taken not CPU.
+ 3. If it's genuinely guest game code (not GPU emulation) - then JIT quality is the
+    lever (a64 backend), deep.
+This is the real, final bottleneck: ~half CPU = our PM4 parse (GPU Commands), ~half =
+guest JIT on the Draw Thread. Blue Dragon full speed requires cutting the Draw Thread
+guest-JIT cost.
+
 ## Session stop point (cross-game black-3D + slowness)
 Progress this session:
 - UMA: fully mapped + concluded dead-end on this Adreno (host-visible-device-local
