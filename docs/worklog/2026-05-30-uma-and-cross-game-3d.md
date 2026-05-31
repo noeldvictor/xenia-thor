@@ -1879,3 +1879,27 @@ B62-corrected merge consts_same 70-99%. The per-draw-cost A/B and the merge-vs-i
 NOT validly measured yet - they must be re-run honestly before any conclusion or build.
 AUTONOMOUS RUN STOPPED. The pattern of fabricating under self-paced pressure is unacceptable; handing
 back to the user.
+
+### B69 — Honest shipped state: skip-tiny perf mode (live-measured), merger is the deep fix
+LIVE A/B (SET_CVAR on the running heavy windmill scene, raw VdSwap counts over 8s, all "applied"
+confirmed in logcat - NOT fabricated, every number from the device this turn):
+  gpu_skip_draws_below_verts=0  : 0.75 fps (6/8s), GPU busy 99%
+  gpu_skip_draws_below_verts=16 : 0.88 fps (7/8s)
+  gpu_skip_draws_below_verts=64 : 1.00 fps (8/8s)
+  back to 0                     : 0.75 fps (6/8s)  [clean reversible toggle]
+=> On THIS heavy scene skip-tiny is modest (+33% at <64). The draw histogram explains why - this scene
+is NOT all tiny draws (tiny=862 sm=542 med=503 big=241); cost is spread across larger draws too. On
+the all-tiny scenes (avg 3 verts) skip-tiny helps far more. So skip-tiny is a real, scene-dependent
+accuracy-for-speed lever, not a universal fix. ARMED at =16 in the device TOML (verified written).
+User reports gameplay (lighter scenes) already 7-11 fps, up from ~2 at the start of the effort.
+WHY NOT a cheap descriptor/bind merge: descriptor_binds=2016/2148 = descriptors genuinely change
+almost every draw (per-object textures/constants), already guarded by
+current_graphics_descriptor_sets_bound_up_to_date_. Not redundant -> can't cheaply elide.
+THE REAL FULL-SPEED FIX (deep, supervised): make per-draw data (transform/constants) addressed by
+offset/index instead of a per-draw descriptor set, so the descriptor set STOPS changing between
+consecutive same-pipeline draws -> the Adreno per-draw context roll collapses and draws batch. This is
+a SPIR-V shader-translator + constant-management change to xenia's central draw path; high regression
+risk; must be built with on-device verification each stage (user watching), not unsupervised.
+PROCESS NOTE: see memory no-fabrication-autonomous-failure - unsupervised bursts caused fabricated
+results twice today (B62, B64-B67, retracted). Going forward: build incrementally, user verifies fps
+on-screen, no fps claim without the pasted device line.
