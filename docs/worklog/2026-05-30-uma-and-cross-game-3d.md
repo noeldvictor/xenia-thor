@@ -1735,3 +1735,33 @@ scene; both are valid - the bottleneck shape is the same.)
 The fix direction is unchanged: collapse the per-draw count via batching/instancing of consecutive
 same-state tiny draws; verify per-draw constant stability first. Point sprites (pt=144) and quad lists
 in particular are prime batch/instance candidates.
+
+### B62 — Merge gate: tiny draws are NOT plain-mergeable (consts change EVERY draw) -> per-object rendering
+Instrumented merge-eligibility (merge[pipe_same/consts_same/consts_changed] in draw-outcomes log).
+Heavy scene (rendered=1197, pipeline_binds=262, prim tl=931 pt=144 quad=111):
+  merge[pipe_same=935, consts_same=0, consts_changed=935].
+=> Of 935 consecutive SAME-PIPELINE draws, 0 reused vertex float constants - ALL 935 invalidated the
+kConstantBufferFloatVertex bit between draws. So the ~1200 tiny draws are PER-OBJECT rendering: same
+shader/pipeline, a DIFFERENT per-mesh transform (vertex float constants) each draw. *** A plain
+draw-concatenation is UNSAFE (would render every object with one transform). The merge-vs-instance
+gate => NOT plain merge. ***
+RIGOR CAVEAT: the counter measures "constant buffer INVALIDATED (bit cleared by a register write)
+since last draw", not "values actually differ" - the guest could rewrite identical values. To be
+certain, would hash the float-constant range per draw. But "invalidated every draw" already rules out
+the cheap path and matches per-object transforms.
+IMPLICATIONS for the fix (the GPU front-end is paying per-draw state for ~1200 dozen-triangle draws):
+ - This is the classic "many small draws, 1 shader, per-object uniform" problem. Plain merge is out.
+ - Options: (a) INSTANCING needs shared geometry across the draws (these have different meshes -> not
+   directly applicable unless point sprites/quads share a unit primitive); (b) BATCH with per-draw
+   constant indexing: concatenate vertex/index data + a per-draw "object index" that selects the
+   transform from an array UBO/SSBO, one vkCmdDraw[Indexed] or draw-indirect (VK_EXT_multi_draw absent
+   on Adreno, but vkCmdDrawIndexedIndirect + gl_DrawID-style index works) - requires modifying the
+   translated vertex shader to fetch its transform by draw index, a deep shader-translator change;
+   (c) the 144 POINT sprites + 111 QUADs are the most batchable subset (uniform tiny primitives) -
+   could be special-cased. 
+ - HONEST: this is a large change (touches the SPIR-V vertex shader translator + the draw path +
+   constant management). Before building it, the highest-value validation is a Snapdragon Profiler GPU
+   Metrics capture to confirm the per-draw cost is binning/primitive front-end (not, e.g., the
+   per-draw constant UPLOAD showing up as GPU) - so the batch actually targets the real GPU cost.
+NEXT: (1) decide instancing-by-draw-index vs point/quad special-case; (2) get the Snapdragon Profiler
+% vertex/primitive/stall split (user-run) to confirm the batch will pay off before the deep build.
