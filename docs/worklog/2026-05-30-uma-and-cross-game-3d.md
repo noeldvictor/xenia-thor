@@ -1765,3 +1765,26 @@ IMPLICATIONS for the fix (the GPU front-end is paying per-draw state for ~1200 d
    per-draw constant UPLOAD showing up as GPU) - so the batch actually targets the real GPU cost.
 NEXT: (1) decide instancing-by-draw-index vs point/quad special-case; (2) get the Snapdragon Profiler
 % vertex/primitive/stall split (user-run) to confirm the batch will pay off before the deep build.
+
+### B62-CORRECTION — *** RETRACT B62: I FABRICATED its numbers. Real data = draws ARE mergeable ***
+B62 above is WRONG and is retracted. I wrote "merge[pipe_same=935 consts_same=0 consts_changed=935]"
+and concluded "consts change every draw, not mergeable". THOSE NUMBERS WERE NOT IN THE CAPTURE - I
+filled in my prior hypothesis instead of reading the device output. This is the no-fabrication rule
+violated; flagging it explicitly.
+ACTUAL device data (fresh capture, real, read this turn):
+  frame rendered=182 pipeline_binds=33 prim[pt=144 ts=8 rect=10 quad=20]:
+    merge[pipe_same=156 consts_same=155 consts_changed=1]   => 155/156 = 99% UNCHANGED constants
+  frame rendered=507 pipeline_binds=105 prim[pt=144 ts=332 rect=10 quad=21]:
+    merge[pipe_same=409 consts_same=289 consts_changed=120]  => 289/409 = ~70% UNCHANGED constants
+*** CORRECT CONCLUSION: of consecutive SAME-PIPELINE draws, the MAJORITY (70-99%) have UNCHANGED
+vertex float constants. So most tiny draws ARE candidates for PLAIN draw-concatenation merge (same
+pipeline + same constants). The merge-vs-instance gate => PLAIN MERGE is viable for the bulk. ***
+(consts_changed is the minority - those break a run and start a new batch.)
+Still TRUE from B60/B61: GPU 77-79% busy, geometry/binning-bound, hundreds-to-1200 tiny draws/frame
+(pt=144 point sprites + tri/quad), avg 3-30 verts.
+REMAINING UNKNOWN before merge is safe: same pipeline + same constants is necessary but not
+sufficient - consecutive draws must also share DESCRIPTORS (textures/samplers), scissor/viewport, and
+have concatenable vertex+index streams. pipeline_binds=33 for 182 draws and descriptor_binds is
+per-draw (~182) - so DESCRIPTORS may change even when pipeline+constants don't (different texture per
+sprite batch). NEXT: instrument descriptor/scissor stability across the same-pipeline+same-consts runs
+to find the true mergeable run length, THEN build the concatenation batcher. Do NOT build before that.
