@@ -1857,6 +1857,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  // Lever 2 (vulkan_merge_draws): realize any pending concatenation run before
+  // the frame's present/teardown work.
+  FlushPendingMergeRun();
+
   // Optional hard freeze (for genuinely static scenes like menus). NOTE: for
   // animated cinematics this does NOT produce a static frame (the engine keeps
   // evolving the scene regardless of the guest clock), so the primary clean-A/B
@@ -2864,6 +2868,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   if (current_render_pass_ != VK_NULL_HANDLE) {
     // Ending because the render pass / framebuffer changed (RT reconfig).
+    // Lever 2: this direct CmdVkEndRenderPass bypasses EndRenderPass(), so flush
+    // the pending concatenation run (it belongs to the old pass) before ending it.
+    FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
     deferred_command_buffer_.CmdVkEndRenderPass();
   }
@@ -2891,6 +2898,13 @@ void VulkanCommandProcessor::EndRenderPass() {
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
   }
+  // Lever 2 (vulkan_merge_draws): the pending draw-concatenation run's draws
+  // belong to THIS render pass - realize them before it ends. This is the master
+  // pass-end flush (covers SubmitBarriers force/barrier breaks and the IssueCopy/
+  // IssueSwap/EndSubmission pass teardowns). No-op when no run is pending, and
+  // never called between mergeable draws (the pass stays open), so coalescing is
+  // preserved.
+  FlushPendingMergeRun();
   deferred_command_buffer_.CmdVkEndRenderPass();
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
@@ -3167,6 +3181,10 @@ VulkanCommandProcessor::AcquireScratchGpuBuffer(
 void VulkanCommandProcessor::BindExternalGraphicsPipeline(
     VkPipeline pipeline, bool keep_dynamic_depth_bias,
     bool keep_dynamic_blend_constants, bool keep_dynamic_stencil_mask_ref) {
+  // Lever 2 (vulkan_merge_draws): an external pipeline replaces the guest pipeline
+  // a pending concatenation run was built against (it NULLs
+  // current_guest_graphics_pipeline_ below), so realize the run first.
+  FlushPendingMergeRun();
   if (!keep_dynamic_depth_bias) {
     dynamic_depth_bias_update_needed_ = true;
   }
@@ -4083,6 +4101,10 @@ bool VulkanCommandProcessor::IssueCopy() {
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
+  // Lever 2 (vulkan_merge_draws): a resolve/copy depends on prior draws having
+  // executed - realize any pending concatenation run first.
+  FlushPendingMergeRun();
+
   uint64_t copy_sequence = ++trace_copy_sequence_;
   bool trace_copy_state = ShouldTraceVulkanCopyState();
   if (trace_copy_state) {
@@ -4617,6 +4639,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 
   // Make sure everything needed for submitting exist.
   if (submission_open_) {
+    // Lever 2 (vulkan_merge_draws): a run must never span a submission - realize
+    // it before any teardown (the EndRenderPass below also flushes, but flush
+    // explicitly here in case any pre-teardown work depends on prior draws).
+    FlushPendingMergeRun();
     if (!sparse_memory_binds_.empty() && semaphores_free_.empty()) {
       VkSemaphoreCreateInfo semaphore_create_info;
       semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
