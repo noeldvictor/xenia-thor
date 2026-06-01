@@ -394,6 +394,19 @@ DEFINE_bool(
     "when off. (Stencil compare/write masks + reference are already dynamic.)",
     "GPU");
 
+DEFINE_bool(
+    vulkan_dynamic_state_topology, false,
+    "Thor/Adreno binning re-arch (Lever 1, EDS): promote primitive topology to "
+    "Vulkan extended dynamic state (VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, core in "
+    "Vulkan 1.3) for triangle LIST + STRIP draws (same triangle class - safe "
+    "without dynamicPrimitiveTopologyUnrestricted) so list/strip variants of one "
+    "shader+state collapse onto ONE VkPipeline. High value for Blue Dragon "
+    "(~931 list + ~266 strip draws/frame). Only triangle list/strip are promoted "
+    "(non-GS, triangle class); fan/line/point/rect/quad stay static. No effect "
+    "unless Vulkan 1.3+. Default off; STARTUP cvar - do not toggle live. "
+    "Bit-identical when off.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

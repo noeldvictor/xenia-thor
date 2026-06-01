@@ -580,6 +580,20 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   }
   description_out.geometry_shader = geometry_shader;
   description_out.primitive_topology = primitive_topology;
+  // EDS topology (Lever 1): promote triangle LIST + STRIP to dynamic state ->
+  // normalize the key to kTriangleList so list/strip variants of one shader+
+  // state collapse onto one VkPipeline. Only non-GS triangle list/strip (same
+  // triangle class, safe without dynamicPrimitiveTopologyUnrestricted); fan/
+  // line/point/rect/quad stay static. The real topology is emitted in
+  // UpdateDynamicState. Default-off keeps the real per-draw topology in the key.
+  if (cvars::vulkan_dynamic_state_topology &&
+      device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0) &&
+      geometry_shader == PipelineGeometryShader::kNone &&
+      (primitive_topology == PipelinePrimitiveTopology::kTriangleList ||
+       primitive_topology == PipelinePrimitiveTopology::kTriangleStrip)) {
+    description_out.primitive_topology =
+        PipelinePrimitiveTopology::kTriangleList;
+  }
   description_out.primitive_restart =
       primitive_processing_result.host_primitive_reset_enabled;
 
@@ -2169,7 +2183,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 14> dynamic_states;
+  std::array<VkDynamicState, 15> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2193,6 +2207,20 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
         VK_DYNAMIC_STATE_CULL_MODE;
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_FRONT_FACE;
+  }
+  // EDS (Lever 1): primitive topology dynamic for the promoted triangle list/
+  // strip pipelines (geometry_shader==kNone + key normalized to kTriangleList).
+  // Matches the key-normalization in GetCurrentStateDescription + emission in
+  // UpdateDynamicState. Applies in both render paths (input assembly is used
+  // regardless of FSI).
+  if (cvars::vulkan_dynamic_state_topology &&
+      vulkan_device->properties().apiVersion >=
+          VK_MAKE_API_VERSION(0, 1, 3, 0) &&
+      description.geometry_shader == PipelineGeometryShader::kNone &&
+      description.primitive_topology ==
+          PipelinePrimitiveTopology::kTriangleList) {
+    dynamic_states[dynamic_state.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY;
   }
   if (!edram_fragment_shader_interlock) {
     // EDS (Lever 1): depth test/write/compare dynamic (core in Vulkan 1.3).

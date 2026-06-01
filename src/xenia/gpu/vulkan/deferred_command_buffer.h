@@ -406,6 +406,12 @@ class DeferredCommandBuffer {
     args.compare_op = compare_op;
   }
 
+  void CmdVkSetPrimitiveTopology(VkPrimitiveTopology primitive_topology) {
+    auto& args = *reinterpret_cast<ArgsVkSetPrimitiveTopology*>(WriteCommand(
+        Command::kVkSetPrimitiveTopology, sizeof(ArgsVkSetPrimitiveTopology)));
+    args.primitive_topology = primitive_topology;
+  }
+
   void CmdVkSetScissor(uint32_t first_scissor, uint32_t scissor_count,
                        const VkRect2D* scissors) {
     const size_t header_size =
@@ -484,6 +490,7 @@ class DeferredCommandBuffer {
     kVkSetDepthTestEnable,
     kVkSetDepthWriteEnable,
     kVkSetFrontFace,
+    kVkSetPrimitiveTopology,
     kVkSetScissor,
     kVkSetStencilCompareMask,
     kVkSetStencilOp,
@@ -665,6 +672,10 @@ class DeferredCommandBuffer {
     VkStencilOp pass_op;
     VkStencilOp depth_fail_op;
     VkCompareOp compare_op;
+  };
+
+  struct ArgsVkSetPrimitiveTopology {
+    VkPrimitiveTopology primitive_topology;
   };
 
   struct ArgsVkSetDepthBias {

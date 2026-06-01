@@ -490,7 +490,8 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   void UpdateDynamicState(const draw_util::ViewportInfo& viewport_info,
                           bool primitive_polygonal,
-                          reg::RB_DEPTHCONTROL normalized_depth_control);
+                          reg::RB_DEPTHCONTROL normalized_depth_control,
+                          xenos::PrimitiveType host_primitive_type);
   void UpdateSystemConstantValues(
       bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -736,6 +737,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // emission regardless of these initial values.
   VkCullModeFlags dynamic_cull_mode_ = VK_CULL_MODE_NONE;
   VkFrontFace dynamic_front_face_ = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  // EDS primitive topology (Lever 1, vulkan_dynamic_state_topology) - only
+  // triangle list/strip are promoted.
+  VkPrimitiveTopology dynamic_primitive_topology_ =
+      VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   // EDS depth (Lever 1, vulkan_dynamic_state_depth).
   VkBool32 dynamic_depth_test_enable_ = VK_FALSE;
   VkBool32 dynamic_depth_write_enable_ = VK_FALSE;
@@ -763,6 +768,7 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool dynamic_stencil_reference_back_update_needed_;
   bool dynamic_cull_mode_update_needed_ = false;
   bool dynamic_front_face_update_needed_ = false;
+  bool dynamic_primitive_topology_update_needed_ = false;
   bool dynamic_depth_test_enable_update_needed_ = false;
   bool dynamic_depth_write_enable_update_needed_ = false;
   bool dynamic_depth_compare_op_update_needed_ = false;

@@ -3186,6 +3186,7 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
   // guest draw. Harmless when the promotion cvar is off (flags never consumed).
   dynamic_cull_mode_update_needed_ = true;
   dynamic_front_face_update_needed_ = true;
+  dynamic_primitive_topology_update_needed_ = true;
   dynamic_depth_test_enable_update_needed_ = true;
   dynamic_depth_write_enable_update_needed_ = true;
   dynamic_depth_compare_op_update_needed_ = true;
@@ -3663,7 +3664,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 
   // Update dynamic graphics pipeline state.
   UpdateDynamicState(viewport_info, primitive_polygonal,
-                     normalized_depth_control);
+                     normalized_depth_control,
+                     primitive_processing_result.host_primitive_type);
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
   if (trace_draw_state) {
@@ -4467,6 +4469,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_stencil_reference_back_update_needed_ = true;
     dynamic_cull_mode_update_needed_ = true;
     dynamic_front_face_update_needed_ = true;
+    dynamic_primitive_topology_update_needed_ = true;
     dynamic_depth_test_enable_update_needed_ = true;
     dynamic_depth_write_enable_update_needed_ = true;
     dynamic_depth_compare_op_update_needed_ = true;
@@ -4877,7 +4880,8 @@ void VulkanCommandProcessor::DestroyScratchBuffer() {
 
 void VulkanCommandProcessor::UpdateDynamicState(
     const draw_util::ViewportInfo& viewport_info, bool primitive_polygonal,
-    reg::RB_DEPTHCONTROL normalized_depth_control) {
+    reg::RB_DEPTHCONTROL normalized_depth_control,
+    xenos::PrimitiveType host_primitive_type) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -5124,6 +5128,28 @@ void VulkanCommandProcessor::UpdateDynamicState(
       deferred_command_buffer_.CmdVkSetFrontFace(front_face);
       dynamic_front_face_ = front_face;
       dynamic_front_face_update_needed_ = false;
+    }
+  }
+
+  // EDS topology (Lever 1): emit the real primitive topology for promoted
+  // triangle LIST/STRIP draws. MUST match the dynamic-state array + key
+  // normalization in the pipeline cache - only host triangle list/strip get
+  // VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY (non-GS, triangle class); everything
+  // else keeps a static topology and must NOT be emitted here.
+  if (cvars::vulkan_dynamic_state_topology &&
+      GetVulkanDevice()->properties().apiVersion >=
+          VK_MAKE_API_VERSION(0, 1, 3, 0) &&
+      (host_primitive_type == xenos::PrimitiveType::kTriangleList ||
+       host_primitive_type == xenos::PrimitiveType::kTriangleStrip)) {
+    VkPrimitiveTopology topology =
+        host_primitive_type == xenos::PrimitiveType::kTriangleStrip
+            ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP
+            : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    if (dynamic_primitive_topology_update_needed_ ||
+        topology != dynamic_primitive_topology_) {
+      deferred_command_buffer_.CmdVkSetPrimitiveTopology(topology);
+      dynamic_primitive_topology_ = topology;
+      dynamic_primitive_topology_update_needed_ = false;
     }
   }
 

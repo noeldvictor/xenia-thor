@@ -9,3 +9,5 @@ XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetDepthCompareOpEXT, vkCmdSetDepthCompareOp
 XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetStencilTestEnableEXT,
                                vkCmdSetStencilTestEnable)
 XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetStencilOpEXT, vkCmdSetStencilOp)
+XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetPrimitiveTopologyEXT,
+                               vkCmdSetPrimitiveTopology)
