@@ -313,6 +313,13 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetPrimitiveTopology(command_buffer, args.primitive_topology);
       } break;
 
+      case Command::kVkSetPrimitiveRestartEnable: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetPrimitiveRestartEnable*>(stream);
+        dfn.vkCmdSetPrimitiveRestartEnable(command_buffer,
+                                           args.primitive_restart_enable);
+      } break;
+
       case Command::kVkSetDepthBias: {
         auto& args = *reinterpret_cast<const ArgsVkSetDepthBias*>(stream);
         dfn.vkCmdSetDepthBias(command_buffer, args.depth_bias_constant_factor,

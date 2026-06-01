@@ -3187,6 +3187,7 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
   dynamic_cull_mode_update_needed_ = true;
   dynamic_front_face_update_needed_ = true;
   dynamic_primitive_topology_update_needed_ = true;
+  dynamic_primitive_restart_enable_update_needed_ = true;
   dynamic_depth_test_enable_update_needed_ = true;
   dynamic_depth_write_enable_update_needed_ = true;
   dynamic_depth_compare_op_update_needed_ = true;
@@ -3665,7 +3666,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Update dynamic graphics pipeline state.
   UpdateDynamicState(viewport_info, primitive_polygonal,
                      normalized_depth_control,
-                     primitive_processing_result.host_primitive_type);
+                     primitive_processing_result.host_primitive_type,
+                     primitive_processing_result.host_primitive_reset_enabled);
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
   if (trace_draw_state) {
@@ -4470,6 +4472,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_cull_mode_update_needed_ = true;
     dynamic_front_face_update_needed_ = true;
     dynamic_primitive_topology_update_needed_ = true;
+    dynamic_primitive_restart_enable_update_needed_ = true;
     dynamic_depth_test_enable_update_needed_ = true;
     dynamic_depth_write_enable_update_needed_ = true;
     dynamic_depth_compare_op_update_needed_ = true;
@@ -4881,7 +4884,8 @@ void VulkanCommandProcessor::DestroyScratchBuffer() {
 void VulkanCommandProcessor::UpdateDynamicState(
     const draw_util::ViewportInfo& viewport_info, bool primitive_polygonal,
     reg::RB_DEPTHCONTROL normalized_depth_control,
-    xenos::PrimitiveType host_primitive_type) {
+    xenos::PrimitiveType host_primitive_type,
+    bool host_primitive_reset_enabled) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -5150,6 +5154,16 @@ void VulkanCommandProcessor::UpdateDynamicState(
       deferred_command_buffer_.CmdVkSetPrimitiveTopology(topology);
       dynamic_primitive_topology_ = topology;
       dynamic_primitive_topology_update_needed_ = false;
+    }
+    // primitive_restart is promoted together with topology (the key zeroes it
+    // when normalizing strip->list, so it MUST be applied dynamically here).
+    VkBool32 restart_enable =
+        host_primitive_reset_enabled ? VK_TRUE : VK_FALSE;
+    if (dynamic_primitive_restart_enable_update_needed_ ||
+        restart_enable != dynamic_primitive_restart_enable_) {
+      deferred_command_buffer_.CmdVkSetPrimitiveRestartEnable(restart_enable);
+      dynamic_primitive_restart_enable_ = restart_enable;
+      dynamic_primitive_restart_enable_update_needed_ = false;
     }
   }
 

@@ -402,9 +402,11 @@ DEFINE_bool(
     "without dynamicPrimitiveTopologyUnrestricted) so list/strip variants of one "
     "shader+state collapse onto ONE VkPipeline. High value for Blue Dragon "
     "(~931 list + ~266 strip draws/frame). Only triangle list/strip are promoted "
-    "(non-GS, triangle class); fan/line/point/rect/quad stay static. No effect "
-    "unless Vulkan 1.3+. Default off; STARTUP cvar - do not toggle live. "
-    "Bit-identical when off.",
+    "(non-GS, triangle class); fan/line/point/rect/quad stay static. Also promotes "
+    "primitive_restart_enable to dynamic for these draws (REQUIRED: the input-"
+    "assembly path asserts restart==false for the kTriangleList key a normalized "
+    "strip collapses to, so restart must be dynamic). No effect unless Vulkan "
+    "1.3+. Default off; STARTUP cvar - do not toggle live. Bit-identical when off.",
     "GPU");
 
 DEFINE_uint32(

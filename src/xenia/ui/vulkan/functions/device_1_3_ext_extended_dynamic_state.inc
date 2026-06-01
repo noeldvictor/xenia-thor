@@ -11,3 +11,5 @@ XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetStencilTestEnableEXT,
 XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetStencilOpEXT, vkCmdSetStencilOp)
 XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetPrimitiveTopologyEXT,
                                vkCmdSetPrimitiveTopology)
+XE_UI_VULKAN_FUNCTION_PROMOTED(vkCmdSetPrimitiveRestartEnableEXT,
+                               vkCmdSetPrimitiveRestartEnable)

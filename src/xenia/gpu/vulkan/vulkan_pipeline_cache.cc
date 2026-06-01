@@ -580,12 +580,18 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   }
   description_out.geometry_shader = geometry_shader;
   description_out.primitive_topology = primitive_topology;
+  description_out.primitive_restart =
+      primitive_processing_result.host_primitive_reset_enabled;
   // EDS topology (Lever 1): promote triangle LIST + STRIP to dynamic state ->
   // normalize the key to kTriangleList so list/strip variants of one shader+
   // state collapse onto one VkPipeline. Only non-GS triangle list/strip (same
   // triangle class, safe without dynamicPrimitiveTopologyUnrestricted); fan/
-  // line/point/rect/quad stay static. The real topology is emitted in
-  // UpdateDynamicState. Default-off keeps the real per-draw topology in the key.
+  // line/point/rect/quad stay static. The real topology + restart are emitted
+  // in UpdateDynamicState. primitive_restart MUST also be zeroed here because
+  // the input-assembly switch asserts restart==false for kTriangleList - a strip
+  // (which may use restart) normalized to the list key would otherwise fail
+  // pipeline creation. Both topology and restart are emitted dynamically, so
+  // behavior is preserved. Default-off keeps the real per-draw values in the key.
   if (cvars::vulkan_dynamic_state_topology &&
       device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       geometry_shader == PipelineGeometryShader::kNone &&
@@ -593,9 +599,8 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
        primitive_topology == PipelinePrimitiveTopology::kTriangleStrip)) {
     description_out.primitive_topology =
         PipelinePrimitiveTopology::kTriangleList;
+    description_out.primitive_restart = 0;
   }
-  description_out.primitive_restart =
-      primitive_processing_result.host_primitive_reset_enabled;
 
   description_out.depth_clamp_enable =
       device_properties.depthClamp &&
@@ -2183,7 +2188,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 15> dynamic_states;
+  std::array<VkDynamicState, 16> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2221,6 +2226,8 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
           PipelinePrimitiveTopology::kTriangleList) {
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY;
+    dynamic_states[dynamic_state.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE;
   }
   if (!edram_fragment_shader_interlock) {
     // EDS (Lever 1): depth test/write/compare dynamic (core in Vulkan 1.3).

@@ -412,6 +412,13 @@ class DeferredCommandBuffer {
     args.primitive_topology = primitive_topology;
   }
 
+  void CmdVkSetPrimitiveRestartEnable(VkBool32 primitive_restart_enable) {
+    auto& args = *reinterpret_cast<ArgsVkSetPrimitiveRestartEnable*>(
+        WriteCommand(Command::kVkSetPrimitiveRestartEnable,
+                     sizeof(ArgsVkSetPrimitiveRestartEnable)));
+    args.primitive_restart_enable = primitive_restart_enable;
+  }
+
   void CmdVkSetScissor(uint32_t first_scissor, uint32_t scissor_count,
                        const VkRect2D* scissors) {
     const size_t header_size =
@@ -490,6 +497,7 @@ class DeferredCommandBuffer {
     kVkSetDepthTestEnable,
     kVkSetDepthWriteEnable,
     kVkSetFrontFace,
+    kVkSetPrimitiveRestartEnable,
     kVkSetPrimitiveTopology,
     kVkSetScissor,
     kVkSetStencilCompareMask,
@@ -676,6 +684,10 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetPrimitiveTopology {
     VkPrimitiveTopology primitive_topology;
+  };
+
+  struct ArgsVkSetPrimitiveRestartEnable {
+    VkBool32 primitive_restart_enable;
   };
 
   struct ArgsVkSetDepthBias {
