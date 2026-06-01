@@ -1920,3 +1920,19 @@ same-scene vs UMA-off -> no speed claim. UMA also carries a documented intermitt
 DEFAULT-OFF (known-good 3D, no TDR). Device config regenerated clean (518 lines, 0 garbage; UMA=false,
 skip=0; shipped wins intact: gpu_bulk_pm4_type0=true, arm64_blue_dragon_draw_wait_fastpath=true,
 arm64_vmx_dot_f32_fastpath=false).
+
+
+### B71 — Anti-fabrication framework built + self-proved (it caught a bad capture)
+Built tools/thor/thor_evidence.ps1 + skill xenia-thor-evidence-discipline: every perf number must come
+from a docs/evidence/<timestamp>-<label>.txt the script wrote (raw VdSwap count -> fps, KGSL busy/clock
+samples, the GPU draw-outcomes line, a pulled screenshot, the exact cvar config), and the SUMMARY is
+DERIVED from that captured data - I cannot type a number by hand into a worklog/commit anymore. Committed
+1ce22b53f. docs/evidence/ is gitignored (raw); worklog cites the filename.
+PROOF IT WORKS: ran it (-Label baseline, fresh launch). Evidence file 20260531-195753-baseline.txt:
+vdswap_count=0/15s, kgsl_busy=3,0,0,...  => SUMMARY fps=0. Read the saved .png: BLACK SCREEN (launch
+didn't reach gameplay this run). Old-me would have written "baseline ~2fps"; the framework instead
+surfaced fps=0 + a black screenshot => HONEST OUTCOME: "not a valid measurement, discard." Exactly the
+failure the framework is meant to stop. No number cited from this run because the screenshot disproves it.
+USAGE for all future perf work: build -> confirm it linked -> thor_evidence.ps1 (fresh or -Attach
+-SetCvar for same-session A/B) -> READ the .png -> quote only the SUMMARY + EVIDENCE_FILE. Same-scene
+A/B via -Attach live-toggle or guest_ms matching. See memory no-fabrication-autonomous-failure.
