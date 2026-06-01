@@ -4078,8 +4078,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (cvars::gpu_trace_cullable_tris) {
     // Front B read-only counter: how many triangles a CPU cull WOULD drop (C1
     // stub returns 0). Never mutates geometry.
-    draw_outcomes_cullable_tris_ += CountCullableTriangles(
-        primitive_processing_result);
+    draw_outcomes_cullable_tris_ += CountCullableTriangles(*vertex_shader);
   }
   if (trace_draw_cpu) {
     draw_cpu_total_ns_ += uint64_t(
@@ -5044,17 +5043,18 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
 }
 
 uint32_t VulkanCommandProcessor::CountCullableTriangles(
-    const PrimitiveProcessor::ProcessingResult& primitive_processing_result) {
-  // Front B (gpu_trace_cullable_tris), READ-ONLY decision instrument. C1
-  // scaffolding: returns 0 (no geometry inspected yet). C2 will replay the guest
-  // VS position transform via the ShaderInterpreter (gated by CanInterpretShader)
-  // + the host W/NDC fixup; C3 will apply the exact backface rule
-  // (PA_SU_SC_MODE_CNTL, IsPrimitivePolygonal incl. the rectangle-list exclusion)
-  // + a conservative fully-outside frustum test and return the would-cull count.
-  // This NEVER mutates the index buffer - it only counts, to size the on-device
-  // cull's potential (the cull itself is held for the device A/B).
-  (void)primitive_processing_result;
-  return 0;
+    const Shader& vertex_shader) {
+  // Front B (gpu_trace_cullable_tris), READ-ONLY decision instrument. Replays
+  // the guest VS positions on the (idle) CPU to size a potential triangle cull,
+  // which would reduce the GPU binning front-end cost - the proven heavy-scene
+  // bottleneck. NEVER mutates the index buffer; only counts. The geometry-
+  // altering cull itself stays held for a device A/B. The estimator is
+  // constructed lazily, so the default (cvar-off) path pays nothing.
+  if (!cull_extent_estimator_) {
+    cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
+        *register_file_, *memory_, nullptr);
+  }
+  return cull_extent_estimator_->CountCullableTriangles(vertex_shader);
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(

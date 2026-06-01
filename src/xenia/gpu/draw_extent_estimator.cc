@@ -73,6 +73,30 @@ void DrawExtentEstimator::PositionYExportSink::Export(
   }
 }
 
+void DrawExtentEstimator::PositionExportSink::Export(
+    ucode::ExportRegister export_register, const float* value,
+    uint32_t value_mask) {
+  if (export_register == ucode::ExportRegister::kVSPosition) {
+    if (value_mask & 0b0001) {
+      position_x_ = value[0];
+    }
+    if (value_mask & 0b0010) {
+      position_y_ = value[1];
+    }
+    if (value_mask & 0b0100) {
+      position_z_ = value[2];
+    }
+    if (value_mask & 0b1000) {
+      position_w_ = value[3];
+    }
+  } else if (export_register ==
+             ucode::ExportRegister::kVSPointSizeEdgeFlagKillVertex) {
+    if (value_mask & 0b0100) {
+      vertex_kill_ = xe::memory::Reinterpret<uint32_t>(value[2]);
+    }
+  }
+}
+
 uint32_t DrawExtentEstimator::EstimateVertexMaxY(const Shader& vertex_shader) {
   SCOPE_profile_cpu_f("gpu");
 
@@ -353,6 +377,187 @@ uint32_t DrawExtentEstimator::EstimateMaxY(bool try_to_estimate_vertex_max_y,
   }
 
   return max_y;
+}
+
+uint32_t DrawExtentEstimator::CountCullableTriangles(
+    const Shader& vertex_shader) {
+  SCOPE_profile_cpu_f("gpu");
+
+  const RegisterFile& regs = register_file_;
+
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (!vgt_draw_initiator.num_indices) {
+    return 0;
+  }
+  // Only triangle lists are counted - strips/fans form primitives across the
+  // index stream and lines/points/rects/quads aren't backface/side-cullable the
+  // same way.
+  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kTriangleList) {
+    return 0;
+  }
+  if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA &&
+      vgt_draw_initiator.source_select != xenos::SourceSelect::kAutoIndex) {
+    // Immediate indices not supported here.
+    return 0;
+  }
+  // Not reproducing tessellation.
+  if (xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode,
+                                 vgt_draw_initiator.prim_type) &&
+      regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
+          xenos::VGTOutputPath::kTessellationEnable) {
+    return 0;
+  }
+  assert_true(vertex_shader.type() == xenos::ShaderType::kVertex);
+  assert_true(vertex_shader.is_ucode_analyzed());
+  if (!ShaderInterpreter::CanInterpretShader(vertex_shader)) {
+    // Texture-fetch VS - uncounted (the counter is a lower bound over
+    // interpretable draws only).
+    return 0;
+  }
+
+  auto pa_cl_vte_cntl = regs.Get<reg::PA_CL_VTE_CNTL>();
+  cull_vtx_xy_fmt_ = pa_cl_vte_cntl.vtx_xy_fmt != 0;
+  if (cull_vtx_xy_fmt_) {
+    // Positions are pre-divided (screen/NDC); the homogeneous clip-plane test
+    // below assumes clip space, so skip conservatively rather than misjudge.
+    return 0;
+  }
+
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  union {
+    const void* index_buffer;
+    const uint16_t* index_buffer_16;
+    const uint32_t* index_buffer_32;
+  };
+  index_buffer = nullptr;
+  xenos::Endian index_endian = vgt_dma_size.swap_mode;
+  if (vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA) {
+    uint32_t index_buffer_base = regs[XE_GPU_REG_VGT_DMA_BASE];
+    uint32_t index_buffer_read_count =
+        std::min(uint32_t(vgt_draw_initiator.num_indices),
+                 uint32_t(vgt_dma_size.num_words));
+    if (vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16) {
+      // Handle the index endianness the same way as the PrimitiveProcessor.
+      if (index_endian == xenos::Endian::k8in32) {
+        index_endian = xenos::Endian::k8in16;
+      } else if (index_endian == xenos::Endian::k16in32) {
+        index_endian = xenos::Endian::kNone;
+      }
+      index_buffer_base &= ~uint32_t(sizeof(uint16_t) - 1);
+      if (trace_writer_) {
+        trace_writer_->WriteMemoryRead(
+            index_buffer_base, sizeof(uint16_t) * index_buffer_read_count);
+      }
+    } else {
+      assert_true(vgt_draw_initiator.index_size == xenos::IndexFormat::kInt32);
+      index_buffer_base &= ~uint32_t(sizeof(uint32_t) - 1);
+      if (trace_writer_) {
+        trace_writer_->WriteMemoryRead(
+            index_buffer_base, sizeof(uint32_t) * index_buffer_read_count);
+      }
+    }
+    index_buffer = memory_.TranslatePhysical(index_buffer_base);
+  }
+
+  auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+  uint32_t reset_index =
+      regs.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx;
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+
+  uint32_t num_indices = vgt_draw_initiator.num_indices;
+  cull_vertices_scratch_.clear();
+  cull_vertices_scratch_.resize(num_indices);
+
+  shader_interpreter_.SetShader(vertex_shader);
+
+  PositionExportSink position_export_sink;
+  shader_interpreter_.SetExportSink(&position_export_sink);
+  for (uint32_t i = 0; i < num_indices; ++i) {
+    CullVertex& out = cull_vertices_scratch_[i];
+    out.valid = false;
+    out.x = 0.0f;
+    out.y = 0.0f;
+    out.z = 0.0f;
+    out.w = 0.0f;
+
+    uint32_t vertex_index;
+    if (vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA) {
+      if (i < vgt_dma_size.num_words && index_buffer) {
+        if (vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16) {
+          vertex_index = index_buffer_16[i];
+        } else {
+          vertex_index = index_buffer_32[i];
+        }
+        // The Xenos only uses 24 bits of the index (reset_indx is 24-bit).
+        vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
+      } else {
+        vertex_index = 0;
+      }
+      if (pa_su_sc_mode_cntl.multi_prim_ib_ena && vertex_index == reset_index) {
+        // Leave this slot invalid - it breaks the triangle it belongs to.
+        continue;
+      }
+    } else {
+      assert_true(vgt_draw_initiator.source_select ==
+                  xenos::SourceSelect::kAutoIndex);
+      vertex_index = i;
+    }
+    vertex_index =
+        std::min(max_index,
+                 std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+
+    position_export_sink.Reset();
+    shader_interpreter_.temp_registers()[0] = float(vertex_index);
+    shader_interpreter_.Execute();
+
+    if (position_export_sink.vertex_kill().has_value() &&
+        (position_export_sink.vertex_kill().value() & ~(UINT32_C(1) << 31))) {
+      continue;
+    }
+    if (!position_export_sink.position_x().has_value() ||
+        !position_export_sink.position_y().has_value() ||
+        !position_export_sink.position_w().has_value()) {
+      continue;
+    }
+    out.x = position_export_sink.position_x().value();
+    out.y = position_export_sink.position_y().value();
+    out.z = position_export_sink.position_z().has_value()
+                ? position_export_sink.position_z().value()
+                : 0.0f;
+    out.w = position_export_sink.position_w().value();
+    out.valid = true;
+  }
+  shader_interpreter_.SetExportSink(nullptr);
+
+  // Conservative frustum count: a triangle is provably cullable if all three
+  // vertices are valid, in front of the eye (w > 0), and all three lie beyond
+  // the SAME side clip plane (x > w, x < -w, y > w, or y < -w). This is
+  // orientation-independent (no Y-flip / winding assumption) and never
+  // over-counts. Z planes and backface (winding) are intentionally omitted to
+  // keep the count provably conservative; this is a lower bound.
+  uint32_t cullable = 0;
+  uint32_t triangle_count = num_indices / 3;
+  for (uint32_t t = 0; t < triangle_count; ++t) {
+    const CullVertex& a = cull_vertices_scratch_[t * 3 + 0];
+    const CullVertex& b = cull_vertices_scratch_[t * 3 + 1];
+    const CullVertex& c = cull_vertices_scratch_[t * 3 + 2];
+    if (!a.valid || !b.valid || !c.valid) {
+      continue;
+    }
+    if (!(a.w > 0.0f && b.w > 0.0f && c.w > 0.0f)) {
+      continue;
+    }
+    bool outside = (a.x > a.w && b.x > b.w && c.x > c.w) ||
+                   (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
+                   (a.y > a.w && b.y > b.w && c.y > c.w) ||
+                   (a.y < -a.w && b.y < -b.w && c.y < -c.w);
+    if (outside) {
+      ++cullable;
+    }
+  }
+  return cullable;
 }
 
 }  // namespace gpu

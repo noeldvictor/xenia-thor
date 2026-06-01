@@ -24,6 +24,7 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/hash.h"
 #include "xenia/gpu/command_processor.h"
+#include "xenia/gpu/draw_extent_estimator.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/spirv_shader_translator.h"
@@ -503,8 +504,7 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Front B (gpu_trace_cullable_tris, READ-ONLY): count how many triangles of this
   // draw a CPU-side cull WOULD drop. Mutates nothing. C1 returns 0 (scaffolding);
   // C2/C3 add the ShaderInterpreter VS-position replay + exact backface/frustum.
-  uint32_t CountCullableTriangles(
-      const PrimitiveProcessor::ProcessingResult& primitive_processing_result);
+  uint32_t CountCullableTriangles(const Shader& vertex_shader);
   void UpdateSystemConstantValues(
       bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -829,6 +829,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // read-only DECISION instrument (no geometry mutated). C1 scaffolding counts 0;
   // C2/C3 wire the ShaderInterpreter VS-position replay + backface/frustum test.
   uint64_t draw_outcomes_cullable_tris_ = 0;
+  // Front B cullable-triangle counter: lazily-constructed CPU VS-position
+  // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
+  // use, so the default path pays nothing.
+  std::unique_ptr<DrawExtentEstimator> cull_extent_estimator_;
   // Per-frame draw composition (what the ~2000 draws ARE): histogram of guest
   // PrimitiveType (index = uint32_t(prim_type) & 0xF) and host-vertex-count
   // size buckets (tiny<16, small<64, med<256, big>=256). Tells whether the

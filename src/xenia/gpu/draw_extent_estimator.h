@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/shader.h"
@@ -38,6 +39,18 @@ class DrawExtentEstimator {
   uint32_t EstimateMaxY(bool try_to_estimate_vertex_max_y,
                         const Shader& vertex_shader);
 
+  // Front B cullable-triangle counter (gpu_trace_cullable_tris): replays the
+  // guest VS positions on the CPU and counts how many triangles a CPU-side cull
+  // WOULD drop before the GPU bins them - a READ-ONLY decision instrument (never
+  // mutates geometry) that sizes the potential of a triangle cull against the
+  // GPU binning bottleneck. Currently counts triangles provably FULLY OUTSIDE
+  // one side clip plane (a conservative lower bound, orientation-independent, no
+  // winding assumption); backface (winding-sensitive) and Z-plane counting are
+  // intentionally omitted for now. Returns 0 when the shader can't be
+  // interpreted (texture-fetch VS), the draw isn't a triangle list, or it uses
+  // pre-divided (vtx_xy_fmt) positions.
+  uint32_t CountCullableTriangles(const Shader& vertex_shader);
+
  private:
   class PositionYExportSink : public ShaderInterpreter::ExportSink {
    public:
@@ -62,6 +75,50 @@ class DrawExtentEstimator {
     std::optional<float> point_size_;
     std::optional<uint32_t> vertex_kill_;
   };
+
+  // Full clip-space position sink for the cullable-triangle counter (captures
+  // x, y, z, w from the position export, plus the kill flag).
+  class PositionExportSink : public ShaderInterpreter::ExportSink {
+   public:
+    void Export(ucode::ExportRegister export_register, const float* value,
+                uint32_t value_mask) override;
+
+    void Reset() {
+      position_x_.reset();
+      position_y_.reset();
+      position_z_.reset();
+      position_w_.reset();
+      vertex_kill_.reset();
+    }
+
+    const std::optional<float>& position_x() const { return position_x_; }
+    const std::optional<float>& position_y() const { return position_y_; }
+    const std::optional<float>& position_z() const { return position_z_; }
+    const std::optional<float>& position_w() const { return position_w_; }
+    const std::optional<uint32_t>& vertex_kill() const { return vertex_kill_; }
+
+   private:
+    std::optional<float> position_x_;
+    std::optional<float> position_y_;
+    std::optional<float> position_z_;
+    std::optional<float> position_w_;
+    std::optional<uint32_t> vertex_kill_;
+  };
+
+  // Reused scratch for the cullable-triangle counter (avoids per-draw alloc).
+  // One entry per index slot in the draw; invalid entries (killed / reset-index
+  // / no position exported) break triangle formation in C3.
+  struct CullVertex {
+    bool valid;
+    float x;
+    float y;
+    float z;
+    float w;
+  };
+  std::vector<CullVertex> cull_vertices_scratch_;
+  // Whether the last counted draw used pre-divided (vtx_xy_fmt) positions - read
+  // by C3 to decide whether to apply the perspective divide.
+  bool cull_vtx_xy_fmt_ = false;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
