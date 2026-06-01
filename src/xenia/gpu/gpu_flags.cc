@@ -409,6 +409,19 @@ DEFINE_bool(
     "1.3+. Default off; STARTUP cvar - do not toggle live. Bit-identical when off.",
     "GPU");
 
+DEFINE_bool(
+    vulkan_merge_draws, false,
+    "Thor/Adreno binning re-arch (Lever 2): zero-copy DRAW CONCATENATION - merge "
+    "consecutive same-state kGuestDMA indexed draws that index a contiguous byte "
+    "run of the shared-memory buffer into ONE vkCmdBindIndexBuffer + ONE "
+    "vkCmdDrawIndexed, paying the Adreno per-draw fixed cost once per run while "
+    "binning each triangle exactly once (NOT instancing). LIST topologies only "
+    "(strips would stitch across draw boundaries). Front A EDS dynamic-state "
+    "promotion lengthens the same-pipeline runs this merges. Default off; STARTUP "
+    "cvar - do not toggle live. Bit-identical when off. Built incrementally - see "
+    "docs/research/20260601-draw-concatenation-design.md.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

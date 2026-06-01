@@ -97,6 +97,7 @@ DECLARE_bool(vulkan_dynamic_state_cull_front);
 DECLARE_bool(vulkan_dynamic_state_depth);
 DECLARE_bool(vulkan_dynamic_state_stencil);
 DECLARE_bool(vulkan_dynamic_state_topology);
+DECLARE_bool(vulkan_merge_draws);
 
 DECLARE_bool(non_seamless_cube_map);
 

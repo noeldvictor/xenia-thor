@@ -493,6 +493,12 @@ class VulkanCommandProcessor : public CommandProcessor {
                           reg::RB_DEPTHCONTROL normalized_depth_control,
                           xenos::PrimitiveType host_primitive_type,
                           bool host_primitive_reset_enabled);
+
+  // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run as
+  // one CmdVkBindIndexBuffer + one CmdVkDrawIndexed, then clear the pending run.
+  // No-op when no run is pending. Must be called at every flush point before any
+  // command that depends on prior draws having executed.
+  void FlushPendingMergeRun();
   void UpdateSystemConstantValues(
       bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -847,6 +853,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t merge_run_len_ = 0;
   VkPipeline merge_run_pipeline_ = VK_NULL_HANDLE;
   uint32_t merge_run_hist_[8] = {};
+  // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
+  // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
+  // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)
+  // by FlushPendingMergeRun(). Step 1 (scaffolding) flushes immediately so a run
+  // is always length 1 (identical command stream); coalescing is enabled later.
+  // All inert / reset when the cvar is off, so the off-path is bit-identical.
+  bool merge_pending_active_ = false;
+  VkBuffer merge_pending_index_buffer_ = VK_NULL_HANDLE;
+  VkDeviceSize merge_pending_index_base_ = 0;
+  VkIndexType merge_pending_index_type_ = VK_INDEX_TYPE_UINT16;
+  uint32_t merge_pending_index_count_ = 0;
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.

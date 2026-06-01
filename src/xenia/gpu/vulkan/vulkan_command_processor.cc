@@ -3942,14 +3942,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         assert_unhandled_case(primitive_processing_result.index_buffer_type);
         return false;
     }
-    deferred_command_buffer_.CmdVkBindIndexBuffer(
-        index_buffer.first, index_buffer.second,
-        primitive_processing_result.host_index_format ==
-                xenos::IndexFormat::kInt16
-            ? VK_INDEX_TYPE_UINT16
-            : VK_INDEX_TYPE_UINT32);
-    deferred_command_buffer_.CmdVkDrawIndexed(
-        primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
+    VkIndexType index_type = primitive_processing_result.host_index_format ==
+                                     xenos::IndexFormat::kInt16
+                                 ? VK_INDEX_TYPE_UINT16
+                                 : VK_INDEX_TYPE_UINT32;
+    if (cvars::vulkan_merge_draws &&
+        primitive_processing_result.index_buffer_type ==
+            PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+      // Lever 2 Step 1 (scaffolding): capture this kGuestDMA draw as a run head
+      // and flush IMMEDIATELY -> a run is always length 1 -> the command stream
+      // is identical to the inline path below. Cross-draw coalescing (the full
+      // merge predicate + chokepoint flushes) is enabled in later increments.
+      merge_pending_active_ = true;
+      merge_pending_index_buffer_ = index_buffer.first;
+      merge_pending_index_base_ = index_buffer.second;
+      merge_pending_index_type_ = index_type;
+      merge_pending_index_count_ =
+          primitive_processing_result.host_draw_vertex_count;
+      FlushPendingMergeRun();
+    } else {
+      deferred_command_buffer_.CmdVkBindIndexBuffer(
+          index_buffer.first, index_buffer.second, index_type);
+      deferred_command_buffer_.CmdVkDrawIndexed(
+          primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
+    }
   }
 
   ++draw_outcomes_rendered_;
@@ -4485,6 +4501,12 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     current_external_compute_pipeline_ = VK_NULL_HANDLE;
     current_guest_graphics_pipeline_layout_ = nullptr;
     current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    // Lever 2: a pending draw-concatenation run never spans a submission. Reset
+    // regardless of the cvar so a mid-run toggle cannot carry stale state. (A
+    // run pending at submission end is flushed by the EndSubmission flush point
+    // before teardown - added in a later increment - so this only clears state.)
+    merge_pending_active_ = false;
+    merge_pending_index_count_ = 0;
 
     primitive_processor_->BeginSubmission();
 
@@ -4879,6 +4901,26 @@ void VulkanCommandProcessor::DestroyScratchBuffer() {
                                          scratch_buffer_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
                                          scratch_buffer_memory_);
+}
+
+void VulkanCommandProcessor::FlushPendingMergeRun() {
+  // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run.
+  // The merged index range is contiguous in shared_memory_->buffer() starting at
+  // merge_pending_index_base_, so it is one CmdVkBindIndexBuffer + one
+  // CmdVkDrawIndexed(sum_of_counts, 1, 0, 0, 0) - firstIndex/vertexOffset stay 0
+  // (the byte offset is carried by the bind offset; vfetch addressing comes from
+  // system constants, equal across the run by the merge predicate).
+  if (!merge_pending_active_ || merge_pending_index_count_ == 0) {
+    merge_pending_active_ = false;
+    return;
+  }
+  deferred_command_buffer_.CmdVkBindIndexBuffer(merge_pending_index_buffer_,
+                                                merge_pending_index_base_,
+                                                merge_pending_index_type_);
+  deferred_command_buffer_.CmdVkDrawIndexed(merge_pending_index_count_, 1, 0, 0,
+                                            0);
+  merge_pending_active_ = false;
+  merge_pending_index_count_ = 0;
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(
