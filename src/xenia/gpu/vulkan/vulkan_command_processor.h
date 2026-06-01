@@ -860,6 +860,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // is always length 1 (identical command stream); coalescing is enabled later.
   // All inert / reset when the cvar is off, so the off-path is bit-identical.
   bool merge_pending_active_ = false;
+  // Set per draw when ANY command was recorded into deferred_command_buffer_
+  // between IssueDraw entry and the draw-emit block (descriptor binds/pushes,
+  // dynamic state, render-pass begin/end, barriers, pipeline bind) - i.e. state
+  // changed, so a pending run cannot be extended by this draw. Computed via the
+  // command-stream cursor; consumed by the merge interceptor (Step 4).
+  bool merge_cannot_extend_this_draw_ = false;
   VkBuffer merge_pending_index_buffer_ = VK_NULL_HANDLE;
   VkDeviceSize merge_pending_index_base_ = 0;
   VkIndexType merge_pending_index_type_ = VK_INDEX_TYPE_UINT16;

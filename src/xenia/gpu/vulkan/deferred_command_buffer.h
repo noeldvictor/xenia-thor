@@ -33,6 +33,14 @@ class DeferredCommandBuffer {
   void Reset();
   void Execute(VkCommandBuffer command_buffer);
 
+  // Monotonic recorded-command cursor (grows by one WriteCommand per recorded
+  // command). Used by the draw-concatenation lever (vulkan_merge_draws): if this
+  // is unchanged across a span, NO command was recorded in that span. Reset by
+  // Reset().
+  size_t command_stream_size_elements() const {
+    return command_stream_.size();
+  }
+
   // render_pass_begin->pNext of all barriers must be null.
   void CmdVkBeginRenderPass(const VkRenderPassBeginInfo* render_pass_begin,
                             VkSubpassContents contents) {

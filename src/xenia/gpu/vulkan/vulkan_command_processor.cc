@@ -3267,6 +3267,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 
   const RegisterFile& regs = *register_file_;
 
+  // Lever 2 (vulkan_merge_draws): snapshot the deferred-command cursor at the top
+  // of IssueDraw. Compared just before the draw-emit block to detect whether ANY
+  // command (descriptor/dynamic-state/render-pass/barrier/pipeline) was recorded
+  // for this draw - if so a pending concatenation run cannot be extended. Cheap;
+  // computed unconditionally, consumed only when the cvar is on (Step 4).
+  const size_t merge_cmd_cursor_at_entry =
+      deferred_command_buffer_.command_stream_size_elements();
+
   // Per-draw CPU timing (command-processor throughput diagnostic). Captures the
   // whole IssueDraw cost (accumulated only for rendered draws) and the
   // PrimitiveProcessor::Process sub-step, to localize the per-draw gate.
@@ -3906,6 +3914,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       render_target_cache_->last_update_render_pass(),
       render_target_cache_->last_update_framebuffer());
+
+  // Lever 2 (vulkan_merge_draws): did this draw record ANY command (state setup,
+  // descriptors, dynamic state, render-pass begin/end, barriers, pipeline bind)
+  // since IssueDraw entry? If so, state changed -> a pending concatenation run
+  // cannot be extended by this draw. (When the pipeline is unchanged - the only
+  // mergeable case - no CmdVkBindPipeline is recorded, so a cursor move means a
+  // genuine state change; a pipeline change is also caught by the predicate.)
+  // Computed here; consumed by the merge interceptor in a later increment.
+  merge_cannot_extend_this_draw_ =
+      deferred_command_buffer_.command_stream_size_elements() !=
+      merge_cmd_cursor_at_entry;
 
   // Draw.
   // Measurement/perf lever: optionally skip the GPU draw command for tiny draws
