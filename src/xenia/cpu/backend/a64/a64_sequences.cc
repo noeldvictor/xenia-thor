@@ -50,6 +50,7 @@ DECLARE_bool(arm64_blue_dragon_edge_variant_audit);
 DECLARE_bool(arm64_blue_dragon_edge_payload_storage_audit);
 DECLARE_bool(arm64_blue_dragon_fpscr_cfg_writeback_audit);
 DECLARE_bool(arm64_vmx_dot_f32_fastpath);
+DECLARE_bool(arm64_flagm_fastpath);
 
 namespace xe {
 namespace cpu {
@@ -2119,6 +2120,28 @@ struct ADD_CARRY_I16
 struct ADD_CARRY_I32
     : Sequence<ADD_CARRY_I32, I<OPCODE_ADD_CARRY, I32Op, I32Op, I32Op, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (!i.src3.is_constant && cvars::arm64_flagm_fastpath &&
+        e.IsFeatureEnabled(xe::arm64::kA64EmitFlagM)) {
+      // FEAT_FlagM: dest = src1 + src2 + carry(bit0). Set PSTATE.C from the
+      // carry's bit0 (masked defensively - the PPC carry-in is provably {0,1},
+      // but the mask removes any reliance on that frontend invariant), then ADC.
+      // Bit-exact-equivalent to the add-the-full-carry path below. Host NZCV is
+      // dead across HIR sequence boundaries, so writing C here is safe.
+      WReg s1 = i.src1.is_constant ? e.w0 : WReg(i.src1.reg().getIdx());
+      if (i.src1.is_constant) {
+        e.mov(e.w0,
+              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+      }
+      WReg s2 = i.src2.is_constant ? e.w1 : WReg(i.src2.reg().getIdx());
+      if (i.src2.is_constant) {
+        e.mov(e.w1,
+              static_cast<uint64_t>(static_cast<uint32_t>(i.src2.constant())));
+      }
+      e.and_(e.x2, XReg(i.src3.reg().getIdx()), 1);
+      e.rmif(e.x2, 63, 2);  // PSTATE.C = (carry & 1); N/Z/V untouched.
+      e.adc(WReg(i.dest.reg().getIdx()), s1, s2);
+      return;
+    }
     if (i.src1.is_constant) {
       e.mov(e.w0,
             static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
@@ -2143,6 +2166,23 @@ struct ADD_CARRY_I32
 struct ADD_CARRY_I64
     : Sequence<ADD_CARRY_I64, I<OPCODE_ADD_CARRY, I64Op, I64Op, I64Op, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (!i.src3.is_constant && cvars::arm64_flagm_fastpath &&
+        e.IsFeatureEnabled(xe::arm64::kA64EmitFlagM)) {
+      // FEAT_FlagM ADC path (see ADD_CARRY_I32). Bit-exact-equivalent: the
+      // carry-in is provably {0,1} and additionally masked to bit0.
+      XReg s1 = i.src1.is_constant ? e.x0 : XReg(i.src1.reg().getIdx());
+      if (i.src1.is_constant) {
+        e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
+      }
+      XReg s2 = i.src2.is_constant ? e.x1 : XReg(i.src2.reg().getIdx());
+      if (i.src2.is_constant) {
+        e.mov(e.x1, static_cast<uint64_t>(i.src2.constant()));
+      }
+      e.and_(e.x2, XReg(i.src3.reg().getIdx()), 1);
+      e.rmif(e.x2, 63, 2);  // PSTATE.C = (carry & 1); N/Z/V untouched.
+      e.adc(XReg(i.dest.reg().getIdx()), s1, s2);
+      return;
+    }
     if (i.src1.is_constant) {
       e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
     } else {

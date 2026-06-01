@@ -18,6 +18,10 @@
 #define XBYAK_NO_OP_NAMES
 #include "third_party/xbyak_aarch64/xbyak_aarch64/xbyak_aarch64.h"
 #include "third_party/xbyak_aarch64/xbyak_aarch64/xbyak_aarch64_util.h"
+
+#if defined(__linux__)
+#include <sys/auxv.h>
+#endif
 #endif
 
 DEFINE_int32(a64_extension_mask, -1,
@@ -26,6 +30,7 @@ DEFINE_int32(a64_extension_mask, -1,
              "    0 = armv8.0\n"
              "    1 = Large System Extensions(LSE) atomic operations\n"
              "    2 = FPCR.FZ flushes denormal inputs (skip software flush)\n"
+             "    4 = FEAT_FlagM (rmif+adc carry fastpath)\n"
              "   -1 = Detect and utilize all possible processor features\n",
              "a64");
 namespace xe {
@@ -54,6 +59,21 @@ void InitFeatureFlags() {
     TEST_EMIT_FEATURE(kA64EmitLSE,
                       Xbyak_aarch64::util::XBYAK_AARCH64_HWCAP_ATOMIC);
 #undef TEST_EMIT_FEATURE
+  }
+
+  // Detect FEAT_FlagM (RMIF/SETF/CFINV). The vendored xbyak_aarch64 util has no
+  // FlagM HWCAP bit, so probe the kernel auxv directly. Linux/Android only; on
+  // other ARM64 hosts FlagM stays off and the a64 backend uses the equivalent
+  // non-FlagM path.
+  if ((cvars::a64_extension_mask & kA64EmitFlagM) == kA64EmitFlagM) {
+#if defined(__linux__)
+#ifndef HWCAP_FLAGM
+#define HWCAP_FLAGM (1 << 23)
+#endif
+    if (getauxval(AT_HWCAP) & HWCAP_FLAGM) {
+      feature_flags_ |= kA64EmitFlagM;
+    }
+#endif
   }
 
   // Detect whether FPCR.FZ flushes denormal float32 inputs to zero.

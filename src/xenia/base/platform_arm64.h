@@ -16,6 +16,7 @@ namespace arm64 {
 enum A64FeatureFlags : uint64_t {
   kA64EmitLSE = 1 << 0,
   kA64FZFlushesInputs = 1 << 1,
+  kA64EmitFlagM = 1 << 2,
 };
 
 XE_NOALIAS

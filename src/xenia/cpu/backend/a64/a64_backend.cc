@@ -328,6 +328,13 @@ DEFINE_bool(
     "broad path black-idled Blue Dragon on 2026-05-21.",
     "a64");
 DEFINE_bool(
+    arm64_flagm_fastpath, false,
+    "Thor ARM64 speed lane: use FEAT_FlagM (rmif+adc) for OPCODE_ADD_CARRY "
+    "(guest adde/addc/subfe carry chains) when the CPU supports FlagM. "
+    "Bit-exact-equivalent to the default add path; default-off, gated for a "
+    "device A/B. Targets CPU-bound titles such as Lost Odyssey.",
+    "a64");
+DEFINE_bool(
     arm64_permute_i32_zip_fastpath, true,
     "Thor ARM64 speed lane: lower common INT32 vector permutes such as "
     "vmrghw/vmrglw with direct NEON zip1/zip2 instead of generic TBL.",

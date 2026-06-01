@@ -294,6 +294,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "a64_enable_host_guest_stack_synchronization");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
+            copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_permute_i32_zip_fastpath");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_enter_free_first");
             copyBooleanExtra(intent, launchArguments, "a64_inline_rtl_leave_final_unlock");
