@@ -86,3 +86,63 @@ CPU is idle). The math signature is exactly why.
 
 Source: workflow run wf_8facd5a2-4cc (binning verdict + 5 designs + 5 adversarial
 verdicts + synthesis). Script: tools/thor/wf_gpu_rearch.mjs.
+
+---
+
+## Implementation status + RECONNECT A/B PROCEDURE (updated 2026-06-01)
+
+Built BLIND while the Thor was disconnected. All gated, default-off, build-verified
+(BUILD SUCCESSFUL + cvar/func strings linked in arm64 libxenia-app.so), and the
+default path is provably bit-identical (each cvar short-circuits first). NONE has run
+on hardware yet — the reconnect A/B below is the gate before trusting/shipping any.
+
+### Done (committed)
+- Lever 0 `590084fa9` — `gpu_merge_vf_index_stride_fix` (measurement-only stride-correct
+  merge_vf contiguity classifier).
+- Lever 1a `5cc773169` — EDS command infrastructure (vkCmdSetCullMode/FrontFace/
+  DepthTestEnable/DepthWriteEnable/DepthCompareOp/StencilTestEnable/StencilOp loaded
+  via functions/device_1_3_ext_extended_dynamic_state.inc + DeferredCommandBuffer
+  record/replay).
+- Lever 1b `50c385d52` — `vulkan_dynamic_state_cull_front` (cull mode + front face).
+- `73e8d9050` — `vulkan_dynamic_state_depth` (depth test/write/compare).
+- `c419b06b7` — `vulkan_dynamic_state_stencil` (stencil test enable + front/back ops).
+
+Each EDS field: key-zeroed in GetCurrentStateDescription (after the real bake) + appended
+to the dynamic-state array in EnsurePipelineCreated (now sized 14) + emitted in
+UpdateDynamicState reproducing the exact baked value, with cmd-buffer-reset and
+external-pipeline-bind re-emission. All gated `cvar && apiVersion>=1.3` (depth/stencil
+also `&& !FSI`).
+
+### DEFERRED to post-reconnect (need on-device verification, not safe to do blind)
+- Primitive **topology** promotion (HIGH value for Blue Dragon: ~931 triangle-list +
+  ~266 strip = same triangle class). Risky blind: intertwined with geometry-shader
+  selection (rect/quad lists) + topology-class normalization + the emit site
+  (UpdateDynamicState) lacks host_primitive_type (needs a signature change). Do it with
+  the device attached so the class handling is verifiable on real frames.
+- Lever 2 (zero-copy draw concatenation) — gated on measuring that EDS actually
+  lengthened same-pipeline runs (merge_run_hist_); building it before that risks the
+  "finds ~0 eligible runs" dead end the binning verdict warned about.
+- Lever 3 (NEON/i8mm/bf16/dotprod/fcma CPU pre-transform, Front B).
+
+### TURNKEY RECONNECT A/B (do this first when the Thor is back + cool)
+Per never-thrash: confirm temp<60C + idle before launch; use tools/thor/thor_evidence.ps1
+(thermal-guarded). The EXISTING merge_run_hist_ instrumentation directly measures EDS
+effectiveness (it counts consecutive same-VkPipeline draws — EDS should shift it to
+higher buckets), so no new code is needed.
+1. BASELINE (cvars off): capture the heavy field scene, freeze content at a fixed
+   guest_ms (gpu_freeze_at_guest_ms) so the frame is identical across configs, with
+   `--ez vulkan_trace_draw_outcomes_per_frame true`. Read merge_run_hist_, pipeline-bind
+   count, gpu_frame_us, fps, + the screenshot.
+2. EDS-ON: same launch + `--ez vulkan_dynamic_state_cull_front true --ez
+   vulkan_dynamic_state_depth true --ez vulkan_dynamic_state_stencil true` (+ optionally
+   `--ei gpu_merge_vf_index_stride_fix 1`). Match the SAME guest_ms.
+3. Compare: merge_run_hist_ should move toward longer runs and pipeline binds should
+   drop if EDS collapses pipelines; gpu_frame_us should fall if per-draw context-roll
+   cost was real. READ both screenshots — rendering MUST be identical (EDS only moves
+   state from static to dynamic; any visual difference = a state-reproduction bug in the
+   emit path, which is where to debug). Confirm the cvar actually took effect in logcat
+   (stale device xenia.config.toml can override).
+4. If EDS-on renders identically AND lengthens runs / cuts gpu_frame_us: ship the cvars
+   on in the Blue Dragon profile, then build topology + Lever 2 on top (now with run-
+   length data). If runs DON'T lengthen: EDS alone won't enable concatenation — the
+   state churn is elsewhere (constants), revisit the binning verdict's risk note.
