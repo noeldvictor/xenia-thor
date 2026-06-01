@@ -499,6 +499,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // No-op when no run is pending. Must be called at every flush point before any
   // command that depends on prior draws having executed.
   void FlushPendingMergeRun();
+
+  // Front B (gpu_trace_cullable_tris, READ-ONLY): count how many triangles of this
+  // draw a CPU-side cull WOULD drop. Mutates nothing. C1 returns 0 (scaffolding);
+  // C2/C3 add the ShaderInterpreter VS-position replay + exact backface/frustum.
+  uint32_t CountCullableTriangles(
+      const PrimitiveProcessor::ProcessingResult& primitive_processing_result);
   void UpdateSystemConstantValues(
       bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
@@ -819,6 +825,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_copy_ = 0;
   uint64_t draw_outcomes_total_vertices_ = 0;
   uint32_t draw_outcomes_max_vertices_ = 0;
+  // Front B (gpu_trace_cullable_tris): would-cull triangle count this frame - a
+  // read-only DECISION instrument (no geometry mutated). C1 scaffolding counts 0;
+  // C2/C3 wire the ShaderInterpreter VS-position replay + backface/frustum test.
+  uint64_t draw_outcomes_cullable_tris_ = 0;
   // Per-frame draw composition (what the ~2000 draws ARE): histogram of guest
   // PrimitiveType (index = uint32_t(prim_type) & 0xF) and host-vertex-count
   // size buckets (tiny<16, small<64, med<256, big>=256). Tells whether the

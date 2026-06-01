@@ -410,6 +410,18 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_trace_cullable_tris, false,
+    "Thor/Adreno binning re-arch (Front B, READ-ONLY decision instrument): on the "
+    "idle CPU, replay each draw's guest VS position transform (ShaderInterpreter) "
+    "and COUNT how many triangles a CPU-side frustum/backface cull WOULD drop "
+    "before the GPU bins them - logged as cullable_tris in the GPU draw outcomes/"
+    "frame line (needs vulkan_trace_draw_outcomes_per_frame). Mutates NO geometry "
+    "(provably rendering-neutral); produces the go/no-go number for whether an "
+    "on-device CPU cull (held for the device A/B) is worth building. Default off. "
+    "See docs/research/20260601-frontb-cpu-cull-design.md.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_merge_draws, false,
     "Thor/Adreno binning re-arch (Lever 2): zero-copy DRAW CONCATENATION - merge "
     "consecutive same-state kGuestDMA indexed draws that index a contiguous byte "

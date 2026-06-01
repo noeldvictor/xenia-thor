@@ -203,6 +203,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_dynamic_state_stencil");
             copyBooleanExtra(intent, launchArguments, "vulkan_dynamic_state_topology");
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws");
+            copyBooleanExtra(intent, launchArguments, "gpu_trace_cullable_tris");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");

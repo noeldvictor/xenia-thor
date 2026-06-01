@@ -1931,7 +1931,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "vtx[tiny={} sm={} med={} big={}] "
         "merge[pipe_same={} consts_same={} consts_changed={}] "
         "vf[same={} contig={} scattered={}] "
-        "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}]",
+        "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "cullable_tris={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1976,8 +1977,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_consts_changed_, merge_vf_same_, merge_vf_contig_,
         merge_vf_scattered_, merge_run_hist_[0], merge_run_hist_[1],
         merge_run_hist_[2], merge_run_hist_[3], merge_run_hist_[4],
-        merge_run_hist_[5], merge_run_hist_[6], merge_run_hist_[7]);
+        merge_run_hist_[5], merge_run_hist_[6], merge_run_hist_[7],
+        draw_outcomes_cullable_tris_);
     draw_outcomes_rendered_ = 0;
+    draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4072,6 +4075,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  if (cvars::gpu_trace_cullable_tris) {
+    // Front B read-only counter: how many triangles a CPU cull WOULD drop (C1
+    // stub returns 0). Never mutates geometry.
+    draw_outcomes_cullable_tris_ += CountCullableTriangles(
+        primitive_processing_result);
+  }
   if (trace_draw_cpu) {
     draw_cpu_total_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -5032,6 +5041,20 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
                                             0);
   merge_pending_active_ = false;
   merge_pending_index_count_ = 0;
+}
+
+uint32_t VulkanCommandProcessor::CountCullableTriangles(
+    const PrimitiveProcessor::ProcessingResult& primitive_processing_result) {
+  // Front B (gpu_trace_cullable_tris), READ-ONLY decision instrument. C1
+  // scaffolding: returns 0 (no geometry inspected yet). C2 will replay the guest
+  // VS position transform via the ShaderInterpreter (gated by CanInterpretShader)
+  // + the host W/NDC fixup; C3 will apply the exact backface rule
+  // (PA_SU_SC_MODE_CNTL, IsPrimitivePolygonal incl. the rectangle-list exclusion)
+  // + a conservative fully-outside frustum test and return the would-cull count.
+  // This NEVER mutates the index buffer - it only counts, to size the on-device
+  // cull's potential (the cull itself is held for the device A/B).
+  (void)primitive_processing_result;
+  return 0;
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(
