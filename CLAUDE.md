@@ -8,6 +8,14 @@ Priority title: **Blue Dragon at full speed**. Thor is ~10-20× more powerful th
 poor framerates are pathological/fixable, not hardware limits. Other priority titles: Lost Odyssey,
 Banjo, Burnout.
 
+## ⚠️ NEVER THRASH THE THOR (hard rule — it crashed the device once; do not repeat)
+- The device is physical hardware. Repeated game launches pinned the GPU at 99% / 72°C and CRASHED it.
+- **The BUILD is the primary verification, not the device.** Refactor → confirm it compiles+links → commit. Touch the device only for rare, gentle, supervised checks.
+- **DEFENSIVE: if you see the GPU thrashing — `gpu_busy_percentage` pegged high or `temp` (milli-°C) climbing past ~70°C — immediately `am force-stop jp.xenia.emulator.github.debug` to shut the emulator down and let it cool.** Do not push through it.
+- **Never the launch-after-launch loop.** Before ANY launch: read `/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage` + `/sys/class/kgsl/kgsl-3d0/temp`; only launch if busy is low and temp < 60°C.
+- The capture harness `tools/thor/thor_evidence.ps1` now ENFORCES this: it refuses to launch when hot/busy (cools first, force-stops the emu), and a watchdog force-stops mid-capture if temp ≥ 80°C. Use it; don't hand-roll `am start` loops.
+- Read GPU temp: `adb -s c3ca0370 shell cat /sys/class/kgsl/kgsl-3d0/temp` (value is milli-°C; 55900 = 55.9°C).
+
 ## Device (the ONE target — optimize for it specifically)
 - AYN Thor, ADB serial **`c3ca0370`**. SoC: Snapdragon 8 Gen 2 (QCS8550 "kalama").
 - GPU: **Adreno 740v2** — a **tile-based deferred renderer (TBDR)**. Freq table MHz: 680 615 550 475
@@ -66,6 +74,7 @@ vertex sizes), then cut draw count / state churn / binning pressure. For the bin
 split, a user-run Snapdragon Profiler / AGI capture is the one external step worth requesting.
 
 ## Working rules (do not violate)
+- **Never thrash the Thor** (see top rule). Build-verify by default; gentle supervised device checks only; force-stop the emulator the moment it thrashes. No launch loops.
 - **Never fabricate.** Every fps/number/scene claim must come from device output you read THIS turn;
   read the screenshot before asserting a visual state. If unmeasured, say "not measured".
 - **Targeted `git add` only — NEVER `git add -A`.** Commit only the specific files you changed.

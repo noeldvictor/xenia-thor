@@ -36,7 +36,14 @@ param(
     [int]$BootWaitSec = 130,               # wait after launch to reach the heavy scene (ignored with -Attach)
     [int]$WindowSec = 15,                  # measurement window length
     [string]$Iso = "/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso",
-    [string]$Seq = "start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300"
+    [string]$Seq = "start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300",
+    # THERMAL/THRASH GUARD (NEVER let the Thor thrash again). A fresh launch is
+    # REFUSED unless the GPU is cool+idle. Tunables are deliberately conservative.
+    [int]$MaxStartTempC = 60,        # do not launch if GPU temp >= this
+    [int]$MaxStartBusyPct = 40,      # do not launch if GPU already this busy
+    [int]$CooldownWaitSec = 180,     # wait up to this long for it to cool, polling gently
+    [int]$ThrashTempC = 80,          # DEFENSIVE: force-stop the emulator if temp hits this mid-run
+    [switch]$Force                   # override the guard (explicit opt-in only)
 )
 
 $ErrorActionPreference = "Continue"
@@ -52,12 +59,42 @@ $png = "$base.png"
 
 function AdbSh($cmd) { & $Adb -s $Device shell $cmd 2>&1 }
 function W($s) { $s | Tee-Object -FilePath $txt -Append | Out-Null; Write-Output $s }
+function GpuTempC { $t = (AdbSh "cat /sys/class/kgsl/kgsl-3d0/temp") -replace '[^0-9]',''; if ($t) { [int]([double]$t / 1000.0) } else { -1 } }
+function GpuBusyPct { $b = (AdbSh "cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage") -replace '[^0-9]',''; if ($b) { [int]$b } else { -1 } }
 
 "=== xenia-thor evidence capture ===" | Out-File $txt -Encoding utf8
 W "label: $Label"
 W "device_time: $stamp"
 W "package: $Package"
 W "attach: $($Attach.IsPresent)  set_cvar: '$SetCvar'  boot_wait: ${BootWaitSec}s  window: ${WindowSec}s"
+
+# THERMAL/THRASH PREFLIGHT GUARD - never launch onto a hot or busy Thor.
+$preTemp = GpuTempC
+$preBusy = GpuBusyPct
+W "preflight: gpu_temp=${preTemp}C gpu_busy=${preBusy}%  (limits: temp<${MaxStartTempC}C busy<${MaxStartBusyPct}%)"
+if (-not $Force) {
+    $waited = 0
+    while ((($preTemp -ge $MaxStartTempC) -or ($preBusy -ge $MaxStartBusyPct)) -and ($waited -lt $CooldownWaitSec)) {
+        # If it is hot AND something is hammering the GPU, defensively stop the emu so it can cool.
+        if ($preBusy -ge $MaxStartBusyPct) {
+            W "preflight: GPU busy ${preBusy}% - force-stopping emulator to let it cool"
+            AdbSh "am force-stop $Package" | Out-Null
+        }
+        W "preflight: device too hot/busy (temp=${preTemp}C busy=${preBusy}%); cooling ${waited}/${CooldownWaitSec}s"
+        Start-Sleep -Seconds 15
+        $waited += 15
+        $preTemp = GpuTempC
+        $preBusy = GpuBusyPct
+    }
+    if (($preTemp -ge $MaxStartTempC) -or ($preBusy -ge $MaxStartBusyPct)) {
+        W "ABORT: device still too hot/busy after ${CooldownWaitSec}s (temp=${preTemp}C busy=${preBusy}%). Refusing to launch - protecting the Thor. Re-run when cool, or pass -Force only if you mean it."
+        W "EVIDENCE_FILE: $txt"
+        Write-Output "ABORTED (thermal guard) - device temp=${preTemp}C busy=${preBusy}%. No launch."
+        AdbSh "am force-stop $Package" | Out-Null
+        exit 2
+    }
+    W "preflight: OK to launch (temp=${preTemp}C busy=${preBusy}%)"
+}
 
 if (-not $Attach) {
     W "action: LAUNCH (fresh)"
@@ -87,17 +124,28 @@ if (-not $Attach) {
 
 # --- measurement window ---
 AdbSh "logcat -c" | Out-Null
-# sample KGSL busy/clock across the window in parallel-ish (every ~1s)
+# sample KGSL busy/clock across the window (every ~1s) WITH a defensive thermal
+# watchdog: if the GPU crosses ThrashTempC mid-capture, force-stop the emulator
+# immediately to protect the device, and abort the window.
 $busy = @(); $clk = @()
 $iters = [Math]::Max(1, $WindowSec)
+$thrashed = $false
 for ($i = 0; $i -lt $iters; $i++) {
     $b = (AdbSh "cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage") -replace '[^0-9]',''
     $c = (AdbSh "cat /sys/class/kgsl/kgsl-3d0/clock_mhz") -replace '[^0-9]',''
     if ($b) { $busy += [int]$b }
     if ($c) { $clk += [int]$c }
+    $tNow = GpuTempC
+    if ($tNow -ge $ThrashTempC) {
+        W "THRASH GUARD TRIPPED: gpu_temp=${tNow}C >= ${ThrashTempC}C mid-capture - force-stopping emulator NOW to protect the Thor."
+        AdbSh "am force-stop $Package" | Out-Null
+        $thrashed = $true
+        break
+    }
     Start-Sleep -Seconds 1
 }
 $log = (AdbSh "logcat -d") -join "`n"
+if ($thrashed) { W "NOTE: capture aborted by thermal watchdog; numbers below are partial - do NOT cite as a clean measurement." }
 
 # screenshot
 AdbSh "screencap -p /sdcard/_ev.png" | Out-Null

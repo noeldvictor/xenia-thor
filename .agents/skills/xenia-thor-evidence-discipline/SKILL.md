@@ -10,6 +10,13 @@ description: "MANDATORY before stating any xenia-thor performance number (fps, g
 when running unsupervised. This skill makes that mechanically impossible: numbers come out of a saved
 file, not out of my head.
 
+## ⚠️ NEVER THRASH THE THOR (read before any device action)
+Repeated launches once pinned the GPU at 99% / 72°C and CRASHED the device. Non-negotiable:
+- **Build-verify by default.** The compile+link is the primary check; touch the device only for rare, gentle, supervised captures. No launch-after-launch loops.
+- **Defensive shutdown:** if `gpu_busy_percentage` is pegged high or `temp` (milli-°C) climbs past ~70°C, immediately `am force-stop jp.xenia.emulator.github.debug`. Don't push through thrashing.
+- The harness enforces it: `thor_evidence.ps1` REFUSES to launch when temp ≥ 60°C or busy ≥ 40% (it cools first, force-stopping the emu), and a watchdog force-stops mid-capture if temp ≥ 80°C (exit code 2 = thermal abort, no number). `-Force` overrides only with explicit intent. Tunables: `-MaxStartTempC -MaxStartBusyPct -CooldownWaitSec -ThrashTempC`.
+- Check before launching by hand: `adb -s c3ca0370 shell cat /sys/class/kgsl/kgsl-3d0/temp` (milli-°C) and `.../gpu_busy_percentage`.
+
 ## The hard rule
 **No performance number (fps, gpu_frame_us, GPU busy%, rendered/draw counts, speedup ratio) may appear
 in a reply, worklog entry, commit message, or memory unless it was produced by
