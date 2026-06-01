@@ -33,7 +33,7 @@ $script:ThorGameProfiles = @{
         TitleId = "4D5307DF"
         Iso     = "/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso"
         Status  = "Reaches ACTUAL IN-GAME (2026-05-30 verified, UMA off): in-field party HUD (char 'Shu' HP40/MP30). BUT 3D world does NOT reach frontbuffer (flat light-blue, only HUD composites) and ~2.0fps. Guest IS rendering (log: 320x8192 + 160x4096 MSAA color/depth RTs created) -> our MSAA-RT resolve->frontbuffer path is the suspect, shared with Burnout in-race black-3D. See docs/research/20260530-bluedragon-ingame-black3d-2fps.md."
-        Cvars   = @{ gpu_uma_direct_shared_memory = $false }  # still OFF pending cool-device A/B; gpu_uma_smart_sync (74a5d57b3) now guards the TDR race, but UMA-ON A/B + the Burnout-class present-hang are unverified. Do NOT flip blind.
+        Cvars   = @{ gpu_uma_direct_shared_memory = $false }  # STAYS OFF - device-verified 2026-05-31 (B74, evidence 20260531-230208-uma_on_guarded): UMA-ON present-HANGS Blue Dragon even WITH both guards on (smart_sync + smart_sync_writes) - black screen, VdSwap=0, process alive + CPU spinning (SoC 59->72C, GPU idle 0%). The RAW+WAW upload-race guards work; a SEPARATE present-hang (same class as the documented Burnout UMA hang) remains the blocker. Do NOT flip on until that present-hang is fixed.
         Reach   = "multi-disc .m3u (Disc 1); auto-reaches in-game field HUD; 3D-black + 2fps blocker."
     }
     "lostodyssey" = @{

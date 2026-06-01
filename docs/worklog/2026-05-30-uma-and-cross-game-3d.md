@@ -1955,3 +1955,38 @@ untouched (never-thrash rule).
 VERDICT: gpu_uma_smart_sync is coverage-complete and safe to keep default-on; the remaining unknown is
 purely the on-device A/B (UMA on vs off, fps + no-TDR over a long run) which waits for a cool device +
 gentle guarded capture. Build-verified work only this iteration.
+
+### B73 — UMA smart-sync WAW guard (code+build, no device): gpu_uma_smart_sync_writes (commit 4918d1b8d)
+Deeper re-audit of smart-sync turned B72's dismissed "honest note" into a real fix. The read-only guard
+(74a5d57b3) is complete for READS, but the shared-buffer memory barrier (PushBufferMemoryBarrier in Use())
+orders only GPU-vs-GPU access - it CANNOT order a direct CPU memcpy (UploadRangesDirect) against a PRIOR
+in-flight GPU WRITE to the same range (EDRAM->shared resolve = kComputeWrite at vulkan_render_target_cache
+:1244, or memexport = kGuestDrawReadWrite). That WAW could clobber/tear data -> the intermittent MMU-fault.
+- Fix: track uma_last_write_submission_ for kComputeWrite/kTransferDestination/kGuestDrawReadWrite; the
+  direct path now waits on the latest prior TOUCHER (max of last read/write) when gpu_uma_smart_sync_writes
+  (default true) is on. Still a single-submission wait, not a drain; never the open submission (no deadlock).
+- Build-verified: BUILD SUCCESSFUL; "gpu_uma_smart_sync_writes" string linked in arm64 libxenia-app.so (7x).
+- Reversible: gpu_uma_smart_sync_writes=false reverts to read-only guard for A/B isolation.
+
+### B74 — Device-verified: UMA-ON STILL present-hangs Blue Dragon (NEGATIVE; headline flip BLOCKED)
+First cool-device guarded capture of gpu_uma_direct_shared_memory=true on Blue Dragon, WITH both guards
+active (smart_sync + smart_sync_writes default-on, serialize_before_write off - verified the persisted TOML
+did not disable smart_sync, so no stale-config confound). Device cool+idle at launch (preflight 59C, busy 1%).
+EVIDENCE_FILE: docs/evidence/20260531-230208-uma_on_guarded.txt  (screenshot READ: fully BLACK)
+- SUMMARY: fps=0 (vdswap=0/15s), gpu_busy_median=0%, no "GPU draw outcomes/frame" line at all.
+- Live re-check on the running session: VdSwap=0 over 6s, process ALIVE (pid 13918), GPU idle 0% busy,
+  but SoC temp climbed 59C->71C->72C with the GPU idle => the CPU is SPINNING. Black screen, zero presents.
+- Interpretation (honest): fps=0 is NOT a perf reading - it is "did not present". Process alive + CPU-bound
+  spin + zero VdSwap + black = a PRESENT-HANG, not a slow boot (a loading screen would not peg CPU with 0 GPU
+  presents for 20+s, and UMA-OFF reaches the in-field HUD by ~120-135s). One capture; cannot 100% separate
+  hang from pathological-slow-boot, but the evidence points to hang.
+- This matches the DOCUMENTED UMA-on present-hang (memory burnout-uma-present-hang-regression: UMA-on hangs
+  Burnout present; off ~60fps). It now reproduces on Blue Dragon too. => My RAW+WAW guards correctly fix the
+  upload RACE, but there is a SEPARATE present-hang in the UMA-direct path that they do NOT fix.
+- ACTION: do NOT flip gpu_uma_direct_shared_memory default-on (stays OFF in the bluedragon profile). The real
+  blocker for the UMA zero-copy win is this present-hang, not the upload race. Per RULE #0, force-stopped at
+  71-72C; device left idle to cool; no relaunch this iteration.
+- NEXT diag (one capture, cool device): isolate the hang - launch UMA-on with gpu_uma_serialize_before_write
+  =true (full drain). If it still hangs with the brute-force serialize, the hang is NOT the upload path at all
+  (points at present/swapchain interaction with the 512MB non-sparse persistently-mapped buffer); if it then
+  renders, the hang is upload-await-related and the guard logic needs revisiting. Either way: NOT shippable yet.
