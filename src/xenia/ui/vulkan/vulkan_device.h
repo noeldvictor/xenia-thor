@@ -203,6 +203,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_1_1_khr_bind_memory2.inc"
     // VK_KHR_maintenance4 (#414, promoted to 1.3)
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
+    // VK_EXT_extended_dynamic_state (#268, promoted to 1.3)
+#include "xenia/ui/vulkan/functions/device_1_3_ext_extended_dynamic_state.inc"
     // VK_KHR_push_descriptor (#81)
 #include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED

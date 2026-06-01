@@ -268,6 +268,16 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetBlendConstants(command_buffer, args.blend_constants);
       } break;
 
+      case Command::kVkSetCullMode: {
+        auto& args = *reinterpret_cast<const ArgsVkSetCullMode*>(stream);
+        dfn.vkCmdSetCullMode(command_buffer, args.cull_mode);
+      } break;
+
+      case Command::kVkSetFrontFace: {
+        auto& args = *reinterpret_cast<const ArgsVkSetFrontFace*>(stream);
+        dfn.vkCmdSetFrontFace(command_buffer, args.front_face);
+      } break;
+
       case Command::kVkSetDepthBias: {
         auto& args = *reinterpret_cast<const ArgsVkSetDepthBias*>(stream);
         dfn.vkCmdSetDepthBias(command_buffer, args.depth_bias_constant_factor,

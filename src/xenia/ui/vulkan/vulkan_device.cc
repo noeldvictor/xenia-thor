@@ -765,6 +765,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
+#include "xenia/ui/vulkan/functions/device_1_3_ext_extended_dynamic_state.inc"
   }
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 

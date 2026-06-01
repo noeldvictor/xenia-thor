@@ -358,6 +358,18 @@ class DeferredCommandBuffer {
     args.depth_bias_slope_factor = depth_bias_slope_factor;
   }
 
+  void CmdVkSetCullMode(VkCullModeFlags cull_mode) {
+    auto& args = *reinterpret_cast<ArgsVkSetCullMode*>(
+        WriteCommand(Command::kVkSetCullMode, sizeof(ArgsVkSetCullMode)));
+    args.cull_mode = cull_mode;
+  }
+
+  void CmdVkSetFrontFace(VkFrontFace front_face) {
+    auto& args = *reinterpret_cast<ArgsVkSetFrontFace*>(
+        WriteCommand(Command::kVkSetFrontFace, sizeof(ArgsVkSetFrontFace)));
+    args.front_face = front_face;
+  }
+
   void CmdVkSetScissor(uint32_t first_scissor, uint32_t scissor_count,
                        const VkRect2D* scissors) {
     const size_t header_size =
@@ -430,7 +442,9 @@ class DeferredCommandBuffer {
     kVkPushConstants,
     kVkPushDescriptorSetKHR,
     kVkSetBlendConstants,
+    kVkSetCullMode,
     kVkSetDepthBias,
+    kVkSetFrontFace,
     kVkSetScissor,
     kVkSetStencilCompareMask,
     kVkSetStencilReference,
@@ -578,6 +592,14 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetBlendConstants {
     float blend_constants[4];
+  };
+
+  struct ArgsVkSetCullMode {
+    VkCullModeFlags cull_mode;
+  };
+
+  struct ArgsVkSetFrontFace {
+    VkFrontFace front_face;
   };
 
   struct ArgsVkSetDepthBias {
