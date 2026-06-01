@@ -103,6 +103,11 @@ class VulkanSharedMemory : public SharedMemory {
   // latest reader guarantees every earlier reader is also done - no full drain,
   // no deadlock (never waits on the still-open current submission).
   uint64_t uma_last_read_submission_ = 0;
+  // Latest submission that WROTE guest data into the buffer (EDRAM->shared
+  // resolve = kComputeWrite, memexport = kGuestDrawReadWrite, transfer dest).
+  // gpu_uma_smart_sync_writes makes the direct path wait on this too, closing
+  // the CPU-write-vs-in-flight-GPU-write WAW the GPU-only barrier can't order.
+  uint64_t uma_last_write_submission_ = 0;
 
   Usage last_usage_;
   std::pair<uint32_t, uint32_t> last_written_range_;

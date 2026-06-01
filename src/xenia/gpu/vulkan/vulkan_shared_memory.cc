@@ -62,6 +62,18 @@ DEFINE_bool(
     "safe. No effect unless gpu_uma_direct_shared_memory is on.",
     "Vulkan");
 DEFINE_bool(
+    gpu_uma_smart_sync_writes, true,
+    "Extends gpu_uma_smart_sync to also guard the WRITE-after-write hazard: a "
+    "direct in-place CPU upload of guest pages can race a PRIOR in-flight GPU "
+    "write to the same range (EDRAM->shared-memory resolve / memexport). The "
+    "shared-buffer memory barrier only orders GPU-vs-GPU accesses - it cannot "
+    "order a CPU memcpy against a GPU write - so the read-only guard misses it. "
+    "With this on, the direct path waits for the latest prior submission that "
+    "either READ or WROTE the buffer (still a single-submission wait, not a "
+    "drain). Off = read-only guard (the original smart-sync). No effect unless "
+    "gpu_uma_direct_shared_memory + gpu_uma_smart_sync are on.",
+    "Vulkan");
+DEFINE_bool(
     gpu_uma_strong_coherency, false,
     "EXPERIMENT (b) for the Adreno UMA GPU-hang (TDR): when writing guest pages "
     "directly into the persistently-mapped HOST_VISIBLE|DEVICE_LOCAL shared "
@@ -317,9 +329,22 @@ void VulkanSharedMemory::Use(Usage usage,
   // UMA smart-sync: remember the submission that consumes the buffer as a guest
   // read so a later direct in-place write can wait only for it (not a full GPU
   // drain). kRead / kGuestDrawReadWrite are the guest-read consumers.
-  if (buffer_host_visible_ &&
-      (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite)) {
-    uma_last_read_submission_ = command_processor_.GetCurrentSubmission();
+  // Also remember the latest guest-data WRITER submission (EDRAM->shared-memory
+  // resolve = kComputeWrite, memexport = kGuestDrawReadWrite, transfer dest):
+  // a direct CPU upload to a range an in-flight GPU write also targets is a WAW
+  // that the buffer barrier (GPU-vs-GPU only) cannot order against a CPU memcpy,
+  // so the direct path must be able to wait for the latest writer too.
+  if (buffer_host_visible_) {
+    const uint64_t current_submission =
+        command_processor_.GetCurrentSubmission();
+    if (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite) {
+      uma_last_read_submission_ = current_submission;
+    }
+    if (usage == Usage::kComputeWrite ||
+        usage == Usage::kTransferDestination ||
+        usage == Usage::kGuestDrawReadWrite) {
+      uma_last_write_submission_ = current_submission;
+    }
   }
   if (last_usage_ != usage || last_written_range_.second) {
     VkPipelineStageFlags src_stage_mask, dst_stage_mask;
@@ -608,10 +633,20 @@ bool VulkanSharedMemory::UploadRangesDirect(
     // latest prior reader guarantees all earlier readers are done too.
     const uint64_t current_submission =
         command_processor_.GetCurrentSubmission();
-    const uint64_t last_reader = uma_last_read_submission_;
-    if (last_reader != 0 && last_reader < current_submission &&
-        command_processor_.GetCompletedSubmission() < last_reader) {
-      command_processor_.AwaitSubmissionCompletion(last_reader);
+    // Wait for the latest prior submission that TOUCHED this buffer. Reads are
+    // the documented TDR cause (deferred tiler index/vfetch); writes (resolve/
+    // memexport) are a WAW the GPU-only barrier cannot order against the CPU
+    // memcpy below. Submissions complete in order, so the single latest toucher
+    // subsumes all earlier ones - still no full drain, no deadlock (never the
+    // still-open current submission).
+    uint64_t wait_submission = uma_last_read_submission_;
+    if (cvars::gpu_uma_smart_sync_writes &&
+        uma_last_write_submission_ > wait_submission) {
+      wait_submission = uma_last_write_submission_;
+    }
+    if (wait_submission != 0 && wait_submission < current_submission &&
+        command_processor_.GetCompletedSubmission() < wait_submission) {
+      command_processor_.AwaitSubmissionCompletion(wait_submission);
     }
   }
 
