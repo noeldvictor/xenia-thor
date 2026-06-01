@@ -294,6 +294,19 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetDepthCompareOp(command_buffer, args.depth_compare_op);
       } break;
 
+      case Command::kVkSetStencilTestEnable: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetStencilTestEnable*>(stream);
+        dfn.vkCmdSetStencilTestEnable(command_buffer, args.stencil_test_enable);
+      } break;
+
+      case Command::kVkSetStencilOp: {
+        auto& args = *reinterpret_cast<const ArgsVkSetStencilOp*>(stream);
+        dfn.vkCmdSetStencilOp(command_buffer, args.face_mask, args.fail_op,
+                              args.pass_op, args.depth_fail_op,
+                              args.compare_op);
+      } break;
+
       case Command::kVkSetDepthBias: {
         auto& args = *reinterpret_cast<const ArgsVkSetDepthBias*>(stream);
         dfn.vkCmdSetDepthBias(command_buffer, args.depth_bias_constant_factor,

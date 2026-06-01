@@ -388,6 +388,24 @@ class DeferredCommandBuffer {
     args.depth_compare_op = depth_compare_op;
   }
 
+  void CmdVkSetStencilTestEnable(VkBool32 stencil_test_enable) {
+    auto& args = *reinterpret_cast<ArgsVkSetStencilTestEnable*>(WriteCommand(
+        Command::kVkSetStencilTestEnable, sizeof(ArgsVkSetStencilTestEnable)));
+    args.stencil_test_enable = stencil_test_enable;
+  }
+
+  void CmdVkSetStencilOp(VkStencilFaceFlags face_mask, VkStencilOp fail_op,
+                         VkStencilOp pass_op, VkStencilOp depth_fail_op,
+                         VkCompareOp compare_op) {
+    auto& args = *reinterpret_cast<ArgsVkSetStencilOp*>(
+        WriteCommand(Command::kVkSetStencilOp, sizeof(ArgsVkSetStencilOp)));
+    args.face_mask = face_mask;
+    args.fail_op = fail_op;
+    args.pass_op = pass_op;
+    args.depth_fail_op = depth_fail_op;
+    args.compare_op = compare_op;
+  }
+
   void CmdVkSetScissor(uint32_t first_scissor, uint32_t scissor_count,
                        const VkRect2D* scissors) {
     const size_t header_size =
@@ -468,6 +486,8 @@ class DeferredCommandBuffer {
     kVkSetFrontFace,
     kVkSetScissor,
     kVkSetStencilCompareMask,
+    kVkSetStencilOp,
+    kVkSetStencilTestEnable,
     kVkSetStencilReference,
     kVkSetStencilWriteMask,
     kVkSetViewport,
@@ -633,6 +653,18 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetDepthCompareOp {
     VkCompareOp depth_compare_op;
+  };
+
+  struct ArgsVkSetStencilTestEnable {
+    VkBool32 stencil_test_enable;
+  };
+
+  struct ArgsVkSetStencilOp {
+    VkStencilFaceFlags face_mask;
+    VkStencilOp fail_op;
+    VkStencilOp pass_op;
+    VkStencilOp depth_fail_op;
+    VkCompareOp compare_op;
   };
 
   struct ArgsVkSetDepthBias {

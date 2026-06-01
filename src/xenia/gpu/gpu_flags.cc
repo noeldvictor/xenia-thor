@@ -383,6 +383,17 @@ DEFINE_bool(
     "Default off; STARTUP cvar - do not toggle live. Bit-identical when off.",
     "GPU");
 
+DEFINE_bool(
+    vulkan_dynamic_state_stencil, false,
+    "Thor/Adreno binning re-arch (Lever 1, EDS): promote stencil test enable + "
+    "stencil ops (front/back fail/pass/depth-fail/compare) to Vulkan extended "
+    "dynamic state (VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE/STENCIL_OP, core in "
+    "Vulkan 1.3) so draws differing only in stencil state collapse onto ONE "
+    "VkPipeline. No effect unless Vulkan 1.3+ and the host-render-target path "
+    "(not FSI). Default off; STARTUP cvar - do not toggle live. Bit-identical "
+    "when off. (Stencil compare/write masks + reference are already dynamic.)",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

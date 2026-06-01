@@ -701,6 +701,23 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
               description_out.stencil_front_compare_op;
         }
       }
+      // EDS stencil (Lever 1): promoted to dynamic state -> exclude stencil test
+      // + ops from the pipeline key so draws differing only in stencil state
+      // collapse. Reproduced in UpdateDynamicState from the same
+      // normalized_depth_control. Default-off keeps the real values.
+      if (cvars::vulkan_dynamic_state_stencil &&
+          device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+        description_out.stencil_test_enable = 0;
+        description_out.stencil_front_fail_op = xenos::StencilOp::kKeep;
+        description_out.stencil_front_pass_op = xenos::StencilOp::kKeep;
+        description_out.stencil_front_depth_fail_op = xenos::StencilOp::kKeep;
+        description_out.stencil_front_compare_op =
+            xenos::CompareFunction::kNever;
+        description_out.stencil_back_fail_op = xenos::StencilOp::kKeep;
+        description_out.stencil_back_pass_op = xenos::StencilOp::kKeep;
+        description_out.stencil_back_depth_fail_op = xenos::StencilOp::kKeep;
+        description_out.stencil_back_compare_op = xenos::CompareFunction::kNever;
+      }
     }
 
     // Color blending and write masks (filled only for the attachments present
@@ -2152,7 +2169,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 12> dynamic_states;
+  std::array<VkDynamicState, 14> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2191,6 +2208,17 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
           VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE;
       dynamic_states[dynamic_state.dynamicStateCount++] =
           VK_DYNAMIC_STATE_DEPTH_COMPARE_OP;
+    }
+    // EDS (Lever 1): stencil test enable + ops dynamic (core in Vulkan 1.3).
+    // Same gate as the key-zeroing + emission. (Stencil compare/write mask +
+    // reference are already dynamic below.)
+    if (cvars::vulkan_dynamic_state_stencil &&
+        vulkan_device->properties().apiVersion >=
+            VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE;
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_STENCIL_OP;
     }
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_DEPTH_BIAS;

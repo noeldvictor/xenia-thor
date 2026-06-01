@@ -740,6 +740,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   VkBool32 dynamic_depth_test_enable_ = VK_FALSE;
   VkBool32 dynamic_depth_write_enable_ = VK_FALSE;
   VkCompareOp dynamic_depth_compare_op_ = VK_COMPARE_OP_NEVER;
+  // EDS stencil (Lever 1, vulkan_dynamic_state_stencil). Distinct from the
+  // already-dynamic stencil compare/write masks + reference below.
+  VkBool32 dynamic_stencil_test_enable_ = VK_FALSE;
+  VkStencilOp dynamic_stencil_front_fail_op_ = VK_STENCIL_OP_KEEP;
+  VkStencilOp dynamic_stencil_front_pass_op_ = VK_STENCIL_OP_KEEP;
+  VkStencilOp dynamic_stencil_front_depth_fail_op_ = VK_STENCIL_OP_KEEP;
+  VkCompareOp dynamic_stencil_front_compare_op_ = VK_COMPARE_OP_NEVER;
+  VkStencilOp dynamic_stencil_back_fail_op_ = VK_STENCIL_OP_KEEP;
+  VkStencilOp dynamic_stencil_back_pass_op_ = VK_STENCIL_OP_KEEP;
+  VkStencilOp dynamic_stencil_back_depth_fail_op_ = VK_STENCIL_OP_KEEP;
+  VkCompareOp dynamic_stencil_back_compare_op_ = VK_COMPARE_OP_NEVER;
   bool dynamic_viewport_update_needed_;
   bool dynamic_scissor_update_needed_;
   bool dynamic_depth_bias_update_needed_;
@@ -755,6 +766,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool dynamic_depth_test_enable_update_needed_ = false;
   bool dynamic_depth_write_enable_update_needed_ = false;
   bool dynamic_depth_compare_op_update_needed_ = false;
+  bool dynamic_stencil_test_enable_update_needed_ = false;
+  bool dynamic_stencil_op_update_needed_ = false;
 
   // Whether VK_KHR_push_descriptor is enabled + active (cvar on, extension
   // supported, function loaded). Decided in SetupContext before any descriptor
