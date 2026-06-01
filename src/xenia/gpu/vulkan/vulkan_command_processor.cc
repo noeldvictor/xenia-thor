@@ -3958,16 +3958,42 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // previous draw (only meaningful within a same-pipeline run). Populates the
     // previously-dead merge_vf_* counters so the merge feasibility is real data.
     uint32_t vf_addr = primitive_processing_result.guest_index_base;
-    uint32_t vf_end = vf_addr + hv;
-    if (vf_addr == merge_vf_last_addr_) {
-      ++merge_vf_same_;
-    } else if (vf_addr == merge_vf_last_end_) {
-      ++merge_vf_contig_;
+    if (cvars::gpu_merge_vf_index_stride_fix > 0) {
+      // Stride-correct contiguity (measurement-only). guest_index_base is a BYTE
+      // address, so the run end is addr + count*stride, not addr + count. Only
+      // kGuestDMA draws have a guest index byte-range to compare; other sources
+      // (kNone/kHostConverted/kHostBuiltin*) are skipped entirely and do NOT
+      // update last_addr/last_end, so they neither get mis-counted as scattered
+      // nor inject a false break into the next guest-DMA draw's comparison.
+      if (primitive_processing_result.index_buffer_type ==
+          PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+        uint32_t stride = primitive_processing_result.host_index_format ==
+                                  xenos::IndexFormat::kInt16
+                              ? 2u
+                              : 4u;
+        uint32_t vf_end = vf_addr + hv * stride;
+        if (vf_addr == merge_vf_last_addr_) {
+          ++merge_vf_same_;
+        } else if (vf_addr == merge_vf_last_end_) {
+          ++merge_vf_contig_;
+        } else {
+          ++merge_vf_scattered_;
+        }
+        merge_vf_last_addr_ = vf_addr;
+        merge_vf_last_end_ = vf_end;
+      }
     } else {
-      ++merge_vf_scattered_;
+      uint32_t vf_end = vf_addr + hv;
+      if (vf_addr == merge_vf_last_addr_) {
+        ++merge_vf_same_;
+      } else if (vf_addr == merge_vf_last_end_) {
+        ++merge_vf_contig_;
+      } else {
+        ++merge_vf_scattered_;
+      }
+      merge_vf_last_addr_ = vf_addr;
+      merge_vf_last_end_ = vf_end;
     }
-    merge_vf_last_addr_ = vf_addr;
-    merge_vf_last_end_ = vf_end;
     // Run-length histogram: maximal runs of consecutive draws sharing the same
     // guest graphics pipeline. The go/no-go signal for batching feasibility.
     if (current_guest_graphics_pipeline_ == merge_run_pipeline_ &&

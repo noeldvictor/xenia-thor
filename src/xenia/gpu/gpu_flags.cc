@@ -346,6 +346,20 @@ DEFINE_int32(
     "gpu_frame_us + read the frame.",
     "GPU");
 
+DEFINE_int32(
+    gpu_merge_vf_index_stride_fix, 0,
+    "Thor/Adreno draw-merge MEASUREMENT-ONLY fix (no emission change, default 0 = "
+    "bit-identical). Corrects the merge_vf_ index-contiguity classifier in the "
+    "draw-outcomes trace: the default classifier compares guest_index_base (a BYTE "
+    "address) against prev + host_draw_vertex_count (a VERTEX COUNT, unscaled by "
+    "index stride), so it over-counts 'scattered' for guest-DMA index runs. When "
+    ">0, scale by the index stride (kInt16=2, kInt32=4) and classify ONLY kGuestDMA "
+    "sources (others have no guest index byte-range to compare). Sizes the true "
+    "coalescable draw population for the concatenation lever. Read merge_vf_*/"
+    "merge_run_hist_ via vulkan_trace_draw_outcomes_per_frame; zero gpu_frame_us "
+    "effect by design.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "
