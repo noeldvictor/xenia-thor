@@ -50,6 +50,18 @@ DEFINE_bool(
     "gpu_uma_direct_shared_memory is on.",
     "Vulkan");
 DEFINE_bool(
+    gpu_uma_smart_sync, true,
+    "Adreno UMA TDR FIX (the shippable one): before a direct in-place write of "
+    "guest pages into the persistently-mapped shared-memory buffer, wait ONLY "
+    "for the last already-CLOSED submission that consumed the buffer as a guest "
+    "read (if it hasn't completed), instead of draining ALL GPU work "
+    "(gpu_uma_serialize_before_write). Submissions complete in order on the one "
+    "graphics queue, so waiting for the latest prior reader guarantees all "
+    "earlier readers are done - removing the CPU-write-vs-deferred-read race "
+    "without serializing the whole GPU. Makes gpu_uma_direct_shared_memory "
+    "safe. No effect unless gpu_uma_direct_shared_memory is on.",
+    "Vulkan");
+DEFINE_bool(
     gpu_uma_strong_coherency, false,
     "EXPERIMENT (b) for the Adreno UMA GPU-hang (TDR): when writing guest pages "
     "directly into the persistently-mapped HOST_VISIBLE|DEVICE_LOCAL shared "
@@ -302,6 +314,13 @@ void VulkanSharedMemory::Use(Usage usage,
   written_range.second =
       std::min(written_range.second, kBufferSize - written_range.first);
   assert_true(usage != Usage::kRead || !written_range.second);
+  // UMA smart-sync: remember the submission that consumes the buffer as a guest
+  // read so a later direct in-place write can wait only for it (not a full GPU
+  // drain). kRead / kGuestDrawReadWrite are the guest-read consumers.
+  if (buffer_host_visible_ &&
+      (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite)) {
+    uma_last_read_submission_ = command_processor_.GetCurrentSubmission();
+  }
   if (last_usage_ != usage || last_written_range_.second) {
     VkPipelineStageFlags src_stage_mask, dst_stage_mask;
     VkAccessFlags src_access_mask, dst_access_mask;
@@ -579,6 +598,20 @@ bool VulkanSharedMemory::UploadRangesDirect(
         command_processor_.GetCompletedSubmission() < current_submission - 1) {
       // Wait for everything submitted so far (current_submission - 1) to drain.
       command_processor_.AwaitSubmissionCompletion(current_submission - 1);
+    }
+  } else if (cvars::gpu_uma_smart_sync) {
+    // TDR FIX: wait ONLY for the last submission that read this buffer, and only
+    // if it is a PRIOR (already-closed) submission that has not yet completed.
+    // GetCurrentSubmission() is the still-OPEN submission being recorded now -
+    // never wait on it (its reads haven't been submitted, and waiting would
+    // deadlock). Because queue submissions complete in order, awaiting the
+    // latest prior reader guarantees all earlier readers are done too.
+    const uint64_t current_submission =
+        command_processor_.GetCurrentSubmission();
+    const uint64_t last_reader = uma_last_read_submission_;
+    if (last_reader != 0 && last_reader < current_submission &&
+        command_processor_.GetCompletedSubmission() < last_reader) {
+      command_processor_.AwaitSubmissionCompletion(last_reader);
     }
   }
 

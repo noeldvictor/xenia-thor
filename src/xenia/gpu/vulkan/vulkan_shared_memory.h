@@ -90,6 +90,20 @@ class VulkanSharedMemory : public SharedMemory {
   bool UploadRangesDirect(const std::vector<std::pair<uint32_t, uint32_t>>&
                               upload_page_ranges);
 
+  // UMA in-flight read tracking (gpu_uma_direct_shared_memory TDR fix,
+  // gpu_uma_smart_sync). The direct path overwrites guest pages IN PLACE on the
+  // CPU timeline, but the Adreno tiler reads them deferred while binning/
+  // rendering a PRIOR submission -> CPU-write-vs-deferred-read race -> torn
+  // index/vfetch -> GPU MMU-fault TDR. The brute fix gpu_uma_serialize_before_
+  // write drains ALL GPU work before every write (kills the UMA win). Correct +
+  // cheap fix: track the single most-recent submission index in which the buffer
+  // was consumed as a guest READ; before a direct write, if that submission is a
+  // PRIOR (already-closed) one that has not completed, wait ONLY for it. Because
+  // submissions complete in order on the one graphics queue, waiting for the
+  // latest reader guarantees every earlier reader is also done - no full drain,
+  // no deadlock (never waits on the still-open current submission).
+  uint64_t uma_last_read_submission_ = 0;
+
   Usage last_usage_;
   std::pair<uint32_t, uint32_t> last_written_range_;
 
