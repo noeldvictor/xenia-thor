@@ -1899,6 +1899,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         }
       }
     }
+    // Flush the final in-progress same-pipeline run into the histogram.
+    if (merge_run_len_) {
+      uint32_t rl = merge_run_len_;
+      uint32_t b = rl <= 1   ? 0
+                   : rl == 2 ? 1
+                   : rl <= 4 ? 2
+                   : rl <= 8 ? 3
+                   : rl <= 16 ? 4
+                   : rl <= 32 ? 5
+                   : rl <= 64 ? 6
+                              : 7;
+      ++merge_run_hist_[b];
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -1913,7 +1926,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
         "merge[pipe_same={} consts_same={} consts_changed={}] "
-        "vf[same={} contig={} scattered={}]",
+        "vf[same={} contig={} scattered={}] "
+        "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -1956,7 +1970,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_vtx_bucket_[0], draw_vtx_bucket_[1], draw_vtx_bucket_[2],
         draw_vtx_bucket_[3], merge_pipe_same_, merge_consts_same_,
         merge_consts_changed_, merge_vf_same_, merge_vf_contig_,
-        merge_vf_scattered_);
+        merge_vf_scattered_, merge_run_hist_[0], merge_run_hist_[1],
+        merge_run_hist_[2], merge_run_hist_[3], merge_run_hist_[4],
+        merge_run_hist_[5], merge_run_hist_[6], merge_run_hist_[7]);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
@@ -1971,6 +1987,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_vf_same_ = 0;
     merge_vf_contig_ = 0;
     merge_vf_scattered_ = 0;
+    merge_vf_last_addr_ = 0;
+    merge_vf_last_end_ = 0;
+    merge_run_len_ = 0;
+    merge_run_pipeline_ = VK_NULL_HANDLE;
+    std::memset(merge_run_hist_, 0, sizeof(merge_run_hist_));
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
@@ -3933,6 +3954,41 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     ++draw_prim_counts_[uint32_t(prim_type) & 0xF];
     uint32_t hv = primitive_processing_result.host_draw_vertex_count;
     ++draw_vtx_bucket_[hv < 16 ? 0 : hv < 64 ? 1 : hv < 256 ? 2 : 3];
+    // vfetch contiguity: classify this draw's guest index/vertex source vs the
+    // previous draw (only meaningful within a same-pipeline run). Populates the
+    // previously-dead merge_vf_* counters so the merge feasibility is real data.
+    uint32_t vf_addr = primitive_processing_result.guest_index_base;
+    uint32_t vf_end = vf_addr + hv;
+    if (vf_addr == merge_vf_last_addr_) {
+      ++merge_vf_same_;
+    } else if (vf_addr == merge_vf_last_end_) {
+      ++merge_vf_contig_;
+    } else {
+      ++merge_vf_scattered_;
+    }
+    merge_vf_last_addr_ = vf_addr;
+    merge_vf_last_end_ = vf_end;
+    // Run-length histogram: maximal runs of consecutive draws sharing the same
+    // guest graphics pipeline. The go/no-go signal for batching feasibility.
+    if (current_guest_graphics_pipeline_ == merge_run_pipeline_ &&
+        merge_run_pipeline_ != VK_NULL_HANDLE) {
+      ++merge_run_len_;
+    } else {
+      if (merge_run_len_) {
+        uint32_t rl = merge_run_len_;
+        uint32_t b = rl <= 1   ? 0
+                     : rl == 2 ? 1
+                     : rl <= 4 ? 2
+                     : rl <= 8 ? 3
+                     : rl <= 16 ? 4
+                     : rl <= 32 ? 5
+                     : rl <= 64 ? 6
+                                : 7;
+        ++merge_run_hist_[b];
+      }
+      merge_run_pipeline_ = current_guest_graphics_pipeline_;
+      merge_run_len_ = 1;
+    }
   }
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;

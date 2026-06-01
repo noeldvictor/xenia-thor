@@ -803,6 +803,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t merge_vf_same_ = 0;
   uint32_t merge_vf_contig_ = 0;
   uint32_t merge_vf_scattered_ = 0;
+  // Run-length histogram (per frame): length of maximal runs of consecutive
+  // rendered draws sharing the same guest graphics pipeline. The GO/NO-GO data
+  // for whether ANY draw-batching is even possible (runs of length 1 => nothing
+  // to merge). Buckets: [1,2,3-4,5-8,9-16,17-32,33-64,65+]. run_len_ is the
+  // in-progress run length, flushed into a bucket on a pipeline change.
+  uint32_t merge_run_len_ = 0;
+  VkPipeline merge_run_pipeline_ = VK_NULL_HANDLE;
+  uint32_t merge_run_hist_[8] = {};
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.
