@@ -370,6 +370,24 @@ class DeferredCommandBuffer {
     args.front_face = front_face;
   }
 
+  void CmdVkSetDepthTestEnable(VkBool32 depth_test_enable) {
+    auto& args = *reinterpret_cast<ArgsVkSetDepthTestEnable*>(WriteCommand(
+        Command::kVkSetDepthTestEnable, sizeof(ArgsVkSetDepthTestEnable)));
+    args.depth_test_enable = depth_test_enable;
+  }
+
+  void CmdVkSetDepthWriteEnable(VkBool32 depth_write_enable) {
+    auto& args = *reinterpret_cast<ArgsVkSetDepthWriteEnable*>(WriteCommand(
+        Command::kVkSetDepthWriteEnable, sizeof(ArgsVkSetDepthWriteEnable)));
+    args.depth_write_enable = depth_write_enable;
+  }
+
+  void CmdVkSetDepthCompareOp(VkCompareOp depth_compare_op) {
+    auto& args = *reinterpret_cast<ArgsVkSetDepthCompareOp*>(WriteCommand(
+        Command::kVkSetDepthCompareOp, sizeof(ArgsVkSetDepthCompareOp)));
+    args.depth_compare_op = depth_compare_op;
+  }
+
   void CmdVkSetScissor(uint32_t first_scissor, uint32_t scissor_count,
                        const VkRect2D* scissors) {
     const size_t header_size =
@@ -444,6 +462,9 @@ class DeferredCommandBuffer {
     kVkSetBlendConstants,
     kVkSetCullMode,
     kVkSetDepthBias,
+    kVkSetDepthCompareOp,
+    kVkSetDepthTestEnable,
+    kVkSetDepthWriteEnable,
     kVkSetFrontFace,
     kVkSetScissor,
     kVkSetStencilCompareMask,
@@ -600,6 +621,18 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetFrontFace {
     VkFrontFace front_face;
+  };
+
+  struct ArgsVkSetDepthTestEnable {
+    VkBool32 depth_test_enable;
+  };
+
+  struct ArgsVkSetDepthWriteEnable {
+    VkBool32 depth_write_enable;
+  };
+
+  struct ArgsVkSetDepthCompareOp {
+    VkCompareOp depth_compare_op;
   };
 
   struct ArgsVkSetDepthBias {

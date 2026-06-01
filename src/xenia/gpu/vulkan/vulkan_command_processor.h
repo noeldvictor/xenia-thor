@@ -736,6 +736,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // emission regardless of these initial values.
   VkCullModeFlags dynamic_cull_mode_ = VK_CULL_MODE_NONE;
   VkFrontFace dynamic_front_face_ = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  // EDS depth (Lever 1, vulkan_dynamic_state_depth).
+  VkBool32 dynamic_depth_test_enable_ = VK_FALSE;
+  VkBool32 dynamic_depth_write_enable_ = VK_FALSE;
+  VkCompareOp dynamic_depth_compare_op_ = VK_COMPARE_OP_NEVER;
   bool dynamic_viewport_update_needed_;
   bool dynamic_scissor_update_needed_;
   bool dynamic_depth_bias_update_needed_;
@@ -748,6 +752,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool dynamic_stencil_reference_back_update_needed_;
   bool dynamic_cull_mode_update_needed_ = false;
   bool dynamic_front_face_update_needed_ = false;
+  bool dynamic_depth_test_enable_update_needed_ = false;
+  bool dynamic_depth_write_enable_update_needed_ = false;
+  bool dynamic_depth_compare_op_update_needed_ = false;
 
   // Whether VK_KHR_push_descriptor is enabled + active (cvar on, extension
   // supported, function loaded). Decided in SetupContext before any descriptor

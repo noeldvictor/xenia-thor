@@ -3186,6 +3186,9 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
   // guest draw. Harmless when the promotion cvar is off (flags never consumed).
   dynamic_cull_mode_update_needed_ = true;
   dynamic_front_face_update_needed_ = true;
+  dynamic_depth_test_enable_update_needed_ = true;
+  dynamic_depth_write_enable_update_needed_ = true;
+  dynamic_depth_compare_op_update_needed_ = true;
   if (current_external_graphics_pipeline_ == pipeline) {
     return;
   }
@@ -4462,6 +4465,9 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_stencil_reference_back_update_needed_ = true;
     dynamic_cull_mode_update_needed_ = true;
     dynamic_front_face_update_needed_ = true;
+    dynamic_depth_test_enable_update_needed_ = true;
+    dynamic_depth_write_enable_update_needed_ = true;
+    dynamic_depth_compare_op_update_needed_ = true;
     current_render_pass_ = VK_NULL_HANDLE;
     current_framebuffer_ = nullptr;
     current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
@@ -5117,8 +5123,55 @@ void VulkanCommandProcessor::UpdateDynamicState(
     }
   }
 
+  // EDS depth (Lever 1): depth test enable + write enable + compare op promoted
+  // to dynamic state. Reproduce EXACTLY what GetCurrentStateDescription baked +
+  // EnsurePipelineCreated derived: depthTestEnable = (write || compare!=ALWAYS),
+  // depthWriteEnable = write, depthCompareOp = NEVER + compare. Only the host-
+  // render-target path uses depth/stencil state (gated like the dynamic-state
+  // array). normalized_depth_control is the same source the key used, so the
+  // values match. The cvar short-circuits first (zero-cost on the default path).
+  if (cvars::vulkan_dynamic_state_depth &&
+      GetVulkanDevice()->properties().apiVersion >=
+          VK_MAKE_API_VERSION(0, 1, 3, 0) &&
+      render_target_cache_->GetPath() !=
+          RenderTargetCache::Path::kPixelShaderInterlock) {
+    uint32_t key_depth_write = 0;
+    xenos::CompareFunction key_compare = xenos::CompareFunction::kAlways;
+    if (normalized_depth_control.z_enable) {
+      key_depth_write = normalized_depth_control.z_write_enable;
+      key_compare = normalized_depth_control.zfunc;
+    }
+    VkBool32 depth_test_enable = VK_FALSE;
+    VkBool32 depth_write_enable = VK_FALSE;
+    VkCompareOp depth_compare_op = VK_COMPARE_OP_NEVER;
+    if (key_depth_write || key_compare != xenos::CompareFunction::kAlways) {
+      depth_test_enable = VK_TRUE;
+      depth_write_enable = key_depth_write ? VK_TRUE : VK_FALSE;
+      depth_compare_op = VkCompareOp(uint32_t(VK_COMPARE_OP_NEVER) +
+                                     uint32_t(key_compare));
+    }
+    if (dynamic_depth_test_enable_update_needed_ ||
+        depth_test_enable != dynamic_depth_test_enable_) {
+      deferred_command_buffer_.CmdVkSetDepthTestEnable(depth_test_enable);
+      dynamic_depth_test_enable_ = depth_test_enable;
+      dynamic_depth_test_enable_update_needed_ = false;
+    }
+    if (dynamic_depth_write_enable_update_needed_ ||
+        depth_write_enable != dynamic_depth_write_enable_) {
+      deferred_command_buffer_.CmdVkSetDepthWriteEnable(depth_write_enable);
+      dynamic_depth_write_enable_ = depth_write_enable;
+      dynamic_depth_write_enable_update_needed_ = false;
+    }
+    if (dynamic_depth_compare_op_update_needed_ ||
+        depth_compare_op != dynamic_depth_compare_op_) {
+      deferred_command_buffer_.CmdVkSetDepthCompareOp(depth_compare_op);
+      dynamic_depth_compare_op_ = depth_compare_op;
+      dynamic_depth_compare_op_update_needed_ = false;
+    }
+  }
+
   // TODO(Triang3l): more VK_EXT_extended_dynamic_state2 fields (primitive
-  // topology / restart, depth test/write/compare, stencil).
+  // topology / restart, stencil test/op).
 }
 
 void VulkanCommandProcessor::UpdateSystemConstantValues(

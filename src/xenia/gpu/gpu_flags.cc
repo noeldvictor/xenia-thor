@@ -372,6 +372,17 @@ DEFINE_bool(
     "keys). Default path is bit-identical when off.",
     "GPU");
 
+DEFINE_bool(
+    vulkan_dynamic_state_depth, false,
+    "Thor/Adreno binning re-arch (Lever 1, EDS): promote depth test enable + "
+    "depth write enable + depth compare op to Vulkan extended dynamic state "
+    "(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE/WRITE_ENABLE/COMPARE_OP, core in Vulkan "
+    "1.3) so draws differing only in depth state collapse onto ONE VkPipeline - "
+    "fewer Adreno context rolls and longer same-pipeline runs. No effect unless "
+    "the device is Vulkan 1.3+ and the host-render-target path is used (not FSI). "
+    "Default off; STARTUP cvar - do not toggle live. Bit-identical when off.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

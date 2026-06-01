@@ -278,6 +278,22 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetFrontFace(command_buffer, args.front_face);
       } break;
 
+      case Command::kVkSetDepthTestEnable: {
+        auto& args = *reinterpret_cast<const ArgsVkSetDepthTestEnable*>(stream);
+        dfn.vkCmdSetDepthTestEnable(command_buffer, args.depth_test_enable);
+      } break;
+
+      case Command::kVkSetDepthWriteEnable: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetDepthWriteEnable*>(stream);
+        dfn.vkCmdSetDepthWriteEnable(command_buffer, args.depth_write_enable);
+      } break;
+
+      case Command::kVkSetDepthCompareOp: {
+        auto& args = *reinterpret_cast<const ArgsVkSetDepthCompareOp*>(stream);
+        dfn.vkCmdSetDepthCompareOp(command_buffer, args.depth_compare_op);
+      } break;
+
       case Command::kVkSetDepthBias: {
         auto& args = *reinterpret_cast<const ArgsVkSetDepthBias*>(stream);
         dfn.vkCmdSetDepthBias(command_buffer, args.depth_bias_constant_factor,

@@ -662,6 +662,15 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
       } else {
         description_out.depth_compare_op = xenos::CompareFunction::kAlways;
       }
+      // EDS depth (Lever 1): promoted to dynamic state -> exclude depth test/
+      // write/compare from the pipeline key so draws differing only in depth
+      // state collapse. The exact values are reproduced in UpdateDynamicState
+      // from the same normalized_depth_control. Default-off keeps real values.
+      if (cvars::vulkan_dynamic_state_depth &&
+          device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+        description_out.depth_write_enable = 0;
+        description_out.depth_compare_op = xenos::CompareFunction::kNever;
+      }
       if (normalized_depth_control.stencil_enable) {
         description_out.stencil_test_enable = 1;
         description_out.stencil_front_fail_op =
@@ -2143,7 +2152,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 9> dynamic_states;
+  std::array<VkDynamicState, 12> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2169,6 +2178,20 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
         VK_DYNAMIC_STATE_FRONT_FACE;
   }
   if (!edram_fragment_shader_interlock) {
+    // EDS (Lever 1): depth test/write/compare dynamic (core in Vulkan 1.3).
+    // Same gate as the key-zeroing in GetCurrentStateDescription + emission in
+    // UpdateDynamicState. Only the host-render-target path uses depth/stencil
+    // state, which is why this is inside the !FSI block.
+    if (cvars::vulkan_dynamic_state_depth &&
+        vulkan_device->properties().apiVersion >=
+            VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE;
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE;
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_DEPTH_COMPARE_OP;
+    }
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_DEPTH_BIAS;
     dynamic_states[dynamic_state.dynamicStateCount++] =
