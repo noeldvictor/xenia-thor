@@ -91,3 +91,37 @@ visible from render-pass handle equality) — covered by the cursor snapshot + c
 flushes. Off-path bit-identity must be preserved at every increment.
 
 Source: wf_07744894-2fe (full output was in the task temp file).
+
+---
+
+## STATUS 2026-06-01: Lever 2 BUILD-COMPLETE (Steps 1-4) + combined reconnect A/B
+All four blind increments shipped, gated `vulkan_merge_draws` (default off, bit-identical):
+- Step 1 `39d812baf` scaffolding (cvar, merge_pending_*, FlushPendingMergeRun, flush-immediately).
+- Step 2 `016164575` cursor signal (merge_cannot_extend_this_draw_ via
+  DeferredCommandBuffer::command_stream_size_elements()).
+- Step 3 `2fc895d4a` chokepoint flushes (EndRenderPass top = master pass-end; RT-change direct
+  break; BindExternalGraphicsPipeline/IssueCopy/IssueSwap/EndSubmission tops). NOTE: the design's
+  "flush at top of SubmitBarriersAndEnter" was corrected - that function is per-draw, so flushing
+  there would force run length 1; flushes go only at genuine pass-ends so coalescing survives.
+- Step 4 `8c17e8f32` list-only coalescing (EXTEND-or-flush; full predicate: list-only topology,
+  stride-correct contiguity, same pipeline/layout/index-type/vgt_indx_offset/index-endian/prim-type,
+  NOT memexport, NOT restart, cursor-clean). VS-const/descriptor/dynamic-state/render-pass changes
+  caught by the cursor signal (they emit a command). skip_tiny + non-indexed + non-kGuestDMA = hard
+  boundaries. Index-count clamp naturally breaks contiguity -> flush.
+Step 5 (device A/B) is the remaining gate - deferred to Thor reconnect.
+
+## THE BINNING RE-ARCH IS BUILD-COMPLETE. Combined reconnect A/B (do FIRST on reconnect, cool+idle)
+Front A EDS (vulkan_dynamic_state_cull_front/depth/stencil/topology) + Lever 2 (vulkan_merge_draws)
+all converge on ONE verification. Per never-thrash: temp<60C + idle, use tools/thor/thor_evidence.ps1.
+1. BASELINE: heavy field scene, gpu_freeze_at_guest_ms to lock content, --ez
+   vulkan_trace_draw_outcomes_per_frame true (all merge cvars OFF). Read merge_run_hist_,
+   merge_vf_contig_ (with gpu_merge_vf_index_stride_fix 1), pipeline-bind count, gpu_frame_us, fps,
+   screenshot.
+2. EDS-ON: + the 4 Front-A cvars. Same guest_ms. merge_run_hist_ should shift to longer runs +
+   pipeline binds drop. Screenshot MUST be identical.
+3. EDS+MERGE-ON: + vulkan_merge_draws. Same guest_ms. Host draw count should drop (runs collapse);
+   gpu_frame_us should fall if per-draw cost was real. Screenshot MUST be identical (any diff = a
+   predicate/flush bug in concatenation; bisect by toggling vulkan_merge_draws alone).
+4. If identical + faster: ship the winning cvars in the bluedragon profile. If a regression: the
+   per-cvar ramp localizes it (Front-A field vs concatenation).
+RAMP/BISECT: enable cvars one at a time to attribute any rendering diff or perf delta.
