@@ -3953,10 +3953,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       primitive_processing_result.host_draw_vertex_count <
           uint32_t(cvars::gpu_skip_draws_below_verts);
   if (skip_tiny_draw) {
-    // Emit nothing; fall through to the per-frame bookkeeping below.
+    // A skipped draw advances the guest index pointer with NO host draw, so it is
+    // a HARD concatenation boundary (Lever 2): flush the pending run so it is
+    // never stitched across the hole. Emit nothing.
+    if (cvars::vulkan_merge_draws) {
+      FlushPendingMergeRun();
+    }
   } else if (primitive_processing_result.index_buffer_type ==
                  PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
              shader_32bit_index_dma) {
+    // Non-indexed (auto / shader-32bit DMA): breaks a kGuestDMA index run.
+    if (cvars::vulkan_merge_draws) {
+      FlushPendingMergeRun();
+    }
     deferred_command_buffer_.CmdVkDraw(
         primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
   } else {
@@ -3986,18 +3995,75 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (cvars::vulkan_merge_draws &&
         primitive_processing_result.index_buffer_type ==
             PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
-      // Lever 2 Step 1 (scaffolding): capture this kGuestDMA draw as a run head
-      // and flush IMMEDIATELY -> a run is always length 1 -> the command stream
-      // is identical to the inline path below. Cross-draw coalescing (the full
-      // merge predicate + chokepoint flushes) is enabled in later increments.
-      merge_pending_active_ = true;
-      merge_pending_index_buffer_ = index_buffer.first;
-      merge_pending_index_base_ = index_buffer.second;
-      merge_pending_index_type_ = index_type;
-      merge_pending_index_count_ =
+      // Lever 2 Step 4: zero-copy draw concatenation. EXTEND the pending run if
+      // this draw shares ALL state with it and indexes the contiguous next byte
+      // range; else flush and start a new head (or emit standalone if this draw
+      // is itself non-mergeable). cvar-on correctness is UNVERIFIABLE without the
+      // device - validated by the on-reconnect A/B (read the frame is identical).
+      const uint32_t idx_count =
           primitive_processing_result.host_draw_vertex_count;
-      FlushPendingMergeRun();
+      const uint32_t idx_base = uint32_t(index_buffer.second);
+      const uint32_t stride = index_type == VK_INDEX_TYPE_UINT16 ? 2u : 4u;
+      const int32_t vgt_indx_offset =
+          regs.Get<int32_t>(XE_GPU_REG_VGT_INDX_OFFSET);
+      const xenos::Endian index_endian =
+          primitive_processing_result.host_shader_index_endian;
+      const xenos::PrimitiveType prim_type =
+          primitive_processing_result.host_primitive_type;
+      // LIST-ONLY: concatenating strip/fan index ranges would stitch primitives
+      // across draw boundaries. Memexport (GPU side effects) and primitive-restart
+      // also break mergeability.
+      const bool mergeable =
+          (prim_type == xenos::PrimitiveType::kTriangleList ||
+           prim_type == xenos::PrimitiveType::kLineList ||
+           prim_type == xenos::PrimitiveType::kPointList) &&
+          memexport_extent_start >= memexport_extent_end &&
+          !primitive_processing_result.host_primitive_reset_enabled;
+      const bool can_extend =
+          merge_pending_active_ && mergeable &&
+          !merge_cannot_extend_this_draw_ &&
+          current_guest_graphics_pipeline_ == merge_pending_pipeline_ &&
+          current_guest_graphics_pipeline_layout_ ==
+              merge_pending_pipeline_layout_ &&
+          index_type == merge_pending_index_type_ &&
+          idx_base == merge_pending_next_byte_ &&
+          uint32_t(vgt_indx_offset) == merge_pending_vertex_base_index_ &&
+          index_endian == merge_pending_vertex_index_endian_ &&
+          prim_type == merge_pending_prim_type_;
+      if (can_extend) {
+        // Concatenate this draw's contiguous index range into the pending run.
+        merge_pending_index_count_ += idx_count;
+        merge_pending_next_byte_ += idx_count * stride;
+      } else {
+        FlushPendingMergeRun();
+        if (mergeable) {
+          // Start a new pending run with this draw as the head.
+          merge_pending_active_ = true;
+          merge_pending_index_buffer_ = index_buffer.first;
+          merge_pending_index_base_ = index_buffer.second;
+          merge_pending_index_type_ = index_type;
+          merge_pending_index_count_ = idx_count;
+          merge_pending_next_byte_ = idx_base + idx_count * stride;
+          merge_pending_pipeline_ = current_guest_graphics_pipeline_;
+          merge_pending_pipeline_layout_ =
+              current_guest_graphics_pipeline_layout_;
+          merge_pending_vertex_base_index_ = uint32_t(vgt_indx_offset);
+          merge_pending_vertex_index_endian_ = index_endian;
+          merge_pending_prim_type_ = prim_type;
+        } else {
+          // Non-mergeable kGuestDMA draw (strip/fan/memexport/restart): standalone.
+          deferred_command_buffer_.CmdVkBindIndexBuffer(
+              index_buffer.first, index_buffer.second, index_type);
+          deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+        }
+      }
     } else {
+      // cvar off, or a non-kGuestDMA indexed type (kHostConverted/kHostBuiltin,
+      // which use per-draw backend index handles and are non-mergeable): flush
+      // any pending run, then emit standalone exactly as before.
+      if (cvars::vulkan_merge_draws) {
+        FlushPendingMergeRun();
+      }
       deferred_command_buffer_.CmdVkBindIndexBuffer(
           index_buffer.first, index_buffer.second, index_type);
       deferred_command_buffer_.CmdVkDrawIndexed(

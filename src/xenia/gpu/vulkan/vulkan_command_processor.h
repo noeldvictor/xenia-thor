@@ -867,9 +867,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   // command-stream cursor; consumed by the merge interceptor (Step 4).
   bool merge_cannot_extend_this_draw_ = false;
   VkBuffer merge_pending_index_buffer_ = VK_NULL_HANDLE;
-  VkDeviceSize merge_pending_index_base_ = 0;
+  VkDeviceSize merge_pending_index_base_ = 0;  // run head guest_index_base = bind offset
   VkIndexType merge_pending_index_type_ = VK_INDEX_TYPE_UINT16;
-  uint32_t merge_pending_index_count_ = 0;
+  uint32_t merge_pending_index_count_ = 0;  // running sum of host_draw_vertex_count
+  // Predicate state captured from the run head, compared to extend (Step 4).
+  uint32_t merge_pending_next_byte_ = 0;  // base + count*stride (contiguity test)
+  VkPipeline merge_pending_pipeline_ = VK_NULL_HANDLE;
+  const PipelineLayout* merge_pending_pipeline_layout_ = nullptr;
+  uint32_t merge_pending_vertex_base_index_ = 0;  // VGT_INDX_OFFSET
+  xenos::Endian merge_pending_vertex_index_endian_ = xenos::Endian::kNone;
+  xenos::PrimitiveType merge_pending_prim_type_ =
+      xenos::PrimitiveType::kTriangleList;
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.
