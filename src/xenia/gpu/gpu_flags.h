@@ -93,6 +93,7 @@ DECLARE_bool(gpu_skip_edram_transfers);
 DECLARE_uint32(gpu_freeze_at_guest_ms);
 DECLARE_int32(gpu_skip_draws_below_verts);
 DECLARE_int32(gpu_merge_vf_index_stride_fix);
+DECLARE_bool(vulkan_dynamic_state_cull_front);
 
 DECLARE_bool(non_seamless_cube_map);
 

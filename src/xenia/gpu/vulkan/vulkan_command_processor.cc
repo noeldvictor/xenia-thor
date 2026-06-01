@@ -3181,6 +3181,11 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
     dynamic_stencil_reference_front_update_needed_ = true;
     dynamic_stencil_reference_back_update_needed_ = true;
   }
+  // EDS cull/front-face (Lever 1b) are not preserved across an external pipeline
+  // (it uses static rasterizer state), so force re-emission before the next
+  // guest draw. Harmless when the promotion cvar is off (flags never consumed).
+  dynamic_cull_mode_update_needed_ = true;
+  dynamic_front_face_update_needed_ = true;
   if (current_external_graphics_pipeline_ == pipeline) {
     return;
   }
@@ -4455,6 +4460,8 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_stencil_write_mask_back_update_needed_ = true;
     dynamic_stencil_reference_front_update_needed_ = true;
     dynamic_stencil_reference_back_update_needed_ = true;
+    dynamic_cull_mode_update_needed_ = true;
+    dynamic_front_face_update_needed_ = true;
     current_render_pass_ = VK_NULL_HANDLE;
     current_framebuffer_ = nullptr;
     current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
@@ -5074,8 +5081,44 @@ void VulkanCommandProcessor::UpdateDynamicState(
     }
   }
 
-  // TODO(Triang3l): VK_EXT_extended_dynamic_state and
-  // VK_EXT_extended_dynamic_state2.
+  // EDS (Lever 1b): cull mode + front face promoted to dynamic state. Reproduce
+  // EXACTLY what VulkanPipelineCache::GetCurrentStateDescription baked into the
+  // pipeline key (which is zeroed out there when promoted): cull/front-face only
+  // apply to polygonal primitives; for non-polygonal draws the key keeps NONE /
+  // counter-clockwise. The cvar short-circuits first, so this is zero-cost (no
+  // device query, no emission) on the default path.
+  if (cvars::vulkan_dynamic_state_cull_front &&
+      GetVulkanDevice()->properties().apiVersion >=
+          VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+    VkCullModeFlags cull_mode = VK_CULL_MODE_NONE;
+    VkFrontFace front_face = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    if (primitive_polygonal) {
+      auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+      if (pa_su_sc_mode_cntl.cull_front) {
+        cull_mode |= VK_CULL_MODE_FRONT_BIT;
+      }
+      if (pa_su_sc_mode_cntl.cull_back) {
+        cull_mode |= VK_CULL_MODE_BACK_BIT;
+      }
+      front_face = pa_su_sc_mode_cntl.face != 0
+                       ? VK_FRONT_FACE_CLOCKWISE
+                       : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    }
+    if (dynamic_cull_mode_update_needed_ || cull_mode != dynamic_cull_mode_) {
+      deferred_command_buffer_.CmdVkSetCullMode(cull_mode);
+      dynamic_cull_mode_ = cull_mode;
+      dynamic_cull_mode_update_needed_ = false;
+    }
+    if (dynamic_front_face_update_needed_ ||
+        front_face != dynamic_front_face_) {
+      deferred_command_buffer_.CmdVkSetFrontFace(front_face);
+      dynamic_front_face_ = front_face;
+      dynamic_front_face_update_needed_ = false;
+    }
+  }
+
+  // TODO(Triang3l): more VK_EXT_extended_dynamic_state2 fields (primitive
+  // topology / restart, depth test/write/compare, stencil).
 }
 
 void VulkanCommandProcessor::UpdateSystemConstantValues(

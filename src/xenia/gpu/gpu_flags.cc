@@ -360,6 +360,18 @@ DEFINE_int32(
     "effect by design.",
     "GPU");
 
+DEFINE_bool(
+    vulkan_dynamic_state_cull_front, false,
+    "Thor/Adreno binning re-arch (Lever 1b, EDS): promote rasterizer cull mode + "
+    "front face to Vulkan extended dynamic state (VK_DYNAMIC_STATE_CULL_MODE / "
+    "FRONT_FACE, core in Vulkan 1.3) so draws differing only in cull/front-face "
+    "(with the same resulting polygon mode) collapse onto ONE VkPipeline - fewer "
+    "Adreno context rolls / pipeline rebinds and longer same-pipeline runs (the "
+    "prerequisite for draw concatenation). No effect unless the device is Vulkan "
+    "1.3+. Default off; STARTUP cvar - do not toggle live (mixes pipeline-cache "
+    "keys). Default path is bit-identical when off.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

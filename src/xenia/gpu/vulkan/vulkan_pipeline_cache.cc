@@ -638,6 +638,19 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   } else {
     description_out.polygon_mode = PipelinePolygonMode::kFill;
   }
+  // EDS (Lever 1b): when cull mode + front face are promoted to dynamic state,
+  // exclude them from the pipeline key so draws differing ONLY in cull/front
+  // face collapse onto one VkPipeline. polygon_mode (derived from cull above)
+  // stays in the key - it is NOT dynamic. The values emitted dynamically in
+  // VulkanCommandProcessor::UpdateDynamicState reproduce the real register
+  // state (incl. the primitive_polygonal gate), so rendering is unchanged.
+  // Must match the dynamic-state array in EnsurePipelineCreated (same gate).
+  if (cvars::vulkan_dynamic_state_cull_front &&
+      device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+    description_out.cull_front = 0;
+    description_out.cull_back = 0;
+    description_out.front_face_clockwise = 0;
+  }
 
   if (render_target_cache_.GetPath() ==
       RenderTargetCache::Path::kHostRenderTargets) {
@@ -2130,7 +2143,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 7> dynamic_states;
+  std::array<VkDynamicState, 9> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2143,6 +2156,18 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   // invalidated (again, even if it has no effect).
   dynamic_states[dynamic_state.dynamicStateCount++] = VK_DYNAMIC_STATE_VIEWPORT;
   dynamic_states[dynamic_state.dynamicStateCount++] = VK_DYNAMIC_STATE_SCISSOR;
+  // EDS (Lever 1b): cull mode + front face dynamic (core in Vulkan 1.3). Must
+  // match the key-zeroing in GetCurrentStateDescription (same cvar + 1.3 gate)
+  // and the emission in VulkanCommandProcessor::UpdateDynamicState. Applies in
+  // both render paths (cull/front-face are in the key regardless of FSI).
+  if (cvars::vulkan_dynamic_state_cull_front &&
+      vulkan_device->properties().apiVersion >=
+          VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+    dynamic_states[dynamic_state.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_CULL_MODE;
+    dynamic_states[dynamic_state.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_FRONT_FACE;
+  }
   if (!edram_fragment_shader_interlock) {
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_DEPTH_BIAS;
