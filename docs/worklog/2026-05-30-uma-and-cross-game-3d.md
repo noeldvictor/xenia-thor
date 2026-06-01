@@ -1936,3 +1936,22 @@ failure the framework is meant to stop. No number cited from this run because th
 USAGE for all future perf work: build -> confirm it linked -> thor_evidence.ps1 (fresh or -Attach
 -SetCvar for same-session A/B) -> READ the .png -> quote only the SUMMARY + EVIDENCE_FILE. Same-scene
 A/B via -Attach live-toggle or guest_ms matching. See memory no-fabrication-autonomous-failure.
+
+### B72 — UMA smart-sync correctness audit (code-only, no device): COVERAGE CONFIRMED
+Audited whether gpu_uma_smart_sync (commit 74a5d57b3) stamps EVERY GPU read of the shared buffer, so
+no direct in-place write can race an un-stamped deferred read (the TDR). Pure code reading, device
+untouched (never-thrash rule).
+- VulkanSharedMemory::Use() has exactly 3 call sites (vulkan_command_processor.cc:1447 readback,
+  3881 memexport per-draw=kGuestDrawReadWrite, 3886 per-draw=kRead). My stamp covers kRead AND
+  kGuestDrawReadWrite -> all 3 sites covered.
+- GetUsageMasks confirms the read-bearing usages: kRead and kGuestDrawReadWrite carry
+  INDEX_READ|SHADER_READ (kRead also TRANSFER_READ). kComputeWrite and kTransferDestination are
+  WRITE-ONLY (no read bit) -> correctly NOT stamped (they don't read buffer_).
+- => Every GPU READ of buffer_ stamps uma_last_read_submission_; the direct write in UploadRangesDirect
+  waits for the latest PRIOR (closed, incomplete) reader. No unstamped read path. Smart-sync is sound.
+- Honest note: kGuestDrawReadWrite (memexport) also WRITES the buffer; a CPU direct-write into a region
+  the GPU is memexport-writing is a pre-existing guest-coherency concern independent of this change, and
+  stamping it as a read is conservatively correct (we still wait for it). Not a regression.
+VERDICT: gpu_uma_smart_sync is coverage-complete and safe to keep default-on; the remaining unknown is
+purely the on-device A/B (UMA on vs off, fps + no-TDR over a long run) which waits for a cool device +
+gentle guarded capture. Build-verified work only this iteration.
