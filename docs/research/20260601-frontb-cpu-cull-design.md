@@ -70,3 +70,33 @@ de-risk the cull's correctness - the cull stays HOLD-for-device. Pre-transform/c
 not reduce the floor and must not be blurred into "Front B progress".
 
 Source: wf_23b97622-da6 (full output in the task temp file). Cited file:line verified in-repo.
+
+---
+
+## C2/C3 DE-RISKED (2026-06-01): mirror DrawExtentEstimator (proven in-repo template)
+C1 scaffolding shipped (afa40d932). The concern that the VS-position replay would be a
+rabbit hole is RESOLVED: src/xenia/gpu/draw_extent_estimator.{h,cc} ALREADY does exactly the
+per-vertex VS replay this counter needs, and is the template to mirror:
+- PositionYExportSink : ShaderInterpreter::ExportSink (draw_extent_estimator.h:42-64) captures
+  position_y/position_w/point_size/vertex_kill from the position export. C2 = a sink capturing
+  FULL clip-space x,y,z,w (extend the same Export() override).
+- The vertex loop (draw_extent_estimator.cc:171-246): SetShader(vertex_shader);
+  SetExportSink; for each i in vgt_draw_initiator.num_indices: read vertex_index from the index
+  buffer (16/32-bit, GpuSwap(index_endian) & 0xFFFFFF, reset-index via multi_prim_ib_ena,
+  +index_offset clamped to [min,max]); temp_registers()[0]=float(vertex_index); Execute();
+  honor vertex_kill; perspective divide x,y,z by position_w when !pa_cl_vte_cntl.vtx_xy_fmt.
+  CanInterpretShader gate already handled (returns false for texture-fetch VS -> count 0).
+- Index buffer CPU pointer + reg setup: mirror draw_extent_estimator.cc:~95-170.
+
+### Precise C2/C3 plan (each gated gpu_trace_cullable_tris, read-only, build-verified)
+- C2: add a ShaderInterpreter + a full-position CullExportSink (or add a CountCullable method to
+  DrawExtentEstimator, which already owns the interpreter + setup - CLEANER, prefer this:
+  add DrawExtentEstimator member to the cull path OR a sibling method). Replay per-vertex,
+  store NDC positions (x/w,y/w,z/w) into a reusable scratch std::vector for the draw. Return 0
+  (positions computed, not yet tested). LOW RISK (count-only, mutates nothing).
+- C3: for LIST topology only (kTriangleList; lines/points/rect non-cullable per IsPrimitivePolygonal
+  + kRectangleList exclusion), for each triangle (indices 3i,3i+1,3i+2): backface = signed area
+  of the 3 NDC xy vs the PA_SU_SC_MODE_CNTL winding/cull bits; frustum = all 3 verts beyond one
+  clip plane (conservative, no guard-band). Count would-cull tris -> return. Log via cullable_tris.
+RECOMMENDATION: prefer reusing DrawExtentEstimator's machinery over reimplementing the vertex
+loop (avoids duplicating the index/vfetch/divide handling, which is the error-prone part).
