@@ -514,6 +514,37 @@ void VulkanPipelineCache::WritePipelineRenderTargetDescription(
   render_target_out.color_write_mask = write_mask;
 }
 
+VkBlendFactor VulkanPipelineCache::GetVkBlendFactor(
+    PipelineBlendFactor blend_factor) {
+  static const VkBlendFactor kMap[] = {
+      VK_BLEND_FACTOR_ZERO,
+      VK_BLEND_FACTOR_ONE,
+      VK_BLEND_FACTOR_SRC_COLOR,
+      VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+      VK_BLEND_FACTOR_DST_COLOR,
+      VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR,
+      VK_BLEND_FACTOR_SRC_ALPHA,
+      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+      VK_BLEND_FACTOR_DST_ALPHA,
+      VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
+      VK_BLEND_FACTOR_CONSTANT_COLOR,
+      VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR,
+      VK_BLEND_FACTOR_CONSTANT_ALPHA,
+      VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA,
+      VK_BLEND_FACTOR_SRC_ALPHA_SATURATE,
+  };
+  return kMap[uint32_t(blend_factor)];
+}
+
+VkBlendOp VulkanPipelineCache::GetVkBlendOp(xenos::BlendOp blend_op) {
+  // 8 entries for safety since 3 bits from the guest are passed directly.
+  static const VkBlendOp kMap[] = {
+      VK_BLEND_OP_ADD,     VK_BLEND_OP_SUBTRACT,          VK_BLEND_OP_MIN,
+      VK_BLEND_OP_MAX,     VK_BLEND_OP_REVERSE_SUBTRACT,  VK_BLEND_OP_ADD,
+      VK_BLEND_OP_ADD,     VK_BLEND_OP_ADD};
+  return kMap[uint32_t(blend_op)];
+}
+
 bool VulkanPipelineCache::GetCurrentStateDescription(
     const VulkanShader::VulkanTranslation* vertex_shader,
     const VulkanShader::VulkanTranslation* pixel_shader,
@@ -2125,32 +2156,6 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     uint32_t color_rts_used =
         description.render_pass_key.depth_and_color_used >> 1;
     {
-      static const VkBlendFactor kBlendFactorMap[] = {
-          VK_BLEND_FACTOR_ZERO,
-          VK_BLEND_FACTOR_ONE,
-          VK_BLEND_FACTOR_SRC_COLOR,
-          VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
-          VK_BLEND_FACTOR_DST_COLOR,
-          VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR,
-          VK_BLEND_FACTOR_SRC_ALPHA,
-          VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-          VK_BLEND_FACTOR_DST_ALPHA,
-          VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
-          VK_BLEND_FACTOR_CONSTANT_COLOR,
-          VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR,
-          VK_BLEND_FACTOR_CONSTANT_ALPHA,
-          VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA,
-          VK_BLEND_FACTOR_SRC_ALPHA_SATURATE,
-      };
-      // 8 entries for safety since 3 bits from the guest are passed directly.
-      static const VkBlendOp kBlendOpMap[] = {VK_BLEND_OP_ADD,
-                                              VK_BLEND_OP_SUBTRACT,
-                                              VK_BLEND_OP_MIN,
-                                              VK_BLEND_OP_MAX,
-                                              VK_BLEND_OP_REVERSE_SUBTRACT,
-                                              VK_BLEND_OP_ADD,
-                                              VK_BLEND_OP_ADD,
-                                              VK_BLEND_OP_ADD};
       assert_true(vulkan_device->properties().independentBlend);
       uint32_t color_rts_remaining = color_rts_used;
       uint32_t color_rt_index;
@@ -2168,17 +2173,17 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
             color_rt.alpha_blend_op != xenos::BlendOp::kAdd) {
           color_blend_attachment.blendEnable = VK_TRUE;
           color_blend_attachment.srcColorBlendFactor =
-              kBlendFactorMap[uint32_t(color_rt.src_color_blend_factor)];
+              GetVkBlendFactor(color_rt.src_color_blend_factor);
           color_blend_attachment.dstColorBlendFactor =
-              kBlendFactorMap[uint32_t(color_rt.dst_color_blend_factor)];
+              GetVkBlendFactor(color_rt.dst_color_blend_factor);
           color_blend_attachment.colorBlendOp =
-              kBlendOpMap[uint32_t(color_rt.color_blend_op)];
+              GetVkBlendOp(color_rt.color_blend_op);
           color_blend_attachment.srcAlphaBlendFactor =
-              kBlendFactorMap[uint32_t(color_rt.src_alpha_blend_factor)];
+              GetVkBlendFactor(color_rt.src_alpha_blend_factor);
           color_blend_attachment.dstAlphaBlendFactor =
-              kBlendFactorMap[uint32_t(color_rt.dst_alpha_blend_factor)];
+              GetVkBlendFactor(color_rt.dst_alpha_blend_factor);
           color_blend_attachment.alphaBlendOp =
-              kBlendOpMap[uint32_t(color_rt.alpha_blend_op)];
+              GetVkBlendOp(color_rt.alpha_blend_op);
         }
         color_blend_attachment.colorWriteMask =
             VkColorComponentFlags(color_rt.color_write_mask);

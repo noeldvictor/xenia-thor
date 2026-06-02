@@ -253,6 +253,12 @@ class VulkanPipelineCache {
   void WritePipelineRenderTargetDescription(
       reg::RB_BLENDCONTROL blend_control, uint32_t write_mask,
       PipelineRenderTarget& render_target_out) const;
+  // Shared host-blend mapping - the single source of truth for
+  // PipelineBlendFactor -> VkBlendFactor and xenos::BlendOp -> VkBlendOp, used by
+  // the static pipeline blend state and (future) the EDS3 dynamic blend emit so
+  // the two paths cannot diverge.
+  static VkBlendFactor GetVkBlendFactor(PipelineBlendFactor blend_factor);
+  static VkBlendOp GetVkBlendOp(xenos::BlendOp blend_op);
   bool GetCurrentStateDescription(
       const VulkanShader::VulkanTranslation* vertex_shader,
       const VulkanShader::VulkanTranslation* pixel_shader,
