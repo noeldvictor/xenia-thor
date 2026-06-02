@@ -434,6 +434,22 @@ DEFINE_bool(
     "docs/research/20260601-draw-concatenation-design.md.",
     "GPU");
 
+DEFINE_bool(
+    vulkan_merge_draws_indirect, false,
+    "Thor/Adreno binning re-arch (Lever 2b): batch consecutive same-state "
+    "kGuestDMA indexed draws into ONE vkCmdDrawIndexedIndirect (drawCount=N) "
+    "instead of N separate vkCmdDrawIndexed, paying the per-draw command/submit "
+    "cost once per run. Unlike concatenation (vulkan_merge_draws), each indirect "
+    "command is a SEPARATE draw, so this ALSO batches triangle STRIPS (no "
+    "cross-draw primitive stitching) and NON-contiguous index ranges (per-command "
+    "firstIndex) - exactly the Blue Dragon intro case (all strips, scattered). "
+    "vertexOffset stays 0 (VGT_INDX_OFFSET via system constants), so a run still "
+    "requires unchanged constants/state between draws and equal VGT_INDX_OFFSET; "
+    "bit-identical to the per-draw path. Requires the multiDrawIndirect device "
+    "feature (auto-disabled if absent). Mutually exclusive with vulkan_merge_draws "
+    "(that wins if both set). Default off; STARTUP cvar - do not toggle live.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "

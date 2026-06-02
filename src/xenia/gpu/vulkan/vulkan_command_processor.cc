@@ -348,6 +348,24 @@ bool VulkanCommandProcessor::SetupContext() {
                          size_t(16384)),
                 size_t(device_properties.minUniformBufferOffsetAlignment)));
 
+  // Lever 2b (vulkan_merge_draws_indirect): per-frame ring for the
+  // VkDrawIndexedIndirectCommand[] arrays. Only created when the lever is enabled
+  // AND the device supports batched indirect draws, so the default build pays
+  // nothing. drawCount > 1 in vkCmdDraw*Indirect requires the multiDrawIndirect
+  // feature (enabled at device creation when supported).
+  mdi_supported_ = device_properties.multiDrawIndirect &&
+                   device_properties.maxDrawIndirectCount >= 2;
+  // Cap commands per MDI run. Head-emit pre-sizes (and zeroes) this many indirect
+  // commands per run, so a large cap wastes buffer + adds no-op iterations on short
+  // runs; 32 covers the bulk of Blue Dragon's same-state runs (runlen histogram).
+  mdi_max_draw_count_ =
+      std::min(device_properties.maxDrawIndirectCount, uint32_t(32));
+  if (cvars::vulkan_merge_draws_indirect && mdi_supported_) {
+    indirect_buffer_pool_ = std::make_unique<ui::vulkan::VulkanUploadBufferPool>(
+        vulkan_device, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+        ui::GraphicsUploadBufferPool::kDefaultPageSize);
+  }
+
   // Descriptor set layouts that don't depend on the setup of other subsystems.
   VkShaderStageFlags guest_shader_stages =
       guest_shader_vertex_stages_ | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1295,6 +1313,7 @@ void VulkanCommandProcessor::ShutdownContext() {
                                          device, descriptor_set_layout_empty_);
 
   uniform_buffer_pool_.reset();
+  indirect_buffer_pool_.reset();
 
   sparse_bind_wait_stage_mask_ = 0;
   sparse_buffer_binds_.clear();
@@ -3988,16 +4007,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           uint32_t(cvars::gpu_skip_draws_below_verts);
   if (skip_tiny_draw) {
     // A skipped draw advances the guest index pointer with NO host draw, so it is
-    // a HARD concatenation boundary (Lever 2): flush the pending run so it is
-    // never stitched across the hole. Emit nothing.
-    if (cvars::vulkan_merge_draws) {
+    // a HARD merge boundary (Levers 2 / 2b): flush the pending run so it is never
+    // stitched across the hole. Emit nothing. (FlushPendingMergeRun also flushes
+    // any pending MDI run.)
+    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
       FlushPendingMergeRun();
     }
   } else if (primitive_processing_result.index_buffer_type ==
                  PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
              shader_32bit_index_dma) {
     // Non-indexed (auto / shader-32bit DMA): breaks a kGuestDMA index run.
-    if (cvars::vulkan_merge_draws) {
+    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
       FlushPendingMergeRun();
     }
     deferred_command_buffer_.CmdVkDraw(
@@ -4091,11 +4111,115 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
         }
       }
+    } else if (cvars::vulkan_merge_draws_indirect && mdi_supported_ &&
+               primitive_processing_result.index_buffer_type ==
+                   PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+      // Lever 2b: MDI draw batching. Unlike concatenation (Lever 2), each
+      // accumulated draw becomes a SEPARATE VkDrawIndexedIndirectCommand, so
+      // triangle/line STRIPS batch too (no cross-draw primitive stitching) and
+      // index ranges need NOT be contiguous (per-command firstIndex) - exactly
+      // the Blue Dragon intro case (all strips, scattered). vertexOffset stays 0
+      // (VGT_INDX_OFFSET is applied via system constants, like the per-draw path),
+      // so a run still requires unchanged state and equal VGT_INDX_OFFSET; the
+      // bytes drawn are identical, only batched. cvar-on correctness is validated
+      // by the device A/B (read the frame is identical to default-off).
+      const uint32_t idx_count =
+          primitive_processing_result.host_draw_vertex_count;
+      const uint32_t idx_base = uint32_t(index_buffer.second);
+      const uint32_t stride = index_type == VK_INDEX_TYPE_UINT16 ? 2u : 4u;
+      const int32_t vgt_indx_offset =
+          regs.Get<int32_t>(XE_GPU_REG_VGT_INDX_OFFSET);
+      const xenos::Endian index_endian =
+          primitive_processing_result.host_shader_index_endian;
+      const xenos::PrimitiveType prim_type =
+          primitive_processing_result.host_primitive_type;
+      // firstIndex = guest_index_base / stride is exact only when the base is
+      // stride-aligned (the GPU/Vulkan bind requires aligned index fetch anyway);
+      // be defensive and skip MDI otherwise. Memexport (GPU side effects/ordering)
+      // breaks a run. LIST and STRIP are both fine (each command is its own draw).
+      const bool mdi_mergeable =
+          (prim_type == xenos::PrimitiveType::kTriangleList ||
+           prim_type == xenos::PrimitiveType::kTriangleStrip ||
+           prim_type == xenos::PrimitiveType::kLineList ||
+           prim_type == xenos::PrimitiveType::kLineStrip ||
+           prim_type == xenos::PrimitiveType::kPointList) &&
+          memexport_extent_start >= memexport_extent_end &&
+          (idx_base % stride) == 0;
+      const bool can_extend =
+          merge_mdi_active_ && mdi_mergeable && merge_mdi_mapping_ &&
+          !merge_cannot_extend_this_draw_ &&
+          index_buffer.first == merge_mdi_index_buffer_ &&
+          current_guest_graphics_pipeline_ == merge_mdi_pipeline_ &&
+          current_guest_graphics_pipeline_layout_ ==
+              merge_mdi_pipeline_layout_ &&
+          index_type == merge_mdi_index_type_ &&
+          uint32_t(vgt_indx_offset) == merge_mdi_vertex_base_index_ &&
+          index_endian == merge_mdi_index_endian_ &&
+          merge_mdi_count_ < mdi_max_draw_count_;
+      VkDrawIndexedIndirectCommand cmd;
+      cmd.indexCount = idx_count;
+      cmd.instanceCount = 1;
+      cmd.firstIndex = idx_base / stride;
+      cmd.vertexOffset = 0;
+      cmd.firstInstance = 0;
+      if (can_extend) {
+        // Fill the next slot of the run's already-emitted (head) indirect array.
+        merge_mdi_mapping_[merge_mdi_count_++] = cmd;
+      } else {
+        // Close the previous run (its indirect draw was already emitted at its
+        // head; nothing to flush), then try to open a new run HEAD here.
+        merge_mdi_active_ = false;
+        merge_mdi_mapping_ = nullptr;
+        merge_mdi_count_ = 0;
+        bool opened = false;
+        if (mdi_mergeable && indirect_buffer_pool_) {
+          const size_t array_bytes =
+              size_t(mdi_max_draw_count_) * sizeof(VkDrawIndexedIndirectCommand);
+          VkBuffer indirect_buffer = VK_NULL_HANDLE;
+          VkDeviceSize indirect_offset = 0;
+          uint8_t* mapping = indirect_buffer_pool_->Request(
+              frame_current_, array_bytes, sizeof(uint32_t), indirect_buffer,
+              indirect_offset);
+          if (mapping) {
+            // Zero the whole array so unused slots are no-op draws (indexCount=0),
+            // then write this head draw into slot 0.
+            std::memset(mapping, 0, array_bytes);
+            auto* cmds = reinterpret_cast<VkDrawIndexedIndirectCommand*>(mapping);
+            cmds[0] = cmd;
+            // Emit the batched draw NOW (head position), correctly ordered after
+            // this draw's state. Bind the index buffer at offset 0 (each command
+            // carries its absolute firstIndex). drawCount is the fixed max; unused
+            // zeroed commands are skipped by the GPU with no binning.
+            deferred_command_buffer_.CmdVkBindIndexBuffer(index_buffer.first, 0,
+                                                          index_type);
+            deferred_command_buffer_.CmdVkDrawIndexedIndirect(
+                indirect_buffer, indirect_offset, mdi_max_draw_count_,
+                uint32_t(sizeof(VkDrawIndexedIndirectCommand)));
+            merge_mdi_active_ = true;
+            merge_mdi_mapping_ = cmds;
+            merge_mdi_count_ = 1;
+            merge_mdi_index_buffer_ = index_buffer.first;
+            merge_mdi_index_type_ = index_type;
+            merge_mdi_pipeline_ = current_guest_graphics_pipeline_;
+            merge_mdi_pipeline_layout_ = current_guest_graphics_pipeline_layout_;
+            merge_mdi_vertex_base_index_ = uint32_t(vgt_indx_offset);
+            merge_mdi_index_endian_ = index_endian;
+            opened = true;
+          }
+        }
+        if (!opened) {
+          // Non-mergeable or allocation failed: standalone, identical to the
+          // per-draw path.
+          deferred_command_buffer_.CmdVkBindIndexBuffer(
+              index_buffer.first, index_buffer.second, index_type);
+          deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+        }
+      }
     } else {
       // cvar off, or a non-kGuestDMA indexed type (kHostConverted/kHostBuiltin,
       // which use per-draw backend index handles and are non-mergeable): flush
-      // any pending run, then emit standalone exactly as before.
-      if (cvars::vulkan_merge_draws) {
+      // any pending run (concat or MDI), then emit standalone exactly as before.
+      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
         FlushPendingMergeRun();
       }
       deferred_command_buffer_.CmdVkBindIndexBuffer(
@@ -4764,6 +4888,9 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     // FIXME(Triang3l): This will result in a memory leak if the guest is not
     // presenting.
     uniform_buffer_pool_->Reclaim(frame_completed_);
+    if (indirect_buffer_pool_) {
+      indirect_buffer_pool_->Reclaim(frame_completed_);
+    }
     while (!single_transient_descriptors_used_.empty()) {
       const UsedSingleTransientDescriptor& used_transient_descriptor =
           single_transient_descriptors_used_.front();
@@ -5131,6 +5258,12 @@ void VulkanCommandProcessor::DestroyScratchBuffer() {
 }
 
 void VulkanCommandProcessor::FlushPendingMergeRun() {
+  // Lever 2b (vulkan_merge_draws_indirect) is mutually exclusive with Lever 2
+  // concatenation, so at most one run is ever active; flushing the MDI run here
+  // means every concatenation flush point also bounds an MDI run.
+  if (merge_mdi_active_) {
+    FlushPendingMergeRunIndirect();
+  }
   // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run.
   // The merged index range is contiguous in shared_memory_->buffer() starting at
   // merge_pending_index_base_, so it is one CmdVkBindIndexBuffer + one
@@ -5148,6 +5281,18 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
                                             0);
   merge_pending_active_ = false;
   merge_pending_index_count_ = 0;
+}
+
+void VulkanCommandProcessor::FlushPendingMergeRunIndirect() {
+  // Lever 2b (vulkan_merge_draws_indirect): close the active MDI run. With
+  // head-emit, the run's single vkCmdDrawIndexedIndirect was already recorded at
+  // the run head, and continuation draws filled slots of its (retained, zeroed)
+  // command array directly - so there is nothing to emit here; just stop the run
+  // so the next mergeable draw opens a fresh head. Called from every merge flush
+  // point (FlushPendingMergeRun) and before any standalone draw.
+  merge_mdi_active_ = false;
+  merge_mdi_mapping_ = nullptr;
+  merge_mdi_count_ = 0;
 }
 
 uint32_t VulkanCommandProcessor::CountCullableTriangles(

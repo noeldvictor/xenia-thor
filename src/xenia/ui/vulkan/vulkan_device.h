@@ -60,6 +60,9 @@ class VulkanDevice {
     uint32_t maxImageDimensionCube = 4096;
     uint32_t maxImageArrayLayers = 256;
     uint32_t maxStorageBufferRange = uint32_t(1) << 27;
+    // Max drawCount accepted by vkCmdDraw*Indirect (for the Thor MDI draw-batching
+    // lever). 1 if multiDrawIndirect is unsupported.
+    uint32_t maxDrawIndirectCount = 1;
     uint32_t maxSamplerAllocationCount = 4000;
     uint32_t maxPerStageDescriptorSamplers = 16;
     uint32_t maxPerStageDescriptorStorageBuffers = 4;
@@ -100,6 +103,8 @@ class VulkanDevice {
 
     bool robustBufferAccess = false;
     bool fullDrawIndexUint32 = false;
+    // Allows vkCmdDraw*Indirect drawCount > 1 (Thor MDI draw-batching lever).
+    bool multiDrawIndirect = false;
     bool independentBlend = false;
     bool geometryShader = false;
     bool tessellationShader = false;

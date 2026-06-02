@@ -588,6 +588,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   XE_UI_VULKAN_LIMIT(maxImageDimensionCube)
   XE_UI_VULKAN_LIMIT(maxImageArrayLayers)
   XE_UI_VULKAN_LIMIT(maxStorageBufferRange)
+  XE_UI_VULKAN_LIMIT(maxDrawIndirectCount)
   XE_UI_VULKAN_LIMIT(maxSamplerAllocationCount)
   XE_UI_VULKAN_LIMIT(maxPerStageDescriptorSamplers)
   XE_UI_VULKAN_LIMIT(maxPerStageDescriptorStorageBuffers)
@@ -624,6 +625,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (with_gpu_emulation) {
     XE_UI_VULKAN_FEATURE(robustBufferAccess)
     XE_UI_VULKAN_FEATURE(fullDrawIndexUint32)
+    XE_UI_VULKAN_FEATURE(multiDrawIndirect)
     XE_UI_VULKAN_FEATURE(independentBlend)
     XE_UI_VULKAN_FEATURE(geometryShader)
     XE_UI_VULKAN_FEATURE(tessellationShader)

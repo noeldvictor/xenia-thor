@@ -501,6 +501,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // command that depends on prior draws having executed.
   void FlushPendingMergeRun();
 
+  // Lever 2b (vulkan_merge_draws_indirect): emit the accumulated MDI run as one
+  // CmdVkBindIndexBuffer (at offset 0) + one CmdVkDrawIndexedIndirect over the
+  // per-frame indirect buffer (or a single CmdVkDrawIndexed for a 1-draw run),
+  // then clear it. No-op when no run is pending. Called from FlushPendingMergeRun()
+  // so every existing flush point covers both levers.
+  void FlushPendingMergeRunIndirect();
+
   // Front B (gpu_trace_cullable_tris, READ-ONLY): count how many triangles of this
   // draw a CPU-side cull WOULD drop. Mutates nothing. C1 returns 0 (scaffolding);
   // C2/C3 add the ShaderInterpreter VS-position replay + exact backface/frustum.
@@ -590,6 +597,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::vector<VkDescriptorImageInfo> descriptor_write_image_info_;
 
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> uniform_buffer_pool_;
+  // Lever 2b (vulkan_merge_draws_indirect): per-frame ring holding the
+  // VkDrawIndexedIndirectCommand[] arrays consumed by vkCmdDrawIndexedIndirect.
+  // Only allocated when the lever is enabled and multiDrawIndirect is supported.
+  std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> indirect_buffer_pool_;
 
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;
@@ -919,6 +930,31 @@ class VulkanCommandProcessor : public CommandProcessor {
   xenos::Endian merge_pending_vertex_index_endian_ = xenos::Endian::kNone;
   xenos::PrimitiveType merge_pending_prim_type_ =
       xenos::PrimitiveType::kTriangleList;
+  // Lever 2b (vulkan_merge_draws_indirect): MDI draw batching. A run of
+  // consecutive same-state kGuestDMA draws (LIST or STRIP, contiguous or not) is
+  // batched into ONE vkCmdDrawIndexedIndirect. Each indirect command is an
+  // independent draw (firstIndex = guest_index_base/stride, vertexOffset 0,
+  // instanceCount 1, firstInstance 0), so strips do not stitch across draws and
+  // index ranges need not be contiguous.
+  // HEAD-EMIT ordering: Xenia records per-draw state (pipeline/descriptors) eagerly
+  // BEFORE the draw-emit block, so a batched draw flushed at the breaker would land
+  // after the breaker's state binds (wrong pipeline). Instead the indirect draw is
+  // emitted at the run HEAD - correctly ordered right after the head's state - over
+  // a buffer pre-sized to mdi_max_draw_count_ commands, ZEROED (indexCount=0 = a
+  // no-op the GPU command processor skips with no binning), and slots are filled as
+  // the run extends via the retained mapping. All inert when the cvar is off / the
+  // feature is unsupported, so the off-path is bit-identical.
+  bool mdi_supported_ = false;  // multiDrawIndirect feature + maxDrawIndirectCount>=2
+  uint32_t mdi_max_draw_count_ = 1;  // min(maxDrawIndirectCount, cap): commands/run
+  bool merge_mdi_active_ = false;
+  VkDrawIndexedIndirectCommand* merge_mdi_mapping_ = nullptr;  // retained run array
+  uint32_t merge_mdi_count_ = 0;       // filled slots in the current run
+  VkBuffer merge_mdi_index_buffer_ = VK_NULL_HANDLE;
+  VkIndexType merge_mdi_index_type_ = VK_INDEX_TYPE_UINT16;
+  VkPipeline merge_mdi_pipeline_ = VK_NULL_HANDLE;
+  const PipelineLayout* merge_mdi_pipeline_layout_ = nullptr;
+  uint32_t merge_mdi_vertex_base_index_ = 0;  // VGT_INDX_OFFSET (must match in run)
+  xenos::Endian merge_mdi_index_endian_ = xenos::Endian::kNone;
   // Batchability signals (per frame): how often the expensive per-draw state
   // actually changes. If these are << rendered draw count, consecutive draws
   // share state and can be merged into far fewer host draws.

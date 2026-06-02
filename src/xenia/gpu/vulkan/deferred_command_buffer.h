@@ -271,6 +271,16 @@ class DeferredCommandBuffer {
     args.first_instance = first_instance;
   }
 
+  void CmdVkDrawIndexedIndirect(VkBuffer buffer, VkDeviceSize offset,
+                                uint32_t draw_count, uint32_t stride) {
+    auto& args = *reinterpret_cast<ArgsVkDrawIndexedIndirect*>(WriteCommand(
+        Command::kVkDrawIndexedIndirect, sizeof(ArgsVkDrawIndexedIndirect)));
+    args.buffer = buffer;
+    args.offset = offset;
+    args.draw_count = draw_count;
+    args.stride = stride;
+  }
+
   void CmdVkEndRenderPass() { WriteCommand(Command::kVkEndRenderPass, 0); }
 
   // pNext of all barriers must be null.
@@ -494,6 +504,7 @@ class DeferredCommandBuffer {
     kVkDispatch,
     kVkDraw,
     kVkDrawIndexed,
+    kVkDrawIndexedIndirect,
     kVkEndRenderPass,
     kVkPipelineBarrier,
     kVkPushConstants,
@@ -615,6 +626,13 @@ class DeferredCommandBuffer {
     uint32_t first_index;
     int32_t vertex_offset;
     uint32_t first_instance;
+  };
+
+  struct ArgsVkDrawIndexedIndirect {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    uint32_t draw_count;
+    uint32_t stride;
   };
 
   struct ArgsVkPipelineBarrier {
