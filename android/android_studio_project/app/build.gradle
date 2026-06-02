@@ -24,12 +24,27 @@ android {
                         '--output-sync=none'
                 // For the app, don't build the executables designed for running from a terminal.
                 // To build the executables, run ndk-build manually.
-                targets 'xenia-app'
+                // main_hook/hook_impl are libadrenotools' runtime-dlopen'd hook payload
+                // (Turnip loading) — not link-time deps of xenia-app, so they are listed
+                // here explicitly so ndk-build builds + packages them (ARM64-only; they are
+                // ExcludeFromBuild on x86_64 so naming them on that ABI is a harmless no-op).
+                targets 'xenia-app', 'main_hook', 'hook_impl'
             }
         }
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
             stl 'c++_static'
+        }
+    }
+
+    // libadrenotools requires its hook .so (libmain_hook.so / libhook_impl.so) to be
+    // EXTRACTED into nativeLibraryDir (the hookLibDir it dlopens from), which only
+    // happens with legacy (uncompressed-extracted) jniLibs packaging. Without this the
+    // hook payload is read directly from the APK and Turnip loading fails (then falls
+    // back to the system driver). Harmless for the default system-driver path.
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
         }
     }
 

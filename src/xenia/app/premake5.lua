@@ -101,6 +101,15 @@ project("xenia-app")
       "aaudio",
     })
 
+  -- libadrenotools (Turnip custom-driver loading) is ARM64-only. main_hook/hook_impl
+  -- are NOT linked here — they are runtime-dlopen'd from nativeLibraryDir and built
+  -- via the Gradle ndk-build `targets` list.
+  filter("platforms:Android-ARM64")
+    links({
+      "adrenotools",
+      "linkernsbypass",
+    })
+
   filter("platforms:not Android-*")
     links({
       "xenia-app-discord",

@@ -266,6 +266,13 @@ workspace("xenia")
   include("third_party/xbyak_aarch64.lua")
   include("third_party/xxhash.lua")
 
+  if os.istarget("android") then
+    -- libadrenotools (rootless Turnip custom-driver loading) — Android-ARM64-only;
+    -- the projects ExcludeFromBuild on Android-x86_64. Used only behind the
+    -- default-OFF gpu_vulkan_driver=turnip cvar.
+    include("third_party/adrenotools.lua")
+  end
+
   if not os.istarget("android") then
     -- SDL2 requires sdl2-config, and as of November 2020 isn't high-quality on
     -- Android yet, most importantly in game controllers - the keycode and axis

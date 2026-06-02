@@ -208,6 +208,11 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");
+            // Turnip custom-driver loading (libadrenotools). Default 'system'.
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver");
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_path");
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_lib");
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_hooks_path");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_texture_source_checksum");
             copyStringExtra(

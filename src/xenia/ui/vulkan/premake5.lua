@@ -12,6 +12,9 @@ project("xenia-ui-vulkan")
   })
   includedirs({
     project_root.."/third_party/Vulkan-Headers/include",
+    -- For <adrenotools/driver.h> in the Android-ARM64 Turnip loader path
+    -- (vulkan_instance.cc, guarded by XE_PLATFORM_ANDROID && XE_ARCH_ARM64).
+    project_root.."/third_party/adrenotools/include",
   })
   local_platform_files()
   local_platform_files("functions")

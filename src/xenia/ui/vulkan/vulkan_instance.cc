@@ -22,6 +22,10 @@
 
 #if XE_PLATFORM_LINUX
 #include <dlfcn.h>
+#if XE_PLATFORM_ANDROID && XE_ARCH_ARM64
+// libadrenotools: rootless custom-Vulkan-driver (Turnip) loading. ARM64-only.
+#include <adrenotools/driver.h>
+#endif
 #elif XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
 #endif
@@ -31,6 +35,32 @@ DEFINE_bool(
     "Write Vulkan VK_EXT_debug_utils messages to the Xenia log, as opposed to "
     "the OS debug output.",
     "Vulkan");
+
+#if XE_PLATFORM_ANDROID
+// Android GPU driver selection (Turnip via libadrenotools). Default 'system' keeps
+// the proprietary Qualcomm driver — the off path is bit-identical. Only the ARM64
+// build acts on these (the loader hook is XE_ARCH_ARM64-guarded); on a null/failed
+// Turnip load the code falls straight back to the system driver, so a bad config
+// can never brick — worst case is "ran on the proprietary driver".
+DEFINE_string(
+    gpu_vulkan_driver, "system",
+    "Android Vulkan ICD to load: 'system' (proprietary Qualcomm, default) or "
+    "'turnip' (a user-imported Mesa Turnip driver via libadrenotools, ARM64 only).",
+    "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_path, "",
+    "When gpu_vulkan_driver=turnip: absolute APP-PRIVATE dir holding the imported "
+    "Turnip .so (e.g. <files>/turnip). MUST NOT be on external/sdcard storage.",
+    "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_lib, "libvulkan_freedreno.so",
+    "Filename of the Turnip ICD .so inside gpu_vulkan_driver_path.", "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_hooks_path, "",
+    "Absolute dir holding libadrenotools' hook .so (libmain_hook.so/libhook_impl.so) "
+    "- MUST be the app's getApplicationInfo().nativeLibraryDir.",
+    "Vulkan");
+#endif
 
 namespace xe {
 namespace ui {
@@ -56,7 +86,38 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   const char* const loader_library_name = "libvulkan.so.1";
 #endif
   // http://developer.download.nvidia.com/mobile/shield/assets/Vulkan/UsingtheVulkanAPI.pdf
-  vulkan_instance->loader_ = dlopen(loader_library_name, RTLD_NOW | RTLD_LOCAL);
+  vulkan_instance->loader_ = nullptr;
+#if XE_PLATFORM_ANDROID && XE_ARCH_ARM64
+  // Optional: rootlessly load a user-imported Mesa Turnip driver via libadrenotools.
+  // Default-OFF (gpu_vulkan_driver=system). The returned handle is dlsym/dlclose-
+  // compatible, so the rest of the loader is unchanged. On ANY failure (toggle off,
+  // missing path/hooks, bad package, ICD reject) loader_ stays null and we fall back
+  // to the system dlopen below - a bad config can never brick; worst case is "ran on
+  // the proprietary driver".
+  if (cvars::gpu_vulkan_driver == "turnip" &&
+      !cvars::gpu_vulkan_driver_path.empty() &&
+      !cvars::gpu_vulkan_driver_hooks_path.empty()) {
+    vulkan_instance->loader_ = adrenotools_open_libvulkan(
+        RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
+        /*tmpLibDir=*/nullptr, cvars::gpu_vulkan_driver_hooks_path.c_str(),
+        cvars::gpu_vulkan_driver_path.c_str(),
+        cvars::gpu_vulkan_driver_lib.c_str(), /*fileRedirectDir=*/nullptr,
+        /*userMappingHandle=*/nullptr);
+    if (vulkan_instance->loader_) {
+      XELOGI("Loaded Turnip Vulkan driver '{}' from '{}' via libadrenotools",
+             cvars::gpu_vulkan_driver_lib, cvars::gpu_vulkan_driver_path);
+    } else {
+      XELOGW(
+          "Turnip load failed (dir='{}' lib='{}' hooks='{}'); falling back to the "
+          "system Vulkan driver",
+          cvars::gpu_vulkan_driver_path, cvars::gpu_vulkan_driver_lib,
+          cvars::gpu_vulkan_driver_hooks_path);
+    }
+  }
+#endif  // XE_PLATFORM_ANDROID && XE_ARCH_ARM64
+  if (!vulkan_instance->loader_) {
+    vulkan_instance->loader_ = dlopen(loader_library_name, RTLD_NOW | RTLD_LOCAL);
+  }
   if (!vulkan_instance->loader_) {
     XELOGE("Failed to load {}", loader_library_name);
     return nullptr;
