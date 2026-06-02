@@ -50,7 +50,30 @@ logcat line. Fields: `rendered`, `avg_vertices`, `gpu_frame_us` (Vulkan timestam
 attribution (`brk_open/buf/img_sr/img_oth`), draw composition (`prim[...]`, `vtx[...]`).
 Diagnostic cvars: `gpu_edram_passes_dont_care`, `gpu_skip_edram_transfers`, `gpu_freeze_at_guest_ms`.
 GPU-vendor profiling over ADB (no GUI): skill **`.agents/skills/xenia-thor-gpu-profile`** — KGSL
-`gpu_busy_percentage`/`clock_mhz` triage + perfetto `gpu_work_period` capture.
+`gpu_busy_percentage`/`clock_mhz` triage. Guarded perfetto capture: `tools/thor/thor_gpu_perfetto.ps1`.
+
+### GPU telemetry: what the Thor exposes vs what's reachable headless (verified 2026-06-02)
+The Adreno/KGSL driver exposes a RICH ftrace event set under `/sys/kernel/tracing/events/` — far
+more than `gpu_busy_percentage`. Notable groups/events:
+- **`kgsl/` (command-batch lifecycle = real GPU submission timing):** `adreno_cmdbatch_queued` →
+  `adreno_cmdbatch_submitted` → `adreno_cmdbatch_retired` (submitted→retired delta = GPU exec time
+  per submission), `adreno_cmdbatch_ready/done/fault/recovery/sync`.
+- **CPU↔GPU stalls (bubbles):** `kgsl_waittimestamp_entry`/`kgsl_waittimestamp_exit` (CPU blocking on
+  a GPU timestamp), `adreno_drawctxt_wait_start`/`wait_done`/`sleep`/`wake`, `syncpoint_*`.
+- **Clock/power:** `kgsl/gpu_frequency`, `kgsl_pwrlevel`, `kgsl_gmu_pwrlevel`, `kgsl_gpubusy`,
+  `kgsl_bus`, `kgsl_clock_throttling`, `kgsl_bcl_clock_throttling`, `kgsl_thermal_constraint`.
+- **Faults/preemption/memory:** `adreno_gpu_fault`, `kgsl_mmu_pagefault`, `adreno_hw_preempt_*`,
+  `adreno_preempt_trigger/done`, `kgsl_mem_alloc/free/map/sync_cache`, `gpu_mem/`, `msm_vidc_events/`.
+- Also `power/gpu_work_period` exists (per-uid GPU-active time).
+
+**CRITICAL: none of these are armable headless on the retail Thor (no root).** Shell is uid 2000
+(group `readtracefs` so it can *read* `/sys/kernel/tracing/trace`, but `echo 1 > .../events/<ev>/enable`
+= **Permission denied**, `tracing_on=0`, no `su`). So `adb shell perfetto` connects to `traced` but
+`traced_probes` cannot enable the events → traces come back **metadata-only / empty** (782–1026 B, zero
+events). Do NOT trust a perfetto capture's existence as proof it has data — query it. To actually use
+this event set you need EITHER root (then enable events + read `trace_pipe`, or perfetto with access)
+OR a USER-run **Snapdragon Profiler / AGI** GUI capture (which is also the only source of the per-stage
+binning-vs-fragment split). Headless, stick to KGSL sysfs busy%/clock + the cvar A/B below.
 
 ### MEASUREMENT RULE (the #1 reliability lesson)
 Blue Dragon's content is a function of **guest uptime**. Relaunch A/Bs are **scene-confounded** — a
