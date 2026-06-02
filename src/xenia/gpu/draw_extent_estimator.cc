@@ -389,10 +389,16 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
   if (!vgt_draw_initiator.num_indices) {
     return 0;
   }
-  // Only triangle lists are counted - strips/fans form primitives across the
-  // index stream and lines/points/rects/quads aren't backface/side-cullable the
-  // same way.
-  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kTriangleList) {
+  // Triangle LIST and STRIP are counted. Blue Dragon's scenes are strip-dominated
+  // (device-measured heavy intro: tl=0, ts~1600), so a list-only counter reads 0 -
+  // useless for sizing the cull on the real content. Strips form primitives across
+  // the index stream with ALTERNATING winding, handled in the per-triangle loop
+  // below. Fans/lines/points/rects/quads aren't backface/side-cullable the same way
+  // and stay uncounted.
+  const bool prim_is_strip =
+      vgt_draw_initiator.prim_type == xenos::PrimitiveType::kTriangleStrip;
+  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kTriangleList &&
+      !prim_is_strip) {
     return 0;
   }
   if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA &&
@@ -552,16 +558,21 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
   const bool cull_back = pa_su_sc_mode_cntl.cull_back != 0;
   const bool front_is_ccw = pa_su_sc_mode_cntl.face == 0;
   uint32_t cullable = 0;
-  uint32_t triangle_count = num_indices / 3;
-  for (uint32_t t = 0; t < triangle_count; ++t) {
-    const CullVertex& a = cull_vertices_scratch_[t * 3 + 0];
-    const CullVertex& b = cull_vertices_scratch_[t * 3 + 1];
-    const CullVertex& c = cull_vertices_scratch_[t * 3 + 2];
+  // Test one triangle (3 scratch slots). `winding_reversed` flips the front/back
+  // sense for the odd triangles of a strip (the GPU alternates strip winding). The
+  // frustum (same-side clip plane) test is orientation-independent, so it is
+  // unaffected. List triangles always pass winding_reversed=false, so the list
+  // count is byte-for-byte unchanged from before.
+  auto count_if_cullable = [&](uint32_t ia, uint32_t ib, uint32_t ic,
+                               bool winding_reversed) {
+    const CullVertex& a = cull_vertices_scratch_[ia];
+    const CullVertex& b = cull_vertices_scratch_[ib];
+    const CullVertex& c = cull_vertices_scratch_[ic];
     if (!a.valid || !b.valid || !c.valid) {
-      continue;
+      return;
     }
     if (!(a.w > 0.0f && b.w > 0.0f && c.w > 0.0f)) {
-      continue;
+      return;
     }
     bool cull = (a.x > a.w && b.x > b.w && c.x > c.w) ||
                 (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
@@ -576,12 +587,28 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
         // Both faces culled - every polygonal triangle is dropped.
         cull = true;
       } else if (det != 0.0f) {
-        bool tri_front = (det > 0.0f) == front_is_ccw;
+        bool tri_front = ((det > 0.0f) == front_is_ccw) != winding_reversed;
         cull = tri_front ? cull_front : cull_back;
       }
     }
     if (cull) {
       ++cullable;
+    }
+  };
+  if (prim_is_strip) {
+    // Strip: triangle t = vertices (t, t+1, t+2); winding alternates by parity. A
+    // reset/invalid vertex (primitive restart) invalidates any triangle containing
+    // it (skipped above), which also breaks the strip there; winding parity is not
+    // re-based after a restart - acceptable for an approximate sizing counter
+    // (front/back ~50/50 on closed meshes, so the droppable-fraction MAGNITUDE this
+    // counter exists to inform is robust).
+    for (uint32_t i = 0; i + 2 < num_indices; ++i) {
+      count_if_cullable(i, i + 1, i + 2, (i & 1u) != 0u);
+    }
+  } else {
+    uint32_t triangle_count = num_indices / 3;
+    for (uint32_t t = 0; t < triangle_count; ++t) {
+      count_if_cullable(t * 3 + 0u, t * 3 + 1u, t * 3 + 2u, false);
     }
   }
   return cullable;
