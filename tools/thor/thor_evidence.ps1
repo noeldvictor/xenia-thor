@@ -101,10 +101,16 @@ if (-not $Attach) {
     AdbSh "am force-stop $Package" | Out-Null
     AdbSh "logcat -c" | Out-Null
     $extra = ""
-    if ($SetCvar -and $SetCvar.Contains("=")) {
-        $n,$v = $SetCvar.Split("=",2)
-        # int vs bool/string heuristic for the launch extra
-        if ($v -match '^\d+$') { $extra = "--ei $n $v" } elseif ($v -in @('true','false')) { $extra = "--ez $n $v" } else { $extra = "--es $n $v" }
+    # -SetCvar accepts one OR several "name=value" pairs separated by ';' so a
+    # content-matched A/B can set e.g. gpu_freeze_at_guest_ms AND the lever together.
+    if ($SetCvar) {
+        foreach ($pair in ($SetCvar -split ';')) {
+            if ($pair -and $pair.Contains("=")) {
+                $n,$v = $pair.Split("=",2)
+                # int vs bool/string heuristic for the launch extra
+                if ($v -match '^\d+$') { $extra += " --ei $n $v" } elseif ($v -in @('true','false')) { $extra += " --ez $n $v" } else { $extra += " --es $n $v" }
+            }
+        }
     }
     $intent = "am start -W -n $comp --es gpu vulkan --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$Seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --ez vulkan_trace_draw_outcomes_per_frame true $extra --es target '$Iso'"
     W "launch_intent: $intent"
@@ -183,6 +189,18 @@ $clkMax  = if ($clk.Count) { ($clk | Measure-Object -Maximum).Maximum } else { -
 # raw evidence into the file
 W ""
 W "--- RAW EVIDENCE ---"
+# Every draw-outcomes frame in the window, so an A/B can be content-matched post-hoc
+# on guest_ms (content is a deterministic function of guest uptime). Pick the line
+# with the SAME guest_ms in both runs and compare gpu_frame_us.
+W "--- ALL DRAW FRAMES (guest_ms gpu_frame_us rendered avg_vertices) ---"
+foreach ($dl in ($drawLines)) {
+    $ln = $dl.Line
+    $gm = if ($ln -match 'guest_ms=(\d+)') { $Matches[1] } else { '?' }
+    $gu = if ($ln -match 'gpu_frame_us=(\d+)') { $Matches[1] } else { '?' }
+    $rd = if ($ln -match 'rendered=(\d+)') { $Matches[1] } else { '?' }
+    $av = if ($ln -match 'avg_vertices=(\d+)') { $Matches[1] } else { '?' }
+    W ("  guest_ms=$gm gpu_frame_us=$gu rendered=$rd avg_vertices=$av")
+}
 W "vdswap_count: $vdcount over ${WindowSec}s"
 W "kgsl_busy_samples: $($busy -join ',')"
 W "kgsl_clk_samples_hz: $($clk -join ',')"
