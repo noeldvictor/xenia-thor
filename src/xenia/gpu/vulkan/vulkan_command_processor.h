@@ -883,6 +883,17 @@ class VulkanCommandProcessor : public CommandProcessor {
       xenos::PrimitiveType::kPointList;
   uint32_t merge_elig_run_next_byte_ = 0;
   uint32_t merge_elig_run_hist_[8] = {};
+  // Merge-miss attribution (read-only): when a true-eligible run breaks, why did
+  // THIS draw fail to extend it (first failing gate)? non_dma = not kGuestDMA;
+  // topo = non-list/line/point topology; other = memexport / primitive-restart;
+  // state = pipeline or topology changed; noncontig = index range not contiguous.
+  // The dominant bucket points to the next binning lever (state-dominated -> EDS
+  // variant-collapse helps; noncontig-dominated -> index layout is the ceiling).
+  uint32_t merge_miss_non_dma_ = 0;
+  uint32_t merge_miss_topology_ = 0;
+  uint32_t merge_miss_other_ = 0;
+  uint32_t merge_miss_state_ = 0;
+  uint32_t merge_miss_noncontig_ = 0;
   // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
   // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
   // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)

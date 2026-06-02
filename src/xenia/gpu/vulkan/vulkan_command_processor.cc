@@ -1946,6 +1946,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "vf[same={} contig={} scattered={}] "
         "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
@@ -1996,6 +1997,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_elig_run_hist_[2], merge_elig_run_hist_[3],
         merge_elig_run_hist_[4], merge_elig_run_hist_[5],
         merge_elig_run_hist_[6], merge_elig_run_hist_[7],
+        merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
+        merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
@@ -2022,6 +2025,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_elig_run_pipeline_ = VK_NULL_HANDLE;
     merge_elig_run_next_byte_ = 0;
     std::memset(merge_elig_run_hist_, 0, sizeof(merge_elig_run_hist_));
+    merge_miss_non_dma_ = 0;
+    merge_miss_topology_ = 0;
+    merge_miss_other_ = 0;
+    merge_miss_state_ = 0;
+    merge_miss_noncontig_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
@@ -4211,6 +4219,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         ++merge_elig_run_len_;
         merge_elig_run_next_byte_ = elig_end;
       } else {
+        // Merge-miss attribution: if a run was active, classify why THIS draw
+        // breaks it (first failing gate).
+        if (merge_elig_run_active_) {
+          if (primitive_processing_result.index_buffer_type !=
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+            ++merge_miss_non_dma_;
+          } else if (elig_prim != xenos::PrimitiveType::kTriangleList &&
+                     elig_prim != xenos::PrimitiveType::kLineList &&
+                     elig_prim != xenos::PrimitiveType::kPointList) {
+            ++merge_miss_topology_;
+          } else if (!elig_mergeable) {
+            // kGuestDMA + list-mergeable topology, but memexport or restart.
+            ++merge_miss_other_;
+          } else if (current_guest_graphics_pipeline_ !=
+                         merge_elig_run_pipeline_ ||
+                     elig_prim != merge_elig_run_prim_type_) {
+            ++merge_miss_state_;
+          } else {
+            ++merge_miss_noncontig_;
+          }
+        }
         if (merge_elig_run_len_) {
           uint32_t rl = merge_elig_run_len_;
           uint32_t b = rl <= 1   ? 0
