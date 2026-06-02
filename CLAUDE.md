@@ -17,10 +17,32 @@ Banjo, Burnout.
 - Read GPU temp: `adb -s c3ca0370 shell cat /sys/class/kgsl/kgsl-3d0/temp` (value is milli-°C; 55900 = 55.9°C).
 
 ## Device (the ONE target — optimize for it specifically)
-- AYN Thor, ADB serial **`c3ca0370`**. SoC: Snapdragon 8 Gen 2 (QCS8550 "kalama").
-- GPU: **Adreno 740v2** — a **tile-based deferred renderer (TBDR)**. Freq table MHz: 680 615 550 475
-  401 348 295 220 124.8 (**max 680**). No `VK_EXT_fragment_shader_interlock`.
-- CPU: Cortex-X3 + A715/A710 + A510; NEON, i8mm, bf16, dotprod.
+- AYN Thor, ADB serial **`c3ca0370`**. SoC: Snapdragon 8 Gen 2 = **QCS8550** ("kalama"), Android 13
+  (SDK 33), kernel 5.15. **~16 GB UMA** (unified CPU/GPU memory — exploit for zero-copy geometry feeds).
+- **CPU — 8-core ARMv9.0-A, heterogeneous (pin hot threads to the right cluster):**
+  - 1× **Cortex-X3** (cpu7) @ **3.19 GHz** — prime; pin the GPU-command / JIT-hot thread here.
+  - 2× A715 + 2× A710 (cpu3-6) @ **2.80 GHz**; 3× A510 (cpu0-2) @ **2.02 GHz**.
+  - ISA (device `/proc/cpuinfo`, all cores): NEON(`asimd`), **`asimddp`** (DOTPROD SDOT/UDOT 4×int8),
+    **`i8mm`** (SMMLA/UMMLA int8 matrix), **`bf16`** (BFMMLA/BFDOT), **`fphp`+`asimdhp`+`asimdfhm`** (FP16
+    arith + FMLAL), **`fcma`** (FCADD/FCMLA complex), **`flagm`/`flagm2`** (RMIF/SETF/CFINV), **`atomics`**
+    (LSE LDADD/SWP/CAS), **`rcpc`/`ilrcpc`** (LDAPR weak-acquire), `jscvt`(FJCVTZS), `frint`, `crc32`,
+    `aes`/`pmull`/`sha1-3`/`sha512`. **NO SVE/SVE2** → NEON is the ONLY SIMD (128-bit). PAC/BTI = security.
+- **GPU: Adreno 740v2** — **tile-based deferred renderer (TBDR / FlexRender)**, Vulkan **1.3**, proprietary
+  Qualcomm driver (NOT Turnip). Freq table MHz: 680 615 550 475 401 348 295 220 124.8 (**max 680**).
+  On-chip **GMEM** tile buffer = the EDRAM-emulation target. The **binning pass runs the position VS per
+  vertex, per draw** (the device-measured ~300µs/draw floor; backface/LRZ reject happens AFTER binning).
+  - Vulkan PRESENT (use): **VK_KHR_push_descriptor** (shipped), **VK_EXT_extended_dynamic_state 1/2** (core
+    in 1.3) + EDS3, **VK_KHR_draw_indirect_count** + draw_indirect, `multiDrawIndirect` (feature, enableable),
+    vertex_input_dynamic_state, maintenance1-4.
+  - Vulkan ABSENT (do NOT design around): **`VK_EXT_fragment_shader_interlock`** (no single-pass EDRAM),
+    `VK_EXT_multi_draw`, `VK_EXT_descriptor_buffer`, `VK_EXT_external_memory_host` (pure zero-copy UMA dead).
+- **HW ↔ guest-math mapping (what's safe to exploit):** guest is PowerPC **VMX128** (128-bit FP32 SIMD) +
+  scalar FP. NEON maps VMX128 1:1 (done in the a64 JIT; vector ops are not C-thunked). **`asimddp`/`i8mm`/
+  `bf16` are int8/bf16 matrix units — NOT usable for guest FP32 geometry** (precision loss → guest-visible
+  divergence, HELD per [[approx-math-guest-visible-vs-heuristics]]); they ARE safe for INTERNAL heuristics
+  (cull tests, extent estimation). `fcma` accelerates complex/rotation math; `flagm` shipped for ADD_CARRY,
+  `atomics`(LSE) for kernel locks (CPU-bound titles like Lost Odyssey). On the GPU-bound BD scene the **CPU
+  is ~85% idle** → spare X3/A715 headroom for NEON pre-transform / triangle-cull feeds via UMA.
 - ADB path: `C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe`
 - Package: `jp.xenia.emulator.github.debug`
 
