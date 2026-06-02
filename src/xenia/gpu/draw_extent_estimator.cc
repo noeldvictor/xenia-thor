@@ -531,12 +531,26 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
   }
   shader_interpreter_.SetExportSink(nullptr);
 
-  // Conservative frustum count: a triangle is provably cullable if all three
-  // vertices are valid, in front of the eye (w > 0), and all three lie beyond
-  // the SAME side clip plane (x > w, x < -w, y > w, or y < -w). This is
-  // orientation-independent (no Y-flip / winding assumption) and never
-  // over-counts. Z planes and backface (winding) are intentionally omitted to
-  // keep the count provably conservative; this is a lower bound.
+  // Count a triangle if it would be dropped by EITHER a conservative frustum
+  // test OR a backface test (counted once).
+  //
+  // FRUSTUM (conservative, orientation-independent, never over-counts): all 3
+  // verts valid, w > 0, and all 3 beyond the SAME side clip plane (x>w / x<-w /
+  // y>w / y<-w).
+  //
+  // BACKFACE (approximate - this is a read-only diagnostic, exact precision is
+  // not needed): the signed area is the homogeneous determinant of the 3
+  // clip-space (x, y, w) vectors. No perspective divide is needed (sign-exact
+  // for w > 0), it is just a few multiply-adds (single-precision, NEON-friendly
+  // on the Cortex-X3). face == 0 means the host front face is CCW
+  // (PA_SU_SC_MODE_CNTL; matches UpdateDynamicState's VkFrontFace derivation).
+  // NOTE: the det>0 <-> CCW mapping assumes the guest clip-space Y orientation;
+  // if a device A/B shows the count is the COMPLEMENT of expected, flip the det
+  // sign. On closed meshes front/back faces are ~50/50, so the droppable-fraction
+  // magnitude (the decision the counter exists to inform) is robust either way.
+  const bool cull_front = pa_su_sc_mode_cntl.cull_front != 0;
+  const bool cull_back = pa_su_sc_mode_cntl.cull_back != 0;
+  const bool front_is_ccw = pa_su_sc_mode_cntl.face == 0;
   uint32_t cullable = 0;
   uint32_t triangle_count = num_indices / 3;
   for (uint32_t t = 0; t < triangle_count; ++t) {
@@ -549,11 +563,24 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
     if (!(a.w > 0.0f && b.w > 0.0f && c.w > 0.0f)) {
       continue;
     }
-    bool outside = (a.x > a.w && b.x > b.w && c.x > c.w) ||
-                   (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
-                   (a.y > a.w && b.y > b.w && c.y > c.w) ||
-                   (a.y < -a.w && b.y < -b.w && c.y < -c.w);
-    if (outside) {
+    bool cull = (a.x > a.w && b.x > b.w && c.x > c.w) ||
+                (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
+                (a.y > a.w && b.y > b.w && c.y > c.w) ||
+                (a.y < -a.w && b.y < -b.w && c.y < -c.w);
+    if (!cull && (cull_front || cull_back)) {
+      // Homogeneous signed-area determinant (2x area, divide-free).
+      float det = a.x * (b.y * c.w - c.y * b.w) -
+                  a.y * (b.x * c.w - c.x * b.w) +
+                  a.w * (b.x * c.y - c.x * b.y);
+      if (cull_front && cull_back) {
+        // Both faces culled - every polygonal triangle is dropped.
+        cull = true;
+      } else if (det != 0.0f) {
+        bool tri_front = (det > 0.0f) == front_is_ccw;
+        cull = tri_front ? cull_front : cull_back;
+      }
+    }
+    if (cull) {
       ++cullable;
     }
   }

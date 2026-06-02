@@ -43,12 +43,13 @@ class DrawExtentEstimator {
   // guest VS positions on the CPU and counts how many triangles a CPU-side cull
   // WOULD drop before the GPU bins them - a READ-ONLY decision instrument (never
   // mutates geometry) that sizes the potential of a triangle cull against the
-  // GPU binning bottleneck. Currently counts triangles provably FULLY OUTSIDE
-  // one side clip plane (a conservative lower bound, orientation-independent, no
-  // winding assumption); backface (winding-sensitive) and Z-plane counting are
-  // intentionally omitted for now. Returns 0 when the shader can't be
-  // interpreted (texture-fetch VS), the draw isn't a triangle list, or it uses
-  // pre-divided (vtx_xy_fmt) positions.
+  // GPU binning bottleneck. Counts a triangle if it is either provably FULLY
+  // OUTSIDE one side clip plane (conservative frustum) OR backface-culled per
+  // PA_SU_SC_MODE_CNTL (approximate: single-precision homogeneous signed-area
+  // determinant, no perspective divide). Z-plane culling is omitted to stay
+  // conservative. Returns 0 when the shader can't be interpreted (texture-fetch
+  // VS), the draw isn't a triangle list, or it uses pre-divided (vtx_xy_fmt)
+  // positions.
   uint32_t CountCullableTriangles(const Shader& vertex_shader);
 
  private:
