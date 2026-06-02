@@ -42,7 +42,7 @@ param(
     [int]$MaxStartTempC = 60,        # do not launch if GPU temp >= this
     [int]$MaxStartBusyPct = 40,      # do not launch if GPU already this busy
     [int]$CooldownWaitSec = 180,     # wait up to this long for it to cool, polling gently
-    [int]$ThrashTempC = 80,          # DEFENSIVE: force-stop the emulator if temp hits this mid-run
+    [int]$ThrashTempC = 68,          # DEFENSIVE: force-stop the emulator if temp hits this (BELOW the ~72C that crashed it once)
     [switch]$Force                   # override the guard (explicit opt-in only)
 )
 
@@ -109,8 +109,25 @@ if (-not $Attach) {
     $intent = "am start -W -n $comp --es gpu vulkan --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$Seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --ez vulkan_trace_draw_outcomes_per_frame true $extra --es target '$Iso'"
     W "launch_intent: $intent"
     AdbSh $intent | Out-Null
-    W "waiting ${BootWaitSec}s for heavy scene..."
-    Start-Sleep -Seconds $BootWaitSec
+    W "waiting ${BootWaitSec}s for heavy scene (thermal-monitored)..."
+    # THERMAL WATCHDOG DURING BOOT WAIT. The boot/intro phase pegs the GPU at ~99%
+    # for 2+ minutes; do NOT sleep blind through it (that left the Thor unguarded for
+    # the whole boot once). Poll temp every 5s and force-stop the instant temp crosses
+    # ThrashTempC so the device can never cook unattended.
+    $bootWaited = 0
+    while ($bootWaited -lt $BootWaitSec) {
+        Start-Sleep -Seconds 5
+        $bootWaited += 5
+        $tNow = GpuTempC
+        if ($tNow -ge $ThrashTempC) {
+            W "THRASH GUARD TRIPPED during boot wait: gpu_temp=${tNow}C >= ${ThrashTempC}C at ${bootWaited}/${BootWaitSec}s - force-stopping emulator NOW to protect the Thor."
+            AdbSh "am force-stop $Package" | Out-Null
+            W "ABORT: device got too hot during boot wait; no measurement taken."
+            W "EVIDENCE_FILE: $txt"
+            Write-Output "ABORTED (thermal guard, boot wait) - gpu_temp=${tNow}C. Emulator force-stopped."
+            exit 2
+        }
+    }
 } else {
     W "action: ATTACH (running session)"
     if ($SetCvar -and $SetCvar.Contains("=")) {
