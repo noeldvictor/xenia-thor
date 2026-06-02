@@ -1916,6 +1916,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_run_hist_[b];
     }
+    // Flush the final in-progress true-eligible run into its histogram.
+    if (merge_elig_run_len_) {
+      uint32_t rl = merge_elig_run_len_;
+      uint32_t b = rl <= 1   ? 0
+                   : rl == 2 ? 1
+                   : rl <= 4 ? 2
+                   : rl <= 8 ? 3
+                   : rl <= 16 ? 4
+                   : rl <= 32 ? 5
+                   : rl <= 64 ? 6
+                              : 7;
+      ++merge_elig_run_hist_[b];
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -1932,6 +1945,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "merge[pipe_same={} consts_same={} consts_changed={}] "
         "vf[same={} contig={} scattered={}] "
         "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "cullable_tris={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
@@ -1978,6 +1992,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_vf_scattered_, merge_run_hist_[0], merge_run_hist_[1],
         merge_run_hist_[2], merge_run_hist_[3], merge_run_hist_[4],
         merge_run_hist_[5], merge_run_hist_[6], merge_run_hist_[7],
+        merge_elig_run_hist_[0], merge_elig_run_hist_[1],
+        merge_elig_run_hist_[2], merge_elig_run_hist_[3],
+        merge_elig_run_hist_[4], merge_elig_run_hist_[5],
+        merge_elig_run_hist_[6], merge_elig_run_hist_[7],
         draw_outcomes_cullable_tris_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
@@ -1999,6 +2017,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_run_len_ = 0;
     merge_run_pipeline_ = VK_NULL_HANDLE;
     std::memset(merge_run_hist_, 0, sizeof(merge_run_hist_));
+    merge_elig_run_len_ = 0;
+    merge_elig_run_active_ = false;
+    merge_elig_run_pipeline_ = VK_NULL_HANDLE;
+    merge_elig_run_next_byte_ = 0;
+    std::memset(merge_elig_run_hist_, 0, sizeof(merge_elig_run_hist_));
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
     rt_transfer_calls_ = 0;
@@ -4155,6 +4178,62 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       }
       merge_run_pipeline_ = current_guest_graphics_pipeline_;
       merge_run_len_ = 1;
+    }
+    // True-eligible-run histogram: like the pipeline-run histogram above, but a
+    // run only extends when the DOMINANT merge gates also hold - same pipeline,
+    // byte-contiguous guest index range, and list-mergeable topology - so it
+    // reflects the real draw-concatenation potential (an upper bound) at baseline,
+    // independent of whether vulkan_merge_draws is on.
+    {
+      const xenos::PrimitiveType elig_prim =
+          primitive_processing_result.host_primitive_type;
+      const bool elig_mergeable =
+          primitive_processing_result.index_buffer_type ==
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+          (elig_prim == xenos::PrimitiveType::kTriangleList ||
+           elig_prim == xenos::PrimitiveType::kLineList ||
+           elig_prim == xenos::PrimitiveType::kPointList) &&
+          memexport_extent_start >= memexport_extent_end &&
+          !primitive_processing_result.host_primitive_reset_enabled;
+      const uint32_t elig_stride =
+          primitive_processing_result.host_index_format ==
+                  xenos::IndexFormat::kInt16
+              ? 2u
+              : 4u;
+      const uint32_t elig_base = primitive_processing_result.guest_index_base;
+      const uint32_t elig_end = elig_base + hv * elig_stride;
+      const bool elig_extend =
+          merge_elig_run_active_ && elig_mergeable &&
+          current_guest_graphics_pipeline_ == merge_elig_run_pipeline_ &&
+          elig_prim == merge_elig_run_prim_type_ &&
+          elig_base == merge_elig_run_next_byte_;
+      if (elig_extend) {
+        ++merge_elig_run_len_;
+        merge_elig_run_next_byte_ = elig_end;
+      } else {
+        if (merge_elig_run_len_) {
+          uint32_t rl = merge_elig_run_len_;
+          uint32_t b = rl <= 1   ? 0
+                       : rl == 2 ? 1
+                       : rl <= 4 ? 2
+                       : rl <= 8 ? 3
+                       : rl <= 16 ? 4
+                       : rl <= 32 ? 5
+                       : rl <= 64 ? 6
+                                  : 7;
+          ++merge_elig_run_hist_[b];
+        }
+        if (elig_mergeable) {
+          merge_elig_run_active_ = true;
+          merge_elig_run_len_ = 1;
+          merge_elig_run_pipeline_ = current_guest_graphics_pipeline_;
+          merge_elig_run_prim_type_ = elig_prim;
+          merge_elig_run_next_byte_ = elig_end;
+        } else {
+          merge_elig_run_active_ = false;
+          merge_elig_run_len_ = 0;
+        }
+      }
     }
   }
   trace_last_draw_sequence_ = ++trace_draw_sequence_;

@@ -867,6 +867,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t merge_run_len_ = 0;
   VkPipeline merge_run_pipeline_ = VK_NULL_HANDLE;
   uint32_t merge_run_hist_[8] = {};
+  // True-eligible-run histogram (read-only, vulkan_trace_draw_outcomes_per_frame):
+  // like merge_run_hist_ but a run only extends when the DOMINANT merge gates also
+  // hold - byte-contiguous guest index range + list-mergeable topology
+  // (kTriangleList/kLineList/kPointList, kGuestDMA, no memexport, no primitive
+  // restart) - not just a shared pipeline. The real draw-concatenation potential,
+  // measurable at BASELINE (independent of vulkan_merge_draws). An upper bound: it
+  // omits the rarely-differing layout/index_type/vertex_base/endian checks and the
+  // intervening-command break. The baseline-vs-+EDS delta shows how much EDS
+  // variant-collapse raises real mergeability. Logged as elig_runlen[...].
+  uint32_t merge_elig_run_len_ = 0;
+  bool merge_elig_run_active_ = false;
+  VkPipeline merge_elig_run_pipeline_ = VK_NULL_HANDLE;
+  xenos::PrimitiveType merge_elig_run_prim_type_ =
+      xenos::PrimitiveType::kPointList;
+  uint32_t merge_elig_run_next_byte_ = 0;
+  uint32_t merge_elig_run_hist_[8] = {};
   // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
   // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
   // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)
