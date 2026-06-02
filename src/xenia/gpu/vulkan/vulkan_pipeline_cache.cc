@@ -82,6 +82,20 @@ bool VulkanPipelineCache::Initialize() {
     }
   }
 
+  // Create an in-memory pipeline cache (spec-transparent vs VK_NULL_HANDLE) so
+  // repeated vkCreateGraphicsPipelines reuses prior compilation within a session.
+  // Non-fatal: on failure pipeline_cache_ stays VK_NULL_HANDLE (the prior
+  // behavior). Disk persistence + pre-warm is a follow-up step.
+  {
+    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+    VkPipelineCacheCreateInfo pipeline_cache_create_info = {};
+    pipeline_cache_create_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    dfn.vkCreatePipelineCache(vulkan_device->device(),
+                              &pipeline_cache_create_info, nullptr,
+                              &pipeline_cache_);
+  }
+
   return true;
 }
 
@@ -99,6 +113,10 @@ void VulkanPipelineCache::Shutdown() {
     }
   }
   pipelines_.clear();
+
+  // Destroy the in-memory pipeline cache.
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineCache, device,
+                                         pipeline_cache_);
 
   // Destroy all internal shaders.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
@@ -2302,7 +2320,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
           ? ui::vulkan::VulkanPerfCountersNow()
           : 0;
   const VkResult pipeline_create_result = dfn.vkCreateGraphicsPipelines(
-      device, VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline);
+      device, pipeline_cache_, 1, &pipeline_create_info, nullptr, &pipeline);
   ui::vulkan::VulkanPerfCountersRecordGraphicsPipelineCreate(
       pipeline_create_start, int32_t(pipeline_create_result));
   if (pipeline_create_result != VK_SUCCESS) {
