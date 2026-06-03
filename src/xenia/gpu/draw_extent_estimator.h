@@ -52,6 +52,26 @@ class DrawExtentEstimator {
   // positions.
   uint32_t CountCullableTriangles(const Shader& vertex_shader);
 
+  // Lever 2 cull Step 2a: build a CONSERVATIVELY culled index list for the current
+  // kGuestDMA triangle-list/strip draw - the emit counterpart of
+  // CountCullableTriangles. Replays the guest VS positions, drops only triangles
+  // that are CLEARLY backface (|det| beyond a relative margin) or fully outside one
+  // frustum side, and writes the surviving triangles' RAW guest index entries (so
+  // the GPU's own swap + VGT_INDX_OFFSET reproduce the same vertices) as a triangle
+  // LIST (strips are converted; odd strip triangles have their first two indices
+  // swapped to preserve winding). Conservative: KEEPS any triangle with an invalid/
+  // killed/missing-position or near-degenerate vertex. Returns false (caller should
+  // draw the indices verbatim) for any draw it can't safely cull: non-DMA, non-tri,
+  // tessellated, primitive-restart, pre-divided (vtx_xy_fmt), clip_disable, or a
+  // non-interpretable (texture-fetch) VS. The result is in culled_index_*().
+  bool BuildCulledIndexList(const Shader& vertex_shader);
+  const uint8_t* culled_index_data() const {
+    return cull_emit_index_bytes_.data();
+  }
+  size_t culled_index_byte_size() const { return cull_emit_index_bytes_.size(); }
+  uint32_t culled_index_count() const { return cull_emit_index_count_; }
+  uint32_t culled_index_stride() const { return cull_emit_index_stride_; }
+
  private:
   class PositionYExportSink : public ShaderInterpreter::ExportSink {
    public:
@@ -120,6 +140,11 @@ class DrawExtentEstimator {
   // Whether the last counted draw used pre-divided (vtx_xy_fmt) positions - read
   // by C3 to decide whether to apply the perspective divide.
   bool cull_vtx_xy_fmt_ = false;
+  // Step 2a output: the raw guest index bytes of the kept triangles (triangle
+  // LIST), filled by BuildCulledIndexList and read by the command processor.
+  std::vector<uint8_t> cull_emit_index_bytes_;
+  uint32_t cull_emit_index_count_ = 0;
+  uint32_t cull_emit_index_stride_ = 0;
 
   const RegisterFile& register_file_;
   const Memory& memory_;

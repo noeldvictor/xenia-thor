@@ -614,5 +614,210 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
   return cullable;
 }
 
+bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
+  SCOPE_profile_cpu_f("gpu");
+  cull_emit_index_bytes_.clear();
+  cull_emit_index_count_ = 0;
+  cull_emit_index_stride_ = 0;
+
+  const RegisterFile& regs = register_file_;
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (!vgt_draw_initiator.num_indices) {
+    return false;
+  }
+  const bool prim_is_strip =
+      vgt_draw_initiator.prim_type == xenos::PrimitiveType::kTriangleStrip;
+  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kTriangleList &&
+      !prim_is_strip) {
+    return false;
+  }
+  // Only guest-DMA indices: we copy the raw guest index entries for kept tris.
+  if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA) {
+    return false;
+  }
+  // Not reproducing tessellation.
+  if (xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode,
+                                 vgt_draw_initiator.prim_type) &&
+      regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
+          xenos::VGTOutputPath::kTessellationEnable) {
+    return false;
+  }
+  if (!vertex_shader.is_ucode_analyzed() ||
+      !ShaderInterpreter::CanInterpretShader(vertex_shader)) {
+    return false;
+  }
+  if (regs.Get<reg::PA_CL_VTE_CNTL>().vtx_xy_fmt != 0) {
+    // Pre-divided (screen/NDC) positions - the clip-plane test assumes clip
+    // space; emit verbatim rather than misjudge.
+    return false;
+  }
+  if (regs.Get<reg::PA_CL_CLIP_CNTL>().clip_disable != 0) {
+    return false;
+  }
+  auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+  if (pa_su_sc_mode_cntl.multi_prim_ib_ena != 0) {
+    // Primitive restart: strip topology can't be flattened to a list without
+    // re-basing winding at each restart - defer (emit verbatim).
+    return false;
+  }
+
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  const uint32_t stride =
+      vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16 ? 2u : 4u;
+  cull_emit_index_stride_ = stride;
+  xenos::Endian index_endian = vgt_dma_size.swap_mode;
+  uint32_t index_buffer_base = regs[XE_GPU_REG_VGT_DMA_BASE];
+  if (stride == 2u) {
+    // Handle index endianness the same way as the PrimitiveProcessor / counter.
+    if (index_endian == xenos::Endian::k8in32) {
+      index_endian = xenos::Endian::k8in16;
+    } else if (index_endian == xenos::Endian::k16in32) {
+      index_endian = xenos::Endian::kNone;
+    }
+    index_buffer_base &= ~uint32_t(sizeof(uint16_t) - 1);
+  } else {
+    index_buffer_base &= ~uint32_t(sizeof(uint32_t) - 1);
+  }
+  const uint8_t* index_bytes =
+      memory_.TranslatePhysical<const uint8_t*>(index_buffer_base);
+  if (!index_bytes) {
+    return false;
+  }
+  const uint16_t* index16 = reinterpret_cast<const uint16_t*>(index_bytes);
+  const uint32_t* index32 = reinterpret_cast<const uint32_t*>(index_bytes);
+
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+  uint32_t num_indices = vgt_draw_initiator.num_indices;
+
+  cull_vertices_scratch_.clear();
+  cull_vertices_scratch_.resize(num_indices);
+  shader_interpreter_.SetShader(vertex_shader);
+  PositionExportSink position_export_sink;
+  shader_interpreter_.SetExportSink(&position_export_sink);
+  for (uint32_t i = 0; i < num_indices; ++i) {
+    CullVertex& out = cull_vertices_scratch_[i];
+    out.valid = false;
+    out.x = out.y = out.z = out.w = 0.0f;
+    uint32_t vertex_index;
+    if (i < vgt_dma_size.num_words) {
+      vertex_index = stride == 2u ? uint32_t(index16[i]) : index32[i];
+      vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
+    } else {
+      vertex_index = 0;
+    }
+    vertex_index =
+        std::min(max_index,
+                 std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+    position_export_sink.Reset();
+    shader_interpreter_.temp_registers()[0] = float(vertex_index);
+    shader_interpreter_.Execute();
+    if (position_export_sink.vertex_kill().has_value() &&
+        (position_export_sink.vertex_kill().value() & ~(UINT32_C(1) << 31))) {
+      continue;
+    }
+    if (!position_export_sink.position_x().has_value() ||
+        !position_export_sink.position_y().has_value() ||
+        !position_export_sink.position_w().has_value()) {
+      continue;
+    }
+    out.x = position_export_sink.position_x().value();
+    out.y = position_export_sink.position_y().value();
+    out.z = position_export_sink.position_z().has_value()
+                ? position_export_sink.position_z().value()
+                : 0.0f;
+    out.w = position_export_sink.position_w().value();
+    out.valid = true;
+  }
+  shader_interpreter_.SetExportSink(nullptr);
+
+  const bool cull_front = pa_su_sc_mode_cntl.cull_front != 0;
+  const bool cull_back = pa_su_sc_mode_cntl.cull_back != 0;
+  const bool front_is_ccw = pa_su_sc_mode_cntl.face == 0;
+
+  const uint32_t max_tris =
+      prim_is_strip ? (num_indices >= 2u ? num_indices - 2u : 0u)
+                    : num_indices / 3u;
+  cull_emit_index_bytes_.reserve(size_t(max_tris) * 3u * stride);
+
+  // Append slot `slot`'s RAW guest index bytes (pre-swap/pre-offset) to the list.
+  auto append_raw = [&](uint32_t slot) {
+    const uint8_t* src = index_bytes + size_t(slot) * stride;
+    cull_emit_index_bytes_.insert(cull_emit_index_bytes_.end(), src,
+                                  src + stride);
+    ++cull_emit_index_count_;
+  };
+  // CONSERVATIVE: drop only triangles that are CLEARLY backface or fully outside
+  // one frustum side; keep everything else (invalid/killed/near-degenerate/edge-on).
+  // Cull decision uses the slot order + winding_reversed (identical to the counter);
+  // emit order swaps the first two slots for odd strip triangles so the output LIST
+  // triangle keeps the strip's actual winding (else the GPU would cull the wrong
+  // face -> holes). Relative |det| margin keeps near-edge-on triangles even if the
+  // CPU position differs slightly from the GPU's.
+  auto emit_if_kept = [&](uint32_t ia, uint32_t ib, uint32_t ic,
+                          bool winding_reversed) {
+    const CullVertex& a = cull_vertices_scratch_[ia];
+    const CullVertex& b = cull_vertices_scratch_[ib];
+    const CullVertex& c = cull_vertices_scratch_[ic];
+    bool cull = false;
+    if (a.valid && b.valid && c.valid && a.w > 0.0f && b.w > 0.0f &&
+        c.w > 0.0f) {
+      cull = (a.x > a.w && b.x > b.w && c.x > c.w) ||
+             (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
+             (a.y > a.w && b.y > b.w && c.y > c.w) ||
+             (a.y < -a.w && b.y < -b.w && c.y < -c.w);
+      if (!cull && (cull_front || cull_back)) {
+        if (cull_front && cull_back) {
+          cull = true;
+        } else {
+          float t0 = b.y * c.w - c.y * b.w;
+          float t1 = b.x * c.w - c.x * b.w;
+          float t2 = b.x * c.y - c.x * b.y;
+          float det = a.x * t0 - a.y * t1 + a.w * t2;
+          float abs_a_x = a.x < 0.0f ? -a.x : a.x;
+          float abs_a_y = a.y < 0.0f ? -a.y : a.y;
+          float abs_a_w = a.w < 0.0f ? -a.w : a.w;
+          float abs_t0 = t0 < 0.0f ? -t0 : t0;
+          float abs_t1 = t1 < 0.0f ? -t1 : t1;
+          float abs_t2 = t2 < 0.0f ? -t2 : t2;
+          float abs_det = det < 0.0f ? -det : det;
+          // Relative edge-on margin: keep triangles whose facing is ambiguous.
+          float scale =
+              abs_a_x * abs_t0 + abs_a_y * abs_t1 + abs_a_w * abs_t2;
+          if (abs_det > (1.0f / 1024.0f) * scale) {
+            bool tri_front =
+                ((det > 0.0f) == front_is_ccw) != winding_reversed;
+            cull = tri_front ? cull_front : cull_back;
+          }
+        }
+      }
+    }
+    if (cull) {
+      return;
+    }
+    if (winding_reversed) {
+      append_raw(ib);
+      append_raw(ia);
+      append_raw(ic);
+    } else {
+      append_raw(ia);
+      append_raw(ib);
+      append_raw(ic);
+    }
+  };
+  if (prim_is_strip) {
+    for (uint32_t i = 0; i + 2u < num_indices; ++i) {
+      emit_if_kept(i, i + 1u, i + 2u, (i & 1u) != 0u);
+    }
+  } else {
+    uint32_t triangle_count = num_indices / 3u;
+    for (uint32_t t = 0; t < triangle_count; ++t) {
+      emit_if_kept(t * 3u + 0u, t * 3u + 1u, t * 3u + 2u, false);
+    }
+  }
+  return true;
+}
+
 }  // namespace gpu
 }  // namespace xe
