@@ -348,6 +348,13 @@ bool VulkanCommandProcessor::SetupContext() {
                          size_t(16384)),
                 size_t(device_properties.minUniformBufferOffsetAlignment)));
 
+  // Lever 2 cull (gpu_cull_compaction): transient INDEX-buffer ring. Created
+  // unconditionally (pages allocate lazily on first Request, so the default build
+  // pays nothing until the cvar is toggled on) to keep the cvar live-toggleable.
+  cull_index_buffer_pool_ = std::make_unique<ui::vulkan::VulkanUploadBufferPool>(
+      vulkan_device, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+      ui::GraphicsUploadBufferPool::kDefaultPageSize);
+
   // Lever 2b (vulkan_merge_draws_indirect): per-frame ring for the
   // VkDrawIndexedIndirectCommand[] arrays. Only created when the lever is enabled
   // AND the device supports batched indirect draws, so the default build pays
@@ -1316,6 +1323,7 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   uniform_buffer_pool_.reset();
   indirect_buffer_pool_.reset();
+  cull_index_buffer_pool_.reset();
 
   sparse_bind_wait_stage_mask_ = 0;
   sparse_buffer_binds_.clear();
@@ -4067,7 +4075,45 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                      xenos::IndexFormat::kInt16
                                  ? VK_INDEX_TYPE_UINT16
                                  : VK_INDEX_TYPE_UINT32;
-    if (cvars::vulkan_merge_draws &&
+    if (cvars::gpu_cull_compaction &&
+        primitive_processing_result.index_buffer_type ==
+            PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+        cull_index_buffer_pool_) {
+      // Lever 2 cull STEP 1: NO-OP index compaction. Copy the raw guest index
+      // bytes VERBATIM into a transient host-visible index buffer and draw from
+      // it instead of binding shared memory directly - the structural pipe the
+      // CPU/NEON cull reuses, proven byte-identical here before any triangle is
+      // dropped. NO endian swap / mask / base-add (the vertex shader does those
+      // at spirv_shader_translator.cc:1592/1606); vertexOffset stays 0 because
+      // VGT_INDX_OFFSET is applied via system constants. Mutually exclusive with
+      // the merge levers (they are off whenever this is on).
+      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
+        FlushPendingMergeRun();
+      }
+      const uint32_t idx_count =
+          primitive_processing_result.host_draw_vertex_count;
+      const uint32_t stride = index_type == VK_INDEX_TYPE_UINT16 ? 2u : 4u;
+      const size_t copy_bytes = size_t(idx_count) * stride;
+      VkBuffer cull_index_buffer = VK_NULL_HANDLE;
+      VkDeviceSize cull_index_offset = 0;
+      uint8_t* cull_mapping = cull_index_buffer_pool_->Request(
+          frame_current_, copy_bytes, stride, cull_index_buffer,
+          cull_index_offset);
+      const uint8_t* guest_indices =
+          memory_->TranslatePhysical<const uint8_t*>(
+              uint32_t(index_buffer.second));
+      if (cull_mapping && guest_indices) {
+        std::memcpy(cull_mapping, guest_indices, copy_bytes);
+        deferred_command_buffer_.CmdVkBindIndexBuffer(
+            cull_index_buffer, cull_index_offset, index_type);
+        deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+      } else {
+        // Allocation / translation failed - emit the unchanged draw.
+        deferred_command_buffer_.CmdVkBindIndexBuffer(
+            index_buffer.first, index_buffer.second, index_type);
+        deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+      }
+    } else if (cvars::vulkan_merge_draws &&
         primitive_processing_result.index_buffer_type ==
             PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
       // Lever 2 Step 4: zero-copy draw concatenation. EXTEND the pending run if
@@ -4966,6 +5012,9 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     uniform_buffer_pool_->Reclaim(frame_completed_);
     if (indirect_buffer_pool_) {
       indirect_buffer_pool_->Reclaim(frame_completed_);
+    }
+    if (cull_index_buffer_pool_) {
+      cull_index_buffer_pool_->Reclaim(frame_completed_);
     }
     while (!single_transient_descriptors_used_.empty()) {
       const UsedSingleTransientDescriptor& used_transient_descriptor =

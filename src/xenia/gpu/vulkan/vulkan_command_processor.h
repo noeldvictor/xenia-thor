@@ -601,6 +601,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // VkDrawIndexedIndirectCommand[] arrays consumed by vkCmdDrawIndexedIndirect.
   // Only allocated when the lever is enabled and multiDrawIndirect is supported.
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> indirect_buffer_pool_;
+  // Lever 2 cull (gpu_cull_compaction): per-frame ring of transient INDEX buffers
+  // that hold the per-draw guest indices copied out of shared memory (Step 1 copies
+  // them verbatim; the eventual cull writes a compacted subset). Created at init so
+  // the cvar is live-toggleable.
+  std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> cull_index_buffer_pool_;
 
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;

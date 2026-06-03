@@ -450,6 +450,19 @@ DEFINE_bool(
     "(that wins if both set). Default off; STARTUP cvar - do not toggle live.",
     "GPU");
 
+DEFINE_bool(
+    gpu_cull_compaction, false,
+    "Thor/Adreno binning re-arch (Lever 2 cull, STEP 1 plumbing): route each "
+    "kGuestDMA indexed draw through a transient index buffer - copy the raw guest "
+    "index bytes VERBATIM into a per-frame upload buffer and draw from it instead "
+    "of binding the shared-memory buffer directly. This is the structural pipe the "
+    "CPU/NEON triangle cull reuses (it will later read+cull+compact those indices); "
+    "with no cull yet it is provably BYTE-IDENTICAL to off. No endian swap / mask / "
+    "base-add (the vertex shader does those); vertexOffset stays 0. Live-toggleable "
+    "(the pool is created at init). Default off. See "
+    "docs/research/20260602-neon-cull-impl-plan.md.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "
