@@ -979,7 +979,7 @@ class Shader {
   bool is_position_affine_mvp_candidate() const {
     return type() == xenos::ShaderType::kVertex && position_export_written_ &&
            !position_slice_tainted_ && !uses_control_flow_loop_ &&
-           !uses_subroutine_or_jump_;
+           !uses_backward_jump_ && !uses_subroutine_call_;
   }
 
   // Why a vertex shader's position slice is NOT affine-MVP - the instrument that
@@ -991,7 +991,8 @@ class Shader {
     kQualifies,             // is_position_affine_mvp_candidate() == true
     kNotVertexOrNoPosition,
     kControlFlowLoop,
-    kSubroutineOrJump,
+    kBackwardJump,          // re-execution - breaks the linear taint pass
+    kSubroutineCall,        // out-of-order callee body - breaks the linear pass
     kDynamicAddressing,     // a0/aL-relative feeds position = skinning bone palette
     kTextureFetch,          // vertex-texture fetch feeds position = displacement
     kOther,                 // transcendental/predicate/other non-affine op
@@ -1003,8 +1004,11 @@ class Shader {
     if (uses_control_flow_loop_) {
       return PositionMvpDisqualReason::kControlFlowLoop;
     }
-    if (uses_subroutine_or_jump_) {
-      return PositionMvpDisqualReason::kSubroutineOrJump;
+    if (uses_backward_jump_) {
+      return PositionMvpDisqualReason::kBackwardJump;
+    }
+    if (uses_subroutine_call_) {
+      return PositionMvpDisqualReason::kSubroutineCall;
     }
     if (!position_slice_tainted_) {
       return PositionMvpDisqualReason::kQualifies;
@@ -1132,8 +1136,9 @@ class Shader {
   // scratch: per-GPR [0-63], 2 bits per component (xyzw) holding a taint REASON
   // priority code (0 clean, see kPositionSlice* below; higher wins on merge so the
   // dominant cause survives). position_disq_reason_ is the dominant reason a tainted
-  // value reached the position export. uses_subroutine_or_jump_ bails the slice
-  // analysis (linear taint pass is only sound for straight-line code).
+  // value reached the position export. uses_backward_jump_/uses_subroutine_call_
+  // bail the slice analysis (linear taint pass is only sound when control flow
+  // doesn't re-execute or jump to an out-of-order callee body).
   static constexpr uint8_t kPositionSliceClean = 0;
   static constexpr uint8_t kPositionSliceOther = 1;
   static constexpr uint8_t kPositionSliceTexfetch = 2;
@@ -1142,7 +1147,11 @@ class Shader {
   uint8_t position_disq_reason_ = kPositionSliceClean;
   bool position_export_written_ = false;
   bool position_slice_tainted_ = false;
-  bool uses_subroutine_or_jump_ = false;
+  // Control-flow bails for the linear slice taint pass. FORWARD jumps are NOT a
+  // bail (program-order over-taint is conservative-safe); only backward jumps
+  // (re-execution) and subroutine calls (out-of-order callee body) break it.
+  bool uses_backward_jump_ = false;
+  bool uses_subroutine_call_ = false;
   bool writes_depth_ = false;
 
   // Memory export eM write info for each control flow instruction, if there are

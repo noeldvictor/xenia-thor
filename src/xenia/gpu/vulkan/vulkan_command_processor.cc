@@ -1970,7 +1970,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
-        "pos_disq_verts[a0={} loop={} jumpcall={} tex={} other={}]",
+        "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2026,7 +2026,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
         draw_outcomes_affine_mvp_pos_vertices_, draw_outcomes_pos_disq_a0_verts_,
         draw_outcomes_pos_disq_loop_verts_,
-        draw_outcomes_pos_disq_jumpcall_verts_,
+        draw_outcomes_pos_disq_backjump_verts_,
+        draw_outcomes_pos_disq_call_verts_,
         draw_outcomes_pos_disq_texfetch_verts_,
         draw_outcomes_pos_disq_other_verts_);
     draw_outcomes_rendered_ = 0;
@@ -2037,7 +2038,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
     draw_outcomes_pos_disq_a0_verts_ = 0;
     draw_outcomes_pos_disq_loop_verts_ = 0;
-    draw_outcomes_pos_disq_jumpcall_verts_ = 0;
+    draw_outcomes_pos_disq_backjump_verts_ = 0;
+    draw_outcomes_pos_disq_call_verts_ = 0;
     draw_outcomes_pos_disq_texfetch_verts_ = 0;
     draw_outcomes_pos_disq_other_verts_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
@@ -4294,8 +4296,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         case Shader::PositionMvpDisqualReason::kControlFlowLoop:
           draw_outcomes_pos_disq_loop_verts_ += hv;
           break;
-        case Shader::PositionMvpDisqualReason::kSubroutineOrJump:
-          draw_outcomes_pos_disq_jumpcall_verts_ += hv;
+        case Shader::PositionMvpDisqualReason::kBackwardJump:
+          draw_outcomes_pos_disq_backjump_verts_ += hv;
+          break;
+        case Shader::PositionMvpDisqualReason::kSubroutineCall:
+          draw_outcomes_pos_disq_call_verts_ += hv;
           break;
         case Shader::PositionMvpDisqualReason::kTextureFetch:
           draw_outcomes_pos_disq_texfetch_verts_ += hv;

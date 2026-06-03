@@ -858,7 +858,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Shader::position_mvp_disqual_reason.
   uint64_t draw_outcomes_pos_disq_a0_verts_ = 0;
   uint64_t draw_outcomes_pos_disq_loop_verts_ = 0;
-  uint64_t draw_outcomes_pos_disq_jumpcall_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_backjump_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_call_verts_ = 0;
   uint64_t draw_outcomes_pos_disq_texfetch_verts_ = 0;
   uint64_t draw_outcomes_pos_disq_other_verts_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position

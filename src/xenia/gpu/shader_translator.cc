@@ -160,7 +160,7 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           }
           // Subroutine bodies execute out of program order; the linear
           // position-slice taint pass can't track them - bail.
-          uses_subroutine_or_jump_ = true;
+          uses_subroutine_call_ = true;
         } break;
         case ControlFlowOpcode::kReturn: {
           ParsedReturnInstruction instr;
@@ -174,9 +174,13 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           if (instr.type == ParsedJumpInstruction::Type::kConditional) {
             bool_constant_index = instr.bool_constant_index;
           }
-          // A jump can skip instructions; the linear position-slice taint pass
-          // assumes straight-line order - bail.
-          uses_subroutine_or_jump_ = true;
+          // Only a BACKWARD jump (target cf-index <= this one = re-execution)
+          // breaks the linear position-slice taint pass. A FORWARD jump merely
+          // skips ahead, so visiting the maybe-skipped instructions in program
+          // order over-taints (never under-taints) - conservative-safe, no bail.
+          if (cf.cond_jmp.address() <= cf_index) {
+            uses_backward_jump_ = true;
+          }
         } break;
         case ControlFlowOpcode::kAlloc: {
           ParsedAllocInstruction instr;
