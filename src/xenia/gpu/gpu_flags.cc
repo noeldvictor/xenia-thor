@@ -463,6 +463,17 @@ DEFINE_bool(
     "docs/research/20260602-neon-cull-impl-plan.md.",
     "GPU");
 
+DEFINE_bool(
+    gpu_cull_replay_validate, false,
+    "Thor cull Step 2b validation (read-only): for qualifying draws, recover the "
+    "affine position matrix M from a few ShaderInterpreter basis vertices (clip = "
+    "M*[input,1], the input read from the position slice's leaf register) and check "
+    "M against held-out vertices' interpreter clip positions. Logs leaf/support and "
+    "the max relative error in the cull line (replay[...]) to confirm the fast "
+    "matrix-recovery replay reproduces the interpreter before it displaces it. "
+    "Default off.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_cull_max_per_frame, 0,
     "Thor cull VALIDATION throttle: cap how many draws per frame run the slow "

@@ -1981,7 +1981,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
         "cull[branch={} skip_dyntop={} skip_qual={} draws={} dropped_tris={} "
         "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
-        "noidxptr={} zerodrop={}) slice_ops_sum={} slice_replayable={}]",
+        "noidxptr={} zerodrop={}) slice_ops_sum={} slice_replayable={} "
+        "replay[affine={} nonaffine={} unsup={} maxerr_milli={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2058,7 +2059,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             [uint32_t(DrawExtentEstimator::CullBail::kNoIndexPtr)],
         draw_outcomes_cull_bail_
             [uint32_t(DrawExtentEstimator::CullBail::kZeroDropped)],
-        draw_outcomes_cull_slice_ops_sum_, draw_outcomes_cull_slice_replayable_);
+        draw_outcomes_cull_slice_ops_sum_, draw_outcomes_cull_slice_replayable_,
+        draw_outcomes_replay_affine_, draw_outcomes_replay_nonaffine_,
+        draw_outcomes_replay_unsupported_,
+        draw_outcomes_replay_max_error_milli_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2079,6 +2083,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     std::memset(draw_outcomes_cull_bail_, 0, sizeof(draw_outcomes_cull_bail_));
     draw_outcomes_cull_slice_ops_sum_ = 0;
     draw_outcomes_cull_slice_replayable_ = 0;
+    draw_outcomes_replay_affine_ = 0;
+    draw_outcomes_replay_nonaffine_ = 0;
+    draw_outcomes_replay_unsupported_ = 0;
+    draw_outcomes_replay_max_error_milli_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4160,6 +4168,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         if (!cull_extent_estimator_) {
           cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
               *register_file_, *memory_, nullptr);
+        }
+        if (cvars::gpu_cull_replay_validate) {
+          switch (cull_extent_estimator_->ValidateAffinePositionReplay(
+              *vertex_shader)) {
+            case DrawExtentEstimator::AffineValidateStatus::kAffine:
+              ++draw_outcomes_replay_affine_;
+              break;
+            case DrawExtentEstimator::AffineValidateStatus::kNonAffine:
+              ++draw_outcomes_replay_nonaffine_;
+              break;
+            case DrawExtentEstimator::AffineValidateStatus::kUnsupported:
+              ++draw_outcomes_replay_unsupported_;
+              break;
+            default:
+              break;
+          }
+          uint32_t e_milli = uint32_t(
+              cull_extent_estimator_->affine_validate_max_error() * 1000.0f);
+          if (e_milli > draw_outcomes_replay_max_error_milli_) {
+            draw_outcomes_replay_max_error_milli_ = e_milli;
+          }
         }
         if (cull_extent_estimator_->BuildCulledIndexList(*vertex_shader) &&
             cull_extent_estimator_->culled_index_stride() == stride) {

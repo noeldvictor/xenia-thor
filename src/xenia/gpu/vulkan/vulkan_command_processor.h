@@ -889,6 +889,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // extracted slices are small + replayable before the replay kernel is built.
   uint64_t draw_outcomes_cull_slice_ops_sum_ = 0;
   uint32_t draw_outcomes_cull_slice_replayable_ = 0;
+  // Step 2b-ii(a) affine-replay validation (gpu_cull_replay_validate): per-frame
+  // counts of draws whose recovered affine matrix M reproduces the interpreter
+  // (affine) / doesn't (nonaffine) / can't be set up (unsupported), and the max
+  // relative error x1000. Confirms the matrix-recovery replay before it lands.
+  uint32_t draw_outcomes_replay_affine_ = 0;
+  uint32_t draw_outcomes_replay_nonaffine_ = 0;
+  uint32_t draw_outcomes_replay_unsupported_ = 0;
+  uint32_t draw_outcomes_replay_max_error_milli_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

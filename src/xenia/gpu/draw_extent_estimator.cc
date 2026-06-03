@@ -614,6 +614,233 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
   return cullable;
 }
 
+// Gauss-Jordan inverse of a 4x4 (partial pivoting). Returns false if singular.
+static bool Invert4x4(const double in[4][4], double out[4][4]) {
+  double a[4][8];
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      a[r][c] = in[r][c];
+      a[r][c + 4] = (r == c) ? 1.0 : 0.0;
+    }
+  }
+  for (int col = 0; col < 4; ++col) {
+    int pivot = col;
+    double best = a[col][col] < 0 ? -a[col][col] : a[col][col];
+    for (int r = col + 1; r < 4; ++r) {
+      double v = a[r][col] < 0 ? -a[r][col] : a[r][col];
+      if (v > best) {
+        best = v;
+        pivot = r;
+      }
+    }
+    if (best < 1e-12) {
+      return false;
+    }
+    if (pivot != col) {
+      for (int c = 0; c < 8; ++c) {
+        double t = a[col][c];
+        a[col][c] = a[pivot][c];
+        a[pivot][c] = t;
+      }
+    }
+    double inv_p = 1.0 / a[col][col];
+    for (int c = 0; c < 8; ++c) {
+      a[col][c] *= inv_p;
+    }
+    for (int r = 0; r < 4; ++r) {
+      if (r == col) {
+        continue;
+      }
+      double f = a[r][col];
+      for (int c = 0; c < 8; ++c) {
+        a[r][c] -= f * a[col][c];
+      }
+    }
+  }
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      out[r][c] = a[r][c + 4];
+    }
+  }
+  return true;
+}
+
+DrawExtentEstimator::AffineValidateStatus
+DrawExtentEstimator::ValidateAffinePositionReplay(const Shader& vertex_shader) {
+  affine_validate_max_error_ = 0.0f;
+  const RegisterFile& regs = register_file_;
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (!vgt_draw_initiator.num_indices ||
+      vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA ||
+      !vertex_shader.is_ucode_analyzed() ||
+      !ShaderInterpreter::CanInterpretShader(vertex_shader)) {
+    return AffineValidateStatus::kSkipped;
+  }
+
+  // The position slice's single register leaf = the vfetch'd input position.
+  uint64_t read_regs = 0, written_regs = 0;
+  for (const ParsedAluInstruction& op : vertex_shader.position_slice_ops()) {
+    auto mark_operand = [&](const InstructionOperand& o) {
+      if (o.storage_source == InstructionStorageSource::kRegister &&
+          o.storage_addressing_mode ==
+              InstructionStorageAddressingMode::kAbsolute &&
+          o.storage_index < 64) {
+        read_regs |= uint64_t(1) << o.storage_index;
+      }
+    };
+    auto mark_result = [&](const InstructionResult& r) {
+      if (r.storage_target == InstructionStorageTarget::kRegister &&
+          r.storage_addressing_mode ==
+              InstructionStorageAddressingMode::kAbsolute &&
+          r.storage_index < 64) {
+        written_regs |= uint64_t(1) << r.storage_index;
+      }
+    };
+    for (uint32_t i = 0; i < op.vector_operand_count; ++i) {
+      mark_operand(op.vector_operands[i]);
+    }
+    for (uint32_t i = 0; i < op.scalar_operand_count; ++i) {
+      mark_operand(op.scalar_operands[i]);
+    }
+    mark_result(op.vector_and_constant_result);
+    mark_result(op.scalar_result);
+  }
+  uint64_t leaf_regs = read_regs & ~written_regs;
+  if (leaf_regs == 0 || (leaf_regs & (leaf_regs - 1)) != 0) {
+    return AffineValidateStatus::kUnsupported;
+  }
+  uint32_t leaf = 0;
+  while (!((leaf_regs >> leaf) & 1)) {
+    ++leaf;
+  }
+
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  const uint32_t stride =
+      vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16 ? 2u : 4u;
+  xenos::Endian index_endian = vgt_dma_size.swap_mode;
+  uint32_t index_buffer_base = regs[XE_GPU_REG_VGT_DMA_BASE];
+  if (stride == 2u) {
+    if (index_endian == xenos::Endian::k8in32) {
+      index_endian = xenos::Endian::k8in16;
+    } else if (index_endian == xenos::Endian::k16in32) {
+      index_endian = xenos::Endian::kNone;
+    }
+    index_buffer_base &= ~uint32_t(1);
+  } else {
+    index_buffer_base &= ~uint32_t(3);
+  }
+  const uint8_t* index_bytes =
+      memory_.TranslatePhysical<const uint8_t*>(index_buffer_base);
+  if (!index_bytes) {
+    return AffineValidateStatus::kSkipped;
+  }
+  const uint16_t* index16 = reinterpret_cast<const uint16_t*>(index_bytes);
+  const uint32_t* index32 = reinterpret_cast<const uint32_t*>(index_bytes);
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+  uint32_t num_indices = vgt_draw_initiator.num_indices;
+  const uint32_t kMaxSamples = 16;
+  uint32_t sample_count = std::min(num_indices, kMaxSamples);
+  if (sample_count < 5) {
+    return AffineValidateStatus::kSkipped;
+  }
+
+  shader_interpreter_.SetShader(vertex_shader);
+  PositionExportSink sink;
+  shader_interpreter_.SetExportSink(&sink);
+  double XtX[4][4] = {};
+  double Xty[4][4] = {};
+  struct Sample {
+    float p[4];
+    float clip[4];
+  } samples[kMaxSamples];
+  uint32_t valid_samples = 0;
+  for (uint32_t s = 0; s < sample_count; ++s) {
+    uint32_t vertex_index;
+    if (s < vgt_dma_size.num_words) {
+      vertex_index = stride == 2u ? uint32_t(index16[s]) : index32[s];
+      vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
+    } else {
+      vertex_index = 0;
+    }
+    vertex_index =
+        std::min(max_index,
+                 std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+    sink.Reset();
+    shader_interpreter_.temp_registers()[0] = float(vertex_index);
+    shader_interpreter_.Execute();
+    if (!sink.position_x().has_value() || !sink.position_y().has_value() ||
+        !sink.position_w().has_value()) {
+      continue;
+    }
+    Sample& smp = samples[valid_samples];
+    const float* p = &shader_interpreter_.temp_registers()[leaf * 4];
+    smp.p[0] = p[0];
+    smp.p[1] = p[1];
+    smp.p[2] = p[2];
+    smp.p[3] = 1.0f;
+    smp.clip[0] = sink.position_x().value();
+    smp.clip[1] = sink.position_y().value();
+    smp.clip[2] =
+        sink.position_z().has_value() ? sink.position_z().value() : 0.0f;
+    smp.clip[3] = sink.position_w().value();
+    for (int a = 0; a < 4; ++a) {
+      for (int b = 0; b < 4; ++b) {
+        XtX[a][b] += double(smp.p[a]) * smp.p[b];
+      }
+      for (int k = 0; k < 4; ++k) {
+        Xty[a][k] += double(smp.p[a]) * smp.clip[k];
+      }
+    }
+    ++valid_samples;
+  }
+  shader_interpreter_.SetExportSink(nullptr);
+  if (valid_samples < 5) {
+    return AffineValidateStatus::kUnsupported;
+  }
+
+  for (int a = 0; a < 4; ++a) {
+    XtX[a][a] += 1e-6;
+  }
+  double inv[4][4];
+  if (!Invert4x4(XtX, inv)) {
+    return AffineValidateStatus::kUnsupported;
+  }
+  double M[4][4];  // clip_k = sum_a M[k][a] * p[a]
+  for (int k = 0; k < 4; ++k) {
+    for (int a = 0; a < 4; ++a) {
+      double v = 0.0;
+      for (int b = 0; b < 4; ++b) {
+        v += inv[a][b] * Xty[b][k];
+      }
+      M[k][a] = v;
+    }
+  }
+  float max_rel = 0.0f;
+  for (uint32_t s = 0; s < valid_samples; ++s) {
+    const Sample& smp = samples[s];
+    for (int k = 0; k < 4; ++k) {
+      double pred = 0.0;
+      for (int a = 0; a < 4; ++a) {
+        pred += M[k][a] * smp.p[a];
+      }
+      double err = pred - smp.clip[k];
+      if (err < 0.0) {
+        err = -err;
+      }
+      double denom = (smp.clip[k] < 0.0f ? -smp.clip[k] : smp.clip[k]) + 1e-3;
+      float rel = float(err / denom);
+      if (rel > max_rel) {
+        max_rel = rel;
+      }
+    }
+  }
+  affine_validate_max_error_ = max_rel;
+  return max_rel < 1.0e-3f ? AffineValidateStatus::kAffine
+                           : AffineValidateStatus::kNonAffine;
+}
+
 bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   SCOPE_profile_cpu_f("gpu");
   cull_emit_index_bytes_.clear();

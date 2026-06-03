@@ -65,6 +65,19 @@ class DrawExtentEstimator {
   // tessellated, primitive-restart, pre-divided (vtx_xy_fmt), clip_disable, or a
   // non-interpretable (texture-fetch) VS. The result is in culled_index_*().
   bool BuildCulledIndexList(const Shader& vertex_shader);
+
+  // Step 2b validation (gpu_cull_replay_validate, read-only): recover the affine
+  // position matrix M (clip = M*[input_xyz,1]) from ShaderInterpreter samples of
+  // the current draw and report how well it reproduces the interpreter. Confirms
+  // the fast matrix-recovery replay before it displaces the interpreter.
+  enum class AffineValidateStatus : uint32_t {
+    kSkipped = 0,      // not a position-affine-MVP / list-strip / DMA draw
+    kUnsupported,      // not exactly one register leaf input, or solve singular
+    kAffine,           // M reproduces the interpreter within tolerance
+    kNonAffine,        // large residual - clip is NOT affine in the leaf input
+  };
+  AffineValidateStatus ValidateAffinePositionReplay(const Shader& vertex_shader);
+  float affine_validate_max_error() const { return affine_validate_max_error_; }
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
@@ -168,6 +181,7 @@ class DrawExtentEstimator {
   uint32_t cull_emit_index_stride_ = 0;
   uint32_t cull_emit_dropped_triangles_ = 0;
   CullBail cull_bail_reason_ = CullBail::kBuilt;
+  float affine_validate_max_error_ = 0.0f;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
