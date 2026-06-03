@@ -901,7 +901,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // xenos::VertexFormat & 63): names which formats keep draws on the slow
   // interpreter so the right decodes get added.
   uint32_t draw_outcomes_cull_fast_engaged_ = 0;
-  uint32_t draw_outcomes_cull_fb_fmt_[64] = {};
+  // Fast-replay setup fail histogram, indexed by DrawExtentEstimator::FastSetupFail
+  // (noleaf/multileaf/novfetch/badfmt/recovery). Pinpoints the fallback cause.
+  uint32_t draw_outcomes_cull_fail_[8] = {};
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

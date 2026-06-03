@@ -886,6 +886,7 @@ static void DecodeFastInput(const DrawExtentEstimator::FastAffineReplay& fr,
 bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
                                                 FastAffineReplay& out) {
   setup_leaf_format_ = xenos::VertexFormat::kUndefined;
+  fast_setup_fail_ = FastSetupFail::kRecoveryFail;  // overridden on specific bails
   // 1. The position slice's single register leaf input.
   uint64_t read_regs = 0, written_regs = 0;
   for (const ParsedAluInstruction& op : vertex_shader.position_slice_ops()) {
@@ -915,7 +916,12 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
     mark_result(op.scalar_result);
   }
   uint64_t leaf_regs = read_regs & ~written_regs;
-  if (leaf_regs == 0 || (leaf_regs & (leaf_regs - 1)) != 0) {
+  if (leaf_regs == 0) {
+    fast_setup_fail_ = FastSetupFail::kNoLeaf;
+    return false;
+  }
+  if ((leaf_regs & (leaf_regs - 1)) != 0) {
+    fast_setup_fail_ = FastSetupFail::kMultiLeaf;
     return false;
   }
   uint32_t leaf = 0;
@@ -939,6 +945,7 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
           fmt != xenos::VertexFormat::k_32_32_32_32_FLOAT &&
           fmt != xenos::VertexFormat::k_16_16_16_16_FLOAT &&
           fmt != xenos::VertexFormat::k_16_16_FLOAT) {
+        fast_setup_fail_ = FastSetupFail::kBadFormat;
         return false;  // unsupported position format for the fast path
       }
       out.format = fmt;
@@ -957,6 +964,7 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
     }
   }
   if (!found || !out.stride_dwords) {
+    fast_setup_fail_ = FastSetupFail::kNoVfetchMatch;
     return false;
   }
 
@@ -1089,6 +1097,7 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
       }
     }
   }
+  fast_setup_fail_ = FastSetupFail::kOk;
   return true;
 }
 

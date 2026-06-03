@@ -104,6 +104,17 @@ class DrawExtentEstimator {
   // processor histogram why draws fall back to the slow interpreter.
   bool last_used_fast_replay() const { return last_build_used_fast_; }
   xenos::VertexFormat last_leaf_format() const { return setup_leaf_format_; }
+  // Why SetupFastAffineReplay bailed (pinpoints the fast-path fallback cause).
+  enum class FastSetupFail : uint32_t {
+    kOk = 0,
+    kNoLeaf,         // position slice reads no register input (const-only)
+    kMultiLeaf,      // >1 register leaf input
+    kNoVfetchMatch,  // single leaf, but no vertex_bindings vfetch writes it
+    kBadFormat,      // vfetch found, but its format isn't fast-decodable
+    kRecoveryFail,   // M couldn't be recovered / failed the residual self-check
+    kCount,
+  };
+  FastSetupFail last_setup_fail() const { return fast_setup_fail_; }
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
@@ -210,6 +221,7 @@ class DrawExtentEstimator {
   float affine_validate_max_error_ = 0.0f;
   bool last_build_used_fast_ = false;
   xenos::VertexFormat setup_leaf_format_ = xenos::VertexFormat::kUndefined;
+  FastSetupFail fast_setup_fail_ = FastSetupFail::kOk;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
