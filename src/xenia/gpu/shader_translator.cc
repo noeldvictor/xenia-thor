@@ -823,36 +823,44 @@ void Shader::ComputePositionSlice() {
 
   std::vector<bool> in_slice(op_count, false);
   // Backward dataflow walk: an op is in the slice if it exports gl_Position or
-  // writes a register component that is (transitively) needed by it.
+  // writes a needed register component. PER-PIPE: only the vector and/or scalar
+  // result that actually contributes pulls in ITS operands - adding both pipes
+  // unconditionally over-includes (drags in unrelated vfetch'd attributes via the
+  // scalar pipe), which yields multiple register leaves and bails the single-leaf
+  // fast replay.
   for (size_t ri = op_count; ri-- > 0;) {
     const ParsedAluInstruction& op = position_slice_ops_[ri];
-    bool is_position =
-        op.vector_and_constant_result.storage_target ==
-            InstructionStorageTarget::kPosition ||
-        op.scalar_result.storage_target == InstructionStorageTarget::kPosition;
     uint8_t vec_w = result_written_mask(op.vector_and_constant_result);
     uint8_t scl_w = result_written_mask(op.scalar_result);
-    bool writes_needed =
-        (vec_w &&
-         (needed[op.vector_and_constant_result.storage_index] & vec_w)) ||
+    bool vec_contributes =
+        op.vector_and_constant_result.storage_target ==
+            InstructionStorageTarget::kPosition ||
+        (vec_w && (needed[op.vector_and_constant_result.storage_index] & vec_w));
+    bool scl_contributes =
+        op.scalar_result.storage_target ==
+            InstructionStorageTarget::kPosition ||
         (scl_w && (needed[op.scalar_result.storage_index] & scl_w));
-    if (!is_position && !writes_needed) {
+    if (!vec_contributes && !scl_contributes) {
       continue;
     }
     in_slice[ri] = true;
-    // Components defined here are no longer needed from earlier ops...
-    if (vec_w) {
-      needed[op.vector_and_constant_result.storage_index] &= uint8_t(~vec_w);
+    // Components defined by a contributing pipe are no longer needed from earlier
+    // ops; only that pipe's operands become needed.
+    if (vec_contributes) {
+      if (vec_w) {
+        needed[op.vector_and_constant_result.storage_index] &= uint8_t(~vec_w);
+      }
+      for (uint32_t k = 0; k < op.vector_operand_count; ++k) {
+        add_operand_reads(op.vector_operands[k]);
+      }
     }
-    if (scl_w) {
-      needed[op.scalar_result.storage_index] &= uint8_t(~scl_w);
-    }
-    // ...and this op's register reads become needed.
-    for (uint32_t k = 0; k < op.vector_operand_count; ++k) {
-      add_operand_reads(op.vector_operands[k]);
-    }
-    for (uint32_t k = 0; k < op.scalar_operand_count; ++k) {
-      add_operand_reads(op.scalar_operands[k]);
+    if (scl_contributes) {
+      if (scl_w) {
+        needed[op.scalar_result.storage_index] &= uint8_t(~scl_w);
+      }
+      for (uint32_t k = 0; k < op.scalar_operand_count; ++k) {
+        add_operand_reads(op.scalar_operands[k]);
+      }
     }
   }
 
