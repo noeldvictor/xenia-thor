@@ -1983,7 +1983,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
         "noidxptr={} zerodrop={} fastfail={}) slice_ops_sum={} slice_replayable={} "
         "replay[affine={} nonaffine={} unsup={} maxerr_milli={}] "
-        "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})]",
+        "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})] "
+        "multi_lc[2={} 3={} 4={} 5p={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2075,7 +2076,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_cull_fail_
             [uint32_t(DrawExtentEstimator::FastSetupFail::kBadFormat)],
         draw_outcomes_cull_fail_
-            [uint32_t(DrawExtentEstimator::FastSetupFail::kRecoveryFail)]);
+            [uint32_t(DrawExtentEstimator::FastSetupFail::kRecoveryFail)],
+        draw_outcomes_cull_multi_lc_[2], draw_outcomes_cull_multi_lc_[3],
+        draw_outcomes_cull_multi_lc_[4],
+        draw_outcomes_cull_multi_lc_[5] + draw_outcomes_cull_multi_lc_[6] +
+            draw_outcomes_cull_multi_lc_[7]);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2102,6 +2107,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_replay_max_error_milli_ = 0;
     draw_outcomes_cull_fast_engaged_ = 0;
     std::memset(draw_outcomes_cull_fail_, 0, sizeof(draw_outcomes_cull_fail_));
+    std::memset(draw_outcomes_cull_multi_lc_, 0,
+                sizeof(draw_outcomes_cull_multi_lc_));
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4210,8 +4217,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         if (cull_extent_estimator_->last_used_fast_replay()) {
           ++draw_outcomes_cull_fast_engaged_;
         } else {
-          ++draw_outcomes_cull_fail_
-              [uint32_t(cull_extent_estimator_->last_setup_fail()) & 7u];
+          DrawExtentEstimator::FastSetupFail fail =
+              cull_extent_estimator_->last_setup_fail();
+          ++draw_outcomes_cull_fail_[uint32_t(fail) & 7u];
+          if (fail == DrawExtentEstimator::FastSetupFail::kMultiLeaf) {
+            // Bucket multi-leaf by leaf count: 2 hints fixable slice over-
+            // inclusion, 3+ hints genuine multi-input/skinned position.
+            ++draw_outcomes_cull_multi_lc_
+                [std::min(cull_extent_estimator_->last_leaf_count(), 7u)];
+          }
         }
         if (built &&
             cull_extent_estimator_->culled_index_stride() == stride) {

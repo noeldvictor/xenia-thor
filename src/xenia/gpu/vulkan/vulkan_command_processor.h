@@ -904,6 +904,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Fast-replay setup fail histogram, indexed by DrawExtentEstimator::FastSetupFail
   // (noleaf/multileaf/novfetch/badfmt/recovery). Pinpoints the fallback cause.
   uint32_t draw_outcomes_cull_fail_[8] = {};
+  // Multi-leaf fallbacks bucketed by leaf count (index = leaf count clamped to 7):
+  // distinguishes fixable slice over-inclusion (2) from genuine skinning (3+).
+  uint32_t draw_outcomes_cull_multi_lc_[8] = {};
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

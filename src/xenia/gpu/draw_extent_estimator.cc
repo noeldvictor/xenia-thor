@@ -925,6 +925,10 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
     }
   }
   uint64_t leaf_regs = read_regs & vfetch_regs;
+  setup_leaf_count_ = 0;
+  for (uint64_t m = leaf_regs; m; m &= m - 1) {
+    ++setup_leaf_count_;
+  }
   if (leaf_regs == 0) {
     fast_setup_fail_ = FastSetupFail::kNoLeaf;
     return false;

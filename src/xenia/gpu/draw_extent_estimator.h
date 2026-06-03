@@ -115,6 +115,12 @@ class DrawExtentEstimator {
     kCount,
   };
   FastSetupFail last_setup_fail() const { return fast_setup_fail_; }
+  // Number of distinct vfetch'd register leaves the position slice reads (the
+  // popcount of read_regs & vfetch_regs). 1 = single affine input (fast path);
+  // >1 = kMultiLeaf - 2 hints fixable slice over-inclusion, 3+ hints genuine
+  // multi-input/skinned position. Lets the command processor bucket the multi
+  // fallbacks to decide whether tightening the slice can recover them.
+  uint32_t last_leaf_count() const { return setup_leaf_count_; }
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
@@ -223,6 +229,7 @@ class DrawExtentEstimator {
   bool last_build_used_fast_ = false;
   xenos::VertexFormat setup_leaf_format_ = xenos::VertexFormat::kUndefined;
   FastSetupFail fast_setup_fail_ = FastSetupFail::kOk;
+  uint32_t setup_leaf_count_ = 0;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
