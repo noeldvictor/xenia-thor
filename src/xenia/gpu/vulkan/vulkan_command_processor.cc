@@ -1981,7 +1981,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
         "cull[branch={} skip_dyntop={} skip_qual={} draws={} dropped_tris={} "
         "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
-        "noidxptr={} zerodrop={})]",
+        "noidxptr={} zerodrop={}) slice_ops_sum={} slice_replayable={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2057,7 +2057,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_cull_bail_
             [uint32_t(DrawExtentEstimator::CullBail::kNoIndexPtr)],
         draw_outcomes_cull_bail_
-            [uint32_t(DrawExtentEstimator::CullBail::kZeroDropped)]);
+            [uint32_t(DrawExtentEstimator::CullBail::kZeroDropped)],
+        draw_outcomes_cull_slice_ops_sum_, draw_outcomes_cull_slice_replayable_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2076,6 +2077,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_cull_draws_ = 0;
     draw_outcomes_cull_dropped_tris_ = 0;
     std::memset(draw_outcomes_cull_bail_, 0, sizeof(draw_outcomes_cull_bail_));
+    draw_outcomes_cull_slice_ops_sum_ = 0;
+    draw_outcomes_cull_slice_replayable_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4134,6 +4137,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       if (frame_current_ != cull_budget_frame_) {
         cull_budget_frame_ = frame_current_;
         cull_draws_this_frame_ = 0;
+      }
+      // Step 2b-i sanity stats over qualifying draws (read-only).
+      if (vertex_shader->is_position_affine_mvp_candidate()) {
+        draw_outcomes_cull_slice_ops_sum_ +=
+            vertex_shader->position_slice_ops().size();
+        if (vertex_shader->position_slice_replayable()) {
+          ++draw_outcomes_cull_slice_replayable_;
+        }
       }
       bool draw_emitted = false;
       if (!can_emit_list) {

@@ -884,6 +884,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // the (slow) interpreter cull, reset when frame_current_ changes.
   uint64_t cull_budget_frame_ = UINT64_MAX;
   uint32_t cull_draws_this_frame_ = 0;
+  // Step 2b-i sanity: over qualifying (position-affine-MVP) draws, the sum of
+  // position-slice op counts and how many slices are replayable. Confirms the
+  // extracted slices are small + replayable before the replay kernel is built.
+  uint64_t draw_outcomes_cull_slice_ops_sum_ = 0;
+  uint32_t draw_outcomes_cull_slice_replayable_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

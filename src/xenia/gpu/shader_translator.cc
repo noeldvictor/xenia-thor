@@ -336,6 +336,10 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
     }
   }
 
+  // Step 2b: reduce the recorded VS ALU ops to the backward slice feeding
+  // gl_Position (read-only; unused by rendering until the fast cull replay).
+  ComputePositionSlice();
+
   is_ucode_analyzed_ = true;
 
   // An empty shader can be created internally by shader translators as a dummy,
@@ -522,6 +526,20 @@ void Shader::GatherAluInstructionInformation(
   ParsedAluInstruction instr;
   ParseAluInstruction(op, type(), instr);
   instr.Disassemble(&ucode_disasm_buffer);
+
+  // Step 2b: record every vertex-shader ALU op (in program order) and mark the
+  // gl_Position writers, for the backward position slice computed after the pass
+  // (ComputePositionSlice). Read-only - unused by rendering until the fast replay.
+  if (type() == xenos::ShaderType::kVertex) {
+    if (instr.vector_and_constant_result.storage_target ==
+            InstructionStorageTarget::kPosition ||
+        instr.scalar_result.storage_target ==
+            InstructionStorageTarget::kPosition) {
+      position_export_op_indices_.push_back(
+          uint32_t(position_slice_ops_.size()));
+    }
+    position_slice_ops_.push_back(instr);
+  }
 
   kills_pixels_ =
       kills_pixels_ ||
@@ -739,6 +757,122 @@ void Shader::PositionSliceMarkFetchResult(const InstructionResult& result,
     }
     SetSliceComponentReason(reg_taint, i, reason);
   }
+}
+
+// Whether a slice op can be replayed by the fast affine cull kernel: no op that
+// changes a0/predicate, and no transcendental scalar (rcp/rsq/exp/log).
+static bool IsPositionSliceOpReplayable(const ParsedAluInstruction& op) {
+  if (((ucode::GetAluVectorOpcodeInfo(op.vector_opcode).changed_state |
+        ucode::GetAluScalarOpcodeInfo(op.scalar_opcode).changed_state) &
+       (ucode::kAluOpChangedStateAddressRegister |
+        ucode::kAluOpChangedStatePredicate)) != 0) {
+    return false;
+  }
+  switch (op.scalar_opcode) {
+    case ucode::AluScalarOpcode::kExp:
+    case ucode::AluScalarOpcode::kLogc:
+    case ucode::AluScalarOpcode::kLog:
+    case ucode::AluScalarOpcode::kRcpc:
+    case ucode::AluScalarOpcode::kRcpf:
+    case ucode::AluScalarOpcode::kRcp:
+    case ucode::AluScalarOpcode::kRsqc:
+    case ucode::AluScalarOpcode::kRsqf:
+    case ucode::AluScalarOpcode::kRsq:
+      return false;
+    default:
+      return true;
+  }
+}
+
+void Shader::ComputePositionSlice() {
+  position_slice_replayable_ = false;
+  if (type() != xenos::ShaderType::kVertex ||
+      position_export_op_indices_.empty() || position_slice_ops_.empty()) {
+    position_slice_ops_.clear();
+    position_export_op_indices_.clear();
+    return;
+  }
+  const size_t op_count = position_slice_ops_.size();
+  // Per-GPR [0-63] needed-component mask (low 4 bits = xyzw).
+  uint8_t needed[64] = {};
+
+  auto add_operand_reads = [&](const InstructionOperand& operand) {
+    if (operand.storage_source != InstructionStorageSource::kRegister ||
+        operand.storage_addressing_mode !=
+            InstructionStorageAddressingMode::kAbsolute ||
+        operand.storage_index >= 64) {
+      return;
+    }
+    uint8_t& mask = needed[operand.storage_index];
+    for (uint32_t c = 0; c < operand.component_count; ++c) {
+      SwizzleSource src = operand.GetComponent(c);
+      if (src >= SwizzleSource::kX && src <= SwizzleSource::kW) {
+        mask |= uint8_t(1u << (uint32_t(src) - uint32_t(SwizzleSource::kX)));
+      }
+    }
+  };
+  auto result_written_mask = [](const InstructionResult& result) -> uint8_t {
+    if (result.storage_target != InstructionStorageTarget::kRegister ||
+        result.storage_addressing_mode !=
+            InstructionStorageAddressingMode::kAbsolute ||
+        result.storage_index >= 64) {
+      return 0;
+    }
+    return uint8_t(result.GetUsedWriteMask());
+  };
+
+  std::vector<bool> in_slice(op_count, false);
+  // Backward dataflow walk: an op is in the slice if it exports gl_Position or
+  // writes a register component that is (transitively) needed by it.
+  for (size_t ri = op_count; ri-- > 0;) {
+    const ParsedAluInstruction& op = position_slice_ops_[ri];
+    bool is_position =
+        op.vector_and_constant_result.storage_target ==
+            InstructionStorageTarget::kPosition ||
+        op.scalar_result.storage_target == InstructionStorageTarget::kPosition;
+    uint8_t vec_w = result_written_mask(op.vector_and_constant_result);
+    uint8_t scl_w = result_written_mask(op.scalar_result);
+    bool writes_needed =
+        (vec_w &&
+         (needed[op.vector_and_constant_result.storage_index] & vec_w)) ||
+        (scl_w && (needed[op.scalar_result.storage_index] & scl_w));
+    if (!is_position && !writes_needed) {
+      continue;
+    }
+    in_slice[ri] = true;
+    // Components defined here are no longer needed from earlier ops...
+    if (vec_w) {
+      needed[op.vector_and_constant_result.storage_index] &= uint8_t(~vec_w);
+    }
+    if (scl_w) {
+      needed[op.scalar_result.storage_index] &= uint8_t(~scl_w);
+    }
+    // ...and this op's register reads become needed.
+    for (uint32_t k = 0; k < op.vector_operand_count; ++k) {
+      add_operand_reads(op.vector_operands[k]);
+    }
+    for (uint32_t k = 0; k < op.scalar_operand_count; ++k) {
+      add_operand_reads(op.scalar_operands[k]);
+    }
+  }
+
+  std::vector<ParsedAluInstruction> sliced;
+  bool replayable = true;
+  for (size_t i = 0; i < op_count; ++i) {
+    if (!in_slice[i]) {
+      continue;
+    }
+    if (!IsPositionSliceOpReplayable(position_slice_ops_[i])) {
+      replayable = false;
+    }
+    sliced.push_back(position_slice_ops_[i]);
+  }
+  position_export_op_indices_.clear();
+  position_slice_ops_ = std::move(sliced);
+  position_slice_replayable_ = replayable && !position_slice_ops_.empty() &&
+                              position_slice_ops_.size() <= 64 &&
+                              !uses_control_flow_loop_ && !uses_backward_jump_ &&
+                              !uses_subroutine_call_;
 }
 
 void Shader::GatherOperandInformation(const InstructionOperand& operand) {

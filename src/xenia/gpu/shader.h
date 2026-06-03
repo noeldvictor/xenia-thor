@@ -1023,6 +1023,18 @@ class Shader {
     }
   }
 
+  // Step 2b: the backward dataflow slice of ALU ops feeding gl_Position, in
+  // program order - the compact sub-program a fast (NEON) replay executes per
+  // vertex instead of the whole ShaderInterpreter. position_slice_replayable() is
+  // true only when the slice is non-empty, within the size cap, and every op is in
+  // the safe affine replay set. Computed once by AnalyzeUcode; UNUSED by rendering
+  // until the replay lands (so a slicing bug is inert - validated against the
+  // interpreter at replay time).
+  const std::vector<ParsedAluInstruction>& position_slice_ops() const {
+    return position_slice_ops_;
+  }
+  bool position_slice_replayable() const { return position_slice_replayable_; }
+
   // Whether each interpolator is written on any execution path.
   uint32_t writes_interpolators() const { return writes_interpolators_; }
 
@@ -1147,6 +1159,13 @@ class Shader {
   uint8_t position_disq_reason_ = kPositionSliceClean;
   bool position_export_written_ = false;
   bool position_slice_tainted_ = false;
+  // Step 2b position-slice op list (see position_slice_ops()). During AnalyzeUcode
+  // position_slice_ops_ first accumulates ALL vertex-shader ALU ops in program
+  // order (with position_export_op_indices_ marking the gl_Position writers), then
+  // ComputePositionSlice() reduces it in place to the backward slice.
+  std::vector<ParsedAluInstruction> position_slice_ops_;
+  std::vector<uint32_t> position_export_op_indices_;
+  bool position_slice_replayable_ = false;
   // Control-flow bails for the linear slice taint pass. FORWARD jumps are NOT a
   // bail (program-order over-taint is conservative-safe); only backward jumps
   // (re-execution) and subroutine calls (out-of-order callee body) break it.
@@ -1198,6 +1217,9 @@ class Shader {
                                 uint8_t value_reason);
   void PositionSliceMarkFetchResult(const InstructionResult& result,
                                     uint8_t reason);
+  // Reduces position_slice_ops_ (all VS ALU ops) to the backward slice feeding
+  // gl_Position and sets position_slice_replayable_ (Step 2b). Read-only.
+  void ComputePositionSlice();
 };
 
 }  // namespace gpu
