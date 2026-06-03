@@ -489,6 +489,20 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_whole_draw_only, false,
+    "Thor cull Step 2c: cull ONLY whole draws, never per-triangle. When a draw's "
+    "fast-affine clip positions are ALL outside one frustum plane (behind the "
+    "camera, or all beyond one X/Y clip plane) the entire draw is skipped (the GPU "
+    "never bins it); otherwise it is drawn VERBATIM as its original triangle strip "
+    "- NO strip->list conversion. The strip->list conversion of the per-triangle "
+    "cull triples the survivor index count and ~3x the binning vertex-invocations, "
+    "which on strip-dominated Blue Dragon costs MORE than the per-triangle saving "
+    "(content-matched A/B: per-tri cull was +6% gpu_frame_us). Whole-draw-only "
+    "captures the off-screen-draw saving without that overhead. Only meaningful "
+    "with gpu_cull_compaction=true. Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_cull_replay_validate, false,
     "Thor cull Step 2b validation (read-only): for qualifying draws, recover the "
     "affine position matrix M from a few ShaderInterpreter basis vertices (clip = "

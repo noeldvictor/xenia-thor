@@ -105,6 +105,7 @@ DECLARE_uint32(gpu_cull_max_per_frame);
 DECLARE_bool(gpu_cull_replay_validate);
 DECLARE_bool(gpu_cull_fast_replay);
 DECLARE_bool(gpu_cull_fast_only);
+DECLARE_bool(gpu_whole_draw_only);
 
 DECLARE_bool(non_seamless_cube_map);
 

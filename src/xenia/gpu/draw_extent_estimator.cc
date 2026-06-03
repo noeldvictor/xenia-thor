@@ -1343,6 +1343,59 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   }
   shader_interpreter_.SetExportSink(nullptr);
 
+  // Whole-draw-only mode (gpu_whole_draw_only): SKIP a draw entirely when it is
+  // fully off-screen, otherwise draw it VERBATIM (return false). This avoids the
+  // per-triangle strip->list conversion (3x the survivor index count -> ~3x the
+  // binning vertex-invocations), which on strip-dominated Blue Dragon costs more
+  // than the per-triangle saving (content-matched A/B: per-tri cull = +6%
+  // gpu_frame_us). The whole-draw test is CONSERVATIVE - every valid vert behind
+  // the camera (w<=0), OR all in front and all beyond ONE X/Y clip plane - and the
+  // fast-affine clip is residual-guarded, so it never culls a visible draw.
+  if (cvars::gpu_whole_draw_only) {
+    bool any_valid = false, all_behind = true, all_front = true;
+    bool all_x_hi = true, all_x_lo = true, all_y_hi = true, all_y_lo = true;
+    for (uint32_t i = 0; i < num_indices; ++i) {
+      const CullVertex& v = cull_vertices_scratch_[i];
+      if (!v.valid) {
+        continue;
+      }
+      any_valid = true;
+      if (v.w > 1.0e-6f) {
+        all_behind = false;
+      } else {
+        all_front = false;
+      }
+      if (!(v.x > v.w)) all_x_hi = false;
+      if (!(v.x < -v.w)) all_x_lo = false;
+      if (!(v.y > v.w)) all_y_hi = false;
+      if (!(v.y < -v.w)) all_y_lo = false;
+      // Early-out: these flags are monotonic (only flip true->false). Once none of
+      // {behind, the 4 XY sides} can still hold, the draw can't be whole-culled, so
+      // stop scanning and draw it verbatim.
+      if (!all_behind && !all_x_hi && !all_x_lo && !all_y_hi && !all_y_lo) {
+        break;
+      }
+    }
+    const uint32_t tri_count = prim_is_strip
+                                   ? (num_indices >= 2u ? num_indices - 2u : 0u)
+                                   : num_indices / 3u;
+    bool whole_cull =
+        any_valid &&
+        (all_behind ||
+         (all_front && (all_x_hi || all_x_lo || all_y_hi || all_y_lo)));
+    if (whole_cull) {
+      // count==0 -> the command processor skips the draw (GPU never bins it).
+      cull_emit_index_count_ = 0;
+      cull_emit_index_stride_ = stride;
+      cull_emit_dropped_triangles_ = tri_count;
+      cull_bail_reason_ = CullBail::kBuilt;
+      return true;
+    }
+    // On-screen: draw verbatim (original strip), no per-triangle list conversion.
+    cull_bail_reason_ = CullBail::kZeroDropped;
+    return false;
+  }
+
   const bool cull_front = pa_su_sc_mode_cntl.cull_front != 0;
   const bool cull_back = pa_su_sc_mode_cntl.cull_back != 0;
   const bool front_is_ccw = pa_su_sc_mode_cntl.face == 0;
