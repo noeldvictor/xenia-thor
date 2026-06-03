@@ -44,6 +44,15 @@ DEFINE_bool(
     "(a strict superset, so the proprietary Qualcomm path is unaffected).",
     "GPU");
 
+DEFINE_bool(
+    vulkan_trace_dump_rt_image, false,
+    "Diagnostic: before the EDRAM dump, copy the first 1xMSAA color render "
+    "target image straight to a host buffer (vkCmdCopyImageToBuffer, independent "
+    "of the dump compute shader) and log a sparse checksum, to tell whether the "
+    "RT image actually holds the rendered data (render/store bug) vs the dump "
+    "shader reading it as zero (e.g. on Turnip). Very slow; default off.",
+    "GPU");
+
 DEFINE_string(
     render_target_path_vulkan, "",
     "Render target emulation path to use on Vulkan.\n"
@@ -6096,6 +6105,143 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
         "pitch={} rectangles={}",
         dump_base, dump_row_length_used, dump_rows, dump_pitch,
         dump_rectangles_.size());
+  }
+
+  // Diagnostic (default off): copy the first 1xMSAA color RT image straight to a
+  // host buffer (independent of the dump compute shader) and checksum it. Tells
+  // whether the RT image actually holds the rendered data (so a render/store bug
+  // can be told apart from a dump-shader-read bug, e.g. on Turnip). One RT per
+  // dump; leaves that RT in TRANSFER_SRC so the barrier loop below transitions it
+  // to SHADER_READ normally. Mirrors ReadbackEdramBufferRange.
+  if (cvars::vulkan_trace_dump_rt_image) {
+    for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+      auto& vulkan_rt =
+          *static_cast<VulkanRenderTarget*>(rectangle.render_target);
+      RenderTargetKey rt_image_key = vulkan_rt.key();
+      // Target the main color RT at EDRAM base 0 (the scene/present target),
+      // not the small side RTs, so the readback reflects the presented image.
+      if (rt_image_key.is_depth ||
+          rt_image_key.msaa_samples != xenos::MsaaSamples::k1X ||
+          rt_image_key.base_tiles != 0) {
+        continue;
+      }
+      const ui::vulkan::VulkanDevice* const vulkan_device =
+          command_processor_.GetVulkanDevice();
+      const ui::vulkan::VulkanDevice::Functions& dfn =
+          vulkan_device->functions();
+      const VkDevice device = vulkan_device->device();
+      uint32_t rt_width = rt_image_key.GetWidth() * draw_resolution_scale_x();
+      uint32_t rt_height =
+          GetRenderTargetHeight(rt_image_key.pitch_tiles_at_32bpp,
+                                rt_image_key.msaa_samples) *
+          draw_resolution_scale_y();
+      if (!rt_width || !rt_height) {
+        break;
+      }
+      uint64_t buffer_size = uint64_t(rt_width) * uint64_t(rt_height) * 8;
+      VkBuffer rt_readback_buffer = VK_NULL_HANDLE;
+      VkDeviceMemory rt_readback_memory = VK_NULL_HANDLE;
+      uint32_t rt_readback_memory_type = UINT32_MAX;
+      VkDeviceSize rt_readback_memory_size = 0;
+      if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
+              vulkan_device, VkDeviceSize(buffer_size),
+              VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+              ui::vulkan::util::MemoryPurpose::kReadback, rt_readback_buffer,
+              rt_readback_memory, &rt_readback_memory_type,
+              &rt_readback_memory_size)) {
+        XELOGE("GPU resolve trace: dump RT IMAGE readback buffer alloc failed");
+        break;
+      }
+      command_processor_.PushImageMemoryBarrier(
+          vulkan_rt.image(),
+          ui::vulkan::util::InitializeSubresourceRange(
+              VK_IMAGE_ASPECT_COLOR_BIT),
+          vulkan_rt.current_stage_mask(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+          vulkan_rt.current_access_mask(), VK_ACCESS_TRANSFER_READ_BIT,
+          vulkan_rt.current_layout(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      vulkan_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_ACCESS_TRANSFER_READ_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      command_processor_.SubmitBarriers(true);
+      VkBufferImageCopy rt_copy_region = {};
+      rt_copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      rt_copy_region.imageSubresource.layerCount = 1;
+      rt_copy_region.imageExtent = {rt_width, rt_height, 1};
+      command_processor_.deferred_command_buffer().CmdVkCopyImageToBuffer(
+          vulkan_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+          rt_readback_buffer, 1, &rt_copy_region);
+      command_processor_.PushBufferMemoryBarrier(
+          rt_readback_buffer, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_TRANSFER_BIT,
+          VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+          VK_ACCESS_HOST_READ_BIT);
+      if (command_processor_.AwaitAllQueueOperationsCompletion()) {
+        void* mapping = nullptr;
+        if (dfn.vkMapMemory(device, rt_readback_memory, 0, VK_WHOLE_SIZE, 0,
+                            &mapping) == VK_SUCCESS) {
+          if (!(vulkan_device->memory_types().host_coherent &
+                (uint32_t(1) << rt_readback_memory_type))) {
+            VkMappedMemoryRange mapped_range;
+            mapped_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            mapped_range.pNext = nullptr;
+            mapped_range.memory = rt_readback_memory;
+            mapped_range.offset = 0;
+            mapped_range.size = rt_readback_memory_size;
+            dfn.vkInvalidateMappedMemoryRanges(device, 1, &mapped_range);
+          }
+          const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mapping);
+          // Only the first width*height*4 bytes are guaranteed written (4bpp RTs
+          // write exactly that; 8bpp RTs write more) - sample within that range.
+          uint64_t checksum_len = uint64_t(rt_width) * uint64_t(rt_height) * 4;
+          constexpr uint64_t kSampleStride = 2048;
+          uint32_t rt_samples = 0, rt_nonzero = 0, rt_varying = 0;
+          uint32_t rt_first_nonzero = 0, rt_previous_word = 0;
+          bool rt_have_previous = false;
+          uint32_t rt_first_words[8] = {};
+          for (uint32_t i = 0; i < 8 && uint64_t(i) * 4 + 4 <= checksum_len;
+               ++i) {
+            std::memcpy(&rt_first_words[i], bytes + i * 4, 4);
+          }
+          for (uint64_t offset = 0; offset + 4 <= checksum_len;
+               offset += kSampleStride) {
+            uint32_t word = 0;
+            std::memcpy(&word, bytes + offset, 4);
+            ++rt_samples;
+            if (word) {
+              ++rt_nonzero;
+              if (!rt_first_nonzero) {
+                rt_first_nonzero = word;
+              }
+            }
+            if (rt_have_previous && word != rt_previous_word) {
+              ++rt_varying;
+            }
+            rt_previous_word = word;
+            rt_have_previous = true;
+          }
+          XELOGI(
+              "GPU resolve trace: dump RT IMAGE checksum rt_key={:08X} "
+              "base_tiles={} size={}x{} color_format={} samples={} nonzero={} "
+              "varying={} first_nonzero_value={:08X} "
+              "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+              rt_image_key.key, rt_image_key.base_tiles, rt_width, rt_height,
+              uint32_t(rt_image_key.GetColorFormat()), rt_samples, rt_nonzero,
+              rt_varying, rt_first_nonzero, rt_first_words[0], rt_first_words[1],
+              rt_first_words[2], rt_first_words[3], rt_first_words[4],
+              rt_first_words[5], rt_first_words[6], rt_first_words[7]);
+          dfn.vkUnmapMemory(device, rt_readback_memory);
+        } else {
+          XELOGE("GPU resolve trace: dump RT IMAGE map failed");
+        }
+      } else {
+        XELOGE("GPU resolve trace: dump RT IMAGE await failed");
+      }
+      dfn.vkDestroyBuffer(device, rt_readback_buffer, nullptr);
+      dfn.vkFreeMemory(device, rt_readback_memory, nullptr);
+      if (!command_processor_.submission_open()) {
+        command_processor_.BeginSubmission(false);
+      }
+      break;
+    }
   }
 
   // Clear previously set temporary indices.
