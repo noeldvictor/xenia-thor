@@ -6114,15 +6114,32 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   // dump; leaves that RT in TRANSFER_SRC so the barrier loop below transitions it
   // to SHADER_READ normally. Mirrors ReadbackEdramBufferRange.
   if (cvars::vulkan_trace_dump_rt_image) {
+    // Find the WIDEST base-0 1xMSAA color RT = the main (e.g. 1280-wide) present
+    // target; several aliased base-0 color RTs exist at smaller pitches and the
+    // scene's color lands in the widest one.
+    uint32_t rt_image_widest = 0;
+    for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+      auto* cand = static_cast<VulkanRenderTarget*>(rectangle.render_target);
+      RenderTargetKey ck = cand->key();
+      if (ck.is_depth || ck.msaa_samples != xenos::MsaaSamples::k1X ||
+          ck.base_tiles != 0) {
+        continue;
+      }
+      uint32_t cw = ck.GetWidth() * draw_resolution_scale_x();
+      if (cw > rt_image_widest) {
+        rt_image_widest = cw;
+      }
+    }
     for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
       auto& vulkan_rt =
           *static_cast<VulkanRenderTarget*>(rectangle.render_target);
       RenderTargetKey rt_image_key = vulkan_rt.key();
-      // Target the main color RT at EDRAM base 0 (the scene/present target),
-      // not the small side RTs, so the readback reflects the presented image.
+      // Only the widest base-0 1xMSAA color RT (the present target).
       if (rt_image_key.is_depth ||
           rt_image_key.msaa_samples != xenos::MsaaSamples::k1X ||
-          rt_image_key.base_tiles != 0) {
+          rt_image_key.base_tiles != 0 ||
+          rt_image_key.GetWidth() * draw_resolution_scale_x() !=
+              rt_image_widest) {
         continue;
       }
       const ui::vulkan::VulkanDevice* const vulkan_device =
