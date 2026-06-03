@@ -31,9 +31,19 @@ def parse(path):
     out["total_vertices"] = _last(r"total_vertices=(\d+)", text, 1)
     out["guest_ms"] = _last(r"\bguest_ms=(\d+)", text, 1)
     # dump RT IMAGE checksum ... size=WxH color_format=F samples=N nonzero=N varying=N
-    out["rt_size"] = _last(r"dump RT IMAGE checksum .*?size=(\d+x\d+)", text, 1)
-    out["rt_nonzero"] = _last(r"dump RT IMAGE checksum .*?nonzero=(\d+)", text, 1)
-    out["rt_varying"] = _last(r"dump RT IMAGE checksum .*?varying=(\d+)", text, 1)
+    # Pick the WIDEST color RT (the main present target; several aliased base-0
+    # RTs exist at smaller pitches), not just the last line.
+    best_w = -1
+    out["rt_size"] = out["rt_nonzero"] = out["rt_varying"] = None
+    for m in re.finditer(
+            r"dump RT IMAGE checksum .*?size=(\d+)x(\d+).*?nonzero=(\d+) "
+            r"varying=(\d+)", text):
+        w = int(m.group(1))
+        if w >= best_w:  # last occurrence of the max width = the heavy-scene frame
+            best_w = w
+            out["rt_size"] = "%sx%s" % (m.group(1), m.group(2))
+            out["rt_nonzero"] = m.group(3)
+            out["rt_varying"] = m.group(4)
     # dump DEPTH IMAGE checksum ... samples=N nonzero=N varying=N
     out["d_nonzero"] = _last(r"dump DEPTH IMAGE checksum .*?nonzero=(\d+)", text, 1)
     out["d_varying"] = _last(r"dump DEPTH IMAGE checksum .*?varying=(\d+)", text, 1)
@@ -93,11 +103,21 @@ def main(argv):
         show(o)
     if len(parsed) == 2:
         a, b = parsed
-        print("\n== DIFF (color/depth nonzero,varying) ==")
+        print("\n== DIFF (%s  vs  %s) ==" % (a["path"], b["path"]))
         print("  color nonzero: %s vs %s | depth varying: %s vs %s"
               % (a["rt_nonzero"], b["rt_nonzero"], a["d_varying"], b["d_varying"]))
         print("  (compare at matched guest_ms %s vs %s / rendered %s vs %s)"
               % (a["guest_ms"], b["guest_ms"], a["rendered"], b["rendered"]))
+
+        def _i(x):
+            return int(x) if x and x.isdigit() else 0
+        # If the reference (second file, e.g. system/Qualcomm) rasterizes the SAME
+        # RTs that the first (e.g. turnip) leaves empty, the first driver is not
+        # rasterizing - the empty-depth reading is NOT an inactive-RT artifact.
+        if _i(b["d_varying"]) >= 200 and _i(a["d_varying"]) < 64 and _i(a["rt_nonzero"]) == 0:
+            print("  --> %s is NOT rasterizing the geometry the reference renders "
+                  "(same RTs) -> M1 confirmed: vertex-position/clip/viewport bug."
+                  % a["path"])
     return 0
 
 
