@@ -464,6 +464,18 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_cull_fast_replay, true,
+    "Thor cull Step 2b: when culling (gpu_cull_compaction), compute each vertex's "
+    "clip position via the fast AFFINE MATRIX-RECOVERY replay (recover the 4x4 M "
+    "from a few ShaderInterpreter basis vertices, then per vertex decode the "
+    "position attribute + 4 dp4s) instead of running the full per-vertex "
+    "ShaderInterpreter - ~orders of magnitude cheaper, and exact since position is "
+    "affine. Falls back to the interpreter when the position input isn't a single "
+    "k_32_32_32_FLOAT vfetch or M can't be recovered. Set false to force the "
+    "interpreter path (correctness reference). Default on.",
+    "GPU");
+
+DEFINE_bool(
     gpu_cull_replay_validate, false,
     "Thor cull Step 2b validation (read-only): for qualifying draws, recover the "
     "affine position matrix M from a few ShaderInterpreter basis vertices (clip = "

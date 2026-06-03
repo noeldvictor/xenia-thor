@@ -103,6 +103,7 @@ DECLARE_bool(gpu_trace_cullable_tris);
 DECLARE_bool(gpu_cull_compaction);
 DECLARE_uint32(gpu_cull_max_per_frame);
 DECLARE_bool(gpu_cull_replay_validate);
+DECLARE_bool(gpu_cull_fast_replay);
 
 DECLARE_bool(non_seamless_cube_map);
 

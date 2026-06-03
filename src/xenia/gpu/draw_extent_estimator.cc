@@ -12,11 +12,13 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdint>
+#include <cstring>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/ucode.h"
 #include "xenia/gpu/xenos.h"
@@ -841,6 +843,180 @@ DrawExtentEstimator::ValidateAffinePositionReplay(const Shader& vertex_shader) {
                            : AffineValidateStatus::kNonAffine;
 }
 
+bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
+                                                FastAffineReplay& out) {
+  // 1. The position slice's single register leaf input.
+  uint64_t read_regs = 0, written_regs = 0;
+  for (const ParsedAluInstruction& op : vertex_shader.position_slice_ops()) {
+    auto mark_operand = [&](const InstructionOperand& o) {
+      if (o.storage_source == InstructionStorageSource::kRegister &&
+          o.storage_addressing_mode ==
+              InstructionStorageAddressingMode::kAbsolute &&
+          o.storage_index < 64) {
+        read_regs |= uint64_t(1) << o.storage_index;
+      }
+    };
+    auto mark_result = [&](const InstructionResult& r) {
+      if (r.storage_target == InstructionStorageTarget::kRegister &&
+          r.storage_addressing_mode ==
+              InstructionStorageAddressingMode::kAbsolute &&
+          r.storage_index < 64) {
+        written_regs |= uint64_t(1) << r.storage_index;
+      }
+    };
+    for (uint32_t i = 0; i < op.vector_operand_count; ++i) {
+      mark_operand(op.vector_operands[i]);
+    }
+    for (uint32_t i = 0; i < op.scalar_operand_count; ++i) {
+      mark_operand(op.scalar_operands[i]);
+    }
+    mark_result(op.vector_and_constant_result);
+    mark_result(op.scalar_result);
+  }
+  uint64_t leaf_regs = read_regs & ~written_regs;
+  if (leaf_regs == 0 || (leaf_regs & (leaf_regs - 1)) != 0) {
+    return false;
+  }
+  uint32_t leaf = 0;
+  while (!((leaf_regs >> leaf) & 1)) {
+    ++leaf;
+  }
+
+  // 2. The vfetch attribute that writes the leaf, and its decode params.
+  const RegisterFile& regs = register_file_;
+  bool found = false;
+  for (const Shader::VertexBinding& binding : vertex_shader.vertex_bindings()) {
+    for (const Shader::VertexBinding::Attribute& attr : binding.attributes) {
+      const ParsedVertexFetchInstruction& fi = attr.fetch_instr;
+      if (fi.result.storage_target != InstructionStorageTarget::kRegister ||
+          fi.result.storage_index != leaf) {
+        continue;
+      }
+      xenos::VertexFormat fmt = fi.attributes.data_format;
+      if (fmt != xenos::VertexFormat::k_32_32_32_FLOAT &&
+          fmt != xenos::VertexFormat::k_32_32_32_32_FLOAT) {
+        return false;  // unsupported position format for the fast path
+      }
+      xenos::xe_gpu_vertex_fetch_t fc = regs.GetVertexFetch(binding.fetch_constant);
+      out.base_dwords = fc.address;
+      out.end_dwords = fc.address + fc.size;
+      out.endian = fc.endian;
+      out.stride_dwords =
+          fi.attributes.stride ? fi.attributes.stride : binding.stride_words;
+      out.offset_dwords = fi.attributes.offset;
+      found = true;
+      break;
+    }
+    if (found) {
+      break;
+    }
+  }
+  if (!found || !out.stride_dwords) {
+    return false;
+  }
+
+  // 3. Recover M from interpreter basis samples spread across the draw.
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA) {
+    return false;
+  }
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  const uint32_t index_stride =
+      vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16 ? 2u : 4u;
+  xenos::Endian index_endian = vgt_dma_size.swap_mode;
+  uint32_t index_buffer_base = regs[XE_GPU_REG_VGT_DMA_BASE];
+  if (index_stride == 2u) {
+    if (index_endian == xenos::Endian::k8in32) {
+      index_endian = xenos::Endian::k8in16;
+    } else if (index_endian == xenos::Endian::k16in32) {
+      index_endian = xenos::Endian::kNone;
+    }
+    index_buffer_base &= ~uint32_t(1);
+  } else {
+    index_buffer_base &= ~uint32_t(3);
+  }
+  const uint8_t* index_bytes =
+      memory_.TranslatePhysical<const uint8_t*>(index_buffer_base);
+  if (!index_bytes) {
+    return false;
+  }
+  const uint16_t* index16 = reinterpret_cast<const uint16_t*>(index_bytes);
+  const uint32_t* index32 = reinterpret_cast<const uint32_t*>(index_bytes);
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+  uint32_t num_indices = vgt_draw_initiator.num_indices;
+  const uint32_t kSamples = 16;
+  if (num_indices < 5) {
+    return false;
+  }
+
+  shader_interpreter_.SetShader(vertex_shader);
+  PositionExportSink sink;
+  shader_interpreter_.SetExportSink(&sink);
+  double XtX[4][4] = {};
+  double Xty[4][4] = {};
+  uint32_t valid_samples = 0;
+  for (uint32_t s = 0; s < kSamples; ++s) {
+    // Spread the basis across the draw to span the geometry (avoids a degenerate,
+    // coplanar basis for a 3D mesh).
+    uint32_t si = uint32_t(uint64_t(s) * num_indices / kSamples);
+    uint32_t vertex_index;
+    if (si < vgt_dma_size.num_words) {
+      vertex_index = index_stride == 2u ? uint32_t(index16[si]) : index32[si];
+      vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
+    } else {
+      vertex_index = 0;
+    }
+    vertex_index =
+        std::min(max_index,
+                 std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+    sink.Reset();
+    shader_interpreter_.temp_registers()[0] = float(vertex_index);
+    shader_interpreter_.Execute();
+    if (!sink.position_x().has_value() || !sink.position_y().has_value() ||
+        !sink.position_w().has_value()) {
+      continue;
+    }
+    const float* p = &shader_interpreter_.temp_registers()[leaf * 4];
+    double pv[4] = {p[0], p[1], p[2], 1.0};
+    double clip[4] = {
+        sink.position_x().value(), sink.position_y().value(),
+        sink.position_z().has_value() ? sink.position_z().value() : 0.0f,
+        sink.position_w().value()};
+    for (int a = 0; a < 4; ++a) {
+      for (int b = 0; b < 4; ++b) {
+        XtX[a][b] += pv[a] * pv[b];
+      }
+      for (int k = 0; k < 4; ++k) {
+        Xty[a][k] += pv[a] * clip[k];
+      }
+    }
+    ++valid_samples;
+  }
+  shader_interpreter_.SetExportSink(nullptr);
+  if (valid_samples < 5) {
+    return false;
+  }
+  for (int a = 0; a < 4; ++a) {
+    XtX[a][a] += 1e-6;
+  }
+  double inv[4][4];
+  if (!Invert4x4(XtX, inv)) {
+    return false;
+  }
+  for (int k = 0; k < 4; ++k) {
+    for (int a = 0; a < 4; ++a) {
+      double v = 0.0;
+      for (int b = 0; b < 4; ++b) {
+        v += inv[a][b] * Xty[b][k];
+      }
+      out.m[k][a] = v;
+    }
+  }
+  return true;
+}
+
 bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   SCOPE_profile_cpu_f("gpu");
   cull_emit_index_bytes_.clear();
@@ -930,6 +1106,19 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
 
   cull_vertices_scratch_.clear();
   cull_vertices_scratch_.resize(num_indices);
+
+  // Fast affine replay (gpu_cull_fast_replay): recover the position matrix M once
+  // and compute each vertex's clip via a 3-float decode + 4 dp4s, instead of the
+  // full ShaderInterpreter per vertex (~orders of magnitude cheaper, exact since
+  // position is affine). Falls back to the interpreter when the position input is
+  // not a single k_32_32_32_FLOAT vfetch or M can't be recovered.
+  FastAffineReplay fast_replay;
+  const bool fast = cvars::gpu_cull_fast_replay &&
+                    SetupFastAffineReplay(vertex_shader, fast_replay);
+  const uint32_t* membase =
+      fast ? reinterpret_cast<const uint32_t*>(memory_.physical_membase())
+           : nullptr;
+
   shader_interpreter_.SetShader(vertex_shader);
   PositionExportSink position_export_sink;
   shader_interpreter_.SetExportSink(&position_export_sink);
@@ -953,6 +1142,31 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
     vertex_index =
         std::min(max_index,
                  std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+    if (fast) {
+      uint32_t addr = fast_replay.stride_dwords * vertex_index +
+                      fast_replay.base_dwords +
+                      uint32_t(fast_replay.offset_dwords);
+      float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f;
+      if (addr < fast_replay.end_dwords) {
+        uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
+        std::memcpy(&p0, &d, sizeof(float));
+      }
+      if (addr + 1u < fast_replay.end_dwords) {
+        uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
+        std::memcpy(&p1, &d, sizeof(float));
+      }
+      if (addr + 2u < fast_replay.end_dwords) {
+        uint32_t d = xenos::GpuSwap(membase[addr + 2u], fast_replay.endian);
+        std::memcpy(&p2, &d, sizeof(float));
+      }
+      const double(&m)[4][4] = fast_replay.m;
+      out.x = float(m[0][0] * p0 + m[0][1] * p1 + m[0][2] * p2 + m[0][3]);
+      out.y = float(m[1][0] * p0 + m[1][1] * p1 + m[1][2] * p2 + m[1][3]);
+      out.z = float(m[2][0] * p0 + m[2][1] * p1 + m[2][2] * p2 + m[2][3]);
+      out.w = float(m[3][0] * p0 + m[3][1] * p1 + m[3][2] * p2 + m[3][3]);
+      out.valid = true;
+      continue;
+    }
     position_export_sink.Reset();
     shader_interpreter_.temp_registers()[0] = float(vertex_index);
     shader_interpreter_.Execute();

@@ -208,6 +208,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_cullable_tris");
             copyBooleanExtra(intent, launchArguments, "gpu_cull_compaction");
             copyBooleanExtra(intent, launchArguments, "gpu_cull_replay_validate");
+            copyBooleanExtra(intent, launchArguments, "gpu_cull_fast_replay");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");

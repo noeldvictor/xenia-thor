@@ -78,6 +78,24 @@ class DrawExtentEstimator {
   };
   AffineValidateStatus ValidateAffinePositionReplay(const Shader& vertex_shader);
   float affine_validate_max_error() const { return affine_validate_max_error_; }
+
+  // Step 2b-ii fast replay: the recovered affine position map + the k_32_32_32_FLOAT
+  // position-attribute decode parameters, so a vertex's clip position is
+  // clip_k = sum_a m[k][a] * {decode(index).x, .y, .z, 1}[a] (4 dp4s + a 3-float
+  // read) instead of the full ShaderInterpreter.
+  struct FastAffineReplay {
+    double m[4][4] = {};
+    uint32_t base_dwords = 0;    // fetch constant base address, in dwords
+    uint32_t end_dwords = 0;     // base + fetch constant size (bounds, in dwords)
+    uint32_t stride_dwords = 0;  // per-vertex stride, in dwords
+    int32_t offset_dwords = 0;   // attribute offset within the vertex, in dwords
+    xenos::Endian endian = xenos::Endian::kNone;
+  };
+  // Sets up the fast replay for the current draw: identifies the position slice's
+  // single k_32_32_32_FLOAT vfetch leaf input and recovers M from interpreter
+  // basis samples. Returns false (caller uses the interpreter path) if the input
+  // isn't a single such vfetch or M can't be recovered.
+  bool SetupFastAffineReplay(const Shader& vertex_shader, FastAffineReplay& out);
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
