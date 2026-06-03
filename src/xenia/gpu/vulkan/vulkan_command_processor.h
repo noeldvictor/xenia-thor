@@ -840,6 +840,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // read-only DECISION instrument (no geometry mutated). C1 scaffolding counts 0;
   // C2/C3 wire the ShaderInterpreter VS-position replay + backface/frustum test.
   uint64_t draw_outcomes_cullable_tris_ = 0;
+  // Lever 2 Step 0 (vulkan_trace_draw_outcomes_per_frame): rendered draws/verts
+  // whose position shader qualifies for the CPU/NEON affine-MVP cull transform
+  // (read-only feasibility classifier, see Shader::is_affine_mvp_candidate). A
+  // lower-bound signal for whether the cull can engage on a title.
+  uint32_t draw_outcomes_affine_mvp_draws_ = 0;
+  uint64_t draw_outcomes_affine_mvp_vertices_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

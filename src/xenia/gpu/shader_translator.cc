@@ -141,6 +141,8 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           instr.Disassemble(&ucode_disasm_buffer);
           constant_register_map_.loop_bitmap |= uint32_t(1)
                                                 << instr.loop_constant_index;
+          // Disqualifies the affine-MVP cull-transform fast path.
+          uses_control_flow_loop_ = true;
         } break;
         case ControlFlowOpcode::kLoopEnd: {
           ParsedLoopEndInstruction instr;
@@ -511,6 +513,32 @@ void Shader::GatherAluInstructionInformation(
        ucode::kAluOpChangedStatePixelKill) ||
       (ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state &
        ucode::kAluOpChangedStatePixelKill);
+
+  // Affine-MVP cull-transform friendliness (Shader::is_affine_mvp_candidate): an op
+  // disqualifies the shader if it changes a0/predicate (dynamic control flow) or is
+  // a transcendental scalar (rcp/rsq/exp/log) - those are slow and not CPU-bit-exact
+  // versus the Adreno's approximation curves.
+  if (((ucode::GetAluVectorOpcodeInfo(op.vector_opcode()).changed_state |
+        ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state) &
+       (ucode::kAluOpChangedStateAddressRegister |
+        ucode::kAluOpChangedStatePredicate)) != 0) {
+    uses_non_affine_mvp_alu_ = true;
+  }
+  switch (op.scalar_opcode()) {
+    case ucode::AluScalarOpcode::kExp:
+    case ucode::AluScalarOpcode::kLogc:
+    case ucode::AluScalarOpcode::kLog:
+    case ucode::AluScalarOpcode::kRcpc:
+    case ucode::AluScalarOpcode::kRcpf:
+    case ucode::AluScalarOpcode::kRcp:
+    case ucode::AluScalarOpcode::kRsqc:
+    case ucode::AluScalarOpcode::kRsqf:
+    case ucode::AluScalarOpcode::kRsq:
+      uses_non_affine_mvp_alu_ = true;
+      break;
+    default:
+      break;
+  }
 
   GatherAluResultInformation(instr.vector_and_constant_result, exec_cf_index);
   GatherAluResultInformation(instr.scalar_result, exec_cf_index);

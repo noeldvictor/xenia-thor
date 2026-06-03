@@ -953,6 +953,20 @@ class Shader {
     return uses_texture_fetch_instruction_results_;
   }
 
+  // Affine-MVP friendliness for the fast CPU/NEON triangle-cull transform: a
+  // conservative WHOLE-shader test - true only when the shader's position could be
+  // computed by a tiny bit-exact NEON micro-kernel (no texture fetch, no control-
+  // flow loop, and no ALU op that touches a0/predicate or is a transcendental
+  // scalar rcp/rsq/exp/log, which are slow and not CPU-bit-exact vs the Adreno's
+  // curves). UNDER-counts (rejects shaders whose color/UV math is complex even if
+  // the position is a simple MVP); a read-only lower-bound signal for whether the
+  // CPU/NEON cull can engage on a title.
+  bool is_affine_mvp_candidate() const {
+    return !uses_texture_fetch_instruction_results_ &&
+           !uses_register_dynamic_addressing_ && !uses_control_flow_loop_ &&
+           !uses_non_affine_mvp_alu_;
+  }
+
   // Whether each interpolator is written on any execution path.
   uint32_t writes_interpolators() const { return writes_interpolators_; }
 
@@ -1058,6 +1072,9 @@ class Shader {
   bool uses_register_dynamic_addressing_ = false;
   bool kills_pixels_ = false;
   bool uses_texture_fetch_instruction_results_ = false;
+  // For is_affine_mvp_candidate() (read-only cull-feasibility classifier).
+  bool uses_control_flow_loop_ = false;
+  bool uses_non_affine_mvp_alu_ = false;
   bool writes_depth_ = false;
 
   // Memory export eM write info for each control flow instruction, if there are
