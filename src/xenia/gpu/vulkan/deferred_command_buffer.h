@@ -281,6 +281,21 @@ class DeferredCommandBuffer {
     args.stride = stride;
   }
 
+  void CmdVkDrawIndexedIndirectCount(VkBuffer buffer, VkDeviceSize offset,
+                                     VkBuffer count_buffer,
+                                     VkDeviceSize count_buffer_offset,
+                                     uint32_t max_draw_count, uint32_t stride) {
+    auto& args = *reinterpret_cast<ArgsVkDrawIndexedIndirectCount*>(
+        WriteCommand(Command::kVkDrawIndexedIndirectCount,
+                     sizeof(ArgsVkDrawIndexedIndirectCount)));
+    args.buffer = buffer;
+    args.offset = offset;
+    args.count_buffer = count_buffer;
+    args.count_buffer_offset = count_buffer_offset;
+    args.max_draw_count = max_draw_count;
+    args.stride = stride;
+  }
+
   void CmdVkEndRenderPass() { WriteCommand(Command::kVkEndRenderPass, 0); }
 
   // pNext of all barriers must be null.
@@ -505,6 +520,7 @@ class DeferredCommandBuffer {
     kVkDraw,
     kVkDrawIndexed,
     kVkDrawIndexedIndirect,
+    kVkDrawIndexedIndirectCount,
     kVkEndRenderPass,
     kVkPipelineBarrier,
     kVkPushConstants,
@@ -632,6 +648,15 @@ class DeferredCommandBuffer {
     VkBuffer buffer;
     VkDeviceSize offset;
     uint32_t draw_count;
+    uint32_t stride;
+  };
+
+  struct ArgsVkDrawIndexedIndirectCount {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkBuffer count_buffer;
+    VkDeviceSize count_buffer_offset;
+    uint32_t max_draw_count;
     uint32_t stride;
   };
 

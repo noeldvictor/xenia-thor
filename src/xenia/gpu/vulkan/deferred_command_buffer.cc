@@ -191,6 +191,14 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
                                      args.draw_count, args.stride);
       } break;
 
+      case Command::kVkDrawIndexedIndirectCount: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkDrawIndexedIndirectCount*>(stream);
+        dfn.vkCmdDrawIndexedIndirectCount(
+            command_buffer, args.buffer, args.offset, args.count_buffer,
+            args.count_buffer_offset, args.max_draw_count, args.stride);
+      } break;
+
       case Command::kVkEndRenderPass:
         dfn.vkCmdEndRenderPass(command_buffer);
         break;

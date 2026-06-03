@@ -765,6 +765,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
 #include "xenia/ui/vulkan/functions/device_1_1_khr_bind_memory2.inc"
 #include "xenia/ui/vulkan/functions/device_1_1_khr_get_memory_requirements2.inc"
   }
+  if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+#include "xenia/ui/vulkan/functions/device_1_2_khr_draw_indirect_count.inc"
+  }
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
 #include "xenia/ui/vulkan/functions/device_1_3_ext_extended_dynamic_state.inc"

@@ -354,7 +354,9 @@ bool VulkanCommandProcessor::SetupContext() {
   // nothing. drawCount > 1 in vkCmdDraw*Indirect requires the multiDrawIndirect
   // feature (enabled at device creation when supported).
   mdi_supported_ = device_properties.multiDrawIndirect &&
-                   device_properties.maxDrawIndirectCount >= 2;
+                   device_properties.maxDrawIndirectCount >= 2 &&
+                   vulkan_device->functions().vkCmdDrawIndexedIndirectCount !=
+                       nullptr;
   // Cap commands per MDI run. Head-emit pre-sizes (and zeroes) this many indirect
   // commands per run, so a large cap wastes buffer + adds no-op iterations on short
   // runs; 32 covers the bulk of Blue Dragon's same-state runs (runlen histogram).
@@ -4163,13 +4165,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       cmd.vertexOffset = 0;
       cmd.firstInstance = 0;
       if (can_extend) {
-        // Fill the next slot of the run's already-emitted (head) indirect array.
+        // Fill the next slot of the run's already-emitted (head) indirect array,
+        // and bump the live count the GPU reads at submit (vkCmdDrawIndexedIndirectCount).
         merge_mdi_mapping_[merge_mdi_count_++] = cmd;
+        *merge_mdi_count_ptr_ = merge_mdi_count_;
       } else {
         // Close the previous run (its indirect draw was already emitted at its
         // head; nothing to flush), then try to open a new run HEAD here.
         merge_mdi_active_ = false;
         merge_mdi_mapping_ = nullptr;
+        merge_mdi_count_ptr_ = nullptr;
         merge_mdi_count_ = 0;
         bool opened = false;
         if (mdi_mergeable && indirect_buffer_pool_) {
@@ -4180,23 +4185,36 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           uint8_t* mapping = indirect_buffer_pool_->Request(
               frame_current_, array_bytes, sizeof(uint32_t), indirect_buffer,
               indirect_offset);
-          if (mapping) {
-            // Zero the whole array so unused slots are no-op draws (indexCount=0),
-            // then write this head draw into slot 0.
-            std::memset(mapping, 0, array_bytes);
+          // Separate 4-byte slot holding the live draw count consumed by
+          // vkCmdDrawIndexedIndirectCount. No zero padding: the GPU reads exactly
+          // merge_mdi_count_ commands at submit, so growing the run only bumps this
+          // value (the 32-slot zero padding is what made the fixed-count MDI a net
+          // loss; see docs/research/20260602-mdi-device-ab-result.md).
+          VkBuffer count_buffer = VK_NULL_HANDLE;
+          VkDeviceSize count_offset = 0;
+          uint8_t* count_mapping =
+              mapping ? indirect_buffer_pool_->Request(
+                            frame_current_, sizeof(uint32_t), sizeof(uint32_t),
+                            count_buffer, count_offset)
+                      : nullptr;
+          if (mapping && count_mapping) {
             auto* cmds = reinterpret_cast<VkDrawIndexedIndirectCommand*>(mapping);
             cmds[0] = cmd;
+            auto* count_ptr = reinterpret_cast<uint32_t*>(count_mapping);
+            *count_ptr = 1;
             // Emit the batched draw NOW (head position), correctly ordered after
             // this draw's state. Bind the index buffer at offset 0 (each command
-            // carries its absolute firstIndex). drawCount is the fixed max; unused
-            // zeroed commands are skipped by the GPU with no binning.
+            // carries its absolute firstIndex); the count buffer bounds the draw to
+            // exactly the filled slots - no no-op padding.
             deferred_command_buffer_.CmdVkBindIndexBuffer(index_buffer.first, 0,
                                                           index_type);
-            deferred_command_buffer_.CmdVkDrawIndexedIndirect(
-                indirect_buffer, indirect_offset, mdi_max_draw_count_,
+            deferred_command_buffer_.CmdVkDrawIndexedIndirectCount(
+                indirect_buffer, indirect_offset, count_buffer, count_offset,
+                mdi_max_draw_count_,
                 uint32_t(sizeof(VkDrawIndexedIndirectCommand)));
             merge_mdi_active_ = true;
             merge_mdi_mapping_ = cmds;
+            merge_mdi_count_ptr_ = count_ptr;
             merge_mdi_count_ = 1;
             merge_mdi_index_buffer_ = index_buffer.first;
             merge_mdi_index_type_ = index_type;
@@ -5285,13 +5303,15 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
 
 void VulkanCommandProcessor::FlushPendingMergeRunIndirect() {
   // Lever 2b (vulkan_merge_draws_indirect): close the active MDI run. With
-  // head-emit, the run's single vkCmdDrawIndexedIndirect was already recorded at
-  // the run head, and continuation draws filled slots of its (retained, zeroed)
-  // command array directly - so there is nothing to emit here; just stop the run
-  // so the next mergeable draw opens a fresh head. Called from every merge flush
-  // point (FlushPendingMergeRun) and before any standalone draw.
+  // head-emit, the run's single vkCmdDrawIndexedIndirectCount was already recorded
+  // at the run head, and continuation draws filled slots of its retained command
+  // array + bumped the live count buffer directly - so there is nothing to emit
+  // here; just stop the run so the next mergeable draw opens a fresh head. Called
+  // from every merge flush point (FlushPendingMergeRun) and before any standalone
+  // draw.
   merge_mdi_active_ = false;
   merge_mdi_mapping_ = nullptr;
+  merge_mdi_count_ptr_ = nullptr;
   merge_mdi_count_ = 0;
 }
 

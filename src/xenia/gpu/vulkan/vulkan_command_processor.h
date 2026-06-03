@@ -948,6 +948,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t mdi_max_draw_count_ = 1;  // min(maxDrawIndirectCount, cap): commands/run
   bool merge_mdi_active_ = false;
   VkDrawIndexedIndirectCommand* merge_mdi_mapping_ = nullptr;  // retained run array
+  // Live draw count for vkCmdDrawIndexedIndirectCount: the GPU reads the count from
+  // this buffer slot at submit time, so growing the run just bumps the value here -
+  // NO zero-padded slots (the flaw that made the fixed-count padded MDI a net loss).
+  uint32_t* merge_mdi_count_ptr_ = nullptr;
   uint32_t merge_mdi_count_ = 0;       // filled slots in the current run
   VkBuffer merge_mdi_index_buffer_ = VK_NULL_HANDLE;
   VkIndexType merge_mdi_index_type_ = VK_INDEX_TYPE_UINT16;
