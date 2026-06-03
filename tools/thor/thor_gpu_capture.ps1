@@ -19,7 +19,12 @@ param(
   # Optional Turnip ir3-compiler flags (set via gpu_vulkan_driver_ir3_debug =
   # IR3_SHADER_DEBUG), e.g. -Ir3Debug nofp16 (disable fp16/mediump lowering),
   # noopt, nocp. Only meaningful with -Driver turnip. Also tags the output files.
-  [string]$Ir3Debug = ""
+  [string]$Ir3Debug = "",
+  # Arbitrary extra launch extras appended verbatim to the am start command, e.g.
+  # '--ez spirv_debug_force_fullscreen_position true --ei vulkan_debug_pixel_shader_output_mode 1'.
+  # Use -Tag to label the output files for the experiment.
+  [string]$ExtraArgs = "",
+  [string]$Tag = ""
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
@@ -61,6 +66,11 @@ if ($Ir3Debug) {
   $label += "_ir3$($Ir3Debug -replace '[^A-Za-z0-9]','')"
   Write-Output "IR3_SHADER_DEBUG=$Ir3Debug"
 }
+if ($ExtraArgs) {
+  $dbgArgs += " $ExtraArgs"
+  Write-Output "ExtraArgs=$ExtraArgs"
+}
+if ($Tag) { $label += "_$($Tag -replace '[^A-Za-z0-9]','')" }
 if ($dbgArgs) { Write-Output "label=$label" }
 
 # 2. Wake + clear log + launch.

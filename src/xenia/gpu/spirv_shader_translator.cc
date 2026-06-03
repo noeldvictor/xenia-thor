@@ -1893,6 +1893,37 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
       builder_->getBuildPoint()->addInstruction(
           std::move(composite_construct_op));
     }
+    // DIAGNOSTIC override: replace the computed position with a fullscreen
+    // triangle keyed off gl_VertexIndex (vid%3 -> (-1,-1),(3,-1),(-1,3); z=0,
+    // w=1, no perspective divide). Every 3 consecutive verts cover the screen.
+    // If a black-rendering driver (Turnip) shows color with this on, the bug is
+    // the VS position computation, not the downstream raster/FS/resolve path.
+    if (cvars::spirv_debug_force_fullscreen_position &&
+        input_vertex_index_ != spv::NoResult) {
+      spv::Id vid =
+          builder_->createLoad(input_vertex_index_, spv::NoPrecision);
+      spv::Id vid_mod3 = builder_->createBinOp(
+          spv::OpSMod, type_int_, vid, builder_->makeIntConstant(3));
+      spv::Id is_1 = builder_->createBinOp(spv::OpIEqual, type_bool_, vid_mod3,
+                                           builder_->makeIntConstant(1));
+      spv::Id is_2 = builder_->createBinOp(spv::OpIEqual, type_bool_, vid_mod3,
+                                           builder_->makeIntConstant(2));
+      spv::Id pos_x =
+          builder_->createTriOp(spv::OpSelect, type_float_, is_1,
+                                builder_->makeFloatConstant(3.0f),
+                                builder_->makeFloatConstant(-1.0f));
+      spv::Id pos_y =
+          builder_->createTriOp(spv::OpSelect, type_float_, is_2,
+                                builder_->makeFloatConstant(3.0f),
+                                builder_->makeFloatConstant(-1.0f));
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(pos_x);
+      id_vector_temp_.push_back(pos_y);
+      id_vector_temp_.push_back(builder_->makeFloatConstant(0.0f));
+      id_vector_temp_.push_back(const_float_1_);
+      position =
+          builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+    }
     builder_->createStore(position, position_ptr);
   }
 }

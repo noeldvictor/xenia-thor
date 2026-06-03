@@ -268,6 +268,17 @@ DEFINE_bool(spirv_no_invariant_color_output, false,
             "color never lands in an R16G16B16A16_SFLOAT (k_2_10_10_10_FLOAT) "
             "attachment. Default off keeps the proprietary path bit-identical.",
             "GPU");
+DEFINE_bool(spirv_debug_force_fullscreen_position, false,
+            "DIAGNOSTIC: ignore the computed vertex position and emit a "
+            "fullscreen triangle keyed off gl_VertexIndex (every 3 consecutive "
+            "verts form a screen-covering triangle). Splits 'the VS position is "
+            "wrong' from 'everything downstream is wrong' on a driver that "
+            "renders black (Turnip): if color appears, the bug is the VS position "
+            "computation (guest VS / vertex-fetch / system-constant uniforms); if "
+            "still black, the bug is downstream (clip/raster state / FS / "
+            "resolve). Pair with a forced constant FS color for a both-ways "
+            "conclusive result. Default off.",
+            "GPU");
 DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "

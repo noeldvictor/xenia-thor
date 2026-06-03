@@ -83,6 +83,7 @@ DECLARE_bool(vulkan_force_2101010_rgba8_fallback);
 DECLARE_bool(vulkan_force_signed_2101010_unorm_fallback);
 DECLARE_bool(spirv_no_invariant_color_output);
 DECLARE_bool(spirv_no_invariant_position_output);
+DECLARE_bool(spirv_debug_force_fullscreen_position);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);
