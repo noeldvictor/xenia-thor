@@ -73,8 +73,12 @@ bool VulkanDebugShaderHashMatchesFilter(uint64_t hash,
 
 int32_t GetVulkanDebugPixelShaderOutputModeForHash(uint64_t hash) {
   if (cvars::vulkan_debug_pixel_shader_output_mode &&
-      VulkanDebugShaderHashMatchesFilter(
-          hash, cvars::vulkan_debug_pixel_shader_output_filter)) {
+      (cvars::vulkan_debug_pixel_shader_output_filter.empty() ||
+       VulkanDebugShaderHashMatchesFilter(
+           hash, cvars::vulkan_debug_pixel_shader_output_filter))) {
+    // Empty filter = match ALL pixel shaders (force the debug output mode on
+    // every PS) - lets a single --ei vulkan_debug_pixel_shader_output_mode probe
+    // (e.g. 1 = solid magenta) test whether fragments run at all.
     return cvars::vulkan_debug_pixel_shader_output_mode;
   }
   if (cvars::vulkan_debug_pixel_shader_output_secondary_mode &&
@@ -1324,7 +1328,9 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
       input_output_interpolators_[interpolator_index] = interpolator;
       builder_->addDecoration(interpolator, spv::DecorationLocation,
                               int(output_location));
-      builder_->addDecoration(interpolator, spv::DecorationInvariant);
+      if (!cvars::spirv_no_invariant_position_output) {
+        builder_->addDecoration(interpolator, spv::DecorationInvariant);
+      }
       main_interface_.push_back(interpolator);
       ++output_location;
     }
@@ -1341,8 +1347,10 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
                                    type_float2_, "xe_out_point_coordinates");
       builder_->addDecoration(output_point_coordinates_,
                               spv::DecorationLocation, int(output_location));
-      builder_->addDecoration(output_point_coordinates_,
-                              spv::DecorationInvariant);
+      if (!cvars::spirv_no_invariant_position_output) {
+        builder_->addDecoration(output_point_coordinates_,
+                                spv::DecorationInvariant);
+      }
       main_interface_.push_back(output_point_coordinates_);
       ++output_location;
     } else {
@@ -1355,7 +1363,9 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
                                    type_float_, "xe_out_point_size");
       builder_->addDecoration(output_point_size_, spv::DecorationLocation,
                               int(output_location));
-      builder_->addDecoration(output_point_size_, spv::DecorationInvariant);
+      if (!cvars::spirv_no_invariant_position_output) {
+        builder_->addDecoration(output_point_size_, spv::DecorationInvariant);
+      }
       main_interface_.push_back(output_point_size_);
       ++output_location;
     }
@@ -1375,7 +1385,9 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   builder_->addDecoration(type_struct_per_vertex, spv::DecorationBlock);
   output_per_vertex_ = builder_->createVariable(
       spv::NoPrecision, spv::StorageClassOutput, type_struct_per_vertex, "");
-  builder_->addDecoration(output_per_vertex_, spv::DecorationInvariant);
+  if (!cvars::spirv_no_invariant_position_output) {
+    builder_->addDecoration(output_per_vertex_, spv::DecorationInvariant);
+  }
   main_interface_.push_back(output_per_vertex_);
 }
 
@@ -2023,9 +2035,14 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
                                 spv::DecorationLocation,
                                 int(color_target_index));
         // Make invariant as pixel shaders may be used for various precise
-        // computations.
-        builder_->addDecoration(output_fragment_data_rt,
-                                spv::DecorationInvariant);
+        // computations. (The Mesa Turnip ir3 backend appears to drop this
+        // Invariant-decorated float color output, so on that driver the
+        // host-render-target color never lands in the attachment - hence the
+        // opt-out cvar; the proprietary driver is unaffected with it off.)
+        if (!cvars::spirv_no_invariant_color_output) {
+          builder_->addDecoration(output_fragment_data_rt,
+                                  spv::DecorationInvariant);
+        }
         main_interface_.push_back(output_fragment_data_rt);
       }
     }

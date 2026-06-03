@@ -45,6 +45,21 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_force_float_color_unorm, false,
+    "Diagnostic: map the guest k_2_10_10_10_FLOAT color render target to the "
+    "non-float host format A8B8G8R8_UNORM_PACK32 instead of R16G16B16A16_SFLOAT. "
+    "Color-incorrect (loses the 7e3 extended range); isolates whether the float "
+    "color attachment is why color never renders on Turnip. Default off.",
+    "GPU");
+
+DEFINE_bool(
+    vulkan_trace_dump_depth_image, false,
+    "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
+    "image - settles whether geometry rasterized (depth has varying geometry Z) "
+    "vs only the clear (no fragments). Default off.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_trace_dump_rt_image, false,
     "Diagnostic: before the EDRAM dump, copy the first 1xMSAA color render "
     "target image straight to a host buffer (vkCmdCopyImageToBuffer, independent "
@@ -1718,7 +1733,11 @@ VkFormat VulkanRenderTargetCache::GetColorVulkanFormat(
       return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT:
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16:
-      return VK_FORMAT_R16G16B16A16_SFLOAT;
+      // Diagnostic: fall back to a non-float host format to isolate whether the
+      // float color attachment is why color never renders on Turnip.
+      return cvars::vulkan_force_float_color_unorm
+                 ? VK_FORMAT_A8B8G8R8_UNORM_PACK32
+                 : VK_FORMAT_R16G16B16A16_SFLOAT;
     case xenos::ColorRenderTargetFormat::k_16_16:
       // TODO(Triang3l): Fallback to float16 (disregarding clearing correctness
       // likely) - possibly on render target gathering, treating them entirely
@@ -1842,6 +1861,13 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   }
   image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
   image_create_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+  // The RT-image readback diagnostics vkCmdCopyImageToBuffer from this image,
+  // which REQUIRES TRANSFER_SRC usage; without it the copy is invalid and the
+  // driver may return zeros (making the readback lie). Only add it when a
+  // readback diagnostic is enabled so the normal path stays unchanged.
+  if (cvars::vulkan_trace_dump_rt_image || cvars::vulkan_trace_dump_depth_image) {
+    image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  }
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -6254,6 +6280,127 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       }
       dfn.vkDestroyBuffer(device, rt_readback_buffer, nullptr);
       dfn.vkFreeMemory(device, rt_readback_memory, nullptr);
+      if (!command_processor_.submission_open()) {
+        command_processor_.BeginSubmission(false);
+      }
+      break;
+    }
+  }
+
+  // Diagnostic (default off): same fixed-function readback for the DEPTH RT
+  // image (depth aspect, 4 bytes/texel). Settles the failure mode: if depth has
+  // many varying geometry-Z values, fragments rasterized (color-write/resolve
+  // bug); if it is just the clear value, no geometry rasterized (vertex/raster).
+  if (cvars::vulkan_trace_dump_depth_image) {
+    for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+      auto& vulkan_rt =
+          *static_cast<VulkanRenderTarget*>(rectangle.render_target);
+      RenderTargetKey d_key = vulkan_rt.key();
+      if (!d_key.is_depth ||
+          d_key.msaa_samples != xenos::MsaaSamples::k1X ||
+          d_key.base_tiles != 0) {
+        continue;
+      }
+      const ui::vulkan::VulkanDevice* const vulkan_device =
+          command_processor_.GetVulkanDevice();
+      const ui::vulkan::VulkanDevice::Functions& dfn =
+          vulkan_device->functions();
+      const VkDevice device = vulkan_device->device();
+      uint32_t d_width = d_key.GetWidth() * draw_resolution_scale_x();
+      uint32_t d_height =
+          GetRenderTargetHeight(d_key.pitch_tiles_at_32bpp, d_key.msaa_samples) *
+          draw_resolution_scale_y();
+      if (!d_width || !d_height) {
+        break;
+      }
+      uint64_t d_buffer_size = uint64_t(d_width) * uint64_t(d_height) * 4;
+      VkBuffer d_buf = VK_NULL_HANDLE;
+      VkDeviceMemory d_mem = VK_NULL_HANDLE;
+      uint32_t d_mem_type = UINT32_MAX;
+      VkDeviceSize d_mem_size = 0;
+      if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
+              vulkan_device, VkDeviceSize(d_buffer_size),
+              VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+              ui::vulkan::util::MemoryPurpose::kReadback, d_buf, d_mem,
+              &d_mem_type, &d_mem_size)) {
+        XELOGE(
+            "GPU resolve trace: dump DEPTH IMAGE readback buffer alloc failed");
+        break;
+      }
+      command_processor_.PushImageMemoryBarrier(
+          vulkan_rt.image(),
+          ui::vulkan::util::InitializeSubresourceRange(
+              VK_IMAGE_ASPECT_DEPTH_BIT),
+          vulkan_rt.current_stage_mask(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+          vulkan_rt.current_access_mask(), VK_ACCESS_TRANSFER_READ_BIT,
+          vulkan_rt.current_layout(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      vulkan_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_ACCESS_TRANSFER_READ_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      command_processor_.SubmitBarriers(true);
+      VkBufferImageCopy d_copy = {};
+      d_copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      d_copy.imageSubresource.layerCount = 1;
+      d_copy.imageExtent = {d_width, d_height, 1};
+      command_processor_.deferred_command_buffer().CmdVkCopyImageToBuffer(
+          vulkan_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, d_buf, 1,
+          &d_copy);
+      command_processor_.PushBufferMemoryBarrier(
+          d_buf, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_TRANSFER_BIT,
+          VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+          VK_ACCESS_HOST_READ_BIT);
+      if (command_processor_.AwaitAllQueueOperationsCompletion()) {
+        void* mapping = nullptr;
+        if (dfn.vkMapMemory(device, d_mem, 0, VK_WHOLE_SIZE, 0, &mapping) ==
+            VK_SUCCESS) {
+          if (!(vulkan_device->memory_types().host_coherent &
+                (uint32_t(1) << d_mem_type))) {
+            VkMappedMemoryRange mapped_range;
+            mapped_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            mapped_range.pNext = nullptr;
+            mapped_range.memory = d_mem;
+            mapped_range.offset = 0;
+            mapped_range.size = d_mem_size;
+            dfn.vkInvalidateMappedMemoryRanges(device, 1, &mapped_range);
+          }
+          const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mapping);
+          uint64_t checksum_len = uint64_t(d_width) * uint64_t(d_height) * 4;
+          constexpr uint64_t kSampleStride = 2048;
+          uint32_t d_samples = 0, d_nonzero = 0, d_varying = 0;
+          uint32_t d_first_nonzero = 0, d_previous_word = 0;
+          bool d_have_previous = false;
+          for (uint64_t offset = 0; offset + 4 <= checksum_len;
+               offset += kSampleStride) {
+            uint32_t word = 0;
+            std::memcpy(&word, bytes + offset, 4);
+            ++d_samples;
+            if (word) {
+              ++d_nonzero;
+              if (!d_first_nonzero) {
+                d_first_nonzero = word;
+              }
+            }
+            if (d_have_previous && word != d_previous_word) {
+              ++d_varying;
+            }
+            d_previous_word = word;
+            d_have_previous = true;
+          }
+          XELOGI(
+              "GPU resolve trace: dump DEPTH IMAGE checksum rt_key={:08X} "
+              "base_tiles={} size={}x{} samples={} nonzero={} varying={} "
+              "first_nonzero={:08X}",
+              d_key.key, d_key.base_tiles, d_width, d_height, d_samples,
+              d_nonzero, d_varying, d_first_nonzero);
+          dfn.vkUnmapMemory(device, d_mem);
+        } else {
+          XELOGE("GPU resolve trace: dump DEPTH IMAGE map failed");
+        }
+      } else {
+        XELOGE("GPU resolve trace: dump DEPTH IMAGE await failed");
+      }
+      dfn.vkDestroyBuffer(device, d_buf, nullptr);
+      dfn.vkFreeMemory(device, d_mem, nullptr);
       if (!command_processor_.submission_open()) {
         command_processor_.BeginSubmission(false);
       }

@@ -252,6 +252,22 @@ DEFINE_bool(vulkan_force_2101010_rgba8_fallback, false,
             "raw R8G8B8A8 host textures. This is color-incorrect and only for "
             "isolating A2B10G10R10 sampling/upload failures.",
             "GPU");
+DEFINE_bool(spirv_no_invariant_position_output, false,
+            "Do not decorate the vertex-shader gl_Position / interpolator / point "
+            "outputs with Invariant. If the Mesa Turnip ir3 backend mishandles an "
+            "Invariant-decorated vertex position, geometry comes out wrong/"
+            "degenerate and nothing rasterizes (black). Default off keeps the "
+            "proprietary path bit-identical.",
+            "GPU");
+DEFINE_bool(spirv_no_invariant_color_output, false,
+            "Do not decorate the fragment-shader color output with Invariant. "
+            "The Invariant+NoContraction scheme is only needed for the "
+            "fragment-shader-interlock multipass EDRAM path (absent on Adreno "
+            "740); on the host-render-target path the Mesa Turnip ir3 backend "
+            "appears to drop the Invariant-decorated float color output so "
+            "color never lands in an R16G16B16A16_SFLOAT (k_2_10_10_10_FLOAT) "
+            "attachment. Default off keeps the proprietary path bit-identical.",
+            "GPU");
 DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "

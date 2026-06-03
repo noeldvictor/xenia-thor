@@ -197,6 +197,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_skip_edram_transfers");
             copyBooleanExtra(intent, launchArguments, "vulkan_dump_rt_full_barrier");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_dump_rt_image");
+            copyBooleanExtra(intent, launchArguments, "vulkan_trace_dump_depth_image");
+            copyBooleanExtra(intent, launchArguments, "spirv_no_invariant_color_output");
+            copyBooleanExtra(intent, launchArguments, "spirv_no_invariant_position_output");
+            copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");
             copyIntExtra(intent, launchArguments, "gpu_freeze_at_guest_ms");
             copyIntExtra(intent, launchArguments, "gpu_cull_max_per_frame");
             copyIntExtra(intent, launchArguments, "gpu_skip_draws_below_verts");
