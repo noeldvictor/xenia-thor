@@ -4131,12 +4131,21 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           (cull_prim_type == xenos::PrimitiveType::kTriangleList ||
            cull_prim_type == xenos::PrimitiveType::kTriangleStrip);
       ++draw_outcomes_cull_branch_;
+      if (frame_current_ != cull_budget_frame_) {
+        cull_budget_frame_ = frame_current_;
+        cull_draws_this_frame_ = 0;
+      }
       bool draw_emitted = false;
       if (!can_emit_list) {
         ++draw_outcomes_cull_skip_dyntop_;
       } else if (!vertex_shader->is_position_affine_mvp_candidate()) {
         ++draw_outcomes_cull_skip_qual_;
+      } else if (cvars::gpu_cull_max_per_frame != 0 &&
+                 cull_draws_this_frame_ >= cvars::gpu_cull_max_per_frame) {
+        // gpu_cull_max_per_frame validation throttle: budget spent this frame,
+        // draw verbatim so the heavy scene still renders for the correctness check.
       } else {
+        ++cull_draws_this_frame_;
         if (!cull_extent_estimator_) {
           cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
               *register_file_, *memory_, nullptr);

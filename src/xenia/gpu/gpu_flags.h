@@ -101,6 +101,7 @@ DECLARE_bool(vulkan_merge_draws);
 DECLARE_bool(vulkan_merge_draws_indirect);
 DECLARE_bool(gpu_trace_cullable_tris);
 DECLARE_bool(gpu_cull_compaction);
+DECLARE_uint32(gpu_cull_max_per_frame);
 
 DECLARE_bool(non_seamless_cube_map);
 

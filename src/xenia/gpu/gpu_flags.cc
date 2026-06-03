@@ -464,6 +464,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_uint32(
+    gpu_cull_max_per_frame, 0,
+    "Thor cull VALIDATION throttle: cap how many draws per frame run the slow "
+    "interpreter-based gpu_cull_compaction triangle cull; the rest draw verbatim. "
+    "0 = unlimited. Lets the heavy scene still render at an interactive-ish rate so "
+    "the cull's visual correctness (no holes) can be checked before the NEON "
+    "micro-interpreter (Step 2b) makes the full cull cheap. Only meaningful with "
+    "gpu_cull_compaction=true.",
+    "GPU");
+
+DEFINE_uint32(
     gpu_freeze_at_guest_ms, 0,
     "Thor measurement harness: once the guest uptime reaches this many "
     "milliseconds, near-freeze the guest clock (time_scalar->0.0001) so the "
