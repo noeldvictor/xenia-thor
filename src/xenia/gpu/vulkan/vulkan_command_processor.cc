@@ -1905,6 +1905,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   }
 
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    // Mode of the fallback position-format histogram (which format keeps the most
+    // draws on the slow interpreter) + total fallbacks, for the cull line.
+    uint32_t cull_fb_mode_fmt = 0, cull_fb_mode_count = 0, cull_fb_total = 0;
+    for (uint32_t fi = 0; fi < 64; ++fi) {
+      uint32_t c = draw_outcomes_cull_fb_fmt_[fi];
+      cull_fb_total += c;
+      if (c > cull_fb_mode_count) {
+        cull_fb_mode_count = c;
+        cull_fb_mode_fmt = fi;
+      }
+    }
     // Read back the newest GPU-timestamp pair from a frame that has completed
     // and whose slot hasn't been reused by an in-flight frame (no host stall).
     if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
@@ -1982,7 +1993,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cull[branch={} skip_dyntop={} skip_qual={} draws={} dropped_tris={} "
         "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
         "noidxptr={} zerodrop={}) slice_ops_sum={} slice_replayable={} "
-        "replay[affine={} nonaffine={} unsup={} maxerr_milli={}]",
+        "replay[affine={} nonaffine={} unsup={} maxerr_milli={}] "
+        "fastrep[engaged={} fb_total={} fb_mode_fmt={} fb_mode_n={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2062,7 +2074,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_cull_slice_ops_sum_, draw_outcomes_cull_slice_replayable_,
         draw_outcomes_replay_affine_, draw_outcomes_replay_nonaffine_,
         draw_outcomes_replay_unsupported_,
-        draw_outcomes_replay_max_error_milli_);
+        draw_outcomes_replay_max_error_milli_, draw_outcomes_cull_fast_engaged_,
+        cull_fb_total, cull_fb_mode_fmt, cull_fb_mode_count);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2087,6 +2100,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_replay_nonaffine_ = 0;
     draw_outcomes_replay_unsupported_ = 0;
     draw_outcomes_replay_max_error_milli_ = 0;
+    draw_outcomes_cull_fast_engaged_ = 0;
+    std::memset(draw_outcomes_cull_fb_fmt_, 0,
+                sizeof(draw_outcomes_cull_fb_fmt_));
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4190,7 +4206,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             draw_outcomes_replay_max_error_milli_ = e_milli;
           }
         }
-        if (cull_extent_estimator_->BuildCulledIndexList(*vertex_shader) &&
+        bool built = cull_extent_estimator_->BuildCulledIndexList(*vertex_shader);
+        // Fast-engaged vs fallback-format histogram for this draw.
+        if (cull_extent_estimator_->last_used_fast_replay()) {
+          ++draw_outcomes_cull_fast_engaged_;
+        } else {
+          ++draw_outcomes_cull_fb_fmt_
+              [uint32_t(cull_extent_estimator_->last_leaf_format()) & 63u];
+        }
+        if (built &&
             cull_extent_estimator_->culled_index_stride() == stride) {
           ++draw_outcomes_cull_draws_;
           draw_outcomes_cull_dropped_tris_ +=

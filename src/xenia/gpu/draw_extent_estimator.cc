@@ -885,6 +885,7 @@ static void DecodeFastInput(const DrawExtentEstimator::FastAffineReplay& fr,
 
 bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
                                                 FastAffineReplay& out) {
+  setup_leaf_format_ = xenos::VertexFormat::kUndefined;
   // 1. The position slice's single register leaf input.
   uint64_t read_regs = 0, written_regs = 0;
   for (const ParsedAluInstruction& op : vertex_shader.position_slice_ops()) {
@@ -933,6 +934,7 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
         continue;
       }
       xenos::VertexFormat fmt = fi.attributes.data_format;
+      setup_leaf_format_ = fmt;  // record even if unhandled (fallback histogram)
       if (fmt != xenos::VertexFormat::k_32_32_32_FLOAT &&
           fmt != xenos::VertexFormat::k_32_32_32_32_FLOAT &&
           fmt != xenos::VertexFormat::k_16_16_16_16_FLOAT &&
@@ -1188,6 +1190,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   FastAffineReplay fast_replay;
   const bool fast = cvars::gpu_cull_fast_replay &&
                     SetupFastAffineReplay(vertex_shader, fast_replay);
+  last_build_used_fast_ = fast;
   const uint32_t* membase =
       fast ? reinterpret_cast<const uint32_t*>(memory_.physical_membase())
            : nullptr;

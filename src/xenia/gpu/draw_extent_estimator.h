@@ -97,6 +97,13 @@ class DrawExtentEstimator {
   // basis samples. Returns false (caller uses the interpreter path) if the input
   // isn't a single such vfetch or M can't be recovered.
   bool SetupFastAffineReplay(const Shader& vertex_shader, FastAffineReplay& out);
+
+  // Diagnostics for the last BuildCulledIndexList call: whether the fast affine
+  // replay engaged, and the leaf position-attribute vfetch format SetupFastAffine-
+  // Replay found (kUndefined if no single register leaf/vfetch). Lets the command
+  // processor histogram why draws fall back to the slow interpreter.
+  bool last_used_fast_replay() const { return last_build_used_fast_; }
+  xenos::VertexFormat last_leaf_format() const { return setup_leaf_format_; }
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
@@ -201,6 +208,8 @@ class DrawExtentEstimator {
   uint32_t cull_emit_dropped_triangles_ = 0;
   CullBail cull_bail_reason_ = CullBail::kBuilt;
   float affine_validate_max_error_ = 0.0f;
+  bool last_build_used_fast_ = false;
+  xenos::VertexFormat setup_leaf_format_ = xenos::VertexFormat::kUndefined;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
