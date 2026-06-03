@@ -36,6 +36,14 @@
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
+DEFINE_bool(
+    vulkan_dump_rt_full_barrier, false,
+    "Widen the EDRAM dump's source image barrier to a full color/depth-attachment-"
+    "write + transfer-write -> compute-read flush. Diagnostic/fix for Turnip (Mesa) "
+    "reading a just-rendered render target as zero in the resolve dump; default off "
+    "(a strict superset, so the proprietary Qualcomm path is unaffected).",
+    "GPU");
+
 DEFINE_string(
     render_target_path_vulkan, "",
     "Render target emulation path to use on Vulkan.\n"
@@ -6110,14 +6118,30 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();
+    VkPipelineStageFlags dump_src_stage = vulkan_rt.current_stage_mask();
+    VkAccessFlags dump_src_access = vulkan_rt.current_access_mask();
+    if (cvars::vulkan_dump_rt_full_barrier) {
+      // Turnip (Mesa) can read a just-rendered render target as zero in the dump if
+      // the attachment writes aren't flushed/flattened out of GMEM/CCU before the
+      // compute texelFetch. Widen the source scope to a strict superset that forces
+      // the flush. A superset never regresses the lax proprietary driver, and it adds
+      // no dispatches, so the speed is unchanged.
+      dump_src_stage |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                        VK_PIPELINE_STAGE_TRANSFER_BIT;
+      dump_src_access |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                         VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
     command_processor_.PushImageMemoryBarrier(
         vulkan_rt.image(),
         ui::vulkan::util::InitializeSubresourceRange(
             rt_key.is_depth
                 ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
                 : VK_IMAGE_ASPECT_COLOR_BIT),
-        vulkan_rt.current_stage_mask(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        vulkan_rt.current_access_mask(), VK_ACCESS_SHADER_READ_BIT,
+        dump_src_stage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        dump_src_access, VK_ACCESS_SHADER_READ_BIT,
         vulkan_rt.current_layout(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     vulkan_rt.SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                        VK_ACCESS_SHADER_READ_BIT,

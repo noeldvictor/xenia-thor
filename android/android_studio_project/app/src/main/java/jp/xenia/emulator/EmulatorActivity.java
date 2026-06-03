@@ -195,6 +195,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_perf_counters");
             copyBooleanExtra(intent, launchArguments, "gpu_edram_passes_dont_care");
             copyBooleanExtra(intent, launchArguments, "gpu_skip_edram_transfers");
+            copyBooleanExtra(intent, launchArguments, "vulkan_dump_rt_full_barrier");
             copyIntExtra(intent, launchArguments, "gpu_freeze_at_guest_ms");
             copyIntExtra(intent, launchArguments, "gpu_cull_max_per_frame");
             copyIntExtra(intent, launchArguments, "gpu_skip_draws_below_verts");
@@ -219,6 +220,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_path");
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_lib");
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_hooks_path");
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_debug");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_texture_source_checksum");
             copyStringExtra(

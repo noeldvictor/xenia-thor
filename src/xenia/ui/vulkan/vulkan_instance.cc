@@ -25,6 +25,7 @@
 #if XE_PLATFORM_ANDROID && XE_ARCH_ARM64
 // libadrenotools: rootless custom-Vulkan-driver (Turnip) loading. ARM64-only.
 #include <adrenotools/driver.h>
+#include <stdlib.h>  // setenv for the Turnip TU_DEBUG escape hatch
 #endif
 #elif XE_PLATFORM_WIN32
 #include "xenia/base/platform_win.h"
@@ -59,6 +60,12 @@ DEFINE_string(
     gpu_vulkan_driver_hooks_path, "",
     "Absolute dir holding libadrenotools' hook .so (libmain_hook.so/libhook_impl.so) "
     "- MUST be the app's getApplicationInfo().nativeLibraryDir.",
+    "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_debug, "",
+    "When gpu_vulkan_driver=turnip: if non-empty, setenv(TU_DEBUG, this) before the "
+    "in-process driver dlopen so the Mesa Turnip driver reads it at init (e.g. "
+    "'flushall', 'noubwc', 'sysmem'). Research/diagnostic A/B; default empty = unset.",
     "Vulkan");
 #endif
 
@@ -104,6 +111,14 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
     std::string driver_dir = cvars::gpu_vulkan_driver_path;
     if (!driver_dir.empty() && driver_dir.back() != '/') {
       driver_dir.push_back('/');
+    }
+    // TU_DEBUG escape hatch: the Turnip .so is dlopen'd IN-PROCESS just below, so an
+    // env var set here is visible to its getenv() at VkInstance/VkDevice init. Lets us
+    // A/B Turnip debug flags (flushall/noubwc/sysmem) without a rebuild. Default empty.
+    if (!cvars::gpu_vulkan_driver_debug.empty()) {
+      setenv("TU_DEBUG", cvars::gpu_vulkan_driver_debug.c_str(), /*overwrite=*/1);
+      XELOGI("Turnip: set TU_DEBUG='{}' before driver load",
+             cvars::gpu_vulkan_driver_debug);
     }
     vulkan_instance->loader_ = adrenotools_open_libvulkan(
         RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
