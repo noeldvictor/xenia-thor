@@ -971,15 +971,36 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
     fast_setup_fail_ = FastSetupFail::kNoLeaf;
     return false;
   }
-  if ((leaf_regs & (leaf_regs - 1)) != 0) {
+  // Try single-leaf affine recovery against EACH candidate vfetch'd leaf the slice
+  // reads (capped). TryRecoverAffineForLeaf's residual self-check accepts a leaf
+  // ONLY if the clip position is truly affine in it, so a multi-leaf draw whose
+  // position actually depends on just ONE of the read vfetch'd inputs (the others
+  // being slice over-inclusion / position-irrelevant) still engages the fast path,
+  // while a genuinely multi-input (skinned/bilinear) position fails every candidate
+  // and falls back. Never emits a wrong cull (residual-guarded).
+  uint32_t tried = 0;
+  for (uint32_t L = 0; L < 64 && tried < 4; ++L) {
+    if (!((leaf_regs >> L) & 1)) {
+      continue;
+    }
+    ++tried;
+    if (TryRecoverAffineForLeaf(vertex_shader, L, out)) {
+      return true;
+    }
+  }
+  // No candidate leaf gives an affine map. A multi-leaf draw that fails every
+  // candidate is genuine multi-input (skinned/bilinear) - keep kMultiLeaf so the
+  // multi_lc histogram still buckets it; a single leaf keeps its specific reason.
+  if (setup_leaf_count_ > 1) {
     fast_setup_fail_ = FastSetupFail::kMultiLeaf;
-    return false;
   }
-  uint32_t leaf = 0;
-  while (!((leaf_regs >> leaf) & 1)) {
-    ++leaf;
-  }
+  return false;
+}
 
+bool DrawExtentEstimator::TryRecoverAffineForLeaf(const Shader& vertex_shader,
+                                                  uint32_t leaf,
+                                                  FastAffineReplay& out) {
+  out = FastAffineReplay();
   // 2. The vfetch attribute that writes the leaf, and its decode params.
   const RegisterFile& regs = register_file_;
   bool found = false;

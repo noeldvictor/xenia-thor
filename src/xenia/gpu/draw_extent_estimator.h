@@ -97,6 +97,14 @@ class DrawExtentEstimator {
   // basis samples. Returns false (caller uses the interpreter path) if the input
   // isn't a single such vfetch or M can't be recovered.
   bool SetupFastAffineReplay(const Shader& vertex_shader, FastAffineReplay& out);
+  // Attempts single-leaf affine recovery for ONE candidate vfetch'd leaf register:
+  // matches it to a vfetch attribute (decode params), fits the 4x4 clip = M*[in,1]
+  // from interpreter basis samples, and self-validates the residual. Returns true
+  // (out filled, fast_setup_fail_ = kOk) only if position is genuinely affine in
+  // that leaf; false otherwise. SetupFastAffineReplay calls this for each candidate
+  // leaf so a multi-leaf draw whose position depends on just one of them engages.
+  bool TryRecoverAffineForLeaf(const Shader& vertex_shader, uint32_t leaf,
+                               FastAffineReplay& out);
 
   // Diagnostics for the last BuildCulledIndexList call: whether the fast affine
   // replay engaged, and the leaf position-attribute vfetch format SetupFastAffine-
