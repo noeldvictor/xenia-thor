@@ -741,6 +741,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
                     : num_indices / 3u;
   cull_emit_index_bytes_.reserve(size_t(max_tris) * 3u * stride);
 
+  uint32_t dropped_triangles = 0;
   // Append slot `slot`'s RAW guest index bytes (pre-swap/pre-offset) to the list.
   auto append_raw = [&](uint32_t slot) {
     const uint8_t* src = index_bytes + size_t(slot) * stride;
@@ -794,6 +795,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
       }
     }
     if (cull) {
+      ++dropped_triangles;
       return;
     }
     if (winding_reversed) {
@@ -816,7 +818,9 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
       emit_if_kept(t * 3u + 0u, t * 3u + 1u, t * 3u + 2u, false);
     }
   }
-  return true;
+  // Only worth the strip->list flattening + topology change if we actually
+  // removed triangles; otherwise the caller should draw the originals verbatim.
+  return dropped_triangles > 0;
 }
 
 }  // namespace gpu

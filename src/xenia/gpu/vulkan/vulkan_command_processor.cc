@@ -4079,39 +4079,91 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         primitive_processing_result.index_buffer_type ==
             PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
         cull_index_buffer_pool_) {
-      // Lever 2 cull STEP 1: NO-OP index compaction. Copy the raw guest index
-      // bytes VERBATIM into a transient host-visible index buffer and draw from
-      // it instead of binding shared memory directly - the structural pipe the
-      // CPU/NEON cull reuses, proven byte-identical here before any triangle is
-      // dropped. NO endian swap / mask / base-add (the vertex shader does those
-      // at spirv_shader_translator.cc:1592/1606); vertexOffset stays 0 because
-      // VGT_INDX_OFFSET is applied via system constants. Mutually exclusive with
-      // the merge levers (they are off whenever this is on).
+      // Lever 2 cull: route each kGuestDMA indexed draw through a transient index
+      // buffer. STEP 2 (cull): if the draw qualifies and a flattened LIST can be
+      // drawn (dynamic topology active), drop clearly-backface/offscreen triangles
+      // and emit only the survivors. STEP 1 (NO-OP) otherwise: copy the raw guest
+      // indices VERBATIM (byte-identical). NO endian swap / mask / base-add (the
+      // VS does those at spirv_shader_translator.cc:1592/1606); vertexOffset stays
+      // 0 (VGT_INDX_OFFSET via system constants). Mutually exclusive with merges.
       if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
         FlushPendingMergeRun();
       }
       const uint32_t idx_count =
           primitive_processing_result.host_draw_vertex_count;
       const uint32_t stride = index_type == VK_INDEX_TYPE_UINT16 ? 2u : 4u;
-      const size_t copy_bytes = size_t(idx_count) * stride;
-      VkBuffer cull_index_buffer = VK_NULL_HANDLE;
-      VkDeviceSize cull_index_offset = 0;
-      uint8_t* cull_mapping = cull_index_buffer_pool_->Request(
-          frame_current_, copy_bytes, stride, cull_index_buffer,
-          cull_index_offset);
-      const uint8_t* guest_indices =
-          memory_->TranslatePhysical<const uint8_t*>(
-              uint32_t(index_buffer.second));
-      if (cull_mapping && guest_indices) {
-        std::memcpy(cull_mapping, guest_indices, copy_bytes);
-        deferred_command_buffer_.CmdVkBindIndexBuffer(
-            cull_index_buffer, cull_index_offset, index_type);
-        deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
-      } else {
-        // Allocation / translation failed - emit the unchanged draw.
-        deferred_command_buffer_.CmdVkBindIndexBuffer(
-            index_buffer.first, index_buffer.second, index_type);
-        deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+      const xenos::PrimitiveType cull_prim_type =
+          primitive_processing_result.host_primitive_type;
+      // A flattened LIST can only be drawn when the pipeline was built with dynamic
+      // topology (same gate as the topology emit in UpdateDynamicState). Else the
+      // cull falls back to the verbatim NO-OP so geometry is never scrambled.
+      const bool can_emit_list =
+          cvars::vulkan_dynamic_state_topology &&
+          GetVulkanDevice()->properties().apiVersion >=
+              VK_MAKE_API_VERSION(0, 1, 3, 0) &&
+          (cull_prim_type == xenos::PrimitiveType::kTriangleList ||
+           cull_prim_type == xenos::PrimitiveType::kTriangleStrip);
+      bool draw_emitted = false;
+      if (can_emit_list && vertex_shader->is_position_affine_mvp_candidate()) {
+        if (!cull_extent_estimator_) {
+          cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
+              *register_file_, *memory_, nullptr);
+        }
+        if (cull_extent_estimator_->BuildCulledIndexList(*vertex_shader) &&
+            cull_extent_estimator_->culled_index_stride() == stride) {
+          const uint32_t culled_count =
+              cull_extent_estimator_->culled_index_count();
+          if (culled_count == 0) {
+            // Every triangle dropped - draw nothing.
+            draw_emitted = true;
+          } else {
+            const size_t culled_bytes =
+                cull_extent_estimator_->culled_index_byte_size();
+            VkBuffer cull_index_buffer = VK_NULL_HANDLE;
+            VkDeviceSize cull_index_offset = 0;
+            uint8_t* cull_mapping = cull_index_buffer_pool_->Request(
+                frame_current_, culled_bytes, stride, cull_index_buffer,
+                cull_index_offset);
+            if (cull_mapping) {
+              std::memcpy(cull_mapping,
+                          cull_extent_estimator_->culled_index_data(),
+                          culled_bytes);
+              // The survivors are a triangle LIST - override the topology and
+              // keep the tracker in sync (the next draw re-sets its own).
+              deferred_command_buffer_.CmdVkSetPrimitiveTopology(
+                  VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+              dynamic_primitive_topology_ =
+                  VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+              deferred_command_buffer_.CmdVkBindIndexBuffer(
+                  cull_index_buffer, cull_index_offset, index_type);
+              deferred_command_buffer_.CmdVkDrawIndexed(culled_count, 1, 0, 0,
+                                                        0);
+              draw_emitted = true;
+            }
+          }
+        }
+      }
+      if (!draw_emitted) {
+        // STEP 1 NO-OP path: verbatim copy of the raw guest indices.
+        const size_t copy_bytes = size_t(idx_count) * stride;
+        VkBuffer cull_index_buffer = VK_NULL_HANDLE;
+        VkDeviceSize cull_index_offset = 0;
+        uint8_t* cull_mapping = cull_index_buffer_pool_->Request(
+            frame_current_, copy_bytes, stride, cull_index_buffer,
+            cull_index_offset);
+        const uint8_t* guest_indices =
+            memory_->TranslatePhysical<const uint8_t*>(
+                uint32_t(index_buffer.second));
+        if (cull_mapping && guest_indices) {
+          std::memcpy(cull_mapping, guest_indices, copy_bytes);
+          deferred_command_buffer_.CmdVkBindIndexBuffer(
+              cull_index_buffer, cull_index_offset, index_type);
+          deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+        } else {
+          deferred_command_buffer_.CmdVkBindIndexBuffer(
+              index_buffer.first, index_buffer.second, index_type);
+          deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+        }
       }
     } else if (cvars::vulkan_merge_draws &&
         primitive_processing_result.index_buffer_type ==
