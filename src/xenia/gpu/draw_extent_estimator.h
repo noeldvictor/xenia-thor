@@ -71,6 +71,9 @@ class DrawExtentEstimator {
   size_t culled_index_byte_size() const { return cull_emit_index_bytes_.size(); }
   uint32_t culled_index_count() const { return cull_emit_index_count_; }
   uint32_t culled_index_stride() const { return cull_emit_index_stride_; }
+  uint32_t culled_dropped_triangles() const {
+    return cull_emit_dropped_triangles_;
+  }
 
  private:
   class PositionYExportSink : public ShaderInterpreter::ExportSink {
@@ -145,6 +148,7 @@ class DrawExtentEstimator {
   std::vector<uint8_t> cull_emit_index_bytes_;
   uint32_t cull_emit_index_count_ = 0;
   uint32_t cull_emit_index_stride_ = 0;
+  uint32_t cull_emit_dropped_triangles_ = 0;
 
   const RegisterFile& register_file_;
   const Memory& memory_;

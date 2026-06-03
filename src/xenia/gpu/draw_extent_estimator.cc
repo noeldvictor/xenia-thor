@@ -619,6 +619,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   cull_emit_index_bytes_.clear();
   cull_emit_index_count_ = 0;
   cull_emit_index_stride_ = 0;
+  cull_emit_dropped_triangles_ = 0;
 
   const RegisterFile& regs = register_file_;
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
@@ -820,6 +821,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   }
   // Only worth the strip->list flattening + topology change if we actually
   // removed triangles; otherwise the caller should draw the originals verbatim.
+  cull_emit_dropped_triangles_ = dropped_triangles;
   return dropped_triangles > 0;
 }
 

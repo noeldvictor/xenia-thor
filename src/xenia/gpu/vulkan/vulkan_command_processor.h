@@ -867,6 +867,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t draw_outcomes_pos_disq_call_verts_ = 0;
   uint64_t draw_outcomes_pos_disq_texfetch_verts_ = 0;
   uint64_t draw_outcomes_pos_disq_other_verts_ = 0;
+  // Step 2a-ii diagnostic funnel (gpu_cull_compaction): where each kGuestDMA draw
+  // that entered the cull branch fell off - skip_dyntop (no dynamic topology),
+  // skip_qual (not position-affine-MVP), skip_build (BuildCulledIndexList bailed /
+  // dropped nothing), or culled (cull_draws + cull_dropped_tris). Pinpoints why the
+  // cull does/doesn't engage on device.
+  uint32_t draw_outcomes_cull_branch_ = 0;
+  uint32_t draw_outcomes_cull_skip_dyntop_ = 0;
+  uint32_t draw_outcomes_cull_skip_qual_ = 0;
+  uint32_t draw_outcomes_cull_skip_build_ = 0;
+  uint32_t draw_outcomes_cull_draws_ = 0;
+  uint64_t draw_outcomes_cull_dropped_tris_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

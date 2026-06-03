@@ -641,7 +641,7 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   // (which may use restart) normalized to the list key would otherwise fail
   // pipeline creation. Both topology and restart are emitted dynamically, so
   // behavior is preserved. Default-off keeps the real per-draw values in the key.
-  if (cvars::vulkan_dynamic_state_topology &&
+  if ((cvars::vulkan_dynamic_state_topology || cvars::gpu_cull_compaction) &&
       device_properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       geometry_shader == PipelineGeometryShader::kNone &&
       (primitive_topology == PipelinePrimitiveTopology::kTriangleList ||
@@ -2241,7 +2241,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   // Matches the key-normalization in GetCurrentStateDescription + emission in
   // UpdateDynamicState. Applies in both render paths (input assembly is used
   // regardless of FSI).
-  if (cvars::vulkan_dynamic_state_topology &&
+  if ((cvars::vulkan_dynamic_state_topology || cvars::gpu_cull_compaction) &&
       vulkan_device->properties().apiVersion >=
           VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       description.geometry_shader == PipelineGeometryShader::kNone &&

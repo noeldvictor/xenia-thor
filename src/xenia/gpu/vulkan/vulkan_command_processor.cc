@@ -1978,7 +1978,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
-        "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}]",
+        "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
+        "cull[branch={} skip_dyntop={} skip_qual={} skip_build={} draws={} "
+        "dropped_tris={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2037,7 +2039,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_pos_disq_backjump_verts_,
         draw_outcomes_pos_disq_call_verts_,
         draw_outcomes_pos_disq_texfetch_verts_,
-        draw_outcomes_pos_disq_other_verts_);
+        draw_outcomes_pos_disq_other_verts_, draw_outcomes_cull_branch_,
+        draw_outcomes_cull_skip_dyntop_, draw_outcomes_cull_skip_qual_,
+        draw_outcomes_cull_skip_build_, draw_outcomes_cull_draws_,
+        draw_outcomes_cull_dropped_tris_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2050,6 +2055,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_pos_disq_call_verts_ = 0;
     draw_outcomes_pos_disq_texfetch_verts_ = 0;
     draw_outcomes_pos_disq_other_verts_ = 0;
+    draw_outcomes_cull_branch_ = 0;
+    draw_outcomes_cull_skip_dyntop_ = 0;
+    draw_outcomes_cull_skip_qual_ = 0;
+    draw_outcomes_cull_skip_build_ = 0;
+    draw_outcomes_cull_draws_ = 0;
+    draw_outcomes_cull_dropped_tris_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4098,19 +4109,28 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // topology (same gate as the topology emit in UpdateDynamicState). Else the
       // cull falls back to the verbatim NO-OP so geometry is never scrambled.
       const bool can_emit_list =
-          cvars::vulkan_dynamic_state_topology &&
+          (cvars::vulkan_dynamic_state_topology ||
+           cvars::gpu_cull_compaction) &&
           GetVulkanDevice()->properties().apiVersion >=
               VK_MAKE_API_VERSION(0, 1, 3, 0) &&
           (cull_prim_type == xenos::PrimitiveType::kTriangleList ||
            cull_prim_type == xenos::PrimitiveType::kTriangleStrip);
+      ++draw_outcomes_cull_branch_;
       bool draw_emitted = false;
-      if (can_emit_list && vertex_shader->is_position_affine_mvp_candidate()) {
+      if (!can_emit_list) {
+        ++draw_outcomes_cull_skip_dyntop_;
+      } else if (!vertex_shader->is_position_affine_mvp_candidate()) {
+        ++draw_outcomes_cull_skip_qual_;
+      } else {
         if (!cull_extent_estimator_) {
           cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
               *register_file_, *memory_, nullptr);
         }
         if (cull_extent_estimator_->BuildCulledIndexList(*vertex_shader) &&
             cull_extent_estimator_->culled_index_stride() == stride) {
+          ++draw_outcomes_cull_draws_;
+          draw_outcomes_cull_dropped_tris_ +=
+              cull_extent_estimator_->culled_dropped_triangles();
           const uint32_t culled_count =
               cull_extent_estimator_->culled_index_count();
           if (culled_count == 0) {
@@ -4141,6 +4161,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               draw_emitted = true;
             }
           }
+        } else {
+          ++draw_outcomes_cull_skip_build_;
         }
       }
       if (!draw_emitted) {
@@ -5748,7 +5770,7 @@ void VulkanCommandProcessor::UpdateDynamicState(
   // normalization in the pipeline cache - only host triangle list/strip get
   // VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY (non-GS, triangle class); everything
   // else keeps a static topology and must NOT be emitted here.
-  if (cvars::vulkan_dynamic_state_topology &&
+  if ((cvars::vulkan_dynamic_state_topology || cvars::gpu_cull_compaction) &&
       GetVulkanDevice()->properties().apiVersion >=
           VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       (host_primitive_type == xenos::PrimitiveType::kTriangleList ||
