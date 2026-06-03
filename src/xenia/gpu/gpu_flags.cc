@@ -288,8 +288,11 @@ DEFINE_int32(spirv_debug_position_probe, 0,
              "2 = only if XYZ are all ~zero (vfetch/constant read returns 0 -> "
              "data/binding). 3 = only if any component is Inf (overflow / "
              "divide-by-zero). 4 = only if finite-and-nonzero (a GOOD position). "
-             "Whichever probe lights up (color in the RT dump) names the failure "
-             "shape. Default 0.",
+             "5 = only if xenia's own system-constant uniform (ndc_scale, always "
+             "nonzero for a real draw) reads nonzero - discriminates 'uniform "
+             "buffers read zero' (black) from 'only vertex-fetch reads zero' "
+             "(magenta). Whichever probe lights up (color in the RT dump) names "
+             "the failure shape. Default 0.",
              "GPU");
 DEFINE_bool(spirv_debug_identity_ndc, false,
             "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "

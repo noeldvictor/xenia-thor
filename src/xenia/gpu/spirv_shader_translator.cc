@@ -1972,6 +1972,31 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
           cond = all_zero;
         } else if (probe == 3) {
           cond = any_inf;
+        } else if (probe == 5) {
+          // probe == 5: is xenia's OWN system-constant uniform (ndc_scale, always
+          // nonzero for a real draw) readable? Discriminates "uniform buffers
+          // read zero on Turnip" (black) from "only the vertex-fetch storage
+          // buffer reads zero" (magenta - uniforms fine, so the bug is vfetch).
+          id_vector_temp_.clear();
+          id_vector_temp_.push_back(
+              builder_->makeIntConstant(kSystemConstantNdcScale));
+          spv::Id ndc_scale = builder_->createLoad(
+              builder_->createAccessChain(spv::StorageClassUniform,
+                                          uniform_system_constants_,
+                                          id_vector_temp_),
+              spv::NoPrecision);
+          spv::Id any_nonzero = builder_->makeBoolConstant(false);
+          for (uint32_t i = 0; i < 3; ++i) {
+            spv::Id c =
+                builder_->createCompositeExtract(ndc_scale, type_float_, i);
+            spv::Id abs_c = builder_->createUnaryBuiltinCall(
+                type_float_, ext_inst_glsl_std_450_, GLSLstd450FAbs, c);
+            any_nonzero = builder_->createBinOp(
+                spv::OpLogicalOr, type_bool_, any_nonzero,
+                builder_->createBinOp(spv::OpFOrdGreaterThan, type_bool_, abs_c,
+                                      eps));
+          }
+          cond = any_nonzero;
         } else {
           // probe == 4: finite (not NaN, not Inf) and not all-zero.
           cond = builder_->createBinOp(
