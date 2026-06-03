@@ -158,6 +158,9 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           if (instr.type == ParsedCallInstruction::Type::kConditional) {
             bool_constant_index = instr.bool_constant_index;
           }
+          // Subroutine bodies execute out of program order; the linear
+          // position-slice taint pass can't track them - bail.
+          uses_subroutine_or_jump_ = true;
         } break;
         case ControlFlowOpcode::kReturn: {
           ParsedReturnInstruction instr;
@@ -171,6 +174,9 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           if (instr.type == ParsedJumpInstruction::Type::kConditional) {
             bool_constant_index = instr.bool_constant_index;
           }
+          // A jump can skip instructions; the linear position-slice taint pass
+          // assumes straight-line order - bail.
+          uses_subroutine_or_jump_ = true;
         } break;
         case ControlFlowOpcode::kAlloc: {
           ParsedAllocInstruction instr;
@@ -397,6 +403,9 @@ void Shader::GatherVertexFetchInformation(
   fetch_instr.Disassemble(&ucode_disasm_buffer);
 
   GatherFetchResultInformation(fetch_instr.result);
+  // A vertex fetch is a clean MVP input (the position/attribute the cull would
+  // re-fetch and transform) - clear taint on the components it writes.
+  PositionSliceMarkFetchResult(fetch_instr.result, /*tainted=*/false);
 
   // Mini-fetches inherit the operands from full fetches.
   if (!fetch_instr.is_mini_fetch) {
@@ -463,6 +472,9 @@ void Shader::GatherTextureFetchInformation(const TextureFetchInstruction& op,
   binding.fetch_instr.Disassemble(&ucode_disasm_buffer);
 
   GatherFetchResultInformation(binding.fetch_instr.result);
+  // A texture fetch feeding the position slice = vertex-texture displacement,
+  // which is not an affine MVP - taint the components it writes.
+  PositionSliceMarkFetchResult(binding.fetch_instr.result, /*tainted=*/true);
   for (size_t i = 0; i < binding.fetch_instr.operand_count; ++i) {
     GatherOperandInformation(binding.fetch_instr.operands[i]);
   }
@@ -514,16 +526,12 @@ void Shader::GatherAluInstructionInformation(
       (ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state &
        ucode::kAluOpChangedStatePixelKill);
 
-  // Affine-MVP cull-transform friendliness (Shader::is_affine_mvp_candidate): an op
-  // disqualifies the shader if it changes a0/predicate (dynamic control flow) or is
-  // a transcendental scalar (rcp/rsq/exp/log) - those are slow and not CPU-bit-exact
-  // versus the Adreno's approximation curves.
-  if (((ucode::GetAluVectorOpcodeInfo(op.vector_opcode()).changed_state |
-        ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state) &
-       (ucode::kAluOpChangedStateAddressRegister |
-        ucode::kAluOpChangedStatePredicate)) != 0) {
-    uses_non_affine_mvp_alu_ = true;
-  }
+  // Affine-MVP cull-transform friendliness: an op is "non-affine-MVP" if it
+  // changes a0/predicate (dynamic control flow) or is a transcendental scalar
+  // (rcp/rsq/exp/log) - those are slow and not CPU-bit-exact versus the Adreno's
+  // approximation curves. The vector and scalar slots are classified separately so
+  // the position-export-slice taint can track each result register precisely.
+  bool scalar_transcendental = false;
   switch (op.scalar_opcode()) {
     case ucode::AluScalarOpcode::kExp:
     case ucode::AluScalarOpcode::kLogc:
@@ -534,10 +542,45 @@ void Shader::GatherAluInstructionInformation(
     case ucode::AluScalarOpcode::kRsqc:
     case ucode::AluScalarOpcode::kRsqf:
     case ucode::AluScalarOpcode::kRsq:
-      uses_non_affine_mvp_alu_ = true;
+      scalar_transcendental = true;
       break;
     default:
       break;
+  }
+  const bool vector_op_non_affine =
+      (ucode::GetAluVectorOpcodeInfo(op.vector_opcode()).changed_state &
+       (ucode::kAluOpChangedStateAddressRegister |
+        ucode::kAluOpChangedStatePredicate)) != 0;
+  const bool scalar_op_non_affine =
+      scalar_transcendental ||
+      (ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state &
+       (ucode::kAluOpChangedStateAddressRegister |
+        ucode::kAluOpChangedStatePredicate)) != 0;
+  // Whole-shader flag (Shader::is_affine_mvp_candidate).
+  if (vector_op_non_affine || scalar_op_non_affine) {
+    uses_non_affine_mvp_alu_ = true;
+  }
+
+  // Position-export-slice taint propagation (Shader::is_position_affine_mvp_candidate),
+  // read-only: a result register's component is "tainted" if its op is non-affine
+  // or any source it reads is already tainted. Vector and scalar results are
+  // independent. If a tainted, non-constant value reaches the position export, the
+  // slice is disqualified.
+  {
+    bool vector_src_tainted = false;
+    for (size_t i = 0; i < instr.vector_operand_count; ++i) {
+      vector_src_tainted |=
+          PositionSliceOperandTainted(instr.vector_operands[i]);
+    }
+    bool scalar_src_tainted = false;
+    for (size_t i = 0; i < instr.scalar_operand_count; ++i) {
+      scalar_src_tainted |=
+          PositionSliceOperandTainted(instr.scalar_operands[i]);
+    }
+    PositionSliceApplyResult(instr.vector_and_constant_result,
+                             vector_op_non_affine || vector_src_tainted);
+    PositionSliceApplyResult(instr.scalar_result,
+                             scalar_op_non_affine || scalar_src_tainted);
   }
 
   GatherAluResultInformation(instr.vector_and_constant_result, exec_cf_index);
@@ -566,6 +609,109 @@ void Shader::GatherAluInstructionInformation(
       XELOGE(
           "ShaderTranslator::GatherAluInstructionInformation: Couldn't extract "
           "memexport stream constant index");
+    }
+  }
+}
+
+bool Shader::PositionSliceOperandTainted(
+    const InstructionOperand& operand) const {
+  if (operand.storage_source != InstructionStorageSource::kRegister) {
+    // Float/bool/loop/fetch constants are clean MVP inputs - UNLESS the constant
+    // is addressed relative to a0/aL, which makes the index dynamic (not a fixed
+    // matrix), so taint conservatively.
+    return operand.storage_addressing_mode !=
+           InstructionStorageAddressingMode::kAbsolute;
+  }
+  if (operand.storage_addressing_mode !=
+      InstructionStorageAddressingMode::kAbsolute) {
+    // Dynamically-addressed register read - not a statically-known slice element.
+    return true;
+  }
+  if (operand.storage_index >= 64) {
+    return true;  // Outside the tracked register file - conservative.
+  }
+  uint8_t reg_taint = slice_reg_taint_[operand.storage_index];
+  if (!reg_taint) {
+    return false;
+  }
+  // Tainted iff any component this operand actually reads is tainted.
+  for (uint32_t i = 0; i < operand.component_count; ++i) {
+    SwizzleSource source = operand.GetComponent(i);
+    if (source >= SwizzleSource::kX && source <= SwizzleSource::kW) {
+      uint32_t lane = uint32_t(source) - uint32_t(SwizzleSource::kX);
+      if (reg_taint & (uint8_t(1) << lane)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void Shader::PositionSliceApplyResult(const InstructionResult& result,
+                                      bool value_tainted) {
+  switch (result.storage_target) {
+    case InstructionStorageTarget::kRegister: {
+      if (result.storage_addressing_mode !=
+              InstructionStorageAddressingMode::kAbsolute ||
+          result.storage_index >= 64) {
+        // Dynamic/unknown register destination - can't track which register got
+        // the value, so give up on the slice (only happens with aL/loops, which
+        // already disqualify, but stay safe).
+        position_slice_tainted_ = true;
+        return;
+      }
+      uint32_t write_mask = result.GetUsedWriteMask();
+      uint8_t& reg_taint = slice_reg_taint_[result.storage_index];
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (!(write_mask & (uint32_t(1) << i))) {
+          continue;  // Component not written - retains its prior taint.
+        }
+        SwizzleSource component = result.components[i];
+        // A constant (0/1) destination component is clean; a computed one carries
+        // the op's taint.
+        bool component_tainted =
+            (component >= SwizzleSource::kX && component <= SwizzleSource::kW)
+                ? value_tainted
+                : false;
+        if (component_tainted) {
+          reg_taint |= uint8_t(uint32_t(1) << i);
+        } else {
+          reg_taint &= uint8_t(~(uint32_t(1) << i));
+        }
+      }
+      break;
+    }
+    case InstructionStorageTarget::kPosition: {
+      position_export_written_ = true;
+      // A tainted, non-constant value reaching gl_Position disqualifies the slice.
+      if (value_tainted && result.GetUsedResultComponents() != 0) {
+        position_slice_tainted_ = true;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void Shader::PositionSliceMarkFetchResult(const InstructionResult& result,
+                                          bool tainted) {
+  if (result.storage_target != InstructionStorageTarget::kRegister ||
+      result.storage_addressing_mode !=
+          InstructionStorageAddressingMode::kAbsolute ||
+      result.storage_index >= 64) {
+    return;
+  }
+  uint32_t write_mask = result.GetUsedWriteMask();
+  uint8_t& reg_taint = slice_reg_taint_[result.storage_index];
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (!(write_mask & (uint32_t(1) << i))) {
+      continue;
+    }
+    if (tainted) {
+      reg_taint |= uint8_t(uint32_t(1) << i);
+    } else {
+      reg_taint &= uint8_t(~(uint32_t(1) << i));
     }
   }
 }

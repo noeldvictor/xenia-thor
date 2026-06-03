@@ -1968,7 +1968,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
-        "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={}",
+        "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
+        "affine_mvp_pos_draws={} affine_mvp_pos_verts={}",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2021,11 +2022,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
         merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
-        draw_outcomes_affine_mvp_vertices_);
+        draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
+        draw_outcomes_affine_mvp_pos_vertices_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
+    draw_outcomes_affine_mvp_pos_draws_ = 0;
+    draw_outcomes_affine_mvp_pos_vertices_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4256,15 +4260,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // stub returns 0). Never mutates geometry.
     draw_outcomes_cullable_tris_ += CountCullableTriangles(*vertex_shader);
   }
-  if (cvars::vulkan_trace_draw_outcomes_per_frame &&
-      vertex_shader->is_affine_mvp_candidate()) {
-    // Lever 2 Step 0 feasibility signal: how many rendered draws/verts have a
-    // position shader the CPU/NEON affine-MVP cull-transform could handle
-    // bit-exactly (read-only classifier; never mutates geometry). See
-    // Shader::is_affine_mvp_candidate.
-    ++draw_outcomes_affine_mvp_draws_;
-    draw_outcomes_affine_mvp_vertices_ +=
-        primitive_processing_result.host_draw_vertex_count;
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    // Lever 2 Step 0 feasibility signals (read-only; never mutates geometry):
+    // 0a whole-shader (coarse, under-counts) and 0b position-export-slice
+    // (precise - ignores color/UV math, the number that sizes the cull's reach).
+    if (vertex_shader->is_affine_mvp_candidate()) {
+      ++draw_outcomes_affine_mvp_draws_;
+      draw_outcomes_affine_mvp_vertices_ +=
+          primitive_processing_result.host_draw_vertex_count;
+    }
+    if (vertex_shader->is_position_affine_mvp_candidate()) {
+      ++draw_outcomes_affine_mvp_pos_draws_;
+      draw_outcomes_affine_mvp_pos_vertices_ +=
+          primitive_processing_result.host_draw_vertex_count;
+    }
   }
   if (trace_draw_cpu) {
     draw_cpu_total_ns_ += uint64_t(

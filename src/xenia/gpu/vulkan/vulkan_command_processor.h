@@ -846,6 +846,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // lower-bound signal for whether the cull can engage on a title.
   uint32_t draw_outcomes_affine_mvp_draws_ = 0;
   uint64_t draw_outcomes_affine_mvp_vertices_ = 0;
+  // Step 0b: the precise position-export-slice classifier (counts draws/verts
+  // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
+  // that actually sizes the CPU/NEON cull's reach. See
+  // Shader::is_position_affine_mvp_candidate.
+  uint32_t draw_outcomes_affine_mvp_pos_draws_ = 0;
+  uint64_t draw_outcomes_affine_mvp_pos_vertices_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

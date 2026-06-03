@@ -967,6 +967,21 @@ class Shader {
            !uses_non_affine_mvp_alu_;
   }
 
+  // Precise variant of the above: does ONLY the backward dataflow slice feeding
+  // the position export qualify for the CPU/NEON affine-MVP cull transform?
+  // Unlike is_affine_mvp_candidate() (whole-shader), this ignores the color/UV
+  // path - a shader whose position is a clean constant-matrix transform of a
+  // vertex-fetched input qualifies even when its lighting/fog path uses rsq/rcp.
+  // Computed during AnalyzeUcode by component-precise taint propagation over the
+  // position export's backward slice; requires straight-line control flow (no
+  // loop/jump/call) for the linear taint pass to be sound. This is the instrument
+  // that actually sizes the CPU/NEON cull's reach on a title.
+  bool is_position_affine_mvp_candidate() const {
+    return type() == xenos::ShaderType::kVertex && position_export_written_ &&
+           !position_slice_tainted_ && !uses_control_flow_loop_ &&
+           !uses_subroutine_or_jump_;
+  }
+
   // Whether each interpolator is written on any execution path.
   uint32_t writes_interpolators() const { return writes_interpolators_; }
 
@@ -1075,6 +1090,15 @@ class Shader {
   // For is_affine_mvp_candidate() (read-only cull-feasibility classifier).
   bool uses_control_flow_loop_ = false;
   bool uses_non_affine_mvp_alu_ = false;
+  // For is_position_affine_mvp_candidate() (position-export-slice classifier).
+  // slice_reg_taint_ is transient AnalyzeUcode scratch: per-GPR [0-63], low 4
+  // bits = per-component (xyzw) "tainted by a non-affine-MVP op or input" flag.
+  // The two result bools are the computed outcome. uses_subroutine_or_jump_ bails
+  // the slice analysis (linear taint pass is only sound for straight-line code).
+  uint8_t slice_reg_taint_[64] = {};
+  bool position_export_written_ = false;
+  bool position_slice_tainted_ = false;
+  bool uses_subroutine_or_jump_ = false;
   bool writes_depth_ = false;
 
   // Memory export eM write info for each control flow instruction, if there are
@@ -1112,6 +1136,14 @@ class Shader {
   void GatherFetchResultInformation(const InstructionResult& result);
   void GatherAluResultInformation(const InstructionResult& result,
                                   uint32_t exec_cf_index);
+
+  // Position-export-slice taint helpers (see is_position_affine_mvp_candidate).
+  // Read-only analysis: no geometry/output is affected.
+  bool PositionSliceOperandTainted(const InstructionOperand& operand) const;
+  void PositionSliceApplyResult(const InstructionResult& result,
+                                bool value_tainted);
+  void PositionSliceMarkFetchResult(const InstructionResult& result,
+                                    bool tainted);
 };
 
 }  // namespace gpu
