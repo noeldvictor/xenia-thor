@@ -844,6 +844,45 @@ DrawExtentEstimator::ValidateAffinePositionReplay(const Shader& vertex_shader) {
                            : AffineValidateStatus::kNonAffine;
 }
 
+// Decode a vertex's position-attribute input (xyz) for the fast replay, matching
+// ShaderInterpreter::ExecuteVertexFetchInstruction. Used for BOTH the M-recovery
+// basis and the per-vertex apply, so the recovered M is self-consistent with the
+// decode (never relies on the interpreter's leaf register, which the color path
+// may overwrite).
+static void DecodeFastInput(const DrawExtentEstimator::FastAffineReplay& fr,
+                            const uint32_t* membase, uint32_t vertex_index,
+                            float out_p[3]) {
+  uint32_t addr = fr.stride_dwords * vertex_index + fr.base_dwords +
+                  uint32_t(fr.offset_dwords);
+  out_p[0] = out_p[1] = out_p[2] = 0.0f;
+  if (fr.format == xenos::VertexFormat::k_16_16_16_16_FLOAT ||
+      fr.format == xenos::VertexFormat::k_16_16_FLOAT) {
+    if (addr < fr.end_dwords) {
+      uint32_t d = xenos::GpuSwap(membase[addr], fr.endian);
+      out_p[0] = xe::xenos_half_to_float(uint16_t(d));
+      out_p[1] = xe::xenos_half_to_float(uint16_t(d >> 16));
+    }
+    if (fr.format == xenos::VertexFormat::k_16_16_16_16_FLOAT &&
+        addr + 1u < fr.end_dwords) {
+      uint32_t d = xenos::GpuSwap(membase[addr + 1u], fr.endian);
+      out_p[2] = xe::xenos_half_to_float(uint16_t(d));
+    }
+  } else {
+    if (addr < fr.end_dwords) {
+      uint32_t d = xenos::GpuSwap(membase[addr], fr.endian);
+      std::memcpy(&out_p[0], &d, sizeof(float));
+    }
+    if (addr + 1u < fr.end_dwords) {
+      uint32_t d = xenos::GpuSwap(membase[addr + 1u], fr.endian);
+      std::memcpy(&out_p[1], &d, sizeof(float));
+    }
+    if (addr + 2u < fr.end_dwords) {
+      uint32_t d = xenos::GpuSwap(membase[addr + 2u], fr.endian);
+      std::memcpy(&out_p[2], &d, sizeof(float));
+    }
+  }
+}
+
 bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
                                                 FastAffineReplay& out) {
   // 1. The position slice's single register leaf input.
@@ -957,6 +996,8 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
     return false;
   }
 
+  const uint32_t* membase =
+      reinterpret_cast<const uint32_t*>(memory_.physical_membase());
   shader_interpreter_.SetShader(vertex_shader);
   PositionExportSink sink;
   shader_interpreter_.SetExportSink(&sink);
@@ -986,8 +1027,12 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
         !sink.position_w().has_value()) {
       continue;
     }
-    const float* p = &shader_interpreter_.temp_registers()[leaf * 4];
-    double pv[4] = {p[0], p[1], p[2], 1.0};
+    // Decode the input the SAME way the apply will (not via the interpreter's leaf
+    // register, which the color path may have overwritten by now) so M is fit and
+    // applied consistently.
+    float pf[3];
+    DecodeFastInput(out, membase, vertex_index, pf);
+    double pv[4] = {pf[0], pf[1], pf[2], 1.0};
     double clip[4] = {
         sink.position_x().value(), sink.position_y().value(),
         sink.position_z().has_value() ? sink.position_z().value() : 0.0f,
@@ -1171,44 +1216,13 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
         std::min(max_index,
                  std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
     if (fast) {
-      uint32_t addr = fast_replay.stride_dwords * vertex_index +
-                      fast_replay.base_dwords +
-                      uint32_t(fast_replay.offset_dwords);
-      float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f;
-      if (fast_replay.format == xenos::VertexFormat::k_16_16_16_16_FLOAT ||
-          fast_replay.format == xenos::VertexFormat::k_16_16_FLOAT) {
-        // Half-float position (matches ShaderInterpreter's unpack): each dword
-        // holds two halves after the 32-bit GpuSwap.
-        if (addr < fast_replay.end_dwords) {
-          uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
-          p0 = xe::xenos_half_to_float(uint16_t(d));
-          p1 = xe::xenos_half_to_float(uint16_t(d >> 16));
-        }
-        if (fast_replay.format == xenos::VertexFormat::k_16_16_16_16_FLOAT &&
-            addr + 1u < fast_replay.end_dwords) {
-          uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
-          p2 = xe::xenos_half_to_float(uint16_t(d));
-        }
-      } else {
-        // k_32_32_32_FLOAT / k_32_32_32_32_FLOAT: three raw floats.
-        if (addr < fast_replay.end_dwords) {
-          uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
-          std::memcpy(&p0, &d, sizeof(float));
-        }
-        if (addr + 1u < fast_replay.end_dwords) {
-          uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
-          std::memcpy(&p1, &d, sizeof(float));
-        }
-        if (addr + 2u < fast_replay.end_dwords) {
-          uint32_t d = xenos::GpuSwap(membase[addr + 2u], fast_replay.endian);
-          std::memcpy(&p2, &d, sizeof(float));
-        }
-      }
+      float p[3];
+      DecodeFastInput(fast_replay, membase, vertex_index, p);
       const double(&m)[4][4] = fast_replay.m;
-      out.x = float(m[0][0] * p0 + m[0][1] * p1 + m[0][2] * p2 + m[0][3]);
-      out.y = float(m[1][0] * p0 + m[1][1] * p1 + m[1][2] * p2 + m[1][3]);
-      out.z = float(m[2][0] * p0 + m[2][1] * p1 + m[2][2] * p2 + m[2][3]);
-      out.w = float(m[3][0] * p0 + m[3][1] * p1 + m[3][2] * p2 + m[3][3]);
+      out.x = float(m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2] + m[0][3]);
+      out.y = float(m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2] + m[1][3]);
+      out.z = float(m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + m[2][3]);
+      out.w = float(m[3][0] * p[0] + m[3][1] * p[1] + m[3][2] * p[2] + m[3][3]);
       out.valid = true;
       continue;
     }
