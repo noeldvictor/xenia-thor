@@ -1997,6 +1997,40 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
                                       eps));
           }
           cond = any_nonzero;
+        } else if (probe == 6 && buffers_shared_memory_ != spv::NoResult) {
+          // probe == 6: read shared-memory binding 0 DIRECTLY (constant array
+          // index 0, no OpSwitch) at a per-vertex spread dword address; light up
+          // if nonzero. Discriminates "the storage buffer itself reads zero on
+          // Turnip" (black - upload/binding/data) from "only the multi-binding
+          // OpSwitch+OpPhi load is miscompiled" (magenta - binding 0 reads fine).
+          spv::Id vid_u = builder_->createUnaryOp(spv::OpBitcast, type_uint_,
+                                                  vid);
+          // idx = (vid << 10) & (2^25 - 1): spread reads across the first 128 MB
+          // window so a heavy scene's guest RAM (mostly nonzero) is sampled.
+          spv::Id idx_u = builder_->createBinOp(
+              spv::OpBitwiseAnd, type_uint_,
+              builder_->createBinOp(spv::OpShiftLeftLogical, type_uint_, vid_u,
+                                    builder_->makeUintConstant(10)),
+              builder_->makeUintConstant((uint32_t(1) << 25) - 1));
+          spv::Id idx_int =
+              builder_->createUnaryOp(spv::OpBitcast, type_int_, idx_u);
+          id_vector_temp_.clear();
+          if (GetSharedMemoryStorageBufferCountLog2()) {
+            // Multi-binding: index array element 0.
+            id_vector_temp_.push_back(const_int_0_);
+          }
+          id_vector_temp_.push_back(const_int_0_);  // SSBO struct member 0.
+          id_vector_temp_.push_back(idx_int);
+          spv::StorageClass sm_sc =
+              features_.spirv_version >= spv::Spv_1_3
+                  ? spv::StorageClassStorageBuffer
+                  : spv::StorageClassUniform;
+          spv::Id sm_val = builder_->createLoad(
+              builder_->createAccessChain(sm_sc, buffers_shared_memory_,
+                                          id_vector_temp_),
+              spv::NoPrecision);
+          cond = builder_->createBinOp(spv::OpINotEqual, type_bool_, sm_val,
+                                       const_uint_0_);
         } else {
           // probe == 4: finite (not NaN, not Inf) and not all-zero.
           cond = builder_->createBinOp(

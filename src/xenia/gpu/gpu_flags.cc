@@ -291,8 +291,11 @@ DEFINE_int32(spirv_debug_position_probe, 0,
              "5 = only if xenia's own system-constant uniform (ndc_scale, always "
              "nonzero for a real draw) reads nonzero - discriminates 'uniform "
              "buffers read zero' (black) from 'only vertex-fetch reads zero' "
-             "(magenta). Whichever probe lights up (color in the RT dump) names "
-             "the failure shape. Default 0.",
+             "(magenta). 6 = only if a DIRECT shared-memory binding-0 read (no "
+             "OpSwitch) is nonzero - discriminates 'the storage buffer reads "
+             "zero' (black) from 'only the multi-binding OpSwitch load is "
+             "miscompiled' (magenta). Whichever probe lights up (color in the RT "
+             "dump) names the failure shape. Default 0.",
              "GPU");
 DEFINE_bool(spirv_debug_identity_ndc, false,
             "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "
