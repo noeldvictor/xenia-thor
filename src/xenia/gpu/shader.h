@@ -982,6 +982,43 @@ class Shader {
            !uses_subroutine_or_jump_;
   }
 
+  // Why a vertex shader's position slice is NOT affine-MVP - the instrument that
+  // decides the CPU/NEON cull's true ceiling on a title (is the non-qualifying
+  // bulk skinning, which a skinning-aware kernel could still cull, or genuinely
+  // non-affine?). Control-flow disqualifiers take priority because they make the
+  // linear taint pass unsound (its slice reason can't be trusted under them).
+  enum class PositionMvpDisqualReason {
+    kQualifies,             // is_position_affine_mvp_candidate() == true
+    kNotVertexOrNoPosition,
+    kControlFlowLoop,
+    kSubroutineOrJump,
+    kDynamicAddressing,     // a0/aL-relative feeds position = skinning bone palette
+    kTextureFetch,          // vertex-texture fetch feeds position = displacement
+    kOther,                 // transcendental/predicate/other non-affine op
+  };
+  PositionMvpDisqualReason position_mvp_disqual_reason() const {
+    if (type() != xenos::ShaderType::kVertex || !position_export_written_) {
+      return PositionMvpDisqualReason::kNotVertexOrNoPosition;
+    }
+    if (uses_control_flow_loop_) {
+      return PositionMvpDisqualReason::kControlFlowLoop;
+    }
+    if (uses_subroutine_or_jump_) {
+      return PositionMvpDisqualReason::kSubroutineOrJump;
+    }
+    if (!position_slice_tainted_) {
+      return PositionMvpDisqualReason::kQualifies;
+    }
+    switch (position_disq_reason_) {
+      case kPositionSliceDynamic:
+        return PositionMvpDisqualReason::kDynamicAddressing;
+      case kPositionSliceTexfetch:
+        return PositionMvpDisqualReason::kTextureFetch;
+      default:
+        return PositionMvpDisqualReason::kOther;
+    }
+  }
+
   // Whether each interpolator is written on any execution path.
   uint32_t writes_interpolators() const { return writes_interpolators_; }
 
@@ -1090,12 +1127,19 @@ class Shader {
   // For is_affine_mvp_candidate() (read-only cull-feasibility classifier).
   bool uses_control_flow_loop_ = false;
   bool uses_non_affine_mvp_alu_ = false;
-  // For is_position_affine_mvp_candidate() (position-export-slice classifier).
-  // slice_reg_taint_ is transient AnalyzeUcode scratch: per-GPR [0-63], low 4
-  // bits = per-component (xyzw) "tainted by a non-affine-MVP op or input" flag.
-  // The two result bools are the computed outcome. uses_subroutine_or_jump_ bails
-  // the slice analysis (linear taint pass is only sound for straight-line code).
+  // For is_position_affine_mvp_candidate() / position_mvp_disqual_reason()
+  // (position-export-slice classifier). slice_reg_taint_ is transient AnalyzeUcode
+  // scratch: per-GPR [0-63], 2 bits per component (xyzw) holding a taint REASON
+  // priority code (0 clean, see kPositionSlice* below; higher wins on merge so the
+  // dominant cause survives). position_disq_reason_ is the dominant reason a tainted
+  // value reached the position export. uses_subroutine_or_jump_ bails the slice
+  // analysis (linear taint pass is only sound for straight-line code).
+  static constexpr uint8_t kPositionSliceClean = 0;
+  static constexpr uint8_t kPositionSliceOther = 1;
+  static constexpr uint8_t kPositionSliceTexfetch = 2;
+  static constexpr uint8_t kPositionSliceDynamic = 3;
   uint8_t slice_reg_taint_[64] = {};
+  uint8_t position_disq_reason_ = kPositionSliceClean;
   bool position_export_written_ = false;
   bool position_slice_tainted_ = false;
   bool uses_subroutine_or_jump_ = false;
@@ -1138,12 +1182,13 @@ class Shader {
                                   uint32_t exec_cf_index);
 
   // Position-export-slice taint helpers (see is_position_affine_mvp_candidate).
-  // Read-only analysis: no geometry/output is affected.
-  bool PositionSliceOperandTainted(const InstructionOperand& operand) const;
+  // Read-only analysis: no geometry/output is affected. Operate on taint REASON
+  // priority codes (kPositionSlice*), not plain booleans.
+  uint8_t PositionSliceOperandReason(const InstructionOperand& operand) const;
   void PositionSliceApplyResult(const InstructionResult& result,
-                                bool value_tainted);
+                                uint8_t value_reason);
   void PositionSliceMarkFetchResult(const InstructionResult& result,
-                                    bool tainted);
+                                    uint8_t reason);
 };
 
 }  // namespace gpu

@@ -852,6 +852,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Shader::is_position_affine_mvp_candidate.
   uint32_t draw_outcomes_affine_mvp_pos_draws_ = 0;
   uint64_t draw_outcomes_affine_mvp_pos_vertices_ = 0;
+  // Step 0c: for the NON-qualifying draws, why their position slice failed (verts
+  // per reason) - decides whether the cull's unreachable bulk is skinning (a0,
+  // liftable by a skinning-aware kernel) or genuinely non-affine. See
+  // Shader::position_mvp_disqual_reason.
+  uint64_t draw_outcomes_pos_disq_a0_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_loop_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_jumpcall_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_texfetch_verts_ = 0;
+  uint64_t draw_outcomes_pos_disq_other_verts_ = 0;
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

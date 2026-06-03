@@ -405,7 +405,7 @@ void Shader::GatherVertexFetchInformation(
   GatherFetchResultInformation(fetch_instr.result);
   // A vertex fetch is a clean MVP input (the position/attribute the cull would
   // re-fetch and transform) - clear taint on the components it writes.
-  PositionSliceMarkFetchResult(fetch_instr.result, /*tainted=*/false);
+  PositionSliceMarkFetchResult(fetch_instr.result, kPositionSliceClean);
 
   // Mini-fetches inherit the operands from full fetches.
   if (!fetch_instr.is_mini_fetch) {
@@ -474,7 +474,7 @@ void Shader::GatherTextureFetchInformation(const TextureFetchInstruction& op,
   GatherFetchResultInformation(binding.fetch_instr.result);
   // A texture fetch feeding the position slice = vertex-texture displacement,
   // which is not an affine MVP - taint the components it writes.
-  PositionSliceMarkFetchResult(binding.fetch_instr.result, /*tainted=*/true);
+  PositionSliceMarkFetchResult(binding.fetch_instr.result, kPositionSliceTexfetch);
   for (size_t i = 0; i < binding.fetch_instr.operand_count; ++i) {
     GatherOperandInformation(binding.fetch_instr.operands[i]);
   }
@@ -547,40 +547,53 @@ void Shader::GatherAluInstructionInformation(
     default:
       break;
   }
-  const bool vector_op_non_affine =
-      (ucode::GetAluVectorOpcodeInfo(op.vector_opcode()).changed_state &
-       (ucode::kAluOpChangedStateAddressRegister |
-        ucode::kAluOpChangedStatePredicate)) != 0;
-  const bool scalar_op_non_affine =
-      scalar_transcendental ||
-      (ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state &
-       (ucode::kAluOpChangedStateAddressRegister |
-        ucode::kAluOpChangedStatePredicate)) != 0;
-  // Whole-shader flag (Shader::is_affine_mvp_candidate).
-  if (vector_op_non_affine || scalar_op_non_affine) {
+  // Intrinsic per-slot reason: a0-changing op = dynamic (skinning machinery),
+  // predicate-changing/transcendental = other.
+  const uint32_t vector_changed =
+      ucode::GetAluVectorOpcodeInfo(op.vector_opcode()).changed_state;
+  const uint32_t scalar_changed =
+      ucode::GetAluScalarOpcodeInfo(op.scalar_opcode()).changed_state;
+  uint8_t vector_op_reason = kPositionSliceClean;
+  if (vector_changed & ucode::kAluOpChangedStateAddressRegister) {
+    vector_op_reason = std::max(vector_op_reason, kPositionSliceDynamic);
+  }
+  if (vector_changed & ucode::kAluOpChangedStatePredicate) {
+    vector_op_reason = std::max(vector_op_reason, kPositionSliceOther);
+  }
+  uint8_t scalar_op_reason = kPositionSliceClean;
+  if (scalar_transcendental) {
+    scalar_op_reason = std::max(scalar_op_reason, kPositionSliceOther);
+  }
+  if (scalar_changed & ucode::kAluOpChangedStateAddressRegister) {
+    scalar_op_reason = std::max(scalar_op_reason, kPositionSliceDynamic);
+  }
+  if (scalar_changed & ucode::kAluOpChangedStatePredicate) {
+    scalar_op_reason = std::max(scalar_op_reason, kPositionSliceOther);
+  }
+  // Whole-shader flag (Shader::is_affine_mvp_candidate) - op-level non-affine only.
+  if (vector_op_reason != kPositionSliceClean ||
+      scalar_op_reason != kPositionSliceClean) {
     uses_non_affine_mvp_alu_ = true;
   }
 
-  // Position-export-slice taint propagation (Shader::is_position_affine_mvp_candidate),
-  // read-only: a result register's component is "tainted" if its op is non-affine
-  // or any source it reads is already tainted. Vector and scalar results are
-  // independent. If a tainted, non-constant value reaches the position export, the
-  // slice is disqualified.
+  // Position-export-slice taint propagation (Shader::is_position_affine_mvp_candidate
+  // / position_mvp_disqual_reason), read-only: a result register component's taint
+  // reason is the highest-priority of its op's intrinsic reason and the reasons of
+  // the sources it reads. Vector and scalar results are independent. If a tainted,
+  // non-constant value reaches the position export, the slice is disqualified.
   {
-    bool vector_src_tainted = false;
+    uint8_t vector_reason = vector_op_reason;
     for (size_t i = 0; i < instr.vector_operand_count; ++i) {
-      vector_src_tainted |=
-          PositionSliceOperandTainted(instr.vector_operands[i]);
+      vector_reason = std::max(
+          vector_reason, PositionSliceOperandReason(instr.vector_operands[i]));
     }
-    bool scalar_src_tainted = false;
+    uint8_t scalar_reason = scalar_op_reason;
     for (size_t i = 0; i < instr.scalar_operand_count; ++i) {
-      scalar_src_tainted |=
-          PositionSliceOperandTainted(instr.scalar_operands[i]);
+      scalar_reason = std::max(
+          scalar_reason, PositionSliceOperandReason(instr.scalar_operands[i]));
     }
-    PositionSliceApplyResult(instr.vector_and_constant_result,
-                             vector_op_non_affine || vector_src_tainted);
-    PositionSliceApplyResult(instr.scalar_result,
-                             scalar_op_non_affine || scalar_src_tainted);
+    PositionSliceApplyResult(instr.vector_and_constant_result, vector_reason);
+    PositionSliceApplyResult(instr.scalar_result, scalar_reason);
   }
 
   GatherAluResultInformation(instr.vector_and_constant_result, exec_cf_index);
@@ -613,42 +626,54 @@ void Shader::GatherAluInstructionInformation(
   }
 }
 
-bool Shader::PositionSliceOperandTainted(
+// Per-component taint REASON helpers over slice_reg_taint_ (2 bits per xyzw lane).
+static inline uint8_t GetSliceComponentReason(uint8_t reg, uint32_t lane) {
+  return uint8_t((reg >> (2 * lane)) & 0x3);
+}
+static inline void SetSliceComponentReason(uint8_t& reg, uint32_t lane,
+                                           uint8_t reason) {
+  reg = uint8_t((reg & ~(uint8_t(0x3) << (2 * lane))) |
+                (uint8_t(reason & 0x3) << (2 * lane)));
+}
+
+uint8_t Shader::PositionSliceOperandReason(
     const InstructionOperand& operand) const {
   if (operand.storage_source != InstructionStorageSource::kRegister) {
-    // Float/bool/loop/fetch constants are clean MVP inputs - UNLESS the constant
-    // is addressed relative to a0/aL, which makes the index dynamic (not a fixed
-    // matrix), so taint conservatively.
+    // Float/bool/loop/fetch constants are clean MVP inputs - UNLESS addressed
+    // relative to a0/aL, making the index dynamic (the bone-matrix palette of a
+    // skinned vertex), which is the skinning signature.
     return operand.storage_addressing_mode !=
-           InstructionStorageAddressingMode::kAbsolute;
+                   InstructionStorageAddressingMode::kAbsolute
+               ? kPositionSliceDynamic
+               : kPositionSliceClean;
   }
   if (operand.storage_addressing_mode !=
       InstructionStorageAddressingMode::kAbsolute) {
     // Dynamically-addressed register read - not a statically-known slice element.
-    return true;
+    return kPositionSliceDynamic;
   }
   if (operand.storage_index >= 64) {
-    return true;  // Outside the tracked register file - conservative.
+    return kPositionSliceOther;  // Outside the tracked register file.
   }
   uint8_t reg_taint = slice_reg_taint_[operand.storage_index];
   if (!reg_taint) {
-    return false;
+    return kPositionSliceClean;
   }
-  // Tainted iff any component this operand actually reads is tainted.
+  // The operand's reason is the highest-priority reason among the components it
+  // actually reads.
+  uint8_t reason = kPositionSliceClean;
   for (uint32_t i = 0; i < operand.component_count; ++i) {
     SwizzleSource source = operand.GetComponent(i);
     if (source >= SwizzleSource::kX && source <= SwizzleSource::kW) {
       uint32_t lane = uint32_t(source) - uint32_t(SwizzleSource::kX);
-      if (reg_taint & (uint8_t(1) << lane)) {
-        return true;
-      }
+      reason = std::max(reason, GetSliceComponentReason(reg_taint, lane));
     }
   }
-  return false;
+  return reason;
 }
 
 void Shader::PositionSliceApplyResult(const InstructionResult& result,
-                                      bool value_tainted) {
+                                      uint8_t value_reason) {
   switch (result.storage_target) {
     case InstructionStorageTarget::kRegister: {
       if (result.storage_addressing_mode !=
@@ -658,34 +683,34 @@ void Shader::PositionSliceApplyResult(const InstructionResult& result,
         // the value, so give up on the slice (only happens with aL/loops, which
         // already disqualify, but stay safe).
         position_slice_tainted_ = true;
+        position_disq_reason_ = std::max(position_disq_reason_, value_reason);
         return;
       }
       uint32_t write_mask = result.GetUsedWriteMask();
       uint8_t& reg_taint = slice_reg_taint_[result.storage_index];
       for (uint32_t i = 0; i < 4; ++i) {
         if (!(write_mask & (uint32_t(1) << i))) {
-          continue;  // Component not written - retains its prior taint.
+          continue;  // Component not written - retains its prior reason.
         }
         SwizzleSource component = result.components[i];
         // A constant (0/1) destination component is clean; a computed one carries
-        // the op's taint.
-        bool component_tainted =
+        // the op's reason.
+        uint8_t component_reason =
             (component >= SwizzleSource::kX && component <= SwizzleSource::kW)
-                ? value_tainted
-                : false;
-        if (component_tainted) {
-          reg_taint |= uint8_t(uint32_t(1) << i);
-        } else {
-          reg_taint &= uint8_t(~(uint32_t(1) << i));
-        }
+                ? value_reason
+                : kPositionSliceClean;
+        SetSliceComponentReason(reg_taint, i, component_reason);
       }
       break;
     }
     case InstructionStorageTarget::kPosition: {
       position_export_written_ = true;
-      // A tainted, non-constant value reaching gl_Position disqualifies the slice.
-      if (value_tainted && result.GetUsedResultComponents() != 0) {
+      // A tainted, non-constant value reaching gl_Position disqualifies the slice;
+      // record the dominant reason.
+      if (value_reason != kPositionSliceClean &&
+          result.GetUsedResultComponents() != 0) {
         position_slice_tainted_ = true;
+        position_disq_reason_ = std::max(position_disq_reason_, value_reason);
       }
       break;
     }
@@ -695,7 +720,7 @@ void Shader::PositionSliceApplyResult(const InstructionResult& result,
 }
 
 void Shader::PositionSliceMarkFetchResult(const InstructionResult& result,
-                                          bool tainted) {
+                                          uint8_t reason) {
   if (result.storage_target != InstructionStorageTarget::kRegister ||
       result.storage_addressing_mode !=
           InstructionStorageAddressingMode::kAbsolute ||
@@ -708,11 +733,7 @@ void Shader::PositionSliceMarkFetchResult(const InstructionResult& result,
     if (!(write_mask & (uint32_t(1) << i))) {
       continue;
     }
-    if (tainted) {
-      reg_taint |= uint8_t(uint32_t(1) << i);
-    } else {
-      reg_taint &= uint8_t(~(uint32_t(1) << i));
-    }
+    SetSliceComponentReason(reg_taint, i, reason);
   }
 }
 

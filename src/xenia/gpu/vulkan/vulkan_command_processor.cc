@@ -1969,7 +1969,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
-        "affine_mvp_pos_draws={} affine_mvp_pos_verts={}",
+        "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
+        "pos_disq_verts[a0={} loop={} jumpcall={} tex={} other={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2023,13 +2024,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
         draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
-        draw_outcomes_affine_mvp_pos_vertices_);
+        draw_outcomes_affine_mvp_pos_vertices_, draw_outcomes_pos_disq_a0_verts_,
+        draw_outcomes_pos_disq_loop_verts_,
+        draw_outcomes_pos_disq_jumpcall_verts_,
+        draw_outcomes_pos_disq_texfetch_verts_,
+        draw_outcomes_pos_disq_other_verts_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
+    draw_outcomes_pos_disq_a0_verts_ = 0;
+    draw_outcomes_pos_disq_loop_verts_ = 0;
+    draw_outcomes_pos_disq_jumpcall_verts_ = 0;
+    draw_outcomes_pos_disq_texfetch_verts_ = 0;
+    draw_outcomes_pos_disq_other_verts_ = 0;
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4273,6 +4283,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       ++draw_outcomes_affine_mvp_pos_draws_;
       draw_outcomes_affine_mvp_pos_vertices_ +=
           primitive_processing_result.host_draw_vertex_count;
+    } else {
+      // 0c: bucket the non-qualifying draw's verts by why its position slice
+      // failed - the number that decides the cull's true ceiling on this title.
+      uint32_t hv = primitive_processing_result.host_draw_vertex_count;
+      switch (vertex_shader->position_mvp_disqual_reason()) {
+        case Shader::PositionMvpDisqualReason::kDynamicAddressing:
+          draw_outcomes_pos_disq_a0_verts_ += hv;
+          break;
+        case Shader::PositionMvpDisqualReason::kControlFlowLoop:
+          draw_outcomes_pos_disq_loop_verts_ += hv;
+          break;
+        case Shader::PositionMvpDisqualReason::kSubroutineOrJump:
+          draw_outcomes_pos_disq_jumpcall_verts_ += hv;
+          break;
+        case Shader::PositionMvpDisqualReason::kTextureFetch:
+          draw_outcomes_pos_disq_texfetch_verts_ += hv;
+          break;
+        default:
+          draw_outcomes_pos_disq_other_verts_ += hv;
+          break;
+      }
     }
   }
   if (trace_draw_cpu) {
