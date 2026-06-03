@@ -67,6 +67,13 @@ DEFINE_string(
     "in-process driver dlopen so the Mesa Turnip driver reads it at init (e.g. "
     "'flushall', 'noubwc', 'sysmem'). Research/diagnostic A/B; default empty = unset.",
     "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_ir3_debug, "",
+    "When gpu_vulkan_driver=turnip: if non-empty, setenv(IR3_SHADER_DEBUG, this) before "
+    "the in-process driver dlopen so the Mesa ir3 shader compiler reads it (SEPARATE "
+    "from TU_DEBUG). For A/B-ing compiler behavior without a rebuild, e.g. 'nofp16' "
+    "(no fp16/mediump lowering), 'noopt', 'nocp', 'disasm'. Default empty = unset.",
+    "Vulkan");
 #endif
 
 namespace xe {
@@ -119,6 +126,17 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
       setenv("TU_DEBUG", cvars::gpu_vulkan_driver_debug.c_str(), /*overwrite=*/1);
       XELOGI("Turnip: set TU_DEBUG='{}' before driver load",
              cvars::gpu_vulkan_driver_debug);
+    }
+    // IR3_SHADER_DEBUG escape hatch: the ir3 shader compiler (same in-proc Turnip
+    // .so) reads this SEPARATE env var, not TU_DEBUG. Lets us A/B compiler flags
+    // without a rebuild - esp. 'nofp16' (disable fp16/mediump lowering, the classic
+    // cause of degenerate vertex positions from RelaxedPrecision-decorated math),
+    // 'noopt'/'nocp' (disable optimizer/copy-prop), 'disasm' (dump ir3). Default empty.
+    if (!cvars::gpu_vulkan_driver_ir3_debug.empty()) {
+      setenv("IR3_SHADER_DEBUG", cvars::gpu_vulkan_driver_ir3_debug.c_str(),
+             /*overwrite=*/1);
+      XELOGI("Turnip: set IR3_SHADER_DEBUG='{}' before driver load",
+             cvars::gpu_vulkan_driver_ir3_debug);
     }
     vulkan_instance->loader_ = adrenotools_open_libvulkan(
         RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,

@@ -10,7 +10,16 @@ param(
   [string]$DeviceSerial = "c3ca0370",
   [ValidateSet("turnip","system")][string]$Driver = "turnip",
   [int]$DurationSec = 150,
-  [string]$OutDir = "scratch\thor-debug"
+  [string]$OutDir = "scratch\thor-debug",
+  # Optional Turnip TU_DEBUG flags (set via the gpu_vulkan_driver_debug cvar),
+  # e.g. -TuDebug sysmem (force direct rendering, bypass GMEM tiling) or nolrz.
+  # Only meaningful with -Driver turnip. Tags the output files so a plain-turnip
+  # reference is not clobbered.
+  [string]$TuDebug = "",
+  # Optional Turnip ir3-compiler flags (set via gpu_vulkan_driver_ir3_debug =
+  # IR3_SHADER_DEBUG), e.g. -Ir3Debug nofp16 (disable fp16/mediump lowering),
+  # noopt, nocp. Only meaningful with -Driver turnip. Also tags the output files.
+  [string]$Ir3Debug = ""
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
@@ -38,12 +47,28 @@ if ($Driver -eq "turnip") {
 }
 $dumpArgs = "--ez vulkan_trace_dump_rt_image true --ez vulkan_trace_dump_depth_image true --ez vulkan_trace_edram_checksum true --ei vulkan_trace_edram_checksum_budget 9000 --ez vulkan_trace_draw_outcomes_per_frame true"
 
+# Optional Turnip TU_DEBUG / IR3_SHADER_DEBUG flags + output label so tagged runs
+# are saved apart from the plain reference.
+$dbgArgs = ""
+$label = $Driver
+if ($TuDebug) {
+  $dbgArgs += " --es gpu_vulkan_driver_debug $TuDebug"
+  $label += "_$($TuDebug -replace '[^A-Za-z0-9]','')"
+  Write-Output "TU_DEBUG=$TuDebug"
+}
+if ($Ir3Debug) {
+  $dbgArgs += " --es gpu_vulkan_driver_ir3_debug $Ir3Debug"
+  $label += "_ir3$($Ir3Debug -replace '[^A-Za-z0-9]','')"
+  Write-Output "IR3_SHADER_DEBUG=$Ir3Debug"
+}
+if ($dbgArgs) { Write-Output "label=$label" }
+
 # 2. Wake + clear log + launch.
 & $adb -s $DeviceSerial shell input keyevent KEYCODE_WAKEUP
 & $adb -s $DeviceSerial shell svc power stayon true
 & $adb -s $DeviceSerial logcat -G 64M
 & $adb -s $DeviceSerial logcat -c
-$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true $dumpArgs --es target '$iso'"
+$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true $dumpArgs --es target '$iso'"
 & $adb -s $DeviceSerial shell $cmd | Out-Null
 
 # 3. Watchdog (64C gate, poll 10s).
@@ -57,8 +82,8 @@ for ($t = 10; $t -le $DurationSec; $t += 10) {
 }
 
 # 4. Capture logcat (text, utf8) + screenshot (binary via /sdcard+pull), then stop.
-$log = Join-Path $OutDir "$($Driver)_logcat.txt"
-$png = Join-Path $OutDir "$($Driver)_frame.png"
+$log = Join-Path $OutDir "$($label)_logcat.txt"
+$png = Join-Path $OutDir "$($label)_frame.png"
 if (-not $hot) {
   (& $adb -s $DeviceSerial logcat -d) | Out-File -Encoding utf8 $log
   & $adb -s $DeviceSerial shell screencap -p /sdcard/thor_gpu_capture.png
