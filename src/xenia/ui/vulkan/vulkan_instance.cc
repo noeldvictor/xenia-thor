@@ -97,10 +97,18 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   if (cvars::gpu_vulkan_driver == "turnip" &&
       !cvars::gpu_vulkan_driver_path.empty() &&
       !cvars::gpu_vulkan_driver_hooks_path.empty()) {
+    // adrenotools forms the driver path as customDriverDir + customDriverName with
+    // NO separator (third_party/adrenotools/src/driver.cpp), so the dir MUST end in
+    // a slash or the stat() fails and the load silently returns null. Normalize it
+    // here so a user-supplied path without the trailing slash still works.
+    std::string driver_dir = cvars::gpu_vulkan_driver_path;
+    if (!driver_dir.empty() && driver_dir.back() != '/') {
+      driver_dir.push_back('/');
+    }
     vulkan_instance->loader_ = adrenotools_open_libvulkan(
         RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
         /*tmpLibDir=*/nullptr, cvars::gpu_vulkan_driver_hooks_path.c_str(),
-        cvars::gpu_vulkan_driver_path.c_str(),
+        driver_dir.c_str(),
         cvars::gpu_vulkan_driver_lib.c_str(), /*fileRedirectDir=*/nullptr,
         /*userMappingHandle=*/nullptr);
     if (vulkan_instance->loader_) {
