@@ -1985,7 +1985,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "replay[affine={} nonaffine={} unsup={} maxerr_milli={}] "
         "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})] "
         "multi_lc[2={} 3={} 4={} 5p={}] "
-        "wholecull[draws={} elig={} verts={}]",
+        "wholecull[draws={} elig={} verts={}] "
+        "whole_skip[draws={} verts={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2083,12 +2084,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_cull_multi_lc_[5] + draw_outcomes_cull_multi_lc_[6] +
             draw_outcomes_cull_multi_lc_[7],
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
-        draw_outcomes_wholecull_verts_);
+        draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
+        draw_outcomes_cull_whole_skip_verts_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_wholecull_draws_ = 0;
     draw_outcomes_wholecull_elig_ = 0;
     draw_outcomes_wholecull_verts_ = 0;
+    draw_outcomes_cull_whole_skip_ = 0;
+    draw_outcomes_cull_whole_skip_verts_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
@@ -4241,7 +4245,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           const uint32_t culled_count =
               cull_extent_estimator_->culled_index_count();
           if (culled_count == 0) {
-            // Every triangle dropped - draw nothing.
+            // Every triangle dropped - draw nothing (the GPU never bins it). This
+            // is the WHOLE-DRAW cull: a fully off-screen draw, skipped before
+            // binning, saving its full per-draw cost. Count it to size the lever.
+            ++draw_outcomes_cull_whole_skip_;
+            draw_outcomes_cull_whole_skip_verts_ += idx_count;
             draw_emitted = true;
           } else {
             const size_t culled_bytes =

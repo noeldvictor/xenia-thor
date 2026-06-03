@@ -852,6 +852,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_wholecull_draws_ = 0;
   uint32_t draw_outcomes_wholecull_elig_ = 0;
   uint64_t draw_outcomes_wholecull_verts_ = 0;
+  // Whole-draw skips actually performed in the gpu_cull_compaction path: draws
+  // whose cull left 0 indices (fully off-screen) and were not submitted - the
+  // real per-draw binning saving. + the vertices thereby spared from binning.
+  uint32_t draw_outcomes_cull_whole_skip_ = 0;
+  uint64_t draw_outcomes_cull_whole_skip_verts_ = 0;
   // Lever 2 Step 0 (vulkan_trace_draw_outcomes_per_frame): rendered draws/verts
   // whose position shader qualifies for the CPU/NEON affine-MVP cull transform
   // (read-only feasibility classifier, see Shader::is_affine_mvp_candidate). A
