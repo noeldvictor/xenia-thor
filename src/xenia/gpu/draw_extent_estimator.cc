@@ -16,6 +16,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
 #include "xenia/gpu/gpu_flags.h"
@@ -894,9 +895,12 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
       }
       xenos::VertexFormat fmt = fi.attributes.data_format;
       if (fmt != xenos::VertexFormat::k_32_32_32_FLOAT &&
-          fmt != xenos::VertexFormat::k_32_32_32_32_FLOAT) {
+          fmt != xenos::VertexFormat::k_32_32_32_32_FLOAT &&
+          fmt != xenos::VertexFormat::k_16_16_16_16_FLOAT &&
+          fmt != xenos::VertexFormat::k_16_16_FLOAT) {
         return false;  // unsupported position format for the fast path
       }
+      out.format = fmt;
       xenos::xe_gpu_vertex_fetch_t fc = regs.GetVertexFetch(binding.fetch_constant);
       out.base_dwords = fc.address;
       out.end_dwords = fc.address + fc.size;
@@ -946,7 +950,9 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
   uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
   uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
   uint32_t num_indices = vgt_draw_initiator.num_indices;
-  const uint32_t kSamples = 16;
+  // 6 samples: 4 independent points exactly determine an affine M; 6 (spread +
+  // regularized) for robustness against a degenerate/coplanar basis.
+  const uint32_t kSamples = 6;
   if (num_indices < 5) {
     return false;
   }
@@ -956,6 +962,8 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
   shader_interpreter_.SetExportSink(&sink);
   double XtX[4][4] = {};
   double Xty[4][4] = {};
+  double samp_p[8][4];
+  double samp_clip[8][4];
   uint32_t valid_samples = 0;
   for (uint32_t s = 0; s < kSamples; ++s) {
     // Spread the basis across the draw to span the geometry (avoids a degenerate,
@@ -991,6 +999,8 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
       for (int k = 0; k < 4; ++k) {
         Xty[a][k] += pv[a] * clip[k];
       }
+      samp_p[valid_samples][a] = pv[a];
+      samp_clip[valid_samples][a] = clip[a];
     }
     ++valid_samples;
   }
@@ -1012,6 +1022,24 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
         v += inv[a][b] * Xty[b][k];
       }
       out.m[k][a] = v;
+    }
+  }
+  // Self-validate: M must reproduce the basis samples. If not (e.g. position
+  // depends on the input's 4th component or the format assumption is wrong), bail
+  // so the caller uses the exact interpreter path - never emit a wrong cull.
+  for (uint32_t s = 0; s < valid_samples; ++s) {
+    for (int k = 0; k < 4; ++k) {
+      double pred = out.m[k][0] * samp_p[s][0] + out.m[k][1] * samp_p[s][1] +
+                    out.m[k][2] * samp_p[s][2] + out.m[k][3] * samp_p[s][3];
+      double err = pred - samp_clip[s][k];
+      if (err < 0.0) {
+        err = -err;
+      }
+      double denom =
+          (samp_clip[s][k] < 0.0 ? -samp_clip[s][k] : samp_clip[s][k]) + 1e-3;
+      if (err / denom > 1.0e-2) {
+        return false;
+      }
     }
   }
   return true;
@@ -1147,17 +1175,34 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
                       fast_replay.base_dwords +
                       uint32_t(fast_replay.offset_dwords);
       float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f;
-      if (addr < fast_replay.end_dwords) {
-        uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
-        std::memcpy(&p0, &d, sizeof(float));
-      }
-      if (addr + 1u < fast_replay.end_dwords) {
-        uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
-        std::memcpy(&p1, &d, sizeof(float));
-      }
-      if (addr + 2u < fast_replay.end_dwords) {
-        uint32_t d = xenos::GpuSwap(membase[addr + 2u], fast_replay.endian);
-        std::memcpy(&p2, &d, sizeof(float));
+      if (fast_replay.format == xenos::VertexFormat::k_16_16_16_16_FLOAT ||
+          fast_replay.format == xenos::VertexFormat::k_16_16_FLOAT) {
+        // Half-float position (matches ShaderInterpreter's unpack): each dword
+        // holds two halves after the 32-bit GpuSwap.
+        if (addr < fast_replay.end_dwords) {
+          uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
+          p0 = xe::xenos_half_to_float(uint16_t(d));
+          p1 = xe::xenos_half_to_float(uint16_t(d >> 16));
+        }
+        if (fast_replay.format == xenos::VertexFormat::k_16_16_16_16_FLOAT &&
+            addr + 1u < fast_replay.end_dwords) {
+          uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
+          p2 = xe::xenos_half_to_float(uint16_t(d));
+        }
+      } else {
+        // k_32_32_32_FLOAT / k_32_32_32_32_FLOAT: three raw floats.
+        if (addr < fast_replay.end_dwords) {
+          uint32_t d = xenos::GpuSwap(membase[addr], fast_replay.endian);
+          std::memcpy(&p0, &d, sizeof(float));
+        }
+        if (addr + 1u < fast_replay.end_dwords) {
+          uint32_t d = xenos::GpuSwap(membase[addr + 1u], fast_replay.endian);
+          std::memcpy(&p1, &d, sizeof(float));
+        }
+        if (addr + 2u < fast_replay.end_dwords) {
+          uint32_t d = xenos::GpuSwap(membase[addr + 2u], fast_replay.endian);
+          std::memcpy(&p2, &d, sizeof(float));
+        }
       }
       const double(&m)[4][4] = fast_replay.m;
       out.x = float(m[0][0] * p0 + m[0][1] * p1 + m[0][2] * p2 + m[0][3]);

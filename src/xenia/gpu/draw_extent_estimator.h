@@ -85,6 +85,7 @@ class DrawExtentEstimator {
   // read) instead of the full ShaderInterpreter.
   struct FastAffineReplay {
     double m[4][4] = {};
+    xenos::VertexFormat format = xenos::VertexFormat::kUndefined;
     uint32_t base_dwords = 0;    // fetch constant base address, in dwords
     uint32_t end_dwords = 0;     // base + fetch constant size (bounds, in dwords)
     uint32_t stride_dwords = 0;  // per-vertex stride, in dwords
