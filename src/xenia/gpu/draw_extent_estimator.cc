@@ -386,6 +386,12 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
     const Shader& vertex_shader) {
   SCOPE_profile_cpu_f("gpu");
 
+  // Whole-draw frustum-cull potential (set before the return below); cleared here
+  // so the early-return (non-tri / non-DMA / vtx_xy_fmt / texfetch) paths leave
+  // the draw correctly marked not-eligible.
+  last_draw_whole_cullable_ = false;
+  last_draw_valid_verts_ = 0;
+
   const RegisterFile& regs = register_file_;
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
@@ -614,6 +620,38 @@ uint32_t DrawExtentEstimator::CountCullableTriangles(
       count_if_cullable(t * 3 + 0u, t * 3 + 1u, t * 3 + 2u, false);
     }
   }
+
+  // WHOLE-DRAW frustum-cull potential (read-only sizing of the whole-draw lever,
+  // which attacks the per-DRAW binning floor that per-triangle culling can't).
+  // CONSERVATIVE + unambiguous: the entire draw is invisible iff EVERY valid vert
+  // is behind the camera (w <= 0, the near/behind-eye half-space), OR every valid
+  // vert is in front (w > 0) AND all lie beyond the SAME X or Y clip plane. The Z
+  // planes are deliberately omitted (clip-Z convention ambiguity could over-cull);
+  // behind-camera + the 4 XY sides capture the dominant off-screen cases without
+  // risk of flagging a partially-visible draw.
+  uint32_t valid_verts = 0;
+  bool all_behind = true, all_front = true;
+  bool all_x_hi = true, all_x_lo = true, all_y_hi = true, all_y_lo = true;
+  for (const CullVertex& v : cull_vertices_scratch_) {
+    if (!v.valid) {
+      continue;
+    }
+    ++valid_verts;
+    if (v.w > 1.0e-6f) {
+      all_behind = false;
+    } else {
+      all_front = false;
+    }
+    if (!(v.x > v.w)) all_x_hi = false;
+    if (!(v.x < -v.w)) all_x_lo = false;
+    if (!(v.y > v.w)) all_y_hi = false;
+    if (!(v.y < -v.w)) all_y_lo = false;
+  }
+  last_draw_valid_verts_ = valid_verts;
+  last_draw_whole_cullable_ =
+      valid_verts > 0 &&
+      (all_behind ||
+       (all_front && (all_x_hi || all_x_lo || all_y_hi || all_y_lo)));
   return cullable;
 }
 

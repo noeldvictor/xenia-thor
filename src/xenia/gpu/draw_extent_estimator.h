@@ -121,6 +121,14 @@ class DrawExtentEstimator {
   // multi-input/skinned position. Lets the command processor bucket the multi
   // fallbacks to decide whether tightening the slice can recover them.
   uint32_t last_leaf_count() const { return setup_leaf_count_; }
+  // Whole-draw frustum-cull potential from the last CountCullableTriangles call:
+  // whether the ENTIRE draw is off-screen (all valid verts behind the camera, OR
+  // all beyond one XY clip plane) - such a draw could be dropped before the GPU
+  // bins it, saving its full per-draw cost. last_draw_valid_verts() is the count
+  // of replayed valid verts (0 = the draw was not eligible / not replayed).
+  // Read-only; sizes whole-draw culling.
+  bool last_draw_whole_cullable() const { return last_draw_whole_cullable_; }
+  uint32_t last_draw_valid_verts() const { return last_draw_valid_verts_; }
   const uint8_t* culled_index_data() const {
     return cull_emit_index_bytes_.data();
   }
@@ -230,6 +238,8 @@ class DrawExtentEstimator {
   xenos::VertexFormat setup_leaf_format_ = xenos::VertexFormat::kUndefined;
   FastSetupFail fast_setup_fail_ = FastSetupFail::kOk;
   uint32_t setup_leaf_count_ = 0;
+  bool last_draw_whole_cullable_ = false;
+  uint32_t last_draw_valid_verts_ = 0;
 
   const RegisterFile& register_file_;
   const Memory& memory_;

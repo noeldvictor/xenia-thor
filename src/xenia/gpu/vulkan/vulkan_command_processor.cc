@@ -1984,7 +1984,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "noidxptr={} zerodrop={} fastfail={}) slice_ops_sum={} slice_replayable={} "
         "replay[affine={} nonaffine={} unsup={} maxerr_milli={}] "
         "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})] "
-        "multi_lc[2={} 3={} 4={} 5p={}]",
+        "multi_lc[2={} 3={} 4={} 5p={}] "
+        "wholecull[draws={} elig={} verts={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2080,9 +2081,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_cull_multi_lc_[2], draw_outcomes_cull_multi_lc_[3],
         draw_outcomes_cull_multi_lc_[4],
         draw_outcomes_cull_multi_lc_[5] + draw_outcomes_cull_multi_lc_[6] +
-            draw_outcomes_cull_multi_lc_[7]);
+            draw_outcomes_cull_multi_lc_[7],
+        draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
+        draw_outcomes_wholecull_verts_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
+    draw_outcomes_wholecull_draws_ = 0;
+    draw_outcomes_wholecull_elig_ = 0;
+    draw_outcomes_wholecull_verts_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
@@ -4496,6 +4502,18 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // Front B read-only counter: how many triangles a CPU cull WOULD drop (C1
     // stub returns 0). Never mutates geometry.
     draw_outcomes_cullable_tris_ += CountCullableTriangles(*vertex_shader);
+    // Whole-draw frustum-cull potential: a draw entirely off-screen (behind the
+    // camera or beyond one XY clip plane) could be dropped before the GPU bins
+    // it, saving its full per-draw cost - the lever per-triangle culling can't
+    // reach. Read-only sizing.
+    if (cull_extent_estimator_->last_draw_valid_verts()) {
+      ++draw_outcomes_wholecull_elig_;
+      if (cull_extent_estimator_->last_draw_whole_cullable()) {
+        ++draw_outcomes_wholecull_draws_;
+        draw_outcomes_wholecull_verts_ +=
+            cull_extent_estimator_->last_draw_valid_verts();
+      }
+    }
   }
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     // Lever 2 Step 0 feasibility signals (read-only; never mutates geometry):
