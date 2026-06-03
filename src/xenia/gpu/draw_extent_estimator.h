@@ -138,6 +138,7 @@ class DrawExtentEstimator {
     kRestart,           // primitive restart (multi_prim_ib_ena)
     kNoIndexPtr,
     kZeroDropped,       // ran the cull but dropped no triangles
+    kFastSetupFail,     // fast affine replay unavailable + fast-only -> draw verbatim
     kCount,
   };
   CullBail culled_bail_reason() const { return cull_bail_reason_; }

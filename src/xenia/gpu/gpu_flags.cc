@@ -476,6 +476,19 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_cull_fast_only, true,
+    "Thor cull Step 2b-iii: cull a draw ONLY when the fast affine matrix-recovery "
+    "replay is available; if SetupFastAffineReplay fails (no single vfetch position "
+    "leaf, multi-input/skinned position, or M not recoverable) draw the triangles "
+    "VERBATIM instead of falling back to the per-vertex ShaderInterpreter. The "
+    "interpreter fallback costs ~9.5us/vert - on Blue Dragon ~1s/frame, dwarfing the "
+    "GPU binning it saves and making the cull a net fps LOSS. Fast-only bounds the "
+    "cull's CPU cost to the cheap fast-decode draws. Set false to restore the "
+    "interpreter fallback (the GPU-frame-time proof reference). Default on. Only "
+    "meaningful with gpu_cull_compaction=true.",
+    "GPU");
+
+DEFINE_bool(
     gpu_cull_replay_validate, false,
     "Thor cull Step 2b validation (read-only): for qualifying draws, recover the "
     "affine position matrix M from a few ShaderInterpreter basis vertices (clip = "

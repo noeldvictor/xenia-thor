@@ -1981,7 +1981,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
         "cull[branch={} skip_dyntop={} skip_qual={} draws={} dropped_tris={} "
         "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
-        "noidxptr={} zerodrop={}) slice_ops_sum={} slice_replayable={} "
+        "noidxptr={} zerodrop={} fastfail={}) slice_ops_sum={} slice_replayable={} "
         "replay[affine={} nonaffine={} unsup={} maxerr_milli={}] "
         "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
@@ -2060,6 +2060,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             [uint32_t(DrawExtentEstimator::CullBail::kNoIndexPtr)],
         draw_outcomes_cull_bail_
             [uint32_t(DrawExtentEstimator::CullBail::kZeroDropped)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kFastSetupFail)],
         draw_outcomes_cull_slice_ops_sum_, draw_outcomes_cull_slice_replayable_,
         draw_outcomes_replay_affine_, draw_outcomes_replay_nonaffine_,
         draw_outcomes_replay_unsupported_,

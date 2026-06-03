@@ -1209,6 +1209,17 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   const bool fast = cvars::gpu_cull_fast_replay &&
                     SetupFastAffineReplay(vertex_shader, fast_replay);
   last_build_used_fast_ = fast;
+  // Fast-path-only (gpu_cull_fast_only, default on): if the fast affine replay is
+  // unavailable, draw the triangles VERBATIM rather than culling them via the
+  // per-vertex ShaderInterpreter. The interpreter fallback costs ~9.5us/vert
+  // (~1s/frame on Blue Dragon) - far more than the GPU binning it would save -
+  // so it turns the cull into a net fps loss. Bailing here bounds the cull's CPU
+  // to the cheap fast-decode draws. (Set the cvar false to restore the
+  // interpreter fallback for the GPU-frame-time proof reference.)
+  if (!fast && cvars::gpu_cull_fast_only) {
+    cull_bail_reason_ = CullBail::kFastSetupFail;
+    return false;
+  }
   const uint32_t* membase =
       fast ? reinterpret_cast<const uint32_t*>(memory_.physical_membase())
            : nullptr;
