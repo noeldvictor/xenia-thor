@@ -887,8 +887,16 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
                                                 FastAffineReplay& out) {
   setup_leaf_format_ = xenos::VertexFormat::kUndefined;
   fast_setup_fail_ = FastSetupFail::kRecoveryFail;  // overridden on specific bails
-  // 1. The position slice's single register leaf input.
-  uint64_t read_regs = 0, written_regs = 0;
+  // 1. The position slice's single register leaf input. A leaf is a register
+  // the slice READS whose value originates from a vertex fetch, found by
+  // intersecting the slice's register reads with the registers written by the
+  // shader's vfetch attributes. A plain read-but-not-ALU-written test misses
+  // the common case where the vfetch'd position is transformed IN PLACE (e.g.
+  // r0 = f(r0)) - that masks r0 out as "written" even though its pre-transform
+  // value is the true affine input. The affine recovery still holds because the
+  // whole chain from the vfetch input to clip stays affine, and the residual
+  // self-check below rejects the draw if it does not.
+  uint64_t read_regs = 0;
   for (const ParsedAluInstruction& op : vertex_shader.position_slice_ops()) {
     auto mark_operand = [&](const InstructionOperand& o) {
       if (o.storage_source == InstructionStorageSource::kRegister &&
@@ -898,24 +906,25 @@ bool DrawExtentEstimator::SetupFastAffineReplay(const Shader& vertex_shader,
         read_regs |= uint64_t(1) << o.storage_index;
       }
     };
-    auto mark_result = [&](const InstructionResult& r) {
-      if (r.storage_target == InstructionStorageTarget::kRegister &&
-          r.storage_addressing_mode ==
-              InstructionStorageAddressingMode::kAbsolute &&
-          r.storage_index < 64) {
-        written_regs |= uint64_t(1) << r.storage_index;
-      }
-    };
     for (uint32_t i = 0; i < op.vector_operand_count; ++i) {
       mark_operand(op.vector_operands[i]);
     }
     for (uint32_t i = 0; i < op.scalar_operand_count; ++i) {
       mark_operand(op.scalar_operands[i]);
     }
-    mark_result(op.vector_and_constant_result);
-    mark_result(op.scalar_result);
   }
-  uint64_t leaf_regs = read_regs & ~written_regs;
+  // Registers written by a vertex-fetch attribute (the shader's true inputs).
+  uint64_t vfetch_regs = 0;
+  for (const Shader::VertexBinding& binding : vertex_shader.vertex_bindings()) {
+    for (const Shader::VertexBinding::Attribute& attr : binding.attributes) {
+      const ParsedVertexFetchInstruction& fi = attr.fetch_instr;
+      if (fi.result.storage_target == InstructionStorageTarget::kRegister &&
+          fi.result.storage_index < 64) {
+        vfetch_regs |= uint64_t(1) << fi.result.storage_index;
+      }
+    }
+  }
+  uint64_t leaf_regs = read_regs & vfetch_regs;
   if (leaf_regs == 0) {
     fast_setup_fail_ = FastSetupFail::kNoLeaf;
     return false;
