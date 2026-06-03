@@ -279,6 +279,18 @@ DEFINE_bool(spirv_debug_force_fullscreen_position, false,
             "resolve). Pair with a forced constant FS color for a both-ways "
             "conclusive result. Default off.",
             "GPU");
+DEFINE_int32(spirv_debug_position_probe, 0,
+             "DIAGNOSTIC (use with spirv_debug_force_fullscreen_position + a "
+             "magenta FS): gate the forced fullscreen triangle on the SHAPE of "
+             "the real computed vertex position, to pin a degenerate-gl_Position "
+             "black screen. 0 = always fullscreen (downstream sanity). 1 = only "
+             "if any position component is NaN (bad math / 0-over-0 W divide). "
+             "2 = only if XYZ are all ~zero (vfetch/constant read returns 0 -> "
+             "data/binding). 3 = only if any component is Inf (overflow / "
+             "divide-by-zero). 4 = only if finite-and-nonzero (a GOOD position). "
+             "Whichever probe lights up (color in the RT dump) names the failure "
+             "shape. Default 0.",
+             "GPU");
 DEFINE_bool(spirv_debug_identity_ndc, false,
             "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "
             "vertex-shader epilogue (do not read the ndc_scale/ndc_offset system "

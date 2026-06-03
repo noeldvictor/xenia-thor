@@ -1906,6 +1906,9 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     // the VS position computation, not the downstream raster/FS/resolve path.
     if (cvars::spirv_debug_force_fullscreen_position &&
         input_vertex_index_ != spv::NoResult) {
+      // Keep the real computed position so the probe modes below can classify
+      // its shape (NaN / zero / Inf / good) by gating the fullscreen triangle.
+      spv::Id real_position = position;
       spv::Id vid =
           builder_->createLoad(input_vertex_index_, spv::NoPrecision);
       spv::Id vid_mod3 = builder_->createBinOp(
@@ -1927,8 +1930,74 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
       id_vector_temp_.push_back(pos_y);
       id_vector_temp_.push_back(builder_->makeFloatConstant(0.0f));
       id_vector_temp_.push_back(const_float_1_);
-      position =
+      spv::Id fullscreen_position =
           builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+
+      // Position-shape probe: emit the fullscreen triangle (-> color appears in
+      // the RT dump) ONLY if the real computed position matches the probed
+      // shape, else emit an off-screen (clipped) triangle. Run with magenta FS
+      // and read which probe lights up to pin the failure: 1=any NaN (bad math /
+      // 0-over-0 W divide), 2=xyz all ~zero (vfetch/constant read returns 0 ->
+      // data/binding), 3=any Inf (overflow/divide-by-0), 4=finite-and-nonzero
+      // (a GOOD position - would mean positions are fine and something else
+      // rejects them). 0 = unconditional fullscreen (downstream sanity).
+      int32_t probe = cvars::spirv_debug_position_probe;
+      if (probe != 0) {
+        spv::Id eps = builder_->makeFloatConstant(1.0f / 1024.0f);
+        spv::Id any_nan = builder_->makeBoolConstant(false);
+        spv::Id any_inf = builder_->makeBoolConstant(false);
+        spv::Id all_zero = builder_->makeBoolConstant(true);
+        for (uint32_t i = 0; i < 4; ++i) {
+          spv::Id c =
+              builder_->createCompositeExtract(real_position, type_float_, i);
+          any_nan = builder_->createBinOp(
+              spv::OpLogicalOr, type_bool_, any_nan,
+              builder_->createUnaryOp(spv::OpIsNan, type_bool_, c));
+          any_inf = builder_->createBinOp(
+              spv::OpLogicalOr, type_bool_, any_inf,
+              builder_->createUnaryOp(spv::OpIsInf, type_bool_, c));
+          if (i < 3) {
+            spv::Id abs_c = builder_->createUnaryBuiltinCall(
+                type_float_, ext_inst_glsl_std_450_, GLSLstd450FAbs, c);
+            all_zero = builder_->createBinOp(
+                spv::OpLogicalAnd, type_bool_, all_zero,
+                builder_->createBinOp(spv::OpFOrdLessThan, type_bool_, abs_c,
+                                      eps));
+          }
+        }
+        spv::Id cond;
+        if (probe == 1) {
+          cond = any_nan;
+        } else if (probe == 2) {
+          cond = all_zero;
+        } else if (probe == 3) {
+          cond = any_inf;
+        } else {
+          // probe == 4: finite (not NaN, not Inf) and not all-zero.
+          cond = builder_->createBinOp(
+              spv::OpLogicalAnd, type_bool_,
+              builder_->createUnaryOp(spv::OpLogicalNot, type_bool_,
+                                      builder_->createBinOp(spv::OpLogicalOr,
+                                                            type_bool_, any_nan,
+                                                            any_inf)),
+              builder_->createUnaryOp(spv::OpLogicalNot, type_bool_, all_zero));
+        }
+        // Off-screen: all components past the w=1 clip volume -> fully clipped.
+        id_vector_temp_.clear();
+        id_vector_temp_.push_back(builder_->makeFloatConstant(2.0f));
+        id_vector_temp_.push_back(builder_->makeFloatConstant(2.0f));
+        id_vector_temp_.push_back(builder_->makeFloatConstant(2.0f));
+        id_vector_temp_.push_back(const_float_1_);
+        spv::Id offscreen_position =
+            builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+        position = builder_->createTriOp(spv::OpSelect, type_float4_,
+                                         builder_->smearScalar(spv::NoPrecision,
+                                                               cond, type_bool4_),
+                                         fullscreen_position,
+                                         offscreen_position);
+      } else {
+        position = fullscreen_position;
+      }
     }
     builder_->createStore(position, position_ptr);
   }

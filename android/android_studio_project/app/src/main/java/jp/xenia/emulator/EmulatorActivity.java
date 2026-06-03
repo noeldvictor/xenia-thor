@@ -293,6 +293,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_pitch");
             copyIntExtra(intent, launchArguments, "vulkan_present_forced_resolve_format");
             copyIntExtra(intent, launchArguments, "vulkan_debug_pixel_shader_output_mode");
+            copyIntExtra(intent, launchArguments, "spirv_debug_position_probe");
             copyIntExtra(
                     intent, launchArguments, "vulkan_debug_pixel_shader_output_secondary_mode");
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_interval");
