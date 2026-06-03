@@ -279,6 +279,17 @@ DEFINE_bool(spirv_debug_force_fullscreen_position, false,
             "resolve). Pair with a forced constant FS color for a both-ways "
             "conclusive result. Default off.",
             "GPU");
+DEFINE_bool(spirv_debug_identity_ndc, false,
+            "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "
+            "vertex-shader epilogue (do not read the ndc_scale/ndc_offset system "
+            "constants; pass the guest clip-space XYZ straight through). Bisects a "
+            "degenerate-gl_Position black screen: if the color RTs go nonzero with "
+            "this on, the guest VS produces FINITE positions and the bug is the "
+            "NDC/system-constant epilogue (a uniform read); if still empty, the "
+            "guest VS itself is degenerate (guest constants / vertex-fetch / ALU). "
+            "Geometry is positionally wrong either way - only the nonzero-ness of "
+            "the RT dump is meaningful. Default off.",
+            "GPU");
 DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "

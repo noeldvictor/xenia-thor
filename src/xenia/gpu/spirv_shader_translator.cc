@@ -1717,25 +1717,31 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
   }
 
   // Apply the NDC scale and offset for guest to host viewport transformation.
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(builder_->makeIntConstant(kSystemConstantNdcScale));
-  spv::Id ndc_scale = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
-      spv::NoPrecision);
-  position_xyz = builder_->createNoContractionBinOp(spv::OpFMul, type_float3_,
-                                                    position_xyz, ndc_scale);
-  id_vector_temp_.clear();
-  id_vector_temp_.push_back(
-      builder_->makeIntConstant(kSystemConstantNdcOffset));
-  spv::Id ndc_offset = builder_->createLoad(
-      builder_->createAccessChain(spv::StorageClassUniform,
-                                  uniform_system_constants_, id_vector_temp_),
-      spv::NoPrecision);
-  spv::Id ndc_offset_mul_w = builder_->createNoContractionBinOp(
-      spv::OpVectorTimesScalar, type_float3_, ndc_offset, position_w);
-  position_xyz = builder_->createNoContractionBinOp(
-      spv::OpFAdd, type_float3_, position_xyz, ndc_offset_mul_w);
+  // DIAGNOSTIC: spirv_debug_identity_ndc skips this whole transform (and the two
+  // system-constant uniform reads it needs) to bisect a degenerate-position
+  // black screen - guest VS finite (RT nonzero) vs guest VS degenerate (empty).
+  if (!cvars::spirv_debug_identity_ndc) {
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(
+        builder_->makeIntConstant(kSystemConstantNdcScale));
+    spv::Id ndc_scale = builder_->createLoad(
+        builder_->createAccessChain(spv::StorageClassUniform,
+                                    uniform_system_constants_, id_vector_temp_),
+        spv::NoPrecision);
+    position_xyz = builder_->createNoContractionBinOp(
+        spv::OpFMul, type_float3_, position_xyz, ndc_scale);
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(
+        builder_->makeIntConstant(kSystemConstantNdcOffset));
+    spv::Id ndc_offset = builder_->createLoad(
+        builder_->createAccessChain(spv::StorageClassUniform,
+                                    uniform_system_constants_, id_vector_temp_),
+        spv::NoPrecision);
+    spv::Id ndc_offset_mul_w = builder_->createNoContractionBinOp(
+        spv::OpVectorTimesScalar, type_float3_, ndc_offset, position_w);
+    position_xyz = builder_->createNoContractionBinOp(
+        spv::OpFAdd, type_float3_, position_xyz, ndc_offset_mul_w);
+  }
 
   // Write the point size.
   if (output_point_size_ != spv::NoResult) {
