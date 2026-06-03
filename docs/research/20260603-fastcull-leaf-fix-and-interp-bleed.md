@@ -69,3 +69,32 @@ exactly this per-vertex interpreter.
 2. **Diagnose kMultiLeaf** (genuine multi-input/skinned position vs slice over-inclusion). If
    over-inclusion, tightening the slice converts the 271 to fast → cull most draws cheaply
    (jackpot). If genuine skinning, fast-path-only is the ceiling for the affine approach.
+
+## Follow-up: fast-path-only shipped (`dd6b02321`)
+
+Added `gpu_cull_fast_only` (default on): when `SetupFastAffineReplay` fails, `BuildCulledIndexList`
+bails to `CullBail::kFastSetupFail` and the caller draws verbatim — the per-vertex interpreter
+never runs. (`gpu_cull_fast_only=false` restores the interpreter fallback for the GPU-proof
+reference.) Added `fastfail=` to the cull bail funnel + the EmulatorActivity allowlist.
+
+### Device A/B (content-matched HEAVY field vista, guest_ms 173252, rendered=2193, avg=132)
+```
+cpu_issuedraw_us=61179..71688   (was ~900000..1008000 with the interpreter fallback - ~14x drop)
+cpu_other_us=35541..40182       (was ~1000000)
+gpu_frame_us=898254..901061     (now the bottleneck; frame is GPU-bound)
+cull[ draws=111 dropped_tris=18753 bail(... zerodrop=23 fastfail=1507) ]
+fastrep[engaged=134 fail(noleaf=0 multi=1508 ...)]
+fps ~= 1.0 (8 VdSwap / 8 s; frame cadence 0.916 s)
+```
+Screenshot: BD opening field vista (windmill/terrain/fence/distant house) — **coherent, hole-free**.
+
+**Conclusion:** fast-only does exactly its job — the ~1 s/frame CPU bleed is gone and the render
+stays correct. But it culls only ~6 % of draws (`fastfail=1507` multi-leaf draws now skip), so the
+GPU benefit is small and net-fps-vs-OFF is unproven (no content-matched OFF run at guest_ms 173 k
+this fire). The affine_mvp_pos candidates average ~113 verts/draw = the **static environment**
+(per the Step-0d analysis; the ~306-vert a0-skinned characters are already excluded, `a0=68670`),
+which should be a *single* MVP input — so **1507/1641 reading >1 vfetch'd register strongly implies
+`ComputePositionSlice` over-inclusion, not genuine skinning.** Next: confirm with a leaf-count
+distribution and tighten the slice taint so the multi-leaf draws collapse to single-leaf → fast-cull
+the bulk at near-zero CPU = the real net-fps win. (Genuine unrolled skinning is *bilinear* in
+weights×position = not affine, so it is unwinnable by any affine recovery; only over-inclusion is.)
