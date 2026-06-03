@@ -663,12 +663,12 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
     return false;
   }
   auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
-  if (pa_su_sc_mode_cntl.multi_prim_ib_ena != 0) {
-    // Primitive restart: strip topology can't be flattened to a list without
-    // re-basing winding at each restart - defer (emit verbatim).
-    cull_bail_reason_ = CullBail::kRestart;
-    return false;
-  }
+  // Primitive restart: handled (NOT bailed). Reset-index slots break the strip into
+  // sub-strips; triangles spanning a reset are dropped and winding parity re-bases
+  // per sub-strip (see the emit loop below).
+  const bool restart_enabled = pa_su_sc_mode_cntl.multi_prim_ib_ena != 0;
+  const uint32_t reset_index =
+      regs.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx;
 
   auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
   const uint32_t stride =
@@ -709,6 +709,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   for (uint32_t i = 0; i < num_indices; ++i) {
     CullVertex& out = cull_vertices_scratch_[i];
     out.valid = false;
+    out.is_reset = false;
     out.x = out.y = out.z = out.w = 0.0f;
     uint32_t vertex_index;
     if (i < vgt_dma_size.num_words) {
@@ -716,6 +717,11 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
       vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
     } else {
       vertex_index = 0;
+    }
+    if (restart_enabled && vertex_index == reset_index) {
+      // Primitive-restart marker: not a real vertex, breaks the strip here.
+      out.is_reset = true;
+      continue;
     }
     vertex_index =
         std::min(max_index,
@@ -819,13 +825,36 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
     }
   };
   if (prim_is_strip) {
-    for (uint32_t i = 0; i + 2u < num_indices; ++i) {
-      emit_if_kept(i, i + 1u, i + 2u, (i & 1u) != 0u);
+    // Walk maximal runs of non-reset slots (sub-strips). Within each, emit
+    // triangles (j,j+1,j+2) with winding parity RE-BASED to the sub-strip start so
+    // strip-restart geometry keeps correct winding; triangles spanning a reset are
+    // simply never formed.
+    uint32_t i = 0;
+    while (i < num_indices) {
+      if (cull_vertices_scratch_[i].is_reset) {
+        ++i;
+        continue;
+      }
+      uint32_t s = i;
+      while (i < num_indices && !cull_vertices_scratch_[i].is_reset) {
+        ++i;
+      }
+      const uint32_t e = i;  // sub-strip [s, e)
+      for (uint32_t j = s; j + 2u < e; ++j) {
+        emit_if_kept(j, j + 1u, j + 2u, ((j - s) & 1u) != 0u);
+      }
     }
   } else {
     uint32_t triangle_count = num_indices / 3u;
     for (uint32_t t = 0; t < triangle_count; ++t) {
-      emit_if_kept(t * 3u + 0u, t * 3u + 1u, t * 3u + 2u, false);
+      const uint32_t a = t * 3u + 0u, b = t * 3u + 1u, c = t * 3u + 2u;
+      // A list triangle containing a reset marker is not a real primitive.
+      if (cull_vertices_scratch_[a].is_reset ||
+          cull_vertices_scratch_[b].is_reset ||
+          cull_vertices_scratch_[c].is_reset) {
+        continue;
+      }
+      emit_if_kept(a, b, c, false);
     }
   }
   // Only worth the strip->list flattening + topology change if we actually

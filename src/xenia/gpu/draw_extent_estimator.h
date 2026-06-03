@@ -151,6 +151,7 @@ class DrawExtentEstimator {
   // / no position exported) break triangle formation in C3.
   struct CullVertex {
     bool valid;
+    bool is_reset;  // primitive-restart marker slot (breaks the strip here)
     float x;
     float y;
     float z;
