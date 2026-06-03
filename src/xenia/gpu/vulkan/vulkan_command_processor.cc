@@ -1979,8 +1979,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
-        "cull[branch={} skip_dyntop={} skip_qual={} skip_build={} draws={} "
-        "dropped_tris={}]",
+        "cull[branch={} skip_dyntop={} skip_qual={} draws={} dropped_tris={} "
+        "bail(notdma={} tess={} notinterp={} vtxxy={} clipdis={} restart={} "
+        "noidxptr={} zerodrop={})]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2041,8 +2042,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_pos_disq_texfetch_verts_,
         draw_outcomes_pos_disq_other_verts_, draw_outcomes_cull_branch_,
         draw_outcomes_cull_skip_dyntop_, draw_outcomes_cull_skip_qual_,
-        draw_outcomes_cull_skip_build_, draw_outcomes_cull_draws_,
-        draw_outcomes_cull_dropped_tris_);
+        draw_outcomes_cull_draws_, draw_outcomes_cull_dropped_tris_,
+        draw_outcomes_cull_bail_[uint32_t(DrawExtentEstimator::CullBail::kNotDMA)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kTessellation)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kNotInterpretable)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kVtxXyFmt)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kClipDisable)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kRestart)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kNoIndexPtr)],
+        draw_outcomes_cull_bail_
+            [uint32_t(DrawExtentEstimator::CullBail::kZeroDropped)]);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
@@ -2058,9 +2073,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_cull_branch_ = 0;
     draw_outcomes_cull_skip_dyntop_ = 0;
     draw_outcomes_cull_skip_qual_ = 0;
-    draw_outcomes_cull_skip_build_ = 0;
     draw_outcomes_cull_draws_ = 0;
     draw_outcomes_cull_dropped_tris_ = 0;
+    std::memset(draw_outcomes_cull_bail_, 0, sizeof(draw_outcomes_cull_bail_));
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
@@ -4162,7 +4177,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             }
           }
         } else {
-          ++draw_outcomes_cull_skip_build_;
+          uint32_t bail =
+              uint32_t(cull_extent_estimator_->culled_bail_reason());
+          if (bail < 12u) {
+            ++draw_outcomes_cull_bail_[bail];
+          }
         }
       }
       if (!draw_emitted) {

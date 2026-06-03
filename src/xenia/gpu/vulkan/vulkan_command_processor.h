@@ -875,9 +875,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_cull_branch_ = 0;
   uint32_t draw_outcomes_cull_skip_dyntop_ = 0;
   uint32_t draw_outcomes_cull_skip_qual_ = 0;
-  uint32_t draw_outcomes_cull_skip_build_ = 0;
   uint32_t draw_outcomes_cull_draws_ = 0;
   uint64_t draw_outcomes_cull_dropped_tris_ = 0;
+  // BuildCulledIndexList bail reasons, indexed by DrawExtentEstimator::CullBail
+  // (sized generously; kCount is currently 11). Names the systematic bail.
+  uint32_t draw_outcomes_cull_bail_[12] = {};
   // Front B cullable-triangle counter: lazily-constructed CPU VS-position
   // replayer, used only when gpu_trace_cullable_tris is set. nullptr until first
   // use, so the default path pays nothing.

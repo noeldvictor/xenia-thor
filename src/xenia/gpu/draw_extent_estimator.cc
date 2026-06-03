@@ -624,16 +624,19 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   const RegisterFile& regs = register_file_;
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
   if (!vgt_draw_initiator.num_indices) {
+    cull_bail_reason_ = CullBail::kNoIndices;
     return false;
   }
   const bool prim_is_strip =
       vgt_draw_initiator.prim_type == xenos::PrimitiveType::kTriangleStrip;
   if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kTriangleList &&
       !prim_is_strip) {
+    cull_bail_reason_ = CullBail::kNotTriList;
     return false;
   }
   // Only guest-DMA indices: we copy the raw guest index entries for kept tris.
   if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA) {
+    cull_bail_reason_ = CullBail::kNotDMA;
     return false;
   }
   // Not reproducing tessellation.
@@ -641,24 +644,29 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
                                  vgt_draw_initiator.prim_type) &&
       regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
           xenos::VGTOutputPath::kTessellationEnable) {
+    cull_bail_reason_ = CullBail::kTessellation;
     return false;
   }
   if (!vertex_shader.is_ucode_analyzed() ||
       !ShaderInterpreter::CanInterpretShader(vertex_shader)) {
+    cull_bail_reason_ = CullBail::kNotInterpretable;
     return false;
   }
   if (regs.Get<reg::PA_CL_VTE_CNTL>().vtx_xy_fmt != 0) {
     // Pre-divided (screen/NDC) positions - the clip-plane test assumes clip
     // space; emit verbatim rather than misjudge.
+    cull_bail_reason_ = CullBail::kVtxXyFmt;
     return false;
   }
   if (regs.Get<reg::PA_CL_CLIP_CNTL>().clip_disable != 0) {
+    cull_bail_reason_ = CullBail::kClipDisable;
     return false;
   }
   auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
   if (pa_su_sc_mode_cntl.multi_prim_ib_ena != 0) {
     // Primitive restart: strip topology can't be flattened to a list without
     // re-basing winding at each restart - defer (emit verbatim).
+    cull_bail_reason_ = CullBail::kRestart;
     return false;
   }
 
@@ -682,6 +690,7 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   const uint8_t* index_bytes =
       memory_.TranslatePhysical<const uint8_t*>(index_buffer_base);
   if (!index_bytes) {
+    cull_bail_reason_ = CullBail::kNoIndexPtr;
     return false;
   }
   const uint16_t* index16 = reinterpret_cast<const uint16_t*>(index_bytes);
@@ -822,6 +831,8 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   // Only worth the strip->list flattening + topology change if we actually
   // removed triangles; otherwise the caller should draw the originals verbatim.
   cull_emit_dropped_triangles_ = dropped_triangles;
+  cull_bail_reason_ =
+      dropped_triangles > 0 ? CullBail::kBuilt : CullBail::kZeroDropped;
   return dropped_triangles > 0;
 }
 

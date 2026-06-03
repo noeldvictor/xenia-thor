@@ -74,6 +74,23 @@ class DrawExtentEstimator {
   uint32_t culled_dropped_triangles() const {
     return cull_emit_dropped_triangles_;
   }
+  // Why BuildCulledIndexList returned false (diagnostic: names the systematic bail
+  // so the cull's reach can be widened). kBuilt = it produced a culled list.
+  enum class CullBail : uint32_t {
+    kBuilt = 0,
+    kNoIndices,
+    kNotTriList,
+    kNotDMA,
+    kTessellation,
+    kNotInterpretable,  // !CanInterpretShader (whole-shader texture fetch)
+    kVtxXyFmt,          // pre-divided positions
+    kClipDisable,
+    kRestart,           // primitive restart (multi_prim_ib_ena)
+    kNoIndexPtr,
+    kZeroDropped,       // ran the cull but dropped no triangles
+    kCount,
+  };
+  CullBail culled_bail_reason() const { return cull_bail_reason_; }
 
  private:
   class PositionYExportSink : public ShaderInterpreter::ExportSink {
@@ -149,6 +166,7 @@ class DrawExtentEstimator {
   uint32_t cull_emit_index_count_ = 0;
   uint32_t cull_emit_index_stride_ = 0;
   uint32_t cull_emit_dropped_triangles_ = 0;
+  CullBail cull_bail_reason_ = CullBail::kBuilt;
 
   const RegisterFile& register_file_;
   const Memory& memory_;
