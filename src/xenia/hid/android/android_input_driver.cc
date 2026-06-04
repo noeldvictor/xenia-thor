@@ -21,6 +21,7 @@
 
 #include "xenia/base/logging.h"
 #include "xenia/hid/hid_flags.h"
+#include "xenia/ui/imgui_gamepad_nav.h"
 #include "xenia/ui/virtual_key.h"
 
 namespace xe {
@@ -337,10 +338,29 @@ AndroidInputDriver::AndroidInputDriver(xe::ui::Window* window,
                                        size_t window_z_order)
     : InputDriver(window, window_z_order) {}
 
-AndroidInputDriver::~AndroidInputDriver() = default;
+AndroidInputDriver::~AndroidInputDriver() {
+  // Stop steering ImGui dialogs once the driver is gone.
+  xe::ui::SetImGuiGamepadNavProvider(nullptr);
+}
 
 X_STATUS AndroidInputDriver::Setup() {
   ResetStateForSetup();
+  // Let the physical controller drive host ImGui dialogs (e.g. guest XAM
+  // message boxes), which otherwise only take touch input on Android. ImGui
+  // applies this only while a dialog is open, so gameplay input is unaffected.
+  xe::ui::SetImGuiGamepadNavProvider([]() -> xe::ui::ImGuiGamepadNav {
+    auto& state = g_android_gamepad_state;
+    std::lock_guard<std::mutex> guard(state.mutex);
+    const uint16_t buttons = state.buttons();
+    xe::ui::ImGuiGamepadNav nav;
+    nav.dpad_up = (buttons & X_INPUT_GAMEPAD_DPAD_UP) != 0;
+    nav.dpad_down = (buttons & X_INPUT_GAMEPAD_DPAD_DOWN) != 0;
+    nav.dpad_left = (buttons & X_INPUT_GAMEPAD_DPAD_LEFT) != 0;
+    nav.dpad_right = (buttons & X_INPUT_GAMEPAD_DPAD_RIGHT) != 0;
+    nav.activate = (buttons & X_INPUT_GAMEPAD_A) != 0;
+    nav.cancel = (buttons & X_INPUT_GAMEPAD_B) != 0;
+    return nav;
+  });
   XELOGI(
       "Android HID: active as XInput controller 1. Thor/Android gamepad "
       "buttons, sticks, triggers, and hat are mapped to user 0.");

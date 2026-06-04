@@ -18,11 +18,32 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/ui/imgui_dialog.h"
+#include "xenia/ui/imgui_gamepad_nav.h"
 #include "xenia/ui/ui_event.h"
 #include "xenia/ui/window.h"
 
 namespace xe {
 namespace ui {
+
+// Platform-registered gamepad navigation source (see imgui_gamepad_nav.h).
+// nullptr on platforms (desktop) whose pad already reaches ImGui via the window
+// event system, leaving their behavior untouched.
+static std::function<ImGuiGamepadNav()> g_imgui_gamepad_nav_provider;
+
+void SetImGuiGamepadNavProvider(std::function<ImGuiGamepadNav()> provider) {
+  g_imgui_gamepad_nav_provider = std::move(provider);
+}
+
+bool HasImGuiGamepadNavProvider() {
+  return static_cast<bool>(g_imgui_gamepad_nav_provider);
+}
+
+ImGuiGamepadNav PollImGuiGamepadNav() {
+  if (g_imgui_gamepad_nav_provider) {
+    return g_imgui_gamepad_nav_provider();
+  }
+  return ImGuiGamepadNav{};
+}
 
 // File: 'ProggyTiny.ttf' (35656 bytes)
 // Exported using binary_to_compressed_c.cpp
@@ -297,6 +318,22 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
       float(window_->GetMediumDpi()) / float(window_->GetDpi());
   io.DisplaySize.x = window_->GetActualPhysicalWidth() * physical_to_logical;
   io.DisplaySize.y = window_->GetActualPhysicalHeight() * physical_to_logical;
+
+  // Feed gamepad navigation on platforms whose controller input doesn't flow
+  // through the window event system (Android). We only reach here when a dialog
+  // is open (early-out above), so in-game controller input is never affected.
+  // Desktop has no provider registered, so its ImGui input is left untouched.
+  if (HasImGuiGamepadNavProvider()) {
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    const ImGuiGamepadNav nav = PollImGuiGamepadNav();
+    io.AddKeyEvent(ImGuiKey_GamepadDpadUp, nav.dpad_up);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadDown, nav.dpad_down);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadLeft, nav.dpad_left);
+    io.AddKeyEvent(ImGuiKey_GamepadDpadRight, nav.dpad_right);
+    io.AddKeyEvent(ImGuiKey_GamepadFaceDown, nav.activate);
+    io.AddKeyEvent(ImGuiKey_GamepadFaceRight, nav.cancel);
+  }
 
   ImGui::NewFrame();
 
