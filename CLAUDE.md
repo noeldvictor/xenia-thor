@@ -139,8 +139,24 @@ Black-3D resolved (stale-config artifact). Next: instrument what the ~2000 draws
 vertex sizes), then cut draw count / state churn / binning pressure. For the binning-vs-rendering GPU
 split, a user-run Snapdragon Profiler / AGI capture is the one external step worth requesting.
 
+## Working philosophy (2026-06-03) — BOLD BUILD MODE, FORWARD ONLY
+- **Ship boldly; git is the safety net.** We are at ~4-6fps — there is little to "protect". Implement the
+  large refactors (the roadmap R-targets), don't hand-wring about regressing a slow baseline. Every perf
+  refactor is **cvar-gated default-off**, so the default path is always best-known-good; experiments
+  iterate forward until they earn `default-on`. The real failure is NOT shipping, not a not-yet-working
+  experiment.
+- **FORWARD ONLY — never `git revert`, never go backwards.** If a change underperforms or breaks: read the
+  frame (png) + logs, use `git log`/history to understand what the good state did, and **FIX IT FORWARD**
+  with a new improving commit. Iterate forward until it works or the hard limit is proven + documented.
+  Progress is monotonic.
+- **Measure clean.** Perf with `tools/thor/thor_gpu_capture.ps1 -NoDump` (RT-dump readbacks poison timing);
+  classify GPU- vs CPU-bound with `-TopProfile` (per-thread `top`). Trust GPU busy% + per-thread top, NOT
+  the derived `gpu_frame_us`. **Read the png every device fire** (black/broken = fix forward immediately).
+
 ## Working rules (do not violate)
-- **Never thrash the Thor** (see top rule). Build-verify by default; gentle supervised device checks only; force-stop the emulator the moment it thrashes. No launch loops.
+- **Never thrash the Thor** (see top rule — this is the ONE hard physical-safety rule that BOLD MODE does
+  NOT relax). Thermal gate STAYS: only launch via `thor_gpu_capture.ps1` (refuses >55°C, 64°C watchdog,
+  ONE launch per fire, force-stops when hot). Device-test aggressively *within* that gate.
 - **Never fabricate.** Every fps/number/scene claim must come from device output you read THIS turn;
   read the screenshot before asserting a visual state. If unmeasured, say "not measured".
 - **Targeted `git add` only — NEVER `git add -A`.** Commit only the specific files you changed.
