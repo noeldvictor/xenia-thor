@@ -336,6 +336,16 @@ bool CommandProcessor::Initialize() {
   worker_thread_->set_name("GPU Commands");
   worker_thread_->Create();
 
+  // Thor perf (roadmap R1): the command-processor worker is the single hot
+  // critical-path thread (~197ms/frame of guest-JIT + per-draw submit). Pin it
+  // to a chosen core so it stays on the prime Cortex-X3 (cpu7 @3.19GHz on the AYN
+  // Thor) at max DVFS instead of floating onto a 2.0GHz A510. Affinity is a hint
+  // only - no guest-visible effect; default -1 leaves scheduling to the OS.
+  if (cvars::thor_gpu_thread_affinity_cpu >= 0 && worker_thread_->thread()) {
+    worker_thread_->thread()->set_affinity_mask(
+        uint64_t(1) << uint32_t(cvars::thor_gpu_thread_affinity_cpu));
+  }
+
   return true;
 }
 

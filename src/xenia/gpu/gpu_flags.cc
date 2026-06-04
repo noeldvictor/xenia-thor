@@ -55,6 +55,15 @@ DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "GPU");
 DEFINE_int32(gpu_blue_dragon_kick_wait_token_budget, 16,
              "Maximum Blue Dragon wait-token kick log lines.", "GPU");
+DEFINE_int32(
+    thor_gpu_thread_affinity_cpu, -1,
+    "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "
+    "thread to this CPU core index (-1 = off / let the scheduler float it). The "
+    "~197ms/frame critical path is single-thread-bound; the Thor's prime Cortex-X3 "
+    "is cpu7 @3.19GHz vs A510 @2.0GHz, so pinning the hot thread to 7 holds it at "
+    "max clock and avoids cross-cluster migration. Hint only (no guest-visible "
+    "effect). Set 7 to test the X3 on this device.",
+    "GPU");
 DEFINE_bool(gpu_trace_swap, false,
             "Trace guest video swap setup, PM4 XE_SWAP packets, and host "
             "present/swap paths.",
