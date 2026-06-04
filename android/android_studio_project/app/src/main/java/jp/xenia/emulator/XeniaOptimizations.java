@@ -138,6 +138,53 @@ public final class XeniaOptimizations {
                 CATEGORY_GPU, true, true,
                 new BoolCvar[]{new BoolCvar("vulkan_dynamic_constants_arena")}, null));
 
+        // Binning-front-end levers. Blue Dragon's heavy scene is GPU-bound on the
+        // Adreno binning stage (~1100-2180 tiny draws, ~263k verts/frame), which
+        // bins per-vertex per-draw BEFORE culling - so the only lever is reducing
+        // the draws/vertices SUBMITTED. These are alternative strategies; enable
+        // ONE at a time and compare at a heavy scene. Experimental (the binning
+        // floor is largely hardware; per-triangle culling measured a net loss, so
+        // it is deliberately not offered).
+        list.add(new Optimization(
+                "opt_whole_draw_cull",
+                "Whole-draw offscreen cull",
+                "CPU-side skip of fully off-screen draws before the GPU bins them.",
+                "Computes each draw's screen extent on the CPU (cheap affine "
+                        + "replay) and skips draws that are entirely off-screen, so "
+                        + "the GPU never bins them. The safest draw reducer - no "
+                        + "per-triangle cost, never culls a visible draw. The most "
+                        + "promising binning lever. Experimental; A/B at a heavy scene.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{
+                        new BoolCvar("gpu_cull_compaction"),
+                        new BoolCvar("gpu_whole_draw_only"),
+                        new BoolCvar("gpu_cull_fast_replay"),
+                        new BoolCvar("gpu_cull_fast_only"),
+                }, null));
+
+        list.add(new Optimization(
+                "opt_draw_concat",
+                "Draw concatenation",
+                "Merges back-to-back same-state draws into fewer GPU draw calls.",
+                "Concatenates consecutive draws that share all state and index "
+                        + "contiguous geometry into a single draw call, cutting the "
+                        + "per-draw binning overhead. Experimental; alternative to "
+                        + "MDI batching - try one at a time and A/B at a heavy scene.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("vulkan_merge_draws")}, null));
+
+        list.add(new Optimization(
+                "opt_mdi_batch",
+                "Multi-draw indirect batching",
+                "Submits many small same-state draws as one indirect command.",
+                "Batches consecutive same-state draws into a single "
+                        + "multiDrawIndirect call (each keeps its own index range, so "
+                        + "strips batch too), cutting per-draw CPU + submission cost. "
+                        + "Experimental; alternative to draw concatenation - try one "
+                        + "at a time and A/B at a heavy scene.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("vulkan_merge_draws_indirect")}, null));
+
         list.add(new Optimization(
                 "opt_prime_core_router",
                 "Prime-core thread router",

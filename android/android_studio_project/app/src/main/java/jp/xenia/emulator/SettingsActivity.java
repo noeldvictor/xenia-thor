@@ -30,6 +30,7 @@ public class SettingsActivity extends Activity {
     private CheckBox mVulkanCounters;
     private boolean mUpdatingControls;
     private final LinkedHashMap<String, CheckBox> mOptToggles = new LinkedHashMap<>();
+    private TextView mOptSummary;
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -173,6 +174,12 @@ public class SettingsActivity extends Activity {
         blurb.setTextSize(12);
         root.addView(blurb, matchWrapWithTopMargin(2));
 
+        mOptSummary = new TextView(this);
+        mOptSummary.setTextColor(getColor(R.color.xenia_green_soft));
+        mOptSummary.setTextSize(13);
+        mOptSummary.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        root.addView(mOptSummary, matchWrapWithTopMargin(8));
+
         String lastCategory = null;
         for (final XeniaOptimizations.Optimization opt : XeniaOptimizations.ALL) {
             if (!opt.category.equals(lastCategory)) {
@@ -191,6 +198,7 @@ public class SettingsActivity extends Activity {
             toggle.setTextColor(getColor(R.color.xenia_text));
             toggle.setTextSize(15);
             toggle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            toggle.setOnCheckedChangeListener((button, checked) -> updateOptSummary());
             root.addView(toggle, matchWrapWithTopMargin(6));
 
             final TextView detail = new TextView(this);
@@ -203,6 +211,22 @@ public class SettingsActivity extends Activity {
 
             mOptToggles.put(opt.prefKey, toggle);
         }
+        updateOptSummary();
+    }
+
+    private void updateOptSummary() {
+        if (mOptSummary == null) {
+            return;
+        }
+        int active = 0;
+        for (final CheckBox toggle : mOptToggles.values()) {
+            if (toggle.isChecked()) {
+                active++;
+            }
+        }
+        mOptSummary.setText(
+                active + " of " + mOptToggles.size() + " optimizations active"
+                        + (active > 1 ? " - stacking the wins" : ""));
     }
 
     private void addButtons(final LinearLayout root) {
