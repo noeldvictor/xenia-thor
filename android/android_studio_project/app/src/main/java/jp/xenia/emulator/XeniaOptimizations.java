@@ -138,6 +138,21 @@ public final class XeniaOptimizations {
                 CATEGORY_GPU, true, true,
                 new BoolCvar[]{new BoolCvar("vulkan_dynamic_constants_arena")}, null));
 
+        list.add(new Optimization(
+                "opt_pipeline_cache",
+                "Persistent shader pipeline cache",
+                "Saves compiled GPU pipelines to disk so later launches skip the stutter.",
+                "The first time a game reaches a new effect, the GPU driver must "
+                        + "compile its shader pipeline, causing a brief hitch. This saves "
+                        + "the driver's compiled pipeline cache to the app's storage and "
+                        + "reloads it on the next launch, so those one-time hitches mostly "
+                        + "disappear on later runs of the same game. Safe: the driver "
+                        + "validates the cache and ignores it if it doesn't match (e.g. "
+                        + "after a driver change). Smooths stutter; does not change the "
+                        + "steady frame rate.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("vulkan_persistent_pipeline_cache")}, null));
+
         // Binning-front-end levers. Blue Dragon's heavy scene is GPU-bound on the
         // Adreno binning stage (~1100-2180 tiny draws, ~263k verts/frame), which
         // bins per-vertex per-draw BEFORE culling - so the only lever is reducing

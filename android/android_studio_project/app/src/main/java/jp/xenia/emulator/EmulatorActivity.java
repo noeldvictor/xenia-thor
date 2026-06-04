@@ -171,6 +171,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_texture_descriptors");
             copyBooleanExtra(intent, launchArguments, "vulkan_push_descriptors");
             copyBooleanExtra(intent, launchArguments, "vulkan_dynamic_constants_arena");
+            copyBooleanExtra(intent, launchArguments, "vulkan_persistent_pipeline_cache");
+            copyStringExtra(intent, launchArguments, "vulkan_pipeline_cache_path");
             copyBooleanExtra(intent, launchArguments, "vulkan_coalesce_edram_transfers");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_outcomes_per_frame");
             copyBooleanExtra(

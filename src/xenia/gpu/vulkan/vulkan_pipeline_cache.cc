@@ -13,12 +13,16 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -35,9 +39,81 @@
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
+DEFINE_bool(
+    vulkan_persistent_pipeline_cache, false,
+    "Persist the Vulkan pipeline cache to disk and reload it next launch to cut "
+    "first-encounter shader-compilation stutter. Needs vulkan_pipeline_cache_path. "
+    "The driver validates the cache UUID, so a stale or wrong-driver blob is "
+    "safely ignored rather than misused.",
+    "Vulkan");
+DEFINE_string(
+    vulkan_pipeline_cache_path, "",
+    "Directory for the persistent Vulkan pipeline cache blob (set by the Android "
+    "app to its private files dir). Empty disables on-disk persistence.",
+    "Vulkan");
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
+
+namespace {
+
+std::filesystem::path PipelineCacheFilePath() {
+  return std::filesystem::path(cvars::vulkan_pipeline_cache_path) /
+         "vulkan_pipeline_cache.bin";
+}
+
+std::vector<uint8_t> LoadPipelineCacheData() {
+  std::vector<uint8_t> data;
+  std::error_code ec;
+  const std::filesystem::path path = PipelineCacheFilePath();
+  const auto size = std::filesystem::file_size(path, ec);
+  if (ec || size == 0 || size > (256ull * 1024ull * 1024ull)) {
+    return data;
+  }
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    return data;
+  }
+  data.resize(static_cast<size_t>(size));
+  file.read(reinterpret_cast<char*>(data.data()),
+            static_cast<std::streamsize>(data.size()));
+  if (!file) {
+    data.clear();
+  }
+  return data;
+}
+
+void SavePipelineCacheData(const ui::vulkan::VulkanDevice::Functions& dfn,
+                           VkDevice device, VkPipelineCache cache) {
+  size_t data_size = 0;
+  if (dfn.vkGetPipelineCacheData(device, cache, &data_size, nullptr) !=
+          VK_SUCCESS ||
+      data_size == 0) {
+    return;
+  }
+  std::vector<uint8_t> data(data_size);
+  if (dfn.vkGetPipelineCacheData(device, cache, &data_size, data.data()) !=
+      VK_SUCCESS) {
+    return;
+  }
+  data.resize(data_size);
+  const std::filesystem::path path = PipelineCacheFilePath();
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  if (!file) {
+    XELOGW("VulkanPipelineCache: could not open '{}' to persist the cache",
+           cvars::vulkan_pipeline_cache_path);
+    return;
+  }
+  file.write(reinterpret_cast<const char*>(data.data()),
+             static_cast<std::streamsize>(data.size()));
+  XELOGI("VulkanPipelineCache: persisted {} bytes of pipeline cache to disk",
+         data.size());
+}
+
+}  // namespace
 
 VulkanPipelineCache::VulkanPipelineCache(
     VulkanCommandProcessor& command_processor,
@@ -91,6 +167,21 @@ bool VulkanPipelineCache::Initialize() {
     VkPipelineCacheCreateInfo pipeline_cache_create_info = {};
     pipeline_cache_create_info.sType =
         VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    // Optionally seed from a previously-saved on-disk blob to cut first-launch
+    // shader-compile stutter. The driver validates the header/UUID, so a stale
+    // or wrong-driver blob is ignored rather than misused. Keep the buffer alive
+    // until after vkCreatePipelineCache reads it.
+    std::vector<uint8_t> initial_data;
+    if (cvars::vulkan_persistent_pipeline_cache &&
+        !cvars::vulkan_pipeline_cache_path.empty()) {
+      initial_data = LoadPipelineCacheData();
+      if (!initial_data.empty()) {
+        pipeline_cache_create_info.initialDataSize = initial_data.size();
+        pipeline_cache_create_info.pInitialData = initial_data.data();
+        XELOGI("VulkanPipelineCache: seeding from {} bytes of on-disk cache",
+               initial_data.size());
+      }
+    }
     dfn.vkCreatePipelineCache(vulkan_device->device(),
                               &pipeline_cache_create_info, nullptr,
                               &pipeline_cache_);
@@ -113,6 +204,14 @@ void VulkanPipelineCache::Shutdown() {
     }
   }
   pipelines_.clear();
+
+  // Persist the pipeline cache to disk (best effort) before destroying it, so
+  // the next launch can skip re-compiling the shaders it already saw.
+  if (cvars::vulkan_persistent_pipeline_cache &&
+      !cvars::vulkan_pipeline_cache_path.empty() &&
+      pipeline_cache_ != VK_NULL_HANDLE) {
+    SavePipelineCacheData(dfn, device, pipeline_cache_);
+  }
 
   // Destroy the in-memory pipeline cache.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineCache, device,

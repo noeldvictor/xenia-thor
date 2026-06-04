@@ -232,6 +232,11 @@ public final class XeniaAndroidSettings {
                     "vulkan_trace_perf_counters_log_interval",
                     preferences.getInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60));
         }
+        // Persistent Vulkan pipeline cache lives in the app's private files dir;
+        // the engine only reads/writes it when the optimization toggle is on.
+        launchArguments.putString(
+                "vulkan_pipeline_cache_path",
+                new File(context.getFilesDir(), "vk_pipeline_cache").getAbsolutePath());
         putStableLaunchOverrides(launchArguments);
         // User-selectable performance optimizations (registry-driven): each
         // enabled toggle contributes its engine cvar(s). Applied last so an
