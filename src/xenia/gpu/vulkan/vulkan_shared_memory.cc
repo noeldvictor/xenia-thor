@@ -127,8 +127,21 @@ bool VulkanSharedMemory::Initialize() {
   buffer_create_info.pQueueFamilyIndices = nullptr;
   // The unified-memory direct-write path needs a single persistently mapped
   // allocation, so it always uses the non-sparse buffer below.
+  //
+  // The Mesa Turnip (Freedreno) driver advertises sparseResidencyBuffer, but its
+  // sparse-buffer residency does not reliably back the 512 MB shared-memory pages
+  // on Adreno: guest programmable-vertex-fetch reads from the storage buffer come
+  // back as zero, so every gl_Position collapses to the origin and the whole
+  // scene is black (Blue Dragon and others). Uniform buffers - which are not
+  // sparse - read fine, which is how this was isolated. Other emulators
+  // (Yuzu/Vita3K/etc.) run on Turnip because they don't depend on sparse
+  // residency for a buffer this large. Force the plain, fully-backed buffer on
+  // Turnip; a 512 MB device-local allocation is trivial on the unified-memory
+  // Thor, and this is the spec-robust path that works on every driver.
+  const bool driver_is_mesa_turnip =
+      vulkan_device->properties().driverID == VK_DRIVER_ID_MESA_TURNIP;
   if (cvars::vulkan_sparse_shared_memory &&
-      !cvars::gpu_uma_direct_shared_memory &&
+      !cvars::gpu_uma_direct_shared_memory && !driver_is_mesa_turnip &&
       vulkan_device->properties().sparseResidencyBuffer) {
     if (dfn.vkCreateBuffer(device, &buffer_create_info, nullptr, &buffer_) ==
         VK_SUCCESS) {
