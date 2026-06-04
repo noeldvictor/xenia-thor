@@ -3425,6 +3425,31 @@ spv::Id SpirvShaderTranslator::LoadUint32FromSharedMemory(
       builder_->makeIntConstant(
           int((uint32_t(1) << binding_address_bits) - 1)));
 
+  if (cvars::gpu_vulkan_shared_memory_no_switch) {
+    // Turnip workaround: the OpSwitch+OpPhi over the SSBO array below appears to
+    // be miscompiled by ir3 (vertex-fetch reads come back zero). Instead, load
+    // from every constant-index binding at binding_address (all in-bounds, each
+    // binding is a full window) and select the right one by binding_index.
+    uint32_t binding_count_sel = uint32_t(1) << binding_count_log2;
+    spv::Id result = const_uint_0_;
+    for (uint32_t i = 0; i < binding_count_sel; ++i) {
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+      id_vector_temp_.push_back(const_int_0_);
+      id_vector_temp_.push_back(binding_address);
+      spv::Id loaded = builder_->createLoad(
+          builder_->createAccessChain(storage_class, buffers_shared_memory_,
+                                      id_vector_temp_),
+          spv::NoPrecision);
+      spv::Id is_i = builder_->createBinOp(spv::OpIEqual, type_bool_,
+                                           binding_index,
+                                           builder_->makeUintConstant(i));
+      result =
+          builder_->createTriOp(spv::OpSelect, type_uint_, is_i, loaded, result);
+    }
+    return result;
+  }
+
   auto value_phi_op = std::make_unique<spv::Instruction>(
       builder_->getUniqueId(), type_uint_, spv::OpPhi);
   // Zero if out of bounds.

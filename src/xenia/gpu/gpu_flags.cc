@@ -297,6 +297,16 @@ DEFINE_int32(spirv_debug_position_probe, 0,
              "miscompiled' (magenta). Whichever probe lights up (color in the RT "
              "dump) names the failure shape. Default 0.",
              "GPU");
+DEFINE_bool(gpu_vulkan_shared_memory_no_switch, false,
+            "Replace the OpSwitch+OpPhi over the multi-binding shared-memory SSBO "
+            "array in LoadUint32FromSharedMemory with constant-index loads from "
+            "every binding + an OpSelect chain (selected by the binding index). "
+            "The Mesa Turnip ir3 backend appears to miscompile the switch/phi-over-"
+            "descriptor-array load so vertex-fetch reads return zero (degenerate "
+            "all-zero gl_Position, black screen); this avoids it. Costs N loads per "
+            "dword instead of 1 (N = guest RAM / maxStorageBufferRange, 4 on a "
+            "128 MB-range device). Default off (proprietary path unchanged).",
+            "GPU");
 DEFINE_bool(spirv_debug_identity_ndc, false,
             "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "
             "vertex-shader epilogue (do not read the ndc_scale/ndc_offset system "

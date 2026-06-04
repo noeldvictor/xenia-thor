@@ -85,6 +85,7 @@ DECLARE_bool(spirv_no_invariant_color_output);
 DECLARE_bool(spirv_no_invariant_position_output);
 DECLARE_bool(spirv_debug_force_fullscreen_position);
 DECLARE_int32(spirv_debug_position_probe);
+DECLARE_bool(gpu_vulkan_shared_memory_no_switch);
 DECLARE_bool(spirv_debug_identity_ndc);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
