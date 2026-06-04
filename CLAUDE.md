@@ -9,6 +9,17 @@ Thor is ~10-20× the 360 in raw FLOPS/cores, but that is mostly **latent paralle
 emulation pays a heavy CPU translation tax and currently uses ~1 of 8 cores, so 4-6fps is not a
 hardware limit — it's where the per-bottleneck work goes.
 
+## ⚡ MISSION (2026-06-04): the BEST, FASTEST, most-optimized xenia ever, for the AYN Thor
+**Every little optimization adds up.** Pursue the best codegen (recompiler quality), a fixed binning
+front-end, and the best thread placement for this exact SoC — then **stack** the wins. Each perf win is
+exposed as a **user-selectable, explained toggle in the in-app Settings UI** (registry:
+`XeniaOptimizations` → rendered by `SettingsActivity` "Performance optimizations" section → wired to
+engine cvars by `XeniaAndroidSettings.createLaunchArguments`). The point of the UI is to **see how the
+little advances compound into big advances** by toggling/stacking them. Adding a new optimization =
+add ONE `XeniaOptimizations` registry entry (it auto-appears in the UI and auto-wires its cvar) +
+allowlist the cvar in `EmulatorActivity`. Default the device-validated wins ON; keep risky/experimental
+ones toggleable (cvar still the engine mechanism, but surfaced + explained, not hidden).
+
 ## ⚡ Current status (2026-06-04) — READ before optimizing
 - **Turnip (Mesa) driver WORKS and is the FAST+CORRECT path.** The months-long black screen was xenia
   backing the 512MB guest-RAM mirror with a SPARSE buffer Turnip doesn't reliably back (vertex-fetch

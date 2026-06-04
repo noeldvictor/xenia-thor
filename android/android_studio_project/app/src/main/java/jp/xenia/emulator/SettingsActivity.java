@@ -16,6 +16,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.LinkedHashMap;
+
 public class SettingsActivity extends Activity {
     private RadioGroup mProfileGroup;
     private RadioGroup mGpuGroup;
@@ -27,6 +29,7 @@ public class SettingsActivity extends Activity {
     private CheckBox mShowFps;
     private CheckBox mVulkanCounters;
     private boolean mUpdatingControls;
+    private final LinkedHashMap<String, CheckBox> mOptToggles = new LinkedHashMap<>();
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -78,6 +81,7 @@ public class SettingsActivity extends Activity {
         addControllerMappingButton(root);
 
         addToggles(root);
+        addOptimizations(root);
         addButtons(root);
         setContentView(scrollView);
 
@@ -147,6 +151,58 @@ public class SettingsActivity extends Activity {
         checkBox.setTextSize(15);
         root.addView(checkBox, matchWrap());
         return checkBox;
+    }
+
+    // Registry-driven performance optimizations: one explained toggle per
+    // XeniaOptimizations entry, grouped by category. Adding a new optimization to
+    // the registry makes it appear here automatically. Every little win adds up -
+    // the section invites stacking them to compound the speedup.
+    private void addOptimizations(final LinearLayout root) {
+        final TextView title = new TextView(this);
+        title.setText("Performance optimizations");
+        title.setTextColor(getColor(R.color.xenia_green_soft));
+        title.setTextSize(13);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        root.addView(title, matchWrapWithTopMargin(18));
+
+        final TextView blurb = new TextView(this);
+        blurb.setText("Every optimization adds up - stack them to compound the win. "
+                + "★ wins are device-validated and on by default; turn any off "
+                + "if a game misbehaves.");
+        blurb.setTextColor(getColor(R.color.xenia_text_secondary));
+        blurb.setTextSize(12);
+        root.addView(blurb, matchWrapWithTopMargin(2));
+
+        String lastCategory = null;
+        for (final XeniaOptimizations.Optimization opt : XeniaOptimizations.ALL) {
+            if (!opt.category.equals(lastCategory)) {
+                lastCategory = opt.category;
+                final TextView category = new TextView(this);
+                category.setText(opt.category);
+                category.setAllCaps(true);
+                category.setTextColor(getColor(R.color.xenia_text_secondary));
+                category.setTextSize(11);
+                category.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                root.addView(category, matchWrapWithTopMargin(12));
+            }
+
+            final CheckBox toggle = new CheckBox(this);
+            toggle.setText(opt.recommended ? opt.title + "  ★" : opt.title);
+            toggle.setTextColor(getColor(R.color.xenia_text));
+            toggle.setTextSize(15);
+            toggle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            root.addView(toggle, matchWrapWithTopMargin(6));
+
+            final TextView detail = new TextView(this);
+            detail.setText(opt.detail);
+            detail.setTextColor(getColor(R.color.xenia_text_secondary));
+            detail.setTextSize(12);
+            final LinearLayout.LayoutParams detailParams = matchWrap();
+            detailParams.setMargins(dp(34), dp(2), 0, dp(2));
+            root.addView(detail, detailParams);
+
+            mOptToggles.put(opt.prefKey, toggle);
+        }
     }
 
     private void addButtons(final LinearLayout root) {
@@ -233,6 +289,12 @@ public class SettingsActivity extends Activity {
         mShowFps.setChecked(preferences.getBoolean(XeniaAndroidSettings.KEY_SHOW_FPS, true));
         mVulkanCounters.setChecked(preferences.getBoolean(
                 XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS, false));
+        for (final XeniaOptimizations.Optimization opt : XeniaOptimizations.ALL) {
+            final CheckBox toggle = mOptToggles.get(opt.prefKey);
+            if (toggle != null) {
+                toggle.setChecked(preferences.getBoolean(opt.prefKey, opt.defaultEnabled));
+            }
+        }
         mUpdatingControls = false;
     }
 
@@ -251,6 +313,12 @@ public class SettingsActivity extends Activity {
         editor.putBoolean(
                 XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS, mVulkanCounters.isChecked());
         editor.putInt(XeniaAndroidSettings.KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60);
+        for (final XeniaOptimizations.Optimization opt : XeniaOptimizations.ALL) {
+            final CheckBox toggle = mOptToggles.get(opt.prefKey);
+            if (toggle != null) {
+                editor.putBoolean(opt.prefKey, toggle.isChecked());
+            }
+        }
         editor.apply();
     }
 

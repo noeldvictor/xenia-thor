@@ -224,6 +224,10 @@ public final class XeniaAndroidSettings {
                     preferences.getInt(KEY_VULKAN_PERF_COUNTERS_INTERVAL, 60));
         }
         putStableLaunchOverrides(launchArguments);
+        // User-selectable performance optimizations (registry-driven): each
+        // enabled toggle contributes its engine cvar(s). Applied last so an
+        // enabled optimization always wins over a stable-default override.
+        XeniaOptimizations.applyTo(preferences, launchArguments);
         return launchArguments;
     }
 
