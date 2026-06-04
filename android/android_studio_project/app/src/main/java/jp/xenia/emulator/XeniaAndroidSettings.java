@@ -52,6 +52,11 @@ public final class XeniaAndroidSettings {
             "launcher_last_run_started_at_ms";
     public static final String KEY_LAST_RUN_FINISHED_AT_MS =
             "launcher_last_run_finished_at_ms";
+    public static final String KEY_LAST_CRASH_REPORTED_AT_MS =
+            "launcher_last_crash_reported_at_ms";
+    public static final String KEY_LAST_CRASH_AT_MS = "launcher_last_crash_at_ms";
+    public static final String KEY_LAST_CRASH_REASON = "launcher_last_crash_reason";
+    public static final String KEY_LAST_CRASH_LOG_PATH = "launcher_last_crash_log_path";
     public static final String KEY_RECENT_GAMES_JSON = "launcher_recent_games_json";
     public static final String KEY_GAME_LIBRARY_JSON = "launcher_game_library_json";
     public static final String KEY_GAME_LIBRARY_FOLDER_URIS_JSON =
@@ -134,6 +139,8 @@ public final class XeniaAndroidSettings {
     public static final String LAST_RUN_STATE_RUNNING = "running";
     public static final String LAST_RUN_STATE_EXITED_TO_MENU = "exited_to_menu";
     public static final String LAST_RUN_STATE_GUEST_CRASH = "guest_crash";
+    /** The whole app/native process died abnormally while a game was running. */
+    public static final String LAST_RUN_STATE_APP_CRASH = "app_crash";
 
     private static final String CPU_ARM64 = "arm64";
     private static final String EXTERNAL_STORAGE_PROVIDER =

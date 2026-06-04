@@ -73,6 +73,9 @@ public class LauncherActivity extends Activity {
 
         setContentView(R.layout.activity_launcher);
         XeniaAndroidSettings.ensureInitialized(this);
+        // Resolve any crash from the previous session (native/app death) before
+        // we render the last-run status, so it shows the real cause + a log.
+        CrashReporter.reconcile(this);
         promoteLibrarySections();
         refreshLastRunStatus();
         refreshGameLibrary();
@@ -314,6 +317,8 @@ public class LauncherActivity extends Activity {
         final String title = preferences.getString(
                 XeniaAndroidSettings.KEY_LAST_RUN_TITLE,
                 getString(R.string.launcher_last_game_unknown));
+        status.setOnClickListener(null);
+        status.setClickable(false);
         if (XeniaAndroidSettings.LAST_RUN_STATE_EXITED_TO_MENU.equals(state)) {
             status.setText(getString(R.string.launcher_last_run_exited, title));
         } else if (XeniaAndroidSettings.LAST_RUN_STATE_GUEST_CRASH.equals(state)) {
@@ -324,12 +329,51 @@ public class LauncherActivity extends Activity {
             } else {
                 status.setText(getString(R.string.launcher_last_run_guest_crash, title));
             }
+        } else if (XeniaAndroidSettings.LAST_RUN_STATE_APP_CRASH.equals(state)) {
+            final String reason = preferences.getString(
+                    XeniaAndroidSettings.KEY_LAST_CRASH_REASON, "crashed");
+            status.setText(title + " crashed last time — " + reason + ".  Tap for details ▸");
+            status.setClickable(true);
+            status.setOnClickListener(view -> showCrashDetails());
         } else if (XeniaAndroidSettings.LAST_RUN_STATE_RUNNING.equals(state)) {
             status.setText(getString(R.string.launcher_last_run_maybe_crashed, title));
         } else {
             status.setText(getString(R.string.launcher_last_run_unknown, title));
         }
         status.setVisibility(View.VISIBLE);
+    }
+
+    private void showCrashDetails() {
+        final CrashReporter.CrashInfo crash = CrashReporter.getLastCrash(this);
+        if (crash == null) {
+            return;
+        }
+        final String log = CrashReporter.readLog(crash.logPath);
+        final String body = log != null && !log.isEmpty()
+                ? log
+                : (crash.title + "\n" + crash.reason
+                        + "\n\n(No detailed trace was captured for this crash.)");
+        final String dialogTitle =
+                (crash.title.isEmpty() ? "Game" : crash.title) + " — crash report";
+        new AlertDialog.Builder(this)
+                .setTitle(dialogTitle)
+                .setMessage(body)
+                .setPositiveButton("Share", (dialog, which) -> shareCrashLog(dialogTitle, body))
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void shareCrashLog(final String subject, final String body) {
+        try {
+            final Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_SUBJECT, subject);
+            intent.putExtra(Intent.EXTRA_TEXT, body);
+            startActivity(Intent.createChooser(intent, "Share crash report"));
+        } catch (final RuntimeException e) {
+            Toast.makeText(this, "No app available to share the report.",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void refreshRecentGames() {
@@ -1111,6 +1155,9 @@ public class LauncherActivity extends Activity {
     private String labelForState(final String state) {
         if (XeniaAndroidSettings.LAST_RUN_STATE_EXITED_TO_MENU.equals(state)) {
             return getString(R.string.launcher_recent_game_exited);
+        }
+        if (XeniaAndroidSettings.LAST_RUN_STATE_APP_CRASH.equals(state)) {
+            return "Crashed";
         }
         if (XeniaAndroidSettings.LAST_RUN_STATE_RUNNING.equals(state)) {
             return getString(R.string.launcher_recent_game_maybe_crashed);
