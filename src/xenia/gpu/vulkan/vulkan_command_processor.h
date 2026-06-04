@@ -625,6 +625,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   VkDescriptorSetLayout descriptor_set_layout_constants_dynamic_ = VK_NULL_HANDLE;
   VkDescriptorPool constants_dynamic_descriptor_pool_ = VK_NULL_HANDLE;
   VkDescriptorSet constants_dynamic_descriptor_set_ = VK_NULL_HANDLE;
+  // R2: the per-draw dynamic offset into each ring for the current draw's
+  // constant slot, passed as pDynamicOffsets when binding the dynamic set.
+  uint32_t current_constant_dynamic_offsets_
+      [SpirvShaderTranslator::kConstantBufferCount] = {};
 
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;

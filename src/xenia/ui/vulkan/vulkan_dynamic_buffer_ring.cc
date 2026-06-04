@@ -49,9 +49,11 @@ bool VulkanDynamicBufferRing::Initialize(const VulkanDevice* device,
                                          VkDeviceSize capacity,
                                          VkBufferUsageFlags usage,
                                          VkMemoryPropertyFlags memory_props,
-                                         VkDeviceSize alignment) {
+                                         VkDeviceSize alignment,
+                                         VkDeviceSize tail_padding) {
   device_ = device;
   alignment_ = std::max<VkDeviceSize>(alignment, VkDeviceSize(1));
+  tail_padding_ = xe::round_up(tail_padding, alignment_);
   // Each frame gets an aligned segment; total capacity is segment * frames.
   segment_size_ = xe::round_up(
       std::max<VkDeviceSize>(capacity / kFramesInFlight, alignment_), alignment_);
@@ -64,7 +66,7 @@ bool VulkanDynamicBufferRing::Initialize(const VulkanDevice* device,
   buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   buffer_create_info.pNext = nullptr;
   buffer_create_info.flags = 0;
-  buffer_create_info.size = capacity_;
+  buffer_create_info.size = capacity_ + tail_padding_;
   buffer_create_info.usage = usage;
   buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   buffer_create_info.queueFamilyIndexCount = 0;
@@ -166,8 +168,8 @@ void VulkanDynamicBufferRing::FlushRange(VkDeviceSize offset, VkDeviceSize size)
   }
   // util::FlushMappedMemoryRange no-ops for host-coherent memory and clamps to
   // nonCoherentAtomSize internally.
-  util::FlushMappedMemoryRange(device_, memory_, memory_type_, offset, capacity_,
-                               size);
+  util::FlushMappedMemoryRange(device_, memory_, memory_type_, offset,
+                               capacity_ + tail_padding_, size);
 }
 
 void VulkanDynamicBufferRing::FrameAdvance(uint64_t frame_index) {

@@ -362,16 +362,41 @@ bool VulkanCommandProcessor::SetupContext() {
   // HOST_VISIBLE|DEVICE_LOCAL; if no such memory type exists we tear all rings
   // back down and fall back rather than run a partially-armed arena.
   if (cvars::vulkan_dynamic_constants_arena) {
-    const VkDeviceSize kArenaCapacity = VkDeviceSize(256) * 1024;
     const VkDeviceSize arena_align = std::max<VkDeviceSize>(
         device_properties.minUniformBufferOffsetAlignment, VkDeviceSize(1));
+    // Per-binding (total capacity, descriptor range). `range` MUST match the
+    // descriptor range set in the dynamic constants descriptor update below, and
+    // is passed as the ring tail_padding so a fixed range can overhang a smaller
+    // variable-size per-draw allocation without leaving the buffer. `capacity` is
+    // sized for a heavy frame's worth of per-draw constant slots (the float
+    // buffers dominate; each draw allocates only its actual constant bytes).
+    struct ArenaRingSpec {
+      VkDeviceSize capacity;
+      VkDeviceSize range;
+    };
+    const VkDeviceSize kFloatRange = VkDeviceSize(sizeof(float) * 4 * 256);
+    ArenaRingSpec arena_specs[SpirvShaderTranslator::kConstantBufferCount];
+    arena_specs[SpirvShaderTranslator::kConstantBufferSystem] = {
+        VkDeviceSize(4) * 1024 * 1024,
+        VkDeviceSize(sizeof(SpirvShaderTranslator::SystemConstants))};
+    arena_specs[SpirvShaderTranslator::kConstantBufferFloatVertex] = {
+        VkDeviceSize(24) * 1024 * 1024, kFloatRange};
+    arena_specs[SpirvShaderTranslator::kConstantBufferFloatPixel] = {
+        VkDeviceSize(24) * 1024 * 1024, kFloatRange};
+    arena_specs[SpirvShaderTranslator::kConstantBufferBoolLoop] = {
+        VkDeviceSize(2) * 1024 * 1024,
+        VkDeviceSize(sizeof(uint32_t) * (8 + 32))};
+    arena_specs[SpirvShaderTranslator::kConstantBufferFetch] = {
+        VkDeviceSize(6) * 1024 * 1024,
+        VkDeviceSize(sizeof(uint32_t) * 6 * 32)};
     bool arena_ok = true;
-    for (auto& ring : dynamic_constants_rings_) {
-      if (!ring.Initialize(vulkan_device, kArenaCapacity,
-                           VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                           arena_align)) {
+    for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      if (!dynamic_constants_rings_[i].Initialize(
+              vulkan_device, arena_specs[i].capacity,
+              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+              arena_align, arena_specs[i].range)) {
         arena_ok = false;
         break;
       }
@@ -385,9 +410,7 @@ bool VulkanCommandProcessor::SetupContext() {
           "ring init failed - falling back to the transient constant path");
     } else {
       XELOGGPU(
-          "VulkanCommandProcessor: vulkan_dynamic_constants_arena ENABLED ({} "
-          "byte rings)",
-          uint64_t(kArenaCapacity));
+          "VulkanCommandProcessor: vulkan_dynamic_constants_arena ENABLED");
     }
   }
 
@@ -5381,6 +5404,16 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     }
     if (cull_index_buffer_pool_) {
       cull_index_buffer_pool_->Reclaim(frame_completed_);
+    }
+    // R2: rotate the constant arena rings to this frame's segment. frame_current_
+    // advances every kMaxFramesInFlight (== the ring's kFramesInFlight) frames, so
+    // a segment is only reused once its frame has completed - no in-flight stomp.
+    // (current_constant_buffers_up_to_date_ was just cleared above, so every
+    // constant re-allocates into the fresh segment this frame.)
+    if (constants_dynamic_descriptor_set_ != VK_NULL_HANDLE) {
+      for (auto& ring : dynamic_constants_rings_) {
+        ring.FrameAdvance(frame_current_);
+      }
     }
     while (!single_transient_descriptors_used_.empty()) {
       const UsedSingleTransientDescriptor& used_transient_descriptor =

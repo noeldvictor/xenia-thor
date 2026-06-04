@@ -40,9 +40,15 @@ class VulkanDynamicBufferRing {
   // memory_props = e.g. HOST_VISIBLE|DEVICE_LOCAL (R2) or DEVICE_LOCAL (R4).
   // Returns false (and leaves is_valid()==false) if creation fails - the caller
   // must fall back to its existing path (e.g. uniform_buffer_pool_).
+  // tail_padding: extra bytes appended to the backing buffer BEYOND the
+  // allocatable capacity (segments). Lets a UNIFORM_BUFFER_DYNAMIC binding use a
+  // fixed descriptor `range` R larger than a variable-size allocation: even the
+  // last slot in the last segment can read [offset, offset+R) without running
+  // past the buffer, as long as tail_padding >= R. Allocation still only uses
+  // `capacity`.
   bool Initialize(const VulkanDevice* device, VkDeviceSize capacity,
                   VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_props,
-                  VkDeviceSize alignment);
+                  VkDeviceSize alignment, VkDeviceSize tail_padding = 0);
   void Shutdown();
 
   bool is_valid() const { return buffer_ != VK_NULL_HANDLE; }
@@ -77,6 +83,7 @@ class VulkanDynamicBufferRing {
   uint32_t memory_type_ = UINT32_MAX;
   bool host_coherent_ = false;
   VkDeviceSize capacity_ = 0;
+  VkDeviceSize tail_padding_ = 0;
   VkDeviceSize segment_size_ = 0;
   VkDeviceSize alignment_ = 1;
   uint32_t current_segment_ = 0;
