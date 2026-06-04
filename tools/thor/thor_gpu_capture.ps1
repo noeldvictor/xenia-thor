@@ -28,7 +28,11 @@ param(
   # Skip the RT/depth/EDRAM readback dump cvars (which add a vkCmdCopyImageToBuffer
   # every resolve) and keep only the cheap draw-outcomes line - for clean fps /
   # gpu_frame_us perf measurement that isn't inflated by the diagnostic readbacks.
-  [switch]$NoDump
+  [switch]$NoDump,
+  # Capture per-THREAD CPU (top -H) during the heavy scene to see whether a single
+  # guest/JIT thread is pegged (~100% of one core = throughput-bound) or no thread
+  # is pegged (= latency/serialization-bound). Saves <label>_top.txt.
+  [switch]$TopProfile
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
@@ -109,6 +113,14 @@ if (-not $hot) {
   & $adb -s $DeviceSerial pull /sdcard/thor_gpu_capture.png $png | Out-Null
   Write-Output "=== draw outcomes / RT IMAGE / DEPTH IMAGE (tail) ==="
   & $adb -s $DeviceSerial shell "logcat -d | grep -E 'GPU draw outcomes|dump RT IMAGE checksum|dump DEPTH IMAGE checksum|Loaded Turnip|No Vulkan physical' | tail -8"
+  if ($TopProfile) {
+    $topf = Join-Path $OutDir "$($label)_top.txt"
+    Write-Output "=== per-thread CPU: top -H -b -n 2 -d 1 -m 22 (2nd iteration = real %CPU) ==="
+    $topout = (& $adb -s $DeviceSerial shell "top -H -b -n 2 -d 1 -m 22")
+    $topout | Out-File -Encoding utf8 $topf
+    $topout | ForEach-Object { Write-Output $_ }
+    Write-Output "top saved: $topf"
+  }
 }
 & $adb -s $DeviceSerial shell am force-stop $pkg
 & $adb -s $DeviceSerial shell svc power stayon false
