@@ -36,6 +36,7 @@
     <string name="launcher_game_library_group_count">%1$d games / %2$d files</string>
     <string name="launcher_game_library_disc_picker_detail">Choose disc</string>
     <string name="launcher_game_action_start">Start game</string>
+    <string name="launcher_game_action_patches">Game patches</string>
     <string name="launcher_game_action_backup_save">Back up save data</string>
     <string name="launcher_game_action_reset_save">Reset save data</string>
     <string name="launcher_game_save_missing">No save data found for this game</string>
