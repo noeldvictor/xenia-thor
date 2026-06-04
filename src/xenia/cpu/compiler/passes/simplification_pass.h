@@ -31,6 +31,9 @@ class SimplificationPass : public ConditionalGroupSubpass {
 
   bool SimplifyAssignments(hir::HIRBuilder* builder);
   hir::Value* CheckValue(hir::Value* value, bool& result);
+
+  // Integer algebraic identities (x+0, x-0, x*1, x|0, x^0, x<<0/x>>0 -> x).
+  bool SimplifyAlgebraicIdentities(hir::HIRBuilder* builder);
 };
 
 }  // namespace passes

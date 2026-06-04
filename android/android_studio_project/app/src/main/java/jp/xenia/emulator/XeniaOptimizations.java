@@ -115,6 +115,18 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("ppc_rlwinm_shift_fastpath")}, null));
 
         list.add(new Optimization(
+                "opt_algebraic_identities",
+                "Algebraic identity simplification",
+                "Folds redundant integer math (x+0, x*1, x<<0 ...) out of code.",
+                "The recompiler sometimes emits redundant integer ops - adding "
+                        + "zero, multiplying by one, shifting by zero. This folds "
+                        + "those identities away before register allocation so they "
+                        + "never reach the CPU. Integer-only (float identities are "
+                        + "unsafe). New - validate before relying on it.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("hir_algebraic_identities")}, null));
+
+        list.add(new Optimization(
                 "opt_constants_arena",
                 "Dynamic constant streaming",
                 "Streams shader constants through one persistent GPU buffer.",

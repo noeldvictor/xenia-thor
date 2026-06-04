@@ -9,7 +9,15 @@
 
 #include "xenia/cpu/compiler/passes/simplification_pass.h"
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/profiling.h"
+
+DEFINE_bool(hir_algebraic_identities, false,
+            "Simplify integer algebraic identities in the HIR (x+0, x-0, x*1, "
+            "x|0, x^0, x<<0, x>>0 -> x) so they fold away before register "
+            "allocation - fewer host instructions. Integer-only (float "
+            "identities are unsafe re: NaN/signed zero). Experimental.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -30,6 +38,9 @@ SimplificationPass::~SimplificationPass() {}
 bool SimplificationPass::Run(HIRBuilder* builder, bool& result) {
   result = false;
   result |= EliminateConversions(builder);
+  if (cvars::hir_algebraic_identities) {
+    result |= SimplifyAlgebraicIdentities(builder);
+  }
   result |= SimplifyAssignments(builder);
   return true;
 }
@@ -117,6 +128,60 @@ bool SimplificationPass::CheckByteSwap(Instr* i) {
     }
   }
   return false;
+}
+
+bool SimplificationPass::SimplifyAlgebraicIdentities(HIRBuilder* builder) {
+  // Turn integer algebraic-identity ops into a plain assign to the surviving
+  // operand; SimplifyAssignments + dead-code elimination then remove the rest.
+  // INTEGER ONLY (dest type <= INT64_TYPE) - float x+0.0 / x*1.0 / x-x are not
+  // identities (NaN, signed zero, inf-inf). Only the plain (flags == 0) variants
+  // are touched so flag-carrying arithmetic is never altered.
+  bool result = false;
+  auto block = builder->first_block();
+  while (block) {
+    auto i = block->instr_head;
+    while (i) {
+      auto next = i->next;
+      if (i->flags == 0 && i->dest && i->dest->type <= INT64_TYPE &&
+          i->src1.value && i->src2.value) {
+        Value* s1 = i->src1.value;
+        Value* s2 = i->src2.value;
+        Value* survivor = nullptr;
+        auto op = i->opcode;
+        if (op == &OPCODE_ADD_info || op == &OPCODE_OR_info ||
+            op == &OPCODE_XOR_info) {
+          if (s2->IsConstant() && s2->IsConstantZero()) {
+            survivor = s1;
+          } else if (s1->IsConstant() && s1->IsConstantZero()) {
+            survivor = s2;
+          }
+        } else if (op == &OPCODE_SUB_info) {
+          if (s2->IsConstant() && s2->IsConstantZero()) {
+            survivor = s1;
+          }
+        } else if (op == &OPCODE_MUL_info) {
+          if (s2->IsConstant() && s2->IsConstantOne()) {
+            survivor = s1;
+          } else if (s1->IsConstant() && s1->IsConstantOne()) {
+            survivor = s2;
+          }
+        } else if (op == &OPCODE_SHL_info || op == &OPCODE_SHR_info ||
+                   op == &OPCODE_SHA_info) {
+          if (s2->IsConstant() && s2->IsConstantZero()) {
+            survivor = s1;
+          }
+        }
+        if (survivor && survivor->type == i->dest->type) {
+          i->Replace(&OPCODE_ASSIGN_info, 0);
+          i->set_src1(survivor);
+          result = true;
+        }
+      }
+      i = next;
+    }
+    block = block->next;
+  }
+  return result;
 }
 
 bool SimplificationPass::SimplifyAssignments(HIRBuilder* builder) {
