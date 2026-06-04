@@ -195,8 +195,13 @@ bool VulkanPrimitiveProcessor::InitializeBuiltinIndexBuffer(
     return false;
   }
   fill_callback(mapping);
+  // Flush the host-mapped UPLOAD allocation that was just written (and mapped at
+  // line ~181), not the device-local destination handle - a dormant handle/type
+  // mismatch that is a no-op only because this device's upload heap happens to be
+  // HOST_COHERENT (the flush early-returns); correct it for robustness on any
+  // memory configuration / driver where the upload heap is non-coherent.
   ui::vulkan::util::FlushMappedMemoryRange(
-      vulkan_device, builtin_index_buffer_memory_, upload_memory_type);
+      vulkan_device, builtin_index_buffer_upload_memory_, upload_memory_type);
   dfn.vkUnmapMemory(device, builtin_index_buffer_upload_memory_);
 
   // Schedule uploading in the first submission.
