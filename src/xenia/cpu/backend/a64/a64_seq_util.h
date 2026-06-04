@@ -312,20 +312,40 @@ inline bool CanFoldFlatGuestAddress(const I64Op& guest) {
          xe::memory::allocation_granularity() <= 0x1000;
 }
 
-// Invoke `emit` with the address operand for a guest memory access: the folded
-// [membase, Wn, UXTW] form when CanFoldFlatGuestAddress(), else the classic
-// [membase, x0] form after ComputeMemoryAddress. `emit` is a generic lambda and
-// MUST accept both Xbyak_aarch64::AdrExt (folded) and Xbyak_aarch64::AdrReg
-// (classic) - i.e. take `auto&& mem`.
+// Invoke `emit(mem)` with the address operand for a guest memory access: the
+// folded [membase, Wn, UXTW] form when CanFoldFlatGuestAddress(), else the
+// classic [membase, x0] form after ComputeMemoryAddress. `emit` is a generic
+// lambda and MUST accept both Xbyak_aarch64::AdrExt (folded) and
+// Xbyak_aarch64::AdrReg (classic) - i.e. take `auto&& mem`. Use for guest loads
+// and watch-free guest stores.
 template <typename EmitFn>
-inline void WithGuestLoadAddress(A64Emitter& e, const I64Op& guest,
-                                 EmitFn&& emit) {
+inline void WithGuestMemAddress(A64Emitter& e, const I64Op& guest,
+                                EmitFn&& emit) {
   using namespace Xbyak_aarch64;
   if (CanFoldFlatGuestAddress(guest)) {
     emit(ptr(e.GetMembaseReg(), WReg(guest.reg().getIdx()), UXTW));
   } else {
     XReg addr = ComputeMemoryAddress(e, guest);
     emit(ptr(e.GetMembaseReg(), addr));
+  }
+}
+
+// Like WithGuestMemAddress but also passes the guest address as an XReg for
+// EmitGuestStoreWatch (which, when the store-watch list is non-empty, needs a
+// register holding the runtime guest address). In the folded path that is the
+// guest source register itself - its W view holds the 32-bit guest address; in
+// the classic path it is the computed x0. `emit` takes
+// `(auto&& mem, Xbyak_aarch64::XReg watch_addr)`.
+template <typename EmitFn>
+inline void WithGuestStoreAddress(A64Emitter& e, const I64Op& guest,
+                                  EmitFn&& emit) {
+  using namespace Xbyak_aarch64;
+  if (CanFoldFlatGuestAddress(guest)) {
+    emit(ptr(e.GetMembaseReg(), WReg(guest.reg().getIdx()), UXTW),
+         XReg(guest.reg().getIdx()));
+  } else {
+    XReg addr = ComputeMemoryAddress(e, guest);
+    emit(ptr(e.GetMembaseReg(), addr), addr);
   }
 }
 

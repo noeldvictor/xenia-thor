@@ -367,12 +367,12 @@ static T MMIOAwareLoad(void* _ctx, unsigned int guestaddr) {
 // ============================================================================
 struct LOAD_I8 : Sequence<LOAD_I8, I<OPCODE_LOAD, I8Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldrb(i.dest, mem); });
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldrb(i.dest, mem); });
   }
 };
 struct LOAD_I16 : Sequence<LOAD_I16, I<OPCODE_LOAD, I16Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldrh(i.dest, mem); });
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldrh(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev16(i.dest, i.dest);
     }
@@ -421,7 +421,7 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
       e.b(done);
       e.L(normal_access);
       {
-        WithGuestLoadAddress(e, i.src1,
+        WithGuestMemAddress(e, i.src1,
                              [&](auto&& mem) { e.ldr(i.dest, mem); });
         if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
           e.rev(i.dest, i.dest);
@@ -429,7 +429,7 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
       }
       e.L(done);
     } else {
-      WithGuestLoadAddress(e, i.src1,
+      WithGuestMemAddress(e, i.src1,
                            [&](auto&& mem) { e.ldr(i.dest, mem); });
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         e.rev(i.dest, i.dest);
@@ -439,7 +439,7 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
 };
 struct LOAD_I64 : Sequence<LOAD_I64, I<OPCODE_LOAD, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev(i.dest, i.dest);
     }
@@ -448,28 +448,28 @@ struct LOAD_I64 : Sequence<LOAD_I64, I<OPCODE_LOAD, I64Op, I64Op>> {
 struct LOAD_F32 : Sequence<LOAD_F32, I<OPCODE_LOAD, F32Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.w0, mem); });
+      WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.w0, mem); });
       e.rev(e.w0, e.w0);
       e.fmov(i.dest, e.w0);
     } else {
-      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
+      WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     }
   }
 };
 struct LOAD_F64 : Sequence<LOAD_F64, I<OPCODE_LOAD, F64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.x0, mem); });
+      WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.x0, mem); });
       e.rev(e.x0, e.x0);
       e.fmov(i.dest, e.x0);
     } else {
-      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
+      WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     }
   }
 };
 struct LOAD_V128 : Sequence<LOAD_V128, I<OPCODE_LOAD, V128Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       // Reverse bytes within each 32-bit word (PPC BE -> ARM64 LE).
       auto idx = i.dest.reg().getIdx();
@@ -485,34 +485,36 @@ EMITTER_OPCODE_TABLE(OPCODE_LOAD, LOAD_I8, LOAD_I16, LOAD_I32, LOAD_I64,
 // ============================================================================
 struct STORE_I8 : Sequence<STORE_I8, I<OPCODE_STORE, VoidOp, I64Op, I8Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (i.src2.is_constant) {
-      e.mov(e.w17, static_cast<uint64_t>(i.src2.constant() & 0xFF));
-      e.strb(e.w17, ptr(e.GetMembaseReg(), addr));
-    } else {
-      e.strb(i.src2, ptr(e.GetMembaseReg(), addr));
-    }
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) {
+      if (i.src2.is_constant) {
+        e.mov(e.w17, static_cast<uint64_t>(i.src2.constant() & 0xFF));
+        e.strb(e.w17, mem);
+      } else {
+        e.strb(i.src2, mem);
+      }
+    });
   }
 };
 struct STORE_I16 : Sequence<STORE_I16, I<OPCODE_STORE, VoidOp, I64Op, I16Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      if (i.src2.is_constant) {
-        uint16_t val = xe::byte_swap(static_cast<uint16_t>(i.src2.constant()));
-        e.mov(e.w17, static_cast<uint64_t>(val));
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) {
+      if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
+        if (i.src2.is_constant) {
+          uint16_t val = xe::byte_swap(static_cast<uint16_t>(i.src2.constant()));
+          e.mov(e.w17, static_cast<uint64_t>(val));
+        } else {
+          e.rev16(e.w17, i.src2);
+        }
+        e.strh(e.w17, mem);
       } else {
-        e.rev16(e.w17, i.src2);
+        if (i.src2.is_constant) {
+          e.mov(e.w17, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
+          e.strh(e.w17, mem);
+        } else {
+          e.strh(i.src2, mem);
+        }
       }
-      e.strh(e.w17, ptr(e.GetMembaseReg(), addr));
-    } else {
-      if (i.src2.is_constant) {
-        e.mov(e.w17, static_cast<uint64_t>(i.src2.constant() & 0xFFFF));
-        e.strh(e.w17, ptr(e.GetMembaseReg(), addr));
-      } else {
-        e.strh(i.src2, ptr(e.GetMembaseReg(), addr));
-      }
-    }
+    });
   }
 };
 struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
@@ -568,7 +570,31 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
       e.b(done);
       e.L(normal_access);
       {
-        auto addr = ComputeMemoryAddress(e, i.src1);
+        WithGuestStoreAddress(e, i.src1, [&](auto&& mem, XReg watch_addr) {
+          if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
+            if (i.src2.is_constant) {
+              uint32_t val =
+                  xe::byte_swap(static_cast<uint32_t>(i.src2.constant()));
+              e.mov(e.w17, static_cast<uint64_t>(val));
+            } else {
+              e.rev(e.w17, i.src2);
+            }
+            e.str(e.w17, mem);
+          } else {
+            if (i.src2.is_constant) {
+              e.mov(e.w17, static_cast<uint64_t>(
+                               static_cast<uint32_t>(i.src2.constant())));
+              e.str(e.w17, mem);
+            } else {
+              e.str(i.src2, mem);
+            }
+          }
+          EmitGuestStoreWatch(e, i.instr, watch_addr, 4);
+        });
+      }
+      e.L(done);
+    } else {
+      WithGuestStoreAddress(e, i.src1, [&](auto&& mem, XReg watch_addr) {
         if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
           if (i.src2.is_constant) {
             uint32_t val =
@@ -577,135 +603,111 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
           } else {
             e.rev(e.w17, i.src2);
           }
-          e.str(e.w17, ptr(e.GetMembaseReg(), addr));
+          e.str(e.w17, mem);
         } else {
           if (i.src2.is_constant) {
             e.mov(e.w17, static_cast<uint64_t>(
                              static_cast<uint32_t>(i.src2.constant())));
-            e.str(e.w17, ptr(e.GetMembaseReg(), addr));
+            e.str(e.w17, mem);
           } else {
-            e.str(i.src2, ptr(e.GetMembaseReg(), addr));
+            e.str(i.src2, mem);
           }
         }
-        EmitGuestStoreWatch(e, i.instr, addr, 4);
-      }
-      e.L(done);
-    } else {
-      auto addr = ComputeMemoryAddress(e, i.src1);
-      if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-        if (i.src2.is_constant) {
-          uint32_t val =
-              xe::byte_swap(static_cast<uint32_t>(i.src2.constant()));
-          e.mov(e.w17, static_cast<uint64_t>(val));
-        } else {
-          e.rev(e.w17, i.src2);
-        }
-        e.str(e.w17, ptr(e.GetMembaseReg(), addr));
-      } else {
-        if (i.src2.is_constant) {
-          e.mov(e.w17, static_cast<uint64_t>(
-                           static_cast<uint32_t>(i.src2.constant())));
-          e.str(e.w17, ptr(e.GetMembaseReg(), addr));
-        } else {
-          e.str(i.src2, ptr(e.GetMembaseReg(), addr));
-        }
-      }
-      EmitGuestStoreWatch(e, i.instr, addr, 4);
+        EmitGuestStoreWatch(e, i.instr, watch_addr, 4);
+      });
     }
   }
 };
 struct STORE_I64 : Sequence<STORE_I64, I<OPCODE_STORE, VoidOp, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      if (i.src2.is_constant) {
-        uint64_t val = xe::byte_swap(static_cast<uint64_t>(i.src2.constant()));
-        e.mov(e.x17, val);
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) {
+      if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
+        if (i.src2.is_constant) {
+          uint64_t val = xe::byte_swap(static_cast<uint64_t>(i.src2.constant()));
+          e.mov(e.x17, val);
+        } else {
+          e.rev(e.x17, i.src2);
+        }
+        e.str(e.x17, mem);
       } else {
-        e.rev(e.x17, i.src2);
+        if (i.src2.is_constant) {
+          e.mov(e.x17, static_cast<uint64_t>(i.src2.constant()));
+          e.str(e.x17, mem);
+        } else {
+          e.str(i.src2, mem);
+        }
       }
-      e.str(e.x17, ptr(e.GetMembaseReg(), addr));
-    } else {
-      if (i.src2.is_constant) {
-        e.mov(e.x17, static_cast<uint64_t>(i.src2.constant()));
-        e.str(e.x17, ptr(e.GetMembaseReg(), addr));
-      } else {
-        e.str(i.src2, ptr(e.GetMembaseReg(), addr));
-      }
-    }
+    });
   }
 };
 struct STORE_F32 : Sequence<STORE_F32, I<OPCODE_STORE, VoidOp, I64Op, F32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      if (i.src2.is_constant) {
-        uint32_t val =
-            xe::byte_swap(static_cast<uint32_t>(i.src2.value->constant.i32));
-        e.mov(e.w17, static_cast<uint64_t>(val));
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) {
+      if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
+        if (i.src2.is_constant) {
+          uint32_t val =
+              xe::byte_swap(static_cast<uint32_t>(i.src2.value->constant.i32));
+          e.mov(e.w17, static_cast<uint64_t>(val));
+        } else {
+          e.fmov(e.w17, i.src2);
+          e.rev(e.w17, e.w17);
+        }
+        e.str(e.w17, mem);
       } else {
-        e.fmov(e.w17, i.src2);
-        e.rev(e.w17, e.w17);
+        if (i.src2.is_constant) {
+          e.mov(e.w17, static_cast<uint64_t>(i.src2.value->constant.i32));
+          e.str(e.w17, mem);
+        } else {
+          e.str(i.src2, mem);
+        }
       }
-      e.str(e.w17, ptr(e.GetMembaseReg(), addr));
-    } else {
-      if (i.src2.is_constant) {
-        e.mov(e.w17, static_cast<uint64_t>(i.src2.value->constant.i32));
-        e.str(e.w17, ptr(e.GetMembaseReg(), addr));
-      } else {
-        e.str(i.src2, ptr(e.GetMembaseReg(), addr));
-      }
-    }
+    });
   }
 };
 struct STORE_F64 : Sequence<STORE_F64, I<OPCODE_STORE, VoidOp, I64Op, F64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      if (i.src2.is_constant) {
-        uint64_t val =
-            xe::byte_swap(static_cast<uint64_t>(i.src2.value->constant.i64));
-        e.mov(e.x17, val);
+    WithGuestMemAddress(e, i.src1, [&](auto&& mem) {
+      if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
+        if (i.src2.is_constant) {
+          uint64_t val =
+              xe::byte_swap(static_cast<uint64_t>(i.src2.value->constant.i64));
+          e.mov(e.x17, val);
+        } else {
+          e.fmov(e.x17, i.src2);
+          e.rev(e.x17, e.x17);
+        }
+        e.str(e.x17, mem);
       } else {
-        e.fmov(e.x17, i.src2);
-        e.rev(e.x17, e.x17);
+        if (i.src2.is_constant) {
+          e.mov(e.x17, static_cast<uint64_t>(i.src2.value->constant.i64));
+          e.str(e.x17, mem);
+        } else {
+          e.str(i.src2, mem);
+        }
       }
-      e.str(e.x17, ptr(e.GetMembaseReg(), addr));
-    } else {
-      if (i.src2.is_constant) {
-        e.mov(e.x17, static_cast<uint64_t>(i.src2.value->constant.i64));
-        e.str(e.x17, ptr(e.GetMembaseReg(), addr));
-      } else {
-        e.str(i.src2, ptr(e.GetMembaseReg(), addr));
-      }
-    }
+    });
   }
 };
 struct STORE_V128
     : Sequence<STORE_V128, I<OPCODE_STORE, VoidOp, I64Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    // ComputeMemoryAddress may return x0, and LoadV128Const/SrcVReg clobber
-    // x0, so save the address to x17 when we need to load a constant source.
-    bool need_src_load =
-        i.src2.is_constant ||
-        (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP);
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    if (need_src_load) {
-      e.mov(e.x17, addr);
-      addr = e.x17;
-    }
+    // Prepare the source value in a register BEFORE computing the address, so
+    // SrcVReg/LoadV128Const (which clobber x0) can't corrupt a classic-path
+    // address materialized into x0. The folded [membase, Wn, UXTW] path never
+    // touches x0, so this ordering also drops the old x17 address-save dance.
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       // Reverse bytes within each 32-bit word, store via scratch v0.
       int idx = SrcVReg(e, i.src2, 0);
       e.rev32(VReg16B(0), VReg16B(idx));
-      e.str(QReg(0), ptr(e.GetMembaseReg(), addr));
+      WithGuestMemAddress(e, i.src1,
+                          [&](auto&& mem) { e.str(QReg(0), mem); });
+    } else if (i.src2.is_constant) {
+      LoadV128Const(e, 0, i.src2.constant());
+      WithGuestMemAddress(e, i.src1,
+                          [&](auto&& mem) { e.str(QReg(0), mem); });
     } else {
-      if (i.src2.is_constant) {
-        LoadV128Const(e, 0, i.src2.constant());
-        e.str(QReg(0), ptr(e.GetMembaseReg(), addr));
-      } else {
-        e.str(i.src2, ptr(e.GetMembaseReg(), addr));
-      }
+      WithGuestMemAddress(e, i.src1,
+                          [&](auto&& mem) { e.str(i.src2, mem); });
     }
   }
 };
