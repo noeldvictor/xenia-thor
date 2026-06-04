@@ -9,11 +9,19 @@ Thor is ~10-20× the 360 in raw FLOPS/cores, but that is mostly **latent paralle
 emulation pays a heavy CPU translation tax and currently uses ~1 of 8 cores, so 4-6fps is not a
 hardware limit — it's where the per-bottleneck work goes.
 
-## ⚡ Current status (2026-06-03) — READ before optimizing
+## ⚡ Current status (2026-06-04) — READ before optimizing
 - **Turnip (Mesa) driver WORKS and is the FAST+CORRECT path.** The months-long black screen was xenia
   backing the 512MB guest-RAM mirror with a SPARSE buffer Turnip doesn't reliably back (vertex-fetch
   read zero → degenerate gl_Position). Fixed: non-sparse on `driverID==VK_DRIVER_ID_MESA_TURNIP`
   (`vulkan_shared_memory.cc`, committed 61c5600e9). All priority games render on Turnip now.
+- **R2 + R3 refactors BUILT + DEVICE-VALIDATED on Blue Dragon (2026-06-04), both cvar-gated default-off.**
+  R3 `arm64_use_flat_membase` (folds guest load/store to `[membase,Wn,UXTW]` indexed addressing, the
+  a64 backend) and R2 `vulkan_dynamic_constants_arena` (persistent UMA constant rings + one
+  UNIFORM_BUFFER_DYNAMIC descriptor set, no per-draw transient descriptor alloc) both render
+  PIXEL-CORRECT on the BD heavy field, and compose (both-on correct). R2 cut `cpu_bind_us` ~8700→~7000
+  (a CPU-hygiene win); both leave `gpu_frame_us` ~127k UNCHANGED — they do NOT move GPU-bound BD's fps
+  (as predicted), so the fps payoff is for CPU-bound titles (Lost Odyssey, test next). R5 draw-concat was
+  DROPPED — the merge path already elides all redundant state, so there was no slack to coalesce.
 - **Blue Dragon heavy scene on Turnip is GPU-BOUND on the binning front-end** (CONFIRMED clean
   2026-06-03): GPU busy ~80%, CPU ~75% idle, NO guest thread pegged (guest/JIT threads 2-5%). The
   bottleneck is ~1100-2180 tiny draws / ~263k verts/frame. BD levers = **reduce DRAWS + submitted
@@ -23,11 +31,14 @@ hardware limit — it's where the per-bottleneck work goes.
   -NoDump` (the RT-dump readbacks poison timing — they made `gpu_frame_us` read a bogus ~1ms and
   led to a wrong "CPU-bound" verdict). **Trust the KGSL GPU busy% + per-thread `top` (`-TopProfile`),
   NOT the derived `gpu_frame_us`.**
-- **Optimization roadmap:** `docs/research/20260603-thor-hyperopt-roadmap.md` (R1-R8). BD = R4 (CPU
-  pre-cull, fewer verts) + R5 (draw concatenation, needs R2 state-elision). CPU-bound titles = R3
-  (flat-membase fastmem: every guest load/store currently emits a BRANCH+ALU, `a64_seq_util.h:286-292`),
-  R6/R7 (call fastpath / parallel JIT). RPCS3 lesson: the steady-fps win is an *optimizing* recompiler
-  tier, not AOT (AOT only kills stutter/load).
+- **Optimization roadmap:** `docs/research/20260603-thor-hyperopt-roadmap.md` (R1-R8) + live status in
+  the `major-refactor-build-progress` memory. DONE + device-validated: **R3** (flat-membase) + **R2**
+  (dynamic constants arena). DROPPED: **R5** (the draw-merge path already elides all redundant state).
+  DEFERRED (silent-corruption risk, want device-per-step validation): **R4** (CPU pre-cull — also measured
+  a NET LOSS per-triangle on strip-heavy BD, `draw_extent_estimator.cc:1346`) + **MC** (parallel JIT).
+  BD is GPU-bound on binning, so the BD fps win still needs a DRAW/VERTEX reducer; R2/R3 are
+  CPU-bound-title wins. NOTE: the old "every guest load/store emits a BRANCH+ALU" was WINDOWS-only (64K
+  alloc granularity); on Android (4K page) it was just a `mov`, now folded away by R3's UXTW addressing.
 
 ## ⚠️ NEVER THRASH THE THOR (hard rule — it crashed the device once; do not repeat)
 - The device is physical hardware. Repeated game launches pinned the GPU at 99% / 72°C and CRASHED it.
