@@ -24,7 +24,11 @@ param(
   # '--ez spirv_debug_force_fullscreen_position true --ei vulkan_debug_pixel_shader_output_mode 1'.
   # Use -Tag to label the output files for the experiment.
   [string]$ExtraArgs = "",
-  [string]$Tag = ""
+  [string]$Tag = "",
+  # Skip the RT/depth/EDRAM readback dump cvars (which add a vkCmdCopyImageToBuffer
+  # every resolve) and keep only the cheap draw-outcomes line - for clean fps /
+  # gpu_frame_us perf measurement that isn't inflated by the diagnostic readbacks.
+  [switch]$NoDump
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
@@ -50,7 +54,12 @@ if ($Driver -eq "turnip") {
   Write-Output "hooks_path=$hooks"
   $drvArgs = "--es gpu vulkan --es gpu_vulkan_driver turnip --es gpu_vulkan_driver_path /data/data/$pkg/files/turnip/ --es gpu_vulkan_driver_lib vulkan.ad07xx.so --es gpu_vulkan_driver_hooks_path '$hooks'"
 }
-$dumpArgs = "--ez vulkan_trace_dump_rt_image true --ez vulkan_trace_dump_depth_image true --ez vulkan_trace_edram_checksum true --ei vulkan_trace_edram_checksum_budget 9000 --ez vulkan_trace_draw_outcomes_per_frame true"
+if ($NoDump) {
+  # Clean perf run: only the cheap per-frame draw-outcomes line, no readbacks.
+  $dumpArgs = "--ez vulkan_trace_draw_outcomes_per_frame true"
+} else {
+  $dumpArgs = "--ez vulkan_trace_dump_rt_image true --ez vulkan_trace_dump_depth_image true --ez vulkan_trace_edram_checksum true --ei vulkan_trace_edram_checksum_budget 9000 --ez vulkan_trace_draw_outcomes_per_frame true"
+}
 
 # Optional Turnip TU_DEBUG / IR3_SHADER_DEBUG flags + output label so tagged runs
 # are saved apart from the plain reference.
