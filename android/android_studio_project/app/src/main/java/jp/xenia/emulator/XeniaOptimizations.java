@@ -153,6 +153,22 @@ public final class XeniaOptimizations {
                 CATEGORY_GPU, false, false,
                 new BoolCvar[]{new BoolCvar("vulkan_persistent_pipeline_cache")}, null));
 
+        list.add(new Optimization(
+                "opt_fp16_pixel",
+                "FP16 pixel shaders (experimental)",
+                "Runs pixel-shader math at half precision on the Adreno's native FP16.",
+                "The Adreno 740 has dedicated FP16 (half-precision) shader math that "
+                        + "our shaders don't use today. This marks pixel-shader float "
+                        + "math as relaxed precision so the Turnip driver can run it at "
+                        + "FP16, cutting shader-core and memory-bandwidth cost. It only "
+                        + "touches pixel shaders, which never compute geometry position, "
+                        + "so it can't break the 3D shape - but it can slightly shift "
+                        + "colors or texture sharpness, so it's experimental and per-game. "
+                        + "Helps shader/fill-heavy scenes, not the Blue Dragon binning "
+                        + "bottleneck. Use the Turnip driver for the FP16 benefit.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("spirv_fp16_relaxed_pixel_alu")}, null));
+
         // Binning-front-end levers. Blue Dragon's heavy scene is GPU-bound on the
         // Adreno binning stage (~1100-2180 tiny draws, ~263k verts/frame), which
         // bins per-vertex per-draw BEFORE culling - so the only lever is reducing

@@ -22,10 +22,22 @@
 #include "third_party/fmt/include/fmt/format.h"
 #include "third_party/glslang/SPIRV/GLSL.std.450.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/math.h"
 #include "xenia/base/string_buffer.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_shader.h"
+
+DEFINE_bool(
+    spirv_fp16_relaxed_pixel_alu, false,
+    "Experimental: mark pixel-shader floating-point ALU results as "
+    "RelaxedPrecision so a driver with native FP16 (e.g. Turnip on the Adreno "
+    "740) can run them at half precision, cutting shader-core and bandwidth "
+    "cost. Scoped to pixel shaders, which never write vertex position, so it "
+    "cannot degenerate geometry (the known RelaxedPrecision-on-position "
+    "hazard). May shift shading/texcoord precision on some games - validate "
+    "per title. Default off.",
+    "GPU");
 
 namespace xe {
 namespace gpu {
@@ -2803,6 +2815,20 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
   }
 
   EnsureBuildPointAvailable();
+
+  // Experimental FP16 lane: relax pixel-shader floating-point ALU results so a
+  // driver with native FP16 (Adreno 740 / Turnip) can lower them to mediump.
+  // is_pixel_shader() guarantees this never reaches a vertex-position store
+  // (kPosition is a vertex-only target), so it cannot degenerate geometry.
+  // Float-typed results only, to leave integer addressing/predicate math exact.
+  if (cvars::spirv_fp16_relaxed_pixel_alu && is_pixel_shader() &&
+      value != spv::NoResult) {
+    const spv::Id value_type = builder_->getTypeId(value);
+    if (value_type &&
+        builder_->isFloatType(builder_->getScalarTypeId(value_type))) {
+      builder_->addDecoration(value, spv::DecorationRelaxedPrecision);
+    }
+  }
 
   spv::Id target_pointer = spv::NoResult;
   switch (result.storage_target) {
