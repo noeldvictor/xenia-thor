@@ -211,7 +211,46 @@ public class SettingsActivity extends Activity {
 
             mOptToggles.put(opt.prefKey, toggle);
         }
+        addOptimizationButtons(root);
         updateOptSummary();
+    }
+
+    private void addOptimizationButtons(final LinearLayout root) {
+        final LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+
+        final Button recommended = new Button(this);
+        recommended.setText("Reset to recommended");
+        recommended.setAllCaps(false);
+        recommended.setOnClickListener(view -> {
+            for (final XeniaOptimizations.Optimization opt : XeniaOptimizations.ALL) {
+                final CheckBox toggle = mOptToggles.get(opt.prefKey);
+                if (toggle != null) {
+                    toggle.setChecked(opt.recommended);
+                }
+            }
+            updateOptSummary();
+        });
+        row.addView(recommended, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        final Button disableAll = new Button(this);
+        disableAll.setText("Disable all");
+        disableAll.setAllCaps(false);
+        disableAll.setOnClickListener(view -> {
+            for (final CheckBox toggle : mOptToggles.values()) {
+                toggle.setChecked(false);
+            }
+            updateOptSummary();
+        });
+        final LinearLayout.LayoutParams disableParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        disableParams.setMargins(dp(10), 0, 0, 0);
+        row.addView(disableAll, disableParams);
+
+        root.addView(row, matchWrapWithTopMargin(10));
     }
 
     private void updateOptSummary() {
