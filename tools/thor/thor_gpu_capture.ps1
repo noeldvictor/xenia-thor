@@ -44,7 +44,14 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 # 0. Never-thrash gate.
 & $adb -s $DeviceSerial reconnect | Out-Null; Start-Sleep -Seconds 1
 $pid0 = "$(& $adb -s $DeviceSerial shell pidof $pkg)".Trim()
-if ($pid0) { Write-Output "ABORT: emulator already running (pid $pid0); force-stop first."; exit 1 }
+if ($pid0) {
+  # The Thor frontend (launcher) auto-restarts after a force-stop, so don't abort
+  # on a running instance - force-stop it (launcher or a previous capture) and
+  # proceed. Thermal safety is still enforced by the temp pre-flight + watchdog.
+  Write-Output "force-stopping running instance (pid $pid0) before capture"
+  & $adb -s $DeviceSerial shell am force-stop $pkg
+  Start-Sleep -Seconds 2
+}
 $temp0 = [int]("0$(& $adb -s $DeviceSerial shell cat /sys/class/kgsl/kgsl-3d0/temp)".Trim())
 Write-Output ("pre-flight temp={0}C" -f ($temp0/1000.0))
 if ($temp0 -eq 0) { Write-Output "ABORT: could not read GPU temp (device offline?)."; exit 1 }

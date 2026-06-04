@@ -110,8 +110,8 @@ public final class XeniaOptimizations {
                         + "a duplicate + 64-bit rotate + mask (5-6 host instructions) "
                         + "even when the op is really a plain shift. This recognizes the "
                         + "slwi/srwi shift forms and emits a single ARM shift instead. "
-                        + "New - validate before relying on it.",
-                CATEGORY_CPU, false, false,
+                        + "Device-validated correct on Blue Dragon.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("ppc_rlwinm_shift_fastpath")}, null));
 
         list.add(new Optimization(
@@ -122,8 +122,8 @@ public final class XeniaOptimizations {
                         + "zero, multiplying by one, shifting by zero. This folds "
                         + "those identities away before register allocation so they "
                         + "never reach the CPU. Integer-only (float identities are "
-                        + "unsafe). New - validate before relying on it.",
-                CATEGORY_CPU, false, false,
+                        + "unsafe). Device-validated correct on Blue Dragon.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("hir_algebraic_identities")}, null));
 
         list.add(new Optimization(
