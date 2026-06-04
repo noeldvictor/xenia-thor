@@ -32,13 +32,20 @@ param(
   # Capture per-THREAD CPU (top -H) during the heavy scene to see whether a single
   # guest/JIT thread is pegged (~100% of one core = throughput-bound) or no thread
   # is pegged (= latency/serialization-bound). Saves <label>_top.txt.
-  [switch]$TopProfile
+  [switch]$TopProfile,
+  # Game ISO to launch (default Blue Dragon). Pass the full device path of another
+  # title (e.g. a Lost Odyssey disc) to capture it instead.
+  [string]$Iso = '/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso',
+  # Intro-skip button sequence (hid_nop_button_sequence): mashes start/a to push
+  # past intros into a steady scene. Default tuned for Blue Dragon; override per
+  # title.
+  [string]$Seq = 'start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300'
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
 $pkg = "jp.xenia.emulator.github.debug"
-$iso = '/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso'
-$seq = 'start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300'
+$iso = $Iso
+$seq = $Seq
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 # 0. Never-thrash gate.
