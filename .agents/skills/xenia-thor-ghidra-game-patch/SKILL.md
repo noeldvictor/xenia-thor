@@ -64,28 +64,49 @@ adb -s c3ca0370 logcat -d | Select-String "Module Hash"
 The launch must use the **same ISO build** you will RE — different builds /
 title updates have different hashes and different addresses.
 
-## Step 2 — extract + decompress the XEX
+## Step 2 — extract the XEX from the ISO
 
 The executable is `default.xex` inside the GDFX ISO. Work only in the ignored
 `scratch\ghidra\guest\` (never commit XEX/ISO/keys).
 
-- Pull the `default.xex` from the disc (an extractor like `xextool`/`wxPirs`, or
-  mount the ISO). Then **decrypt + decompress** to the raw basefile:
-  `xextool -d <out_dir> default.xex` (produces the loadable PPC image).
-- Note the basefile load address (almost always `0x82000000` for retail titles;
-  confirm from the XEX header / Xenia's module dump).
+- Extract with `scripts/gdfx_extract.py` (mirrors the fork's own GDFX parser;
+  random-access, never loads the multi-GB ISO):
+  `python gdfx_extract.py "<image.iso>" default.xex scratch/ghidra/guest/<title>/default.xex`
+- No separate decrypt/decompress step is needed — **XEXLoaderWV (Step 3) decrypts
+  + decompresses the XEX inside Ghidra.** (To inspect: the FILE_FORMAT_INFO
+  optional-header key `0x000003FF` holds `encryption_type` then `compression_type`
+  — basic block compression = `1`, LZX = `2`; IMAGE_BASE key `0x00010201` is the
+  load base, almost always `0x82000000`.)
 
-## Step 3 — load into Ghidra (PowerPC/Xenon, big-endian)
+## Step 3 — load into Ghidra with XEXLoaderWV (decrypts + decompresses)
 
-Ghidra home + headless are in **xenia-ghidra-ooda-loop**
-(`...\toolchains\ghidra_12.0.4_PUBLIC\support\analyzeHeadless.bat`).
+Ghidra home is in **xenia-ghidra-ooda-loop**
+(`...\toolchains\ghidra_12.0.4_PUBLIC`). Two one-time setup items (already done in
+this environment):
 
-- Preferred: install the community **Xbox 360 XEX loader** extension — it sets
-  base `0x82000000`, maps sections, and resolves xam/xboxkrnl imports by ordinal.
-- Fallback: import the decompressed basefile as **raw binary**, language
-  `PowerPC:BE:32:default`, image base `0x82000000`, then run auto-analysis.
-  (Xenon runs 32-bit effective addresses; VMX128 vectors aren't modeled, but the
-  integer/branch/store code you patch is.)
+- **XEXLoaderWV extension** (zeroKilo) — handles AES decrypt, basic/LZX
+  decompress, sections, and **names xam/xboxkrnl imports by ordinal** (so you can
+  search for `XamShowDirtyDiscErrorUI` directly). Grab the build matching your
+  Ghidra version from `github.com/zeroKilo/XEXLoaderWV/releases` (a `12.0.4`
+  build exists) and unzip into `<GHIDRA>/Ghidra/Extensions/`.
+- **JDK 21** — Ghidra 12 needs it; set `JAVA_HOME_OVERRIDE=<jdk21>` in
+  `<GHIDRA>/support/launch.properties` if the system JDK is older.
+
+Import + analyze headless (the loader auto-detects the XEX2 magic — no `-loader`
+needed); keep the project so follow-up scripts run fast with `-process`:
+
+```
+analyzeHeadless.bat <projDir> <name> -import default.xex \
+    -scriptPath scratch\ghidra\scripts -postScript <YourScript>.java
+# re-run scripts against the analyzed project without re-analysis:
+analyzeHeadless.bat <projDir> <name> -process default.xex -noanalysis \
+    -scriptPath scratch\ghidra\scripts -postScript <YourScript>.java
+```
+
+A GhidraScript that walks `getReferencesTo()` from the named import to its callers
+(decompile + assembly with `addr : bytes : insn`) pinpoints the branch/value to
+patch. If a handler is reached indirectly (no code xref), search memory for its
+big-endian pointer bytes to find the dispatch table.
 
 ## Step 4 — find the target
 
