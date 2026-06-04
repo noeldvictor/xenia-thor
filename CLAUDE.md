@@ -20,6 +20,36 @@ add ONE `XeniaOptimizations` registry entry (it auto-appears in the UI and auto-
 allowlist the cvar in `EmulatorActivity`. Default the device-validated wins ON; keep risky/experimental
 ones toggleable (cvar still the engine mechanism, but surfaced + explained, not hidden).
 
+## 🩹 GAME PATCHES (core feature, 2026-06-04) — a first-class part of the emu
+The fork now has the **game-patch system** (xenia-canary `.patch.toml`), ported
+back after this fork had dropped it. Patches are a core idea: **performance**
+fixes (60 FPS, disable blur/SSAO/LoD), **cheats** (infinite lives/money/ammo),
+and **compatibility bypasses** (e.g. Banjo's dirty-disc false-verification).
+- **Engine** (`src/xenia/patcher/`, in `xenia-core`): `PatchDB` loads
+  `files/patches/*.patch.toml`, matched by `title_id` + build hash; `Patcher`
+  writes `be8/be16/be32/be64/f32/f64/string/u16string/array` values into guest
+  memory. `KernelState::LoadUserModule` calls `ApplyPatchesForTitle` right after
+  `module->Dump()`. Adapted to the fork's **cpptoml** (upstream uses tomlplusplus).
+  The match hash is `UserModule::CalculateHash()` = **XXH3-64 of the code
+  section**, logged by `Dump()` as `Module Hash: {:016X}` — read it from logcat
+  to author a patch. `apply_patches` cvar (default on).
+- **Patch addresses are guest effective addresses** (`0x82xxxxxx`); a `be32`
+  value is a big-endian PPC instruction word (`0x60000000` = `nop`). Storage on
+  Android is `getFilesDir()/patches` (== engine `storage_root/patches`).
+- **In-app manager**: the launcher's per-game actions → **"Game patches"** (shown
+  when the title ID resolves) → `GamePatchManagerActivity`. Downloads every
+  matching `.patch.toml` for the title from
+  **github.com/xenia-canary/game-patches** by title-id, lists each `[[patch]]`
+  with a **Switch** (perf + cheats together), writes `is_enabled` back. Logic in
+  `GamePatchManager.java` (mirrors `GpuDriverManager`).
+- **Authoring new patches** (incl. the **Banjo dirty-disc bypass** — a guest-side
+  PowerPC false verification, NOT a file/disc problem; the ISO is SHA-identical
+  to a working PC copy): use the **`.agents/skills/xenia-thor-ghidra-game-patch`**
+  skill (Ghidra: extract+load the XEX as `PowerPC:BE:32` @ `0x82000000`, find the
+  bad branch / decrement, emit `.patch.toml`). `scripts/emit_patch_toml.py` +
+  `references/ppc_patch_cookbook.md` help. See memory
+  [[banjo-dirty-disc-stuck-pending]].
+
 ## 🚀 DRAMATIC VISION (2026-06-04, user direction) — TWO TRACKS IN PARALLEL, not either/or
 The user is done with CPU-vs-GPU flip-flopping and timid step-by-step. Pursue **both** tracks at once:
 - **CPU track** — recomp / best codegen / multicore / hardware accelerators. Speeds up **CPU-bound
