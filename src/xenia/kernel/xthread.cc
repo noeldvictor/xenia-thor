@@ -19,6 +19,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
+#include "xenia/base/thor_topology.h"
 #include "xenia/base/threading.h"
 #include "xenia/cpu/breakpoint.h"
 #include "xenia/cpu/ppc/ppc_decode_data.h"
@@ -38,9 +39,10 @@ DEFINE_int32(
     "AYN Thor multi-CPU (roadmap): if non-zero, pin ALL guest (emulated) threads "
     "to this host CPU-core bitmask instead of letting the scheduler float them "
     "(possibly onto the little A510 cluster). On the Thor the big cores are "
-    "cpu3-7 (A715/A710 + the X3 prime @3.19GHz), so 248 (0xF8) keeps the guest "
-    "CPU emulation off the 2.0GHz little cores - helps CPU-bound titles (e.g. "
-    "Lost Odyssey). Hint only, no guest-visible effect. 0 = unchanged (default).",
+    "cpu3-7 (A715/A710 + the X3 prime @3.19GHz). -1 = auto (the big-core cluster "
+    "0xF8 from ThorTopology); any positive value = an explicit host-core bitmask; "
+    "keeps the guest CPU emulation off the 2.0GHz A510 little cores - helps "
+    "CPU-bound titles (e.g. Lost Odyssey). Hint only. 0 = unchanged (default).",
     "Kernel");
 
 namespace xe {
@@ -891,9 +893,13 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
 
   if (xe::threading::logical_processor_count() >= 6) {
     if (cvars::thor_guest_thread_affinity_mask != 0) {
-      // Thor multi-CPU: keep guest threads on the chosen (big-core) cluster.
-      thread_->set_affinity_mask(
-          uint64_t(uint32_t(cvars::thor_guest_thread_affinity_mask)));
+      // Thor multi-CPU: -1 = auto (the big-core cluster from ThorTopology, the
+      // single source of truth); any positive value = an explicit host-core
+      // bitmask. Keeps the guest CPU emulation off the 2.0GHz A510 little cores.
+      uint64_t mask = (cvars::thor_guest_thread_affinity_mask < 0)
+                          ? ThorTopology::BigCoreMask()
+                          : uint64_t(uint32_t(cvars::thor_guest_thread_affinity_mask));
+      thread_->set_affinity_mask(mask);
     } else if (!cvars::ignore_thread_affinities) {
       thread_->set_affinity_mask(uint64_t(1) << cpu_index);
     }
