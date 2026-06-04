@@ -10,6 +10,7 @@
 #ifndef XENIA_KERNEL_USER_MODULE_H_
 #define XENIA_KERNEL_USER_MODULE_H_
 
+#include <optional>
 #include <string>
 
 #include "xenia/cpu/export_resolver.h"
@@ -58,6 +59,9 @@ class UserModule : public XModule {
   uint32_t guest_xex_header() const { return guest_xex_header_; }
   // The title ID in the xex header or 0 if this is not a xex.
   uint32_t title_id() const;
+  // XXH3 hash of the module's code section, used to match game patches to a
+  // specific title build. Valid after CalculateHash() (called in Dump()).
+  std::optional<uint64_t> hash() const { return hash_; }
   bool is_executable() const { return processor_module_->is_executable(); }
   bool is_dll_module() const { return is_dll_module_; }
 
@@ -97,6 +101,7 @@ class UserModule : public XModule {
 
  private:
   X_STATUS LoadXexContinue();
+  void CalculateHash();
 
   std::string name_;
   std::string path_;
@@ -107,6 +112,7 @@ class UserModule : public XModule {
   bool is_dll_module_ = false;
   uint32_t entry_point_ = 0;
   uint32_t stack_size_ = 0;
+  std::optional<uint64_t> hash_ = std::nullopt;
 };
 
 }  // namespace kernel

@@ -44,6 +44,9 @@ namespace ui {
 class ImGuiDrawer;
 class Window;
 }  // namespace ui
+namespace patcher {
+class Patcher;
+}  // namespace patcher
 }  // namespace xe
 
 namespace xe {
@@ -147,6 +150,10 @@ class Emulator {
     return export_resolver_.get();
   }
 
+  // Game patch database / applier (xenia-canary .patch.toml). May be null if
+  // patching is disabled.
+  patcher::Patcher* patcher() const { return patcher_.get(); }
+
   // File systems mapped to disc images, folders, etc for games and save data.
   vfs::VirtualFileSystem* file_system() const { return file_system_.get(); }
 
@@ -237,6 +244,7 @@ class Emulator {
   std::unique_ptr<hid::InputSystem> input_system_;
 
   std::unique_ptr<cpu::ExportResolver> export_resolver_;
+  std::unique_ptr<patcher::Patcher> patcher_;
   std::unique_ptr<vfs::VirtualFileSystem> file_system_;
 
   std::unique_ptr<kernel::KernelState> kernel_state_;

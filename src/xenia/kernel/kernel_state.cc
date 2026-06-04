@@ -27,6 +27,7 @@
 #include "xenia/kernel/xnotifylistener.h"
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
+#include "xenia/patcher/patcher.h"
 
 namespace xe {
 namespace kernel {
@@ -436,6 +437,14 @@ object_ref<UserModule> KernelState::LoadUserModule(
   }
 
   module->Dump();
+
+  // Apply any matching game patches now that the module is loaded and its build
+  // hash has been computed (Dump() -> CalculateHash()). Non-matching titles
+  // apply nothing, so this is safe to run for every loaded module.
+  if (emulator_->patcher() != nullptr) {
+    emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(),
+                                               module->hash());
+  }
 
   if (module->is_dll_module() && module->entry_point() && call_entry) {
     // Call DllMain(DLL_PROCESS_ATTACH):

@@ -12,4 +12,11 @@ project("xenia-core")
   })
   defines({
   })
-  files({"*.h", "*.cc"})
+  files({
+    "*.h",
+    "*.cc",
+    -- Game patch system (xenia-canary .patch.toml applier). Lives in xenia-core
+    -- because it depends on Memory + config.cc's ParseFile, both defined here.
+    "patcher/*.h",
+    "patcher/*.cc",
+  })

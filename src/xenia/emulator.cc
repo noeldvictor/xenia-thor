@@ -45,6 +45,7 @@
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/memory.h"
+#include "xenia/patcher/patcher.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/window.h"
@@ -817,6 +818,10 @@ X_STATUS Emulator::Setup(
 
   // Shared export resolver used to attach and query for HLE exports.
   export_resolver_ = std::make_unique<xe::cpu::ExportResolver>();
+
+  // Game patch database (xenia-canary .patch.toml files under storage/patches).
+  // Loads patch files now; ApplyPatchesForTitle is invoked at module launch.
+  patcher_ = std::make_unique<xe::patcher::Patcher>(storage_root_);
 
   std::unique_ptr<xe::cpu::backend::Backend> backend;
 #if XE_ARCH_AMD64
