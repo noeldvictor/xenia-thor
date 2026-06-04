@@ -3364,8 +3364,17 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
   descriptor_set_layouts
       [SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram] =
           descriptor_set_layout_shared_memory_and_edram_;
+  // R2 (vulkan_dynamic_constants_arena): when the arena is armed (its dynamic
+  // layout was created at init), EVERY guest pipeline uses the
+  // UNIFORM_BUFFER_DYNAMIC constants layout so the one persistent dynamic set can
+  // be bound with per-draw dynamic offsets. The arena state is fixed for the run,
+  // so this substitution is identical across every pipeline and every bind - no
+  // variant bit in PipelineLayoutKey is needed. Default-off (handle null) keeps
+  // the static UNIFORM_BUFFER layout, byte-identical to before.
   descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetConstants] =
-      descriptor_set_layout_constants_;
+      (descriptor_set_layout_constants_dynamic_ != VK_NULL_HANDLE)
+          ? descriptor_set_layout_constants_dynamic_
+          : descriptor_set_layout_constants_;
   // Mutable layouts.
   descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
       descriptor_set_layout_textures_vertex;
