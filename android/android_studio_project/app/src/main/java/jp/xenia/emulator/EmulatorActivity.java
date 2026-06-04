@@ -513,6 +513,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot_on_idle");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
+            copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");
+            copyBooleanExtra(intent, launchArguments, "xam_suppress_dirty_disc_error");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_budget");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_after_ms");

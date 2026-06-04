@@ -32,6 +32,15 @@ DEFINE_bool(android_xam_keyboard_ime, true,
             "Android");
 #endif  // XE_PLATFORM_ANDROID
 
+DEFINE_bool(
+    xam_suppress_dirty_disc_error, false,
+    "Make XamShowDirtyDiscErrorUI a no-op instead of showing a fatal 'Disc Read "
+    "Error' dialog and exiting. Use when a title falsely reports a dirty disc on "
+    "a verified-good image (e.g. Banjo: Nuts & Bolts on the Thor, where the read "
+    "data is confirmed byte-correct) so it continues past its false integrity "
+    "check.",
+    "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -548,6 +557,12 @@ DECLARE_XAM_EXPORT1(XamShowDeviceSelectorUI, kUI, kImplemented);
 
 void XamShowDirtyDiscErrorUI_entry(dword_t user_index) {
   XELOGE("XamShowDirtyDiscErrorUI: user_index={}", uint32_t(user_index));
+  if (cvars::xam_suppress_dirty_disc_error) {
+    XELOGW(
+        "XamShowDirtyDiscErrorUI suppressed (xam_suppress_dirty_disc_error); "
+        "returning so the title continues past its (false) dirty-disc check");
+    return;
+  }
   if (cvars::headless) {
     assert_always();
     exit(1);
