@@ -20,6 +20,47 @@ add ONE `XeniaOptimizations` registry entry (it auto-appears in the UI and auto-
 allowlist the cvar in `EmulatorActivity`. Default the device-validated wins ON; keep risky/experimental
 ones toggleable (cvar still the engine mechanism, but surfaced + explained, not hidden).
 
+## 🚀 DRAMATIC VISION (2026-06-04, user direction) — TWO TRACKS IN PARALLEL, not either/or
+The user is done with CPU-vs-GPU flip-flopping and timid step-by-step. Pursue **both** tracks at once:
+- **CPU track** — recomp / best codegen / multicore / hardware accelerators. Speeds up **CPU-bound
+  titles** (Lost Odyssey, and non-vista BD gameplay). This is where the recomp ambition lives.
+- **GPU track** — binning / draw-coalescing / Turnip driver. The **BD-heavy-scene fps lever**, which
+  recomp and codegen do NOT touch. Draw-coalescing renderer + the NEON triangle-cull micro-interpreter
+  + driver work.
+Neither substitutes for the other. Full rationale + the four locked direction choices:
+[[thor-two-track-vision]]. The four (max-ambition) picks:
+1. **Recomp** = full ground-up: keep the baseline JIT for cold code **+ a 2nd optimizing tier** for hot
+   blocks (block-linking, cross-block regalloc, inlining, dead-flag/CR elimination, macro-op fusion).
+   **LLVM stays OUT** (RPCS3 data: ~40% slower than a hand JIT).
+2. **HW accelerators** = push them even for guest math (NEON + int8/bf16 matrix + Hexagon DSP/NPU), but
+   **gate per-op/per-shader-class, validate on-device, NEVER on guest position/geometry precision**
+   ([[approx-math-guest-visible-vs-heuristics]] — FP16/int8 on guest-visible math has black-screened BD).
+3. **Driver manager** = full in-app GPU-driver downloader (URL or bundled Turnip → install to app files →
+   libadrenotools hook → per-version recommendation text for Adreno 740; Citron/Winlator-style).
+4. **Multicore** = host-subsystem offload to idle cores + parallel JIT translation + speculative
+   guest-thread spreading; **fix the latent publication races first** (parallel-jit-design findings in
+   [[major-refactor-build-progress]]).
+Every win still ships as an explained, stacking `XeniaOptimizations` Settings toggle.
+
+### Static-recomp verdict (workflow 2026-06-04) — answered, do NOT port
+A Blue-Dragon-specific static recomp EXISTS — **re:Blue** (github.com/zolaware/reblue) on the **ReXGlue**
+SDK (Xenia-derived AOT C++ codegen); plus general **XenonRecomp**/**XenosRecomp** and the Android-Vulkan
+precedent **LibertyRecomp**. But static recomp's win is native ARM64 CPU — a cost **we don't have** (BD
+is GPU-binding-bound, CPU ~75% idle). It does NOT reduce draws/binning; recomp renderers re-submit the
+original draw stream 1:1. So **do not build a BD recomp port** (months of per-game RE, no Android build,
+"barely playable" on PC). **STEAL** into xenia instead (each a toggle): FP16/RelaxedPrecision SPIR-V
+decorations (Adreno 740 has native FP16; our translator emits none — never on position), persistent
+on-disk pipeline-cache pre-warm (kills shader-compile stutter), ARMv9 FLAGM CR/XER flag handling. Detail:
+[[bd-recomp-verdict]].
+
+### Per-stage GPU profiling is a FULL-ADB job (not a GUI punt)
+The app is debuggable + we ship Turnip, so the per-stage GPU split (binning/vertex vs fragment vs stall,
+per-draw cost) is reachable over **full ADB, no root, no GUI** — via the Mesa/Turnip freedreno perfetto
+counter producer, gfxreconstruct `.gfxr` capture+replay profiling, in-engine per-pass Vulkan timestamps,
+or the AGI CLI. Skill: **`.agents/skills/xenia-thor-adb-gpu-stage-split`** (Snapdragon/AGI GUI demoted to
+last resort). This unblocks the one load-bearing BD unknown — is the ~333µs/draw a removable per-draw
+stall/context-roll or an irreducible per-primitive binning floor — instead of waiting on a user capture.
+
 ## ⚡ Current status (2026-06-04) — READ before optimizing
 - **Turnip (Mesa) driver WORKS and is the FAST+CORRECT path.** The months-long black screen was xenia
   backing the 512MB guest-RAM mirror with a SPARSE buffer Turnip doesn't reliably back (vertex-fetch
@@ -137,8 +178,11 @@ more than `gpu_busy_percentage`. Notable groups/events:
 `traced_probes` cannot enable the events → traces come back **metadata-only / empty** (782–1026 B, zero
 events). Do NOT trust a perfetto capture's existence as proof it has data — query it. To actually use
 this event set you need EITHER root (then enable events + read `trace_pipe`, or perfetto with access)
-OR a USER-run **Snapdragon Profiler / AGI** GUI capture (which is also the only source of the per-stage
-binning-vs-fragment split). Headless, stick to KGSL sysfs busy%/clock + the cvar A/B below.
+OR — for the per-stage binning-vs-fragment split — the **full-ADB driver-path routes** in the
+`xenia-thor-adb-gpu-stage-split` skill (Mesa/Turnip freedreno perfetto counter producer, gfxreconstruct
+`.gfxr` capture+replay, in-engine per-pass Vulkan timestamps): these use the debuggable app's per-app
+GPU-counter access, NOT the blocked kernel ftrace, so they do not need root or a GUI. The Snapdragon/AGI
+GUI is the LAST resort, not the plan. For quick triage, KGSL sysfs busy%/clock + the cvar A/B still apply.
 
 ### MEASUREMENT RULE (the #1 reliability lesson)
 Blue Dragon's content is a function of **guest uptime**. Relaunch A/Bs are **scene-confounded** — a
@@ -159,7 +203,7 @@ the CPU (CPU is ~84% idle during these frames). Full chronological detail + retr
 Shipped wins (default-on, device-verified): bulk PM4 type-0 parse; Blue Dragon draw-wait fastpath.
 Black-3D resolved (stale-config artifact). Next: instrument what the ~2000 draws are (prim types +
 vertex sizes), then cut draw count / state churn / binning pressure. For the binning-vs-rendering GPU
-split, a user-run Snapdragon Profiler / AGI capture is the one external step worth requesting.
+split, use the full-ADB routes in `xenia-thor-adb-gpu-stage-split` (driver-path counters, no GUI/root).
 
 ## Working philosophy (2026-06-03) — BOLD BUILD MODE, FORWARD ONLY
 - **Ship boldly; git is the safety net.** We are at ~4-6fps — there is little to "protect". Implement the
