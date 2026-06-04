@@ -61,6 +61,7 @@ public class SettingsActivity extends Activity {
                 {getString(R.string.settings_gpu_vulkan), XeniaAndroidSettings.GPU_VULKAN},
                 {getString(R.string.settings_gpu_null), XeniaAndroidSettings.GPU_NULL},
         });
+        addGpuDriverButton(root);
         mResolutionGroup = addRadioGroup(root, R.string.settings_internal_resolution,
                 new String[][] {
                         {getString(R.string.settings_internal_resolution_480p),
@@ -126,6 +127,22 @@ public class SettingsActivity extends Activity {
         }
         root.addView(group, matchWrap());
         return group;
+    }
+
+    private void addGpuDriverButton(final LinearLayout root) {
+        final TextView caption = new TextView(this);
+        caption.setText("Vulkan driver: download a custom Turnip build for the Adreno 740 "
+                + "(usually faster than the stock driver) or switch back to system.");
+        caption.setTextColor(getColor(R.color.xenia_text_secondary));
+        caption.setTextSize(12);
+        root.addView(caption, matchWrapWithTopMargin(8));
+
+        final Button button = new Button(this);
+        button.setText("Manage GPU drivers");
+        button.setAllCaps(false);
+        button.setOnClickListener(view ->
+                startActivity(new Intent(this, GpuDriverManagerActivity.class)));
+        root.addView(button, matchWrapWithTopMargin(4));
     }
 
     private void addControllerMappingButton(final LinearLayout root) {

@@ -23,6 +23,8 @@ public final class XeniaAndroidSettings {
 
     public static final String KEY_PROFILE = "profile";
     public static final String KEY_GPU_DRIVER = "gpu_driver";
+    /** Selected custom Vulkan ICD package id ("" = system driver). */
+    public static final String KEY_GPU_DRIVER_PACKAGE = "gpu_driver_package";
     public static final String KEY_INTERNAL_RESOLUTION = "internal_resolution";
     public static final String KEY_APU_DRIVER = "apu_driver";
     public static final String KEY_HID_DRIVER = "hid_driver";
@@ -228,6 +230,9 @@ public final class XeniaAndroidSettings {
         // enabled toggle contributes its engine cvar(s). Applied last so an
         // enabled optimization always wins over a stable-default override.
         XeniaOptimizations.applyTo(preferences, launchArguments);
+        // Selected custom Vulkan ICD (GPU driver), if any -> gpu_vulkan_driver*
+        // cvars for the libadrenotools loader (no-op for the system driver).
+        GpuDriverManager.applyToLaunch(context, launchArguments);
         return launchArguments;
     }
 
