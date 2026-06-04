@@ -12,6 +12,7 @@
 
 #include <atomic>
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/vec128.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
@@ -31,6 +32,9 @@ constexpr uint32_t DCZID_EL0 = ARM64_SYSREG(0b11, 0b011, 0b0000, 0b0000, 0b111);
 #else
 #error "No MRS wrapper available for current compiler implemented."
 #endif
+
+// R3 (flat membase): see a64_seq_memory.cc for the definition / rationale.
+DECLARE_bool(arm64_use_flat_membase);
 
 namespace xe {
 namespace cpu {
@@ -292,6 +296,36 @@ inline XReg ComputeMemoryAddress(A64Emitter& e, const I64Op& guest) {
       e.L(skip);
     }
     return e.x0;
+  }
+}
+
+// R3 (arm64_use_flat_membase): true when a guest memory access can fold its
+// 32-bit guest address straight into the load/store's [membase, Wn, UXTW]
+// indexed addressing mode - eliding the `mov w0, wGuest` zero-extend and freeing
+// x0 on every access. Only valid for a non-constant guest register on a platform
+// that needs NO large-page +0x1000 fixup (Android: allocation_granularity() ==
+// page size). On Windows (64K granularity) the fixup is required, so this returns
+// false and ComputeMemoryAddress (which emits the fixup) is used - keeping codegen
+// byte-identical when the cvar is off OR a fixup is needed.
+inline bool CanFoldFlatGuestAddress(const I64Op& guest) {
+  return cvars::arm64_use_flat_membase && !guest.is_constant &&
+         xe::memory::allocation_granularity() <= 0x1000;
+}
+
+// Invoke `emit` with the address operand for a guest memory access: the folded
+// [membase, Wn, UXTW] form when CanFoldFlatGuestAddress(), else the classic
+// [membase, x0] form after ComputeMemoryAddress. `emit` is a generic lambda and
+// MUST accept both Xbyak_aarch64::AdrExt (folded) and Xbyak_aarch64::AdrReg
+// (classic) - i.e. take `auto&& mem`.
+template <typename EmitFn>
+inline void WithGuestLoadAddress(A64Emitter& e, const I64Op& guest,
+                                 EmitFn&& emit) {
+  using namespace Xbyak_aarch64;
+  if (CanFoldFlatGuestAddress(guest)) {
+    emit(ptr(e.GetMembaseReg(), WReg(guest.reg().getIdx()), UXTW));
+  } else {
+    XReg addr = ComputeMemoryAddress(e, guest);
+    emit(ptr(e.GetMembaseReg(), addr));
   }
 }
 

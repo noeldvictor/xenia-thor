@@ -45,6 +45,14 @@ DEFINE_bool(arm64_global_reservation_helpers, false,
             "Use Edge-style global reservation helpers for A64 "
             "RESERVED_LOAD/STORE instead of the legacy inline CAS path.",
             "a64");
+DEFINE_bool(arm64_use_flat_membase, false,
+            "R3: fold the 32-bit guest address into [membase, Wn, UXTW] indexed "
+            "guest loads instead of materializing membase+addr through a scratch "
+            "register, saving a `mov` (and freeing x0) per guest load on "
+            "platforms that need no large-page +0x1000 fixup (e.g. Android). "
+            "Default-off; experimental. No effect on Windows (64K granularity "
+            "requires the fixup).",
+            "a64");
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -359,14 +367,12 @@ static T MMIOAwareLoad(void* _ctx, unsigned int guestaddr) {
 // ============================================================================
 struct LOAD_I8 : Sequence<LOAD_I8, I<OPCODE_LOAD, I8Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    e.ldrb(i.dest, ptr(e.GetMembaseReg(), addr));
+    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldrb(i.dest, mem); });
   }
 };
 struct LOAD_I16 : Sequence<LOAD_I16, I<OPCODE_LOAD, I16Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    e.ldrh(i.dest, ptr(e.GetMembaseReg(), addr));
+    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldrh(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev16(i.dest, i.dest);
     }
@@ -415,16 +421,16 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
       e.b(done);
       e.L(normal_access);
       {
-        auto addr = ComputeMemoryAddress(e, i.src1);
-        e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+        WithGuestLoadAddress(e, i.src1,
+                             [&](auto&& mem) { e.ldr(i.dest, mem); });
         if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
           e.rev(i.dest, i.dest);
         }
       }
       e.L(done);
     } else {
-      auto addr = ComputeMemoryAddress(e, i.src1);
-      e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+      WithGuestLoadAddress(e, i.src1,
+                           [&](auto&& mem) { e.ldr(i.dest, mem); });
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
         e.rev(i.dest, i.dest);
       }
@@ -433,8 +439,7 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
 };
 struct LOAD_I64 : Sequence<LOAD_I64, I<OPCODE_LOAD, I64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       e.rev(i.dest, i.dest);
     }
@@ -442,32 +447,29 @@ struct LOAD_I64 : Sequence<LOAD_I64, I<OPCODE_LOAD, I64Op, I64Op>> {
 };
 struct LOAD_F32 : Sequence<LOAD_F32, I<OPCODE_LOAD, F32Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      e.ldr(e.w0, ptr(e.GetMembaseReg(), addr));
+      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.w0, mem); });
       e.rev(e.w0, e.w0);
       e.fmov(i.dest, e.w0);
     } else {
-      e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     }
   }
 };
 struct LOAD_F64 : Sequence<LOAD_F64, I<OPCODE_LOAD, F64Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
-      e.ldr(e.x0, ptr(e.GetMembaseReg(), addr));
+      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(e.x0, mem); });
       e.rev(e.x0, e.x0);
       e.fmov(i.dest, e.x0);
     } else {
-      e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+      WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     }
   }
 };
 struct LOAD_V128 : Sequence<LOAD_V128, I<OPCODE_LOAD, V128Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    e.ldr(i.dest, ptr(e.GetMembaseReg(), addr));
+    WithGuestLoadAddress(e, i.src1, [&](auto&& mem) { e.ldr(i.dest, mem); });
     if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
       // Reverse bytes within each 32-bit word (PPC BE -> ARM64 LE).
       auto idx = i.dest.reg().getIdx();
