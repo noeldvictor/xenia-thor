@@ -618,6 +618,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::array<ui::vulkan::VulkanDynamicBufferRing,
              size_t(SpirvShaderTranslator::kConstantBufferCount)>
       dynamic_constants_rings_;
+  // R2: a UNIFORM_BUFFER_DYNAMIC variant of descriptor_set_layout_constants_ plus
+  // one persistent descriptor set bound once to dynamic_constants_rings_ (the
+  // per-draw dynamic offset selects each draw's constant slot). All VK_NULL_HANDLE
+  // unless the arena is active. The set is freed implicitly with its pool.
+  VkDescriptorSetLayout descriptor_set_layout_constants_dynamic_ = VK_NULL_HANDLE;
+  VkDescriptorPool constants_dynamic_descriptor_pool_ = VK_NULL_HANDLE;
+  VkDescriptorSet constants_dynamic_descriptor_set_ = VK_NULL_HANDLE;
 
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;

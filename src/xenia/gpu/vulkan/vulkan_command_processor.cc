@@ -471,6 +471,110 @@ bool VulkanCommandProcessor::SetupContext() {
         "constant buffers");
     return false;
   }
+
+  // R2 (vulkan_dynamic_constants_arena): build the UNIFORM_BUFFER_DYNAMIC variant
+  // of the guest-constants layout (same 5 bindings/stages, DYNAMIC type) plus one
+  // persistent descriptor set bound once to the arena rings - the per-draw dynamic
+  // offset selects each draw's slot. Only when the cvar is on AND the rings
+  // initialized; default-off leaves all three handles null and the per-draw
+  // transient path unchanged. The enum constant-buffer indices are the binding
+  // indices (0..kConstantBufferCount-1).
+  if (cvars::vulkan_dynamic_constants_arena &&
+      dynamic_constants_rings_[0].is_valid()) {
+    for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      descriptor_set_layout_bindings_constants[i].descriptorType =
+          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    }
+    const bool dynamic_layout_ok =
+        dfn.vkCreateDescriptorSetLayout(
+            device, &descriptor_set_layout_create_info, nullptr,
+            &descriptor_set_layout_constants_dynamic_) == VK_SUCCESS;
+    // Restore the shared bindings array to its non-dynamic type (defensive - it
+    // is a local not reused after this, but keep it self-consistent).
+    for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      descriptor_set_layout_bindings_constants[i].descriptorType =
+          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    }
+    if (!dynamic_layout_ok) {
+      XELOGE(
+          "Failed to create the dynamic guest-constants descriptor set layout");
+      return false;
+    }
+    VkDescriptorPoolSize dynamic_pool_size;
+    dynamic_pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    dynamic_pool_size.descriptorCount =
+        SpirvShaderTranslator::kConstantBufferCount;
+    VkDescriptorPoolCreateInfo dynamic_pool_create_info;
+    dynamic_pool_create_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dynamic_pool_create_info.pNext = nullptr;
+    dynamic_pool_create_info.flags = 0;
+    dynamic_pool_create_info.maxSets = 1;
+    dynamic_pool_create_info.poolSizeCount = 1;
+    dynamic_pool_create_info.pPoolSizes = &dynamic_pool_size;
+    if (dfn.vkCreateDescriptorPool(device, &dynamic_pool_create_info, nullptr,
+                                   &constants_dynamic_descriptor_pool_) !=
+        VK_SUCCESS) {
+      XELOGE("Failed to create the dynamic guest-constants descriptor pool");
+      return false;
+    }
+    VkDescriptorSetAllocateInfo dynamic_set_allocate_info;
+    dynamic_set_allocate_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dynamic_set_allocate_info.pNext = nullptr;
+    dynamic_set_allocate_info.descriptorPool =
+        constants_dynamic_descriptor_pool_;
+    dynamic_set_allocate_info.descriptorSetCount = 1;
+    dynamic_set_allocate_info.pSetLayouts =
+        &descriptor_set_layout_constants_dynamic_;
+    if (dfn.vkAllocateDescriptorSets(device, &dynamic_set_allocate_info,
+                                     &constants_dynamic_descriptor_set_) !=
+        VK_SUCCESS) {
+      XELOGE("Failed to allocate the dynamic guest-constants descriptor set");
+      return false;
+    }
+    // Per-binding descriptor range = the MAX bytes that binding can hold; the
+    // per-draw dynamic offset selects the slot. Float constants are variable per
+    // draw but capped at 256 vec4.
+    VkDeviceSize constant_ranges[SpirvShaderTranslator::kConstantBufferCount];
+    constant_ranges[SpirvShaderTranslator::kConstantBufferSystem] =
+        VkDeviceSize(sizeof(SpirvShaderTranslator::SystemConstants));
+    constant_ranges[SpirvShaderTranslator::kConstantBufferFloatVertex] =
+        VkDeviceSize(sizeof(float) * 4 * 256);
+    constant_ranges[SpirvShaderTranslator::kConstantBufferFloatPixel] =
+        VkDeviceSize(sizeof(float) * 4 * 256);
+    constant_ranges[SpirvShaderTranslator::kConstantBufferBoolLoop] =
+        VkDeviceSize(sizeof(uint32_t) * (8 + 32));
+    constant_ranges[SpirvShaderTranslator::kConstantBufferFetch] =
+        VkDeviceSize(sizeof(uint32_t) * 6 * 32);
+    VkDescriptorBufferInfo
+        dynamic_buffer_infos[SpirvShaderTranslator::kConstantBufferCount];
+    VkWriteDescriptorSet
+        dynamic_writes[SpirvShaderTranslator::kConstantBufferCount];
+    for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      dynamic_buffer_infos[i].buffer = dynamic_constants_rings_[i].buffer();
+      dynamic_buffer_infos[i].offset = 0;
+      dynamic_buffer_infos[i].range = constant_ranges[i];
+      VkWriteDescriptorSet& dynamic_write = dynamic_writes[i];
+      dynamic_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      dynamic_write.pNext = nullptr;
+      dynamic_write.dstSet = constants_dynamic_descriptor_set_;
+      dynamic_write.dstBinding = i;
+      dynamic_write.dstArrayElement = 0;
+      dynamic_write.descriptorCount = 1;
+      dynamic_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+      dynamic_write.pImageInfo = nullptr;
+      dynamic_write.pBufferInfo = &dynamic_buffer_infos[i];
+      dynamic_write.pTexelBufferView = nullptr;
+    }
+    dfn.vkUpdateDescriptorSets(device,
+                               SpirvShaderTranslator::kConstantBufferCount,
+                               dynamic_writes, 0, nullptr);
+    XELOGGPU(
+        "VulkanCommandProcessor: dynamic constants descriptor set bound to the "
+        "arena rings");
+  }
+
   // Transient: storage buffer for compute shaders.
   VkDescriptorSetLayoutBinding descriptor_set_layout_binding_transient;
   descriptor_set_layout_binding_transient.binding = 0;
@@ -1317,6 +1421,10 @@ void VulkanCommandProcessor::ShutdownContext() {
   ui::vulkan::util::DestroyAndNullHandle(
       dfn.vkDestroyDescriptorPool, device,
       shared_memory_and_edram_descriptor_pool_);
+  // R2: the dynamic constants set is freed implicitly with its pool.
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
+                                         constants_dynamic_descriptor_pool_);
+  constants_dynamic_descriptor_set_ = VK_NULL_HANDLE;
 
   texture_cache_.reset();
 
@@ -1354,6 +1462,9 @@ void VulkanCommandProcessor::ShutdownContext() {
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
                                          device,
                                          descriptor_set_layout_constants_);
+  ui::vulkan::util::DestroyAndNullHandle(
+      dfn.vkDestroyDescriptorSetLayout, device,
+      descriptor_set_layout_constants_dynamic_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
                                          device, descriptor_set_layout_empty_);
 
