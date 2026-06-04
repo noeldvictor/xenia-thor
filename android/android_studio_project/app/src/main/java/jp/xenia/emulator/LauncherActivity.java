@@ -364,21 +364,38 @@ public class LauncherActivity extends Activity {
 
     private void setLauncherTab(final int tab) {
         activeLauncherTab = tab;
-        final LinearLayout librarySection = findViewById(R.id.launcher_game_library_section);
-        final LinearLayout recentSection = findViewById(R.id.launcher_recent_games_section);
         final LinearLayout recentList = findViewById(R.id.launcher_recent_games_list);
-        if (librarySection != null) {
-            librarySection.setVisibility(tab == LAUNCHER_TAB_RECENT ? View.GONE : View.VISIBLE);
-        }
-        if (recentSection != null) {
-            final boolean hasRecent = recentList != null && recentList.getChildCount() > 0;
-            recentSection.setVisibility(
-                    tab == LAUNCHER_TAB_RECENT && hasRecent ? View.VISIBLE : View.GONE);
-        }
+        final boolean hasRecent = recentList != null && recentList.getChildCount() > 0;
+        final boolean browse = tab == LAUNCHER_TAB_BROWSE;
+        final boolean tools = tab == LAUNCHER_TAB_TOOLS;
+
+        // Each tab now shows its OWN content (previously Browse/Tools did nothing
+        // and just left the game library on screen). Games = the library grid,
+        // Recent = recent games, Browse = ways to find/add games, Tools = settings
+        // and diagnostics.
+        setSectionVisible(R.id.launcher_game_library_section, tab == LAUNCHER_TAB_GAMES);
+        setSectionVisible(R.id.launcher_recent_games_section,
+                tab == LAUNCHER_TAB_RECENT && hasRecent);
+
+        setSectionVisible(R.id.launcher_action_rail, browse || tools);
+        setSectionVisible(R.id.launcher_scan_games_card, browse);
+        setSectionVisible(R.id.launcher_add_game_folder_card, browse);
+        setSectionVisible(R.id.launcher_browse_game_card, browse);
+        setSectionVisible(R.id.launcher_settings_card, tools);
+        setSectionVisible(R.id.launcher_gpu_trace_card, tools);
+        setSectionVisible(R.id.launcher_window_demo_card, tools);
+
         updateLauncherTab(R.id.launcher_games_tab, tab == LAUNCHER_TAB_GAMES);
         updateLauncherTab(R.id.launcher_recent_tab, tab == LAUNCHER_TAB_RECENT);
         updateLauncherTab(R.id.launcher_browse_tab, tab == LAUNCHER_TAB_BROWSE);
         updateLauncherTab(R.id.launcher_tools_tab, tab == LAUNCHER_TAB_TOOLS);
+    }
+
+    private void setSectionVisible(final int viewId, final boolean visible) {
+        final View view = findViewById(viewId);
+        if (view != null) {
+            view.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void updateLauncherTab(final int viewId, final boolean active) {
