@@ -99,6 +99,14 @@ public final class GpuDriverManager {
                 "https://github.com/K11MCH1/AdrenoToolsDrivers/releases/download/"
                         + "v26.0.0-rc07/Turnip_v26.0.0_R7.zip",
                 false));
+        list.add(new Recommended(
+                "MrPurple Turnip T-28",
+                "\"purple-turnip\" — tracks the very latest Mesa source (newer than the "
+                        + "builds above, Vulkan 1.4). Bleeding-edge: sometimes faster, "
+                        + "sometimes regresses — A/B it against R8 on your games.",
+                "https://github.com/MrPurple666/purple-turnip/releases/download/"
+                        + "vturnip_mrpurple_T28-toasted.adpkg/turnip_mrpurple_T28-toasted.adpkg.zip",
+                false));
         RECOMMENDED = Collections.unmodifiableList(list);
     }
 
