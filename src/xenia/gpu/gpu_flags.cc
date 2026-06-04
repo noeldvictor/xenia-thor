@@ -539,6 +539,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_dynamic_constants_arena, false,
+    "R2 (Thor hyperopt): hold the guest draw constant buffers in a persistent, "
+    "per-frame-segmented UMA ring arena and bind them once via a "
+    "UNIFORM_BUFFER_DYNAMIC descriptor set with per-draw pDynamicOffsets, instead "
+    "of allocating + writing a transient descriptor set per draw. Needs a dynamic "
+    "pipeline-layout variant (built only while this is on) so layouts never mix. "
+    "Default off = byte-identical (uniform_buffer_pool_ + per-draw transient set). "
+    "Experimental; being landed incrementally.",
+    "GPU");
+
+DEFINE_bool(
     gpu_cull_fast_replay, true,
     "Thor cull Step 2b: when culling (gpu_cull_compaction), compute each vertex's "
     "clip position via the fast AFFINE MATRIX-RECOVERY replay (recover the 4x4 M "

@@ -355,6 +355,42 @@ bool VulkanCommandProcessor::SetupContext() {
       vulkan_device, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
       ui::GraphicsUploadBufferPool::kDefaultPageSize);
 
+  // R2 (vulkan_dynamic_constants_arena): persistent UMA ring arena for the guest
+  // draw constant buffers. Initialized ONLY when the cvar is on; default-off
+  // leaves every ring invalid so the per-draw transient-descriptor path
+  // (uniform_buffer_pool_) is used unchanged. On the Thor's UMA every heap is
+  // HOST_VISIBLE|DEVICE_LOCAL; if no such memory type exists we tear all rings
+  // back down and fall back rather than run a partially-armed arena.
+  if (cvars::vulkan_dynamic_constants_arena) {
+    const VkDeviceSize kArenaCapacity = VkDeviceSize(256) * 1024;
+    const VkDeviceSize arena_align = std::max<VkDeviceSize>(
+        device_properties.minUniformBufferOffsetAlignment, VkDeviceSize(1));
+    bool arena_ok = true;
+    for (auto& ring : dynamic_constants_rings_) {
+      if (!ring.Initialize(vulkan_device, kArenaCapacity,
+                           VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                           arena_align)) {
+        arena_ok = false;
+        break;
+      }
+    }
+    if (!arena_ok) {
+      for (auto& ring : dynamic_constants_rings_) {
+        ring.Shutdown();
+      }
+      XELOGGPU(
+          "VulkanCommandProcessor: vulkan_dynamic_constants_arena requested but "
+          "ring init failed - falling back to the transient constant path");
+    } else {
+      XELOGGPU(
+          "VulkanCommandProcessor: vulkan_dynamic_constants_arena ENABLED ({} "
+          "byte rings)",
+          uint64_t(kArenaCapacity));
+    }
+  }
+
   // Lever 2b (vulkan_merge_draws_indirect): per-frame ring for the
   // VkDrawIndexedIndirectCommand[] arrays. Only created when the lever is enabled
   // AND the device supports batched indirect draws, so the default build pays
@@ -1324,6 +1360,11 @@ void VulkanCommandProcessor::ShutdownContext() {
   uniform_buffer_pool_.reset();
   indirect_buffer_pool_.reset();
   cull_index_buffer_pool_.reset();
+  // R2: release the constant arena rings while the device is still valid (no-op
+  // when the cvar left them uninitialized).
+  for (auto& ring : dynamic_constants_rings_) {
+    ring.Shutdown();
+  }
 
   sparse_bind_wait_stage_mask_ = 0;
   sparse_buffer_binds_.clear();

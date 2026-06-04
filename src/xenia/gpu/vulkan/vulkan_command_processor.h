@@ -42,6 +42,7 @@
 #include "xenia/ui/vulkan/vulkan_gpu_completion_timeline.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 #include "xenia/ui/vulkan/vulkan_provider.h"
+#include "xenia/ui/vulkan/vulkan_dynamic_buffer_ring.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 
 namespace xe {
@@ -606,6 +607,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   // them verbatim; the eventual cull writes a compacted subset). Created at init so
   // the cvar is live-toggleable.
   std::unique_ptr<ui::vulkan::VulkanUploadBufferPool> cull_index_buffer_pool_;
+
+  // R2 (vulkan_dynamic_constants_arena): persistent, per-frame-segmented UMA ring
+  // arena for the kConstantBufferCount guest draw constant buffers. The eventual
+  // bind path writes constants in place and binds them once via a
+  // UNIFORM_BUFFER_DYNAMIC descriptor set with per-draw pDynamicOffsets, instead
+  // of allocating a transient descriptor set per draw. Only Initialize()d when the
+  // cvar is on; default-off leaves these invalid and keeps uniform_buffer_pool_
+  // (byte-identical to today). is_valid() gates the whole arena path.
+  std::array<ui::vulkan::VulkanDynamicBufferRing,
+             size_t(SpirvShaderTranslator::kConstantBufferCount)>
+      dynamic_constants_rings_;
 
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;
