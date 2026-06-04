@@ -717,7 +717,11 @@ dword_result_t NtQueryFullAttributesFile_entry(
     assert_always();
   }
 
-  auto target_path = util::TranslateAnsiString(kernel_memory(), object_name);
+  // Use the path-normalizing translate (whitespace-trimmed) like upstream, so a
+  // padded/whitespace-suffixed query path still resolves. The fork previously
+  // used the raw string_view here, which made Banjo: Nuts & Bolts'
+  // 'GAME:\loctext\englishus\' query miss -> dirty-disc error.
+  auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
   if (!IsValidPath(target_path, false)) {

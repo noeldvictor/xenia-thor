@@ -94,6 +94,24 @@ inline std::string_view TranslateAnsiString(const Memory* memory,
       ansi_string->length);
 }
 
+// Like TranslateAnsiString but returns an owned, whitespace-trimmed std::string
+// for path resolution (matches upstream Canary's TranslateAnsiPath). Games
+// sometimes pass path X_ANSI_STRINGs whose length includes trailing padding /
+// whitespace; the raw string_view then fails to resolve in the VFS. Observed on
+// Banjo: Nuts & Bolts querying 'GAME:\\loctext\\englishus\\' ->
+// NtQueryFullAttributesFile NO_SUCH_FILE -> dirty-disc error.
+inline std::string TranslateAnsiPath(const Memory* memory,
+                                     const X_ANSI_STRING* ansi_string) {
+  std::string path(TranslateAnsiString(memory, ansi_string));
+  const char* const whitespace = " \t\r\n\f\v";
+  const size_t start = path.find_first_not_of(whitespace);
+  if (start == std::string::npos) {
+    return "";
+  }
+  const size_t end = path.find_last_not_of(whitespace);
+  return path.substr(start, end - start + 1);
+}
+
 inline std::string_view TranslateAnsiStringAddress(const Memory* memory,
                                                    uint32_t guest_address) {
   if (!guest_address) {
