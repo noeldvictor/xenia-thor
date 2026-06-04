@@ -96,6 +96,15 @@ X_STATUS XFile::QueryDirectory(X_FILE_DIRECTORY_INFORMATION* out_info,
 X_STATUS XFile::Read(uint32_t buffer_guest_address, uint32_t buffer_length,
                      uint64_t byte_offset, uint32_t* out_bytes_read,
                      uint32_t apc_context, bool notify_completion) {
+  std::lock_guard<std::mutex> lock(file_lock_);
+  return ReadInternal(buffer_guest_address, buffer_length, byte_offset,
+                      out_bytes_read, apc_context, notify_completion);
+}
+
+X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
+                             uint32_t buffer_length, uint64_t byte_offset,
+                             uint32_t* out_bytes_read, uint32_t apc_context,
+                             bool notify_completion) {
   if (byte_offset == uint64_t(-1)) {
     // Read from current position.
     byte_offset = position_;
@@ -155,6 +164,13 @@ X_STATUS XFile::Read(uint32_t buffer_guest_address, uint32_t buffer_length,
                   xe::global_critical_region::AcquireDirect(),
                   buffer_guest_address, buffer_length, true, true);
             }
+            // Seek to the explicit offset before advancing, so a following
+            // current-position read continues from the right place. Without
+            // this, an explicit-offset read left position_ wrong and the next
+            // sequential read returned the wrong bytes (matches upstream).
+            if (byte_offset) {
+              position_ = byte_offset;
+            }
             position_ += bytes_read;
           }
         }
@@ -183,6 +199,9 @@ X_STATUS XFile::Read(uint32_t buffer_guest_address, uint32_t buffer_length,
 X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
                             uint64_t byte_offset, uint32_t* out_bytes_read,
                             uint32_t apc_context) {
+  // Hold the lock across the whole scatter so the per-segment reads stay
+  // contiguous and don't race other threads' reads on position_.
+  std::lock_guard<std::mutex> lock(file_lock_);
   X_STATUS result = X_STATUS_SUCCESS;
 
   // segments points to an array of buffer pointers of type
@@ -205,12 +224,13 @@ X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
     }
 
     uint32_t bytes_read = 0;
-    result = Read(read_buffer, read_length,
-                  byte_offset ? ((byte_offset != -1 && byte_offset != -2)
-                                     ? byte_offset + read_total
-                                     : byte_offset)
-                              : -1,
-                  &bytes_read, apc_context, false);
+    // ReadInternal (not Read) because we already hold file_lock_.
+    result = ReadInternal(read_buffer, read_length,
+                          byte_offset ? ((byte_offset != -1 && byte_offset != -2)
+                                             ? byte_offset + read_total
+                                             : byte_offset)
+                                      : -1,
+                          &bytes_read, apc_context, false);
 
     if (result != X_STATUS_SUCCESS) {
       break;
@@ -239,6 +259,7 @@ X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
 X_STATUS XFile::Write(uint32_t buffer_guest_address, uint32_t buffer_length,
                       uint64_t byte_offset, uint32_t* out_bytes_written,
                       uint32_t apc_context) {
+  std::lock_guard<std::mutex> lock(file_lock_);
   if (byte_offset == uint64_t(-1)) {
     // Write from current position.
     byte_offset = position_;
