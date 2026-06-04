@@ -759,6 +759,45 @@ dword_result_t NtQueryFullAttributesFile_entry(
     XELOGW(
         "NtQueryFullAttributesFile status: path='{}' status={:08X} missing=1",
         target_path, uint32_t(X_STATUS_NO_SUCH_FILE));
+    // Diagnostic: walk up to the deepest directory that DOES resolve and list
+    // its children, so a missing leaf (parse gap / wrong name) is distinguished
+    // from a wholly-absent subtree. (Banjo: Nuts & Bolts queries
+    // 'GAME:\loctext\englishus\'; this reveals what the GDFX parse actually has
+    // under \loctext on the same ISO that resolves it on PC.)
+    std::string probe(target_path);
+    while (!probe.empty() && (probe.back() == '\\' || probe.back() == '/')) {
+      probe.pop_back();
+    }
+    for (int depth = 0; depth < 8; ++depth) {
+      const size_t sep = probe.find_last_of("\\/");
+      if (sep == std::string::npos) {
+        break;
+      }
+      probe = probe.substr(0, sep);
+      if (probe.empty() || probe.back() == ':') {
+        break;
+      }
+      auto* dir = kernel_state()->file_system()->ResolvePath(probe);
+      if (!dir) {
+        XELOGW("  NtQFA probe: parent '{}' also missing", probe);
+        continue;
+      }
+      std::string kids;
+      size_t shown = 0;
+      for (const auto& child : dir->children()) {
+        if (shown) {
+          kids += ", ";
+        }
+        kids += child->name();
+        if (++shown >= 48) {
+          kids += ", ...";
+          break;
+        }
+      }
+      XELOGW("  NtQFA probe: deepest existing dir '{}' has {} children: [{}]",
+             probe, dir->child_count(), kids);
+      break;
+    }
   }
   return X_STATUS_NO_SUCH_FILE;
 }
