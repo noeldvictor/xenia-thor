@@ -101,6 +101,20 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("arm64_use_flat_membase")}, null));
 
         list.add(new Optimization(
+                "opt_rlwinm_shift",
+                "Fast rotate/shift codegen",
+                "Compiles common PowerPC rotate-and-mask ops to a single shift.",
+                "The PowerPC rlwinm instruction (rotate-left then mask) is one of "
+                        + "the most frequent ops in Xbox 360 code - array indexing, "
+                        + "struct offsets, bit extracts. The recompiler normally emits "
+                        + "a duplicate + 64-bit rotate + mask (5-6 host instructions) "
+                        + "even when the op is really a plain shift. This recognizes the "
+                        + "slwi/srwi shift forms and emits a single ARM shift instead. "
+                        + "New - validate before relying on it.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("ppc_rlwinm_shift_fastpath")}, null));
+
+        list.add(new Optimization(
                 "opt_constants_arena",
                 "Dynamic constant streaming",
                 "Streams shader constants through one persistent GPU buffer.",

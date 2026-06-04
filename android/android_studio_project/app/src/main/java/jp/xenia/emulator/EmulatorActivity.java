@@ -155,6 +155,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "clear_memory_page_state");
             copyBooleanExtra(intent, launchArguments, "emit_inline_mmio_checks");
             copyBooleanExtra(intent, launchArguments, "arm64_use_flat_membase");
+            copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_shift_fastpath");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");

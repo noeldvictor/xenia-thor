@@ -10,8 +10,16 @@
 #include "xenia/cpu/ppc/ppc_emit-private.h"
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
+
+DEFINE_bool(ppc_rlwinm_shift_fastpath, false,
+            "Compile the common PPC rlwinm rotate-and-mask forms (slwi/srwi) "
+            "directly to a single shift instead of the generic "
+            "duplicate-then-rotate-then-mask HIR sequence - far fewer host "
+            "instructions on a very hot PPC instruction. Experimental.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -1029,6 +1037,36 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
   // r <- ROTL32((RS)[32:63], n)
   // m <- MASK(MB+32, ME+32)
   // RA <- r & m
+  if (cvars::ppc_rlwinm_shift_fastpath) {
+    const uint32_t sh = i.M.SH;
+    const uint32_t mb = i.M.MB;
+    const uint32_t me = i.M.ME;
+    // slwi rA,rS,n == rlwinm rA,rS,n,0,31-n : a 32-bit logical shift-left by n,
+    // zero-extended to 64. srwi rA,rS,n == rlwinm rA,rS,32-n,n,31 : a 32-bit
+    // logical shift-right by n (== MB). Both are extremely common and collapse
+    // to a single shift instead of duplicate+rotate+mask. Contiguous, non-wrap
+    // masks only; everything else falls through to the generic path below.
+    if (sh != 0 && mb == 0 && me == 31 - sh) {
+      Value* r = f.ZeroExtend(
+          f.Shl(f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE), int8_t(sh)),
+          INT64_TYPE);
+      f.StoreGPR(i.M.RA, r);
+      if (i.M.Rc) {
+        f.UpdateCR(0, r);
+      }
+      return 0;
+    }
+    if (me == 31 && sh != 0 && mb == 32 - sh) {
+      Value* r = f.ZeroExtend(
+          f.Shr(f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE), int8_t(mb)),
+          INT64_TYPE);
+      f.StoreGPR(i.M.RA, r);
+      if (i.M.Rc) {
+        f.UpdateCR(0, r);
+      }
+      return 0;
+    }
+  }
   Value* v = f.LoadGPR(i.M.RT);
 
   // (x||x)
