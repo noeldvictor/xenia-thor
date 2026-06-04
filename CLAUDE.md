@@ -4,9 +4,30 @@ Guidance for Claude working in this repo. Read this first.
 
 ## Goal
 Make Xbox 360 games run **fast and playable** on the **AYN Thor** Android handheld via this xenia fork.
-Priority title: **Blue Dragon at full speed**. Thor is ~10-20× more powerful than the Xbox 360, so
-poor framerates are pathological/fixable, not hardware limits. Other priority titles: Lost Odyssey,
-Banjo, Burnout.
+Priority title: **Blue Dragon at full speed**. Other priority titles: Lost Odyssey, Banjo, Burnout.
+Thor is ~10-20× the 360 in raw FLOPS/cores, but that is mostly **latent parallel + GPU throughput**;
+emulation pays a heavy CPU translation tax and currently uses ~1 of 8 cores, so 4-6fps is not a
+hardware limit — it's where the per-bottleneck work goes.
+
+## ⚡ Current status (2026-06-03) — READ before optimizing
+- **Turnip (Mesa) driver WORKS and is the FAST+CORRECT path.** The months-long black screen was xenia
+  backing the 512MB guest-RAM mirror with a SPARSE buffer Turnip doesn't reliably back (vertex-fetch
+  read zero → degenerate gl_Position). Fixed: non-sparse on `driverID==VK_DRIVER_ID_MESA_TURNIP`
+  (`vulkan_shared_memory.cc`, committed 61c5600e9). All priority games render on Turnip now.
+- **Blue Dragon heavy scene on Turnip is GPU-BOUND on the binning front-end** (CONFIRMED clean
+  2026-06-03): GPU busy ~80%, CPU ~75% idle, NO guest thread pegged (guest/JIT threads 2-5%). The
+  bottleneck is ~1100-2180 tiny draws / ~263k verts/frame. BD levers = **reduce DRAWS + submitted
+  VERTICES** (Adreno bins per-vertex-per-draw *before* cull, so GPU post-bin cull = zero win).
+  CPU/JIT levers do NOT speed BD (CPU idle) — they're for the CPU-bound titles (Lost Odyssey).
+- **MEASUREMENT DISCIPLINE (cost real days):** measure perf with `tools/thor/thor_gpu_capture.ps1
+  -NoDump` (the RT-dump readbacks poison timing — they made `gpu_frame_us` read a bogus ~1ms and
+  led to a wrong "CPU-bound" verdict). **Trust the KGSL GPU busy% + per-thread `top` (`-TopProfile`),
+  NOT the derived `gpu_frame_us`.**
+- **Optimization roadmap:** `docs/research/20260603-thor-hyperopt-roadmap.md` (R1-R8). BD = R4 (CPU
+  pre-cull, fewer verts) + R5 (draw concatenation, needs R2 state-elision). CPU-bound titles = R3
+  (flat-membase fastmem: every guest load/store currently emits a BRANCH+ALU, `a64_seq_util.h:286-292`),
+  R6/R7 (call fastpath / parallel JIT). RPCS3 lesson: the steady-fps win is an *optimizing* recompiler
+  tier, not AOT (AOT only kills stutter/load).
 
 ## ⚠️ NEVER THRASH THE THOR (hard rule — it crashed the device once; do not repeat)
 - The device is physical hardware. Repeated game launches pinned the GPU at 99% / 72°C and CRASHED it.
