@@ -147,13 +147,14 @@ public final class XeniaOptimizations {
         // it is deliberately not offered).
         list.add(new Optimization(
                 "opt_whole_draw_cull",
-                "Whole-draw offscreen cull",
-                "CPU-side skip of fully off-screen draws before the GPU bins them.",
-                "Computes each draw's screen extent on the CPU (cheap affine "
-                        + "replay) and skips draws that are entirely off-screen, so "
-                        + "the GPU never bins them. The safest draw reducer - no "
-                        + "per-triangle cost, never culls a visible draw. The most "
-                        + "promising binning lever. Experimental; A/B at a heavy scene.",
+                "Whole-draw offscreen cull (broken)",
+                "Skips draws judged off-screen - currently over-culls on Blue Dragon.",
+                "Computes each draw's screen extent on the CPU and skips draws "
+                        + "judged entirely off-screen so the GPU never bins them. "
+                        + "KNOWN ISSUE (device-tested 2026-06-04): the affine extent "
+                        + "test is too aggressive and OVER-CULLS on Blue Dragon - it "
+                        + "blanks most of the scene (282 vs 263k vertices). Left OFF "
+                        + "pending a fix to the extent test; not recommended to enable.",
                 CATEGORY_GPU, false, false,
                 new BoolCvar[]{
                         new BoolCvar("gpu_cull_compaction"),
