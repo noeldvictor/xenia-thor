@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/hir/value.h"
 
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 
@@ -427,35 +428,62 @@ void Value::MulHi(Value* other, bool is_unsigned) {
   }
 }
 
+// PPC integer divides never trap: divide-by-zero yields 0, and signed
+// overflow (INT_MIN / -1) also yields 0. The host C++ `/` is undefined
+// behavior for both, which on x86 SIGFPEs and on ARM64 returns the wrong
+// value (INT_MIN for the overflow case) and lets the optimizer make unsafe
+// assumptions. Route constant folding through these so it matches the guest
+// exactly and can never crash/UB. Ported from xenia-edge 324a8eb81.
+template <typename T>
+static T PPCUDiv(T numer, T denom) {
+  if (!denom) {
+    return 0;
+  } else {
+    return numer / denom;
+  }
+}
+template <typename T>
+static T PPCIDiv(T numer, T denom) {
+  if (!denom) {
+    return 0;
+  } else if (numer == static_cast<T>(1LL << ((sizeof(T) * CHAR_BIT) - 1)) &&
+             !~denom) {  // numer is signbit and denom is all ones -> signed
+                         // overflow
+    return 0;
+  } else {
+    return numer / denom;
+  }
+}
+
 void Value::Div(Value* other, bool is_unsigned) {
   assert_true(type == other->type);
   switch (type) {
     case INT8_TYPE:
       if (is_unsigned) {
-        constant.i8 /= uint8_t(other->constant.i8);
+        constant.i8 = PPCUDiv<uint8_t>(constant.i8, other->constant.i8);
       } else {
-        constant.i8 /= other->constant.i8;
+        constant.i8 = PPCIDiv<int8_t>(constant.i8, other->constant.i8);
       }
       break;
     case INT16_TYPE:
       if (is_unsigned) {
-        constant.i16 /= uint16_t(other->constant.i16);
+        constant.i16 = PPCUDiv<uint16_t>(constant.i16, other->constant.i16);
       } else {
-        constant.i16 /= other->constant.i16;
+        constant.i16 = PPCIDiv<int16_t>(constant.i16, other->constant.i16);
       }
       break;
     case INT32_TYPE:
       if (is_unsigned) {
-        constant.i32 /= uint32_t(other->constant.i32);
+        constant.i32 = PPCUDiv<uint32_t>(constant.i32, other->constant.i32);
       } else {
-        constant.i32 /= other->constant.i32;
+        constant.i32 = PPCIDiv<int32_t>(constant.i32, other->constant.i32);
       }
       break;
     case INT64_TYPE:
       if (is_unsigned) {
-        constant.i64 /= uint64_t(other->constant.i64);
+        constant.i64 = PPCUDiv<uint64_t>(constant.i64, other->constant.i64);
       } else {
-        constant.i64 /= other->constant.i64;
+        constant.i64 = PPCIDiv<int64_t>(constant.i64, other->constant.i64);
       }
       break;
     case FLOAT32_TYPE:
