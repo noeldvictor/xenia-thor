@@ -34,6 +34,9 @@ class SimplificationPass : public ConditionalGroupSubpass {
 
   // Integer algebraic identities (x+0, x-0, x*1, x|0, x^0, x<<0/x>>0 -> x).
   bool SimplifyAlgebraicIdentities(hir::HIRBuilder* builder);
+
+  // Fold AND(x, NOT(y)) -> AND_NOT(x, y) (one ARM64 BIC; dead NOT removed by DCE).
+  bool SimplifyAndNot(hir::HIRBuilder* builder);
 };
 
 }  // namespace passes

@@ -19,6 +19,15 @@ DEFINE_bool(hir_algebraic_identities, false,
             "identities are unsafe re: NaN/signed zero). Experimental.",
             "CPU");
 
+DEFINE_bool(hir_fold_and_not, false,
+            "Fold dependent AND(x, NOT(y)) HIR sequences into a single AND_NOT "
+            "opcode (the a64 backend lowers AND_NOT to one BIC). When the NOT "
+            "has no other uses, dead-code elimination then removes it, so the "
+            "two-op AND+NOT becomes one BIC. Bit-exact (definitional). "
+            "Default-off pending on-device regression validation before "
+            "default-on. Ported from xenia-edge c383d049e.",
+            "CPU");
+
 namespace xe {
 namespace cpu {
 namespace compiler {
@@ -40,6 +49,9 @@ bool SimplificationPass::Run(HIRBuilder* builder, bool& result) {
   result |= EliminateConversions(builder);
   if (cvars::hir_algebraic_identities) {
     result |= SimplifyAlgebraicIdentities(builder);
+  }
+  if (cvars::hir_fold_and_not) {
+    result |= SimplifyAndNot(builder);
   }
   result |= SimplifyAssignments(builder);
   return true;
@@ -174,6 +186,50 @@ bool SimplificationPass::SimplifyAlgebraicIdentities(HIRBuilder* builder) {
         if (survivor && survivor->type == i->dest->type) {
           i->Replace(&OPCODE_ASSIGN_info, 0);
           i->set_src1(survivor);
+          result = true;
+        }
+      }
+      i = next;
+    }
+    block = block->next;
+  }
+  return result;
+}
+
+bool SimplificationPass::SimplifyAndNot(HIRBuilder* builder) {
+  // Fold a dependent AND + NOT into a single AND_NOT opcode:
+  //   v = NOT(y);  d = AND(x, v)   ->   d = AND_NOT(x, y)   (== x & ~y)
+  // The a64 backend lowers AND_NOT to one BIC. AND is commutative, so the NOT
+  // may feed either operand; AND_NOT is NOT commutative (dest = src1 & ~src2),
+  // so the surviving (non-NOT) operand always becomes src1 and the NOT's input
+  // becomes src2. The leftover NOT is removed by the later dead-code-
+  // elimination pass when it has no other uses. Ported from xenia-edge
+  // c383d049e, adapted to this fork's standalone block-walk style.
+  bool result = false;
+  auto block = builder->first_block();
+  while (block) {
+    auto i = block->instr_head;
+    while (i) {
+      auto next = i->next;
+      // Only plain AND (flags == 0); bitwise AND never carries flags, but guard
+      // defensively so a flag-carrying variant is never silently dropped.
+      if (i->opcode == &OPCODE_AND_info && i->flags == 0 && i->src1.value &&
+          i->src2.value) {
+        Value* src1 = i->src1.value;
+        Value* src2 = i->src2.value;
+        Instr* def1 = src1->def;
+        Instr* def2 = src2->def;
+        if (def2 && def2->opcode == &OPCODE_NOT_info) {
+          // AND(x, NOT(y)) -> AND_NOT(x, y)
+          i->Replace(&OPCODE_AND_NOT_info, 0);
+          i->set_src1(src1);
+          i->set_src2(def2->src1.value);
+          result = true;
+        } else if (def1 && def1->opcode == &OPCODE_NOT_info) {
+          // AND(NOT(y), x) -> AND_NOT(x, y)  (AND commutes)
+          i->Replace(&OPCODE_AND_NOT_info, 0);
+          i->set_src1(src2);
+          i->set_src2(def1->src1.value);
           result = true;
         }
       }
