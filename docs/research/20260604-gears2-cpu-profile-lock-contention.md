@@ -83,3 +83,14 @@ provably safe + cvar-gated. This is the deeper half of the hoist-lock lever.
   "<host_hex_start> <host_hex_size> guest_<guest_addr>" to the app-readable perf map simpleperf
   reads -> future profiles resolve the "unknown[+2a12xxxx]" JIT frames to guest PCs = named codegen
   targets. THIS is the next high-value tooling unit (own focused cycle).
+
+## UPDATE 2026-06-05: JIT PERF-MAP SHIPPED (15e82252c) + VALIDATED -> hot guest functions NAMED.
+cvar cpu_perf_map_path -> A64Function::Setup writes "<host_hex> <host_size> guest_<addr>" per emit.
+Deployed; launched Gears 2 with --es cpu_perf_map_path .../files/jit.map -> 15193 functions mapped.
+The report's "unknown[+<hostaddr>]" sample addrs are ABSOLUTE host addrs in the JIT cache, so a
+~10-line python bisect over the map resolves them. RESULT - the ~24% anonymous JIT blob = TWO guest
+functions: **guest_82977688 ~14.79% + guest_8298C2A0 ~10.10% = ~25% of Gears 2 CPU** in two hot
+game-code loops. The codegen mission is UNBLOCKED. NEXT: Ghidra-analyze guest_82977688 (Gears 2 XEX,
+base 0x82000000) to identify the routine -> a general codegen improvement (if our a64 lowering of its
+PPC pattern is suboptimal) or a game-HLE (if it's a known routine like a memcpy/decompress). Also
+re-usable on Lost Odyssey / any CPU-bound title.
