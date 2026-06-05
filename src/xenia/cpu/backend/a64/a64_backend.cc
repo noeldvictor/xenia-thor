@@ -58,8 +58,14 @@ DECLARE_bool(a64_inline_kf_lower_irql_apc_guard);
 DECLARE_bool(a64_kf_lower_irql_apc_guard_audit);
 DECLARE_uint32(a64_kf_lower_irql_apc_guard_native_poll_interval);
 
-DEFINE_uint32(a64_max_stackpoints, 65536,
-              "Max number of host->guest stack mappings we can record.",
+DEFINE_uint32(a64_max_stackpoints, 262144,
+              "Max number of host->guest stack mappings we can record. Bumped "
+              "from 65536 to 262144 (4x) because the longjmp stackpoint sync "
+              "leaks depth on heavy-longjmp titles (Infinite Undiscovery crashed "
+              "'Overflowed stackpoints' ~37s in at 65536; a larger cap survives "
+              "past the menu - device-validated IU reaches its title screen). "
+              "This is a WORKAROUND; the real fix is repairing the longjmp sync "
+              "(edge d5956d7e3). Non-leaking titles only touch a tiny prefix.",
               "a64");
 
 DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
