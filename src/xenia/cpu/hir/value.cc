@@ -788,18 +788,22 @@ void Value::Not() {
 
 void Value::Shl(Value* other) {
   assert_true(other->type == INT8_TYPE);
+  // Mask the shift amount to the operand width. A count >= the bit width is
+  // C++ undefined behavior, and the backends mask too (a64 SHL_I32 uses
+  // & 0x1F, SHL_I64 & 0x3F; host x86/arm shl mask by width) - so fold this
+  // identically to keep folded == runtime and avoid UB.
   switch (type) {
     case INT8_TYPE:
-      constant.u8 <<= other->constant.u8;
+      constant.u8 <<= other->constant.u8 & 0x7;
       break;
     case INT16_TYPE:
-      constant.u16 <<= other->constant.u8;
+      constant.u16 <<= other->constant.u8 & 0xF;
       break;
     case INT32_TYPE:
-      constant.u32 <<= other->constant.u8;
+      constant.u32 <<= other->constant.u8 & 0x1F;
       break;
     case INT64_TYPE:
-      constant.u64 <<= other->constant.u8;
+      constant.u64 <<= other->constant.u8 & 0x3F;
       break;
     default:
       assert_unhandled_case(type);
@@ -809,18 +813,20 @@ void Value::Shl(Value* other) {
 
 void Value::Shr(Value* other) {
   assert_true(other->type == INT8_TYPE);
+  // Mask the shift amount to the operand width (see Value::Shl): count >= width
+  // is C++ UB and the backends mask, so keep the fold defined and == runtime.
   switch (type) {
     case INT8_TYPE:
-      constant.u8 = constant.u8 >> other->constant.u8;
+      constant.u8 = constant.u8 >> (other->constant.u8 & 0x7);
       break;
     case INT16_TYPE:
-      constant.u16 = constant.u16 >> other->constant.u8;
+      constant.u16 = constant.u16 >> (other->constant.u8 & 0xF);
       break;
     case INT32_TYPE:
-      constant.u32 = constant.u32 >> other->constant.u8;
+      constant.u32 = constant.u32 >> (other->constant.u8 & 0x1F);
       break;
     case INT64_TYPE:
-      constant.u64 = constant.u64 >> other->constant.u8;
+      constant.u64 = constant.u64 >> (other->constant.u8 & 0x3F);
       break;
     default:
       assert_unhandled_case(type);
@@ -830,18 +836,20 @@ void Value::Shr(Value* other) {
 
 void Value::Sha(Value* other) {
   assert_true(other->type == INT8_TYPE);
+  // Mask the shift amount to the operand width (see Value::Shl): count >= width
+  // is C++ UB and the backends mask, so keep the fold defined and == runtime.
   switch (type) {
     case INT8_TYPE:
-      constant.i8 = constant.i8 >> other->constant.u8;
+      constant.i8 = constant.i8 >> (other->constant.u8 & 0x7);
       break;
     case INT16_TYPE:
-      constant.i16 = constant.i16 >> other->constant.u8;
+      constant.i16 = constant.i16 >> (other->constant.u8 & 0xF);
       break;
     case INT32_TYPE:
-      constant.i32 = constant.i32 >> other->constant.u8;
+      constant.i32 = constant.i32 >> (other->constant.u8 & 0x1F);
       break;
     case INT64_TYPE:
-      constant.i64 = constant.i64 >> other->constant.u8;
+      constant.i64 = constant.i64 >> (other->constant.u8 & 0x3F);
       break;
     default:
       assert_unhandled_case(type);
