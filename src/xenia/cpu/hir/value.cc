@@ -410,9 +410,15 @@ void Value::MulHi(Value* other, bool is_unsigned) {
       }
 #else
       if (is_unsigned) {
+        // Zero-extend (not sign-extend) the signed int64_t storage before
+        // widening: casting constant.i64 straight to unsigned __int128
+        // sign-extends a high-bit-set value, corrupting unsigned mulhdu/mulhwu
+        // constant folding on the GCC/Clang (Android/ARM64) path. Mirrors the
+        // already-correct INT32 case above. Ported from xenia-edge 643c13668.
         constant.i64 = static_cast<uint64_t>(
-            (static_cast<unsigned __int128>(constant.i64) *
-             static_cast<unsigned __int128>(other->constant.i64)) >>
+            (static_cast<unsigned __int128>(static_cast<uint64_t>(constant.i64)) *
+             static_cast<unsigned __int128>(
+                 static_cast<uint64_t>(other->constant.i64))) >>
             64);
       } else {
         constant.i64 = static_cast<uint64_t>(
