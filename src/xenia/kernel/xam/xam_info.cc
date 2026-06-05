@@ -307,7 +307,17 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
       loader_data.launch_path = path;
     }
   } else {
-    assert_always("Game requested exit to dashboard via XamLoaderLaunchTitle");
+    // raw_name_ptr == NULL is the guest's "exit to the dashboard" request.
+    // There is no dashboard to launch on Thor, so terminate the title cleanly
+    // (return to the emulator's game list) instead of asserting - assert_always
+    // here was a hard SIGABRT crash on the debug build. Games legitimately hit
+    // this path to quit: e.g. Banjo-Kazooie N&B after its dirty-disc box and
+    // Telltale BTTF after its media-update flow. Clearing launch_path makes this
+    // behave exactly like XamLoaderTerminateTitle (no relaunch).
+    XELOGI(
+        "XamLoaderLaunchTitle(NULL): guest requested exit to dashboard; "
+        "terminating title (no dashboard to launch).");
+    loader_data.launch_path = "";
   }
 
   // This function does not return.
