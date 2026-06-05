@@ -237,6 +237,29 @@ faster config races into a different cinematic frame. **Always compare configs a
 AND equal `rendered` count.** An unmatched A/B produced a fake "9× load/store" result that was
 retracted. Trust profile/counter deltas only on content-matched frames + read the screenshot.
 
+## 🔬 PERFORMANCE METHODOLOGY — always RE the slow GUEST code with Ghidra (don't guess)
+**When a game (or scene) is slow, do NOT guess at a fix. Find the hot GUEST code and Ghidra-analyze
+it to understand WHY it's slow on our emulator and WHAT class of fix/patch it needs.** This is the
+same RE-the-guest-code discipline that cracked Banjo's dirty disc (disassembled the guest verifier to
+find the real cause) — apply it to SLOW areas too.
+1. **Profile to localize the bottleneck.** `-TopProfile` per-thread `top` (a pegged guest/JIT thread =
+   CPU-bound; high GPU busy% with no pegged thread = GPU-bound); the A64 speed profiler for **hot
+   guest PCs**; `gpu_frame_us` vs the `cpu_*` buckets (`cpu_issuedraw/process/tex/rt/pipe/bind/other`)
+   to pick the phase; the `GPU draw outcomes` composition. (Movie-free frame only — RULE 0.)
+2. **Get the hot guest function(s)** — the pegged thread's top PCs, or the guest function dominating
+   the draw stream / a `cpu_*` phase.
+3. **Ghidra-analyze that guest function** (skill: `.agents/skills/xenia-ghidra-ooda-loop`; extract the
+   XEX with `xenia-thor-ghidra-game-patch`'s `gdfx_extract.py`, load via XEXLoaderWV): what is it — a
+   tight hot loop? a math/hash kernel? a guest instruction pattern our JIT compiles slowly or wrong
+   (no fast-path)? an HLE/kernel call we implement slowly? redundant per-frame work?
+4. **Pick the fix CLASS:** JIT **codegen fast-path** (hot guest op pattern), **HLE optimization**
+   (a kernel/XAM call dominates), **GPU draw/binning** fix (draw-issue/binning dominates), or a
+   **game patch** (guest does removable redundant work — NOP it via the patcher). 
+5. **Implement cvar-gated, validate, measure the delta** on a content-matched, movie-free frame; ship
+   the win as a stacking `XeniaOptimizations` toggle.
+Skills: **`xenia-ghidra-ooda-loop`** (RE hot PCs / native crashes for perf+bugs), **`xenia-thor-adb-gpu-stage-split`**
+(per-stage GPU split), **`xenia-thor-ghidra-game-patch`** (XEX extract + authoring patches).
+
 ## Current root-cause verdict (as of B60, 2026-05-31)
 Blue Dragon heavy 3D scene is **GPU-BOUND on the geometry / per-draw / binning / state front-end**,
 PROVEN by Adreno GPU busy% = **77-79% @ 615MHz** on the live heavy scene. Content-matched harness
