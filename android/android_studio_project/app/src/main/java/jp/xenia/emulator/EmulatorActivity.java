@@ -131,6 +131,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "kernel_display_resolution");
             copyStringExtra(intent, launchArguments, "cpu");
             copyStringExtra(intent, launchArguments, "cpu_perf_map_path");
+            copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyStringExtra(intent, launchArguments, "apu");
             copyBooleanExtra(intent, launchArguments, "mute");
             copyIntExtra(intent, launchArguments, "log_level");
