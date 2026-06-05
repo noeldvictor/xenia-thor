@@ -1081,6 +1081,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t draw_cpu_rt_ns_ = 0;
   uint64_t draw_cpu_pipeline_ns_ = 0;
   uint64_t draw_cpu_bindings_ns_ = 0;
+  // Bisect the "other" bucket: setup_ = IssueDraw entry -> Process (shader
+  // analysis + early state); emit_ = after UpdateBindings -> end of IssueDraw
+  // (the actual draw-command recording + any GPU/resource wait). Tells us
+  // whether the dominant per-draw cost is CPU setup or the emit/wait path.
+  uint64_t draw_cpu_setup_ns_ = 0;
+  uint64_t draw_cpu_emit_ns_ = 0;
 
   // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
   // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command
