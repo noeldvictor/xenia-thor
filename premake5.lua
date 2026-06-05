@@ -3,6 +3,14 @@ require("third_party/premake-export-compile-commands/export-compile-commands")
 require("third_party/premake-androidndk/androidndk")
 require("third_party/premake-cmake/cmake")
 
+-- Cross-target ARM64 for Linux to run the a64 backend under qemu-user for
+-- device-free testing (see the a64-qemu-harness). Only affects Linux builds
+-- invoked with --linux-arm64; all other platforms are unchanged.
+newoption({
+  trigger = "linux-arm64",
+  description = "Cross-target ARM64 for Linux (device-free a64 testing under qemu)",
+})
+
 location(build_root)
 targetdir(build_bin)
 objdir(build_obj)
@@ -39,9 +47,13 @@ if ARCH ~= "ppc64" then
 end
 
 characterset("Unicode")
-flags({
-  "FatalWarnings",        -- Treat warnings as errors.
-})
+-- The cross GCC used for --linux-arm64 emits warnings MSVC/clang don't; don't
+-- make those fatal for the device-free a64 test build.
+if not _OPTIONS["linux-arm64"] then
+  flags({
+    "FatalWarnings",        -- Treat warnings as errors.
+  })
+end
 
 filter("kind:StaticLib")
   defines({
@@ -94,18 +106,34 @@ filter("configurations:Release")
   -- including handling of specials since games make assumptions about them.
 filter("platforms:Linux")
   system("linux")
-  toolset("clang")
+  -- The --linux-arm64 cross build uses aarch64-linux-gnu-g++ (gcc toolset), so
+  -- premake emits gcc-style flags (no clang-only -stdlib=libstdc++).
+  if _OPTIONS["linux-arm64"] then
+    toolset("gcc")
+    -- The GCC-15 cross compiler is stricter about transitive std includes than
+    -- MSVC/clang; force-include the common headers so the device-free a64 build
+    -- doesn't need a header-by-header <cstdint>/<cstring> sweep.
+    forceincludes({"cstdint", "cstddef", "cstring"})
+  else
+    toolset("clang")
+  end
   buildoptions({
     -- "-mlzcnt",  -- (don't) Assume lzcnt is supported.
   })
-  pkg_config.all("gtk+-x11-3.0")
+  if not _OPTIONS["linux-arm64"] then
+    pkg_config.all("gtk+-x11-3.0")
+  end
   links({
     "stdc++fs",
     "dl",
-    "lz4",
     "pthread",
     "rt",
   })
+  -- lz4 is a system lib not present in the aarch64 cross sysroot; the lean a64
+  -- cpu-test build doesn't use it, so only link it for the normal x86_64 build.
+  if not _OPTIONS["linux-arm64"] then
+    links({"lz4"})
+  end
 
 filter({"platforms:Linux", "kind:*App"})
   linkgroups("On")
@@ -229,7 +257,11 @@ workspace("xenia")
       architecture("x86_64")
     filter({})
   else
-    architecture("x86_64")
+    if os.istarget("linux") and _OPTIONS["linux-arm64"] then
+      architecture("ARM64")
+    else
+      architecture("x86_64")
+    end
     if os.istarget("linux") then
       platforms({"Linux"})
     elseif os.istarget("macosx") then

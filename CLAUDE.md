@@ -171,6 +171,30 @@ stall/context-roll or an irreducible per-primitive binning floor — instead of 
   `am start -W -n <comp> --es gpu vulkan --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence 'start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --es target '<ISO>'`
 - fps proxy: count `VdSwap(` logcat lines per second. Leave the device idle (force-stop) when done.
 
+## Testing & dev cycle — verify WITHOUT the Thor, and iterate fast
+The device is unreliable (thermal, battery drains when left screen-awake) and slow to fire. Most code is
+verifiable on the dev box; reserve the Thor for what genuinely needs it (GPU/perf, final a64 validation).
+
+- **Host CPU tests (x64) — backend-INDEPENDENT code (HIR passes, hir::Value/const-folding, kernel HLE,
+  VFS).** A prebuilt + rebuildable `xenia-cpu-tests` runs on Windows:
+  - Build: `& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" build\xenia-cpu-tests.vcxproj /p:Configuration="Debug Windows" /p:Platform=x64 /m /v:minimal` (incremental ~5-15s).
+  - Run: `.\build\bin\Windows\Debug\xenia-cpu-tests.exe "FILTER_*"` (Catch2). Tests in `src/xenia/cpu/testing/*_test.cc`.
+  - Add a test: create `NAME_test.cc` + one `<ClCompile .../>` line in the (gitignored) `build/xenia-cpu-tests.vcxproj`,
+    rebuild, run; commit ONLY the `.cc` (`test_suite` globs `*_test.cc`, so premake regen auto-includes it).
+  - This is x64, so it does NOT exercise the a64 backend — only backend-independent logic.
+- **Device-free a64 (ARM64) backend testing via QEMU** — runs the REAL ARM64 codegen the Thor uses, under
+  `qemu-aarch64` in WSL. Set up: WSL Ubuntu + `aarch64-linux-gnu-g++` + `qemu-user` + a Linux `premake5`
+  (full recipe + the GCC-15/SDL/lz4/kernel-stub fixes in memory `a64-qemu-harness`). Build+run:
+  `premake5 --linux-arm64 gmake2 && make -C build config=debug_linux xenia-cpu-tests CXX=aarch64-linux-gnu-g++ ...`
+  then `qemu-aarch64 -L /usr/aarch64-linux-gnu ./build/bin/Linux/Debug/xenia-cpu-tests`. This compiles a LEAN
+  tree (no GUI/kernel) gated by `--linux-arm64` (all guards leave the Windows/Android builds untouched).
+  Use it to catch a64-codegen bugs (already found LVSL/LVSR + PACK divergences) and for x64-vs-a64
+  differential testing — no Thor needed.
+- **Fast dev cycle (memory `fast-dev-cycle`):** BATCH fixes → build ONCE; run the Android gradle build in the
+  BACKGROUND in parallel with the host MSBuild; DROP gradle-per-fix (the host build already verifies portable
+  C++); use Workflow audits to find+verify bugs in parallel; prioritize device/high-impact over benign
+  hardening; less ceremony.
+
 ## Config gotcha (cost real days — remember it)
 The device persists `files/xenia.config.toml` which **OVERRIDES compiled cvar defaults** (only
 `--ez/--ei` intent extras beat it). A stale cvar left there caused a months-long phantom "black-3D"
