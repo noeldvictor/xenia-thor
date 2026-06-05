@@ -62,3 +62,24 @@ SharedMemory::MakeRangeValid / Memory::EnablePhysicalMemoryAccessCallbacks (if a
 watched + valid, skip re-arming the protection) and/or cut the lock hold time there. Write-watch
 correctness is essential (miss a guest write = stale GPU data = corruption), so any skip must be
 provably safe + cvar-gated. This is the deeper half of the hoist-lock lever.
+
+## UPDATE 2026-06-05 (code-analysis + 2nd profile): RE-PRIORITIZED - write-watch path is ALREADY
+## optimal; lock contention is SCENE-TRANSIENT, not steady. Real lever = the JIT guest code.
+- Code analysis (shared_memory.cc + memory.cc): the path is ALREADY well-optimized, NO clean safe
+  win. RequestRange already skips valid pages (empty upload_ranges_ -> early return). EnableAccess-
+  Callbacks already skips already-watched pages for the Protect syscall, and its per-page access
+  check CANNOT be shortcut (must distinguish already-watched [safe to batch] from kNoAccess [must
+  NOT protect or real faults break]). The Protect/mprotect syscall CANNOT move outside the global
+  lock (flag-set + mprotect must be atomic, else a guest write between them is missed = corruption).
+- 2nd profile (g2b.data, current deployed build) shows mutex+atomic contention ~0.4% TOTAL - vs
+  ~12.6% in g2perf.data (1st profile). The ~30x swing is SCENE VARIANCE (nondeterministic intro-
+  mash hit different game phases), NOT the build (hoist-lock was off in both). => lock contention
+  is a TRANSIENT spike during heavy/loading phases, NOT a steady-state bottleneck. The hoist-lock
+  (fe0e3c4ad) is fine as a default-off toggle; don't over-invest in the lock lever.
+- THE STEADY bottleneck is the ~24% hot JIT GUEST CODE (consistent across scenes = the game logic).
+  To attack it we must NAME the hot guest loops -> BUILD A JIT PERF-MAP: no /tmp/perf-<pid>.map or
+  jitdump emission exists yet, but the infra does (GuestFunction::MapMachineCodeToGuestAddress,
+  A64Function host code range). Add a cvar-gated writer that, on each guest function emit, appends
+  "<host_hex_start> <host_hex_size> guest_<guest_addr>" to the app-readable perf map simpleperf
+  reads -> future profiles resolve the "unknown[+2a12xxxx]" JIT frames to guest PCs = named codegen
+  targets. THIS is the next high-value tooling unit (own focused cycle).
