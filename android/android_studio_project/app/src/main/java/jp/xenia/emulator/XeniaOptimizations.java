@@ -127,6 +127,19 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("hir_algebraic_identities")}, null));
 
         list.add(new Optimization(
+                "opt_and_not_fold",
+                "Fused AND-NOT codegen",
+                "Compiles 'x AND (NOT y)' into a single ARM64 instruction.",
+                "When recompiled code computes x AND (NOT y) - common after other "
+                        + "passes expose a NOT feeding an AND - the recompiler normally "
+                        + "emits a separate NOT then AND. This fuses them into one ARM64 "
+                        + "BIC (bit-clear), one instruction instead of two. Bit-exact "
+                        + "(AND(x, NOT(y)) equals AND_NOT(x, y)), proven by host unit "
+                        + "tests; device-validated no-regression on Blue Dragon.",
+                CATEGORY_CPU, true, true,
+                new BoolCvar[]{new BoolCvar("hir_fold_and_not")}, null));
+
+        list.add(new Optimization(
                 "opt_constants_arena",
                 "Dynamic constant streaming",
                 "Streams shader constants through one persistent GPU buffer.",
