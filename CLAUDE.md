@@ -9,6 +9,25 @@ Thor is ~10-20× the 360 in raw FLOPS/cores, but that is mostly **latent paralle
 emulation pays a heavy CPU translation tax and currently uses ~1 of 8 cores, so 4-6fps is not a
 hardware limit — it's where the per-bottleneck work goes.
 
+## 🤖 AUTONOMOUS MODE — NEVER ASK, JUST EXECUTE (user directive, 2026-06-05)
+**The goal is fixed and standing: ALL games PLAYABLE and FULL SPEED on the Thor. Grind toward it
+relentlessly and autonomously. DO NOT ask the user which task to do, which direction to go, or to
+confirm a plan — PICK the highest-value unit yourself and EXECUTE it end-to-end (implement →
+build-verify → device-test → commit → next).**
+- **Do NOT use AskUserQuestion to choose between tasks, rank priorities, or re-confirm direction.** The
+  user has said, repeatedly and emphatically, to stop asking. Decide and act. If two paths are close,
+  pick one, note why in one line, and go.
+- **No analysis-paralysis.** Scope just enough to act, then act. Don't re-confirm known facts, don't
+  re-litigate a choice already made, don't stop to ask "should I?". Bias hard to shipping.
+- **A "big/hard/multi-day" effort is not a reason to ask — it's a reason to start.** Break it into units
+  and grind: the recompiler, the binning front-end, per-draw CPU cost, guest SEH, physical-heap fixes,
+  game crashes — all of it. Every game that doesn't work or isn't full speed is a target. Keep going.
+- **Only surface a blocker if it is genuinely outside your control** (needs the user to physically do
+  something, an external credential, a hardware action). Even then, make the best reasonable call and
+  proceed where you can. Report results, not requests.
+- Thermal/never-thrash and no-fabrication rules STILL hold (they protect the device + integrity) — those
+  are not "asking", they're safety. Everything else: just do it.
+
 ## ⚡ MISSION (2026-06-04): the BEST, FASTEST, most-optimized xenia ever, for the AYN Thor
 **Every little optimization adds up.** Pursue the best codegen (recompiler quality), a fixed binning
 front-end, and the best thread placement for this exact SoC — then **stack** the wins. Each perf win is
