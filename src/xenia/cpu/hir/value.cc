@@ -1484,17 +1484,21 @@ void Value::DotProduct3(Value* other) {
   assert_true(this->type == VEC128_TYPE && other->type == VEC128_TYPE);
   switch (type) {
     case VEC128_TYPE: {
-      // TODO(rick): is this sane?
       type = FLOAT32_TYPE;
-      // Using x86 DPPS ordering for consistency with x86-64 code generation:
-      // (X1 * X2 + Y1 * Y2) + (Z1 * Z2 + 0.0f)
-      // (+ 0.0f for zero sign, as zero imm8[4:7] bits result in zero terms,
-      // not in complete exclusion of them)
-      // TODO(Triang3l): NaN on overflow.
-      constant.f32 =
-          (constant.v128.f32[0] * other->constant.v128.f32[0] +
-           constant.v128.f32[1] * other->constant.v128.f32[1]) +
-          (constant.v128.f32[2] * other->constant.v128.f32[2] + 0.0f);
+      // Match the backend EmulateDotProduct3 exactly: accumulate the lane
+      // products in double precision, narrow once to float, and convert an
+      // infinite result to QNaN (0x7FC00000). The previous FP32-only fold
+      // without the inf->QNaN step diverged from the runtime on overflow (inf
+      // vs QNaN) and by up to a ULP from the double-precision a64 path.
+      double d0 = double(constant.v128.f32[0]) * double(other->constant.v128.f32[0]);
+      double d1 = double(constant.v128.f32[1]) * double(other->constant.v128.f32[1]);
+      double d2 = double(constant.v128.f32[2]) * double(other->constant.v128.f32[2]);
+      float result = float(d0 + d1 + d2);
+      if (std::isinf(result)) {
+        constant.u32 = 0x7FC00000u;
+      } else {
+        constant.f32 = result;
+      }
     } break;
     default:
       assert_unhandled_case(type);
@@ -1506,15 +1510,20 @@ void Value::DotProduct4(Value* other) {
   assert_true(this->type == VEC128_TYPE && other->type == VEC128_TYPE);
   switch (type) {
     case VEC128_TYPE: {
-      // TODO(rick): is this sane?
       type = FLOAT32_TYPE;
-      // Using x86 DPPS ordering for consistency with x86-64 code generation:
-      // (X1 * X2 + Y1 * Y2) + (Z1 * Z2 + W1 * W2)
-      // TODO(Triang3l): NaN on overflow.
-      constant.f32 = (constant.v128.f32[0] * other->constant.v128.f32[0] +
-                      constant.v128.f32[1] * other->constant.v128.f32[1]) +
-                     (constant.v128.f32[2] * other->constant.v128.f32[2] +
-                      constant.v128.f32[3] * other->constant.v128.f32[3]);
+      // Match the backend EmulateDotProduct4 exactly: accumulate the lane
+      // products in double precision, narrow once to float, and convert an
+      // infinite result to QNaN (0x7FC00000). See DotProduct3.
+      double d0 = double(constant.v128.f32[0]) * double(other->constant.v128.f32[0]);
+      double d1 = double(constant.v128.f32[1]) * double(other->constant.v128.f32[1]);
+      double d2 = double(constant.v128.f32[2]) * double(other->constant.v128.f32[2]);
+      double d3 = double(constant.v128.f32[3]) * double(other->constant.v128.f32[3]);
+      float result = float(d0 + d1 + d2 + d3);
+      if (std::isinf(result)) {
+        constant.u32 = 0x7FC00000u;
+      } else {
+        constant.f32 = result;
+      }
     } break;
     default:
       assert_unhandled_case(type);
