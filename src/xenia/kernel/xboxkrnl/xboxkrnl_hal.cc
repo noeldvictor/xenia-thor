@@ -17,6 +17,17 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+dword_result_t HalGetCurrentAVPack_entry() {
+  // Returns the current AV pack (display connector) code. Was unimplemented, so
+  // it returned 0 - and games that validate the AV pack "explode" unless the
+  // value is one of 3/4/6/8 (see XGetAVPack). Return the same value as
+  // XGetAVPack (6 = VGA) so the kernel- and XAM-level queries agree and the
+  // PAL/AV-pack check passes. Cross-game (anything querying display config;
+  // e.g. Back to the Future hit this unimplemented import during early boot).
+  return 6;
+}
+DECLARE_XBOXKRNL_EXPORT1(HalGetCurrentAVPack, kNone, kImplemented);
+
 void HalReturnToFirmware_entry(dword_t routine) {
   // void
   // IN FIRMWARE_REENTRY  Routine
