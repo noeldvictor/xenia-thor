@@ -387,7 +387,11 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
         }
       }
 
-      if (!file->is_synchronous()) {
+      // Async reads complete immediately here, but report PENDING so the guest
+      // takes its async-completion path. EOF must NOT be masked as PENDING
+      // (upstream parity): an async read that hits end-of-file should surface
+      // X_STATUS_END_OF_FILE, not 0x103.
+      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
@@ -505,7 +509,11 @@ dword_result_t NtReadFileScatter_entry(
         }
       }
 
-      if (!file->is_synchronous()) {
+      // Async reads complete immediately here, but report PENDING so the guest
+      // takes its async-completion path. EOF must NOT be masked as PENDING
+      // (upstream parity): an async read that hits end-of-file should surface
+      // X_STATUS_END_OF_FILE, not 0x103.
+      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
@@ -597,7 +605,11 @@ dword_result_t NtWriteFile_entry(dword_t file_handle, dword_t event_handle,
         }
       }
 
-      if (!file->is_synchronous()) {
+      // Async reads complete immediately here, but report PENDING so the guest
+      // takes its async-completion path. EOF must NOT be masked as PENDING
+      // (upstream parity): an async read that hits end-of-file should surface
+      // X_STATUS_END_OF_FILE, not 0x103.
+      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
