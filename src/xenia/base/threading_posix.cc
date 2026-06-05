@@ -633,10 +633,11 @@ class PosixCondition<Thread> : public PosixConditionBase {
       }
     }
 #if XE_PLATFORM_ANDROID
-    if (sched_setaffinity(pthread_gettid_np(thread_), sizeof(cpu_set_t),
-                          &cpu_set) != 0) {
-      assert_always();
-    }
+    // sched_setaffinity may fail with EPERM on Android (the app may not be
+    // permitted to pin to certain cores); guest affinity is advisory, so
+    // tolerate failure rather than aborting (same crash class as set_priority).
+    (void)sched_setaffinity(pthread_gettid_np(thread_), sizeof(cpu_set_t),
+                            &cpu_set);
 #else
     if (pthread_setaffinity_np(thread_, sizeof(cpu_set_t), &cpu_set) != 0) {
       assert_always();
@@ -660,8 +661,13 @@ class PosixCondition<Thread> : public PosixConditionBase {
     WaitStarted();
     sched_param param{};
     param.sched_priority = new_priority;
-    if (pthread_setschedparam(thread_, SCHED_FIFO, &param) != 0)
-      assert_always();
+    // SCHED_FIFO is real-time scheduling and requires privilege (CAP_SYS_NICE);
+    // an unprivileged Android app process cannot obtain it, so
+    // pthread_setschedparam fails with EPERM. A guest thread priority is only
+    // an advisory hint, so tolerate failure and keep the default scheduling
+    // instead of aborting. (This assert_always() crashed Back to the Future
+    // ~3s into boot when a guest worker thread requested a priority.)
+    (void)pthread_setschedparam(thread_, SCHED_FIFO, &param);
   }
 
   void QueueUserCallback(std::function<void()> callback) {
