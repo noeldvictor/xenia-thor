@@ -11,10 +11,23 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/platform.h"
 
 namespace xe {
 
 uint64_t Clock::host_tick_frequency_platform() {
+#if XE_ARCH_ARM64
+  // ARM64: the architected generic-timer frequency (cntfrq_el0). This is the
+  // same counter source CLOCK_MONOTONIC is derived from, but read from the
+  // userspace-accessible system register directly - so host_tick_count_platform
+  // below can read cntvct_el0 with a single instruction instead of a
+  // clock_gettime vdso call on every guest mftb (clock_gettime was ~15% of CPU
+  // on timing-heavy titles, e.g. Lost Odyssey). Count + frequency MUST stay on
+  // the same source, so both switch together. cntfrq_el0 is mandated on ARMv8.
+  uint64_t freq;
+  asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  return freq;
+#else
   timespec res;
   int error = clock_getres(CLOCK_MONOTONIC_RAW, &res);
   assert_zero(error);
@@ -22,14 +35,23 @@ uint64_t Clock::host_tick_frequency_platform() {
 
   // Convert nano seconds to hertz. Resolution is 1ns on most systems.
   return 1000000000ull / res.tv_nsec;
+#endif
 }
 
 uint64_t Clock::host_tick_count_platform() {
+#if XE_ARCH_ARM64
+  // Read the architected monotonic counter directly (see the frequency note
+  // above) instead of clock_gettime, which is a vdso call on the hot mftb path.
+  uint64_t cnt;
+  asm volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+  return cnt;
+#else
   timespec tp;
   int error = clock_gettime(CLOCK_MONOTONIC_RAW, &tp);
   assert_zero(error);
 
   return tp.tv_nsec + tp.tv_sec * 1000000000ull;
+#endif
 }
 
 uint64_t Clock::QueryHostSystemTime() {
