@@ -59,7 +59,20 @@ simpleperf): the spin functions' self % should DROP and [kernel] futex/sched may
 fps does NOT regress (the spin yielding should let the awaited work complete sooner, ideally
 RAISING fps on the multi-threaded titles). Thermal-safe short records (9s warm + 12s record).
 
-## OPEN QUESTION (resolve before implementing): which clock does the spin read?
+## RESOLVED 2026-06-05: the spins read a KERNEL TICK from MEMORY, not mftb -> option 1 is OUT.
+Re-reading the disasm: the per-iteration spin CONDITION reads a kernel tick value from guest MEMORY
+(guest_827B6278: r30 = [[KPCR r13 +0x100]+0x58]; Gears guest_8298C2A0's loop: r9/r10 = [r31+0x2A90]/
+[r31+0x2A9C]) - a plain lwz. The `mftb` reads in these functions are ONE-TIME baselines BEFORE the
+loop, NOT per-iteration. So instrumenting LOAD_CLOCK (mftb) would NOT see the spin's hot reads ->
+**option 1 (clock-read-frequency yield) is INVALIDATED; do not implement it (it would not catch the
+spin).** The correct approach is option 2 (backward-branch idle detection, clock-source-agnostic) -
+a real JIT change: instrument backward-taken branches whose loop body did no store to non-stack
+memory (a pure poll loop) + yield after N. Substantial; needs a dedicated effort + device A/B. (Also
+possible: the polled kernel-tick's update granularity in our emulation - if coarse, the spin lasts
+longer; worth checking KeTickCount/interrupt-time update rate, but the spin still busy-waits its
+timeout regardless.)
+
+## (superseded) original open question: which clock does the spin read?
 Option 1 only catches spins that read mftb (-> LOAD_CLOCK). But the disasm shows the spins read
 TWO different sources: Gears guest_8298C2A0 (the OUTER loop) uses `mftb` directly (-> LOAD_CLOCK,
 catchable by option 1), while the INNER poll guest_82977688/827B6278 compares a timestamp to a

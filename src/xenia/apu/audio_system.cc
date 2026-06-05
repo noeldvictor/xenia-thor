@@ -217,8 +217,21 @@ void AudioSystem::SubmitFrame(size_t index, uint32_t samples_ptr) {
   SCOPE_profile_cpu_f("apu");
 
   auto global_lock = global_critical_region_.Acquire();
-  assert_true(index < kMaximumClientCount);
-  assert_true(clients_[index].driver != NULL);
+  // Drop the frame gracefully instead of asserting / dereferencing a null
+  // driver if the guest submits for an invalid or no-longer-registered client
+  // (e.g. during teardown) - prevents a crash. Ported from xenia-canary
+  // 64c59d3d0 (the silence-submit there is for a float* driver; ours takes a
+  // guest sample pointer, and a truly-invalid client has no live semaphore).
+  if (index >= kMaximumClientCount || !clients_[index].driver) {
+    XELOGW(
+        "AudioSystem::SubmitFrame: invalid client index {} (driver={}); "
+        "dropping frame",
+        index,
+        index < kMaximumClientCount
+            ? static_cast<void*>(clients_[index].driver)
+            : nullptr);
+    return;
+  }
   (clients_[index].driver)->SubmitFrame(samples_ptr);
 }
 
