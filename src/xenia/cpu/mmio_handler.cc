@@ -260,6 +260,10 @@ bool MMIOHandler::TryDecodeLoadStore(const uint8_t* p,
 #elif XE_ARCH_ARM64
   decoded_out.length = sizeof(uint32_t);
   uint32_t instruction = *reinterpret_cast<const uint32_t*>(p);
+  // Encoding of `REV Wt, Wn` (32-bit byte reverse): used to detect the
+  // LDR+REV pair our a64 JIT emits for byte-swapped MMIO loads.
+  constexpr uint32_t kArm64RevWMask = UINT32_C(0xFFFFFC00);
+  constexpr uint32_t kArm64RevWFixed = UINT32_C(0x5AC00800);
 
   // Literal loading (PC-relative) is not handled.
 
@@ -303,6 +307,25 @@ bool MMIOHandler::TryDecodeLoadStore(const uint8_t* p,
     // Zero constant rather than a register read.
     decoded_out.is_constant = true;
     decoded_out.constant = 0;
+  }
+  if (decoded_out.is_load &&
+      decoded_out.value_reg >= DecodedLoadStore::kArm64ValueRegX0 &&
+      decoded_out.value_reg <= (DecodedLoadStore::kArm64ValueRegX0 + 30)) {
+    // Detect LDR + REV Wt, Wt so the handler doesn't byte-swap (the REV runs
+    // after the handler resumes at LDR+4 and does the swap itself). Mirrors the
+    // x64 MOVBE handling. Ported from xenia-edge adeacfa0e. Without this the
+    // faulting byte-swapped MMIO load double-swaps (and byte_swap was read
+    // uninitialized - now zero-initialized at the decode call site).
+    uint32_t next_instruction =
+        *reinterpret_cast<const uint32_t*>(p + sizeof(uint32_t));
+    uint8_t rev_rd = next_instruction & 31;
+    uint8_t rev_rn = (next_instruction >> 5) & 31;
+    uint8_t value_reg =
+        decoded_out.value_reg - DecodedLoadStore::kArm64ValueRegX0;
+    if ((next_instruction & kArm64RevWMask) == kArm64RevWFixed &&
+        rev_rd == value_reg && rev_rn == value_reg) {
+      decoded_out.byte_swap = true;
+    }
   }
 
   decoded_out.mem_has_base = true;
@@ -455,7 +478,7 @@ bool MMIOHandler::ExceptionCallback(Exception* ex) {
 
   auto rip = ex->pc();
   auto p = reinterpret_cast<const uint8_t*>(rip);
-  DecodedLoadStore decoded_load_store;
+  DecodedLoadStore decoded_load_store{};
   if (!TryDecodeLoadStore(p, decoded_load_store)) {
     XELOGE("Unable to decode MMIO load or store instruction at {}", p);
     assert_always("Unknown MMIO instruction type");
