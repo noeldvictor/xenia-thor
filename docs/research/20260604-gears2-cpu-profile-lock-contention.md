@@ -112,3 +112,16 @@ wall-clock-bound so it won't cut the spin's CPU burn - only multi-thread clock c
 UE3/Gears is SPIN-WAIT-bound, not compute-bound -> codegen lowering won't move it. NEXT: profile a
 DIFFERENT-engine title (Lost Odyssey, Mistwalker JRPG) with the perf-map -> JRPGs likely have real
 compute kernels (skinning/math/AI) where the codegen lever actually applies.
+
+## UPDATE 2026-06-05: Lost Odyssey profiled too -> SAME conclusion. CPU-bound titles are SPIN-BOUND.
+LO profiled (simpleperf+perf-map): top fn guest_827B6278 (~12.32%) DISASSEMBLED = STRUCTURALLY
+IDENTICAL to Gears 2's guest_82977688 (same 8x 'or rX,rX,rX' NOP-spin x4, same 0x2ABD flag check,
+same 0x1388/5000-tick timeout, same struct offsets 0x2A90/0x2A88/0xC/0x8). Two different engines
+share this code => it's a SHARED Xbox 360 XDK SYNCHRONIZATION PRIMITIVE (spin-then-block lock/
+critical-section), ~12-15% CPU in BOTH games. So across 3 hot fns / 2 games, the CPU-bound 360
+titles are SPIN-WAIT/SYNC-BOUND, NOT compute-bound -> the codegen lever does NOT apply (these spin
+routines are already well-compiled). The real cross-game CPU lever = JIT idle/spin-loop detection +
+host yield, or better thread scheduling so lock-holders run sooner (both substantial/correctness-
+sensitive features). THE REAL SHIPPED CPU WIN from this whole arc = the cntvct clock fix (45f19b2b1,
+vdso 14.76->0.77%, docs/research/20260605-arm64-cntvct-clock-win.md). The codegen-kernel hunt is
+CONCLUDED for these titles; next CPU lever (spin-loop-yield) needs a dedicated careful effort.
