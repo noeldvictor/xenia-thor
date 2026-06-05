@@ -139,6 +139,20 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_dynamic_constants_arena")}, null));
 
         list.add(new Optimization(
+                "opt_hoist_residency_lock",
+                "Hoisted memory-residency lock",
+                "Locks shared memory once per draw instead of once per buffer.",
+                "Before each draw the emulator makes the guest's vertex and "
+                        + "memory-export buffers resident, and each of those calls "
+                        + "separately grabs and releases the shared-memory lock. This "
+                        + "grabs the lock once around the whole batch (the lock is "
+                        + "reentrant, so the result is identical) - fewer lock "
+                        + "round-trips on the hottest per-draw path. Pure CPU hygiene; "
+                        + "no rendering change.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("vulkan_hoist_request_range_lock")}, null));
+
+        list.add(new Optimization(
                 "opt_pipeline_cache",
                 "Persistent shader pipeline cache",
                 "Saves compiled GPU pipelines to disk so later launches skip the stutter.",

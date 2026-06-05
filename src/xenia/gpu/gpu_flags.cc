@@ -510,6 +510,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_hoist_request_range_lock, false,
+    "Thor CPU-hygiene: acquire the SharedMemory global lock ONCE around the "
+    "per-draw vertex + memexport RequestRange calls in IssueDraw, instead of "
+    "letting each RequestRange re-acquire the (recursive) global lock. "
+    "Semantically identical - just fewer lock/unlock round-trips per draw on "
+    "the hot draw-issue path. Zero rendering change. Ported from xenia-edge "
+    "c2674b19d (the lock-hoist half; we keep our per-draw residency dedup). "
+    "Default off; enabled via the in-app optimization toggle.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_merge_draws_indirect, false,
     "Thor/Adreno binning re-arch (Lever 2b): batch consecutive same-state "
     "kGuestDMA indexed draws into ONE vkCmdDrawIndexedIndirect (drawCount=N) "

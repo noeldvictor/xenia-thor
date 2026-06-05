@@ -106,6 +106,7 @@ DECLARE_bool(vulkan_dynamic_state_stencil);
 DECLARE_bool(vulkan_dynamic_state_topology);
 DECLARE_bool(vulkan_merge_draws);
 DECLARE_bool(vulkan_merge_draws_indirect);
+DECLARE_bool(vulkan_hoist_request_range_lock);
 DECLARE_bool(gpu_trace_cullable_tris);
 DECLARE_bool(gpu_cull_compaction);
 DECLARE_bool(vulkan_dynamic_constants_arena);

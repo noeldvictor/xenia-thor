@@ -26,6 +26,7 @@
 #include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/base/mutex.h"
 #include "xenia/base/profiling.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
@@ -4190,6 +4191,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     return false;
   }
 
+  // Hoist the SharedMemory global lock across the vertex + memexport
+  // RequestRange calls below, so the per-call reentrant Acquire()s inside
+  // RequestRange become cheap recursive re-locks instead of full round-trips on
+  // the hot draw-issue path. The mutex is recursive, so holding it across the
+  // loop is semantically identical to per-call locking. Released right after the
+  // memexport loop (not held across the rest of the draw). Port of the lock-
+  // hoist half of xenia-edge c2674b19d. Gated; default off.
+  std::unique_lock<std::recursive_mutex> request_range_hoisted_lock(
+      global_critical_region::mutex(), std::defer_lock);
+  if (cvars::vulkan_hoist_request_range_lock) {
+    request_range_hoisted_lock.lock();
+  }
+
   // Ensure vertex buffers are resident.
   // TODO(Triang3l): Cache residency for ranges in a way similar to how texture
   // validity is tracked.
@@ -4258,6 +4272,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     memexport_extent_end =
         std::max(memexport_extent_end,
                  memexport_range_base_bytes + memexport_range.size_bytes);
+  }
+  // Done with RequestRange - release the hoisted global lock before the rest of
+  // the draw (barriers, descriptor updates, emission) so it isn't serialized.
+  if (request_range_hoisted_lock.owns_lock()) {
+    request_range_hoisted_lock.unlock();
   }
 
   // Insert the shared memory barrier if needed.
