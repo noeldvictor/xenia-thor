@@ -1115,14 +1115,19 @@ struct LOAD_VECTOR_SHL_I8
     e.mov(e.x1, static_cast<uint64_t>(0x0C0D0E0F08090A0Bull));
     e.fmov(Xbyak_aarch64::DReg(d), e.x0);
     e.ins(VReg(d).d2[1], e.x1);
-    // Add shift amount (splatted).
+    // Add shift amount (splatted). The shift wraps mod 16 (lvsl indexes the
+    // table by sh & 0xF). The PPC frontend already masks (ea & 0xF), so real
+    // guest code never feeds sh >= 16; mask anyway for parity with the x64
+    // backend (which does `and dx, 0xF`) and to honor the HIR op contract.
     if (i.src1.is_constant) {
-      if (i.src1.constant() != 0) {
-        e.movi(VReg(0).b16, static_cast<uint8_t>(i.src1.constant()));
+      const uint8_t sh = static_cast<uint8_t>(i.src1.constant() & 0xF);
+      if (sh != 0) {
+        e.movi(VReg(0).b16, sh);
         e.add(VReg(d).b16, VReg(d).b16, VReg(0).b16);
       }
     } else {
-      e.dup(VReg(0).b16, i.src1);
+      e.and_(e.w0, Xbyak_aarch64::WReg(i.src1.reg().getIdx()), 0xF);
+      e.dup(VReg(0).b16, e.w0);
       e.add(VReg(d).b16, VReg(d).b16, VReg(0).b16);
     }
   }
@@ -1143,14 +1148,19 @@ struct LOAD_VECTOR_SHR_I8
     e.mov(e.x1, static_cast<uint64_t>(0x1C1D1E1F18191A1Bull));
     e.fmov(Xbyak_aarch64::DReg(d), e.x0);
     e.ins(VReg(d).d2[1], e.x1);
-    // Subtract shift amount (splatted).
+    // Subtract shift amount (splatted). The shift wraps mod 16 (lvsr indexes
+    // the table by sh & 0xF). The PPC frontend already masks (ea & 0xF), so
+    // real guest code never feeds sh >= 16; mask anyway for parity with the
+    // x64 backend (which does `and dx, 0xF`) and to honor the HIR op contract.
     if (i.src1.is_constant) {
-      if (i.src1.constant() != 0) {
-        e.movi(VReg(0).b16, static_cast<uint8_t>(i.src1.constant()));
+      const uint8_t sh = static_cast<uint8_t>(i.src1.constant() & 0xF);
+      if (sh != 0) {
+        e.movi(VReg(0).b16, sh);
         e.sub(VReg(d).b16, VReg(d).b16, VReg(0).b16);
       }
     } else {
-      e.dup(VReg(0).b16, i.src1);
+      e.and_(e.w0, Xbyak_aarch64::WReg(i.src1.reg().getIdx()), 0xF);
+      e.dup(VReg(0).b16, e.w0);
       e.sub(VReg(d).b16, VReg(d).b16, VReg(0).b16);
     }
   }
