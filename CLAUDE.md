@@ -214,6 +214,23 @@ OR — for the per-stage binning-vs-fragment split — the **full-ADB driver-pat
 GPU-counter access, NOT the blocked kernel ftrace, so they do not need root or a GUI. The Snapdragon/AGI
 GUI is the LAST resort, not the plan. For quick triage, KGSL sysfs busy%/clock + the cvar A/B still apply.
 
+### MEASUREMENT RULE 0 — NEVER MEASURE MOVIES (intros/FMV/cutscenes play at FULL SPEED)
+**Pre-rendered video (boot logos, intro movies, in-engine cutscenes, FMV) plays back at full speed
+regardless of emulation performance — it's video decode, not real-time game rendering.** A game that
+"runs full speed" during its intro is NOT working at speed. So:
+- **A whole-capture `VdSwap/s` average is MEANINGLESS if the window includes any movie** — the
+  full-speed movie frames inflate the number (e.g. a Gears menu mis-read as "~18fps" because the 75s
+  VdSwap average bundled the full-speed intro logos with the slow menu).
+- **ALWAYS skip past every intro/movie first** (mash `start`/`a` — see `hid_nop_button_sequence`),
+  and **read the screenshot to CONFIRM the frame is an interactive MENU or live GAMEPLAY**, not a
+  video. A movie frame looks cinematic/letterboxed and keeps changing every frame even when you give
+  no input; a real menu/scene is static or input-driven.
+- **Measure fps only over the steady interactive scene** (VdSwap counted across a movie-free window),
+  OR read `gpu_frame_us` from a `GPU draw outcomes` line on a matched, confirmed-non-movie content
+  frame. Cross-check the draw composition (`prim[...]`, `rendered`, `avg_vertices`): a real 3D scene
+  has many geometry draws; a movie/menu is a handful of fullscreen-quad/blit draws.
+See [[skip-intro-movies-is-paramount]], [[xbox360-intro-movie-skip-testing]].
+
 ### MEASUREMENT RULE (the #1 reliability lesson)
 Blue Dragon's content is a function of **guest uptime**. Relaunch A/Bs are **scene-confounded** — a
 faster config races into a different cinematic frame. **Always compare configs at matched `guest_ms`
