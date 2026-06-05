@@ -843,6 +843,42 @@ void Value::Sha(Value* other) {
   }
 }
 
+void Value::RotateLeft(Value* other) {
+  assert_true(other->type == INT8_TYPE);
+  uint8_t rotation = other->constant.u8;
+  // Match the a64 ROTATE_LEFT_* sequences exactly: the amount is masked to the
+  // type width and a rotation of 0 leaves the value unchanged. The 0 case must
+  // be guarded because the generic base/math.h rotate_left() shifts by the full
+  // width when sh==0, which is undefined behavior on the non-Win32 (Android/
+  // ARM64) path that has no _rotl intrinsic specialization. PPC rlwinm with
+  // SH==0 (clrlwi-style masking) makes the 0 case common.
+  switch (type) {
+    case INT8_TYPE: {
+      uint8_t sh = rotation & 0x7;
+      if (sh) constant.u8 = rotate_left<uint8_t>(constant.u8, sh);
+      break;
+    }
+    case INT16_TYPE: {
+      uint8_t sh = rotation & 0xF;
+      if (sh) constant.u16 = rotate_left<uint16_t>(constant.u16, sh);
+      break;
+    }
+    case INT32_TYPE: {
+      uint8_t sh = rotation & 0x1F;
+      if (sh) constant.u32 = rotate_left<uint32_t>(constant.u32, sh);
+      break;
+    }
+    case INT64_TYPE: {
+      uint8_t sh = rotation & 0x3F;
+      if (sh) constant.u64 = rotate_left<uint64_t>(constant.u64, sh);
+      break;
+    }
+    default:
+      assert_unhandled_case(type);
+      break;
+  }
+}
+
 void Value::Extract(Value* vec, Value* index) {
   assert_true(vec->type == VEC128_TYPE);
   switch (type) {
