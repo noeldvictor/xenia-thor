@@ -259,6 +259,13 @@ public final class XeniaAndroidSettings {
         for (final String cvar : STABLE_LAUNCH_FALSE_CVARS) {
             launchArguments.putBoolean(cvar, false);
         }
+        // Force the a64 guest-stack-sync array large enough for longjmp-heavy
+        // titles (Infinite Undiscovery overflows the old 65536 ~37s in and
+        // crashes). The compiled default was bumped to 262144, but a persisted
+        // device xenia.config.toml OVERRIDES compiled defaults - only an intent
+        // extra beats it - so pass it on every launch. Device-validated: IU
+        // reaches its menu at 262144 (vs crash at 65536).
+        launchArguments.putInt("a64_max_stackpoints", 262144);
     }
 
     public static String resolveLaunchTarget(final Context context, final Uri target) {
