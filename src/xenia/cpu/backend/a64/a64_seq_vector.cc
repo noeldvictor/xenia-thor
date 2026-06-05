@@ -1702,9 +1702,12 @@ struct UNPACK : Sequence<UNPACK, I<OPCODE_UNPACK, V128Op, V128Op>> {
     e.sxtl2(VReg(0).s4, VReg(s).h8);
     LoadV128Const(e, 1, vec128i(0x40400000u), 0);
     e.add(VReg(0).s4, VReg(0).s4, VReg(1).s4);
-    // Reorder {w,z,y,x} → {x,y,z,w}: rev64 then swap halves.
-    e.rev64(VReg(0).s4, VReg(0).s4);                  // {z,w,x,y}
-    e.ext(VReg(0).b16, VReg(0).b16, VReg(0).b16, 8);  // {x,y,z,w}
+    // Reorder the sign-extended pairs into PPC vector word order. The earlier
+    // sequence followed rev64 with ext(...,8), which rotated the result by one
+    // 64-bit half - the right four values in the wrong half order (A64 visual
+    // bugs in Halo 3/ODST/Reach/Halo 4 and Nier). rev64 alone matches x64/PPC.
+    // Ported from xenia-edge 7eb0c7671.
+    e.rev64(VReg(0).s4, VReg(0).s4);
     EmitMagicFloatOverflowCheck(e, d);
   }
   static void EmitUINT_2101010(A64Emitter& e, const EmitArgType& i) {
