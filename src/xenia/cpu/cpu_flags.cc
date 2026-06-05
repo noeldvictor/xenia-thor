@@ -44,6 +44,17 @@ DEFINE_bool(
 DEFINE_bool(validate_hir, false,
             "Perform validation checks on the HIR during compilation.", "CPU");
 
+DEFINE_string(
+    cpu_perf_map_path, "",
+    "Thor JIT profiling: when non-empty, the a64 backend appends a perf-style "
+    "JIT symbol map line '<host_hex_start> <host_hex_size> guest_<guest_addr>' "
+    "for every emitted guest function to this file. Pairs with a simpleperf "
+    "--app capture so the anonymous JIT code-cache samples resolve to named "
+    "guest functions (guest_82xxxxxx) instead of 'unknown'. Default empty = "
+    "disabled (zero overhead). Point it at an app-writable path, e.g. the app's "
+    "external files dir.",
+    "CPU");
+
 DEFINE_uint64(
     pvr, 0x710700,
     "Processor version and revision number.\nBits 0 to 15 are the version "

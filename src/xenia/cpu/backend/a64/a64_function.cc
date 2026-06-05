@@ -9,7 +9,11 @@
 
 #include "xenia/cpu/backend/a64/a64_function.h"
 
+#include <cstdio>
+#include <mutex>
+
 #include "xenia/cpu/backend/a64/a64_backend.h"
+#include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/thread_state.h"
 #include "xenia/base/logging.h"
@@ -18,6 +22,38 @@ namespace xe {
 namespace cpu {
 namespace backend {
 namespace a64 {
+
+namespace {
+// Thor JIT profiling: append a perf-style JIT symbol-map line for an emitted
+// guest function when cpu_perf_map_path is set, so a simpleperf --app capture
+// can resolve the anonymous JIT code-cache samples to named guest functions.
+// Format matches the perf/simpleperf JIT map: "<hex_start> <hex_size> <name>".
+// Thread-safe (many JIT threads emit concurrently); the file is opened once.
+void AppendJitPerfMapLine(uint8_t* machine_code, size_t machine_code_length,
+                          uint32_t guest_address) {
+  const std::string& path = cvars::cpu_perf_map_path;
+  if (path.empty() || !machine_code || !machine_code_length) {
+    return;
+  }
+  static std::mutex perf_map_mutex;
+  static std::FILE* perf_map_file = nullptr;
+  static bool perf_map_open_attempted = false;
+  std::lock_guard<std::mutex> lock(perf_map_mutex);
+  if (!perf_map_open_attempted) {
+    perf_map_open_attempted = true;
+    perf_map_file = std::fopen(path.c_str(), "w");
+  }
+  if (!perf_map_file) {
+    return;
+  }
+  std::fprintf(
+      perf_map_file, "%llx %llx guest_%08X\n",
+      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(machine_code)),
+      static_cast<unsigned long long>(machine_code_length),
+      static_cast<uint32_t>(guest_address));
+  std::fflush(perf_map_file);
+}
+}  // namespace
 
 A64Function::A64Function(Module* module, uint32_t address)
     : GuestFunction(module, address) {}
@@ -218,6 +254,7 @@ EvaluateA64GuestCallFastEntryCodegenProtocol(
 void A64Function::Setup(uint8_t* machine_code, size_t machine_code_length) {
   machine_code_length_.store(machine_code_length, std::memory_order_relaxed);
   machine_code_.store(machine_code, std::memory_order_release);
+  AppendJitPerfMapLine(machine_code, machine_code_length, address());
 }
 
 A64GuestCallFastEntryContract A64Function::guest_call_fast_entry_contract()
