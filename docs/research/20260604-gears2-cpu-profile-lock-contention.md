@@ -39,3 +39,26 @@ On-device guest CPU profiling on the retail (non-root) Thor:
 2. Allocator churn: scudo contention suggests heavy malloc/free; object-pool the hot allocations.
 3. Build the JIT symbol map so future profiles NAME the hot guest functions (turns the ~24% JIT
    blob into specific codegen targets).
+
+## UPDATE 2026-06-05: FULLY SYMBOLICATED (after deploying the current build, build-id matched)
+Deployed the current build (FullDeploy - first time the 5 committed fixes a64 LoadV128Const/SHORT_4
++ MMIO + hoist-lock reached the device; Gears 2 still boots+renders = those fixes VALIDATED non-
+breaking). Re-profiled (g2b.data, 24518 samples) with full libxenia-app.so symbols. The contended
+mutex + the hottest named runtime path resolve to ONE chain, all under the guest threads
+(XHostThread::Execute -> guest JIT -> HLE):
+  **SharedMemory::RequestRange -> VulkanSharedMemory::UploadRanges -> SharedMemory::MakeRangeValid
+  -> Memory::EnablePhysicalMemoryAccessCallbacks -> PhysicalHeap::EnableAccessCallbacks**
+i.e. the GPU shared-memory upload path RE-ARMING physical write-watch callbacks. EnableAccessCallbacks
+is the #2 named self hotspot (0.36%) and the chain takes the global lock (the exact lock the hoist-
+lock fe0e3c4ad targets - CONFIRMS that lever sits on the real hot path). Other named self hotspots
+(all <0.55%, long tail): disruptorplus::spin_wait::spin_once (0.55%, busy-wait), CommandProcessor::
+WriteRegister + RegisterFile::GetRegisterInfo (PM4 packet processing), copy_and_swap_32_unaligned
+(endian), XXH_read64/XXH3_accumulate_512_neon (hashing), Arena::Alloc, DeferredCommandBuffer::
+CmdVkPipelineBarrier (lots of barriers). NONE individually dominant -> the bulk stays guest JIT
+code (~24%) + this write-watch/lock path.
+
+NEXT FIX TARGET (careful, correctness-critical): reduce REDUNDANT write-watch re-arming in
+SharedMemory::MakeRangeValid / Memory::EnablePhysicalMemoryAccessCallbacks (if a range is already
+watched + valid, skip re-arming the protection) and/or cut the lock hold time there. Write-watch
+correctness is essential (miss a guest write = stale GPU data = corruption), so any skip must be
+provably safe + cvar-gated. This is the deeper half of the hoist-lock lever.
