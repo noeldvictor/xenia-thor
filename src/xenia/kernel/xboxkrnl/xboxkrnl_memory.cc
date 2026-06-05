@@ -1121,6 +1121,14 @@ dword_result_t ExAllocatePool_entry(dword_t size) {
 }
 DECLARE_XBOXKRNL_EXPORT1(ExAllocatePool, kMemory, kImplemented);
 
+// ExAllocatePoolWithTag(NumberOfBytes, Tag): NonPagedPool alloc with a tag. Was
+// declared in the export table (ordinal 0xA) but unimplemented — some titles
+// (e.g. Back to the Future) import it; without it they fault early.
+dword_result_t ExAllocatePoolWithTag_entry(dword_t size, dword_t tag) {
+  return ExAllocatePoolTypeWithTag_entry(size, tag, 0);
+}
+DECLARE_XBOXKRNL_EXPORT1(ExAllocatePoolWithTag, kMemory, kImplemented);
+
 void ExFreePool_entry(lpvoid_t base_address) {
   kernel_state()->memory()->SystemHeapFree(base_address);
 }
