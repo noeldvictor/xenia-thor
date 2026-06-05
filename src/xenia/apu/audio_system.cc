@@ -166,6 +166,21 @@ void AudioSystem::Shutdown() {
     worker_thread_->Wait(0, 0, 0, nullptr);
     worker_thread_.reset();
   }
+
+  // Unregister any clients the guest left active so their audio drivers are
+  // torn down before this AudioSystem's client semaphores are destroyed -
+  // otherwise a driver's OnBufferEnd can fire on a freed semaphore and crash
+  // during shutdown. Mirrors UnregisterClient. Ported from xenia-canary 1662c7570.
+  {
+    auto global_lock = global_critical_region_.Acquire();
+    for (size_t i = 0; i < kMaximumClientCount; ++i) {
+      if (clients_[i].in_use) {
+        DestroyDriver(clients_[i].driver);
+        memory()->SystemHeapFree(clients_[i].wrapped_callback_arg);
+        clients_[i] = {0};
+      }
+    }
+  }
 }
 
 X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg,
