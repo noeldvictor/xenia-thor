@@ -94,3 +94,21 @@ game-code loops. The codegen mission is UNBLOCKED. NEXT: Ghidra-analyze guest_82
 base 0x82000000) to identify the routine -> a general codegen improvement (if our a64 lowering of its
 PPC pattern is suboptimal) or a game-HLE (if it's a known routine like a memcpy/decompress). Also
 re-usable on Lost Odyssey / any CPU-bound title.
+
+## UPDATE 2026-06-05: BOTH top Gears 2 functions DISASSEMBLED = ONE spin-wait mechanism (NOT codegen).
+- guest_82977688 (~15%): a guest poll/rate-limit routine - 8x 'or rX,rX,rX' NOP delay (already elided
+  to 0 HIR ops) then a timeout-gated poll of 0x829917C0 vs 0x1388(5000). Already well-compiled.
+- guest_8298C2A0 (~10%): the OUTER time-bounded spin LOOP that repeatedly calls guest_82977688 while
+  a timebase condition holds. Driven by **mftb** (move-from-timebase, 8298C334) -> our LOAD_CLOCK
+  (a64_seq_memory.cc:720) does CallNative(Clock::QueryGuestTickCount) which takes tick_mutex_ + a
+  scaling mul/div PER READ (clock.cc UpdateGuestClock).
+=> Gears 2's top ~25% CPU is a guest SPIN-WAIT on a timed condition (likely waiting on an async op /
+thread / resource), NOT a compute kernel. NO clean codegen win: the functions are well-compiled; the
+cost is inherent busy-spinning for a wall-clock duration. Real levers (both non-trivial): (1) JIT
+idle/spin-loop detection + host yield (reduce busy-wait CPU, let the awaited producer run); (2) speed
+up the awaited operation (0x829917C0 / the polled condition - game-specific); (3) clock_no_scaling
+cvar bypasses the tick_mutex_+scaling per mftb (cuts clock-contention, but the spin DURATION is
+wall-clock-bound so it won't cut the spin's CPU burn - only multi-thread clock contention). LESSON:
+UE3/Gears is SPIN-WAIT-bound, not compute-bound -> codegen lowering won't move it. NEXT: profile a
+DIFFERENT-engine title (Lost Odyssey, Mistwalker JRPG) with the perf-map -> JRPGs likely have real
+compute kernels (skinning/math/AI) where the codegen lever actually applies.
