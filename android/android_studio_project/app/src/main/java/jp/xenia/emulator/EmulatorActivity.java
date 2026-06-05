@@ -329,6 +329,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_lse_kernel_lock_fastpaths");
             copyBooleanExtra(
                     intent, launchArguments, "a64_enable_host_guest_stack_synchronization");
+            copyIntExtra(intent, launchArguments, "a64_max_stackpoints");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");
