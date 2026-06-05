@@ -1143,12 +1143,32 @@ void Value::VectorConvertI2F(Value* other, bool is_unsigned) {
 void Value::VectorConvertF2I(Value* other, bool is_unsigned) {
   assert_true(type == VEC128_TYPE);
 
-  // FIXME(DrChat): This does not saturate!
+  // Saturating, NaN-clean float->int per lane, matching the backends' fcvtzs/
+  // fcvtzu (a64) and the x64 saturation sequence: NaN -> 0, out-of-range
+  // saturates to the type min/max, truncation is toward zero. A plain C cast of
+  // a NaN/inf/out-of-range float to int is C++ undefined behavior and diverges
+  // from the saturating runtime (the guest converts are int_sat: vctsxs/vctuxs,
+  // vcfpsxws128/vcfpuxws128).
   for (int i = 0; i < 4; i++) {
+    float f = other->constant.v128.f32[i];
     if (is_unsigned) {
-      constant.v128.u32[i] = (uint32_t)other->constant.v128.f32[i];
+      if (std::isnan(f) || f <= 0.0f) {
+        constant.v128.u32[i] = 0u;
+      } else if (f >= 4294967296.0f) {  // >= 2^32
+        constant.v128.u32[i] = 0xFFFFFFFFu;
+      } else {
+        constant.v128.u32[i] = (uint32_t)f;
+      }
     } else {
-      constant.v128.i32[i] = (int32_t)other->constant.v128.f32[i];
+      if (std::isnan(f)) {
+        constant.v128.i32[i] = 0;
+      } else if (f >= 2147483648.0f) {  // >= 2^31
+        constant.v128.u32[i] = 0x7FFFFFFFu;
+      } else if (f < -2147483648.0f) {  // < -2^31
+        constant.v128.u32[i] = 0x80000000u;
+      } else {
+        constant.v128.i32[i] = (int32_t)f;
+      }
     }
   }
 }
