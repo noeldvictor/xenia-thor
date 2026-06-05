@@ -135,6 +135,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "apu");
             copyBooleanExtra(intent, launchArguments, "mute");
             copyIntExtra(intent, launchArguments, "log_level");
+            copyIntExtra(intent, launchArguments, "user_language");
             copyBooleanExtra(intent, launchArguments, "xma_trace_context_state");
             copyBooleanExtra(intent, launchArguments, "xma_fast_silence");
             copyStringExtra(intent, launchArguments, "hid");
