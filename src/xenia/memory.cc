@@ -1592,6 +1592,28 @@ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
 
   uint32_t parent_base_address = GetPhysicalAddress(base_address);
   if (!parent_heap_->Release(parent_base_address, out_region_size)) {
+    // MmFreePhysicalMemory frees the allocation CONTAINING the address; the
+    // guest may pass an address inside a region rather than its base. Project
+    // Sylpheed (4D5307F2) frees ~5.7MB into a single ~58MB physical allocation,
+    // which previously failed here and cascaded to an uncatchable guest C++
+    // exception (crash). On this FAILURE path only - exact-base frees (every
+    // working title) take the success path above and never reach here - resolve
+    // to this heap's containing region base and release the whole allocation
+    // (which matches MmFreePhysicalMemory semantics: it frees the allocation,
+    // not a sub-range). QueryBaseAndSize returns a HEAP-RELATIVE base.
+    uint32_t region_rel_base = base_address;
+    uint32_t region_size = 0;
+    if (QueryBaseAndSize(&region_rel_base, &region_size) && region_size != 0) {
+      const uint32_t region_base = heap_base_ + region_rel_base;
+      if (region_base != base_address && base_address >= region_base &&
+          (base_address - region_base) < region_size) {
+        XELOGW(
+            "PhysicalHeap::Release: non-base free of {:08X} resolved to "
+            "containing region {:08X}+{:X}; releasing the allocation (#1559).",
+            base_address, region_base, region_size);
+        return Release(region_base, out_region_size);
+      }
+    }
     XELOGE(
         "PhysicalHeap::Release failed due to parent heap failure "
         "(physical_address={:08X}, parent_address={:08X}, heap_base={:08X}, "
