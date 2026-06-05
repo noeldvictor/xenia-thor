@@ -74,8 +74,19 @@ DEFINE_bool(
     "Thor Android compatibility: trace KeSetCurrentStackPointers reenter "
     "attempts without changing behavior.",
     "Kernel");
+// XE_PLATFORM_ANDROID is only #defined (to 1) on Android and is UNDEFINED on
+// every other platform (platform.h uses an #elif chain). It is therefore safe
+// in #if preprocessor context but NOT usable as a C++ value - doing so broke
+// the desktop/host build (error C2065). Resolve it once to a portable constexpr
+// for both the cvar default and the runtime gate below; value is identical on
+// Android (true), and false elsewhere.
+#if XE_PLATFORM_ANDROID
+static constexpr bool kXeIsAndroidPlatform = true;
+#else
+static constexpr bool kXeIsAndroidPlatform = false;
+#endif
 DEFINE_bool(
-    xboxkrnl_android_reenter_longjmp, XE_PLATFORM_ANDROID,
+    xboxkrnl_android_reenter_longjmp, kXeIsAndroidPlatform,
     "Thor Android compatibility: use longjmp instead of C++ exceptions for "
     "guest reenter so generated A64 code doesn't need to unwind host C++ "
     "frames.",
@@ -402,7 +413,7 @@ void LogReenterAudit(XThread* current_thread, pointer_t<X_KTHREAD> thread,
   uint32_t fiber_ptr = thread ? static_cast<uint32_t>(thread->fiber_ptr) : 0;
   int32_t apc_disable_count = thread ? thread->apc_disable_count : 0;
   bool non_throw_reenter =
-      will_reenter && XE_PLATFORM_ANDROID &&
+      will_reenter && kXeIsAndroidPlatform &&
       cvars::xboxkrnl_android_reenter_longjmp;
 
   XELOGI(
