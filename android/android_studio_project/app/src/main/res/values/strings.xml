@@ -79,6 +79,8 @@
     <string name="xam_keyboard_title">Keyboard Input</string>
     <string name="xam_keyboard_description">Enter text</string>
     <string name="settings_subtitle">Thor profiles, video, and launch options</string>
+    <string name="settings_active_profile_label">Active profile</string>
+    <string name="settings_active_profile_summary">%1$s · %2$s · %3$d of %4$d optimizations on</string>
     <string name="settings_profile">Profile</string>
     <string name="settings_profile_balanced">Thor balanced</string>
     <string name="settings_profile_performance">Performance</string>

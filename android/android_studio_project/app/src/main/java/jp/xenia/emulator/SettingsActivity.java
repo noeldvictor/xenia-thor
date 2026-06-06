@@ -3,6 +3,7 @@ package jp.xenia.emulator;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -47,6 +48,7 @@ public class SettingsActivity extends Activity {
         scrollView.addView(root);
 
         addTitle(root);
+        addActiveProfileBanner(root);
         mProfileGroup = addRadioGroup(root, R.string.settings_profile, new String[][] {
                 {getString(R.string.settings_profile_balanced),
                         XeniaAndroidSettings.PROFILE_BALANCED},
@@ -107,6 +109,50 @@ public class SettingsActivity extends Activity {
         final LinearLayout.LayoutParams params = matchWrap();
         params.setMargins(0, dp(4), 0, dp(14));
         root.addView(subtitle, params);
+    }
+
+    // A pinned banner showing the live "stacked wins" summary so the user can
+    // SEE what is actually active at a glance (the whole point of the
+    // optimization registry) instead of it being buried among the toggles.
+    private void addActiveProfileBanner(final LinearLayout root) {
+        final SharedPreferences prefs = XeniaAndroidSettings.getPreferences(this);
+        final String gpu = prefs.getString(
+                XeniaAndroidSettings.KEY_GPU_DRIVER, XeniaAndroidSettings.GPU_VULKAN);
+        final String gpuLabel =
+                XeniaAndroidSettings.GPU_NULL.equals(gpu) ? "Null" : "Vulkan";
+        final String resLabel = prefs.getString(
+                XeniaAndroidSettings.KEY_INTERNAL_RESOLUTION,
+                XeniaAndroidSettings.RESOLUTION_720P);
+        final int enabled = XeniaOptimizations.enabledCount(prefs);
+        final int total = XeniaOptimizations.ALL.size();
+
+        final LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        final GradientDrawable background = new GradientDrawable();
+        background.setColor(getColor(R.color.xenia_card));
+        background.setCornerRadius(dp(12));
+        background.setStroke(dp(1), getColor(R.color.xenia_green_dim));
+        card.setBackground(background);
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
+
+        final TextView label = new TextView(this);
+        label.setText(getString(R.string.settings_active_profile_label)
+                .toUpperCase(java.util.Locale.US));
+        label.setTextColor(getColor(R.color.xenia_green_soft));
+        label.setTextSize(11);
+        card.addView(label, matchWrap());
+
+        final TextView summary = new TextView(this);
+        summary.setText(getString(R.string.settings_active_profile_summary,
+                gpuLabel, resLabel, enabled, total));
+        summary.setTextColor(getColor(R.color.xenia_text));
+        summary.setTextSize(16);
+        summary.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        card.addView(summary, matchWrapWithTopMargin(2));
+
+        final LinearLayout.LayoutParams params = matchWrap();
+        params.setMargins(0, 0, 0, dp(10));
+        root.addView(card, params);
     }
 
     private RadioGroup addRadioGroup(
