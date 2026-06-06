@@ -318,6 +318,17 @@ bool VulkanCommandProcessor::SetupContext() {
                               &gpu_timestamp_pool_) != VK_SUCCESS) {
       gpu_timestamp_pool_ = VK_NULL_HANDLE;
     }
+    // Route A per-pass timing pool (separate from the frame pool; used only when
+    // vulkan_trace_pass_timestamps is on). 2 timestamps per bracket pair.
+    VkQueryPoolCreateInfo pass_pool_create_info = {};
+    pass_pool_create_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    pass_pool_create_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    pass_pool_create_info.queryCount =
+        2u * kMaxPassBrackets * kMaxFramesInFlight;
+    if (dfn.vkCreateQueryPool(device, &pass_pool_create_info, nullptr,
+                              &gpu_pass_timestamp_pool_) != VK_SUCCESS) {
+      gpu_pass_timestamp_pool_ = VK_NULL_HANDLE;
+    }
   }
   XELOGGPU("VulkanCommandProcessor: GPU timestamps {} (period {} ns)",
            gpu_timestamp_pool_ != VK_NULL_HANDLE ? "ENABLED" : "disabled",
@@ -1402,6 +1413,8 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyQueryPool, device,
                                          gpu_timestamp_pool_);
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyQueryPool, device,
+                                         gpu_pass_timestamp_pool_);
 
   DestroyScratchBuffer();
 
@@ -2106,6 +2119,30 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           gpu_frame_us_ = uint64_t(double(ts[1] - ts[0]) *
                                    double(gpu_timestamp_period_ns_) / 1000.0);
         }
+        // Route A: sum this frame's per-pass spans = time INSIDE render passes.
+        if (gpu_pass_timestamp_pool_ != VK_NULL_HANDLE) {
+          uint32_t n = gpu_pass_count_written_[best_slot];
+          if (n > kMaxPassBrackets) {
+            n = kMaxPassBrackets;
+          }
+          if (n) {
+            uint64_t pts[2u * kMaxPassBrackets] = {};
+            if (ts_dfn.vkGetQueryPoolResults(
+                    GetVulkanDevice()->device(), gpu_pass_timestamp_pool_,
+                    uint32_t(best_slot) * 2u * kMaxPassBrackets, 2u * n,
+                    sizeof(uint64_t) * 2u * n, pts, sizeof(uint64_t),
+                    VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+              uint64_t sum_ticks = 0;
+              for (uint32_t i = 0; i < n; ++i) {
+                if (pts[2u * i + 1u] > pts[2u * i]) {
+                  sum_ticks += pts[2u * i + 1u] - pts[2u * i];
+                }
+              }
+              gpu_pass_us_ = uint64_t(double(sum_ticks) *
+                                      double(gpu_timestamp_period_ns_) / 1000.0);
+            }
+          }
+        }
       }
     }
     // Flush the final in-progress same-pipeline run into the histogram.
@@ -2144,7 +2181,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} "
-        "gpu_frame_us={} msaa={} surf_pitch={} "
+        "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
@@ -2190,7 +2227,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   1000
             : 0,
         draw_cpu_setup_ns_ / 1000, draw_cpu_emit_ns_ / 1000,
-        gpu_frame_us_,
+        gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
@@ -3203,6 +3240,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // the pending concatenation run (it belongs to the old pass) before ending it.
     FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
+    RecordPassTimestamp(false);
     deferred_command_buffer_.CmdVkEndRenderPass();
   }
   current_render_pass_ = render_pass;
@@ -3221,6 +3259,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.pClearValues = nullptr;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
+  RecordPassTimestamp(true);
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
 
@@ -3236,9 +3275,27 @@ void VulkanCommandProcessor::EndRenderPass() {
   // never called between mergeable draws (the pass stays open), so coalescing is
   // preserved.
   FlushPendingMergeRun();
+  RecordPassTimestamp(false);
   deferred_command_buffer_.CmdVkEndRenderPass();
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
+}
+
+void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
+  if (!cvars::vulkan_trace_pass_timestamps ||
+      gpu_pass_timestamp_pool_ == VK_NULL_HANDLE ||
+      gpu_pass_bracket_count_ >= kMaxPassBrackets) {
+    return;
+  }
+  uint32_t pass_base =
+      uint32_t(frame_current_ % kMaxFramesInFlight) * (2u * kMaxPassBrackets);
+  uint32_t slot =
+      pass_base + 2u * gpu_pass_bracket_count_ + (is_begin ? 0u : 1u);
+  deferred_command_buffer_.CmdVkWriteTimestamp(
+      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpu_pass_timestamp_pool_, slot);
+  if (!is_begin) {
+    ++gpu_pass_bracket_count_;
+  }
 }
 
 VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
@@ -5663,6 +5720,19 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
                               gpu_timestamp_pool_, gpu_ts_base);
       gpu_timestamp_frame_written_[frame_current_ % kMaxFramesInFlight] =
           frame_current_;
+    }
+    // Route A: reset this frame's pass-timestamp range BEFORE Execute replays
+    // the per-pass timestamp writes, and record how many bracket pairs were
+    // recorded this frame for the deferred readback. (1 submission/frame on BD;
+    // multi-submit frames keep only the last submission's spans.)
+    if (cvars::vulkan_trace_pass_timestamps &&
+        gpu_pass_timestamp_pool_ != VK_NULL_HANDLE) {
+      uint32_t pass_slot = uint32_t(frame_current_ % kMaxFramesInFlight);
+      dfn.vkCmdResetQueryPool(command_buffer.buffer, gpu_pass_timestamp_pool_,
+                              pass_slot * 2u * kMaxPassBrackets,
+                              2u * kMaxPassBrackets);
+      gpu_pass_count_written_[pass_slot] = gpu_pass_bracket_count_;
+      gpu_pass_bracket_count_ = 0;
     }
     deferred_command_buffer_.Execute(command_buffer.buffer);
     if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {

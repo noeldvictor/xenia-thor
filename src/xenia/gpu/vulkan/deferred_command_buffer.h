@@ -529,6 +529,20 @@ class DeferredCommandBuffer {
                 sizeof(VkViewport) * viewport_count);
   }
 
+  // Route A per-pass GPU timing (Thor binning diagnostic): records a GPU
+  // timestamp into query_pool at index `query` at the given pipeline stage,
+  // in-order within the deferred stream so render-pass spans can be bracketed.
+  // Only emitted when the caller chooses to (cvar-gated upstream); default path
+  // never records this, so the command stream is unchanged when disabled.
+  void CmdVkWriteTimestamp(VkPipelineStageFlagBits pipeline_stage,
+                           VkQueryPool query_pool, uint32_t query) {
+    auto& args = *reinterpret_cast<ArgsVkWriteTimestamp*>(WriteCommand(
+        Command::kVkWriteTimestamp, sizeof(ArgsVkWriteTimestamp)));
+    args.pipeline_stage = pipeline_stage;
+    args.query_pool = query_pool;
+    args.query = query;
+  }
+
  private:
   enum class Command {
     kVkBeginRenderPass,
@@ -566,6 +580,7 @@ class DeferredCommandBuffer {
     kVkSetStencilReference,
     kVkSetStencilWriteMask,
     kVkSetViewport,
+    kVkWriteTimestamp,
   };
 
   struct CommandHeader {
@@ -583,6 +598,12 @@ class DeferredCommandBuffer {
     VkSubpassContents contents;
     // Followed by aligned optional VkClearValue[].
     static_assert(alignof(VkClearValue) <= alignof(uintmax_t));
+  };
+
+  struct ArgsVkWriteTimestamp {
+    VkQueryPool query_pool;
+    uint32_t query;
+    VkPipelineStageFlagBits pipeline_stage;
   };
 
   struct ArgsVkBindDescriptorSets {

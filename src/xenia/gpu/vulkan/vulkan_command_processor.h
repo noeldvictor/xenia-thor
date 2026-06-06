@@ -1101,6 +1101,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Last successfully read GPU frame time (microseconds), logged at swap.
   uint64_t gpu_frame_us_ = 0;
 
+  // Route A per-pass GPU timing (Thor binning diagnostic; cvar
+  // vulkan_trace_pass_timestamps, default OFF -> default path byte-identical).
+  // Separate query pool so the working frame-time path is untouched. Brackets
+  // each GAME render-pass span (begin->end) with deferred timestamps; readback
+  // sums the spans -> gpu_pass_us_ = time spent INSIDE render passes, vs
+  // gpu_frame_us_ total (difference = EDRAM transfers / compute / barriers /
+  // stalls BETWEEN passes). kMaxPassBrackets span-pairs per frame.
+  static constexpr uint32_t kMaxPassBrackets = 128;
+  VkQueryPool gpu_pass_timestamp_pool_ = VK_NULL_HANDLE;
+  uint32_t gpu_pass_bracket_count_ = 0;  // bracket pairs recorded this frame
+  uint32_t gpu_pass_count_written_[kMaxFramesInFlight] = {};  // per frame slot
+  uint64_t gpu_pass_us_ = 0;  // last read in-render-pass GPU time (us)
+  // Records a GPU timestamp (begin or end of a render-pass span) into the pass
+  // pool via the deferred command buffer. No-op unless the cvar is on.
+  void RecordPassTimestamp(bool is_begin);
+
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
   // render target cache; logged + reset at swap. transfer_calls = times

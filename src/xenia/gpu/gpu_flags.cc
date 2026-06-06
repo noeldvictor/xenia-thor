@@ -537,6 +537,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_trace_pass_timestamps, false,
+    "Route A per-pass GPU timing (Thor binning diagnostic): bracket each GAME "
+    "render-pass span with GPU timestamps and log gpu_pass_us (time INSIDE "
+    "render passes) on the GPU draw outcomes line. gpu_frame_us - gpu_pass_us = "
+    "time BETWEEN passes (EDRAM transfers / compute / barriers / stalls), the "
+    "measured pass-fragmentation floor. Default off; needs "
+    "vulkan_trace_draw_outcomes_per_frame for the log line.",
+    "GPU");
+
+DEFINE_bool(
     gpu_cull_compaction, false,
     "Thor/Adreno binning re-arch (Lever 2 cull, STEP 1 plumbing): route each "
     "kGuestDMA indexed draw through a transient index buffer - copy the raw guest "
