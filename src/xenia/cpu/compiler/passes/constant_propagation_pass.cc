@@ -593,7 +593,19 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MAX:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          // Do NOT constant-fold float MAX. OPCODE_MAX is float-only here
+          // (vmaxfp / F32 / F64), and Value::Max() uses std::max, which is
+          // order-dependent for signed zeros -- max(+0,-0) must yield +0
+          // regardless of operand order, but std::max(-0,+0) yields -0 -- and
+          // mishandles NaN propagation. Folding here mis-evaluated vmaxfp
+          // (upstream d85bfc189: caused a Sonic block to creep perpetually).
+          // The backends reproduce the correct semantics (a64 fmax sets a
+          // zero result's sign = sign1 & sign2; x64 vmaxps both orders + and),
+          // so leave the op for codegen. (Guarded on float type so a future
+          // integer MAX would still fold.)
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              v->type != FLOAT32_TYPE && v->type != FLOAT64_TYPE &&
+              v->type != VEC128_TYPE) {
             v->set_from(i->src1.value);
             v->Max(i->src2.value);
             i->Remove();
