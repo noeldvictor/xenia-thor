@@ -56,6 +56,27 @@ DEFINE_bool(
     "may present with tearing if frames don't meet the host display refresh "
     "rate.",
     "Vulkan");
+// Default on for Android (thermal-constrained handheld), off elsewhere. The
+// platform branch must live outside the DEFINE_bool() call - MSVC's preprocessor
+// rejects #if directives inside a function-like macro's argument list.
+#if XE_PLATFORM_ANDROID
+#define XE_PRESENT_REFRESH_CAPPED_DEFAULT true
+#else
+#define XE_PRESENT_REFRESH_CAPPED_DEFAULT false
+#endif
+DEFINE_bool(
+    vulkan_present_refresh_capped, XE_PRESENT_REFRESH_CAPPED_DEFAULT,
+    "Force the refresh-rate-capped FIFO presentation mode, overriding the "
+    "present-mode priority above (immediate/mailbox). On a thermal-constrained "
+    "handheld the uncapped modes spin presentation far above the display refresh "
+    "on light/loading screens (device-observed ~568fps with the GPU pegged at "
+    "98%, overheating in seconds), while real <=60fps gameplay is unaffected "
+    "(device-validated: Blue Dragon heavy field stayed at its ~5.9fps baseline "
+    "with identical gpu_frame_us under FIFO). Caps that waste for cooler, "
+    "lower-power presentation at a negligible (<=1 frame) latency cost. Default "
+    "on for Android; off elsewhere to keep the desktop low-latency behavior.",
+    "Vulkan");
+#undef XE_PRESENT_REFRESH_CAPPED_DEFAULT
 DEFINE_bool(vulkan_trace_perf_counters, false,
             "Trace compact aggregate Vulkan performance counters for "
             "pipeline creation, submits, barriers, render passes, and "
@@ -1559,7 +1580,13 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
   // interfering with GPU command processing, and also to allow tearing so
   // variable refresh rate may be used where it's available.
   // Note: If the priorities here are changes, update the cvar descriptions.
-  if (cvars::vulkan_allow_present_mode_immediate &&
+  if (cvars::vulkan_present_refresh_capped) {
+    // Refresh-capped: force strict FIFO (always available, no tearing). Caps
+    // wasteful >refresh presentation on light/loading screens that otherwise
+    // peg the GPU and overheat the handheld, without regressing <=60fps content
+    // (FIFO presents sub-refresh frames at their native rate). See the cvar.
+    swapchain_create_info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+  } else if (cvars::vulkan_allow_present_mode_immediate &&
       std::find(present_modes.cbegin(), present_modes.cend(),
                 VK_PRESENT_MODE_IMMEDIATE_KHR) != present_modes.cend()) {
     // Allowing tearing to reduce latency, and possibly variable refresh rate

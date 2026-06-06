@@ -169,6 +169,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_immediate");
             copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_mailbox");
             copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_fifo_relaxed");
+            copyBooleanExtra(intent, launchArguments, "vulkan_present_refresh_capped");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");

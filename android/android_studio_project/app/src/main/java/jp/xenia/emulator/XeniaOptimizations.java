@@ -140,6 +140,25 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("hir_fold_and_not")}, null));
 
         list.add(new Optimization(
+                "opt_present_refresh_capped",
+                "Refresh-capped presentation (cooler)",
+                "Caps screen presentation to the display refresh instead of "
+                        + "running it as fast as possible.",
+                "By default the emulator presents frames as fast as it can, which "
+                        + "on light/loading screens spins the GPU far above the "
+                        + "display refresh rate (device-measured ~568fps with the "
+                        + "GPU pegged at 98%), overheating the handheld in seconds "
+                        + "for no visible benefit (the screen can't show more than "
+                        + "its refresh rate). This caps presentation to the refresh "
+                        + "rate (FIFO), so loading screens and menus run far cooler "
+                        + "and use less battery. Real gameplay is unaffected - Xbox "
+                        + "360 games are 30/60fps, below the cap (device-validated: "
+                        + "Blue Dragon stayed at its ~5.9fps baseline). Costs at "
+                        + "most one frame of extra latency.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("vulkan_present_refresh_capped")}, null));
+
+        list.add(new Optimization(
                 "opt_constants_arena",
                 "Dynamic constant streaming",
                 "Streams shader constants through one persistent GPU buffer.",
