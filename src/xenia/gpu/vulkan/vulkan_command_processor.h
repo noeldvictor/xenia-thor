@@ -1130,6 +1130,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // whether the dominant per-draw cost is CPU setup or the emit/wait path.
   uint64_t draw_cpu_setup_ns_ = 0;
   uint64_t draw_cpu_emit_ns_ = 0;
+  // BeginSubmission time (a SUBSET of setup_, which spans entry->Process and
+  // includes this call). BeginSubmission contains the frame-await throttle-wait
+  // that blocks until the GPU catches up - so this separates the GPU-paced WAIT
+  // from the real per-draw CPU setup: on a GPU-bound title most of setup_ is
+  // beginsubmit_ (wait, not a CPU lever); on a CPU-bound title beginsubmit_ is
+  // small and the rest of setup_ is real work (the lever).
+  uint64_t draw_cpu_beginsubmit_ns_ = 0;
 
   // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
   // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command

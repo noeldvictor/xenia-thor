@@ -2219,7 +2219,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
-        "cpu_setup_us={} cpu_emit_us={} "
+        "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2269,6 +2269,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   1000
             : 0,
         draw_cpu_setup_ns_ / 1000, draw_cpu_emit_ns_ / 1000,
+        draw_cpu_beginsubmit_ns_ / 1000,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
@@ -2455,6 +2456,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_cpu_bindings_ns_ = 0;
     draw_cpu_setup_ns_ = 0;
     draw_cpu_emit_ns_ = 0;
+    draw_cpu_beginsubmit_ns_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -3876,8 +3878,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // before the awaiting may be referencing objects destroyed by
   // CompletedSubmissionUpdated.
   for (uint32_t i = 0; i < 2; ++i) {
+    std::chrono::steady_clock::time_point bs_t0;
+    if (trace_draw_cpu) {
+      bs_t0 = std::chrono::steady_clock::now();
+    }
     if (!BeginSubmission(true)) {
       return false;
+    }
+    if (trace_draw_cpu) {
+      // BeginSubmission carries the frame-await throttle-wait; time it apart from
+      // the rest of setup so the GPU-paced wait is separable from real CPU setup.
+      draw_cpu_beginsubmit_ns_ += uint64_t(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - bs_t0)
+              .count());
     }
 
     // Process primitives.
