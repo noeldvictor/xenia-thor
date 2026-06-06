@@ -1129,6 +1129,18 @@ struct MEMORY_BARRIER
 EMITTER_OPCODE_TABLE(OPCODE_MEMORY_BARRIER, MEMORY_BARRIER);
 
 // ============================================================================
+// OPCODE_YIELD
+// ============================================================================
+struct YIELD : Sequence<YIELD, I<OPCODE_YIELD, VoidOp>> {
+  static void Emit(X64Emitter& e, const EmitArgType& i) {
+    // Guest spin-wait hint (or rN,rN,rN) -> x86 PAUSE: backs the spinning core
+    // off so a sibling thread (often the lock/condition holder) can progress.
+    e.pause();
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_YIELD, YIELD);
+
+// ============================================================================
 // OPCODE_MEMSET
 // ============================================================================
 struct MEMSET_I64_I8_I64

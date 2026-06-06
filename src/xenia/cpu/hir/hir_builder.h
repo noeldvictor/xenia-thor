@@ -171,6 +171,9 @@ class HIRBuilder {
   void CacheControl(Value* address, size_t cache_line_size,
                     CacheControlType type);
   void MemoryBarrier();
+  // Emits a CPU spin/yield hint (ARM YIELD / x86 PAUSE) - no semantic effect,
+  // used to honor guest PowerPC spin-wait priority hints (or rN,rN,rN).
+  void Yield();
 
   void SetRoundingMode(Value* value);
   Value* Max(Value* value1, Value* value2);

@@ -308,6 +308,19 @@ struct MEMORY_BARRIER
 EMITTER_OPCODE_TABLE(OPCODE_MEMORY_BARRIER, MEMORY_BARRIER);
 
 // ============================================================================
+// OPCODE_YIELD
+// ============================================================================
+struct YIELD : Sequence<YIELD, I<OPCODE_YIELD, VoidOp>> {
+  static void Emit(A64Emitter& e, const EmitArgType& i) {
+    // Guest spin-wait hint (or rN,rN,rN) -> ARM YIELD: hints the core to back
+    // the spinning thread off so a sibling thread (often the lock/condition
+    // holder) can progress sooner.
+    e.yield();
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_YIELD, YIELD);
+
+// ============================================================================
 // OPCODE_CACHE_CONTROL
 // ============================================================================
 struct CACHE_CONTROL

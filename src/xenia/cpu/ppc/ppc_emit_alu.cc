@@ -798,8 +798,14 @@ int InstrEmit_norx(PPCHIRBuilder& f, const InstrData& i) {
 int InstrEmit_orx(PPCHIRBuilder& f, const InstrData& i) {
   // RA <- (RS) | (RB)
   if (i.X.RT == i.X.RB && i.X.RT == i.X.RA && !i.X.Rc) {
-    // Sometimes used as no-op.
-    f.Nop();
+    // `or rN,rN,rN` is functionally a no-op but is the PowerPC/Xbox 360 CPU
+    // spin-wait / thread-priority hint (e.g. the `or 31,31,31` x8 padding in the
+    // shared XDK spin-then-block sync primitive that dominates CPU-bound titles
+    // like Lost Odyssey and Gears). Emit a host spin hint (ARM YIELD / x86 PAUSE)
+    // instead of discarding it, so the spinning core backs off and a sibling
+    // thread (often the lock/condition holder) can progress. Correctness-neutral
+    // (a hint), so it stays on the default path.
+    f.Yield();
     return 0;
   }
   Value* ra;

@@ -1407,6 +1407,8 @@ void HIRBuilder::CacheControl(Value* address, size_t cache_line_size,
 
 void HIRBuilder::MemoryBarrier() { AppendInstr(OPCODE_MEMORY_BARRIER_info, 0); }
 
+void HIRBuilder::Yield() { AppendInstr(OPCODE_YIELD_info, 0); }
+
 void HIRBuilder::SetRoundingMode(Value* value) {
   ASSERT_INTEGER_TYPE(value);
   Instr* i = AppendInstr(OPCODE_SET_ROUNDING_MODE_info, 0);
