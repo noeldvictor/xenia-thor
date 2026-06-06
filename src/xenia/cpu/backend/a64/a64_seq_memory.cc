@@ -78,6 +78,13 @@ DEFINE_uint32(a64_clock_spin_yield_sleep_us, 0,
               "0 = sched_yield only (safest, no sleep latency). The BD fastpath "
               "uses ~100us; tune on-device.",
               "a64");
+DEFINE_uint32(a64_clock_spin_yield_window_us, 50,
+              "Thor ARM64: two consecutive mftb reads within this many host us "
+              "count as a tight spin (else the counter resets). Wider catches "
+              "slower spin loops; legit per-frame mftb (~16ms apart) still "
+              "resets. Was hardcoded 2us (too tight - caught nothing at a "
+              "GPU-bound Gears2 menu); tune on-device.",
+              "a64");
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -769,7 +776,9 @@ struct LOAD_CLOCK : Sequence<LOAD_CLOCK, I<OPCODE_LOAD_CLOCK, I64Op>> {
       thread_local uint64_t last_host_ticks = 0;
       thread_local uint32_t consecutive_rapid = 0;
       const uint64_t now = Clock::QueryHostTickCount();
-      const uint64_t rapid_ticks = Clock::QueryHostTickFrequency() / 500000u;
+      const uint64_t rapid_ticks =
+          Clock::QueryHostTickFrequency() *
+          uint64_t(cvars::a64_clock_spin_yield_window_us) / 1000000u;
       if (last_host_ticks != 0 && (now - last_host_ticks) <= rapid_ticks) {
         if (++consecutive_rapid >= cvars::a64_clock_spin_yield_stride) {
           consecutive_rapid = 0;
