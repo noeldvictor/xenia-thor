@@ -54,6 +54,23 @@ class PosixMappedMemory : public MappedMemory {
         return nullptr;
       }
       map_length = size_t(file_stat.st_size);
+    } else if (protection & PROT_WRITE) {
+      // For a writable mapping with an explicit length, the backing file must be
+      // at least offset+map_length bytes, otherwise writes to mapped pages past
+      // the file's EOF raise SIGBUS on Linux/Android (MAP_SHARED). Windows sizes
+      // the file at mapping creation, so the desktop path relied on that
+      // implicit grow; size it explicitly here. Close() truncates back down to
+      // the actually-written size. (Fixes Emulator::SaveToFile SIGBUS on Android,
+      // and any writable MappedMemory opened on a smaller/fresh file.)
+      struct stat64 file_stat;
+      const off64_t required = off64_t(offset + map_length);
+      if (fstat64(file_descriptor, &file_stat) == 0 &&
+          file_stat.st_size < required) {
+        if (ftruncate64(file_descriptor, required) != 0) {
+          close(file_descriptor);
+          return nullptr;
+        }
+      }
     }
 
     void* data =
