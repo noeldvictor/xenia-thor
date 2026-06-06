@@ -132,7 +132,13 @@ void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {
       kernel_memory()->TranslateVirtual<x_s__CatchableTypeArray*>(
           throw_info->catchable_type_array_ptr);
 
-  xe::debugging::Break();
+  // xenia does not implement guest C++ exception dispatch/unwinding. Don't
+  // abort here: log and return so RtlRaiseException is non-fatal, matching
+  // upstream canary/edge. Otherwise ANY guest throw (e.g. std::bad_alloc from
+  // a failed allocation -- Project Sylpheed's heap allocator does exactly
+  // this) hard-crashes the emulator at the raise site.
+  // xe::debugging::Break();
+  XELOGE("Guest attempted to throw a C++ exception!");
 }
 
 void RtlRaiseException_entry(pointer_t<X_EXCEPTION_RECORD> record) {
@@ -149,7 +155,11 @@ void RtlRaiseException_entry(pointer_t<X_EXCEPTION_RECORD> record) {
 
   // TODO(benvanik): unwinding.
   // This is going to suck.
-  xe::debugging::Break();
+  // RtlRaiseException is not a noreturn function for unhandled codes; return
+  // safe-ish instead of aborting the whole emulator (port of upstream
+  // canary/edge).
+  // xe::debugging::Break();
+  XELOGE("Guest attempted to trigger a breakpoint!");
 }
 DECLARE_XBOXKRNL_EXPORT2(RtlRaiseException, kDebug, kStub, kImportant);
 
