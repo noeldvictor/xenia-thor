@@ -753,6 +753,15 @@ struct LOAD_CLOCK : Sequence<LOAD_CLOCK, I<OPCODE_LOAD_CLOCK, I64Op>> {
   static uint64_t LoadClock(void* raw_context) {
     const uint64_t guest_tick = Clock::QueryGuestTickCount();
     if (cvars::a64_clock_spin_yield) {
+      // Observability (so a device A/B can tell "enabled but not firing" from
+      // "not enabled"): log once on first reach, and the firing count every 4096
+      // yields. Grep logcat for "a64_clock_spin_yield".
+      static std::atomic<bool> logged_enabled{false};
+      if (!logged_enabled.exchange(true)) {
+        XELOGI("a64_clock_spin_yield ENABLED (stride={}, sleep_us={})",
+               uint32_t(cvars::a64_clock_spin_yield_stride),
+               uint32_t(cvars::a64_clock_spin_yield_sleep_us));
+      }
       // Per-thread tight-poll detector. A real mftb spin reads the clock far
       // faster (every few guest instructions) than legitimate timing code
       // (a handful of reads per frame), so only count reads that arrive within
@@ -764,6 +773,11 @@ struct LOAD_CLOCK : Sequence<LOAD_CLOCK, I<OPCODE_LOAD_CLOCK, I64Op>> {
       if (last_host_ticks != 0 && (now - last_host_ticks) <= rapid_ticks) {
         if (++consecutive_rapid >= cvars::a64_clock_spin_yield_stride) {
           consecutive_rapid = 0;
+          static std::atomic<uint64_t> fired{0};
+          const uint64_t n = fired.fetch_add(1, std::memory_order_relaxed) + 1;
+          if ((n & 0xFFFu) == 0) {
+            XELOGI("a64_clock_spin_yield fired {} times", n);
+          }
           const uint32_t sleep_us = cvars::a64_clock_spin_yield_sleep_us;
           if (sleep_us) {
             xe::threading::Sleep(std::chrono::microseconds(sleep_us));
