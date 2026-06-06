@@ -1500,14 +1500,38 @@ struct VECTOR_AVERAGE
               if (is_unsigned) {
                 e.vpavgb(dest, src1, src2);
               } else {
-                assert_always();
+                // No signed byte average in AVX (PAVGB is unsigned only) -
+                // emulate (a+b+1)>>1, matching the a64 srhadd. Mirrors the
+                // INT32 signed path below; previously assert_always() crashed
+                // the x64 host on any vavgsb-using title.
+                if (i.src2.is_constant) {
+                  e.lea(e.GetNativeParam(1),
+                        e.StashConstantXmm(1, i.src2.constant()));
+                } else {
+                  e.lea(e.GetNativeParam(1), e.StashXmm(1, i.src2));
+                }
+                e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
+                e.CallNativeSafe(
+                    reinterpret_cast<void*>(EmulateVectorAverage<int8_t>));
+                e.vmovaps(i.dest, e.xmm0);
               }
               break;
             case INT16_TYPE:
               if (is_unsigned) {
                 e.vpavgw(dest, src1, src2);
               } else {
-                assert_always();
+                // No signed word average in AVX (PAVGW is unsigned only) -
+                // emulate, matching the a64 srhadd (was assert_always()).
+                if (i.src2.is_constant) {
+                  e.lea(e.GetNativeParam(1),
+                        e.StashConstantXmm(1, i.src2.constant()));
+                } else {
+                  e.lea(e.GetNativeParam(1), e.StashXmm(1, i.src2));
+                }
+                e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
+                e.CallNativeSafe(
+                    reinterpret_cast<void*>(EmulateVectorAverage<int16_t>));
+                e.vmovaps(i.dest, e.xmm0);
               }
               break;
             case INT32_TYPE:
