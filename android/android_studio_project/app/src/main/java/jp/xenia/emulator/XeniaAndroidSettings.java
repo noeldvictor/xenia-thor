@@ -276,6 +276,16 @@ public final class XeniaAndroidSettings {
         // extra beats it - so pass it on every launch. Device-validated: IU
         // reaches its menu at 262144 (vs crash at 65536).
         launchArguments.putInt("a64_max_stackpoints", 262144);
+        // Mount the Xbox 360 cache partition (cache0:/cache1:/cache:). The
+        // engine default is false and the persisted device xenia.config.toml
+        // also pins it false, so the in-app launch left the cache devices
+        // UNMOUNTED - while every capture/test harness launch forces
+        // `--ez mount_cache true`. Games that open the cache devices (streaming,
+        // decompressed assets, temp data - the engine notes "Some (older?) games
+        // try accessing cache:\ too") therefore got device-not-found and stalled
+        // EARLIER via the play button than in tests. Match the proven-good test
+        // config so the app reaches as far as the captures do.
+        launchArguments.putBoolean("mount_cache", true);
     }
 
     public static String resolveLaunchTarget(final Context context, final Uri target) {
