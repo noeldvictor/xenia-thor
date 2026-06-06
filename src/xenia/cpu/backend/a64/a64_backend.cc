@@ -57,6 +57,9 @@
 DECLARE_bool(a64_inline_kf_lower_irql_apc_guard);
 DECLARE_bool(a64_kf_lower_irql_apc_guard_audit);
 DECLARE_uint32(a64_kf_lower_irql_apc_guard_native_poll_interval);
+DECLARE_bool(a64_clock_spin_yield);
+DECLARE_uint32(a64_clock_spin_yield_stride);
+DECLARE_uint32(a64_clock_spin_yield_sleep_us);
 
 DEFINE_uint32(a64_max_stackpoints, 262144,
               "Max number of host->guest stack mappings we can record. Bumped "
@@ -2860,6 +2863,16 @@ bool A64Backend::Initialize(Processor* processor) {
 
   // Expose the code cache to the base Backend class.
   Backend::code_cache_ = code_cache_.get();
+
+  // Guaranteed startup confirmation of the clock-spin-yield cvar state (runs
+  // regardless of whether any guest scene later hits mftb/LOAD_CLOCK) - lets a
+  // device fire confirm the --ez override actually applied, independent of
+  // scene. The LOAD_CLOCK "fired N times" log then reports if/how often it
+  // triggers once a guest scene actually spins on mftb.
+  XELOGI("A64Backend: clock-spin-yield {} (stride={}, sleep_us={})",
+         cvars::a64_clock_spin_yield ? "ENABLED" : "disabled",
+         uint32_t(cvars::a64_clock_spin_yield_stride),
+         uint32_t(cvars::a64_clock_spin_yield_sleep_us));
 
   // Set up machine info for the register allocator.
   machine_info_.supports_extended_load_store = true;
