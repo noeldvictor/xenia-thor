@@ -197,8 +197,10 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info) {
   if (stat(path.c_str(), &st) == 0) {
     if (S_ISDIR(st.st_mode)) {
       out_info->type = FileInfo::Type::kDirectory;
+      out_info->total_size = 0;
     } else {
       out_info->type = FileInfo::Type::kFile;
+      out_info->total_size = st.st_size;
     }
     out_info->create_timestamp = convertUnixtimeToWinFiletime(st.st_ctime);
     out_info->access_timestamp = convertUnixtimeToWinFiletime(st.st_atime);
