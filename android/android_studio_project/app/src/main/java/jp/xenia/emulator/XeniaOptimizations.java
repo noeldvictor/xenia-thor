@@ -196,7 +196,7 @@ public final class XeniaOptimizations {
                         + "validates the cache and ignores it if it doesn't match (e.g. "
                         + "after a driver change). Smooths stutter; does not change the "
                         + "steady frame rate.",
-                CATEGORY_GPU, false, false,
+                CATEGORY_GPU, true, true,
                 new BoolCvar[]{new BoolCvar("vulkan_persistent_pipeline_cache")}, null));
 
         list.add(new Optimization(
