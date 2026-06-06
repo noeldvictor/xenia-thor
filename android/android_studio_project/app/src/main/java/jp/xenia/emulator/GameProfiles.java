@@ -78,6 +78,17 @@ public final class GameProfiles {
         PROFILES.put("535107DB", new Profile("Infinite Undiscovery")
                 .add("a64_max_stackpoints", Integer.valueOf(262144),
                         "Needs a larger guest-stack array or it crashes ~37s in"));
+
+        // MagnaCarta 2 (4E4D080B): the a64 longjmp stackpoint array overflows
+        // even the global 262144 (Overflowed stackpoints! -> SIGABRT crash at
+        // boot via the play button). The leak is BOUNDED - 1048576 (4x) keeps it
+        // under the cap through boot. Device-validated 2026-06-06: at 1048576 the
+        // title boots to in-game (a story-dialogue scene, ~30fps OSD, VdSwap
+        // flowing) instead of crashing. Per-game so only this title pays the
+        // larger per-thread stackpoint allocation.
+        PROFILES.put("4E4D080B", new Profile("MagnaCarta 2")
+                .add("a64_max_stackpoints", Integer.valueOf(1048576),
+                        "Needs a larger guest-stack array or it crashes at boot"));
     }
 
     private static String normalize(final String titleId) {

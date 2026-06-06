@@ -39,7 +39,11 @@ param(
   # Intro-skip button sequence (hid_nop_button_sequence): mashes start/a to push
   # past intros into a steady scene. Default tuned for Blue Dragon; override per
   # title.
-  [string]$Seq = 'start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300'
+  [string]$Seq = 'start@20000:300;a@26000:300;start@32000:300;a@38000:300;start@45000:300;a@52000:300;start@60000:300;a@70000:300;start@82000:300;a@92000:300;start@102000:300;a@112000:300',
+  # Override the a64 longjmp stackpoint capacity (default matches the launcher's
+  # forced 262144). Raise for heavy-longjmp titles that overflow even 262144
+  # (e.g. MagnaCarta 2) to test a per-game cap before adding a GameProfiles entry.
+  [int]$StackPoints = 262144
 )
 $ErrorActionPreference = "Stop"
 $adb = "C:\Users\leanerdesigner\AppData\Local\Android\Sdk\platform-tools\adb.exe"
@@ -109,7 +113,7 @@ if ($dbgArgs) { Write-Output "label=$label" }
 # (XeniaAndroidSettings, commit 3d3bbf526); without it the device TOML pins the
 # 65536 default and heavy-longjmp titles (IU, BTTF Episode 1) spuriously SIGABRT
 # "Overflowed stackpoints!" in captures that DON'T crash via the app UI.
-$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --ei a64_max_stackpoints 262144 $dumpArgs --es target '$iso'"
+$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --ei a64_max_stackpoints $StackPoints $dumpArgs --es target '$iso'"
 & $adb -s $DeviceSerial shell $cmd | Out-Null
 
 # Capture output paths (defined before the watchdog so a hot-stop can still grab
