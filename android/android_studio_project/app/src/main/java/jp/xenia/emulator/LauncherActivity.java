@@ -437,8 +437,17 @@ public class LauncherActivity extends Activity {
         setSectionVisible(R.id.launcher_add_game_folder_card, browse);
         setSectionVisible(R.id.launcher_browse_game_card, browse);
         setSectionVisible(R.id.launcher_settings_card, tools);
+        setSectionVisible(R.id.launcher_dev_tools_header, tools);
         setSectionVisible(R.id.launcher_gpu_trace_card, tools);
         setSectionVisible(R.id.launcher_window_demo_card, tools);
+
+        // The action rail is shared by Browse and Tools; give it the right
+        // heading per tab instead of the stale "Library tools" on both.
+        final TextView railTitle = findViewById(R.id.launcher_action_rail_title);
+        if (railTitle != null) {
+            railTitle.setText(browse ? R.string.launcher_browse_actions_title
+                                     : R.string.launcher_tools_actions_title);
+        }
 
         updateLauncherTab(R.id.launcher_games_tab, tab == LAUNCHER_TAB_GAMES);
         updateLauncherTab(R.id.launcher_recent_tab, tab == LAUNCHER_TAB_RECENT);

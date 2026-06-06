@@ -15,6 +15,9 @@
     <string name="launcher_tab_browse">Browse</string>
     <string name="launcher_tab_tools">Tools</string>
     <string name="launcher_quick_actions_title">Library tools</string>
+    <string name="launcher_tools_actions_title">Tools &amp; settings</string>
+    <string name="launcher_browse_actions_title">Find &amp; add games</string>
+    <string name="launcher_dev_tools_header">Developer &amp; diagnostics</string>
     <string name="launcher_scan_games">Scan Games</string>
     <string name="launcher_scan_games_detail">Find Xbox 360 games in your ROM folders</string>
     <string name="launcher_add_game_folder">Add Game Folder</string>
@@ -56,9 +59,9 @@
     <string name="launcher_recent_game_guest_heap">Guest heap / exception</string>
     <string name="launcher_recent_game_maybe_crashed">May have crashed/closed</string>
     <string name="launcher_recent_game_unknown">Unknown</string>
-    <string name="launcher_settings_detail">Profiles, video, audio, input</string>
-    <string name="launcher_trace_detail">Frame capture analysis</string>
-    <string name="launcher_demo_detail">Vulkan surface test</string>
+    <string name="launcher_settings_detail">Profile, video, audio &amp; controls</string>
+    <string name="launcher_trace_detail">Inspect a captured GPU frame</string>
+    <string name="launcher_demo_detail">Test the Vulkan rendering surface</string>
     <string name="osd_app_title">Xenia Thor</string>
     <string name="osd_runtime_status">Vulkan / ARM64</string>
     <string name="osd_a64_research_active">Xenia Thor Android build</string>

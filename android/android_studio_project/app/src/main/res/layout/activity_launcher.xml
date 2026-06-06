@@ -251,6 +251,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/launcher_action_rail_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif-medium"
@@ -482,6 +483,17 @@
                             android:textSize="10sp" />
                     </LinearLayout>
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/launcher_dev_tools_header"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/launcher_dev_tools_header"
+                    android:textColor="@color/xenia_text_secondary"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
 
                 <LinearLayout
                     android:id="@+id/launcher_gpu_trace_card"
