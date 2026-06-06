@@ -1023,6 +1023,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   const PipelineLayout* merge_stripd_run_layout_ = nullptr;
   int32_t merge_stripd_run_vgt_offset_ = 0;
   uint32_t merge_stripd_run_hist_[8] = {};
+  // Strip-coalescer TEXTURE-aware run histogram (logged as stript_runlen[...]):
+  // like merge_strip_run_* but a run additionally requires the pixel texture
+  // descriptor signature to be UNCHANGED. This ISOLATES the texture breaker (vs
+  // stripd's transform breaker) and directly predicts rank-5's standalone payoff:
+  // after rank-5 pre-transform removes the transform as a run-breaker, only
+  // texture changes remain, so stript_runlen == the post-rank-5 merge factor. If
+  // stript stays high, rank-5 alone suffices; if it collapses like stripd, rank-4
+  // (bindless) is ALSO required. Valid only with vulkan_cache_texture_descriptors
+  // on (else the texture descriptor bit is cleared unconditionally every draw).
+  bool merge_draw_ptex_same_ = false;
+  uint32_t merge_stript_run_len_ = 0;
+  bool merge_stript_run_active_ = false;
+  VkPipeline merge_stript_run_pipeline_ = VK_NULL_HANDLE;
+  const PipelineLayout* merge_stript_run_layout_ = nullptr;
+  int32_t merge_stript_run_vgt_offset_ = 0;
+  uint32_t merge_stript_run_hist_[8] = {};
   // Merge-miss attribution (read-only): when a true-eligible run breaks, why did
   // THIS draw fail to extend it (first failing gate)? non_dma = not kGuestDMA;
   // topo = non-list/line/point topology; other = memexport / primitive-restart;

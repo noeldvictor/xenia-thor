@@ -2197,6 +2197,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_stripd_run_hist_[b];
     }
+    // Flush the final in-progress texture-aware strip run into its histogram.
+    if (merge_stript_run_len_) {
+      uint32_t rl = merge_stript_run_len_;
+      uint32_t b = rl <= 1    ? 0
+                   : rl == 2  ? 1
+                   : rl <= 4  ? 2
+                   : rl <= 8  ? 3
+                   : rl <= 16 ? 4
+                   : rl <= 32 ? 5
+                   : rl <= 64 ? 6
+                              : 7;
+      ++merge_stript_run_hist_[b];
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -2217,6 +2230,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "strip_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "stripd_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "stript_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
@@ -2287,6 +2301,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_stripd_run_hist_[2], merge_stripd_run_hist_[3],
         merge_stripd_run_hist_[4], merge_stripd_run_hist_[5],
         merge_stripd_run_hist_[6], merge_stripd_run_hist_[7],
+        merge_stript_run_hist_[0], merge_stript_run_hist_[1],
+        merge_stript_run_hist_[2], merge_stript_run_hist_[3],
+        merge_stript_run_hist_[4], merge_stript_run_hist_[5],
+        merge_stript_run_hist_[6], merge_stript_run_hist_[7],
         merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
         merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
@@ -2405,6 +2423,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_stripd_run_layout_ = nullptr;
     merge_stripd_run_vgt_offset_ = 0;
     std::memset(merge_stripd_run_hist_, 0, sizeof(merge_stripd_run_hist_));
+    merge_stript_run_len_ = 0;
+    merge_stript_run_active_ = false;
+    merge_stript_run_pipeline_ = VK_NULL_HANDLE;
+    merge_stript_run_layout_ = nullptr;
+    merge_stript_run_vgt_offset_ = 0;
+    std::memset(merge_stript_run_hist_, 0, sizeof(merge_stript_run_hist_));
     merge_miss_non_dma_ = 0;
     merge_miss_topology_ = 0;
     merge_miss_other_ = 0;
@@ -5140,6 +5164,54 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         }
       }
     }
+    // Strip-coalescer TEXTURE-aware run histogram (stript_runlen): like the strip
+    // run but a run extends only when the pixel texture descriptor signature is
+    // ALSO unchanged - ISOLATES the texture run-breaker (parallel to stripd's
+    // transform breaker) and predicts rank-5's standalone payoff (after a
+    // pre-transform removes the transform breaker, only texture breaks remain).
+    {
+      const xenos::PrimitiveType stript_prim =
+          primitive_processing_result.host_primitive_type;
+      const int32_t stript_vgt_offset =
+          regs.Get<int32_t>(XE_GPU_REG_VGT_INDX_OFFSET);
+      const bool stript_mergeable =
+          primitive_processing_result.index_buffer_type ==
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+          stript_prim == xenos::PrimitiveType::kTriangleStrip &&
+          memexport_extent_start >= memexport_extent_end;
+      const bool stript_extend =
+          merge_stript_run_active_ && stript_mergeable &&
+          merge_draw_ptex_same_ &&
+          current_guest_graphics_pipeline_ == merge_stript_run_pipeline_ &&
+          current_guest_graphics_pipeline_layout_ == merge_stript_run_layout_ &&
+          stript_vgt_offset == merge_stript_run_vgt_offset_;
+      if (stript_extend) {
+        ++merge_stript_run_len_;
+      } else {
+        if (merge_stript_run_len_) {
+          uint32_t rl = merge_stript_run_len_;
+          uint32_t b = rl <= 1    ? 0
+                       : rl == 2  ? 1
+                       : rl <= 4  ? 2
+                       : rl <= 8  ? 3
+                       : rl <= 16 ? 4
+                       : rl <= 32 ? 5
+                       : rl <= 64 ? 6
+                                  : 7;
+          ++merge_stript_run_hist_[b];
+        }
+        if (stript_mergeable) {
+          merge_stript_run_active_ = true;
+          merge_stript_run_len_ = 1;
+          merge_stript_run_pipeline_ = current_guest_graphics_pipeline_;
+          merge_stript_run_layout_ = current_guest_graphics_pipeline_layout_;
+          merge_stript_run_vgt_offset_ = stript_vgt_offset;
+        } else {
+          merge_stript_run_active_ = false;
+          merge_stript_run_len_ = 0;
+        }
+      }
+    }
   }
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;
@@ -7343,6 +7415,15 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         ~((UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
           (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
   }
+
+  // Capture - while the bit still reflects THIS draw's change - whether the pixel
+  // texture descriptor set is UNCHANGED from the previous draw (only meaningful
+  // with vulkan_cache_texture_descriptors on; otherwise the bit was just cleared
+  // unconditionally above). Consumed by the stript_runlen histogram to isolate the
+  // texture run-breaker and predict rank-5's standalone merge payoff.
+  merge_draw_ptex_same_ =
+      (current_graphics_descriptor_set_values_up_to_date_ &
+       (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel)) != 0;
 
   // Make sure new descriptor sets are bound to the command buffer.
 
