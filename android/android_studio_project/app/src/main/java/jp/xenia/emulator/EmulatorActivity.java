@@ -161,6 +161,14 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_shift_fastpath");
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
+            // Present-mode A/B (thermal vs latency): default selection prefers
+            // IMMEDIATE (uncapped -> 568fps + GPU 98% + overheat on unthrottled
+            // loading screens, device-observed on Lost Odyssey). Allowlist these
+            // so a device A/B can force MAILBOX/FIFO and measure heat vs gameplay
+            // perf before changing any default. No default behavior change.
+            copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_immediate");
+            copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_mailbox");
+            copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_fifo_relaxed");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
