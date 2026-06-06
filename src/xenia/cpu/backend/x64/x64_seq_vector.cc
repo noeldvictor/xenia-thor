@@ -2126,37 +2126,25 @@ struct PACK : Sequence<PACK, I<OPCODE_PACK, V128Op, V128Op, V128Op>> {
     std::memset(b, 0, sizeof(b));
 
     for (int i = 0; i < 2; i++) {
-      b[7 - i] = half_float::detail::float2half<std::round_toward_zero>(a[i]);
+      b[7 - i] = float_to_xenos_half(a[i]);
     }
 
     return _mm_load_si128(reinterpret_cast<__m128i*>(b));
   }
   static void EmitFLOAT16_2(X64Emitter& e, const EmitArgType& i) {
     assert_true(i.src2.value->IsConstantZero());
-    // http://blogs.msdn.com/b/chuckw/archive/2012/09/11/directxmath-f16c-and-fma.aspx
     // dest = [(src1.x | src1.y), 0, 0, 0]
-
-    if (e.IsFeatureEnabled(kX64EmitF16C)) {
-      Xmm src;
-      if (i.src1.is_constant) {
-        src = i.dest;
-        e.LoadConstantXmm(src, i.src1.constant());
-      } else {
-        src = i.src1;
-      }
-      // 0|0|0|0|W|Z|Y|X
-      e.vcvtps2ph(i.dest, src, 0b00000011);
-      // Shuffle to X|Y|0|0|0|0|0|0
-      e.vpshufb(i.dest, i.dest, e.GetXmmConstPtr(XMMPackFLOAT16_2));
+    // Xenon FLOAT16 is NOT IEEE half (no inf/nan; large values saturate to
+    // 0x7FFF), so the hardware F16C vcvtps2ph path is wrong here — always use
+    // the software xenos conversion (float_to_xenos_half), matching the a64
+    // backend and xenia-canary.
+    if (i.src1.is_constant) {
+      e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
     } else {
-      if (i.src1.is_constant) {
-        e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
-      } else {
-        e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
-      }
-      e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_2));
-      e.vmovaps(i.dest, e.xmm0);
+      e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
     }
+    e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_2));
+    e.vmovaps(i.dest, e.xmm0);
   }
   static __m128i EmulateFLOAT16_4(void*, __m128 src1) {
     alignas(16) float a[4];
@@ -2165,8 +2153,7 @@ struct PACK : Sequence<PACK, I<OPCODE_PACK, V128Op, V128Op, V128Op>> {
     std::memset(b, 0, sizeof(b));
 
     for (int i = 0; i < 4; i++) {
-      b[7 - (i ^ 2)] =
-          half_float::detail::float2half<std::round_toward_zero>(a[i]);
+      b[7 - (i ^ 2)] = float_to_xenos_half(a[i], false, true);
     }
 
     return _mm_load_si128(reinterpret_cast<__m128i*>(b));
@@ -2174,28 +2161,16 @@ struct PACK : Sequence<PACK, I<OPCODE_PACK, V128Op, V128Op, V128Op>> {
   static void EmitFLOAT16_4(X64Emitter& e, const EmitArgType& i) {
     assert_true(i.src2.value->IsConstantZero());
     // dest = [(src1.z | src1.w), (src1.x | src1.y), 0, 0]
-
-    if (e.IsFeatureEnabled(kX64EmitF16C)) {
-      Xmm src;
-      if (i.src1.is_constant) {
-        src = i.dest;
-        e.LoadConstantXmm(src, i.src1.constant());
-      } else {
-        src = i.src1;
-      }
-      // 0|0|0|0|W|Z|Y|X
-      e.vcvtps2ph(i.dest, src, 0b00000011);
-      // Shuffle to Z|W|X|Y|0|0|0|0
-      e.vpshufb(i.dest, i.dest, e.GetXmmConstPtr(XMMPackFLOAT16_4));
+    // Xenon FLOAT16 is non-IEEE (round-to-nearest-even, saturate to 0x7FFF) —
+    // the hardware F16C path is wrong; use the software xenos conversion,
+    // matching the a64 backend and xenia-canary.
+    if (i.src1.is_constant) {
+      e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
     } else {
-      if (i.src1.is_constant) {
-        e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
-      } else {
-        e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
-      }
-      e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_4));
-      e.vmovaps(i.dest, e.xmm0);
+      e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
     }
+    e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_4));
+    e.vmovaps(i.dest, e.xmm0);
   }
   static void EmitSHORT_2(X64Emitter& e, const EmitArgType& i) {
     assert_true(i.src2.value->IsConstantZero());
@@ -2541,7 +2516,7 @@ struct UNPACK : Sequence<UNPACK, I<OPCODE_UNPACK, V128Op, V128Op>> {
     _mm_store_si128(reinterpret_cast<__m128i*>(a), src1);
 
     for (int i = 0; i < 2; i++) {
-      b[i] = half_float::detail::half2float(a[VEC128_W(6 + i)]);
+      b[i] = xenos_half_to_float(a[VEC128_W(6 + i)]);
     }
 
     // Constants, or something
@@ -2551,46 +2526,17 @@ struct UNPACK : Sequence<UNPACK, I<OPCODE_UNPACK, V128Op, V128Op>> {
     return _mm_load_ps(b);
   }
   static void EmitFLOAT16_2(X64Emitter& e, const EmitArgType& i) {
-    // 1 bit sign, 5 bit exponent, 10 bit mantissa
-    // D3D10 half float format
-    // TODO(benvanik):
-    // http://blogs.msdn.com/b/chuckw/archive/2012/09/11/directxmath-f16c-and-fma.aspx
-    // Use _mm_cvtph_ps -- requires very modern processors (SSE5+)
-    // Unpacking half floats:
-    // http://fgiesen.wordpress.com/2012/03/28/half-to-float-done-quic/
-    // Packing half floats: https://gist.github.com/rygorous/2156668
-    // Load source, move from tight pack of X16Y16.... to X16...Y16...
-    // Also zero out the high end.
-    // TODO(benvanik): special case constant unpacks that just get 0/1/etc.
-
-    if (e.IsFeatureEnabled(kX64EmitF16C)) {
-      Xmm src;
-      if (i.src1.is_constant) {
-        src = i.dest;
-        e.LoadConstantXmm(src, i.src1.constant());
-      } else {
-        src = i.src1;
-      }
-      // sx = src.iw >> 16;
-      // sy = src.iw & 0xFFFF;
-      // dest = { XMConvertHalfToFloat(sx),
-      //          XMConvertHalfToFloat(sy),
-      //          0.0,
-      //          1.0 };
-      // Shuffle to 0|0|0|0|0|0|Y|X
-      e.vpshufb(i.dest, src, e.GetXmmConstPtr(XMMUnpackFLOAT16_2));
-      e.vcvtph2ps(i.dest, i.dest);
-      e.vpshufd(i.dest, i.dest, 0b10100100);
-      e.vpor(i.dest, e.GetXmmConstPtr(XMM0001));
+    // 1 bit sign, 5 bit exponent, 10 bit mantissa - but Xenon FLOAT16 is NOT
+    // IEEE half (exponent 0x1F is a normal value, not inf/nan), so the hardware
+    // F16C vcvtph2ps path is wrong; use the software xenos conversion
+    // (xenos_half_to_float), matching the a64 backend and xenia-canary.
+    if (i.src1.is_constant) {
+      e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
     } else {
-      if (i.src1.is_constant) {
-        e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
-      } else {
-        e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
-      }
-      e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_2));
-      e.vmovaps(i.dest, e.xmm0);
+      e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
     }
+    e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_2));
+    e.vmovaps(i.dest, e.xmm0);
   }
   static __m128 EmulateFLOAT16_4(void*, __m128i src1) {
     alignas(16) uint16_t a[8];
@@ -2598,33 +2544,22 @@ struct UNPACK : Sequence<UNPACK, I<OPCODE_UNPACK, V128Op, V128Op>> {
     _mm_store_si128(reinterpret_cast<__m128i*>(a), src1);
 
     for (int i = 0; i < 4; i++) {
-      b[i] = half_float::detail::half2float(a[VEC128_W(4 + i)]);
+      b[i] = xenos_half_to_float(a[VEC128_W(4 + i)]);
     }
 
     return _mm_load_ps(b);
   }
   static void EmitFLOAT16_4(X64Emitter& e, const EmitArgType& i) {
     // src = [(dest.x | dest.y), (dest.z | dest.w), 0, 0]
-    if (e.IsFeatureEnabled(kX64EmitF16C)) {
-      Xmm src;
-      if (i.src1.is_constant) {
-        src = i.dest;
-        e.LoadConstantXmm(src, i.src1.constant());
-      } else {
-        src = i.src1;
-      }
-      // Shuffle to 0|0|0|0|W|Z|Y|X
-      e.vpshufb(i.dest, src, e.GetXmmConstPtr(XMMUnpackFLOAT16_4));
-      e.vcvtph2ps(i.dest, i.dest);
+    // Xenon FLOAT16 is non-IEEE; the hardware F16C path is wrong — use the
+    // software xenos conversion, matching the a64 backend and xenia-canary.
+    if (i.src1.is_constant) {
+      e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
     } else {
-      if (i.src1.is_constant) {
-        e.lea(e.GetNativeParam(0), e.StashConstantXmm(0, i.src1.constant()));
-      } else {
-        e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
-      }
-      e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_4));
-      e.vmovaps(i.dest, e.xmm0);
+      e.lea(e.GetNativeParam(0), e.StashXmm(0, i.src1));
     }
+    e.CallNativeSafe(reinterpret_cast<void*>(EmulateFLOAT16_4));
+    e.vmovaps(i.dest, e.xmm0);
   }
   static void EmitSHORT_2(X64Emitter& e, const EmitArgType& i) {
     // (VD.x) = 3.0 + (VB.x>>16)*2^-22
