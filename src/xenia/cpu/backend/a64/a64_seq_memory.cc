@@ -11,12 +11,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 
 #include "xenia/base/byte_order.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/memory.h"
+#include "xenia/base/threading.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_emitter.h"
 #include "xenia/cpu/backend/a64/a64_op.h"
@@ -53,6 +55,29 @@ DEFINE_bool(arm64_use_flat_membase, false,
             "Default-off; experimental. No effect on Windows (64K granularity "
             "requires the fixup).",
             "a64");
+// Spin-loop-yield (cross-title generalization of the proven Blue Dragon
+// draw-wait fastpath, +27% fps). CPU-bound 360 titles (Lost Odyssey, Gears 2)
+// burn ~12-25% CPU in a shared XDK spin-wait primitive that busy-polls mftb in a
+// tight loop; the spinner never yields, starving the lock-holder thread. The
+// LOAD_CLOCK helper detects the tight poll and yields. Default-OFF (a single
+// bool check on the default path); earns default-on after a device A/B on
+// LO/Gears2. See docs/research/20260606-thor-spin-loop-yield-cpu-lever-scope.md.
+DEFINE_bool(a64_clock_spin_yield, false,
+            "Thor ARM64: when a guest thread busy-polls mftb in a tight loop "
+            "(the XDK spin-wait primitive), yield the host core so the "
+            "lock-holder thread runs sooner. Cross-title generalization of the "
+            "Blue Dragon draw-wait fastpath. Default off; device-validate.",
+            "a64");
+DEFINE_uint32(a64_clock_spin_yield_stride, 64,
+              "Thor ARM64: yield after this many consecutive tight (back-to-"
+              "back) mftb reads from one thread. Higher = only deeper spins "
+              "yield (fewer false positives on legit timing code).",
+              "a64");
+DEFINE_uint32(a64_clock_spin_yield_sleep_us, 0,
+              "Thor ARM64: sleep this many host microseconds at each spin-yield. "
+              "0 = sched_yield only (safest, no sleep latency). The BD fastpath "
+              "uses ~100us; tune on-device.",
+              "a64");
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -726,7 +751,32 @@ struct LOAD_CLOCK : Sequence<LOAD_CLOCK, I<OPCODE_LOAD_CLOCK, I64Op>> {
     e.mov(i.dest, e.x0);
   }
   static uint64_t LoadClock(void* raw_context) {
-    return Clock::QueryGuestTickCount();
+    const uint64_t guest_tick = Clock::QueryGuestTickCount();
+    if (cvars::a64_clock_spin_yield) {
+      // Per-thread tight-poll detector. A real mftb spin reads the clock far
+      // faster (every few guest instructions) than legitimate timing code
+      // (a handful of reads per frame), so only count reads that arrive within
+      // ~2us of the previous one as "spinning"; any larger gap resets.
+      thread_local uint64_t last_host_ticks = 0;
+      thread_local uint32_t consecutive_rapid = 0;
+      const uint64_t now = Clock::QueryHostTickCount();
+      const uint64_t rapid_ticks = Clock::QueryHostTickFrequency() / 500000u;
+      if (last_host_ticks != 0 && (now - last_host_ticks) <= rapid_ticks) {
+        if (++consecutive_rapid >= cvars::a64_clock_spin_yield_stride) {
+          consecutive_rapid = 0;
+          const uint32_t sleep_us = cvars::a64_clock_spin_yield_sleep_us;
+          if (sleep_us) {
+            xe::threading::Sleep(std::chrono::microseconds(sleep_us));
+          } else {
+            xe::threading::MaybeYield();
+          }
+        }
+      } else {
+        consecutive_rapid = 0;
+      }
+      last_host_ticks = now;
+    }
+    return guest_tick;
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_LOAD_CLOCK, LOAD_CLOCK);

@@ -206,6 +206,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_perf_counters");
             copyBooleanExtra(intent, launchArguments, "gpu_edram_passes_dont_care");
             copyBooleanExtra(intent, launchArguments, "gpu_skip_edram_transfers");
+            copyBooleanExtra(intent, launchArguments, "a64_clock_spin_yield");
+            copyIntExtra(intent, launchArguments, "a64_clock_spin_yield_stride");
+            copyIntExtra(intent, launchArguments, "a64_clock_spin_yield_sleep_us");
             copyBooleanExtra(intent, launchArguments, "vulkan_dump_rt_full_barrier");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_dump_rt_image");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_dump_depth_image");
