@@ -424,3 +424,84 @@ TEST_CASE("VECTOR_AVERAGE_I32_UNSIGNED", "[instr]") {
         REQUIRE(result == vec128i(-1, 0, 2000000000, 1));
       });
 }
+
+// VECTOR_SUB saturating (vsubsws/vsubuws/vsubsbs...) clamps a-b to the type
+// range. a64 has native sqsub/uqsub for every width; x64 has PSUBS/PSUBUS only
+// for byte/word and EMULATES the 32-bit saturating cases with hand-rolled
+// overflow detection - so the 32-bit signed/unsigned saturate is the key
+// cross-backend differential (emulation vs native).
+TEST_CASE("VECTOR_SUB_I32_SIGNED_SATURATE", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3,
+            b.VectorSub(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE,
+                        ARITHMETIC_SATURATE));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] = vec128i(INT_MAX, INT_MIN, 100, -100);
+        ctx->v[5] = vec128i(INT_MIN, INT_MAX, 50, 50);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        // MAX-MIN overflows +, MIN-MAX overflows -, both saturate.
+        REQUIRE(result == vec128i(INT_MAX, INT_MIN, 50, -150));
+      });
+}
+
+TEST_CASE("VECTOR_SUB_I32_UNSIGNED_SATURATE", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3,
+            b.VectorSub(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE,
+                        ARITHMETIC_SATURATE | ARITHMETIC_UNSIGNED));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        // -1 == UINT_MAX (unsigned). Underflow (b>a) saturates to 0.
+        ctx->v[4] = vec128i(100, 0, -1, 5);
+        ctx->v[5] = vec128i(50, 1, 0, 10);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        REQUIRE(result == vec128i(50, 0, -1, 0));
+      });
+}
+
+TEST_CASE("VECTOR_SUB_I8_SIGNED_SATURATE", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3,
+            b.VectorSub(LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE,
+                        ARITHMETIC_SATURATE));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] = vec128b(127, -128, 100, -100, 0, 50, -50, 10, 1, -1, 60,
+                            -60, 127, -128, 5, -5);
+        ctx->v[5] = vec128b(-128, 127, 50, 50, 0, 50, -50, 10, 1, -1, -70, 70,
+                            1, -1, 6, 6);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        REQUIRE(result == vec128b(127, -128, 50, -128, 0, 0, 0, 0, 0, 0, 127,
+                                  -128, 126, -127, -1, -11));
+      });
+}
+
+TEST_CASE("VECTOR_SUB_I32_MODULO", "[instr]") {
+  TestFunction test([](HIRBuilder& b) {
+    StoreVR(b, 3, b.VectorSub(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        ctx->v[4] = vec128i(INT_MAX, 0, 100, -100);
+        ctx->v[5] = vec128i(-1, 1, 50, 50);
+      },
+      [](PPCContext* ctx) {
+        auto result = ctx->v[3];
+        // INT_MAX-(-1) wraps to INT_MIN (modulo, no saturate).
+        REQUIRE(result == vec128i(INT_MIN, -1, 50, -150));
+      });
+}
