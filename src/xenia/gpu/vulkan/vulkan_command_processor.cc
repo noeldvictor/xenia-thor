@@ -3240,8 +3240,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // the pending concatenation run (it belongs to the old pass) before ending it.
     FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
-    RecordPassTimestamp(false);
     deferred_command_buffer_.CmdVkEndRenderPass();
+    // End-of-pass timestamp AFTER EndRenderPass so it captures the TBDR tile
+    // store/flush (the deferred binning+fragment work), not just draw recording.
+    RecordPassTimestamp(false);
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
@@ -3275,8 +3277,9 @@ void VulkanCommandProcessor::EndRenderPass() {
   // never called between mergeable draws (the pass stays open), so coalescing is
   // preserved.
   FlushPendingMergeRun();
-  RecordPassTimestamp(false);
   deferred_command_buffer_.CmdVkEndRenderPass();
+  // End-of-pass timestamp AFTER EndRenderPass to capture the TBDR tile store.
+  RecordPassTimestamp(false);
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
 }
