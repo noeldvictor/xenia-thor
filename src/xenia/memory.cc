@@ -979,15 +979,35 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
 
   if (page_count > (high_page_number - low_page_number)) {
     auto* thread_state = cpu::ThreadState::Get();
-    uint32_t guest_lr = (thread_state && thread_state->context())
-                            ? uint32_t(thread_state->context()->lr)
-                            : 0;
+    auto* ctx = thread_state ? thread_state->context() : nullptr;
+    uint32_t guest_lr = ctx ? uint32_t(ctx->lr) : 0;
     XELOGE(
         "BaseHeap::Alloc page count too big for requested range "
         "(size={:08X} page_count={:X} low_page={:X} high_page={:X} "
         "page_size={:X} heap_base={:08X} heap_size={:08X} guest_lr={:08X})",
         size, page_count, low_page_number, high_page_number, page_size_,
         heap_base_, heap_size_, guest_lr);
+    // Walk the guest PPC back-chain to find the caller that requested this
+    // impossible size. PPC frames: [sp] = caller frame, callee's return addr
+    // saved at [caller_sp - 8]. (One-shot diag for absurd phys allocs.)
+    if (ctx && memory_) {
+      uint32_t sp = uint32_t(ctx->r[1]);
+      XELOGE("  alloc-too-big guest backtrace (sp={:08X} lr={:08X}):", sp,
+             guest_lr);
+      for (int frame = 0; frame < 12 && sp >= 0x1000 && sp < 0xFFFFF000;
+           ++frame) {
+        auto rd32 = [&](uint32_t addr) -> uint32_t {
+          const uint8_t* p = memory_->TranslateVirtual<const uint8_t*>(addr);
+          return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+                 (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+        };
+        uint32_t parent_sp = rd32(sp);
+        if (parent_sp <= sp || parent_sp - sp > 0x20000) break;
+        uint32_t ret = rd32(parent_sp - 8);
+        XELOGE("    #{} ret={:08X} (frame sp={:08X})", frame, ret, parent_sp);
+        sp = parent_sp;
+      }
+    }
     return false;
   }
 
