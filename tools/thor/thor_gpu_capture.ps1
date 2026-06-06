@@ -105,7 +105,11 @@ if ($dbgArgs) { Write-Output "label=$label" }
 & $adb -s $DeviceSerial shell svc power stayon true
 & $adb -s $DeviceSerial logcat -G 64M
 & $adb -s $DeviceSerial logcat -c
-$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true $dumpArgs --es target '$iso'"
+# --ei a64_max_stackpoints 262144 matches what the real launcher forces
+# (XeniaAndroidSettings, commit 3d3bbf526); without it the device TOML pins the
+# 65536 default and heavy-longjmp titles (IU, BTTF Episode 1) spuriously SIGABRT
+# "Overflowed stackpoints!" in captures that DON'T crash via the app UI.
+$cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true --ei a64_max_stackpoints 262144 $dumpArgs --es target '$iso'"
 & $adb -s $DeviceSerial shell $cmd | Out-Null
 
 # Capture output paths (defined before the watchdog so a hot-stop can still grab
