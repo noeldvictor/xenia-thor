@@ -2184,6 +2184,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_strip_run_hist_[b];
     }
+    // Flush the final in-progress descriptor-aware strip run into its histogram.
+    if (merge_stripd_run_len_) {
+      uint32_t rl = merge_stripd_run_len_;
+      uint32_t b = rl <= 1    ? 0
+                   : rl == 2  ? 1
+                   : rl <= 4  ? 2
+                   : rl <= 8  ? 3
+                   : rl <= 16 ? 4
+                   : rl <= 32 ? 5
+                   : rl <= 64 ? 6
+                              : 7;
+      ++merge_stripd_run_hist_[b];
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -2203,6 +2216,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "strip_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "stripd_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
@@ -2269,6 +2283,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_strip_run_hist_[2], merge_strip_run_hist_[3],
         merge_strip_run_hist_[4], merge_strip_run_hist_[5],
         merge_strip_run_hist_[6], merge_strip_run_hist_[7],
+        merge_stripd_run_hist_[0], merge_stripd_run_hist_[1],
+        merge_stripd_run_hist_[2], merge_stripd_run_hist_[3],
+        merge_stripd_run_hist_[4], merge_stripd_run_hist_[5],
+        merge_stripd_run_hist_[6], merge_stripd_run_hist_[7],
         merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
         merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
@@ -2381,6 +2399,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_strip_run_layout_ = nullptr;
     merge_strip_run_vgt_offset_ = 0;
     std::memset(merge_strip_run_hist_, 0, sizeof(merge_strip_run_hist_));
+    merge_stripd_run_len_ = 0;
+    merge_stripd_run_active_ = false;
+    merge_stripd_run_pipeline_ = VK_NULL_HANDLE;
+    merge_stripd_run_layout_ = nullptr;
+    merge_stripd_run_vgt_offset_ = 0;
+    std::memset(merge_stripd_run_hist_, 0, sizeof(merge_stripd_run_hist_));
     merge_miss_non_dma_ = 0;
     merge_miss_topology_ = 0;
     merge_miss_other_ = 0;
@@ -5066,6 +5090,56 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         }
       }
     }
+    // Strip-coalescer DESCRIPTOR-aware run histogram (stripd_runlen): identical to
+    // the strip run above but a run extends only when the vertex float constants
+    // (the per-mesh transform) are ALSO unchanged - the TRUE rank-3 merge factor.
+    // A constant change marks a new object whose strip CANNOT be stitched into the
+    // same physical draw (it has a different transform), so it breaks the run. The
+    // gap to strip_runlen = what the rank-4/5 wideners (bindless / pre-transform)
+    // would have to recover for the full strip-merge factor.
+    {
+      const xenos::PrimitiveType stripd_prim =
+          primitive_processing_result.host_primitive_type;
+      const int32_t stripd_vgt_offset =
+          regs.Get<int32_t>(XE_GPU_REG_VGT_INDX_OFFSET);
+      const bool stripd_mergeable =
+          primitive_processing_result.index_buffer_type ==
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+          stripd_prim == xenos::PrimitiveType::kTriangleStrip &&
+          memexport_extent_start >= memexport_extent_end;
+      const bool stripd_extend =
+          merge_stripd_run_active_ && stripd_mergeable &&
+          merge_draw_vfetch_consts_same_ &&
+          current_guest_graphics_pipeline_ == merge_stripd_run_pipeline_ &&
+          current_guest_graphics_pipeline_layout_ == merge_stripd_run_layout_ &&
+          stripd_vgt_offset == merge_stripd_run_vgt_offset_;
+      if (stripd_extend) {
+        ++merge_stripd_run_len_;
+      } else {
+        if (merge_stripd_run_len_) {
+          uint32_t rl = merge_stripd_run_len_;
+          uint32_t b = rl <= 1    ? 0
+                       : rl == 2  ? 1
+                       : rl <= 4  ? 2
+                       : rl <= 8  ? 3
+                       : rl <= 16 ? 4
+                       : rl <= 32 ? 5
+                       : rl <= 64 ? 6
+                                  : 7;
+          ++merge_stripd_run_hist_[b];
+        }
+        if (stripd_mergeable) {
+          merge_stripd_run_active_ = true;
+          merge_stripd_run_len_ = 1;
+          merge_stripd_run_pipeline_ = current_guest_graphics_pipeline_;
+          merge_stripd_run_layout_ = current_guest_graphics_pipeline_layout_;
+          merge_stripd_run_vgt_offset_ = stripd_vgt_offset;
+        } else {
+          merge_stripd_run_active_ = false;
+          merge_stripd_run_len_ = 0;
+        }
+      }
+    }
   }
   trace_last_draw_sequence_ = ++trace_draw_sequence_;
   trace_last_draw_vs_hash_ = vertex_shader_hash;
@@ -6931,6 +7005,17 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     }
     merge_last_pipeline_ = current_guest_graphics_pipeline_;
   }
+
+  // Capture - BEFORE the per-draw invalidation below re-sets the up-to-date bit -
+  // whether this draw's vertex float constants (the per-mesh transform) are
+  // UNCHANGED from the previous draw. This is the strip-coalescer's true (rank-3)
+  // mergeability gate: consecutive strips can be stitched into one physical draw
+  // only if they share the per-object transform. Consumed by the stripd_runlen
+  // histogram in the draw-outcomes instrumentation (which runs later, after the
+  // bit has already been re-set by the upload below).
+  merge_draw_vfetch_consts_same_ =
+      (current_constant_buffers_up_to_date_ &
+       (UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFloatVertex)) != 0;
 
   // Invalidate constant buffers and descriptors for changed data.
 

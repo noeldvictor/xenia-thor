@@ -1007,6 +1007,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   const PipelineLayout* merge_strip_run_layout_ = nullptr;
   int32_t merge_strip_run_vgt_offset_ = 0;
   uint32_t merge_strip_run_hist_[8] = {};
+  // Strip-coalescer DESCRIPTOR-aware run histogram (logged as stripd_runlen[...]):
+  // like merge_strip_run_* but a run additionally requires the vertex float
+  // constants (the per-mesh transform) to be UNCHANGED - the TRUE rank-3 merge
+  // factor, since strips can be stitched into ONE physical draw only if they share
+  // the per-object transform. The gap between strip_runlen and stripd_runlen sizes
+  // how much the rank-4 (bindless) / rank-5 (CPU pre-transform) wideners recover.
+  // merge_draw_vfetch_consts_same_ is captured per draw in UpdateConstantBuffers
+  // (before the per-draw invalidation re-sets the up-to-date bit) and consumed by
+  // the stripd run logic in the draw-outcomes instrumentation.
+  bool merge_draw_vfetch_consts_same_ = false;
+  uint32_t merge_stripd_run_len_ = 0;
+  bool merge_stripd_run_active_ = false;
+  VkPipeline merge_stripd_run_pipeline_ = VK_NULL_HANDLE;
+  const PipelineLayout* merge_stripd_run_layout_ = nullptr;
+  int32_t merge_stripd_run_vgt_offset_ = 0;
+  uint32_t merge_stripd_run_hist_[8] = {};
   // Merge-miss attribution (read-only): when a true-eligible run breaks, why did
   // THIS draw fail to extend it (first failing gate)? non_dma = not kGuestDMA;
   // topo = non-list/line/point topology; other = memexport / primitive-restart;
