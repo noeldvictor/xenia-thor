@@ -19,13 +19,15 @@ DEFINE_bool(hir_algebraic_identities, false,
             "identities are unsafe re: NaN/signed zero). Experimental.",
             "CPU");
 
-DEFINE_bool(hir_fold_and_not, false,
+DEFINE_bool(hir_fold_and_not, true,
             "Fold dependent AND(x, NOT(y)) HIR sequences into a single AND_NOT "
             "opcode (the a64 backend lowers AND_NOT to one BIC). When the NOT "
             "has no other uses, dead-code elimination then removes it, so the "
             "two-op AND+NOT becomes one BIC. Bit-exact (definitional). "
-            "Default-off pending on-device regression validation before "
-            "default-on. Ported from xenia-edge c383d049e.",
+            "Default-on: the fold transform is host-x64 unit-tested "
+            "(AND_NOT_FOLD_TRANSFORM) and the a64 AND_NOT->BIC lowering is "
+            "qemu-tested (AND_NOT_*_RUNTIME); Blue Dragon device run regression-"
+            "clean. Ported from xenia-edge c383d049e.",
             "CPU");
 
 namespace xe {
