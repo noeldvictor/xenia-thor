@@ -1110,12 +1110,21 @@ bool Emulator::SaveToFile(const std::filesystem::path& path) {
 
   // It's important we don't hold the global lock here! XThreads need to step
   // forward (possibly through guarded regions) without worry!
+  // Per-step progress logging: SaveToFile was observed to stall on Android
+  // (~68KB written then no completion); these pinpoint the hanging subsystem.
+  XELOGI("save-state: SaveToFile begin (saving processor)");
   processor_->Save(&stream);
+  XELOGI("save-state: saving graphics (@{} bytes)", stream.offset());
   graphics_system_->Save(&stream);
+  XELOGI("save-state: saving audio (@{} bytes)", stream.offset());
   audio_system_->Save(&stream);
+  XELOGI("save-state: saving kernel (@{} bytes)", stream.offset());
   kernel_state_->Save(&stream);
+  XELOGI("save-state: saving memory (@{} bytes)", stream.offset());
   memory_->Save(&stream);
+  XELOGI("save-state: closing (@{} bytes)", stream.offset());
   map->Close(stream.offset());
+  XELOGI("save-state: SaveToFile done (@{} bytes)", stream.offset());
 
   Resume();
   return true;
