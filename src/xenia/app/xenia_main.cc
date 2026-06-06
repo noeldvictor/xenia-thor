@@ -8,6 +8,7 @@
  */
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -21,6 +22,7 @@
 
 #include "xenia/app/emulator_window.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/debugging.h"
 #include "xenia/base/filesystem.h"
@@ -108,6 +110,25 @@ DEFINE_path(
 
 DEFINE_bool(mount_scratch, false, "Enable scratch mount", "Storage");
 DEFINE_bool(mount_cache, false, "Enable cache mount", "Storage");
+
+// Headless/Android save-state hooks for DETERMINISTIC SCENE-REACH (A/B testing):
+// the engine has Emulator::Save/RestoreFromFile but they're only wired to the
+// desktop F7/F8 keys (DEBUG-only). These cvars expose them on the Android/headless
+// path - reach a scene once (auto-save at a guest-uptime target) then restore it
+// deterministically for matched GPU-lever A/Bs. All gated off by default. NOTE:
+// the save-state path is desktop-tested; cross-platform round-trip is unverified
+// on Android (device-validate save THEN restore before relying on it).
+DEFINE_path(restore_state_path, "",
+            "If non-empty, restore the emulator save-state from this file right "
+            "after the title launches (same-title only).",
+            "SaveState");
+DEFINE_path(save_state_path, "state.sav",
+            "Path that the save_state_at_guest_ms auto-save writes to.",
+            "SaveState");
+DEFINE_int32(save_state_at_guest_ms, 0,
+             "If >0, auto-save the emulator state to save_state_path once guest "
+             "uptime reaches this many ms (one-shot). 0 = disabled.",
+             "SaveState");
 
 DEFINE_transient_path(target, "",
                       "Specifies the target .xex or .iso to execute.",
@@ -769,6 +790,41 @@ void EmulatorApp::EmulatorThread() {
       xe::FatalError(fmt::format("Failed to launch target: {:08X}", result));
       app_context().RequestDeferredQuit();
       return;
+    }
+
+    // Deterministic scene-reach (A/B testing): optionally restore a save-state
+    // right after launch, and/or auto-save once guest uptime reaches a target.
+    // Both gated by cvars (default off) - exposes the engine save-state on the
+    // Android/headless path where the desktop F7/F8 keys don't exist. Runs on
+    // this EmulatorThread (owns the title lifecycle); the auto-save uses a host
+    // poll-thread (SaveToFile pauses the GUEST threads, so a non-guest host
+    // thread is safe, like the desktop UI-thread F7 path).
+    if (!cvars::restore_state_path.empty()) {
+      if (emulator_->RestoreFromFile(cvars::restore_state_path)) {
+        XELOGI("save-state: restored from '{}'",
+               xe::path_to_utf8(cvars::restore_state_path));
+      } else {
+        XELOGE("save-state: failed to restore from '{}'",
+               xe::path_to_utf8(cvars::restore_state_path));
+      }
+    }
+    if (cvars::save_state_at_guest_ms > 0) {
+      const uint64_t target_ms = uint64_t(cvars::save_state_at_guest_ms);
+      const std::filesystem::path save_path = cvars::save_state_path;
+      Emulator* emu = emulator_.get();
+      std::thread([emu, target_ms, save_path]() {
+        while (xe::Clock::QueryGuestUptimeMillis() < target_ms) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        if (emu->SaveToFile(save_path)) {
+          XELOGI("save-state: auto-saved to '{}' at guest ~{}ms",
+                 xe::path_to_utf8(save_path),
+                 xe::Clock::QueryGuestUptimeMillis());
+        } else {
+          XELOGE("save-state: auto-save to '{}' failed",
+                 xe::path_to_utf8(save_path));
+        }
+      }).detach();
     }
   }
 

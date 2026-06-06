@@ -170,6 +170,13 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_mailbox");
             copyBooleanExtra(intent, launchArguments, "vulkan_allow_present_mode_fifo_relaxed");
             copyBooleanExtra(intent, launchArguments, "vulkan_present_refresh_capped");
+            // Save-state hooks for deterministic scene-reach A/B testing (gated,
+            // default off): restore a state right after launch, and/or auto-save
+            // once guest uptime hits a target. Exposes the engine save-state on
+            // the Android path (no desktop F7/F8 keys).
+            copyStringExtra(intent, launchArguments, "restore_state_path");
+            copyStringExtra(intent, launchArguments, "save_state_path");
+            copyIntExtra(intent, launchArguments, "save_state_at_guest_ms");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
