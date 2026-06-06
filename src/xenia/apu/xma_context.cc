@@ -751,7 +751,21 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
             xma::GetPacketFrameOffset(packet) + packet_idx * kBitsPerPacket;
       }
       // TODO buffer bounds check
-      assert_true(data->input_buffer_read_offset < offset);
+      if (data->input_buffer_read_offset >= offset) {
+        // No forward progress: the recomputed frame offset is not ahead of the
+        // current read offset (malformed/exhausted packet stream). This was an
+        // assert_true, which SIGABRTs the WHOLE emulator on a guest-data XMA
+        // edge case (device-observed crashing Gears of War ~85s in,
+        // xma_context.cc:754). Match this function's other "buffer fully used"
+        // exits (break) instead - strictly safer than aborting; the game
+        // re-kicks the decoder with a fresh buffer. Only reached when the old
+        // assert would have fired, so working audio is byte-for-byte unaffected.
+        XELOGW(
+            "XmaContext {}: non-forward input read offset (0x{:X} >= 0x{:X}); "
+            "stopping decode of this buffer",
+            id(), uint32_t(data->input_buffer_read_offset), offset);
+        break;
+      }
       data->input_buffer_read_offset = offset;
     }
   }
