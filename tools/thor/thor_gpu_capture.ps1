@@ -108,19 +108,32 @@ if ($dbgArgs) { Write-Output "label=$label" }
 $cmd = "am start -W -n $pkg/jp.xenia.emulator.EmulatorActivity $drvArgs $dbgArgs --es cpu arm64 --es apu android --es hid nop --es hid_nop_button_sequence '$seq' --ez arm64_enable_mini_jit true --ez android_hide_osd true --ez mount_cache true $dumpArgs --es target '$iso'"
 & $adb -s $DeviceSerial shell $cmd | Out-Null
 
-# 3. Watchdog (64C gate, poll 10s).
+# Capture output paths (defined before the watchdog so a hot-stop can still grab
+# data - thermally-aggressive titles like LO / the BD heavy field trip 64C before
+# the duration ends, and we must NOT lose the frame+logcat to the force-stop).
+$log = Join-Path $OutDir "$($label)_logcat.txt"
+$png = Join-Path $OutDir "$($label)_frame.png"
+
+# 3. Watchdog (64C gate, poll 10s). On a hot trip CAPTURE the frame+logcat BEFORE
+# force-stopping (the app is still live at 64C; screencap is quick) so hot titles
+# still yield data.
 $hot = $false
 for ($t = 10; $t -le $DurationSec; $t += 10) {
   Start-Sleep -Seconds 10
   $temp = [int]("0$(& $adb -s $DeviceSerial shell cat /sys/class/kgsl/kgsl-3d0/temp)".Trim())
   $busy = "$(& $adb -s $DeviceSerial shell cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage)".Trim()
   Write-Output ("t={0}s temp={1}C busy={2}" -f $t, ($temp/1000.0), $busy)
-  if ($temp -ge 64000) { Write-Output "WATCHDOG: >=64C, force-stop"; & $adb -s $DeviceSerial shell am force-stop $pkg; $hot = $true; break }
+  if ($temp -ge 64000) {
+    Write-Output "WATCHDOG: >=64C, capture+force-stop"
+    (& $adb -s $DeviceSerial logcat -d) | Out-File -Encoding utf8 $log
+    & $adb -s $DeviceSerial shell screencap -p /sdcard/thor_gpu_capture.png
+    & $adb -s $DeviceSerial pull /sdcard/thor_gpu_capture.png $png | Out-Null
+    & $adb -s $DeviceSerial shell am force-stop $pkg
+    $hot = $true; break
+  }
 }
 
 # 4. Capture logcat (text, utf8) + screenshot (binary via /sdcard+pull), then stop.
-$log = Join-Path $OutDir "$($label)_logcat.txt"
-$png = Join-Path $OutDir "$($label)_frame.png"
 if (-not $hot) {
   (& $adb -s $DeviceSerial logcat -d) | Out-File -Encoding utf8 $log
   & $adb -s $DeviceSerial shell screencap -p /sdcard/thor_gpu_capture.png
