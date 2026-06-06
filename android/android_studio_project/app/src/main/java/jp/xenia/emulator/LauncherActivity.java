@@ -220,9 +220,20 @@ public class LauncherActivity extends Activity {
     private void launchGame(final Uri uri, final String displayTitle) {
         final Intent emulatorIntent = new Intent(this, EmulatorActivity.class);
         emulatorIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        final String titleId = resolveTitleIdForSaveTools(
+                displayTitle,
+                XeniaAndroidSettings.resolveLaunchTarget(this, uri),
+                uri.toString());
         final Bundle emulatorLaunchArguments =
-                XeniaAndroidSettings.createLaunchArguments(this, uri);
+                XeniaAndroidSettings.createLaunchArguments(this, uri, titleId);
         emulatorLaunchArguments.putAll(getDebugLaunchOverrides());
+        if (GameProfiles.hasProfile(titleId)) {
+            Toast.makeText(
+                    this,
+                    getString(R.string.launcher_game_profile_applied,
+                            GameProfiles.profileName(titleId)),
+                    Toast.LENGTH_SHORT).show();
+        }
         rememberLastGame(uri, displayTitle);
         XeniaAndroidSettings.recordLaunchStarted(
                 this,

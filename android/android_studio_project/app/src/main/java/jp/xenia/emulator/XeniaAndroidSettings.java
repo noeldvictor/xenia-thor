@@ -205,6 +205,11 @@ public final class XeniaAndroidSettings {
     }
 
     public static Bundle createLaunchArguments(final Context context, final Uri target) {
+        return createLaunchArguments(context, target, "");
+    }
+
+    public static Bundle createLaunchArguments(
+            final Context context, final Uri target, final String titleId) {
         ensureInitialized(context);
         final SharedPreferences preferences = getPreferences(context);
         final Bundle launchArguments = new Bundle();
@@ -245,6 +250,11 @@ public final class XeniaAndroidSettings {
         // Selected custom Vulkan ICD (GPU driver), if any -> gpu_vulkan_driver*
         // cvars for the libadrenotools loader (no-op for the system driver).
         GpuDriverManager.applyToLaunch(context, launchArguments);
+        // Per-game profile: best-known cvars for this specific title, applied
+        // after the global optimizations so a per-game win overrides the global
+        // default. No-op for unprofiled titles. The Bundle channel is the only
+        // one that beats the device's persisted xenia.config.toml.
+        GameProfiles.applyTo(titleId, launchArguments);
         return launchArguments;
     }
 
