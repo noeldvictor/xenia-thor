@@ -222,6 +222,19 @@ dword_result_t NtSetInformationFile_entry(
     }
     case XFileEndOfFileInformation: {
       auto info = info_ptr.as<X_FILE_END_OF_FILE_INFORMATION*>();
+      const uint64_t eof = uint64_t(info->end_of_file);
+      // Diagnostic for the Project Sylpheed cache:\access ~2.85GB (0xB61F0000)
+      // preallocation that drives a nonsensical multi-GB in-memory reserve on a
+      // 512MB-RAM 360. Flag abnormally large SetLength values (also logs the
+      // byteswap, so a guest layout/byte-order mis-read - e.g. 0xB61F0000 vs the
+      // 0x00001FB6=8118-byte swap - is obvious). Gated >64MB so normal saves
+      // don't spam. Cross-game: any title preallocating a huge cache file.
+      if (eof > (64ull << 20)) {
+        XELOGW(
+            "NtSetInformationFile EndOfFile LARGE: '{}' end_of_file=0x{:016X} "
+            "({} bytes); byteswap=0x{:016X}",
+            file->entry()->path(), eof, eof, xe::byte_swap(eof));
+      }
       result = file->SetLength(info->end_of_file);
       out_length = sizeof(*info);
 
