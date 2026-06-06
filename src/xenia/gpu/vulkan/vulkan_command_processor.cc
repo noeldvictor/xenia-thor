@@ -1743,7 +1743,7 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
         }
         uint32_t first_words[8] = {};
         uint32_t first_word_count =
-            uint32_t(std::min<uint32_t>(xe::countof(first_words), length / 4));
+            uint32_t(std::min<size_t>(xe::countof(first_words), length / 4));
         for (uint32_t i = 0; i < first_word_count; ++i) {
           std::memcpy(&first_words[i], bytes + i * sizeof(uint32_t),
                       sizeof(uint32_t));
@@ -1988,7 +1988,7 @@ void VulkanCommandProcessor::TraceVertexFetchSources(
           ++nonzero_samples;
         }
       }
-      uint32_t first_word_count = uint32_t(std::min<uint32_t>(
+      uint32_t first_word_count = uint32_t(std::min<size_t>(
           xe::countof(first_words_raw), length / sizeof(uint32_t)));
       for (uint32_t i = 0; i < first_word_count; ++i) {
         std::memcpy(&first_words_raw[i], bytes + i * sizeof(uint32_t),
