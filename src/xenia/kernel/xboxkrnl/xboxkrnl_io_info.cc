@@ -132,8 +132,10 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     default: {
-      // Unsupported, for now.
-      assert_always();
+      // Unsupported, for now. Log + return INVALID_PARAMETER instead of
+      // assert_always() (which aborts the emulator in release builds).
+      XELOGW("NtQueryInformationFile: unimplemented info_class={}",
+             uint32_t(info_class));
       status = X_STATUS_INVALID_PARAMETER;
       out_length = 0;
       break;
@@ -243,8 +245,13 @@ dword_result_t NtSetInformationFile_entry(
       break;
     }
     default:
-      // Unsupported, for now.
-      assert_always();
+      // Unsupported, for now. Don't assert_always() -- that aborts the whole
+      // emulator in release builds. Log the class and ignore the set (result
+      // stays X_STATUS_SUCCESS, matching the Disposition/Allocation ignore
+      // cases above) so the guest continues. Project Sylpheed reaches this
+      // once the cache: file-size fix lets it boot past the prior OOM.
+      XELOGW("NtSetInformationFile: unimplemented info_class={}",
+             uint32_t(info_class));
       out_length = 0;
       break;
   }
