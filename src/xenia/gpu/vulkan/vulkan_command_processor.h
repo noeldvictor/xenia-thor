@@ -996,6 +996,17 @@ class VulkanCommandProcessor : public CommandProcessor {
       xenos::PrimitiveType::kPointList;
   uint32_t merge_elig_run_next_byte_ = 0;
   uint32_t merge_elig_run_hist_[8] = {};
+  // Strip-coalescer-eligible run histogram (read-only): admits kTriangleStrip and
+  // DROPS the byte-contiguity gate (the coalescer stitches non-contiguous strips
+  // via a merged restart-separated index buffer), keyed on
+  // pipeline+pipeline_layout+VGT_INDX_OFFSET. Sizes BD's strip draw-merge factor;
+  // logged as strip_runlen[...].
+  uint32_t merge_strip_run_len_ = 0;
+  bool merge_strip_run_active_ = false;
+  VkPipeline merge_strip_run_pipeline_ = VK_NULL_HANDLE;
+  const PipelineLayout* merge_strip_run_layout_ = nullptr;
+  int32_t merge_strip_run_vgt_offset_ = 0;
+  uint32_t merge_strip_run_hist_[8] = {};
   // Merge-miss attribution (read-only): when a true-eligible run breaks, why did
   // THIS draw fail to extend it (first failing gate)? non_dma = not kGuestDMA;
   // topo = non-list/line/point topology; other = memexport / primitive-restart;

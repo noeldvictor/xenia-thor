@@ -2171,6 +2171,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_elig_run_hist_[b];
     }
+    // Flush the final in-progress strip-coalescer run into its histogram.
+    if (merge_strip_run_len_) {
+      uint32_t rl = merge_strip_run_len_;
+      uint32_t b = rl <= 1    ? 0
+                   : rl == 2  ? 1
+                   : rl <= 4  ? 2
+                   : rl <= 8  ? 3
+                   : rl <= 16 ? 4
+                   : rl <= 32 ? 5
+                   : rl <= 64 ? 6
+                              : 7;
+      ++merge_strip_run_hist_[b];
+    }
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -2189,6 +2202,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "vf[same={} contig={} scattered={}] "
         "runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "elig_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
+        "strip_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
@@ -2251,6 +2265,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_elig_run_hist_[2], merge_elig_run_hist_[3],
         merge_elig_run_hist_[4], merge_elig_run_hist_[5],
         merge_elig_run_hist_[6], merge_elig_run_hist_[7],
+        merge_strip_run_hist_[0], merge_strip_run_hist_[1],
+        merge_strip_run_hist_[2], merge_strip_run_hist_[3],
+        merge_strip_run_hist_[4], merge_strip_run_hist_[5],
+        merge_strip_run_hist_[6], merge_strip_run_hist_[7],
         merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
         merge_miss_noncontig_, merge_miss_other_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
@@ -2357,6 +2375,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_elig_run_pipeline_ = VK_NULL_HANDLE;
     merge_elig_run_next_byte_ = 0;
     std::memset(merge_elig_run_hist_, 0, sizeof(merge_elig_run_hist_));
+    merge_strip_run_len_ = 0;
+    merge_strip_run_active_ = false;
+    merge_strip_run_pipeline_ = VK_NULL_HANDLE;
+    merge_strip_run_layout_ = nullptr;
+    merge_strip_run_vgt_offset_ = 0;
+    std::memset(merge_strip_run_hist_, 0, sizeof(merge_strip_run_hist_));
     merge_miss_non_dma_ = 0;
     merge_miss_topology_ = 0;
     merge_miss_other_ = 0;
@@ -4993,6 +5017,52 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         } else {
           merge_elig_run_active_ = false;
           merge_elig_run_len_ = 0;
+        }
+      }
+    }
+    // Strip-coalescer-eligible run histogram: admits kTriangleStrip and DROPS the
+    // byte-contiguity gate (the draw-coalescer stitches non-contiguous strips via
+    // a merged restart-separated index buffer), keyed on
+    // pipeline+pipeline_layout+VGT_INDX_OFFSET. Sizes BD's strip draw-merge factor.
+    {
+      const xenos::PrimitiveType strip_prim =
+          primitive_processing_result.host_primitive_type;
+      const int32_t strip_vgt_offset =
+          regs.Get<int32_t>(XE_GPU_REG_VGT_INDX_OFFSET);
+      const bool strip_mergeable =
+          primitive_processing_result.index_buffer_type ==
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+          strip_prim == xenos::PrimitiveType::kTriangleStrip &&
+          memexport_extent_start >= memexport_extent_end;
+      const bool strip_extend =
+          merge_strip_run_active_ && strip_mergeable &&
+          current_guest_graphics_pipeline_ == merge_strip_run_pipeline_ &&
+          current_guest_graphics_pipeline_layout_ == merge_strip_run_layout_ &&
+          strip_vgt_offset == merge_strip_run_vgt_offset_;
+      if (strip_extend) {
+        ++merge_strip_run_len_;
+      } else {
+        if (merge_strip_run_len_) {
+          uint32_t rl = merge_strip_run_len_;
+          uint32_t b = rl <= 1    ? 0
+                       : rl == 2  ? 1
+                       : rl <= 4  ? 2
+                       : rl <= 8  ? 3
+                       : rl <= 16 ? 4
+                       : rl <= 32 ? 5
+                       : rl <= 64 ? 6
+                                  : 7;
+          ++merge_strip_run_hist_[b];
+        }
+        if (strip_mergeable) {
+          merge_strip_run_active_ = true;
+          merge_strip_run_len_ = 1;
+          merge_strip_run_pipeline_ = current_guest_graphics_pipeline_;
+          merge_strip_run_layout_ = current_guest_graphics_pipeline_layout_;
+          merge_strip_run_vgt_offset_ = strip_vgt_offset;
+        } else {
+          merge_strip_run_active_ = false;
+          merge_strip_run_len_ = 0;
         }
       }
     }
