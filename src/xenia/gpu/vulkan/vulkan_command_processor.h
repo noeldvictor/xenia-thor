@@ -654,10 +654,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   static const VkDescriptorPoolSize kDescriptorPoolSizeUniformBuffer;
   static const VkDescriptorPoolSize kDescriptorPoolSizeStorageBuffer;
   static const VkDescriptorPoolSize kDescriptorPoolSizeTextures[2];
+  // gpu_vulkan_float_constants_ssbo: the guest-constants set becomes MIXED (the
+  // system/bool/fetch bindings stay UNIFORM_BUFFER, the two float bindings
+  // become STORAGE_BUFFER), so it needs a pool providing both types.
+  static const VkDescriptorPoolSize kDescriptorPoolSizeConstantsMixed[2];
   ui::vulkan::LinkedTypeDescriptorSetAllocator
       transient_descriptor_allocator_uniform_buffer_;
   ui::vulkan::LinkedTypeDescriptorSetAllocator
       transient_descriptor_allocator_storage_buffer_;
+  // Allocator for the MIXED guest-constants set when gpu_vulkan_float_constants_
+  // ssbo is on (UNIFORM_BUFFER + STORAGE_BUFFER bindings in one set). Lazily
+  // allocates pages, so costs nothing when the cvar is off.
+  ui::vulkan::LinkedTypeDescriptorSetAllocator
+      transient_descriptor_allocator_constants_mixed_;
   std::deque<UsedSingleTransientDescriptor> single_transient_descriptors_used_;
   std::array<std::vector<VkDescriptorSet>,
              size_t(SingleTransientDescriptorLayout::kCount)>
