@@ -316,6 +316,18 @@ DEFINE_bool(gpu_vulkan_shared_memory_no_switch, false,
             "dword instead of 1 (N = guest RAM / maxStorageBufferRange, 4 on a "
             "128 MB-range device). Default off (proprietary path unchanged).",
             "GPU");
+DEFINE_bool(gpu_vulkan_float_constants_ssbo, false,
+            "Declare the guest float-constant buffer as an SSBO "
+            "(StorageClassStorageBuffer) instead of a UBO. The Mesa Turnip ir3 "
+            "backend appears to miscompile DYNAMIC (a0-relative, i.e. indexed/"
+            "skinning) OpAccessChain reads of the UNIFORM float_constants array "
+            "(returning wrong values -> degenerate vertex positions -> black 3D, "
+            "e.g. Magna Carta 2's skinned scenes); Turnip indexes storage buffers "
+            "robustly. Must be matched by the descriptor-set layout, pool, and "
+            "write (all STORAGE_BUFFER) - the CP gates those on this cvar too. "
+            "Default off (UBO path unchanged); likely fixes any indexed-constant/"
+            "skinned-VS title when on.",
+            "GPU");
 DEFINE_bool(spirv_debug_identity_ndc, false,
             "DIAGNOSTIC: skip the guest->host NDC scale/offset transform in the "
             "vertex-shader epilogue (do not read the ndc_scale/ndc_offset system "

@@ -443,10 +443,26 @@ void SpirvShaderTranslator::StartTranslation() {
       builder_->addMemberName(type_float_constants, 0, "float_constants");
       builder_->addMemberDecoration(type_float_constants, 0,
                                     spv::DecorationOffset, 0);
-      builder_->addDecoration(type_float_constants, spv::DecorationBlock);
+      // gpu_vulkan_float_constants_ssbo: optionally declare the float constants
+      // as an SSBO (StorageBuffer) instead of a UBO. The Turnip ir3 backend
+      // miscompiles DYNAMIC (a0-relative / indexed = skinning) reads of the
+      // UNIFORM float_constants array (returns wrong values -> degenerate vertex
+      // positions -> black 3D, e.g. Magna Carta 2), but indexes storage buffers
+      // robustly. Mirrors the shared-memory SSBO pattern (Block on >=1.3,
+      // BufferBlock on <1.3). MUST match the descriptor layout/pool/write, which
+      // the command processor gates on this same cvar.
+      const bool float_constants_ssbo = cvars::gpu_vulkan_float_constants_ssbo;
+      builder_->addDecoration(
+          type_float_constants,
+          (float_constants_ssbo && features_.spirv_version < spv::Spv_1_3)
+              ? spv::DecorationBufferBlock
+              : spv::DecorationBlock);
       uniform_float_constants_ = builder_->createVariable(
-          spv::NoPrecision, spv::StorageClassUniform, type_float_constants,
-          "xe_uniform_float_constants");
+          spv::NoPrecision,
+          (float_constants_ssbo && features_.spirv_version >= spv::Spv_1_3)
+              ? spv::StorageClassStorageBuffer
+              : spv::StorageClassUniform,
+          type_float_constants, "xe_uniform_float_constants");
       builder_->addDecoration(uniform_float_constants_,
                               spv::DecorationDescriptorSet,
                               int(kDescriptorSetConstants));
@@ -2716,9 +2732,14 @@ spv::Id SpirvShaderTranslator::LoadOperandStorage(
       id_vector_temp_util_.push_back(const_int_0_);
       // Array element.
       id_vector_temp_util_.push_back(index);
-      vec4_pointer = builder_->createAccessChain(spv::StorageClassUniform,
-                                                 uniform_float_constants_,
-                                                 id_vector_temp_util_);
+      // Storage class must match the float_constants buffer declaration
+      // (gpu_vulkan_float_constants_ssbo -> StorageBuffer on SPIR-V >= 1.3).
+      vec4_pointer = builder_->createAccessChain(
+          (cvars::gpu_vulkan_float_constants_ssbo &&
+           features_.spirv_version >= spv::Spv_1_3)
+              ? spv::StorageClassStorageBuffer
+              : spv::StorageClassUniform,
+          uniform_float_constants_, id_vector_temp_util_);
       break;
     default:
       assert_unhandled_case(operand.storage_source);
