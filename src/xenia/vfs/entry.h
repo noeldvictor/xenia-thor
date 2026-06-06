@@ -110,6 +110,7 @@ class Entry {
   bool Delete(Entry* entry);
   bool Delete();
   void Touch();
+  void Rename(const std::filesystem::path file_path);
 
   // If successful, out_file points to a new file. When finished, call
   // file->Destroy()
@@ -131,6 +132,11 @@ class Entry {
     return nullptr;
   }
   virtual bool DeleteEntryInternal(Entry* entry) { return false; }
+  // Move/rename this entry to the given guest path. Default is a no-op (used by
+  // read-only devices - ISO/STFS - where rename is unsupported). Writable
+  // host-backed devices override to perform the actual move.
+  virtual void RenameEntryInternal(
+      const std::vector<std::string_view>& path_parts) {}
 
   xe::global_critical_region global_critical_region_;
   Device* device_;

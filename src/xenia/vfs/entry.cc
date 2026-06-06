@@ -11,6 +11,7 @@
 
 #include "xenia/base/filesystem.h"
 #include "xenia/base/string.h"
+#include "xenia/base/utf8.h"
 #include "xenia/vfs/device.h"
 
 namespace xe {
@@ -131,6 +132,31 @@ bool Entry::Delete() {
 
 void Entry::Touch() {
   // TODO(benvanik): update timestamps.
+}
+
+void Entry::Rename(const std::filesystem::path file_path) {
+  // Store the string to ensure string_views from split_path remain valid.
+  const std::string path_str = xe::path_to_utf8(file_path);
+  // Guest-aware split (handles both '\' and '/' separators; std::filesystem on
+  // POSIX/Android does NOT treat '\' as a separator, so file_path.filename()
+  // would return the whole guest path - use the split parts instead).
+  std::vector<std::string_view> path_parts = xe::utf8::split_path(path_str);
+  if (path_parts.size() < 2) {
+    // Malformed target (no "root:\name"); nothing safe to do.
+    return;
+  }
+  // Remove the root (e.g. "cache:").
+  path_parts.erase(path_parts.begin());
+
+  // Device-specific move (no-op on read-only devices).
+  RenameEntryInternal(path_parts);
+
+  const std::string guest_path =
+      xe::utf8::join_paths(path_parts, xe::kGuestPathSeparator);
+  absolute_path_ =
+      xe::utf8::join_guest_paths(device_->mount_path(), guest_path);
+  path_ = guest_path;
+  name_ = std::string(path_parts.back());
 }
 
 }  // namespace vfs

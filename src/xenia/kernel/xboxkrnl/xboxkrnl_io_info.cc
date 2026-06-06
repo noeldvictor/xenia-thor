@@ -257,6 +257,26 @@ dword_result_t NtSetInformationFile_entry(
       }
       break;
     }
+    case XFileRenameInformation: {
+      // Atomic write pattern: write a temp file, then rename it onto the final
+      // path. Previously unimplemented -> the rename silently no-op'd, so the
+      // save/cache file never landed at its final path and the subsequent
+      // open/query failed (cross-game: any title that writes-temp-then-renames,
+      // e.g. Project Sylpheed cache:\ writes). Move the backing host file.
+      auto info = info_ptr.as<X_FILE_RENAME_INFORMATION*>();
+      const std::string target_path =
+          util::TranslateAnsiPath(kernel_memory(), &info->ansi_string);
+      if (target_path.empty()) {
+        result = X_STATUS_INVALID_PARAMETER;
+        out_length = 0;
+        break;
+      }
+      XELOGI("NtSetInformationFile rename '{}' -> '{}'", file->entry()->path(),
+             target_path);
+      result = file->Rename(xe::to_path(target_path));
+      out_length = sizeof(X_FILE_RENAME_INFORMATION);
+      break;
+    }
     default:
       // Unsupported, for now. Don't assert_always() -- that aborts the whole
       // emulator in release builds. Log the class and ignore the set (result

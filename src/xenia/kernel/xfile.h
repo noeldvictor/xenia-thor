@@ -111,6 +111,9 @@ class XFile : public XObject {
 
   X_STATUS SetLength(size_t length);
 
+  // Renames/moves the backing entry to the given guest path (FileRename info).
+  X_STATUS Rename(const std::filesystem::path file_path);
+
   void RegisterIOCompletionPort(uint32_t key, object_ref<XIOCompletion> port);
   void RemoveIOCompletionPort(uint32_t key);
 
