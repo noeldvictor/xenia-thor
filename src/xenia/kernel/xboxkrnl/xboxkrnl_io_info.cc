@@ -99,12 +99,19 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     case XFileXctdCompressionInformation: {
-      // Files that are XCTD compressed begin with the magic 0x0FF512ED but we
-      // shouldn't detect this that way. There's probably a flag somewhere
-      // (attributes?) that defines if it's compressed or not.
-      auto info = info_ptr.as<X_FILE_XCTD_COMPRESSION_INFORMATION*>();
-      info->unknown = 0;
-      out_length = sizeof(*info);
+      // Returning SUCCESS here (with unknown=0, a fork change) makes some titles
+      // (Banjo-Kazooie: Nuts & Bolts) treat large compressed \bundle files as
+      // XCTD and FALSE-FAIL their content verify -> bogus dirty-disc error. The
+      // ISO is byte-identical to a copy that boots on upstream canary; canary
+      // returns INVALID_PARAMETER here, so the guest treats the file as non-XCTD
+      // and reads it raw, which verifies. Match upstream. (Root-caused by a
+      // fork-vs-canary diff with a PC x64 repro; the bug reproduces on x64 + a64,
+      // i.e. it is NOT a64-codegen and NOT the disc.)
+      XELOGE(
+          "NtQueryInformationFile(XFileXctdCompressionInformation) "
+          "unimplemented");
+      status = X_STATUS_INVALID_PARAMETER;
+      out_length = 0;
       break;
     };
     case XFileNetworkOpenInformation: {
