@@ -57,6 +57,9 @@ DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
 DECLARE_bool(arm64_compiled_call_trace_full_regs);
 DECLARE_bool(arm64_compiled_call_trace_returns);
+DECLARE_string(arm64_pc_operand_log_pcs);
+DECLARE_string(arm64_pc_operand_log_tids);
+DECLARE_uint32(arm64_pc_operand_log_budget);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
@@ -170,6 +173,9 @@ std::atomic<int> g_a64_call_trace_budget{0};
 std::atomic<uint32_t> g_a64_call_trace_configured_budget{
     std::numeric_limits<uint32_t>::max()};
 std::atomic<uint64_t> g_a64_call_trace_first_host_ms{0};
+std::atomic<int> g_pc_operand_log_budget{0};
+std::atomic<uint32_t> g_pc_operand_log_configured_budget{
+    std::numeric_limits<uint32_t>::max()};
 std::mutex g_a64_call_trace_counts_mutex;
 std::unordered_map<uint64_t, uint64_t> g_a64_call_trace_counts;
 std::atomic<int> g_blue_dragon_draw_wait_caller_profile_budget{0};
@@ -1926,6 +1932,67 @@ void TraceFunctionReturn(void* raw_context, uint64_t function_address) {
       static_cast<uint32_t>(ctx->r[3]), static_cast<uint32_t>(ctx->r[4]),
       static_cast<uint32_t>(ctx->r[5]), static_cast<uint32_t>(ctx->r[10]),
       static_cast<uint32_t>(ctx->r[11]));
+}
+
+void ConfigurePcOperandLogBudget() {
+  uint32_t budget = cvars::arm64_pc_operand_log_budget;
+  uint32_t configured_budget =
+      g_pc_operand_log_configured_budget.load(std::memory_order_relaxed);
+  if (configured_budget == budget) {
+    return;
+  }
+  if (g_pc_operand_log_configured_budget.compare_exchange_strong(
+          configured_budget, budget, std::memory_order_acq_rel)) {
+    int clamped_budget =
+        budget > static_cast<uint32_t>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(budget);
+    g_pc_operand_log_budget.store(clamped_budget, std::memory_order_release);
+  }
+}
+
+bool ConsumePcOperandLogBudget() {
+  int value = g_pc_operand_log_budget.load(std::memory_order_relaxed);
+  while (value > 0) {
+    if (g_pc_operand_log_budget.compare_exchange_strong(
+            value, value - 1, std::memory_order_acq_rel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Banjo deep JIT-fix operand capture: logs the guest GPRs at a specific guest PC
+// (filtered by arm64_pc_operand_log_pcs/_tids). Emitted at MarkSourceOffset ONLY
+// into functions whose body contains a matching PC, via the SAME safe
+// CallNativeSafe path as TraceFunctionEntry (reads values from PPCContext, not
+// live host regs). Pick capture PCs at ctx-boundaries (just after bl/bctrl
+// returns, or std/stw-to-ctx) so the GPRs are authoritative; pair with
+// arm64_context_value_cache=false if a value might be in an unflushed host reg.
+void LogPcOperands(void* raw_context, uint64_t guest_pc) {
+  auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  if (!ctx) {
+    return;
+  }
+  if (!TraceFilterMatches(ctx->thread_id, cvars::arm64_pc_operand_log_tids)) {
+    return;
+  }
+  ConfigurePcOperandLogBudget();
+  if (!ConsumePcOperandLogBudget()) {
+    return;
+  }
+  XELOGI(
+      "A64 PC operand pc {:08X} thid {:08X} r3 {:08X} r4 {:08X} r5 {:08X} "
+      "r6 {:08X} r7 {:08X} r8 {:08X} r9 {:08X} r10 {:08X} r11 {:08X} "
+      "r27 {:08X} r29 {:08X} r30 {:08X} r31 {:08X} lr {:08X}",
+      static_cast<uint32_t>(guest_pc), ctx->thread_id,
+      static_cast<uint32_t>(ctx->r[3]), static_cast<uint32_t>(ctx->r[4]),
+      static_cast<uint32_t>(ctx->r[5]), static_cast<uint32_t>(ctx->r[6]),
+      static_cast<uint32_t>(ctx->r[7]), static_cast<uint32_t>(ctx->r[8]),
+      static_cast<uint32_t>(ctx->r[9]), static_cast<uint32_t>(ctx->r[10]),
+      static_cast<uint32_t>(ctx->r[11]), static_cast<uint32_t>(ctx->r[27]),
+      static_cast<uint32_t>(ctx->r[29]), static_cast<uint32_t>(ctx->r[30]),
+      static_cast<uint32_t>(ctx->r[31]), static_cast<uint32_t>(ctx->lr));
 }
 
 void UpdateBlueDragonDrawWaitKernelTimeForFastpath(void* raw_context) {
@@ -4028,6 +4095,18 @@ void A64Emitter::MarkSourceOffset(const hir::Instr* i) {
   entry->guest_address = static_cast<uint32_t>(i->src1.offset);
   entry->hir_offset = uint32_t(i->block->ordinal << 16) | i->ordinal;
   entry->code_offset = static_cast<uint32_t>(getSize());
+
+  // Banjo deep JIT-fix: emit a guest-GPR operand log immediately before this
+  // guest instruction when its PC matches arm64_pc_operand_log_pcs. The check
+  // runs at JIT time so the CallNativeSafe is only emitted into the handful of
+  // functions containing a target PC (no per-instruction runtime cost).
+  if (!cvars::arm64_pc_operand_log_pcs.empty()) {
+    uint32_t pc = static_cast<uint32_t>(i->src1.offset);
+    if (TraceFilterMatches(pc, cvars::arm64_pc_operand_log_pcs)) {
+      mov(x1, static_cast<uint64_t>(pc));
+      CallNativeSafe(reinterpret_cast<void*>(&LogPcOperands));
+    }
+  }
 }
 
 void A64Emitter::DebugBreak() {

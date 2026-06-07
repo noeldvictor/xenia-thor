@@ -352,6 +352,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_compiled_call_trace_after_ms");
             copyBooleanExtra(intent, launchArguments, "arm64_compiled_call_trace_full_regs");
             copyBooleanExtra(intent, launchArguments, "arm64_compiled_call_trace_returns");
+            copyStringExtra(intent, launchArguments, "arm64_pc_operand_log_pcs");
+            copyStringExtra(intent, launchArguments, "arm64_pc_operand_log_tids");
+            copyIntExtra(intent, launchArguments, "arm64_pc_operand_log_budget");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_interval_ms");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_top_functions");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_min_delta");

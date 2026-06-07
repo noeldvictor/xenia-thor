@@ -124,6 +124,27 @@ DEFINE_bool(
     "status (the entry trace only shows inputs). Default off; use with a tight "
     "..._functions filter (commas, not semicolons, in adb extras).",
     "a64");
+DEFINE_string(
+    arm64_pc_operand_log_pcs, "",
+    "Thor ARM64 / Banjo deep JIT-fix: comma/semicolon/space separated guest PCs "
+    "or inclusive ranges at which to log the guest GPR operands. A mid-function "
+    "operand capture emitted at the matching guest instruction via the SAFE "
+    "entry-hook CallNativeSafe path (NOT the buggy epilog return hook). Empty "
+    "disables. Localizes which deep verify fn first returns the fail status "
+    "(e.g. Banjo 82719490,82719494,8271e258,8271e168). Pick PCs at ctx-"
+    "boundaries (just after bl/bctrl, or std/stw-to-ctx); pair with "
+    "arm64_context_value_cache=false so ctx->r[N] is authoritative.",
+    "a64");
+DEFINE_string(
+    arm64_pc_operand_log_tids, "",
+    "Thor ARM64: optional guest thread-id filter for arm64_pc_operand_log_pcs "
+    "(e.g. the verify worker thread). Empty = all threads.",
+    "a64");
+DEFINE_uint32(
+    arm64_pc_operand_log_budget, 4096,
+    "Thor ARM64: maximum arm64_pc_operand_log_pcs lines to emit (bounds device "
+    "logcat volume for the one-fire capture).",
+    "a64");
 DEFINE_bool(
     arm64_blue_dragon_draw_wait_probe, false,
     "Thor ARM64 bring-up: update current KTHREAD+0x58 at Blue Dragon's known "
