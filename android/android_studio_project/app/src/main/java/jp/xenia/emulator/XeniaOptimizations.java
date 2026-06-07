@@ -306,7 +306,7 @@ public final class XeniaOptimizations {
 
         list.add(new Optimization(
                 "opt_adpf_perf_hints",
-                "ADPF performance hints (experimental)",
+                "ADPF performance hints",
                 "Tells Android which thread is frame-critical so it boosts the "
                         + "right core and saves power when there's slack.",
                 "Android 12+ exposes the Dynamic Performance Framework (ADPF) "
@@ -317,8 +317,9 @@ public final class XeniaOptimizations {
                         + "there is slack - smarter than fixed core pinning, which Google "
                         + "says ADPF supersedes on Android 12+. Pure scheduling hint: it "
                         + "does not change rendering. No effect on ROMs without the API. "
-                        + "Experimental - validate per device.",
-                CATEGORY_THREADS, false, false,
+                        + "Device-validated functional + safe on the Thor (2026-06-07); "
+                        + "the scheduling benefit is largest on CPU-bound and loading scenes.",
+                CATEGORY_THREADS, true, true,
                 new BoolCvar[]{new BoolCvar("gpu_adpf_performance_hints")}, null));
 
         list.add(new Optimization(

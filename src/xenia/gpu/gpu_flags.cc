@@ -32,13 +32,15 @@ DEFINE_uint32(
     "GPU");
 
 DEFINE_bool(
-    gpu_adpf_performance_hints, false,
+    gpu_adpf_performance_hints, true,
     "Android only (ADPF Performance Hint API): report the GPU command-processor "
     "(frame-critical) thread's per-frame work duration vs the target frame "
     "budget to the OS so the scheduler boosts the right CPU core when frames "
     "run long and relaxes it (saving power/heat) when there is slack. Pure "
     "scheduling hint - does not change rendering. No-op off Android or on ROMs "
-    "without the API. Default off (experimental, validate per device).",
+    "without the API. Default ON (device-validated functional + safe 2026-06-07: "
+    "session created, 130s stable on Blue Dragon, rendering unaffected; benefit "
+    "is largest on CPU-bound/loading scenes).",
     "GPU");
 
 DEFINE_bool(
