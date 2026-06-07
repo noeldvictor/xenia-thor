@@ -56,6 +56,7 @@ DECLARE_string(arm64_compiled_call_trace_functions);
 DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
 DECLARE_bool(arm64_compiled_call_trace_full_regs);
+DECLARE_bool(arm64_compiled_call_trace_returns);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
@@ -1876,6 +1877,54 @@ void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
         static_cast<uint32_t>(ctx->r[7]), static_cast<uint32_t>(ctx->r[8]),
         static_cast<uint32_t>(ctx->r[9]), static_cast<uint32_t>(ctx->r[12]));
   }
+}
+
+// Emitted at the shared function EPILOG (single exit) when call-trace +
+// arm64_compiled_call_trace_returns are on. Logs the guest RETURN value (r3)
+// of a traced function, so a verify chain's NTSTATUS-returning layers can be
+// localized (which fn FIRST returns the fail status) - the entry hook only
+// shows inputs. Same function/tid/after_ms/budget gating as TraceFunctionEntry.
+void TraceFunctionReturn(void* raw_context, uint64_t function_address) {
+  auto ctx = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  if (!ctx || !A64CallTraceRequested() ||
+      !cvars::arm64_compiled_call_trace_returns) {
+    return;
+  }
+
+  uint32_t function_u32 = static_cast<uint32_t>(function_address);
+  if (!TraceFilterMatches(
+          ctx->thread_id, cvars::arm64_compiled_call_trace_guest_tids) ||
+      !TraceFilterMatches(
+          function_u32, cvars::arm64_compiled_call_trace_functions)) {
+    return;
+  }
+
+  uint64_t now_ms = xe::Clock::QueryHostUptimeMillis();
+  uint64_t first_ms =
+      g_a64_call_trace_first_host_ms.load(std::memory_order_relaxed);
+  if (!first_ms &&
+      g_a64_call_trace_first_host_ms.compare_exchange_strong(
+          first_ms, now_ms, std::memory_order_acq_rel)) {
+    first_ms = now_ms;
+  }
+  uint32_t after_ms = cvars::arm64_compiled_call_trace_after_ms;
+  if (after_ms && now_ms - first_ms < after_ms) {
+    return;
+  }
+
+  ConfigureA64CallTraceBudget();
+  if (!ConsumeA64CallTraceBudget()) {
+    return;
+  }
+
+  XELOGI(
+      "A64 call trace RET thid {:08X} fn {:08X} '{}' r3 {:08X} r4 {:08X} "
+      "r5 {:08X} r10 {:08X} r11 {:08X}",
+      ctx->thread_id, function_u32,
+      DescribeTraceFunction(ctx->processor, function_u32),
+      static_cast<uint32_t>(ctx->r[3]), static_cast<uint32_t>(ctx->r[4]),
+      static_cast<uint32_t>(ctx->r[5]), static_cast<uint32_t>(ctx->r[10]),
+      static_cast<uint32_t>(ctx->r[11]));
 }
 
 void UpdateBlueDragonDrawWaitKernelTimeForFastpath(void* raw_context) {
@@ -3871,6 +3920,14 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // EPILOG
   // ========================================================================
   L(*epilog_label_);
+  // Return-value trace hook (single shared exit). Guest r3 (return value) is in
+  // ctx here (STORE_CONTEXT'd before the return). Gated at emit by the same
+  // A64CallTraceRequested() as the entry hook; runtime-gated by the _returns
+  // cvar + the function/tid filter inside TraceFunctionReturn.
+  if (A64CallTraceRequested()) {
+    mov(x1, static_cast<uint64_t>(current_guest_function_));
+    CallNativeSafe(reinterpret_cast<void*>(&TraceFunctionReturn));
+  }
   MaybeEmitBlueDragonStricmpReturnProfile();
   MaybeEmitBodyTimeProfileEnd();
   epilog_label_ = nullptr;

@@ -117,6 +117,14 @@ DEFINE_bool(
     "(the main line stays compact); use with a tight ..._functions filter.",
     "a64");
 DEFINE_bool(
+    arm64_compiled_call_trace_returns, false,
+    "Thor ARM64 bring-up: also emit an 'A64 call trace RET' line at each traced "
+    "function's RETURN with its return value (r3) + r4/r5/r10/r11. Localizes "
+    "which function in an NTSTATUS-returning verify chain FIRST returns the fail "
+    "status (the entry trace only shows inputs). Default off; use with a tight "
+    "..._functions filter (commas, not semicolons, in adb extras).",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_draw_wait_probe, false,
     "Thor ARM64 bring-up: update current KTHREAD+0x58 at Blue Dragon's known "
     "draw-thread wait timeout load site. Research-only title probe.",
