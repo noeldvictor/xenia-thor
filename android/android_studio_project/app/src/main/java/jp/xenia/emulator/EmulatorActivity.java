@@ -161,8 +161,13 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_shift_fastpath");
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
-            copyBooleanExtra(intent, launchArguments,
-                    "permit_float_constant_evaluation");
+            // NOTE: permit_float_constant_evaluation is deliberately NOT
+            // allowlisted. Setting it false makes constant-prop SKIP float XMM
+            // folds, but the XMM backend asserts on a both-constant operand
+            // (x64_op.h EmitCommutative/AssociativeBinaryXmmOp) -> a both-const
+            // float ADD/MUL/etc. would crash. The engine cvar stays default-on
+            // (inert, folds happen); do NOT make it settable until the XMM
+            // emitters materialize BOTH constants. See port-roadmap memory.
             // Present-mode A/B (thermal vs latency): default selection prefers
             // IMMEDIATE (uncapped -> 568fps + GPU 98% + overheat on unthrottled
             // loading screens, device-observed on Lost Odyssey). Allowlist these
