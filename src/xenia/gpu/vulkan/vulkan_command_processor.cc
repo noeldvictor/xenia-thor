@@ -2250,6 +2250,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
+        "cpu_real_us={} cpu_gap_us={} "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2300,6 +2301,27 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             : 0,
         draw_cpu_setup_ns_ / 1000, draw_cpu_emit_ns_ / 1000,
         draw_cpu_beginsubmit_ns_ / 1000,
+        // cpu_real = total IssueDraw minus the GPU-paced BeginSubmission wait =
+        // the real CPU work; cpu_real > gpu_frame  =>  genuinely CPU-bound
+        // (the reliable test - cpu_issuedraw alone bundles the throttle-wait).
+        (draw_cpu_total_ns_ > draw_cpu_beginsubmit_ns_)
+            ? (draw_cpu_total_ns_ - draw_cpu_beginsubmit_ns_) / 1000
+            : 0,
+        // cpu_gap = the truly UNACCOUNTED CPU: total minus every measured region
+        // (setup[which already includes beginsubmit] + process + textures + rt +
+        // pipeline + bindings + emit). The old cpu_other looked huge only because
+        // it did not subtract setup/emit; this is the real untimed remainder.
+        (draw_cpu_total_ns_ >
+         (draw_cpu_setup_ns_ + draw_cpu_process_ns_ + draw_cpu_textures_ns_ +
+          draw_cpu_rt_ns_ + draw_cpu_pipeline_ns_ + draw_cpu_bindings_ns_ +
+          draw_cpu_emit_ns_))
+            ? (draw_cpu_total_ns_ -
+               (draw_cpu_setup_ns_ + draw_cpu_process_ns_ +
+                draw_cpu_textures_ns_ + draw_cpu_rt_ns_ +
+                draw_cpu_pipeline_ns_ + draw_cpu_bindings_ns_ +
+                draw_cpu_emit_ns_)) /
+                  1000
+            : 0,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
