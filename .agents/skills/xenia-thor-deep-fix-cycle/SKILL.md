@@ -13,6 +13,51 @@ miscompiled op does. Pairs with `xenia-ghidra-ooda-loop` (RE), `xenia-thor-gpu-c
 (the fire tool), `a64-qemu-harness` + `host-cpu-test-harness` memories (differential
 testing), and `xenia-windows-powershell-command-hygiene`.
 
+## STEP 0 (DO THIS FIRST) — TRIAGE: is it a FORK REGRESSION? PC-build + canary-diff
+
+Before assuming an a64-codegen bug and grinding the device for days, prove WHERE
+the bug lives. **If a game is broken on the fork but WORKS on upstream xenia-canary,
+it is a fork regression in SHARED code — found by a sub-minute PC diff, not weeks
+of device fires.** This cracked Banjo's "dirty-disc" (chased for weeks as a
+verify-hash / async-IO / a64 / game-patch problem — ALL red herrings) in one
+session: it was `NtQueryInformationFile(XFileXctdCompressionInformation)` returning
+`X_STATUS_SUCCESS` instead of upstream's `X_STATUS_INVALID_PARAMETER` (commit
+240ce1e91), reproducible on x64.
+
+The recipe:
+1. **Build the fork's x64 `xenia.exe` on PC.** The fork's Windows-app target may be
+   bit-rotted (Android-focused). Fixes that were needed (manual vcxproj edits are
+   gitignored, so re-apply or `premake5` regen): `xenia_main.cc` discord
+   `DEFINE_bool(discord, !XE_PLATFORM_ANDROID,...)` → `#if defined(XE_PLATFORM_ANDROID) && XE_PLATFORM_ANDROID ... #else ... #endif`;
+   add `patcher/patch_db.cc`+`patcher/patcher.cc` to `build/xenia-core.vcxproj`;
+   add `xenia_main.cc` to `build/xenia-app.vcxproj` (it was entirely missing → only
+   `GetWindowedAppCreator` unresolved); add `vulkan_dynamic_buffer_ring.cc` to
+   `build/xenia-ui-vulkan.vcxproj`; REMOVE `vulkan_window_demo.cc`/`d3d12_window_demo.cc`
+   from the `xenia-ui-vulkan`/`xenia-ui-d3d12` LIB vcxprojs (demo objs pollute the
+   libs → `WindowDemoApp` unresolved). Build: `subst X: <repo>` then MSBuild
+   `build\xenia-app.vcxproj /p:Configuration="Release Windows" /p:Platform=x64` (NO
+   `2>&1`). Output: `build/bin/Windows/Release/xenia.exe`.
+2. **Run the fork x64 on the ISO:** `xenia.exe "<iso>" --gpu=null --log_file=<log>`
+   (the verify/HLE runs CPU-side regardless of GPU). If it ALSO fails → the bug is
+   SHARED code (NOT a64), and you now have a fast PC repro (sub-minute iterations,
+   attach a debugger — no device, no thermal gate). If it WORKS on x64 but fails on
+   the Thor → genuine a64-only bug → use the cycle below.
+3. **Get the reference:** download prebuilt upstream xenia-canary (GitHub API
+   `api.github.com/repos/xenia-canary/xenia-canary-releases/releases/latest` →
+   the `.zip` asset). Run the SAME ISO. If it BOOTS → **fork regression confirmed.**
+4. **Find the divergence:** diff the fork-vs-canary KERNEL-CALL sequence at the
+   failure point (xenia logs `DiscImageDevice::ResolvePath`, the imports, etc. — find
+   the call canary handles differently right before the fork fails), then diff the
+   specific shared HLE/vfs source (`src/xenia/...` vs `scratch/upstream/xenia-canary/src/xenia/...`).
+   The divergent handler is the regression. (Sanity-check the change's git history —
+   `git log -S` — to confirm reverting won't undo a deliberate fix.)
+5. **Fix on the fork, rebuild PC (sub-minute), confirm dirty-disc/crash gone, THEN**
+   build the Android APK + device-validate (one gated fire).
+
+Use the a64 OPERAND-CAPTURE cycle below ONLY for genuine a64-only bugs (fails on
+the Thor but the fork's x64 build is fine). For "works on canary, broken on fork,"
+STEP 0 is the whole game.
+
 ## RULE 0 — VALIDATE THE PATH IS EXECUTED BEFORE DEEP-DIVING IT
 
 The #1 wasted-fire failure: static RE / a decompiler names a "decision branch",

@@ -139,8 +139,11 @@ DEFINE_transient_bool(portable, false,
 
 DECLARE_bool(debug);
 
-DEFINE_bool(discord, !XE_PLATFORM_ANDROID, "Enable Discord rich presence",
-            "General");
+#if defined(XE_PLATFORM_ANDROID) && XE_PLATFORM_ANDROID
+DEFINE_bool(discord, false, "Enable Discord rich presence", "General");
+#else
+DEFINE_bool(discord, true, "Enable Discord rich presence", "General");
+#endif
 
 namespace xe {
 namespace app {
