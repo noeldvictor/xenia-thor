@@ -2250,7 +2250,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
-        "cpu_real_us={} cpu_gap_us={} "
+        "cpu_real_us={} cpu_gap_us={} cpu_vfres_us={} "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2322,6 +2322,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                 draw_cpu_emit_ns_)) /
                   1000
             : 0,
+        draw_cpu_vfresidency_ns_ / 1000,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
@@ -2509,6 +2510,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_cpu_setup_ns_ = 0;
     draw_cpu_emit_ns_ = 0;
     draw_cpu_beginsubmit_ns_ = 0;
+    draw_cpu_vfresidency_ns_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -4405,6 +4407,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Ensure vertex buffers are resident.
   // TODO(Triang3l): Cache residency for ranges in a way similar to how texture
   // validity is tracked.
+  std::chrono::steady_clock::time_point vfres_t0;
+  if (trace_draw_cpu) {
+    vfres_t0 = std::chrono::steady_clock::now();
+  }
   uint64_t vertex_buffers_resident[2] = {};
   for (const Shader::VertexBinding& vertex_binding :
        vertex_shader->vertex_bindings()) {
@@ -4445,6 +4451,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
     vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
                                                   << (vfetch_index & 63);
+  }
+  if (trace_draw_cpu) {
+    draw_cpu_vfresidency_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - vfres_t0)
+            .count());
   }
   if (cvars::vulkan_trace_vertex_fetch_checksum) {
     TraceVertexFetchSources(*vertex_shader,

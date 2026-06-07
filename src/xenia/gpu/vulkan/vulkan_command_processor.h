@@ -1146,6 +1146,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // beginsubmit_ (wait, not a CPU lever); on a CPU-bound title beginsubmit_ is
   // small and the rest of setup_ is real work (the lever).
   uint64_t draw_cpu_beginsubmit_ns_ = 0;
+  // Subset of the untimed cpu_gap: the per-draw "ensure vertex buffers resident"
+  // RequestRange loop. Its residency bitmask is rebuilt PER DRAW, so RequestRange
+  // is called for every vertex binding of every draw (~1.5/draw) - a documented
+  // TODO to cache like texture validity. On a high-draw CPU-bound title (Burnout
+  // ~3442 draws) this can be a large share of cpu_gap; this attributes it before
+  // building a (correctness-sensitive) frame-scoped residency cache.
+  uint64_t draw_cpu_vfresidency_ns_ = 0;
 
   // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
   // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command
