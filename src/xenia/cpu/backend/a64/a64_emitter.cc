@@ -68,6 +68,7 @@ DECLARE_bool(arm64_blue_dragon_draw_wait_caller_profile);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_caller_profile_budget);
 DECLARE_bool(arm64_blue_dragon_memcpy_fastpath);
+DECLARE_bool(arm64_gears3_memcpy_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_deferred_cr_fastpath);
 DECLARE_bool(arm64_blue_dragon_stricmp_return_profile);
@@ -5068,8 +5069,15 @@ bool A64Emitter::EmitBlueDragonDrawWaitFastpathBody() {
 }
 
 bool A64Emitter::TryEmitBlueDragonMemcpyFunctionBody() {
-  if (!cvars::arm64_blue_dragon_memcpy_fastpath ||
-      current_guest_function_ != 0x826BF770) {
+  // memcpy(r3=dst, r4=src, r5=len) -> native std::memmove. Originally Blue
+  // Dragon's hot 0x826BF770; Gears of War 3's 0x82CC9970 (device-IDed as the
+  // load-bound memcpy, identical alignment-aware shape + memcpy(r3,r4,r5) ABI)
+  // reuses the SAME body below under its own cvar.
+  const bool bd = cvars::arm64_blue_dragon_memcpy_fastpath &&
+                  current_guest_function_ == 0x826BF770;
+  const bool gears3 = cvars::arm64_gears3_memcpy_fastpath &&
+                      current_guest_function_ == 0x82CC9970;
+  if (!bd && !gears3) {
     return false;
   }
 

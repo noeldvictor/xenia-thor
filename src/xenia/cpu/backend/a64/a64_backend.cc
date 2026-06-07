@@ -205,6 +205,14 @@ DEFINE_bool(
     "Research-only and title-specific.",
     "a64");
 DEFINE_bool(
+    arm64_gears3_memcpy_fastpath, false,
+    "Thor ARM64 speed lane: replace Gears of War 3's hot 82CC9970 memcpy with a "
+    "native host memmove over translated guest pointers. Device-IDed as the "
+    "load-bound memcpy(r3=dst,r4=src,r5=len) (same alignment-aware shape + ABI "
+    "as BD's 826BF770), dominating the ~9s black-load gap. Research-only and "
+    "title-specific; device-validate (load-gap shrink + byte-identical frame).",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_stricmp_fastpath, false,
     "Thor ARM64 speed lane: replace Blue Dragon's hot 826C5620 ASCII "
     "case-insensitive string-compare helper with a hand-emitted A64 loop that "
