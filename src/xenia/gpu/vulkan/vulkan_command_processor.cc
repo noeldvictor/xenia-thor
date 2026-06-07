@@ -4411,6 +4411,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (trace_draw_cpu) {
     vfres_t0 = std::chrono::steady_clock::now();
   }
+  // Frame-scoped residency cache: clear it when the frame index changes so each
+  // guest vertex-buffer write is re-uploaded next frame. Only when the cvar is
+  // on (otherwise the cache stays empty and the path below is unchanged).
+  if (cvars::vulkan_cache_vertex_residency &&
+      vertex_residency_cache_frame_ != frame_current_) {
+    vertex_residency_cache_.clear();
+    vertex_residency_cache_frame_ = frame_current_;
+  }
   uint64_t vertex_buffers_resident[2] = {};
   for (const Shader::VertexBinding& vertex_binding :
        vertex_shader->vertex_bindings()) {
@@ -4441,12 +4449,35 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             vfetch_index, vfetch_constant.dword_0, vfetch_constant.dword_1);
         return false;
     }
-    if (!shared_memory_->RequestRange(vfetch_constant.address << 2,
-                                      vfetch_constant.size << 2)) {
+    uint32_t vf_address = vfetch_constant.address << 2;
+    uint32_t vf_size = vfetch_constant.size << 2;
+    if (cvars::vulkan_cache_vertex_residency) {
+      uint64_t vf_key = (uint64_t(vf_address) << 32) | uint64_t(vf_size);
+      if (vertex_residency_cache_.find(vf_key) !=
+          vertex_residency_cache_.end()) {
+        // Already made resident earlier this frame - skip the redundant
+        // RequestRange (its per-call dirty-page check + bookkeeping).
+        vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
+                                                      << (vfetch_index & 63);
+        continue;
+      }
+      if (!shared_memory_->RequestRange(vf_address, vf_size)) {
+        XELOGE(
+            "Failed to request vertex buffer at 0x{:08X} (size {}) in the "
+            "shared memory",
+            vf_address, vf_size);
+        return false;
+      }
+      vertex_residency_cache_.insert(vf_key);
+      vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
+                                                    << (vfetch_index & 63);
+      continue;
+    }
+    if (!shared_memory_->RequestRange(vf_address, vf_size)) {
       XELOGE(
           "Failed to request vertex buffer at 0x{:08X} (size {}) in the shared "
           "memory",
-          vfetch_constant.address << 2, vfetch_constant.size << 2);
+          vf_address, vf_size);
       return false;
     }
     vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)

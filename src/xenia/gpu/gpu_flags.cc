@@ -533,6 +533,22 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_cache_vertex_residency, false,
+    "Thor CPU lever (high-draw CPU-bound titles, e.g. Burnout in-race ~3442 "
+    "draws): cache vertex-buffer residency ACROSS draws WITHIN a frame so the "
+    "per-draw 'ensure vertex buffers resident' RequestRange loop skips ranges "
+    "already requested this frame, instead of re-calling RequestRange for every "
+    "binding of every draw (~5000/frame). Implements the existing "
+    "TODO(Triang3l) to cache residency like texture validity. The cache is "
+    "frame-stamped (cleared when the frame index changes) so each guest "
+    "vertex-buffer write is re-uploaded next frame. CORRECTNESS: assumes the "
+    "guest does not CPU-write an already-requested vertex range MID-frame "
+    "(between draws of the same frame); rare but possible, so default OFF + "
+    "device A/B (verify pixel-correct on BD + Burnout) before enabling. "
+    "Measured by cpu_vfres_us in the draw-outcomes log. Default off.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_merge_draws_indirect, false,
     "Thor/Adreno binning re-arch (Lever 2b): batch consecutive same-state "
     "kGuestDMA indexed draws into ONE vkCmdDrawIndexedIndirect (drawCount=N) "

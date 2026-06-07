@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1153,6 +1154,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   // ~3442 draws) this can be a large share of cpu_gap; this attributes it before
   // building a (correctness-sensitive) frame-scoped residency cache.
   uint64_t draw_cpu_vfresidency_ns_ = 0;
+
+  // Optional frame-scoped vertex-buffer residency cache (cvar
+  // vulkan_cache_vertex_residency, default off): set of (address|size) vertex
+  // ranges already RequestRange'd this frame, so the per-draw residency loop can
+  // skip ranges seen earlier in the SAME frame. Frame-stamped: cleared when
+  // frame_current_ changes (each frame re-requests once, so guest writes upload
+  // next frame). Only touched when the cvar is on.
+  std::unordered_set<uint64_t> vertex_residency_cache_;
+  uint64_t vertex_residency_cache_frame_ = 0;
 
   // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
   // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command
