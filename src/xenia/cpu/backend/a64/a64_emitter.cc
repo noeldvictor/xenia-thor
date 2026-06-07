@@ -3920,11 +3920,14 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // EPILOG
   // ========================================================================
   L(*epilog_label_);
-  // Return-value trace hook (single shared exit). Guest r3 (return value) is in
-  // ctx here (STORE_CONTEXT'd before the return). Gated at emit by the same
-  // A64CallTraceRequested() as the entry hook; runtime-gated by the _returns
-  // cvar + the function/tid filter inside TraceFunctionReturn.
-  if (A64CallTraceRequested()) {
+  // Return-value trace hook (single shared exit). GATED at EMIT by the _returns
+  // cvar (not just A64CallTraceRequested) so it is ONLY present when explicitly
+  // requested -- a CallNativeSafe here, before PopStackpoint/LR-restore, was
+  // observed to break call-trace runs (the 2026-06-07 returns capture got ZERO
+  // lines vs the working full-regs run; suspected register/stackpoint clobber at
+  // the epilog). Confined to returns=true until that corruption is fixed, so
+  // entry/full-regs call-trace runs (returns=false) are unaffected.
+  if (A64CallTraceRequested() && cvars::arm64_compiled_call_trace_returns) {
     mov(x1, static_cast<uint64_t>(current_guest_function_));
     CallNativeSafe(reinterpret_cast<void*>(&TraceFunctionReturn));
   }
