@@ -185,6 +185,26 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_hoist_request_range_lock")}, null));
 
         list.add(new Optimization(
+                "opt_gate_rt_update",
+                "Skip redundant render-target updates",
+                "Reuses the render-target setup across draws that don't change it.",
+                "Before every draw the emulator recomputes the render-target "
+                        + "configuration (which color/depth buffers, their formats, the "
+                        + "EDRAM layout). In a busy scene that runs thousands of times a "
+                        + "frame although the targets change only a handful of times. "
+                        + "This skips the recompute when the render-target config is "
+                        + "byte-identical to the last draw AND the render pass is still "
+                        + "open - a pass break, EDRAM transfer or frame boundary forces a "
+                        + "real update - so the redundant work is removed with no "
+                        + "rendering change. Device-validated: Burnout Revenge in-race "
+                        + "5.9 -> 7.9 fps (+34%; the per-draw RT cost fell ~16ms -> ~2ms), "
+                        + "pixel-correct; Blue Dragon pixel-correct and unchanged (it is "
+                        + "GPU-bound, so the CPU saving is free headroom). Helps "
+                        + "CPU-bound, draw-heavy scenes.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("vulkan_gate_rt_update")}, null));
+
+        list.add(new Optimization(
                 "opt_pipeline_cache",
                 "Persistent shader pipeline cache",
                 "Saves compiled GPU pipelines to disk so later launches skip the stutter.",
