@@ -118,7 +118,16 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
       // Retain so long as the object is in the table.
       object->Retain();
 
-      XELOGI("Added handle:{:08X} for {}", handle, typeid(*object).name());
+      // Hot path: fires on EVERY handle add (e.g. ~135/s of async-I/O event
+      // churn during UE3 / Gears 3 asset loads). At the default Info level this
+      // cost a typeid() RTTI + {fmt} format + logcat write *inside the global
+      // critical region* on every op, serializing other threads' kernel-object
+      // ops and flooding the log. Gate to Debug (the ShouldLog check short-
+      // circuits the typeid + format + I/O below Debug) so normal play pays
+      // nothing; raise the log level to trace handle churn. Cross-game.
+      if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
+        XELOGD("Added handle:{:08X} for {}", handle, typeid(*object).name());
+      }
     }
   }
 
@@ -228,7 +237,11 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
       object->handles().erase(handle_entry);
     }
 
-    XELOGI("Removed handle:{:08X} for {}", handle, typeid(*object).name());
+    // Hot path (see AddHandle): gate to Debug so the typeid() + format + logcat
+    // write don't run on every handle removal under the global lock.
+    if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
+      XELOGD("Removed handle:{:08X} for {}", handle, typeid(*object).name());
+    }
 
     // Remove object name from mapping to prevent naming collision.
     if (!object->name().empty()) {
