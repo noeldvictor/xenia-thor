@@ -274,6 +274,10 @@ class CommandProcessor {
 
   uint32_t counter_ = 0;
 
+  // Host wall-clock (uptime ms) of the last presented swap, for the optional
+  // gpu_frame_limit_fps host-side frame-rate limiter.
+  uint64_t last_swap_host_millis_ = 0;
+
   uint32_t primary_buffer_ptr_ = 0;
   uint32_t primary_buffer_size_ = 0;
 

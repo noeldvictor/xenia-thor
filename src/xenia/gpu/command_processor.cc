@@ -17,6 +17,7 @@
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/byte_stream.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
@@ -1377,6 +1378,27 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
                                frontbuffer_height);
   TraceSwapRenderTargets(register_file_, frontbuffer_ptr, frontbuffer_width,
                          frontbuffer_height);
+
+  // Host-side frame-rate limiter (gpu_frame_limit_fps): pace the swap so light/
+  // loading/menu screens don't render hundreds of fps and peg+overheat the GPU
+  // (device-observed: Lost Odyssey loading ~943fps -> 72.5C). Sleeping here
+  // throttles the CP worker; ring-buffer backpressure then paces the guest.
+  // 0 = disabled (prior behavior). Caps real frames/sec, not guest time.
+  uint32_t frame_limit_fps = cvars::gpu_frame_limit_fps;
+  if (frame_limit_fps) {
+    uint64_t target_interval_ms = 1000ull / frame_limit_fps;
+    if (target_interval_ms) {
+      if (last_swap_host_millis_) {
+        uint64_t elapsed_ms =
+            xe::Clock::QueryHostUptimeMillis() - last_swap_host_millis_;
+        if (elapsed_ms < target_interval_ms) {
+          xe::threading::Sleep(
+              std::chrono::milliseconds(target_interval_ms - elapsed_ms));
+        }
+      }
+      last_swap_host_millis_ = xe::Clock::QueryHostUptimeMillis();
+    }
+  }
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
             display_width, display_height);

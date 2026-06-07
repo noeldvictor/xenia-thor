@@ -322,6 +322,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     intent, launchArguments, "vulkan_trace_vertex_fetch_checksum_budget");
             copyIntExtra(
                     intent, launchArguments, "vulkan_trace_swap_shared_memory_checksum_budget");
+            copyIntExtra(intent, launchArguments, "gpu_frame_limit_fps");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_min_width");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_min_height");
             copyIntExtra(intent, launchArguments, "vulkan_present_scored_resolve_budget");

@@ -20,6 +20,17 @@ DEFINE_path(
 
 DEFINE_bool(vsync, true, "Enable VSYNC.", "GPU");
 
+DEFINE_uint32(
+    gpu_frame_limit_fps, 0,
+    "Host-side frame-rate limiter: cap the guest swap (present) rate to this "
+    "many frames per second by pacing the command-processor swap handler "
+    "(ring-buffer backpressure then paces the guest). 0 = disabled (prior "
+    "behavior). Tames light/loading/menu screens that otherwise render hundreds "
+    "of fps and peg the GPU at ~99%, overheating the handheld (device-observed: "
+    "Lost Odyssey loading screen ~943fps -> 72.5C); real <=cap gameplay is "
+    "unaffected. Note: this caps real frames/sec, NOT guest time (time_scalar).",
+    "GPU");
+
 DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
