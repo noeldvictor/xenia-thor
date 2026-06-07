@@ -912,7 +912,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           break;
 
         case OPCODE_DOT_PRODUCT_3:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->DotProduct3(i->src2.value);
             i->Remove();
@@ -921,7 +922,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           break;
 
         case OPCODE_DOT_PRODUCT_4:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->DotProduct4(i->src2.value);
             i->Remove();
