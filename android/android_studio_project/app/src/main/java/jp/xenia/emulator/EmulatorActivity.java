@@ -161,6 +161,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_shift_fastpath");
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
+            copyBooleanExtra(intent, launchArguments,
+                    "permit_float_constant_evaluation");
             // Present-mode A/B (thermal vs latency): default selection prefers
             // IMMEDIATE (uncapped -> 568fps + GPU 98% + overheat on unthrottled
             // loading screens, device-observed on Lost Odyssey). Allowlist these

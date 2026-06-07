@@ -20,6 +20,17 @@
 DEFINE_bool(inline_mmio_access, true, "Inline constant MMIO loads and stores.",
             "CPU");
 
+DEFINE_bool(
+    permit_float_constant_evaluation, true,
+    "Constant-fold floating-point arithmetic (ADD/SUB/MUL/DIV/MUL_ADD/MUL_SUB/"
+    "NEG/ABS/SQRT/RSQRT/RECIP on FLOAT32/FLOAT64/VEC128) at compile time. Host "
+    "FPU folding can diverge from the guest PPC/VMX FPU (rounding mode, denormal "
+    "flush, signed zeros, NaN propagation, and the low-precision rsqrt/recip "
+    "estimates the guest uses); disable to leave float math for the backends, "
+    "which reproduce the guest semantics. Default on preserves prior behavior; "
+    "OPCODE_MAX float folding is always skipped regardless (see d85bfc189).",
+    "CPU");
+
 namespace xe {
 namespace cpu {
 namespace compiler {
@@ -31,6 +42,20 @@ using namespace xe::cpu::hir;
 using xe::cpu::hir::HIRBuilder;
 using xe::cpu::hir::TypeName;
 using xe::cpu::hir::Value;
+
+// A constant fold whose RESULT is a float type uses host FPU arithmetic, which
+// can diverge from the guest PPC/VMX FPU. Skip such folds when float const-eval
+// is disabled (cvar permit_float_constant_evaluation). Integer-typed results are
+// always safe to fold. VEC128 is treated as float here (matching the existing
+// OPCODE_MAX guard); skipping an integer VEC128 fold when the cvar is off is
+// merely conservative, never incorrect.
+static bool SkipFloatConstantFold(const Value* v) {
+  if (cvars::permit_float_constant_evaluation) {
+    return false;
+  }
+  return v->type == FLOAT32_TYPE || v->type == FLOAT64_TYPE ||
+         v->type == VEC128_TYPE;
+}
 
 ConstantPropagationPass::ConstantPropagationPass()
     : ConditionalGroupSubpass() {}
@@ -447,7 +472,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           break;
 
         case OPCODE_ADD:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Add(i->src2.value);
             i->Remove();
@@ -476,7 +502,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_SUB:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Sub(i->src2.value);
             i->Remove();
@@ -484,7 +511,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MUL:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Mul(i->src2.value);
             i->Remove();
@@ -523,7 +551,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_DIV:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Div(i->src2.value, (i->flags & ARITHMETIC_UNSIGNED) != 0);
             i->Remove();
@@ -548,7 +577,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MUL_ADD:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             if (i->src3.value->IsConstant()) {
               v->set_from(i->src1.value);
               Value::MulAdd(v, i->src1.value, i->src2.value, i->src3.value);
@@ -570,7 +600,8 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MUL_SUB:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !SkipFloatConstantFold(v)) {
             // Multiply part is constant.
             if (i->src3.value->IsConstant()) {
               v->set_from(i->src1.value);
@@ -613,7 +644,7 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_NEG:
-          if (i->src1.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Neg();
             i->Remove();
@@ -621,7 +652,7 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_ABS:
-          if (i->src1.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Abs();
             i->Remove();
@@ -629,7 +660,7 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_SQRT:
-          if (i->src1.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Sqrt();
             i->Remove();
@@ -637,7 +668,7 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_RSQRT:
-          if (i->src1.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->RSqrt();
             i->Remove();
@@ -645,7 +676,7 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_RECIP:
-          if (i->src1.value->IsConstant()) {
+          if (i->src1.value->IsConstant() && !SkipFloatConstantFold(v)) {
             v->set_from(i->src1.value);
             v->Recip();
             i->Remove();
