@@ -109,6 +109,14 @@ DEFINE_uint32(
     "this many host milliseconds after the first traced function entry.",
     "a64");
 DEFINE_bool(
+    arm64_compiled_call_trace_full_regs, false,
+    "Thor ARM64 bring-up: also emit a second 'A64 call trace regs' line per "
+    "traced entry with the registers the main line omits (r0/r2/r4-r9/r12) - "
+    "the argument/operand GPRs needed to capture computed-vs-expected at a "
+    "targeted verify/compare function (e.g. Banjo's bundle-verify). Default off "
+    "(the main line stays compact); use with a tight ..._functions filter.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_draw_wait_probe, false,
     "Thor ARM64 bring-up: update current KTHREAD+0x58 at Blue Dragon's known "
     "draw-thread wait timeout load site. Research-only title probe.",

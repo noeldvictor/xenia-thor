@@ -55,6 +55,7 @@ DECLARE_uint32(arm64_compiled_call_trace_budget);
 DECLARE_string(arm64_compiled_call_trace_functions);
 DECLARE_string(arm64_compiled_call_trace_guest_tids);
 DECLARE_uint32(arm64_compiled_call_trace_after_ms);
+DECLARE_bool(arm64_compiled_call_trace_full_regs);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
@@ -1861,6 +1862,20 @@ void TraceFunctionEntry(void* raw_context, uint64_t function_address) {
       static_cast<uint32_t>(ctx->r[10]), static_cast<uint32_t>(ctx->r[11]),
       static_cast<uint32_t>(ctx->r[13]), static_cast<uint32_t>(ctx->r[29]),
       static_cast<uint32_t>(ctx->r[30]), static_cast<uint32_t>(ctx->r[31]));
+
+  if (cvars::arm64_compiled_call_trace_full_regs) {
+    // Second line with the argument/operand GPRs the main line omits, so a
+    // targeted verify/compare function's full inputs (e.g. computed-vs-expected
+    // hash in r3/r4/r5) are captured. Correlate by thid+fn+count.
+    XELOGI(
+        "A64 call trace regs thid {:08X} fn {:08X} count {} r0 {:08X} r2 {:08X} "
+        "r4 {:08X} r5 {:08X} r6 {:08X} r7 {:08X} r8 {:08X} r9 {:08X} r12 {:08X}",
+        ctx->thread_id, function_u32, count, static_cast<uint32_t>(ctx->r[0]),
+        static_cast<uint32_t>(ctx->r[2]), static_cast<uint32_t>(ctx->r[4]),
+        static_cast<uint32_t>(ctx->r[5]), static_cast<uint32_t>(ctx->r[6]),
+        static_cast<uint32_t>(ctx->r[7]), static_cast<uint32_t>(ctx->r[8]),
+        static_cast<uint32_t>(ctx->r[9]), static_cast<uint32_t>(ctx->r[12]));
+  }
 }
 
 void UpdateBlueDragonDrawWaitKernelTimeForFastpath(void* raw_context) {
