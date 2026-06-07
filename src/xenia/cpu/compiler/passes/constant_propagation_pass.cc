@@ -912,8 +912,13 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           break;
 
         case OPCODE_DOT_PRODUCT_3:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
-              !SkipFloatConstantFold(v)) {
+          // NOT gated by SkipFloatConstantFold: this fold is already made
+          // backend-EQUIVALENT (double-accumulate + inf->QNaN, see
+          // dot_product_test.cc), so it is not a host-FP divergence; and the
+          // XMM backend asserts on a both-constant operand (x64_op.h
+          // EmitCommutativeBinaryXmmOp), so a constant DOT_PRODUCT MUST be
+          // folded here.
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
             v->set_from(i->src1.value);
             v->DotProduct3(i->src2.value);
             i->Remove();
@@ -922,8 +927,9 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           break;
 
         case OPCODE_DOT_PRODUCT_4:
-          if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
-              !SkipFloatConstantFold(v)) {
+          // See DOT_PRODUCT_3: backend-equivalent fold + XMM both-constant
+          // assert mean a constant dot product MUST be folded (not gated).
+          if (i->src1.value->IsConstant() && i->src2.value->IsConstant()) {
             v->set_from(i->src1.value);
             v->DotProduct4(i->src2.value);
             i->Remove();
