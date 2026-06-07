@@ -560,7 +560,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_gate_rt_update, false,
+    vulkan_gate_rt_update, true,
     "Thor CPU lever (high-draw CPU-bound titles, e.g. Burnout in-race ~3442 "
     "draws): skip the per-draw RenderTargetCache::Update (~15ms/frame cpu_rt) "
     "when the render-target CONFIG is byte-identical to the last draw AND the "
@@ -572,8 +572,10 @@ DEFINE_bool(
     "register Update reads (RB_SURFACE_INFO, RB_DEPTH_INFO, RB_COLOR_INFO[0-3]) "
     "plus the normalized depth-control / color-mask / vertex-shader / "
     "rasterization-done inputs. CORRECTNESS: any missed dependency = stale RT = "
-    "GPU corruption, so default OFF + device A/B (BD + Burnout pixel-correct) "
-    "before enabling. Measured by cpu_rt_us. Default off.",
+    "GPU corruption. DEVICE-VALIDATED cross-game: Burnout in-race 5.9->7.9fps "
+    "(+34%) PIXEL-PERFECT [CPU-bound] + BTTF gameplay PIXEL-CORRECT [GPU-bound] "
+    "-> DEFAULT ON (matches the default-on opt_gate_rt_update toggle). Measured "
+    "by cpu_rt_us.",
     "GPU");
 
 DEFINE_bool(
