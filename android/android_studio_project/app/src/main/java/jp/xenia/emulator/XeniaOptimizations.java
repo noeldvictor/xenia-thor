@@ -141,22 +141,25 @@ public final class XeniaOptimizations {
 
         list.add(new Optimization(
                 "opt_present_refresh_capped",
-                "Refresh-capped presentation (cooler)",
-                "Caps screen presentation to the display refresh instead of "
-                        + "running it as fast as possible.",
-                "By default the emulator presents frames as fast as it can, which "
-                        + "on light/loading screens spins the GPU far above the "
-                        + "display refresh rate (device-measured ~568fps with the "
-                        + "GPU pegged at 98%), overheating the handheld in seconds "
-                        + "for no visible benefit (the screen can't show more than "
-                        + "its refresh rate). This caps presentation to the refresh "
-                        + "rate (FIFO), so loading screens and menus run far cooler "
-                        + "and use less battery. Real gameplay is unaffected - Xbox "
-                        + "360 games are 30/60fps, below the cap (device-validated: "
-                        + "Blue Dragon stayed at its ~5.9fps baseline). Costs at "
-                        + "most one frame of extra latency.",
+                "Frame-rate limiter (cooler, less battery)",
+                "Caps the frame rate so light/loading/menu screens don't render "
+                        + "hundreds of fps and overheat the device.",
+                "By default the emulator renders frames as fast as it can. On "
+                        + "light/loading/menu/FMV screens that means HUNDREDS of fps "
+                        + "with the GPU pegged at ~99%, overheating the handheld in "
+                        + "seconds for no visible benefit (device-measured: Lost "
+                        + "Odyssey's loading screen hit 943fps / 72.5C). Capping the "
+                        + "display present alone (FIFO) does NOT help, because the "
+                        + "guest keeps RENDERING every frame; this also paces the "
+                        + "guest swap host-side to ~60fps so the GPU stops doing the "
+                        + "wasted render work. Device-validated: the same LO loading "
+                        + "screen dropped 943fps -> 61fps with GPU busy 99% -> 15%. "
+                        + "Real gameplay is unaffected - Xbox 360 games are 30/60fps, "
+                        + "at or below the cap, and the limiter never sleeps below it "
+                        + "(Blue Dragon stays at its ~5.9fps baseline).",
                 CATEGORY_GPU, true, true,
-                new BoolCvar[]{new BoolCvar("vulkan_present_refresh_capped")}, null));
+                new BoolCvar[]{new BoolCvar("vulkan_present_refresh_capped")},
+                new IntCvar[]{new IntCvar("gpu_frame_limit_fps", 60)}));
 
         list.add(new Optimization(
                 "opt_constants_arena",

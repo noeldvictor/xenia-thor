@@ -21,7 +21,7 @@ DEFINE_path(
 DEFINE_bool(vsync, true, "Enable VSYNC.", "GPU");
 
 DEFINE_uint32(
-    gpu_frame_limit_fps, 0,
+    gpu_frame_limit_fps, 60,
     "Host-side frame-rate limiter: cap the guest swap (present) rate to this "
     "many frames per second by pacing the command-processor swap handler "
     "(ring-buffer backpressure then paces the guest). 0 = disabled (prior "
