@@ -185,6 +185,11 @@ class VulkanDevice {
     // avoiding per-draw descriptor set allocation + vkUpdateDescriptorSets +
     // vkCmdBindDescriptorSets. Big per-draw CPU win on Adreno.
     bool ext_KHR_push_descriptor = false;  // #81
+    // #464 (track #6): rasterization-order attachment access - the FSI
+    // alternative on Turnip (no fragment_shader_interlock) enabling the
+    // EDRAM-in-GMEM render path that eliminates EDRAM ownership-transfer copies
+    // (measured ~9ms / ~22% of the BTTF GPU frame).
+    bool ext_EXT_rasterization_order_attachment_access = false;
     // Max descriptors pushable per push (from
     // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
     // extension is unavailable.

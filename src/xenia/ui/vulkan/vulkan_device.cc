@@ -192,6 +192,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(KHR_shader_float_controls, 1, 2)
       // #252.
       XE_UI_VULKAN_LOCAL_EXTENSION(EXT_fragment_shader_interlock)
+      // #464 (track #6): rasterization-order attachment access - the FSI
+      // alternative for the EDRAM-in-GMEM render path on Turnip (which lacks
+      // fragment_shader_interlock). Detected here; consumed by the EDRAM ROAA
+      // render-target path (gpu_vulkan_edram_roaa).
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_rasterization_order_attachment_access)
       // #277.
       XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(
           EXT_shader_demote_to_helper_invocation, 1, 3)

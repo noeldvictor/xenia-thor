@@ -20,6 +20,7 @@ DECLARE_bool(vsync);
 DECLARE_uint32(gpu_frame_limit_fps);
 DECLARE_bool(gpu_adpf_performance_hints);
 DECLARE_bool(gpu_adpf_thermal_throttle);
+DECLARE_bool(gpu_vulkan_edram_roaa);
 
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
 DECLARE_bool(clear_memory_page_state);

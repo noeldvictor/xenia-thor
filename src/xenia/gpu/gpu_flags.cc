@@ -53,6 +53,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_edram_roaa, false,
+    "Track #6 (EXPERIMENTAL, in progress): use the rasterization-order "
+    "attachment-access EDRAM render path that keeps EDRAM resident in tile "
+    "memory and eliminates the EDRAM ownership-transfer copies (device-measured "
+    "~9ms / ~22% of the BTTF GPU frame). Requires "
+    "VK_EXT_rasterization_order_attachment_access (present on Turnip Adreno "
+    "740). Falls back to the default host-render-target (transfer) path when "
+    "off or unsupported. Default off until the path is complete + validated.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "
