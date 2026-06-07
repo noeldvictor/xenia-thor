@@ -1164,6 +1164,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::unordered_set<uint64_t> vertex_residency_cache_;
   uint64_t vertex_residency_cache_frame_ = 0;
 
+  // Optional RenderTargetCache::Update gate (cvar vulkan_gate_rt_update, default
+  // off): snapshot of the RT config from the last real Update, to skip the
+  // redundant per-draw Update when the config is unchanged AND the render pass
+  // is still open (current_render_pass_ != null). Only touched when the cvar is
+  // on. rt_gate_valid_ guards the first draw; the current_render_pass_ check
+  // handles pass breaks / transfers / frame boundaries.
+  bool rt_gate_valid_ = false;
+  bool rt_gate_is_raster_done_ = false;
+  bool rt_gate_last_ok_ = false;
+  uint32_t rt_gate_surface_info_ = 0;
+  uint32_t rt_gate_depth_control_ = 0;
+  uint32_t rt_gate_color_mask_ = 0;
+  uint32_t rt_gate_depth_info_ = 0;
+  uint32_t rt_gate_color_info_[4] = {};
+  uint64_t rt_gate_vs_hash_ = 0;
+
   // GPU-side frame time via Vulkan timestamp queries (Thor/Adreno bring-up).
   // Writes a TOP/BOTTOM timestamp pair around each frame's submitted command
   // buffer; the result is read back deferred (a completed frame) and logged at

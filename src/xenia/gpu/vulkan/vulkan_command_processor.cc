@@ -4131,9 +4131,62 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (trace_draw_cpu) {
     rt_t0 = std::chrono::steady_clock::now();
   }
-  bool rt_update_ok = render_target_cache_->Update(
-      is_rasterization_done, normalized_depth_control, normalized_color_mask,
-      *vertex_shader);
+  bool rt_update_ok;
+  if (cvars::vulkan_gate_rt_update) {
+    // Skip the redundant per-draw RenderTargetCache::Update when the RT config
+    // is byte-identical to the last real Update AND the render pass is still
+    // open. A pass break, EDRAM transfer, or frame/submission boundary nulls
+    // current_render_pass_, forcing a real Update (which re-enters the pass and
+    // runs any EDRAM ownership transfers). The snapshot covers every register
+    // Update reads plus its normalized inputs.
+    uint32_t gate_surface =
+        register_file_->Get<reg::RB_SURFACE_INFO>().value;
+    uint32_t gate_depth_info = register_file_->Get<reg::RB_DEPTH_INFO>().value;
+    uint32_t gate_color_info[4];
+    for (uint32_t i = 0; i < 4; ++i) {
+      gate_color_info[i] =
+          register_file_
+              ->Get<reg::RB_COLOR_INFO>(
+                  reg::RB_COLOR_INFO::rt_register_indices[i])
+              .value;
+    }
+    uint64_t gate_vs_hash = vertex_shader->ucode_data_hash();
+    bool snapshot_match =
+        rt_gate_valid_ && current_render_pass_ != VK_NULL_HANDLE &&
+        rt_gate_surface_info_ == gate_surface &&
+        rt_gate_depth_control_ == normalized_depth_control.value &&
+        rt_gate_color_mask_ == normalized_color_mask &&
+        rt_gate_depth_info_ == gate_depth_info &&
+        rt_gate_color_info_[0] == gate_color_info[0] &&
+        rt_gate_color_info_[1] == gate_color_info[1] &&
+        rt_gate_color_info_[2] == gate_color_info[2] &&
+        rt_gate_color_info_[3] == gate_color_info[3] &&
+        rt_gate_vs_hash_ == gate_vs_hash &&
+        rt_gate_is_raster_done_ == is_rasterization_done;
+    if (snapshot_match) {
+      rt_update_ok = rt_gate_last_ok_;
+    } else {
+      rt_update_ok = render_target_cache_->Update(
+          is_rasterization_done, normalized_depth_control,
+          normalized_color_mask, *vertex_shader);
+      rt_gate_valid_ = true;
+      rt_gate_surface_info_ = gate_surface;
+      rt_gate_depth_control_ = normalized_depth_control.value;
+      rt_gate_color_mask_ = normalized_color_mask;
+      rt_gate_depth_info_ = gate_depth_info;
+      rt_gate_color_info_[0] = gate_color_info[0];
+      rt_gate_color_info_[1] = gate_color_info[1];
+      rt_gate_color_info_[2] = gate_color_info[2];
+      rt_gate_color_info_[3] = gate_color_info[3];
+      rt_gate_vs_hash_ = gate_vs_hash;
+      rt_gate_is_raster_done_ = is_rasterization_done;
+      rt_gate_last_ok_ = rt_update_ok;
+    }
+  } else {
+    rt_update_ok = render_target_cache_->Update(
+        is_rasterization_done, normalized_depth_control, normalized_color_mask,
+        *vertex_shader);
+  }
   if (trace_draw_cpu) {
     draw_cpu_rt_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(

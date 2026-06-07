@@ -549,6 +549,23 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_gate_rt_update, false,
+    "Thor CPU lever (high-draw CPU-bound titles, e.g. Burnout in-race ~3442 "
+    "draws): skip the per-draw RenderTargetCache::Update (~15ms/frame cpu_rt) "
+    "when the render-target CONFIG is byte-identical to the last draw AND the "
+    "render pass is still open (current_render_pass_ != null). Render targets "
+    "change only ~9x/frame, so most Update calls are redundant. SAFE because a "
+    "pass break, EDRAM transfer, or frame/submission boundary nulls "
+    "current_render_pass_, which forces a real Update (re-entering the pass + "
+    "running any EDRAM ownership transfers); the config snapshot covers every "
+    "register Update reads (RB_SURFACE_INFO, RB_DEPTH_INFO, RB_COLOR_INFO[0-3]) "
+    "plus the normalized depth-control / color-mask / vertex-shader / "
+    "rasterization-done inputs. CORRECTNESS: any missed dependency = stale RT = "
+    "GPU corruption, so default OFF + device A/B (BD + Burnout pixel-correct) "
+    "before enabling. Measured by cpu_rt_us. Default off.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_merge_draws_indirect, false,
     "Thor/Adreno binning re-arch (Lever 2b): batch consecutive same-state "
     "kGuestDMA indexed draws into ONE vkCmdDrawIndexedIndirect (drawCount=N) "
