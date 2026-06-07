@@ -108,3 +108,23 @@ Before building G1, the doc's "pure CPU byte-repack of the vertex buffer" framin
 3. **Specialized VS variant** — redirect the position vfetch to read the tight buffer (stride = pos size) instead of guest memory (full stride). Requires a shader-cache key variant + translator support; position must stay **bit-exact** (fp16/lossy = black-screen per the held cvar rule).
 
 **Revised effort/risk:** MEDIUM-HIGH effort, MEDIUM risk (not LOW/LOW). The "G1 is its own cheap kill/go diagnostic" claim is **weakened** — the diagnostic now costs the full build. **Implication:** before committing to G1, prefer the cheaper bandwidth-vs-math gate via the per-stage GPU split (`xenia-thor-adb-gpu-stage-split`: binning µs vs render µs on a matched movie-free BD heavy frame), which the issues-roadmap already names as the gating measurement. Only build the full G1 gather+variant if that split shows binning is fetch-bandwidth-dominated. C1 spin-wait reclamation (thermal/headroom, HLE-only, no per-vertex cost) is unaffected by this correction and remains the cheapest parallel ship.
+
+---
+
+## Addendum 2 — GPU-bound bottleneck CORRECTED: it is NOT binning, it is EDRAM transfers (measured 2026-06-07) ⚠️
+
+**The entire "GPU floor = Adreno binning front-end" premise of this doc is REFUTED by direct on-device per-pass GPU timestamps. The GPU-bound titles are EDRAM-transfer/barrier-bound, and that bottleneck is at the hardware/driver FLOOR on the Thor. G1 (de-interleave) and all binning-front-end levers target a stage that costs ~3% of the frame — do NOT build them for these titles.**
+
+Measured with Route A per-pass timestamps (`vulkan_trace_pass_timestamps`), cross-game, png-confirmed real 3D:
+- **Blue Dragon** (heavy windmill): `gpu_pass_us ~2.6ms` (time INSIDE render passes = binning + fragment) vs `gpu_frame_us ~90ms` at ~80% GPU-busy → **~97% of the GPU frame is BETWEEN passes** (EDRAM transfer/blit/barrier work), only ~3% is binning+fragment.
+- **Back to the Future** (in-game): `gpu_pass ~1.5ms` vs `gpu_frame ~39ms`, ~48-51 pass-breaks/frame → **~96% between-pass.**
+- Break count is nearly identical across the two games (~49) → it is a **systemic cost of xenia's EDRAM render-target ownership machinery** (per-frame transfer/barrier structure), not game content. ~49 breaks × ~0.8-1.8ms tile store/reload ≈ the between-pass time.
+
+So binning (the thing G1/de-interleave/cull attack) is ~2.6ms — attacking it cannot move a 90ms frame. **The binning premise this doc was built on is wrong for the actual cost.**
+
+**Why it is FLOORED (not just unbuilt):**
+- The EDRAM transfer **barriers are already batched** in code (`PerformTransfersAndResolveClears`, vulkan_render_target_cache.cc:4765-4855 hoists all dest+source barriers into one place; per-transfer only for true cross-copy hazards). The `:4910` single-pass-merge idea is largely already done.
+- A clean A/B of the existing partial coalesce (`vulkan_coalesce_edram_transfers`) on a stable BTTF scene was **pixel-correct but fps-NEUTRAL** (it halved `pass_break_rt_change` 14→7 but `gpu_frame` and total `brk_open` were unchanged — the breaks are over-determined: a pass still breaks for a barrier even when the rt-change reason is coalesced). So the merge has a low ceiling.
+- The only path that avoids the EDRAM tile-transfer machinery entirely is **FSI** (`Path::kPixelShaderInterlock`, EDRAM-in-SSBO, no tile copies). Device-tested `--es render_target_path_vulkan fsi` → log: `sample_interlock=false pixel_interlock=false ... selected=fbo`. **FSI is absent on the Adreno 740/Turnip driver** — the interlock features are not exposed.
+
+**Conclusion / what to build instead:** BD/BTTF (and likely all EDRAM-heavy GPU-bound titles) are at their GPU floor on the Thor's current Turnip driver — the ~87ms EDRAM-transfer overhead is structural. Stop chasing their GPU fps (binning levers G1/G2/G5, de-interleave, cull are all moot — they target a ~3% stage). The only re-openers: a future Turnip exposing `VK_EXT_fragment_shader_interlock` (watch the changelog), or a fundamentally different EDRAM model (huge, risky). The CPU track of this doc (C1 spin-wait, etc.) is unaffected; the shipped Burnout rt-gate (+34%, the per-draw RT-update gate) is the model CPU win. Redirect "faster" effort to CPU-bound titles and to the broken titles (Sylpheed, Banjo), not the GPU-bound EDRAM floor.
