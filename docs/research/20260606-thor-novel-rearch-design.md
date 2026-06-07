@@ -93,3 +93,18 @@ The surviving novel move is **G1 de-interleave: feed Turnip's binning pass a thi
 - `src/xenia/kernel/xboxkrnl/xboxkrnl_threading.cc` — NtYieldExecution:744, KeWaitForSingleObject:1211, RW-spinlock:1677-1741 (C1)
 - `src/xenia/cpu/compiler/passes/` — C2/C3 codegen quality (host/qemu testable)
 - `android/.../XeniaOptimizations.java` + `GameProfiles.java` — toggle registry + per-game seeds
+
+---
+
+## Addendum — G1 implementation feasibility (verified against code, 2026-06-06)
+
+Before building G1, the doc's "pure CPU byte-repack of the vertex buffer" framing was checked against the actual xenia vertex path. **It is inaccurate for this architecture — corrected here.**
+
+**There is no host vertex buffer to repack.** At draw time, `vulkan_command_processor.cc:4383-4426` does **not** bind per-attribute vertex buffers — for each `Shader::VertexBinding` it only calls `shared_memory_->RequestRange(vfetch_constant.address<<2, vfetch_constant.size<<2)`, ensuring the **guest's own vertex memory** (at the guest stride, `binding.stride_words`) is resident in the unified shared-memory GPU mirror of guest RAM. The translated VS computes each vfetch address **in-shader** from the guest fetch constant (base + index·stride + attr offset) via `var_main_vfetch_address_` (`spirv_shader_translator.cc:624`) and loads from shared memory. Turnip's binning clone re-runs the *same* vfetch. So "de-interleave" cannot be a host-side buffer relayout; the data the GPU fetches IS the guest's interleaved layout.
+
+**What real G1 actually requires (3 parts, not 1):**
+1. **Position-vfetch identification** — per vertex shader, determine which `vfetch`/attribute flows to the position export (dataflow analysis at translation time; the translator already parses `ParsedVertexFetchInstruction`, see the trace hook near `vulkan_command_processor.cc:2063`).
+2. **CPU gather pass** — allocate a tight position buffer and, per vertex, read position from `shared_memory[guest_base + i·stride + pos_offset]` (honoring guest endian/format) and write it contiguously. This is an **R4-class per-vertex CPU pass**, and **R4 (CPU per-vertex preprocessing) already measured a net LOSS on strip-heavy BD** — the gather must beat that recorded loss or G1 is dead.
+3. **Specialized VS variant** — redirect the position vfetch to read the tight buffer (stride = pos size) instead of guest memory (full stride). Requires a shader-cache key variant + translator support; position must stay **bit-exact** (fp16/lossy = black-screen per the held cvar rule).
+
+**Revised effort/risk:** MEDIUM-HIGH effort, MEDIUM risk (not LOW/LOW). The "G1 is its own cheap kill/go diagnostic" claim is **weakened** — the diagnostic now costs the full build. **Implication:** before committing to G1, prefer the cheaper bandwidth-vs-math gate via the per-stage GPU split (`xenia-thor-adb-gpu-stage-split`: binning µs vs render µs on a matched movie-free BD heavy frame), which the issues-roadmap already names as the gating measurement. Only build the full G1 gather+variant if that split shows binning is fetch-bandwidth-dominated. C1 spin-wait reclamation (thermal/headroom, HLE-only, no per-vertex cost) is unaffected by this correction and remains the cheapest parallel ship.
