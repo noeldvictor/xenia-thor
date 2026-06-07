@@ -193,6 +193,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_uma_direct_shared_memory");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_serialize_before_write");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_strong_coherency");
+            copyBooleanExtra(intent, launchArguments, "gpu_adpf_performance_hints");
+            copyBooleanExtra(intent, launchArguments, "gpu_adpf_thermal_throttle");
             copyBooleanExtra(intent, launchArguments, "execute_unclipped_draw_vs_on_cpu");
             copyBooleanExtra(intent, launchArguments, "vulkan_sparse_shared_memory");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_texture_descriptors");
@@ -355,6 +357,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "arm64_pc_operand_log_pcs");
             copyStringExtra(intent, launchArguments, "arm64_pc_operand_log_tids");
             copyIntExtra(intent, launchArguments, "arm64_pc_operand_log_budget");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_ntreadfile_force_complete");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_interval_ms");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_top_functions");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_min_delta");

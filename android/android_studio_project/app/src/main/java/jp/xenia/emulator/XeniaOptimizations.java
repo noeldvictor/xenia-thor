@@ -304,6 +304,37 @@ public final class XeniaOptimizations {
                         new IntCvar("thor_guest_thread_affinity_mask", -1),
                 }));
 
+        list.add(new Optimization(
+                "opt_adpf_perf_hints",
+                "ADPF performance hints (experimental)",
+                "Tells Android which thread is frame-critical so it boosts the "
+                        + "right core and saves power when there's slack.",
+                "Android 12+ exposes the Dynamic Performance Framework (ADPF) "
+                        + "Performance Hint API: the app reports how long the "
+                        + "frame-critical GPU-command thread takes each frame versus the "
+                        + "target frame budget, and the OS raises that core's clock when "
+                        + "frames run long and lowers it (saving battery and heat) when "
+                        + "there is slack - smarter than fixed core pinning, which Google "
+                        + "says ADPF supersedes on Android 12+. Pure scheduling hint: it "
+                        + "does not change rendering. No effect on ROMs without the API. "
+                        + "Experimental - validate per device.",
+                CATEGORY_THREADS, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_adpf_performance_hints")}, null));
+
+        list.add(new Optimization(
+                "opt_adpf_thermal",
+                "ADPF thermal auto-throttle (experimental)",
+                "Eases the frame rate down as the device heats up, before Android "
+                        + "throttles it hard.",
+                "Reads the OS thermal headroom each frame (ADPF Thermal API) and "
+                        + "pre-emptively lowers the present cap (45/30/20 fps as the "
+                        + "device approaches the throttling threshold) so the fanless "
+                        + "handheld sheds heat gradually instead of the OS slamming the "
+                        + "clocks down. Composes with the frame-rate limiter (takes the "
+                        + "lower cap). No effect on ROMs without the API. Experimental.",
+                CATEGORY_THREADS, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_adpf_thermal_throttle")}, null));
+
         ALL = Collections.unmodifiableList(list);
     }
 

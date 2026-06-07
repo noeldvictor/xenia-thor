@@ -31,6 +31,14 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 
+#if XE_PLATFORM_ANDROID
+#include <dlfcn.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <chrono>
+#endif  // XE_PLATFORM_ANDROID
+
 namespace xe {
 namespace gpu {
 
@@ -47,6 +55,67 @@ std::atomic<int32_t> gpu_swap_frontbuffer_checksum_count{0};
 std::atomic<int32_t> gpu_swap_render_targets_trace_count{0};
 std::atomic<int32_t> gpu_unknown_register_write_log_count{0};
 std::atomic<bool> gpu_swap_probe_cvars_logged{false};
+
+#if XE_PLATFORM_ANDROID
+// ADPF / thermal NDK entry points, resolved at runtime via dlsym so the build
+// links against any minSdk and gracefully no-ops on devices/ROMs that lack them
+// (APerformanceHint_* arrived in API 33, AThermal_getThermalHeadroom in API 31).
+struct AdpfApi {
+  // android/performance_hint.h
+  void* (*get_manager)() = nullptr;
+  void* (*create_session)(void* manager, const int32_t* thread_ids, size_t size,
+                          int64_t initial_target_ns) = nullptr;
+  int (*update_target)(void* session, int64_t target_ns) = nullptr;
+  int (*report_actual)(void* session, int64_t actual_ns) = nullptr;
+  void (*close_session)(void* session) = nullptr;
+  // android/thermal.h
+  void* (*thermal_acquire)() = nullptr;
+  void (*thermal_release)(void* manager) = nullptr;
+  float (*thermal_headroom)(void* manager, int forecast_seconds) = nullptr;
+  bool perf_hint_available = false;
+  bool thermal_available = false;
+};
+
+const AdpfApi& GetAdpfApi() {
+  static const AdpfApi api = []() {
+    AdpfApi a;
+    void* lib = dlopen("libandroid.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!lib) {
+      lib = dlopen("libandroid.so", RTLD_NOW);
+    }
+    if (!lib) {
+      return a;
+    }
+    a.get_manager = reinterpret_cast<decltype(a.get_manager)>(
+        dlsym(lib, "APerformanceHint_getManager"));
+    a.create_session = reinterpret_cast<decltype(a.create_session)>(
+        dlsym(lib, "APerformanceHint_createSession"));
+    a.update_target = reinterpret_cast<decltype(a.update_target)>(
+        dlsym(lib, "APerformanceHint_updateTargetWorkDuration"));
+    a.report_actual = reinterpret_cast<decltype(a.report_actual)>(
+        dlsym(lib, "APerformanceHint_reportActualWorkDuration"));
+    a.close_session = reinterpret_cast<decltype(a.close_session)>(
+        dlsym(lib, "APerformanceHint_closeSession"));
+    a.thermal_acquire = reinterpret_cast<decltype(a.thermal_acquire)>(
+        dlsym(lib, "AThermal_acquireManager"));
+    a.thermal_release = reinterpret_cast<decltype(a.thermal_release)>(
+        dlsym(lib, "AThermal_releaseManager"));
+    a.thermal_headroom = reinterpret_cast<decltype(a.thermal_headroom)>(
+        dlsym(lib, "AThermal_getThermalHeadroom"));
+    a.perf_hint_available = a.get_manager && a.create_session &&
+                            a.update_target && a.report_actual;
+    a.thermal_available = a.thermal_acquire && a.thermal_headroom;
+    return a;
+  }();
+  return api;
+}
+
+int64_t AdpfNowNs() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+#endif  // XE_PLATFORM_ANDROID
 
 bool ShouldLogUnknownGpuRegister(std::atomic<int32_t>& counter) {
   int32_t budget = cvars::gpu_unknown_register_log_budget;
@@ -352,6 +421,10 @@ bool CommandProcessor::Initialize() {
 
 void CommandProcessor::Shutdown() {
   EndTracing();
+
+#if XE_PLATFORM_ANDROID
+  AdpfShutdown();
+#endif  // XE_PLATFORM_ANDROID
 
   worker_running_ = false;
   write_ptr_index_event_->Set();
@@ -1333,6 +1406,99 @@ bool CommandProcessor::ExecutePacketType3_INTERRUPT(RingBuffer* reader,
   return true;
 }
 
+#if XE_PLATFORM_ANDROID
+void CommandProcessor::AdpfBeginSwap() {
+  const bool want_hints = cvars::gpu_adpf_performance_hints;
+  const bool want_thermal = cvars::gpu_adpf_thermal_throttle;
+  if (!want_hints && !want_thermal) {
+    return;
+  }
+  const AdpfApi& api = GetAdpfApi();
+
+  if (!adpf_init_attempted_) {
+    adpf_init_attempted_ = true;
+    if (want_hints && api.perf_hint_available) {
+      adpf_hint_manager_ = api.get_manager();
+      if (adpf_hint_manager_) {
+        // Register THIS thread (the CP worker = the frame-critical thread).
+        int32_t tid = static_cast<int32_t>(syscall(__NR_gettid));
+        uint32_t fps =
+            cvars::gpu_frame_limit_fps ? cvars::gpu_frame_limit_fps : 60u;
+        int64_t target_ns = int64_t(1000000000ull / fps);
+        adpf_hint_session_ =
+            api.create_session(adpf_hint_manager_, &tid, 1, target_ns);
+      }
+    }
+    if (want_thermal && api.thermal_available) {
+      adpf_thermal_manager_ = api.thermal_acquire();
+    }
+    XELOGI(
+        "ADPF init: perf-hints {} (session {}), thermal-throttle {} (mgr {})",
+        want_hints ? "on" : "off",
+        adpf_hint_session_ ? "created" : "unavailable",
+        want_thermal ? "on" : "off",
+        adpf_thermal_manager_ ? "acquired" : "unavailable");
+  }
+
+  // Report the previous frame's actual CP work duration. AdpfEndSwap timestamps
+  // AFTER the frame-limiter sleep, so this interval excludes the pacing sleep -
+  // letting ADPF drop CPU power (and heat) when there is genuine slack.
+  if (adpf_hint_session_ && adpf_last_frame_end_ns_) {
+    int64_t actual_ns = AdpfNowNs() - int64_t(adpf_last_frame_end_ns_);
+    if (actual_ns > 0) {
+      uint32_t fps =
+          cvars::gpu_frame_limit_fps ? cvars::gpu_frame_limit_fps : 60u;
+      api.update_target(adpf_hint_session_, int64_t(1000000000ull / fps));
+      api.report_actual(adpf_hint_session_, actual_ns);
+    }
+  }
+
+  // Thermal headroom changes slowly; polling every ~30 swaps is plenty.
+  if (adpf_thermal_manager_ && (adpf_thermal_poll_counter_++ % 30u) == 0u) {
+    adpf_thermal_headroom_ = api.thermal_headroom(adpf_thermal_manager_, 10);
+  }
+}
+
+void CommandProcessor::AdpfEndSwap() {
+  if (adpf_hint_session_) {
+    adpf_last_frame_end_ns_ = uint64_t(AdpfNowNs());
+  }
+}
+
+uint32_t CommandProcessor::AdpfThermalAdjustedFrameLimit(
+    uint32_t configured_fps) const {
+  if (!cvars::gpu_adpf_thermal_throttle || !adpf_thermal_manager_) {
+    return configured_fps;
+  }
+  // Headroom is normalized: 0 = cool, 1.0 = at the throttling threshold (may
+  // exceed 1.0). NaN (unsupported) fails every comparison -> no throttle.
+  float h = adpf_thermal_headroom_;
+  uint32_t cap;
+  if (h >= 1.0f) {
+    cap = 20u;
+  } else if (h >= 0.95f) {
+    cap = 30u;
+  } else if (h >= 0.90f) {
+    cap = 45u;
+  } else {
+    return configured_fps;
+  }
+  return configured_fps ? std::min(configured_fps, cap) : cap;
+}
+
+void CommandProcessor::AdpfShutdown() {
+  const AdpfApi& api = GetAdpfApi();
+  if (adpf_hint_session_ && api.close_session) {
+    api.close_session(adpf_hint_session_);
+  }
+  adpf_hint_session_ = nullptr;
+  if (adpf_thermal_manager_ && api.thermal_release) {
+    api.thermal_release(adpf_thermal_manager_);
+  }
+  adpf_thermal_manager_ = nullptr;
+}
+#endif  // XE_PLATFORM_ANDROID
+
 bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
                                                   uint32_t packet,
                                                   uint32_t count) {
@@ -1379,12 +1545,23 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   TraceSwapRenderTargets(register_file_, frontbuffer_ptr, frontbuffer_width,
                          frontbuffer_height);
 
+#if XE_PLATFORM_ANDROID
+  // ADPF: report the previous frame's CP work + refresh thermal headroom before
+  // the frame limiter (below) applies any thermal-derived cap.
+  AdpfBeginSwap();
+#endif  // XE_PLATFORM_ANDROID
+
   // Host-side frame-rate limiter (gpu_frame_limit_fps): pace the swap so light/
   // loading/menu screens don't render hundreds of fps and peg+overheat the GPU
   // (device-observed: Lost Odyssey loading ~943fps -> 72.5C). Sleeping here
   // throttles the CP worker; ring-buffer backpressure then paces the guest.
   // 0 = disabled (prior behavior). Caps real frames/sec, not guest time.
   uint32_t frame_limit_fps = cvars::gpu_frame_limit_fps;
+#if XE_PLATFORM_ANDROID
+  // Pre-emptive thermal throttle (gpu_adpf_thermal_throttle): lower the present
+  // cap as ADPF thermal headroom approaches the throttling threshold.
+  frame_limit_fps = AdpfThermalAdjustedFrameLimit(frame_limit_fps);
+#endif  // XE_PLATFORM_ANDROID
   if (frame_limit_fps) {
     uint64_t target_interval_ms = 1000ull / frame_limit_fps;
     if (target_interval_ms) {
@@ -1402,6 +1579,12 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
             display_width, display_height);
+
+#if XE_PLATFORM_ANDROID
+  // Mark end-of-frame AFTER the limiter sleep + swap so the next frame's
+  // reported ADPF work duration excludes the intentional pacing sleep.
+  AdpfEndSwap();
+#endif  // XE_PLATFORM_ANDROID
 
   ++counter_;
   if (ShouldTraceGpuInterruptPacket()) {

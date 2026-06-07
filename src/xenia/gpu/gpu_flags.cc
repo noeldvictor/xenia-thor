@@ -32,6 +32,25 @@ DEFINE_uint32(
     "GPU");
 
 DEFINE_bool(
+    gpu_adpf_performance_hints, false,
+    "Android only (ADPF Performance Hint API): report the GPU command-processor "
+    "(frame-critical) thread's per-frame work duration vs the target frame "
+    "budget to the OS so the scheduler boosts the right CPU core when frames "
+    "run long and relaxes it (saving power/heat) when there is slack. Pure "
+    "scheduling hint - does not change rendering. No-op off Android or on ROMs "
+    "without the API. Default off (experimental, validate per device).",
+    "GPU");
+
+DEFINE_bool(
+    gpu_adpf_thermal_throttle, false,
+    "Android only (ADPF Thermal API): read thermal headroom each frame and "
+    "pre-emptively cap the present rate (45/30/20 fps as headroom approaches "
+    "the throttling threshold) so the fanless handheld sheds heat before the OS "
+    "throttles hard. Composes with gpu_frame_limit_fps (takes the lower cap). "
+    "No-op off Android or on ROMs without the API. Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

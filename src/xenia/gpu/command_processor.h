@@ -278,6 +278,24 @@ class CommandProcessor {
   // gpu_frame_limit_fps host-side frame-rate limiter.
   uint64_t last_swap_host_millis_ = 0;
 
+#if XE_PLATFORM_ANDROID
+  // ADPF (Android Dynamic Performance Framework) integration, driven from
+  // ExecutePacketType3_XE_SWAP on the CP worker (frame-critical) thread. Both
+  // gpu_adpf_* cvars default-off. NDK handles are opaque void* resolved via
+  // dlsym (no link-time dependency; graceful no-op without the API).
+  void AdpfBeginSwap();   // lazy init + report previous frame + poll thermal
+  void AdpfEndSwap();     // timestamp end-of-frame (excludes the limiter sleep)
+  void AdpfShutdown();    // close the hint session + release the thermal manager
+  uint32_t AdpfThermalAdjustedFrameLimit(uint32_t configured_fps) const;
+  void* adpf_hint_manager_ = nullptr;     // APerformanceHintManager*
+  void* adpf_hint_session_ = nullptr;     // APerformanceHintSession*
+  void* adpf_thermal_manager_ = nullptr;  // AThermalManager*
+  bool adpf_init_attempted_ = false;
+  uint64_t adpf_last_frame_end_ns_ = 0;
+  uint32_t adpf_thermal_poll_counter_ = 0;
+  float adpf_thermal_headroom_ = 0.0f;
+#endif  // XE_PLATFORM_ANDROID
+
   uint32_t primary_buffer_ptr_ = 0;
   uint32_t primary_buffer_size_ = 0;
 
