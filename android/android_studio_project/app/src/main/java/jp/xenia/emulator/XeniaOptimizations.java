@@ -288,20 +288,30 @@ public final class XeniaOptimizations {
 
         list.add(new Optimization(
                 "opt_prime_core_router",
-                "Prime-core thread router",
-                "Runs the hottest threads on the 3.19 GHz Cortex-X3 prime core.",
+                "Prime-core GPU-command priority",
+                "Pins the GPU-command thread to the 3.19 GHz Cortex-X3 and raises "
+                        + "its priority so the GPU never starves waiting on it.",
                 "The Snapdragon 8 Gen 2 has one 3.19 GHz Cortex-X3, four ~2.8 GHz mid "
-                        + "cores and three 2.0 GHz efficiency cores. Left alone the OS can "
-                        + "park the emulator's hot guest and GPU-command threads on a slow "
-                        + "2.0 GHz core. This pins the GPU-command thread to the X3 and "
-                        + "keeps the guest threads on the big cluster - up to a ~1.6x clock "
-                        + "ratio on the single-threaded critical path. Scheduler hints "
-                        + "only, with a safe fallback if the OS rejects them.",
+                        + "cores and three 2.0 GHz efficiency cores. Left alone the OS "
+                        + "parks the emulator's hot threads on a slow 2.0 GHz core AND "
+                        + "lets busy guest threads deschedule the GPU-command thread - so "
+                        + "the GPU sits idle waiting for the next batch of work to be "
+                        + "submitted. This (1) pins the GPU-command thread to the X3, (2) "
+                        + "raises its scheduling priority (nice) so the OS keeps it running "
+                        + "even when the guest threads are busy, and (3) keeps the guest "
+                        + "threads on the big cluster. Device-validated 2026-06-07: Back "
+                        + "to the Future's DeLorean scene went ~24 -> ~30 fps (its 30fps "
+                        + "target), GPU frame time ~41.5 -> ~26 ms and GPU busy 66% -> 82% "
+                        + "(the command thread was being descheduled; prioritizing it fed "
+                        + "the GPU continuously). Raising priority does NOT take a core "
+                        + "away from the guest, so it is safe for CPU-bound titles too. "
+                        + "Scheduler hints only, with a safe fallback if the OS rejects them.",
                 CATEGORY_THREADS, true, true,
                 null,
                 new IntCvar[]{
                         new IntCvar("thor_gpu_thread_affinity_cpu", 7),
                         new IntCvar("thor_guest_thread_affinity_mask", -1),
+                        new IntCvar("gpu_cp_worker_nice", -19),
                 }));
 
         list.add(new Optimization(
