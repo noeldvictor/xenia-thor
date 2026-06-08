@@ -94,19 +94,19 @@ public final class GameProfiles {
         // ran ~24fps (gpu_frame ~41.5ms) NOT because of the GPU work itself but
         // because the guest threads descheduled the GPU-command (CP) thread, so
         // the GPU starved ~16ms/frame waiting on command submission (busy 66%).
-        // Dedicating the Cortex-X3 prime core (cpu7) to the CP thread + holding
-        // the guest threads on cpu3-6 (mask 0x78=120, off the X3) frees the CP
-        // -> the GPU is fed continuously -> gpu_frame ~26ms, BTTF reaches its
-        // 30fps target (busy 81%, now frame-paced not GPU-starved). Device-
-        // validated 2026-06-07, two runs (gpu_frame ~25.4/26.1ms, VdSwap 30-31/s
-        // at the DeLorean scene). Per-game (NOT global) because moving guest
-        // threads off the X3 could slow CPU-bound titles that want it for the
-        // guest main thread.
+        // FIX: raise the CP thread's scheduling priority (nice -19) so the OS
+        // keeps it running under guest-thread contention -> the GPU is fed
+        // continuously -> gpu_frame ~26ms, BTTF reaches its 30fps target (busy
+        // 82%, now frame-paced not GPU-starved). Device-validated 2026-06-07:
+        // gpu_cp_worker_nice=-19 gave gpu_frame ~25.7ms / VdSwap 30-31/s / busy
+        // 82% at the DeLorean scene (cvar-confirmed "worker nice set to -19"),
+        // reproducing the earlier X3-affinity result (two runs ~25.4/26.1ms) but
+        // WITHOUT stealing a core from the guest -> safe even for CPU-bound
+        // titles. (Supersedes the per-game X3 affinity cvars: same win, safer
+        // mechanism, no core-steal.)
         PROFILES.put("443607D6", new Profile("Back to the Future: The Game")
-                .add("thor_gpu_thread_affinity_cpu", Integer.valueOf(7),
-                        "Dedicate the Cortex-X3 (cpu7) to the GPU-command thread; BTTF was GPU-starved by CP-thread contention")
-                .add("thor_guest_thread_affinity_mask", Integer.valueOf(120),
-                        "Keep guest threads on cpu3-6 (off the X3) so the CP thread runs uncontended -> GPU fed -> 30fps"));
+                .add("gpu_cp_worker_nice", Integer.valueOf(-19),
+                        "Raise the GPU-command thread's priority so it isn't descheduled under guest contention -> GPU fed -> 30fps (BTTF was GPU-starved by CP-thread descheduling)"));
     }
 
     private static String normalize(final String titleId) {
