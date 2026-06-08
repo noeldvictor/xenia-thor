@@ -12,6 +12,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_cpp_eh.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
@@ -24,6 +25,53 @@ DEFINE_bool(xboxkrnl_ignore_guest_debug_breakpoints, false,
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+
+// Unit 3 of the guest C++ exception-dispatch build (cvar
+// guest_cpp_exception_dispatch). Walk the guest PowerPC back-chain to enumerate
+// call frames for the unwinder; declared in xboxkrnl_cpp_eh.h. Pure logic over a
+// guest-memory read callback so it is host cpu-testable (walk_guest_stack_test).
+// FAILS CLOSED on any corrupt step -- a bad walk must never feed a longjmp.
+size_t WalkGuestStack(
+    const std::function<bool(uint32_t, uint32_t&)>& read_be32,
+    uint32_t start_pc, uint32_t start_sp, uint32_t stack_min,
+    uint32_t stack_max, size_t max_frames,
+    std::vector<GuestEhFrame>* out_frames) {
+  uint32_t cur_pc = start_pc;
+  uint32_t cur_sp = start_sp;
+  for (size_t i = 0; i < max_frames; ++i) {
+    out_frames->push_back({cur_pc, cur_sp});
+
+    // The caller's stack pointer is the back-chain word at [sp].
+    uint32_t caller_sp = 0;
+    if (!read_be32(cur_sp, caller_sp)) {
+      break;  // back-chain word unreadable
+    }
+    if (caller_sp == 0) {
+      break;  // top of the stack (null back-chain)
+    }
+    if (caller_sp <= cur_sp) {
+      break;  // the stack grows down; the caller must sit at a higher address
+    }
+    if ((caller_sp & 0x7u) != 0) {
+      break;  // back-chain must be at least 8-byte aligned
+    }
+    if (caller_sp < stack_min || caller_sp >= stack_max) {
+      break;  // outside the valid guest stack region
+    }
+
+    // The return address into the caller is the LR this frame saved at
+    // [caller_sp - 8]. If it is unreadable, stop WITHOUT appending a frame we
+    // cannot give a PC -- the next iteration would have no valid pc.
+    uint32_t ret_pc = 0;
+    if (!read_be32(caller_sp - 8u, ret_pc)) {
+      break;
+    }
+
+    cur_pc = ret_pc;
+    cur_sp = caller_sp;
+  }
+  return out_frames->size();
+}
 
 void DbgBreakPoint_entry() {
   if (cvars::xboxkrnl_ignore_guest_debug_breakpoints) {
