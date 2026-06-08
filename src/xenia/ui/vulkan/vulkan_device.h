@@ -149,6 +149,12 @@ class VulkanDevice {
     bool fragmentShaderSampleInterlock = false;
     bool fragmentShaderPixelInterlock = false;
 
+    // VK_EXT_rasterization_order_attachment_access (#464, track #6 EDRAM ROAA -
+    // the FSI alternative on Turnip for the EDRAM-in-GMEM render path).
+    bool rasterizationOrderColorAttachmentAccess = false;
+    bool rasterizationOrderDepthAttachmentAccess = false;
+    bool rasterizationOrderStencilAttachmentAccess = false;
+
     // VK_EXT_shader_demote_to_helper_invocation (#277, promoted to 1.3)
 
     bool shaderDemoteToHelperInvocation = false;

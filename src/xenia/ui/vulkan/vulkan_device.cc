@@ -309,6 +309,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT>
       features_EXT_fragment_shader_interlock;
+  // Track #6: rasterization-order attachment access feature (the FSI
+  // alternative on Turnip enabling the transfer-free EDRAM-in-GMEM path).
+  VulkanFeatures<
+      VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_EXT>
+      features_EXT_rasterization_order_attachment_access;
   VulkanFeatures<
       VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT>
@@ -348,6 +354,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (ext_EXT_fragment_shader_interlock) {
       features_EXT_fragment_shader_interlock.Link(supported_features_2,
                                                   device_create_info);
+    }
+    if (device->extensions_.ext_EXT_rasterization_order_attachment_access) {
+      features_EXT_rasterization_order_attachment_access.Link(
+          supported_features_2, device_create_info);
     }
     if (ext_EXT_non_seamless_cube_map) {
       features_EXT_non_seamless_cube_map.Link(supported_features_2,
@@ -712,6 +722,17 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
                              fragmentShaderSampleInterlock)
       XE_UI_VULKAN_FEATURE_2(features_EXT_fragment_shader_interlock,
                              fragmentShaderPixelInterlock)
+    }
+  }
+
+  if (device->extensions_.ext_EXT_rasterization_order_attachment_access) {
+    if (with_gpu_emulation) {
+      XE_UI_VULKAN_FEATURE_2(features_EXT_rasterization_order_attachment_access,
+                             rasterizationOrderColorAttachmentAccess)
+      XE_UI_VULKAN_FEATURE_2(features_EXT_rasterization_order_attachment_access,
+                             rasterizationOrderDepthAttachmentAccess)
+      XE_UI_VULKAN_FEATURE_2(features_EXT_rasterization_order_attachment_access,
+                             rasterizationOrderStencilAttachmentAccess)
     }
   }
 
