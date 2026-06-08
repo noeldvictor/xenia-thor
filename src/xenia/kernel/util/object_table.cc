@@ -415,6 +415,14 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
   // Populate the per-thread cache under the lock (the generation is stable while
   // the lock is held). The cache keeps its own reference to the object.
   if (use_cache && object) {
+    // One-time confirmation that the cache is active (so logcat can verify the
+    // cvar took effect during A/B measurement).
+    static std::atomic<bool> logged_active{false};
+    if (!logged_active.exchange(true)) {
+      XELOGI(
+          "ObjectTable: lock-free per-thread handle cache ACTIVE "
+          "(kernel_object_handle_cache)");
+    }
     HandleCacheEntry& ce =
         t_handle_cache.entries[GetHandleSlot(handle) & (kHandleCacheSize - 1)];
     if (ce.object) {

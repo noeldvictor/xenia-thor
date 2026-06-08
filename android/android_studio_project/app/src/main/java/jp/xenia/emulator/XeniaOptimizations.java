@@ -336,6 +336,23 @@ public final class XeniaOptimizations {
                 CATEGORY_THREADS, false, false,
                 new BoolCvar[]{new BoolCvar("gpu_adpf_thermal_throttle")}, null));
 
+        list.add(new Optimization(
+                "opt_object_handle_cache",
+                "Lock-free object-handle cache (experimental)",
+                "Skips the global kernel lock on repeated object-handle lookups.",
+                "Every guest wait/handle/object operation (NtWaitForSingleObject, "
+                        + "events, mutexes, threads, files) looks up its kernel object "
+                        + "under a single global lock; on multi-threaded games that lock "
+                        + "is contended ~20% of CPU time (profiled on Gears). This adds a "
+                        + "small per-thread cache so repeated lookups of the same handle "
+                        + "skip the lock entirely, kept correct by a table generation "
+                        + "counter (any handle add/remove forces a re-lookup) and by "
+                        + "holding a reference to each cached object. Helps CPU-bound "
+                        + "multi-threaded titles; no effect on GPU-bound scenes. "
+                        + "Experimental - validate per device.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("kernel_object_handle_cache")}, null));
+
         ALL = Collections.unmodifiableList(list);
     }
 
