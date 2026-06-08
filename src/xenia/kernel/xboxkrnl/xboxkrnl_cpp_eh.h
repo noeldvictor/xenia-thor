@@ -29,6 +29,12 @@ struct GuestEhFrame {
   uint32_t sp;  // this frame's stack pointer (guest r1)
 };
 
+// Read a big-endian u32 from guest memory, returning false if the address is
+// unmapped/unreadable. Shared by the EH stack walk and the descriptor decoders
+// so both are host cpu-testable via a synthetic map; the runtime passes a
+// wrapper over memory()->TranslateVirtual + xe::load_and_swap.
+using GuestBe32Reader = std::function<bool(uint32_t, uint32_t&)>;
+
 // Walk the guest PowerPC back-chain from (start_pc, start_sp) toward the stack
 // base, appending each frame (the starting frame included) to *out_frames.
 //
@@ -50,6 +56,69 @@ size_t WalkGuestStack(
     uint32_t start_pc, uint32_t start_sp, uint32_t stack_min,
     uint32_t stack_max, size_t max_frames,
     std::vector<GuestEhFrame>* out_frames);
+
+// ---- Unit 4: MSVC C++ EH descriptors (stored BIG-ENDIAN in guest memory) ----
+//
+// The catch-handler tables are the standard 32-bit MSVC structures. We decode
+// them field-by-field (each decoder byte-swaps every u32 via GuestBe32Reader)
+// into host-endian copies. Layouts/offsets are gate-confirmed on Project
+// Sylpheed; sizes: FuncInfo 0x1C, TryBlockMapEntry 0x14, HandlerType 0x10.
+
+// EH4 FuncInfo magic (gate-confirmed). The high 3 bits hold bbaOpts, so compare
+// the low 29 bits.
+constexpr uint32_t kGuestEhFuncInfoMagic = 0x19930522u;
+constexpr uint32_t kGuestEhFuncInfoMagicMask = 0x1FFFFFFFu;
+
+// _s_FuncInfo (per function; located via FuncStart - 4).
+struct GuestFuncInfo {
+  uint32_t magic;              // 0x00 (& mask) == kGuestEhFuncInfoMagic
+  int32_t max_state;           // 0x04
+  uint32_t unwind_map;         // 0x08 -> UnwindMapEntry[]
+  uint32_t num_try_blocks;     // 0x0C
+  uint32_t try_block_map;      // 0x10 -> TryBlockMapEntry[num_try_blocks]
+  uint32_t num_ip_map_entries; // 0x14
+  uint32_t ip_to_state_map;    // 0x18 -> IpToStateMapEntry[]
+};
+
+// _s_TryBlockMapEntry (per try block).
+struct GuestTryBlockMapEntry {
+  int32_t try_low;         // 0x00 state range [try_low, try_high] the try covers
+  int32_t try_high;        // 0x04
+  int32_t catch_high;      // 0x08 last state reachable from the catch funclets
+  int32_t num_catches;     // 0x0C
+  uint32_t handler_array;  // 0x10 -> HandlerType[num_catches]
+};
+
+// _s_HandlerType (per catch clause).
+struct GuestHandlerType {
+  uint32_t adjectives;          // 0x00 const/volatile/ref + 0x40 = catch(...)
+  uint32_t type_descriptor;     // 0x04 -> TypeDescriptor (0 for catch(...))
+  int32_t disp_catch_obj;       // 0x08 caught-object offset from the establisher
+  uint32_t address_of_handler;  // 0x0C guest VA of the catch funclet
+};
+
+// TypeDescriptor header; the mangled type name is the C string at name_addr.
+struct GuestTypeDescriptor {
+  uint32_t vftable;    // 0x00
+  uint32_t spare;      // 0x04
+  uint32_t name_addr;  // address of the null-terminated mangled name (= addr+8)
+};
+
+// Resolve a function's FuncInfo pointer: the word at (func_start - 4) holds the
+// FuncInfo VA (gate finding; device-validated at U6). False on a bad read.
+bool ResolveGuestFuncInfoAddr(const GuestBe32Reader& read_be32,
+                              uint32_t func_start, uint32_t* out_func_info_addr);
+
+// Decode one descriptor at a guest address. Each returns false (touching no
+// output) if any constituent word is unreadable.
+bool DecodeGuestFuncInfo(const GuestBe32Reader& read_be32, uint32_t addr,
+                         GuestFuncInfo* out);
+bool DecodeGuestTryBlockMapEntry(const GuestBe32Reader& read_be32, uint32_t addr,
+                                 GuestTryBlockMapEntry* out);
+bool DecodeGuestHandlerType(const GuestBe32Reader& read_be32, uint32_t addr,
+                            GuestHandlerType* out);
+bool DecodeGuestTypeDescriptor(const GuestBe32Reader& read_be32, uint32_t addr,
+                               GuestTypeDescriptor* out);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

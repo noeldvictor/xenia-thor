@@ -73,6 +73,78 @@ size_t WalkGuestStack(
   return out_frames->size();
 }
 
+// Unit 4: decode the big-endian MSVC C++ EH descriptors. Each decoder reads its
+// fixed set of u32 words via read_be32 (which byte-swaps), so a wrong offset or
+// struct size is caught host-side (eh_descriptors_test). All-or-nothing: an
+// unreadable word fails the whole decode without touching *out.
+bool ResolveGuestFuncInfoAddr(const GuestBe32Reader& read_be32,
+                              uint32_t func_start, uint32_t* out_func_info_addr) {
+  return read_be32(func_start - 4u, *out_func_info_addr);
+}
+
+bool DecodeGuestFuncInfo(const GuestBe32Reader& read_be32, uint32_t addr,
+                         GuestFuncInfo* out) {
+  uint32_t w[7];
+  for (int i = 0; i < 7; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->magic = w[0];
+  out->max_state = static_cast<int32_t>(w[1]);
+  out->unwind_map = w[2];
+  out->num_try_blocks = w[3];
+  out->try_block_map = w[4];
+  out->num_ip_map_entries = w[5];
+  out->ip_to_state_map = w[6];
+  return true;
+}
+
+bool DecodeGuestTryBlockMapEntry(const GuestBe32Reader& read_be32, uint32_t addr,
+                                 GuestTryBlockMapEntry* out) {
+  uint32_t w[5];
+  for (int i = 0; i < 5; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->try_low = static_cast<int32_t>(w[0]);
+  out->try_high = static_cast<int32_t>(w[1]);
+  out->catch_high = static_cast<int32_t>(w[2]);
+  out->num_catches = static_cast<int32_t>(w[3]);
+  out->handler_array = w[4];
+  return true;
+}
+
+bool DecodeGuestHandlerType(const GuestBe32Reader& read_be32, uint32_t addr,
+                            GuestHandlerType* out) {
+  uint32_t w[4];
+  for (int i = 0; i < 4; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->adjectives = w[0];
+  out->type_descriptor = w[1];
+  out->disp_catch_obj = static_cast<int32_t>(w[2]);
+  out->address_of_handler = w[3];
+  return true;
+}
+
+bool DecodeGuestTypeDescriptor(const GuestBe32Reader& read_be32, uint32_t addr,
+                               GuestTypeDescriptor* out) {
+  uint32_t w[2];
+  for (int i = 0; i < 2; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->vftable = w[0];
+  out->spare = w[1];
+  out->name_addr = addr + 8u;  // the mangled name C string follows the header
+  return true;
+}
+
 void DbgBreakPoint_entry() {
   if (cvars::xboxkrnl_ignore_guest_debug_breakpoints) {
     XELOGW("DbgBreakPoint suppressed by xboxkrnl_ignore_guest_debug_breakpoints");
