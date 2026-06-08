@@ -107,6 +107,19 @@ DEFINE_int32(
     "max clock and avoids cross-cluster migration. Hint only (no guest-visible "
     "effect). Set 7 to test the X3 on this device.",
     "GPU");
+DEFINE_int32(
+    gpu_cp_worker_nice, 0,
+    "AYN Thor perf: lower the 'GPU Commands' command-processor worker thread's "
+    "nice value (Android setpriority) so the OS does not deschedule it under "
+    "guest-thread CPU contention - the GPU then stays fed instead of idling on "
+    "command submission (BTTF DeLorean measured ~16ms/frame GPU-idle, busy 66%, "
+    "from the CP thread being descheduled). A global-SAFE alternative to pinning "
+    "the X3 (thor_gpu_thread_affinity_cpu): it raises priority WITHOUT stealing a "
+    "core from the guest, so it should not regress CPU-bound titles. Android "
+    "forbids SCHED_FIFO (set_priority EPERMs) but lets an app lower its own "
+    "thread's nice (audio threads use -19). 0 = no change (default). Negative = "
+    "higher priority; try -19. Android-only.",
+    "GPU");
 DEFINE_bool(gpu_trace_swap, false,
             "Trace guest video swap setup, PM4 XE_SWAP packets, and host "
             "present/swap paths.",

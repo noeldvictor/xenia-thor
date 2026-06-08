@@ -33,6 +33,7 @@
 
 #if XE_PLATFORM_ANDROID
 #include <dlfcn.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -536,6 +537,26 @@ void CommandProcessor::SetDesiredSwapPostEffect(
 }
 
 void CommandProcessor::WorkerThreadMain() {
+#if XE_PLATFORM_ANDROID
+  // Thor perf: raise this GPU-command worker's scheduling priority (nice) so the
+  // OS keeps it running under guest-thread CPU contention. Otherwise busy guest
+  // threads deschedule it and the GPU starves waiting on command submission
+  // (measured ~16ms/frame GPU-idle on BTTF, busy 66%). Android forbids SCHED_FIFO
+  // (set_priority EPERMs) but lets an app lower its own thread's nice (audio
+  // threads use -19). Global-SAFE alternative to pinning the X3
+  // (thor_gpu_thread_affinity_cpu) - it does NOT steal a core from the guest, so
+  // it should not regress CPU-bound titles. 0 = no change (default).
+  if (cvars::gpu_cp_worker_nice != 0) {
+    const id_t cp_tid = static_cast<id_t>(syscall(SYS_gettid));
+    if (setpriority(PRIO_PROCESS, cp_tid, cvars::gpu_cp_worker_nice) == -1) {
+      XELOGW("CommandProcessor: setpriority(GPU worker nice={}) failed",
+             int32_t(cvars::gpu_cp_worker_nice));
+    } else {
+      XELOGI("CommandProcessor: GPU-command worker nice set to {}",
+             int32_t(cvars::gpu_cp_worker_nice));
+    }
+  }
+#endif  // XE_PLATFORM_ANDROID
   if (!SetupContext()) {
     xe::FatalError("Unable to setup command processor internal state");
     return;
