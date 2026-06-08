@@ -268,6 +268,14 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   TraceWriter& trace_writer_;
 
   Path path_ = Path::kHostRenderTargets;
+  // Track #6: EDRAM-ROAA sub-mode of kHostRenderTargets - keeps the real RT
+  // images but replaces EDRAM ownership-transfer copies (measured ~9ms / ~22%
+  // of the BTTF GPU frame) with rasterization-order input-attachment reads.
+  // Set in Initialize when gpu_vulkan_edram_roaa + the
+  // VK_EXT_rasterization_order_attachment_access extension + its color
+  // attachment-access feature are all present; only gates the few differing
+  // sites (transfer / render-pass / pipeline / pixel shader). Default off.
+  bool edram_roaa_ = false;
 
   // Accessible in fragment and compute shaders.
   VkDescriptorSetLayout descriptor_set_layout_storage_buffer_ = VK_NULL_HANDLE;

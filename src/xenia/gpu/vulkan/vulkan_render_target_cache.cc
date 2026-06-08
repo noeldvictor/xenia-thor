@@ -367,6 +367,20 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       cvars::render_target_path_vulkan,
       path_ == Path::kPixelShaderInterlock ? "fsi" : "fbo");
 
+  // Track #6 (gpu_vulkan_edram_roaa): EDRAM-ROAA sub-mode of the host
+  // render-target path - eliminates the EDRAM ownership-transfer copies
+  // (device-measured ~9ms / ~22% of the BTTF GPU frame) by reading prior RT
+  // contents via rasterization-order input attachments instead of copying.
+  // Requires the host RT path + VK_EXT_rasterization_order_attachment_access +
+  // the color attachment-access feature. Gates only the transfer / render-pass /
+  // pipeline / pixel-shader sites; default off, byte-identical when off.
+  edram_roaa_ =
+      cvars::gpu_vulkan_edram_roaa && path_ == Path::kHostRenderTargets &&
+      vulkan_device->extensions()
+          .ext_EXT_rasterization_order_attachment_access &&
+      vulkan_device->properties().rasterizationOrderColorAttachmentAccess;
+  XELOGI("VulkanRenderTargetCache: edram_roaa={}", edram_roaa_);
+
   // Format support.
   constexpr VkFormatFeatureFlags kUsedDepthFormatFeatures =
       VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
