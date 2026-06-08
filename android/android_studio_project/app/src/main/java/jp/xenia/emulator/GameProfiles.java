@@ -89,6 +89,24 @@ public final class GameProfiles {
         PROFILES.put("4E4D080B", new Profile("MagnaCarta 2")
                 .add("a64_max_stackpoints", Integer.valueOf(1048576),
                         "Needs a larger guest-stack array or it crashes at boot"));
+
+        // Back to the Future: The Game (443607D6): GPU-bound DeLorean gameplay
+        // ran ~24fps (gpu_frame ~41.5ms) NOT because of the GPU work itself but
+        // because the guest threads descheduled the GPU-command (CP) thread, so
+        // the GPU starved ~16ms/frame waiting on command submission (busy 66%).
+        // Dedicating the Cortex-X3 prime core (cpu7) to the CP thread + holding
+        // the guest threads on cpu3-6 (mask 0x78=120, off the X3) frees the CP
+        // -> the GPU is fed continuously -> gpu_frame ~26ms, BTTF reaches its
+        // 30fps target (busy 81%, now frame-paced not GPU-starved). Device-
+        // validated 2026-06-07, two runs (gpu_frame ~25.4/26.1ms, VdSwap 30-31/s
+        // at the DeLorean scene). Per-game (NOT global) because moving guest
+        // threads off the X3 could slow CPU-bound titles that want it for the
+        // guest main thread.
+        PROFILES.put("443607D6", new Profile("Back to the Future: The Game")
+                .add("thor_gpu_thread_affinity_cpu", Integer.valueOf(7),
+                        "Dedicate the Cortex-X3 (cpu7) to the GPU-command thread; BTTF was GPU-starved by CP-thread contention")
+                .add("thor_guest_thread_affinity_mask", Integer.valueOf(120),
+                        "Keep guest threads on cpu3-6 (off the X3) so the CP thread runs uncontended -> GPU fed -> 30fps"));
     }
 
     private static String normalize(final String titleId) {
