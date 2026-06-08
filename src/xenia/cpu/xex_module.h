@@ -114,6 +114,27 @@ class XexModule : public xe::cpu::Module {
   const uint32_t base_address() const { return base_address_; }
   const bool is_dev_kit() const { return is_dev_kit_; }
 
+  // One decoded entry of the XEX PE exception directory
+  // (IMAGE_CE_RUNTIME_FUNCTION_ENTRY[]), used by guest C++ exception dispatch
+  // (cvar guest_cpp_exception_dispatch). On Xbox 360 the on-disk entries are
+  // packed 8-byte {u32 FuncStart; u32 bits}, stored BIG-ENDIAN, FuncStart is a
+  // full guest VA, and bit31 of bits = the exception-handler flag. The packed
+  // length subfields are unreliable, so the function's range is bounded by the
+  // next sorted entry's func_start (the function's EH FuncInfo, when present,
+  // lives at the word [func_start - 4]).
+  struct GuestRuntimeFunction {
+    uint32_t func_start;          // guest VA of the function start
+    uint32_t end_address;         // exclusive upper bound (next func_start)
+    bool has_exception_handler;   // ExceptionFlag (bit31)
+  };
+  // Map a guest PC to its runtime-function entry, or nullptr. Requires the
+  // exception directory to have been parsed (guest_cpp_exception_dispatch on).
+  const GuestRuntimeFunction* FindRuntimeFunction(uint32_t guest_pc) const;
+  // Testable core: search a sorted-by-func_start table for the entry whose
+  // [func_start, end_address) contains pc.
+  static const GuestRuntimeFunction* FindRuntimeFunction(
+      const std::vector<GuestRuntimeFunction>& table, uint32_t guest_pc);
+
   // Gets an optional header. Returns NULL if not found.
   // Special case: if key & 0xFF == 0x00, this function will return the value,
   // not a pointer! This assumes out_ptr points to uint32_t.
@@ -201,6 +222,9 @@ class XexModule : public xe::cpu::Module {
   std::vector<ImportLibrary>
       import_libs_;  // pre-loaded import libraries for ease of use
   std::vector<PESection> pe_sections_;
+  // Parsed XEX PE exception directory, sorted by func_start (empty unless
+  // guest_cpp_exception_dispatch was on at load). See GuestRuntimeFunction.
+  std::vector<GuestRuntimeFunction> guest_runtime_functions_;
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;

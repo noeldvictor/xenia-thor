@@ -14,6 +14,7 @@
 #include "third_party/fmt/include/fmt/format.h"
 
 #include "xenia/base/byte_order.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
@@ -28,6 +29,16 @@
 #include "third_party/crypto/rijndael-alg-fst.c"
 #include "third_party/crypto/rijndael-alg-fst.h"
 #include "third_party/pe/pe_image.h"
+
+DEFINE_bool(
+    guest_cpp_exception_dispatch, false,
+    "Experimental (Project Sylpheed): on a guest C++ throw (RtlRaiseException "
+    "0xE06D7363) unwind the guest stack to the registered catch handler and "
+    "resume there, instead of logging+returning (which crashes today). "
+    "Default-off; the dispatch falls back to the log+return stub on any "
+    "failure, so it cannot regress the default path. WIP build (see the "
+    "guest-eh-build-plan memory).",
+    "Kernel");
 
 static const uint8_t xe_xex2_retail_key[16] = {
     0x20, 0xB1, 0x85, 0xA5, 0x9D, 0x28, 0xFD, 0xC3,
@@ -860,9 +871,109 @@ int XexModule::ReadPEHeaders() {
     pe_sections_.push_back(section);
   }
 
+  // Guest C++ exception dispatch (default-off): parse the PE exception
+  // directory (IMAGE_CE_RUNTIME_FUNCTION_ENTRY[]) so the unwinder can map a
+  // guest PC -> its function (the EH FuncInfo, when present, lives at the word
+  // [func_start - 4]). On Xbox 360 the entries are packed 8-byte
+  // {u32 FuncStart; u32 bits} stored BIG-ENDIAN; FuncStart is a full guest VA;
+  // bit31 of bits = ExceptionFlag. (Confirmed by Ghidra on Project Sylpheed.)
+  if (cvars::guest_cpp_exception_dispatch) {
+    const auto& exc_dir =
+        opthdr->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    const uint32_t exc_va = exc_dir.VirtualAddress;
+    const uint32_t exc_size = exc_dir.Size;
+    if (exc_va != 0 && exc_size >= 8) {
+      const uint32_t exc_addr = base_address_ + exc_va;
+      if (exc_addr >= base_address_ &&
+          uint64_t(exc_addr) + exc_size <= upper_address) {
+        const uint32_t count = exc_size / 8;
+        const uint8_t* tbl =
+            memory()->TranslateVirtual<const uint8_t*>(exc_addr);
+        guest_runtime_functions_.clear();
+        guest_runtime_functions_.reserve(count);
+        uint32_t in_image = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+          const uint8_t* e = tbl + uint64_t(i) * 8;
+          const uint32_t func_start = xe::load_and_swap<uint32_t>(e);
+          const uint32_t bits = xe::load_and_swap<uint32_t>(e + 4);
+          GuestRuntimeFunction fn;
+          fn.func_start = func_start;
+          fn.end_address = 0;  // set after sort
+          fn.has_exception_handler = ((bits >> 31) & 1) != 0;
+          if (func_start >= base_address_ && func_start < upper_address) {
+            ++in_image;
+          }
+          guest_runtime_functions_.push_back(fn);
+        }
+        std::sort(guest_runtime_functions_.begin(),
+                  guest_runtime_functions_.end(),
+                  [](const GuestRuntimeFunction& a,
+                     const GuestRuntimeFunction& b) {
+                    return a.func_start < b.func_start;
+                  });
+        for (size_t i = 0; i + 1 < guest_runtime_functions_.size(); ++i) {
+          guest_runtime_functions_[i].end_address =
+              guest_runtime_functions_[i + 1].func_start;
+        }
+        if (!guest_runtime_functions_.empty()) {
+          guest_runtime_functions_.back().end_address =
+              guest_runtime_functions_.back().func_start + 0x10000u;
+        }
+        XELOGI(
+            "guest-EH: parsed XEX exception table: {} entries ({} in-image) "
+            "VA={:08X} size={:X}; first func_start={:08X} eh={}",
+            count, in_image, exc_va, exc_size,
+            guest_runtime_functions_.empty()
+                ? 0u
+                : guest_runtime_functions_.front().func_start,
+            (guest_runtime_functions_.empty() ||
+             !guest_runtime_functions_.front().has_exception_handler)
+                ? 0
+                : 1);
+        if (count != 0 && in_image * 10u < count * 9u) {
+          XELOGW(
+              "guest-EH: <90% of exception entries in-image ({}/{}) -> likely "
+              "wrong endianness/RVA; lookups unreliable",
+              in_image, count);
+        }
+      } else {
+        XELOGW(
+            "guest-EH: exception directory out of image bounds VA={:08X} "
+            "size={:X}",
+            exc_va, exc_size);
+      }
+    }
+  }
+
   // DumpTLSDirectory(pImageBase, pNTHeader, (PIMAGE_TLS_DIRECTORY32)0);
   // DumpExportsSection(pImageBase, pNTHeader);
   return 0;
+}
+
+const XexModule::GuestRuntimeFunction* XexModule::FindRuntimeFunction(
+    uint32_t guest_pc) const {
+  return FindRuntimeFunction(guest_runtime_functions_, guest_pc);
+}
+
+const XexModule::GuestRuntimeFunction* XexModule::FindRuntimeFunction(
+    const std::vector<GuestRuntimeFunction>& table, uint32_t guest_pc) {
+  if (table.empty()) {
+    return nullptr;
+  }
+  // table is sorted by func_start; find the last entry with func_start <= pc.
+  auto it = std::upper_bound(
+      table.begin(), table.end(), guest_pc,
+      [](uint32_t pc, const GuestRuntimeFunction& e) {
+        return pc < e.func_start;
+      });
+  if (it == table.begin()) {
+    return nullptr;
+  }
+  --it;
+  if (guest_pc >= it->func_start && guest_pc < it->end_address) {
+    return &*it;
+  }
+  return nullptr;
 }
 
 void XexModule::ReadSecurityInfo() {
