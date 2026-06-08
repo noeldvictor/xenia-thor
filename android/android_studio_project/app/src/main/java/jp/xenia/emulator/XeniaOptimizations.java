@@ -311,7 +311,11 @@ public final class XeniaOptimizations {
                 new IntCvar[]{
                         new IntCvar("thor_gpu_thread_affinity_cpu", 7),
                         new IntCvar("thor_guest_thread_affinity_mask", -1),
-                        new IntCvar("gpu_cp_worker_nice", -19),
+                        // nice -15: above the guest worker threads (-10) so the
+                        // GPU-command thread wins scheduling and feeds the GPU,
+                        // but BELOW the Android audio output thread (AudioTrack
+                        // is nice -16) so it never preempts audio -> no glitches.
+                        new IntCvar("gpu_cp_worker_nice", -15),
                 }));
 
         list.add(new Optimization(

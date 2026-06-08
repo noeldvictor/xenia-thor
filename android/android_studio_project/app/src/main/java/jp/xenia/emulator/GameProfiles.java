@@ -105,8 +105,8 @@ public final class GameProfiles {
         // titles. (Supersedes the per-game X3 affinity cvars: same win, safer
         // mechanism, no core-steal.)
         PROFILES.put("443607D6", new Profile("Back to the Future: The Game")
-                .add("gpu_cp_worker_nice", Integer.valueOf(-19),
-                        "Raise the GPU-command thread's priority so it isn't descheduled under guest contention -> GPU fed -> 30fps (BTTF was GPU-starved by CP-thread descheduling)"));
+                .add("gpu_cp_worker_nice", Integer.valueOf(-15),
+                        "Raise the GPU-command thread's priority above the guest workers (-10) so it isn't descheduled -> GPU fed -> 30fps; -15 stays below the audio thread (-16) to avoid audio glitches"));
     }
 
     private static String normalize(final String titleId) {
