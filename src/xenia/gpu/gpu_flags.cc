@@ -578,7 +578,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_hoist_request_range_lock, false,
+    vulkan_hoist_request_range_lock, true,
     "Thor CPU-hygiene: acquire the SharedMemory global lock ONCE around the "
     "per-draw vertex + memexport RequestRange calls in IssueDraw, instead of "
     "letting each RequestRange re-acquire the (recursive) global lock. "
@@ -663,7 +663,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_dynamic_constants_arena, false,
+    vulkan_dynamic_constants_arena, true,
     "R2 (Thor hyperopt): hold the guest draw constant buffers in a persistent, "
     "per-frame-segmented UMA ring arena and bind them once via a "
     "UNIFORM_BUFFER_DYNAMIC descriptor set with per-draw pDynamicOffsets, instead "

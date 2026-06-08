@@ -12,11 +12,12 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/profiling.h"
 
-DEFINE_bool(hir_algebraic_identities, false,
+DEFINE_bool(hir_algebraic_identities, true,
             "Simplify integer algebraic identities in the HIR (x+0, x-0, x*1, "
             "x|0, x^0, x<<0, x>>0 -> x) so they fold away before register "
             "allocation - fewer host instructions. Integer-only (float "
-            "identities are unsafe re: NaN/signed zero). Experimental.",
+            "identities are unsafe re: NaN/signed zero). Default-on (matches the "
+            "opt_algebraic_identities toggle, device-validated on Blue Dragon).",
             "CPU");
 
 DEFINE_bool(hir_fold_and_not, true,

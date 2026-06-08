@@ -47,12 +47,13 @@ DEFINE_bool(arm64_global_reservation_helpers, false,
             "Use Edge-style global reservation helpers for A64 "
             "RESERVED_LOAD/STORE instead of the legacy inline CAS path.",
             "a64");
-DEFINE_bool(arm64_use_flat_membase, false,
+DEFINE_bool(arm64_use_flat_membase, true,
             "R3: fold the 32-bit guest address into [membase, Wn, UXTW] indexed "
             "guest loads instead of materializing membase+addr through a scratch "
             "register, saving a `mov` (and freeing x0) per guest load on "
             "platforms that need no large-page +0x1000 fixup (e.g. Android). "
-            "Default-off; experimental. No effect on Windows (64K granularity "
+            "Default-on (matches the opt_flat_membase toggle, device-validated "
+            "pixel-correct on Blue Dragon). No effect on Windows (64K granularity "
             "requires the fixup).",
             "a64");
 // Spin-loop-yield (cross-title generalization of the proven Blue Dragon

@@ -40,7 +40,7 @@
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 DEFINE_bool(
-    vulkan_persistent_pipeline_cache, false,
+    vulkan_persistent_pipeline_cache, true,
     "Persist the Vulkan pipeline cache to disk and reload it next launch to cut "
     "first-encounter shader-compilation stutter. Needs vulkan_pipeline_cache_path. "
     "The driver validates the cache UUID, so a stale or wrong-driver blob is "
