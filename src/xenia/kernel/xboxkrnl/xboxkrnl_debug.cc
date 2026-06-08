@@ -469,20 +469,32 @@ static bool TryDispatchGuestCppException(pointer_t<X_EXCEPTION_RECORD> record) {
     const uint32_t frame_sp = frames[i].sp;
     const auto* rf = xex->FindRuntimeFunction(frame_pc);
 
-    // Per-frame diagnostics: surface why a catch is / isn't found in this frame
-    // (no runtime function, no EH, bad FuncInfo magic, or no try blocks).
+    // Per-frame diagnostics: surface why a catch is / isn't found in this frame.
+    // Compare two FuncInfo-location hypotheses: the word at func_start-4, and the
+    // pdata bits word interpreted as an xdata/FuncInfo RVA (base + bits&0x7FFFFFFF).
+    // Whichever yields magic 0x19930522 across all EH frames is the real
+    // convention (frame[5]'s func_start-4 decoded to garbage on Sylpheed).
     uint32_t func_info_ea = 0;
     GuestFuncInfo fi{};
     const bool fi_ok =
         rf && rf->has_exception_handler &&
         ResolveGuestFuncInfoAddr(read_be32, rf->func_start, &func_info_ea) &&
         DecodeGuestFuncInfo(read_be32, func_info_ea, &fi);
+
+    const uint32_t bits = rf ? rf->pdata_bits : 0u;
+    const uint32_t cand_ea =
+        rf ? (xex->base_address() + (bits & 0x7FFFFFFFu)) : 0u;
+    GuestFuncInfo cand_fi{};
+    const bool cand_ok = rf && rf->has_exception_handler &&
+                         DecodeGuestFuncInfo(read_be32, cand_ea, &cand_fi);
     XELOGI(
         "guest-eh:  frame[{}] pc={:08X} sp={:08X} func={:08X} has_eh={} "
-        "fi={:08X} magic={:08X} ntry={}",
+        "bits={:08X} | fi(-4)={:08X} magic={:08X} ntry={} | cand={:08X} "
+        "cmagic={:08X} cntry={}",
         i, frame_pc, frame_sp, rf ? rf->func_start : 0u,
-        (rf && rf->has_exception_handler) ? 1 : 0, func_info_ea,
-        fi_ok ? fi.magic : 0u, fi_ok ? fi.num_try_blocks : 0u);
+        (rf && rf->has_exception_handler) ? 1 : 0, bits, func_info_ea,
+        fi_ok ? fi.magic : 0u, fi_ok ? fi.num_try_blocks : 0u, cand_ea,
+        cand_ok ? cand_fi.magic : 0u, cand_ok ? cand_fi.num_try_blocks : 0u);
 
     if (!fi_ok) {
       continue;

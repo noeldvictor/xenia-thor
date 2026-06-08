@@ -900,6 +900,7 @@ int XexModule::ReadPEHeaders() {
           fn.func_start = func_start;
           fn.end_address = 0;  // set after sort
           fn.has_exception_handler = ((bits >> 31) & 1) != 0;
+          fn.pdata_bits = bits;
           if (func_start >= base_address_ && func_start < upper_address) {
             ++in_image;
           }

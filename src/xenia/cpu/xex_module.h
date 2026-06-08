@@ -126,6 +126,8 @@ class XexModule : public xe::cpu::Module {
     uint32_t func_start;          // guest VA of the function start
     uint32_t end_address;         // exclusive upper bound (next func_start)
     bool has_exception_handler;   // ExceptionFlag (bit31)
+    uint32_t pdata_bits;          // raw 2nd pdata word (bit31=flag; low bits may
+                                  // encode the xdata/FuncInfo RVA -- under study)
   };
   // Map a guest PC to its runtime-function entry, or nullptr. Requires the
   // exception directory to have been parsed (guest_cpp_exception_dispatch on).
