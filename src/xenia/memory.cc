@@ -34,6 +34,19 @@ DEFINE_bool(protect_on_release, false,
             "Protect released memory to prevent accesses.", "Memory");
 DEFINE_bool(scribble_heap, false,
             "Scribble 0xCD into all allocated heap memory.", "Memory");
+DEFINE_bool(
+    mm_free_physical_nonbase_noop, false,
+    "Sylpheed (4D5307F2) candidate fix: when MmFreePhysicalMemory is called "
+    "with an address INSIDE a physical allocation (not its base), treat it as a "
+    "no-op (leave the allocation intact) instead of releasing the WHOLE "
+    "containing region. The release-whole-region fallback frees co-located "
+    "still-live buffers (Sylpheed frees a sub-address then READS another "
+    "sub-address of the same region -> the read buffer is gone -> NtReadFile "
+    "C0000005 -> uncatchable guest C++ throw -> crash). Only affects NON-base "
+    "frees (exact-base frees - every other title - take the success path and "
+    "never reach here), so cross-game risk is low. Default-off pending on-device "
+    "validation (fire Sylpheed with --ez mm_free_physical_nonbase_noop true).",
+    "Memory");
 DEFINE_uint32(
     mmap_address_high, 0,
     "ARM64/Android research: optionally try to map guest memory at "
@@ -1637,6 +1650,21 @@ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
       const uint32_t region_base = heap_base_ + region_rel_base;
       if (region_base != base_address && base_address >= region_base &&
           (base_address - region_base) < region_size) {
+        if (cvars::mm_free_physical_nonbase_noop) {
+          // Sylpheed (4D5307F2): the guest frees a sub-address then READS
+          // another sub-address of the SAME region; releasing the whole region
+          // here frees the still-live read buffer -> NtReadFile C0000005 ->
+          // guest C++ throw -> crash. Leave the allocation intact (a benign
+          // leak of the intended sub-free) so co-located buffers survive.
+          XELOGW(
+              "PhysicalHeap::Release: non-base free of {:08X} inside region "
+              "{:08X}+{:X} treated as no-op (mm_free_physical_nonbase_noop).",
+              base_address, region_base, region_size);
+          if (out_region_size) {
+            *out_region_size = 0;
+          }
+          return true;
+        }
         XELOGW(
             "PhysicalHeap::Release: non-base free of {:08X} resolved to "
             "containing region {:08X}+{:X}; releasing the allocation (#1559).",
