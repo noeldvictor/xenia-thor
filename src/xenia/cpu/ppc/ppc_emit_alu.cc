@@ -14,11 +14,14 @@
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
-DEFINE_bool(ppc_rlwinm_shift_fastpath, false,
+DEFINE_bool(ppc_rlwinm_shift_fastpath, true,
             "Compile the common PPC rlwinm rotate-and-mask forms (slwi/srwi) "
             "directly to a single shift instead of the generic "
             "duplicate-then-rotate-then-mask HIR sequence - far fewer host "
-            "instructions on a very hot PPC instruction. Experimental.",
+            "instructions on a very hot PPC instruction. Default-on: matches "
+            "the device-validated (Blue Dragon) opt_rlwinm_shift Settings "
+            "toggle, so non-UI/am-start launch paths use the same fast codegen "
+            "as the play button (the toggle is the off-switch).",
             "CPU");
 
 namespace xe {
