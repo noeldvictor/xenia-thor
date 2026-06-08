@@ -468,15 +468,23 @@ static bool TryDispatchGuestCppException(pointer_t<X_EXCEPTION_RECORD> record) {
     const uint32_t frame_pc = frames[i].pc;
     const uint32_t frame_sp = frames[i].sp;
     const auto* rf = xex->FindRuntimeFunction(frame_pc);
-    if (!rf || !rf->has_exception_handler) {
-      continue;
-    }
+
+    // Per-frame diagnostics: surface why a catch is / isn't found in this frame
+    // (no runtime function, no EH, bad FuncInfo magic, or no try blocks).
     uint32_t func_info_ea = 0;
-    if (!ResolveGuestFuncInfoAddr(read_be32, rf->func_start, &func_info_ea)) {
-      continue;
-    }
-    GuestFuncInfo fi;
-    if (!DecodeGuestFuncInfo(read_be32, func_info_ea, &fi)) {
+    GuestFuncInfo fi{};
+    const bool fi_ok =
+        rf && rf->has_exception_handler &&
+        ResolveGuestFuncInfoAddr(read_be32, rf->func_start, &func_info_ea) &&
+        DecodeGuestFuncInfo(read_be32, func_info_ea, &fi);
+    XELOGI(
+        "guest-eh:  frame[{}] pc={:08X} sp={:08X} func={:08X} has_eh={} "
+        "fi={:08X} magic={:08X} ntry={}",
+        i, frame_pc, frame_sp, rf ? rf->func_start : 0u,
+        (rf && rf->has_exception_handler) ? 1 : 0, func_info_ea,
+        fi_ok ? fi.magic : 0u, fi_ok ? fi.num_try_blocks : 0u);
+
+    if (!fi_ok) {
       continue;
     }
     if ((fi.magic & kGuestEhFuncInfoMagicMask) != kGuestEhFuncInfoMagic) {
