@@ -537,6 +537,25 @@ static bool TryDispatchGuestCppException(pointer_t<X_EXCEPTION_RECORD> record) {
       static_cast<uint32_t>(record->exception_address), lr, sp, thrown_ptr,
       throw_info_ea, frames.size(), stack_min, stack_max);
 
+  // Decode the thrown type's mangled name (the most-derived CatchableType) --
+  // distinguishes std::bad_alloc (memory) from a file/IO or other exception,
+  // which directs the real fix (Sylpheed's throw is uncaught, so the cause, not
+  // EH dispatch, is what matters).
+  {
+    uint32_t cta_ea = 0;
+    uint32_t ct0_ea = 0;
+    if (read_be32(throw_info_ea + 0x0Cu, cta_ea) && cta_ea &&
+        read_be32(cta_ea + 0x04u, ct0_ea) && ct0_ea) {
+      GuestCatchableType ct0;
+      GuestTypeDescriptor td0;
+      if (DecodeGuestCatchableType(read_be32, ct0_ea, &ct0) &&
+          DecodeGuestTypeDescriptor(read_be32, ct0.type_descriptor, &td0)) {
+        XELOGI("guest-eh: thrown type = '{}' (type_descriptor={:08X})",
+               ReadGuestCString(read_u8, td0.name_addr), ct0.type_descriptor);
+      }
+    }
+  }
+
   // Resolve the catch via the pure, host-tested decision over the executable
   // module's runtime-function table.
   auto lookup = [xex](uint32_t pc, uint32_t& func_start, bool& has_eh) -> bool {
