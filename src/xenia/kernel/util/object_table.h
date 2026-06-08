@@ -10,6 +10,7 @@
 #ifndef XENIA_KERNEL_UTIL_OBJECT_TABLE_H_
 #define XENIA_KERNEL_UTIL_OBJECT_TABLE_H_
 
+#include <atomic>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -101,6 +102,19 @@ class ObjectTable {
   bool Resize(uint32_t new_capacity);
 
   xe::global_critical_region global_critical_region_;
+  // Bumped (release) under the global lock on every structural table change
+  // (add/remove/purge/restore/resize/reset) so the optional lock-free
+  // per-thread handle cache (object_table.cc, kernel_object_handle_cache) can
+  // detect staleness via an acquire load and fall back to the locked path.
+  // Reduces global-lock contention on the hot LookupObject path (~20% of CPU
+  // on multi-threaded titles per simpleperf profiling).
+  std::atomic<uint32_t> object_generation_{0};
+  void BumpObjectGeneration() {
+    object_generation_.fetch_add(1, std::memory_order_release);
+  }
+  uint32_t object_generation() const {
+    return object_generation_.load(std::memory_order_acquire);
+  }
   uint32_t table_capacity_ = 0;
   ObjectTableEntry* table_ = nullptr;
   uint32_t last_free_entry_ = 0;

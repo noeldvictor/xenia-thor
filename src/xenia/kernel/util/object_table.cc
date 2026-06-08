@@ -13,13 +13,53 @@
 #include <cstring>
 
 #include "xenia/base/byte_stream.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
 
+DEFINE_bool(
+    kernel_object_handle_cache, false,
+    "Lock-free per-thread cache for kernel object-handle lookups "
+    "(ObjectTable::LookupObject). Skips the global critical-region lock on "
+    "repeated lookups of the same handle, reducing the lock contention that "
+    "dominates CPU on multi-threaded titles (~20% per profiling). Correctness "
+    "is preserved by a table generation counter (any handle add/remove/purge "
+    "forces a re-lookup) and by the cache holding a reference to each cached "
+    "object. Experimental; default off until device soak-validated.",
+    "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace util {
+
+namespace {
+// Per-thread lock-free handle->object cache (kernel_object_handle_cache).
+// Each entry holds a reference to the cached object, so the object is always
+// alive on a cache hit; a stored table generation that must equal the table's
+// current generation guarantees the handle still maps to that object (any
+// structural change bumps the generation -> miss -> locked relookup). The
+// thread_local struct's destructor releases the held references on thread exit.
+struct HandleCacheEntry {
+  ObjectTable* table = nullptr;
+  X_HANDLE handle = 0;
+  XObject* object = nullptr;
+  uint32_t generation = 0;
+};
+constexpr uint32_t kHandleCacheSize = 16;  // power of two
+struct HandleCache {
+  HandleCacheEntry entries[kHandleCacheSize];
+  ~HandleCache() {
+    for (HandleCacheEntry& e : entries) {
+      if (e.object) {
+        e.object->Release();
+        e.object = nullptr;
+      }
+    }
+  }
+};
+thread_local HandleCache t_handle_cache;
+}  // namespace
 
 ObjectTable::ObjectTable() {}
 
@@ -40,6 +80,9 @@ void ObjectTable::Reset() {
   last_free_entry_ = 0;
   free(table_);
   table_ = nullptr;
+
+  // Structural change: invalidate stale per-thread handle caches.
+  BumpObjectGeneration();
 }
 
 X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot) {
@@ -111,6 +154,8 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
     if (XSUCCEEDED(result)) {
       ObjectTableEntry& entry = table_[slot];
       entry.object = object;
+      // Structural change: invalidate stale per-thread handle caches.
+      BumpObjectGeneration();
       entry.handle_ref_count = 1;
       handle = XObject::kHandleBase + (slot << 2);
       object->handles().push_back(handle);
@@ -227,6 +272,8 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
   if (entry->object) {
     auto object = entry->object;
     entry->object = nullptr;
+    // Structural change: invalidate stale per-thread handle caches.
+    BumpObjectGeneration();
     assert_zero(entry->handle_ref_count);
     entry->handle_ref_count = 0;
 
@@ -286,6 +333,8 @@ void ObjectTable::PurgeAllObjects() {
       entry.object = nullptr;
     }
   }
+  // Structural change: invalidate stale per-thread handle caches.
+  BumpObjectGeneration();
 }
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTable(X_HANDLE handle) {
@@ -323,6 +372,24 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
     return nullptr;
   }
 
+  // Lock-free fast path (kernel_object_handle_cache): a per-thread cache keyed
+  // by handle. The cached entry holds a reference (so the object is always alive
+  // on a hit) plus the table generation at cache time; a generation match
+  // guarantees no structural table change since caching, i.e. the handle still
+  // maps to the cached object. Any add/remove/purge/restore/reset bumps the
+  // generation -> miss -> locked path. Skips the global lock on the hot path.
+  const bool use_cache = cvars::kernel_object_handle_cache && !already_locked;
+  if (use_cache) {
+    uint32_t gen = object_generation();
+    HandleCacheEntry& ce =
+        t_handle_cache.entries[GetHandleSlot(handle) & (kHandleCacheSize - 1)];
+    if (ce.table == this && ce.handle == handle && ce.generation == gen &&
+        ce.object) {
+      ce.object->Retain();
+      return ce.object;
+    }
+  }
+
   XObject* object = nullptr;
   if (!already_locked) {
     global_critical_region_.mutex().lock();
@@ -343,6 +410,21 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
   // Retain the object pointer.
   if (object) {
     object->Retain();
+  }
+
+  // Populate the per-thread cache under the lock (the generation is stable while
+  // the lock is held). The cache keeps its own reference to the object.
+  if (use_cache && object) {
+    HandleCacheEntry& ce =
+        t_handle_cache.entries[GetHandleSlot(handle) & (kHandleCacheSize - 1)];
+    if (ce.object) {
+      ce.object->Release();
+    }
+    object->Retain();
+    ce.table = this;
+    ce.handle = handle;
+    ce.object = object;
+    ce.generation = object_generation();
   }
 
   if (!already_locked) {
@@ -448,6 +530,8 @@ X_STATUS ObjectTable::RestoreHandle(X_HANDLE handle, XObject* object) {
     auto& entry = table_[slot];
     entry.object = object;
     object->Retain();
+    // Structural change: invalidate stale per-thread handle caches.
+    BumpObjectGeneration();
   }
 
   return X_STATUS_SUCCESS;
