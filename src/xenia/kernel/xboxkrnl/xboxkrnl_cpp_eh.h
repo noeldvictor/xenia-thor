@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace xe {
@@ -119,6 +120,66 @@ bool DecodeGuestHandlerType(const GuestBe32Reader& read_be32, uint32_t addr,
                             GuestHandlerType* out);
 bool DecodeGuestTypeDescriptor(const GuestBe32Reader& read_be32, uint32_t addr,
                                GuestTypeDescriptor* out);
+
+// ---- Unit 5: type-match personality (catch selection + PMD this-adjust) ----
+//
+// Given the throw's ThrowInfo->CatchableTypeArray (the set of types the thrown
+// object can bind to, base classes included) and a catch clause's HandlerType,
+// decide whether the catch handles the throw -- matching by the TypeDescriptor
+// mangled-name string -- and yield the PMD that converts the thrown pointer to
+// the caught base subobject. (Throw-side structs mirror the existing
+// x_s__ThrowInfo / x_s__CatchableType / x_PMD in xboxkrnl_debug.cc, re-expressed
+// over GuestBe32Reader so the matcher is host cpu-testable.)
+
+// Per-throw magic in the X_EXCEPTION_RECORD (distinct from the FuncInfo magic).
+constexpr uint32_t kGuestEhThrowMagic = 0x19930520u;
+
+// catch(...) is a HandlerType with a null type descriptor.
+inline bool IsGuestCatchAll(const GuestHandlerType& handler) {
+  return handler.type_descriptor == 0;
+}
+
+// Read a guest ASCII C-string (a mangled type name). Reads bytes until NUL,
+// max_len, or an unreadable byte; returns what was read.
+using GuestByteReader = std::function<bool(uint32_t, uint8_t&)>;
+std::string ReadGuestCString(const GuestByteReader& read_u8, uint32_t addr,
+                             size_t max_len = 512);
+
+// _PMD: this-pointer displacement (member / vbtable-ptr / vbtable-entry).
+struct GuestPmd {
+  int32_t mdisp;
+  int32_t pdisp;
+  int32_t vdisp;
+};
+bool DecodeGuestPmd(const GuestBe32Reader& read_be32, uint32_t addr,
+                    GuestPmd* out);
+
+// _s_CatchableType (0x1C): one type the thrown object can be caught as.
+struct GuestCatchableType {
+  uint32_t properties;          // 0x00
+  uint32_t type_descriptor;     // 0x04 -> TypeDescriptor
+  GuestPmd this_displacement;   // 0x08..0x13
+  int32_t size_or_offset;       // 0x14
+  uint32_t copy_function;       // 0x18
+};
+bool DecodeGuestCatchableType(const GuestBe32Reader& read_be32, uint32_t addr,
+                              GuestCatchableType* out);
+
+// Adjust the thrown-object pointer to the base subobject the catch expects, per
+// the PMD. pdisp < 0 is the common (non-virtual) case = base + mdisp; pdisp >= 0
+// walks the vbtable (rare; device-validated at U6). Fails safe to base + mdisp.
+uint32_t AdjustGuestThisPointer(const GuestBe32Reader& read_be32, uint32_t base,
+                                const GuestPmd& pmd);
+
+// Does `handler` catch the throw at throw_info_ea? On a typed match, *out_pmd =
+// the matching CatchableType's this_displacement; for catch(...), *out_is_catch_all
+// = true and *out_pmd = identity (mdisp 0, pdisp -1). Matches by the mangled type
+// name, trying each CatchableType in order (most-derived first).
+bool GuestHandlerCatchesThrow(const GuestBe32Reader& read_be32,
+                              const GuestByteReader& read_u8,
+                              const GuestHandlerType& handler,
+                              uint32_t throw_info_ea, GuestPmd* out_pmd,
+                              bool* out_is_catch_all);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

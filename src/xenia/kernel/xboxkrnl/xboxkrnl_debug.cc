@@ -145,6 +145,129 @@ bool DecodeGuestTypeDescriptor(const GuestBe32Reader& read_be32, uint32_t addr,
   return true;
 }
 
+// Unit 5: type-match personality (catch selection + PMD this-adjust). Pure logic
+// over the readers, host-tested by eh_type_match_test.
+std::string ReadGuestCString(const GuestByteReader& read_u8, uint32_t addr,
+                             size_t max_len) {
+  std::string s;
+  for (size_t i = 0; i < max_len; ++i) {
+    uint8_t b = 0;
+    if (!read_u8(addr + static_cast<uint32_t>(i), b) || b == 0) {
+      break;
+    }
+    s.push_back(static_cast<char>(b));
+  }
+  return s;
+}
+
+bool DecodeGuestPmd(const GuestBe32Reader& read_be32, uint32_t addr,
+                    GuestPmd* out) {
+  uint32_t w[3];
+  for (int i = 0; i < 3; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->mdisp = static_cast<int32_t>(w[0]);
+  out->pdisp = static_cast<int32_t>(w[1]);
+  out->vdisp = static_cast<int32_t>(w[2]);
+  return true;
+}
+
+bool DecodeGuestCatchableType(const GuestBe32Reader& read_be32, uint32_t addr,
+                              GuestCatchableType* out) {
+  uint32_t w[7];
+  for (int i = 0; i < 7; ++i) {
+    if (!read_be32(addr + static_cast<uint32_t>(i) * 4u, w[i])) {
+      return false;
+    }
+  }
+  out->properties = w[0];
+  out->type_descriptor = w[1];
+  out->this_displacement.mdisp = static_cast<int32_t>(w[2]);
+  out->this_displacement.pdisp = static_cast<int32_t>(w[3]);
+  out->this_displacement.vdisp = static_cast<int32_t>(w[4]);
+  out->size_or_offset = static_cast<int32_t>(w[5]);
+  out->copy_function = w[6];
+  return true;
+}
+
+uint32_t AdjustGuestThisPointer(const GuestBe32Reader& read_be32, uint32_t base,
+                                const GuestPmd& pmd) {
+  if (pmd.pdisp < 0) {
+    return base + static_cast<uint32_t>(pmd.mdisp);  // non-virtual base
+  }
+  // Virtual base: base + pdisp holds the vbtable pointer; the base subobject
+  // offset is the vbtable entry at vbtable + vdisp.
+  uint32_t vbtable = 0;
+  if (!read_be32(base + static_cast<uint32_t>(pmd.pdisp), vbtable)) {
+    return base + static_cast<uint32_t>(pmd.mdisp);
+  }
+  uint32_t vbentry = 0;
+  if (!read_be32(vbtable + static_cast<uint32_t>(pmd.vdisp), vbentry)) {
+    return base + static_cast<uint32_t>(pmd.mdisp);
+  }
+  return base + static_cast<uint32_t>(pmd.pdisp) +
+         static_cast<uint32_t>(static_cast<int32_t>(vbentry)) +
+         static_cast<uint32_t>(pmd.mdisp);
+}
+
+bool GuestHandlerCatchesThrow(const GuestBe32Reader& read_be32,
+                              const GuestByteReader& read_u8,
+                              const GuestHandlerType& handler,
+                              uint32_t throw_info_ea, GuestPmd* out_pmd,
+                              bool* out_is_catch_all) {
+  *out_is_catch_all = false;
+  out_pmd->mdisp = 0;
+  out_pmd->pdisp = -1;  // identity (no adjustment)
+  out_pmd->vdisp = 0;
+
+  if (IsGuestCatchAll(handler)) {
+    *out_is_catch_all = true;
+    return true;
+  }
+
+  GuestTypeDescriptor catch_td;
+  if (!DecodeGuestTypeDescriptor(read_be32, handler.type_descriptor, &catch_td)) {
+    return false;
+  }
+  std::string catch_name = ReadGuestCString(read_u8, catch_td.name_addr);
+  if (catch_name.empty()) {
+    return false;
+  }
+
+  // ThrowInfo.catchable_type_array_ptr is at +0x0C; the array is {count;
+  // ptrs[count]}.
+  uint32_t cta_ea = 0;
+  if (!read_be32(throw_info_ea + 0x0Cu, cta_ea)) {
+    return false;
+  }
+  uint32_t count = 0;
+  if (!read_be32(cta_ea + 0x00u, count)) {
+    return false;
+  }
+  constexpr uint32_t kMaxCatchableTypes = 64u;
+  for (uint32_t i = 0; i < count && i < kMaxCatchableTypes; ++i) {
+    uint32_t ct_ea = 0;
+    if (!read_be32(cta_ea + 0x04u + i * 4u, ct_ea)) {
+      return false;
+    }
+    GuestCatchableType ct;
+    if (!DecodeGuestCatchableType(read_be32, ct_ea, &ct)) {
+      continue;
+    }
+    GuestTypeDescriptor ct_td;
+    if (!DecodeGuestTypeDescriptor(read_be32, ct.type_descriptor, &ct_td)) {
+      continue;
+    }
+    if (ReadGuestCString(read_u8, ct_td.name_addr) == catch_name) {
+      *out_pmd = ct.this_displacement;
+      return true;
+    }
+  }
+  return false;
+}
+
 void DbgBreakPoint_entry() {
   if (cvars::xboxkrnl_ignore_guest_debug_breakpoints) {
     XELOGW("DbgBreakPoint suppressed by xboxkrnl_ignore_guest_debug_breakpoints");
