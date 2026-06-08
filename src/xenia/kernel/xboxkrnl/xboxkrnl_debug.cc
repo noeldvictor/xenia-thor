@@ -7,10 +7,13 @@
  ******************************************************************************
  */
 
+#include "xenia/base/byte_order.h"
 #include "xenia/base/debugging.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/cpu/xex_module.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_cpp_eh.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -21,6 +24,21 @@ DEFINE_bool(xboxkrnl_ignore_guest_debug_breakpoints, false,
             "Experimental Android bring-up: log and ignore guest "
             "DbgBreakPoint calls instead of trapping the host process.",
             "Kernel");
+
+// The master switch (guest_cpp_exception_dispatch) is DEFINEd in the cpu lib
+// (xex_module.cc) because the XEX loader needs it to parse the exception
+// directory; HandleCppException only reads it here.
+DECLARE_bool(guest_cpp_exception_dispatch);
+
+DEFINE_bool(
+    guest_cpp_exception_dispatch_transfer, false,
+    "Experimental (Project Sylpheed): when guest_cpp_exception_dispatch is also "
+    "on, actually transfer control to the matched guest catch funclet (set the "
+    "establisher frame + Reenter) instead of only walking/matching and logging. "
+    "Default-off so the first device run validates the unwind+match "
+    "diagnostically before risking a control transfer. See the "
+    "guest-eh-build-plan memory.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -355,6 +373,212 @@ typedef struct {
   xe::be<uint32_t> catchable_type_array_ptr;
 } x_s__ThrowInfo;
 
+// Unit 6 of the guest C++ exception-dispatch build: actually dispatch a guest
+// C++ throw to its catch handler. Returns true once it has transferred control
+// (via Reenter, which does not return here on the Android longjmp path); returns
+// false on any failure or if no handler is found, so the caller falls back to
+// the historical log+return stub. Walk/decode/match are host-validated
+// (xboxkrnl_cpp_eh.* + the [guest-eh] cpu-tests); this wires them to the live
+// context. Gated by cvars::guest_cpp_exception_dispatch; the control transfer
+// itself is additionally gated by guest_cpp_exception_dispatch_transfer so the
+// first device run can validate the unwind+match diagnostically.
+static bool TryDispatchGuestCppException(pointer_t<X_EXCEPTION_RECORD> record) {
+  auto current_thread = XThread::GetCurrentThread();
+  if (!current_thread || !current_thread->thread_state()) {
+    return false;
+  }
+  auto context = current_thread->thread_state()->context();
+  if (!context) {
+    return false;
+  }
+  auto memory = kernel_memory();
+  if (!memory) {
+    return false;
+  }
+
+  // Fault-safe guest readers: refuse unmapped / non-readable pages so a corrupt
+  // back-chain or EH pointer can never fault the host (which would be worse than
+  // the stub). Page protection is checked via the owning heap.
+  auto read_be32 = [memory](uint32_t addr, uint32_t& out) -> bool {
+    if (addr < 0x1000u) return false;
+    auto* heap = memory->LookupHeap(addr);
+    uint32_t protect = 0;
+    if (!heap || !heap->QueryProtect(addr, &protect) ||
+        !(protect & kMemoryProtectRead)) {
+      return false;
+    }
+    out = xe::load_and_swap<uint32_t>(memory->TranslateVirtual<uint8_t*>(addr));
+    return true;
+  };
+  auto read_u8 = [memory](uint32_t addr, uint8_t& out) -> bool {
+    if (addr < 0x1000u) return false;
+    auto* heap = memory->LookupHeap(addr);
+    uint32_t protect = 0;
+    if (!heap || !heap->QueryProtect(addr, &protect) ||
+        !(protect & kMemoryProtectRead)) {
+      return false;
+    }
+    out = *memory->TranslateVirtual<uint8_t*>(addr);
+    return true;
+  };
+
+  const uint32_t thrown_ptr =
+      static_cast<uint32_t>(record->exception_information[1]);
+  const uint32_t throw_info_ea =
+      static_cast<uint32_t>(record->exception_information[2]);
+  if (!throw_info_ea) {
+    return false;
+  }
+
+  // RtlRaiseException is HLE-called from the guest throw machinery
+  // (_CxxThrowException); the throw site is the guest return address (lr). Use
+  // the recorded exception_address if the guest populated it.
+  const uint32_t lr = static_cast<uint32_t>(context->lr);
+  uint32_t fault_pc = static_cast<uint32_t>(record->exception_address);
+  if (!fault_pc) {
+    fault_pc = lr;
+  }
+  const uint32_t sp = static_cast<uint32_t>(context->r[1]);
+
+  auto exec_module = kernel_state()->GetExecutableModule();
+  if (!exec_module) {
+    return false;
+  }
+  auto* xex = exec_module->xex_module();
+  if (!xex) {
+    return false;
+  }
+
+  uint32_t stack_min = current_thread->stack_limit();
+  uint32_t stack_max = current_thread->stack_base();
+  if (!stack_max) {
+    stack_max = 0xFFFFFFFFu;  // bounds unknown: rely on the walk's other gates
+  }
+
+  std::vector<GuestEhFrame> frames;
+  WalkGuestStack(read_be32, fault_pc, sp, stack_min, stack_max,
+                 /*max_frames=*/256, &frames);
+  XELOGI(
+      "guest-eh: throw exc_addr={:08X} lr={:08X} sp={:08X} thrown={:08X} "
+      "throw_info={:08X} frames={} stack=[{:08X}-{:08X}]",
+      static_cast<uint32_t>(record->exception_address), lr, sp, thrown_ptr,
+      throw_info_ea, frames.size(), stack_min, stack_max);
+
+  for (size_t i = 0; i < frames.size(); ++i) {
+    const uint32_t frame_pc = frames[i].pc;
+    const uint32_t frame_sp = frames[i].sp;
+    const auto* rf = xex->FindRuntimeFunction(frame_pc);
+    if (!rf || !rf->has_exception_handler) {
+      continue;
+    }
+    uint32_t func_info_ea = 0;
+    if (!ResolveGuestFuncInfoAddr(read_be32, rf->func_start, &func_info_ea)) {
+      continue;
+    }
+    GuestFuncInfo fi;
+    if (!DecodeGuestFuncInfo(read_be32, func_info_ea, &fi)) {
+      continue;
+    }
+    if ((fi.magic & kGuestEhFuncInfoMagicMask) != kGuestEhFuncInfoMagic) {
+      continue;
+    }
+    if (!fi.num_try_blocks || !fi.try_block_map) {
+      continue;
+    }
+    for (uint32_t t = 0; t < fi.num_try_blocks && t < 256u; ++t) {
+      GuestTryBlockMapEntry tb;
+      if (!DecodeGuestTryBlockMapEntry(read_be32, fi.try_block_map + t * 0x14u,
+                                       &tb)) {
+        continue;
+      }
+      if (tb.num_catches <= 0 || !tb.handler_array) {
+        continue;
+      }
+      for (int32_t h = 0; h < tb.num_catches && h < 256; ++h) {
+        GuestHandlerType handler;
+        if (!DecodeGuestHandlerType(
+                read_be32, tb.handler_array + static_cast<uint32_t>(h) * 0x10u,
+                &handler)) {
+          continue;
+        }
+        GuestPmd pmd;
+        bool catch_all = false;
+        if (!GuestHandlerCatchesThrow(read_be32, read_u8, handler, throw_info_ea,
+                                      &pmd, &catch_all)) {
+          continue;
+        }
+
+        const uint32_t establisher = frame_sp;
+        const uint32_t adjusted =
+            catch_all ? thrown_ptr
+                      : AdjustGuestThisPointer(read_be32, thrown_ptr, pmd);
+        // First-cut continuation = the establisher's return address. The true
+        // post-catch resume point lives inside the establisher; this is refined
+        // after the diagnostic fire reveals the funclet structure.
+        const uint32_t continuation =
+            (i + 1 < frames.size()) ? frames[i + 1].pc : lr;
+
+        XELOGI(
+            "guest-eh: MATCH frame[{}] func={:08X} try={} catch={} "
+            "funclet={:08X} establisher={:08X} disp_catch_obj={:08X} "
+            "adjusted_this={:08X} catch_all={} adjectives={:08X} cont={:08X}",
+            i, rf->func_start, t, h, handler.address_of_handler, establisher,
+            static_cast<uint32_t>(handler.disp_catch_obj), adjusted,
+            catch_all ? 1 : 0, handler.adjectives, continuation);
+
+        if (!cvars::guest_cpp_exception_dispatch_transfer) {
+          // Diagnostic mode: handler found and logged, but do not risk the
+          // control transfer yet. Fall back to the stub.
+          XELOGW(
+              "guest-eh: transfer disabled "
+              "(guest_cpp_exception_dispatch_transfer off); not transferring");
+          return false;
+        }
+
+        // Store the caught object for typed catches (catch(...) binds nothing).
+        if (!catch_all) {
+          constexpr uint32_t kHandlerIsReference = 0x08u;
+          if (!(handler.adjectives & kHandlerIsReference)) {
+            XELOGW(
+                "guest-eh: catch-by-value not yet supported (adj={:08X}); "
+                "declining",
+                handler.adjectives);
+            return false;
+          }
+          const uint32_t slot =
+              establisher + static_cast<uint32_t>(handler.disp_catch_obj);
+          auto* slot_heap = memory->LookupHeap(slot);
+          uint32_t slot_protect = 0;
+          if (!slot_heap || !slot_heap->QueryProtect(slot, &slot_protect) ||
+              !(slot_protect & kMemoryProtectWrite)) {
+            XELOGW("guest-eh: catch-object slot {:08X} not writable; declining",
+                   slot);
+            return false;
+          }
+          xe::store_and_swap<uint32_t>(memory->TranslateVirtual<uint8_t*>(slot),
+                                       adjusted);
+        }
+
+        // Transfer to the catch funclet. Mirrors KeSetCurrentStackPointers: set
+        // the establisher frame + funclet ABI (r12 = establisher frame), seed lr
+        // with the continuation, and Reenter at the funclet.
+        // A64Backend::PrepareForReentry resets the stackpoint depth on reentry,
+        // so no manual reconciliation is required.
+        XELOGI("guest-eh: TRANSFER -> funclet {:08X} (r1=r12={:08X} lr={:08X})",
+               handler.address_of_handler, establisher, continuation);
+        context->r[1] = establisher;
+        context->r[12] = establisher;
+        context->lr = continuation;
+        current_thread->Reenter(handler.address_of_handler);
+        return true;  // unreachable on the longjmp path
+      }
+    }
+  }
+  XELOGW("guest-eh: no matching catch handler found in {} frames",
+         frames.size());
+  return false;
+}
+
 void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {
   // C++ exception.
   // https://blogs.msdn.com/b/oldnewthing/archive/2010/07/30/10044061.aspx
@@ -364,23 +588,18 @@ void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {
   assert_true(record->number_parameters == 3);
   assert_true(record->exception_information[0] == 0x19930520);
 
-  auto thrown_ptr = record->exception_information[1];
-  auto thrown = kernel_memory()->TranslateVirtual(thrown_ptr);
-  auto vftable_ptr = *reinterpret_cast<xe::be<uint32_t>*>(thrown);
+  if (cvars::guest_cpp_exception_dispatch) {
+    if (TryDispatchGuestCppException(record)) {
+      return;  // transferred to the guest catch handler
+    }
+    // Otherwise fall through to the historical stub.
+  }
 
-  auto throw_info_ptr = record->exception_information[2];
-  auto throw_info =
-      kernel_memory()->TranslateVirtual<x_s__ThrowInfo*>(throw_info_ptr);
-  auto catchable_types =
-      kernel_memory()->TranslateVirtual<x_s__CatchableTypeArray*>(
-          throw_info->catchable_type_array_ptr);
-
-  // xenia does not implement guest C++ exception dispatch/unwinding. Don't
-  // abort here: log and return so RtlRaiseException is non-fatal, matching
-  // upstream canary/edge. Otherwise ANY guest throw (e.g. std::bad_alloc from
-  // a failed allocation -- Project Sylpheed's heap allocator does exactly
-  // this) hard-crashes the emulator at the raise site.
-  // xe::debugging::Break();
+  // Without dispatch (or on any failure above): log and return so
+  // RtlRaiseException is non-fatal, matching upstream canary/edge. Otherwise ANY
+  // guest throw (e.g. std::bad_alloc from a failed allocation -- Project
+  // Sylpheed's heap allocator does exactly this) hard-crashes the emulator at
+  // the raise site.
   XELOGE("Guest attempted to throw a C++ exception!");
 }
 
