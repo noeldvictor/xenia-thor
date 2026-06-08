@@ -373,6 +373,79 @@ typedef struct {
   xe::be<uint32_t> catchable_type_array_ptr;
 } x_s__ThrowInfo;
 
+// Unit 6 (pure, host-tested): scan the unwound frames for the first catch that
+// handles the throw. Declared in xboxkrnl_cpp_eh.h. This is the dispatch
+// DECISION (which catch + how to bind the object) isolated from the live context
+// + the Reenter, so it is fully host cpu-testable (eh_catch_resolution_test) --
+// the catch-found path that Sylpheed's uncaught throw could not exercise.
+GuestCatchResolution FindGuestCatchForThrow(
+    const GuestBe32Reader& read_be32, const GuestByteReader& read_u8,
+    const GuestRuntimeFunctionLookup& lookup,
+    const std::vector<GuestEhFrame>& frames, uint32_t throw_info_ea,
+    uint32_t thrown_ptr) {
+  GuestCatchResolution res;
+  for (size_t i = 0; i < frames.size(); ++i) {
+    const uint32_t frame_pc = frames[i].pc;
+    const uint32_t frame_sp = frames[i].sp;
+    uint32_t func_start = 0;
+    bool has_eh = false;
+    const bool have_func = lookup(frame_pc, func_start, has_eh);
+
+    uint32_t func_info_ea = 0;
+    GuestFuncInfo fi{};
+    const bool fi_ok =
+        have_func && has_eh &&
+        ResolveGuestFuncInfoAddr(read_be32, func_start, &func_info_ea) &&
+        DecodeGuestFuncInfo(read_be32, func_info_ea, &fi);
+    XELOGI(
+        "guest-eh:  frame[{}] pc={:08X} sp={:08X} func={:08X} has_eh={} "
+        "fi={:08X} magic={:08X} ntry={}",
+        i, frame_pc, frame_sp, func_start, (have_func && has_eh) ? 1 : 0,
+        func_info_ea, fi_ok ? fi.magic : 0u, fi_ok ? fi.num_try_blocks : 0u);
+    if (!fi_ok ||
+        (fi.magic & kGuestEhFuncInfoMagicMask) != kGuestEhFuncInfoMagic ||
+        !fi.num_try_blocks || !fi.try_block_map) {
+      continue;
+    }
+    for (uint32_t t = 0; t < fi.num_try_blocks && t < 256u; ++t) {
+      GuestTryBlockMapEntry tb;
+      if (!DecodeGuestTryBlockMapEntry(read_be32, fi.try_block_map + t * 0x14u,
+                                       &tb)) {
+        continue;
+      }
+      if (tb.num_catches <= 0 || !tb.handler_array) {
+        continue;
+      }
+      for (int32_t h = 0; h < tb.num_catches && h < 256; ++h) {
+        GuestHandlerType handler;
+        if (!DecodeGuestHandlerType(
+                read_be32, tb.handler_array + static_cast<uint32_t>(h) * 0x10u,
+                &handler)) {
+          continue;
+        }
+        GuestPmd pmd;
+        bool catch_all = false;
+        if (!GuestHandlerCatchesThrow(read_be32, read_u8, handler, throw_info_ea,
+                                      &pmd, &catch_all)) {
+          continue;
+        }
+        res.found = true;
+        res.frame_index = i;
+        res.funclet = handler.address_of_handler;
+        res.establisher = frame_sp;
+        res.adjusted_this =
+            catch_all ? thrown_ptr
+                      : AdjustGuestThisPointer(read_be32, thrown_ptr, pmd);
+        res.disp_catch_obj = handler.disp_catch_obj;
+        res.adjectives = handler.adjectives;
+        res.is_catch_all = catch_all;
+        return res;
+      }
+    }
+  }
+  return res;  // found == false
+}
+
 // Unit 6 of the guest C++ exception-dispatch build: actually dispatch a guest
 // C++ throw to its catch handler. Returns true once it has transferred control
 // (via Reenter, which does not return here on the Android longjmp path); returns
@@ -464,139 +537,81 @@ static bool TryDispatchGuestCppException(pointer_t<X_EXCEPTION_RECORD> record) {
       static_cast<uint32_t>(record->exception_address), lr, sp, thrown_ptr,
       throw_info_ea, frames.size(), stack_min, stack_max);
 
-  for (size_t i = 0; i < frames.size(); ++i) {
-    const uint32_t frame_pc = frames[i].pc;
-    const uint32_t frame_sp = frames[i].sp;
-    const auto* rf = xex->FindRuntimeFunction(frame_pc);
-
-    // Per-frame diagnostics: surface why a catch is / isn't found in this frame.
-    // Compare two FuncInfo-location hypotheses: the word at func_start-4, and the
-    // pdata bits word interpreted as an xdata/FuncInfo RVA (base + bits&0x7FFFFFFF).
-    // Whichever yields magic 0x19930522 across all EH frames is the real
-    // convention (frame[5]'s func_start-4 decoded to garbage on Sylpheed).
-    uint32_t func_info_ea = 0;
-    GuestFuncInfo fi{};
-    const bool fi_ok =
-        rf && rf->has_exception_handler &&
-        ResolveGuestFuncInfoAddr(read_be32, rf->func_start, &func_info_ea) &&
-        DecodeGuestFuncInfo(read_be32, func_info_ea, &fi);
-
-    const uint32_t bits = rf ? rf->pdata_bits : 0u;
-    const uint32_t cand_ea =
-        rf ? (xex->base_address() + (bits & 0x7FFFFFFFu)) : 0u;
-    GuestFuncInfo cand_fi{};
-    const bool cand_ok = rf && rf->has_exception_handler &&
-                         DecodeGuestFuncInfo(read_be32, cand_ea, &cand_fi);
-    XELOGI(
-        "guest-eh:  frame[{}] pc={:08X} sp={:08X} func={:08X} has_eh={} "
-        "bits={:08X} | fi(-4)={:08X} magic={:08X} ntry={} | cand={:08X} "
-        "cmagic={:08X} cntry={}",
-        i, frame_pc, frame_sp, rf ? rf->func_start : 0u,
-        (rf && rf->has_exception_handler) ? 1 : 0, bits, func_info_ea,
-        fi_ok ? fi.magic : 0u, fi_ok ? fi.num_try_blocks : 0u, cand_ea,
-        cand_ok ? cand_fi.magic : 0u, cand_ok ? cand_fi.num_try_blocks : 0u);
-
-    if (!fi_ok) {
-      continue;
+  // Resolve the catch via the pure, host-tested decision over the executable
+  // module's runtime-function table.
+  auto lookup = [xex](uint32_t pc, uint32_t& func_start, bool& has_eh) -> bool {
+    const auto* rf = xex->FindRuntimeFunction(pc);
+    if (!rf) {
+      return false;
     }
-    if ((fi.magic & kGuestEhFuncInfoMagicMask) != kGuestEhFuncInfoMagic) {
-      continue;
-    }
-    if (!fi.num_try_blocks || !fi.try_block_map) {
-      continue;
-    }
-    for (uint32_t t = 0; t < fi.num_try_blocks && t < 256u; ++t) {
-      GuestTryBlockMapEntry tb;
-      if (!DecodeGuestTryBlockMapEntry(read_be32, fi.try_block_map + t * 0x14u,
-                                       &tb)) {
-        continue;
-      }
-      if (tb.num_catches <= 0 || !tb.handler_array) {
-        continue;
-      }
-      for (int32_t h = 0; h < tb.num_catches && h < 256; ++h) {
-        GuestHandlerType handler;
-        if (!DecodeGuestHandlerType(
-                read_be32, tb.handler_array + static_cast<uint32_t>(h) * 0x10u,
-                &handler)) {
-          continue;
-        }
-        GuestPmd pmd;
-        bool catch_all = false;
-        if (!GuestHandlerCatchesThrow(read_be32, read_u8, handler, throw_info_ea,
-                                      &pmd, &catch_all)) {
-          continue;
-        }
-
-        const uint32_t establisher = frame_sp;
-        const uint32_t adjusted =
-            catch_all ? thrown_ptr
-                      : AdjustGuestThisPointer(read_be32, thrown_ptr, pmd);
-        // First-cut continuation = the establisher's return address. The true
-        // post-catch resume point lives inside the establisher; this is refined
-        // after the diagnostic fire reveals the funclet structure.
-        const uint32_t continuation =
-            (i + 1 < frames.size()) ? frames[i + 1].pc : lr;
-
-        XELOGI(
-            "guest-eh: MATCH frame[{}] func={:08X} try={} catch={} "
-            "funclet={:08X} establisher={:08X} disp_catch_obj={:08X} "
-            "adjusted_this={:08X} catch_all={} adjectives={:08X} cont={:08X}",
-            i, rf->func_start, t, h, handler.address_of_handler, establisher,
-            static_cast<uint32_t>(handler.disp_catch_obj), adjusted,
-            catch_all ? 1 : 0, handler.adjectives, continuation);
-
-        if (!cvars::guest_cpp_exception_dispatch_transfer) {
-          // Diagnostic mode: handler found and logged, but do not risk the
-          // control transfer yet. Fall back to the stub.
-          XELOGW(
-              "guest-eh: transfer disabled "
-              "(guest_cpp_exception_dispatch_transfer off); not transferring");
-          return false;
-        }
-
-        // Store the caught object for typed catches (catch(...) binds nothing).
-        if (!catch_all) {
-          constexpr uint32_t kHandlerIsReference = 0x08u;
-          if (!(handler.adjectives & kHandlerIsReference)) {
-            XELOGW(
-                "guest-eh: catch-by-value not yet supported (adj={:08X}); "
-                "declining",
-                handler.adjectives);
-            return false;
-          }
-          const uint32_t slot =
-              establisher + static_cast<uint32_t>(handler.disp_catch_obj);
-          auto* slot_heap = memory->LookupHeap(slot);
-          uint32_t slot_protect = 0;
-          if (!slot_heap || !slot_heap->QueryProtect(slot, &slot_protect) ||
-              !(slot_protect & kMemoryProtectWrite)) {
-            XELOGW("guest-eh: catch-object slot {:08X} not writable; declining",
-                   slot);
-            return false;
-          }
-          xe::store_and_swap<uint32_t>(memory->TranslateVirtual<uint8_t*>(slot),
-                                       adjusted);
-        }
-
-        // Transfer to the catch funclet. Mirrors KeSetCurrentStackPointers: set
-        // the establisher frame + funclet ABI (r12 = establisher frame), seed lr
-        // with the continuation, and Reenter at the funclet.
-        // A64Backend::PrepareForReentry resets the stackpoint depth on reentry,
-        // so no manual reconciliation is required.
-        XELOGI("guest-eh: TRANSFER -> funclet {:08X} (r1=r12={:08X} lr={:08X})",
-               handler.address_of_handler, establisher, continuation);
-        context->r[1] = establisher;
-        context->r[12] = establisher;
-        context->lr = continuation;
-        current_thread->Reenter(handler.address_of_handler);
-        return true;  // unreachable on the longjmp path
-      }
-    }
+    func_start = rf->func_start;
+    has_eh = rf->has_exception_handler;
+    return true;
+  };
+  const GuestCatchResolution res = FindGuestCatchForThrow(
+      read_be32, read_u8, lookup, frames, throw_info_ea, thrown_ptr);
+  if (!res.found) {
+    XELOGW("guest-eh: no matching catch handler found in {} frames",
+           frames.size());
+    return false;
   }
-  XELOGW("guest-eh: no matching catch handler found in {} frames",
-         frames.size());
-  return false;
+
+  // First-cut continuation = the establisher's return address (the next frame's
+  // pc). The true post-catch resume point lives inside the establisher; refine
+  // once a throw-and-catch title exercises the transfer.
+  const uint32_t continuation = (res.frame_index + 1 < frames.size())
+                                    ? frames[res.frame_index + 1].pc
+                                    : lr;
+  XELOGI(
+      "guest-eh: MATCH frame[{}] funclet={:08X} establisher={:08X} "
+      "disp_catch_obj={:08X} adjusted_this={:08X} catch_all={} adjectives={:08X} "
+      "cont={:08X}",
+      res.frame_index, res.funclet, res.establisher,
+      static_cast<uint32_t>(res.disp_catch_obj), res.adjusted_this,
+      res.is_catch_all ? 1 : 0, res.adjectives, continuation);
+
+  if (!cvars::guest_cpp_exception_dispatch_transfer) {
+    // Diagnostic mode: handler found and logged, but do not risk the control
+    // transfer yet. Fall back to the stub.
+    XELOGW(
+        "guest-eh: transfer disabled "
+        "(guest_cpp_exception_dispatch_transfer off); not transferring");
+    return false;
+  }
+
+  // Store the caught object for typed catches (catch(...) binds nothing).
+  if (!res.is_catch_all) {
+    constexpr uint32_t kHandlerIsReference = 0x08u;
+    if (!(res.adjectives & kHandlerIsReference)) {
+      XELOGW(
+          "guest-eh: catch-by-value not yet supported (adj={:08X}); declining",
+          res.adjectives);
+      return false;
+    }
+    const uint32_t slot =
+        res.establisher + static_cast<uint32_t>(res.disp_catch_obj);
+    auto* slot_heap = memory->LookupHeap(slot);
+    uint32_t slot_protect = 0;
+    if (!slot_heap || !slot_heap->QueryProtect(slot, &slot_protect) ||
+        !(slot_protect & kMemoryProtectWrite)) {
+      XELOGW("guest-eh: catch-object slot {:08X} not writable; declining", slot);
+      return false;
+    }
+    xe::store_and_swap<uint32_t>(memory->TranslateVirtual<uint8_t*>(slot),
+                                 res.adjusted_this);
+  }
+
+  // Transfer to the catch funclet. Mirrors KeSetCurrentStackPointers: set the
+  // establisher frame + funclet ABI (r12 = establisher frame), seed lr with the
+  // continuation, and Reenter at the funclet. A64Backend::PrepareForReentry
+  // resets the stackpoint depth on reentry, so no manual reconciliation needed.
+  XELOGI("guest-eh: TRANSFER -> funclet {:08X} (r1=r12={:08X} lr={:08X})",
+         res.funclet, res.establisher, continuation);
+  context->r[1] = res.establisher;
+  context->r[12] = res.establisher;
+  context->lr = continuation;
+  current_thread->Reenter(res.funclet);
+  return true;  // unreachable on the longjmp path
 }
 
 void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {

@@ -181,6 +181,38 @@ bool GuestHandlerCatchesThrow(const GuestBe32Reader& read_be32,
                               uint32_t throw_info_ea, GuestPmd* out_pmd,
                               bool* out_is_catch_all);
 
+// ---- Unit 6: catch resolution (the pure dispatch decision) ----
+//
+// Map a guest pc to its function start + whether it has an exception handler
+// (the runtime wraps XexModule::FindRuntimeFunction; tests pass a synthetic
+// table). Returns false if pc is in no known runtime function.
+using GuestRuntimeFunctionLookup =
+    std::function<bool(uint32_t pc, uint32_t& func_start, bool& has_eh)>;
+
+// The result of scanning the unwound frames for a catch that handles the throw.
+struct GuestCatchResolution {
+  bool found = false;
+  size_t frame_index = 0;     // index into the walked frames
+  uint32_t funclet = 0;       // HandlerType.address_of_handler (catch funclet VA)
+  uint32_t establisher = 0;   // establisher frame sp (r1/r12 for the funclet)
+  uint32_t adjusted_this = 0; // PMD-adjusted thrown pointer (== thrown for catch-all)
+  int32_t disp_catch_obj = 0; // caught-object offset from the establisher frame
+  uint32_t adjectives = 0;    // HandlerType.adjectives (0x08 = by-reference)
+  bool is_catch_all = false;
+};
+
+// Scan `frames` (innermost first) for the first catch clause that handles the
+// throw at throw_info_ea, decoding each function's FuncInfo / try blocks /
+// handlers and matching by type (GuestHandlerCatchesThrow). Pure logic over the
+// readers + lookup, so the whole catch-found decision is host cpu-testable
+// (eh_catch_resolution_test) -- the path Sylpheed's uncaught throw could not
+// exercise on-device. Returns {found=false} if no frame catches.
+GuestCatchResolution FindGuestCatchForThrow(
+    const GuestBe32Reader& read_be32, const GuestByteReader& read_u8,
+    const GuestRuntimeFunctionLookup& lookup,
+    const std::vector<GuestEhFrame>& frames, uint32_t throw_info_ea,
+    uint32_t thrown_ptr);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe
