@@ -2163,13 +2163,61 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                     sizeof(uint64_t) * 2u * n, pts, sizeof(uint64_t),
                     VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
               uint64_t sum_ticks = 0;
+              // Pass-split diagnostic: largest pass spans + the inter-pass
+              // GAPS (end of pass i -> begin of pass i+1; brackets are written
+              // chronologically) + the head/tail edges against the whole-frame
+              // pair. Attributes the dominant "between-pass" GPU time (real
+              // between-pass work/stall vs in-pass under-measurement) - the
+              // load-bearing unknown after in-pass transfers proved fps-flat.
+              uint64_t gap_ticks = 0;
+              uint64_t top_pass[3] = {};
+              uint64_t top_gap[3] = {};
+              auto top3_insert = [](uint64_t(&top)[3], uint64_t value) {
+                if (value > top[0]) {
+                  top[2] = top[1];
+                  top[1] = top[0];
+                  top[0] = value;
+                } else if (value > top[1]) {
+                  top[2] = top[1];
+                  top[1] = value;
+                } else if (value > top[2]) {
+                  top[2] = value;
+                }
+              };
               for (uint32_t i = 0; i < n; ++i) {
                 if (pts[2u * i + 1u] > pts[2u * i]) {
-                  sum_ticks += pts[2u * i + 1u] - pts[2u * i];
+                  uint64_t span_ticks = pts[2u * i + 1u] - pts[2u * i];
+                  sum_ticks += span_ticks;
+                  top3_insert(top_pass, span_ticks);
+                }
+                if (i + 1u < n && pts[2u * (i + 1u)] > pts[2u * i + 1u]) {
+                  uint64_t one_gap_ticks = pts[2u * (i + 1u)] - pts[2u * i + 1u];
+                  gap_ticks += one_gap_ticks;
+                  top3_insert(top_gap, one_gap_ticks);
                 }
               }
               gpu_pass_us_ = uint64_t(double(sum_ticks) *
                                       double(gpu_timestamp_period_ns_) / 1000.0);
+              uint64_t head_ticks =
+                  (ts[1] > ts[0] && pts[0] > ts[0]) ? pts[0] - ts[0] : 0;
+              uint64_t tail_ticks = (ts[1] > ts[0] && ts[1] > pts[2u * n - 1u])
+                                        ? ts[1] - pts[2u * n - 1u]
+                                        : 0;
+              const double tick_us =
+                  double(gpu_timestamp_period_ns_) / 1000.0;
+              XELOGI(
+                  "GPU pass split: n={} pass_us={} gap_us={} head_us={} "
+                  "tail_us={} top_pass_us=[{} {} {}] top_gap_us=[{} {} {}]",
+                  n, uint64_t(double(sum_ticks) * tick_us),
+                  uint64_t(double(gap_ticks) * tick_us),
+                  uint64_t(double(head_ticks) * tick_us),
+                  uint64_t(double(tail_ticks) * tick_us),
+                  uint64_t(double(top_pass[0]) * tick_us),
+                  uint64_t(double(top_pass[1]) * tick_us),
+                  uint64_t(double(top_pass[2]) * tick_us),
+                  uint64_t(double(top_gap[0]) * tick_us),
+                  uint64_t(double(top_gap[1]) * tick_us),
+                  uint64_t(double(top_gap[2]) * tick_us));
             }
           }
         }
