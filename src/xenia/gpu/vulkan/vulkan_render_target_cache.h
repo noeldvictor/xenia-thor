@@ -856,11 +856,21 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // resolve_clear_rectangle is expected to be provided by
   // PrepareHostRenderTargetsResolveClear which should do all the needed size
   // bound checks.
+  // When the guest pass hint (key + render pass + framebuffer of the pass the
+  // following guest draw will use, whose attachments are exactly
+  // render_targets) is provided and gpu_vulkan_inpass_edram_transfers is
+  // enabled, eligible destinations get their transfer draws recorded INSIDE
+  // that pass (entered here, left open for the guest draw) instead of
+  // dedicated single-attachment transfer passes - avoiding the pass break and
+  // GMEM tile flush/reload on tile-based GPUs.
   void PerformTransfersAndResolveClears(
       uint32_t render_target_count, RenderTarget* const* render_targets,
       const std::vector<Transfer>* render_target_transfers,
       const uint64_t* render_target_resolve_clear_values = nullptr,
-      const Transfer::Rectangle* resolve_clear_rectangle = nullptr);
+      const Transfer::Rectangle* resolve_clear_rectangle = nullptr,
+      const RenderPassKey* guest_render_pass_key = nullptr,
+      VkRenderPass guest_render_pass = VK_NULL_HANDLE,
+      const Framebuffer* guest_framebuffer = nullptr);
 
   VkPipeline GetDumpPipeline(DumpPipelineKey key);
 

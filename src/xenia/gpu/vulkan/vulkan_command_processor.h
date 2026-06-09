@@ -1234,6 +1234,15 @@ class VulkanCommandProcessor : public CommandProcessor {
       ++rt_transfer_diff_format_;
     }
   }
+  // In-pass EDRAM transfers (gpu_vulkan_inpass_edram_transfers): destinations
+  // transferred inside the guest render pass this call, and why others were
+  // skipped (integer-reinterpret format vs feedback/cross-copy/bounds).
+  void AddInpassTransferStats(uint32_t inpass_dests, uint32_t skipped_format,
+                              uint32_t skipped_other) {
+    rt_inpass_transfer_dests_ += inpass_dests;
+    rt_inpass_skipped_format_ += skipped_format;
+    rt_inpass_skipped_other_ += skipped_other;
+  }
 
  private:
   uint32_t rt_transfer_calls_ = 0;
@@ -1246,6 +1255,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_pass_break_rt_change_ = 0;
   uint32_t rt_transfer_same_format_ = 0;
   uint32_t rt_transfer_diff_format_ = 0;
+  uint32_t rt_inpass_transfer_dests_ = 0;
+  uint32_t rt_inpass_skipped_format_ = 0;
+  uint32_t rt_inpass_skipped_other_ = 0;
   // Per-frame attribution of WHAT barriers actually end an open render pass
   // (the tiler-killing breaks). Tallied in SubmitBarriers when it ends a live
   // pass: how many such break-flushes, and the composition of the flushed

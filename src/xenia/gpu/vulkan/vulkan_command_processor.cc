@@ -2247,6 +2247,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
+        "inpass[x={} skip_fmt={} skip_oth={}] "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2284,6 +2285,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         rt_transfer_calls_, rt_transfers_, rt_resolve_clears_,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
         rt_transfer_same_format_, rt_transfer_diff_format_,
+        rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
+        rt_inpass_skipped_other_,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2501,6 +2504,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     brk_img_other_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
+    rt_inpass_transfer_dests_ = 0;
+    rt_inpass_skipped_format_ = 0;
+    rt_inpass_skipped_other_ = 0;
     draw_cpu_total_ns_ = 0;
     draw_cpu_process_ns_ = 0;
     draw_cpu_textures_ns_ = 0;

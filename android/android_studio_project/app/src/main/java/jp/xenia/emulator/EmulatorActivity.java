@@ -567,6 +567,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");
+            copyIntExtra(intent, launchArguments, "gpu_vulkan_inpass_edram_transfers");
             copyBooleanExtra(intent, launchArguments, "xam_suppress_dirty_disc_error");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_budget");

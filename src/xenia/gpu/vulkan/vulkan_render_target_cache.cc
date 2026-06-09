@@ -1444,10 +1444,8 @@ bool VulkanRenderTargetCache::Update(
       RenderTarget* const* depth_and_color_render_targets =
           last_update_accumulated_render_targets();
 
-      PerformTransfersAndResolveClears(1 + xenos::kMaxColorRenderTargets,
-                                       depth_and_color_render_targets,
-                                       last_update_transfers());
-
+      // Building the guest render pass key is pure - safe to do before the
+      // transfers (needed up-front for the in-pass transfer mode).
       if (depth_and_color_render_targets[0]) {
         render_pass_key.depth_and_color_used |= 1 << 0;
         render_pass_key.depth_format =
@@ -1474,38 +1472,67 @@ bool VulkanRenderTargetCache::Update(
             depth_and_color_render_targets[4]->key().GetColorFormat();
       }
 
-      const Framebuffer* framebuffer = last_update_framebuffer_;
-      VkRenderPass render_pass = last_update_render_pass_key_ == render_pass_key
-                                     ? last_update_render_pass_
-                                     : VK_NULL_HANDLE;
-      if (render_pass == VK_NULL_HANDLE) {
-        render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
-        if (render_pass == VK_NULL_HANDLE) {
-          return false;
-        }
-        // Framebuffer for a different render pass needed now.
-        framebuffer = nullptr;
-      }
-
       uint32_t pitch_tiles_at_32bpp =
           ((rb_surface_info.surface_pitch << uint32_t(
                 rb_surface_info.msaa_samples >= xenos::MsaaSamples::k4X)) +
            (xenos::kEdramTileWidthSamples - 1)) /
           xenos::kEdramTileWidthSamples;
-      if (framebuffer) {
-        if (last_update_framebuffer_pitch_tiles_at_32bpp_ !=
-                pitch_tiles_at_32bpp ||
-            std::memcmp(last_update_framebuffer_attachments_,
-                        depth_and_color_render_targets,
-                        sizeof(last_update_framebuffer_attachments_))) {
+
+      // Resolves the guest render pass + framebuffer (cached when unchanged
+      // since the last update). Pure cache lookups/creation - records no
+      // commands, so its ordering relative to the transfers only matters for
+      // making the objects available to the in-pass transfer mode.
+      const Framebuffer* framebuffer = nullptr;
+      VkRenderPass render_pass = VK_NULL_HANDLE;
+      auto lookup_guest_pass_objects = [&]() -> bool {
+        framebuffer = last_update_framebuffer_;
+        render_pass = last_update_render_pass_key_ == render_pass_key
+                          ? last_update_render_pass_
+                          : VK_NULL_HANDLE;
+        if (render_pass == VK_NULL_HANDLE) {
+          render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
+          if (render_pass == VK_NULL_HANDLE) {
+            return false;
+          }
+          // Framebuffer for a different render pass needed now.
           framebuffer = nullptr;
         }
-      }
-      if (!framebuffer) {
-        framebuffer = GetHostRenderTargetsFramebuffer(
-            render_pass_key, pitch_tiles_at_32bpp,
-            depth_and_color_render_targets);
+        if (framebuffer) {
+          if (last_update_framebuffer_pitch_tiles_at_32bpp_ !=
+                  pitch_tiles_at_32bpp ||
+              std::memcmp(last_update_framebuffer_attachments_,
+                          depth_and_color_render_targets,
+                          sizeof(last_update_framebuffer_attachments_))) {
+            framebuffer = nullptr;
+          }
+        }
         if (!framebuffer) {
+          framebuffer = GetHostRenderTargetsFramebuffer(
+              render_pass_key, pitch_tiles_at_32bpp,
+              depth_and_color_render_targets);
+          if (!framebuffer) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      if (cvars::gpu_vulkan_inpass_edram_transfers > 0) {
+        // In-pass transfer mode: resolve the guest pass objects first and hand
+        // them to the transfer executor so eligible destinations can be
+        // transferred inside the guest pass (left open for the guest draw).
+        if (!lookup_guest_pass_objects()) {
+          return false;
+        }
+        PerformTransfersAndResolveClears(
+            1 + xenos::kMaxColorRenderTargets, depth_and_color_render_targets,
+            last_update_transfers(), nullptr, nullptr, &render_pass_key,
+            render_pass, framebuffer);
+      } else {
+        PerformTransfersAndResolveClears(1 + xenos::kMaxColorRenderTargets,
+                                         depth_and_color_render_targets,
+                                         last_update_transfers());
+        if (!lookup_guest_pass_objects()) {
           return false;
         }
       }
@@ -4619,7 +4646,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     uint32_t render_target_count, RenderTarget* const* render_targets,
     const std::vector<Transfer>* render_target_transfers,
     const uint64_t* render_target_resolve_clear_values,
-    const Transfer::Rectangle* resolve_clear_rectangle) {
+    const Transfer::Rectangle* resolve_clear_rectangle,
+    const RenderPassKey* guest_render_pass_key, VkRenderPass guest_render_pass,
+    const Framebuffer* guest_framebuffer) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
   // Per-frame instrumentation: total EDRAM transfers processed this call (the
@@ -4671,6 +4700,134 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         resolve_clear_rectangle->height_pixels * draw_resolution_scale_y();
     resolve_clear_rect.baseArrayLayer = 0;
     resolve_clear_rect.layerCount = 1;
+  }
+
+  // In-pass EDRAM transfers (gpu_vulkan_inpass_edram_transfers): decide which
+  // destinations can have their transfer draws recorded inside the provided
+  // guest render pass instead of a dedicated single-attachment transfer pass
+  // (avoiding the pass break + GMEM tile flush/reload on tile-based GPUs).
+  // Eligibility (fail-closed to the legacy path):
+  // - A guest pass hint is provided, and no resolve clear is requested.
+  // - Color destinations (level >= 1) whose ownership-transfer format is not
+  //   an integer reinterpretation (float16-class formats keep the legacy
+  //   UINT-view pass for NaN bit-exactness).
+  // - Depth destinations only at level >= 2 and only with
+  //   VK_EXT_shader_stencil_export (no stencil-bit draws / mid-pass clears).
+  // - No transfer source (or host depth source read as an image) may be bound
+  //   as an attachment of the guest framebuffer (feedback loop), and the
+  //   destination must not be a source for another destination (cross-copy
+  //   ordering).
+  // - Every transfer rectangle must fit in the guest framebuffer render area
+  //   (the dedicated transfer pass had the destination own extent instead).
+  bool dest_in_guest_pass[1 + xenos::kMaxColorRenderTargets] = {};
+  bool any_dest_in_guest_pass = false;
+  {
+    uint32_t inpass_dest_count = 0;
+    uint32_t inpass_skip_format = 0;
+    uint32_t inpass_skip_other = 0;
+    const int32_t inpass_level = cvars::gpu_vulkan_inpass_edram_transfers;
+    if (inpass_level > 0 && guest_render_pass_key &&
+        guest_render_pass != VK_NULL_HANDLE && guest_framebuffer &&
+        render_target_transfers && !resolve_clear_needed &&
+        render_target_count <= 1 + xenos::kMaxColorRenderTargets) {
+      for (uint32_t i = 0; i < render_target_count; ++i) {
+        RenderTarget* dest_rt = render_targets[i];
+        if (!dest_rt) {
+          continue;
+        }
+        const std::vector<Transfer>& dest_transfers =
+            render_target_transfers[i];
+        if (dest_transfers.empty()) {
+          continue;
+        }
+        RenderTargetKey dest_rt_key =
+            static_cast<VulkanRenderTarget*>(dest_rt)->key();
+        bool eligible;
+        if (dest_rt_key.is_depth) {
+          eligible = inpass_level >= 2 &&
+                     vulkan_device->extensions().ext_EXT_shader_stencil_export;
+        } else {
+          bool is_integer = false;
+          GetColorOwnershipTransferVulkanFormat(dest_rt_key.GetColorFormat(),
+                                                &is_integer);
+          eligible = !is_integer;
+          if (is_integer) {
+            ++inpass_skip_format;
+          }
+        }
+        if (eligible) {
+          // Feedback / cross-copy checks.
+          for (const Transfer& transfer : dest_transfers) {
+            for (uint32_t j = 0; j < render_target_count; ++j) {
+              if (!render_targets[j]) {
+                continue;
+              }
+              if (transfer.source == render_targets[j] ||
+                  (transfer.host_depth_source &&
+                   transfer.host_depth_source != dest_rt &&
+                   transfer.host_depth_source == render_targets[j])) {
+                eligible = false;
+                break;
+              }
+            }
+            if (!eligible) {
+              break;
+            }
+          }
+          for (uint32_t j = 0; eligible && j < render_target_count; ++j) {
+            if (j == i || !render_targets[j]) {
+              continue;
+            }
+            for (const Transfer& other_transfer :
+                 render_target_transfers[j]) {
+              if (other_transfer.source == dest_rt ||
+                  other_transfer.host_depth_source == dest_rt) {
+                eligible = false;
+                break;
+              }
+            }
+          }
+          if (eligible) {
+            // Bounds check against the guest render area.
+            uint32_t dest_pitch_tiles = dest_rt_key.GetPitchTiles();
+            bool dest_is_64bpp = dest_rt_key.Is64bpp();
+            for (const Transfer& transfer : dest_transfers) {
+              Transfer::Rectangle
+                  rectangles[Transfer::kMaxRectanglesWithCutout];
+              uint32_t rectangle_count = transfer.GetRectangles(
+                  dest_rt_key.base_tiles, dest_pitch_tiles,
+                  dest_rt_key.msaa_samples, dest_is_64bpp, rectangles,
+                  nullptr);
+              for (uint32_t j = 0; j < rectangle_count; ++j) {
+                const Transfer::Rectangle& rectangle = rectangles[j];
+                if ((rectangle.x_pixels + rectangle.width_pixels) *
+                            draw_resolution_scale_x() >
+                        guest_framebuffer->host_extent.width ||
+                    (rectangle.y_pixels + rectangle.height_pixels) *
+                            draw_resolution_scale_y() >
+                        guest_framebuffer->host_extent.height) {
+                  eligible = false;
+                  break;
+                }
+              }
+              if (!eligible) {
+                break;
+              }
+            }
+          }
+          if (!eligible) {
+            ++inpass_skip_other;
+          }
+        }
+        if (eligible) {
+          dest_in_guest_pass[i] = true;
+          any_dest_in_guest_pass = true;
+          ++inpass_dest_count;
+        }
+      }
+    }
+    command_processor_.AddInpassTransferStats(
+        inpass_dest_count, inpass_skip_format, inpass_skip_other);
   }
 
   // Do host depth storing for the depth destination (assuming there can be only
@@ -4885,11 +5042,21 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   TransferAddressConstant last_host_depth_address_constant;
   TransferAddressConstant last_address_constant;
 
+  // Two phases when in-pass transfers are active: phase 0 records the legacy
+  // (ineligible) destinations through their dedicated transfer passes first;
+  // phase 1 then enters the guest render pass once for all eligible
+  // destinations and leaves it open for the guest draw that follows.
+  for (uint32_t loop_phase = 0;
+       loop_phase < (any_dest_in_guest_pass ? 2u : 1u); ++loop_phase) {
   for (uint32_t i = 0; i < render_target_count; ++i) {
     RenderTarget* dest_rt = render_targets[i];
     if (!dest_rt) {
       continue;
     }
+    if (any_dest_in_guest_pass && dest_in_guest_pass[i] != (loop_phase == 1)) {
+      continue;
+    }
+    const bool dest_uses_guest_pass = dest_in_guest_pass[i];
 
     const std::vector<Transfer>& current_transfers = render_target_transfers[i];
     if (current_transfers.empty() && !resolve_clear_needed) {
@@ -4921,6 +5088,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     }
 
     // Get the objects needed for transfers to the destination.
+    // In-pass mode (gpu_vulkan_inpass_edram_transfers, the TODO below): record
+    // the transfer draws inside the guest render pass itself - the transfer
+    // pipelines are keyed by the full RenderPassKey and write-mask only the
+    // destination color attachment, so they are compatible with the guest pass
+    // as long as the destination uses its draw format (eligibility ensured
+    // that). The pass is entered here and left open for the guest draw.
     // TODO(Triang3l): Reuse the guest render pass for transfers where possible
     // (if the Vulkan format used for drawing is also usable for transfers - for
     // instance, R8G8B8A8_UNORM can be used for both, so the guest pass can be
@@ -4930,6 +5103,17 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     // overall perform all non-cross-copying transfers for the current
     // framebuffer configuration in a single pass, to load / store only once.
     RenderPassKey transfer_render_pass_key;
+    VkRenderPass transfer_render_pass;
+    const Framebuffer* transfer_framebuffer;
+    if (dest_uses_guest_pass) {
+      transfer_render_pass_key = *guest_render_pass_key;
+      transfer_render_pass = guest_render_pass;
+      transfer_framebuffer = guest_framebuffer;
+      // Same-format sizing instrumentation, kept consistent with the legacy
+      // path (in-pass color destinations are always same-format by
+      // eligibility; in-pass depth still counts as not-same-format).
+      command_processor_.AddTransferFormatStats(!dest_rt_key.is_depth);
+    } else {
     transfer_render_pass_key.msaa_samples = dest_rt_key.msaa_samples;
     // When the color transfer format is identical to the draw format (no integer
     // reinterpretation needed, e.g. R8G8B8A8_UNORM / A2B10G10R10), the transfer
@@ -4972,7 +5156,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       }
       command_processor_.AddTransferFormatStats(same_format);
     }
-    VkRenderPass transfer_render_pass =
+    transfer_render_pass =
         GetHostRenderTargetsRenderPass(transfer_render_pass_key);
     if (transfer_render_pass == VK_NULL_HANDLE) {
       continue;
@@ -4981,11 +5165,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         transfer_framebuffer_render_targets[1 + xenos::kMaxColorRenderTargets] =
             {};
     transfer_framebuffer_render_targets[dest_rt_key.is_depth ? 0 : 1] = dest_rt;
-    const Framebuffer* transfer_framebuffer = GetHostRenderTargetsFramebuffer(
+    transfer_framebuffer = GetHostRenderTargetsFramebuffer(
         transfer_render_pass_key, dest_rt_key.pitch_tiles_at_32bpp,
         transfer_framebuffer_render_targets);
     if (!transfer_framebuffer) {
       continue;
+    }
     }
     // Don't enter the render pass immediately - may still insert source
     // barriers later.
@@ -5007,6 +5192,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       new_transfer_shader_key.dest_msaa_samples = dest_rt_key.msaa_samples;
       new_transfer_shader_key.dest_resource_format =
           dest_rt_key.resource_format;
+      // In-pass transfers output to the destination's actual color attachment
+      // slot in the guest render pass (the transfer fragment shader writes
+      // Location = dest_color_rt_index, and the pipeline write-masks only that
+      // attachment). The dedicated transfer pass always uses slot 0.
+      new_transfer_shader_key.dest_color_rt_index =
+          (dest_uses_guest_pass && i > 0) ? (i - 1) : 0;
       uint32_t stencil_clear_rectangle_count = 0;
       for (uint32_t j = 0; j <= uint32_t(need_stencil_bit_draws); ++j) {
         // j == 0 - color or depth.
@@ -5603,6 +5794,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       command_buffer.CmdVkClearAttachments(1, &resolve_clear_attachment, 1,
                                            &resolve_clear_rect);
     }
+  }
   }
 }
 

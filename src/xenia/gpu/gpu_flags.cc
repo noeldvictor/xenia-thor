@@ -63,6 +63,20 @@ DEFINE_bool(
     "off or unsupported. Default off until the path is complete + validated.",
     "GPU");
 
+DEFINE_int32(
+    gpu_vulkan_inpass_edram_transfers, 0,
+    "EXPERIMENTAL (Thor/TBDR): perform EDRAM ownership-transfer draws INSIDE "
+    "the guest render pass instead of dedicated single-attachment transfer "
+    "passes, cutting render-pass breaks + GMEM tile flush/reload on tilers "
+    "(completes the upstream pass-reuse TODO). 0 = off (default, legacy "
+    "transfer passes). 1 = color destinations only (excludes "
+    "integer-reinterpret formats like float16, which keep the legacy pass for "
+    "NaN bit-exactness). 2 = color + depth destinations (depth requires "
+    "VK_EXT_shader_stencil_export; self-gates off it). Transfers whose source "
+    "is bound as a current framebuffer attachment (feedback) always use the "
+    "legacy path. No new extensions required.",
+    "GPU");
+
 DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
