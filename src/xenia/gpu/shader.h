@@ -1035,6 +1035,33 @@ class Shader {
   }
   bool position_slice_replayable() const { return position_slice_replayable_; }
 
+  // G1-lite (gpu_binning_deinterleave_pos): the single vertex-fetch instruction
+  // whose result register is the position slice's only vfetch'd input ("leaf").
+  // Computed once by AnalyzeUcode (the static hoist of the draw-time leaf->
+  // vfetch match in DrawExtentEstimator::TryRecoverAffineForLeaf). When valid,
+  // the SPIR-V translator may emit a runtime-redirected load of this fetch's
+  // needed words from a compacted position stream, cutting the bytes/vertex the
+  // tiler's binning pass fetches. Tag is per-INSTRUCTION (matched by result
+  // register + fetch constant + offset), NOT per fetch constant - interleaved
+  // streams share one fetch constant across position/normal/UV fetches. Any
+  // format qualifies (the compact stream carries the RAW dwords; the shader's
+  // unchanged endian/unpack consumes them - bit-exact by construction).
+  // Invalid when: not a vertex shader / no position export / control flow makes
+  // the linear taint pass unsound / zero or multiple leaves / the leaf register
+  // is written by more than one vfetch (ambiguous) / mini-fetch / zero stride.
+  struct PositionVfetchTag {
+    bool valid = false;
+    uint32_t result_register = 0;
+    uint32_t fetch_constant = 0;
+    uint32_t stride_words = 0;
+    uint32_t offset_words = 0;
+    uint32_t used_result_components = 0;
+    xenos::VertexFormat format = xenos::VertexFormat::kUndefined;
+  };
+  const PositionVfetchTag& position_vfetch_tag() const {
+    return position_vfetch_tag_;
+  }
+
   // Whether each interpolator is written on any execution path.
   uint32_t writes_interpolators() const { return writes_interpolators_; }
 
@@ -1166,6 +1193,7 @@ class Shader {
   std::vector<ParsedAluInstruction> position_slice_ops_;
   std::vector<uint32_t> position_export_op_indices_;
   bool position_slice_replayable_ = false;
+  PositionVfetchTag position_vfetch_tag_;
   // Control-flow bails for the linear slice taint pass. FORWARD jumps are NOT a
   // bail (program-order over-taint is conservative-safe); only backward jumps
   // (re-execution) and subroutine calls (out-of-order callee body) break it.
@@ -1220,6 +1248,9 @@ class Shader {
   // Reduces position_slice_ops_ (all VS ALU ops) to the backward slice feeding
   // gl_Position and sets position_slice_replayable_ (Step 2b). Read-only.
   void ComputePositionSlice();
+  // Derives position_vfetch_tag_ from the reduced slice + vertex bindings (the
+  // G1-lite analysis hoist). Must run after ComputePositionSlice. Read-only.
+  void ComputePositionVfetchTag();
 };
 
 }  // namespace gpu

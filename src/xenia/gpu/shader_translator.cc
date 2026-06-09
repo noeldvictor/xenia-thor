@@ -340,6 +340,10 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
   // gl_Position (read-only; unused by rendering until the fast cull replay).
   ComputePositionSlice();
 
+  // G1-lite: statically identify the single position-feeding vertex fetch (the
+  // analysis hoist for the de-interleaved binning position stream). Read-only.
+  ComputePositionVfetchTag();
+
   is_ucode_analyzed_ = true;
 
   // An empty shader can be created internally by shader translators as a dummy,
@@ -881,6 +885,99 @@ void Shader::ComputePositionSlice() {
                               position_slice_ops_.size() <= 64 &&
                               !uses_control_flow_loop_ && !uses_backward_jump_ &&
                               !uses_subroutine_call_;
+}
+
+void Shader::ComputePositionVfetchTag() {
+  position_vfetch_tag_ = PositionVfetchTag();
+  // The linear taint pass (and thus the slice this derives from) is only sound
+  // under straight-line control flow - same gate as the affine-MVP candidate.
+  if (type() != xenos::ShaderType::kVertex || !position_export_written_ ||
+      uses_control_flow_loop_ || uses_backward_jump_ ||
+      uses_subroutine_call_ || position_slice_ops_.empty()) {
+    return;
+  }
+  // Leaf derivation, hoisted from DrawExtentEstimator::SetupFastAffineReplay:
+  // registers the slice READS intersected with registers WRITTEN by vertex
+  // fetches. (In-place transforms like r0 = f(r0) keep r0 a leaf because the
+  // pre-transform value is the true fetched input.)
+  uint64_t read_regs = 0;
+  for (const ParsedAluInstruction& op : position_slice_ops_) {
+    auto mark_operand = [&read_regs](const InstructionOperand& o) {
+      if (o.storage_source == InstructionStorageSource::kRegister &&
+          o.storage_addressing_mode ==
+              InstructionStorageAddressingMode::kAbsolute &&
+          o.storage_index < 64) {
+        read_regs |= uint64_t(1) << o.storage_index;
+      }
+    };
+    for (uint32_t i = 0; i < op.vector_operand_count; ++i) {
+      mark_operand(op.vector_operands[i]);
+    }
+    for (uint32_t i = 0; i < op.scalar_operand_count; ++i) {
+      mark_operand(op.scalar_operands[i]);
+    }
+  }
+  uint64_t vfetch_regs = 0;
+  for (const Shader::VertexBinding& binding : vertex_bindings_) {
+    for (const Shader::VertexBinding::Attribute& attr : binding.attributes) {
+      const ParsedVertexFetchInstruction& fetch_instr = attr.fetch_instr;
+      if (fetch_instr.result.storage_target ==
+              InstructionStorageTarget::kRegister &&
+          fetch_instr.result.storage_index < 64) {
+        vfetch_regs |= uint64_t(1) << fetch_instr.result.storage_index;
+      }
+    }
+  }
+  uint64_t leaf_regs = read_regs & vfetch_regs;
+  // Exactly one leaf - multi-input positions (skinning, blends) don't have a
+  // single redirectable stream.
+  if (!leaf_regs || (leaf_regs & (leaf_regs - 1))) {
+    return;
+  }
+  uint32_t leaf = xe::tzcnt(leaf_regs);
+  // Match the leaf to its writing fetch instruction. Ambiguity (two fetches
+  // writing the same register) bails: the redirect must target exactly the
+  // instruction whose value reaches the position math.
+  const Shader::VertexBinding* tag_binding = nullptr;
+  const Shader::VertexBinding::Attribute* tag_attr = nullptr;
+  for (const Shader::VertexBinding& binding : vertex_bindings_) {
+    for (const Shader::VertexBinding::Attribute& attr : binding.attributes) {
+      const ParsedVertexFetchInstruction& fetch_instr = attr.fetch_instr;
+      if (fetch_instr.result.storage_target !=
+              InstructionStorageTarget::kRegister ||
+          fetch_instr.result.storage_index != leaf) {
+        continue;
+      }
+      if (tag_attr) {
+        return;  // ambiguous
+      }
+      tag_binding = &binding;
+      tag_attr = &attr;
+    }
+  }
+  if (!tag_attr) {
+    return;
+  }
+  const ParsedVertexFetchInstruction& fetch_instr = tag_attr->fetch_instr;
+  if (fetch_instr.is_mini_fetch) {
+    // The redirect targets a full fetch (mini fetches chain off another
+    // fetch's address).
+    return;
+  }
+  uint32_t stride_words = fetch_instr.attributes.stride
+                              ? fetch_instr.attributes.stride
+                              : tag_binding->stride_words;
+  if (!stride_words) {
+    return;
+  }
+  position_vfetch_tag_.valid = true;
+  position_vfetch_tag_.result_register = leaf;
+  position_vfetch_tag_.fetch_constant = tag_binding->fetch_constant;
+  position_vfetch_tag_.stride_words = stride_words;
+  position_vfetch_tag_.offset_words = uint32_t(fetch_instr.attributes.offset);
+  position_vfetch_tag_.used_result_components =
+      fetch_instr.result.GetUsedResultComponents();
+  position_vfetch_tag_.format = fetch_instr.attributes.data_format;
 }
 
 void Shader::GatherOperandInformation(const InstructionOperand& operand) {
