@@ -2184,6 +2184,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   top[2] = value;
                 }
               };
+              uint64_t top_gap_ticks = 0;
+              uint32_t top_gap_index = UINT32_MAX;
               for (uint32_t i = 0; i < n; ++i) {
                 if (pts[2u * i + 1u] > pts[2u * i]) {
                   uint64_t span_ticks = pts[2u * i + 1u] - pts[2u * i];
@@ -2194,7 +2196,40 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   uint64_t one_gap_ticks = pts[2u * (i + 1u)] - pts[2u * i + 1u];
                   gap_ticks += one_gap_ticks;
                   top3_insert(top_gap, one_gap_ticks);
+                  if (one_gap_ticks > top_gap_ticks) {
+                    top_gap_ticks = one_gap_ticks;
+                    top_gap_index = i;
+                  }
                 }
+              }
+              // Composition of the largest gap: the commands recorded between
+              // the end of pass i and the begin of pass i+1 are exactly what
+              // the GPU executes in that hole (one submission per frame).
+              // Saturating diffs guard against any mid-frame buffer reset.
+              uint32_t gap_dispatches = 0, gap_buffer_copies = 0;
+              uint32_t gap_buffer_image_copies = 0, gap_barriers = 0;
+              uint64_t gap_copy_kb = 0;
+              if (top_gap_index != UINT32_MAX && top_gap_index + 1u < n) {
+                const PassBoundarySnap& end_snap =
+                    gap_snap_end_[best_slot][top_gap_index];
+                const PassBoundarySnap& begin_snap =
+                    gap_snap_begin_[best_slot][top_gap_index + 1u];
+                auto sat_diff32 = [](uint32_t after, uint32_t before) {
+                  return after > before ? after - before : 0u;
+                };
+                gap_dispatches =
+                    sat_diff32(begin_snap.dispatches, end_snap.dispatches);
+                gap_buffer_copies =
+                    sat_diff32(begin_snap.buffer_copies, end_snap.buffer_copies);
+                gap_buffer_image_copies = sat_diff32(
+                    begin_snap.buffer_image_copies, end_snap.buffer_image_copies);
+                gap_barriers = sat_diff32(begin_snap.barriers, end_snap.barriers);
+                gap_copy_kb =
+                    (begin_snap.buffer_copy_bytes > end_snap.buffer_copy_bytes
+                         ? begin_snap.buffer_copy_bytes -
+                               end_snap.buffer_copy_bytes
+                         : 0) /
+                    1024u;
               }
               gpu_pass_us_ = uint64_t(double(sum_ticks) *
                                       double(gpu_timestamp_period_ns_) / 1000.0);
@@ -2207,7 +2242,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   double(gpu_timestamp_period_ns_) / 1000.0;
               XELOGI(
                   "GPU pass split: n={} pass_us={} gap_us={} head_us={} "
-                  "tail_us={} top_pass_us=[{} {} {}] top_gap_us=[{} {} {}]",
+                  "tail_us={} top_pass_us=[{} {} {}] top_gap_us=[{} {} {}] "
+                  "topgap[i={} disp={} bufcp={} cpkb={} b2icp={} barr={}]",
                   n, uint64_t(double(sum_ticks) * tick_us),
                   uint64_t(double(gap_ticks) * tick_us),
                   uint64_t(double(head_ticks) * tick_us),
@@ -2217,7 +2253,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   uint64_t(double(top_pass[2]) * tick_us),
                   uint64_t(double(top_gap[0]) * tick_us),
                   uint64_t(double(top_gap[1]) * tick_us),
-                  uint64_t(double(top_gap[2]) * tick_us));
+                  uint64_t(double(top_gap[2]) * tick_us), top_gap_index,
+                  gap_dispatches, gap_buffer_copies, gap_copy_kb,
+                  gap_buffer_image_copies, gap_barriers);
             }
           }
         }
@@ -3478,6 +3516,20 @@ void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
       pass_base + 2u * gpu_pass_bracket_count_ + (is_begin ? 0u : 1u);
   deferred_command_buffer_.CmdVkWriteTimestamp(
       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpu_pass_timestamp_pool_, slot);
+  // Composition snapshot for the inter-pass gap attribution.
+  {
+    const DeferredCommandBuffer::RecordStats& record_stats =
+        deferred_command_buffer_.record_stats();
+    PassBoundarySnap& snap =
+        (is_begin ? gap_snap_begin_
+                  : gap_snap_end_)[frame_current_ % kMaxFramesInFlight]
+                                  [gpu_pass_bracket_count_];
+    snap.dispatches = record_stats.dispatches;
+    snap.buffer_copies = record_stats.buffer_copies;
+    snap.buffer_image_copies = record_stats.buffer_image_copies;
+    snap.barriers = record_stats.barriers;
+    snap.buffer_copy_bytes = record_stats.buffer_copy_bytes;
+  }
   if (!is_begin) {
     ++gpu_pass_bracket_count_;
   }

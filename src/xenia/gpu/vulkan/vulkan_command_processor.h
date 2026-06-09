@@ -1209,6 +1209,21 @@ class VulkanCommandProcessor : public CommandProcessor {
   // pool via the deferred command buffer. No-op unless the cvar is on.
   void RecordPassTimestamp(bool is_begin);
 
+  // Recording-time composition snapshots taken at each pass-timestamp bracket
+  // (cumulative DeferredCommandBuffer::RecordStats at pass begin/end). The
+  // readback diffs begin[i+1] - end[i] to attribute what GPU commands live in
+  // the inter-pass gap i (compute dispatches / copies / barriers) - an empty
+  // composition under a large measured gap means GPU idle/starvation instead.
+  struct PassBoundarySnap {
+    uint32_t dispatches;
+    uint32_t buffer_copies;
+    uint32_t buffer_image_copies;
+    uint32_t barriers;
+    uint64_t buffer_copy_bytes;
+  };
+  PassBoundarySnap gap_snap_begin_[kMaxFramesInFlight][kMaxPassBrackets] = {};
+  PassBoundarySnap gap_snap_end_[kMaxFramesInFlight][kMaxPassBrackets] = {};
+
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
   // render target cache; logged + reset at swap. transfer_calls = times

@@ -29,7 +29,10 @@ DeferredCommandBuffer::DeferredCommandBuffer(
   command_stream_.reserve(initial_size / sizeof(uintmax_t));
 }
 
-void DeferredCommandBuffer::Reset() { command_stream_.clear(); }
+void DeferredCommandBuffer::Reset() {
+  command_stream_.clear();
+  record_stats_ = RecordStats();
+}
 
 void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -415,6 +418,7 @@ void DeferredCommandBuffer::CmdVkPipelineBarrier(
     const VkBufferMemoryBarrier* buffer_memory_barriers,
     uint32_t image_memory_barrier_count,
     const VkImageMemoryBarrier* image_memory_barriers) {
+  ++record_stats_.barriers;
   size_t arguments_size = sizeof(ArgsVkPipelineBarrier);
   size_t memory_barriers_offset = 0;
   if (memory_barrier_count) {

@@ -41,6 +41,19 @@ class DeferredCommandBuffer {
     return command_stream_.size();
   }
 
+  // Cheap recording-time composition counters for the between-render-pass GPU
+  // gap attribution (snapshotted by the command processor at the pass
+  // timestamp brackets; reset together with the buffer). Cumulative within one
+  // recording.
+  struct RecordStats {
+    uint32_t dispatches = 0;
+    uint32_t buffer_copies = 0;
+    uint32_t buffer_image_copies = 0;
+    uint32_t barriers = 0;
+    uint64_t buffer_copy_bytes = 0;
+  };
+  const RecordStats& record_stats() const { return record_stats_; }
+
   // render_pass_begin->pNext of all barriers must be null.
   void CmdVkBeginRenderPass(const VkRenderPassBeginInfo* render_pass_begin,
                             VkSubpassContents contents) {
@@ -203,6 +216,7 @@ class DeferredCommandBuffer {
     uint8_t* args_ptr = reinterpret_cast<uint8_t*>(
         WriteCommand(Command::kVkCopyBuffer,
                      header_size + sizeof(VkBufferCopy) * region_count));
+    ++record_stats_.buffer_copies;
     auto& args = *reinterpret_cast<ArgsVkCopyBuffer*>(args_ptr);
     args.src_buffer = src_buffer;
     args.dst_buffer = dst_buffer;
@@ -211,6 +225,9 @@ class DeferredCommandBuffer {
   }
   void CmdVkCopyBuffer(VkBuffer src_buffer, VkBuffer dst_buffer,
                        uint32_t region_count, const VkBufferCopy* regions) {
+    for (uint32_t i = 0; i < region_count; ++i) {
+      record_stats_.buffer_copy_bytes += regions[i].size;
+    }
     std::memcpy(CmdCopyBufferEmplace(src_buffer, dst_buffer, region_count),
                 regions, sizeof(VkBufferCopy) * region_count);
   }
@@ -224,6 +241,7 @@ class DeferredCommandBuffer {
     uint8_t* args_ptr = reinterpret_cast<uint8_t*>(
         WriteCommand(Command::kVkCopyBufferToImage,
                      header_size + sizeof(VkBufferImageCopy) * region_count));
+    ++record_stats_.buffer_image_copies;
     auto& args = *reinterpret_cast<ArgsVkCopyBufferToImage*>(args_ptr);
     args.src_buffer = src_buffer;
     args.dst_image = dst_image;
@@ -266,6 +284,7 @@ class DeferredCommandBuffer {
 
   void CmdVkDispatch(uint32_t group_count_x, uint32_t group_count_y,
                      uint32_t group_count_z) {
+    ++record_stats_.dispatches;
     auto& args = *reinterpret_cast<ArgsVkDispatch*>(
         WriteCommand(Command::kVkDispatch, sizeof(ArgsVkDispatch)));
     args.group_count_x = group_count_x;
@@ -544,6 +563,7 @@ class DeferredCommandBuffer {
   }
 
  private:
+  RecordStats record_stats_;
   enum class Command {
     kVkBeginRenderPass,
     kVkBindDescriptorSets,
