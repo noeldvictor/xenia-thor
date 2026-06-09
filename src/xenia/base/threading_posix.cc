@@ -16,6 +16,7 @@
 
 #include <pthread.h>
 #include <sched.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
@@ -23,6 +24,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <ctime>
 #include <memory>
@@ -485,6 +487,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         exit_code_(0),
         state_(State::kUninitialized),
         suspend_count_(0) {
+    sem_init(&suspend_sem_, 0, 0);
 #if XE_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -525,6 +528,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         signaled_(false),
         exit_code_(0),
         state_(State::kRunning) {
+    sem_init(&suspend_sem_, 0, 0);
 #if XE_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -546,6 +550,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         assert_always();
       }
     }
+    sem_destroy(&suspend_sem_);
   }
 
   bool Signal() override { return true; }
@@ -701,6 +706,13 @@ class PosixCondition<Thread> : public PosixConditionBase {
       *out_previous_suspend_count = suspend_count_;
     }
     --suspend_count_;
+    // When fully resumed, transition to running and wake the suspended thread's
+    // WaitSuspended via the async-signal-safe semaphore (ported edge 6f18c9850;
+    // moved here from WaitSuspended, which can no longer touch state_ safely).
+    if (suspend_count_ == 0 && state_ == State::kSuspended) {
+      state_ = State::kRunning;
+      sem_post(&suspend_sem_);
+    }
     state_signal_.notify_all();
     return true;
   }
@@ -769,11 +781,16 @@ class PosixCondition<Thread> : public PosixConditionBase {
                        [this] { return state_ != State::kUninitialized; });
   }
 
-  /// Set state to suspended and wait until it reset by another thread
+  /// Wait until resumed by another thread. Called from the SIGRTMIN suspend
+  /// signal handler, where pthread_mutex_lock/condvar are NOT async-signal-safe
+  /// and would deadlock or corrupt the heap (the bug this fixes). sem_wait IS
+  /// async-signal-safe; the state_ = kRunning transition now happens in Resume()
+  /// under state_mutex_. (Ported from edge 6f18c9850.)
   void WaitSuspended() {
-    std::unique_lock<std::mutex> lock(state_mutex_);
-    state_signal_.wait(lock, [this] { return suspend_count_ == 0; });
-    state_ = State::kRunning;
+    int ret;
+    do {
+      ret = sem_wait(&suspend_sem_);
+    } while (ret == -1 && errno == EINTR);
   }
 
   void* native_handle() const override {
@@ -798,6 +815,10 @@ class PosixCondition<Thread> : public PosixConditionBase {
   int exit_code_;
   volatile State state_;
   volatile uint32_t suspend_count_;
+  // Async-signal-safe suspend/resume wakeup. WaitSuspended runs in the SIGRTMIN
+  // suspend signal handler, where pthread_mutex_lock/condvar are NOT
+  // async-signal-safe (deadlock/heap corruption). Ported from edge 6f18c9850.
+  sem_t suspend_sem_;
   mutable std::mutex state_mutex_;
   mutable std::mutex callback_mutex_;
   mutable std::condition_variable state_signal_;
