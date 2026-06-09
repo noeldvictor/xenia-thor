@@ -50,6 +50,7 @@ class DeferredCommandBuffer {
     uint32_t buffer_copies = 0;
     uint32_t buffer_image_copies = 0;
     uint32_t barriers = 0;
+    uint32_t draws = 0;
     uint64_t buffer_copy_bytes = 0;
   };
   const RecordStats& record_stats() const { return record_stats_; }
@@ -294,6 +295,7 @@ class DeferredCommandBuffer {
 
   void CmdVkDraw(uint32_t vertex_count, uint32_t instance_count,
                  uint32_t first_vertex, uint32_t first_instance) {
+    ++record_stats_.draws;
     auto& args = *reinterpret_cast<ArgsVkDraw*>(
         WriteCommand(Command::kVkDraw, sizeof(ArgsVkDraw)));
     args.vertex_count = vertex_count;
@@ -305,6 +307,7 @@ class DeferredCommandBuffer {
   void CmdVkDrawIndexed(uint32_t index_count, uint32_t instance_count,
                         uint32_t first_index, int32_t vertex_offset,
                         uint32_t first_instance) {
+    ++record_stats_.draws;
     auto& args = *reinterpret_cast<ArgsVkDrawIndexed*>(
         WriteCommand(Command::kVkDrawIndexed, sizeof(ArgsVkDrawIndexed)));
     args.index_count = index_count;

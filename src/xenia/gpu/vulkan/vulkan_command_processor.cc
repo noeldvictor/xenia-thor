@@ -2214,6 +2214,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               uint32_t gap_dispatches = 0, gap_buffer_copies = 0;
               uint32_t gap_buffer_image_copies = 0, gap_barriers = 0;
               uint64_t gap_copy_kb = 0;
+              uint32_t flank_prev_draws = 0, flank_next_draws = 0;
+              uint32_t flank_prev_fb = 0, flank_next_fb = 0;
               if (top_gap_index != UINT32_MAX && top_gap_index + 1u < n) {
                 const PassBoundarySnap& end_snap =
                     gap_snap_end_[best_slot][top_gap_index];
@@ -2235,6 +2237,21 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                end_snap.buffer_copy_bytes
                          : 0) /
                     1024u;
+                // Identity of the passes flanking the dominant gap: draws in
+                // pass i (end[i] - begin[i]) / pass i+1 (end[i+1] - begin[i+1])
+                // and their framebuffer ids.
+                const PassBoundarySnap& prev_begin_snap =
+                    gap_snap_begin_[best_slot][top_gap_index];
+                flank_prev_draws =
+                    sat_diff32(end_snap.draws, prev_begin_snap.draws);
+                flank_prev_fb = end_snap.framebuffer_id;
+                if (top_gap_index + 1u < n) {
+                  const PassBoundarySnap& next_end_snap =
+                      gap_snap_end_[best_slot][top_gap_index + 1u];
+                  flank_next_draws =
+                      sat_diff32(next_end_snap.draws, begin_snap.draws);
+                  flank_next_fb = begin_snap.framebuffer_id;
+                }
               }
               gpu_pass_us_ = uint64_t(double(sum_ticks) *
                                       double(gpu_timestamp_period_ns_) / 1000.0);
@@ -2249,7 +2266,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   "GPU pass split: n={} pass_us={} gap_us={} head_us={} "
                   "tail_us={} top_pass_us=[{} {} {}] top_gap_us=[{} {} {}] "
                   "topgap[i={} disp={} bufcp={} cpkb={} b2icp={} barr={}] "
-                  "swap_after={}",
+                  "swap_after={} flank[p{}fb={:04x}dr={} p{}fb={:04x}dr={}]",
                   n, uint64_t(double(sum_ticks) * tick_us),
                   uint64_t(double(gap_ticks) * tick_us),
                   uint64_t(double(head_ticks) * tick_us),
@@ -2262,7 +2279,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   uint64_t(double(top_gap[2]) * tick_us), top_gap_index,
                   gap_dispatches, gap_buffer_copies, gap_copy_kb,
                   gap_buffer_image_copies, gap_barriers,
-                  gpu_swap_bracket_[best_slot]);
+                  gpu_swap_bracket_[best_slot], top_gap_index, flank_prev_fb,
+                  flank_prev_draws, top_gap_index + 1u, flank_next_fb,
+                  flank_next_draws);
             }
           }
         }
@@ -3535,6 +3554,9 @@ void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
     snap.buffer_copies = record_stats.buffer_copies;
     snap.buffer_image_copies = record_stats.buffer_image_copies;
     snap.barriers = record_stats.barriers;
+    snap.draws = record_stats.draws;
+    snap.framebuffer_id = uint32_t(
+        (reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) & 0xFFFFu);
     snap.buffer_copy_bytes = record_stats.buffer_copy_bytes;
   }
   if (!is_begin) {

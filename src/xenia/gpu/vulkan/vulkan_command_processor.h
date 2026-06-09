@@ -1219,6 +1219,10 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t buffer_copies;
     uint32_t buffer_image_copies;
     uint32_t barriers;
+    uint32_t draws;
+    // Low framebuffer-pointer bits at the bracket - a cheap per-pass identity
+    // to tell which render passes flank the dominant gap.
+    uint32_t framebuffer_id;
     uint64_t buffer_copy_bytes;
   };
   PassBoundarySnap gap_snap_begin_[kMaxFramesInFlight][kMaxPassBrackets] = {};
