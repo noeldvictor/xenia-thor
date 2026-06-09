@@ -2109,6 +2109,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // the frame's present/teardown work.
   FlushPendingMergeRun();
 
+  // Gap attribution: remember which pass bracket the guest swap lands after
+  // (the current frame slot is never the completed slot the readback uses).
+  gpu_swap_bracket_[frame_current_ % kMaxFramesInFlight] =
+      gpu_pass_bracket_count_;
+
   // Optional hard freeze (for genuinely static scenes like menus). NOTE: for
   // animated cinematics this does NOT produce a static frame (the engine keeps
   // evolving the scene regardless of the guest clock), so the primary clean-A/B
@@ -2243,7 +2248,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               XELOGI(
                   "GPU pass split: n={} pass_us={} gap_us={} head_us={} "
                   "tail_us={} top_pass_us=[{} {} {}] top_gap_us=[{} {} {}] "
-                  "topgap[i={} disp={} bufcp={} cpkb={} b2icp={} barr={}]",
+                  "topgap[i={} disp={} bufcp={} cpkb={} b2icp={} barr={}] "
+                  "swap_after={}",
                   n, uint64_t(double(sum_ticks) * tick_us),
                   uint64_t(double(gap_ticks) * tick_us),
                   uint64_t(double(head_ticks) * tick_us),
@@ -2255,7 +2261,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   uint64_t(double(top_gap[1]) * tick_us),
                   uint64_t(double(top_gap[2]) * tick_us), top_gap_index,
                   gap_dispatches, gap_buffer_copies, gap_copy_kb,
-                  gap_buffer_image_copies, gap_barriers);
+                  gap_buffer_image_copies, gap_barriers,
+                  gpu_swap_bracket_[best_slot]);
             }
           }
         }

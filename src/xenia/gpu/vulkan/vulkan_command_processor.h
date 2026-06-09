@@ -1223,6 +1223,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   };
   PassBoundarySnap gap_snap_begin_[kMaxFramesInFlight][kMaxPassBrackets] = {};
   PassBoundarySnap gap_snap_end_[kMaxFramesInFlight][kMaxPassBrackets] = {};
+  // Bracket count at IssueSwap time per frame slot: which inter-pass gap the
+  // guest swap/present teardown lands in (if the dominant empty gap sits right
+  // here, the hole is present/pacing interaction, not GPU work).
+  uint32_t gpu_swap_bracket_[kMaxFramesInFlight] = {};
 
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
