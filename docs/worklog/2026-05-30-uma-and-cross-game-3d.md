@@ -1990,3 +1990,31 @@ EVIDENCE_FILE: docs/evidence/20260531-230208-uma_on_guarded.txt  (screenshot REA
   =true (full drain). If it still hangs with the brute-force serialize, the hang is NOT the upload path at all
   (points at present/swapchain interaction with the 512MB non-sparse persistently-mapped buffer); if it then
   renders, the hang is upload-await-related and the guard logic needs revisiting. Either way: NOT shippable yet.
+
+### B75 — G1-lite de-interleaved position binning stream: BUILT end-to-end, F1-measured FLAT (lever killed cleanly)
+The full G1-lite chain shipped (all cvar-gated default-off, inert when off): U0 Shader::ComputePositionVfetchTag
+static analysis (8f6a1b032), U0b deint[] coverage telemetry (a471438a2+5547868c7), U1 translator dual-path —
+kSysFlag_PosFetchRedirect uniform branch + XeCompactPos SSBO at set-0 binding 1 (2 under FSI) + SystemConstants
+compact_pos_base_dwords, fat address + var_main_vfetch_address_ kept unconditional (5c21995cc), U2 host side —
+48MB HOST_VISIBLE|DEVICE_LOCAL compact_pos_ring_ (16MB/frame segments, R2-arena pattern, no staging copy),
+per-draw gather with intra-frame fc cache + 4MB cap, flag+base armed only on gather success, redir/bail
+telemetry (390835ffb). Cvar: gpu_binning_deinterleave_pos.
+- F1 GATE FIRES (BTTF heavy menu, Turnip): control OFF (turnip_bttff1off) vs ON (turnip_bttff1diag), same
+  session, same APK. ON ran at FULL coverage: redir_draws=392/392 eligible, redir_verts=162,906/frame (43% of
+  all verts on the compact 12-16B/vert stream), bails=0, gather ~0.4ms CPU/frame, png PIXEL-CORRECT (DeLorean
+  menu).
+- CONTENT-MATCHED RESULT (identical rendered + avg_verts states, n=140-240 frames/cell):
+  rendered=902/381.7k verts: OFF 41,730us vs ON 41,573us; rendered=735/378.5k verts: OFF 36,545us vs ON
+  36,395us. Delta = -0.4% = NOISE.
+- VERDICT: cutting the binning pass's vertex-fetch bytes by ~3-6x on 43% of verts moved nothing -> the
+  ~12ms/32ns-per-vert main-pass binning drain is per-vertex COMPUTE/fixed-function tiler cost, NOT fetch
+  bandwidth. Exactly the design's #1 risk, killed cheaply by the gate as intended. U3 (cross-frame cache) and
+  U4 (Modification-bit DCE variant) cancelled — bandwidth is exonerated, a no-fat-path variant cannot win
+  either. Machinery stays in-tree (default off) in case a genuinely fetch-bound title appears.
+- Fire #1 (turnip_bttff1) hung at boot (1 swap then silence, GPU 0%) but the identical config ran clean twice
+  after — BTTF boot flake, not the cvar. Tooling note: debuggerd -b needs root on the Thor; run-as +
+  /proc/<pid>/task/*/wchan gives thread wait-channels instead (adreno_drawctxt_wait on the GPU thread is the
+  NORMAL GPU-bound wait, not a hang signature).
+- NEXT (per this build's own ranking): productize gpu_edram_passes_dont_care behind RT-cache deadness gating —
+  the one MEASURED ~12% whole-frame BTTF win still on the table (raw DONT_CARE black-screens; needs the safe
+  variant).
