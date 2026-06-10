@@ -1130,6 +1130,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Head-emit: element offset of the run head's recorded ArgsVkDrawIndexed in
   // the deferred command stream - extensions patch its index_count in place.
   size_t merge_pending_draw_args_offset_ = 0;
+  // Rewrite mode (vulkan_merge_draws_rewrite): the fixed-cap transient index
+  // block the run's scattered guest index ranges are appended into (mapping
+  // into cull_index_buffer_pool_; null when the run is zero-copy/inactive).
+  static constexpr size_t kMergeRewriteBlockBytes = 64 * 1024;
+  uint8_t* merge_pending_rewrite_mapping_ = nullptr;
+  size_t merge_pending_rewrite_used_bytes_ = 0;
   // Predicate state captured from the run head, compared to extend (Step 4).
   uint32_t merge_pending_next_byte_ = 0;  // base + count*stride (contiguity test)
   VkPipeline merge_pending_pipeline_ = VK_NULL_HANDLE;

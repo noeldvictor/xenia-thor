@@ -620,6 +620,21 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_merge_draws_rewrite, false,
+    "Thor/Adreno binning re-arch (Lever 2 rank-3): INDEX-REWRITING draw "
+    "concatenation - merge consecutive same-state kGuestDMA indexed LIST draws "
+    "into ONE vkCmdDrawIndexed by COPYING each draw's raw guest index bytes "
+    "(verbatim, no swap - the vertex shader applies the index endian) appended "
+    "into a fixed-cap transient index block, so SCATTERED index ranges "
+    "concatenate too (unlike the zero-copy vulkan_merge_draws, which requires "
+    "byte-contiguous ranges and almost never engages). Run boundaries: any "
+    "recorded state change, primitive type/pipeline/constants change, "
+    "VGT_INDX_OFFSET/endian change, or block capacity (64KB). Wins over "
+    "vulkan_merge_draws if both set. The controlled test for the measured "
+    "~31us/draw BTTF per-draw slope. Default off; STARTUP cvar.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_hoist_request_range_lock, true,
     "Thor CPU-hygiene: acquire the SharedMemory global lock ONCE around the "
     "per-draw vertex + memexport RequestRange calls in IssueDraw, instead of "

@@ -5077,14 +5077,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // a HARD merge boundary (Levers 2 / 2b): flush the pending run so it is never
     // stitched across the hole. Emit nothing. (FlushPendingMergeRun also flushes
     // any pending MDI run.)
-    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
+    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_rewrite ||
+        cvars::vulkan_merge_draws_indirect) {
       FlushPendingMergeRun();
     }
   } else if (primitive_processing_result.index_buffer_type ==
                  PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
              shader_32bit_index_dma) {
     // Non-indexed (auto / shader-32bit DMA): breaks a kGuestDMA index run.
-    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
+    if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_rewrite ||
+        cvars::vulkan_merge_draws_indirect) {
       FlushPendingMergeRun();
     }
     deferred_command_buffer_.CmdVkDraw(
@@ -5124,7 +5126,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // indices VERBATIM (byte-identical). NO endian swap / mask / base-add (the
       // VS does those at spirv_shader_translator.cc:1592/1606); vertexOffset stays
       // 0 (VGT_INDX_OFFSET via system constants). Mutually exclusive with merges.
-      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
+      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_rewrite ||
+        cvars::vulkan_merge_draws_indirect) {
         FlushPendingMergeRun();
       }
       const uint32_t idx_count =
@@ -5275,7 +5278,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
         }
       }
-    } else if (cvars::vulkan_merge_draws &&
+    } else if ((cvars::vulkan_merge_draws ||
+                cvars::vulkan_merge_draws_rewrite) &&
         primitive_processing_result.index_buffer_type ==
             PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
       // Lever 2 Step 4: zero-copy draw concatenation. EXTEND the pending run if
@@ -5302,6 +5306,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
            prim_type == xenos::PrimitiveType::kPointList) &&
           memexport_extent_start >= memexport_extent_end &&
           !primitive_processing_result.host_primitive_reset_enabled;
+      // Rewrite mode (vulkan_merge_draws_rewrite, wins if both set): the run's
+      // indices are COPIED verbatim into a fixed-cap transient index block, so
+      // SCATTERED guest index ranges concatenate too - the contiguity term is
+      // replaced by block-capacity room in the predicate.
+      const bool merge_rewrite = cvars::vulkan_merge_draws_rewrite;
+      const size_t copy_bytes = size_t(idx_count) * stride;
       const bool can_extend =
           merge_pending_active_ && mergeable &&
           !merge_cannot_extend_this_draw_ &&
@@ -5309,33 +5319,72 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           current_guest_graphics_pipeline_layout_ ==
               merge_pending_pipeline_layout_ &&
           index_type == merge_pending_index_type_ &&
-          idx_base == merge_pending_next_byte_ &&
+          (merge_rewrite
+               ? (merge_pending_rewrite_mapping_ != nullptr &&
+                  merge_pending_rewrite_used_bytes_ + copy_bytes <=
+                      kMergeRewriteBlockBytes)
+               : idx_base == merge_pending_next_byte_) &&
           uint32_t(vgt_indx_offset) == merge_pending_vertex_base_index_ &&
           index_endian == merge_pending_vertex_index_endian_ &&
           prim_type == merge_pending_prim_type_;
       if (can_extend) {
-        // Concatenate this draw's contiguous index range into the run by
-        // growing the HEAD-EMITTED draw command in place. Recording anything
-        // here would be wrong: this draw recorded no state (the extend
-        // precondition), and the head draw is already in the stream at the
-        // correct position relative to its own state.
+        // Concatenate this draw's index range into the run by growing the
+        // HEAD-EMITTED draw command in place. Recording anything here would
+        // be wrong: this draw recorded no state (the extend precondition),
+        // and the head draw is already in the stream at the correct position
+        // relative to its own state.
+        if (merge_rewrite) {
+          const uint8_t* extend_guest_indices =
+              memory_->TranslatePhysical<const uint8_t*>(idx_base);
+          std::memcpy(
+              merge_pending_rewrite_mapping_ + merge_pending_rewrite_used_bytes_,
+              extend_guest_indices, copy_bytes);
+          merge_pending_rewrite_used_bytes_ += copy_bytes;
+        }
         merge_pending_index_count_ += idx_count;
         merge_pending_next_byte_ += idx_count * stride;
         deferred_command_buffer_.PatchVkDrawIndexedIndexCount(
             merge_pending_draw_args_offset_, merge_pending_index_count_);
       } else {
         FlushPendingMergeRun();
-        if (mergeable) {
-          // Start a new run, EMITTING its bind + draw at the head (so later
-          // draws' state setup can never be recorded ahead of the run's
-          // draw - the flush-time emission this replaces drew the run with
-          // the NEXT draw's state, corrupting the frame). Extensions only
-          // patch the recorded index count.
+        bool run_started = false;
+        if (mergeable && merge_rewrite && copy_bytes <= kMergeRewriteBlockBytes) {
+          // Start a rewrite run: reserve a fixed-cap transient block, copy the
+          // head draw's raw guest index bytes verbatim (no swap/mask - the VS
+          // applies the index endian via system constants), and head-emit the
+          // run's bind + draw against the block.
+          VkBuffer rewrite_buffer = VK_NULL_HANDLE;
+          VkDeviceSize rewrite_offset = 0;
+          uint8_t* rewrite_mapping = cull_index_buffer_pool_->Request(
+              frame_current_, kMergeRewriteBlockBytes, stride, rewrite_buffer,
+              rewrite_offset);
+          const uint8_t* head_guest_indices =
+              memory_->TranslatePhysical<const uint8_t*>(idx_base);
+          if (rewrite_mapping && head_guest_indices) {
+            std::memcpy(rewrite_mapping, head_guest_indices, copy_bytes);
+            deferred_command_buffer_.CmdVkBindIndexBuffer(
+                rewrite_buffer, rewrite_offset, index_type);
+            merge_pending_draw_args_offset_ =
+                deferred_command_buffer_.CmdVkDrawIndexedRetained(idx_count, 1,
+                                                                  0, 0, 0);
+            merge_pending_rewrite_mapping_ = rewrite_mapping;
+            merge_pending_rewrite_used_bytes_ = copy_bytes;
+            run_started = true;
+          }
+        } else if (mergeable && !merge_rewrite) {
+          // Start a zero-copy run, EMITTING its bind + draw at the head (so
+          // later draws' state setup can never be recorded ahead of the run's
+          // draw). Extensions only patch the recorded index count.
           deferred_command_buffer_.CmdVkBindIndexBuffer(
               index_buffer.first, index_buffer.second, index_type);
           merge_pending_draw_args_offset_ =
               deferred_command_buffer_.CmdVkDrawIndexedRetained(idx_count, 1,
                                                                 0, 0, 0);
+          merge_pending_rewrite_mapping_ = nullptr;
+          merge_pending_rewrite_used_bytes_ = 0;
+          run_started = true;
+        }
+        if (run_started) {
           merge_pending_active_ = true;
           merge_pending_index_buffer_ = index_buffer.first;
           merge_pending_index_base_ = index_buffer.second;
@@ -5349,7 +5398,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           merge_pending_vertex_index_endian_ = index_endian;
           merge_pending_prim_type_ = prim_type;
         } else {
-          // Non-mergeable kGuestDMA draw (strip/fan/memexport/restart): standalone.
+          // Non-mergeable kGuestDMA draw (strip/fan/memexport/restart), or the
+          // rewrite block could not be reserved: standalone.
           deferred_command_buffer_.CmdVkBindIndexBuffer(
               index_buffer.first, index_buffer.second, index_type);
           deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
@@ -5479,7 +5529,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // cvar off, or a non-kGuestDMA indexed type (kHostConverted/kHostBuiltin,
       // which use per-draw backend index handles and are non-mergeable): flush
       // any pending run (concat or MDI), then emit standalone exactly as before.
-      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_indirect) {
+      if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_rewrite ||
+        cvars::vulkan_merge_draws_indirect) {
         FlushPendingMergeRun();
       }
       deferred_command_buffer_.CmdVkBindIndexBuffer(
@@ -6782,6 +6833,8 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
   // wrong state.)
   merge_pending_active_ = false;
   merge_pending_index_count_ = 0;
+  merge_pending_rewrite_mapping_ = nullptr;
+  merge_pending_rewrite_used_bytes_ = 0;
 }
 
 void VulkanCommandProcessor::FlushPendingMergeRunIndirect() {
