@@ -1085,6 +1085,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   render_passes_.clear();
+  for (const auto& render_pass_pair : load_dont_care_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  load_dont_care_render_passes_.clear();
 
   for (VkPipeline& resolve_copy_pipeline : resolve_copy_pipelines_) {
     ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
@@ -1138,6 +1144,12 @@ void VulkanRenderTargetCache::ClearCache() {
     dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
   }
   render_passes_.clear();
+  for (const auto& render_pass_pair : load_dont_care_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  load_dont_care_render_passes_.clear();
 
   RenderTargetCache::ClearCache();
 }
@@ -1597,12 +1609,23 @@ bool VulkanRenderTargetCache::Update(
 }
 
 VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
-    RenderPassKey key) {
+    RenderPassKey key, uint32_t load_dont_care_mask) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
-  auto it = render_passes_.find(key);
-  if (it != render_passes_.end()) {
-    return it->second;
+  // Only attachments that are actually bound can be marked.
+  load_dont_care_mask &= key.depth_and_color_used;
+  uint64_t load_dont_care_key =
+      (uint64_t(key.key) << 5) | uint64_t(load_dont_care_mask);
+  if (load_dont_care_mask) {
+    auto variant_it = load_dont_care_render_passes_.find(load_dont_care_key);
+    if (variant_it != load_dont_care_render_passes_.end()) {
+      return variant_it->second;
+    }
+  } else {
+    auto it = render_passes_.find(key);
+    if (it != render_passes_.end()) {
+      return it->second;
+    }
   }
 
   VkSampleCountFlagBits samples;
@@ -1628,13 +1651,18 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     attachment.flags = 0;
     attachment.format = GetDepthVulkanFormat(key.depth_format);
     attachment.samples = samples;
+    // gpu_edram_passes_dont_care = the raw diagnostic (all passes, load AND
+    // store - black-screens titles that need the contents); the safe per-pass
+    // variant elides only the LOAD of attachments in load_dont_care_mask,
+    // proven fully overwritten by the pass's first draw.
     const bool dont_care = cvars::gpu_edram_passes_dont_care;
-    attachment.loadOp = dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
-                                  : VK_ATTACHMENT_LOAD_OP_LOAD;
+    const bool load_dont_care = dont_care || (load_dont_care_mask & 0b1);
+    attachment.loadOp = load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                       : VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.storeOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                    : VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.stencilLoadOp = dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
-                                         : VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.stencilLoadOp = load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                              : VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.stencilStoreOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                           : VK_ATTACHMENT_STORE_OP_STORE;
     attachment.initialLayout = VulkanRenderTarget::kDepthDrawLayout;
@@ -1666,7 +1694,8 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
             ? GetColorOwnershipTransferVulkanFormat(color_format)
             : GetColorVulkanFormat(color_format);
     attachment.samples = samples;
-    attachment.loadOp = cvars::gpu_edram_passes_dont_care
+    attachment.loadOp = (cvars::gpu_edram_passes_dont_care ||
+                         (load_dont_care_mask & attachment_bit))
                             ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
                             : VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.storeOp = cvars::gpu_edram_passes_dont_care
@@ -1745,11 +1774,37 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
                              &render_pass) != VK_SUCCESS) {
     XELOGE("VulkanRenderTargetCache: Failed to create a render pass");
-    render_passes_.emplace(key, VK_NULL_HANDLE);
+    if (load_dont_care_mask) {
+      load_dont_care_render_passes_.emplace(load_dont_care_key,
+                                            VK_NULL_HANDLE);
+    } else {
+      render_passes_.emplace(key, VK_NULL_HANDLE);
+    }
     return VK_NULL_HANDLE;
   }
-  render_passes_.emplace(key, render_pass);
+  if (load_dont_care_mask) {
+    load_dont_care_render_passes_.emplace(load_dont_care_key, render_pass);
+  } else {
+    render_passes_.emplace(key, render_pass);
+  }
   return render_pass;
+}
+
+VkRenderPass VulkanRenderTargetCache::GetLoadDontCareVariantForLastUpdate(
+    VkRenderPass original, uint32_t load_dont_care_mask) {
+  if (GetPath() != Path::kHostRenderTargets ||
+      original != last_update_render_pass_ ||
+      original == VK_NULL_HANDLE) {
+    return original;
+  }
+  RenderPassKey key = last_update_render_pass_key_;
+  load_dont_care_mask &= key.depth_and_color_used;
+  if (!load_dont_care_mask) {
+    return original;
+  }
+  VkRenderPass variant =
+      GetHostRenderTargetsRenderPass(key, load_dont_care_mask);
+  return variant != VK_NULL_HANDLE ? variant : original;
 }
 
 VkFormat VulkanRenderTargetCache::GetDepthVulkanFormat(

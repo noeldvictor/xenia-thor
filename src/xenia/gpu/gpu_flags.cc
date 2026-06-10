@@ -78,6 +78,20 @@ DEFINE_int32(
     "GPU");
 
 DEFINE_bool(
+    gpu_edram_passes_dont_care_safe, false,
+    "EXPERIMENTAL (Thor/TBDR): when a render pass's FIRST draw provably "
+    "overwrites the entire render area unconditionally (a one-rectangle "
+    "rectangle-list draw - the guest clear idiom - with always-pass depth "
+    "write or replace-mode full-mask color write, verified by replaying its "
+    "vertex positions on the CPU), begin the pass with "
+    "VK_ATTACHMENT_LOAD_OP_DONT_CARE for the proven attachments, skipping "
+    "their GMEM tile loads on tile-based GPUs. Per-pass and per-attachment - "
+    "unlike the raw gpu_edram_passes_dont_care diagnostic (which elides all "
+    "loads AND stores and corrupts titles that need the contents). Any "
+    "uncertainty falls back to loading.",
+    "GPU");
+
+DEFINE_bool(
     gpu_binning_deinterleave_pos, false,
     "EXPERIMENTAL (Thor/TBDR): de-interleave the position vertex stream into a "
     "compact raw-dword buffer so the tiler's binning pass fetches only "

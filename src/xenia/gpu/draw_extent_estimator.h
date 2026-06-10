@@ -39,6 +39,18 @@ class DrawExtentEstimator {
   uint32_t EstimateMaxY(bool try_to_estimate_vertex_max_y,
                         const Shader& vertex_shader);
 
+  // Safe DONT_CARE deadness proof: if the current draw is a single-rectangle
+  // rectangle list (the guest clear idiom - 3 vertices), replays the vertex
+  // positions on the CPU and returns the conservatively COVERED screen-space
+  // pixel rectangle (x1/y1 exclusive; window offset applied; rounded INWARD so
+  // every pixel in [x0,x1)x[y0,y1) is fully written at the draw's MSAA mode).
+  // Returns false - callers must assume nothing is covered - when the draw is
+  // not a one-rect rectangle list, the shader can't be interpreted, or any
+  // vertex position is unavailable/killed.
+  bool EstimateRectListCoverage(const Shader& vertex_shader, int32_t& out_x0,
+                                int32_t& out_y0, int32_t& out_x1,
+                                int32_t& out_y1);
+
   // Front B cullable-triangle counter (gpu_trace_cullable_tris): replays the
   // guest VS positions on the CPU and counts how many triangles a CPU-side cull
   // WOULD drop before the GPU bins them - a READ-ONLY decision instrument (never

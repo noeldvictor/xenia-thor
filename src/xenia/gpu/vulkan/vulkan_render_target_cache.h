@@ -169,7 +169,20 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // Returns the render pass object, or VK_NULL_HANDLE if failed to create.
   // A render pass managed by the render target cache may be ended and resumed
   // at any time (to allow for things like copying and texture loading).
-  VkRenderPass GetHostRenderTargetsRenderPass(RenderPassKey key);
+  // load_dont_care_mask (bit 0 = depth, bits 1-4 = color 0-3, same layout as
+  // RenderPassKey::depth_and_color_used): attachments whose loadOp should be
+  // VK_ATTACHMENT_LOAD_OP_DONT_CARE because the pass's first draw provably
+  // overwrites the whole render area (gpu_edram_passes_dont_care_safe).
+  // Variants are compatible with pipelines and framebuffers created against
+  // the mask-0 pass (load/store ops don't affect render pass compatibility).
+  VkRenderPass GetHostRenderTargetsRenderPass(RenderPassKey key,
+                                              uint32_t load_dont_care_mask = 0);
+  // Returns the load-DONT_CARE variant of the last Update()'s render pass for
+  // beginning it, or `original` unchanged when not applicable (mask empty
+  // after clamping to the bound attachments, not the host-render-targets path,
+  // or `original` is not the last update's render pass).
+  VkRenderPass GetLoadDontCareVariantForLastUpdate(VkRenderPass original,
+                                                   uint32_t load_dont_care_mask);
   VkRenderPass GetFragmentShaderInterlockRenderPass() const {
     assert_true(GetPath() == Path::kPixelShaderInterlock);
     return fsi_render_pass_;
@@ -893,6 +906,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // VK_NULL_HANDLE if failed to create.
   std::unordered_map<RenderPassKey, VkRenderPass, RenderPassKey::Hasher>
       render_passes_;
+  // Safe DONT_CARE variants, keyed (uint64_t(RenderPassKey::key) << 5) |
+  // load_dont_care_mask. VK_NULL_HANDLE if failed to create.
+  std::unordered_map<uint64_t, VkRenderPass> load_dont_care_render_passes_;
 
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;

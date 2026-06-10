@@ -295,6 +295,199 @@ uint32_t DrawExtentEstimator::EstimateVertexMaxY(const Shader& vertex_shader) {
          8;
 }
 
+bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
+                                                   int32_t& out_x0,
+                                                   int32_t& out_y0,
+                                                   int32_t& out_x1,
+                                                   int32_t& out_y1) {
+  SCOPE_profile_cpu_f("gpu");
+
+  const RegisterFile& regs = register_file_;
+
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  // One rectangle exactly - the guest clear idiom.
+  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kRectangleList ||
+      vgt_draw_initiator.num_indices != 3) {
+    return false;
+  }
+  if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA &&
+      vgt_draw_initiator.source_select != xenos::SourceSelect::kAutoIndex) {
+    return false;
+  }
+  // Not reproducing tessellation.
+  if (xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode,
+                                 vgt_draw_initiator.prim_type) &&
+      regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
+          xenos::VGTOutputPath::kTessellationEnable) {
+    return false;
+  }
+  assert_true(vertex_shader.type() == xenos::ShaderType::kVertex);
+  assert_true(vertex_shader.is_ucode_analyzed());
+  if (!ShaderInterpreter::CanInterpretShader(vertex_shader)) {
+    return false;
+  }
+
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  union {
+    const void* index_buffer;
+    const uint16_t* index_buffer_16;
+    const uint32_t* index_buffer_32;
+  };
+  index_buffer = nullptr;
+  xenos::Endian index_endian = vgt_dma_size.swap_mode;
+  if (vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA) {
+    uint32_t index_buffer_base = regs[XE_GPU_REG_VGT_DMA_BASE];
+    if (vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16) {
+      if (index_endian == xenos::Endian::k8in32) {
+        index_endian = xenos::Endian::k8in16;
+      } else if (index_endian == xenos::Endian::k16in32) {
+        index_endian = xenos::Endian::kNone;
+      }
+      index_buffer_base &= ~uint32_t(sizeof(uint16_t) - 1);
+    } else {
+      index_buffer_base &= ~uint32_t(sizeof(uint32_t) - 1);
+    }
+    index_buffer = memory_.TranslatePhysical(index_buffer_base);
+  }
+  auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+  uint32_t reset_index =
+      regs.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx;
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_index = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_index = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+
+  auto pa_cl_vte_cntl = regs.Get<reg::PA_CL_VTE_CNTL>();
+  float viewport_x_scale = pa_cl_vte_cntl.vport_x_scale_ena
+                               ? regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE)
+                               : 1.0f;
+  float viewport_x_offset =
+      pa_cl_vte_cntl.vport_x_offset_ena
+          ? regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XOFFSET)
+          : 0.0f;
+  float viewport_y_scale = pa_cl_vte_cntl.vport_y_scale_ena
+                               ? regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE)
+                               : 1.0f;
+  float viewport_y_offset =
+      pa_cl_vte_cntl.vport_y_offset_ena
+          ? regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YOFFSET)
+          : 0.0f;
+
+  float min_x = FLT_MAX, min_y = FLT_MAX;
+  float max_x = -FLT_MAX, max_y = -FLT_MAX;
+
+  shader_interpreter_.SetShader(vertex_shader);
+  PositionExportSink position_export_sink;
+  shader_interpreter_.SetExportSink(&position_export_sink);
+  bool valid = true;
+  for (uint32_t i = 0; i < vgt_draw_initiator.num_indices; ++i) {
+    uint32_t vertex_index;
+    if (vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA) {
+      if (i < vgt_dma_size.num_words) {
+        if (vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16) {
+          vertex_index = index_buffer_16[i];
+        } else {
+          vertex_index = index_buffer_32[i];
+        }
+        vertex_index = xenos::GpuSwap(vertex_index, index_endian) & 0xFFFFFF;
+      } else {
+        vertex_index = 0;
+      }
+      if (pa_su_sc_mode_cntl.multi_prim_ib_ena && vertex_index == reset_index) {
+        // A degenerate "rectangle" - not a clear.
+        valid = false;
+        break;
+      }
+    } else {
+      vertex_index = i;
+    }
+    vertex_index =
+        std::min(max_index,
+                 std::max(min_index, (vertex_index + index_offset) & 0xFFFFFF));
+
+    position_export_sink.Reset();
+    shader_interpreter_.temp_registers()[0] = float(vertex_index);
+    shader_interpreter_.Execute();
+
+    if (position_export_sink.vertex_kill().has_value() &&
+        (position_export_sink.vertex_kill().value() & ~(UINT32_C(1) << 31))) {
+      valid = false;
+      break;
+    }
+    if (!position_export_sink.position_x().has_value() ||
+        !position_export_sink.position_y().has_value()) {
+      valid = false;
+      break;
+    }
+    float vertex_x = position_export_sink.position_x().value();
+    float vertex_y = position_export_sink.position_y().value();
+    if (!pa_cl_vte_cntl.vtx_xy_fmt) {
+      if (!position_export_sink.position_w().has_value()) {
+        valid = false;
+        break;
+      }
+      float vertex_w = position_export_sink.position_w().value();
+      if (!(vertex_w != 0.0f)) {
+        valid = false;
+        break;
+      }
+      vertex_x /= vertex_w;
+      vertex_y /= vertex_w;
+    }
+    vertex_x = vertex_x * viewport_x_scale + viewport_x_offset;
+    vertex_y = vertex_y * viewport_y_scale + viewport_y_offset;
+    if (!(vertex_x == vertex_x) || !(vertex_y == vertex_y)) {
+      // NaN.
+      valid = false;
+      break;
+    }
+    min_x = std::min(min_x, vertex_x);
+    min_y = std::min(min_y, vertex_y);
+    max_x = std::max(max_x, vertex_x);
+    max_y = std::max(max_y, vertex_y);
+  }
+  shader_interpreter_.SetExportSink(nullptr);
+  if (!valid || min_x > max_x || min_y > max_y) {
+    return false;
+  }
+
+  // To 24p8 fixed point, with the same pixel-center and window-offset handling
+  // as EstimateVertexMaxY.
+  int32_t min_x_24p8 = ui::FloatToD3D11Fixed16p8(min_x);
+  int32_t min_y_24p8 = ui::FloatToD3D11Fixed16p8(min_y);
+  int32_t max_x_24p8 = ui::FloatToD3D11Fixed16p8(max_x);
+  int32_t max_y_24p8 = ui::FloatToD3D11Fixed16p8(max_y);
+  if (regs.Get<reg::PA_SU_VTX_CNTL>().pix_center ==
+      xenos::PixelCenter::kD3DZero) {
+    min_x_24p8 += 128;
+    min_y_24p8 += 128;
+    max_x_24p8 += 128;
+    max_y_24p8 += 128;
+  }
+  if (pa_su_sc_mode_cntl.vtx_window_offset_enable) {
+    auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
+    int32_t window_x_offset_24p8 = pa_sc_window_offset.window_x_offset * 256;
+    int32_t window_y_offset_24p8 = pa_sc_window_offset.window_y_offset * 256;
+    min_x_24p8 += window_x_offset_24p8;
+    max_x_24p8 += window_x_offset_24p8;
+    min_y_24p8 += window_y_offset_24p8;
+    max_y_24p8 += window_y_offset_24p8;
+  }
+
+  // Round INWARD to fully-covered pixels. Without MSAA a pixel is covered iff
+  // its center (n + 0.5 in the post-half-pixel-offset space, top-left rule
+  // inclusive) is inside; with MSAA, samples can lie anywhere within the
+  // pixel, so require the whole pixel square.
+  bool msaa_1x = regs.Get<reg::RB_SURFACE_INFO>().msaa_samples ==
+                 xenos::MsaaSamples::k1X;
+  int32_t round_min = msaa_1x ? 127 : 255;
+  int32_t round_max = msaa_1x ? 128 : 255;
+  out_x0 = (min_x_24p8 + round_min) >> 8;
+  out_y0 = (min_y_24p8 + round_min) >> 8;
+  out_x1 = ((max_x_24p8 - round_max) >> 8) + 1;
+  out_y1 = ((max_y_24p8 - round_max) >> 8) + 1;
+  return out_x0 < out_x1 && out_y0 < out_y1;
+}
+
 uint32_t DrawExtentEstimator::EstimateMaxY(bool try_to_estimate_vertex_max_y,
                                            const Shader& vertex_shader) {
   SCOPE_profile_cpu_f("gpu");

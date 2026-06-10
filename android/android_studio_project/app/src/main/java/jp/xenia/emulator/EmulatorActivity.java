@@ -210,6 +210,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_draw_outcomes_per_frame");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_pass_timestamps");
             copyBooleanExtra(intent, launchArguments, "gpu_binning_deinterleave_pos");
+            copyBooleanExtra(intent, launchArguments, "gpu_edram_passes_dont_care_safe");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_use_vd_scaler_output_for_swap");
             copyBooleanExtra(

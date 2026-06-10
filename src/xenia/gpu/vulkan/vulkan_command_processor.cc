@@ -2442,6 +2442,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
         "gather_us={} bails={}] "
+        "dc_safe[p={} att={}] "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2484,6 +2485,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_deint_elig_verts_, draw_outcomes_deint_redir_draws_,
         draw_outcomes_deint_redir_verts_,
         draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
+        draw_outcomes_dc_safe_passes_, draw_outcomes_dc_safe_atts_,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2623,6 +2625,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_deint_redir_verts_ = 0;
     draw_outcomes_deint_gather_ns_ = 0;
     draw_outcomes_deint_bails_ = 0;
+    draw_outcomes_dc_safe_passes_ = 0;
+    draw_outcomes_dc_safe_atts_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -3584,10 +3588,34 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
+  // Safe DONT_CARE: if the draw opening this pass provably overwrites the
+  // whole render area for some attachments, begin with a load-DONT_CARE
+  // variant (compatible - load/store ops don't affect render pass
+  // compatibility, so pipelines and the framebuffer remain valid, and
+  // current_render_pass_ keeps tracking the original for the resume compare).
+  VkRenderPass begin_render_pass = render_pass;
+  if (dc_safe_pending_state_mask_) {
+    const VkExtent2D& dc_safe_extent = framebuffer->host_extent;
+    if (dc_safe_pending_rect_[0] <= 0 && dc_safe_pending_rect_[1] <= 0 &&
+        dc_safe_pending_rect_[2] >= int32_t(dc_safe_extent.width) &&
+        dc_safe_pending_rect_[3] >= int32_t(dc_safe_extent.height)) {
+      VkRenderPass dc_safe_variant =
+          render_target_cache_->GetLoadDontCareVariantForLastUpdate(
+              render_pass, dc_safe_pending_state_mask_);
+      if (dc_safe_variant != render_pass) {
+        begin_render_pass = dc_safe_variant;
+        ++draw_outcomes_dc_safe_passes_;
+        draw_outcomes_dc_safe_atts_ += xe::bit_count(
+            dc_safe_pending_state_mask_ &
+            render_target_cache_->last_update_render_pass_key()
+                .depth_and_color_used);
+      }
+    }
+  }
   VkRenderPassBeginInfo render_pass_begin_info;
   render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   render_pass_begin_info.pNext = nullptr;
-  render_pass_begin_info.renderPass = render_pass;
+  render_pass_begin_info.renderPass = begin_render_pass;
   render_pass_begin_info.framebuffer = framebuffer->framebuffer;
   render_pass_begin_info.renderArea.offset.x = 0;
   render_pass_begin_info.renderArea.offset.y = 0;
@@ -4350,6 +4378,78 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         !TraceTextureSourceChecksums(used_texture_mask_pixel, "pixel",
                                      pixel_shader->ucode_data_hash())) {
       return false;
+    }
+  }
+
+  // Safe DONT_CARE (gpu_edram_passes_dont_care_safe): if this draw is a
+  // provable full-render-area unconditional overwrite (the guest clear idiom -
+  // a one-rect rectangle list with always-pass writes), record which
+  // attachments' prior contents are dead. Consumed only if THIS draw opens the
+  // render pass - those attachments' tile loads are then elided via a
+  // load-DONT_CARE render pass variant. Any uncertainty leaves the mask 0 and
+  // the pass loads normally.
+  dc_safe_pending_state_mask_ = 0;
+  if (cvars::gpu_edram_passes_dont_care_safe &&
+      !cvars::gpu_edram_passes_dont_care &&
+      !cvars::gpu_vulkan_inpass_edram_transfers &&
+      prim_type == xenos::PrimitiveType::kRectangleList && index_count == 3 &&
+      pixel_shader &&
+      !pixel_shader->kills_pixels() &&
+      !draw_util::DoesCoverageDependOnAlpha(
+          regs.Get<reg::RB_COLORCONTROL>()) &&
+      regs.Get<reg::RB_SURFACE_INFO>().msaa_samples ==
+          xenos::MsaaSamples::k1X) {
+    uint32_t dc_safe_state_mask = 0;
+    // Depth/stencil: every covered sample takes an unconditional depth write,
+    // and stencil is not in use.
+    if (normalized_depth_control.z_enable &&
+        normalized_depth_control.z_write_enable &&
+        normalized_depth_control.zfunc == xenos::CompareFunction::kAlways &&
+        !normalized_depth_control.stencil_enable) {
+      dc_safe_state_mask |= 0b1;
+    }
+    // Color: written by the pixel shader, full write mask, blending disabled
+    // (source ONE, destination ZERO, op ADD - a pure replace).
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      if (!pixel_shader->writes_color_target(i)) {
+        continue;
+      }
+      if (((normalized_color_mask >> (i * 4)) & 0xF) != 0xF) {
+        continue;
+      }
+      if ((regs[reg::RB_BLENDCONTROL::rt_register_indices[i]] & 0x1FFF1FFF) !=
+          0x00010001) {
+        continue;
+      }
+      dc_safe_state_mask |= uint32_t(1) << (1 + i);
+    }
+    if (dc_safe_state_mask) {
+      if (!cull_extent_estimator_) {
+        cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
+            *register_file_, *memory_, nullptr);
+      }
+      int32_t cover_x0, cover_y0, cover_x1, cover_y1;
+      if (cull_extent_estimator_->EstimateRectListCoverage(
+              *vertex_shader, cover_x0, cover_y0, cover_x1, cover_y1)) {
+        // The write only happens inside the draw's scissor.
+        draw_util::Scissor dc_safe_scissor;
+        draw_util::GetScissor(regs, dc_safe_scissor);
+        cover_x0 = std::max(cover_x0, int32_t(dc_safe_scissor.offset[0]));
+        cover_y0 = std::max(cover_y0, int32_t(dc_safe_scissor.offset[1]));
+        cover_x1 = std::min(
+            cover_x1,
+            int32_t(dc_safe_scissor.offset[0] + dc_safe_scissor.extent[0]));
+        cover_y1 = std::min(
+            cover_y1,
+            int32_t(dc_safe_scissor.offset[1] + dc_safe_scissor.extent[1]));
+        if (cover_x0 < cover_x1 && cover_y0 < cover_y1) {
+          dc_safe_pending_state_mask_ = dc_safe_state_mask;
+          dc_safe_pending_rect_[0] = cover_x0;
+          dc_safe_pending_rect_[1] = cover_y0;
+          dc_safe_pending_rect_[2] = cover_x1;
+          dc_safe_pending_rect_[3] = cover_y1;
+        }
+      }
     }
   }
 

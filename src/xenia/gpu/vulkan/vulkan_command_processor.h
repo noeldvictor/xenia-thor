@@ -931,6 +931,16 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t draw_outcomes_deint_redir_verts_ = 0;
   uint64_t draw_outcomes_deint_gather_ns_ = 0;
   uint32_t draw_outcomes_deint_bails_ = 0;
+  // Safe DONT_CARE (gpu_edram_passes_dont_care_safe): the current draw's
+  // provable full-cover overwrite state - attachment deadness mask (bit 0
+  // depth, bits 1-4 color 0-3) and the covered pixel rect (x0,y0,x1,y1; x1/y1
+  // exclusive). Consumed only if THIS draw opens a render pass; 0 = no proof.
+  uint32_t dc_safe_pending_state_mask_ = 0;
+  int32_t dc_safe_pending_rect_[4] = {};
+  // Telemetry: passes begun with a load-DONT_CARE variant + attachments whose
+  // tile load was elided.
+  uint32_t draw_outcomes_dc_safe_passes_ = 0;
+  uint32_t draw_outcomes_dc_safe_atts_ = 0;
   // Step 0b: the precise position-export-slice classifier (counts draws/verts
   // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
   // that actually sizes the CPU/NEON cull's reach. See
