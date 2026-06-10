@@ -2177,3 +2177,17 @@ Where the fps levers now sit, per today's measurements:
 - All diagnostic instrumentation (mrw/cbup/dsre/mrwf) ships read-only behind the outcomes trace;
   the deterministic Burnout TRAFFIC ATTACK scene (45.5ms/2120 host draws, replicates to 0.04%)
   is the reference A/B vehicle for future draw-path work. 9 gate-safe fires today, zero errors.
+
+### B83 - BTTF floor re-attribution with the merge ON: the 12.7ms binning drain is INDEPENDENT of draws
+Fire turnip_bttfmrwts (rewrite + pass timestamps, 902-state heavy menu, 64C-watchdog-salvaged -
+10th fire of the day): host_draws 902->721 live (-181, B79 replicating) yet **top_gap_us =
+12,642-12,764 unchanged** vs every rewrite-off capture (12.0-13.0ms), same bracket i=22, same
+flank (1-draw pass fb=5d93 -> main scene pass fb=576f, 383 draws), pass_us ~1.39ms, the ~2.1ms
+secondary gaps identical. => the per-draw merge and the main-pass drain are INDEPENDENT; the drain
+is the main pass's per-VERTEX binning (379k verts ~ 32ns/vert), exactly as the 2026-06-09 final
+synthesis concluded. **The queued BTTF/BD GPU unit is the never-run dependency-narrowing
+experiment: narrow the broad EXTERNAL subpass dependency stage/access masks in
+GetHostRenderTargetsRenderPass (vulkan_render_target_cache.cc ~:1683) so the tiler can overlap
+prior passes' deferred render with the main pass's binning - worth up to ~30% of the BTTF GPU
+frame if it pipelines.** Session totals: 10 gate-safe fires, 9 commits, one watchdog trip
+(salvaged), zero vulkan errors, every readable frame pixel-correct.
