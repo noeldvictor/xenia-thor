@@ -2432,15 +2432,13 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_stript_run_hist_[b];
     }
-    // Host draw calls actually recorded this frame (vs guest `rendered`):
-    // delta of the deferred command buffer's cumulative draw stat. The stat
-    // zeroes on command-buffer Reset, which the wrap check absorbs.
-    uint32_t host_draws_stat_now = deferred_command_buffer_.record_stats().draws;
-    uint32_t host_draws_frame =
-        host_draws_stat_now >= host_draws_last_stat_
-            ? host_draws_stat_now - host_draws_last_stat_
-            : host_draws_stat_now;
-    host_draws_last_stat_ = host_draws_stat_now;
+    // Host draw calls recorded since the last print (vs guest `rendered`):
+    // completed submissions' draw stats are folded into the accumulator at
+    // Execute time, plus whatever the current recording holds.
+    uint64_t host_draws_total = host_draws_recorded_accum_ +
+                                deferred_command_buffer_.record_stats().draws;
+    uint64_t host_draws_frame = host_draws_total - host_draws_printed_marker_;
+    host_draws_printed_marker_ = host_draws_total;
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -5316,13 +5314,28 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           index_endian == merge_pending_vertex_index_endian_ &&
           prim_type == merge_pending_prim_type_;
       if (can_extend) {
-        // Concatenate this draw's contiguous index range into the pending run.
+        // Concatenate this draw's contiguous index range into the run by
+        // growing the HEAD-EMITTED draw command in place. Recording anything
+        // here would be wrong: this draw recorded no state (the extend
+        // precondition), and the head draw is already in the stream at the
+        // correct position relative to its own state.
         merge_pending_index_count_ += idx_count;
         merge_pending_next_byte_ += idx_count * stride;
+        deferred_command_buffer_.PatchVkDrawIndexedIndexCount(
+            merge_pending_draw_args_offset_, merge_pending_index_count_);
       } else {
         FlushPendingMergeRun();
         if (mergeable) {
-          // Start a new pending run with this draw as the head.
+          // Start a new run, EMITTING its bind + draw at the head (so later
+          // draws' state setup can never be recorded ahead of the run's
+          // draw - the flush-time emission this replaces drew the run with
+          // the NEXT draw's state, corrupting the frame). Extensions only
+          // patch the recorded index count.
+          deferred_command_buffer_.CmdVkBindIndexBuffer(
+              index_buffer.first, index_buffer.second, index_type);
+          merge_pending_draw_args_offset_ =
+              deferred_command_buffer_.CmdVkDrawIndexedRetained(idx_count, 1,
+                                                                0, 0, 0);
           merge_pending_active_ = true;
           merge_pending_index_buffer_ = index_buffer.first;
           merge_pending_index_base_ = index_buffer.second;
@@ -6594,6 +6607,9 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
       gpu_pass_count_written_[pass_slot] = gpu_pass_bracket_count_;
       gpu_pass_bracket_count_ = 0;
     }
+    // Fold this submission's recorded draw count into the host_draws=
+    // accumulator before the next BeginSubmission resets the stat.
+    host_draws_recorded_accum_ += deferred_command_buffer_.record_stats().draws;
     deferred_command_buffer_.Execute(command_buffer.buffer);
     if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
       dfn.vkCmdWriteTimestamp(command_buffer.buffer,
@@ -6756,21 +6772,14 @@ void VulkanCommandProcessor::FlushPendingMergeRun() {
   if (merge_mdi_active_) {
     FlushPendingMergeRunIndirect();
   }
-  // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run.
-  // The merged index range is contiguous in shared_memory_->buffer() starting at
-  // merge_pending_index_base_, so it is one CmdVkBindIndexBuffer + one
-  // CmdVkDrawIndexed(sum_of_counts, 1, 0, 0, 0) - firstIndex/vertexOffset stay 0
-  // (the byte offset is carried by the bind offset; vfetch addressing comes from
-  // system constants, equal across the run by the merge predicate).
-  if (!merge_pending_active_ || merge_pending_index_count_ == 0) {
-    merge_pending_active_ = false;
-    return;
-  }
-  deferred_command_buffer_.CmdVkBindIndexBuffer(merge_pending_index_buffer_,
-                                                merge_pending_index_base_,
-                                                merge_pending_index_type_);
-  deferred_command_buffer_.CmdVkDrawIndexed(merge_pending_index_count_, 1, 0, 0,
-                                            0);
+  // Lever 2 (vulkan_merge_draws): close the accumulated draw-concatenation
+  // run. With head-emit, the run's single CmdVkBindIndexBuffer +
+  // CmdVkDrawIndexed were recorded when the run STARTED (in the correct
+  // position relative to the head draw's own state), and extensions patched
+  // the recorded index count in place - so nothing is emitted here; the run
+  // just stops being extendable. (The old flush-time emission recorded the
+  // run draw AFTER subsequent draws' state setup, drawing the run with the
+  // wrong state.)
   merge_pending_active_ = false;
   merge_pending_index_count_ = 0;
 }

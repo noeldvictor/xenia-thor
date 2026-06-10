@@ -941,9 +941,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // tile load was elided.
   uint32_t draw_outcomes_dc_safe_passes_ = 0;
   uint32_t draw_outcomes_dc_safe_atts_ = 0;
-  // Snapshot of the deferred command buffer's cumulative draw stat at the last
-  // outcomes print, for the per-frame host_draws= delta.
-  uint32_t host_draws_last_stat_ = 0;
+  // host_draws= telemetry: draw stats of completed submissions are folded into
+  // the accumulator at Execute time (the per-recording stat zeroes on Reset);
+  // the print marker turns the monotone total into a per-frame delta.
+  uint64_t host_draws_recorded_accum_ = 0;
+  uint64_t host_draws_printed_marker_ = 0;
   // Step 0b: the precise position-export-slice classifier (counts draws/verts
   // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
   // that actually sizes the CPU/NEON cull's reach. See
@@ -1125,6 +1127,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   VkDeviceSize merge_pending_index_base_ = 0;  // run head guest_index_base = bind offset
   VkIndexType merge_pending_index_type_ = VK_INDEX_TYPE_UINT16;
   uint32_t merge_pending_index_count_ = 0;  // running sum of host_draw_vertex_count
+  // Head-emit: element offset of the run head's recorded ArgsVkDrawIndexed in
+  // the deferred command stream - extensions patch its index_count in place.
+  size_t merge_pending_draw_args_offset_ = 0;
   // Predicate state captured from the run head, compared to extend (Step 4).
   uint32_t merge_pending_next_byte_ = 0;  // base + count*stride (contiguity test)
   VkPipeline merge_pending_pipeline_ = VK_NULL_HANDLE;

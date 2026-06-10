@@ -317,6 +317,29 @@ class DeferredCommandBuffer {
     args.first_instance = first_instance;
   }
 
+  // Head-emit draw concatenation (vulkan_merge_draws): like CmdVkDrawIndexed,
+  // but returns the element offset of the recorded arguments so the run
+  // head's index count can be grown in place while the run stays open
+  // (recording the run draw at FLUSH time instead would place it AFTER later
+  // draws' state setup commands - the head draw would then execute with the
+  // wrong state). An offset is returned instead of a pointer because the
+  // stream storage may reallocate.
+  size_t CmdVkDrawIndexedRetained(uint32_t index_count,
+                                  uint32_t instance_count,
+                                  uint32_t first_index, int32_t vertex_offset,
+                                  uint32_t first_instance) {
+    size_t header_offset_elements = command_stream_.size();
+    CmdVkDrawIndexed(index_count, instance_count, first_index, vertex_offset,
+                     first_instance);
+    return header_offset_elements + kCommandHeaderSizeElements;
+  }
+  void PatchVkDrawIndexedIndexCount(size_t args_offset_elements,
+                                    uint32_t index_count) {
+    reinterpret_cast<ArgsVkDrawIndexed*>(command_stream_.data() +
+                                         args_offset_elements)
+        ->index_count = index_count;
+  }
+
   void CmdVkDrawIndexedIndirect(VkBuffer buffer, VkDeviceSize offset,
                                 uint32_t draw_count, uint32_t stride) {
     auto& args = *reinterpret_cast<ArgsVkDrawIndexedIndirect*>(WriteCommand(
