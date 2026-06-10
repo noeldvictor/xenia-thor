@@ -1751,6 +1751,20 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   subpass_dependencies[1].srcAccessMask = dependency_access_mask;
   subpass_dependencies[1].dstAccessMask = dependency_access_mask;
   subpass_dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  if (cvars::gpu_vulkan_weak_external_subpass_deps) {
+    // DIAGNOSTIC (knowingly unsafe in theory): turn both EXTERNAL dependencies
+    // into no-ops so the driver may overlap this pass's binning with prior
+    // passes' deferred render. Every BTTF frame fully drains (~12.7ms, ~30% of
+    // the GPU frame) right before its main scene pass and the drain survives
+    // transfer elimination AND draw merging - these EXTERNAL deps are the
+    // remaining candidate serializer. If the drain vanishes and the frame
+    // stays pixel-correct, build the precise version (emit targeted barriers
+    // only on actual same-RT reuse between passes).
+    subpass_dependencies[0].srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    subpass_dependencies[0].srcAccessMask = 0;
+    subpass_dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    subpass_dependencies[1].dstAccessMask = 0;
+  }
 
   VkRenderPassCreateInfo render_pass_create_info;
   render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;

@@ -650,6 +650,21 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_weak_external_subpass_deps, false,
+    "DIAGNOSTIC (Thor/Adreno binning serialization probe; knowingly unsafe in "
+    "theory): make the guest render passes' EXTERNAL subpass dependencies "
+    "no-ops (src TOP_OF_PIPE/0 in, dst BOTTOM_OF_PIPE/0 out) so the tiler may "
+    "overlap a pass's binning with prior passes' deferred render. Every BTTF "
+    "frame fully drains (~12.7ms = ~30% of the GPU frame) immediately before "
+    "its main scene pass; the drain survives transfer elimination and draw "
+    "merging, leaving these dependencies as the candidate serializer. If the "
+    "drain vanishes with this on and the frame stays pixel-correct, the "
+    "productized fix is targeted barriers on actual same-RT reuse only. May "
+    "corrupt titles that re-read a just-written render target - read the "
+    "frame. Default off; STARTUP cvar.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_hoist_request_range_lock, true,
     "Thor CPU-hygiene: acquire the SharedMemory global lock ONCE around the "
     "per-draw vertex + memexport RequestRange calls in IssueDraw, instead of "
