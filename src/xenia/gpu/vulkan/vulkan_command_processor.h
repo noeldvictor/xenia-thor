@@ -1275,6 +1275,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // (blocked-then-released) from bookkeeping causes.
   uint32_t draw_frame_open_sub_pre_ = 0;
   uint32_t draw_frame_open_sub_post_ = 0;
+  // Pure fence await/poll time inside CheckSubmissionCompletionAndDeviceLoss
+  // this frame (all call sites); fopen wait_us minus this = the completion-
+  // side reclamation CPU. The (A)-GPU-late vs (B)-reclaim-cost discriminator.
+  uint64_t completion_fence_await_ns_ = 0;
   // Subset of the untimed cpu_gap: the per-draw "ensure vertex buffers resident"
   // RequestRange loop. Its residency bitmask is rebuilt PER DRAW, so RequestRange
   // is called for every vertex binding of every draw (~1.5/draw) - a documented

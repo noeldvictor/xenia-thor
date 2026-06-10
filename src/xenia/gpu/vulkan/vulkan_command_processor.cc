@@ -2454,7 +2454,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
         "cpu_real_us={} cpu_gap_us={} cpu_vfres_us={} "
-        "fopen[wait_us={} inflight={} sub_pre={} sub_post={}] "
+        "fopen[wait_us={} inflight={} sub_pre={} sub_post={} fence_us={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2541,6 +2541,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_cpu_vfresidency_ns_ / 1000,
         draw_cpu_frame_open_wait_ns_ / 1000, draw_frame_open_in_flight_,
         draw_frame_open_sub_pre_, draw_frame_open_sub_post_,
+        completion_fence_await_ns_ / 1000,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
@@ -2772,6 +2773,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_frame_open_in_flight_ = 0;
     draw_frame_open_sub_pre_ = 0;
     draw_frame_open_sub_post_ = 0;
+    completion_fence_await_ns_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -6428,7 +6430,22 @@ void VulkanCommandProcessor::CheckSubmissionCompletionAndDeviceLoss(
     await_submission = GetCurrentSubmission() - 1;
   }
 
-  completion_timeline_.AwaitSubmissionAndUpdateCompleted(await_submission);
+  // fopen[fence_us=]: time the PURE fence await/poll apart from the
+  // completion-side reclamation below (shared memory / primitive processor /
+  // render target cache / texture cache CompletedSubmissionUpdated). The
+  // frame-open wait_us minus this = reclamation CPU - splits "GPU genuinely
+  // late" from "completion processing is expensive".
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    const std::chrono::steady_clock::time_point fence_t0 =
+        std::chrono::steady_clock::now();
+    completion_timeline_.AwaitSubmissionAndUpdateCompleted(await_submission);
+    completion_fence_await_ns_ +=
+        uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                     std::chrono::steady_clock::now() - fence_t0)
+                     .count());
+  } else {
+    completion_timeline_.AwaitSubmissionAndUpdateCompleted(await_submission);
+  }
 
   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
 
