@@ -631,6 +631,30 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t current_constant_dynamic_offsets_
       [SpirvShaderTranslator::kConstantBufferCount] = {};
 
+  // G1-lite (gpu_binning_deinterleave_pos): persistent per-frame-segmented
+  // ring holding the per-draw compact de-interleaved position streams (raw
+  // guest dwords, ascending word order, popcount(needed_words) per element).
+  // Bound once at the set-0 compact binding; the shader offsets into it with
+  // SystemConstants compact_pos_base_dwords. Only Initialize()d when the cvar
+  // is on; is_valid() gates the whole gather path.
+  ui::vulkan::VulkanDynamicBufferRing compact_pos_ring_;
+  // Intra-frame gather cache: draws sharing a fetch constant + tag layout
+  // reuse one gathered stream within a frame (ring segments are frame-local).
+  struct CompactPosCacheEntry {
+    uint32_t fc_dword_0;
+    uint32_t fc_dword_1;
+    uint32_t stride_words;
+    uint32_t offset_words;
+    uint32_t needed_words;
+    uint32_t base_dwords;
+  };
+  std::vector<CompactPosCacheEntry> compact_pos_cache_;
+  uint64_t compact_pos_cache_frame_ = 0;
+  // Dword offset of the current draw's gathered stream into compact_pos_ring_,
+  // or UINT32_MAX when this draw is not redirected (the flag stays clear and
+  // the draw runs verbatim off the interleaved stream).
+  uint32_t compact_pos_current_base_dwords_ = UINT32_MAX;
+
   // Descriptor set layouts used by different shaders.
   VkDescriptorSetLayout descriptor_set_layout_empty_ = VK_NULL_HANDLE;
   VkDescriptorSetLayout descriptor_set_layout_constants_ = VK_NULL_HANDLE;
@@ -900,6 +924,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // redirectable (Shader::position_vfetch_tag) - the de-interleave ceiling.
   uint32_t draw_outcomes_deint_elig_draws_ = 0;
   uint64_t draw_outcomes_deint_elig_verts_ = 0;
+  // G1-lite live telemetry: draws/verts actually redirected to the compact
+  // stream, CPU time spent gathering, and bails (invalid fc / cap / ring
+  // full). Counted unconditionally (cheap); logged with the outcomes line.
+  uint32_t draw_outcomes_deint_redir_draws_ = 0;
+  uint64_t draw_outcomes_deint_redir_verts_ = 0;
+  uint64_t draw_outcomes_deint_gather_ns_ = 0;
+  uint32_t draw_outcomes_deint_bails_ = 0;
   // Step 0b: the precise position-export-slice classifier (counts draws/verts
   // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
   // that actually sizes the CPU/NEON cull's reach. See

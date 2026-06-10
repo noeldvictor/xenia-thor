@@ -443,6 +443,36 @@ bool VulkanCommandProcessor::SetupContext() {
     }
   }
 
+  // G1-lite (gpu_binning_deinterleave_pos): the compact de-interleaved
+  // position stream ring. HOST_VISIBLE|DEVICE_LOCAL on UMA (the CPU gathers
+  // directly into the persistent mapping - no staging copy, no in-pass
+  // command-buffer work), plain HOST_VISIBLE as the fallback. If neither
+  // exists the path stays disarmed: every draw runs verbatim and the set-0
+  // compact binding points at shared memory as a dummy.
+  if (cvars::gpu_binning_deinterleave_pos) {
+    constexpr VkDeviceSize kCompactPosRingCapacity =
+        VkDeviceSize(48) * 1024 * 1024;
+    if (!compact_pos_ring_.Initialize(
+            vulkan_device, kCompactPosRingCapacity,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            sizeof(uint32_t)) &&
+        !compact_pos_ring_.Initialize(vulkan_device, kCompactPosRingCapacity,
+                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                      sizeof(uint32_t))) {
+      XELOGGPU(
+          "VulkanCommandProcessor: gpu_binning_deinterleave_pos requested but "
+          "the compact position ring init failed - draws will run verbatim");
+    } else {
+      XELOGGPU(
+          "VulkanCommandProcessor: gpu_binning_deinterleave_pos compact "
+          "position ring ENABLED ({} MB)",
+          uint64_t(kCompactPosRingCapacity >> 20));
+    }
+  }
+
   // Lever 2b (vulkan_merge_draws_indirect): per-frame ring for the
   // VkDrawIndexedIndirectCommand[] arrays. Only created when the lever is enabled
   // AND the device supports batched indirect draws, so the default build pays
@@ -866,11 +896,13 @@ bool VulkanCommandProcessor::SetupContext() {
       1 + uint32_t(edram_fragment_shader_interlock);
   VkDescriptorBufferInfo compact_pos_descriptor_buffer_info;
   if (cvars::gpu_binning_deinterleave_pos) {
-    // Compact de-interleaved position stream. Until the dedicated ring buffer
-    // exists, point the binding at the shared memory buffer - the shader only
-    // reads it under kSysFlag_PosFetchRedirect, which is never set without a
-    // valid gathered stream.
-    compact_pos_descriptor_buffer_info.buffer = shared_memory_->buffer();
+    // Compact de-interleaved position stream: the gather ring when it was
+    // created, or the shared memory buffer as a safe dummy (the shader only
+    // reads this binding under kSysFlag_PosFetchRedirect, which is never set
+    // unless a gather into the ring succeeded).
+    compact_pos_descriptor_buffer_info.buffer =
+        compact_pos_ring_.is_valid() ? compact_pos_ring_.buffer()
+                                     : shared_memory_->buffer();
     compact_pos_descriptor_buffer_info.offset = 0;
     compact_pos_descriptor_buffer_info.range = VK_WHOLE_SIZE;
     VkWriteDescriptorSet& write_descriptor_set_compact_pos =
@@ -1588,6 +1620,9 @@ void VulkanCommandProcessor::ShutdownContext() {
   for (auto& ring : dynamic_constants_rings_) {
     ring.Shutdown();
   }
+  // G1-lite: release the compact position stream ring (no-op when the cvar
+  // left it uninitialized).
+  compact_pos_ring_.Shutdown();
 
   sparse_bind_wait_stage_mask_ = 0;
   sparse_buffer_binds_.clear();
@@ -2405,7 +2440,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "inpass[x={} skip_fmt={} skip_oth={}] "
-        "deint[elig_draws={} elig_verts={}] "
+        "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
+        "gather_us={} bails={}] "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2445,7 +2481,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         rt_transfer_same_format_, rt_transfer_diff_format_,
         rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
         rt_inpass_skipped_other_, draw_outcomes_deint_elig_draws_,
-        draw_outcomes_deint_elig_verts_,
+        draw_outcomes_deint_elig_verts_, draw_outcomes_deint_redir_draws_,
+        draw_outcomes_deint_redir_verts_,
+        draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2581,6 +2619,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_affine_mvp_draws_ = 0;
     draw_outcomes_deint_elig_draws_ = 0;
     draw_outcomes_deint_elig_verts_ = 0;
+    draw_outcomes_deint_redir_draws_ = 0;
+    draw_outcomes_deint_redir_verts_ = 0;
+    draw_outcomes_deint_gather_ns_ = 0;
+    draw_outcomes_deint_bails_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -4604,6 +4646,132 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       primitive_processing_result.host_vertex_shader_type ==
           Shader::HostVertexShaderType::kVertex;
 
+  // G1-lite (gpu_binning_deinterleave_pos): gather this draw's tagged
+  // position vfetch words into the compact de-interleaved ring. Any bail
+  // leaves compact_pos_current_base_dwords_ = UINT32_MAX, so
+  // UpdateSystemConstantValues keeps kSysFlag_PosFetchRedirect clear and the
+  // draw runs verbatim off the interleaved stream. The gather reads guest CPU
+  // memory; ranges written only by the GPU (resolves/memexport) are not
+  // detected yet - the F1 pixel-correctness gate covers that edge until the
+  // cross-frame invalidation unit lands.
+  compact_pos_current_base_dwords_ = UINT32_MAX;
+  if (compact_pos_ring_.is_valid() &&
+      vertex_shader->position_vfetch_tag().valid) {
+    const Shader::PositionVfetchTag& pos_tag =
+        vertex_shader->position_vfetch_tag();
+    std::chrono::steady_clock::time_point gather_t0 =
+        std::chrono::steady_clock::now();
+    xenos::xe_gpu_vertex_fetch_t pos_vfetch =
+        regs.GetVertexFetch(pos_tag.fetch_constant);
+    uint32_t pos_needed_words = xenos::GetVertexFormatNeededWords(
+        pos_tag.format, pos_tag.used_result_components);
+    uint32_t pos_word_count = xe::bit_count(pos_needed_words);
+    if (pos_vfetch.type == xenos::FetchConstantType::kVertex &&
+        pos_word_count && pos_tag.stride_words) {
+      if (compact_pos_cache_frame_ != frame_current_) {
+        compact_pos_cache_.clear();
+        compact_pos_cache_frame_ = frame_current_;
+      }
+      uint32_t gathered_base_dwords = UINT32_MAX;
+      for (const CompactPosCacheEntry& cache_entry : compact_pos_cache_) {
+        if (cache_entry.fc_dword_0 == pos_vfetch.dword_0 &&
+            cache_entry.fc_dword_1 == pos_vfetch.dword_1 &&
+            cache_entry.stride_words == pos_tag.stride_words &&
+            cache_entry.offset_words == pos_tag.offset_words &&
+            cache_entry.needed_words == pos_needed_words) {
+          gathered_base_dwords = cache_entry.base_dwords;
+          break;
+        }
+      }
+      if (gathered_base_dwords == UINT32_MAX) {
+        // Whole elements the fetch constant can supply: element e reads up to
+        // word e*stride + offset + highest_needed_word, within `size` dwords.
+        uint32_t pos_last_word = 31 - xe::lzcnt(pos_needed_words);
+        uint32_t pos_span = pos_tag.offset_words + pos_last_word + 1;
+        uint32_t fc_size_dwords = pos_vfetch.size;
+        uint32_t element_count =
+            fc_size_dwords >= pos_span
+                ? (fc_size_dwords - pos_span) / pos_tag.stride_words + 1
+                : 0;
+        // Cap a single gather so a runaway fetch constant range cannot blow
+        // the frame segment - bail to the verbatim draw instead.
+        constexpr uint64_t kCompactPosMaxGatherBytes = uint64_t(4) << 20;
+        uint64_t gather_bytes =
+            uint64_t(element_count) * pos_word_count * sizeof(uint32_t);
+        if (element_count && gather_bytes <= kCompactPosMaxGatherBytes) {
+          bool ring_alloc_ok = false;
+          VkDeviceSize ring_offset = compact_pos_ring_.Allocate(
+              VkDeviceSize(gather_bytes), &ring_alloc_ok);
+          if (ring_alloc_ok) {
+            const uint32_t* gather_src =
+                memory_->TranslatePhysical<const uint32_t*>(pos_vfetch.address
+                                                            << 2);
+            uint32_t* gather_dst = reinterpret_cast<uint32_t*>(
+                compact_pos_ring_.host_mapping() + ring_offset);
+            const uint32_t* element_src = gather_src + pos_tag.offset_words;
+            uint32_t stride_words = pos_tag.stride_words;
+            // Both paths write the needed words in ascending word order - the
+            // layout contract with the shader's redirect arm. Contiguous masks
+            // (a packed position vector at one offset - the common case) take
+            // the straight strided copy; the generic loop covers sparse masks.
+            uint32_t first_word;
+            xe::bit_scan_forward(pos_needed_words, &first_word);
+            bool words_contiguous =
+                pos_needed_words ==
+                (((uint32_t(1) << pos_word_count) - 1) << first_word);
+            if (words_contiguous) {
+              const uint32_t* element_words = element_src + first_word;
+              for (uint32_t e = 0; e < element_count; ++e) {
+                for (uint32_t w = 0; w < pos_word_count; ++w) {
+                  gather_dst[w] = element_words[w];
+                }
+                gather_dst += pos_word_count;
+                element_words += stride_words;
+              }
+            } else {
+              for (uint32_t e = 0; e < element_count; ++e) {
+                const uint32_t* element_words = element_src + e * stride_words;
+                uint32_t words_remaining = pos_needed_words;
+                uint32_t word_index;
+                while (xe::bit_scan_forward(words_remaining, &word_index)) {
+                  words_remaining &= ~(uint32_t(1) << word_index);
+                  *gather_dst++ = element_words[word_index];
+                }
+              }
+            }
+            compact_pos_ring_.FlushRange(ring_offset,
+                                         VkDeviceSize(gather_bytes));
+            gathered_base_dwords = uint32_t(ring_offset >> 2);
+            CompactPosCacheEntry new_entry;
+            new_entry.fc_dword_0 = pos_vfetch.dword_0;
+            new_entry.fc_dword_1 = pos_vfetch.dword_1;
+            new_entry.stride_words = pos_tag.stride_words;
+            new_entry.offset_words = pos_tag.offset_words;
+            new_entry.needed_words = pos_needed_words;
+            new_entry.base_dwords = gathered_base_dwords;
+            compact_pos_cache_.push_back(new_entry);
+          } else {
+            ++draw_outcomes_deint_bails_;
+          }
+        } else {
+          ++draw_outcomes_deint_bails_;
+        }
+      }
+      if (gathered_base_dwords != UINT32_MAX) {
+        compact_pos_current_base_dwords_ = gathered_base_dwords;
+        ++draw_outcomes_deint_redir_draws_;
+        draw_outcomes_deint_redir_verts_ +=
+            primitive_processing_result.host_draw_vertex_count;
+      }
+    } else {
+      ++draw_outcomes_deint_bails_;
+    }
+    draw_outcomes_deint_gather_ns_ +=
+        uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                     std::chrono::steady_clock::now() - gather_t0)
+                     .count());
+  }
+
   // Update system constants before uploading them.
   UpdateSystemConstantValues(primitive_polygonal, primitive_processing_result,
                              shader_32bit_index_dma, viewport_info,
@@ -6083,6 +6251,14 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
         ring.FrameAdvance(frame_current_);
       }
     }
+    // G1-lite: rotate the compact position ring to this frame's segment and
+    // drop the intra-frame gather cache (its entries point into the previous
+    // segment).
+    if (compact_pos_ring_.is_valid()) {
+      compact_pos_ring_.FrameAdvance(frame_current_);
+      compact_pos_cache_.clear();
+      compact_pos_cache_frame_ = frame_current_;
+    }
     while (!single_transient_descriptors_used_.empty()) {
       const UsedSingleTransientDescriptor& used_transient_descriptor =
           single_transient_descriptors_used_.front();
@@ -7092,6 +7268,16 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
       flags |= SpirvShaderTranslator::kSysFlag_FSIDepthStencilEarlyWrite;
     }
   }
+  // G1-lite: this draw's position vfetch reads the compact de-interleaved
+  // stream gathered in IssueDraw (UINT32_MAX = no gather - verbatim draw).
+  uint32_t compact_pos_base_dwords = 0;
+  if (compact_pos_current_base_dwords_ != UINT32_MAX) {
+    flags |= SpirvShaderTranslator::kSysFlag_PosFetchRedirect;
+    compact_pos_base_dwords = compact_pos_current_base_dwords_;
+  }
+  dirty |= system_constants_.compact_pos_base_dwords != compact_pos_base_dwords;
+  system_constants_.compact_pos_base_dwords = compact_pos_base_dwords;
+
   dirty |= system_constants_.flags != flags;
   system_constants_.flags = flags;
 
