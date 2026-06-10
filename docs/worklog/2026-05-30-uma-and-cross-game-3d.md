@@ -2057,3 +2057,25 @@ outcomes print runs after command-buffer submit/Reset zeroes the stat; relocate 
   command - texture/sampler transient-descriptor reuse, dynamic-state elision, system-constant dirty
   upload deferred to UpdateBindings AFTER the merge decision), fix forward, re-A/B with a clean png
   before believing any number.
+
+### B78 — Concat corruption ROOT-CAUSED + FIXED (head-emit); the -10.3% RETRACTED (it was the corruption)
+- Root cause (code read, no fire needed): vulkan_merge_draws emitted the pending run at FLUSH time -
+  by then the NEXT draw's state setup (descriptors/dynamic state) was already recorded, so the run head
+  executed under the next draw's state. Exactly matches the corrupt-element pattern.
+- FIX d1a0adf23: HEAD-EMIT - record the run's bind+draw when the run STARTS, grow the recorded
+  index_count in place on extension (CmdVkDrawIndexedRetained returns a realloc-safe stream-element
+  offset; PatchVkDrawIndexedIndexCount patches it; flush now only closes the run; patching never moves
+  the can_extend stream cursor). host_draws= also fixed (per-submission stats folded into an
+  accumulator at Execute; print derives a delta from the monotone total).
+- VERIFY FIRE (turnip_mergefix): **PIXEL-CORRECT** (silver DeLorean, clean glyphs) and **FLAT**:
+  735-state 36,527us (control 36,564), 902-state 41,561 (control 41,781); host_draws=764/916 vs
+  rendered+transfer-draws 773/940 -> only ~9-24 draws merged/frame. The zero-copy contiguity
+  requirement almost never holds on BTTF (scattered index ranges).
+- => **The B77 -10.3% is RETRACTED as a perf signal: it was the corruption itself rendering cheaper
+  garbage.** The per-draw hypothesis stands ONLY on the correlational 31us/draw cross-state slope.
+- NEXT: the controlled test with real coverage = INDEX-REWRITING concatenation (coalescer rank-3):
+  append consecutive same-state draws' scattered index ranges into ONE transient index-buffer
+  allocation + one host draw per run (can_extend minus contiguity; LIST-only; the cull index-copy
+  machinery already does per-draw verbatim copies). merge[pipe_same=538 consts_same=471] of ~735 draws
+  bounds the coverage. If THAT is flat at hundreds of merged draws, per-draw dies as a hypothesis and
+  the floor is elsewhere.
