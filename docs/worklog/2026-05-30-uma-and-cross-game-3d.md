@@ -2098,3 +2098,34 @@ index-count patching (the d1a0adf23 discipline); all flush gates extended.
   (~3442 draws - the high-leverage title for this lever) + BD validation fires, coverage extension
   (~190 of ~500 tl draws merge today; constants_changed=71 boundaries), and a fresh attribution pass on
   the remaining ~35.6ms BTTF floor (per-draw now bounded small; fetch bandwidth + verts already dead).
+
+### B80 - Cross-game merge validation: BD + Burnout are STRIP-dominated -> strip concat built
+Session resumed after a crash; B79 NEXT list executed. Toggle first: opt_draw_concat upgraded to
+vulkan_merge_draws_rewrite (ffa7c2fe6, default-off, pushed).
+- FIRE turnip_burnoutmrw (rewrite ON, short reach-seq): stalled at the SAVE/LOAD menu (a save file
+  from the 6/6 runs changed the menu flow; last input at 36s). Menu = 134-136 draws, host=rendered+1,
+  0 vulkan errors, 61.3fps, pixel-correct. Mid-capture the device USB-renegotiated ("Use USB for"
+  dialog) and dropped ADB at t=150s - recovery: adb kill-server/start-server, then SALVAGE (app still
+  alive: screencap + logcat -d), force-stop after. Capture fully recovered.
+- FIRE turnip_burnoutmrw2 (rewrite ON, default BD mash seq, 220s): reached live in-game 3D (TRAFFIC
+  ATTACK event intro over the highway, 7.9fps, pixel-correct, no watchdog trip, final 54.7C).
+  rendered=2110, total_verts ~627k, gpu_frame ~46.5ms, cpu_issuedraw ~94-95ms (cpu_other ~67ms) =
+  Burnout stays CPU-IssueDraw-bound. **prim[ts=1898 tl=16 pt=48 ll=47 quad=84]: 90% TRIANGLE STRIPS ->
+  host_draws=2120 ~= rendered: ZERO merge coverage (the rewrite is LIST-only).** Same-state potential
+  is huge (merge[pipe_same=1851 consts_same=1207]) but all strips. Planned control fire CANCELLED
+  (nothing merged -> ON==OFF; saves a fire).
+- BD mining (6/6 turnip_bdstriphist): **prim[ts=968 tl=0]** of rendered=1138, strip_runlen[2=30
+  3-4=29 5-8=16 9-16=9 17-32=5 33-64=8] = ~886 draws in same-pipeline strip runs >=2 (~790
+  eliminable IF constants also hold; that capture predates stripd_runlen).
+- => **The two priority titles have ZERO coverage from LIST-only concat; strip support IS the
+  per-draw lever for them.** BUILT: vulkan_merge_draws_rewrite_strips (default off, requires
+  rewrite): tri-strip runs join inside the rewritten index block - restart-enabled runs via ONE
+  all-FF restart marker (host reset index is always 0xFFFF/0xFFFFFFFF for kGuestDMA,
+  primitive_processor.h:144; raw-byte compare = endian-immune; restart resets winding parity);
+  restart-disabled runs via the classic degenerate join (dup last + first index, 3 dups when the
+  accumulated count is odd to preserve winding parity - every junction triangle has a duplicated
+  vertex = zero area). can_extend gains a 3-index join reserve in the capacity term + explicit
+  reset-state equality; head stores merge_pending_reset_enabled_. LIST behavior unchanged
+  (strip_concat requires the new cvar); allowlisted in EmulatorActivity.
+- NEXT: BD fire rewrite+strips ON (pixel check + host_draws delta = true strip coverage), then
+  Burnout re-fire, then the BTTF ~35.6ms floor re-attribution (pass-split on a rewrite-on capture).

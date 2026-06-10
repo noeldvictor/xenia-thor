@@ -5297,21 +5297,33 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           primitive_processing_result.host_shader_index_endian;
       const xenos::PrimitiveType prim_type =
           primitive_processing_result.host_primitive_type;
-      // LIST-ONLY: concatenating strip/fan index ranges would stitch primitives
-      // across draw boundaries. Memexport (GPU side effects) and primitive-restart
-      // also break mergeability.
-      const bool mergeable =
-          (prim_type == xenos::PrimitiveType::kTriangleList ||
-           prim_type == xenos::PrimitiveType::kLineList ||
-           prim_type == xenos::PrimitiveType::kPointList) &&
-          memexport_extent_start >= memexport_extent_end &&
-          !primitive_processing_result.host_primitive_reset_enabled;
       // Rewrite mode (vulkan_merge_draws_rewrite, wins if both set): the run's
       // indices are COPIED verbatim into a fixed-cap transient index block, so
       // SCATTERED guest index ranges concatenate too - the contiguity term is
       // replaced by block-capacity room in the predicate.
       const bool merge_rewrite = cvars::vulkan_merge_draws_rewrite;
+      // LIST topologies concatenate verbatim (no cross-draw stitching).
+      // Primitive-restart lists are excluded (restart with list topologies is
+      // not valid Vulkan without an extension). TRIANGLE STRIPS additionally
+      // concatenate in rewrite mode when vulkan_merge_draws_rewrite_strips is
+      // on: the extend path JOINS strips inside the rewritten block (restart
+      // marker / degenerate triangles), so stitching is handled, not avoided.
+      // Memexport (GPU side effects) always breaks mergeability.
+      const bool strip_concat =
+          merge_rewrite && cvars::vulkan_merge_draws_rewrite_strips &&
+          prim_type == xenos::PrimitiveType::kTriangleStrip;
+      const bool list_mergeable =
+          (prim_type == xenos::PrimitiveType::kTriangleList ||
+           prim_type == xenos::PrimitiveType::kLineList ||
+           prim_type == xenos::PrimitiveType::kPointList) &&
+          !primitive_processing_result.host_primitive_reset_enabled;
+      const bool mergeable = (list_mergeable || strip_concat) &&
+                             memexport_extent_start >= memexport_extent_end;
       const size_t copy_bytes = size_t(idx_count) * stride;
+      // Strip joins write up to 3 extra indices ahead of the incoming draw's
+      // bytes - reserve room for them in the capacity term.
+      const size_t join_reserve_bytes =
+          strip_concat ? size_t(3) * stride : size_t(0);
       const bool can_extend =
           merge_pending_active_ && mergeable &&
           !merge_cannot_extend_this_draw_ &&
@@ -5321,12 +5333,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           index_type == merge_pending_index_type_ &&
           (merge_rewrite
                ? (merge_pending_rewrite_mapping_ != nullptr &&
-                  merge_pending_rewrite_used_bytes_ + copy_bytes <=
+                  merge_pending_rewrite_used_bytes_ + copy_bytes +
+                          join_reserve_bytes <=
                       kMergeRewriteBlockBytes)
                : idx_base == merge_pending_next_byte_) &&
           uint32_t(vgt_indx_offset) == merge_pending_vertex_base_index_ &&
           index_endian == merge_pending_vertex_index_endian_ &&
-          prim_type == merge_pending_prim_type_;
+          prim_type == merge_pending_prim_type_ &&
+          primitive_processing_result.host_primitive_reset_enabled ==
+              merge_pending_reset_enabled_;
       if (can_extend) {
         // Concatenate this draw's index range into the run by growing the
         // HEAD-EMITTED draw command in place. Recording anything here would
@@ -5336,10 +5351,42 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         if (merge_rewrite) {
           const uint8_t* extend_guest_indices =
               memory_->TranslatePhysical<const uint8_t*>(idx_base);
-          std::memcpy(
-              merge_pending_rewrite_mapping_ + merge_pending_rewrite_used_bytes_,
-              extend_guest_indices, copy_bytes);
-          merge_pending_rewrite_used_bytes_ += copy_bytes;
+          uint8_t* dst =
+              merge_pending_rewrite_mapping_ + merge_pending_rewrite_used_bytes_;
+          uint32_t join_indices = 0;
+          if (prim_type == xenos::PrimitiveType::kTriangleStrip) {
+            if (merge_pending_reset_enabled_) {
+              // Restart-enabled strip run: one all-FF restart marker (the host
+              // reset index is always 0xFFFF/0xFFFFFFFF for kGuestDMA, and the
+              // fixed-function restart compare reads the raw buffer bytes, so
+              // all-FF is endian-immune). Restart also resets the strip's
+              // winding parity, so no parity bookkeeping is needed.
+              std::memset(dst, 0xFF, stride);
+              join_indices = 1;
+            } else {
+              // Restart-disabled strip run: classic degenerate join - repeat
+              // the run's last index, then the incoming strip's first index.
+              // Every triangle spanning the junction contains a duplicated
+              // vertex (zero area, rasterizes nothing). When the accumulated
+              // index count is odd, a third duplicate keeps the incoming
+              // strip's first real triangle at even parity so its winding
+              // matches what it would be standalone.
+              const uint8_t* last_src = dst - stride;
+              join_indices = (merge_pending_index_count_ & 1u) ? 3u : 2u;
+              std::memcpy(dst, last_src, stride);
+              if (join_indices == 3u) {
+                std::memcpy(dst + stride, last_src, stride);
+                std::memcpy(dst + 2u * stride, extend_guest_indices, stride);
+              } else {
+                std::memcpy(dst + stride, extend_guest_indices, stride);
+              }
+            }
+            dst += size_t(join_indices) * stride;
+          }
+          std::memcpy(dst, extend_guest_indices, copy_bytes);
+          merge_pending_rewrite_used_bytes_ +=
+              size_t(join_indices) * stride + copy_bytes;
+          merge_pending_index_count_ += join_indices;
         }
         merge_pending_index_count_ += idx_count;
         merge_pending_next_byte_ += idx_count * stride;
@@ -5397,6 +5444,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           merge_pending_vertex_base_index_ = uint32_t(vgt_indx_offset);
           merge_pending_vertex_index_endian_ = index_endian;
           merge_pending_prim_type_ = prim_type;
+          merge_pending_reset_enabled_ =
+              primitive_processing_result.host_primitive_reset_enabled;
         } else {
           // Non-mergeable kGuestDMA draw (strip/fan/memexport/restart), or the
           // rewrite block could not be reserved: standalone.

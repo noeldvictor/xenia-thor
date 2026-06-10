@@ -1144,6 +1144,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   xenos::Endian merge_pending_vertex_index_endian_ = xenos::Endian::kNone;
   xenos::PrimitiveType merge_pending_prim_type_ =
       xenos::PrimitiveType::kTriangleList;
+  // The run head's host_primitive_reset_enabled. Only ever true for strip runs
+  // (vulkan_merge_draws_rewrite_strips); selects the strip JOIN strategy on
+  // extend (restart marker vs degenerate triangles) and must match to extend.
+  bool merge_pending_reset_enabled_ = false;
   // Lever 2b (vulkan_merge_draws_indirect): MDI draw batching. A run of
   // consecutive same-state kGuestDMA draws (LIST or STRIP, contiguous or not) is
   // batched into ONE vkCmdDrawIndexedIndirect. Each indirect command is an

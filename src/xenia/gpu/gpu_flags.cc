@@ -635,6 +635,21 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_merge_draws_rewrite_strips, false,
+    "Thor/Adreno binning re-arch (Lever 2 rank-3 strip coverage): extend the "
+    "index-rewriting draw concatenation (vulkan_merge_draws_rewrite, required) "
+    "to TRIANGLE STRIP draws by JOINING consecutive same-state strips inside "
+    "the rewritten index block: primitive-restart-enabled runs are joined with "
+    "one all-FF restart marker (the host reset index is always 0xFFFF/"
+    "0xFFFFFFFF for kGuestDMA); restart-disabled runs are joined with 2 "
+    "duplicate indices (3 when the accumulated index count is odd, preserving "
+    "strip winding parity) forming zero-area degenerate triangles the "
+    "rasterizer drops. Strip-dominated titles (Blue Dragon ts=968/1138, "
+    "Burnout ts=1898/2110 draws/frame) have ZERO coverage from the LIST-only "
+    "rewrite; this is their per-draw lever. Default off; STARTUP cvar.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_hoist_request_range_lock, true,
     "Thor CPU-hygiene: acquire the SharedMemory global lock ONCE around the "
     "per-draw vertex + memexport RequestRange calls in IssueDraw, instead of "

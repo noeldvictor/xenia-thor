@@ -115,6 +115,7 @@ DECLARE_bool(vulkan_dynamic_state_stencil);
 DECLARE_bool(vulkan_dynamic_state_topology);
 DECLARE_bool(vulkan_merge_draws);
 DECLARE_bool(vulkan_merge_draws_rewrite);
+DECLARE_bool(vulkan_merge_draws_rewrite_strips);
 DECLARE_bool(vulkan_merge_draws_indirect);
 DECLARE_bool(vulkan_trace_pass_timestamps);
 DECLARE_bool(vulkan_hoist_request_range_lock);
