@@ -2454,7 +2454,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
         "cpu_real_us={} cpu_gap_us={} cpu_vfres_us={} "
-        "fopen[wait_us={} inflight={}] "
+        "fopen[wait_us={} inflight={} sub_pre={} sub_post={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2540,6 +2540,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             : 0,
         draw_cpu_vfresidency_ns_ / 1000,
         draw_cpu_frame_open_wait_ns_ / 1000, draw_frame_open_in_flight_,
+        draw_frame_open_sub_pre_, draw_frame_open_sub_post_,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
@@ -2769,6 +2770,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_cpu_vfresidency_ns_ = 0;
     draw_cpu_frame_open_wait_ns_ = 0;
     draw_frame_open_in_flight_ = 0;
+    draw_frame_open_sub_pre_ = 0;
+    draw_frame_open_sub_post_ = 0;
   }
 
   if (cvars::gpu_trace_swap) {
@@ -6526,6 +6529,13 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
   std::chrono::steady_clock::time_point frame_open_t0;
   if (time_frame_open) {
     draw_frame_open_in_flight_ = uint32_t(frame_current_ - frame_completed_);
+    // Submission backlog before/after the await: post ~= pre - 1 means the GPU
+    // is genuinely executing ~that many submissions behind (real GPU span per
+    // frame is longer than gpu_frame_us measures); post collapsing to ~0 means
+    // completions arrived in a BURST during the wait (the GPU was blocked on
+    // something the CPU/present released - signaling/pacing, not execution).
+    draw_frame_open_sub_pre_ =
+        uint32_t(GetCurrentSubmission() - GetCompletedSubmission());
     frame_open_t0 = std::chrono::steady_clock::now();
   }
   CheckSubmissionCompletionAndDeviceLoss(await_submission);
@@ -6534,6 +6544,8 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
         uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                      std::chrono::steady_clock::now() - frame_open_t0)
                      .count());
+    draw_frame_open_sub_post_ =
+        uint32_t(GetCurrentSubmission() - GetCompletedSubmission());
   }
   const uint64_t completed_submission = GetCompletedSubmission();
   if (device_lost_ || completed_submission < await_submission) {

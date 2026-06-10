@@ -1270,6 +1270,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // known-complete when it started (frame_current_ - frame_completed_).
   uint64_t draw_cpu_frame_open_wait_ns_ = 0;
   uint32_t draw_frame_open_in_flight_ = 0;
+  // Submission backlog (current - completed) sampled before and after the
+  // frame-open await - splits real-GPU-execution-lag from burst-completion
+  // (blocked-then-released) from bookkeeping causes.
+  uint32_t draw_frame_open_sub_pre_ = 0;
+  uint32_t draw_frame_open_sub_post_ = 0;
   // Subset of the untimed cpu_gap: the per-draw "ensure vertex buffers resident"
   // RequestRange loop. Its residency bitmask is rebuilt PER DRAW, so RequestRange
   // is called for every vertex binding of every draw (~1.5/draw) - a documented
