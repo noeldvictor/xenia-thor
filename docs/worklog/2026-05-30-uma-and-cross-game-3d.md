@@ -2040,3 +2040,20 @@ pipelines/framebuffers (load/store ops are outside render-pass compatibility); s
   elide state)? merge[pipe_same=667/900 consts_same=518] says the merge potential is huge. Config-only
   A/B fire on BTTF at matched states; if it only elides state, build the concatenation (the draw-
   coalescer rank-3 prototype, now gated IN by this slope).
+
+### B77 — Merge A/B: concat cuts gpu_frame -10.3% at matched content BUT corrupts the frame (predicate hole)
+host_draws= telemetry added (b67716e37) then found broken-as-placed (reads 0 on steady frames - the
+outcomes print runs after command-buffer submit/Reset zeroes the stat; relocate later). The A/B itself:
+- turnip_mergeAB (vulkan_merge_draws=true) vs turnip_dcsafe1 (same-day control), matched states with
+  identical avg_verts, n~250/cell: rendered=735: 36,564 -> **32,789us (-10.3%)**; rendered=902:
+  41,781 -> 40,658us (-2.7%); light states up to -21% (rendered=97: 5,703 -> 4,474us).
+- **PNG = CORRUPT** (Rule-0 read caught it): DeLorean dark + garbled orange patch, menu glyphs broken,
+  icons mangled. The zero-copy concat's can_extend predicate (vulkan_command_processor.cc:5270-5334:
+  pipeline/layout/index-type/contiguous-bytes/INDX_OFFSET/endian/prim + the cursor-snapshot
+  merge_cannot_extend_this_draw_) lets some real state change through on BTTF. The -10.3% is therefore
+  TAINTED - but it still demonstrates the per-draw lever moves GPU time materially (consistent with the
+  replicated 31us/draw slope of B76).
+- NEXT: find the predicate hole (suspects: state changes elided by caching layers so they record no
+  command - texture/sampler transient-descriptor reuse, dynamic-state elision, system-constant dirty
+  upload deferred to UpdateBindings AFTER the merge decision), fix forward, re-A/B with a clean png
+  before believing any number.
