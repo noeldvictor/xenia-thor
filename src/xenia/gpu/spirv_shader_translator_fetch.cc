@@ -45,6 +45,27 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
 
   uint32_t fetch_constant_word_0_index = instr.operands[1].storage_index << 1;
 
+  // G1-lite de-interleaved position stream: check whether this instruction is
+  // the statically tagged position vfetch and the compact stream buffer was
+  // declared for this translation (gpu_binning_deinterleave_pos + valid tag).
+  // The redirect needs a per-vertex element index, so stride-0 instructions
+  // never qualify.
+  bool pos_fetch_redirect = false;
+  if (buffer_compact_pos_ != spv::NoResult && !instr.is_mini_fetch &&
+      instr.attributes.stride) {
+    const Shader::PositionVfetchTag& pos_tag =
+        current_shader().position_vfetch_tag();
+    if (pos_tag.valid &&
+        instr.result.storage_target == InstructionStorageTarget::kRegister &&
+        instr.result.storage_index == pos_tag.result_register &&
+        uint32_t(instr.operands[1].storage_index) == pos_tag.fetch_constant &&
+        uint32_t(instr.attributes.offset) == pos_tag.offset_words &&
+        uint32_t(instr.attributes.stride) == pos_tag.stride_words) {
+      pos_fetch_redirect = true;
+    }
+  }
+  spv::Id pos_fetch_element_index = spv::NoResult;
+
   spv::Id address;
   if (instr.is_mini_fetch) {
     // `base + index * stride` loaded by vfetch_full.
@@ -88,6 +109,11 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
           spv::OpConvertFToS, type_int_,
           builder_->createUnaryBuiltinCall(type_float_, ext_inst_glsl_std_450_,
                                            GLSLstd450Floor, index));
+      if (pos_fetch_redirect) {
+        // The compact stream is indexed by the element, not by the byte
+        // stride - capture the floored index before the stride multiply.
+        pos_fetch_element_index = index;
+      }
       if (instr.attributes.stride > 1) {
         index = builder_->createBinOp(
             spv::OpIMul, type_int_, index,
@@ -107,42 +133,135 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
   }
 
   // Load the needed words.
+  // Word ordinals (positions within the loaded composite) are shared by both
+  // load paths and by the unpacking below, in ascending word index order.
   unsigned int word_composite_indices[4] = {};
-  spv::Id word_composite_constituents[4];
   uint32_t word_count = 0;
-  uint32_t words_remaining = needed_words;
-  uint32_t word_index;
-  while (xe::bit_scan_forward(words_remaining, &word_index)) {
-    words_remaining &= ~(1 << word_index);
-    spv::Id word_address = address;
-    // Add the word offset from the instruction (signed), plus the offset of the
-    // word within the element.
-    int32_t word_offset = instr.attributes.offset + word_index;
-    if (word_offset) {
-      word_address =
-          builder_->createBinOp(spv::OpIAdd, type_int_, word_address,
-                                builder_->makeIntConstant(int(word_offset)));
+  {
+    uint32_t words_remaining = needed_words;
+    uint32_t word_index;
+    while (xe::bit_scan_forward(words_remaining, &word_index)) {
+      words_remaining &= ~(1 << word_index);
+      word_composite_indices[word_index] = word_count++;
     }
-    word_composite_indices[word_index] = word_count;
-    // FIXME(Triang3l): Bound checking is not done here, but haven't encountered
-    // any games relying on out-of-bounds access. On Adreno 200 on Android (LG
-    // P705), however, words (not full elements) out of glBufferData bounds
-    // contain 0.
-    word_composite_constituents[word_count++] =
-        LoadUint32FromSharedMemory(word_address);
   }
+  spv::Id words_type =
+      word_count > 1 ? type_uint_vectors_[word_count - 1] : type_uint_;
+
+  // The original interleaved load path - one shared memory load per needed
+  // word at the guest stride address.
+  auto load_interleaved_words = [&]() -> spv::Id {
+    spv::Id word_composite_constituents[4];
+    uint32_t loaded_count = 0;
+    uint32_t words_remaining = needed_words;
+    uint32_t word_index;
+    while (xe::bit_scan_forward(words_remaining, &word_index)) {
+      words_remaining &= ~(1 << word_index);
+      spv::Id word_address = address;
+      // Add the word offset from the instruction (signed), plus the offset of
+      // the word within the element.
+      int32_t word_offset = instr.attributes.offset + word_index;
+      if (word_offset) {
+        word_address =
+            builder_->createBinOp(spv::OpIAdd, type_int_, word_address,
+                                  builder_->makeIntConstant(int(word_offset)));
+      }
+      // FIXME(Triang3l): Bound checking is not done here, but haven't
+      // encountered any games relying on out-of-bounds access. On Adreno 200
+      // on Android (LG P705), however, words (not full elements) out of
+      // glBufferData bounds contain 0.
+      word_composite_constituents[loaded_count++] =
+          LoadUint32FromSharedMemory(word_address);
+    }
+    if (loaded_count > 1) {
+      // Copying from the array to id_vector_temp_ now, not in the loop above,
+      // because of the LoadUint32FromSharedMemory call (potentially using
+      // id_vector_temp_ internally).
+      id_vector_temp_.clear();
+      id_vector_temp_.insert(id_vector_temp_.cend(),
+                             word_composite_constituents,
+                             word_composite_constituents + loaded_count);
+      return builder_->createCompositeConstruct(words_type, id_vector_temp_);
+    }
+    return word_composite_constituents[0];
+  };
+
   spv::Id words;
-  if (word_count > 1) {
-    // Copying from the array to id_vector_temp_ now, not in the loop above,
-    // because of the LoadUint32FromSharedMemory call (potentially using
-    // id_vector_temp_ internally).
-    id_vector_temp_.clear();
-    id_vector_temp_.insert(id_vector_temp_.cend(), word_composite_constituents,
-                           word_composite_constituents + word_count);
-    words = builder_->createCompositeConstruct(
-        type_uint_vectors_[word_count - 1], id_vector_temp_);
+  if (pos_fetch_redirect && pos_fetch_element_index != spv::NoResult) {
+    // G1-lite: under kSysFlag_PosFetchRedirect, load this vfetch's needed
+    // words from the compact de-interleaved stream - raw guest dwords packed
+    // by the host gather in ascending word index order,
+    // popcount(needed_words) per element - so the binning pass reads
+    // 4*word_count bytes per vertex instead of the full interleaved stride.
+    // The unchanged endian swap and unpacking below consume either source.
+    // The interleaved ADDRESS computation above stays unconditional because
+    // vfetch_mini of other attributes chains off var_main_vfetch_address_.
+    spv::Id redirect_cond = builder_->createBinOp(
+        spv::OpINotEqual, type_bool_,
+        builder_->createBinOp(
+            spv::OpBitwiseAnd, type_uint_, main_system_constant_flags_,
+            builder_->makeUintConstant(
+                static_cast<unsigned int>(kSysFlag_PosFetchRedirect))),
+        const_uint_0_);
+    SpirvBuilder::IfBuilder redirect_if(
+        redirect_cond, spv::SelectionControlDontFlattenMask, *builder_);
+    spv::Id compact_words;
+    {
+      // Base offset of this draw's gathered stream in the compact buffer.
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(
+          builder_->makeIntConstant(kSystemConstantCompactPosBaseDwords));
+      spv::Id compact_base = builder_->createUnaryOp(
+          spv::OpBitcast, type_int_,
+          builder_->createLoad(
+              builder_->createAccessChain(spv::StorageClassUniform,
+                                          uniform_system_constants_,
+                                          id_vector_temp_),
+              spv::NoPrecision));
+      spv::Id compact_element_address = builder_->createBinOp(
+          spv::OpIAdd, type_int_, compact_base,
+          word_count > 1
+              ? builder_->createBinOp(
+                    spv::OpIMul, type_int_, pos_fetch_element_index,
+                    builder_->makeIntConstant(int(word_count)))
+              : pos_fetch_element_index);
+      spv::StorageClass compact_storage_class =
+          features_.spirv_version >= spv::Spv_1_3
+              ? spv::StorageClassStorageBuffer
+              : spv::StorageClassUniform;
+      spv::Id compact_constituents[4];
+      for (uint32_t i = 0; i < word_count; ++i) {
+        spv::Id word_address = compact_element_address;
+        if (i) {
+          word_address =
+              builder_->createBinOp(spv::OpIAdd, type_int_, word_address,
+                                    builder_->makeIntConstant(int(i)));
+        }
+        id_vector_temp_.clear();
+        // The only member of the compact stream buffer struct.
+        id_vector_temp_.push_back(const_int_0_);
+        id_vector_temp_.push_back(word_address);
+        compact_constituents[i] = builder_->createLoad(
+            builder_->createAccessChain(compact_storage_class,
+                                        buffer_compact_pos_, id_vector_temp_),
+            spv::NoPrecision);
+      }
+      if (word_count > 1) {
+        id_vector_temp_.clear();
+        id_vector_temp_.insert(id_vector_temp_.cend(), compact_constituents,
+                               compact_constituents + word_count);
+        compact_words =
+            builder_->createCompositeConstruct(words_type, id_vector_temp_);
+      } else {
+        compact_words = compact_constituents[0];
+      }
+    }
+    redirect_if.makeBeginElse();
+    spv::Id interleaved_words = load_interleaved_words();
+    redirect_if.makeEndIf();
+    words = redirect_if.createMergePhi(compact_words, interleaved_words);
   } else {
-    words = word_composite_constituents[0];
+    words = load_interleaved_words();
   }
 
   // Endian swap the words, getting the endianness from bits 0:1 of the second

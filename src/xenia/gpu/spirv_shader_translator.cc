@@ -367,6 +367,8 @@ void SpirvShaderTranslator::StartTranslation() {
        type_uint_},
       {"edram_depth_base_dwords_scaled",
        offsetof(SystemConstants, edram_depth_base_dwords_scaled), type_uint_},
+      {"compact_pos_base_dwords",
+       offsetof(SystemConstants, compact_pos_base_dwords), type_uint_},
       {"color_exp_bias", offsetof(SystemConstants, color_exp_bias),
        type_float4_},
       {"edram_poly_offset_front_scale",
@@ -578,6 +580,51 @@ void SpirvShaderTranslator::StartTranslation() {
     builder_->addDecoration(buffers_shared_memory_, spv::DecorationBinding, 0);
     if (features_.spirv_version >= spv::Spv_1_4) {
       main_interface_.push_back(buffers_shared_memory_);
+    }
+
+    // Compact de-interleaved position stream (gpu_binning_deinterleave_pos):
+    // the tagged position vfetch's needed raw dwords gathered tightly by the
+    // host, read under the kSysFlag_PosFetchRedirect uniform branch so the
+    // binning pass fetches 4*popcount(needed_words) bytes per vertex instead
+    // of the full interleaved stride. The descriptor set layout gains this
+    // binding only when the cvar is enabled (mirrored in the Vulkan command
+    // processor).
+    buffer_compact_pos_ = spv::NoResult;
+    if (cvars::gpu_binning_deinterleave_pos && is_vertex_shader() &&
+        current_shader().position_vfetch_tag().valid) {
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(builder_->makeRuntimeArray(type_uint_));
+      builder_->addDecoration(id_vector_temp_.back(),
+                              spv::DecorationArrayStride, sizeof(uint32_t));
+      spv::Id type_compact_pos =
+          builder_->makeStructType(id_vector_temp_, "XeCompactPos");
+      builder_->addMemberName(type_compact_pos, 0, "compact_pos");
+      builder_->addMemberDecoration(type_compact_pos, 0,
+                                    spv::DecorationRestrict);
+      builder_->addMemberDecoration(type_compact_pos, 0,
+                                    spv::DecorationNonWritable);
+      builder_->addMemberDecoration(type_compact_pos, 0, spv::DecorationOffset,
+                                    0);
+      builder_->addDecoration(type_compact_pos,
+                              features_.spirv_version >= spv::Spv_1_3
+                                  ? spv::DecorationBlock
+                                  : spv::DecorationBufferBlock);
+      buffer_compact_pos_ = builder_->createVariable(
+          spv::NoPrecision,
+          features_.spirv_version >= spv::Spv_1_3
+              ? spv::StorageClassStorageBuffer
+              : spv::StorageClassUniform,
+          type_compact_pos, "xe_compact_pos");
+      builder_->addDecoration(buffer_compact_pos_,
+                              spv::DecorationDescriptorSet,
+                              int(kDescriptorSetSharedMemoryAndEdram));
+      // Binding 1 normally; under fragment shader interlock the EDRAM buffer
+      // occupies binding 1, so the compact stream takes binding 2.
+      builder_->addDecoration(buffer_compact_pos_, spv::DecorationBinding,
+                              edram_fragment_shader_interlock_ ? 2 : 1);
+      if (features_.spirv_version >= spv::Spv_1_4) {
+        main_interface_.push_back(buffer_compact_pos_);
+      }
     }
   }
 

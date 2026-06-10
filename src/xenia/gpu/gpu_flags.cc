@@ -78,6 +78,20 @@ DEFINE_int32(
     "GPU");
 
 DEFINE_bool(
+    gpu_binning_deinterleave_pos, false,
+    "EXPERIMENTAL (Thor/TBDR): de-interleave the position vertex stream into a "
+    "compact raw-dword buffer so the tiler's binning pass fetches only "
+    "popcount(needed_words)*4 bytes per vertex instead of the full interleaved "
+    "guest stride (the measured per-vertex binning drain). Eligible vertex "
+    "shaders (single statically-provable position vfetch) gain a uniform "
+    "runtime branch; the CPU gathers the needed dwords verbatim, so the "
+    "shader's unchanged endian-swap/unpack path stays bit-exact. Any "
+    "ineligibility or gather bail falls back to the verbatim draw. Changes the "
+    "shared-memory descriptor set layout, so toggling invalidates cached "
+    "pipelines once.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

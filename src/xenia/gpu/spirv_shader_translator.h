@@ -127,6 +127,13 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // should be safe at least temporarily).
     kSysFlag_FSIDepthStencilEarlyWrite_Shift,
 
+    // Vertex shaders with a valid position_vfetch_tag: load the tagged
+    // position vfetch's needed words from the compact de-interleaved stream
+    // (set kDescriptorSetSharedMemoryAndEdram extra binding) instead of the
+    // interleaved shared-memory stride, to cut binning-pass vertex-fetch
+    // bandwidth. Raw guest dwords - same endian swap and unpacking.
+    kSysFlag_PosFetchRedirect_Shift,
+
     kSysFlag_Count,
 
     // For HostVertexShaderType kVertex, if fullDrawIndexUint32 is not
@@ -166,6 +173,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kSysFlag_FSIStencilTest = 1u << kSysFlag_FSIStencilTest_Shift,
     kSysFlag_FSIDepthStencilEarlyWrite =
         1u << kSysFlag_FSIDepthStencilEarlyWrite_Shift,
+    kSysFlag_PosFetchRedirect = 1u << kSysFlag_PosFetchRedirect_Shift,
   };
   static_assert(kSysFlag_Count <= 32, "Too many flags in the system constants");
 
@@ -205,7 +213,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
     float alpha_test_reference;
     uint32_t edram_32bpp_tile_pitch_dwords_scaled;
     uint32_t edram_depth_base_dwords_scaled;
-    float padding_edram_depth_base_dwords_scaled;
+    // Base offset in dwords of the compact de-interleaved position stream for
+    // the current draw (kSysFlag_PosFetchRedirect).
+    uint32_t compact_pos_base_dwords;
 
     float color_exp_bias[4];
 
@@ -818,6 +828,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kSystemConstantAlphaTestReference,
     kSystemConstantEdram32bppTilePitchDwordsScaled,
     kSystemConstantEdramDepthBaseDwordsScaled,
+    kSystemConstantCompactPosBaseDwords,
     kSystemConstantColorExpBias,
     kSystemConstantEdramPolyOffsetFrontScale,
     kSystemConstantEdramPolyOffsetBackScale,
@@ -841,6 +852,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
   spv::Id buffers_shared_memory_;
   spv::Id buffer_edram_;
+  // Compact de-interleaved position stream (kSysFlag_PosFetchRedirect);
+  // spv::NoResult when not declared for this translation.
+  spv::Id buffer_compact_pos_;
 
   // Not using combined images and samplers because
   // maxPerStageDescriptorSamplers is often lower than

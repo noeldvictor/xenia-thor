@@ -698,7 +698,7 @@ bool VulkanCommandProcessor::SetupContext() {
       render_target_cache_->GetPath() ==
       RenderTargetCache::Path::kPixelShaderInterlock;
   VkDescriptorSetLayoutBinding
-      shared_memory_and_edram_descriptor_set_layout_bindings[2];
+      shared_memory_and_edram_descriptor_set_layout_bindings[3];
   shared_memory_and_edram_descriptor_set_layout_bindings[0].binding = 0;
   shared_memory_and_edram_descriptor_set_layout_bindings[0].descriptorType =
       VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -730,6 +730,21 @@ bool VulkanCommandProcessor::SetupContext() {
     shared_memory_and_edram_descriptor_set_layout_create_info.bindingCount = 2;
   } else {
     shared_memory_and_edram_descriptor_set_layout_create_info.bindingCount = 1;
+  }
+  if (cvars::gpu_binning_deinterleave_pos) {
+    // Compact de-interleaved position stream (binding 1, or 2 under fragment
+    // shader interlock - must match the SPIR-V translator).
+    uint32_t compact_pos_binding_index =
+        shared_memory_and_edram_descriptor_set_layout_create_info.bindingCount;
+    VkDescriptorSetLayoutBinding& compact_pos_binding =
+        shared_memory_and_edram_descriptor_set_layout_bindings
+            [compact_pos_binding_index];
+    compact_pos_binding.binding = compact_pos_binding_index;
+    compact_pos_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    compact_pos_binding.descriptorCount = 1;
+    compact_pos_binding.stageFlags = guest_shader_stages;
+    compact_pos_binding.pImmutableSamplers = nullptr;
+    ++shared_memory_and_edram_descriptor_set_layout_create_info.bindingCount;
   }
   if (dfn.vkCreateDescriptorSetLayout(
           device, &shared_memory_and_edram_descriptor_set_layout_create_info,
@@ -763,7 +778,8 @@ bool VulkanCommandProcessor::SetupContext() {
   VkDescriptorPoolSize descriptor_pool_sizes[1];
   descriptor_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   descriptor_pool_sizes[0].descriptorCount =
-      shared_memory_binding_count + uint32_t(edram_fragment_shader_interlock);
+      shared_memory_binding_count + uint32_t(edram_fragment_shader_interlock) +
+      uint32_t(cvars::gpu_binning_deinterleave_pos);
   VkDescriptorPoolCreateInfo descriptor_pool_create_info;
   descriptor_pool_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -810,7 +826,7 @@ bool VulkanCommandProcessor::SetupContext() {
         shared_memory_binding_range * i;
     shared_memory_descriptor_buffer_info.range = shared_memory_binding_range;
   }
-  VkWriteDescriptorSet write_descriptor_sets[2];
+  VkWriteDescriptorSet write_descriptor_sets[3];
   VkWriteDescriptorSet& write_descriptor_set_shared_memory =
       write_descriptor_sets[0];
   write_descriptor_set_shared_memory.sType =
@@ -846,8 +862,37 @@ bool VulkanCommandProcessor::SetupContext() {
     write_descriptor_set_edram.pBufferInfo = &edram_descriptor_buffer_info;
     write_descriptor_set_edram.pTexelBufferView = nullptr;
   }
-  dfn.vkUpdateDescriptorSets(device,
-                             1 + uint32_t(edram_fragment_shader_interlock),
+  uint32_t shared_memory_and_edram_write_count =
+      1 + uint32_t(edram_fragment_shader_interlock);
+  VkDescriptorBufferInfo compact_pos_descriptor_buffer_info;
+  if (cvars::gpu_binning_deinterleave_pos) {
+    // Compact de-interleaved position stream. Until the dedicated ring buffer
+    // exists, point the binding at the shared memory buffer - the shader only
+    // reads it under kSysFlag_PosFetchRedirect, which is never set without a
+    // valid gathered stream.
+    compact_pos_descriptor_buffer_info.buffer = shared_memory_->buffer();
+    compact_pos_descriptor_buffer_info.offset = 0;
+    compact_pos_descriptor_buffer_info.range = VK_WHOLE_SIZE;
+    VkWriteDescriptorSet& write_descriptor_set_compact_pos =
+        write_descriptor_sets[shared_memory_and_edram_write_count];
+    write_descriptor_set_compact_pos.sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_descriptor_set_compact_pos.pNext = nullptr;
+    write_descriptor_set_compact_pos.dstSet =
+        shared_memory_and_edram_descriptor_set_;
+    write_descriptor_set_compact_pos.dstBinding =
+        1 + uint32_t(edram_fragment_shader_interlock);
+    write_descriptor_set_compact_pos.dstArrayElement = 0;
+    write_descriptor_set_compact_pos.descriptorCount = 1;
+    write_descriptor_set_compact_pos.descriptorType =
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write_descriptor_set_compact_pos.pImageInfo = nullptr;
+    write_descriptor_set_compact_pos.pBufferInfo =
+        &compact_pos_descriptor_buffer_info;
+    write_descriptor_set_compact_pos.pTexelBufferView = nullptr;
+    ++shared_memory_and_edram_write_count;
+  }
+  dfn.vkUpdateDescriptorSets(device, shared_memory_and_edram_write_count,
                              write_descriptor_sets, 0, nullptr);
 
   // Swap objects.
