@@ -2156,3 +2156,24 @@ gold-standard matched control: gpu 45,531/45,547us host=2120 across independent 
 - Strip-concat stays default-off + harmless; validate opportunistically on BD heavy field / BTTF
   (titles whose batches share VBs) when reach cooperates. 8 gate-safe fires today, no trips, no
   vulkan errors anywhere, every frame pixel-correct.
+
+### B82 - Rebasing widener gated OUT: Burnout strip churn is SHAPE-level (merge lever conclusively bounded)
+Built the mrwf[] rebase-feasibility classifier (9bf856e1b: per merge-class draw, vertex fetch
+constants vs the previous draw - identical / uniformly-stride-aligned-biasable (the index-rebasing
+widener population, split b16/b32 by bias magnitude) / shape-changed) and fired the deterministic
+Burnout scene (turnip_burnoutmrwf): **mrwf[same=124 b16=0 b32=0 shape=1288]** - ZERO biasable draws;
+the per-draw fetch churn is SHAPE-level (stride/size/binding-layout differences = different vertex
+formats), NOT base shifts. **=> the fetch-aware index-rebasing widener is DEAD: no index rewrite can
+legally merge these draws. The per-draw merge lever is CONCLUSIVELY BOUNDED at the BTTF-class
+result (shared-VB draws, ~5us/draw, -2.4% BTTF, shipped e3eb08187 + toggle ffa7c2fe6 + strip joins
+9575f7d7e for shared-VB strip titles).** Burnout/BD per-mesh strip streams would need the rank-5
+bindless/pre-transform restructure (previously demoted, stays demoted).
+Where the fps levers now sit, per today's measurements:
+- Burnout in-race: CPU-IssueDraw-bound (cpu_issuedraw ~94-95ms vs gpu 46.5ms; cpu_setup ~49.5ms +
+  cpu_beginsubmit ~47.6ms + cpu_other ~67ms dominate) -> the lever is CPU-side IssueDraw cost +
+  submission pipelining, NOT GPU draws.
+- BTTF/BD GPU floor: the ~35.6ms post-merge BTTF floor re-attribution (pass-split on a rewrite-on
+  capture) is the open GPU question - [[roaa-edram-path]] track (main-pass binning serialization).
+- All diagnostic instrumentation (mrw/cbup/dsre/mrwf) ships read-only behind the outcomes trace;
+  the deterministic Burnout TRAFFIC ATTACK scene (45.5ms/2120 host draws, replicates to 0.04%)
+  is the reference A/B vehicle for future draw-path work. 9 gate-safe fires today, zero errors.
