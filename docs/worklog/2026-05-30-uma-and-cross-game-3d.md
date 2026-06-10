@@ -2212,3 +2212,28 @@ identical-config control (turnip_bttfmrwts):
   where pass-chain serialization might be real (different RT-reuse patterns).
 - NOTE: these raw captures run WITHOUT the launcher toggle stack (prime-core router etc. are
   launcher-applied); BTTF reached its 30fps target with the router ON (B-series 2026-06-07).
+
+### B85 - Full-stack Burnout truth + NEW TOP LEVER: CPU/GPU frame SERIALIZATION
+First-ever raw-fire measurement of Burnout WITH the full shipped toggle stack ON (fire
+turnip_burnoutfullstack: flat_membase + rlwinm + algebraic + and_not + refresh-cap + arena +
+hoist + rt-gate + pipeline-cache + texcache + prime-router + ADPF), deterministic TRAFFIC ATTACK
+scene rendered=2110:
+- The stack works: cpu_rt 10.5 -> 2.0ms (rt gate), binds down, real CPU work (cpu_real_us)
+  47 -> **35.1ms** (-26%); frame interval ~94.8 -> ~82ms (~8.6 -> ~12.2fps).
+- THE STRUCTURE: cpu_issuedraw 82.0ms = cpu_beginsubmit **46.9ms** (the frame-await, ONCE per
+  frame at frame open - BeginSubmission early-outs per draw, vulkan_command_processor.cc:6504)
+  + ~35.1ms real CPU. gpu_frame_us 46.5ms. **=> CPU and GPU run SERIALIZED: the GPU idles ~35ms
+  per frame (57% utilized), the CPU blocks one full GPU frame at every frame open - despite
+  kMaxFramesInFlight=3 (h:569), the steady-state wait should be ~(46.5-35.1)=~11ms, not 46.9ms ->
+  effectively ~1 frame in flight. If pipelined, Burnout = max(35.1, 46.5) = ~46.5ms = ~21.5fps
+  (+75%). BTTF shows the same shape (beginsubmit ~36.8 ~ gpu_frame ~41, see 2026-06-09 notes -
+  the then-"starvation hypothesis" is now reframed as this same frame serialization).**
+- Candidate causes: (a) guest VdSwap pacing (the guest waits for swap completion; xenia signals
+  it only after GPU finish/present -> the GUEST serializes); (b) closed_frame_submissions_
+  bookkeeping making the await degenerate to previous-frame; (c) a hidden per-frame full await.
+- BUILT the discriminator (this commit): fopen[wait_us= inflight=] in the outcomes line - the
+  SINGLE frame-open await duration + frames not yet known-complete at its start
+  (frame_current_ - frame_completed_). inflight ~1 = producer/guest-side (a); ~3 + long wait =
+  (b)/(c). One fire decides. **This is the top cross-game fps lever now: the per-draw merge is
+  bounded (B82) and the binning drain is irreducible (B84); pipelining attacks BOTH CPU-paced
+  titles (Burnout) and the CPU side of GPU-bound ones.**

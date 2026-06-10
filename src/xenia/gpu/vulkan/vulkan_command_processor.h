@@ -1265,6 +1265,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // beginsubmit_ (wait, not a CPU lever); on a CPU-bound title beginsubmit_ is
   // small and the rest of setup_ is real work (the lever).
   uint64_t draw_cpu_beginsubmit_ns_ = 0;
+  // Frame-serialization probe (fopen[]): the single frame-open await duration
+  // (NOT accumulated - one frame open per frame) and the frames not yet
+  // known-complete when it started (frame_current_ - frame_completed_).
+  uint64_t draw_cpu_frame_open_wait_ns_ = 0;
+  uint32_t draw_frame_open_in_flight_ = 0;
   // Subset of the untimed cpu_gap: the per-draw "ensure vertex buffers resident"
   // RequestRange loop. Its residency bitmask is rebuilt PER DRAW, so RequestRange
   // is called for every vertex binding of every draw (~1.5/draw) - a documented
