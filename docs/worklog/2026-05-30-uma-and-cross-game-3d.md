@@ -2018,3 +2018,25 @@ telemetry (390835ffb). Cvar: gpu_binning_deinterleave_pos.
 - NEXT (per this build's own ranking): productize gpu_edram_passes_dont_care behind RT-cache deadness gating —
   the one MEASURED ~12% whole-frame BTTF win still on the table (raw DONT_CARE black-screens; needs the safe
   variant).
+
+### B76 — Safe DONT_CARE shipped (zero coverage on BTTF) + the per-draw slope discovery
+Built + shipped (6f4fd9c4e, default-off cvar gpu_edram_passes_dont_care_safe): per-pass load-DONT_CARE
+render-pass variants gated by a PROVEN full-cover clear draw (one-rect rectangle list, always-pass
+unconditional writes, CPU-replayed vertex coverage via the new DrawExtentEstimator::
+EstimateRectListCoverage, clipped to scissor, inward-rounded). Variants are compatible with existing
+pipelines/framebuffers (load/store ops are outside render-pass compatibility); stores never elided.
+- GATE FIRE (turnip_dcsafe1, BTTF heavy menu, pixel-correct png): **dc_safe[p=0 att=0] - the trigger
+  never fired.** BTTF clears via RESOLVE-CLEARS (rt_resolve_clears=2/frame), not pass-opening rect-list
+  draws; gpu_frame ~36.8-37.2ms at rendered=719-730 = baseline, as expected with the lever disengaged.
+  Infra stays (sound, inert); v2 candidate = loadOp=CLEAR folding of resolve-cleared ranges (park).
+- **THE DISCOVERY (replicated, same-session):** BTTF's two heavy-menu states have near-equal verts
+  (381.7k vs 378.5k, +0.8%) but 902 vs 735 draws, and gpu_frame differs 41,730->36,545us (off run) and
+  41,573->36,395us (diag run) = **31.0us/draw marginal slope in BOTH runs**. Combined with the F1
+  fetch-bandwidth kill (B75) and vertex-reduction-flat history, the BTTF GPU wall looks PER-DRAW
+  (~22-28ms of the 37-42ms frame at 730-900 draws), not per-vertex. The old ~32ns/vert was a derived
+  ratio, never a slope; this is a measured slope (caveat: draw composition differs between the states -
+  correlational until a controlled host-draw-count A/B).
+- NEXT: the controlled test - does vulkan_merge_draws CONCATENATE host vkCmdDrawIndexed calls (or only
+  elide state)? merge[pipe_same=667/900 consts_same=518] says the merge potential is huge. Config-only
+  A/B fire on BTTF at matched states; if it only elides state, build the concatenation (the draw-
+  coalescer rank-3 prototype, now gated IN by this slope).
