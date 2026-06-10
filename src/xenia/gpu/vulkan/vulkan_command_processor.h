@@ -1134,6 +1134,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t mrw_end_ = 0;
   uint32_t mrw_prim_ = 0;
   uint32_t mrw_rst_ = 0;
+  // mrw_cant attribution helpers: per frame, how many times each CONSTANT
+  // BUFFER class was re-uploaded (its up-to-date bit was clear at request
+  // time; indices = SpirvShaderTranslator::ConstantBuffer order sys/fv/fp/bl/
+  // fetch) and how many times each DESCRIPTOR SET index was re-bound (0=shared
+  // memory+EDRAM, 1=constants, 2=vertex textures, 3=pixel textures). The
+  // dominant per-draw counter = the state churn that records commands between
+  // draws and breaks every merge run (mrw[cant=]).
+  uint32_t mrw_cb_upload_[5] = {};
+  uint32_t mrw_ds_rebind_[4] = {};
   // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
   // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
   // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)

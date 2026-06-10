@@ -2468,6 +2468,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
         "mrw[ext={} head={} auto={} ndma={} nomrg={} cant={} pipe={} itype={} "
         "cap={} vgt={} end={} prim={} rst={}] "
+        "cbup[sys={} fv={} fp={} bl={} f={}] "
+        "dsre[smem={} cons={} texv={} texp={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
@@ -2576,6 +2578,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         mrw_ext_, mrw_head_, mrw_auto_, mrw_ndma_, mrw_nomrg_, mrw_cant_,
         mrw_pipe_, mrw_itype_, mrw_cap_, mrw_vgt_, mrw_end_, mrw_prim_,
         mrw_rst_,
+        mrw_cb_upload_[0], mrw_cb_upload_[1], mrw_cb_upload_[2],
+        mrw_cb_upload_[3], mrw_cb_upload_[4],
+        mrw_ds_rebind_[0], mrw_ds_rebind_[1], mrw_ds_rebind_[2],
+        mrw_ds_rebind_[3],
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
         draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
         draw_outcomes_affine_mvp_pos_vertices_, draw_outcomes_pos_disq_a0_verts_,
@@ -2723,6 +2729,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     mrw_end_ = 0;
     mrw_prim_ = 0;
     mrw_rst_ = 0;
+    std::memset(mrw_cb_upload_, 0, sizeof(mrw_cb_upload_));
+    std::memset(mrw_ds_rebind_, 0, sizeof(mrw_ds_rebind_));
     merge_miss_noncontig_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
@@ -7981,6 +7989,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     auto request_constant = [&](uint32_t index, size_t size,
                                 VkDescriptorBufferInfo& buffer_info,
                                 VkDeviceSize& out_offset) -> uint8_t* {
+      if (index < 5u) {
+        ++mrw_cb_upload_[index];
+      }
       if (arena) {
         bool ok = false;
         VkDeviceSize off =
@@ -8546,6 +8557,10 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                                  : 0,
         arena_constants_in_range ? current_constant_dynamic_offsets_ : nullptr);
     ++draw_outcomes_descriptor_binds_;
+    for (uint32_t set_i = descriptor_set_index;
+         set_i < descriptor_set_mask_tzcnt && set_i < 4u; ++set_i) {
+      ++mrw_ds_rebind_[set_i];
+    }
     if (descriptor_set_mask_tzcnt >= 32) {
       break;
     }
