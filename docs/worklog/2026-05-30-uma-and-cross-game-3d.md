@@ -2129,3 +2129,30 @@ vulkan_merge_draws_rewrite (ffa7c2fe6, default-off, pushed).
   (strip_concat requires the new cvar); allowlisted in EmulatorActivity.
 - NEXT: BD fire rewrite+strips ON (pixel check + host_draws delta = true strip coverage), then
   Burnout re-fire, then the BTTF ~35.6ms floor re-attribution (pass-split on a rewrite-on capture).
+
+### B81 - Strip-concat zero coverage ROOT-CAUSED: per-draw FETCH-constant churn (real state, not hygiene)
+Three diagnostic fires on the deterministic Burnout TRAFFIC ATTACK scene (rendered=2110, ts=1898,
+gold-standard matched control: gpu 45,531/45,547us host=2120 across independent runs):
+- turnip_burnoutmrwstack (rewrite+strips+arena+texcache): STILL host=2120, zero merges; the stack
+  verifiably applied (cpu_bind_us 10.5k -> 8.9k) and rendered pixel-identical.
+- Built mrw[] live attribution (5bf6f9b4a): **mrw[ext=0 head=1424 auto=602 ndma=84 nomrg=0
+  cant=1342, all state gates 0]** - strips ARE kGuestDMA + mergeable and 1424 runs START per frame;
+  every extend dies on merge_cannot_extend_this_draw_ (a command recorded between draws).
+- Built cbup[]/dsre[] churn counters (f0920db97): **cbup[sys=151 fv=895 fp=769 bl=5 f=2045]
+  dsre[cons=2066 texv=2 texp=0]** - the FETCH constants buffer re-uploads on ~97% of draws (and
+  float constants on ~40%), driving a constants-set rebind per draw. Textures are QUIET (the
+  descriptor cache works).
+- => **VERDICT: consecutive Burnout strips genuinely reference DIFFERENT vertex buffers (per-mesh
+  fetch base) and often different transforms - they are NOT same-state draws, and cant is the
+  correctness gate refusing an illegal merge.** The strip-concat implementation (9575f7d7e) is
+  correct but has ~zero legal coverage on Burnout; BTTF's 181 list merges worked because its
+  glyph/UI draws share one vertex buffer (scattered index ranges, stable fetch constants).
+- NEXT LEVER SHAPE (design unit, device-free): **fetch-aware index REBASING** - when consecutive
+  draws differ ONLY in the fetch base (same stride/format/endian) and (baseB-baseHead) % stride
+  == 0, rewrite the incoming indices with bias=(baseB-baseHead)/stride during the block copy
+  (decode guest-endian index -> add bias -> re-encode; NEON-able), gated on the biased range
+  fitting the index type. That is the rank-4-class widener from the coalescer plan. Float-constant
+  churn (fv=895) bounds even rebased coverage to ~50-60% of strip draws.
+- Strip-concat stays default-off + harmless; validate opportunistically on BD heavy field / BTTF
+  (titles whose batches share VBs) when reach cooperates. 8 gate-safe fires today, no trips, no
+  vulkan errors anywhere, every frame pixel-correct.
