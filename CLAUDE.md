@@ -28,6 +28,16 @@ build-verify → device-test → commit → next).**
 - Thermal/never-thrash and no-fabrication rules STILL hold (they protect the device + integrity) — those
   are not "asking", they're safety. Everything else: just do it.
 
+## 🔀 THOR BUSY → DO DEVICE-FREE WORK (2026-06-06)
+The Thor is scarce: one fire/cooldown (~10-15min), 64°C watchdog (~80s), and it degrades under heavy
+firing (Magna's boot started stalling after ~6 launches). Treat it as busy when the gate fails, you've
+fired this cooldown, a boot/scene is stuck (don't blind-retry), it's over-fired, or a fire adds no new
+data — then PIVOT to a ready device-free queue: host cpu-tests/const-fold; qemu a64 codegen
+([[a64-qemu-harness]]); build the next cvar-gated fix (default-off, incremental); MINE existing
+captures (log-grep > re-fire — this cracked Magna's root-cause with zero fires); Ghidra/code-RE;
+edge/canary ports; docs/scoping. Fires are the bottleneck: batch → build once → fire once → fill
+cooldowns device-free. If degraded, note the user recovery (reboot/cache-clear) and keep progressing.
+
 ## ⚡ MISSION (2026-06-04): the BEST, FASTEST, most-optimized xenia ever, for the AYN Thor
 **Every little optimization adds up.** Pursue the best codegen (recompiler quality), a fixed binning
 front-end, and the best thread placement for this exact SoC — then **stack** the wins. Each perf win is
