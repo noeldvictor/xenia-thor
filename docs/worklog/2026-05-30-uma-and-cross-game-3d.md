@@ -2191,3 +2191,24 @@ GetHostRenderTargetsRenderPass (vulkan_render_target_cache.cc ~:1683) so the til
 prior passes' deferred render with the main pass's binning - worth up to ~30% of the BTTF GPU
 frame if it pipelines.** Session totals: 10 gate-safe fires, 9 commits, one watchdog trip
 (salvaged), zero vulkan errors, every readable frame pixel-correct.
+
+### B84 - EXTERNAL-dependency hypothesis REFUTED: the BTTF binning drain is irreducible compute
+Built gpu_vulkan_weak_external_subpass_deps (9753a46a6: both EXTERNAL subpass deps of every guest
+render pass made no-ops, default-off probe) + fired BTTF (turnip_bttfweakdeps) against the same-day
+identical-config control (turnip_bttfmrwts):
+- CONTENT-MATCHED RESULT: 902-state gpu_frame 40,751us (n=334) vs control 40,703 (n=245); 735-state
+  35,543 (n=236) vs 35,775 (n=256) = NEUTRAL. Matched 902-state top_gap 12,721-12,951us vs control
+  12,642-12,764 = **UNCHANGED**. Pixel-correct (in-DeLorean prompt clean). [Live-read trap avoided:
+  an unmatched dr=266 intermediate state showed a 7.9ms top gap - smaller scene, smaller drain, NOT
+  an improvement; always match flank dr=.]
+- => **THE ELIMINATION CHAIN IS COMPLETE. The ~12.7ms pre-main-pass drain is NOT: EDRAM transfers
+  (bttfcombo), draw count (bttfmrwts, -181 draws), tile load/store (dont_care), explicit barriers
+  (topgap barr=0), or render-pass EXTERNAL dependencies (this fire). It is the main scene pass's
+  OWN per-vertex binning compute (379k verts x ~32ns = ~22 GPU cycles/vert at 680MHz) executing -
+  REAL WORK, not a removable stall.** Cutting it requires submitting fewer vertices (guest-level
+  LOD/cull - a game-patch-class lever) or a fundamentally cheaper binning position shader; every
+  emulator-side serialization/overhead lever is now measured-and-dead on this drain.
+- The probe cvar stays in-tree (default-off, harmless, pixel-correct on BTTF) for other titles
+  where pass-chain serialization might be real (different RT-reuse patterns).
+- NOTE: these raw captures run WITHOUT the launcher toggle stack (prime-core router etc. are
+  launcher-applied); BTTF reached its 30fps target with the router ON (B-series 2026-06-07).
