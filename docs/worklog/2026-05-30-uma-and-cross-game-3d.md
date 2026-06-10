@@ -2079,3 +2079,22 @@ outcomes print runs after command-buffer submit/Reset zeroes the stat; relocate 
   machinery already does per-draw verbatim copies). merge[pipe_same=538 consts_same=471] of ~735 draws
   bounds the coverage. If THAT is flat at hundreds of merged draws, per-draw dies as a hypothesis and
   the floor is elsewhere.
+
+### B79 — Index-rewriting concat: the per-draw question ANSWERED with the first real, controlled GPU win
+Shipped e3eb08187: vulkan_merge_draws_rewrite (default off) - consecutive same-state kGuestDMA LIST
+draws merged into ONE vkCmdDrawIndexed by appending each draw's raw guest index bytes (verbatim; the VS
+applies index endian) into 64KB transient blocks from cull_index_buffer_pool_; head-emit + in-place
+index-count patching (the d1a0adf23 discipline); all flush gates extended.
+- FIRE turnip_mergerw vs same-day control turnip_mergefix (matched states, identical avg_verts,
+  n=246-258/cell): **PIXEL-CORRECT** (silver DeLorean, clean glyphs) and:
+  rendered=735: 36,527 -> **35,604us**, host_draws 764 -> **583** (-181 draws/frame, -24%)
+  rendered=902: 41,561 -> **40,595us**, host_draws 916 -> **721** (-195 draws/frame, -21%)
+  = **~5.0-5.1us of GPU frame per eliminated draw, replicated across both states.** Best 735-state
+  gpu_frame measured to date.
+- VERDICT: the per-draw GPU cost is REAL but ~5us/draw for the mergeable (small tri-list) draws, not
+  the 31us/draw the cross-state slope suggested - that slope was mostly draw COMPOSITION. Win as built:
+  ~-0.9-1.0ms/frame (-2.4%) on BTTF.
+- NEXT: XeniaOptimizations toggle (default-off until cross-game pixel-validation), Burnout in-race
+  (~3442 draws - the high-leverage title for this lever) + BD validation fires, coverage extension
+  (~190 of ~500 tl draws merge today; constants_changed=71 boundaries), and a fresh attribution pass on
+  the remaining ~35.6ms BTTF floor (per-draw now bounded small; fetch bandwidth + verts already dead).
