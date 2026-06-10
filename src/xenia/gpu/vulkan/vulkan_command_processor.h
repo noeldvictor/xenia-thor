@@ -896,6 +896,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // lower-bound signal for whether the cull can engage on a title.
   uint32_t draw_outcomes_affine_mvp_draws_ = 0;
   uint64_t draw_outcomes_affine_mvp_vertices_ = 0;
+  // G1-lite coverage: draws/verts whose position vfetch is statically
+  // redirectable (Shader::position_vfetch_tag) - the de-interleave ceiling.
+  uint32_t draw_outcomes_deint_elig_draws_ = 0;
+  uint64_t draw_outcomes_deint_elig_verts_ = 0;
   // Step 0b: the precise position-export-slice classifier (counts draws/verts
   // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
   // that actually sizes the CPU/NEON cull's reach. See

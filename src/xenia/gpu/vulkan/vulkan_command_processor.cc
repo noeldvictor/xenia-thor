@@ -2386,7 +2386,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})] "
         "multi_lc[2={} 3={} 4={} 5p={}] "
         "wholecull[draws={} elig={} verts={}] "
-        "whole_skip[draws={} verts={}]",
+        "whole_skip[draws={} verts={}] "
+        "deint[elig_draws={} elig_verts={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2523,7 +2524,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             draw_outcomes_cull_multi_lc_[7],
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
-        draw_outcomes_cull_whole_skip_verts_);
+        draw_outcomes_cull_whole_skip_verts_, draw_outcomes_deint_elig_draws_,
+        draw_outcomes_deint_elig_verts_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_wholecull_draws_ = 0;
@@ -2532,6 +2534,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_cull_whole_skip_ = 0;
     draw_outcomes_cull_whole_skip_verts_ = 0;
     draw_outcomes_affine_mvp_draws_ = 0;
+    draw_outcomes_deint_elig_draws_ = 0;
+    draw_outcomes_deint_elig_verts_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -5174,6 +5178,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (vertex_shader->is_affine_mvp_candidate()) {
       ++draw_outcomes_affine_mvp_draws_;
       draw_outcomes_affine_mvp_vertices_ +=
+          primitive_processing_result.host_draw_vertex_count;
+    }
+    // G1-lite eligibility sizing (read-only): draws/vertices whose position
+    // fetch is statically redirectable to a compact binning stream
+    // (Shader::position_vfetch_tag) - the coverage ceiling for the
+    // de-interleaved binning position stream, measurable before it is built.
+    if (vertex_shader->position_vfetch_tag().valid) {
+      ++draw_outcomes_deint_elig_draws_;
+      draw_outcomes_deint_elig_verts_ +=
           primitive_processing_result.host_draw_vertex_count;
     }
     if (vertex_shader->is_position_affine_mvp_candidate()) {
