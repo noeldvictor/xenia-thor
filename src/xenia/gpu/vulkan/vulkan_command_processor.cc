@@ -2470,6 +2470,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cap={} vgt={} end={} prim={} rst={}] "
         "cbup[sys={} fv={} fp={} bl={} f={}] "
         "dsre[smem={} cons={} texv={} texp={}] "
+        "mrwf[same={} b16={} b32={} shape={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
@@ -2582,6 +2583,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         mrw_cb_upload_[3], mrw_cb_upload_[4],
         mrw_ds_rebind_[0], mrw_ds_rebind_[1], mrw_ds_rebind_[2],
         mrw_ds_rebind_[3],
+        mrw_fetch_same_, mrw_fetch_bias16_, mrw_fetch_bias32_,
+        mrw_fetch_shape_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
         draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
         draw_outcomes_affine_mvp_pos_vertices_, draw_outcomes_pos_disq_a0_verts_,
@@ -2731,6 +2734,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     mrw_rst_ = 0;
     std::memset(mrw_cb_upload_, 0, sizeof(mrw_cb_upload_));
     std::memset(mrw_ds_rebind_, 0, sizeof(mrw_ds_rebind_));
+    mrw_fetch_same_ = 0;
+    mrw_fetch_bias16_ = 0;
+    mrw_fetch_bias32_ = 0;
+    mrw_fetch_shape_ = 0;
     merge_miss_noncontig_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
@@ -5403,6 +5410,82 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           ++mrw_prim_;
         } else {
           ++mrw_rst_;
+        }
+      }
+      // Rebase-feasibility classifier (read-only, mrwf[]): this draw's vertex
+      // fetch constants vs the previous merge-class draw's. same = fetch is
+      // not the run breaker; b16/b32 = only a uniform stride-aligned base
+      // shift (the index-rebasing widener's coverage; split by whether the
+      // bias magnitude fits 16-bit indices); shape = real fetch change.
+      {
+        const auto& fetch_bindings = vertex_shader->vertex_bindings();
+        const bool shape_usable =
+            !fetch_bindings.empty() && fetch_bindings.size() <= 8;
+        MrwFetchSnap cur[8];
+        uint32_t binding_count = 0;
+        if (shape_usable) {
+          for (const Shader::VertexBinding& b : fetch_bindings) {
+            xenos::xe_gpu_vertex_fetch_t vf =
+                regs.GetVertexFetch(b.fetch_constant);
+            MrwFetchSnap& s = cur[binding_count++];
+            s.fetch_constant = b.fetch_constant;
+            s.address_bytes = uint32_t(vf.address) << 2;
+            s.dword_1 = vf.dword_1;
+            s.type = uint32_t(vf.type);
+            s.stride_bytes = b.stride_words * 4;
+          }
+        }
+        if (shape_usable && mrw_prev_fetch_valid_ &&
+            binding_count == mrw_prev_fetch_count_) {
+          bool same = true;
+          bool biasable = true;
+          int64_t bias_indices = INT64_MAX;  // unset
+          for (uint32_t i = 0; i < binding_count; ++i) {
+            const MrwFetchSnap& p = mrw_prev_fetch_[i];
+            const MrwFetchSnap& c = cur[i];
+            if (c.fetch_constant != p.fetch_constant || c.type != p.type ||
+                c.dword_1 != p.dword_1 || c.stride_bytes != p.stride_bytes) {
+              same = false;
+              biasable = false;
+              break;
+            }
+            if (c.address_bytes != p.address_bytes) {
+              same = false;
+              const int64_t delta =
+                  int64_t(c.address_bytes) - int64_t(p.address_bytes);
+              if (!c.stride_bytes ||
+                  (delta % int64_t(c.stride_bytes)) != 0) {
+                biasable = false;
+                break;
+              }
+              const int64_t k = delta / int64_t(c.stride_bytes);
+              if (bias_indices == INT64_MAX) {
+                bias_indices = k;
+              } else if (bias_indices != k) {
+                biasable = false;
+                break;
+              }
+            }
+          }
+          if (same) {
+            ++mrw_fetch_same_;
+          } else if (biasable && bias_indices != INT64_MAX) {
+            if (bias_indices >= -65535 && bias_indices <= 65535) {
+              ++mrw_fetch_bias16_;
+            } else {
+              ++mrw_fetch_bias32_;
+            }
+          } else {
+            ++mrw_fetch_shape_;
+          }
+        }
+        if (shape_usable) {
+          std::memcpy(mrw_prev_fetch_, cur,
+                      sizeof(MrwFetchSnap) * binding_count);
+          mrw_prev_fetch_count_ = binding_count;
+          mrw_prev_fetch_valid_ = true;
+        } else {
+          mrw_prev_fetch_valid_ = false;
         }
       }
       if (can_extend) {

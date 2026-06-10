@@ -1143,6 +1143,28 @@ class VulkanCommandProcessor : public CommandProcessor {
   // draws and breaks every merge run (mrw[cant=]).
   uint32_t mrw_cb_upload_[5] = {};
   uint32_t mrw_ds_rebind_[4] = {};
+  // Rebase-feasibility classifier (mrwf[] in the outcomes line): for each
+  // merge-class (kGuestDMA, merge cvars on) draw, its vertex fetch constants
+  // vs the PREVIOUS such draw: same = identical (fetch isn't the breaker);
+  // b16/b32 = identical except ONE uniform stride-aligned base shift across
+  // all bindings (the index-bias magnitude fits/exceeds 16-bit indices) -
+  // the population the fetch-aware index-REBASING widener could merge; shape
+  // = field/stride/binding change (unmergeable, real state change). Sizes
+  // the rebasing build before it is attempted.
+  struct MrwFetchSnap {
+    uint32_t fetch_constant;
+    uint32_t address_bytes;
+    uint32_t dword_1;
+    uint32_t type;
+    uint32_t stride_bytes;
+  };
+  MrwFetchSnap mrw_prev_fetch_[8] = {};
+  uint32_t mrw_prev_fetch_count_ = 0;
+  bool mrw_prev_fetch_valid_ = false;
+  uint32_t mrw_fetch_same_ = 0;
+  uint32_t mrw_fetch_bias16_ = 0;
+  uint32_t mrw_fetch_bias32_ = 0;
+  uint32_t mrw_fetch_shape_ = 0;
   // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
   // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
   // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)
