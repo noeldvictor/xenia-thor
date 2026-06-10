@@ -2432,6 +2432,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                               : 7;
       ++merge_stript_run_hist_[b];
     }
+    // Host draw calls actually recorded this frame (vs guest `rendered`):
+    // delta of the deferred command buffer's cumulative draw stat. The stat
+    // zeroes on command-buffer Reset, which the wrap check absorbs.
+    uint32_t host_draws_stat_now = deferred_command_buffer_.record_stats().draws;
+    uint32_t host_draws_frame =
+        host_draws_stat_now >= host_draws_last_stat_
+            ? host_draws_stat_now - host_draws_last_stat_
+            : host_draws_stat_now;
+    host_draws_last_stat_ = host_draws_stat_now;
     XELOGI(
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
@@ -2442,7 +2451,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
         "gather_us={} bails={}] "
-        "dc_safe[p={} att={}] "
+        "dc_safe[p={} att={}] host_draws={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2486,6 +2495,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_deint_redir_verts_,
         draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
         draw_outcomes_dc_safe_passes_, draw_outcomes_dc_safe_atts_,
+        host_draws_frame,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)

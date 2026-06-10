@@ -941,6 +941,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // tile load was elided.
   uint32_t draw_outcomes_dc_safe_passes_ = 0;
   uint32_t draw_outcomes_dc_safe_atts_ = 0;
+  // Snapshot of the deferred command buffer's cumulative draw stat at the last
+  // outcomes print, for the per-frame host_draws= delta.
+  uint32_t host_draws_last_stat_ = 0;
   // Step 0b: the precise position-export-slice classifier (counts draws/verts
   // whose POSITION slice is affine-MVP, ignoring the color/UV path) - the number
   // that actually sizes the CPU/NEON cull's reach. See
