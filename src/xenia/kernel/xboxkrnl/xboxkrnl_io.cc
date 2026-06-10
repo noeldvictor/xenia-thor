@@ -38,6 +38,18 @@ DEFINE_int32(
     "zero suppresses them.",
     "Kernel");
 
+DEFINE_bool(
+    xboxkrnl_ntreadfile_force_complete, false,
+    "Banjo async-IO experiment: NtReadFile/NtReadFileScatter that completed "
+    "their data synchronously return the real success status instead of "
+    "overriding it to X_STATUS_PENDING for async-opened files. Banjo's \\Bundle "
+    "verify opens the file async; on the Thor the guest's async-completion path "
+    "does not consume the (already-read + event-signaled) completion, leaving "
+    "its lookup table empty -> false dirty-disc. Forcing synchronous completion "
+    "routes the guest to its working sync-consume path. Diverges from upstream "
+    "async semantics; default off; device-validate per title.",
+    "Kernel");
+
 namespace {
 
 std::atomic<int32_t> nt_create_file_fail_log_count{0};
@@ -390,8 +402,11 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
       // Async reads complete immediately here, but report PENDING so the guest
       // takes its async-completion path. EOF must NOT be masked as PENDING
       // (upstream parity): an async read that hits end-of-file should surface
-      // X_STATUS_END_OF_FILE, not 0x103.
-      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
+      // X_STATUS_END_OF_FILE, not 0x103. xboxkrnl_ntreadfile_force_complete
+      // skips the override (returns the synchronous success) for the Banjo
+      // async-\Bundle-read case where the guest never consumes the completion.
+      if (!cvars::xboxkrnl_ntreadfile_force_complete &&
+          !file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
@@ -512,8 +527,11 @@ dword_result_t NtReadFileScatter_entry(
       // Async reads complete immediately here, but report PENDING so the guest
       // takes its async-completion path. EOF must NOT be masked as PENDING
       // (upstream parity): an async read that hits end-of-file should surface
-      // X_STATUS_END_OF_FILE, not 0x103.
-      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
+      // X_STATUS_END_OF_FILE, not 0x103. xboxkrnl_ntreadfile_force_complete
+      // skips the override (returns the synchronous success) for the Banjo
+      // async-\Bundle-read case where the guest never consumes the completion.
+      if (!cvars::xboxkrnl_ntreadfile_force_complete &&
+          !file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
@@ -608,8 +626,11 @@ dword_result_t NtWriteFile_entry(dword_t file_handle, dword_t event_handle,
       // Async reads complete immediately here, but report PENDING so the guest
       // takes its async-completion path. EOF must NOT be masked as PENDING
       // (upstream parity): an async read that hits end-of-file should surface
-      // X_STATUS_END_OF_FILE, not 0x103.
-      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
+      // X_STATUS_END_OF_FILE, not 0x103. xboxkrnl_ntreadfile_force_complete
+      // skips the override (returns the synchronous success) for the Banjo
+      // async-\Bundle-read case where the guest never consumes the completion.
+      if (!cvars::xboxkrnl_ntreadfile_force_complete &&
+          !file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
         result = X_STATUS_PENDING;
       }
 
