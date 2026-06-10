@@ -1110,6 +1110,30 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t merge_miss_other_ = 0;
   uint32_t merge_miss_state_ = 0;
   uint32_t merge_miss_noncontig_ = 0;
+  // LIVE merge-rewrite path attribution (mrw[] in the outcomes line): what the
+  // interceptor actually did per draw this frame. ext = extended a run; head =
+  // started a run; auto = bypassed via the non-indexed/shader-32bit-DMA path;
+  // ndma = indexed but non-kGuestDMA (converted/builtin); nomrg = in-branch
+  // but non-mergeable (topology/memexport/list-restart); for in-branch
+  // mergeable draws with an active run that could NOT extend, the FIRST
+  // failing can_extend gate: cant (a command was recorded since IssueDraw
+  // entry - constants/texture/state churn), pipe (pipeline/layout), itype
+  // (index type), cap (rewrite block capacity / zero-copy contiguity), vgt
+  // (VGT_INDX_OFFSET), end (index endian), prim (primitive type), rst (reset
+  // state). Answers "why didn't it merge" directly on-device.
+  uint32_t mrw_ext_ = 0;
+  uint32_t mrw_head_ = 0;
+  uint32_t mrw_auto_ = 0;
+  uint32_t mrw_ndma_ = 0;
+  uint32_t mrw_nomrg_ = 0;
+  uint32_t mrw_cant_ = 0;
+  uint32_t mrw_pipe_ = 0;
+  uint32_t mrw_itype_ = 0;
+  uint32_t mrw_cap_ = 0;
+  uint32_t mrw_vgt_ = 0;
+  uint32_t mrw_end_ = 0;
+  uint32_t mrw_prim_ = 0;
+  uint32_t mrw_rst_ = 0;
   // Lever 2 (vulkan_merge_draws): zero-copy draw concatenation. A pending run of
   // consecutive same-state kGuestDMA draws indexing a contiguous byte range is
   // accumulated here and flushed (one CmdVkBindIndexBuffer + one CmdVkDrawIndexed)

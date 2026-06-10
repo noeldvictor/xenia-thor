@@ -2466,6 +2466,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "stripd_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "stript_runlen[1={} 2={} 3-4={} 5-8={} 9-16={} 17-32={} 33-64={} 65+={}] "
         "merge_miss[non_dma={} topo={} state={} noncontig={} other={}] "
+        "mrw[ext={} head={} auto={} ndma={} nomrg={} cant={} pipe={} itype={} "
+        "cap={} vgt={} end={} prim={} rst={}] "
         "cullable_tris={} affine_mvp_draws={} affine_mvp_verts={} "
         "affine_mvp_pos_draws={} affine_mvp_pos_verts={} "
         "pos_disq_verts[a0={} loop={} backjump={} call={} tex={} other={}] "
@@ -2571,6 +2573,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         merge_stript_run_hist_[6], merge_stript_run_hist_[7],
         merge_miss_non_dma_, merge_miss_topology_, merge_miss_state_,
         merge_miss_noncontig_, merge_miss_other_,
+        mrw_ext_, mrw_head_, mrw_auto_, mrw_ndma_, mrw_nomrg_, mrw_cant_,
+        mrw_pipe_, mrw_itype_, mrw_cap_, mrw_vgt_, mrw_end_, mrw_prim_,
+        mrw_rst_,
         draw_outcomes_cullable_tris_, draw_outcomes_affine_mvp_draws_,
         draw_outcomes_affine_mvp_vertices_, draw_outcomes_affine_mvp_pos_draws_,
         draw_outcomes_affine_mvp_pos_vertices_, draw_outcomes_pos_disq_a0_verts_,
@@ -2705,6 +2710,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_miss_topology_ = 0;
     merge_miss_other_ = 0;
     merge_miss_state_ = 0;
+    mrw_ext_ = 0;
+    mrw_head_ = 0;
+    mrw_auto_ = 0;
+    mrw_ndma_ = 0;
+    mrw_nomrg_ = 0;
+    mrw_cant_ = 0;
+    mrw_pipe_ = 0;
+    mrw_itype_ = 0;
+    mrw_cap_ = 0;
+    mrw_vgt_ = 0;
+    mrw_end_ = 0;
+    mrw_prim_ = 0;
+    mrw_rst_ = 0;
     merge_miss_noncontig_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
@@ -5089,6 +5107,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         cvars::vulkan_merge_draws_indirect) {
       FlushPendingMergeRun();
     }
+    if (cvars::vulkan_merge_draws_rewrite) {
+      ++mrw_auto_;
+    }
     deferred_command_buffer_.CmdVkDraw(
         primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
   } else {
@@ -5342,6 +5363,40 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           prim_type == merge_pending_prim_type_ &&
           primitive_processing_result.host_primitive_reset_enabled ==
               merge_pending_reset_enabled_;
+      // Live attribution: why didn't this draw extend the active run? First
+      // failing gate only; read from the mrw[] outcomes-line counters.
+      if (can_extend) {
+        ++mrw_ext_;
+      } else if (!mergeable) {
+        ++mrw_nomrg_;
+      } else if (merge_pending_active_) {
+        if (merge_cannot_extend_this_draw_) {
+          ++mrw_cant_;
+        } else if (current_guest_graphics_pipeline_ !=
+                       merge_pending_pipeline_ ||
+                   current_guest_graphics_pipeline_layout_ !=
+                       merge_pending_pipeline_layout_) {
+          ++mrw_pipe_;
+        } else if (index_type != merge_pending_index_type_) {
+          ++mrw_itype_;
+        } else if (merge_rewrite
+                       ? (merge_pending_rewrite_mapping_ == nullptr ||
+                          merge_pending_rewrite_used_bytes_ + copy_bytes +
+                                  join_reserve_bytes >
+                              kMergeRewriteBlockBytes)
+                       : idx_base != merge_pending_next_byte_) {
+          ++mrw_cap_;
+        } else if (uint32_t(vgt_indx_offset) !=
+                   merge_pending_vertex_base_index_) {
+          ++mrw_vgt_;
+        } else if (index_endian != merge_pending_vertex_index_endian_) {
+          ++mrw_end_;
+        } else if (prim_type != merge_pending_prim_type_) {
+          ++mrw_prim_;
+        } else {
+          ++mrw_rst_;
+        }
+      }
       if (can_extend) {
         // Concatenate this draw's index range into the run by growing the
         // HEAD-EMITTED draw command in place. Recording anything here would
@@ -5432,6 +5487,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           run_started = true;
         }
         if (run_started) {
+          ++mrw_head_;
           merge_pending_active_ = true;
           merge_pending_index_buffer_ = index_buffer.first;
           merge_pending_index_base_ = index_buffer.second;
@@ -5581,6 +5637,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       if (cvars::vulkan_merge_draws || cvars::vulkan_merge_draws_rewrite ||
         cvars::vulkan_merge_draws_indirect) {
         FlushPendingMergeRun();
+      }
+      if (cvars::vulkan_merge_draws_rewrite &&
+          primitive_processing_result.index_buffer_type !=
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+        ++mrw_ndma_;
       }
       deferred_command_buffer_.CmdVkBindIndexBuffer(
           index_buffer.first, index_buffer.second, index_type);
