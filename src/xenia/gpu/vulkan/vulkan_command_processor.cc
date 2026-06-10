@@ -2360,6 +2360,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "inpass[x={} skip_fmt={} skip_oth={}] "
+        "deint[elig_draws={} elig_verts={}] "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2386,8 +2387,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "fastrep[engaged={} fail(noleaf={} multi={} novf={} badfmt={} recov={})] "
         "multi_lc[2={} 3={} 4={} 5p={}] "
         "wholecull[draws={} elig={} verts={}] "
-        "whole_skip[draws={} verts={}] "
-        "deint[elig_draws={} elig_verts={}]",
+        "whole_skip[draws={} verts={}]",
         draw_outcomes_rendered_, draw_outcomes_skipped_no_vs_,
         draw_outcomes_skipped_no_rast_, draw_outcomes_copy_,
         draw_outcomes_total_vertices_, draw_outcomes_max_vertices_,
@@ -2399,7 +2399,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
         rt_transfer_same_format_, rt_transfer_diff_format_,
         rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
-        rt_inpass_skipped_other_,
+        rt_inpass_skipped_other_, draw_outcomes_deint_elig_draws_,
+        draw_outcomes_deint_elig_verts_,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2524,8 +2525,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             draw_outcomes_cull_multi_lc_[7],
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
-        draw_outcomes_cull_whole_skip_verts_, draw_outcomes_deint_elig_draws_,
-        draw_outcomes_deint_elig_verts_);
+        draw_outcomes_cull_whole_skip_verts_);
     draw_outcomes_rendered_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_wholecull_draws_ = 0;
