@@ -2728,3 +2728,42 @@ EVERY call. Unit A makes it survive guest calls.
   + synthesis -> Unit A GO/NO-GO + Unit B safe scope. Per the B86x lesson (a pixel-correct fire is a
   FALSE NEGATIVE for rare races), the workflow - not a device fire - is the correctness gate. Device
   A/B (mechanism counters + pixel + fps) follows the verdict.
+
+### B86bb - RED-TEAM VERDICT: the cross-call lever is COLLAPSED. r31 NO_GO, r1 safe-but-narrow. Guards shipped.
+The 6-agent Opus red-team (722k subagent tokens, source-verified every load-bearing fact) caught a REAL
+silent-corruption bug in my "highly confident" r1 design - exactly the B86x false-negative class, but
+this time BEFORE device/default-on. Verdict: **Unit A = GO_WITH_GUARDS, Unit B (r14-r31) = NO_GO.**
+- **The bug (4 of 5 angles converged):** preserve_call kept the r1 carrier alive across call forms that
+  are NOT EABI-conforming returns. (a) guest blr/bclr (longjmp / C++ EH non-local exit) lowers to
+  CALL_INDIRECT+CALL_POSSIBLE_RETURN, NOT OPCODE_RETURN (ppc_emit_control.cc:130). (b) a direct bl to a
+  kernel IMPORT (KeSetCurrentStackPointers, sets context r1, returns normally) is OPCODE_CALL in the
+  CALLER - the carrier-resetting CALL_EXTERN lives only in the stub body, invisible to the caller's pass
+  (hir_builder.cc:944). (c) the a64 stack-sync net (default ON) reloads r1 FROM CONTEXT on a longjmp
+  resume and re-enters the caller WITHOUT reseeding the carrier (a64_backend.cc:1370) -> promoted
+  ASSIGN-from-local reads STALE r1. All rare, silent, pixel-test-invisible stack-pointer corruption.
+- **Guards shipped (f144b19be):** (1) preserve ONLY direct OPCODE_CALL/CALL_TRUE to a kDefault guest
+  function; kill on CALL_POSSIBLE_RETURN, ALL indirect, and extern/import/epilog targets. (2) auto-
+  disable preserve_call while a64_enable_host_guest_stack_synchronization is on (arch-gated). (3)
+  non-convergence fail-safe (abort promotion if the availability fixpoint doesn't converge in 64 iters).
+  (4) defensive entry-seed of the carrier. Host x64 480/157 green, a64 build clean.
+- **=> THE LEVER IS COLLAPSED, and this is the key finding:**
+  - **r14-r31 (r31=this, the BIG Burnout win): permanently NO_GO.** No callee-saved-restore guarantee
+    for non-conforming guest code (leaf/naked/asm/CRT can use r31 as scratch + return), and NO runtime
+    backstop (the sync net only checks r1). The verdict's sharpest point: *Burnout's per-iteration r31
+    reload at 0x82382798 EXISTS BECAUSE the per-element callee may legitimately mutate/restore r31 -
+    register-preservation is exactly the load it would WRONGLY defeat.* So r31 was never safely removable.
+  - **r1 (the residual): safe only with the sync net OFF (guard 2), under which it's a confounded,
+    non-default config** (sync-off changes all longjmp/EH handling). Inert by default. Small ceiling
+    (r1 is one reload; the big r31/r30 ones are NO_GO). Making it sync-ON-safe needs a cross-layer
+    backend carrier-reseed (guard 3b) - low EV for an r1-only win.
+- **NO device fire:** there is no clean fire that exercises the ACTIVE mechanism in the default config
+  (guard 2 forces sync-off; sync-off confounds attribution). "Make fires count" + the collapsed ceiling
+  => documenting + redirecting beats burning a fire on a marginal, confounded residual.
+- **REDIRECT (next CPU-track lever for Burnout - NOT register preservation):** (1) the CR-triplet
+  store-elision noted in B86z (each compare emits 3 store_context CR bits the context_barrier blocks;
+  arm64_cr_compare_branch_across_context_barrier exists, default-off after a BD crash) - revisit with
+  the SAME red-team rigor; (2) JIT inlining of the small per-element leaf callee 0x8238CD28 (kills the
+  call+barrier+reload entirely); (3) a game-patch capping TRAFFIC-ATTACK entity density (fewer loop
+  iterations - direct, title-specific). The OODA + red-team discipline is the durable win: it converted
+  a confident-but-wrong "Burnout's #1 codegen fix" into a precise, safe, bounded negative result -
+  preventing both a shipped corruption footgun and a multi-day chase of an unsafe dead end.
