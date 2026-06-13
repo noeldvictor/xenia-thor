@@ -2461,3 +2461,14 @@ the 22ms is real CPU and the lever is codegen, i.e. the CPU-track NZCV/FLAGM gap
 vsync_on_swap stays default-off in-tree (menu-safe, may pace genuinely vblank-bound titles).
 Session totals 2026-06-12/13: 17 fires (3 watchdog trips salvaged, 1 cvar-hang), zero unsafe
 launches, every conclusion content-matched + png-verified.
+
+### B86p - CPU track opened: single compare->branch NZCV fusion BUILT (device-free unit)
+With the device link down (USB drop), pivoted to the CPU/NEON track per the Thor-busy rule:
+built `arm64_single_compare_branch_fusion` (default-off) - integer COMPARE whose only consumer
+is the immediately following BRANCH_TRUE/FALSE now emits cmp + b.cond instead of
+cmp + cset + cbnz (strict 3->2 instruction win per hit; bool still materialized for
+multi-use values, matching the existing CR-triplet fusion's safety posture; hooked AFTER the
+richer triplet fusions in SelectSequence). Compilation verified in the arm64 lib; correctness
+gate = the 353-test instruction suite under qemu-aarch64 (WSL harness, run in progress) with
+the cvar on. Frequency-of-hit on real titles = the queued gap-audit; this lands the mechanism
+first since it cannot regress (strictly fewer instructions, gated, default-off).
