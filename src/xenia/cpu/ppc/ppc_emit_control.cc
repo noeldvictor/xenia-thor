@@ -44,7 +44,7 @@ namespace {
 // call boundary is removed. Read-only; never changes codegen.
 struct InlineLeafScan {
   bool straightline_leaf = false;
-  uint32_t inst_count = 0;
+  uint32_t inst_count = 0;  // body instructions, EXCLUDING the terminal blr
 };
 InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
   InlineLeafScan scan;
@@ -52,8 +52,8 @@ InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
   if (!memory) {
     return scan;
   }
-  uint32_t a = address;
-  for (uint32_t n = 0; n < kMaxInsts; ++n, a += 4) {
+  for (uint32_t n = 0; n < kMaxInsts; ++n) {
+    uint32_t a = address + n * 4;
     auto host = memory->TranslateVirtual(a);
     if (!host) {
       return scan;
@@ -63,14 +63,18 @@ InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
       // Padding / unknown end without a clean return.
       return scan;
     }
-    ++scan.inst_count;
     if (code == 0x4E800020) {
-      // blr - unconditional return. Straight-line leaf if we got here without
-      // hitting any other branch/call.
+      // blr - unconditional return. Straight-line leaf: every body instruction
+      // up to here was a non-branch, non-invalid, non-mtlr op, so it is safe to
+      // splice the body and skip this return.
       scan.straightline_leaf = true;
       return scan;
     }
     PPCOpcode opcode = LookupOpcode(code);
+    if (opcode == PPCOpcode::kInvalid) {
+      // Can't safely emit an invalid op inline.
+      return scan;
+    }
     if (opcode == PPCOpcode::bx || opcode == PPCOpcode::bcx ||
         opcode == PPCOpcode::bcctrx || opcode == PPCOpcode::bclrx) {
       // Any branch/call in the body - not a straight-line leaf (yet).
@@ -89,6 +93,7 @@ InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
         return scan;
       }
     }
+    ++scan.inst_count;  // a validated body instruction
   }
   return scan;  // exceeded the budget without a clean return
 }
@@ -153,6 +158,24 @@ int InstrEmit_branch(PPCHIRBuilder& f, const char* src, uint64_t cia,
             "INLINE-CAND caller={:08X} callee={:08X} insts={} leaf={} cond={}",
             uint32_t(f.function() ? f.function()->address() : 0), nia_value,
             scan.inst_count, scan.straightline_leaf ? 1 : 0, cond ? 1 : 0);
+      }
+      // JIT inlining Unit 1 (splice): an UNCONDITIONAL direct bl to a
+      // straight-line leaf guest function is inlined - emit the leaf body inline
+      // and skip its return, so NO OPCODE_CALL (and hence no context_barrier) is
+      // emitted and the caller's within-block context promotion can fold the
+      // per-call register/CR round-trips. LR was set to the return address above
+      // (correct if the leaf reads it; leaves that REWRITE lr were excluded as
+      // tail-calls). Conditional and self calls are excluded. The SAFE past-the-
+      // wall lever (eliminate the call, don't elide across its barrier).
+      if (cvars::arm64_jit_inline_leaf && lk && !cond && function &&
+          function->behavior() == Function::Behavior::kDefault &&
+          nia_value != f.function()->address()) {
+        InlineLeafScan scan =
+            ScanInlineLeafCandidate(f.frontend()->memory(), nia_value);
+        if (scan.straightline_leaf) {
+          f.EmitInlineLeaf(nia_value, scan.inst_count);
+          return 0;  // inlined - no call emitted
+        }
       }
       if (cond) {
         if (!expect_true) {

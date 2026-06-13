@@ -40,6 +40,11 @@ class PPCHIRBuilder : public hir::HIRBuilder {
   };
   bool Emit(GuestFunction* function, uint32_t flags);
 
+  // JIT inlining (Unit 1): splice a straight-line leaf's body_count body
+  // instructions inline (skipping its terminal blr). Pre-validated by
+  // ScanInlineLeafCandidate; never branches/recurses/partial-emits.
+  void EmitInlineLeaf(uint32_t address, uint32_t body_count);
+
   GuestFunction* function() const { return function_; }
   PPCFrontend* frontend() const { return frontend_; }
   Function* LookupFunction(uint32_t address);

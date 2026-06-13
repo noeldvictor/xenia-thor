@@ -195,6 +195,45 @@ bool PPCHIRBuilder::Emit(GuestFunction* function, uint32_t flags) {
   return Finalize();
 }
 
+void PPCHIRBuilder::EmitInlineLeaf(uint32_t address, uint32_t body_count) {
+  // Splice a straight-line leaf (validated by ScanInlineLeafCandidate) inline:
+  // emit its body_count body instructions and SKIP the terminal blr, so control
+  // falls through to the caller's continuation. No OPCODE_CALL is emitted, so no
+  // context_barrier interposes - the caller's within-block context promotion can
+  // fold the per-call register/CR round-trips. The emitted HIR matches what the
+  // leaf compiles to normally, minus its return. body_count is bounded and every
+  // instruction was pre-validated as a non-branch, non-mtlr, valid op, so this
+  // never branches, recurses, or partial-emits a call.
+  Memory* memory = frontend_->memory();
+  for (uint32_t n = 0; n < body_count; ++n) {
+    uint32_t inst_address = address + n * 4;
+    uint32_t code =
+        xe::load_and_swap<uint32_t>(memory->TranslateVirtual(inst_address));
+    auto opcode = LookupOpcode(code);
+    auto& opcode_info = GetOpcodeInfo(opcode);
+    if (opcode == PPCOpcode::kInvalid) {
+      // Pre-validation rejects invalid ops; comment defensively and continue
+      // (never bail mid-body, which would leave a half-spliced leaf).
+      Comment("INLINE-LEAF INVALID");
+      continue;
+    }
+    // Synchronize context as required (same as the normal Emit loop).
+    if (opcode_info.type == PPCOpcodeType::kSync) {
+      ContextBarrier();
+    }
+    InstrData i;
+    i.address = inst_address;
+    i.code = code;
+    i.opcode = opcode;
+    i.opcode_info = &opcode_info;
+    if (!opcode_info.emit || opcode_info.emit(*this, i)) {
+      // Unimplemented but valid op - comment and continue, exactly as the normal
+      // Emit loop does (becomes a no-op, no differently than a normal compile).
+      Comment("INLINE-LEAF UNIMPLEMENTED");
+    }
+  }
+}
+
 void PPCHIRBuilder::MaybeBreakOnInstruction(uint32_t address) {
   if (address != cvars::break_on_instruction) {
     return;
