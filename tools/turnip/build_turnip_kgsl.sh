@@ -69,7 +69,6 @@ meson setup build-android \
   -Dgallium-drivers= \
   -Dvulkan-drivers=freedreno \
   -Dfreedreno-kmds=kgsl \
-  -Db_lto=true \
   --reconfigure 2>/dev/null ||
 meson setup build-android \
   --cross-file build-crossfile-android \
@@ -79,8 +78,7 @@ meson setup build-android \
   -Dandroid-stub=true \
   -Dgallium-drivers= \
   -Dvulkan-drivers=freedreno \
-  -Dfreedreno-kmds=kgsl \
-  -Db_lto=true
+  -Dfreedreno-kmds=kgsl
 
 ninja -C build-android
 
