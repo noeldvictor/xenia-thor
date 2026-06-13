@@ -2406,3 +2406,21 @@ NEXT-SESSION DEVICE TEST: push both to the app files dir, point gpu_vulkan_drive
 each, A/B vs shipped v26.0.0_R7 (boot + pixel + the fopen probe with the XENIA-side lazy
 polls OFF - the driver fix should make even EAGER polls non-blocking, independently
 validating the patch).
+
+### B86l - event-driven vblank: BUILT + REFUTED on the Burnout race (both hook placements)
+Built vsync_on_swap (cvar default-off, allowlisted): at every guest swap, when the inter-swap
+interval exceeds the vblank period, the vsync worker fires the next vblank immediately (timer
+keeps running as the cadence fallback; menus measured EXACTLY 16-18ms = no uncapping, the
+adaptive discriminator works). Fired twice on the Burnout race, matched rendered=2110:
+- hook at IssueSwap START (turnip_swapvbl): frame 65-83ms = NEUTRAL vs lazyheavy control.
+- hook at IssueSwap END after EndSubmission (turnip_swapvbl2): frame 69-71ms = NEUTRAL.
+=> **the race's frame pacing is NOT released by vblank-interrupt arrival** (menus ARE - the
+vsync=false fire broke their 16.7 lock). The race shows frame = cpu_issuedraw + a FIXED
+~22-25ms regardless of early vblanks. The remaining-bubble mechanism is elsewhere: candidate
+= the swap-COMPLETION signaling path the guest actually blocks on (VdSwap writeback/swap
+interrupt source raised on a later schedule), or a guest kernel-timer wait. NEXT PROBE (not
+more blind variants): instrument what the guest thread blocks on between IssueSwap and the
+next frame's first draw (kernel wait object + the swap-ack write path), one fire localizes.
+- vsync_on_swap stays in-tree default-off: harmless, menu-safe, may pace other titles whose
+  loops DO wait on vblank arrival; re-evaluate per-title.
+- Fires today: 13, two watchdog trips salvaged, all data pixel-correct. Device done for real.
