@@ -2185,6 +2185,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  // Event-driven vblank (vsync_on_swap): let the vsync worker fire the
+  // pending vblank for slower-than-60fps titles now instead of making this
+  // frame round up to the next fixed 16.7ms tick (worklog B86i/B86j).
+  graphics_system_->RequestSwapVblank();
+
   // Lever 2 (vulkan_merge_draws): realize any pending concatenation run before
   // the frame's present/teardown work.
   FlushPendingMergeRun();

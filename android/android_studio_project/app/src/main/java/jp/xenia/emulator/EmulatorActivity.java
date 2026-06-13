@@ -272,6 +272,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             // ~1ms - the A/B for the vsync-quantization hypothesis (every
             // title's frame interval is an exact 16.7ms multiple, B86i).
             copyBooleanExtra(intent, launchArguments, "vsync");
+            copyBooleanExtra(intent, launchArguments, "vsync_on_swap");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_vertex_residency");
             copyBooleanExtra(intent, launchArguments, "vulkan_gate_rt_update");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_cullable_tris");

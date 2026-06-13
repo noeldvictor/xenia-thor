@@ -157,7 +157,18 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
           uint64_t current_time = Clock::QueryGuestTickCount();
           uint64_t elapsed = (current_time - last_frame_time) /
                              (Clock::guest_tick_frequency() / 1000);
-          if (elapsed >= vsync_duration) {
+          bool fire = elapsed >= vsync_duration;
+          if (!fire && cvars::vsync_on_swap &&
+              swap_vblank_requested_.load(std::memory_order_relaxed)) {
+            // Event-driven vblank: a slower-than-60fps title just issued a
+            // swap (RequestSwapVblank only arms this when the inter-swap
+            // interval exceeds the vblank period) - fire the vblank now
+            // instead of letting the guest's frame round up to the next fixed
+            // 16.7ms tick (the measured cross-game quantization, B86i/B86j).
+            fire = true;
+          }
+          if (fire) {
+            swap_vblank_requested_.store(false, std::memory_order_relaxed);
             MarkVblank();
             last_frame_time = current_time;
           }
@@ -371,6 +382,28 @@ void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
             source, interrupt_callback_data_, token_ptr, token, token + 1);
       }
     }
+  }
+}
+
+void GraphicsSystem::RequestSwapVblank() {
+  if (!cvars::vsync_on_swap) {
+    return;
+  }
+  const uint64_t now = Clock::QueryGuestTickCount();
+  const uint64_t prev =
+      last_swap_request_ticks_.exchange(now, std::memory_order_relaxed);
+  const uint64_t ticks_per_ms = Clock::guest_tick_frequency() / 1000;
+  if (!ticks_per_ms) {
+    return;
+  }
+  const uint64_t interval_ms = (now - prev) / ticks_per_ms;
+  // Only titles running SLOWER than the vblank rate get the early vblank -
+  // their frame would otherwise round up to the next fixed 16.7ms tick
+  // (worklog B86i/B86j: Burnout 4 ticks, Blue Dragon 8, Gears 2). At-or-
+  // above-60fps content (menus, light scenes) keeps the timer cadence, so
+  // pacing can never exceed the normal vblank rate.
+  if (interval_ms >= 20) {
+    swap_vblank_requested_.store(true, std::memory_order_relaxed);
   }
 }
 

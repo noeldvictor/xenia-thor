@@ -20,6 +20,16 @@ DEFINE_path(
 
 DEFINE_bool(vsync, true, "Enable VSYNC.", "GPU");
 
+DEFINE_bool(
+    vsync_on_swap, false,
+    "EXPERIMENTAL (Thor): fire the guest vblank interrupt immediately when a "
+    "slower-than-60fps title issues a swap, instead of making its frame wait "
+    "out the remainder of the fixed 16.7ms vblank tick. Measured (B86i/j): "
+    "every title's frame interval is quantized to exact vblank multiples "
+    "(Burnout 4 ticks, Blue Dragon 8, Gears 2); this removes the rounding "
+    "for sub-60fps frames while at-60fps content keeps the timer cadence.",
+    "GPU");
+
 DEFINE_uint32(
     gpu_frame_limit_fps, 60,
     "Host-side frame-rate limiter: cap the guest swap (present) rate to this "

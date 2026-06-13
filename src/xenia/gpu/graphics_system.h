@@ -100,6 +100,25 @@ class GraphicsSystem {
 
   void MarkVblank();
 
+ public:
+  // Event-driven vblank (cvar vsync_on_swap): the guest paces its frame loop
+  // on the emulated vblank interrupt, which the vsync worker fires on a fixed
+  // 60Hz timer - so every guest frame's duration rounds UP to a multiple of
+  // 16.7ms after its actual work completes (measured: Burnout 4x, Blue Dragon
+  // 8x, Gears 2x - worklog B86i/B86j; breaking the lock live-confirmed the
+  // mechanism). Called at every guest swap: when the title is running slower
+  // than the vblank rate (inter-swap interval past the threshold), the worker
+  // fires the next vblank immediately instead of letting the guest wait out
+  // the remainder of the fixed tick. Titles at 60fps or faster (menus) keep
+  // the normal timer cadence, so this cannot speed anything past 60Hz pacing.
+  void RequestSwapVblank();
+
+ protected:
+  // Guest tick count of the previous swap request + the pending early-fire
+  // flag for the vsync worker.
+  std::atomic<uint64_t> last_swap_request_ticks_{0};
+  std::atomic<bool> swap_vblank_requested_{false};
+
   Memory* memory_ = nullptr;
   cpu::Processor* processor_ = nullptr;
   kernel::KernelState* kernel_state_ = nullptr;
