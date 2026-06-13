@@ -2581,3 +2581,23 @@ real CPU breakdown of a post-fence-fix CPU-bound title:
 - This is the OODA loop CLAUDE.md prescribes: profile -> localize -> targeted fix. NEXT: build a
   JIT guest<->host perf-map to NAME the two hot guest loops, then Ghidra + targeted JIT fast-path
   or game-patch (the bigger 43% guest-code lever).
+
+### B86v - HONEST CORRECTION: the LSE win inlines libxenia-app's atomics but Burnout's hot atomic is BIONIC pthread
+Re-profiled Burnout's race on the LSE build (-march=armv8.2-a+lse -mno-outline-atomics, objdump-
+verified: libxenia-app.so outline-atomic calls 96->0, replaced by 160+ inline casal/casalb/
+ldaddal). RESULT: the profile is UNCHANGED - __aarch64_cas2_acq still 4.03%, __aarch64_swp2_rel
+still 1.76%, DSO split identical (43% guest JIT / 34% libxenia-app / 11% libc).
+- **Call graph reveals why: __aarch64_cas2_acq is called by BIONIC's pthread_mutex_lock ->
+  NonPI::MutexLockWithTimeout, i.e. it lives in libc.so (a PREBUILT system lib, can't recompile
+  with LSE), invoked by libxenia-app's global_critical_region lock sites (a08010/a06924).** My
+  LSE flag correctly inlined libxenia-app's OWN atomics (validated) but those are NOT the hot
+  ones - Burnout's hot 6% atomic is bionic's recursive_mutex internal CAS.
+- => **the LSE build change is CORRECT + validated + general host-code hygiene (helps any path
+  where libxenia-app's own atomics are hot), but its BURNOUT impact is ~0.** The "~2-4% win"
+  in the B86u commit message is REFUTED for Burnout. Kept in-tree (correct, safe, not harmful;
+  the per-instruction casal is strictly >= the outline call for our own atomics).
+- **THE REAL LEVER (now clearly localized): reduce global_critical_region lock ACQUISITIONS on
+  the guest hot path** (~6% pthread CAS + ~3.4% pthread_mutex lock/unlock + the futex_wait tail
+  = ~10% in lock machinery, all from the global recursive_mutex). The hoist-lock toggle
+  (fe0e3c4ad) attacked this; the durable fix is fewer lock sites on the per-frame guest path.
+  Plus the bigger 43% guest-JIT-code lever (name the hot loops via a perf-map -> Ghidra). NEXT.
