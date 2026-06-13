@@ -2307,3 +2307,17 @@ Fire turnip_bttflazy2 (lazy ON, raw), matched dr=902 heavy-menu flank vs turnip_
 - (Earlier bttflazy fire invalidated: an Android USB-preferences dialog stole foreground and
   paused the emu - environment artifact, not a regression; do not restart the adb server while
   a capture is live.)
+
+### B86e - Blue Dragon +30%: now PURELY GPU-bound (CPU fully hidden)
+Fire turnip_bdlazy (lazy ON, raw, default BD boot), matched heavy window guest_ms 149.9-150.9k
+rendered~1156-1168 vs control turnip_bdbeginsubmit (149.3-149.9k):
+- beginsubmit 130.3-130.7ms -> **0.63-0.82ms**; fopen wait 3-6us; inflight 2->3; gpu_frame_us
+  ~128.5ms UNCHANGED (BD saturates the GPU in-pass at 99% busy - no BTTF-style overlap win);
+  frame interval ~170ms -> **~126-132ms = 5.9 -> 7.9fps OSD (+30%)**, png pixel-correct (heavy
+  field, Shu in village). Frame ~= gpu_frame exactly: BD's CPU is now FULLY hidden behind the
+  GPU - the title is purely GPU-bound at the per-vertex binning floor; the next BD fps must come
+  from submitted-vertex reduction (game-patch LOD/cull) or a cheaper binning position shader.
+- Session totals (B86-B86e): 6 gate-safe fires + 1 environment-invalidated, all pixel-correct,
+  zero vulkan errors, device left idle <60C. Priority-title scoreboard from ONE fix:
+  Burnout +46% (12.2->~13.8 event/in-race ~higher), BTTF +78% (12.4->~22, 27.7fps gameplay raw),
+  Blue Dragon +30% (5.9->7.9).
