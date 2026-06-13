@@ -162,6 +162,18 @@ DEFINE_bool(gpu_watch_lo_render_gate, false,
             "run-flag 0x832631b8) every vblank, from boot, to localize when LO "
             "stops issuing draws. Inert for other titles.",
             "GPU");
+// Bold forward experiment (default-off): Lost Odyssey renders ~54 frames then
+// DISABLES its render thread (latch 0x832631a8 + run-flag 0x832631b8 -> 0) ->
+// black screen. This cvar, AFTER LO has disabled rendering (seen latch 1->0),
+// forces both globals back to 1 every vblank so LO's per-frame render fn keeps
+// building+presenting draws. Tests whether the frame-54 disable is THE gate (LO
+// shows content) or whether the scene is simply not produced (stays black). Only
+// engages post-disable so it does not perturb LO's init.
+DEFINE_bool(gpu_force_lo_render_latch, false,
+            "Lost Odyssey: after LO disables its render thread (~frame 54), force "
+            "the render latch 0x832631a8 + run-flag 0x832631b8 back to 1 each "
+            "vblank to keep rendering active. Experiment; inert for other titles.",
+            "GPU");
 // One-shot guest-memory dump (RE enabler: e.g. scene-diff Burnout's traffic-car
 // count to author the traffic-density patch, or inspect a stuck game's state).
 // When dump_guest_mem_at_ms > 0, at the first vblank where guest uptime >= it,

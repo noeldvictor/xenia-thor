@@ -3405,3 +3405,24 @@ no-ops (banner only, exit 0, gradle never runs) because of the space in "New pro
 the **X: subst** (space-free): BUILD SUCCESSFUL 57s, cvar lands in the .so. Verify with
 `grep -c <cvar> <obj>/arm64-v8a/libxenia-app.so`; the --ez canary confirms extras apply on-device.
 Committed: gpu_watch_lo_render_gate probe (gpu_flags.cc/.h, graphics_system.cc, EmulatorActivity.java).
+
+### B87aa - LO force-latch experiment REFUTES the render-disable hypothesis: black screen is an upstream GAME-LOGIC stall at frame 55, not the render thread. (Human "continue"/Stop-hook; ultracode.)
+Built + fired `gpu_force_lo_render_latch` (bold cvar-gated forward experiment): after LO disables its
+render thread @frame 54, force the latch 0x832631a8 + run-flag 0x832631b8 back to 1 every vblank so the
+per-frame render fn keeps running. Device result (screenshot + watch): the force ENGAGES (watch shows my
+re-enable: guest_ms 6267 latch 0->1/runflag 0->1 after LO's disable; again @10111), NO crash - **but the
+screen stays BLACK with "0.0 FPS" and framectr 0x832631b0 is STUCK at 0x37 (55), never advancing.**
+
+CONCLUSION (decisive elimination): keeping the render thread alive renders nothing because **LO's main
+loop has stopped CALLING the render path** - it stalled at frame 55. So the frame-54 SetRenderThreadActive(0)
+disable + the D3D "HSIO failed" message are both SYMPTOMS, not the cause. This PROVES (not just infers) the
+B86ss/tt "black screen = absence of render work, deep game-logic dependency" - the render machinery is fine;
+LO has nothing to feed it. Today's HSIO sub-tree map (B86zz: global 0x8331905C, D3D check 0x827BA5E8,
+ready-set 0x823cdef8, the loader-vs-D3D polarity contradiction) is accurate but was chasing a symptom; the
+force-latch experiment is what redirected to the real layer.
+
+NEXT (corrected target): find what LO's MAIN thread (the framectr 0x832631b0 incrementer) is waiting on at
+frame 55. Per B86ss/tt the black-screen threads are all in NORMAL kernel waits (no spin/deadlock), so the
+main loop is blocked on an event/async-asset/IO/content-enum completion that never arrives. Profile the
+main XThread's wait site (LR) at the stuck state (gpu_log_interrupt_counts already walks the XThread list +
+LRs) and RE what that wait is. This is the genuine "deep game-logic" gate. Committed: gpu_force_lo_render_latch.

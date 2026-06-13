@@ -506,6 +506,25 @@ void GraphicsSystem::MarkVblank() {
     }
   }
 
+  // Bold experiment: once LO has disabled rendering (latch 0x832631a8 went 1->0
+  // after being enabled), force the render latch + run-flag back to 1 each vblank
+  // so the per-frame render fn keeps building+presenting draws. Engages ONLY
+  // post-disable to avoid perturbing init. Tests if the frame-54 disable is the
+  // black-screen gate.
+  if (cvars::gpu_force_lo_render_latch && memory_) {
+    static bool s_seen_enable = false;
+    static bool s_seen_disable = false;
+    uint32_t latch = MaybeReadGuestU32(memory_, 0x832631A8);
+    if (latch != 0) s_seen_enable = true;
+    if (s_seen_enable && latch == 0) s_seen_disable = true;
+    if (s_seen_disable) {
+      auto* lp = memory_->TranslateVirtual(0x832631A8);
+      auto* rp = memory_->TranslateVirtual(0x832631B8);
+      if (lp) xe::store_and_swap<uint32_t>(lp, 1);
+      if (rp) xe::store_and_swap<uint32_t>(rp, 1);
+    }
+  }
+
   // One-shot guest-memory dump (RE enabler). Caller must target a committed
   // region (default = the image at 0x82000000, which holds .data globals).
   if (cvars::dump_guest_mem_at_ms > 0 && memory_) {

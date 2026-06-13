@@ -34,6 +34,7 @@ DECLARE_bool(gpu_trace_interrupts);
 DECLARE_int32(gpu_trace_interrupts_budget);
 DECLARE_bool(gpu_log_interrupt_counts);
 DECLARE_bool(gpu_watch_lo_render_gate);
+DECLARE_bool(gpu_force_lo_render_latch);
 DECLARE_int32(dump_guest_mem_at_ms);
 DECLARE_uint32(dump_guest_mem_base);
 DECLARE_int32(dump_guest_mem_size_mb);
