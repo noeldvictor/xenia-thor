@@ -2655,3 +2655,45 @@ interleavings; the synthesizer confirmed the structural facts.
   verification catches what one test + one analyst miss. The ultracode/workflow approach earned
   its keep here.** The REAL Burnout lever remains the 43% guest-JIT game-logic code (perf-map ->
   Ghidra -> targeted fast-path/game-patch).
+
+### B86y/z - UNBLOCKED: the 43% guest code is NAMED. Burnout's #1 hot guest function = 0x82382798 (~16%)
+Built the JIT host->guest perf-map (cpu_emit_jit_perf_map, B86y: PlaceGuestCode logs
+"JITSYM <host_exec_addr> <size> <guest_addr>" per compiled function). Re-profiled Burnout's race
+WITH it on (6865 JITSYM lines + simpleperf same run) and correlated offline
+(tools: scratch/thor-debug/correlate_jit.py):
+- **xenia's code cache maps at a FIXED address (0x2A0000000, no ASLR) - the hot host JIT
+  addresses are STABLE across runs.** So the previously-unnameable "unknown[+2a026dd3c]" 43%
+  guest cost is now fully mappable.
+- **Burnout's dominant hot GUEST functions (the real lever):**
+  - **0x82382798 = ~16% of CPU** (host 0x2A026D9B0-0x2A026DFF0, 0x640 bytes; hot loop at guest
+    offsets +0x38C/+0x420/+0x450 = a tight inner loop). THE #1 target.
+  - **0x8238CD28 = ~6%** (host 0x2A0294850-0x2A0294FF4, 0x7A4 bytes; hot at +0x680/+0x68C).
+  - Both compiled at BOOT (~2s in), so a short boot fire dumps them (no race needed).
+- NEXT: dump 0x82382798's PPC + our OptHIR (disassemble_function_filter) to see WHAT it does +
+  whether our JIT compiles it inefficiently -> pick the fix class (codegen fast-path if our
+  OptHIR is bad, OR game-patch if it's removable guest work, OR HLE). This is the CLAUDE.md OODA
+  loop reaching the "Ghidra the hot guest function" step - finally actionable on Burnout's real
+  43%-guest-JIT lever.
+
+### B86z(2) - OODA complete: Burnout's #1 hot guest func is an entity-traversal loop; the codegen lever is CROSS-CALL REGISTER PRESERVATION
+Dumped 0x82382798's PPC + our OptHIR (disassemble_function_filter). It's a small (0xE0 guest
+bytes) ENTITY-TRAVERSAL LOOP: iterates a collection [r31+0x2890, r31+0x289C) on `this` (r31),
+calling 0x8238CD28 (the #2 hot func) per element, loop condition via a subfc/subfe/rlwinm carry
+idiom. Fits TRAFFIC ATTACK (per-entity game-logic update). The cost is the loop x iterations.
+- **OUR CODEGEN INEFFICIENCY (from the OptHIR):** every iteration RELOADS r31/r1/r30 + the range
+  bounds [r31+0x2890/0x289C] from CONTEXT MEMORY (load_context), because the `context_barrier`
+  inserted at each `call` (0x8238CD28) invalidates the per-block register cache. The
+  loop-invariant `this`/range loads CANNOT be hoisted across the call. Plus each cmpl/cmpi emits
+  3 store_context CR bits that the context_barrier prevents the compare->branch fusion from
+  eliding (the arm64_cr_compare_branch_across_context_barrier cvar exists for this but is
+  DEFAULT-OFF after a Blue Dragon guest crash).
+- **=> THE FIX CLASS (now precisely motivated by real hot code): cross-call / cross-context-
+  barrier GUEST-REGISTER PRESERVATION** (keep callee-preserved guest GPRs - r31/r1/r30 - in host
+  regs across the call instead of round-tripping context memory). This is the research's "static
+  register pinning" / "callee-saved tracking" lever (CPU-track rank-3), and it's THE lever for
+  Burnout's #1 (16%) + likely cross-game (loop-with-calls is universal). A substantial backend
+  unit, but no longer speculative - justified by Burnout's actual dominant guest function.
+- DELIVERED this arc: the JIT perf-map tooling (cpu_emit_jit_perf_map, B86y) +
+  tools/thor/correlate_jit.py = a REUSABLE pipeline to name + Ghidra ANY title's hot guest code.
+  The OODA loop (profile->name->Ghidra->codegen analysis->fix class) is now fully operational on
+  guest-JIT cost - the biggest lever class for CPU-bound titles.
