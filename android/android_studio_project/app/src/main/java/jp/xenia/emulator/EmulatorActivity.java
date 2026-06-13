@@ -268,6 +268,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws_indirect");
             copyBooleanExtra(intent, launchArguments, "vulkan_hoist_request_range_lock");
             copyBooleanExtra(intent, launchArguments, "vulkan_lazy_completion_polls");
+            // Guest vblank pacing: vsync=false drops the 16ms vblank timer to
+            // ~1ms - the A/B for the vsync-quantization hypothesis (every
+            // title's frame interval is an exact 16.7ms multiple, B86i).
+            copyBooleanExtra(intent, launchArguments, "vsync");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_vertex_residency");
             copyBooleanExtra(intent, launchArguments, "vulkan_gate_rt_update");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_cullable_tris");
