@@ -3110,3 +3110,36 @@ allowlisted - no rebuild). Findings:
   whether any token word changes; OR (b) disasm 0x827B6278 (the polled word) + 0x827B6C48 (the callback's
   store target) - the definitive route. Then fire ONLY LO's requested interrupt and/or correct the callback
   token write.
+
+### B86oo - Built a device-free XEX->PPC disassembler (Ghidra-free) + DISASSEMBLED LO's actual spin + interrupt callback. LO's wait mechanism read from real guest code.
+Took route (b) and built the missing capability: a standalone XEX->PPC disassembly pipeline (committed
+`tools/xex/`, a7a9d6ab9) so guest RE no longer needs Ghidra (not installed). It replicates xex_module.cc:
+XEX2 parse + AES-128 retail-key derive + CBC image decrypt + de-block + decompress (basic AND LZX, the
+latter via a compiled libmspack `xexlzx.exe`) + capstone PPC. `remote_xex_pull.py` pulls just default.xex
+from the device ISO over `adb dd` (no 7.8GB transfer). Validated: BD entry 0x824669e0 (basic) + LO entry
+0x827ca440 (LZX) both decode to clean PPC prologues. **This unblocks ALL guest RE** (LO here, the Burnout
+traffic-density game-patch, BD engine) that the Ghidra gap was blocking.
+
+**LO's wait mechanism, read from the real disassembly (callback_data = 0x4004B680, a big GPU-sync struct):**
+- **Spin 0x827B6278** (the 100%-CPU hot fn): prologue, `r29 = *arg0` (= callback_data), runs a 4-iter
+  nop-delay, then **polls `*(callback_data+0x2abd)` bit 0x2** (`lbz; rlwinm. ,0,0x1e,0x1e; bne exit`); also
+  reads a timer (PCR+0x100 -> +0x58) and bails after a **0x1388 (5000) tick timeout**. So LO spins until a
+  device-status BIT (0x2abd:bit1) is set or it times out.
+- **Interrupt callback 0x827B6C48** (LO's SetInterruptCallback target), source==1 path: `S =
+  *(callback_data+0x2a94)`; if `S->0x10 == 0x0BADF00D` it traps (twui) - else if nonzero, `call S->0x10`;
+  then under a lock (0x830d9d5c/..d6c) does **`*S &= ~(1 << cpu)` with cpu = `*(PCR+0x10c)`** = clears the
+  current CPU's bit in a per-CPU pending mask. source==0 (vblank) path conditionally calls 0x827b4680.
+- **xenia sets the cpu number CORRECTLY**: SetActiveCpu(n) writes `pcr.current_cpu` at offset 0x10c
+  (xthread.cc:886), and DispatchInterruptCallback(1,n) calls SetActiveCpu(n) before running the callback. So
+  the per-CPU bit clear targets the right bit. That mechanism is NOT the bug.
+- **KEY GAP**: the spin waits on `+0x2abd` (a device-status byte), NOT the `+0x2a94` mask the source==1
+  callback clears. `+0x2abd` is a heavily-used status byte - **45 accessor sites, all in LO's GPU
+  device-driver layer 0x823Cxxxx/0x823Dxxxx** (lbz/stb r*,0x2abd(r31)). So bit 0x2 is set by that device
+  layer in response to a GPU event/completion, and LO's loader spins until it's set. xenia isn't producing
+  whatever GPU event makes the 0x823Cxxxx code set 0x2abd:bit1.
+
+**NEXT UNIT (focused, the tool makes it cheap):** trace which 0x823Cxxxx writer sets `0x2abd |= 0x2` and its
+GPU precondition (likely a specific PM4/event-write completion or the device-init handshake) -> make xenia
+deliver that event so LO's loader proceeds. The disassembler is committed, so this is pure analysis now.
+DEVICE NOTE: Thor was over-fired (~9 LO launches) and is boot-stalling; let it recover before the validation
+fire. No device work this segment - all device-free disasm.
