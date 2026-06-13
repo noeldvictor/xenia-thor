@@ -2424,3 +2424,14 @@ next frame's first draw (kernel wait object + the swap-ack write path), one fire
 - vsync_on_swap stays in-tree default-off: harmless, menu-safe, may pace other titles whose
   loops DO wait on vblank arrival; re-evaluate per-title.
 - Fires today: 13, two watchdog trips salvaged, all data pixel-correct. Device done for real.
+
+### B86m - gpu_interrupt_on_swap: BREAKS Burnout boot (3 swaps -> hang); bubble probe must be guest-side
+Zero-build A/B (existing allowlisted cvar, fire turnip_swapint): with the source-1-on-swap
+interrupt enabled Burnout hangs after 3 VdSwaps (GPU 0% busy, no crash) - its ISR mishandles
+the unexpected source-1 dispatch. The cvar remains what its comment says: a Blue Dragon
+bring-up hack, NOT a general swap-ack lever. THIRD cheap hypothesis refuted tonight (early
+vblank at swap start, at swap end, swap interrupt) => the Burnout fixed ~22-25ms post-CPU
+bubble is released by none of the host-side signal paths we can cheaply toggle. The probe
+must observe the GUEST: which wait object/PC the render thread blocks on between IssueSwap
+and the next frame's first draw (kernel wait tracing or the A64 speed profiler hot-PC route),
+plus where that object gets signaled host-side. Build next session; no more blind toggles.
