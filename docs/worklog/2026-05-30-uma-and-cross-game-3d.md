@@ -2448,3 +2448,16 @@ incomplete and waited for the next fixed tick = the measured neutrality. FIX SHI
 the early vblank after ++counter_ (command_processor.cc XE_SWAP handler). Validation fire
 queued (cooldown); if still neutral the remaining dependency is the rptr writeback timing -
 one more known stone, then the spin target itself (VdSwap writeback args) is the next read.
+
+### B86o - post-counter placement ALSO neutral: the vblank-arrival family is EXHAUSTED
+Fire turnip_swapvbl3 (request after ++counter_): race rendered=2110 intervals ~68-70ms =
+neutral, THIRD placement (pre-IssueSwap / post-EndSubmission / post-counter) - the early
+vblank does not release Burnout's inter-frame poll regardless of CP-state timing. The ~22ms
+is therefore either (a) real guest game-code (sim ticks) between swaps - NOT a wait at all -
+or (b) a spin whose exit condition is not derived from vblank/CP state. DISCRIMINATOR (next
+session): the A64 speed profiler hot-PC sampling on the race thread (existing harness) - a
+spin shows one dominant PC (then Ghidra it + patch/fastpath); sim work shows a spread (then
+the 22ms is real CPU and the lever is codegen, i.e. the CPU-track NZCV/FLAGM gap-audit arc).
+vsync_on_swap stays default-off in-tree (menu-safe, may pace genuinely vblank-bound titles).
+Session totals 2026-06-12/13: 17 fires (3 watchdog trips salvaged, 1 cvar-hang), zero unsafe
+launches, every conclusion content-matched + png-verified.
