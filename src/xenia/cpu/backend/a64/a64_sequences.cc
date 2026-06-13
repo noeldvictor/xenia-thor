@@ -39,6 +39,7 @@ DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
 DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
 DECLARE_bool(arm64_single_compare_branch_fusion);
+DECLARE_bool(arm64_cmp_negimm_cmn_fastpath);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
@@ -6681,8 +6682,14 @@ static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
         WReg src1_reg(0);
         A64Emitter::SetupReg(src1, src1_reg);
         uint32_t imm = static_cast<uint32_t>(IntegerValueBits(src2));
+        const int32_t simm = src2->constant.i32;
         if (imm <= 4095) {
           e.cmp(src1_reg, imm);
+        } else if (cvars::arm64_cmp_negimm_cmn_fastpath && simm < 0 &&
+                   simm >= -4095) {
+          // cmp Rn,#(neg) wraps >4095 into a mov+cmp; cmn Rn,#(-neg) sets
+          // identical NZCV in one instruction.
+          e.cmn(src1_reg, static_cast<uint32_t>(-simm));
         } else {
           e.mov(e.w0, imm);
           e.cmp(src1_reg, e.w0);
@@ -6711,8 +6718,14 @@ static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
         XReg src1_reg(0);
         A64Emitter::SetupReg(src1, src1_reg);
         uint64_t imm = IntegerValueBits(src2);
+        const int64_t simm = src2->constant.i64;
         if (imm <= 4095) {
           e.cmp(src1_reg, static_cast<uint32_t>(imm));
+        } else if (cvars::arm64_cmp_negimm_cmn_fastpath && simm < 0 &&
+                   simm >= -4095) {
+          // cmp Xn,#(neg) wraps >4095 into a mov+cmp; cmn Xn,#(-neg) sets
+          // identical NZCV in one instruction.
+          e.cmn(src1_reg, static_cast<uint32_t>(-simm));
         } else {
           e.mov(e.x0, imm);
           e.cmp(src1_reg, e.x0);

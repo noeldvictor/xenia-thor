@@ -2525,3 +2525,14 @@ compare->branch fusion + the NZCV gap. Findings (all adversarially verified):
   rmif+adc fastpath (lower value than framed, mostly confirm/measure); U3 single-compare CR0
   record-form (the path that ACTUALLY fires on real code = highest real-world impact). SELECT is
   already csel (no gap).
+
+### B86s - CPU track U1: cmn for negative compare immediates (the workflow's lowest-risk real-code win)
+Implemented the workflow's ranked U1: arm64_cmp_negimm_cmn_fastpath (default-off). A compare
+against a small negative immediate (cmpwi rX,-1 / cmpdi rX,-k for k<=4095) currently wraps the
+immediate >4095 and always takes the mov-to-scratch + cmp path; `cmn rX,#k` sets IDENTICAL NZCV
+to `cmp rX,#-k` in ONE instruction (saves the mov). Added to EmitIntegerCompareFlags' I32+I64
+constant-src2 arms, so it fires via the CR-triplet fusion - the path that ACTUALLY fires on real
+code (cmpwi-vs-small-negative is ubiquitous: loop bounds, -1 sentinels, error checks). Pure
+flag-equivalent (the cset/branch condition is unchanged); test vectors at -1, -5, -4095 boundary
+for both I32 (CompareSLT) and I64 (CompareSGT). Unlike the inert compare->branch fusion, this is
+a real-code optimization. Validation pending (x64 8 cases/22 assertions already green).

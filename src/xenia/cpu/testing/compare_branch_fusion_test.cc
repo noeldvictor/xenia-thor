@@ -22,6 +22,7 @@
 
 #if XE_ARCH_ARM64
 DECLARE_bool(arm64_single_compare_branch_fusion);
+DECLARE_bool(arm64_cmp_negimm_cmn_fastpath);
 #endif  // XE_ARCH_ARM64
 
 using namespace xe;
@@ -49,6 +50,30 @@ struct ScopedCompareBranchFusion {
  private:
 #if XE_ARCH_ARM64
   bool previous_ = false;
+#endif  // XE_ARCH_ARM64
+};
+
+// Enables both the fusion and the cmn-for-negative-immediate fast-path.
+struct ScopedCmnNegImm {
+  ScopedCmnNegImm() {
+#if XE_ARCH_ARM64
+    prev_fusion_ = cvars::arm64_single_compare_branch_fusion;
+    prev_cmn_ = cvars::arm64_cmp_negimm_cmn_fastpath;
+    cvars::arm64_single_compare_branch_fusion = true;
+    cvars::arm64_cmp_negimm_cmn_fastpath = true;
+#endif  // XE_ARCH_ARM64
+  }
+  ~ScopedCmnNegImm() {
+#if XE_ARCH_ARM64
+    cvars::arm64_single_compare_branch_fusion = prev_fusion_;
+    cvars::arm64_cmp_negimm_cmn_fastpath = prev_cmn_;
+#endif  // XE_ARCH_ARM64
+  }
+
+ private:
+#if XE_ARCH_ARM64
+  bool prev_fusion_ = false;
+  bool prev_cmn_ = false;
 #endif  // XE_ARCH_ARM64
 };
 
@@ -216,6 +241,55 @@ TEST_CASE("COMPARE_BRANCH_FUSION_EQ_BRANCH_FALSE", "[instr]") {
         ctx->r[4] = 1;
         ctx->r[5] = 2;
       },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
+}
+
+TEST_CASE("COMPARE_BRANCH_FUSION_CMN_NEGIMM_I32", "[instr]") {
+  // Compare against a small negative I32 constant -> cmn rX,#k path (the
+  // immediate wraps >4095 so the non-cmn path would mov+cmp). Both signed
+  // and the resulting branch direction must match a plain cmp.
+  ScopedCmnNegImm fusion;
+  TestFunction test([](HIRBuilder& b) {
+    // r4 < -1 (signed)?
+    auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 4), INT32_TYPE),
+                            b.LoadConstantInt32(-1));
+    auto taken = b.NewLabel();
+    b.BranchTrue(cmp, taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(0));
+    b.Return();
+    b.MarkLabel(taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(1));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) { ctx->r[4] = uint64_t(int64_t(-5)); },  // -5 < -1
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
+  test.Run(
+      [](PPCContext* ctx) { ctx->r[4] = 0; },  // 0 < -1 is false
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
+  test.Run(
+      [](PPCContext* ctx) { ctx->r[4] = uint64_t(int64_t(-1)); },  // -1 < -1 false
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
+}
+
+TEST_CASE("COMPARE_BRANCH_FUSION_CMN_NEGIMM_I64", "[instr]") {
+  // 64-bit compare against -4095 (boundary of the cmn immediate range).
+  ScopedCmnNegImm fusion;
+  TestFunction test([](HIRBuilder& b) {
+    auto cmp = b.CompareSGT(LoadGPR(b, 4), b.LoadConstantInt64(-4095));
+    auto taken = b.NewLabel();
+    b.BranchTrue(cmp, taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(0));
+    b.Return();
+    b.MarkLabel(taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(1));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) { ctx->r[4] = 0; },  // 0 > -4095
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
+  test.Run(
+      [](PPCContext* ctx) { ctx->r[4] = uint64_t(int64_t(-5000)); },  // -5000 > -4095 false
       [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
 }
 

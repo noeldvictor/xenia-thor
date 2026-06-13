@@ -500,6 +500,16 @@ DEFINE_bool(
     "is still materialized whenever any other HIR instruction reads it.",
     "a64");
 DEFINE_bool(
+    arm64_cmp_negimm_cmn_fastpath, false,
+    "Thor ARM64 speed lane: compare against a small negative immediate "
+    "(e.g. cmpwi rX,-1) with a single `cmn rX,#k` instead of materializing "
+    "the wrapped 32/64-bit immediate into a scratch register and `cmp` "
+    "(cmn rX,#k sets identical NZCV to cmp rX,#-k). Fires on the common "
+    "compare-vs-small-negative-constant pattern via the CR-triplet fusion. "
+    "Pure flag-equivalent optimization (saves one mov per hit); the cset/"
+    "branch condition is unchanged.",
+    "a64");
+DEFINE_bool(
     arm64_context_traffic_audit, false,
     "Thor ARM64 speed lane: log HIR context/local/memory traffic summaries "
     "for compiled functions. Research-only lowering audit.",
