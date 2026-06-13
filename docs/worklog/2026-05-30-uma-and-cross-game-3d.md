@@ -2868,8 +2868,33 @@ call rather than elide guest state across its barrier. cvar arm64_jit_inline_lea
   inverted faces), no crash, 1592 VdSwaps. The splice is CODEGEN-CORRECT on a complex scene. BD is
   GPU-bound (gpu_frame_us~129ms unchanged = the binning floor) so its fps is unaffected - the CPU win
   lands on CPU-bound titles, not GPU-bound BD. Host x64 cpu-tests 480/157 green throughout.
-- **STATUS: a genuinely DELIVERED, device-validated, safe codegen optimization** - the first validated
-  feature of this session (vs the debunks). Modest scope (~7% of direct calls are inlinable leaves; misses
-  Burnout's hot trampoline call 0x8238CD28 per the B86ee gate) but REAL, SAFE, and STACKING. Next:
-  quantify the CPU win on a CPU-bound title + productize as a stacking XeniaOptimizations toggle. The
-  Burnout-capturing general form (control-flow + tail-call inlining) remains a bigger future build.
+- **STATUS (at B86ff): looked like a delivered win - BD pixel-correct. But see B86gg: it CRASHES Burnout.**
+
+### B86gg - HONEST CORRECTION: the inline splice CRASHES Burnout. BD pixel-correct was a FALSE NEGATIVE.
+Did the fps measurement the goal-hook demanded - a matched Burnout A/B in the CPU-bound race scene. The
+result EXPOSED a correctness bug the BD validation missed (the B86x lesson, AGAIN, this time caught by a
+2nd-title device test before any default-on):
+- **Baseline (burnout_inline_off, inline OFF):** Burnout boots + reaches a HEAVY RACE scene (rendered=2175,
+  676k verts, gpu_frame_us=45ms), runs 180s / 6835 VdSwaps, **steady in-race ~6.7 fps** (last-30s; deeply
+  CPU-bound: ~150ms frame vs 45ms GPU => ~105ms is the guest entity-loop CPU). Clean.
+- **Inline ON (burnout_inline_on, arm64_jit_inline_leaf=true):** Burnout **CRASHED at guest_ms~4.5s in
+  EARLY BOOT** - SIGABRT, abort message "decStrong() called ... too many times" (an Android RefBase
+  over-release) in the WindowedAppActivity.paintWindow present path; only 84 draw-outcome frames vs the
+  baseline's 6833. OFF clean 180s vs ON crash at 4.5s = the splice is the trigger.
+- **=> the straight-line-leaf splice has a TITLE-SPECIFIC MISCOMPILE.** BD inlined 2577 leaves pixel-correct,
+  but a leaf pattern in Burnout's early boot is miscompiled, cascading (most likely a corrupted guest
+  present/swap path) into the host surface over-release. BD pixel-correct was a FALSE NEGATIVE for it -
+  exactly why multi-title device validation matters. The crash site (paintWindow decStrong) is not the JIT
+  itself, so the path is indirect (miscompiled guest leaf -> bad guest state -> bad present); ROOT-CAUSE
+  needs RE (symbolize the crash, find the last-inlined leaf before the abort, dump + diff it).
+- **ACTION (forward-only):** REMOVED the user-facing XeniaOptimizations toggle (a one-click crash of a
+  priority title is not a safe option) - replaced with a NOTE documenting the crash; the cvar
+  arm64_jit_inline_leaf + the splice STAY in-tree, DEFAULT-OFF, for investigation. The B86ff "delivered"
+  claim is RETRACTED: the inline splice is BUILT + BD-pixel-correct but UNSAFE (crashes Burnout) = NOT a
+  shippable win yet.
+- **HONEST LEDGER:** the measurement the hook demanded did its job - it caught a crash, not a win. No fps
+  was delivered (the bounded leaf scope would have given Burnout at most a small gain anyway, per the gate,
+  and the splice is unsafe regardless). The no-fabrication + no-corruption discipline held: I will not ship
+  a "win" that crashes a priority title. NEXT = root-cause the Burnout leaf miscompile (the real fix), then
+  re-validate on BOTH BD and Burnout before any toggle returns; the Burnout-transformative general/tail-call
+  form remains a separate bigger build.

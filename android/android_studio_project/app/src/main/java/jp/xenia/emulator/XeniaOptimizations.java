@@ -139,29 +139,12 @@ public final class XeniaOptimizations {
                 CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("hir_fold_and_not")}, null));
 
-        list.add(new Optimization(
-                "opt_jit_inline_leaf",
-                "Inline tiny leaf functions (experimental)",
-                "Splices small straight-line helper functions into their caller so "
-                        + "there's no call overhead and loop values stay in registers.",
-                "Xbox 360 code calls many tiny straight-line helper functions. Each "
-                        + "call forces the recompiler to insert a context barrier - it "
-                        + "must flush the guest registers to memory around the call "
-                        + "because the callee shares the same guest state - which blocks "
-                        + "it from keeping loop-invariant values in CPU registers across "
-                        + "the call. This inlines a small straight-line leaf helper (a "
-                        + "single basic block ending in a return, with no calls or "
-                        + "branches of its own) directly into the caller, so there is no "
-                        + "call and no barrier, and the surrounding loop's values stay in "
-                        + "registers. Safe by construction: only unconditional direct "
-                        + "calls to a normal guest leaf are inlined, and helpers that "
-                        + "rewrite the link register (tail calls) are excluded. "
-                        + "Device-validated pixel-correct on Blue Dragon (2577 leaves "
-                        + "inlined, no corruption). Helps CPU-bound titles; no effect on "
-                        + "GPU-bound scenes (Blue Dragon stays at its GPU-bound baseline). "
-                        + "Experimental - validate per game.",
-                CATEGORY_CPU, false, false,
-                new BoolCvar[]{new BoolCvar("arm64_jit_inline_leaf")}, null));
+        // NOTE: the JIT leaf-inlining lever (cvar arm64_jit_inline_leaf) is NOT
+        // offered as a user toggle - it is pixel-correct on Blue Dragon but
+        // CRASHES Burnout Revenge in early boot (SIGABRT, decStrong over-release
+        // in the present path; device-tested 2026-06-13). The straight-line-leaf
+        // splice has a title-specific miscompile to root-cause before it can be a
+        // safe option. The cvar stays in-tree (default-off) for investigation.
 
         list.add(new Optimization(
                 "opt_present_refresh_capped",
