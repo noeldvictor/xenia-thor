@@ -144,6 +144,12 @@ DEFINE_bool(gpu_trace_interrupts, false,
 DEFINE_int32(gpu_trace_interrupts_budget, 256,
              "Maximum GPU interrupt trace lines; negative means unlimited.",
              "GPU");
+DEFINE_bool(gpu_log_interrupt_counts, false,
+            "Non-fatal interrupt-activity probe: log cumulative source-0/source-1 "
+            "(PM4_INTERRUPT/CP-driven) interrupt-dispatch counts ~once/sec from "
+            "the vblank, without the per-event latency of gpu_trace_interrupts "
+            "(which is fatal to Lost Odyssey's interrupt-timing-sensitive init).",
+            "GPU");
 DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "Experimental Blue Dragon Android bring-up hack: increment the "
             "graphics wait token when a GPU interrupt is dispatched.",

@@ -48,6 +48,14 @@ std::atomic<int32_t> gpu_mark_vblank_trace_count{0};
 std::atomic<int32_t> gpu_unknown_register_read_log_count{0};
 std::atomic<int32_t> gpu_unknown_register_write_log_count{0};
 
+// Lightweight, non-fatal interrupt-dispatch counters (no per-event logging, so
+// they don't perturb interrupt-timing-sensitive titles like Lost Odyssey, which
+// the verbose gpu_trace_interrupts path kills). Surfaced once/sec from MarkVblank
+// when gpu_log_interrupt_counts is set. src1 == PM4_INTERRUPT/CP-driven dispatches.
+std::atomic<uint32_t> g_int_dispatch_src0{0};
+std::atomic<uint32_t> g_int_dispatch_src1{0};
+std::atomic<uint32_t> g_int_vblank_log_count{0};
+
 bool ShouldLogUnknownGpuRegister(std::atomic<int32_t>& counter) {
   int32_t budget = cvars::gpu_unknown_register_log_budget;
   if (budget < 0) {
@@ -318,6 +326,12 @@ void GraphicsSystem::DispatchInterruptCallback(uint32_t source, uint32_t cpu) {
     return;
   }
 
+  if (source == 0) {
+    g_int_dispatch_src0.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    g_int_dispatch_src1.fetch_add(1, std::memory_order_relaxed);
+  }
+
   auto thread = kernel::XThread::GetCurrentThread();
   assert_not_null(thread);
 
@@ -424,6 +438,19 @@ void GraphicsSystem::MarkVblank() {
   //     something wrong and the CP will block waiting for code that
   //     needs to be run in the interrupt.
   DispatchInterruptCallback(0, 2);
+
+  // Non-fatal interrupt-activity probe: log cumulative dispatch counts ~once/sec
+  // (every 64 vblanks). Reveals whether CP-driven (source-1/PM4_INTERRUPT)
+  // interrupts keep firing during a guest stall, without the per-event latency
+  // of gpu_trace_interrupts (which is fatal to Lost Odyssey's init).
+  if (cvars::gpu_log_interrupt_counts &&
+      (g_int_vblank_log_count.fetch_add(1) % 64) == 0) {
+    XELOGI(
+        "INT counts: src0={} src1={} vblank_counter={:08X} guest_ms={}",
+        g_int_dispatch_src0.load(std::memory_order_relaxed),
+        g_int_dispatch_src1.load(std::memory_order_relaxed),
+        command_processor_->counter(), Clock::QueryGuestUptimeMillis());
+  }
 }
 
 void GraphicsSystem::ClearCaches() {
