@@ -2321,3 +2321,19 @@ rendered~1156-1168 vs control turnip_bdbeginsubmit (149.3-149.9k):
   zero vulkan errors, device left idle <60C. Priority-title scoreboard from ONE fix:
   Burnout +46% (12.2->~13.8 event/in-race ~higher), BTTF +78% (12.4->~22, 27.7fps gameplay raw),
   Blue Dragon +30% (5.9->7.9).
+
+### B86f - round 2 (bounded reclaim + paint-thread polls): NEUTRAL on Burnout, structurally safer
+Fire turnip_lazyr2 (round-2 build, watchdog-salvaged at 64.6C, race data intact): matched
+rendered=2110: frame ~65-85ms (round-1 ~66-82), gpu_frame 45.5-46.5 unchanged, issuedraw
+44-55ms unchanged, pixel-correct, inflight now 4. The refresher-fence-poll hypothesis for the
+Burnout residual is REFUTED at the current pipeline depth: at frame 75ms vs GPU 46ms the
+previous frame's refresher fence is already signaled ~29ms before the next swap - the poll only
+blocks when frame ~= gpu_frame (FULL pipelining), i.e. exactly BD's measured state, where round
+2 should still matter (untested - device at thermal gate, 7 fires today). Round 2 kept: never
+polling in-flight fences is strictly safer and bounds the fence pools.
+- **Burnout raw status: now genuinely CPU-bound on real work** (issuedraw 44-55ms ~= GPU 46ms;
+  raw fires lack the launcher toggle stack that cut cpu_real 47->35ms in B85) + ~20-30ms
+  inter-frame (guest swap pacing/kernel) - the ~21.5fps target should be reachable IN-APP with
+  the stack + lazy now. NEXT measured units: in-app Burnout check via launcher (stack+lazy
+  compose), BD round-2 re-fire (frame==gpu_frame case), Gears/LO lazy checks,
+  gpu_edram_passes_dont_care_safe fire (built ~12% GPU lever, dc_safe counters in place).
