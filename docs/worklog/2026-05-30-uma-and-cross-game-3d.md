@@ -3243,3 +3243,29 @@ Pushed the post-HSIO-fix black screen as far as the available tools allow:
   thread that should signal it. The HSIO win shows the pattern: a single wrong stub return blocks the whole
   bring-up. HEADLINE THIS SEGMENT: the months-long LO loading-stall is ROOT-FIXED + validated (B86rr);
   LO now advances to a *new* black-screen gate (a separate blocked-wait), characterized here for continuation.
+
+### B86tt - LO black-screen gate = "no render work queued" (NOT a spin/block/stub); LO runs its multicore game loop normally past device-init. Deep game-logic gate.
+Built a guest-thread census (committed 3f8af0947: once/sec from MarkVblank, walks the XThread list, logs
+name+running+LR) + simpleperf'd the active threads, all over the new WiFi ADB. Findings:
+- **Census at the black screen (ready=1, src1=0 - HSIO fix holds):** all ~20 guest threads are in NORMAL
+  kernel waits - NtWaitForSingleObjectEx worker pools (LR 0x822C5358), KeDelayExecutionThread frame-pacing
+  (0x827CACFC), Ke/NtWaitForMultipleObjects (0x82CC4FB4/0x82CC3B28/0x82BE3154), a timed KeWaitForSingleObject
+  loop (0x827C139C). Two threads (tids 3,5) run guest code (lr=0). => NOT a deadlock.
+- **simpleperf of the active threads:** hottest guest fn = **0x82CC3C50** (~8%), a per-CPU RENDEZVOUS/barrier
+  (sets this cpu's flag via `stbx ,r13+0x10c(cpu)`, packs+compares per-cpu flags 0x134-0x148). It has `beqlr`
+  early-exits and is only ~8% (not a tight spin) => it COMPLETES each iteration = LO's NORMAL multicore loop
+  sync, not the gate.
+- **=> The black screen is the ABSENCE of render work, not a spin/block/stub.** LO runs its game loop fine
+  past device-init (multicore sync ticking, threads pacing) but never reaches the phase that issues draws
+  (0 draws, no disc I/O). This is a deep game-logic dependency (a missing event/asset/trigger the game logic
+  waits on before rendering), NOT a single wrong kernel stub like the HSIO win. Much harder to pin: you
+  can't profile the absence of work - need to find WHY LO's logic doesn't advance to rendering (candidate
+  angles: an intro-movie/XMA path that should play+complete, a content/save enumeration that returns wrong,
+  a VdCallGraphicsNotificationRoutines/graphics-notify callback LO registered that xenia isn't invoking, or
+  a guest event that should be set by a worker). NEXT: trace what tids 3/5's loop is gated on at a HIGHER
+  level (the caller of 0x82CC3C50 / what decides whether to render this frame), or compare the import/notify
+  callbacks LO registers vs what xenia delivers.
+- HEADLINE (unchanged): the months-long LO LOADING stall is ROOT-FIXED + validated (B86rr). LO now boots
+  through device-init to a post-init black screen; the remaining gate is deep game-logic, not the loader.
+- Tooling banked this session: tools/xex XEX->PPC disassembler, gpu_log_interrupt_counts probe (+devstate
+  +thread census), WiFi ADB (drop-resilient: reconnect-before-each-cmd; wifi_sleep_policy 2 + stayon).
