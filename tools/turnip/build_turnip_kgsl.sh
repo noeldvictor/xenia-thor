@@ -69,6 +69,12 @@ meson setup build-android \
   -Dgallium-drivers= \
   -Dvulkan-drivers=freedreno \
   -Dfreedreno-kmds=kgsl \
+  -Degl=disabled \
+  -Dgles1=disabled \
+  -Dgles2=disabled \
+  -Dopengl=false \
+  -Dglx=disabled \
+  -Dshared-glapi=disabled \
   --reconfigure 2>/dev/null ||
 meson setup build-android \
   --cross-file build-crossfile-android \
@@ -78,7 +84,13 @@ meson setup build-android \
   -Dandroid-stub=true \
   -Dgallium-drivers= \
   -Dvulkan-drivers=freedreno \
-  -Dfreedreno-kmds=kgsl
+  -Dfreedreno-kmds=kgsl \
+  -Degl=disabled \
+  -Dgles1=disabled \
+  -Dgles2=disabled \
+  -Dopengl=false \
+  -Dglx=disabled \
+  -Dshared-glapi=disabled
 
 ninja -C build-android
 
