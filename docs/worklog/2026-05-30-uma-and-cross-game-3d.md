@@ -2392,3 +2392,17 @@ vsync=false is NOT shippable raw (heat + vblank-counter game-speed risk).
 **THE BUILD (next session): event-driven vblank - MarkVblank on swap completion (with a 16.7ms
 ceiling/floor for vblank-counter sanity), unquantizing heavy frames (Burnout 65->~50 = ~19-21fps
 predicted) WITHOUT uncapping light scenes.** 11 fires today total; device rested.
+
+### B86k - PATCHED TURNIP DRIVER BUILT (device-free): the driver-side fix is ready to test
+Stood up the full Mesa Android cross-build in WSL (Ubuntu 26.04 + NDK r27c + meson/ninja;
+turnkey script tools/turnip/build_turnip_kgsl.sh + the patch
+tools/turnip/kgsl-nonblocking-fence-status.patch, iterated through 3 meson config fixes:
+no LTO, EGL/GL disabled, NDK warning suppressions). OUTPUT (scratch/turnip-builds/):
+- vulkan.ad07xx.PATCHED.so - Mesa 26.2.0-devel + the KGSL non-blocking fence-status fix
+  (timeout-0 STATE_TS polls -> READTIMESTAMP retired-timestamp query, 914 targets, 17MB).
+- vulkan.ad07xx.CONTROL.so - identical Mesa, unpatched (isolates the patch from the
+  26.0_R7 -> 26.2-devel version bump in the A/B; main may have its own a740 regressions).
+NEXT-SESSION DEVICE TEST: push both to the app files dir, point gpu_vulkan_driver_path at
+each, A/B vs shipped v26.0.0_R7 (boot + pixel + the fopen probe with the XENIA-side lazy
+polls OFF - the driver fix should make even EAGER polls non-blocking, independently
+validating the patch).
