@@ -59,18 +59,11 @@ class VulkanGPUCompletionTimeline : public GPUCompletionTimeline {
       other.submission_successful_.reset();
     }
 
-    FenceAcquisition& operator==(FenceAcquisition&& other) {
-      if (this == &other) {
-        return *this;
-      }
-      completion_timeline_ = other.completion_timeline_;
-      other.completion_timeline_ = nullptr;
-      fence_ = other.fence_;
-      other.fence_ = VK_NULL_HANDLE;
-      submission_successful_ = other.submission_successful_;
-      other.submission_successful_.reset();
-      return *this;
-    }
+    // Move assignment is intentionally unavailable: assigning over a live
+    // acquisition would have to release the held fence first (dtor logic);
+    // nothing needs it. (This was previously a bogus `operator==` declaration
+    // that was never callable - made the deletion explicit.)
+    FenceAcquisition& operator=(FenceAcquisition&&) = delete;
 
     ~FenceAcquisition() {
       if (completion_timeline_ && fence_) {
