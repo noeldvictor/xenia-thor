@@ -2472,3 +2472,29 @@ richer triplet fusions in SelectSequence). Compilation verified in the arm64 lib
 gate = the 353-test instruction suite under qemu-aarch64 (WSL harness, run in progress) with
 the cvar on. Frequency-of-hit on real titles = the queued gap-audit; this lands the mechanism
 first since it cannot regress (strictly fewer instructions, gated, default-off).
+
+### B86q - CPU track: compare->branch fusion VALIDATED (x64 + a64/qemu) + cpu-test harness fix
+The arm64_single_compare_branch_fusion (B86p, cmp+b.cond for a single-use compare feeding the
+next branch) is now correctness-validated on BOTH backends, and a load-bearing test-harness gap
+was found and fixed along the way:
+- **Harness root cause (backend-INDEPENDENT, found via x64 control):** the new branchy test
+  failed identically on x64 AND a64 with the fusion #if'd out on x64 -> NOT the fusion. Cause:
+  TestModule (raw-HIR test path, test_module.cc) never called HIRBuilder::Finalize(), which
+  PPCHIRBuilder::Emit() calls to materialize implicit fall-through edges. Without it a
+  BranchTrue's not-taken fall-through block has no incoming edge and
+  ControlFlowSimplificationPass deletes it as unreachable -> the not-taken case wrongly reaches
+  the taken block (r3 always = taken value). FIX: test_module.cc calls builder_->Finalize()
+  before the pass pipeline. Validated: full x64 suite 470 assertions / 153 cases ALL PASS (no
+  regression from Finalize); the harness now supports multi-block/branchy test functions for
+  the first time (memory: no prior *_test.cc used branches).
+- **Fusion validated:** new compare_branch_fusion_test.cc (4 cases x SLT/UGT/EQ-branch-false/
+  multi-use, with signed-vs-unsigned and HI/GT and LT/LO edge vectors): PASS on x64 (12 assert)
+  AND on a64 under qemu with the fusion ENABLED in-process (ScopedCompareBranchFusion) -> the
+  cmp + (cset-if-multi-use) + b.cond codegen is bit-correct including the single-use cset-skip
+  and the BRANCH_FALSE condition inversion.
+- Also fixed the lean-a64 link: guarded eh_*_test.cc + walk_guest_stack_test.cc behind
+  !XE_ARCH_ARM64 (they reference xenia-kernel xboxkrnl EH helpers absent from the lean qemu
+  tree; x64 still compiles+passes them). Test files are never compiled into the Android app.
+- Opus multi-agent workflow ran in parallel for the NZCV gap audit + adversarial fusion review
+  (the harness-failure agent independently found+applied the Finalize fix, then I cross-validated
+  it). Full a64 suite regression check + the gap-audit synthesis pending.

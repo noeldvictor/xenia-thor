@@ -7,6 +7,12 @@
  ******************************************************************************
  */
 
+// The lean ARM64 (qemu) cpu-test build links xenia-cpu but NOT
+// xenia-kernel; this test exercises the xboxkrnl guest stack walker that
+// lives there, so it is host-(x64-)only.
+#include "xenia/base/platform.h"
+#if !XE_ARCH_ARM64
+
 #include "xenia/cpu/testing/util.h"
 
 #include <cstdint>
@@ -134,3 +140,5 @@ TEST_CASE("WalkGuestStack honors max_frames", "[guest-eh]") {
                             kStackMax, /*max_frames=*/4, &frames);
   REQUIRE(n == 4);
 }
+
+#endif  // !XE_ARCH_ARM64

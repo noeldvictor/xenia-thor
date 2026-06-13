@@ -7,6 +7,12 @@
  ******************************************************************************
  */
 
+// The lean ARM64 (qemu) cpu-test build links xenia-cpu but NOT
+// xenia-kernel; these tests exercise xboxkrnl guest-EH helpers that
+// live there, so they are host-(x64-)only.
+#include "xenia/base/platform.h"
+#if !XE_ARCH_ARM64
+
 #include "xenia/cpu/testing/util.h"
 
 #include <cstdint>
@@ -151,3 +157,5 @@ TEST_CASE("EH descriptor decode fails closed on unreadable memory",
   GuestFuncInfo fi2{};
   REQUIRE_FALSE(DecodeGuestFuncInfo(read2, 0x82010000u, &fi2));
 }
+
+#endif  // !XE_ARCH_ARM64

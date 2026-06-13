@@ -7,6 +7,12 @@
  ******************************************************************************
  */
 
+// The lean ARM64 (qemu) cpu-test build links xenia-cpu but NOT
+// xenia-kernel; these tests exercise xboxkrnl guest-EH helpers that
+// live there, so they are host-(x64-)only.
+#include "xenia/base/platform.h"
+#if !XE_ARCH_ARM64
+
 #include "xenia/cpu/testing/util.h"
 
 #include <cstdint>
@@ -205,3 +211,5 @@ TEST_CASE("DecodeGuestPmd and DecodeGuestCatchableType field offsets",
   REQUIRE(pmd.pdisp == 7);
   REQUIRE(pmd.vdisp == 9);
 }
+
+#endif  // !XE_ARCH_ARM64

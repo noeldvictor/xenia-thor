@@ -91,6 +91,14 @@ Symbol::Status TestModule::DeclareFunction(uint32_t address,
       return Symbol::Status::kFailed;
     }
 
+    // Materialize implicit fall-through edges as explicit tail branches before
+    // running the pass pipeline. PPCHIRBuilder::Emit() does this via
+    // Finalize(); the raw-HIR test path must too, otherwise multi-block test
+    // functions (e.g. a BranchTrue that falls through to the not-taken block)
+    // leave the fall-through block with no incoming edge, and
+    // ControlFlowSimplificationPass deletes it as unreachable.
+    builder_->Finalize();
+
     // Run optimization passes.
     compiler_->Compile(builder_.get());
 
