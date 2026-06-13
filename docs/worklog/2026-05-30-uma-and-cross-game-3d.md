@@ -2266,3 +2266,17 @@ await=10550 up=10553 comp=10551]`, wait_us ~= fence_us ~= gpu_frame_us (5.2k) on
   frame-open await's bounded free). Steady state per frame: ONE vkWaitForFences on a 3-frames-old
   (signaled) fence, zero blocking polls. Prediction: Burnout heavy fopen wait 46.9ms -> ~us, frame
   82 -> ~max(35.1 CPU, 46.5 GPU) = ~21.5fps (+75%); BTTF beginsubmit ~36.8ms similarly freed.
+
+### B86b - lazy-polls DEVICE-VALIDATED on the Burnout light scene (matched A/B)
+Fire turnip_lazypolls vs same-day control turnip_awaitidx, content-matched (rendered=134
+SAVE/LOAD menu + live 3D background, guest_ms 181.9-182.0k, png pixel-identical, 59.4fps OSD
+both - scene is vsync-capped so the win shows in the CPU buckets, not fps):
+- fopen wait_us 4970-5437 -> **3-4us** (fence_us 5000 -> 0); cpu_beginsubmit 5.1-5.5ms -> 53-61us;
+  cpu_issuedraw 7.1-7.7ms -> **2.1-2.3ms (-70%)** (the submit-time poll's block is gone too);
+  gpu_frame_us UNCHANGED (4.7-5.2ms both) = no GPU-side cost; **inflight 2 -> 3 = the
+  kMaxFramesInFlight pipeline genuinely fills for the first time on Turnip.**
+- Confirms the B86 mechanism end-to-end on device. Remaining: heavy-scene fps validation
+  (TRAFFIC ATTACK rendered~2110, prediction ~12.2 -> ~21.5fps), then default-ON +
+  XeniaOptimizations toggle + BTTF/BD cross-game. Today's fires land on the SAVE/LOAD menu at
+  guest_ms ~181k (save state differs from 06-10's ~151k TRAFFIC ATTACK reach) - heavy fire
+  needs extra A presses to enter an event.
