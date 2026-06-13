@@ -2697,3 +2697,34 @@ idiom. Fits TRAFFIC ATTACK (per-entity game-logic update). The cost is the loop 
   tools/thor/correlate_jit.py = a REUSABLE pipeline to name + Ghidra ANY title's hot guest code.
   The OODA loop (profile->name->Ghidra->codegen analysis->fix class) is now fully operational on
   guest-JIT cost - the biggest lever class for CPU-bound titles.
+
+### B86aa - BUILT Unit A: cross-call r1 (stack-pointer) preservation, the safest-first slice of the lever
+Executed the lever (not deferred it). Found the backend ALREADY has the scaffold: ContextPromotionPass
+has an r1/r11 live-in carrier transform (PromoteGprLiveInR1) + an audit lane that MEASURES the exact
+opportunity for the non-closed callee-saved set r31/r30/r29/r28/r27 (arm64_guest_state_nonclosed_cache_
+audit, flush_call = hits lost to call barriers) but changes no codegen. The carrier transform RESET on
+EVERY call. Unit A makes it survive guest calls.
+- **NEW cvar arm64_context_promotion_gpr_livein_r1_preserve_call (default OFF):** guest-to-guest
+  CALL/CALL_TRUE/CALL_INDIRECT(_TRUE) no longer kill the r1 carrier. CALL_EXTERN (host/HLE, can mutate
+  any guest reg), volatile ops, RETURN/TRAP/DEBUG_BREAK STILL reset. PPC EABI: r1 non-volatile + a
+  returning callee MUST restore sp, so r1 is valid after any normally-returning call. Threaded through
+  IsContextStateKillingInstr (now splits guest-call from CALL_EXTERN) + all 3 dataflow sites so the
+  availability analysis matches the rewrite. Allowlisted in EmulatorActivity. Commit cfa344377.
+- **r1 IS the #1 reloaded slot in the hot loop:** PPCContext.r[] is at 0x20, so load_context +40 = r1,
+  +272 = r30, +280 = r31. The 0x82382798 RawHIR dump shows +40 (r1) reloaded MORE than +280/+272 -
+  Unit A targets the single most-reloaded register. (Unit B = r30/r31 next.)
+- **Layering verified safe (CALL is FLAG_BRANCH|FLAG_VOLATILE):** (1) the normal PromoteBlock flushes
+  on the volatile call, so after-call r1 loads stay LOAD_CONTEXT for my transform to optimize; (2)
+  RemoveDeadStoresBlock treats CALL as a VOLATILE|BRANCH barrier, so the pre-call STORE_CONTEXT r1 the
+  callee reads is NEVER removed - the "context current before a call" invariant holds; (3) my explicit
+  CALL check intercepts before the volatile fallthrough. The transform reuses the SAME local-as-phi
+  machinery that already crosses context_barriers (preserve_barrier, default true) - the only new
+  assumption is the ABI one.
+- **Validation:** host x64 cpu-tests 480 assertions / 157 cases GREEN (default path unchanged). Android
+  APK built clean (a64). Mechanism proof available device-side from the livein_r1 AUDIT counters at
+  COMPILE time (loads_replaced up, skipped_after_call down) - no need to reach the traffic scene.
+- **Safety gate = an Opus adversarial red-team workflow (running):** 5 angles (ABI conformance,
+  longjmp/EH unwind, indirect/vtable calls, backend regalloc-across-call, the transform's own dataflow)
+  + synthesis -> Unit A GO/NO-GO + Unit B safe scope. Per the B86x lesson (a pixel-correct fire is a
+  FALSE NEGATIVE for rare races), the workflow - not a device fire - is the correctness gate. Device
+  A/B (mechanism counters + pixel + fps) follows the verdict.
