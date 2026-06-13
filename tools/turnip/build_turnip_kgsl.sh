@@ -43,10 +43,10 @@ TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 cat > build-crossfile-android <<EOF
 [binaries]
 ar = '$TOOLCHAIN/bin/llvm-ar'
-c = ['ccache', '$TOOLCHAIN/bin/aarch64-linux-android$SDKVER-clang']
-cpp = ['ccache', '$TOOLCHAIN/bin/aarch64-linux-android$SDKVER-clang++', '-static-libstdc++']
-c_ld = 'lld'
-cpp_ld = 'lld'
+c = ['ccache', '$TOOLCHAIN/bin/aarch64-linux-android$SDKVER-clang', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
+cpp = ['ccache', '$TOOLCHAIN/bin/aarch64-linux-android$SDKVER-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++', '-Wno-error=c++11-narrowing', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
+c_ld = '$TOOLCHAIN/bin/ld.lld'
+cpp_ld = '$TOOLCHAIN/bin/ld.lld'
 strip = '$TOOLCHAIN/bin/llvm-strip'
 pkg-config = ['env', 'PKG_CONFIG_LIBDIR=NDKDIR/pkgconfig', '/usr/bin/pkg-config']
 
