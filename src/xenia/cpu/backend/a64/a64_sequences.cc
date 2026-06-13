@@ -38,6 +38,7 @@ DECLARE_uint32(arm64_immediate_lowering_audit_function);
 DECLARE_uint32(arm64_immediate_lowering_audit_budget);
 DECLARE_bool(arm64_cr_compare_branch_across_context_barrier);
 DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
+DECLARE_bool(arm64_single_compare_branch_fusion);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
@@ -6878,6 +6879,87 @@ static bool TrySelectUnsignedZeroCompareStoreContext(A64Emitter* e,
 }  // namespace
 
 // ============================================================================
+
+// Single COMPARE -> BRANCH fusion: when an integer compare's result feeds the
+// immediately following BRANCH_TRUE/BRANCH_FALSE, branch on the host NZCV
+// flags directly (cmp + b.cond) instead of materializing a bool and testing
+// it (cmp + cset + cbnz). The cset is kept whenever any other HIR instruction
+// also reads the compare value. The richer CR-triplet fusions above get first
+// chance in SelectSequence; this catches the remaining simple cases (the
+// first slice of NZCV-resident flag handling).
+static bool TrySelectSingleCompareBranch(A64Emitter* e,
+                                         const hir::Instr* instr,
+                                         const hir::Instr** new_tail) {
+  if (!cvars::arm64_single_compare_branch_fusion) {
+    return false;
+  }
+  if (!instr || !instr->dest || instr->dest->type != hir::INT8_TYPE) {
+    return false;
+  }
+  Cond true_cond;
+  switch (instr->GetOpcodeNum()) {
+    case hir::OPCODE_COMPARE_EQ:
+      true_cond = Xbyak_aarch64::EQ;
+      break;
+    case hir::OPCODE_COMPARE_NE:
+      true_cond = Xbyak_aarch64::NE;
+      break;
+    case hir::OPCODE_COMPARE_SLT:
+      true_cond = Xbyak_aarch64::LT;
+      break;
+    case hir::OPCODE_COMPARE_SLE:
+      true_cond = Xbyak_aarch64::LE;
+      break;
+    case hir::OPCODE_COMPARE_SGT:
+      true_cond = Xbyak_aarch64::GT;
+      break;
+    case hir::OPCODE_COMPARE_SGE:
+      true_cond = Xbyak_aarch64::GE;
+      break;
+    case hir::OPCODE_COMPARE_ULT:
+      true_cond = Xbyak_aarch64::LO;
+      break;
+    case hir::OPCODE_COMPARE_ULE:
+      true_cond = Xbyak_aarch64::LS;
+      break;
+    case hir::OPCODE_COMPARE_UGT:
+      true_cond = Xbyak_aarch64::HI;
+      break;
+    case hir::OPCODE_COMPARE_UGE:
+      true_cond = Xbyak_aarch64::HS;
+      break;
+    default:
+      return false;
+  }
+  const hir::Instr* branch = instr->next;
+  if (!branch) {
+    return false;
+  }
+  switch (branch->GetOpcodeNum()) {
+    case hir::OPCODE_BRANCH_TRUE:
+    case hir::OPCODE_BRANCH_FALSE:
+      break;
+    default:
+      return false;
+  }
+  if (branch->src1.value != instr->dest) {
+    return false;
+  }
+  // Rejects non-integer / mismatched operand types and emits the cmp.
+  if (!EmitIntegerCompareFlags(*e, instr)) {
+    return false;
+  }
+  if (!ValueHasOnlyUse(instr->dest, branch)) {
+    // Other HIR instructions also read the bool - keep it materialized.
+    WReg dest_reg(0);
+    A64Emitter::SetupReg(instr->dest, dest_reg);
+    e->cset(dest_reg, true_cond);
+  }
+  EmitBranchOnCompareValue(e, branch, true_cond);
+  *new_tail = branch->next;
+  return true;
+}
+
 // SelectSequence — dispatch an instruction to its sequence handler
 // ============================================================================
 bool SelectSequence(A64Emitter* e, const hir::Instr* i,
@@ -6889,6 +6971,9 @@ bool SelectSequence(A64Emitter* e, const hir::Instr* i,
     return true;
   }
   if (TrySelectUnsignedGtEqCompareStores(e, i, new_tail)) {
+    return true;
+  }
+  if (TrySelectSingleCompareBranch(e, i, new_tail)) {
     return true;
   }
 

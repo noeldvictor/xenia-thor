@@ -491,6 +491,15 @@ DEFINE_uint32(
     "arm64_cr_store_elide_for_fused_branch. 0 enables all functions.",
     "a64");
 DEFINE_bool(
+    arm64_single_compare_branch_fusion, false,
+    "Thor ARM64 speed lane: when an integer COMPARE's only consumer is the "
+    "immediately following BRANCH_TRUE/BRANCH_FALSE, emit cmp + b.cond "
+    "directly instead of cmp + cset + cbnz (drops the materialized bool - "
+    "the first slice of NZCV-resident flag handling beyond the CR-triplet "
+    "fusions). Strictly fewer instructions on every hit; the compare value "
+    "is still materialized whenever any other HIR instruction reads it.",
+    "a64");
+DEFINE_bool(
     arm64_context_traffic_audit, false,
     "Thor ARM64 speed lane: log HIR context/local/memory traffic summaries "
     "for compiled functions. Research-only lowering audit.",
