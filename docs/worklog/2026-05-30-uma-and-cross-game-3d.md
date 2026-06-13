@@ -2558,3 +2558,26 @@ guest's Main XThread runs game logic (physics/AI/state) through our JIT and is C
 - **NEXT (CPU track, now clearly the Burnout lever):** profile the hot guest PCs WITHIN Main XThread
   (A64 speed profiler / simpleperf --app on the guest thread) -> Ghidra the dominant function ->
   targeted codegen fast-path or game-patch. This is the OODA loop CLAUDE.md prescribes.
+
+### B86u - simpleperf cracks Burnout's CPU breakdown + a clean LSE-atomics build win
+Profiled the live Burnout race (simpleperf --app, 10s, 26966 samples, fence fix on) - the FIRST
+real CPU breakdown of a post-fence-fix CPU-bound title:
+- **By DSO: 43.4% "unknown" (anonymous JIT pages = GUEST game-logic code), 34.0% libxenia-app.so
+  (host emulator), 11.5% libc, 7.7% kernel, 2.2% vdso, GPU driver (turnip) only 0.57%.** =>
+  Burnout is overwhelmingly CPU-bound on JIT'd guest code + host overhead; GPU is a rounding error.
+- **Top host symbols: 4.06% __aarch64_cas2_acq + 1.86% __aarch64_swp2_rel = ~6% in OUTLINE
+  ATOMICS**, plus ~3.4% pthread_mutex lock/unlock (global_critical_region recursive_mutex), 2.2%
+  __kernel_clock_gettime, 0.9% memcpy. Two hot guest-loop clusters (~14% at 0x2a026ddXX, ~5% at
+  0x2a0294eXX) = the dominant game-logic functions (need a JIT perf-map to name - future tooling).
+- **WIN: the ~6% outline-atomics is pure dispatch overhead.** The NDK default -moutline-atomics
+  routes every host C/C++ atomic through __aarch64_casN_*/__aarch64_swpN_* helpers that do a
+  RUNTIME LSE-detection + indirect call PER ATOMIC. The Thor's 8 Gen 2 HAS LSE (the `atomics`
+  HWCAP). FIX: build the arm64 host with `-march=armv8.2-a+lse` so the compiler INLINES the atomic
+  to a single casal/swpal - no helper call. Added to premake5.lua workspace Android-ARM64 filter
+  (regen via `premake5 --os=android androidndk` - the --os=android is REQUIRED or it generates
+  Windows-platform .mk; the .mk are gitignored/gradle-regenerated). Scoped arm64-only (x86 rejects
+  -march=armv8). Safe: the Thor is the only device this APK runs on. Expected ~2-4% CPU win on
+  CPU-bound titles (Burnout/Gears/LO) - and since Burnout is now CPU-bound (B86t), that's fps.
+- This is the OODA loop CLAUDE.md prescribes: profile -> localize -> targeted fix. NEXT: build a
+  JIT guest<->host perf-map to NAME the two hot guest loops, then Ghidra + targeted JIT fast-path
+  or game-patch (the bigger 43% guest-code lever).

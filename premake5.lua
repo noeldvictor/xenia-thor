@@ -191,6 +191,15 @@ filter("platforms:Android-*")
     "log",
   })
 
+-- The AYN Thor (the ONE target) is a Snapdragon 8 Gen 2 = ARMv9.0-A with LSE
+-- atomics (the `atomics` HWCAP). The NDK default (-moutline-atomics) routes
+-- every C/C++ atomic through the __aarch64_casN_*/__aarch64_swpN_* outline
+-- helpers, which do a runtime LSE-detection + indirect call PER ATOMIC.
+-- Profiling Burnout's CPU-bound race (B86u) showed ~6% of CPU in
+-- __aarch64_cas2_acq + __aarch64_swp2_rel from that dispatch alone. Targeting
+-- armv8.2-a+lse makes the compiler INLINE the LSE atomic (a single
+-- casal/swpal) with no helper call - safe because the Thor is the only device
+-- this APK runs on. ARM64-only (the x86_64 ABI rejects -march=armv8).
 filter("platforms:Windows")
   system("windows")
   toolset("msc")
@@ -253,6 +262,18 @@ workspace("xenia")
     platforms({"Android-ARM64", "Android-x86_64"})
     filter("platforms:Android-ARM64")
       architecture("ARM64")
+      -- The AYN Thor (the ONE target) is a Snapdragon 8 Gen 2 = ARMv9.0-A with
+      -- LSE atomics. The NDK default (-moutline-atomics) routes every C/C++
+      -- atomic through the __aarch64_casN_*/__aarch64_swpN_* outline helpers
+      -- (runtime LSE-detection + indirect call PER ATOMIC). Burnout's
+      -- CPU-bound race profiled ~6% in __aarch64_cas2_acq/__aarch64_swp2_rel
+      -- from that dispatch (B86u). Targeting armv8.2-a+lse inlines the atomic
+      -- to a single casal/swpal - safe because the Thor is the only device
+      -- this APK runs on.
+      -- -march alone leaves the NDK's default -moutline-atomics active (atomics
+      -- still routed through __aarch64_*_acq_rel helpers); -mno-outline-atomics
+      -- makes the compiler emit the LSE casal/swpal/ldaddal inline.
+      buildoptions({"-march=armv8.2-a+lse", "-mno-outline-atomics"})
     filter("platforms:Android-x86_64")
       architecture("x86_64")
     filter({})
