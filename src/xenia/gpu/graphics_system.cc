@@ -445,11 +445,22 @@ void GraphicsSystem::MarkVblank() {
   // of gpu_trace_interrupts (which is fatal to Lost Odyssey's init).
   if (cvars::gpu_log_interrupt_counts &&
       (g_int_vblank_log_count.fetch_add(1) % 64) == 0) {
+    // Also sample the guest device-state word at interrupt_callback_data_+0x2ABC.
+    // byte 0x2ABC is the high 8 bits: 0x2abc:bit7 (device-pending gate that LO's
+    // loader waits to clear) = val & 0x80000000; 0x2abd:bit1 (device-ready, what
+    // the loader spin waits to be set) = val & 0x00020000. Reveals whether the
+    // handshake ever advances during the stall.
+    uint32_t devstate = interrupt_callback_data_
+                            ? MaybeReadGuestU32(memory_,
+                                                interrupt_callback_data_ + 0x2ABC)
+                            : 0;
     XELOGI(
-        "INT counts: src0={} src1={} vblank_counter={:08X} guest_ms={}",
+        "INT counts: src0={} src1={} vblank_counter={:08X} guest_ms={} "
+        "devstate_2abc={:08X} pending(2abc:b7)={} ready(2abd:b1)={}",
         g_int_dispatch_src0.load(std::memory_order_relaxed),
         g_int_dispatch_src1.load(std::memory_order_relaxed),
-        command_processor_->counter(), Clock::QueryGuestUptimeMillis());
+        command_processor_->counter(), Clock::QueryGuestUptimeMillis(), devstate,
+        (devstate & 0x80000000u) ? 1 : 0, (devstate & 0x00020000u) ? 1 : 0);
   }
 }
 

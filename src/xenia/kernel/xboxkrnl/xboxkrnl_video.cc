@@ -36,6 +36,18 @@ UPDATE_from_uint32(kernel_display_gamma_type, 2020, 12, 31, 13, 1);
 DEFINE_double(kernel_display_gamma_power, 2.22222233,
               "Display gamma to use with kernel_display_gamma_type 3.",
               "Kernel");
+// Lost Odyssey gates its graphics device-ready on VdIsHSIOTrainingSucceeded()
+// returning 0 (its loader sets the ready flag only when ret==0; xenia's stub
+// returns 1, so LO spins forever on its loading screen, re-polling in an
+// accelerating PM4_INTERRUPT loop - device-validated via the gpu_log_interrupt
+// _counts probe). HSIO is CPU<->GPU high-speed-link training that does not exist
+// in emulation; LO treats 0 as "trained/OK". Default-off preserves the legacy
+// return=1 for every other title; enable for LO (GameProfile). See worklog B86rr.
+DEFINE_bool(vd_hsio_training_succeeded_returns_zero, false,
+            "Make VdIsHSIOTrainingSucceeded() return 0 instead of 1 (Lost "
+            "Odyssey requires 0 to mark its graphics device ready and leave its "
+            "loading screen). Default-off = legacy behavior for all other games.",
+            "Kernel");
 DEFINE_string(
     kernel_display_resolution, "720p",
     "Guest video mode reported by VdQueryVideoMode. Supported values: 480p "
@@ -440,8 +452,9 @@ DECLARE_XBOXKRNL_EXPORT2(VdCallGraphicsNotificationRoutines, kVideo,
                          kImplemented, kSketchy);
 
 dword_result_t VdIsHSIOTrainingSucceeded_entry() {
-  // BOOL return value
-  return 1;
+  // BOOL return value. Lost Odyssey's device-ready handshake proceeds only when
+  // this returns 0 (cvar-gated; default-off keeps the legacy 1 for other titles).
+  return cvars::vd_hsio_training_succeeded_returns_zero ? 0 : 1;
 }
 DECLARE_XBOXKRNL_EXPORT1(VdIsHSIOTrainingSucceeded, kVideo, kStub);
 
