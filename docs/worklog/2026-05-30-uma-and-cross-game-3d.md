@@ -3269,3 +3269,23 @@ name+running+LR) + simpleperf'd the active threads, all over the new WiFi ADB. F
   through device-init to a post-init black screen; the remaining gate is deep game-logic, not the loader.
 - Tooling banked this session: tools/xex XEX->PPC disassembler, gpu_log_interrupt_counts probe (+devstate
   +thread census), WiFi ADB (drop-resilient: reconnect-before-each-cmd; wifi_sleep_policy 2 + stayon).
+
+### B86uu - Burnout traffic-density patch RE STARTED (roadmap #1 fps lever, unblocked by tools/xex). XEX extracted+decompressed; patch-class determined.
+Acted on the deferred Burnout game-patch instead of deferring it again, using the new device-free toolchain:
+- **Extracted Burnout Revenge default.xex** (`/storage/2664-21DE/Roms/xbox360/Burnout Revenge (USA).iso`)
+  via `remote_xex_pull.py` over WiFi ADB (7.0MiB, no multi-GB transfer), then DECOMPRESSED it with
+  `xex_disasm.py` (comp=1 BASIC + AES, like BD; entry 0x825b0500, MZ valid, image 0xda0000). tools/xex now
+  validated on a THIRD title (BD basic, LO LZX, Burnout basic).
+- **Localized the traffic system** by string scan of the decompressed image: TrafficCar, TrafficPhysics,
+  TrafficVehicle, TrafficBodies, TrafficHorns, TrafficLights, and crucially **TrafficParam /
+  TrafficParamPositions** (the traffic config block).
+- **Patch-class determined (key finding):** TrafficParam @ guest 0x820452EB sits in a STRING TABLE of
+  named identifiers ("MergeLane\0TrafficParam\0...", with ":mp" suffixes) and has **0 direct lis/addi code
+  refs** -> Burnout uses a NAME/HASH-based property system; the traffic density is **name-loaded DATA (track/
+  property blobs), not a code constant**. So a .patch.toml (which patches guest CODE memory) CANNOT just flip
+  a density config value. The viable patch = find the traffic SPAWN function (reads the param, spawns N cars)
+  and patch it to CAP the count (NOP/clamp). NEXT: locate the spawn loop (search for code that iterates
+  creating TrafficCar/TrafficVehicle entities, or that reads the TrafficParam property by name) -> patch the
+  cap -> the roadmap's per-draw/IssueDraw win (Burnout race is CPU-bound on ~2175 per-draw IssueDraw; fewer
+  cars = fewer draws = less IssueDraw + less GPU). Multi-session RE from here, but the XEX is extracted and
+  the system is localized so the next session starts at the spawn-loop hunt, not extraction.
