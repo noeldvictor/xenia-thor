@@ -2435,3 +2435,16 @@ bubble is released by none of the host-side signal paths we can cheaply toggle. 
 must observe the GUEST: which wait object/PC the render thread blocks on between IssueSwap
 and the next frame's first draw (kernel wait tracing or the A64 speed profiler hot-PC route),
 plus where that object gets signaled host-side. Build next session; no more blind toggles.
+
+### B86n - WAIT PROBE LOCALIZED IT: Burnout POLLS swap state; the ISR raced ++counter_
+Fire turnip_waitprobe2 (log_high_frequency_kernel_calls + log_level 3, 78MB salvage,
+watchdog-tripped pre-race but menu windows suffice): between two consecutive VdSwaps the swap
+thread (F8000028) makes **ZERO blocking kernel calls** - it executes ~257 KeGetCurrentProcessType
+calls + XamInput polls = a POLL LOOP on its swap-completion state (other threads wait normally:
+KeDelay/KeWaitForSingleObject on other tids). => Burnout's pacing = poll, serviced by the
+guest's vblank ISR, which derives swap-done from CP progress. BOTH B86l placements fired the
+early vblank BEFORE ExecutePacketType3_XE_SWAP's ++counter_ -> the early ISR saw the swap
+incomplete and waited for the next fixed tick = the measured neutrality. FIX SHIPPED: request
+the early vblank after ++counter_ (command_processor.cc XE_SWAP handler). Validation fire
+queued (cooldown); if still neutral the remaining dependency is the rptr writeback timing -
+one more known stone, then the spin target itself (VdSwap writeback args) is the next read.
