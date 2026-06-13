@@ -2924,3 +2924,22 @@ inline's promotion win).
   sold as a perf win). NEXT to actually deliver: (a) hot-call TARGETING (only inline calls inside loops /
   profiled-hot), (b) general/tail-call inlining to capture 0x8238CD28. Both build on this validated splice.
   Honest bottom line this turn: a working+safe codegen mechanism + a real crash fix, but zero fps moved.
+
+### B86ii - WHY inline was always flat on Burnout's race: it's IssueDraw-bound, not entity-loop-bound
+Re-analyzed the clean Burnout race A/B CPU breakdown (a genuine redirect): in the heavy race
+(rendered=2175, 676k verts, 6.7fps/150ms frame): **gpu_frame_us=45ms but cpu_issuedraw_us=93ms** (real
+work ~47ms + ~46ms fence/beginsubmit wait), cpu_setup=48ms, cpu_bind=10ms, cpu_rt=10ms, cpu_other=66ms.
+**Burnout's race is bound on the per-DRAW IssueDraw CPU cost (~93ms / 2175 draws ~= 21us/draw on the
+GPU-command thread), NOT the guest entity loop** - matching [[bttf-per-draw-slope]] ("Burnout = CPU
+IssueDraw 94ms vs 46ms GPU"). So the JIT inline (which optimizes GUEST game-logic codegen) was targeting
+the WRONG thread/bottleneck for this scene the whole time - explaining the flat result independent of the
+leaf-scope/cold-call issues. The IssueDraw lever is largely EXPLORED: gate_rt_update SHIPPED (+34% Burnout
+in-race, default-on, already in this 6.7 baseline), constants-arena + push-descriptors SHIPPED,
+draw_concat DEAD on Burnout (per-mesh strips). The residual per-draw cost (~21us/draw x 2175) + the
+fence-serialization bubble are the remaining race levers, both hard/explored. **MISSION-LEVEL HONEST
+STATE:** Burnout's earlier wins (fence fix, gate_rt_update, prime-core router) already took it ~12->15fps;
+its race is now bound on a ~21us/draw IssueDraw floor + a guest-CPU mix where the easy levers are shipped.
+The remaining fps needs either deep per-draw IssueDraw reduction, NEON-vectorizing the guest entity math,
+general/tail-call inlining of the hot path, or a traffic-density game-patch - each a multi-day effort, none
+a quick win. No fps was fabricated; the analysis redirects future effort to the ACTUAL bottleneck
+(IssueDraw / per-draw cost) rather than guest-JIT codegen for this scene.
