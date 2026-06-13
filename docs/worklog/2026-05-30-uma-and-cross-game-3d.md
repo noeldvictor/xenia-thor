@@ -2943,3 +2943,27 @@ The remaining fps needs either deep per-draw IssueDraw reduction, NEON-vectorizi
 general/tail-call inlining of the hot path, or a traffic-density game-patch - each a multi-day effort, none
 a quick win. No fps was fabricated; the analysis redirects future effort to the ACTUAL bottleneck
 (IssueDraw / per-draw cost) rather than guest-JIT codegen for this scene.
+
+### B86jj - whole-draw cull on Burnout = NET LOSS (-38%), conclusively tested. Burnout-race levers EXHAUSTED.
+Tested the last concrete GPU-side draw-count lever (gpu_cull_compaction + gpu_whole_draw_only +
+fast_replay + fast_only) on Burnout's race - it targets the ACTUAL bottleneck (the 93ms IssueDraw cost
+driven by draw count), GPU-side, and the cull is conservative (only culls provably-offscreen draws, never
+visible). DEVICE RESULT: ~38% SLOWER (last-30s 4.18fps vs 6.70 baseline). host_draws=3542 ~= rendered=3536
+= culled ZERO draws (Burnout already CPU-culls its scene, so there are no fully-offscreen draws to drop),
+while cpu_issuedraw ballooned 93ms -> 328ms (the per-vertex extent computation for ~780k verts added ~235ms
+of pure overhead to the already-bottlenecked GPU-command thread). Net loss, no crash, conservative (no
+over-cull). DEAD on Burnout.
+- **BURNOUT-RACE LEVER LEDGER (all empirically tested/closed this arc, do NOT re-test):** JIT inline = FLAT
+  (wrong thread: race is IssueDraw-bound not guest-logic-bound); cross-call register/CR preservation =
+  UNSAFE (cross-barrier wall); whole-draw cull = -38% NET LOSS (no offscreen draws + CPU overhead);
+  draw_concat = DEAD (per-mesh strips); dont_care_safe = INERT; frames-in-flight = NOT the constraint
+  (cap 3, using 2). The IssueDraw per-draw levers that DO help are already SHIPPED (gate_rt_update +34%,
+  constants arena, push descriptors, prime-core router, fence fix) - those took Burnout ~12->15fps.
+- **DEFINITIVE HONEST STATE:** Burnout's race is at a structural per-draw IssueDraw floor with every
+  quick/medium software lever now empirically exhausted. The ONLY remaining paths to a Burnout-race fps
+  win are MULTI-DAY: (a) a traffic-density game-patch (Ghidra-RE Burnout's XEX to cut draw count at the
+  source - the one lever targeting the real bottleneck, needs GUI RE I can't do headlessly), (b) deep
+  command-processor IssueDraw rearchitecture, (c) static recomp (CPU-only, rejected). None is a per-turn
+  deliverable. No fps was fabricated across this entire arc; the value delivered is correctness (the
+  inline crash fix, the cross-barrier wall verdict) + a fully-mapped, empirically-closed lever space that
+  stops future sessions re-burning effort on dead Burnout-race levers.
