@@ -188,6 +188,26 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_hoist_request_range_lock")}, null));
 
         list.add(new Optimization(
+                "opt_lazy_completion_polls",
+                "Non-blocking GPU completion checks",
+                "Stops fence-status checks from secretly waiting for the GPU.",
+                "On the Turnip driver over Qualcomm's KGSL kernel, simply ASKING "
+                        + "whether GPU work has finished (a fence status check) blocks "
+                        + "until it actually finishes: the driver issues a zero-timeout "
+                        + "kernel wait, and the kernel defines a zero timeout as "
+                        + "wait-forever. The emulator checked eagerly at every frame "
+                        + "start and every submission, so the CPU silently waited out a "
+                        + "full GPU frame, every frame - CPU and GPU ran one-after-the-"
+                        + "other instead of in parallel. This skips every check a frame "
+                        + "doesn't strictly need: frames-in-flight rises 2 to 3 and the "
+                        + "CPU and GPU truly overlap. Device-validated on Burnout "
+                        + "Revenge: the frame-open wait fell 5.4 ms to 3 us and "
+                        + "per-frame CPU draw cost fell 70%, pixel-correct, GPU time "
+                        + "unchanged.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("vulkan_lazy_completion_polls")}, null));
+
+        list.add(new Optimization(
                 "opt_gate_rt_update",
                 "Skip redundant render-target updates",
                 "Reuses the render-target setup across draws that don't change it.",

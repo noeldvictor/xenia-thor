@@ -2280,3 +2280,17 @@ both - scene is vsync-capped so the win shows in the CPU buckets, not fps):
   XeniaOptimizations toggle + BTTF/BD cross-game. Today's fires land on the SAVE/LOAD menu at
   guest_ms ~181k (save state differs from 06-10's ~151k TRAFFIC ATTACK reach) - heavy fire
   needs extra A presses to enter an event.
+
+### B86c - lazy-polls HEAVY-SCENE VALIDATED: the B85 lever is REAL and CAPTURED
+Fire turnip_lazyheavy (lazy ON, raw/no launcher stack, extended A-press seq) reached the gold
+TRAFFIC ATTACK scene (rendered=2110, guest_ms ~100.6-101.1k):
+- **fopen wait_us 46,245-46,836 (06-10 control turnip_burnoutsubpre) -> 4us**; fence_us=0;
+  inflight 2 -> 3; gpu_frame_us 45.5-46.8ms UNCHANGED vs control = pure CPU-side win.
+- Frame interval (guest_ms deltas at rendered=2110): control ~102-114ms -> **~66-82ms (+~46%
+  fps raw)**; end-frame png = TRAFFIC ATTACK event screen pixel-correct, OSD 13.8 FPS (B85-era
+  raw ~8.6). Remaining ~20ms over max(CPU,GPU) = guest swap pacing/present outside IssueDraw -
+  a separate (smaller) lever.
+- Toggle SHIPPED default-ON (opt_lazy_completion_polls in XeniaOptimizations); engine cvar
+  stays default-off so raw captures A/B cleanly. NEXT: BTTF/BD cross-game checks (BTTF
+  beginsubmit ~36.8ms = same bug, expect ~30fps -> ~40+), presenter-side bare eager polls
+  (vulkan_presenter.cc:841,2330) = round 2, Mesa kgsl status-query bug is upstream-able.
