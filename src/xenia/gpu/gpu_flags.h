@@ -17,7 +17,6 @@ DECLARE_bool(trace_gpu_stream);
 DECLARE_path(dump_shaders);
 
 DECLARE_bool(vsync);
-DECLARE_bool(gpu_skip_redundant_watch_rearm);
 DECLARE_bool(vsync_on_swap);
 DECLARE_uint32(gpu_frame_limit_fps);
 DECLARE_bool(gpu_adpf_performance_hints);

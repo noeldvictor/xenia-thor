@@ -2624,3 +2624,34 @@ all-already-valid => all-already-watched => the re-arm is a pure no-op.
   this): the cost is dominated by the 43% guest JIT code + genuine write-watch, not removable
   host overhead. The REAL Burnout lever is the 43% guest game-logic JIT (perf-map -> name the
   hot loops 0x2a026ddXX ~14% -> Ghidra -> targeted fast-path/game-patch).**
+
+### B86x - REVERTED: the watch-rearm-skip is UNSAFE (adversarial workflow caught a missed-write race my analysis + a single device test missed)
+The 12-agent Opus design workflow (4 understand -> 3 candidate designs -> 2 skeptics each ->
+synthesis) RIGOROUSLY REFUTED the gpu_skip_redundant_watch_rearm optimization (B86w) and the
+two other candidates. Both independent skeptics broke all three with concrete missed-write
+interleavings; the synthesizer confirmed the structural facts.
+- **THE IRREDUCIBLE INVARIANT:** deciding "does this page need the watch?" requires a
+  LOCK-CONSISTENT snapshot of TWO separately-written fields - notify_on_invalidation (in
+  system_page_flags_) AND page_table_[].current_protect (a NON-ATOMIC 4-bit bitfield in a packed
+  PageEntry union, RMW'd as a 64-bit word by BaseHeap::Protect/Alloc). The valid bit is NOT a
+  sound proxy: a watched page's NORMAL steady state is current_protect==kReadWrite + notify_bit
+  ==1 + host page RO, and the bit-set/host-Protect are coupled but DEFERRED (batched at loop end,
+  memory.cc:1813/1822), so even a lock-held observer sees intermediate states. Any decision made
+  without the global mutex can splice a stale value of one field with a fresh value of the other
+  -> a page left writable-but-unwatched -> guest write doesn't fault -> GPU never invalidated ->
+  stale geometry/texture corruption. **My B86w device test was PIXEL-CORRECT but that was a
+  FALSE-NEGATIVE for the rare race - exactly why adversarial static verification was the right
+  call.** REVERTED the skip + the cvar + allowlist (fix-forward, no git revert).
+- **THE SAFE PATH (workflow recommendation):** the per-call lock is irreducible; do NOT touch
+  memory.cc/shared_memory.cc to win this. (1) vulkan_hoist_request_range_lock is DEFAULT-ON and
+  already makes the inner EnableAccessCallbacks Acquire() a cheap RECURSIVE re-lock of an
+  already-held mutex (no fresh contended acquire) - the biggest shipped safe mitigation. (2) The
+  only correct call-count cut is reducing the per-draw RequestRange residency rebuild
+  (vulkan_command_processor.cc:4967 TODO) via a residency cache whose eviction is wired to the
+  ACTUAL invalidation signal under the SAME mutex - a real engineering unit, device-validated
+  feeder-by-feeder on a mid-frame-buffer-reusing title (Burnout), NOT a quick fix.
+- **META-LESSON (reinforced): for correctness-critical concurrency, a single pixel-correct device
+  fire is NOT proof of safety (rare races don't manifest in 10s); adversarial multi-agent static
+  verification catches what one test + one analyst miss. The ultracode/workflow approach earned
+  its keep here.** The REAL Burnout lever remains the 43% guest-JIT game-logic code (perf-map ->
+  Ghidra -> targeted fast-path/game-patch).

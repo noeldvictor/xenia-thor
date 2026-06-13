@@ -273,9 +273,6 @@ public class EmulatorActivity extends WindowedAppActivity {
             // title's frame interval is an exact 16.7ms multiple, B86i).
             copyBooleanExtra(intent, launchArguments, "vsync");
             copyBooleanExtra(intent, launchArguments, "vsync_on_swap");
-            // Skip the redundant write-watch re-arm for already-valid ranges
-            // (B86v: ~6-10% of Burnout's CPU-bound race is this global-lock path).
-            copyBooleanExtra(intent, launchArguments, "gpu_skip_redundant_watch_rearm");
             // Guest-wait localization probe (B86m): log blocking/high-frequency
             // kernel exports to identify what the render thread waits on
             // between swaps (the fixed ~22ms Burnout bubble).

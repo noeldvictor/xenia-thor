@@ -17,7 +17,6 @@
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
-#include "xenia/gpu/gpu_flags.h"
 #include "xenia/memory.h"
 
 namespace xe {
@@ -287,17 +286,17 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
   uint32_t valid_block_first = valid_page_first >> 6;
   uint32_t valid_block_last = valid_page_last >> 6;
 
-  // Whether any page in the range transitioned invalid->valid. Only such pages
-  // need the access-callback (write-watch) re-arm below - a page that was
-  // already valid is already watched (if guest-writable) or needs no watch
-  // (read-only/no-access pages fault naturally). The valid bit and the watch
-  // are clears together: a guest write fault OR a guest make-writable both run
-  // PhysicalHeap::Protect/EnableAccessCallbacks -> TriggerCallbacks which
-  // clears the valid bit, so a valid page is never writable-but-unwatched.
-  // Therefore, when nothing was newly validated the EnablePhysicalMemory-
-  // AccessCallbacks call (which re-takes the global lock and loops the range)
-  // is a pure no-op and can be skipped (gpu_skip_redundant_watch_rearm, B86v).
-  bool any_newly_valid = false;
+  // NOTE (B86w/x): a "skip the re-arm when the range was already valid"
+  // optimization was tried here and REVERTED - a 12-agent adversarial design
+  // workflow proved it unsafe. The valid bit is NOT a sound proxy for "already
+  // watched": deciding whether a page needs the watch requires a
+  // lock-consistent snapshot of TWO separately-written fields
+  // (notify_on_invalidation AND page_table_[].current_protect, a non-atomic
+  // bitfield in a packed union), which only the global mutex provides. A
+  // single device test was pixel-correct but that was a false-negative for the
+  // rare missed-write race. The lock here is irreducible; the safe mitigation
+  // is vulkan_hoist_request_range_lock (default-on, makes this inner Acquire a
+  // cheap recursive re-lock) + cutting the per-draw RequestRange call COUNT.
   {
     auto global_lock = global_critical_region_.Acquire();
 
@@ -310,9 +309,6 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
         valid_bits &= (uint64_t(1) << ((valid_page_last & 63) + 1)) - 1;
       }
       SystemPageFlagsBlock& block = system_page_flags_[i];
-      if ((block.valid & valid_bits) != valid_bits) {
-        any_newly_valid = true;
-      }
       block.valid |= valid_bits;
       if (written_by_gpu) {
         block.valid_and_gpu_written |= valid_bits;
@@ -322,8 +318,7 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
     }
   }
 
-  if (memory_invalidation_callback_handle_ &&
-      (any_newly_valid || !cvars::gpu_skip_redundant_watch_rearm)) {
+  if (memory_invalidation_callback_handle_) {
     memory().EnablePhysicalMemoryAccessCallbacks(
         valid_page_first << page_size_log2_,
         (valid_page_last - valid_page_first + 1) << page_size_log2_, true,
