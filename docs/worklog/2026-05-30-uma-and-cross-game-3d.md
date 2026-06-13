@@ -3289,3 +3289,16 @@ Acted on the deferred Burnout game-patch instead of deferring it again, using th
   cap -> the roadmap's per-draw/IssueDraw win (Burnout race is CPU-bound on ~2175 per-draw IssueDraw; fewer
   cars = fewer draws = less IssueDraw + less GPU). Multi-session RE from here, but the XEX is extracted and
   the system is localized so the next session starts at the spawn-loop hunt, not extraction.
+
+### B86vv - Burnout spawn-loop hunt: BLOCKED on a hash-based property system (strings don't localize the code).
+Drove the spawn-loop hunt (not deferred). The 3 traffic identifiers - TrafficCar @0x82018E3B, TrafficVehicle
+@0x8203E8EB, TrafficParam @0x820452EB - each have **0 lis/addi code refs AND 0 data-pointer refs** in the
+14MB image. They're packed null-terminated strings in a string POOL referenced by a PRECOMPUTED HASH (the
+RenderWare/Criterion attribute system), not by address. => a string-based hunt for the traffic spawn loop is
+a dead end. NEXT approaches (multi-session): (a) find the engine's string-hash fn, hash "TrafficParam", grep
+the code for that 32-bit constant -> the property lookup -> the density read -> the spawn loop; OR (b)
+runtime memory diff of a high-traffic vs low-traffic scene (needs a guest-memory dump path xenia lacks); OR
+(c) find the generic entity-create fn and a caller that loops on a count. The cheap win (cap the spawn loop)
+is sound but the RE to FIND the loop is the real cost - the roadmap's "needs Ghidra + find the traffic logic"
+was right; the hash indirection makes it harder than a constant patch. XEX + image are extracted (scratch/
+burnout/, gitignored) so the next session starts at the hash/entity-create hunt.
