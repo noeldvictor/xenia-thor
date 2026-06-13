@@ -24,8 +24,12 @@
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/threading.h"
+#include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/thread_state.h"
 #include "xenia/gpu/command_processor.h"
 #include "xenia/gpu/gpu_flags.h"
+#include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/ui/graphics_provider.h"
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
@@ -461,6 +465,21 @@ void GraphicsSystem::MarkVblank() {
         g_int_dispatch_src1.load(std::memory_order_relaxed),
         command_processor_->counter(), Clock::QueryGuestUptimeMillis(), devstate,
         (devstate & 0x80000000u) ? 1 : 0, (devstate & 0x00020000u) ? 1 : 0);
+    // Guest-thread census: name + running + LR (a blocked thread's LR is the
+    // guest return address of its wait site, which tools/xex can disassemble to
+    // find what LO is parked on at the post-device-ready black screen).
+    if (kernel_state_) {
+      auto threads =
+          kernel_state_->object_table()->GetObjectsByType<kernel::XThread>();
+      for (auto& t : threads) {
+        if (!t) continue;
+        auto* ts = t->thread_state();
+        uint32_t lr =
+            (ts && ts->context()) ? uint32_t(ts->context()->lr) : 0u;
+        XELOGI("  XTHR '{}' tid={:08X} running={} lr={:08X}", t->name(),
+               t->thread_id(), t->is_running() ? 1 : 0, lr);
+      }
+    }
   }
 }
 
