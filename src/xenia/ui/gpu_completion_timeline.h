@@ -92,6 +92,13 @@ class GPUCompletionTimeline {
     return AwaitSubmissionAndUpdateCompleted(GetUpcomingSubmission() - 1);
   }
 
+  // True when completion-status queries must be avoided beyond what an await
+  // strictly requires (Turnip-over-KGSL status queries on in-flight fences
+  // block until GPU completion). Callers doing optional freshness polls
+  // (reuse/reclaim checks) should use GetCompletedSubmissionFromLastUpdate
+  // instead of UpdateAndGetCompletedSubmission when this is set.
+  bool IsLazyCompletionPolls() const { return lazy_completion_polls_; }
+
  protected:
   explicit GPUCompletionTimeline() = default;
 
@@ -101,8 +108,6 @@ class GPUCompletionTimeline {
   void SetLazyCompletionPolls(const bool lazy) {
     lazy_completion_polls_ = lazy;
   }
-
-  bool IsLazyCompletionPolls() const { return lazy_completion_polls_; }
 
   // Call only after a successful submission, so that it can be awaited later.
   void IncrementUpcomingSubmission() { ++upcoming_submission_; }

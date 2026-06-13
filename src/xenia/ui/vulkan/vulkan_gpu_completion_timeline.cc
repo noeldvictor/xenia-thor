@@ -75,11 +75,34 @@ std::optional<VulkanGPUCompletionTimeline::FenceAcquisition>
 VulkanGPUCompletionTimeline::AcquireFenceForSubmission(
     VkResult* const result_out_opt) {
   // Reuse fences if completion was not awaited or updated explicitly. In lazy
-  // mode, only poll when there's no free fence to reuse - on Turnip/KGSL this
-  // poll lands on the still-running previous submission's fence and blocks
-  // until it retires (the B85 ~10.6 ms cpu_gap at submission time).
-  if (!IsLazyCompletionPolls() || free_fences_.empty()) {
+  // mode, never run the drain-all poll - on Turnip/KGSL it lands on the
+  // still-running newest submission's fence and blocks until it retires (the
+  // B85 ~10.6 ms cpu_gap at submission time, and the per-swap block in
+  // RefreshGuestOutputImpl whose refresher timeline has no steady-state
+  // awaits). Instead, reclaim only fences that are at least
+  // kLazyReclaimMinPending submissions deep - those are signaled in any
+  // non-pathological pipeline, and the reclaim stops at the first unsignaled
+  // fence instead of draining into the in-flight tail. The fence pool size
+  // thus stays bounded (~kLazyReclaimMinPending + frames in flight) without
+  // the timeline ever needing an explicit await.
+  if (!IsLazyCompletionPolls()) {
     UpdateAndGetCompletedSubmission();
+  } else if (free_fences_.empty()) {
+    while (pending_submission_fences_.size() >= kLazyReclaimMinPending) {
+      const VkResult fence_status =
+          vulkan_device_->functions().vkGetFenceStatus(
+              vulkan_device_->device(),
+              pending_submission_fences_.front().second);
+      if (fence_status != VK_SUCCESS) {
+        if (fence_status == VK_ERROR_DEVICE_LOST) {
+          vulkan_device_->SetLost();
+        }
+        break;
+      }
+      SetCompletedSubmission(pending_submission_fences_.front().first);
+      free_fences_.push_back(pending_submission_fences_.front().second);
+      pending_submission_fences_.pop_front();
+    }
   }
 
   VkFence fence = VK_NULL_HANDLE;

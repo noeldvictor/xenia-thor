@@ -837,8 +837,18 @@ VkCommandBuffer VulkanPresenter::AcquireUISetupCommandBufferFromUIThread() {
 
   // Try to reuse an existing command buffer.
   if (!paint_context_.ui_setup_command_buffers.empty()) {
+    // In lazy completion-poll mode (Turnip/KGSL fence status queries on
+    // in-flight fences block until GPU completion - see
+    // vulkan_lazy_completion_polls), don't run the drain-all poll on the
+    // paint thread: UI setup submissions are queue-ordered after the guest's
+    // heavy submission, so polling into the in-flight tail blocks for up to a
+    // guest GPU frame. The last-update value advances through the bounded
+    // reclaim in AcquireFenceForSubmission; reuse just lags a few submissions
+    // (a couple of extra command buffers at worst).
     const uint64_t submission_index_completed =
-        ui_completion_timeline_.UpdateAndGetCompletedSubmission();
+        ui_completion_timeline_.IsLazyCompletionPolls()
+            ? ui_completion_timeline_.GetCompletedSubmissionFromLastUpdate()
+            : ui_completion_timeline_.UpdateAndGetCompletedSubmission();
     for (size_t i = 0; i < paint_context_.ui_setup_command_buffers.size();
          ++i) {
       PaintContext::UISetupCommandBuffer& ui_setup_command_buffer =
@@ -2325,9 +2335,18 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
   // Release main target guest output image references that aren't needed
   // anymore (this is done after various potential guest-output-related main
   // target completion timeline waits so the completed submission index is the
-  // most actual).
+  // most actual). In lazy completion-poll mode, use the last-update value
+  // instead of polling: paint submissions are queue-ordered after the guest's
+  // heavy submission, so the drain-all poll blocks the paint thread for up to
+  // a guest GPU frame. The AwaitMaxSubmissionsPendingAndUpdateCompleted
+  // throttle at the start of every paint keeps the value advancing, so the
+  // release lag is bounded by the paint submission count.
   uint64_t completed_paint_submission =
-      paint_context_.completion_timeline.UpdateAndGetCompletedSubmission();
+      paint_context_.completion_timeline.IsLazyCompletionPolls()
+          ? paint_context_.completion_timeline
+                .GetCompletedSubmissionFromLastUpdate()
+          : paint_context_.completion_timeline
+                .UpdateAndGetCompletedSubmission();
   for (std::pair<uint64_t, std::shared_ptr<GuestOutputImage>>&
            guest_output_image_paint_ref :
        paint_context_.guest_output_image_paint_refs) {
@@ -2368,7 +2387,12 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
         *this, paint_context_.swapchain_extent.width,
         paint_context_.swapchain_extent.height, draw_command_buffer,
         ui_completion_timeline_.GetUpcomingSubmission(),
-        ui_completion_timeline_.UpdateAndGetCompletedSubmission(),
+        // In lazy completion-poll mode the drain-all poll can block the paint
+        // thread on in-flight fences (Turnip/KGSL); UI drawers just recycle
+        // their per-submission resources a few submissions later.
+        ui_completion_timeline_.IsLazyCompletionPolls()
+            ? ui_completion_timeline_.GetCompletedSubmissionFromLastUpdate()
+            : ui_completion_timeline_.UpdateAndGetCompletedSubmission(),
         paint_context_.swapchain_render_pass,
         paint_context_.swapchain_render_pass_format);
     ExecuteUIDrawersFromUIThread(ui_draw_context);

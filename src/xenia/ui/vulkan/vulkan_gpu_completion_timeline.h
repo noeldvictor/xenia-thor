@@ -131,6 +131,13 @@ class VulkanGPUCompletionTimeline : public GPUCompletionTimeline {
   void AwaitSubmissionImpl(uint64_t awaited_submission) override;
 
  private:
+  // In lazy completion-poll mode, only fences at least this many submissions
+  // deep are status-polled for reuse reclamation (deeper = signaled in any
+  // non-pathological pipeline; on Turnip/KGSL polling an in-flight fence
+  // blocks until it retires). Also bounds the fence pool size for timelines
+  // that are never explicitly awaited (the guest output refresher timeline).
+  static constexpr size_t kLazyReclaimMinPending = 4;
+
   VulkanDevice* const vulkan_device_;
 
   std::vector<VkFence> free_fences_;
