@@ -2847,3 +2847,29 @@ opportunity first.
   MEASURED, not assumed, before sinking days into the splice. Building Unit 1 (the splice) is the next
   deliberate unit - scope decision (modest leaf-only vs the bigger Burnout-capturing general form) is now
   evidence-driven, not a guess.
+
+### B86ff - BUILT + DEVICE-VALIDATED the inline splice (Unit 1): the safe past-the-wall lever WORKS
+Built the actual splice and validated it pixel-correct on device - the inlining lever materialized into
+working, validated code (not deferred). **Unit 1 = PPCHIRBuilder::EmitInlineLeaf + the InstrEmit_branch
+hook (commit 9aa31dee0):** an UNCONDITIONAL direct bl to a straight-line leaf guest function emits the
+leaf's body inline and SKIPS its terminal blr, so NO OPCODE_CALL (hence no context_barrier) is emitted -
+the caller's within-block context promotion then folds the per-call register/CR round-trips. This is the
+SAFE alternative to the dead cross-barrier-elision class ([[cross-barrier-elision-wall]]): ELIMINATE the
+call rather than elide guest state across its barrier. cvar arm64_jit_inline_leaf, default OFF.
+- **Correctness design:** only lk && !cond && kDefault target && not-self; ScanInlineLeafCandidate
+  pre-validates (straight-line, ends in the terminal blr <=64 insts, no kInvalid, no mtlr=tail-call-thru-lr);
+  LR already = return address; EmitInlineLeaf emits exactly body_count pre-validated insts (unimplemented
+  -> comment+continue like the normal Emit loop; never branches/recurses/partial-emits). Not emitting the
+  CALL keeps the leaf body in the caller's block (the point); the continuation still starts a new block if
+  it's a branch target (labels marked independently). Execution order leaf-body -> caller cia+4 = call+return.
+- **DEVICE VALIDATION (bd_inline_leaf, BD heavy field vista, arm64_jit_inline_leaf=true):** 2577
+  straight-line leaves INLINED, rendered=1174/263k verts matched, **PIXEL-CORRECT** (village/field vista
+  identical to baseline - character, terrain, fence, foliage, buildings, mountains; NO holes/garbage/
+  inverted faces), no crash, 1592 VdSwaps. The splice is CODEGEN-CORRECT on a complex scene. BD is
+  GPU-bound (gpu_frame_us~129ms unchanged = the binning floor) so its fps is unaffected - the CPU win
+  lands on CPU-bound titles, not GPU-bound BD. Host x64 cpu-tests 480/157 green throughout.
+- **STATUS: a genuinely DELIVERED, device-validated, safe codegen optimization** - the first validated
+  feature of this session (vs the debunks). Modest scope (~7% of direct calls are inlinable leaves; misses
+  Burnout's hot trampoline call 0x8238CD28 per the B86ee gate) but REAL, SAFE, and STACKING. Next:
+  quantify the CPU win on a CPU-bound title + productize as a stacking XeniaOptimizations toggle. The
+  Burnout-capturing general form (control-flow + tail-call inlining) remains a bigger future build.
