@@ -396,6 +396,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_permute_i32_zip_fastpath");
+            // NZCV codegen units (B86p-s): compare->branch fusion + cmn for
+            // negative compare immediates. Default-off, correctness-validated
+            // x64+a64; allowlisted for device A/B (Burnout is now CPU-bound on
+            // the guest Main XThread - B86t - so these codegen wins are its lever).
+            copyBooleanExtra(intent, launchArguments, "arm64_single_compare_branch_fusion");
+            copyBooleanExtra(intent, launchArguments, "arm64_cmp_negimm_cmn_fastpath");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_enter_free_first");
             copyBooleanExtra(intent, launchArguments, "a64_inline_rtl_leave_final_unlock");
             copyBooleanExtra(intent, launchArguments, "a64_rtl_leave_fastpath_audit");
