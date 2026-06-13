@@ -3014,3 +3014,62 @@ fps levers can't touch):
   Cache1 partition setup; or an unimplemented kernel export (the log noted "Implemented: 94% - 4
   unimplemented" in one export group). Then fix the specific wait -> LO from stuck-loading to working.
 - Launch gotcha (recorded): `Lost Odyssey.m3u` is a DIRECTORY; launch the Disc 1 ISO inside it.
+
+### B86mm - LO stall CONCLUSIVELY localized: a GUEST-CODE SPIN at guest PC 0x827B6278 (NOT a kernel wait; B86ll corrected). XamShowMessageBoxUIEx fix was a misdiagnosis; BD wait-token kick REFUTED (crashes LO).
+Drove the LO broken->working lever to a definitive root-cause localization (the "all games working" dimension).
+Three threads of work this session, honestly reported:
+
+**(1) XamShowMessageBoxUIEx export (committed 99e09b752) - REAL fix, but NOT LO's blocker (misdiagnosis, corrected).**
+LO's import dump flagged `!! XamShowMessageBoxUIEx` (export 0x2DC: registered in xam_table.inc but had NO
+`_entry` impl). I implemented it (routes to the base XamShowMessageBoxUI_entry, mirroring canary/edge) +
+added a `xam_auto_dismiss_message_boxes` cvar. This is a genuine missing-export fix (helps any title that
+CALLS it) and is deployed+verified. **BUT the high-freq kernel trace proves LO NEVER CALLS it at runtime**
+(`XamShowMessageBoxUIEx` appears exactly once in 128k log lines = the load-time import dump, which I'd
+misread as a runtime call). So it does NOT fix LO. Keep it (hygiene); do not claim it as the LO fix.
+
+**(2) Build-pipeline fix (gradle-ndk dual-tree stale-link).** Two native build trees existed: recompiled
+`.o` under `cxx/Debug/<hash>/obj/...` (HAD my change) but the linked `.so` came from `ndkBuild/githubDebug/
+obj/...` (stale, did NOT). Targeted `.o`/`.so` deletes never relinked it (grep -a proved the source change
+was in the `.o` but not the `.so`). A full `gradlew clean :app:assembleGithubDebug` wiped both trees and the
+fix finally landed in the stripped `.so` (verified `grep -a -c xam_auto_dismiss` > 0). Lesson: when a source
+change "won't take" on Android, the incremental ndkBuild link can desync from the cxx object tree -> full
+clean. (This had been silently shipping stale binaries.)
+
+**(3) THE diagnosis - LO load-stall = a guest-code SPIN, exact PC localized.** B86ll guessed "blocked on a
+kernel object/event/join". WRONG - corrected here via the in-engine guest-PC profiler:
+- High-freq kernel trace (`log_high_frequency_kernel_calls=true`): during the stall the ONLY logged activity
+  is VdSwap + draw outcomes. The single `NtWaitForSingleObjectEx` in 128k lines is boot-time. So it is NOT a
+  kernel-primitive wait.
+- Per-thread `top -H` during the stall: exactly ONE guest thread pegged at 100% CPU (R, running) - e.g.
+  `XThread55CF6CB0` / `XThread5EFC7CB0` (the hex = guest object addr, varies per launch); all other XThreads
+  sleep at 3-15%. => LO's loading thread is SPINNING in pure JIT'd guest code (makes zero kernel calls -
+  that's why the trace was silent).
+- simpleperf + JIT perf-map (NEW device-free guest-PC flow, now proven on the Thor): launch with
+  `cpu_emit_jit_perf_map=true --es cpu_perf_map_path /data/data/<pkg>/files/xenia_perf.map`; `simpleperf
+  record --app <pkg> -f 1000 --duration 6`; copy the perf-map to `/data/local/tmp/perf-<pid>.map`; map the
+  hot host addrs through it. Result: the spin thread's samples cluster in ONE ~1.1KB host range ->
+  **guest_827B6278 (~30% of the thread, dominant) + guest_823B62A0 (~11%)**.
+- **0x827B6278 is in the SAME 0x827B6xxx code block as LO's graphics interrupt callback** (LO calls
+  `SetInterruptCallback(827B6C48, 4004B680)`; interrupt_callback_data_ = 0x4004B680). So LO's main thread is
+  spinning in a timing/sync loop on a guest-memory condition that the GPU interrupt callback should satisfy.
+  The vblank IS firing (60Hz vsync_worker -> MarkVblank -> counter++ -> DispatchInterruptCallback), so it's
+  not "counter never advances"; it's a specific token/flag the callback's body is supposed to write.
+
+**REFUTED: the BD wait-token kick.** `graphics_system.cc:367` has `gpu_blue_dragon_kick_wait_token` -
+on a source==1 interrupt it increments the token at `*(interrupt_callback_data_ + 0x2A10)`. Both LO and BD
+are Mistwalker, so I tested it on LO (allowlisted, in the deployed .so, no rebuild). **It CRASHES LO at ~6s**
+(process gone, GPU never renders) - LO's token layout differs from BD's, so the blind +0x2A10 increment
+corrupts LO. Keep the kick OFF for LO; it is BD-specific.
+
+**Ruled out this session (do not re-chase):** XamShowMessageBoxUIEx (0 runtime calls), RtlUpcaseUnicodeChar
+(the other unimplemented import - 0 runtime calls), the boot C000014F STATUS_DISK_CORRUPT (a benign
+NullDevice::ResolvePath probe the game converts to a DOS error and continues), async-IO PENDING (B86ll), a
+kernel-object wait (this entry).
+
+**NEXT UNIT (clearly scoped, needs disasm tooling):** disassemble guest **0x827B6278** + the interrupt
+callback **0x827B6C48** (extract LO's default.xex via the game-patch skill's gdfx_extract, load PowerPC:BE:32
+@ 0x82000000, or a standalone PPC disassembler since Ghidra isn't installed) to read the EXACT guest-memory
+address LO polls in the spin and what 0x827B6C48 is supposed to store there. Then make xenia's interrupt
+dispatch satisfy LO's specific protocol (an LO-correct analog of the BD kick, NOT the BD kick itself). That
+flips LO from stuck-loading to rendering. Device-free profiler recipe + the spin PCs are banked above so the
+next session starts from the disasm, not from re-localizing.
