@@ -1,0 +1,29 @@
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+index bb3c184..f3d8241 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -848,6 +848,24 @@ kgsl_syncobj_wait(struct tu_device *device,
+       return VK_TIMEOUT;
+ 
+    case KGSL_SYNCOBJ_STATE_TS: {
++      if (abs_timeout_ns == 0) {
++         /* Status poll (vkGetFenceStatus / zero-timeout vkWaitForFences). The
++          * wait ioctl must not be used here: the downstream KGSL kernel
++          * treats timeout==0 as an infinite wait (adreno_drawctxt.c: "If
++          * timeout is 0, wait forever"), which turns a status query on an
++          * in-flight fence into a blocking wait until the submission retires.
++          * Query the retired timestamp non-blockingly instead.
++          */
++         struct kgsl_cmdstream_readtimestamp_ctxtid read = {
++            .context_id = s->queue->msm_queue_id,
++            .type = KGSL_TIMESTAMP_RETIRED,
++         };
++         int ret = safe_ioctl(device->fd,
++                              IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID, &read);
++         if (ret == 0 && timestamp_cmp(read.timestamp, s->timestamp))
++            return VK_SUCCESS;
++         return VK_TIMEOUT;
++      }
+       return wait_timestamp_safe(device->fd, s->queue->msm_queue_id,
+                                  s->timestamp, abs_timeout_ns);
+    }
