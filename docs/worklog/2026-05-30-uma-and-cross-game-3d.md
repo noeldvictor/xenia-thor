@@ -2898,3 +2898,29 @@ result EXPOSED a correctness bug the BD validation missed (the B86x lesson, AGAI
   a "win" that crashes a priority title. NEXT = root-cause the Burnout leaf miscompile (the real fix), then
   re-validate on BOTH BD and Burnout before any toggle returns; the Burnout-transformative general/tail-call
   form remains a separate bigger build.
+
+### B86hh - CRASH FIXED (root-caused) + Burnout re-measured: SAFE+CORRECT now, but fps FLAT (honest)
+Root-caused + FIXED the B86gg crash (commit a71786d08). **The bug: EmitInlineLeaf emitted the inlined
+leaf's instructions WITHOUT a SourceOffset** (host->guest PC mapping). A guest fault/exception inside the
+inlined code (a write-watch hit during Burnout's boot memory setup) mapped to the WRONG guest PC and was
+mishandled -> cascaded into the host present-path surface over-release (SIGABRT/decStrong). BD's inlined
+leaves never faulted, so BD pixel-correct was a FALSE NEGATIVE. FIX = emit SourceOffset(inst_address) per
+inlined instruction (OPCODE_SOURCE_OFFSET is FLAG_IGNORE|FLAG_HIDE, not a barrier, so it does NOT undo the
+inline's promotion win).
+- **RE-VALIDATED on device (burnout_inline_fix, inline ON):** Burnout now BOOTS + runs a full 180s race
+  (6836 frames vs the crashed 84), reaches the 675k-vert race scene, **PIXEL-CORRECT** (city race, car/
+  road/HUD all clean, no corruption), NO crash. So the splice is now CORRECT on BOTH BD and Burnout. Host
+  x64 480/157 green.
+- **BURNOUT FPS = FLAT (honest, no win):** matched A/B in the heavy race scene: OFF last-30s 6.70fps vs ON
+  6.71fps (last-60s 7.37 vs 7.20 = ON slightly LOWER). Within race-scene noise / flat-to-slightly-negative.
+  TWO reasons, both predicted: (1) the leaf scope MISSES Burnout's hot trampoline call 0x8238CD28 (B86ee
+  gate); (2) the splice inlines ALL straight-line-leaf calls INDISCRIMINATELY (cold + hot), so cold-call
+  inlining just GROWS CODE (I-cache pressure) without targeted benefit -> net flat/slightly-negative. A real
+  win needs TARGETING (hot/in-loop calls only) AND the general/tail-call form (to reach the non-leaf hot
+  call).
+- **STATUS: the inline MECHANISM is built + crash-fixed + multi-title-validated (a real correctness asset),
+  but it is NOT a delivered fps win** - indiscriminate leaf inlining is flat/slightly-negative, and the
+  bottleneck calls aren't leaves. cvar stays default-off, NO user toggle (a flat optimization must not be
+  sold as a perf win). NEXT to actually deliver: (a) hot-call TARGETING (only inline calls inside loops /
+  profiled-hot), (b) general/tail-call inlining to capture 0x8238CD28. Both build on this validated splice.
+  Honest bottom line this turn: a working+safe codegen mechanism + a real crash fix, but zero fps moved.
