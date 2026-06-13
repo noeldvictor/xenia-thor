@@ -30,11 +30,12 @@ PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$MESA"
 
-# Apply the patch (idempotent: skip if already applied).
+# Apply the patch (idempotent: skip if already applied). Strip CRLF in case
+# the patch is read from a Windows checkout mount.
 if ! grep -q "IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID, &read" \
      src/freedreno/vulkan/tu_knl_kgsl.cc; then
-  git apply "$PATCH_DIR/kgsl-nonblocking-fence-status.patch" ||
-  patch -p1 --fuzz=3 < "$PATCH_DIR/kgsl-nonblocking-fence-status.patch"
+  sed 's/\r$//' "$PATCH_DIR/kgsl-nonblocking-fence-status.patch" > /tmp/kgsl_fs.patch
+  git apply /tmp/kgsl_fs.patch || patch -p1 --fuzz=3 < /tmp/kgsl_fs.patch
 fi
 
 TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
