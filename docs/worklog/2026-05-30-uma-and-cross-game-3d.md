@@ -2967,3 +2967,26 @@ over-cull). DEAD on Burnout.
   deliverable. No fps was fabricated across this entire arc; the value delivered is correctness (the
   inline crash fix, the cross-barrier wall verdict) + a fully-mapped, empirically-closed lever space that
   stops future sessions re-burning effort on dead Burnout-race levers.
+
+### B86kk - Lost Odyssey "black-render" DIAGNOSED: it's a STUCK LOADING screen (file-not-found IO stall), NOT a render bug
+Pivoted to the "all games WORKING" goal dimension (a priority title broken->working, which the exhausted
+fps levers can't touch) and diagnosed LO end-to-end on device:
+- **Launch-path gotcha (fixed):** `Lost Odyssey.m3u` is a DIRECTORY (4 disc ISOs inside), same convention
+  as Blue Dragon. Launching the directory -> "Unable to mount disc image" abort. Launch the Disc 1 ISO
+  INSIDE it: `.../Lost Odyssey.m3u/Lost Odyssey (USA, Europe) (...) (Disc 1).iso`.
+- **The diagnosis (device, lo_blackrender_d1):** LO boots + runs (19923 VdSwaps, ~166-387fps, no crash)
+  but renders EXACTLY 3 draws/frame the ENTIRE run (prim[rect=1 quad=2], 15 verts, MAX rendered=3 over
+  19867 frames, 60s guest), cpu_real_us=143 (near-zero work). Frontbuffer checksum = ALL ZEROS (black)
+  every swap. **SCREENSHOT = a "Loading" SPINNER on black.** So LO is STUCK on a loading screen and never
+  reaches its content - the 3 draws are the spinner+text. NOT a rendering/RT/shader bug (the earlier
+  "black-render" framing was wrong).
+- **ROOT-CAUSE CLASS (from the kernel log right before the loading loop):** xeRtlNtStatusToDosError
+  **C000000F => 2** (STATUS_NO_SUCH_FILE) and **C0000225 => 490** (STATUS_NOT_FOUND). **LO can't find a
+  file it needs to finish loading -> stuck.** This is a guest VFS/IO stall, the BANJO/MAGNA boot-stall
+  class (not GPU). Redirects the fix from rendering to the kernel/VFS path.
+- **NEXT UNIT:** file-trace WHICH file LO probes that returns NO_SUCH_FILE/NOT_FOUND (enable verbose
+  vfs/NtCreateFile/NtReadFile logging), and WHY (hypotheses: multi-disc - LO Disc 1 referencing content
+  on Disc 2-4 not mounted; OR a cache/update path expected but absent - launcher forces mount_cache=true;
+  OR a path-resolution mismatch). Then fix the VFS path / mount handling so the load completes -> LO from
+  broken (stuck loading) to working. A genuine broken->working lever for a priority title, now localized
+  to a specific failure class (multi-unit, Banjo-class depth, but concretely scoped).
