@@ -3193,3 +3193,30 @@ Converted the analysis into a shipped, deployed, device-validated change and got
   completion), then make xenia satisfy it. The probe stays as a permanent diagnostic. HONEST: LO still not
   fixed, but this segment SHIPPED a deployed+validated change and decisively eliminated the
   interrupt-delivery hypothesis.
+
+### B86rr - LO ROOT-CAUSE FIXED + device-validated: VdIsHSIOTrainingSucceeded must return 0 (xenia returned 1). LO now CLEARS the loading-screen stall. (Next gate: a black screen.)
+THE root cause of LO's loading-screen stall, found by extending the gpu_log_interrupt_counts probe to
+also sample the guest device-state word (interrupt_callback_data_+0x2ABC) and disassembling the gate:
+- **The devstate probe DISPROVED the 0x2abc:bit7 hypothesis** (B86pp/qq): bit7 was ALWAYS 0. The real
+  blocker was ready-bit 0x2abd:bit1 never SET. devstate oscillated 0x00160400<->0x00060400 (state machine
+  alive) but bit1 stayed 0.
+- **Disasm of the ready-bit setter chain (tools/xex):** ready-bit1 is set by a check-ready fn ONLY IF a
+  global `*(0x8331905C)` is nonzero; that global = `(VdIsHSIOTrainingSucceeded()==0) ? 1 : 0`
+  (bl 0x830da68c -> cntlzw -> store). The kernel import at 0x830da68c is **VdIsHSIOTrainingSucceeded**
+  (ord 0x1C6). **xenia's stub returned 1**, so the global stayed 0, ready-bit never set, and LO's loader
+  span forever - the accelerating PM4_INTERRUPT retry loop (src1 -> 3878) was LO re-polling.
+- **FIX (committed 4eb271ad6): cvar `vd_hsio_training_succeeded_returns_zero`** (default-off = legacy 1 for
+  every other title) makes VdIsHSIOTrainingSucceeded return 0. HSIO = CPU<->GPU high-speed-link training
+  that doesn't exist in emulation; LO treats 0 as trained/OK.
+- **DEVICE-VALIDATED with the cvar ON:** ready(0x2abd:b1) flips **0->1**, the retry loop **STOPS**
+  (src1 3878->0), guest_ms keeps advancing - **LO leaves the loader spin.** The months-long loading-screen
+  stall is RESOLVED at the root. This is the deepest LO fix the project has landed.
+- **HONEST - LO is not yet playable:** past the device-ready handshake LO now sits at a **BLACK SCREEN**
+  (123k VdSwaps/empty present loop, 0 draws, GPU ~1%, NO disc I/O, NO interrupts) = a SEPARATE, subsequent
+  init gate (LO has multiple). So LO went from "stuck on the loading spinner forever" -> "past device-init,
+  now black-screen". Real validated progress + a real shipped fix, but not full playability.
+- **NEXT UNIT:** profile the post-ready black-screen state (top -H -> guest PC -> tools/xex disasm, same
+  method) to find the next gate LO waits on, then fix it. Do NOT default-on the LO GameProfile yet (black
+  screen is not "working"). gotchas (recorded): `adb reconnect` pops the Android USB dialog which PAUSES the
+  emu (0 FPS); PowerShell `>` mangles screencap binary (UTF-16) - use screencap-to-/sdcard + adb pull;
+  end-of-run ADB drops truncate captures - the gpu_log_interrupt_counts once/sec lines survive in the buffer.
