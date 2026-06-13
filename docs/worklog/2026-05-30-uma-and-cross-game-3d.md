@@ -3316,3 +3316,35 @@ flag is a runtime global in the localized 0x832x-0x833x set). NEXT: (Burnout) du
 low/no-traffic scene, diff -> the traffic count -> patch the spawn cap; (LO) correlate the render-decision
 global (disasm the frame fn) against its dumped value. Both now have the runtime-data capability they were
 blocked on.
+
+### B86xx - Burnout traffic system FULLY reverse-engineered (2 adversarial workflows + manual trace). No safe single-word static patch; lever needs runtime mem-diff. (Human said "continue"; ultracode.)
+Mounted two parallel multi-agent Workflows (25 agents, ~1.4M tokens) + manual disasm on the decompressed Burnout
+XEX (scratch/burnout/, base 0x82000000) to author the traffic-density fps patch device-free. Full map:
+- **Active traffic-car COUNT = world+0x1c99e0** (siblings +e4/+e8). Addressing: `addis rX,rWorld,0x1d; addi rX,rX,-0x6620`.
+- **Traffic-car ARRAY = world+0x56bf0**, stride 0x780 (1920 B/car).
+- Counts RESET to 0 at scene start by the bulk-init at 0x8229BC30 (writes r26 to ~dozens of world fields).
+- 6 sites read count@0x1c99e0, ALL non-render: 0x8223BCC0 (flag-clear), 0x8225A880 (physics integrate),
+  0x8225ABD8 (frame-tail reset, vtable[1]=0x82284790), 0x8225CC28 (hash-map registration), 0x82280478
+  (Update(dt) sim + the render path), 0x82296300 (serializer).
+- **RENDER PATH**: per-frame traffic update fn @0x8229FAC8 calls render-dispatch 0x82280478, whose two
+  bitmask+visibility-gated loops (0x8228068C=128 slots/stride0x780, 0x82280750=48 slots/stride0x4f0) do per
+  slot: `bctrl vtable[0](this,dt)` (Update sim) -> `bl 0x82234b10` (frustum cull, exactly 2 callers = THE draw
+  gate) -> if visible `bl 0x820bc6d0 -> 0x82277518 -> 0x822762a0` (enqueue, with dedup) into the RENDER LIST
+  @world+0x51f00, count @world+0x56b68 -> later drained to IssueDraws.
+- **WHY no clean single-word patch (adversarially verified, do NOT re-try these):** (a) capping any count@
+  0x1c99e0 loop = wrong subsystem + corrupts physics/reset/serialize + over-runs stale slots, 0 draw benefit;
+  (b) the static immediates 0x2f (@0x8234668C) and 0xfe (@0x8233ED14) are REFLECTION-descriptor-builder counts
+  (boot-time type registration via the strided-construct helper 0x82097220) - patching corrupts serialization;
+  (c) the render loops are gated by a per-slot active-bitmask + per-car visibility, NOT a count, so there is no
+  count-load to swap; capping their bound (cmpwi r31,0x80/0x30) skips the per-slot Update(dt) -> freezes/desyncs
+  the sim (forbidden); (d) the 0x30 gate @0x8229fb5c (`cmpwi r5,0x30; blt`) only gates whether the generic
+  array-processor 0x822802a0 runs when traffic is FULL - ambiguous, NOT a verified density cap.
+- **THE SAFE PATCH (next session, needs device):** runtime mem-diff to bind the render-list-count lever
+  (world+0x56b68) in a dense vs sparse scene, confirm it tracks drawn cars, then EITHER cap the DRAIN that
+  reads world+0x56b68 and issues draws (render-only, safe) OR a code-cave counter before the enqueue
+  (0x822762a0) - a MULTI-word patch (author via the Ghidra game-patch skill, not a one-liner). NOTE: the world
+  object is heap-allocated, so the guest-mem dump must target the heap (find the world-ptr global in the image
+  first), not the 0x82000000 image region. Validate: fire Burnout in a dense Traffic-Attack scene with the
+  patch + vulkan_trace_draw_outcomes_per_frame, confirm rendered draws drop from ~2175 with no crash and
+  traffic cars still MOVE (sim intact). Tooling proven: tools/xex on a 3rd title; the parallel-RE Workflow
+  pattern + adversarial verify caught 3 red-herring patches that would have corrupted the game.
