@@ -2990,3 +2990,27 @@ fps levers can't touch) and diagnosed LO end-to-end on device:
   OR a path-resolution mismatch). Then fix the VFS path / mount handling so the load completes -> LO from
   broken (stuck loading) to working. A genuine broken->working lever for a priority title, now localized
   to a specific failure class (multi-unit, Banjo-class depth, but concretely scoped).
+
+### B86ll - LO stuck-loading: ruled out async-IO + slow-load; it reads the CJK fonts OK then HANGS (deep guest stall)
+Ground the LO broken->working lever hard (concrete units, the "all games working" dimension the exhausted
+fps levers can't touch):
+- **Ruled out the Banjo async-IO fix:** tested xboxkrnl_ntreadfile_force_complete=true -> LO STILL stuck
+  (max rendered=3). The file-io trace shows LO's reads are synchronous=true status=0 (they SUCCEED), so
+  it's NOT the async-PENDING-not-consumed stall.
+- **Ruled out slow-load:** 240s wall / 103s guest, STILL max rendered=3 (36068 frames all 3 draws). LO is
+  genuinely STUCK, not just slowly streaming the font.
+- **What LO actually does (file-io trace):** reads `\Device\Cdrom0\xenon_sys.fpd` (the Xbox360 CJK SYSTEM
+  FONT, ~16MB - LO is a JP RPG) 163x + `xenon_loc.fpd` + its own `LO.fpd`/`LO.fpi`, AND probes
+  `\Device\Harddisk0\Cache1` - ALL succeed (status=0). The reads are paced ~2 reads/13ms (LO yields per
+  frame to render the spinner). The font read PROGRESSES (offset 450KB->16MB), it does NOT loop.
+- **=> LO reads its fonts + cache OK, then HANGS without ever rendering content (max rendered=3 forever,
+  black frontbuffer).** Since file IO succeeds, the stall is almost certainly a GUEST-THREAD WAIT (the
+  loading thread blocked on a kernel object/event/thread-join that never completes) - the Banjo/Magna
+  deep-stall class, NOT a GPU/render bug and NOT a simple file-not-found.
+- **NEXT UNIT (clearly scoped):** profile the LO loading thread's WAIT STATE - which kernel primitive it's
+  blocked on (NtWaitForSingleObject/event/semaphore, a thread join, or an unimplemented kernel call that
+  returns wrong). Use per-thread state (run-as + /proc/<pid>/task/*/wchan, or a guest-thread wait trace).
+  Hypotheses to check: an audio/XMA worker the load waits on (the AAudio init failed in the host log); the
+  Cache1 partition setup; or an unimplemented kernel export (the log noted "Implemented: 94% - 4
+  unimplemented" in one export group). Then fix the specific wait -> LO from stuck-loading to working.
+- Launch gotcha (recorded): `Lost Odyssey.m3u` is a DIRECTORY; launch the Disc 1 ISO inside it.
