@@ -16,12 +16,22 @@
 #include "xenia/apu/apu_flags.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
 #include "xenia/cpu/compiler/compiler.h"
+#include "xenia/cpu/function.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/processor.h"
 
 DECLARE_bool(debug);
+#if XE_ARCH_ARM64
+// Defined by the a64 backend (a64_backend.cc). The cross-call r1 carrier is
+// unsound while this stack-sync net is enabled (it reloads r1 from context and
+// resumes into the caller after a longjmp without reseeding the carrier), so
+// PromoteGprLiveInR1 disables preserve_call when it is on. Declared only on
+// ARM64 builds — the symbol does not exist in the x64-only host build.
+DECLARE_bool(a64_enable_host_guest_stack_synchronization);
+#endif
 
 DEFINE_bool(store_all_context_values, false,
             "Don't strip dead context stores to aid in debugging.", "CPU");
@@ -53,14 +63,17 @@ DEFINE_bool(arm64_context_promotion_gpr_livein_r1_preserve_barrier, true,
             "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_livein_r1_preserve_call, false,
             "Thor ARM64 research (cross-call register preservation): keep the "
-            "live-in r[1] (PPC stack pointer) carrier valid across "
-            "guest-to-guest CALL / CALL_TRUE / CALL_INDIRECT instructions. The "
-            "PPC EABI makes r1 non-volatile and a returning callee MUST restore "
-            "the stack pointer, so r1 survives any guest call that returns "
-            "normally. CALL_EXTERN (host/HLE helpers), volatile ops, and "
-            "function exits STILL reset the carrier. Eliminates the per-iteration "
-            "r1 reload our JIT emits across calls in hot loops (e.g. Burnout's "
-            "entity-traversal loop 0x82382798). Default-off experiment.",
+            "live-in r[1] (PPC stack pointer) carrier valid across a DIRECT "
+            "guest-to-guest bl (OPCODE_CALL/CALL_TRUE) to a normal guest "
+            "function only. Guarded (adversarial red-team 2026-06-13): resets on "
+            "CALL_POSSIBLE_RETURN (guest blr/longjmp/EH), on ALL indirect calls, "
+            "on direct calls to extern/import/epilog targets (e.g. "
+            "KeSetCurrentStackPointers), and is auto-disabled while "
+            "a64_enable_host_guest_stack_synchronization is on (the sync net "
+            "reloads r1 from context on a longjmp resume without reseeding the "
+            "carrier). Eliminates the per-iteration r1 reload our JIT emits "
+            "across calls in hot loops (e.g. Burnout's entity-traversal loop "
+            "0x82382798). Default-off experiment.",
             "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_livein_r1_audit, false,
             "Thor ARM64 research: log attempted/replaced/skipped counters for "
@@ -691,21 +704,38 @@ bool IsContextStateKillingInstr(Instr* instr, bool preserve_barrier,
     }
     return false;
   }
-  // Guest-to-guest calls preserve the PPC non-volatile registers (incl. r1, the
-  // stack pointer), so with preserve_call the carrier survives them. CALL_EXTERN
-  // is a host/HLE helper that can mutate any guest context register, so it is
-  // NEVER preserved here.
+  // Cross-call carrier preservation (preserve_call) is sound ONLY for a DIRECT
+  // guest-to-guest call (PPC bl, lk=1) to a normal guest function. Everything
+  // else can change r1 without an EABI-conforming return and MUST kill the
+  // carrier (adversarial red-team 2026-06-13, all guards source-verified):
+  //  - CALL_POSSIBLE_RETURN marks guest blr/bclr-to-LR = the longjmp / C++ EH
+  //    non-local-exit path (ppc_emit_control.cc); the callee can resume an OUTER
+  //    frame at a different r1.
+  //  - CALL_INDIRECT/_TRUE (bctrl/blr) hit runtime targets that may be import
+  //    stubs or stack-switching/fiber shims that legally change the reg file.
+  //  - A direct call whose target is NOT a plain guest function (kExtern/kBuiltin
+  //    import like KeSetCurrentStackPointers, or a prolog/epilog gpr-restore
+  //    thunk) sets context r1 and returns normally; the caller's pass only sees
+  //    OPCODE_CALL (hir_builder.cc), so it must treat these as carrier-killing.
+  // The remaining longjmp-resume hole (the a64 stack-sync net reloads r1 from
+  // context and re-enters the caller without reseeding the carrier) is closed in
+  // PromoteGprLiveInR1 by disabling preserve_call while that net is enabled.
   if (instr->opcode == &OPCODE_CALL_info ||
-      instr->opcode == &OPCODE_CALL_TRUE_info ||
-      instr->opcode == &OPCODE_CALL_INDIRECT_info ||
-      instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info) {
-    if (!preserve_call) {
+      instr->opcode == &OPCODE_CALL_TRUE_info) {
+    const bool preservable =
+        preserve_call && !(instr->flags & hir::CALL_POSSIBLE_RETURN) &&
+        instr->src1.symbol &&
+        instr->src1.symbol->behavior() ==
+            xe::cpu::Function::Behavior::kDefault;
+    if (!preservable) {
       *killed_by_call = true;
       return true;
     }
     return false;
   }
-  if (instr->opcode == &OPCODE_CALL_EXTERN_info) {
+  if (instr->opcode == &OPCODE_CALL_INDIRECT_info ||
+      instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info ||
+      instr->opcode == &OPCODE_CALL_EXTERN_info) {
     *killed_by_call = true;
     return true;
   }
@@ -1408,8 +1438,18 @@ bool ContextPromotionPass::ShouldRunGprLiveInR1Promotion(
 void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
   const bool preserve_barrier =
       cvars::arm64_context_promotion_gpr_livein_r1_preserve_barrier;
-  const bool preserve_call =
+  bool preserve_call =
       cvars::arm64_context_promotion_gpr_livein_r1_preserve_call;
+#if XE_ARCH_ARM64
+  // The a64 host/guest stack-sync net (a64_enable_host_guest_stack_synchronization,
+  // default ON) reloads r1 from context and resumes into the caller after a
+  // longjmp/EH unwind WITHOUT reseeding the promoted carrier. While it is on, a
+  // preserved cross-call r1 read can be stale on that rare path -> silent stack
+  // corruption. Disable preserve_call until a backend-side carrier reseed lands.
+  if (preserve_call && cvars::a64_enable_host_guest_stack_synchronization) {
+    preserve_call = false;
+  }
+#endif
   GprLiveInR1Stats stats;
   stats.function_address = FindFirstSourceOffset(builder);
 
@@ -1489,6 +1529,22 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
         }
       }
     }
+  }
+
+  // Non-convergence fail-safe (red-team guard): edges are seeded optimistically
+  // clean with only a hard 64-iteration cap. On a deep/irreducible CFG the
+  // fixpoint can exit still changing, leaving an edge optimistically clean whose
+  // carrier was never deposited -> a promoted load would read uninitialized
+  // stack. If we did not converge, abandon promotion for this whole function
+  // (every guest r1 load stays a real LOAD_CONTEXT). Correctness over the win.
+  if (changed) {
+    if (cvars::arm64_context_promotion_gpr_livein_r1_audit) {
+      XELOGW(
+          "A64 GPR live-in r1: availability fixpoint did NOT converge for fn "
+          "{:08X} ({} blocks); skipping promotion (fail-safe).",
+          stats.function_address, stats.blocks);
+    }
+    return;
   }
 
   auto block_needs_entry_local = [&](Block* block) {
@@ -1674,6 +1730,24 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
         store_local_if_needed(insert_before, &state, false);
       } else {
         ++stats.skipped_no_value_for_store;
+      }
+    }
+  }
+
+  // Defensive entry seed (red-team guard, preserve_call only): deposit the
+  // function-entry r1 into the carrier local at the top of the entry block so
+  // that if any runtime path reaches a promoted LOAD_LOCAL whose static deposit
+  // was skipped (e.g. a back-edge corner), it reads the entry stack pointer
+  // (correct for the common function that never changes its own sp) rather than
+  // uninitialized stack memory. Only emitted when cross-call preservation is
+  // actually active, so the preserve_call-off path stays byte-identical.
+  if (preserve_call) {
+    if (Block* entry_block = builder->first_block()) {
+      if (Instr* insert_before = entry_block->instr_head) {
+        Value* seed = builder->LoadContext(kR1ContextOffset, INT64_TYPE);
+        builder->last_instr()->MoveBefore(insert_before);
+        builder->StoreLocal(local_slot, seed);
+        builder->last_instr()->MoveBefore(insert_before);
       }
     }
   }
