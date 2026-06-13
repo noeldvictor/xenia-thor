@@ -207,10 +207,18 @@ void PPCHIRBuilder::EmitInlineLeaf(uint32_t address, uint32_t body_count) {
   Memory* memory = frontend_->memory();
   for (uint32_t n = 0; n < body_count; ++n) {
     uint32_t inst_address = address + n * 4;
+    trace_info_.dest_count = 0;
     uint32_t code =
         xe::load_and_swap<uint32_t>(memory->TranslateVirtual(inst_address));
     auto opcode = LookupOpcode(code);
     auto& opcode_info = GetOpcodeInfo(opcode);
+    // Emit the host->guest PC mapping for this inlined instruction, exactly as
+    // the normal Emit loop does. Without it the inlined code has NO source-offset,
+    // so a guest fault/exception inside it (e.g. a write-watch hit during boot)
+    // maps to the wrong guest PC and is mishandled. OPCODE_SOURCE_OFFSET is
+    // FLAG_IGNORE|FLAG_HIDE (not volatile / not a barrier), so it does NOT break
+    // the context promotion the inline exists to enable.
+    SourceOffset(inst_address);
     if (opcode == PPCOpcode::kInvalid) {
       // Pre-validation rejects invalid ops; comment defensively and continue
       // (never bail mid-body, which would leave a half-spliced leaf).
