@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -478,6 +479,31 @@ void GraphicsSystem::MarkVblank() {
             (ts && ts->context()) ? uint32_t(ts->context()->lr) : 0u;
         XELOGI("  XTHR '{}' tid={:08X} running={} lr={:08X}", t->name(),
                t->thread_id(), t->is_running() ? 1 : 0, lr);
+      }
+    }
+  }
+
+  // One-shot guest-memory dump (RE enabler). Caller must target a committed
+  // region (default = the image at 0x82000000, which holds .data globals).
+  if (cvars::dump_guest_mem_at_ms > 0 && memory_) {
+    static std::atomic<bool> dumped{false};
+    if (Clock::QueryGuestUptimeMillis() >=
+            uint64_t(cvars::dump_guest_mem_at_ms) &&
+        !dumped.exchange(true)) {
+      size_t size = size_t(cvars::dump_guest_mem_size_mb) * 1024 * 1024;
+      const uint8_t* src =
+          memory_->virtual_membase() + cvars::dump_guest_mem_base;
+      std::FILE* f = std::fopen(cvars::dump_guest_mem_path.c_str(), "wb");
+      if (f) {
+        size_t wrote = std::fwrite(src, 1, size, f);
+        std::fclose(f);
+        XELOGI("guest-mem dump: {} bytes from {:08X} -> {} (guest_ms={})", wrote,
+               uint32_t(cvars::dump_guest_mem_base),
+               cvars::dump_guest_mem_path.c_str(),
+               Clock::QueryGuestUptimeMillis());
+      } else {
+        XELOGE("guest-mem dump: failed to open {}",
+               cvars::dump_guest_mem_path.c_str());
       }
     }
   }

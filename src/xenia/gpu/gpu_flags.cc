@@ -150,6 +150,20 @@ DEFINE_bool(gpu_log_interrupt_counts, false,
             "the vblank, without the per-event latency of gpu_trace_interrupts "
             "(which is fatal to Lost Odyssey's interrupt-timing-sensitive init).",
             "GPU");
+// One-shot guest-memory dump (RE enabler: e.g. scene-diff Burnout's traffic-car
+// count to author the traffic-density patch, or inspect a stuck game's state).
+// When dump_guest_mem_at_ms > 0, at the first vblank where guest uptime >= it,
+// dump dump_guest_mem_size_mb MB of guest virtual memory starting at guest addr
+// dump_guest_mem_base to dump_guest_mem_path. Default-off / inert.
+DEFINE_int32(dump_guest_mem_at_ms, 0,
+             "Guest-uptime ms at which to one-shot dump guest memory (0=off).",
+             "GPU");
+DEFINE_uint32(dump_guest_mem_base, 0x82000000,
+              "Guest virtual address to start the guest-memory dump from.", "GPU");
+DEFINE_int32(dump_guest_mem_size_mb, 64,
+             "Size in MB of the guest-memory dump.", "GPU");
+DEFINE_string(dump_guest_mem_path, "/data/local/tmp/guestmem.bin",
+              "Output path for the guest-memory dump.", "GPU");
 DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "Experimental Blue Dragon Android bring-up hack: increment the "
             "graphics wait token when a GPU interrupt is dispatched.",
