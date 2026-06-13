@@ -2294,3 +2294,16 @@ TRAFFIC ATTACK scene (rendered=2110, guest_ms ~100.6-101.1k):
   stays default-off so raw captures A/B cleanly. NEXT: BTTF/BD cross-game checks (BTTF
   beginsubmit ~36.8ms = same bug, expect ~30fps -> ~40+), presenter-side bare eager polls
   (vulkan_presenter.cc:841,2330) = round 2, Mesa kgsl status-query bug is upstream-able.
+
+### B86d - BTTF CROSS-GAME CONFIRMED (+78%) + the binning drain now OVERLAPS render
+Fire turnip_bttflazy2 (lazy ON, raw), matched dr=902 heavy-menu flank vs turnip_bttfweakdeps:
+- beginsubmit 41.2ms -> 0.3-0.5ms; fopen wait 3-8us; inflight 2->3; frame interval ~80ms ->
+  ~32-50ms (**~12.4 -> ~22fps, +78%**); gameplay png (Twin Pines Mall) pixel-correct, OSD 27.7fps
+  raw (the 30fps target previously needed the prime-router stack).
+- **gpu_frame_us itself fell 40.6 -> ~26.7ms**: with 3 frames genuinely in flight the tiler
+  overlaps frame N's binning with N-1's rendering - the B83/B84 "irreducible" 12.7ms binning
+  drain is irreducible AS COMPUTE but its serialization against render was an artifact of the
+  1-frame-in-flight regime. The fence-poll bug was silently the GPU-floor inflator too.
+- (Earlier bttflazy fire invalidated: an Android USB-preferences dialog stole foreground and
+  paused the emu - environment artifact, not a regression; do not restart the adb server while
+  a capture is live.)
