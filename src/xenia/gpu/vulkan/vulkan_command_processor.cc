@@ -3389,16 +3389,6 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // was not called), to prevent leaking per-frame resources.
   EndSubmission(true);
 
-  // Event-driven vblank (vsync_on_swap): let the vsync worker fire the
-  // pending vblank for slower-than-60fps titles now instead of making this
-  // frame round up to the next fixed 16.7ms tick (worklog B86i/B86j). At the
-  // END of IssueSwap so the host-side swap state is fully settled before the
-  // guest's vblank ISR (which performs the guest's swap-completion
-  // processing) runs - firing at IssueSwap start was measured NEUTRAL, most
-  // plausibly because the ISR raced the still-in-progress host swap and fell
-  // back to waiting for the next fixed tick.
-  graphics_system_->RequestSwapVblank();
-
   if (cvars::gpu_trace_vd_swap) {
     XELOGI(
         "VulkanPresenter: IssueSwap compact state refreshed={} "

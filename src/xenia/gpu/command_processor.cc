@@ -1620,6 +1620,19 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   if (cvars::gpu_interrupt_on_swap) {
     graphics_system_->DispatchInterruptCallback(1, 2);
   }
+
+  // Event-driven vblank (vsync_on_swap): fire the pending vblank for
+  // slower-than-60fps titles now instead of letting the guest's frame round
+  // up to the next fixed 16.7ms tick (worklog B86i/B86j). MUST be after
+  // ++counter_: the wait probe (B86m/n) showed the guest render thread POLLS
+  // its swap-completion state (no kernel wait between swaps; ~257 cheap
+  // export calls per inter-swap window = a poll loop), and the guest's vblank
+  // ISR derives that state from the CP's progress - both earlier placements
+  // (inside the backend IssueSwap, before the counter increment) measured
+  // NEUTRAL because the early-run ISR still saw the swap as incomplete and
+  // fell back to waiting for the next fixed tick.
+  graphics_system_->RequestSwapVblank();
+
   return true;
 }
 
