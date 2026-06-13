@@ -3302,3 +3302,17 @@ runtime memory diff of a high-traffic vs low-traffic scene (needs a guest-memory
 is sound but the RE to FIND the loop is the real cost - the roadmap's "needs Ghidra + find the traffic logic"
 was right; the hash indirection makes it harder than a constant patch. XEX + image are extracted (scratch/
 burnout/, gitignored) so the next session starts at the hash/entity-create hunt.
+
+### B86ww - Guest-memory dump SHIPPED + VALIDATED (committed 7ef29054b). LO runtime game-state localized.
+Built + committed a reusable one-shot guest-memory dump (cvars dump_guest_mem_at_ms/_base/_size_mb/_path;
+fires from MarkVblank at a guest-uptime threshold, writes N MB of guest virtual memory to a file). Gotcha:
+the app uid can't write /data/local/tmp -> use /data/data/<pkg>/files/ + pull via `run-as <pkg> cat`.
+DEVICE-VALIDATED: dumped 20MB of LO from 0x82000000 at guest_ms 18018. Diffed runtime-vs-static
+(scratch/_lzx_image.bin) -> 421 changed regions, ~549KB of runtime-modified .data/.bss, concentrated in
+0x832x-0x833x with a 333KB structure @0x83318000 (the live game-state / entity region). This is the enabler
+the Burnout traffic-density patch needs (B86vv: traffic is hash-referenced, not a code constant -> find the
+count via runtime mem-diff, not strings) AND a new angle on LO's render gate (the "won't advance to render"
+flag is a runtime global in the localized 0x832x-0x833x set). NEXT: (Burnout) dump a race scene + a
+low/no-traffic scene, diff -> the traffic count -> patch the spawn cap; (LO) correlate the render-decision
+global (disasm the frame fn) against its dumped value. Both now have the runtime-data capability they were
+blocked on.
