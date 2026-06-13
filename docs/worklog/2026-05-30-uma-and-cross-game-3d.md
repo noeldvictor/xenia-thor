@@ -2237,3 +2237,32 @@ scene rendered=2110:
   (b)/(c). One fire decides. **This is the top cross-game fps lever now: the per-draw merge is
   bounded (B82) and the binning drain is irreducible (B84); pipelining attacks BOTH CPU-paced
   titles (Burnout) and the CPU side of GPU-bound ones.**
+
+### B86 - ROOT CAUSE FOUND: Turnip/KGSL fence-status queries BLOCK -> the B85 serialization
+Fired the await-index probe (turnip_awaitidx, Burnout light scene rendered=134, fopen now prints
+await/up/comp + fence_us): `fopen[wait_us=5418 inflight=2 sub_pre=2 sub_post=1 fence_us=5414
+await=10550 up=10553 comp=10551]`, wait_us ~= fence_us ~= gpu_frame_us (5.2k) on EVERY line.
+- **Bookkeeping is CORRECT** (await = up-3) and the awaited submission was ALREADY known-complete
+  at entry (comp=await+1) -> vkWaitForFences can never run -> the entire block is inside the
+  vkGetFenceStatus poll loop. The fence-ring/slot-aliasing suspicion from 2026-06-10 is REFUTED.
+- **Mechanism (source-verified end to end):** vkGetFenceStatus = vk_sync_wait(timeout=0) in Mesa's
+  common runtime; the KGSL backend (mesa src/freedreno/vulkan/tu_knl_kgsl.cc) has no status op and
+  maps a submitted fence's poll to IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID with ioctl timeout=0
+  (get_relative_ms(0)=0; the UNSIGNALED early-poll-return only covers not-yet-submitted syncobjs);
+  the downstream KGSL kernel (sm8550 graphics-kernel adreno_drawctxt.c:161) documents **"If timeout
+  is 0, wait forever"**. => ON TURNIP-OVER-KGSL, QUERYING AN IN-FLIGHT FENCE'S STATUS BLOCKS UNTIL
+  THE SUBMISSION RETIRES. (Upstream-able Mesa bug: the kgsl backend should use a readtimestamp
+  query, not a 0-timeout wait, for status polls.)
+- **Why that serialized every frame:** GPUCompletionTimeline::AwaitSubmissionAndUpdateCompleted
+  pre-polls unconditionally, and UpdateCompletedSubmission drains the pending-fence deque until the
+  first unsignaled fence - i.e. PAST the awaited submission into the just-submitted one -> the
+  frame-open await blocked one full GPU frame (Burnout heavy 46.9ms = B85), and the
+  AcquireFenceForSubmission poll at submit time blocked the remainder (the B85 cpu_gap ~10.6ms).
+  Affects the guest GPU thread AND the presenter paint thread (same class), every Turnip title.
+- **FIX SHIPPED (cvar vulkan_lazy_completion_polls, default off pending device validation):**
+  (1) await early-outs on the last-known completed value and otherwise calls AwaitSubmissionImpl
+  directly (bounded to fences <= awaited, never the in-flight tail; no post-wait re-poll);
+  (2) AcquireFenceForSubmission polls only when free_fences_ is empty (fences recycle via the
+  frame-open await's bounded free). Steady state per frame: ONE vkWaitForFences on a 3-frames-old
+  (signaled) fence, zero blocking polls. Prediction: Burnout heavy fopen wait 46.9ms -> ~us, frame
+  82 -> ~max(35.1 CPU, 46.5 GPU) = ~21.5fps (+75%); BTTF beginsubmit ~36.8ms similarly freed.
