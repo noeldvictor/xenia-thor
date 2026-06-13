@@ -483,6 +483,29 @@ void GraphicsSystem::MarkVblank() {
     }
   }
 
+  // Lost Odyssey render-gate watch: sample the verified render-thread globals
+  // every vblank (from boot) and log only on a transition. latch 0x832631a8 gates
+  // the per-frame scene-draw build + present; run-flag 0x832631b8 gates the
+  // render-worker that sets the latch. Both are 0 at the black-screen stall, so a
+  // 1->0 transition here pinpoints WHEN/at what guest_ms LO disables rendering.
+  if (cvars::gpu_watch_lo_render_gate && memory_) {
+    static uint32_t s_prev_latch = 0xFFFFFFFFu;
+    static uint32_t s_prev_run = 0xFFFFFFFFu;
+    uint32_t latch = MaybeReadGuestU32(memory_, 0x832631A8);
+    uint32_t run = MaybeReadGuestU32(memory_, 0x832631B8);
+    if (latch != s_prev_latch || run != s_prev_run) {
+      uint32_t framectr = MaybeReadGuestU32(memory_, 0x832631B0);
+      uint32_t worker_handle = MaybeReadGuestU32(memory_, 0x832631BC);
+      XELOGI(
+          "LO render-gate: latch(31a8) {:08X}->{:08X} runflag(31b8) {:08X}->{:08X} "
+          "framectr(31b0)={:08X} worker(31bc)={:08X} guest_ms={}",
+          s_prev_latch, latch, s_prev_run, run, framectr, worker_handle,
+          Clock::QueryGuestUptimeMillis());
+      s_prev_latch = latch;
+      s_prev_run = run;
+    }
+  }
+
   // One-shot guest-memory dump (RE enabler). Caller must target a committed
   // region (default = the image at 0x82000000, which holds .data globals).
   if (cvars::dump_guest_mem_at_ms > 0 && memory_) {

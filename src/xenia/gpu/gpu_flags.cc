@@ -150,6 +150,18 @@ DEFINE_bool(gpu_log_interrupt_counts, false,
             "the vblank, without the per-event latency of gpu_trace_interrupts "
             "(which is fatal to Lost Odyssey's interrupt-timing-sensitive init).",
             "GPU");
+// Lost Odyssey render-gate watch. Device-free RE localized LO's black-screen to a
+// render-thread latch: the per-frame render fn (guest 0x82821110) skips both the
+// scene-draw build and present while global latch 0x832631a8 == 0; that latch is
+// set by the render-worker (0x828204a8) only while run-flag 0x832631b8 != 0; both
+// read 0 at the stall. This probe samples those globals every vblank and logs only
+// on a transition, from boot, so a capture pinpoints WHEN (and at what guest_ms) LO
+// disables rendering -> correlate with the disable caller 0x827c98a8. Default-off.
+DEFINE_bool(gpu_watch_lo_render_gate, false,
+            "Log Lost Odyssey render-gate global transitions (latch 0x832631a8 / "
+            "run-flag 0x832631b8) every vblank, from boot, to localize when LO "
+            "stops issuing draws. Inert for other titles.",
+            "GPU");
 // One-shot guest-memory dump (RE enabler: e.g. scene-diff Burnout's traffic-car
 // count to author the traffic-density patch, or inspect a stuck game's state).
 // When dump_guest_mem_at_ms > 0, at the first vblank where guest uptime >= it,

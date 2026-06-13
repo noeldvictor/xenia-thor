@@ -3369,3 +3369,39 @@ Continued the device-free Burnout RE (autonomous grind). Traced the runtime addr
   crash and traffic still MOVES (sim intact). The full static map (B86xx) + this addressing make the device session
   efficient. Banked: tools/xex (3 titles), the guest-mem dump, the parallel-RE+adversarial-verify Workflow pattern
   (caught 3 game-corrupting red-herring patches).
+
+### B86zz - LO black-screen ROOT CAUSE localized + LIVE-confirmed: D3D disables rendering on HSIO-training failure. Build-infra fix (X: subst). (Human said "continue"; ultracode.)
+The 17-agent LO render-gate workflow (wf_907835b8-e75) returned a HIGH-confidence MECHANISM but its two
+root-cause guesses were REFUTED by careful log-reading: (1) "sign-in gate" - WRONG: user 0 IS signed in
+(XamUserGetXUID(0)=B13EBABEBABEBABE, signin_state=1; the workflow misread d>-entry pre-call pointer values
+as return values); (2) "XNotifyGetNext(0x02000002)=INPUTDEVICESCHANGED gate" - WRONG: 0x02000002 =
+XN_LIVE_INVITE_ACCEPTED (a routine LIVE poll), and xenia already enqueues the real boot notifications
+(0x9/0xA/0x12/0x13) to the first listener (kernel_state.cc:663). Refuting these BEFORE building saved a
+wasted device fire on a wrong fix.
+
+Built `gpu_watch_lo_render_gate` (default-off): samples LO's verified render globals every vblank, logs
+transitions. Device-fired it (correct build) and got the decisive timeline: **runflag 0x832631b8 0->1 @
+guest_ms 5311, latch 0x832631a8 0->1 @ 5328 (RENDER ON), 54 frames rendered, then latch+runflag 1->0 @
+6176 (RENDER OFF) -> black.** LO renders its loading screen then DELIBERATELY turns rendering off.
+
+Why: LO's own D3D prints `(DbgPrint) D3D: GPU initialization (HSIO training) has failed so no graphics
+will render.` ~4ms after writing GPU regs **0x0081=0x80010000** + **0x0082=0x00000000** (both "unknown
+register", unemulated HSIO control regs). The decision is pure guest code (no kernel call, no reg read
+between the write and the message; 0 "Read from unknown register" all run) -> LO expects an HSIO-complete
+**anticipated interrupt** to its callback 0x827B6C48 that xenia never fires. CRITICAL: this is
+INDEPENDENT of VdIsHSIOTrainingSucceeded - fired with `vd_hsio_training_succeeded_returns_zero true`
+(override confirmed applying via the new canary), the message STILL prints. The B86rr cvar fixes the
+LOADER ready-bit gate; the D3D "no graphics" decision is a SECOND, separate HSIO consumer.
+
+NEXT (multi-session): make HSIO "succeed" for the D3D path - (a) disasm LO's HSIO routine (string xref
+scans failed -> ref is base-reg-relative; walk fwd from the SetInterruptCallback caller / the CP code
+emitting the 0x0081 write), (b) fire the PRECISE anticipated HSIO-complete interrupt to 0x827B6C48 after
+the 0x0081 write (blanket interrupts crash LO), or (c) game-patch the D3D HSIO-failed branch. Render
+enable=0x82480818 (uncond in its fn, gated by caller 0x8247bf98()==1), disable=SetRenderThreadActive(0)
+caller 0x827c98a8.
+
+BUILD-INFRA FIX (cost 2 wasted fires this turn): `cmd /c "<spaced-realpath>\gradlew.bat ..."` SILENTLY
+no-ops (banner only, exit 0, gradle never runs) because of the space in "New project 8". MUST build via
+the **X: subst** (space-free): BUILD SUCCESSFUL 57s, cvar lands in the .so. Verify with
+`grep -c <cvar> <obj>/arm64-v8a/libxenia-app.so`; the --ez canary confirms extras apply on-device.
+Committed: gpu_watch_lo_render_gate probe (gpu_flags.cc/.h, graphics_system.cc, EmulatorActivity.java).

@@ -190,6 +190,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
             copyBooleanExtra(intent, launchArguments, "gpu_log_interrupt_counts");
+            copyBooleanExtra(intent, launchArguments, "gpu_watch_lo_render_gate");
             copyBooleanExtra(intent, launchArguments, "vd_hsio_training_succeeded_returns_zero");
             copyIntExtra(intent, launchArguments, "dump_guest_mem_at_ms");
             copyIntExtra(intent, launchArguments, "dump_guest_mem_base");
