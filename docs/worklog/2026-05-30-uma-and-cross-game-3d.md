@@ -3143,3 +3143,27 @@ GPU precondition (likely a specific PM4/event-write completion or the device-ini
 deliver that event so LO's loader proceeds. The disassembler is committed, so this is pure analysis now.
 DEVICE NOTE: Thor was over-fired (~9 LO launches) and is boot-stalling; let it recover before the validation
 fire. No device work this segment - all device-free disasm.
+
+### B86pp - LO ready-bit traced to a device-init HANDSHAKE (not a stuck ring); the ring works. Root narrowed to the 0x2abc:bit7 "pending" gate.
+Continued the disasm trace to the writer of the device-ready bit, then up the chain:
+- **The ONLY setter of 0x2abd:bit1 (what the 0x827B6278 loader spin waits for) is at 0x823CDFD0** (`lbz
+  0x2abd; ori ,2; stb`), inside a check-ready fn (~0x823CDF40). It is reached only after `bl 0x823ce530`
+  (GPU-ring sync) AND three gates pass: **`0x2abc:bit7` (0x80) must be CLEAR**, a global must be !=0, and
+  bit1 not already set. So if 0x2abc:bit7 stays set, the ready-bit is NEVER set -> loader spins forever.
+- **0x823ce530 = GPU command-ring management**: reads write-ptr `*(dev+0x30)`, read-ptr `*(dev+0x3a40)`,
+  computes `(wptr-rptr)/4` pending dwords, builds PM4 packets (`oris ,0x8100`), gated by 0x2abc:bit7 +
+  `*(dev+0x34bc)->0x98`. It returns (not the hot spin).
+- **xenia DOES implement CP read-ptr writeback** (command_processor.cc:715 sets read_ptr_writeback_ptr_ from
+  CP_RB_RPTR_ADDR 0x70C; :1006 UpdatePrimaryReadPointer stores read_ptr_index_ to the guest writeback addr).
+  So the ring-drain feedback path EXISTS.
+- **CRUCIAL re-frame: the ring is NOT stuck.** In the good runs LO's loading screen renders (rendered=3, GPU
+  busy ~71%) -> xenia IS consuming LO's ring and the read ptr advances. So the hang is NOT "ring never
+  drains". It is a higher-level **device-init handshake**: LO's driver keeps `0x2abc:bit7` (pending) set,
+  waiting on a specific GPU completion/event/sequence during device bring-up that xenia isn't producing in
+  the form LO expects (consistent with B86nn: LO uses anticipated PM4_INTERRUPTs + panics on unanticipated).
+- **NEXT (pure disasm, tool ready):** find the writer that CLEARS `0x2abc:bit7` (`andi ,0x7f` / `rlwinm`
+  store to 0x2abc) and its precondition; that's the exact GPU event LO's bring-up waits on. Then make xenia
+  deliver it. HONEST: not fixed this turn - the root is a multi-fn GPU device-init handshake; completing it
+  to a validated xenia change needs more trace + a device fire (Thor degraded, must recover first). Durable
+  win this segment = the committed `tools/xex/` disassembler + this trace (next session starts at "clear
+  0x2abc:bit7", not from scratch).
