@@ -3073,3 +3073,40 @@ address LO polls in the spin and what 0x827B6C48 is supposed to store there. The
 dispatch satisfy LO's specific protocol (an LO-correct analog of the BD kick, NOT the BD kick itself). That
 flips LO from stuck-loading to rendering. Device-free profiler recipe + the spin PCs are banked above so the
 next session starts from the disasm, not from re-localizing.
+
+### B86nn - LO interrupt PROTOCOL characterized: LO uses ANTICIPATED PM4_INTERRUPT requests + PANICS on unanticipated interrupts. All 3 BD interrupt hacks REFUTED. Token NOT at +0x2A10.
+Pushed the LO spin diagnosis from "waits on an interrupt-set token" to the actual interrupt protocol, by
+reading the dispatch path + the in-engine GPU interrupt trace (`gpu_trace_interrupts=true`, already
+allowlisted - no rebuild). Findings:
+- **LO uses ANTICIPATED interrupts via the command stream.** The trace caught a `PM4_INTERRUPT cpu_mask=
+  00000004` (cpu bit 2) packet processed by `ExecutePacketType3_INTERRUPT` (command_processor.cc:1406) ->
+  `DispatchInterruptCallback(1, n)`. So LO writes PM4_INTERRUPT packets into its ring to REQUEST a source-1
+  interrupt at the exact point it expects one. This is the correct/anticipated path.
+- **LO PANICS on UNANTICIPATED interrupts -> all the blanket BD interrupt hacks crash it:**
+  - `gpu_interrupt_on_swap` + `gpu_interrupt_on_ring_idle` (fire source-1 on every swap / ring-drain):
+    LO's OWN D3D runtime prints `ERR[D3D]: Unanticipated CPU_INTERRUPT. Sign of a corrupt command [buffer]`
+    then executes a guest `tw/td` trap ("forced trap hit on A64 thid 1") = LO asserts/dies at ~boot. So an
+    interrupt fired when LO didn't request it is, to LO, proof of a corrupt command buffer.
+  - `gpu_blue_dragon_kick_wait_token` (blind-increment `*(interrupt_callback_data_+0x2A10)`): crashes LO at
+    ~6s. And the interrupt trace shows WHY: for LO, `token_ptr` read at `interrupt_callback_data_(0x4004B680)
+    + 0x2A10` = `00000000` (null) -> **LO's wait-token is NOT at the BD +0x2A10 offset**; the kick
+    dereferences null/garbage. LO's token lives elsewhere (engine layout differs from BD despite both
+    Mistwalker).
+- **The vblank source-0 path WORKS** (trace: `MarkVblank counter 0->1->...->C dispatching source=0`,
+  `dispatch begin/end source=0 callback=827B6C48`). So the callback IS being invoked on vblank; the stall is
+  NOT "callback never runs". It's that LO's spin waits for a token set by the callback on a SPECIFIC
+  ANTICIPATED (PM4-requested) source-1 interrupt, and either (a) that PM4_INTERRUPT isn't being emitted/
+  processed during the sustained stall, or (b) the callback runs but writes a token the spin isn't reading.
+- **=> The LO fix is NOT a blanket interrupt (every blanket variant makes LO panic "unanticipated").** It
+  must be precise: ensure xenia processes LO's PM4_INTERRUPT request during the stall AND that the callback's
+  write lands on the exact word the 0x827B6278 spin polls. Both require the disasm (token addr + callback
+  store + the ring point where LO requests the interrupt).
+- **DEVICE NOTE (Magna-class degradation):** after ~9 LO fires this session the boot started stalling early
+  (GPU 0%, ~2 VdSwaps, process gone, NO crash/trap markers) instead of reaching the loading screen. Same
+  over-firing degradation seen on Magna (~6 launches). Let the Thor recover (idle/reboot) before the next LO
+  fire; don't blind-retry a stalled boot.
+- **NEXT (two routes, pick on a fresh device):** (a) re-fire `gpu_trace_interrupts=true` and CATCH the
+  sustained-stall window (guest_ms 30k+, rendered=3) to see whether a PM4_INTERRUPT fires DURING the stall +
+  whether any token word changes; OR (b) disasm 0x827B6278 (the polled word) + 0x827B6C48 (the callback's
+  store target) - the definitive route. Then fire ONLY LO's requested interrupt and/or correct the callback
+  token write.
