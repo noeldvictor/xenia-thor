@@ -3220,3 +3220,26 @@ also sample the guest device-state word (interrupt_callback_data_+0x2ABC) and di
   screen is not "working"). gotchas (recorded): `adb reconnect` pops the Android USB dialog which PAUSES the
   emu (0 FPS); PowerShell `>` mangles screencap binary (UTF-16) - use screencap-to-/sdcard + adb pull;
   end-of-run ADB drops truncate captures - the gpu_log_interrupt_counts once/sec lines survive in the buffer.
+
+### B86ss - LO black-screen gate CHARACTERIZED = guest HARD-BLOCKED (not a spin); WiFi ADB set up. Needs xenia wait-state instrumentation (next).
+Pushed the post-HSIO-fix black screen as far as the available tools allow:
+- **WiFi ADB stood up** (USB kept dropping): `adb tcpip 5555` + `adb connect 192.168.1.32:5555`. It still
+  drops when idle (WiFi power-save), so the working pattern is **drop-resilient**: reconnect right before
+  each adb command; LO runs on-device regardless of the ADB state. `settings put global wifi_sleep_policy 2`
+  + `svc power stayon true` helps.
+- **top -H at the black screen: NO thread pegged** (main host thread 10.6%, GPU Commands 1.5%, all guest
+  XThreads <2% = sleeping; 679/800% idle). So unlike the loader spin (one XThread at 100%), the black screen
+  is a **BLOCKED WAIT - LO's guest is hard-parked**, waiting on a signal that never comes.
+- **Nearly zero activity:** logcat at the black screen = ~1 VdSwap, no runtime kernel calls, no
+  PM4_INTERRUPTs. The present loop has stopped; the guest threads make no calls while parked.
+- **Not observable with on-hand tools:** `debuggerd -b <pid>` returns empty (no root/perms for another uid's
+  app on the retail device); simpleperf can't sample sleeping threads; the high-freq kernel trace is silent
+  (parked threads don't call); device-free disasm has no entry PC (the blocked threads' PCs are unknown, and
+  the loader-spin 0x827B6278 has 6 generic callers - the black-screen wait is a different site).
+- **NEXT UNIT:** build xenia-side **guest wait-state instrumentation** - e.g. once/sec from MarkVblank, walk
+  the kernel's XThread list and log each guest thread's name + state + the kernel object it's blocked on (or
+  its resume guest PC). That names the object LO's bring-up is parked on -> then either implement/signal it
+  (likely another kStub kernel fn returning the wrong value, like VdIsHSIOTrainingSucceeded was) or fix the
+  thread that should signal it. The HSIO win shows the pattern: a single wrong stub return blocks the whole
+  bring-up. HEADLINE THIS SEGMENT: the months-long LO loading-stall is ROOT-FIXED + validated (B86rr);
+  LO now advances to a *new* black-screen gate (a separate blocked-wait), characterized here for continuation.
