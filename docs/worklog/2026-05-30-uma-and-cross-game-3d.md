@@ -2767,3 +2767,29 @@ this time BEFORE device/default-on. Verdict: **Unit A = GO_WITH_GUARDS, Unit B (
   iterations - direct, title-specific). The OODA + red-team discipline is the durable win: it converted
   a confident-but-wrong "Burnout's #1 codegen fix" into a precise, safe, bounded negative result -
   preventing both a shipped corruption footgun and a multi-day chase of an unsafe dead end.
+
+### B86cc - DEBUNKED a second ghost: gpu_edram_passes_dont_care_safe is INERT, not a "~12% win"
+Pivoted to deliver a GPU win by productizing gpu_edram_passes_dont_care_safe (memory + the
+binning-deinterleave index both ranked it "~12% measured, productize next"). Verified the consumption
+site is sound-by-construction (loads elided only when one full-screen unconditional-overwrite clear
+provably covers the ENTIRE render area, vulkan_command_processor.cc:3651/4446). BUT before shipping,
+checked the worklog: **B76 already proved it has ZERO coverage** - its trigger (a pass-opening one-rect
+full-area clear) NEVER fires because BTTF clears via RESOLVE-CLEARS, not pass-opening rect draws
+(dc_safe[p=0 att=0]). A fresh 2026-06-13 BTTF fire matched: dc_safe[p=0 att=0]. The "~12%" was the
+UNSAFE raw gpu_edram_passes_dont_care (elides ALL loads+stores, BLACK-SCREENS) - the SAFE variant cannot
+capture it on BTTF's resolve-clear idiom. **Productizing dont_care_safe as a win would have been
+fabrication.** Did NOT ship it; corrected the stale memories ([[binning-deinterleave-build]], MEMORY.md
+index) so it is never re-chased. (Capturing the 12% safely needs the parked v2 = loadOp=CLEAR folding of
+resolve-cleared ranges - a different mechanism.) The genuine pixel-correct per-draw lever nearby is draw
+concatenation (vulkan_merge_draws_rewrite / opt_draw_concat, ~2.4% BTTF, B78-fixed) - already an
+explained default-off toggle; the path to delivering it is cross-title device pixel-validation -> flip
+default-on (it stays off today because a per-game predicate hole corrupted B77 before B78's head-emit
+fix, so default-on needs per-title proof).
+- **Honest session ledger:** two levers that looked promising both evaporated under scrutiny - cross-call
+  register preservation (collapsed: r31 unsafe, r1 narrow) and dont_care_safe (inert). No new fps number
+  moved. What DID ship: a safe, guarded cross-call r1 cvar; a corruption bug prevented by the red-team;
+  two corrected memories that stop future sessions burning effort on the same ghosts. The no-fabrication
+  rule held - I will not ship an inert or unsafe "win" to satisfy the goal hook. NEXT (genuinely open,
+  not yet evaporated): device-validate opt_draw_concat across titles for default-on; the CR-triplet
+  elision under red-team rigor; or a non-Burnout title that is broken->working (bigger "all games
+  working" progress than squeezing a mature title's last %).
