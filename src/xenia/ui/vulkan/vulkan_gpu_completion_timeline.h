@@ -25,8 +25,10 @@ namespace vulkan {
 
 class VulkanGPUCompletionTimeline : public GPUCompletionTimeline {
  public:
-  explicit VulkanGPUCompletionTimeline(VulkanDevice* const vulkan_device)
-      : vulkan_device_(vulkan_device) {}
+  // Reads the vulkan_lazy_completion_polls cvar (defined in the .cc) to
+  // enable the lazy completion-poll mode (Turnip/KGSL fence status queries on
+  // in-flight fences block until GPU completion - see the cvar comment).
+  explicit VulkanGPUCompletionTimeline(VulkanDevice* vulkan_device);
 
   VulkanGPUCompletionTimeline(const VulkanGPUCompletionTimeline&) = delete;
   VulkanGPUCompletionTimeline& operator=(const VulkanGPUCompletionTimeline&) =

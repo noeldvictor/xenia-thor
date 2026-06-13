@@ -13,11 +13,35 @@
 #include <iterator>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+
+// On Turnip-over-KGSL, vkGetFenceStatus on an in-flight fence BLOCKS until the
+// fence's submission retires: Mesa's KGSL backend (tu_knl_kgsl.cc) implements
+// the status query as IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID with timeout=0,
+// and the downstream KGSL kernel (adreno_drawctxt.c) documents timeout==0 as
+// "wait forever". Eagerly polling pending fences therefore serializes the CPU
+// to the GPU for a full GPU frame at every frame open (Burnout: the 46.9 ms
+// fopen wait, B85) plus the submission-time remainder (the ~10.6 ms cpu_gap).
+// Lazy mode skips every status query that the current operation does not
+// strictly require: awaits early-out on the last-known completed value and
+// otherwise wait only on fences <= the awaited submission; fence reuse polls
+// only when no free fence is available.
+DEFINE_bool(vulkan_lazy_completion_polls, false,
+            "Never query Vulkan fence status beyond what an await strictly "
+            "requires (Turnip/KGSL status queries on in-flight fences block "
+            "until GPU completion, serializing the CPU to the GPU).",
+            "Vulkan");
 
 namespace xe {
 namespace ui {
 namespace vulkan {
+
+VulkanGPUCompletionTimeline::VulkanGPUCompletionTimeline(
+    VulkanDevice* const vulkan_device)
+    : vulkan_device_(vulkan_device) {
+  SetLazyCompletionPolls(cvars::vulkan_lazy_completion_polls);
+}
 
 VulkanGPUCompletionTimeline::~VulkanGPUCompletionTimeline() {
 #ifndef NDEBUG
@@ -50,8 +74,13 @@ VulkanGPUCompletionTimeline::~VulkanGPUCompletionTimeline() {
 std::optional<VulkanGPUCompletionTimeline::FenceAcquisition>
 VulkanGPUCompletionTimeline::AcquireFenceForSubmission(
     VkResult* const result_out_opt) {
-  // Reuse fences if completion was not awaited or updated explicitly.
-  UpdateAndGetCompletedSubmission();
+  // Reuse fences if completion was not awaited or updated explicitly. In lazy
+  // mode, only poll when there's no free fence to reuse - on Turnip/KGSL this
+  // poll lands on the still-running previous submission's fence and blocks
+  // until it retires (the B85 ~10.6 ms cpu_gap at submission time).
+  if (!IsLazyCompletionPolls() || free_fences_.empty()) {
+    UpdateAndGetCompletedSubmission();
+  }
 
   VkFence fence = VK_NULL_HANDLE;
 

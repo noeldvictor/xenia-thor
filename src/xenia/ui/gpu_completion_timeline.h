@@ -54,6 +54,25 @@ class GPUCompletionTimeline {
 
   bool AwaitSubmissionAndUpdateCompleted(const uint64_t awaited_submission) {
     assert_true(awaited_submission < upcoming_submission_);
+    if (lazy_completion_polls_) {
+      // Lazy mode: never issue completion-status queries beyond what the
+      // await itself requires. On Turnip-over-KGSL a fence status query
+      // (vkGetFenceStatus, or any wait reaching the kernel with timeout 0) on
+      // an in-flight fence BLOCKS until that submission retires (Mesa
+      // tu_knl_kgsl.cc passes ioctl timeout=0, and the KGSL kernel documents
+      // timeout==0 as "wait forever" - adreno_drawctxt.c). The unconditional
+      // pre-poll below therefore drains the pending-fence list into the
+      // just-submitted fence and serializes the CPU to the GPU for a full
+      // GPU frame at every frame open (Burnout B85: 46.9 ms = gpu_frame_us).
+      // Here: skip every query when the last-known completed value already
+      // covers the awaited submission, and otherwise go straight to the
+      // implementation wait, which is bounded to fences <= the awaited
+      // submission (never the in-flight tail).
+      if (GetCompletedSubmissionFromLastUpdate() < awaited_submission) {
+        AwaitSubmissionImpl(awaited_submission);
+      }
+      return GetCompletedSubmissionFromLastUpdate() >= awaited_submission;
+    }
     if (UpdateAndGetCompletedSubmission() < awaited_submission) {
       AwaitSubmissionImpl(awaited_submission);
     }
@@ -76,6 +95,15 @@ class GPUCompletionTimeline {
  protected:
   explicit GPUCompletionTimeline() = default;
 
+  // See AwaitSubmissionAndUpdateCompleted. Set by implementations whose
+  // completion-status queries can block on in-flight submissions
+  // (Turnip-over-KGSL), making eager polling a CPU/GPU serializer.
+  void SetLazyCompletionPolls(const bool lazy) {
+    lazy_completion_polls_ = lazy;
+  }
+
+  bool IsLazyCompletionPolls() const { return lazy_completion_polls_; }
+
   // Call only after a successful submission, so that it can be awaited later.
   void IncrementUpcomingSubmission() { ++upcoming_submission_; }
 
@@ -93,6 +121,8 @@ class GPUCompletionTimeline {
   uint64_t upcoming_submission_ = 1;
 
   uint64_t completed_submission_ = 0;
+
+  bool lazy_completion_polls_ = false;
 };
 
 }  // namespace ui
