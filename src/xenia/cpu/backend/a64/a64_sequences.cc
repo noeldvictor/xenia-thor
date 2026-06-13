@@ -6564,6 +6564,53 @@ static bool EmitIntegerCompareFlags(A64Emitter& e, const hir::Instr* instr) {
     return false;
   }
 
+  // Signed sub-word (I8/I16) comparisons must sign-extend both operands to a
+  // full register before `cmp`, exactly like the canonical
+  // DEFINE_SIGNED_COMPARE_XX sequences: on the backend's zero-extended
+  // sub-word representation, 0xFF (=-1 as signed I8) would otherwise compare
+  // as 255 and branch the wrong way. The plain-`cmp` arms below are correct
+  // for the unsigned/equality conditions (zero-extended bits) and for
+  // I32/I64. This hardens ALL callers of this helper (the CR-triplet/pair
+  // fusions and the single compare->branch fusion); real PPC compares are
+  // cmpw/cmpd (I32/I64) so it is defensive there but load-bearing for any
+  // sub-word signed compare an internal HIR producer feeds to a fused branch.
+  const hir::Opcode compare_op = instr->GetOpcodeNum();
+  const bool is_signed_inequality = compare_op == hir::OPCODE_COMPARE_SLT ||
+                                    compare_op == hir::OPCODE_COMPARE_SLE ||
+                                    compare_op == hir::OPCODE_COMPARE_SGT ||
+                                    compare_op == hir::OPCODE_COMPARE_SGE;
+  if (is_signed_inequality &&
+      (src1->type == hir::INT8_TYPE || src1->type == hir::INT16_TYPE)) {
+    const bool is_byte = src1->type == hir::INT8_TYPE;
+    const uint64_t mask = is_byte ? 0xFFu : 0xFFFFu;
+    if (src1->IsConstant()) {
+      e.mov(e.w0, IntegerValueBits(src1) & mask);
+    } else {
+      WReg src1_reg(0);
+      A64Emitter::SetupReg(src1, src1_reg);
+      e.mov(e.w0, src1_reg);
+    }
+    if (is_byte) {
+      e.sxtb(e.w0, e.w0);
+    } else {
+      e.sxth(e.w0, e.w0);
+    }
+    if (src2->IsConstant()) {
+      e.mov(e.w1, IntegerValueBits(src2) & mask);
+    } else {
+      WReg src2_reg(0);
+      A64Emitter::SetupReg(src2, src2_reg);
+      e.mov(e.w1, src2_reg);
+    }
+    if (is_byte) {
+      e.sxtb(e.w1, e.w1);
+    } else {
+      e.sxth(e.w1, e.w1);
+    }
+    e.cmp(e.w0, e.w1);
+    return true;
+  }
+
   switch (src1->type) {
     case hir::INT8_TYPE: {
       if (src1->IsConstant()) {

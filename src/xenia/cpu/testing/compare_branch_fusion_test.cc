@@ -96,6 +96,75 @@ TEST_CASE("COMPARE_BRANCH_FUSION_SLT_SINGLE_USE", "[instr]") {
       [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
 }
 
+TEST_CASE("COMPARE_BRANCH_FUSION_SLT_I8_SIGNEXT", "[instr]") {
+  // Signed sub-word compare: 0xFF (=-1) must compare LESS THAN 1, not as 255.
+  // The fused path routes through EmitIntegerCompareFlags, which must
+  // sxtb-extend for signed I8 - a plain cmp would branch the wrong way.
+  ScopedCompareBranchFusion fusion;
+  TestFunction test([](HIRBuilder& b) {
+    auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 4), INT8_TYPE),
+                            b.Truncate(LoadGPR(b, 5), INT8_TYPE));
+    auto taken = b.NewLabel();
+    b.BranchTrue(cmp, taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(0));
+    b.Return();
+    b.MarkLabel(taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(1));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        // (int8)0xFF = -1 < (int8)1 -> taken.
+        ctx->r[4] = 0xFF;
+        ctx->r[5] = 1;
+      },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
+  test.Run(
+      [](PPCContext* ctx) {
+        // (int8)1 < (int8)0xFF(=-1) is false -> not taken.
+        ctx->r[4] = 1;
+        ctx->r[5] = 0xFF;
+      },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
+  test.Run(
+      [](PPCContext* ctx) {
+        // (int8)0x80 = -128 < (int8)0x7F = 127 -> taken.
+        ctx->r[4] = 0x80;
+        ctx->r[5] = 0x7F;
+      },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
+}
+
+TEST_CASE("COMPARE_BRANCH_FUSION_SGT_I16_SIGNEXT", "[instr]") {
+  // Signed I16: 0xFFFF (=-1) must NOT be > 1 (sxth path).
+  ScopedCompareBranchFusion fusion;
+  TestFunction test([](HIRBuilder& b) {
+    auto cmp = b.CompareSGT(b.Truncate(LoadGPR(b, 4), INT16_TYPE),
+                            b.Truncate(LoadGPR(b, 5), INT16_TYPE));
+    auto taken = b.NewLabel();
+    b.BranchTrue(cmp, taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(0));
+    b.Return();
+    b.MarkLabel(taken);
+    StoreGPR(b, 3, b.LoadConstantUint64(1));
+    b.Return();
+  });
+  test.Run(
+      [](PPCContext* ctx) {
+        // (int16)0xFFFF = -1 > (int16)1 is false -> not taken.
+        ctx->r[4] = 0xFFFF;
+        ctx->r[5] = 1;
+      },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0); });
+  test.Run(
+      [](PPCContext* ctx) {
+        // (int16)0x7FFF = 32767 > (int16)0x8000 = -32768 -> taken.
+        ctx->r[4] = 0x7FFF;
+        ctx->r[5] = 0x8000;
+      },
+      [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 1); });
+}
+
 TEST_CASE("COMPARE_BRANCH_FUSION_UGT_SINGLE_USE", "[instr]") {
   ScopedCompareBranchFusion fusion;
   TestFunction test([](HIRBuilder& b) {

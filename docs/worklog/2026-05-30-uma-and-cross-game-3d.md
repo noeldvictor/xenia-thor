@@ -2498,3 +2498,30 @@ was found and fixed along the way:
 - Opus multi-agent workflow ran in parallel for the NZCV gap audit + adversarial fusion review
   (the harness-failure agent independently found+applied the Finalize fix, then I cross-validated
   it). Full a64 suite regression check + the gap-audit synthesis pending.
+
+### B86r - Opus workflow caught a REAL blocker in the fusion (shared-helper sign-ext bug) + ranked NZCV units
+Ran a 12-agent Opus workflow (4 investigators -> adversarial verify -> synthesis) on the
+compare->branch fusion + the NZCV gap. Findings (all adversarially verified):
+- **BLOCKER (my test missed it): EmitIntegerCompareFlags emits a plain `cmp` for signed I8/I16
+  with NO sxtb/sxth** (unlike the canonical DEFINE_SIGNED_COMPARE_XX which extends, with a
+  comment that 0xFF=-1 else compares as 255). Signed I8 cmp(-1,1) -> branches the WRONG way.
+  My test only used INT32 operands so it never hit it. This helper is SHARED by the existing
+  CR-triplet/pair fusions too -> latent landmine there as well (defensive: real PPC compares are
+  cmpw/cmpd = I32/I64, so unhit on real code, but a sub-word signed compare from any internal
+  HIR producer feeding a fused branch would miscompile). **FIX: sxtb/sxth-extend signed I8/I16
+  inside EmitIntegerCompareFlags (keyed off the compare opcode it already receives) - hardens
+  ALL THREE fusion callers at once.** Added signed-I8 + signed-I16 test vectors (0xFF, 0x80,
+  0x7FFF/0x8000 boundaries).
+- **Frequency: the single compare->branch fusion fires RARELY-TO-NEVER on real code** (0/60
+  branches in the Gears 3 OptHIR dump, independently re-run). Root cause is a title-independent
+  frontend invariant: every integer compare AND record-form routes through UpdateCR (3 lt/gt/eq
+  compares + 3 store_context); the branch re-LOADS the CR field via load_context with a
+  source_offset/context_barrier interposed -> the compare is never instr->next-adjacent to the
+  branch. The CR-triplet fusion already owns the dominant shape (38 triplets / 23 with branch).
+  => this fusion is effectively an inert research lane; keep it default-off, correctness-fixed.
+- **Ranked next NZCV units (verified):** U1 `cmn` for negative compare immediates (cmpwi vs
+  small-neg always falls to mov-to-scratch since imm wraps >4095; lowest risk, optimization not
+  bug); U2 FlagM carry - NUANCE: subfe already lowers to OPCODE_ADD_CARRY so it ALREADY gets the
+  rmif+adc fastpath (lower value than framed, mostly confirm/measure); U3 single-compare CR0
+  record-form (the path that ACTUALLY fires on real code = highest real-world impact). SELECT is
+  already csel (no gap).
