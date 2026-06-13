@@ -1275,6 +1275,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   // (blocked-then-released) from bookkeeping causes.
   uint32_t draw_frame_open_sub_pre_ = 0;
   uint32_t draw_frame_open_sub_post_ = 0;
+  // The raw indices of the frame-open await: the awaited submission
+  // (closed_frame_submissions_ slot), the upcoming submission, and the
+  // last-known completed submission at await entry. sub_pre=2 with a
+  // GPU-frame-length wait implies awaited == upcoming-1 (the JUST-closed
+  // submission - bookkeeping degeneration) OR a wait on an already-passed
+  // value; these three numbers decide which without inference.
+  uint64_t draw_frame_open_await_idx_ = 0;
+  uint64_t draw_frame_open_upcoming_ = 0;
+  uint64_t draw_frame_open_completed_ = 0;
   // Pure fence await/poll time inside CheckSubmissionCompletionAndDeviceLoss
   // this frame (all call sites); fopen wait_us minus this = the completion-
   // side reclamation CPU. The (A)-GPU-late vs (B)-reclaim-cost discriminator.

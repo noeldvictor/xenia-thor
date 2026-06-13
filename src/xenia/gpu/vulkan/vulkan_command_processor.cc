@@ -2454,7 +2454,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
         "cpu_real_us={} cpu_gap_us={} cpu_vfres_us={} "
-        "fopen[wait_us={} inflight={} sub_pre={} sub_post={} fence_us={}] "
+        "fopen[wait_us={} inflight={} sub_pre={} sub_post={} fence_us={} "
+        "await={} up={} comp={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
@@ -2542,6 +2543,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_cpu_frame_open_wait_ns_ / 1000, draw_frame_open_in_flight_,
         draw_frame_open_sub_pre_, draw_frame_open_sub_post_,
         completion_fence_await_ns_ / 1000,
+        draw_frame_open_await_idx_, draw_frame_open_upcoming_,
+        draw_frame_open_completed_,
         gpu_frame_us_, gpu_pass_us_,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
@@ -6553,6 +6556,9 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     // something the CPU/present released - signaling/pacing, not execution).
     draw_frame_open_sub_pre_ =
         uint32_t(GetCurrentSubmission() - GetCompletedSubmission());
+    draw_frame_open_await_idx_ = await_submission;
+    draw_frame_open_upcoming_ = GetCurrentSubmission();
+    draw_frame_open_completed_ = GetCompletedSubmission();
     frame_open_t0 = std::chrono::steady_clock::now();
   }
   CheckSubmissionCompletionAndDeviceLoss(await_submission);
