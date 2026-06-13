@@ -2337,3 +2337,17 @@ polling in-flight fences is strictly safer and bounds the fence pools.
   the stack + lazy now. NEXT measured units: in-app Burnout check via launcher (stack+lazy
   compose), BD round-2 re-fire (frame==gpu_frame case), Gears/LO lazy checks,
   gpu_edram_passes_dont_care_safe fire (built ~12% GPU lever, dc_safe counters in place).
+
+### B86g - Gears of War: 4th title validated (~18 -> 29.6fps menu) + Mesa driver patch authored
+Fire turnip_gearslazy (lazy ON, raw): main menu (rendered=172-175, png pixel-correct, OSD
+29.6fps) frame interval ~33ms vs the prior ~18fps menu assessment; cpu_issuedraw now 3.9-4.8ms
+- the previously-attributed "cpu_other ~45ms" WAS this fence block. gpu_frame 23.8-26.1ms,
+inflight=4. (Scene caveat: prior 18fps was a different session's menu read; direction is
+unambiguous - the IssueDraw cost collapsed 10x.)
+Also authored the DRIVER-side fix for our shipped Turnip + upstream: timeout-0 STATE_TS polls
+should use IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID (retired-timestamp compare) instead of the
+WAITTIMESTAMP ioctl - doc + patch code in
+docs/research/20260612-turnip-kgsl-blocking-fence-status.md (build deferred: Mesa Android
+cross-build; xenia-side fix already covers xenia).
+Session scoreboard (one root cause, 8 fires): Burnout +46%, BTTF +78% (27.7 gameplay), BD +30%
+(7.9), Gears menu ~+64% (29.6). All pixel-correct, default-ON toggle shipped.
