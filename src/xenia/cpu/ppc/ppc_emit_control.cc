@@ -10,10 +10,15 @@
 #include "xenia/cpu/ppc/ppc_emit-private.h"
 
 #include "xenia/base/assert.h"
+#include "xenia/base/logging.h"
+#include "xenia/base/memory.h"
 #include "xenia/cpu/cpu_flags.h"
+#include "xenia/cpu/function.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_frontend.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
+#include "xenia/cpu/ppc/ppc_opcode_info.h"
+#include "xenia/memory.h"
 
 #include <stddef.h>
 
@@ -26,6 +31,54 @@ using namespace xe::cpu::hir;
 
 using xe::cpu::hir::Label;
 using xe::cpu::hir::Value;
+
+namespace {
+// JIT inlining Unit 0 (read-only candidate analysis). A direct guest bl is a
+// straight-line-leaf inline candidate iff, scanning its ucode from the entry,
+// the FIRST control-flow instruction reached is the terminal blr (return) - i.e.
+// the body is a single straight-line basic block with no branch/call of its own,
+// within a small instruction budget. This is the simplest, safest splice target
+// (no label remapping, no recursion) and is exactly the shape that lets the
+// caller's within-block context promotion fold the per-call round-trips once the
+// call boundary is removed. Read-only; never changes codegen.
+struct InlineLeafScan {
+  bool straightline_leaf = false;
+  uint32_t inst_count = 0;
+};
+InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
+  InlineLeafScan scan;
+  constexpr uint32_t kMaxInsts = 64;  // ~256 bytes; small leaves only
+  if (!memory) {
+    return scan;
+  }
+  uint32_t a = address;
+  for (uint32_t n = 0; n < kMaxInsts; ++n, a += 4) {
+    auto host = memory->TranslateVirtual(a);
+    if (!host) {
+      return scan;
+    }
+    uint32_t code = xe::load_and_swap<uint32_t>(host);
+    if (!code) {
+      // Padding / unknown end without a clean return.
+      return scan;
+    }
+    ++scan.inst_count;
+    if (code == 0x4E800020) {
+      // blr - unconditional return. Straight-line leaf if we got here without
+      // hitting any other branch/call.
+      scan.straightline_leaf = true;
+      return scan;
+    }
+    PPCOpcode opcode = LookupOpcode(code);
+    if (opcode == PPCOpcode::bx || opcode == PPCOpcode::bcx ||
+        opcode == PPCOpcode::bcctrx || opcode == PPCOpcode::bclrx) {
+      // Any branch/call in the body - not a straight-line leaf (yet).
+      return scan;
+    }
+  }
+  return scan;  // exceeded the budget without a clean return
+}
+}  // namespace
 
 int InstrEmit_branch(PPCHIRBuilder& f, const char* src, uint64_t cia,
                      Value* nia, bool lk, Value* cond = NULL,
@@ -76,6 +129,17 @@ int InstrEmit_branch(PPCHIRBuilder& f, const char* src, uint64_t cia,
     } else {
       // Call function.
       auto function = f.LookupFunction(nia_value);
+      // JIT inlining Unit 0 (read-only): classify this direct-bl target so the
+      // inlining opportunity can be measured before the splice (Unit 1) exists.
+      if (cvars::arm64_jit_inline_audit && function &&
+          function->behavior() == Function::Behavior::kDefault) {
+        InlineLeafScan scan =
+            ScanInlineLeafCandidate(f.frontend()->memory(), nia_value);
+        XELOGI(
+            "INLINE-CAND caller={:08X} callee={:08X} insts={} leaf={} cond={}",
+            uint32_t(f.function() ? f.function()->address() : 0), nia_value,
+            scan.inst_count, scan.straightline_leaf ? 1 : 0, cond ? 1 : 0);
+      }
       if (cond) {
         if (!expect_true) {
           cond = f.IsFalse(cond);

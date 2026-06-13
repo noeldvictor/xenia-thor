@@ -395,6 +395,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             // JIT host->guest symbol map for offline simpleperf symbolization
             // of the 43% guest-JIT cost (B86t/u). Default-off profiling aid.
             copyBooleanExtra(intent, launchArguments, "cpu_emit_jit_perf_map");
+            copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_audit");
+            copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_leaf");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");

@@ -83,3 +83,19 @@ DEFINE_bool(cpu_emit_jit_perf_map, false,
             "Log a JITSYM host->guest map line for each placed guest function "
             "(for offline simpleperf JIT symbolization). Default off.",
             "CPU");
+
+DEFINE_bool(arm64_jit_inline_audit, false,
+            "Thor JIT inlining Unit 0 (read-only): at each DIRECT guest bl, "
+            "classify the target by scanning its ucode and log an INLINE-CAND "
+            "line (straight-line-leaf? instruction count). Measures the inlining "
+            "opportunity before the splice is built. Changes no codegen. "
+            "Default off.",
+            "CPU");
+DEFINE_bool(arm64_jit_inline_leaf, false,
+            "Thor JIT inlining (build target, NOT YET ACTIVE): inline a direct "
+            "bl to a small straight-line leaf guest function into the caller, "
+            "eliminating the call + its context_barrier so the loop-invariant "
+            "guest loads/CR stores promote across the (removed) call boundary - "
+            "the SAFE alternative to cross-barrier elision (see the cross-barrier "
+            "elision wall verdict). Default off.",
+            "CPU");
