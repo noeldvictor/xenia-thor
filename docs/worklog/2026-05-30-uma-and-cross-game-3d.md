@@ -2378,3 +2378,17 @@ with 153 race lines): matched rendered=2110 vs B85 turnip_burnoutfullstack contr
   acquire, EndSubmission) + the guest-side VdSwap ack path - one fire localizes the bubble.
 - Session device totals: 10 fires, 2 watchdog trips (both salvaged), all data pixel-correct;
   device rested from here.
+
+### B86j - VSYNC-QUANTIZATION MECHANISM CONFIRMED (menu-level); event-driven vblank = the build
+Derivation: every post-lazy title's frame interval is an exact 16.7ms multiple (Burnout 64-68
+~4x, BD 126-135 ~8x w/ gpu 128.6->ceil 133.3, Gears 33-34 ~2x w/ gpu 24-26). The 60Hz vblank
+timer (graphics_system.cc:150-167, MarkVblank every >=16ms; vsync cvar) paces the guest, so
+every frame rounds UP to the next vblank after GPU completion - the B86i ~18ms bubble.
+Fire turnip_novsync (--ez vsync false via new allowlist d4bde2392, lazy ON): the SAVE/LOAD-class
+menus that were HARD-LOCKED at 16.7ms (59.4fps OSD in every prior capture) ran at **3-12ms
+intervals (~80-300fps)** - the lock is the vblank timer, CONFIRMED. Cost: uncapped menus burned
+the thermal budget (63C by t=40, watchdog before the race) -> race-level numbers deferred;
+vsync=false is NOT shippable raw (heat + vblank-counter game-speed risk).
+**THE BUILD (next session): event-driven vblank - MarkVblank on swap completion (with a 16.7ms
+ceiling/floor for vblank-counter sanity), unquantizing heavy frames (Burnout 65->~50 = ~19-21fps
+predicted) WITHOUT uncapping light scenes.** 11 fires today total; device rested.
