@@ -72,3 +72,14 @@ DEFINE_bool(break_condition_truncate, true, "truncate value to 32-bits", "CPU");
 
 DEFINE_bool(break_on_debugbreak, true, "int3 on JITed __debugbreak requests.",
             "CPU");
+
+// JIT symbol map for profiling: when on, every guest function placed in the
+// code cache logs "JITSYM <host_exec_addr_hex> <code_size_hex>
+// <guest_addr_hex>". simpleperf reports JIT'd guest code as anonymous host
+// addresses (unknown[+...]); capture these JITSYM lines in the SAME run as a
+// simpleperf profile, then offline-correlate a hot host address to its guest
+// PPC function (Ghidra it). Default-off (one line per compiled function).
+DEFINE_bool(cpu_emit_jit_perf_map, false,
+            "Log a JITSYM host->guest map line for each placed guest function "
+            "(for offline simpleperf JIT symbolization). Default off.",
+            "CPU");

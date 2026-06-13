@@ -392,6 +392,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "a64_enable_host_guest_stack_synchronization");
             copyIntExtra(intent, launchArguments, "a64_max_stackpoints");
+            // JIT host->guest symbol map for offline simpleperf symbolization
+            // of the 43% guest-JIT cost (B86t/u). Default-off profiling aid.
+            copyBooleanExtra(intent, launchArguments, "cpu_emit_jit_perf_map");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");

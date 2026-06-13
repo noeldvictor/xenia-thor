@@ -28,6 +28,7 @@
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/mutex.h"
+#include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/backend/code_cache.h"
 #include "xenia/cpu/function.h"
 
@@ -217,6 +218,17 @@ class CodeCacheBase : public CodeCache {
     // Post-placement hook (e.g. VTune notification).
     self().OnCodePlaced(guest_address, function_info, code_execute_address,
                         func_info.code_size.total);
+
+    // JIT symbol map for offline simpleperf symbolization of guest code
+    // (cpu_emit_jit_perf_map). The host execute address is the runtime
+    // address simpleperf samples (anonymous "unknown[+...]"), so capture
+    // these in the same run as the profile and correlate offline to find the
+    // guest PPC function behind a hot JIT host address.
+    if (cvars::cpu_emit_jit_perf_map && guest_address) {
+      XELOGI("JITSYM {:X} {:X} {:08X}",
+             reinterpret_cast<uint64_t>(code_execute_address),
+             uint64_t(func_info.code_size.total), guest_address);
+    }
 
     // Fix up indirection table.
     if (guest_address && indirection_table_base_) {

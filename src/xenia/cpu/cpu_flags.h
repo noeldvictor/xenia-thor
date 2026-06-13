@@ -39,5 +39,6 @@ DECLARE_string(break_condition_op);
 DECLARE_bool(break_condition_truncate);
 
 DECLARE_bool(break_on_debugbreak);
+DECLARE_bool(cpu_emit_jit_perf_map);
 
 #endif  // XENIA_CPU_CPU_FLAGS_H_
