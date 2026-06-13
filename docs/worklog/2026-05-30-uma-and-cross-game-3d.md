@@ -2793,3 +2793,30 @@ fix, so default-on needs per-title proof).
   not yet evaporated): device-validate opt_draw_concat across titles for default-on; the CR-triplet
   elision under red-team rigor; or a non-Burnout title that is broken->working (bigger "all games
   working" progress than squeezing a mature title's last %).
+
+### B86dd - the cross-barrier elision WALL (codegen verdict) + draw_concat & CR-triplet closed
+Stopped pattern-matching to promising-sounding levers and instead mapped WHY this session's levers kept
+evaporating. **THE WALL (now a documented architectural verdict, memory [[cross-barrier-elision-wall]]):**
+the JIT inserts an OPCODE_CONTEXT_BARRIER at every guest CALL because guest functions SHARE ONE
+PPCContext - so the caller cannot assume ANY guest state (GPRs, CR, XER) survives the call. Therefore
+EVERY optimization that elides guest state ACROSS a call barrier is fundamentally unsafe, proven by two
+independent collapses: cross-call register preservation (red-team: silent stack corruption on
+longjmp/import) AND CR-triplet cross-barrier store-elision (arm64_cr_compare_branch_across_context_barrier
+CRASHED BD; same class). The within-block CR-triplet fusion is fine + shipped (B86r: owns the dominant
+38-triplet shape); only the cross-barrier variant is unsafe. **The ONLY safe way to kill the per-call
+context round-trip in a hot loop is to ELIMINATE THE CALL = JIT-inline the leaf** (semantically
+transparent, sidesteps the wall) - the two-track vision's 2nd-tier inlining, a substantial backend build.
+- **draw_concat (opt_draw_concat) device-validated on BD (turnip_bddrawconcaton, matched heavy vista
+  guest_ms~153k rendered=1220/263k verts):** host_draws=1266 >= rendered=1220 = NO merge (BD's per-mesh
+  strips don't meet the merge predicate, as [[bttf-per-draw-slope]] predicted), PIXEL-CORRECT village
+  scene (no holes). So draw_concat is BTTF-only (~2.4%, shared-VB), inert+safe on BD, dead on Burnout -
+  and CANNOT safely default-on (the B77 per-game predicate hole could recur on an unvalidated shared-VB
+  title), so it stays correctly an explained opt-in toggle. Clean re-confirm: BD is deeply GPU-bound
+  (gpu_frame_us~128ms vs cpu_real_us~30ms; the CPU just waits on the GPU fence = the binning floor).
+- **HONEST SESSION CLOSE:** no new fps number moved. What this cycle delivered: a safe guarded cross-call
+  r1 cvar; a silent-corruption bug PREVENTED by adversarial red-team; THREE debunked/settled lever
+  variants documented so they're never re-chased (dont_care_safe inert, BD cull net-neutral, cross-barrier
+  elision unsafe); the architectural WALL verdict that redirects all future CPU-codegen toward INLINING.
+  The mature-codebase reality: remaining per-title software levers are small/bounded/dead, the biggest
+  wins were GPU/driver/sync (the fence fix +46-78%), and the next genuinely-open BIG lever is JIT inlining
+  of direct-call leaves (multi-day). No fabricated or unsafe "win" shipped - the no-fabrication rule held.
