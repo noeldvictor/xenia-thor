@@ -1,0 +1,4 @@
+*.exe
+obj/
+_lzx_*.bin
+__pycache__/
