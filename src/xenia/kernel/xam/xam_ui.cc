@@ -41,6 +41,17 @@ DEFINE_bool(
     "check.",
     "Kernel");
 
+DEFINE_bool(
+    xam_auto_dismiss_message_boxes, false,
+    "Auto-answer XamShowMessageBoxUI/UIEx prompts with the title's own focused "
+    "(default) button and complete immediately, instead of showing an interactive "
+    "ImGui dialog and waiting for input. On a handheld/automated setup a system "
+    "message box that is never dismissed HANGS the title forever - e.g. Lost "
+    "Odyssey puts up a profile/storage prompt on its first load and gets stuck on "
+    "a black 'Loading' screen waiting for the (never-arriving) response. Picks the "
+    "title's default button so it continues. Default off.",
+    "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -305,8 +316,9 @@ dword_result_t XamShowMessageBoxUI_entry(
   }
 
   X_RESULT result;
-  if (cvars::headless) {
-    // Auto-pick the focused button.
+  if (cvars::headless || cvars::xam_auto_dismiss_message_boxes) {
+    // Auto-pick the focused button (headless, or auto-dismiss for handheld /
+    // automated use where an interactive dialog would never be answered).
     auto run = [result_ptr, active_button]() -> X_RESULT {
       *result_ptr = static_cast<uint32_t>(active_button);
       return X_ERROR_SUCCESS;
@@ -342,6 +354,25 @@ dword_result_t XamShowMessageBoxUI_entry(
   return result;
 }
 DECLARE_XAM_EXPORT1(XamShowMessageBoxUI, kUI, kImplemented);
+
+// The "extended" message box. It was UNIMPLEMENTED (export 0x2DC was registered
+// but had no entry), so its OVERLAPPED never completed and any guest that puts up
+// a system message box during boot HANGS FOREVER waiting on the result. Lost
+// Odyssey does exactly this on its first load (a profile/storage prompt after
+// XamUserGetSigninState) and gets stuck on a black "Loading" screen. The Ex
+// variant is the base call plus one unused dword and a MESSAGEBOX_RESULT result
+// (whose first dword is the chosen button index, matching the base's lpdword_t
+// result) - so route it straight to the base entry so the overlapped completes.
+dword_result_t XamShowMessageBoxUIEx_entry(
+    dword_t user_index, lpu16string_t title_ptr, lpu16string_t text_ptr,
+    dword_t button_count, lpdword_t button_ptrs, dword_t active_button,
+    dword_t flags, dword_t unknown_unused, lpdword_t result_ptr,
+    pointer_t<XAM_OVERLAPPED> overlapped) {
+  return XamShowMessageBoxUI_entry(user_index, title_ptr, text_ptr, button_count,
+                                   button_ptrs, active_button, flags, result_ptr,
+                                   overlapped);
+}
+DECLARE_XAM_EXPORT1(XamShowMessageBoxUIEx, kUI, kImplemented);
 
 class KeyboardInputDialog : public XamDialog {
  public:
