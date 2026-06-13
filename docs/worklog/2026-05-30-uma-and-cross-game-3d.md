@@ -2351,3 +2351,15 @@ docs/research/20260612-turnip-kgsl-blocking-fence-status.md (build deferred: Mes
 cross-build; xenia-side fix already covers xenia).
 Session scoreboard (one root cause, 8 fires): Burnout +46%, BTTF +78% (27.7 gameplay), BD +30%
 (7.9), Gears menu ~+64% (29.6). All pixel-correct, default-ON toggle shipped.
+
+### B86h - dont_care_safe on BD: INERT (0 engagements) + round-2 BD-neutral; BD floor stands
+Fire turnip_bddcsafe (lazy + gpu_edram_passes_dont_care_safe, round-2 build): dc_safe[p=0
+att=0] across ALL 2546 outcome lines - BD's 10 rect draws/frame never qualify as pass-opening
+provable full-coverage clears (and BD tile load/store was already measured ~3%, so the BD
+ceiling was tiny regardless). dont_care_safe stays a BTTF-class lever (its ~12% diagnostic
+measurement) - try it on BTTF next cooldown. Matched heavy window (149.9-150.9k, rendered
+1160-1164): frame ~126-135ms, gpu_frame ~128.8-129.6ms = IDENTICAL to bdlazy round-1; png
+pixel-identical (7.9fps). fopen now shows the genuine kMaxFramesInFlight throttle on BD
+(wait ~94ms with comp<await - the GPU-bound case working as designed). BD CONCLUSION: at the
+gpu_frame floor with every emulator-side CPU/sync lever now applied; next levers are
+submitted-vertex reduction (game-patch LOD/cull) or a cheaper binning position shader.
