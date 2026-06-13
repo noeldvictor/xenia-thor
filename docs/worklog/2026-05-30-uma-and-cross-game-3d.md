@@ -2601,3 +2601,26 @@ still 1.76%, DSO split identical (43% guest JIT / 34% libxenia-app / 11% libc).
   = ~10% in lock machinery, all from the global recursive_mutex). The hoist-lock toggle
   (fe0e3c4ad) attacked this; the durable fix is fewer lock sites on the per-frame guest path.
   Plus the bigger 43% guest-JIT-code lever (name the hot loops via a perf-map -> Ghidra). NEXT.
+
+### B86w - watch-rearm-skip: SAFE + pixel-correct but ~0 Burnout (the lock cost is genuine churn, not redundant re-arms)
+Designed (12-agent Opus adversarial workflow on the EnableAccessCallbacks lock contention) +
+implemented gpu_skip_redundant_watch_rearm (default-off): in SharedMemory::MakeRangeValid, skip
+the EnablePhysicalMemoryAccessCallbacks re-arm (a SECOND global-lock acquisition + range loop)
+when NO page transitioned invalid->valid. Safety (independently verified + device-confirmed): a
+valid page is never writable-but-unwatched - a guest write OR a guest make-writable both run
+PhysicalHeap::Protect -> TriggerCallbacks which CLEARS the valid bit (memory.cc:1706-1708), so
+all-already-valid => all-already-watched => the re-arm is a pure no-op.
+- DEVICE A/B (cvar ON, Burnout race, simpleperf + png): **PIXEL-CORRECT** (clean in-race
+  gameplay, no missed-write corruption - confirms the safety analysis). BUT the lock contention
+  is **UNCHANGED**: __aarch64_cas2_acq 4.03%->3.83%, swp2_rel 1.76%->1.85%, DSO split identical
+  = within noise. => ~0 Burnout win.
+- WHY ~0: in Burnout's race the guest genuinely CHURNS memory (game state + command buffers
+  rewritten each frame), so writes invalidate the ranges and MakeRangeValid mostly re-validates
+  GENUINELY-invalidated ranges (any_newly_valid=true) - the skip rarely fires. The ~10% lock
+  cost is REAL write-watch work (re-arming actually-invalidated pages) + MakeRangeValid's OWN
+  first lock (line 290, NOT skipped) + the recursive_mutex itself, NOT redundant re-arms.
+- Kept default-off (correct, safe, pixel-validated; may help titles/scenes that re-validate
+  STABLE memory - not Burnout). **TWO careful host-side opts now ~0 for Burnout (LSE B86v +
+  this): the cost is dominated by the 43% guest JIT code + genuine write-watch, not removable
+  host overhead. The REAL Burnout lever is the 43% guest game-logic JIT (perf-map -> name the
+  hot loops 0x2a026ddXX ~14% -> Ghidra -> targeted fast-path/game-patch).**

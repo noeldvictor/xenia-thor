@@ -21,6 +21,18 @@ DEFINE_path(
 DEFINE_bool(vsync, true, "Enable VSYNC.", "GPU");
 
 DEFINE_bool(
+    gpu_skip_redundant_watch_rearm, false,
+    "EXPERIMENTAL (Thor): in SharedMemory::MakeRangeValid, skip the "
+    "EnablePhysicalMemoryAccessCallbacks re-arm (which re-takes the global "
+    "lock and loops over the range) when NO page transitioned invalid->valid "
+    "- i.e. the range was already fully valid, hence already watched. Safe: a "
+    "valid page is never writable-but-unwatched (a guest write or a guest "
+    "make-writable both fire TriggerCallbacks which clears the valid bit, "
+    "memory.cc PhysicalHeap::Protect/EnableAccessCallbacks). Burnout's "
+    "CPU-bound race spends ~6-10% in this global-lock path (B86v).",
+    "GPU");
+
+DEFINE_bool(
     vsync_on_swap, false,
     "EXPERIMENTAL (Thor): fire the guest vblank interrupt immediately when a "
     "slower-than-60fps title issues a swap, instead of making its frame wait "
