@@ -2536,3 +2536,25 @@ code (cmpwi-vs-small-negative is ubiquitous: loop bounds, -1 sentinels, error ch
 flag-equivalent (the cset/branch condition is unchanged); test vectors at -1, -5, -4095 boundary
 for both I32 (CompareSLT) and I64 (CompareSGT). Unlike the inert compare->branch fusion, this is
 a real-code optimization. Validation pending (x64 8 cases/22 assertions already green).
+
+### B86t - DECISIVE: post-fence-fix Burnout is CPU-BOUND on the guest Main XThread (99%) - codegen IS the lever
+Manual `top -H` grabbed during the LIVE Burnout TRAFFIC ATTACK race (rendered=2110, fence fix on,
+device 58->64C): per-thread CPU (2nd iteration = real):
+- **Main XThread (guest main game-logic thread): 99% CPU - PEGGED on one core.**
+- Thread-3 (CP/JIT worker): 82%. XMA Decoder 40%, Audio Worker 17%.
+- ALL other guest XThread*: 1-3% (idle/waiting). GPU VSync 1%. ~5 of 8 cores idle (491% idle).
+=> **The residual ~20ms frame bubble (frame 66 = gpu 46 + ~20) is GUEST GAME-LOGIC CPU TIME: the
+guest's Main XThread runs game logic (physics/AI/state) through our JIT and is CPU-BOUND at
+~99%, taking ~65ms/frame to produce the next frame's commands while the GPU only needs 46ms.**
+- **MAJOR REFRAME: the Turnip/KGSL fence-poll fix ([[burnout-frame-serialization]]) moved Burnout
+  from GPU/sync-bound to CPU-BOUND-on-guest-main-thread. So the CPU TRACK (codegen quality, the
+  NZCV/flag work, the optimizing tier, targeted JIT fast-paths) IS the lever for Burnout's last
+  ~40% (15.2 -> ~21.5fps) - exactly the device-free codegen work just shipped (B86p-s). This was
+  previously believed GPU-bound where "codegen doesn't help"; it does now.**
+- The "1 of 8 cores" shape is stark (Main XThread 99% on one core, 5 cores idle). A single guest
+  thread can't be parallelized, BUT (a) codegen quality speeds it directly, (b) parallel/background
+  JIT translation offloads compile cost, (c) Ghidra-RE the Main XThread's hot guest PCs to find the
+  dominant game-logic loop and add a targeted fast-path/patch.
+- **NEXT (CPU track, now clearly the Burnout lever):** profile the hot guest PCs WITHIN Main XThread
+  (A64 speed profiler / simpleperf --app on the guest thread) -> Ghidra the dominant function ->
+  targeted codegen fast-path or game-patch. This is the OODA loop CLAUDE.md prescribes.
