@@ -3167,3 +3167,29 @@ Continued the disasm trace to the writer of the device-ready bit, then up the ch
   to a validated xenia change needs more trace + a device fire (Thor degraded, must recover first). Durable
   win this segment = the committed `tools/xex/` disassembler + this trace (next session starts at "clear
   0x2abc:bit7", not from scratch).
+
+### B86qq - DEPLOYED a code change + device-validated it: LO's PM4_INTERRUPTs DO fire during the stall (accelerating retry loop) -> the hang is the device-state handshake, NOT interrupt delivery. Device recovered via reboot.
+Converted the analysis into a shipped, deployed, device-validated change and got a decisive answer.
+- **Device recovery:** the Thor's LO boot had degraded (boot-stall at ~4s after ~9 fires); `adb reboot`
+  CLEARED it (clean LO baseline post-reboot: rendered=3, guest_ms 21111). Recovery = reboot, confirmed.
+- **gpu_trace_interrupts is FATAL to LO** (kills it at ~2s, reproducible across reboot): the per-event trace
+  latency in the interrupt path breaks LO's interrupt-timing-sensitive device init. So I built a NON-fatal
+  probe instead.
+- **SHIPPED `gpu_log_interrupt_counts`** (committed 7637d680d): file-scope atomic src0/src1 dispatch
+  counters (no hot-path logging) in graphics_system.cc, logged ONCE/sec from MarkVblank; cvar gated
+  default-off + allowlisted. Built incremental (cvar verified in the stripped .so, no stale-link), installed,
+  fired.
+- **DEVICE-VALIDATED RESULT:** during LO's stall the counters show src1 (PM4_INTERRUPT/CP-driven dispatches)
+  climbing **1 -> 5 -> 53 -> 209 -> 601** by guest_ms 11817 (exceeding the 597 vblank src0), ACCELERATING -
+  and the emulation SLOWS as it climbs. => LO's loader is in an **accelerating PM4_INTERRUPT retry loop**:
+  it emits interrupt requests, they DO fire and run the source-1 callback (clears the per-cpu mask), but
+  device-ready never comes, so it retries harder. **CONCLUSION: interrupts fire fine; the hang is the
+  device-state handshake (0x2abc:bit7 never clears).** This RULES OUT interrupt delivery as the fix (and
+  explains why blind interrupt injection - kick/on_swap/ring_idle - only crashed LO: it doesn't need MORE
+  interrupts).
+- **NEXT (the fix, now precisely bounded):** find what clears 0x2abc:bit7. Candidate writer chain is the
+  0x827B8xxx device command-buffer state machine (rlwimi at 0x827B8B68 rewrites the 0x2abc byte; the andi
+  sites clear other bits). Trace which path clears bit7 + its GPU precondition (a command-buffer/EVENT_WRITE
+  completion), then make xenia satisfy it. The probe stays as a permanent diagnostic. HONEST: LO still not
+  fixed, but this segment SHIPPED a deployed+validated change and decisively eliminated the
+  interrupt-delivery hypothesis.
