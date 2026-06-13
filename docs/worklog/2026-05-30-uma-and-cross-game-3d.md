@@ -2363,3 +2363,18 @@ pixel-identical (7.9fps). fopen now shows the genuine kMaxFramesInFlight throttl
 (wait ~94ms with comp<await - the GPU-bound case working as designed). BD CONCLUSION: at the
 gpu_frame floor with every emulator-side CPU/sync lever now applied; next levers are
 submitted-vertex reduction (game-patch LOD/cull) or a cheaper binning position shader.
+
+### B86i - Burnout FULL-STACK + lazy composite: 12.2 -> ~15.2fps; the ~18ms swap-pacing bubble is the next lever
+Fire turnip_fullstacklazy (launcher toggle stack replicated + lazy, watchdog-salvaged at t=100
+with 153 race lines): matched rendered=2110 vs B85 turnip_burnoutfullstack control:
+- frame ~82ms -> **~64-68ms (~12.2 -> ~15.2fps, +26% on top of the stack)**; beginsubmit
+  46.9ms -> 21-27us; cpu_real 34-37.5ms (= B85's 35.1, the stack composes cleanly with lazy);
+  gpu_frame 46.1-47.7ms unchanged; inflight=4.
+- NOT yet the ~21.5 ideal: frame 65 = gpu 46.5 + **~18ms pipeline bubble** (GPU busy 71% =
+  exactly gpu_frame/frame). The bubble survives the stack, lazy round-1 AND round-2 -> it is
+  NOT fence polls, NOT reclamation, NOT CPU work. Candidates: guest VdSwap pacing (the guest's
+  own swap-ack wait), presenter mailbox handoff, AwaitMax(2) paint throttle under FIFO.
+  NEXT-SESSION PROBE: fopen-style phase timers inside IssueSwap (refresh callback wait, mailbox
+  acquire, EndSubmission) + the guest-side VdSwap ack path - one fire localizes the bubble.
+- Session device totals: 10 fires, 2 watchdog trips (both salvaged), all data pixel-correct;
+  device rested from here.
