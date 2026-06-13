@@ -3348,3 +3348,24 @@ XEX (scratch/burnout/, base 0x82000000) to author the traffic-density fps patch 
   patch + vulkan_trace_draw_outcomes_per_frame, confirm rendered draws drop from ~2175 with no crash and
   traffic cars still MOVE (sim intact). Tooling proven: tools/xex on a 3rd title; the parallel-RE Workflow
   pattern + adversarial verify caught 3 red-herring patches that would have corrupted the game.
+
+### B86yy - Burnout world-object addressing traced (device-free prep for the mem-diff complete).
+Continued the device-free Burnout RE (autonomous grind). Traced the runtime addressing of the traffic lever:
+- The traffic functions take the "world" object in r3 = SESSION + 0x47760 (set at 0x823469F0: addis r26,r28,4;
+  addi r26,r26,0x7760; mr r3,r26 before bl 0x8229FAC8). So at runtime: traffic COUNT = session+0x47760+0x1c99e0
+  = **session+0x2111c0**; render-list COUNT = session+0x47760+0x56b68 = **session+0x9e2c8**; car ARRAY =
+  session+0x47760+0x56bf0 = **session+0x9e350** (stride 0x780).
+- The SESSION object is the master game object, passed DOWN the call chain: game-tick 0x82346810 (r28=arg0) <-
+  0x8210edc0 (r3=r29) <- ... (several levels up to the game main loop; the root global is deep - not worth
+  tracing further since the mem-diff can dump-and-diff instead).
+- **DEVICE-FREE RE COMPLETE.** The remaining work is purely device-based (needs Burnout navigated to dense vs
+  sparse traffic scenes, which the static analysis cannot do): (1) dump the guest HEAP in a dense Traffic-Attack
+  scene + a sparse scene (the guest-mem dump tool, targeting the heap - the session object is heap-allocated,
+  ~0x2111c0+ bytes, so dump a large heap window, NOT the 0x82000000 image); (2) diff -> the car-array region
+  (stride 0x780, ~48 entries) + the count fields differ -> confirms the live density/render-list lever; (3) from
+  the confirmed field, the SAFE patch = cap the render-list drain (render-only) or a code-cave counter before the
+  enqueue 0x822762a0 (multi-word, via the Ghidra game-patch skill); (4) validate: fire Burnout in the SAME dense
+  scene with the patch + vulkan_trace_draw_outcomes_per_frame, confirm rendered draws drop from ~2175 with no
+  crash and traffic still MOVES (sim intact). The full static map (B86xx) + this addressing make the device session
+  efficient. Banked: tools/xex (3 titles), the guest-mem dump, the parallel-RE+adversarial-verify Workflow pattern
+  (caught 3 game-corrupting red-herring patches).
