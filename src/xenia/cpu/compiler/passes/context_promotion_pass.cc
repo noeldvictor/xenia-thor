@@ -51,6 +51,17 @@ DEFINE_bool(arm64_context_promotion_gpr_livein_r1_preserve_barrier, true,
             "Thor ARM64 research: preserve clean r[1] availability across "
             "HIR context_barrier instructions in the live-in r1 probe.",
             "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_livein_r1_preserve_call, false,
+            "Thor ARM64 research (cross-call register preservation): keep the "
+            "live-in r[1] (PPC stack pointer) carrier valid across "
+            "guest-to-guest CALL / CALL_TRUE / CALL_INDIRECT instructions. The "
+            "PPC EABI makes r1 non-volatile and a returning callee MUST restore "
+            "the stack pointer, so r1 survives any guest call that returns "
+            "normally. CALL_EXTERN (host/HLE helpers), volatile ops, and "
+            "function exits STILL reset the carrier. Eliminates the per-iteration "
+            "r1 reload our JIT emits across calls in hot loops (e.g. Burnout's "
+            "entity-traversal loop 0x82382798). Default-off experiment.",
+            "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_livein_r1_audit, false,
             "Thor ARM64 research: log attempted/replaced/skipped counters for "
             "arm64_context_promotion_gpr_livein_r1.",
@@ -667,7 +678,7 @@ bool IsTargetR1OverlapStore(Instr* instr) {
 }
 
 bool IsContextStateKillingInstr(Instr* instr, bool preserve_barrier,
-                                bool* killed_by_call,
+                                bool preserve_call, bool* killed_by_call,
                                 bool* killed_by_barrier,
                                 bool* killed_by_exit) {
   *killed_by_call = false;
@@ -680,11 +691,21 @@ bool IsContextStateKillingInstr(Instr* instr, bool preserve_barrier,
     }
     return false;
   }
+  // Guest-to-guest calls preserve the PPC non-volatile registers (incl. r1, the
+  // stack pointer), so with preserve_call the carrier survives them. CALL_EXTERN
+  // is a host/HLE helper that can mutate any guest context register, so it is
+  // NEVER preserved here.
   if (instr->opcode == &OPCODE_CALL_info ||
       instr->opcode == &OPCODE_CALL_TRUE_info ||
       instr->opcode == &OPCODE_CALL_INDIRECT_info ||
-      instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info ||
-      instr->opcode == &OPCODE_CALL_EXTERN_info) {
+      instr->opcode == &OPCODE_CALL_INDIRECT_TRUE_info) {
+    if (!preserve_call) {
+      *killed_by_call = true;
+      return true;
+    }
+    return false;
+  }
+  if (instr->opcode == &OPCODE_CALL_EXTERN_info) {
     *killed_by_call = true;
     return true;
   }
@@ -1387,6 +1408,8 @@ bool ContextPromotionPass::ShouldRunGprLiveInR1Promotion(
 void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
   const bool preserve_barrier =
       cvars::arm64_context_promotion_gpr_livein_r1_preserve_barrier;
+  const bool preserve_call =
+      cvars::arm64_context_promotion_gpr_livein_r1_preserve_call;
   GprLiveInR1Stats stats;
   stats.function_address = FindFirstSourceOffset(builder);
 
@@ -1411,8 +1434,9 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
       bool killed_by_call = false;
       bool killed_by_barrier = false;
       bool killed_by_exit = false;
-      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
-                                     &killed_by_barrier, &killed_by_exit)) {
+      if (IsContextStateKillingInstr(instr, preserve_barrier, preserve_call,
+                                     &killed_by_call, &killed_by_barrier,
+                                     &killed_by_exit)) {
         clean = false;
       }
       if (IsTargetR1Store(instr)) {
@@ -1476,8 +1500,9 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
       bool killed_by_call = false;
       bool killed_by_barrier = false;
       bool killed_by_exit = false;
-      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
-                                     &killed_by_barrier, &killed_by_exit)) {
+      if (IsContextStateKillingInstr(instr, preserve_barrier, preserve_call,
+                                     &killed_by_call, &killed_by_barrier,
+                                     &killed_by_exit)) {
         clean = false;
       }
       if (IsTargetR1Store(instr)) {
@@ -1577,8 +1602,9 @@ void ContextPromotionPass::PromoteGprLiveInR1(HIRBuilder* builder) {
       bool killed_by_call = false;
       bool killed_by_barrier = false;
       bool killed_by_exit = false;
-      if (IsContextStateKillingInstr(instr, preserve_barrier, &killed_by_call,
-                                     &killed_by_barrier, &killed_by_exit)) {
+      if (IsContextStateKillingInstr(instr, preserve_barrier, preserve_call,
+                                     &killed_by_call, &killed_by_barrier,
+                                     &killed_by_exit)) {
         if (state.clean) {
           if (killed_by_barrier) {
             ++stats.barrier_resets;

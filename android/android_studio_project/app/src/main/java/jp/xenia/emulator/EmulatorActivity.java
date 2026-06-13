@@ -541,6 +541,10 @@ public class EmulatorActivity extends WindowedAppActivity {
                     launchArguments,
                     "arm64_context_promotion_gpr_livein_r1_preserve_barrier");
             copyBooleanExtra(
+                    intent,
+                    launchArguments,
+                    "arm64_context_promotion_gpr_livein_r1_preserve_call");
+            copyBooleanExtra(
                     intent, launchArguments, "arm64_context_promotion_gpr_livein_r1_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_guest_state_register_cache_audit");
             copyIntExtra(
