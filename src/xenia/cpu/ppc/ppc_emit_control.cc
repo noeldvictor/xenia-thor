@@ -16,6 +16,7 @@
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_frontend.h"
+#include "xenia/cpu/ppc/ppc_decode_data.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 #include "xenia/cpu/ppc/ppc_opcode_info.h"
 #include "xenia/memory.h"
@@ -74,6 +75,19 @@ InlineLeafScan ScanInlineLeafCandidate(Memory* memory, uint32_t address) {
         opcode == PPCOpcode::bcctrx || opcode == PPCOpcode::bclrx) {
       // Any branch/call in the body - not a straight-line leaf (yet).
       return scan;
+    }
+    if (opcode == PPCOpcode::mtspr) {
+      // A leaf that REWRITES LR before its blr is a tail-call THROUGH lr, not a
+      // return to us - inlining it as a fall-through would miscompile. Exclude
+      // any mtlr (mtspr to SPR 8) from candidacy. (mflr/reads are fine: LR holds
+      // the return address, which inlining preserves.)
+      PPCDecodeData d;
+      d.address = a;
+      d.code = code;
+      uint32_t spr = ((d.XFX.SPR() & 0x1F) << 5) | ((d.XFX.SPR() >> 5) & 0x1F);
+      if (spr == 8) {
+        return scan;
+      }
     }
   }
   return scan;  // exceeded the budget without a clean return

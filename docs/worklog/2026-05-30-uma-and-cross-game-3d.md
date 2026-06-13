@@ -2820,3 +2820,30 @@ transparent, sidesteps the wall) - the two-track vision's 2nd-tier inlining, a s
   The mature-codebase reality: remaining per-title software levers are small/bounded/dead, the biggest
   wins were GPU/driver/sync (the fence fix +46-78%), and the next genuinely-open BIG lever is JIT inlining
   of direct-call leaves (multi-day). No fabricated or unsafe "win" shipped - the no-fabrication rule held.
+
+### B86ee - STARTED JIT inlining (the safe past-the-wall lever): Unit 0 built + GATE MEASURED
+Executed the deferred inlining lever instead of deferring it again. Inlining is the SAFE alternative to
+the dead cross-barrier-elision class ([[cross-barrier-elision-wall]]): eliminate the call so there's no
+barrier to elide across. **Unit 0 = the read-only candidate analyzer** (commit 69e17d672, host x64
+480/157 green, on-device): arm64_jit_inline_audit + ScanInlineLeafCandidate classify each DIRECT guest bl
+target as a "straight-line leaf" (single straight-line block ending in the terminal blr, <=64 insts, no
+branch/call in the body = the simplest safe splice). De-risks the multi-day splice by MEASURING the
+opportunity first.
+- **GATE FIRE (burnout_inline_audit, 38422 INLINE-CAND lines): straight-line-leaf inlining is NARROW and
+  MISSES Burnout's hot call.** Aggregate only 2656/38422 = **~6.9% of direct calls are straight-line
+  leaves**. Worse, Burnout's hot entity loop 0x82382798 makes 4 direct calls and the #2-hot per-element
+  callee **0x8238CD28 is insts=2 leaf=0 = a 2-instruction TAIL-TRAMPOLINE** (branches, doesn't return);
+  only one of its 4 calls (8238CD08, 8 insts) is a straight-line leaf. **So the tractable leaf-inlining
+  scope does NOT capture Burnout's hottest call** - that needs general/tail-call-following inlining (a
+  much bigger, riskier build). Unit 0 just SAVED a multi-day splice that would have missed the target.
+- **Correctness guard added (Unit 0 hardening):** a leaf doing `mtlr rX; blr` is a tail-call THROUGH lr,
+  NOT a return - inlining it as fall-through would miscompile. ScanInlineLeafCandidate now excludes any
+  mtspr-to-LR (SPR 8) from candidacy (host build clean). This is a real correctness fix that de-risks the
+  eventual splice (Unit 1).
+- **VERDICT on the inlining lever:** the SAFE/tractable form (straight-line-leaf splice) is a modest
+  cross-game CPU-hygiene win (~7% of calls de-barriered) that does NOT deliver Burnout's win; the
+  Burnout-capturing form (general inlining with control-flow + tail-call following) is a substantial,
+  correctness-critical build. Unit 0 + this gate are the durable output: the inlining opportunity is now
+  MEASURED, not assumed, before sinking days into the splice. Building Unit 1 (the splice) is the next
+  deliberate unit - scope decision (modest leaf-only vs the bigger Burnout-capturing general form) is now
+  evidence-driven, not a guess.
