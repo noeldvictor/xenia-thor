@@ -3473,3 +3473,23 @@ attributed to the fix - only CORRECTNESS is claimed. Per the repo "device-valida
 clean). A proper fps A/B (cvar off vs on, matched guest_ms, on a cool device) can quantify the gain later;
 the win here is a correct, validated, default-on ARM64 codegen optimization on a hot PPC instruction form.
 NOTE: device hit 67.7C this fire (>64C gate) - force-stopped immediately; let it cool before the next fire.
+
+### B87ee - Codegen-sweep batch (3 cvars) CORRECTNESS-validated in real 3D (BD), default-off pending in-game PERF A/B. (User "ultracode" + "in-game not menus"; ultracode.)
+The ppc-codegen-optimization-sweep workflow (36 agents, 20/30 candidates passed adversarial verification)
+yielded a ranked list; implemented the 3 clean high-value ones (committed 38014f576): ppc_cr_logical_self_fastpath
+(crxor/creqv/cror/crand/crnor when BI==BB -> crclr/crset/crmove/crnot), ppc_vsplt_swizzle_fastpath (vspltw
+splat via one Swizzle/dup vs Extract+Splat), ppc_vand_self_fastpath (vand/vandc VA==VB, mirrors shipped
+vor/vxor). Host x64 builds clean; APK built (cvars in arm64 .so).
+
+DEVICE CORRECTNESS (per the user's in-game directive, NOT a menu): fired BD with ALL 4 codegen cvars ON
+(+rlwinm_mask). BD's in-engine 3D opening (airship/sail, "Microsoft Game Studios Presents") renders
+PIXEL-CORRECT - real emulated 3D geometry (1.4fps in-engine, not a video), NO corruption. This clears the
+top a64 risk (vspltw lane-ordering + the vector ops in real vertex/shader math). BD sustained 135s at only
+50.7C (heats far less than Gears' 67C@40s).
+
+HONEST GAP: this is CORRECTNESS in real 3D, NOT the in-game PERF the user wants - it was a slow in-engine
+CINEMATIC, not interactive CPU-bound gameplay. Codegen wins help CPU-bound gameplay (Gears combat, Burnout
+race per [[burnout-frame-serialization]] B86t); BD's field is GPU-bound so it hides CPU savings. Cvars stay
+DEFAULT-OFF pending a proper in-game A/B: reach a CPU-bound gameplay scene, capture cvars-off vs -on at
+matched guest_ms, compare VdSwap/s + cpu_* phase buckets, then promote only the ones that move in-game fps.
+Deferred sweep items: rlwinm-general (diverges on wrapping masks), vsldoi-EXT (a64 backend file), addic/lhz.
