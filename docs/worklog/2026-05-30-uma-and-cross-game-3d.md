@@ -3446,3 +3446,17 @@ rule - the proven slwi/srwi stay default-on under ppc_rlwinm_shift_fastpath, unt
 device-A/B to promote. FOLLOW-UP FINDING: the PPC-instr test harness crash blocks all local codegen
 verification - worth fixing (high leverage for future CPU work); the host HIR-opcode suite
 (xenia-cpu-tests.exe) runs fine but does not cover PPC->HIR emission.
+
+### B87cc - rlwinm-mask codegen validation: BOTH device-free harnesses blocked (x64 AVs, qemu-a64 hangs). Change stays default-off, provably-correct. (Stop-hook; ultracode.)
+Tried to promote the B87bb rlwinm SH==0 fast-path from default-off to validated. Both device-free PPC
+instruction-test paths are currently BROKEN on this box: (1) Windows x64 xenia-cpu-ppc-tests.exe AVs
+(0xC0000005) inside fn->Call executing the FIRST trivial test (rlwinm_1, sh=24 = unchanged generic path) -
+not the null-backend (cpu defaults "any" -> X64Backend); the AV escapes ProtectedRunTest; the guest-function
+execution/trampoline path faults though the HIR-opcode suite (xenia-cpu-tests.exe) executes fine, so it's
+specific to RawModule guest-fn execution. (2) qemu-aarch64 + the prebuilt linux-arm64 ppc-test loads but
+HANGS/is pathologically slow on rlwinm_1 (>170s, no result) - JIT-under-qemu self-modifying-code
+retranslation. NET: cannot test-validate codegen device-free here right now. **This broken codegen-verify
+infra is the real blocker for the whole "rearch CPU" track and is the highest-leverage fix** (a working PPC
+instr harness validates every future codegen change in seconds). The rlwinm change stays default-off,
+provably-correct (ZeroExtend(RS_low32 & mask32) == generic path for SH==0), promote after the harness is
+fixed OR a device A/B (toggle ppc_rlwinm_mask_fastpath on a CPU-bound title, confirm pixel-correct).
