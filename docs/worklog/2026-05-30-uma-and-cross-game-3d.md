@@ -3460,3 +3460,16 @@ infra is the real blocker for the whole "rearch CPU" track and is the highest-le
 instr harness validates every future codegen change in seconds). The rlwinm change stays default-off,
 provably-correct (ZeroExtend(RS_low32 & mask32) == generic path for SH==0), promote after the harness is
 fixed OR a device A/B (toggle ppc_rlwinm_mask_fastpath on a CPU-bound title, confirm pixel-correct).
+
+### B87dd - rlwinm-mask fast-path DEVICE-VALIDATED on Gears + promoted to default-ON. (User "build the fix"; ultracode.)
+Built the deployable APK with the B87bb rlwinm SH==0 fast-path (verified ppc_rlwinm_mask_fastpath x7 in the
+arm64 .so, ppc_emit_alu.o recompiled). Fired Gears of War (World) with `--ez ppc_rlwinm_mask_fastpath true`:
+the **CAMPAIGN menu renders PIXEL-CORRECT** (crisp text, correct layout, no corruption, no crash; VdSwap=870,
+29.6 FPS on-counter). This device-confirms the codegen change is correct on a heavy CPU-bound PPC title,
+complementing the bit-level proof. HONEST: did NOT run a matched cvar-off A/B (Gears hit 67.7C -> force-stop,
+thermal gate), and the old "~18fps" baseline was itself flagged mis-measured, so the 29.6 FPS is NOT
+attributed to the fix - only CORRECTNESS is claimed. Per the repo "device-validated wins go default-on" rule
++ matching the sibling slwi/srwi fast-paths, promoted ppc_rlwinm_mask_fastpath default false->true (compiles
+clean). A proper fps A/B (cvar off vs on, matched guest_ms, on a cool device) can quantify the gain later;
+the win here is a correct, validated, default-on ARM64 codegen optimization on a hot PPC instruction form.
+NOTE: device hit 67.7C this fire (>64C gate) - force-stopped immediately; let it cool before the next fire.

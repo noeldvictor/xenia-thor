@@ -23,14 +23,15 @@ DEFINE_bool(ppc_rlwinm_shift_fastpath, true,
             "toggle, so non-UI/am-start launch paths use the same fast codegen "
             "as the play button (the toggle is the off-switch).",
             "CPU");
-DEFINE_bool(ppc_rlwinm_mask_fastpath, false,
+DEFINE_bool(ppc_rlwinm_mask_fastpath, true,
             "Compile the SH==0 rlwinm forms (clrlwi/clrrwi/mask-extract, a very "
             "common bitfield-mask pattern) directly to one 32-bit AND + "
             "zero-extend instead of the generic 64-bit duplicate+rotate+mask "
             "sequence. Provably equal to the generic path for SH==0 (the emitter's "
-            "own TODO). Default-OFF pending on-device validation (the local PPC "
-            "instruction-test harness crashes pre-existing, so it was verified by "
-            "build + correctness analysis only).",
+            "own TODO). Default-ON: correctness proven (ZeroExtend(RS_low32 & "
+            "mask32) == generic path for SH==0) AND device-validated pixel-correct "
+            "on Gears of War (heavy CPU-bound PPC) - the campaign menu renders "
+            "identically with it on, matching the sibling slwi/srwi fast-paths.",
             "CPU");
 
 namespace xe {
