@@ -115,6 +115,67 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("ppc_rlwinm_shift_fastpath")}, null));
 
         list.add(new Optimization(
+                "opt_rlwinm_mask",
+                "Fast bitfield-mask codegen",
+                "Compiles PowerPC bitfield-mask ops (clrlwi/clrrwi/extract) to a single 32-bit AND.",
+                "A second very common rlwinm form masks a bitfield without "
+                        + "rotating - clearing the top or bottom bits of a word, or "
+                        + "extracting a contiguous bitfield. The recompiler otherwise "
+                        + "emits a 64-bit duplicate + rotate + mask; this collapses it "
+                        + "to one ARM AND. Device-validated correct on Gears of War.",
+                CATEGORY_CPU, true, true,
+                new BoolCvar[]{new BoolCvar("ppc_rlwinm_mask_fastpath")}, null));
+
+        list.add(new Optimization(
+                "opt_rlwinm_general",
+                "Fast general rotate-and-mask codegen (experimental)",
+                "Compiles rotate-then-mask bitfield extracts to a 32-bit rotate + AND.",
+                "The general PowerPC rlwinm form (rotate the low word, then mask a "
+                        + "non-wrapping field) is used for packed-field extraction. "
+                        + "This emits one 32-bit rotate + AND instead of the 64-bit "
+                        + "duplicate+rotate+mask (~3-4 fewer host instructions). "
+                        + "Experimental: bit-exact for non-wrapping masks; wrapping "
+                        + "masks safely use the original path.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("ppc_rlwinm_general_fastpath")}, null));
+
+        list.add(new Optimization(
+                "opt_cr_logical_self",
+                "Fast condition-register idioms (experimental)",
+                "Simplifies common condition-register bit idioms (clear/set/copy/not).",
+                "Compilers emit condition-register bit ops where the two source "
+                        + "bits are the same (crclr/crset/crmove/crnot). The "
+                        + "recompiler otherwise loads both bits and does a logical "
+                        + "op; this recognizes the idiom and emits a single store. "
+                        + "Experimental, pending in-game validation.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("ppc_cr_logical_self_fastpath")}, null));
+
+        list.add(new Optimization(
+                "opt_vsplt_swizzle",
+                "Fast vector splat codegen (experimental)",
+                "Compiles vector lane-splat (vspltw) to a single NEON dup.",
+                "The PowerPC vspltw broadcasts one 32-bit lane of a vector to all "
+                        + "four. The recompiler otherwise round-trips through a "
+                        + "general-purpose register; this emits a single NEON dup, "
+                        + "avoiding the vector->GP->vector stall. Experimental, "
+                        + "pending in-game validation.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("ppc_vsplt_swizzle_fastpath")}, null));
+
+        list.add(new Optimization(
+                "opt_vand_self",
+                "Fast self-AND vector codegen (experimental)",
+                "Folds vand/vandc of a register with itself to a copy or zero.",
+                "When a PowerPC vector AND (vand) or AND-complement (vandc) uses "
+                        + "the same register for both inputs, the result is just a "
+                        + "copy or a zero. This recognizes that and drops the "
+                        + "redundant load + logic, mirroring the shipped vor/vxor "
+                        + "self-ops. Experimental, pending in-game validation.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("ppc_vand_self_fastpath")}, null));
+
+        list.add(new Optimization(
                 "opt_algebraic_identities",
                 "Algebraic identity simplification",
                 "Folds redundant integer math (x+0, x*1, x<<0 ...) out of code.",

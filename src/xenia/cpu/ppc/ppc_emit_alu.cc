@@ -33,6 +33,17 @@ DEFINE_bool(ppc_rlwinm_mask_fastpath, true,
             "on Gears of War (heavy CPU-bound PPC) - the campaign menu renders "
             "identically with it on, matching the sibling slwi/srwi fast-paths.",
             "CPU");
+DEFINE_bool(ppc_rlwinm_general_fastpath, false,
+            "Compile the GENERAL rlwinm rotate-and-mask form (SH!=0 with a "
+            "non-wrapping mask MB<=ME, the catch-all after slwi/srwi/clrlwi) as a "
+            "single 32-bit rotate + 32-bit AND + zero-extend instead of the "
+            "generic 64-bit (x||x)-duplicate + 64-bit rotate + 64-bit mask "
+            "(~3-4 fewer ARM64 instructions on a very hot opcode). Bit-exact only "
+            "for MB<=ME (verified); WRAPPING masks (MB>ME) correctly fall through "
+            "to the generic path, whose (RS||RS) rotate legitimately leaves bits "
+            "in the high word that PPC requires. Default-off pending in-game "
+            "CPU-bound (Burnout race) perf validation.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -1097,6 +1108,29 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
     if (cvars::ppc_rlwinm_mask_fastpath && sh == 0 && mb <= me) {
       uint32_t m32 = uint32_t(XEMASK(mb + 32, me + 32));
       Value* lo = f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE);
+      if (m32 != 0xFFFFFFFFu) {
+        lo = f.And(lo, f.LoadConstantUint32(m32));
+      }
+      Value* r = f.ZeroExtend(lo, INT64_TYPE);
+      f.StoreGPR(i.M.RA, r);
+      if (i.M.Rc) {
+        f.UpdateCR(0, r);
+      }
+      return 0;
+    }
+    // General rotate-and-mask (SH!=0) with a NON-wrapping mask (MB<=ME): the
+    // catch-all after slwi/srwi/clrlwi. Rotate the low 32 bits left by SH, AND
+    // with the 32-bit MASK(MB+32,ME+32), zero-extend - one 32-bit ROR + AND +
+    // UXTW vs the generic 64-bit (x||x)+rotate+64-bit-mask. Bit-exact ONLY for
+    // MB<=ME: the non-wrapping mask lives wholly in the low word, so the result's
+    // high word is 0, matching PPC. WRAPPING masks (MB>ME) MUST fall through to
+    // the generic path - PPC's (RS||RS) rotate legitimately leaves rotated bits
+    // in the high register word there, which this 32-bit form would wrongly zero
+    // (adversarially-verified counterexample rlwinm rA,rS,4,28,3). Default-off.
+    if (cvars::ppc_rlwinm_general_fastpath && sh != 0 && mb <= me) {
+      Value* lo = f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE);
+      lo = f.RotateLeft(lo, f.LoadConstantInt8(int8_t(sh)));
+      uint32_t m32 = uint32_t(XEMASK(mb + 32, me + 32));
       if (m32 != 0xFFFFFFFFu) {
         lo = f.And(lo, f.LoadConstantUint32(m32));
       }
