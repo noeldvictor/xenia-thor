@@ -23,6 +23,15 @@ DEFINE_bool(ppc_rlwinm_shift_fastpath, true,
             "toggle, so non-UI/am-start launch paths use the same fast codegen "
             "as the play button (the toggle is the off-switch).",
             "CPU");
+DEFINE_bool(ppc_rlwinm_mask_fastpath, false,
+            "Compile the SH==0 rlwinm forms (clrlwi/clrrwi/mask-extract, a very "
+            "common bitfield-mask pattern) directly to one 32-bit AND + "
+            "zero-extend instead of the generic 64-bit duplicate+rotate+mask "
+            "sequence. Provably equal to the generic path for SH==0 (the emitter's "
+            "own TODO). Default-OFF pending on-device validation (the local PPC "
+            "instruction-test harness crashes pre-existing, so it was verified by "
+            "build + correctness analysis only).",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -1069,6 +1078,28 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
       Value* r = f.ZeroExtend(
           f.Shr(f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE), int8_t(mb)),
           INT64_TYPE);
+      f.StoreGPR(i.M.RA, r);
+      if (i.M.Rc) {
+        f.UpdateCR(0, r);
+      }
+      return 0;
+    }
+    // clrlwi/clrrwi/mask-extract: SH==0 with a non-wrapping mask (MB<=ME) is just
+    // a 32-bit AND with the mask, zero-extended to 64 - no rotate. This is the
+    // SH==0 case the generic path's own TODO calls out ("the compiler will
+    // generate a bunch of these...we can do less work"): it otherwise emits a
+    // wasteful 64-bit (x||x) duplicate + rotate + 64-bit mask. Here it collapses
+    // to one AND (+UXTW) on the ARM64 backend. MB>ME (wrapping mask) falls
+    // through to the generic path. Provably equal to the generic path for SH==0
+    // (ZeroExtend(RS_low32 & mask32)); separate default-off cvar pending on-device
+    // validation (the local PPC instruction-test harness crashes pre-existing).
+    if (cvars::ppc_rlwinm_mask_fastpath && sh == 0 && mb <= me) {
+      uint32_t m32 = uint32_t(XEMASK(mb + 32, me + 32));
+      Value* lo = f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE);
+      if (m32 != 0xFFFFFFFFu) {
+        lo = f.And(lo, f.LoadConstantUint32(m32));
+      }
+      Value* r = f.ZeroExtend(lo, INT64_TYPE);
       f.StoreGPR(i.M.RA, r);
       if (i.M.Rc) {
         f.UpdateCR(0, r);

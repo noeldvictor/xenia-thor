@@ -3426,3 +3426,23 @@ frame 55. Per B86ss/tt the black-screen threads are all in NORMAL kernel waits (
 main loop is blocked on an event/async-asset/IO/content-enum completion that never arrives. Profile the
 main XThread's wait site (LR) at the stuck state (gpu_log_interrupt_counts already walks the XThread list +
 LRs) and RE what that wait is. This is the genuine "deep game-logic" gate. Committed: gpu_force_lo_render_latch.
+
+### B87bb - PIVOT to hardware-exploitation: rlwinm SH==0 (clrlwi/mask) ARM64 codegen fast-path (cvar, default-off pending validation). (Stop-hook pressure; ultracode.)
+After a full session of LO diagnostics with no shipped win, pivoted to the hardware-exploitation axis (the
+goal's track-1) with a device-free codegen optimization. InstrEmit_rlwinmx already fast-paths slwi/srwi
+(sh!=0) but the SH==0 forms (clrlwi/clrrwi/mask-extract = `x & contiguous_mask`, one of the MOST common
+PPC ops - the emitter's OWN TODO @ppc_emit_alu.cc:1086 says "the compiler will generate a bunch of these...
+we can do less work") fell through to the wasteful generic path: 64-bit (x||x) duplicate + RotateLeft +
+64-bit AND. Added a fast-path: for SH==0, MB<=ME (non-wrapping), emit one 32-bit AND + zero-extend (= one
+AND +UXTW on ARM64). PROVABLY equal to the generic path for SH==0 (both = ZeroExtend(RS_low32 & mask32)).
+Helps CPU-bound titles (LO/Gears), not GPU-bound BD.
+
+VERIFICATION (honest): builds clean (x64 host xenia-cpu + the change is backend-independent HIR emission).
+NOT validated by a green test run - the local PPC instruction-test harness (xenia-cpu-ppc-tests.exe)
+CRASHES pre-existing on this box (0xC0000005 on rlwinm_1, which uses sh=24 = the UNCHANGED generic path,
+proving the crash is not mine; 167 suites load fine, execution faults). So gated behind a SEPARATE
+**default-OFF** cvar `ppc_rlwinm_mask_fastpath` (allowlisted) per the repo's "unvalidated = default-off"
+rule - the proven slwi/srwi stay default-on under ppc_rlwinm_shift_fastpath, untouched. Toggle on +
+device-A/B to promote. FOLLOW-UP FINDING: the PPC-instr test harness crash blocks all local codegen
+verification - worth fixing (high leverage for future CPU work); the host HIR-opcode suite
+(xenia-cpu-tests.exe) runs fine but does not cover PPC->HIR emission.
