@@ -16,18 +16,18 @@
 
 #include <cmath>
 
-DEFINE_bool(ppc_vsplt_swizzle_fastpath, false,
+DEFINE_bool(ppc_vsplt_swizzle_fastpath, true,
             "Compile vspltw/vspltw128 (splat one 32-bit lane to all four) to a "
             "single Swizzle/dup instead of Extract+Splat, which on ARM64 removes "
             "a vector->GP->vector round-trip (umov+dup -> one dup Vd.s4,Vs.s4[L]). "
-            "Bit-identical (INT32 lanes). Default-off pending device validation; "
-            "follows ppc_rlwinm_mask_fastpath. vspltw only (not vsplth/vspltb).",
+            "Bit-identical (INT32 lanes). Default-ON: in-game validated (Burnout "
+            "race A/B) + BD 3D pixel-correct. vspltw only (not vsplth/vspltb).",
             "CPU");
-DEFINE_bool(ppc_vand_self_fastpath, false,
+DEFINE_bool(ppc_vand_self_fastpath, true,
             "Fast-path vand/vandc with VA==VB: vand X,X==copy X (mirrors the "
             "shipped vor self-copy), vandc X,X==zero (mirrors the shipped vxor "
             "self-clear). Drops a redundant vector load + the and/bic. "
-            "Bit-identical. Default-off pending device validation.",
+            "Bit-identical. Default-ON: in-game validated + BD 3D pixel-correct.",
             "CPU");
 
 namespace xe {

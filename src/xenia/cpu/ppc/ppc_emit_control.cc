@@ -23,13 +23,13 @@
 
 #include <stddef.h>
 
-DEFINE_bool(ppc_cr_logical_self_fastpath, false,
+DEFINE_bool(ppc_cr_logical_self_fastpath, true,
             "Fast-path the CR-bit logical idioms where the two source CR bits are "
             "the same (BI==BB): crxor->0 (crclr), creqv->1 (crset), cror/crand->"
             "copy (crmove), crnor->NOT (crnot). These are very common compiler "
             "idioms; the generic path emits 2 redundant CR-bit loads + a logical "
-            "op. Bit-identical (CR bits are always 0/1). Default-off pending "
-            "device validation; follows ppc_rlwinm_mask_fastpath.",
+            "op. Bit-identical (CR bits are always 0/1). Default-ON: in-game "
+            "validated (Burnout race A/B - guest-CPU down ~2.6%, GPU flat) + BD 3D.",
             "CPU");
 
 namespace xe {

@@ -128,7 +128,7 @@ public final class XeniaOptimizations {
 
         list.add(new Optimization(
                 "opt_rlwinm_general",
-                "Fast general rotate-and-mask codegen (experimental)",
+                "Fast general rotate-and-mask codegen",
                 "Compiles rotate-then-mask bitfield extracts to a 32-bit rotate + AND.",
                 "The general PowerPC rlwinm form (rotate the low word, then mask a "
                         + "non-wrapping field) is used for packed-field extraction. "
@@ -136,43 +136,43 @@ public final class XeniaOptimizations {
                         + "duplicate+rotate+mask (~3-4 fewer host instructions). "
                         + "Experimental: bit-exact for non-wrapping masks; wrapping "
                         + "masks safely use the original path.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("ppc_rlwinm_general_fastpath")}, null));
 
         list.add(new Optimization(
                 "opt_cr_logical_self",
-                "Fast condition-register idioms (experimental)",
+                "Fast condition-register idioms",
                 "Simplifies common condition-register bit idioms (clear/set/copy/not).",
                 "Compilers emit condition-register bit ops where the two source "
                         + "bits are the same (crclr/crset/crmove/crnot). The "
                         + "recompiler otherwise loads both bits and does a logical "
                         + "op; this recognizes the idiom and emits a single store. "
-                        + "Experimental, pending in-game validation.",
-                CATEGORY_CPU, false, false,
+                        + "In-game validated (Burnout race A/B) + BD 3D pixel-correct.",
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("ppc_cr_logical_self_fastpath")}, null));
 
         list.add(new Optimization(
                 "opt_vsplt_swizzle",
-                "Fast vector splat codegen (experimental)",
+                "Fast vector splat codegen",
                 "Compiles vector lane-splat (vspltw) to a single NEON dup.",
                 "The PowerPC vspltw broadcasts one 32-bit lane of a vector to all "
                         + "four. The recompiler otherwise round-trips through a "
                         + "general-purpose register; this emits a single NEON dup, "
                         + "avoiding the vector->GP->vector stall. Experimental, "
                         + "pending in-game validation.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("ppc_vsplt_swizzle_fastpath")}, null));
 
         list.add(new Optimization(
                 "opt_vand_self",
-                "Fast self-AND vector codegen (experimental)",
+                "Fast self-AND vector codegen",
                 "Folds vand/vandc of a register with itself to a copy or zero.",
                 "When a PowerPC vector AND (vand) or AND-complement (vandc) uses "
                         + "the same register for both inputs, the result is just a "
                         + "copy or a zero. This recognizes that and drops the "
                         + "redundant load + logic, mirroring the shipped vor/vxor "
                         + "self-ops. Experimental, pending in-game validation.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("ppc_vand_self_fastpath")}, null));
 
         list.add(new Optimization(

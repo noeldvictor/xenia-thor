@@ -33,7 +33,7 @@ DEFINE_bool(ppc_rlwinm_mask_fastpath, true,
             "on Gears of War (heavy CPU-bound PPC) - the campaign menu renders "
             "identically with it on, matching the sibling slwi/srwi fast-paths.",
             "CPU");
-DEFINE_bool(ppc_rlwinm_general_fastpath, false,
+DEFINE_bool(ppc_rlwinm_general_fastpath, true,
             "Compile the GENERAL rlwinm rotate-and-mask form (SH!=0 with a "
             "non-wrapping mask MB<=ME, the catch-all after slwi/srwi/clrlwi) as a "
             "single 32-bit rotate + 32-bit AND + zero-extend instead of the "
@@ -41,8 +41,8 @@ DEFINE_bool(ppc_rlwinm_general_fastpath, false,
             "(~3-4 fewer ARM64 instructions on a very hot opcode). Bit-exact only "
             "for MB<=ME (verified); WRAPPING masks (MB>ME) correctly fall through "
             "to the generic path, whose (RS||RS) rotate legitimately leaves bits "
-            "in the high word that PPC requires. Default-off pending in-game "
-            "CPU-bound (Burnout race) perf validation.",
+            "in the high word that PPC requires. Default-ON: in-game validated "
+            "(Burnout race matched A/B - guest-CPU down, GPU flat).",
             "CPU");
 
 namespace xe {

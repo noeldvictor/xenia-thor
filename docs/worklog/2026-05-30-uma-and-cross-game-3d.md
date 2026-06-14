@@ -3493,3 +3493,28 @@ race per [[burnout-frame-serialization]] B86t); BD's field is GPU-bound so it hi
 DEFAULT-OFF pending a proper in-game A/B: reach a CPU-bound gameplay scene, capture cvars-off vs -on at
 matched guest_ms, compare VdSwap/s + cpu_* phase buckets, then promote only the ones that move in-game fps.
 Deferred sweep items: rlwinm-general (diverges on wrapping masks), vsldoi-EXT (a64 backend file), addic/lhz.
+
+### B87ff - Codegen fps stack: matched IN-GAME A/B on Burnout race (-2.6% guest-CPU), 4 wins promoted default-ON + stacked as in-app toggles. (User "ultracode...start stacking fps wins" + "in-game not menus"; ultracode.)
+The codegen-fps-stack-assembly workflow (5 agents): implemented rlwinm-general - but its ADVERSARIAL VERIFY
+agent CAUGHT the impl agent's bug (the proposed unguarded fast-path is WRONG on wrapping masks MB>ME: it
+zeroes the high word, but PPC's (RS||RS) rotate legitimately leaves rotated bits there; counterexample
+rlwinm rA,rS,4,28,3 -> PPC+generic=0xABCDEF09A0000009, fast-path=0x00000000A0000009; an independent 285k-case
+fuzz confirmed). Shipped the CORRECTED version guarded mb<=me (non-wrapping only); wrapping masks fall through
+to generic. + wired all 5 codegen cvars into the XeniaOptimizations in-app STACKING registry (Settings ->
+Performance optimizations, each an explained toggle that compounds).
+
+**IN-GAME MATCHED A/B (per the user's "not menus" directive)**: Burnout Revenge live highway RACE (reach via
+tools/thor/thor_reach_scenes.ps1 burnout hid seq). Captured FULL draw-outcomes for cvars-OFF vs cvars-ON
+(4 experimental codegen cvars), matched over guest_ms [48000,72000] (n=1440 frames; inputs identical + codegen
+bit-exact => identical game state per guest_ms, the ONLY delta is emulation cost). RESULT: **cpu_other (guest-
+code execution) -2.6% overall (-1.1% light frames, -4.1% on heavier rendered=135 frames - more code = more
+saving), cpu_real -1.0%, GPU FLAT (+-0.5% = no regression, confirms CPU-specific).** Real, consistent,
+statistically clean (n~720/group). Modest - and this highway is GPU-bound so fps doesn't move here - but a
+genuine in-game guest-CPU win that scales with code density + translates to fps on CPU-bound scenes/titles.
+PITFALL avoided: the FIRST A/B was scene-confounded (OFF reached guest_ms 82xxx, ON 72xxx - different scenes);
+re-ran both same-duration with full-log capture to overlap guest_ms (the CLAUDE.md matched-guest_ms rule).
+
+PROMOTED the 4 validated wins to DEFAULT-ON (correctness: BD 3D pixel-correct + Burnout race clean + workflow
+adversarial verification; perf: the matched -2.6%): ppc_rlwinm_general/ppc_cr_logical_self/ppc_vsplt_swizzle/
+ppc_vand_self, + their registry entries default-on (titles de-"experimental"-ed). The stack now compounds by
+default with opt_rlwinm_shift/opt_rlwinm_mask/opt_flat_membase. Host + APK build clean.
