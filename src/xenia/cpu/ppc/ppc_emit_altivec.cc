@@ -10,10 +10,25 @@
 #include "xenia/cpu/ppc/ppc_emit-private.h"
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
 #include <cmath>
+
+DEFINE_bool(ppc_vsplt_swizzle_fastpath, false,
+            "Compile vspltw/vspltw128 (splat one 32-bit lane to all four) to a "
+            "single Swizzle/dup instead of Extract+Splat, which on ARM64 removes "
+            "a vector->GP->vector round-trip (umov+dup -> one dup Vd.s4,Vs.s4[L]). "
+            "Bit-identical (INT32 lanes). Default-off pending device validation; "
+            "follows ppc_rlwinm_mask_fastpath. vspltw only (not vsplth/vspltb).",
+            "CPU");
+DEFINE_bool(ppc_vand_self_fastpath, false,
+            "Fast-path vand/vandc with VA==VB: vand X,X==copy X (mirrors the "
+            "shipped vor self-copy), vandc X,X==zero (mirrors the shipped vxor "
+            "self-clear). Drops a redundant vector load + the and/bic. "
+            "Bit-identical. Default-off pending device validation.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -451,6 +466,11 @@ int InstrEmit_vadduws(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_vand_(PPCHIRBuilder& f, uint32_t vd, uint32_t va, uint32_t vb) {
   // VD <- (VA) & (VB)
+  if (cvars::ppc_vand_self_fastpath && va == vb) {
+    // vand X,X == copy X (mirrors the shipped vor self-copy).
+    f.StoreVR(vd, f.LoadVR(va));
+    return 0;
+  }
   Value* v = f.And(f.LoadVR(va), f.LoadVR(vb));
   f.StoreVR(vd, v);
   return 0;
@@ -464,6 +484,11 @@ int InstrEmit_vand128(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_vandc_(PPCHIRBuilder& f, uint32_t vd, uint32_t va, uint32_t vb) {
   // VD <- (VA) & ¬(VB)
+  if (cvars::ppc_vand_self_fastpath && va == vb) {
+    // vandc X,X == zero (mirrors the shipped vxor self-clear).
+    f.StoreVR(vd, f.LoadZeroVec128());
+    return 0;
+  }
   Value* v = f.AndNot(f.LoadVR(va), f.LoadVR(vb));
   f.StoreVR(vd, v);
   return 0;
@@ -1518,6 +1543,14 @@ int InstrEmit_vsplth(PPCHIRBuilder& f, const InstrData& i) {
 int InstrEmit_vspltw_(PPCHIRBuilder& f, uint32_t vd, uint32_t vb,
                       uint32_t uimm) {
   // (VD.xyzw) <- (VB.uimm)
+  if (cvars::ppc_vsplt_swizzle_fastpath) {
+    // Splat lane L to all four 32-bit lanes via one Swizzle (dup on ARM64),
+    // avoiding the Extract+Splat vector->GP->vector round-trip.
+    uint32_t lane = uimm & 0x3;
+    f.StoreVR(vd, f.Swizzle(f.LoadVR(vb), INT32_TYPE,
+                            MakeSwizzleMask(lane, lane, lane, lane)));
+    return 0;
+  }
   Value* w = f.Extract(f.LoadVR(vb), uimm & 0x3, INT32_TYPE);
   Value* v = f.Splat(w, VEC128_TYPE);
   f.StoreVR(vd, v);

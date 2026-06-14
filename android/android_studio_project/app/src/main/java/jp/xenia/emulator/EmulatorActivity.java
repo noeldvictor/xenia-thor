@@ -162,6 +162,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_use_flat_membase");
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_shift_fastpath");
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_mask_fastpath");
+            copyBooleanExtra(intent, launchArguments, "ppc_cr_logical_self_fastpath");
+            copyBooleanExtra(intent, launchArguments, "ppc_vsplt_swizzle_fastpath");
+            copyBooleanExtra(intent, launchArguments, "ppc_vand_self_fastpath");
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
             // NOTE: permit_float_constant_evaluation is deliberately NOT

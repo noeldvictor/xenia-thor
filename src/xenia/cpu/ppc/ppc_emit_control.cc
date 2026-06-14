@@ -23,6 +23,15 @@
 
 #include <stddef.h>
 
+DEFINE_bool(ppc_cr_logical_self_fastpath, false,
+            "Fast-path the CR-bit logical idioms where the two source CR bits are "
+            "the same (BI==BB): crxor->0 (crclr), creqv->1 (crset), cror/crand->"
+            "copy (crmove), crnor->NOT (crnot). These are very common compiler "
+            "idioms; the generic path emits 2 redundant CR-bit loads + a logical "
+            "op. Bit-identical (CR bits are always 0/1). Default-off pending "
+            "device validation; follows ppc_rlwinm_mask_fastpath.",
+            "CPU");
+
 namespace xe {
 namespace cpu {
 namespace ppc {
@@ -446,6 +455,12 @@ int InstrEmit_bclrx(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_crand(PPCHIRBuilder& f, const InstrData& i) {
   // CR[bt] <- CR[ba] & CR[bb]   bt=bo, ba=bi, bb=bb
+  if (cvars::ppc_cr_logical_self_fastpath && i.XL.BI == i.XL.BB) {
+    // crand bt,bx,bx == crmove: copy CR[bx] to CR[bt] (x & x == x).
+    f.StoreCRField(i.XL.BO >> 2, i.XL.BO & 3,
+                   f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3));
+    return 0;
+  }
   Value* ba = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
   Value* bb = f.LoadCRField(i.XL.BB >> 2, i.XL.BB & 3);
   Value* bt = f.And(ba, bb);
@@ -464,6 +479,11 @@ int InstrEmit_crandc(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_creqv(PPCHIRBuilder& f, const InstrData& i) {
   // CR[bt] <- CR[ba] == CR[bb]   bt=bo, ba=bi, bb=bb
+  if (cvars::ppc_cr_logical_self_fastpath && i.XL.BI == i.XL.BB) {
+    // creqv bt,bx,bx == crset: CR[bt]=1 (x == x is always true).
+    f.StoreCRField(i.XL.BO >> 2, i.XL.BO & 3, f.LoadConstantInt8(1));
+    return 0;
+  }
   Value* ba = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
   Value* bb = f.LoadCRField(i.XL.BB >> 2, i.XL.BB & 3);
   Value* bt = f.CompareEQ(ba, bb);
@@ -482,6 +502,13 @@ int InstrEmit_crnand(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_crnor(PPCHIRBuilder& f, const InstrData& i) {
   // CR[bt] <- ¬(CR[ba] | CR[bb])   bt=bo, ba=bi, bb=bb
+  if (cvars::ppc_cr_logical_self_fastpath && i.XL.BI == i.XL.BB) {
+    // crnor bt,bx,bx == crnot: CR[bt] = ¬CR[bx]. CR bits are always 0/1, so
+    // ¬(x|x) & 1 == x ^ 1.
+    Value* v = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
+    f.StoreCRField(i.XL.BO >> 2, i.XL.BO & 3, f.Xor(v, f.LoadConstantInt8(0x01)));
+    return 0;
+  }
   Value* ba = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
   Value* bb = f.LoadCRField(i.XL.BB >> 2, i.XL.BB & 3);
   Value* bt = f.And(f.Not(f.Or(ba, bb)), f.LoadConstantInt8(0x01));
@@ -491,6 +518,12 @@ int InstrEmit_crnor(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_cror(PPCHIRBuilder& f, const InstrData& i) {
   // CR[bt] <- CR[ba] | CR[bb]   bt=bo, ba=bi, bb=bb
+  if (cvars::ppc_cr_logical_self_fastpath && i.XL.BI == i.XL.BB) {
+    // cror bt,bx,bx == crmove: copy CR[bx] to CR[bt] (x | x == x).
+    f.StoreCRField(i.XL.BO >> 2, i.XL.BO & 3,
+                   f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3));
+    return 0;
+  }
   Value* ba = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
   Value* bb = f.LoadCRField(i.XL.BB >> 2, i.XL.BB & 3);
   Value* bt = f.Or(ba, bb);
@@ -509,6 +542,11 @@ int InstrEmit_crorc(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_crxor(PPCHIRBuilder& f, const InstrData& i) {
   // CR[bt] <- CR[ba] xor CR[bb]   bt=bo, ba=bi, bb=bb
+  if (cvars::ppc_cr_logical_self_fastpath && i.XL.BI == i.XL.BB) {
+    // crxor bt,bx,bx == crclr: CR[bt]=0 (x ^ x is always 0).
+    f.StoreCRField(i.XL.BO >> 2, i.XL.BO & 3, f.LoadConstantInt8(0));
+    return 0;
+  }
   Value* ba = f.LoadCRField(i.XL.BI >> 2, i.XL.BI & 3);
   Value* bb = f.LoadCRField(i.XL.BB >> 2, i.XL.BB & 3);
   Value* bt = f.Xor(ba, bb);
