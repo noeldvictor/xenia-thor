@@ -26,7 +26,15 @@ DEFINE_bool(
     "dominates CPU on multi-threaded titles (~20% per profiling). Correctness "
     "is preserved by a table generation counter (any handle add/remove/purge "
     "forces a re-lookup) and by the cache holding a reference to each cached "
-    "object. Experimental; default off until device soak-validated.",
+    "object. CORRECTNESS-VERIFIED (2026-06-14: all 5 mutators bump the generation; "
+    "per-entry ref prevents use-after-free; the gen snapshot makes hits "
+    "linearizable) + Burnout-soak-stable (70s, no crash, engages on the present "
+    "path that crashes inlining). TARGETED, not universal: it removes lock "
+    "contention on multi-threaded/lock-bound titles (~20% per Gears profiling) but "
+    "adds a tiny per-lookup check that is net-flat-to-slightly-negative on "
+    "JIT-bound low-contention titles (Burnout A/B: cpu ~+0.5-1% on low-hit frames). "
+    "Stays default-off / opt-in toggle (enable per-title for lock-bound titles); "
+    "do NOT default-on.",
     "Kernel");
 
 namespace xe {

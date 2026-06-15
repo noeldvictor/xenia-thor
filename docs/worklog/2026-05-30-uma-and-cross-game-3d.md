@@ -3518,3 +3518,31 @@ PROMOTED the 4 validated wins to DEFAULT-ON (correctness: BD 3D pixel-correct + 
 adversarial verification; perf: the matched -2.6%): ppc_rlwinm_general/ppc_cr_logical_self/ppc_vsplt_swizzle/
 ppc_vand_self, + their registry entries default-on (titles de-"experimental"-ed). The stack now compounds by
 default with opt_rlwinm_shift/opt_rlwinm_mask/opt_flat_membase. Host + APK build clean.
+
+### B87gg - Next-CPU-win hunt: inlining is the cross-barrier WALL (confirmed); object-handle lock cache is correct+soak-stable but TARGETED (flat on JIT-bound Burnout). (User "keep stacking, find the next CPU win" + "continue".)
+Codegen micro-op vein is largely tapped (the -2.6% stack shipped). Investigated the 2 biggest remaining CPU
+levers:
+(1) JIT LEAF INLINING (arm64_jit_inline_leaf): 3 independent Opus agents converged - removing OPCODE_CALL
+removes its OPCODE_FLAG_VOLATILE, so the default context-promotion/dead-store passes operate across the
+inlined body unsafely = the cross-barrier wall again. KEY FACT: ContextBarrier() emits OPCODE_CONTEXT_BARRIER
+flags=0 which the DEFAULT promotion/DSE passes DON'T honor (only FLAG_VOLATILE/BRANCH reset validity), so a
+safe-inline barrier needs a VOLATILE op or EndBlock, and the safe (barriered/transparent-leaf) inline keeps
+only modest intra-leaf folding. CORRECTION: the agents analyzed a STALE crash - the registry NOTE's "CRASHES
+Burnout" predates the a71786d08 SourceOffset fix (which IS in the code); per B86aa-hh the real state is
+no-crash + fps-FLAT (misses the hot non-leaf trampoline 0x8238CD28 + inlines cold). So inlining = walled big
+win / modest safe win / needs targeting; NOT a quick stack-on. (Lesson: read the curated memory BEFORE
+launching agents - I should have caught the stale-crash scope earlier.)
+(2) LOCK CONTENTION via the existing kernel_object_handle_cache (lock-free per-thread handle->object cache):
+CORRECTNESS-VERIFIED by inspection (BumpObjectGeneration fires in all 5 mutators Reset/AddHandle/
+RemoveHandleLocked/PurgeAllObjects/RestoreHandle; per-entry ref = no use-after-free; gen snapshot = hits
+linearizable) + device SOAK-stable (fired Burnout race 70s with it ON: cache ACTIVE log fired, 0 crash
+markers, engaged on the present path that crashed inlining). BUT the matched Burnout A/B (cache-on vs the
+existing cache-off baseline, codegen-experimental-off both, n=1437/window) is FLAT-to-slightly-negative:
+cpu_other -0.7% overall but +0.5-1% on low-hit-rate rendered=134 frames, gpu flat. Burnout's Main XThread is
+JIT-BOUND (not lock-bound), so the cache's per-lookup check adds tiny overhead with little contention to
+remove. It's a TARGETED win for lock-CONTENDED multi-threaded titles (~20% per Gears profiling, Gears
+overheats so unmeasured) - kept default-OFF / opt-in toggle, NOT default-on (would slightly regress
+low-contention titles). Updated its cvar comment to record verified+soak-stable+targeted. Net: no NEW
+universal CPU win this turn - the universal codegen vein is tapped, the big levers are walled (inlining) or
+targeted (lock cache); the honest next CPU step is title-specific (enable the cache via a GameProfile for
+lock-bound titles; or the deep targeted-inlining build for Burnout's 0x8238CD28).
