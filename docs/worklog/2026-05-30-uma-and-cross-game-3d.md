@@ -3546,3 +3546,17 @@ low-contention titles). Updated its cvar comment to record verified+soak-stable+
 universal CPU win this turn - the universal codegen vein is tapped, the big levers are walled (inlining) or
 targeted (lock cache); the honest next CPU step is title-specific (enable the cache via a GameProfile for
 lock-bound titles; or the deep targeted-inlining build for Burnout's 0x8238CD28).
+
+### B87hh - Targeted-inlining lever CLOSED: Burnout's hot call 0x8238CD28 is a NON-LEAF -> CPU codegen track exhausted for the priority CPU-bound title. (User "continue".)
+Started the targeted-inlining unit (the biggest remaining CPU lever) with device-free disasm of Burnout's
+hot per-element call 0x8238CD28 (called in loop 0x82382798). It is a NON-LEAF: prologue (mflr; bl save-helper
+0x8259bafc; stwu r1,-0x80 frame) + 4 internal calls (0x825af9e8/0x8238c8d8/0x8238cc08) + multiple branches.
+So the leaf-inliner correctly skips it; capturing it needs a FULL function inliner AND wouldn't escape the
+per-iteration barriers (its internal calls keep their own context_barriers). The targeted-inlining win for
+Burnout is NOT tractable. Combined with micro-ops-shipped-but-fps-flat + leaf-inlining-walled + lock-cache-
+flat-on-Burnout, the CPU codegen track is EXHAUSTED for Burnout - its fps is bottlenecked on real guest
+function-call work codegen can't eliminate. Recorded in [[cross-barrier-elision-wall]]. STRATEGIC: stop
+grinding CPU codegen for fps (tapped/walled); the project's biggest wins are GPU/DRIVER/SYNC (Turnip fence
++46-78%). The shipped codegen wins (rlwinm shift/mask/general, CR-self, vsplt, vand) are correct + stacked
+but small (~-2.6% guest-CPU aggregate, fps-neutral on GPU/JIT-bound scenes). Device degrading (~14 fires) -
+rest/reboot before more device work.
