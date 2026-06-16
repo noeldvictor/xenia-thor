@@ -492,6 +492,20 @@ DEFINE_bool(spirv_debug_identity_ndc, false,
             "the RT dump is meaningful. Default off.",
             "GPU");
 DEFINE_bool(
+    spirv_pos_binning_passthrough, false,
+    "DIAGNOSTIC (Position-Only-Shading A/B): in the vertex shader, replace the "
+    "guest-computed clip-space gl_Position with a trivial per-vertex value "
+    "derived only from gl_VertexIndex, so the expensive guest VS math (skinning "
+    "/ matrix-palette transforms) that fed the position no longer reaches the "
+    "position output. Turnip's auto-derived position-only BINNING clone then "
+    "dead-code-eliminates that math. Tests whether the per-vertex binning drain "
+    "(Blue Dragon's ~12.7ms 'irreducible' floor) is actually reducible VS math "
+    "(POS-friendly SPIR-V would then be the fix) vs truly irreducible per-vertex "
+    "fixed overhead (fetch / primitive assembly / tiling). BREAKS RENDERING - "
+    "TIMING DIAGNOSTIC ONLY: compare gpu_frame_us off vs on at a matched "
+    "guest_ms. Default off.",
+    "GPU");
+DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
     "sampling is unavailable, load signed 2_10_10_10 textures through the "

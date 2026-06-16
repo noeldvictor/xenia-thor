@@ -268,6 +268,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_shared_memory_no_switch");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_float_constants_ssbo");
             copyBooleanExtra(intent, launchArguments, "spirv_debug_identity_ndc");
+            copyBooleanExtra(intent, launchArguments, "spirv_pos_binning_passthrough");
             copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");
             copyIntExtra(intent, launchArguments, "gpu_freeze_at_guest_ms");
             copyIntExtra(intent, launchArguments, "gpu_cull_max_per_frame");

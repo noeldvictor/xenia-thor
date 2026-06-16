@@ -1717,6 +1717,35 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
       spv::StorageClassOutput, output_per_vertex_, id_vector_temp_);
   spv::Id guest_position = builder_->createLoad(position_ptr, spv::NoPrecision);
 
+  // DIAGNOSTIC (Position-Only-Shading A/B, spirv_pos_binning_passthrough):
+  // replace the guest-computed clip-space position with a trivial per-vertex
+  // value derived only from gl_VertexIndex. The expensive guest VS math
+  // (skinning / matrix-palette transforms) that fed gl_Position then no longer
+  // reaches the position output, so Turnip's auto-derived position-only BINNING
+  // clone dead-code-eliminates it. If Blue Dragon's ~12.7ms per-vertex binning
+  // drain collapses with this ON (matched guest_ms), that cost was reducible VS
+  // math (POS-friendly SPIR-V is the fix); if it stays, the drain is irreducible
+  // per-vertex fixed overhead. BREAKS RENDERING - timing diagnostic only.
+  // Guarded to real vertex shaders (tess-eval has no gl_VertexIndex).
+  if (cvars::spirv_pos_binning_passthrough &&
+      input_vertex_index_ != spv::NoResult) {
+    spv::Id vertex_index_f = builder_->createUnaryOp(
+        spv::OpConvertSToF, type_float_,
+        builder_->createLoad(input_vertex_index_, spv::NoPrecision));
+    // Cheap per-vertex spread so primitives aren't all degenerate (keeps the
+    // binner doing realistic per-primitive work; isolates VS MATH, not topology).
+    spv::Id spread = builder_->createNoContractionBinOp(
+        spv::OpFMul, type_float_, vertex_index_f,
+        builder_->makeFloatConstant(1.0e-4f));
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(spread);
+    id_vector_temp_.push_back(spread);
+    id_vector_temp_.push_back(const_float_0_);
+    id_vector_temp_.push_back(const_float_1_);
+    guest_position =
+        builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+  }
+
   // Check if the shader already returns W, not 1/W, and if it doesn't, turn 1/W
   // into W.
   spv::Id position_w =
