@@ -10,6 +10,7 @@
 #include "xenia/cpu/xex_module.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "third_party/fmt/include/fmt/format.h"
 
@@ -1212,19 +1213,68 @@ bool XexModule::LoadContinue() {
   return true;
 }
 
+void XexModule::RefillPrecompileWork() {
+  // Serialize the scan: only one worker scans the frontier at a time (others
+  // try_lock, bail, and back off). Avoids N redundant O(n) scans / N global
+  // lock grabs when several workers drain the queue at once.
+  std::unique_lock<std::mutex> scan_lock(precompile_scan_mutex_,
+                                         std::try_to_lock);
+  if (!scan_lock.owns_lock()) {
+    return;
+  }
+
+  const uint32_t lo = low_address_;
+  const uint32_t hi = high_address_;
+
+  // (1) The call-graph frontier: functions xenia has DECLARED (boundaries
+  // analyzed - they were direct-call targets discovered while compiling their
+  // callers) but not yet DEFINED (codegen). This is pdata-independent, so it
+  // works even on XEXs with no exception directory (e.g. Burnout). ForEach
+  // Function briefly holds the global lock per its contract; the callback is a
+  // cheap status check that only collects addresses (codegen happens off-lock
+  // below), so the global lock is not held across compilation.
+  std::vector<uint32_t> found;
+  ForEachFunction([&](Function* f) {
+    if (f->status() == Symbol::Status::kDeclared) {
+      found.push_back(f->address());
+    }
+  });
+
+  // Merge fresh, in-image addresses into the work queue (queued_ dedups across
+  // rounds, so a function seen mid-declare is picked up on a later scan).
+  std::lock_guard<std::mutex> lock(precompile_mutex_);
+  for (uint32_t addr : found) {
+    if (addr >= lo && addr < hi && precompile_queued_.insert(addr).second) {
+      precompile_work_.push_back(addr);
+    }
+  }
+  // (2) Bonus: the parsed pdata entry points (when the XEX has an exception
+  // directory) - precompiles even functions not yet reached by the discovered
+  // call graph. Empty on no-pdata titles (then (1) is the sole source).
+  for (const auto& fn : guest_runtime_functions_) {
+    const uint32_t addr = fn.func_start;
+    if (addr >= lo && addr < hi && precompile_queued_.insert(addr).second) {
+      precompile_work_.push_back(addr);
+    }
+  }
+}
+
 void XexModule::PrecompileGuestFunctions() {
   if (!cvars::cpu_precompile_guest_functions) {
     return;
   }
-  if (guest_runtime_functions_.empty()) {
-    XELOGW(
-        "cpu_precompile_guest_functions: no parsed function-entry table for "
-        "this module (empty XEX exception directory) - nothing to precompile");
-    return;
-  }
 
-  // Worker count: explicit, else hardware cores - 2 (leave headroom for the
-  // executing guest threads + host), clamped to [1, 6].
+  // DEADLOCK-SAFETY (load it: this MUST stay a load-window-only, joined
+  // pre-warm). This is called from LoadContinue, which runs inside
+  // KernelState::LoadUserModule's LoadFromFile() call with the global lock
+  // RELEASED, and BEFORE any guest thread is launched (LaunchModule->Resume
+  // happens later). So during this routine no thread holds the recursive
+  // global lock at an outer level and no guest thread is executing - the
+  // workers can acquire the global lock freely and the entry_table /
+  // DefineSymbol compile-spins all fully release it, so they cannot form the
+  // executor-holds-outer-global / compiler-waits-for-global cycle. We JOIN the
+  // workers before returning so they NEVER run concurrently with gameplay (that
+  // would deadlock - see the cvar help + the parallel-jit-precompiler memory).
   int requested = cvars::cpu_precompile_threads;
   uint32_t worker_count;
   if (requested > 0) {
@@ -1238,33 +1288,111 @@ void XexModule::PrecompileGuestFunctions() {
   }
 
   precompile_stop_.store(false, std::memory_order_relaxed);
-  precompile_next_.store(0, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> lock(precompile_mutex_);
+    precompile_work_.clear();
+    precompile_queued_.clear();
+    precompile_cursor_ = 0;
+  }
 
-  const size_t count = guest_runtime_functions_.size();
   const uint32_t lo = low_address_;
   const uint32_t hi = high_address_;
-  XELOGI(
-      "cpu_precompile_guest_functions: precompiling {} guest functions on {} "
-      "background thread(s) (code range {:08X}-{:08X})",
-      count, worker_count, lo, hi);
 
+  // Seed the call-graph walk: the entry point (so it works on no-pdata titles
+  // like Burnout - the boot/init path is reachable from here) + the pdata
+  // entry points when present. RefillPrecompileWork() then follows the frontier
+  // each function's compile declares.
+  {
+    std::lock_guard<std::mutex> lock(precompile_mutex_);
+    uint32_t entry_point = 0;
+    if (GetOptHeader(XEX_HEADER_ENTRY_POINT, &entry_point) && entry_point >= lo &&
+        entry_point < hi && precompile_queued_.insert(entry_point).second) {
+      precompile_work_.push_back(entry_point);
+    }
+    for (const auto& fn : guest_runtime_functions_) {
+      const uint32_t addr = fn.func_start;
+      if (addr >= lo && addr < hi && precompile_queued_.insert(addr).second) {
+        precompile_work_.push_back(addr);
+      }
+    }
+  }
+
+  // Time budget: bound the load-time impact. 0 = unbounded.
+  const int budget_ms = cvars::cpu_precompile_budget_ms;
+  const auto start = std::chrono::steady_clock::now();
+  const auto deadline =
+      budget_ms > 0
+          ? start + std::chrono::milliseconds(budget_ms)
+          : std::chrono::steady_clock::time_point::max();
+
+  XELOGI(
+      "cpu_precompile_guest_functions: load-window pre-warm on {} thread(s) "
+      "from the entry point + {} pdata entries, budget {}ms (code range "
+      "{:08X}-{:08X})",
+      worker_count, guest_runtime_functions_.size(), budget_ms, lo, hi);
+
+  std::atomic<uint32_t> compiled{0};
   for (uint32_t t = 0; t < worker_count; ++t) {
-    precompile_threads_.emplace_back([this, count, lo, hi]() {
+    precompile_threads_.emplace_back([this, deadline, &compiled]() {
       xe::threading::set_name("PrecompileJIT");
-      size_t i;
-      while (!precompile_stop_.load(std::memory_order_relaxed) &&
-             (i = precompile_next_.fetch_add(1, std::memory_order_relaxed)) <
-                 count) {
-        const uint32_t addr = guest_runtime_functions_[i].func_start;
-        // Only real in-image code addresses; ResolveFunction compiles on first
-        // demand (thread-safe: EntryTable spins on STATUS_COMPILING, the
-        // per-function lock + concurrent translator pool make this race-safe).
-        if (addr >= lo && addr < hi) {
+      int empty_rounds = 0;
+      while (!precompile_stop_.load(std::memory_order_relaxed)) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+          break;  // load-time budget elapsed
+        }
+        uint32_t addr = 0;
+        bool have = false;
+        {
+          std::lock_guard<std::mutex> lock(precompile_mutex_);
+          if (precompile_cursor_ < precompile_work_.size()) {
+            addr = precompile_work_[precompile_cursor_++];
+            have = true;
+          }
+        }
+        if (have) {
+          // Compile (define) the function now, on this idle core, so the guest
+          // doesn't pay the codegen cost on first encounter. Safe here only
+          // because no guest thread is executing yet (see the routine header).
           processor_->ResolveFunction(addr);
+          compiled.fetch_add(1, std::memory_order_relaxed);
+          empty_rounds = 0;
+          continue;
+        }
+        // Queue drained: discover more of the frontier the just-compiled
+        // functions declared.
+        RefillPrecompileWork();
+        bool now_have;
+        {
+          std::lock_guard<std::mutex> lock(precompile_mutex_);
+          now_have = precompile_cursor_ < precompile_work_.size();
+        }
+        if (!now_have) {
+          // Give any in-flight compiles on the other workers a moment to
+          // declare new frontier; after a few empty rounds the reachable set is
+          // exhausted, so this worker exits (the join then completes).
+          if (++empty_rounds > 5) {
+            break;
+          }
+          xe::threading::Sleep(std::chrono::milliseconds(1));
         }
       }
     });
   }
+
+  // JOIN: the pre-warm must finish before the guest starts. This bounds load by
+  // at most budget_ms (+ one in-flight compile per worker).
+  for (auto& thread : precompile_threads_) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  precompile_threads_.clear();
+
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
+  XELOGI("cpu_precompile_guest_functions: pre-warmed {} function(s) in {}ms",
+         compiled.load(std::memory_order_relaxed), elapsed);
 }
 
 void XexModule::StopPrecompile() {

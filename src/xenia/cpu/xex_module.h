@@ -11,8 +11,10 @@
 #define XENIA_CPU_XEX_MODULE_H_
 
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "xenia/cpu/module.h"
@@ -239,13 +241,24 @@ class XexModule : public xe::cpu::Module {
   // guest_cpp_exception_dispatch was on at load). See GuestRuntimeFunction.
   std::vector<GuestRuntimeFunction> guest_runtime_functions_;
 
-  // Multicore JIT precompiler state (cpu_precompile_guest_functions). Workers
-  // atomically pull indices from precompile_next_ and ResolveFunction() each
-  // guest function; precompile_stop_ + join in StopPrecompile() drains them
-  // before Unload deallocates guest code.
+  // Multicore JIT precompiler state (cpu_precompile_guest_functions).
+  // RefillPrecompileWork() scans the module's declared-but-undefined function
+  // frontier (functions xenia declared as direct-call targets while compiling
+  // their callers, but hasn't codegen'd yet) and the parsed pdata entry points,
+  // appending fresh addresses to precompile_work_. Workers pull the next index
+  // (precompile_cursor_) and ResolveFunction() it off-lock, codegen'ing it
+  // ahead of the guest reaching it. precompile_stop_ + join in StopPrecompile()
+  // drains them before Unload deallocates guest code. All non-atomic members
+  // are guarded by precompile_mutex_; the work scan follows the call graph so
+  // it is independent of whether the XEX has a pdata exception directory.
   std::vector<std::thread> precompile_threads_;
   std::atomic<bool> precompile_stop_{false};
-  std::atomic<size_t> precompile_next_{0};
+  std::mutex precompile_mutex_;       // guards work_/queued_/cursor_
+  std::mutex precompile_scan_mutex_;  // serializes the frontier scan (try_lock)
+  std::vector<uint32_t> precompile_work_;
+  std::unordered_set<uint32_t> precompile_queued_;
+  size_t precompile_cursor_ = 0;
+  void RefillPrecompileWork();
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;

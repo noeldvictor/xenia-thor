@@ -100,17 +100,33 @@ DEFINE_bool(arm64_jit_inline_leaf, false,
             "elision wall verdict). Default off.",
             "CPU");
 DEFINE_bool(cpu_precompile_guest_functions, false,
-            "Precompile the module's guest functions on background threads (the "
-            "Thor's otherwise-idle cores) ahead of execution, eliminating the "
-            "first-encounter JIT-compile stutter / compile-induced frame drops "
-            "that otherwise block the executing guest thread. The compile path is "
-            "thread-safe (EntryTable spins on STATUS_COMPILING, per-function "
-            "lock, concurrent translator pool), so this races the executors "
-            "safely. Exploits the spare cores (the goal's '~1 of 8 cores'). "
-            "Default-off experimental.",
+            "Parallel JIT pre-warm: during module load (the window AFTER the "
+            "module image is committed but BEFORE any guest thread starts "
+            "executing), compile the boot/init call graph on the Thor's "
+            "otherwise-idle cores, so the functions the guest runs first are "
+            "already JIT'd - removing first-encounter compile stutter. The "
+            "workers follow the declared-but-undefined call-graph frontier from "
+            "the entry point (plus the pdata entry points when present), so it "
+            "works regardless of whether the XEX has an exception directory. "
+            "DEADLOCK-SAFE by construction: it runs only in the load window (no "
+            "guest thread holds the global lock yet) and JOINS before load "
+            "completes. NOTE: it does NOT run concurrently with gameplay - "
+            "racing the executing guest deadlocks on xenia's recursive global "
+            "lock + lazy-compile cycle (EntryTable::GetOrCreate spins on "
+            "STATUS_COMPILING while the executor holds the outer global lock, "
+            "and the background compile blocks acquiring that same lock). "
+            "Exploits the spare cores (the goal's '~1 of 8 cores'). Default-off "
+            "experimental.",
             "CPU");
 DEFINE_int32(cpu_precompile_threads, 0,
-             "Background precompiler thread count when cpu_precompile_guest_"
-             "functions is on (0 = auto: hardware cores - 2, leaving cores for "
-             "the executing guest threads).",
+             "Pre-warm worker thread count when cpu_precompile_guest_functions "
+             "is on (0 = auto: hardware cores - 2). Clamped to [1, 6].",
+             "CPU");
+DEFINE_int32(cpu_precompile_budget_ms, 1500,
+             "Wall-clock budget (ms) for the cpu_precompile_guest_functions "
+             "load-window pre-warm. Bounds how much the parallel pre-warm may "
+             "add to load time; it stops + joins once the budget elapses (or "
+             "earlier if the reachable frontier is exhausted). 0 = unbounded "
+             "(pre-warm the entire reachable set - can add seconds to load on a "
+             "large title).",
              "CPU");

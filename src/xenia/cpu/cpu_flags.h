@@ -44,5 +44,6 @@ DECLARE_bool(arm64_jit_inline_audit);
 DECLARE_bool(arm64_jit_inline_leaf);
 DECLARE_bool(cpu_precompile_guest_functions);
 DECLARE_int32(cpu_precompile_threads);
+DECLARE_int32(cpu_precompile_budget_ms);
 
 #endif  // XENIA_CPU_CPU_FLAGS_H_
