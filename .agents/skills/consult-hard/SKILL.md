@@ -28,11 +28,18 @@ The user logs in themselves (interactive browser OAuth — do NOT try to automat
 
 Check auth before a real consult: `codex login status` and `gemini -p "ok"` (cheap probe).
 
-## Models (verified 2026-06-16 — re-verify if these error)
-- **Codex strongest:** `gpt-5.5` at `model_reasoning_effort=xhigh`. (`gpt-5.5-codex` is NOT a real id.)
-- **Gemini strongest:** `gemini-3.1-pro-preview` (the `gemini-3-pro-preview` string aliases to it).
-  Stable fallback if a preview id 404s: `gemini-2.5-pro`. (`gemini-3.5-pro` is NOT GA yet.)
-- Preview ids rotate — if Gemini errors on the model, re-check with `gemini --help` / try `gemini-2.5-pro`.
+## Models (verified on THIS machine 2026-06-16 — user preference baked in)
+- **Codex:** `gpt-5.5` at `model_reasoning_effort=high` (user-requested "high thinking"; `xhigh`
+  is the max if you want even deeper). `gpt-5.5-codex` is NOT a real id. Auth = ChatGPT login (done).
+- **Gemini:** `gemini-3-flash-preview` (user prefers a 3.x flash over 3.1-pro). Auth here is the
+  **Google OAuth login** (copied creds in `~/.gemini`), which exposes a NARROWER model set than the
+  API-key path. **Confirmed working on this OAuth login:** `gemini-2.5-pro`, `gemini-2.5-flash`,
+  `gemini-3-flash-preview`. **NOT available via OAuth:** `gemini-3.5-pro`, `gemini-3.5-flash`,
+  `gemini-flash-latest` (these need a `GEMINI_API_KEY` from AI Studio + `selectedType: gemini-api-key`).
+  Stronger-reasoning option on the same login: `gemini-2.5-pro`.
+- To unlock the real `gemini-3.5-flash`/`-pro`: set `GEMINI_API_KEY`, flip `~/.gemini/settings.json`
+  `security.auth.selectedType` to `gemini-api-key`. (settings.json must be UTF-8 **without BOM** — use
+  the Write tool, NOT PowerShell `Out-File -Encoding utf8`, which adds a BOM and breaks the JSON parse.)
 
 ## How to run it
 
@@ -65,9 +72,10 @@ Outputs: `scratch/consult/codex.md` and `scratch/consult/gemini.md`.
 
 Raw equivalents (if you'd rather run them as two separate background calls):
 ```powershell
-Get-Content scratch\consult\problem.txt -Raw | codex exec -m gpt-5.5 -c model_reasoning_effort="xhigh" --skip-git-repo-check - *>&1 | Out-File scratch\consult\codex.md -Encoding utf8
-Get-Content scratch\consult\problem.txt -Raw | gemini -m gemini-3.1-pro-preview *>&1 | Out-File scratch\consult\gemini.md -Encoding utf8
+Get-Content scratch\consult\problem.txt -Raw | codex exec -m gpt-5.5 -c model_reasoning_effort="high" --skip-git-repo-check - *>&1 | Out-File scratch\consult\codex.md -Encoding utf8
+Get-Content scratch\consult\problem.txt -Raw | gemini -m gemini-3-flash-preview 2>$null | Out-File scratch\consult\gemini.md -Encoding utf8
 ```
+(Gemini prints a harmless "256-color" warning to stderr — `2>$null` keeps the captured answer clean.)
 
 ### 3. Reconcile (this is the point — don't just relay)
 Read both files. Then to the user, produce:

@@ -17,17 +17,19 @@ param(
   [Parameter(Mandatory = $true)][string]$PromptFile,
   [string]$OutDir = "scratch/consult",
   [string]$CodexModel = "gpt-5.5",
-  [string]$GeminiModel = "gemini-3.1-pro-preview",
-  [string]$Effort = "xhigh"
+  [string]$GeminiModel = "gemini-3-flash-preview",
+  [string]$Effort = "high"
 )
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $PromptFile)) { throw "Prompt file not found: $PromptFile" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+# Background jobs run with a DIFFERENT working directory, so make paths absolute.
+$OutDir = (Resolve-Path $OutDir).Path
 
 # Make sure the npm global bin (where codex/gemini live) is on PATH for the jobs.
 $npmBin = (npm prefix -g).Trim()
-$prompt = Get-Content $PromptFile -Raw
+$prompt = Get-Content (Resolve-Path $PromptFile).Path -Raw
 
 Write-Output "Consulting Codex ($CodexModel @ $Effort) + Gemini ($GeminiModel) in parallel..."
 Write-Output "(max reasoning -> this takes minutes; outputs -> $OutDir)"
