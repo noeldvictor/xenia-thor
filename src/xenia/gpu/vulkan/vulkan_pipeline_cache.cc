@@ -2303,7 +2303,9 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
               GetVkBlendOp(color_rt.alpha_blend_op);
         }
         color_blend_attachment.colorWriteMask =
-            VkColorComponentFlags(color_rt.color_write_mask);
+            cvars::gpu_force_no_color_write
+                ? 0
+                : VkColorComponentFlags(color_rt.color_write_mask);
       }
     }
     color_blend_state.attachmentCount = 32 - xe::lzcnt(color_rts_used);

@@ -519,6 +519,18 @@ DEFINE_bool(
     "fixed overhead. BREAKS RENDERING - timing diagnostic only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_force_no_color_write, false,
+    "DIAGNOSTIC (overdraw ROP/blend split): force colorWriteMask=0 on all color "
+    "render targets, so every draw still rasterizes + depth-tests + runs (the "
+    "shader) but writes NO color and does NO blend. Keeps coverage, draws, "
+    "verts, RT transfers, depth. Splits the per-covered-fragment cost: if "
+    "gpu_frame_us collapses (e.g. BD ~696ms -> tens of ms) the dominant cost is "
+    "the COLOR-WRITE + ALPHA-BLEND ROP path (overdraw) -> a depth pre-pass / LRZ "
+    "that stops occluded fragments from reaching the ROP will pay; if it stays "
+    "high, the cost is raster/depth/discard, not the color path. BREAKS "
+    "RENDERING - timing diagnostic only. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_force_tiny_draws, false,
     "DIAGNOSTIC (per-draw vs per-vertex overhead split): clamp every indexed "
     "draw's index count to 3 (one tiny triangle), keeping ALL the per-draw work "
