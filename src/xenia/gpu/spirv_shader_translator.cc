@@ -1744,6 +1744,22 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     id_vector_temp_.push_back(const_float_1_);
     guest_position =
         builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+  } else if (cvars::spirv_pos_collapse_only) {
+    // Companion control: keep the FULL guest position math (binning clone NOT
+    // pruned - guest_position still feeds gl_Position) but scale XY by a tiny
+    // factor to collapse on-screen coverage to ~0, matching passthrough's
+    // fragment cost. passthrough-vs-collapse_only at a matched guest_ms then
+    // isolates the binning VS-math cost (fragment confound cancels).
+    spv::Id eps = builder_->makeFloatConstant(1.0e-4f);
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(eps);
+    id_vector_temp_.push_back(eps);
+    id_vector_temp_.push_back(const_float_1_);
+    id_vector_temp_.push_back(const_float_1_);
+    spv::Id xy_collapse =
+        builder_->createCompositeConstruct(type_float4_, id_vector_temp_);
+    guest_position = builder_->createNoContractionBinOp(
+        spv::OpFMul, type_float4_, guest_position, xy_collapse);
   }
 
   // Check if the shader already returns W, not 1/W, and if it doesn't, turn 1/W

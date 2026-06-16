@@ -506,6 +506,19 @@ DEFINE_bool(
     "guest_ms. Default off.",
     "GPU");
 DEFINE_bool(
+    spirv_pos_collapse_only, false,
+    "DIAGNOSTIC companion to spirv_pos_binning_passthrough: KEEP the full guest "
+    "position math (so Turnip's binning clone still runs it - NOT pruned) but "
+    "scale the final clip-space XY to collapse on-screen coverage to ~0, exactly "
+    "like passthrough does. This isolates the fragment-work confound: passthrough "
+    "(binning math pruned + coverage collapsed) vs collapse_only (binning math "
+    "kept + coverage collapsed) at a matched guest_ms cancels the fragment delta, "
+    "so the gpu_frame_us difference between the two = the per-vertex binning "
+    "VS-math cost alone. If passthrough is much faster than collapse_only, the "
+    "binning floor is reducible VS math; if they're equal, it's irreducible "
+    "fixed overhead. BREAKS RENDERING - timing diagnostic only. Default off.",
+    "GPU");
+DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
     "sampling is unavailable, load signed 2_10_10_10 textures through the "
