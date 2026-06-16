@@ -519,6 +519,22 @@ DEFINE_bool(
     "fixed overhead. BREAKS RENDERING - timing diagnostic only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_force_tiny_draws, false,
+    "DIAGNOSTIC (per-draw vs per-vertex overhead split): clamp every indexed "
+    "draw's index count to 3 (one tiny triangle), keeping ALL the per-draw work "
+    "intact (the ~1200 draw calls, 208 pipeline binds, ~1038 descriptor binds, "
+    "index-buffer binds, ~25 RT transfers) but collapsing per-vertex work to ~0 "
+    "(only ~3 verts/draw fetched/transformed/binned/shaded, fragment ~0). So "
+    "gpu_frame_us with this ON = the PER-DRAW floor alone (command-processor / "
+    "state / descriptor / RT-transfer / GMEM cost). Compare to the normal "
+    "~263k-vertex frame (or the spirv_pos_binning_passthrough ~33.7ms point) at "
+    "a matched guest_ms: if ON stays near the full frame -> the overhead is "
+    "PER-DRAW (draw-batching / bindless is a big GPU win); if ON collapses to a "
+    "few ms -> it's PER-VERTEX fetch/tiling (draw-batching only helps CPU; need "
+    "fewer verts / bindless vertex fetch). BREAKS RENDERING - timing diagnostic "
+    "only. Default off.",
+    "GPU");
+DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
     "sampling is unavailable, load signed 2_10_10_10 textures through the "

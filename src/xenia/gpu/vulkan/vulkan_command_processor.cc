@@ -5731,7 +5731,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           // per-draw path.
           deferred_command_buffer_.CmdVkBindIndexBuffer(
               index_buffer.first, index_buffer.second, index_type);
-          deferred_command_buffer_.CmdVkDrawIndexed(idx_count, 1, 0, 0, 0);
+          deferred_command_buffer_.CmdVkDrawIndexed(
+              cvars::gpu_force_tiny_draws ? std::min<uint32_t>(idx_count, 3u)
+                                          : idx_count,
+              1, 0, 0, 0);
         }
       }
     } else {
@@ -5749,8 +5752,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       }
       deferred_command_buffer_.CmdVkBindIndexBuffer(
           index_buffer.first, index_buffer.second, index_type);
+      // DIAGNOSTIC gpu_force_tiny_draws: clamp index count to 3 (one triangle)
+      // to collapse per-VERTEX work while keeping all per-DRAW work, isolating
+      // the per-draw overhead floor. Default off.
       deferred_command_buffer_.CmdVkDrawIndexed(
-          primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
+          cvars::gpu_force_tiny_draws
+              ? std::min<uint32_t>(
+                    primitive_processing_result.host_draw_vertex_count, 3u)
+              : primitive_processing_result.host_draw_vertex_count,
+          1, 0, 0, 0);
     }
   }
 

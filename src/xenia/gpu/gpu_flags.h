@@ -107,6 +107,7 @@ DECLARE_bool(gpu_vulkan_float_constants_ssbo);
 DECLARE_bool(spirv_debug_identity_ndc);
 DECLARE_bool(spirv_pos_binning_passthrough);
 DECLARE_bool(spirv_pos_collapse_only);
+DECLARE_bool(gpu_force_tiny_draws);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);
