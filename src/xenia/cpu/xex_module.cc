@@ -18,6 +18,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
+#include "xenia/base/threading.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/cpu/lzx.h"
@@ -75,7 +76,13 @@ using xe::kernel::KernelState;
 XexModule::XexModule(Processor* processor, KernelState* kernel_state)
     : Module(processor), processor_(processor), kernel_state_(kernel_state) {}
 
-XexModule::~XexModule() {}
+XexModule::~XexModule() {
+  // Defensive: ensure any background precompiler workers are joined before the
+  // precompile_threads_ vector is destructed (a still-joinable std::thread
+  // would std::terminate). Unload() normally does this first; this covers the
+  // load-failure / no-Unload teardown path.
+  StopPrecompile();
+}
 
 bool XexModule::GetOptHeader(const xex2_header* header, xex2_header_keys key,
                              void** out_ptr) {
@@ -877,7 +884,10 @@ int XexModule::ReadPEHeaders() {
   // [func_start - 4]). On Xbox 360 the entries are packed 8-byte
   // {u32 FuncStart; u32 bits} stored BIG-ENDIAN; FuncStart is a full guest VA;
   // bit31 of bits = ExceptionFlag. (Confirmed by Ghidra on Project Sylpheed.)
-  if (cvars::guest_cpp_exception_dispatch) {
+  // The same parsed table is the function-entry list the multicore precompiler
+  // (cpu_precompile_guest_functions) walks, so build it for either consumer.
+  if (cvars::guest_cpp_exception_dispatch ||
+      cvars::cpu_precompile_guest_functions) {
     const auto& exc_dir =
         opthdr->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
     const uint32_t exc_va = exc_dir.VirtualAddress;
@@ -1194,10 +1204,84 @@ bool XexModule::LoadContinue() {
     page += desc.page_count;
   }
 
+  // Multicore JIT: kick off background precompilation of this module's guest
+  // functions now that the executable range is committed and the function-entry
+  // table is parsed. No-op unless cpu_precompile_guest_functions is set.
+  PrecompileGuestFunctions();
+
   return true;
 }
 
+void XexModule::PrecompileGuestFunctions() {
+  if (!cvars::cpu_precompile_guest_functions) {
+    return;
+  }
+  if (guest_runtime_functions_.empty()) {
+    XELOGW(
+        "cpu_precompile_guest_functions: no parsed function-entry table for "
+        "this module (empty XEX exception directory) - nothing to precompile");
+    return;
+  }
+
+  // Worker count: explicit, else hardware cores - 2 (leave headroom for the
+  // executing guest threads + host), clamped to [1, 6].
+  int requested = cvars::cpu_precompile_threads;
+  uint32_t worker_count;
+  if (requested > 0) {
+    worker_count = static_cast<uint32_t>(requested);
+  } else {
+    unsigned hw = std::thread::hardware_concurrency();
+    worker_count = hw > 3 ? hw - 2 : 1;
+  }
+  if (worker_count > 6) {
+    worker_count = 6;
+  }
+
+  precompile_stop_.store(false, std::memory_order_relaxed);
+  precompile_next_.store(0, std::memory_order_relaxed);
+
+  const size_t count = guest_runtime_functions_.size();
+  const uint32_t lo = low_address_;
+  const uint32_t hi = high_address_;
+  XELOGI(
+      "cpu_precompile_guest_functions: precompiling {} guest functions on {} "
+      "background thread(s) (code range {:08X}-{:08X})",
+      count, worker_count, lo, hi);
+
+  for (uint32_t t = 0; t < worker_count; ++t) {
+    precompile_threads_.emplace_back([this, count, lo, hi]() {
+      xe::threading::set_name("PrecompileJIT");
+      size_t i;
+      while (!precompile_stop_.load(std::memory_order_relaxed) &&
+             (i = precompile_next_.fetch_add(1, std::memory_order_relaxed)) <
+                 count) {
+        const uint32_t addr = guest_runtime_functions_[i].func_start;
+        // Only real in-image code addresses; ResolveFunction compiles on first
+        // demand (thread-safe: EntryTable spins on STATUS_COMPILING, the
+        // per-function lock + concurrent translator pool make this race-safe).
+        if (addr >= lo && addr < hi) {
+          processor_->ResolveFunction(addr);
+        }
+      }
+    });
+  }
+}
+
+void XexModule::StopPrecompile() {
+  precompile_stop_.store(true, std::memory_order_relaxed);
+  for (auto& thread : precompile_threads_) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  precompile_threads_.clear();
+}
+
 bool XexModule::Unload() {
+  // Drain background precompiler workers before anything is torn down (they
+  // dereference guest code + the processor).
+  StopPrecompile();
+
   if (!loaded_) {
     return true;
   }

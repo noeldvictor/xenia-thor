@@ -99,3 +99,18 @@ DEFINE_bool(arm64_jit_inline_leaf, false,
             "the SAFE alternative to cross-barrier elision (see the cross-barrier "
             "elision wall verdict). Default off.",
             "CPU");
+DEFINE_bool(cpu_precompile_guest_functions, false,
+            "Precompile the module's guest functions on background threads (the "
+            "Thor's otherwise-idle cores) ahead of execution, eliminating the "
+            "first-encounter JIT-compile stutter / compile-induced frame drops "
+            "that otherwise block the executing guest thread. The compile path is "
+            "thread-safe (EntryTable spins on STATUS_COMPILING, per-function "
+            "lock, concurrent translator pool), so this races the executors "
+            "safely. Exploits the spare cores (the goal's '~1 of 8 cores'). "
+            "Default-off experimental.",
+            "CPU");
+DEFINE_int32(cpu_precompile_threads, 0,
+             "Background precompiler thread count when cpu_precompile_guest_"
+             "functions is on (0 = auto: hardware cores - 2, leaving cores for "
+             "the executing guest threads).",
+             "CPU");

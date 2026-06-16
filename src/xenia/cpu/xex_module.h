@@ -10,7 +10,9 @@
 #ifndef XENIA_CPU_XEX_MODULE_H_
 #define XENIA_CPU_XEX_MODULE_H_
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "xenia/cpu/module.h"
@@ -137,6 +139,15 @@ class XexModule : public xe::cpu::Module {
   static const GuestRuntimeFunction* FindRuntimeFunction(
       const std::vector<GuestRuntimeFunction>& table, uint32_t guest_pc);
 
+  // Multicore JIT: precompile this module's guest functions (from the parsed
+  // runtime-function table) on background threads, ahead of execution, to use
+  // the otherwise-idle cores and remove first-encounter compile stutter.
+  // No-op unless cpu_precompile_guest_functions is set. Safe to race executors
+  // (the compile path is thread-safe). StopPrecompile joins the workers and is
+  // called before Unload deallocates the guest code, and from the destructor.
+  void PrecompileGuestFunctions();
+  void StopPrecompile();
+
   // Gets an optional header. Returns NULL if not found.
   // Special case: if key & 0xFF == 0x00, this function will return the value,
   // not a pointer! This assumes out_ptr points to uint32_t.
@@ -227,6 +238,14 @@ class XexModule : public xe::cpu::Module {
   // Parsed XEX PE exception directory, sorted by func_start (empty unless
   // guest_cpp_exception_dispatch was on at load). See GuestRuntimeFunction.
   std::vector<GuestRuntimeFunction> guest_runtime_functions_;
+
+  // Multicore JIT precompiler state (cpu_precompile_guest_functions). Workers
+  // atomically pull indices from precompile_next_ and ResolveFunction() each
+  // guest function; precompile_stop_ + join in StopPrecompile() drains them
+  // before Unload deallocates guest code.
+  std::vector<std::thread> precompile_threads_;
+  std::atomic<bool> precompile_stop_{false};
+  std::atomic<size_t> precompile_next_{0};
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;
