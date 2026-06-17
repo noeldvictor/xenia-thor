@@ -519,6 +519,16 @@ DEFINE_bool(
     "fixed overhead. BREAKS RENDERING - timing diagnostic only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_opaque_depth_prepass, false,
+    "Opaque depth PRE-PASS (WIP, build target): within a render pass, render the "
+    "OPAQUE draws (depth-write, no alpha-test, no blend - see the comp[opaque=] "
+    "draw-outcomes counter) DEPTH-ONLY first, so the full color stream (including "
+    "alpha-test foliage behind opaque terrain) early-Z-rejects occluded fragments "
+    "before their fragment work runs - attacking Blue Dragon's overdraw-bound GPU "
+    "frame. Needs draw deferral + stream splice (see docs/research/20260617-bd-"
+    "opaque-depth-prepass-plan.md). NOT YET FUNCTIONAL - scaffold only. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_force_no_color_write, false,
     "DIAGNOSTIC (overdraw ROP/blend split): force colorWriteMask=0 on all color "
     "render targets, so every draw still rasterizes + depth-tests + runs (the "
