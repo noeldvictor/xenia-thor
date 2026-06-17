@@ -569,6 +569,32 @@ DEFINE_bool(
     "foliage RE should be shelved. BREAKS foliage rendering - timing diagnostic "
     "only. Pair with gpu_freeze_at_guest_ms for a clean A/B. Default off.",
     "GPU");
+DEFINE_bool(
+    gpu_collapse_blended_coverage, false,
+    "DIAGNOSTIC (transparency overdraw isolation): like "
+    "gpu_collapse_alphatest_coverage but for BLENDED draws (alpha-blend "
+    "transparency - water, effects, particles; cannot early-Z so they "
+    "overdraw). gpu_frame_us ON vs OFF at a matched frame = the blended "
+    "fragment cost. Default off.",
+    "GPU");
+DEFINE_bool(
+    gpu_collapse_opaque_coverage, false,
+    "DIAGNOSTIC (opaque overdraw isolation): like "
+    "gpu_collapse_alphatest_coverage but for OPAQUE draws (depth-write, no "
+    "alpha-test, no blend - terrain/buildings; these GET Adreno LRZ/early-Z so "
+    "their overdraw should be LOW). gpu_frame_us ON vs OFF = the opaque "
+    "fragment+vertex cost; if large, opaque overdraw isn't being early-Z "
+    "rejected (a depth-prepass lever). Default off.",
+    "GPU");
+DEFINE_int32(
+    gpu_blended_thin_factor, 0,
+    "SPEED HACK (transparency overdraw reduction): thin BLENDED (alpha-blend) "
+    "draws - keep 1 of every N, collapse the rest. Device-proven on Blue "
+    "Dragon: blended transparency overdraw is ~34% of the GPU frame "
+    "(865ms->571ms collapsed). Riskier visually than foliage thinning "
+    "(transparency = fog/shadow/glow/particles, more load-bearing), so "
+    "validate per-game. 0/1 = off; 2 = keep 1/2; 4 = keep 1/4. Default 0.",
+    "GPU");
 DEFINE_int32(
     gpu_foliage_thin_factor, 0,
     "SPEED HACK (foliage overdraw reduction - 'performance mode'): thin "

@@ -5793,12 +5793,37 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // (foliage density vs fps). All default off.
       const bool is_alphatest_draw =
           register_file_->Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0;
-      const bool collapse_this_draw =
+      bool collapse_this_draw =
           cvars::gpu_force_tiny_draws ||
           (cvars::gpu_collapse_alphatest_coverage && is_alphatest_draw) ||
           (cvars::gpu_foliage_thin_factor >= 2 && is_alphatest_draw &&
            (draw_outcomes_alphatest_draws_ %
             uint32_t(cvars::gpu_foliage_thin_factor)) != 0);
+      if (!collapse_this_draw && !is_alphatest_draw &&
+          (cvars::gpu_collapse_blended_coverage ||
+           cvars::gpu_collapse_opaque_coverage ||
+           cvars::gpu_blended_thin_factor >= 2)) {
+        // Per-class diagnostic collapse / blended-thin speed hack for the
+        // non-alpha-test classes (mirrors the draw-outcomes classifier below).
+        auto bc0 = register_file_->Get<reg::RB_BLENDCONTROL>();
+        const bool blends_draw =
+            !(bc0.color_srcblend == xenos::BlendFactor::kOne &&
+              bc0.color_destblend == xenos::BlendFactor::kZero &&
+              bc0.color_comb_fcn == xenos::BlendOp::kAdd &&
+              bc0.alpha_srcblend == xenos::BlendFactor::kOne &&
+              bc0.alpha_destblend == xenos::BlendFactor::kZero &&
+              bc0.alpha_comb_fcn == xenos::BlendOp::kAdd);
+        if (cvars::gpu_collapse_blended_coverage && blends_draw) {
+          collapse_this_draw = true;
+        } else if (cvars::gpu_blended_thin_factor >= 2 && blends_draw &&
+                   (draw_outcomes_blended_draws_ %
+                    uint32_t(cvars::gpu_blended_thin_factor)) != 0) {
+          collapse_this_draw = true;
+        } else if (cvars::gpu_collapse_opaque_coverage && !blends_draw &&
+                   normalized_depth_control.z_write_enable) {
+          collapse_this_draw = true;
+        }
+      }
       deferred_command_buffer_.CmdVkDrawIndexed(
           collapse_this_draw
               ? std::min<uint32_t>(

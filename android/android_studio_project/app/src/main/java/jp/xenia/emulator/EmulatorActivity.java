@@ -272,6 +272,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "spirv_pos_collapse_only");
             copyBooleanExtra(intent, launchArguments, "gpu_force_tiny_draws");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_alphatest_coverage");
+            copyBooleanExtra(intent, launchArguments, "gpu_collapse_blended_coverage");
+            copyBooleanExtra(intent, launchArguments, "gpu_collapse_opaque_coverage");
+            copyIntExtra(intent, launchArguments, "gpu_blended_thin_factor");
             copyIntExtra(intent, launchArguments, "gpu_foliage_thin_factor");
             copyBooleanExtra(intent, launchArguments, "gpu_force_no_color_write");
             copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");

@@ -404,6 +404,27 @@ public final class XeniaOptimizations {
                 new IntCvar[]{new IntCvar("gpu_foliage_thin_factor", 4)}));
 
         list.add(new Optimization(
+                "opt_blended_thin",
+                "Reduce transparency effects (performance mode)",
+                "Thins alpha-blended draws (fog/glow/shadows/particles) to cut GPU overdraw.",
+                "Alpha-blended transparency (fog, soft shadows, glows, particles) "
+                        + "cannot use the GPU's early-depth rejection, so overlapping "
+                        + "transparent layers all get fully shaded - heavy overdraw. "
+                        + "Device-measured on Blue Dragon's heavy scene: blended "
+                        + "transparency is ~34% of the GPU frame. This keeps 1 of every "
+                        + "2 blended draws and collapses the rest. Stacks with "
+                        + "'Aggressive foliage reduction': both together took Blue "
+                        + "Dragon's scene from 865ms to ~390ms per GPU frame (~2.2x, "
+                        + "~1.2 -> ~2.5 fps) with the scene still intact. Riskier than "
+                        + "foliage thinning - transparency is more load-bearing (fog/"
+                        + "lighting mood), so it can visibly thin atmospheric effects. "
+                        + "Correct/safe (only reduces blended geometry, never 3D shape); "
+                        + "experimental, a per-game visual tradeoff.",
+                CATEGORY_GPU, false, false,
+                null,
+                new IntCvar[]{new IntCvar("gpu_blended_thin_factor", 2)}));
+
+        list.add(new Optimization(
                 "opt_prime_core_router",
                 "Prime-core GPU-command priority",
                 "Pins the GPU-command thread to the 3.19 GHz Cortex-X3 and raises "
