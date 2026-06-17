@@ -2457,7 +2457,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "fopen[wait_us={} inflight={} sub_pre={} sub_post={} fence_us={} "
         "await={} up={} comp={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
-        "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} guest_ms={} "
+        "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} "
+        "comp[opaque={} opaque_verts={} alphatest={} blended={}] guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
         "merge[pipe_same={} consts_same={} consts_changed={}] "
@@ -2549,7 +2550,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
-        brk_img_other_, xe::Clock::QueryGuestUptimeMillis(),
+        brk_img_other_, draw_outcomes_opaque_draws_,
+        draw_outcomes_opaque_verts_, draw_outcomes_alphatest_draws_,
+        draw_outcomes_blended_draws_, xe::Clock::QueryGuestUptimeMillis(),
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPointList)],
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kLineList)],
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kLineStrip)],
@@ -2641,6 +2644,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
     draw_outcomes_rendered_ = 0;
+    draw_outcomes_opaque_draws_ = 0;
+    draw_outcomes_opaque_verts_ = 0;
+    draw_outcomes_alphatest_draws_ = 0;
+    draw_outcomes_blended_draws_ = 0;
     draw_outcomes_cullable_tris_ = 0;
     draw_outcomes_wholecull_draws_ = 0;
     draw_outcomes_wholecull_elig_ = 0;
@@ -5765,6 +5772,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  // Depth-prepass eligibility classification (Unit 1 of the opaque depth
+  // pre-pass). Opaque = writes depth, no alpha-test/discard, RT0 not blending
+  // (src=One,dst=Zero,op=Add for both color and alpha) - these can be rendered
+  // depth-only first so the color pass early-Z-rejects their occluded fragments.
+  {
+    auto rb_colorcontrol_cls = register_file_->Get<reg::RB_COLORCONTROL>();
+    auto rb_blendcontrol0 = register_file_->Get<reg::RB_BLENDCONTROL>();
+    const bool blends =
+        !(rb_blendcontrol0.color_srcblend == xenos::BlendFactor::kOne &&
+          rb_blendcontrol0.color_destblend == xenos::BlendFactor::kZero &&
+          rb_blendcontrol0.color_comb_fcn == xenos::BlendOp::kAdd &&
+          rb_blendcontrol0.alpha_srcblend == xenos::BlendFactor::kOne &&
+          rb_blendcontrol0.alpha_destblend == xenos::BlendFactor::kZero &&
+          rb_blendcontrol0.alpha_comb_fcn == xenos::BlendOp::kAdd);
+    if (rb_colorcontrol_cls.alpha_test_enable) {
+      ++draw_outcomes_alphatest_draws_;
+    } else if (blends) {
+      ++draw_outcomes_blended_draws_;
+    } else if (normalized_depth_control.z_write_enable) {
+      ++draw_outcomes_opaque_draws_;
+      draw_outcomes_opaque_verts_ +=
+          primitive_processing_result.host_draw_vertex_count;
+    }
+  }
   if (cvars::gpu_trace_cullable_tris) {
     // Front B read-only counter: how many triangles a CPU cull WOULD drop (C1
     // stub returns 0). Never mutates geometry.

@@ -898,6 +898,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_copy_ = 0;
   uint64_t draw_outcomes_total_vertices_ = 0;
   uint32_t draw_outcomes_max_vertices_ = 0;
+  // Depth-prepass eligibility classification (Unit 1 of the opaque depth
+  // pre-pass): per frame, how many rendered draws are OPAQUE (depth-write on,
+  // no alpha-test/discard, no blend) - i.e. safe to render depth-only in a
+  // pre-pass so the color pass early-Z-rejects their occluded fragments - vs
+  // ALPHA-TEST (defeats LRZ, prepass doesn't help) vs BLENDED (order-locked,
+  // cannot prepass). The opaque vertex sum estimates the pre-pass-recoverable
+  // overdraw. Decides whether the (expensive) deferral/replay is worth building.
+  uint32_t draw_outcomes_opaque_draws_ = 0;
+  uint64_t draw_outcomes_opaque_verts_ = 0;
+  uint32_t draw_outcomes_alphatest_draws_ = 0;
+  uint32_t draw_outcomes_blended_draws_ = 0;
   // Front B (gpu_trace_cullable_tris): would-cull triangle count this frame - a
   // read-only DECISION instrument (no geometry mutated). C1 scaffolding counts 0;
   // C2/C3 wire the ShaderInterpreter VS-position replay + backface/frustum test.
