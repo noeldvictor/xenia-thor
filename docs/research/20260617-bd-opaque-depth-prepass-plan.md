@@ -39,6 +39,35 @@ no blend), and opaque-before-transparent is the standard correct order. Effects:
 So NO Unit 2, NO depth-state edits (existing dynamic depth state suffices), NO color-off. The ONLY
 remaining piece is capturing each opaque draw SELF-CONTAINED into prepass_command_buffer_ (Unit 3).
 
+## UNIT 3 DESIGN — RECONCILED (Codex gpt-5.5 + Gemini, both converged, 2026-06-17)
+APPROACH = (b) full per-opaque-draw STATE SNAPSHOT. Add a recorder, EmitFullState(prepass_command_buffer_),
+that — when an opaque candidate draw is issued — UNCONDITIONALLY (ignoring dirty flags) emits a complete,
+self-contained bind+draw into prepass_command_buffer_, using the EXACT original pipeline (color-write is
+baked, so the prepass renders color too - fine, it's a reorder not a depth-only). Must emit, in order:
+  1. CmdVkBindPipeline (current_guest_graphics_pipeline_) + its pipeline LAYOUT.
+  2. CmdVkBindDescriptorSets - the current sets AND their DYNAMIC OFFSETS (miss = "everything bound but
+     addresses wrong" -> vertex explosions / black). #1 trap.
+  3. CmdVkPushConstants - the cached push-constant shadow (guest vertex-fetch constants). #2 trap.
+  4. CmdVkBindIndexBuffer (buffer + type + offset) + CmdVkBindVertexBuffers (whole array + offsets).
+  5. All dynamic state values: viewport, scissor, depth test/write/COMPARE-OP (use ORIGINAL op, do NOT
+     force LESS; watch reverse-Z viewport min/maxDepth), stencil, cull mode, front face, primitive
+     topology, primitive restart, depth bias, blend constants.
+  6. The draw (CmdVkDrawIndexed / variant) with its args.
+REJECTED: (a) parallel prepass binding-tracker = best long-term but bug-prone at bring-up (must mirror
+Vulkan binding-invalidation exactly) - do it AFTER (b) proves the ordering. (c) byte-range copy = WRONG
+(non-opaque draws between opaque draws change pipeline/descriptors/dynamic/push-constants).
+STRICT candidate filter (start here, relax later): depth-test ON + depth-write ON + no blend + no
+alpha-test/discard + no stencil dependency + no side effects (no image store/atomics/query/conditional)
++ normal indexed geometry. EXCLUDE clear-like draws. Splice MUST stay within ONE subpass (after Begin,
+before any draw, never across clears/resolves/RT-transfers/RT changes) - so only enable the splice for
+passes where the splice point precedes all draws and no RT transfer intervenes.
+VALIDATION LADDER (default-off cvar, cheap->full): (1) empty splice [DONE - skeleton]. (2) snapshot ONE
+opaque draw, keep original -> no visual change. (3) SKIP that original -> object still appears from the
+prepass = capture complete (CHEAPEST decisive fire; black/exploded = missing dynamic offsets/push
+constants). (4) all opaque + keep originals -> visual + GPU-time compare. (5) measure alpha-test region
+cost drop = the win. CLASSIFIER strict-first, relax one condition at a time.
+FIRST BUILD: EmitFullState + a cvar to (3) skip-original-for-prepassed-opaque, validate capture on device.
+
 ## Unit plan
 - [x] UNIT 1 - draw classifier (opaque/alphatest/blended counters + comp[] log). SHIPPED aa5cf6965.
 - [ ] UNIT 2 - depth-only pipeline variant: for an opaque draw's pipeline, a variant with
