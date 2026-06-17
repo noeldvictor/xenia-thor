@@ -5786,6 +5786,34 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                     primitive_processing_result.host_draw_vertex_count, 3u)
               : primitive_processing_result.host_draw_vertex_count,
           1, 0, 0, 0);
+      // Opaque depth pre-pass (Unit 3): if this is an opaque candidate, emit a
+      // self-contained copy to the FRONT of the pass (spliced at EndRenderPass)
+      // so alpha-test foliage behind it early-Z-rejects. v1 gated to EDS-off +
+      // host-RT so the reused pipeline's baked depth/cull/topology/stencil are
+      // correct. Default-off cvar; safe no-op otherwise.
+      if (prepass_active_ && cvars::gpu_opaque_depth_prepass &&
+          !cvars::vulkan_dynamic_state_depth &&
+          !cvars::vulkan_dynamic_state_topology &&
+          !cvars::vulkan_dynamic_state_cull_front &&
+          !cvars::vulkan_dynamic_state_stencil && !cvars::gpu_cull_compaction &&
+          render_target_cache_->GetPath() ==
+              RenderTargetCache::Path::kHostRenderTargets &&
+          normalized_depth_control.z_write_enable) {
+        auto rb_cc_prepass = register_file_->Get<reg::RB_COLORCONTROL>();
+        auto bc0_prepass = register_file_->Get<reg::RB_BLENDCONTROL>();
+        const bool blends_prepass =
+            !(bc0_prepass.color_srcblend == xenos::BlendFactor::kOne &&
+              bc0_prepass.color_destblend == xenos::BlendFactor::kZero &&
+              bc0_prepass.color_comb_fcn == xenos::BlendOp::kAdd &&
+              bc0_prepass.alpha_srcblend == xenos::BlendFactor::kOne &&
+              bc0_prepass.alpha_destblend == xenos::BlendFactor::kZero &&
+              bc0_prepass.alpha_comb_fcn == xenos::BlendOp::kAdd);
+        if (!rb_cc_prepass.alpha_test_enable && !blends_prepass) {
+          EmitOpaquePrepassDraw(
+              index_buffer.first, index_buffer.second, index_type,
+              primitive_processing_result.host_draw_vertex_count);
+        }
+      }
     }
   }
 
@@ -7181,6 +7209,65 @@ uint32_t VulkanCommandProcessor::CountCullableTriangles(
         *register_file_, *memory_, nullptr);
   }
   return cull_extent_estimator_->CountCullableTriangles(vertex_shader);
+}
+
+void VulkanCommandProcessor::EmitOpaquePrepassDraw(VkBuffer index_buffer,
+                                                   VkDeviceSize index_offset,
+                                                   VkIndexType index_type,
+                                                   uint32_t index_count) {
+  // Opaque depth pre-pass (gpu_opaque_depth_prepass), Unit 3: emit a SELF-
+  // CONTAINED copy of the current opaque draw into prepass_command_buffer_,
+  // which EndRenderPass splices to the FRONT of the render pass. Reuses the
+  // EXACT current pipeline (color-write baked in - this is a reorder, not a
+  // depth-only pass) + the dynamic-state member values already populated for
+  // this draw by UpdateDynamicState. v1 is gated by the caller to EDS-off +
+  // host-render-target path, so depth/cull/topology/stencil are baked into the
+  // pipeline (correct for the reused pipeline) and only the always-dynamic
+  // viewport/scissor (+ host-RT depth-bias/blend/stencil masks) need re-emitting.
+  DeferredCommandBuffer& pb = prepass_command_buffer_;
+  if (current_guest_graphics_pipeline_ == VK_NULL_HANDLE ||
+      current_guest_graphics_pipeline_layout_ == nullptr) {
+    return;
+  }
+  pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                       current_guest_graphics_pipeline_);
+  // All descriptor sets the layout expects, with the constants set's per-draw
+  // dynamic offsets (the constants set is the ONLY set with dynamic descriptors).
+  const bool constants_present =
+      constants_dynamic_descriptor_set_ != VK_NULL_HANDLE;
+  pb.CmdVkBindDescriptorSets(
+      VK_PIPELINE_BIND_POINT_GRAPHICS,
+      current_guest_graphics_pipeline_layout_->GetPipelineLayout(), 0,
+      uint32_t(SpirvShaderTranslator::kDescriptorSetCount),
+      current_graphics_descriptor_sets_,
+      constants_present ? uint32_t(SpirvShaderTranslator::kConstantBufferCount)
+                        : 0,
+      constants_present ? current_constant_dynamic_offsets_ : nullptr);
+  // Always-dynamic state (values already current from this draw's
+  // UpdateDynamicState). Viewport/scissor are always dynamic; depth-bias /
+  // blend-constants / stencil masks+refs are dynamic on the host-RT path.
+  pb.CmdVkSetViewport(0, 1, &dynamic_viewport_);
+  pb.CmdVkSetScissor(0, 1, &dynamic_scissor_);
+  if (render_target_cache_->GetPath() ==
+      RenderTargetCache::Path::kHostRenderTargets) {
+    pb.CmdVkSetDepthBias(dynamic_depth_bias_constant_factor_, 0.0f,
+                         dynamic_depth_bias_slope_factor_);
+    pb.CmdVkSetBlendConstants(dynamic_blend_constants_);
+    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_FRONT_BIT,
+                                  dynamic_stencil_compare_mask_front_);
+    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_BACK_BIT,
+                                  dynamic_stencil_compare_mask_back_);
+    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_FRONT_BIT,
+                                dynamic_stencil_write_mask_front_);
+    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_BACK_BIT,
+                                dynamic_stencil_write_mask_back_);
+    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_FRONT_BIT,
+                                dynamic_stencil_reference_front_);
+    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_BACK_BIT,
+                                dynamic_stencil_reference_back_);
+  }
+  pb.CmdVkBindIndexBuffer(index_buffer, index_offset, index_type);
+  pb.CmdVkDrawIndexed(index_count, 1, 0, 0, 0);
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(

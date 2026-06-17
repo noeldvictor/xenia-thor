@@ -497,6 +497,12 @@ class VulkanCommandProcessor : public CommandProcessor {
                           xenos::PrimitiveType host_primitive_type,
                           bool host_primitive_reset_enabled);
 
+  // Opaque depth pre-pass (gpu_opaque_depth_prepass), Unit 3: emit a
+  // self-contained copy of the current opaque draw into prepass_command_buffer_
+  // (reuses the current pipeline + the already-current dynamic-state members).
+  void EmitOpaquePrepassDraw(VkBuffer index_buffer, VkDeviceSize index_offset,
+                             VkIndexType index_type, uint32_t index_count);
+
   // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run as
   // one CmdVkBindIndexBuffer + one CmdVkDrawIndexed, then clear the pending run.
   // No-op when no run is pending. Must be called at every flush point before any
