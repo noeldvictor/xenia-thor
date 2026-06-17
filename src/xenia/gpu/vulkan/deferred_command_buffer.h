@@ -41,6 +41,26 @@ class DeferredCommandBuffer {
     return command_stream_.size();
   }
 
+  // Opaque depth pre-pass (gpu_opaque_depth_prepass) splice primitive. The
+  // command stream is POSITION-INDEPENDENT (Execute walks it header-by-header;
+  // args hold absolute Vulkan handles + inline-by-value data whose offsets are
+  // computed relative to each command at replay), so inserting another buffer's
+  // entire recorded stream at an element position is a valid reordering. Used to
+  // splice the recorded opaque depth-only draws in right after BeginRenderPass,
+  // before the color draws, within one render pass. element_pos must be a
+  // command-boundary cursor captured from command_stream_size_elements().
+  void InsertStreamFrom(size_t element_pos, const DeferredCommandBuffer& other) {
+    if (other.command_stream_.empty()) {
+      return;
+    }
+    assert_true(element_pos <= command_stream_.size());
+    command_stream_.insert(command_stream_.begin() + element_pos,
+                           other.command_stream_.begin(),
+                           other.command_stream_.end());
+    record_stats_.draws += other.record_stats_.draws;
+    record_stats_.barriers += other.record_stats_.barriers;
+  }
+
   // Cheap recording-time composition counters for the between-render-pass GPU
   // gap attribution (snapshotted by the command processor at the pass
   // timestamp brackets; reset together with the buffer). Cumulative within one
