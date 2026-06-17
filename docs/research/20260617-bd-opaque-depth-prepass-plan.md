@@ -23,6 +23,22 @@ overdraw). Cheap-confirmed alternative win: RT-transfer coalescing (~20%, measur
   in GMEM (no resolve). A two-render-pass version costs only ~1 depth store+load (~0.15ms) = negligible
   vs 800ms, so EITHER ordering is acceptable; same-pass is cleanest.
 
+## DESIGN SIMPLIFICATION (2026-06-17) — reorder-to-front, NOT depth-only
+Key realization: the pre-pass does NOT need depth-only pipeline variants (Unit 2 ELIMINATED) or
+color-disable (color write isn't dynamic anyway). It is just **reordering the OPAQUE draws to the FRONT
+of the render pass**: copy each opaque draw's command sequence (via prepass_command_buffer_ +
+InsertStreamFrom) so it renders FIRST, at the front. Opaque draws are order-independent (depth-resolved,
+no blend), and opaque-before-transparent is the standard correct order. Effects:
+- Opaque draws render at the front (write depth + color normally, their existing pipelines/state).
+- Their ORIGINALS (still in place, interleaved) then depth-test against the now-primed depth: with LESS
+  they early-Z-reject (≈ a free move); with LEQUAL they harmlessly re-render. Either is correct.
+- Alpha-test + blended draws (61% + 21%) keep their order but now early-Z-reject the fragments BEHIND
+  the opaque terrain before their shader runs = the overdraw win.
+- Blend correctness preserved: only OPAQUE draws move; blended draws keep relative order; opaque
+  occludes via depth exactly as before.
+So NO Unit 2, NO depth-state edits (existing dynamic depth state suffices), NO color-off. The ONLY
+remaining piece is capturing each opaque draw SELF-CONTAINED into prepass_command_buffer_ (Unit 3).
+
 ## Unit plan
 - [x] UNIT 1 - draw classifier (opaque/alphatest/blended counters + comp[] log). SHIPPED aa5cf6965.
 - [ ] UNIT 2 - depth-only pipeline variant: for an opaque draw's pipeline, a variant with
