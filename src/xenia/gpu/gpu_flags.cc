@@ -557,6 +557,32 @@ DEFINE_bool(
     "only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_collapse_alphatest_coverage, false,
+    "DIAGNOSTIC (alpha-test foliage overdraw isolation - the BD load-bearing "
+    "falsifier): clamp index count to 3 ONLY for ALPHA-TEST draws "
+    "(RB_COLORCONTROL.alpha_test_enable != 0 - the ~61% foliage draws), leaving "
+    "opaque + blended draws at full geometry. So gpu_frame_us ON vs OFF at a "
+    "matched/frozen guest_ms = exactly the per-vertex + per-covered-fragment "
+    "cost of the alpha-test foliage. If the delta is most of the ~868ms BD "
+    "frame -> alpha-test foliage overdraw IS the bottleneck and a foliage-cut "
+    "lever is worth pursuing; if small -> the cost is elsewhere and the guest "
+    "foliage RE should be shelved. BREAKS foliage rendering - timing diagnostic "
+    "only. Pair with gpu_freeze_at_guest_ms for a clean A/B. Default off.",
+    "GPU");
+DEFINE_int32(
+    gpu_foliage_thin_factor, 0,
+    "SPEED HACK (foliage overdraw reduction - 'performance mode'): thin "
+    "alpha-test foliage by keeping only 1 of every N alpha-test draws and "
+    "collapsing the rest to ~0 coverage (RB_COLORCONTROL.alpha_test_enable). "
+    "Device-proven on Blue Dragon: alpha-test foliage overdraw is ~43% of the "
+    "GPU frame (865ms->492ms when fully collapsed), so thinning trades foliage "
+    "density for a large, tunable GPU-frame-time win on alpha-test-heavy TBDR "
+    "scenes (the overdraw defeats Adreno LRZ). 0 or 1 = off (keep all foliage); "
+    "2 = keep 1/2 (drop ~50%, ~1.27x); 4 = keep 1/4 (drop ~75%, ~1.48x); higher "
+    "= sparser + faster. Correct/safe (only reduces guest-drawn foliage "
+    "geometry); the visual cost is thinner grass/detail. Default 0 (off).",
+    "GPU");
+DEFINE_bool(
     vulkan_force_signed_2101010_unorm_fallback, false,
     "Research-only Android/Adreno probe: when signed A2B10G10R10 texture "
     "sampling is unavailable, load signed 2_10_10_10 textures through the "

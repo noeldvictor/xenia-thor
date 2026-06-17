@@ -108,6 +108,8 @@ DECLARE_bool(spirv_debug_identity_ndc);
 DECLARE_bool(spirv_pos_binning_passthrough);
 DECLARE_bool(spirv_pos_collapse_only);
 DECLARE_bool(gpu_force_tiny_draws);
+DECLARE_bool(gpu_collapse_alphatest_coverage);
+DECLARE_int32(gpu_foliage_thin_factor);
 DECLARE_bool(gpu_force_no_color_write);
 DECLARE_bool(gpu_opaque_depth_prepass);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
