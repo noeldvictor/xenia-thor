@@ -382,6 +382,28 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_merge_draws_indirect")}, null));
 
         list.add(new Optimization(
+                "opt_foliage_thin",
+                "Aggressive foliage reduction (performance mode)",
+                "Thins alpha-test foliage/grass to cut GPU overdraw on heavy 3D scenes.",
+                "Alpha-test foliage (grass, leaves, detail props) is often the "
+                        + "single biggest GPU cost on heavy 3D scenes: its cut-out edges "
+                        + "defeat the Adreno's hidden-surface optimization (LRZ), so "
+                        + "every overlapping layer of foliage is fully shaded - massive "
+                        + "overdraw. Device-measured on Blue Dragon's heavy scene: "
+                        + "alpha-test foliage is ~43% of the entire GPU frame. This keeps "
+                        + "1 of every 4 foliage draws and collapses the rest, trading "
+                        + "foliage density for speed - Blue Dragon's scene went 865ms -> "
+                        + "583ms per GPU frame (~1.48x, ~1.2 -> ~1.7 fps), foliage thinner "
+                        + "but the scene intact. Correct and safe (it only reduces "
+                        + "guest-drawn foliage geometry, never position/3D shape); the "
+                        + "visual cost is sparser grass/detail. Helps alpha-test-heavy "
+                        + "scenes; no effect where there is no foliage. Experimental, a "
+                        + "per-game visual tradeoff.",
+                CATEGORY_GPU, false, false,
+                null,
+                new IntCvar[]{new IntCvar("gpu_foliage_thin_factor", 4)}));
+
+        list.add(new Optimization(
                 "opt_prime_core_router",
                 "Prime-core GPU-command priority",
                 "Pins the GPU-command thread to the 3.19 GHz Cortex-X3 and raises "
