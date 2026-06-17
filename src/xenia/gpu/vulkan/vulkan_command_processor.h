@@ -584,6 +584,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::deque<std::pair<uint64_t, CommandBuffer>> command_buffers_submitted_;
   DeferredCommandBuffer deferred_command_buffer_;
 
+  // Opaque depth pre-pass (gpu_opaque_depth_prepass). During a render pass, the
+  // opaque draws' depth-only commands are recorded here; at EndRenderPass this
+  // stream is spliced into the main deferred buffer right after BeginRenderPass
+  // (at prepass_insert_pos_), so the color stream early-Z-rejects against the
+  // primed opaque depth. prepass_active_ is set between Begin/EndRenderPass when
+  // the cvar is on. Unit 3 (the opaque-draw capture) fills this; until then it
+  // stays empty and the splice is a no-op.
+  DeferredCommandBuffer prepass_command_buffer_;
+  size_t prepass_insert_pos_ = 0;
+  bool prepass_active_ = false;
+
   std::vector<VkSparseMemoryBind> sparse_memory_binds_;
   std::vector<SparseBufferBind> sparse_buffer_binds_;
   // SparseBufferBind converted to VkSparseBufferMemoryBindInfo to this buffer

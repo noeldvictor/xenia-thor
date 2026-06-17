@@ -232,6 +232,7 @@ VulkanCommandProcessor::VulkanCommandProcessor(
                                graphics_system->provider())
                                ->vulkan_device()),
       deferred_command_buffer_(*this),
+      prepass_command_buffer_(*this),
       transient_descriptor_allocator_uniform_buffer_(
           static_cast<const ui::vulkan::VulkanProvider*>(
               graphics_system->provider())
@@ -3687,6 +3688,14 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.pClearValues = nullptr;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
+  // Opaque depth pre-pass: mark the splice point right AFTER BeginRenderPass so
+  // the captured opaque depth-only draws land before the color stream. Unit 3
+  // fills prepass_command_buffer_; until then this is inert (empty splice).
+  if (cvars::gpu_opaque_depth_prepass) {
+    prepass_command_buffer_.Reset();
+    prepass_insert_pos_ = deferred_command_buffer_.command_stream_size_elements();
+    prepass_active_ = true;
+  }
   RecordPassTimestamp(true);
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
@@ -3703,6 +3712,15 @@ void VulkanCommandProcessor::EndRenderPass() {
   // never called between mergeable draws (the pass stays open), so coalescing is
   // preserved.
   FlushPendingMergeRun();
+  // Opaque depth pre-pass: splice the captured opaque depth-only draws in right
+  // after BeginRenderPass (before the color stream), so the color draws early-Z
+  // reject against the primed depth. No-op while prepass_command_buffer_ is
+  // empty (Unit 3 not yet filling it).
+  if (prepass_active_) {
+    deferred_command_buffer_.InsertStreamFrom(prepass_insert_pos_,
+                                              prepass_command_buffer_);
+    prepass_active_ = false;
+  }
   deferred_command_buffer_.CmdVkEndRenderPass();
   // End-of-pass timestamp AFTER EndRenderPass to capture the TBDR tile store.
   RecordPassTimestamp(false);
