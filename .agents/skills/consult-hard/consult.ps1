@@ -37,8 +37,11 @@ $prompt = Get-Content (Resolve-Path $PromptFile).Path -Raw
 Write-Output "Consulting Codex ($CodexModel @ $Effort)..."
 Write-Output "(max reasoning -> this takes minutes; output -> $OutDir/codex.md)"
 
-$prompt | codex exec -m $CodexModel -c "model_reasoning_effort=$Effort" --skip-git-repo-check - *>&1 |
-  Out-File "$OutDir/codex.md" -Encoding utf8
+# Use codex's own -o to write the final message. Do NOT use `*>&1 | Out-File` on
+# the node exe in foreground: in PowerShell 5.1 that wraps native stderr in a
+# NativeCommandError and aborts the pipeline -> empty file + exit 1 (the bug that
+# bit the Codex-only rewrite; the old Gemini+Codex version dodged it via Start-Job).
+$prompt | codex exec -m $CodexModel -c "model_reasoning_effort=$Effort" --skip-git-repo-check -o "$OutDir/codex.md" -
 
 Write-Output "DONE."
 Write-Output "  Codex -> $OutDir/codex.md ($((Get-Item "$OutDir/codex.md" -ErrorAction SilentlyContinue).Length) bytes)"

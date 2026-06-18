@@ -78,6 +78,22 @@ Entry::Status EntryTable::GetOrCreate(uint32_t address, Entry** out_entry) {
   // TODO(benvanik): replace with a map with wait-free for find.
   // https://github.com/facebook/folly/blob/master/folly/AtomicHashMap.h
 
+  // Lock-free fast path for already-READY entries. This is the lever that
+  // actually matters: Processor::ResolveFunction (the JIT's hot indirect-call
+  // resolution path) goes through GetOrCreate, NOT Get(), so the lock-free
+  // read-cache only helps if it is checked HERE. Same safety as Get(): Entry* is
+  // stable for the table's lifetime, the slot is validated by entry->address,
+  // and only READY entries are ever published - so a validated hit is a valid
+  // READY entry needing no global lock, no status re-read, no torn read.
+  if (cvars::cpu_lockfree_entry_lookup) {
+    Entry* cached =
+        lookup_cache_[LookupCacheSlot(address)].load(std::memory_order_acquire);
+    if (cached && cached->address == address) {
+      *out_entry = cached;
+      return Entry::STATUS_READY;
+    }
+  }
+
   auto global_lock = global_critical_region_.Acquire();
   const auto& it = map_.find(address);
   Entry* entry = it != map_.end() ? it->second : nullptr;
@@ -106,6 +122,14 @@ Entry::Status EntryTable::GetOrCreate(uint32_t address, Entry** out_entry) {
   }
   global_lock.unlock();
   *out_entry = entry;
+  // Publish READY entries for future lock-free hits (release pairs with the
+  // acquire-load above). NEW entries become READY in ResolveFunction after
+  // compilation; they get cached on the next GetOrCreate for the address (hot
+  // functions resolve repeatedly, so the one-call delay is negligible).
+  if (cvars::cpu_lockfree_entry_lookup && status == Entry::STATUS_READY) {
+    lookup_cache_[LookupCacheSlot(address)].store(entry,
+                                                  std::memory_order_release);
+  }
   return status;
 }
 
