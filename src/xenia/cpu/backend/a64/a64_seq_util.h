@@ -636,6 +636,79 @@ inline void FixupVmxNan_V128_Fma(
   e.L(done);
 }
 
+// Lazy-spill variant of FixupVmxNan_V128_Fma for the generalized FMA fast path.
+// Sources s1/s2 stay REGISTER-resident in s1_vreg/s2_vreg (read via umov); s3
+// was spilled to GUEST_SCRATCH+32 and is loaded into v3 ONLY on the NaN path.
+// Result in v2 (modified in place). The cheap front-gate skips everything when
+// no result lane is NaN (the common case, so no source spill is read). Same PPC
+// NaN-priority semantics as FixupVmxNan_V128_Fma (src1>src2>src3, SNaN quieted,
+// default 0xFFC00000). Clobbers v3, w0, w16, w17.
+inline void FixupVmxNan_V128_Fma_LazySpill(A64Emitter& e, int s1_vreg,
+                                           int s2_vreg) {
+  using namespace Xbyak_aarch64;
+  auto& done = e.NewCachedLabel();
+
+  e.fcmeq(VReg(3).s4, VReg(2).s4, VReg(2).s4);
+  e.uminv(SReg(3), VReg(3).s4);
+  e.fmov(e.w0, SReg(3));
+  e.cbnz(e.w0, done);
+
+  // NaN present: bring s3 in from the stack (front-gate clobbered v3).
+  e.ldr(QReg(3),
+        Xbyak_aarch64::ptr(
+            e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 32));
+  e.mov(e.w16, 0xFF000000u);
+
+  for (int lane = 0; lane < 4; lane++) {
+    auto& lane_ok = e.NewCachedLabel();
+    auto& s1_not_nan = e.NewCachedLabel();
+    auto& s2_not_nan = e.NewCachedLabel();
+    auto& use_default = e.NewCachedLabel();
+
+    e.umov(e.w0, VReg(2).s4[lane]);
+    e.lsl(e.w17, e.w0, 1);
+    e.cmp(e.w17, e.w16);
+    e.b(LS, lane_ok);
+
+    // src1 (register-resident).
+    e.umov(e.w0, VReg(s1_vreg).s4[lane]);
+    e.lsl(e.w17, e.w0, 1);
+    e.cmp(e.w17, e.w16);
+    e.b(LS, s1_not_nan);
+    e.orr(e.w0, e.w0, static_cast<uint64_t>(1u << 22));
+    e.ins(VReg(2).s4[lane], e.w0);
+    e.b(lane_ok);
+
+    e.L(s1_not_nan);
+    // src2 (register-resident).
+    e.umov(e.w0, VReg(s2_vreg).s4[lane]);
+    e.lsl(e.w17, e.w0, 1);
+    e.cmp(e.w17, e.w16);
+    e.b(LS, s2_not_nan);
+    e.orr(e.w0, e.w0, static_cast<uint64_t>(1u << 22));
+    e.ins(VReg(2).s4[lane], e.w0);
+    e.b(lane_ok);
+
+    e.L(s2_not_nan);
+    // src3 (loaded into v3 from stack).
+    e.umov(e.w0, VReg(3).s4[lane]);
+    e.lsl(e.w17, e.w0, 1);
+    e.cmp(e.w17, e.w16);
+    e.b(LS, use_default);
+    e.orr(e.w0, e.w0, static_cast<uint64_t>(1u << 22));
+    e.ins(VReg(2).s4[lane], e.w0);
+    e.b(lane_ok);
+
+    e.L(use_default);
+    e.mov(e.w0, 0xFFC00000u);
+    e.ins(VReg(2).s4[lane], e.w0);
+
+    e.L(lane_ok);
+  }
+
+  e.L(done);
+}
+
 // VMX float32x4 binary operations with full PPC semantics.
 enum class VmxFpBinOp { Add, Sub, Mul, Div };
 

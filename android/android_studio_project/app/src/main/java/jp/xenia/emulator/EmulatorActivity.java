@@ -506,6 +506,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_stvewx_stack_lane_audit");
             copyBooleanExtra(
+                    intent, launchArguments, "arm64_fma_v128_fastpath");
+            copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_mul_add_v128_fastpath");
             copyBooleanExtra(
                     intent, launchArguments, "arm64_blue_dragon_mul_add_v128_audit");

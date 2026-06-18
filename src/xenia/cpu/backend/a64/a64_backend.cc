@@ -308,6 +308,18 @@ DEFINE_bool(
     "default-off.",
     "a64");
 DEFINE_bool(
+    arm64_fma_v128_fastpath, false,
+    "Thor ARM64 speed lane (GENERALIZED): lower vmaddfp/MUL_ADD_V128 to one "
+    "fmla.s4 (exact single-rounding = PPC vmaddfp) for ALL guest functions when "
+    "Thor hardware flushes VMX denormal inputs (kA64FZFlushesInputs). Lazy-spill "
+    "NaN fixup: sources stay register-resident, only s3 is spilled, and the PPC "
+    "per-lane NaN propagation runs only when a result lane is NaN - saving the "
+    "slow path's 2 source stores + s3 reload on the common path. The no-NaN path "
+    "is bit-identical to the slow path. EXPERIMENTAL/default-off: needs a "
+    "qemu-a64 differential (multi-NaN/denormal/Inf/signed-zero) + a MUL_SUB "
+    "variant before default-on.",
+    "a64");
+DEFINE_bool(
     arm64_blue_dragon_mul_add_v128_audit, false,
     "Thor ARM64 speed lane: instrument Blue Dragon 82282490 vmaddfp/"
     "MUL_ADD_V128 sites 82282568, 8228256C, and 82282570 for denormal, "

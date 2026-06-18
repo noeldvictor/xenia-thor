@@ -41,6 +41,7 @@ DECLARE_bool(arm64_cr_store_elide_for_fused_branch);
 DECLARE_bool(arm64_single_compare_branch_fusion);
 DECLARE_bool(arm64_cmp_negimm_cmn_fastpath);
 DECLARE_uint32(arm64_cr_store_elide_for_fused_branch_function);
+DECLARE_bool(arm64_fma_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_fastpath);
 DECLARE_bool(arm64_blue_dragon_mul_add_v128_audit);
 DECLARE_bool(arm64_blue_dragon_call_boundary_state_audit);
@@ -5371,6 +5372,38 @@ struct MUL_ADD_V128
     : Sequence<MUL_ADD_V128,
                I<OPCODE_MUL_ADD, V128Op, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    // Generalized FMA fast path (arm64_fma_v128_fastpath, default-off): lower
+    // vmaddfp to one fmla.s4 (exact single-rounding) for ALL guest functions,
+    // with the PPC NaN fixup done LAZILY - sources stay register-resident, only
+    // s3 is spilled, and the per-lane NaN propagation runs only when a result
+    // lane is NaN. Requires hardware FZ input-flush (kA64FZFlushesInputs). The
+    // no-NaN common path is provably identical to the slow path's bare fmla.
+    // NEEDS a qemu-a64 differential (multi-NaN/denormal/Inf/signed-zero) before
+    // it can be promoted default-on. Falls through to the BD-audit/slow path
+    // below when off.
+    if (cvars::arm64_fma_v128_fastpath &&
+        e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
+      e.ChangeFpcrMode(FPCRMode::Vmx);
+      int d = i.dest.reg().getIdx();
+      int s1, s2;
+      PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);  // s1=v0, s2=v1
+      int s3 = SrcVReg(e, i.src3, 3);
+      if (s3 != 3) {
+        e.mov(VReg(3).b16, VReg(s3).b16);
+      }
+      // Spill s3 so the rare NaN path can read it after the front-gate
+      // clobbers v3 (saves the 2 s1/s2 stores + the slow path's s3 reload).
+      e.str(QReg(3),
+            Xbyak_aarch64::ptr(
+                e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 32));
+      e.mov(VReg(2).b16, VReg(3).b16);                // v2 = s3
+      e.fmla(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);   // v2 = s3 + s1*s2
+      FixupVmxNan_V128_Fma_LazySpill(e, s1, s2);
+      if (d != 2) {
+        e.mov(VReg(d).b16, VReg(2).b16);
+      }
+      return;
+    }
     // dest = s1*s2 + s3 with VMX denormal flushing + PPC NaN propagation.
     // Scratch register plan:
     //   1. Flush s3 into v3, save to stack[32].
