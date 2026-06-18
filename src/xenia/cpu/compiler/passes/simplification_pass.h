@@ -42,6 +42,11 @@ class SimplificationPass : public ConditionalGroupSubpass {
   // could possibly set already survives the mask c. Removes the redundant masks
   // that pile up emulating 32-bit PPC ops / zero-extending loads on 64-bit values.
   bool SimplifyRedundantMask(hir::HIRBuilder* builder);
+
+  // Known-bits range fold: replace an integer op with constant 0 when its
+  // operands' possible bits (MaxNonzeroBits) prove the result must be 0
+  // (AND with a non-overlapping mask; SHR that shifts all possible bits out).
+  bool SimplifyConstRange(hir::HIRBuilder* builder);
   // Conservative upper bound on the bits that may be set in v (1 = maybe set).
   static uint64_t MaxNonzeroBits(const hir::Value* v, int depth);
 };

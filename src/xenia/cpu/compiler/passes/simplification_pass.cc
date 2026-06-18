@@ -45,6 +45,18 @@ DEFINE_bool(
     "host+qemu differential-validated; then a stacking XeniaOptimizations toggle.",
     "CPU");
 
+DEFINE_bool(
+    hir_const_range_fold, false,
+    "Thor CPU codegen lever (extends hir_known_bits_mask_fold): fold an integer "
+    "op to a constant 0 when a conservative upper bound on its operands' bits "
+    "(MaxNonzeroBits) proves the result CANNOT have any bit set - AND(x,const) "
+    "where x's possible bits don't overlap the mask, and SHR(x,const) that "
+    "shifts every possible bit of x out the bottom. Common in PPC bitfield/mask "
+    "and shifted zero-extended-load code. Bit-exact (definitional); the dead op "
+    "is removed and DCE cleans the rest. Default-off until host+qemu validated, "
+    "then a stacking XeniaOptimizations toggle.",
+    "CPU");
+
 namespace xe {
 namespace cpu {
 namespace compiler {
@@ -72,6 +84,9 @@ bool SimplificationPass::Run(HIRBuilder* builder, bool& result) {
   }
   if (cvars::hir_known_bits_mask_fold) {
     result |= SimplifyRedundantMask(builder);
+  }
+  if (cvars::hir_const_range_fold) {
+    result |= SimplifyConstRange(builder);
   }
   result |= SimplifyAssignments(builder);
   return true;
@@ -190,6 +205,51 @@ bool SimplificationPass::SimplifyRedundantMask(HIRBuilder* builder) {
             i->set_src1(x);
             result = true;
           }
+        }
+      }
+      i = next;
+    }
+    block = block->next;
+  }
+  return result;
+}
+
+bool SimplificationPass::SimplifyConstRange(HIRBuilder* builder) {
+  // Known-bits "result is provably 0" folds. When MaxNonzeroBits proves an
+  // integer op cannot have any set bit, replace its dest with constant 0 and
+  // remove the op (mirrors constant_propagation's set_zero + Remove; DCE and
+  // SimplifyAssignments clean up the rest). Bit-exact.
+  bool result = false;
+  auto block = builder->first_block();
+  while (block) {
+    auto i = block->instr_head;
+    while (i) {
+      auto next = i->next;
+      if (i->flags == 0 && i->dest && i->dest->type <= INT64_TYPE &&
+          i->src1.value) {
+        auto op = i->opcode;
+        bool folds_to_zero = false;
+        if (op == &OPCODE_AND_info && i->src2.value) {
+          // AND(x, c) == 0 when none of x's possible bits fall inside the mask
+          // (constant may be either operand; AND commutes).
+          Value* s1 = i->src1.value;
+          Value* s2 = i->src2.value;
+          if (s2->IsConstant()) {
+            folds_to_zero = (MaxNonzeroBits(s1, 8) & MaxNonzeroBits(s2, 1)) == 0;
+          } else if (s1->IsConstant()) {
+            folds_to_zero = (MaxNonzeroBits(s2, 8) & MaxNonzeroBits(s1, 1)) == 0;
+          }
+        } else if (op == &OPCODE_SHR_info && i->src2.value &&
+                   i->src2.value->IsConstant()) {
+          // logical shift right by a constant: 0 if every possible bit of x is
+          // below the shift amount. MaxNonzeroBits is already type-width-masked.
+          uint64_t sh = i->src2.value->constant.u8 & 63;
+          folds_to_zero = (MaxNonzeroBits(i->src1.value, 8) >> sh) == 0;
+        }
+        if (folds_to_zero) {
+          i->dest->set_zero(i->dest->type);
+          i->Remove();
+          result = true;
         }
       }
       i = next;
