@@ -39,6 +39,45 @@ DEFINE_int32(
     "Kernel");
 
 DEFINE_bool(
+    xam_redirect_xui_font_cache, false,
+    "Compatibility: redirect the XUI font cache (xuifontcachefont / "
+    "xuifontcachemeta) to the writable cache: device. Titles like Banjo-Kazooie: "
+    "Nuts & Bolts create these relative to the READ-ONLY game disc then POLL for "
+    "them to exist; the create fails so they never appear and the UI never "
+    "initializes (white screen). Routing every access to cache: lets "
+    "create+poll+read all succeed. Requires mount_cache (launcher forces it). "
+    "Inert for titles that don't touch these files. Default off.",
+    "Kernel");
+
+// Redirect the XUI font cache to the writable cache: device (see the cvar). The
+// XUI font cache basenames are title-agnostic, so matching them is safe. Returns
+// true + fills 'out' with the cache: path; the caller reassigns target_path (and
+// clears any root_directory handle so the absolute cache: path resolves on the
+// cache device instead of the read-only disc root).
+static bool RedirectXuiFontCache(std::string_view target_path,
+                                 std::string& out) {
+  if (!cvars::xam_redirect_xui_font_cache) {
+    return false;
+  }
+  std::string lower(target_path);
+  for (auto& c : lower) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+  }
+  const char* base = nullptr;
+  if (lower.find("xuifontcachemeta") != std::string::npos) {
+    base = "xuifontcachemeta";
+  } else if (lower.find("xuifontcachefont") != std::string::npos) {
+    base = "xuifontcachefont";
+  }
+  if (!base) {
+    return false;
+  }
+  out = std::string("cache:\\") + base;
+  XELOGI("XUI font cache redirected to {}", out);
+  return true;
+}
+
+DEFINE_bool(
     xboxkrnl_ntreadfile_force_complete, false,
     "Banjo async-IO experiment: NtReadFile/NtReadFileScatter that completed "
     "their data synchronously return the real success status instead of "
@@ -238,6 +277,15 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
     assert_true(root_file->type() == XObject::Type::File);
 
     root_entry = root_file->entry();
+  }
+
+  // Compat: route the XUI font cache to the writable cache: device so the
+  // disc-relative create succeeds (Banjo-Kazooie N&B white-screen fix). Clear the
+  // disc root handle so the absolute cache: path resolves on the cache device.
+  std::string fc_redirect;
+  if (RedirectXuiFontCache(target_path, fc_redirect)) {
+    target_path = fc_redirect;
+    root_entry = nullptr;
   }
 
   // Attempt open (or create).
@@ -759,6 +807,13 @@ dword_result_t NtQueryFullAttributesFile_entry(
   // Enforce that the path is ASCII.
   if (!IsValidPath(target_path, false)) {
     return X_STATUS_OBJECT_NAME_INVALID;
+  }
+
+  // Compat: the XUI font-cache existence POLL must see the redirected cache:
+  // copy too, or it would keep missing on the disc (Banjo white-screen fix).
+  std::string fc_redirect;
+  if (RedirectXuiFontCache(target_path, fc_redirect)) {
+    target_path = fc_redirect;
   }
 
   // Resolve the file using the virtual file system.
