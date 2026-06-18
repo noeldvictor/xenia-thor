@@ -1,14 +1,20 @@
 ---
 name: consult-hard
-description: Consult heavyweight external models (OpenAI Codex gpt-5.5 + Google Gemini 3.x Pro) for really hard rethinking — adversarial red-team of a plan, independent from-scratch alternatives, or a deep second opinion on a stuck/walled problem. Use when an analysis is contested, a lever hit a wall, a decision is high-stakes, or the user asks to "consult codex / gemini / chatgpt 5.5 for the hard stuff." Packages the full context, runs BOTH models at max reasoning in parallel, and reconciles their answers with our own.
+description: Consult the heavyweight external model (OpenAI Codex gpt-5.5) for really hard rethinking — adversarial red-team of a plan, independent from-scratch alternatives, or a deep second opinion on a stuck/walled problem. Use when an analysis is contested, a lever hit a wall, a decision is high-stakes, or the user asks to "consult codex / chatgpt 5.5 for the hard stuff." Packages the full context, runs Codex at max reasoning, and reconciles its answer with our own.
 ---
 
-# consult-hard — second-brain rethinking via Codex (gpt-5.5) + Gemini (3.x Pro)
+# consult-hard — second-brain rethinking via Codex (gpt-5.5)
 
-Two frontier reasoning models, consulted in parallel on genuinely hard problems, then
-reconciled. Use it to break out of a wall, stress-test a conclusion before committing
-effort, or get fundamentally different framings. It is a *thinking* aid — it does not touch
-the device or the repo (read-only consultation).
+> **Gemini was REMOVED 2026-06-18 (user direction: "only stick to gpt 5.5").** Its free-tier Google
+> OAuth was deprecated mid-project ("IneligibleTierError / migrate to Antigravity", HTTP 403
+> SUBSCRIPTION_REQUIRED), so it stopped answering. This skill now consults ONLY Codex/gpt-5.5.
+> `consult.ps1` no longer launches a Gemini job. To re-add Gemini later you'd need a `GEMINI_API_KEY`
+> from AI Studio + the settings.json auth flip (historical notes retained below for reference).
+
+A frontier reasoning model, consulted on genuinely hard problems, then reconciled against our own
+analysis. Use it to break out of a wall, stress-test a conclusion before committing effort, or get a
+fundamentally different framing. It is a *thinking* aid — it does not touch the device or the repo
+(read-only consultation).
 
 ## When to use
 - A perf lever or design hit a **wall** and you want an independent attack on the assumptions
