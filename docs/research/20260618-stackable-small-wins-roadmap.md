@@ -6,6 +6,10 @@ compilation-lock + XMA plan. Full raw list: scratch/consult/codex.md. This is th
 (each win is landed + verified one at a time; never fabricate a banked gain).
 
 ## LANDED this session
+- **`hir_const_range_fold` (codegen peephole batch #1)** — extends MaxNonzeroBits: folds AND(x,const) with a
+  non-overlapping mask + SHR(x,const) that shifts all known bits out → constant 0 (set_zero + Remove, DCE
+  cleans up). Bit-exact; 5 host differential tests (2 fold + 3 discriminators); full suite 158 green; host
+  x64 + Android a64 clean. Default-off → flip default-on after a device regression-check (with the other folds).
 - **Lock-free fast-path on `GetOrCreate` (the REAL resolution path), not just `Get()`** — reconciling Codex's
   #1/#6 with a scout exposed that `Processor::ResolveFunction` goes through `GetOrCreate` (always locked), NOT
   `Get()`, so the shipped lock-free cache was INERT on the hot path (why the A/B was neutral). Now an
