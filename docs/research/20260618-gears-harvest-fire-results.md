@@ -45,6 +45,23 @@ lever is optimizing the host XMA decoder (NEON), and it's cross-title.
 NOT codegen (a spinwait doesn't benefit from a trace-specializer). Relates to the LO spin at 0x827B6278 and
 the general spin-yield lever. (Steady-gameplay hot-fn may differ - this is the LOAD phase.)
 
+## Lock-free lookup A/B (clean 2-fire, matched Gears load) — NEUTRAL
+OFF vs ON CAS/SWP/mutex totals: 13.81% vs 13.60% (within noise; cas2_acq 5.80→5.18 the only mover, the rest
+flat-or-up = run variance). The load-phase contention is GetOrCreate (JIT COMPILATION) + memory/kernel locks,
+NOT the Get HIT path the read-cache speeds. `cpu_lockfree_entry_lookup` only helps STEADY GAMEPLAY (Get-heavy
+indirect-call resolution, no new compilation) — unreached here. Stays default-off (untested where it'd matter,
+not dead). **The 13.8% is real; its true lever is COMPILATION-lock churn -> A/B `cpu_precompile_guest_functions`
+(load-window pre-warm) next, NOT the Get cache.**
+
+## "Every little gain" hit-list (evidence-ranked, each needs its own measured fire)
+1. **`cpu_precompile_guest_functions` A/B** (shipped, default-off) — attacks the measured 13.8% compilation-lock
+   churn directly (pre-warm the call-graph on idle cores at load). Highest-evidence next gain.
+2. **Host XMA decoder NEON optimization** — 21.5% of load CPU in the XMA decoder thread; host-side, cross-title.
+3. **`hir_known_bits_mask_fold` -> default-on** (shipped, default-off, bit-exact host-tested) — pure op-count
+   reduction; needs a device regression-check (boot+render clean) then flip + XeniaOptimizations toggle.
+4. **`cpu_lockfree_entry_lookup`** — gated on a steady-gameplay measurement (neutral at load).
+5. **Guest spin-wait** (guest_8222F460) — spin-detect/yield; niche.
+
 ## Net verdict
 The harvest did its job: it KILLED the CRT-port-is-a-win hypothesis for this scene (the hot leaf is
 sync-polling, not memcpy), keeping `cpu_shared_function_fastpath` correctly inert, AND redirected to three
