@@ -114,6 +114,18 @@ void RegisterSharedFunctionForTesting(uint64_t canonical_hash,
 // in r3. arg0 = Memory*. Operates byte-exactly on guest memory (raw bytes, no
 // endianness concern), leaving volatile registers as-is (the caller treats them
 // as clobbered anyway, so not updating them is ABI-safe).
+// A bulk native write to guest memory BYPASSES the per-store store-watch the JIT
+// store path fires (GPU resource + code-cache invalidation). Re-fire it once over
+// the written range so a substituted memset/memcpy stays observationally correct
+// for watched memory (GPU upload buffers, self-modifying/JIT'd code pages). No-op
+// for unwatched ranges. Codex-flagged correctness gate; required before populating
+// the table with ANY entry. (Currently inert: the table ships empty.)
+static void TriggerStoreWatch(Memory* memory, uint32_t address, uint32_t length) {
+  memory->TriggerPhysicalMemoryCallbacks(
+      xe::global_critical_region::AcquireDirect(), address, length,
+      /*is_write=*/true, /*unwatch_exact_range=*/false);
+}
+
 void SharedMemsetHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   auto memory = reinterpret_cast<Memory*>(arg0);
   uint32_t dest = static_cast<uint32_t>(ppc_context->r[3]);
@@ -121,6 +133,7 @@ void SharedMemsetHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   uint32_t count = static_cast<uint32_t>(ppc_context->r[5]);
   if (count) {
     std::memset(memory->TranslateVirtual<uint8_t*>(dest), value, count);
+    TriggerStoreWatch(memory, dest, count);
   }
 }
 
@@ -132,6 +145,7 @@ void SharedMemcpyHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   if (count) {
     std::memcpy(memory->TranslateVirtual<uint8_t*>(dest),
                 memory->TranslateVirtual<const uint8_t*>(src), count);
+    TriggerStoreWatch(memory, dest, count);
   }
 }
 
@@ -143,6 +157,7 @@ void SharedMemmoveHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   if (count) {
     std::memmove(memory->TranslateVirtual<uint8_t*>(dest),
                  memory->TranslateVirtual<const uint8_t*>(src), count);
+    TriggerStoreWatch(memory, dest, count);
   }
 }
 
