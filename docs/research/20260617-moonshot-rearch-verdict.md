@@ -58,6 +58,33 @@ shipped wins remain the driver fence fix + the overdraw thinning toggles + (CPU-
 codegen units (FMA shipped; FlagM in-block + the rest are single-% careful units). NOT a silver bullet -
 this is the honest ceiling of the current architecture on this hardware.
 
+## THIRD PASS (2026-06-17, seeded with ROAA=false): the ceiling is CONFIRMED
+Hunted 4 NEW spaces (branchy tier-2 JIT, overdraw-without-ROP, idle-8-core, present-side framegen/UMA).
+The red-team (reading the tree) killed/demoted them all:
+- **Shadow-stack/return-prediction = ALREADY SHIPPED** (CallIndirect a64_emitter.cc:6116-6121 already does the
+  return-addr compare -> direct epilog jump).
+- **Profiler-guided leaf inlining (the synth's #1 "new" pick) = ALREADY SHIPPED** (arm64_jit_inline_leaf +
+  EmitInlineLeaf complete splice + ScanInlineLeafCandidate + arm64_jit_inline_audit census; default-off, and
+  KNOWN to CRASH Burnout early-boot = a title-specific miscompile to root-cause, per
+  [[cross-barrier-elision-wall]]). DEVICE-FREE GATE I ran: of Burnout hot-fn 0x82382798's ~4 callees, only
+  0x8238cd08 (7 insns) is a true straight-line leaf; 0x82382710/0x82382e40 call further (non-leaf) -> the
+  call-overhead lever has LIMITED FUEL (~1 of 4), gate ~negative.
+- **Half-res foliage RT / dithered-alpha / framegen / reproject** = wall-gated (EDRAM-tile retarget, FSI-absent
+  blend=fixed-function host state, single-queue, or bit-exact-violating content-degradation = same bucket as the
+  shipped thinning toggles).
+- **Block-link/superblock JIT (#2) = the ONLY genuinely-new viable item**, but incremental ON TOP of the shipped
+  inline-leaf path, low-single-digit %, M-effort - a stacking grind-toggle, NOT an unlock.
+
+**DEFINITIVE VERDICT (3 adversarial passes + device-confirmed + device-free gates):** xenia-on-Thor is near its
+practical CEILING. The state of the art = the SHIPPED wins (driver fence fix +46-78%, foliage/blended thinning
+2.2x, prime-core router, the codegen fast-paths, the now-shipped FMA-V128). Remaining CPU levers are MODEST
+single-digit% grind-toggles: (a) root-cause the Burnout arm64_jit_inline_leaf crash to make that shipped lever
+usable (limited fuel per the gate); (b) the block-link/superblock toggle (#2). The biggest SINGLE remaining
+lever stays where it always was: FEWER SUBMITTED VERTS/DRAWS on GPU-bound BD (the thinning toggles, or a guest
+LOD-patch RE) - which no codegen and none of the moonshots touch. There is no hidden silver bullet; the 3
+passes' value was rigorously PROVING that (each caught a real misread: ROAA stub, LL/SC byte-swap landmine,
+already-shipped leaf-inline).
+
 ## Cheapest remaining de-risks (opportunistic, low cost)
 1. DEVICE-FREE: confirm the #2 NEON-SIMT gate FAILS (Ghidra: are LO/Burnout hot loops branchy not
    SIMD-shaped?) - mostly already answered NO-TARGET by the Burnout 0x82382798 disasm.
