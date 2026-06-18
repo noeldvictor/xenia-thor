@@ -31,6 +31,20 @@ DEFINE_bool(hir_fold_and_not, true,
             "clean. Ported from xenia-edge c383d049e.",
             "CPU");
 
+DEFINE_bool(
+    hir_known_bits_mask_fold, false,
+    "Thor CPU codegen lever: known-bits (NZM) redundant-mask elimination. Drop "
+    "an AND(x, constant) when a conservative upper bound on x's possibly-set "
+    "bits already fits entirely inside the mask (x & c == x), so the AND is a "
+    "no-op. Targets the redundant masks that pile up emulating 32-bit PPC ops "
+    "and zero-extending loads (lbz/lhz, clrlwi, rlwinm) on 64-bit host values - "
+    "exactly the branchy integer hot code of CPU-bound titles (Burnout, Lost "
+    "Odyssey). Bit-exact (definitional). Additive to the per-instruction "
+    "rlwinm fast-paths (this catches CROSS-instruction redundancy they can't). "
+    "Inspired by xenia-edge's NZM simplification_pass. Default-off until "
+    "host+qemu differential-validated; then a stacking XeniaOptimizations toggle.",
+    "CPU");
+
 namespace xe {
 namespace cpu {
 namespace compiler {
@@ -56,8 +70,133 @@ bool SimplificationPass::Run(HIRBuilder* builder, bool& result) {
   if (cvars::hir_fold_and_not) {
     result |= SimplifyAndNot(builder);
   }
+  if (cvars::hir_known_bits_mask_fold) {
+    result |= SimplifyRedundantMask(builder);
+  }
   result |= SimplifyAssignments(builder);
   return true;
+}
+
+// Returns a mask whose set bits are an UPPER BOUND on the bits that value v can
+// possibly have set (a 0 bit is provably always 0). Conservative: when in doubt
+// it returns all bits of v's type width (so the only error is missing a fold,
+// never an unsound one). Integer values only; recursion is depth-bounded so this
+// stays cheap during the pass.
+uint64_t SimplificationPass::MaxNonzeroBits(const Value* v, int depth) {
+  // Width mask for the value's type (bits outside it are always zero).
+  uint64_t type_mask;
+  switch (v->type) {
+    case INT8_TYPE:
+      type_mask = 0xFFull;
+      break;
+    case INT16_TYPE:
+      type_mask = 0xFFFFull;
+      break;
+    case INT32_TYPE:
+      type_mask = 0xFFFFFFFFull;
+      break;
+    case INT64_TYPE:
+      type_mask = ~0ull;
+      break;
+    default:
+      // Non-integer (float/vec) - no useful integer bit knowledge.
+      return ~0ull;
+  }
+
+  if (v->IsConstant()) {
+    uint64_t cv;
+    switch (v->type) {
+      case INT8_TYPE:
+        cv = v->constant.u8;
+        break;
+      case INT16_TYPE:
+        cv = v->constant.u16;
+        break;
+      case INT32_TYPE:
+        cv = v->constant.u32;
+        break;
+      default:
+        cv = v->constant.u64;
+        break;
+    }
+    return cv & type_mask;
+  }
+
+  if (depth <= 0 || !v->def) {
+    return type_mask;
+  }
+
+  const Instr* def = v->def;
+  auto op = def->opcode;
+  Value* s1 = def->src1.value;
+  Value* s2 = def->src2.value;
+
+  if (op == &OPCODE_ASSIGN_info && s1) {
+    return MaxNonzeroBits(s1, depth - 1) & type_mask;
+  } else if (op == &OPCODE_ZERO_EXTEND_info && s1) {
+    // High bits are zero-filled; the source's known bits carry up unchanged.
+    return MaxNonzeroBits(s1, depth - 1) & type_mask;
+  } else if (op == &OPCODE_TRUNCATE_info && s1) {
+    return MaxNonzeroBits(s1, depth - 1) & type_mask;
+  } else if (op == &OPCODE_AND_info && s1 && s2) {
+    return MaxNonzeroBits(s1, depth - 1) & MaxNonzeroBits(s2, depth - 1) &
+           type_mask;
+  } else if ((op == &OPCODE_OR_info || op == &OPCODE_XOR_info) && s1 && s2) {
+    return (MaxNonzeroBits(s1, depth - 1) | MaxNonzeroBits(s2, depth - 1)) &
+           type_mask;
+  } else if (op == &OPCODE_SHL_info && s1 && s2 && s2->IsConstant()) {
+    uint64_t sh = s2->constant.u8 & 63;  // shift amount is i8 in HIR
+    return (MaxNonzeroBits(s1, depth - 1) << sh) & type_mask;
+  } else if (op == &OPCODE_SHR_info && s1 && s2 && s2->IsConstant()) {
+    // Logical shift right: high bits zero-filled, so known bits move down.
+    uint64_t sh = s2->constant.u8 & 63;
+    return (MaxNonzeroBits(s1, depth - 1) >> sh) & type_mask;
+  }
+
+  // Unknown producer - assume any bit of the type may be set.
+  return type_mask;
+}
+
+bool SimplificationPass::SimplifyRedundantMask(HIRBuilder* builder) {
+  // Drop AND(x, c) when x's possibly-set bits all survive the constant mask c
+  // (i.e. x & c == x for every possible x), turning the AND into a plain assign.
+  // SimplifyAssignments + DCE then remove the leftover. Bit-exact (definitional).
+  bool result = false;
+  auto block = builder->first_block();
+  while (block) {
+    auto i = block->instr_head;
+    while (i) {
+      auto next = i->next;
+      if (i->opcode == &OPCODE_AND_info && i->flags == 0 && i->dest &&
+          i->dest->type <= INT64_TYPE && i->src1.value && i->src2.value) {
+        Value* s1 = i->src1.value;
+        Value* s2 = i->src2.value;
+        // AND commutes: the constant mask may be either operand.
+        Value* x = nullptr;
+        Value* mask = nullptr;
+        if (s2->IsConstant()) {
+          x = s1;
+          mask = s2;
+        } else if (s1->IsConstant()) {
+          x = s2;
+          mask = s1;
+        }
+        if (x && mask && x->type == i->dest->type) {
+          uint64_t c = MaxNonzeroBits(mask, 1);  // exact (constant)
+          uint64_t mx = MaxNonzeroBits(x, 8);
+          // If none of x's possible bits fall outside the mask, x & c == x.
+          if ((mx & ~c) == 0) {
+            i->Replace(&OPCODE_ASSIGN_info, 0);
+            i->set_src1(x);
+            result = true;
+          }
+        }
+      }
+      i = next;
+    }
+    block = block->next;
+  }
+  return result;
 }
 
 bool SimplificationPass::EliminateConversions(HIRBuilder* builder) {
