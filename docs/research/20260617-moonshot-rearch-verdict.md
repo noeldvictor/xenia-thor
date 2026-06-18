@@ -8,6 +8,13 @@ black-screen landmine, caught by review).
 
 ## The moonshots, after the red-team read the code
 
+**DEVICE-CONFIRMED 2026-06-17: `edram_roaa=false` on the Thor's Adreno 740** (logged live:
+"VulkanRenderTargetCache: edram_roaa=false", render_target_path selected=fbo). So
+VK_EXT_rasterization_order_attachment_access is NOT exposed by Turnip on the 740, and FSI is also absent
+-> there is NO hardware ordered-ROP path on this device. The red-team's prediction is confirmed: the
+ordered-ROP / compute-ROP moonshot is HARDWARE-DEAD here, AND the modest transfer-elision ROAA build is
+dead too (the extension isn't present). The RT path that actually runs is the FBO host-render-targets one.
+
 **#1/#4 — Exact Xenos ROP / compute-ROP back-end (paraLLEl-GS for the 360): DO NOT START.**
 The design synthesis claimed "xenia already has an exact ROP path, just finish it via ROAA, and it
 fixes BD's overdraw." The red-team REFUTED this from the code:
