@@ -35,7 +35,45 @@ struct PPCBuiltins {
   Function* enter_global_lock;
   Function* leave_global_lock;
   Function* syscall_handler;
+  // Shared-function fast-path: native replacements for hot, byte-identical XDK
+  // runtime kernels that recur across titles (cpu_shared_function_fastpath).
+  Function* shared_memset;
+  Function* shared_memcpy;
+  Function* shared_memmove;
 };
+
+// Which native kernel a recognized shared guest function maps to.
+enum class SharedFunctionKind : uint32_t {
+  kNone = 0,
+  kMemset,
+  kMemcpy,
+  kMemmove,
+};
+
+// Canonical, RELOCATION-INVARIANT hash of a guest function's instruction stream.
+// The same statically-linked XDK/CRT library function is duplicated as guest
+// machine code in every title that links it, but relocated to a different
+// address - so its inter-function call targets differ. We zero the LI field of
+// b/bl (primary opcode 18) before hashing so the function hashes identically
+// across titles; everything else (including intra-function relative branches,
+// which move with the function) is hashed raw. Masking is deliberately MINIMAL
+// to keep false-positive collisions near-impossible: under-masking only yields a
+// missed match (safe - falls back to normal JIT), never a wrong substitution.
+// Leaf kernels (memset/memcpy/memmove: loops, no external calls) hash raw.
+uint64_t CanonicalFunctionHashRaw(const void* code, uint32_t size_bytes);
+uint64_t CanonicalFunctionHash(const Memory* memory, uint32_t start_address,
+                               uint32_t end_address);
+
+// Curated hash+size -> kind lookup. kNone if unrecognized. Entries are added
+// ONLY after a harvested hash is RE-confirmed to be the named XDK kernel, so a
+// match is exact (and the native handler is byte-equivalent anyway).
+SharedFunctionKind LookupSharedFunction(uint64_t canonical_hash,
+                                        uint32_t size_bytes);
+// Register a (hash,size)->kind mapping (host test uses this to drive the
+// substitution path without a device-harvested table).
+void RegisterSharedFunctionForTesting(uint64_t canonical_hash,
+                                      uint32_t size_bytes,
+                                      SharedFunctionKind kind);
 
 struct GlobalLockOwnerSnapshot {
   int32_t count;

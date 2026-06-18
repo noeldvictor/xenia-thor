@@ -34,6 +34,25 @@ DEFINE_bool(
     "unimplemented PowerPC instruction is encountered.",
     "CPU");
 
+DEFINE_bool(
+    cpu_shared_function_fastpath, false,
+    "Thor cross-title CPU lever: recognize hot, byte-identical XDK runtime "
+    "kernels (memset/memcpy/memmove) that recur across titles - by a "
+    "relocation-invariant canonical hash - and run a native host implementation "
+    "instead of JIT-translating the guest loop. The same statically-linked XDK "
+    "library code is duplicated in every title, so a recognized fast-path "
+    "amortizes library-wide. Default-off; the hash table is curated + "
+    "RE-confirmed (empty until populated via a cpu_shared_function_harvest run), "
+    "so this is INERT until verified entries are compiled in.",
+    "CPU");
+DEFINE_bool(
+    cpu_shared_function_harvest, false,
+    "Diagnostic for cpu_shared_function_fastpath: log every compiled guest "
+    "function's canonical (reloc-invariant) hash + size so the hot shared XDK "
+    "kernels can be identified and added to the curated fast-path table. "
+    "Default-off (verbose).",
+    "CPU");
+
 namespace xe {
 namespace cpu {
 namespace ppc {
@@ -112,6 +131,45 @@ bool PPCHIRBuilder::Emit(GuestFunction* function, uint32_t flags) {
 
   // Always mark entry with label.
   label_list_[0] = NewLabel();
+
+  // Shared-function fast-path: if this whole function is a recognized hot XDK
+  // kernel, substitute a native host implementation for the entire body. The
+  // substitute is structurally "<native call>; blr" - both proven HIR patterns.
+  if (cvars::cpu_shared_function_fastpath || cvars::cpu_shared_function_harvest) {
+    uint32_t fn_start = function_->address();
+    uint32_t fn_end = function_->end_address();
+    uint64_t canon = CanonicalFunctionHash(memory, fn_start, fn_end);
+    uint32_t fn_size = fn_end - fn_start + 4;
+    if (cvars::cpu_shared_function_harvest) {
+      XELOGI("shared-fn-harvest {:08X}-{:08X} size={} canon={:016X}", fn_start,
+             fn_end, fn_size, canon);
+    }
+    if (cvars::cpu_shared_function_fastpath) {
+      SharedFunctionKind kind = LookupSharedFunction(canon, fn_size);
+      Function* handler = nullptr;
+      switch (kind) {
+        case SharedFunctionKind::kMemset:
+          handler = builtins()->shared_memset;
+          break;
+        case SharedFunctionKind::kMemcpy:
+          handler = builtins()->shared_memcpy;
+          break;
+        case SharedFunctionKind::kMemmove:
+          handler = builtins()->shared_memmove;
+          break;
+        default:
+          break;
+      }
+      if (handler) {
+        MarkLabel(label_list_[0]);
+        CallExtern(handler);                          // native op (reads r3-r5)
+        CallIndirect(LoadLR(), CALL_POSSIBLE_RETURN);  // return to LR, like blr
+        XELOGD("shared-fn fast-path substituted {:08X} kind={}", fn_start,
+               static_cast<uint32_t>(kind));
+        return Finalize();
+      }
+    }
+  }
 
   uint32_t start_address = function_->address();
   uint32_t end_address = function_->end_address();

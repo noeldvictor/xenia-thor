@@ -10,9 +10,16 @@
 #include "xenia/cpu/ppc/ppc_frontend.h"
 
 #include <atomic>
+#include <cstring>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 #include "xenia/base/atomic.h"
+#include "xenia/base/byte_order.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/mutex.h"
+#include "xenia/base/xxhash.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_emit.h"
 #include "xenia/cpu/ppc/ppc_opcode_info.h"
@@ -22,6 +29,122 @@
 namespace xe {
 namespace cpu {
 namespace ppc {
+
+// ---------------------------------------------------------------------------
+// Shared-function fast-path (cpu_shared_function_fastpath): recognize hot,
+// byte-identical XDK runtime kernels that recur across titles and run a native
+// host implementation instead of JIT-translating the guest loop. The recognizer
+// + native handlers live here; the substitution hook is in PPCHIRBuilder::Emit.
+// ---------------------------------------------------------------------------
+
+uint64_t CanonicalFunctionHashRaw(const void* code, uint32_t size_bytes) {
+  // Mask the relocation-prone LI field of b/bl (primary opcode 18) so the same
+  // library function hashes identically across titles; hash everything else raw.
+  const uint32_t word_count = size_bytes / 4;
+  std::vector<uint32_t> canon(word_count);
+  const uint8_t* p = reinterpret_cast<const uint8_t*>(code);
+  for (uint32_t i = 0; i < word_count; ++i) {
+    // Guest code is big-endian; normalize to a host value for decoding/hashing.
+    uint32_t word = xe::load_and_swap<uint32_t>(p + i * 4);
+    const uint32_t primary = (word >> 26) & 0x3F;
+    if (primary == 18) {
+      // I-form b/ba/bl/bla: keep opcode (top 6) + AA/LK (bottom 2), zero LI.
+      word &= 0xFC000003u;
+    }
+    canon[i] = word;
+  }
+  return XXH3_64bits(canon.data(),
+                     static_cast<size_t>(word_count) * sizeof(uint32_t));
+}
+
+uint64_t CanonicalFunctionHash(const Memory* memory, uint32_t start_address,
+                               uint32_t end_address) {
+  if (end_address < start_address) {
+    return 0;
+  }
+  const uint32_t size_bytes = end_address - start_address + 4;
+  const uint8_t* code =
+      const_cast<Memory*>(memory)->TranslateVirtual<const uint8_t*>(
+          start_address);
+  return CanonicalFunctionHashRaw(code, size_bytes);
+}
+
+namespace {
+struct SharedFunctionEntry {
+  uint32_t size_bytes;
+  SharedFunctionKind kind;
+};
+// hash -> {size, kind}. Curated; populated by RE-confirmed harvest. Empty by
+// default, so the fast-path is INERT on real titles until verified entries are
+// compiled in (then it becomes a stacking, default-off XeniaOptimizations win).
+std::unordered_map<uint64_t, SharedFunctionEntry>& SharedFunctionTable() {
+  static std::unordered_map<uint64_t, SharedFunctionEntry> table;
+  return table;
+}
+std::mutex& SharedFunctionTableMutex() {
+  static std::mutex m;
+  return m;
+}
+}  // namespace
+
+SharedFunctionKind LookupSharedFunction(uint64_t canonical_hash,
+                                        uint32_t size_bytes) {
+  std::lock_guard<std::mutex> lock(SharedFunctionTableMutex());
+  auto& table = SharedFunctionTable();
+  auto it = table.find(canonical_hash);
+  if (it == table.end()) {
+    return SharedFunctionKind::kNone;
+  }
+  // Size must also match: a defense against a hash collision selecting a
+  // differently-sized function (the handler would otherwise run wrong bounds).
+  if (it->second.size_bytes != size_bytes) {
+    return SharedFunctionKind::kNone;
+  }
+  return it->second.kind;
+}
+
+void RegisterSharedFunctionForTesting(uint64_t canonical_hash,
+                                      uint32_t size_bytes,
+                                      SharedFunctionKind kind) {
+  std::lock_guard<std::mutex> lock(SharedFunctionTableMutex());
+  SharedFunctionTable()[canonical_hash] = {size_bytes, kind};
+}
+
+// Native handlers. PPC ABI: r3/r4/r5 = first three args; the result (dest) stays
+// in r3. arg0 = Memory*. Operates byte-exactly on guest memory (raw bytes, no
+// endianness concern), leaving volatile registers as-is (the caller treats them
+// as clobbered anyway, so not updating them is ABI-safe).
+void SharedMemsetHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
+  auto memory = reinterpret_cast<Memory*>(arg0);
+  uint32_t dest = static_cast<uint32_t>(ppc_context->r[3]);
+  int value = static_cast<int>(static_cast<uint32_t>(ppc_context->r[4]));
+  uint32_t count = static_cast<uint32_t>(ppc_context->r[5]);
+  if (count) {
+    std::memset(memory->TranslateVirtual<uint8_t*>(dest), value, count);
+  }
+}
+
+void SharedMemcpyHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
+  auto memory = reinterpret_cast<Memory*>(arg0);
+  uint32_t dest = static_cast<uint32_t>(ppc_context->r[3]);
+  uint32_t src = static_cast<uint32_t>(ppc_context->r[4]);
+  uint32_t count = static_cast<uint32_t>(ppc_context->r[5]);
+  if (count) {
+    std::memcpy(memory->TranslateVirtual<uint8_t*>(dest),
+                memory->TranslateVirtual<const uint8_t*>(src), count);
+  }
+}
+
+void SharedMemmoveHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
+  auto memory = reinterpret_cast<Memory*>(arg0);
+  uint32_t dest = static_cast<uint32_t>(ppc_context->r[3]);
+  uint32_t src = static_cast<uint32_t>(ppc_context->r[4]);
+  uint32_t count = static_cast<uint32_t>(ppc_context->r[5]);
+  if (count) {
+    std::memmove(memory->TranslateVirtual<uint8_t*>(dest),
+                 memory->TranslateVirtual<const uint8_t*>(src), count);
+  }
+}
 
 namespace {
 
@@ -160,6 +283,15 @@ bool PPCFrontend::Initialize() {
       processor_->DefineBuiltin("LeaveGlobalLock", LeaveGlobalLock, arg0, arg1);
   builtins_.syscall_handler = processor_->DefineBuiltin(
       "SyscallHandler", SyscallHandler, nullptr, nullptr);
+  // Shared-function fast-path native kernels (arg0 = Memory* for guest<->host
+  // address translation; arg1 unused).
+  void* mem_arg = reinterpret_cast<void*>(processor_->memory());
+  builtins_.shared_memset = processor_->DefineBuiltin(
+      "SharedMemset", SharedMemsetHandler, mem_arg, nullptr);
+  builtins_.shared_memcpy = processor_->DefineBuiltin(
+      "SharedMemcpy", SharedMemcpyHandler, mem_arg, nullptr);
+  builtins_.shared_memmove = processor_->DefineBuiltin(
+      "SharedMemmove", SharedMemmoveHandler, mem_arg, nullptr);
   return true;
 }
 

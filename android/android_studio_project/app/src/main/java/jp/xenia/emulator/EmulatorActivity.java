@@ -167,6 +167,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "ppc_vand_self_fastpath");
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_general_fastpath");
             copyBooleanExtra(intent, launchArguments, "hir_known_bits_mask_fold");
+            copyBooleanExtra(intent, launchArguments, "cpu_shared_function_fastpath");
+            copyBooleanExtra(intent, launchArguments, "cpu_shared_function_harvest");
             copyBooleanExtra(intent, launchArguments, "cpu_lockfree_entry_lookup");
             copyBooleanExtra(intent, launchArguments, "cpu_precompile_guest_functions");
             copyIntExtra(intent, launchArguments, "cpu_precompile_threads");
