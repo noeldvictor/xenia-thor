@@ -49,6 +49,45 @@ add ONE `XeniaOptimizations` registry entry (it auto-appears in the UI and auto-
 allowlist the cvar in `EmulatorActivity`. Default the device-validated wins ON; keep risky/experimental
 ones toggleable (cvar still the engine mechanism, but surfaced + explained, not hidden).
 
+## 🔧 THOR HARDWARE ACCELERATORS — exploit these CONSTANTLY (standing directive)
+**Every design decision should ask: which Thor accelerator does this exploit?** The Thor is ~10-20× the
+360 in raw FLOPS/cores, but that power is mostly LATENT parallel + GPU throughput — emulation pays a heavy
+per-instruction translation tax and is bottlenecked per-title (BD = GPU overdraw, Burnout = CPU game-logic
+JIT). Closing the gap means mapping guest work onto these units. Always ask Codex (gpt-5.5) + Gemini for
+hard rearch calls ([[consult-hard]]).
+
+**SoC: Snapdragon 8 Gen 2 (QCS8550 "kalama"), ~16 GB UMA** (unified CPU/GPU, zero-copy — exploit for
+geometry/texture feeds).
+
+**CPU — 8× ARMv9.0-A, heterogeneous (pin hot threads to the right cluster):**
+- 1× **Cortex-X3 @ 3.19 GHz** (prime) · 2× A715 + 2× A710 @ 2.80 GHz (mid) · 3× A510 @ 2.02 GHz (efficiency)
+- **NEON (`asimd`)** — 128-bit SIMD, the ONLY SIMD (no SVE/SVE2). Maps PPC VMX128 1:1 (done in a64 backend).
+- **`asimddp`** (DOTPROD SDOT/UDOT 4×int8) · **`i8mm`** (int8 matrix SMMLA/UMMLA) · **`bf16`** (BFMMLA/BFDOT)
+  — LOSSY int8/bf16 matrix units; SAFE only for internal heuristics (cull/extent), NEVER guest FP32 (it
+  black-screens — [[approx-math-guest-visible-vs-heuristics]]).
+- **`fphp`+`asimdhp`+`asimdfhm`** (FP16 arith + FMLAL) — pixel-shader-only on the GPU side, never geometry.
+- **`fcma`** (FCADD/FCMLA — complex/rotation) · **`flagm`/`flagm2`** (RMIF/SETF8/SETF16/CFINV — direct NZCV
+  flag manip = the Rosetta-2 flag trick; shipped for ADD_CARRY, in-block-only per [[cross-barrier-elision-wall]])
+- **`atomics` (LSE LDADD/SWP/CAS) + LSE2** · **`rcpc`/`ilrcpc`** (LDAPR weak-acquire — cheap TSO ordering)
+- **`jscvt`** (FJCVTZS) · **`frint`** · **`crc32`** · **`aes`/`pmull`/`sha1`/`sha2`/`sha512`** · PAC/BTI
+
+**GPU — Adreno 740v2 (TBDR / FlexRender), Vulkan 1.3:**
+- On-chip **GMEM** tile buffer (the EDRAM-emulation target), max 680 MHz, **LRZ** early-Z (DEFEATED by
+  alpha-test/discard — the BD overdraw cause)
+- **SINGLE** graphics+compute queue (internal BR/BV binning — NO separately-schedulable async-compute queue)
+- **PRESENT:** push_descriptor, extended_dynamic_state 1/2/3, draw_indirect_count, **multiDrawIndirect**,
+  vertex_input_dynamic_state, `VK_QCOM_tile_properties`, shader_float16_int8
+- **ABSENT (device-confirmed):** `fragment_shader_interlock`, `rasterization_order_attachment_access`
+  (ROAA=false, confirmed 2026-06-17), `descriptor_buffer`, `external_memory_host`,
+  `tile_memory_heap`/`tile_shading` (840+ only), mesh shaders (unverified)
+
+**Also:** Hexagon DSP/NPU (HVX 1024-bit, idle; but FastRPC = 75µs–several-ms BLOCKING round-trip, batch-only).
+
+**Shipped exploits so far:** NEON VMX128 1:1, flat-membase, rlwinm/CR fast-paths, FLAGM ADD_CARRY, FMA-V128
+generalize, LSE locks, prime-core X3 router, ADPF, the blocking-fence-poll fix (the big driver win),
+overdraw thinning (foliage/blended), persistent pipeline cache. See [[thor-two-track-vision]],
+[[ppc-thor-hw-accel-rearch]], docs/research/20260617-*.
+
 ## 🩹 GAME PATCHES (core feature, 2026-06-04) — a first-class part of the emu
 The fork now has the **game-patch system** (xenia-canary `.patch.toml`), ported
 back after this fork had dropped it. Patches are a core idea: **performance**
