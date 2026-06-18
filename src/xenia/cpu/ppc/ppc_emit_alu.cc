@@ -952,8 +952,27 @@ int InstrEmit_rldcrx(PPCHIRBuilder& f, const InstrData& i) {
 }
 
 int InstrEmit_rldicx(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  // n <- sh[5] || sh[0:4]
+  // r <- ROTL64((RS), n)
+  // b <- mb[5] || mb[0:4]
+  // m <- MASK(b, ~n & 63)   ; clears the high bits above b AND the low bits
+  //                           below (63 - n), i.e. clear-left-and-right
+  // RA <- r & m
+  uint32_t sh = (i.MD.SH5 << 5) | i.MD.SH;
+  uint32_t mb = (i.MD.MB5 << 5) | i.MD.MB;
+  uint64_t m = XEMASK(mb, 63 - sh);
+  Value* v = f.LoadGPR(i.MD.RT);
+  if (sh) {
+    v = f.RotateLeft(v, f.LoadConstantInt8(sh));
+  }
+  if (m != 0xFFFFFFFFFFFFFFFF) {
+    v = f.And(v, f.LoadConstantUint64(m));
+  }
+  f.StoreGPR(i.MD.RA, v);
+  if (i.MD.Rc) {
+    f.UpdateCR(0, v);
+  }
+  return 0;
 }
 
 int InstrEmit_rldiclx(PPCHIRBuilder& f, const InstrData& i) {

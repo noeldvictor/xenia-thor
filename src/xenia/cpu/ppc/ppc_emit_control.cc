@@ -555,8 +555,13 @@ int InstrEmit_crxor(PPCHIRBuilder& f, const InstrData& i) {
 }
 
 int InstrEmit_mcrf(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  // mcrf crfD, crfS:  CR[crfD] <- CR[crfS]
+  // crfD is the top 3 bits of the BO field, crfS the top 3 bits of BI (same
+  // field layout the CR-logical ops use, e.g. crand's i.XL.BO >> 2).
+  uint32_t crfD = i.XL.BO >> 2;
+  uint32_t crfS = i.XL.BI >> 2;
+  f.StoreCR(crfD, f.LoadCR(crfS));
+  return 0;
 }
 
 // System linkage (A-24)
