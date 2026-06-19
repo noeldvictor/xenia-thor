@@ -540,6 +540,18 @@ DEFINE_bool(
     "opaque-depth-prepass-plan.md). NOT YET FUNCTIONAL - scaffold only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_foliage_lrz_force_depth, false,
+    "Lever A (overdraw attack): force the alpha-test foliage class to depth-TEST "
+    "(zfunc=Less) with depth-WRITE OFF against the opaque depth field, so foliage "
+    "behind opaque geometry early-Z-rejects on the Adreno (LRZ-TEST survives "
+    "discard; LRZ-WRITE does not) instead of fully shading every occluded leaf. "
+    "Pair with gpu_opaque_depth_prepass=true (primes opaque depth first) for the "
+    "full effect. Host-RT path only. Quality tradeoff: changes foliage depth "
+    "test/write semantics (sorting), validate visually. Validate via a gpu_freeze "
+    "A/B (force_depth off vs on, BOTH legs with the prepass on) at a matched "
+    "frozen frame. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_force_no_color_write, false,
     "DIAGNOSTIC (overdraw ROP/blend split): force colorWriteMask=0 on all color "
     "render targets, so every draw still rasterizes + depth-tests + runs (the "

@@ -116,6 +116,7 @@ DECLARE_int32(gpu_blended_thin_factor);
 DECLARE_int32(gpu_foliage_thin_factor);
 DECLARE_bool(gpu_force_no_color_write);
 DECLARE_bool(gpu_opaque_depth_prepass);
+DECLARE_bool(gpu_foliage_lrz_force_depth);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);

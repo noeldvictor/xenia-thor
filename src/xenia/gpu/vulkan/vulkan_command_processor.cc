@@ -4420,6 +4420,22 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Set up the render targets - this may perform dispatches and draws.
   reg::RB_DEPTHCONTROL normalized_depth_control =
       draw_util::GetNormalizedDepthControl(regs);
+  // Lever A (gpu_foliage_lrz_force_depth): force the overdraw-heavy alpha-test
+  // foliage to depth-TEST (z<, write-OFF) against the opaque depth field (best
+  // when primed by gpu_opaque_depth_prepass) so foliage behind opaque geometry
+  // early-Z-rejects on Adreno without polluting depth. zfunc MUST be kLess - a
+  // write-off + kAlways is normalized to depth-OFF by GetNormalizedDepthControl
+  // (see :4484), silently disabling the test. Host-RT path only; the cvar is
+  // default-off so this is inert + zero-cost by default. Quality tradeoff: it
+  // changes foliage depth sorting (test/write semantics), validate visually.
+  if (cvars::gpu_foliage_lrz_force_depth &&
+      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0 &&
+      render_target_cache_->GetPath() ==
+          RenderTargetCache::Path::kHostRenderTargets) {
+    normalized_depth_control.z_enable = 1;
+    normalized_depth_control.z_write_enable = 0;
+    normalized_depth_control.zfunc = xenos::CompareFunction::kLess;
+  }
   uint32_t normalized_color_mask =
       pixel_shader ? draw_util::GetNormalizedColorMask(
                          regs, pixel_shader->writes_color_targets())
