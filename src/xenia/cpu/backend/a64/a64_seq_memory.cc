@@ -226,6 +226,14 @@ static void UpdateCurrentThreadKernelTime(void* raw_context) {
 }
 
 static bool ShouldUpdateBlueDragonDrawWaitKernelTime(const hir::Instr* instr) {
+  // NOTE: Gears' draw-wait KTHREAD+0x58 load site is 0x8222F4CC (same XDK D3D
+  // draw-wait primitive). It was tried here but is DELIBERATELY NOT added:
+  // advancing kernel-time makes Gears' watchdog fire, but Gears' GPU-hung
+  // handler ends in an unconditional trap (guest 0x8222FE14 twui) -> the emulator
+  // crashes instead of recovering (device-tested 2026-06-19). BD recovers without
+  // trapping; Gears does not. Unblocking Gears needs the clean Gap-A fix (advance
+  // Gears' ring read-pointer so the drain routine 0x82221980 sets +0x2A39 bit 0x2)
+  // or a game-patch NOPing the trap. See docs/research/20260619-gears-spinwait-re.md.
   return cvars::arm64_blue_dragon_draw_wait_probe &&
          instr->GuestAddressFor() == 0x8246B474;
 }
