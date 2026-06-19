@@ -1035,9 +1035,25 @@ bool XThread::Save(ByteStream* stream) {
   if (running_) {
     pc = emulator()->processor()->StepToGuestSafePoint(thread_id_);
     if (!pc) {
-      XELOGE("XThread {:08X} failed to save: could not step to a safe point!",
-             handle());
-      assert_always();
+      // Could not reach a safe point (a spinning/blocked guest thread that will
+      // not advance). Soft-skip this thread from the snapshot so the overall
+      // SaveToFile COMPLETES instead of hanging - the rest of the state (guest
+      // memory + the other threads) is still serialized, and KernelState::Save
+      // excludes a false-returning thread from the persisted thread count, so
+      // the stream stays self-consistent for Restore. A skipped thread is
+      // dropped, so a restore is best-effort (good for a render-only A/B), not
+      // a fully faithful resume.
+      if (main_thread_) {
+        XELOGE(
+            "XThread {:08X} is the MAIN thread but could not reach a safe "
+            "point; the save will have NO main thread and may not be resumable.",
+            handle());
+      } else {
+        XELOGW(
+            "XThread {:08X} could not reach a safe point; soft-skipping it from "
+            "the save.",
+            handle());
+      }
       return false;
     }
   }

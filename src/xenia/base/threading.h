@@ -75,6 +75,44 @@ class Fence {
     }
   }
 
+  // Like Wait() but bounded by a timeout. Returns true if signaled, false on
+  // timeout. On timeout the waiter count THIS call added is removed (and no
+  // signal is consumed) so signal_state_ stays consistent. Sound only for the
+  // single-waiter case (e.g. the debugger step / save-state path); do not mix a
+  // WaitFor and a Wait waiter on the same Fence.
+  bool WaitFor(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    assert_true((signal_state_ & ~SIGMASK_) < (SIGMASK_ - 1) &&
+                "Too many threads?");
+
+    auto signal_state = ++signal_state_;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (; !(signal_state & SIGMASK_); signal_state = signal_state_) {
+      if (cond_.wait_until(lock, deadline) == std::cv_status::timeout) {
+        // Re-read under the held lock; a Signal() may have raced in right at the
+        // deadline (Signal also takes mutex_, so this is serialized).
+        signal_state = signal_state_;
+        if (signal_state & SIGMASK_) {
+          break;  // raced: signaled at the deadline, fall through to teardown
+        }
+        // Genuine timeout: undo the waiter increment we added (the exact inverse
+        // of the entry ++), without consuming a signal.
+        assert_true((signal_state & ~SIGMASK_) > 0);  // our own count >= 1
+        signal_state_ = signal_state - 1;
+        return false;
+      }
+    }
+
+    // Signaled path: bookkeeping identical to Wait().
+    assert_true((signal_state & ~SIGMASK_) > 0);  // wait_count > 0
+    if (signal_state == (1 | SIGMASK_)) {         // wait_count == 1
+      signal_state_ = 0;
+    } else {
+      signal_state_ = --signal_state;
+    }
+    return true;
+  }
+
  private:
   using state_t_ = uint_fast32_t;
   static constexpr state_t_ SIGMASK_ = state_t_(1)

@@ -1124,6 +1124,14 @@ void Processor::StepGuestInstruction(uint32_t thread_id) {
   ResumeThread(thread_id);
 }
 
+// Bounds so the save-state / debugger safe-point machinery can never hang on a
+// guest thread that is spinning or blocked and will never reach the stepped-to
+// address (e.g. a frozen-scene worker). Each only trips in the genuinely
+// non-advancing case; healthy threads converge orders of magnitude faster.
+static constexpr std::chrono::milliseconds kStepWaitTimeout{1500};
+static constexpr int kMaxSyncScan = 256;       // words; a BB boundary is near
+static constexpr int kMaxSafePointDepth = 64;  // MMIO/mfmsr tail-recursion cap
+
 bool Processor::StepToGuestAddress(uint32_t thread_id, uint32_t pc) {
   auto functions = FindFunctionsWithAddress(pc);
   if (functions.empty()) {
@@ -1146,12 +1154,26 @@ bool Processor::StepToGuestAddress(uint32_t thread_id, uint32_t pc) {
 
   // HACK
   auto thread_info = QueryThreadDebugInfo(thread_id);
+  if (!thread_info) {
+    bp.Suspend();
+    return false;
+  }
   uint32_t suspend_count = 1;
   while (suspend_count) {
     thread_info->thread->thread()->Resume(&suspend_count);
   }
 
-  fence.Wait();
+  if (!fence.WaitFor(kStepWaitTimeout)) {
+    // Target thread never reached pc (spinning/blocked guest thread). Un-patch
+    // the UD2 and re-suspend the thread to restore the paused invariant the
+    // caller (e.g. SaveToFile) relies on, then bail. Only trips on a genuinely
+    // stuck thread - a healthy step signals on the first wait iteration.
+    bp.Suspend();
+    thread_info->thread->thread()->Suspend();
+    XELOGW("StepToGuestAddress({:08X}) timed out; thread {:08X} not advancing",
+           pc, thread_id);
+    return false;
+  }
   bp.Suspend();
 
   return true;
@@ -1160,7 +1182,11 @@ bool Processor::StepToGuestAddress(uint32_t thread_id, uint32_t pc) {
 uint32_t Processor::StepIntoGuestBranchTarget(uint32_t thread_id, uint32_t pc) {
   xe::cpu::ppc::PPCDecodeData d;
   d.address = pc;
-  d.code = xe::load_and_swap<uint32_t>(memory()->TranslateVirtual(d.address));
+  auto* d_host_ptr = memory()->TranslateVirtual(d.address);
+  if (!d_host_ptr) {
+    return 0;  // unmapped address -> can't decode; signal failure to caller
+  }
+  d.code = xe::load_and_swap<uint32_t>(d_host_ptr);
   auto opcode = xe::cpu::ppc::LookupOpcode(d.code);
 
   // Must be on a branch.
@@ -1174,17 +1200,19 @@ uint32_t Processor::StepIntoGuestBranchTarget(uint32_t thread_id, uint32_t pc) {
   if (d.code == 0x4E800020) {
     // blr
     uint32_t nia = uint32_t(context->lr);
-    StepToGuestAddress(thread_id, nia);
+    // Propagate a step timeout (previously the return was ignored; on a healthy
+    // thread StepToGuestAddress succeeds and this is identical to before).
+    if (!StepToGuestAddress(thread_id, nia)) return 0;
     pc = nia;
   } else if (d.code == 0x4E800420) {
     // bctr
     uint32_t nia = uint32_t(context->ctr);
-    StepToGuestAddress(thread_id, nia);
+    if (!StepToGuestAddress(thread_id, nia)) return 0;
     pc = nia;
   } else if (opcode == PPCOpcode::bx) {
     // bx
     uint32_t nia = d.I.ADDR();
-    StepToGuestAddress(thread_id, nia);
+    if (!StepToGuestAddress(thread_id, nia)) return 0;
     pc = nia;
   } else if (opcode == PPCOpcode::bcx || opcode == PPCOpcode::bcctrx ||
              opcode == PPCOpcode::bclrx) {
@@ -1221,7 +1249,18 @@ uint32_t Processor::StepIntoGuestBranchTarget(uint32_t thread_id, uint32_t pc) {
       thread->thread()->Resume(&suspend_count);
     }
 
-    fence.Wait();
+    if (!fence.WaitFor(kStepWaitTimeout)) {
+      // Thread never reached either branch target (spinning/blocked). Un-patch
+      // both UD2s, re-suspend, and signal failure (0) to the caller.
+      bpt.Suspend();
+      bpf.Suspend();
+      thread->thread()->Suspend();
+      XELOGW(
+          "StepIntoGuestBranchTarget({:08X}) timed out; thread {:08X} not "
+          "advancing",
+          pc, thread_id);
+      return 0;
+    }
     bpt.Suspend();
     bpf.Suspend();
   }
@@ -1229,14 +1268,26 @@ uint32_t Processor::StepIntoGuestBranchTarget(uint32_t thread_id, uint32_t pc) {
   return pc;
 }
 
-uint32_t Processor::StepToGuestSafePoint(uint32_t thread_id, bool ignore_host) {
+uint32_t Processor::StepToGuestSafePoint(uint32_t thread_id, bool ignore_host,
+                                         int depth) {
   // This cannot be done if we're the calling thread!
   if (thread_id == ThreadState::GetThreadID()) {
     assert_always(
         "Processor::StepToSafePoint(): target thread is the calling thread!");
     return 0;
   }
+  // Bound the MMIO/mfmsr tail-recursion below (each level steps one instruction
+  // and re-enters) so a thread that keeps landing on non-sync host code can't
+  // recurse forever. `depth` is internal bookkeeping; callers pass nothing.
+  if (depth > kMaxSafePointDepth) {
+    XELOGW("StepToGuestSafePoint: recursion depth cap hit for thread {:08X}",
+           thread_id);
+    return 0;
+  }
   auto thread_info = QueryThreadDebugInfo(thread_id);
+  if (!thread_info) {
+    return 0;
+  }
   auto thread = thread_info->thread;
 
   // Now the fun part begins: Registers are only guaranteed to be synchronized
@@ -1280,19 +1331,31 @@ uint32_t Processor::StepToGuestSafePoint(uint32_t thread_id, bool ignore_host) {
     xe::cpu::ppc::PPCDecodeData d;
     const xe::cpu::ppc::PPCOpcodeInfo* sync_info = nullptr;
     d.address = cpu_frames[0].guest_pc - 4;
-    do {
+    for (int scan = 0; scan < kMaxSyncScan; ++scan) {
       d.address += 4;
-      d.code =
-          xe::load_and_swap<uint32_t>(memory()->TranslateVirtual(d.address));
+      auto* host_ptr = memory()->TranslateVirtual(d.address);
+      if (!host_ptr) {
+        break;  // ran off mapped memory - no safe point here
+      }
+      d.code = xe::load_and_swap<uint32_t>(host_ptr);
       auto& opcode_info = xe::cpu::ppc::LookupOpcodeInfo(d.code);
       if (opcode_info.type == cpu::ppc::PPCOpcodeType::kSync) {
         sync_info = &opcode_info;
         break;
       }
-    } while (true);
+    }
+    if (!sync_info) {
+      // No basic-block boundary within range (corrupt PC / unmapped page /
+      // genuinely no branch nearby). Can't capture a coherent context here.
+      XELOGW("StepToGuestSafePoint: no sync op within {} words of {:08X}",
+             kMaxSyncScan, pc);
+      return 0;
+    }
 
     if (d.address != pc) {
-      StepToGuestAddress(thread_id, d.address);
+      if (!StepToGuestAddress(thread_id, d.address)) {
+        return 0;
+      }
       pc = d.address;
     }
 
@@ -1303,6 +1366,10 @@ uint32_t Processor::StepToGuestSafePoint(uint32_t thread_id, bool ignore_host) {
     // over them.
     if (sync_info->group == xe::cpu::ppc::PPCOpcodeGroup::kB) {
       pc = StepIntoGuestBranchTarget(thread_id, d.address);
+      // 0 is the failure sentinel (a real guest branch target is never 0).
+      if (!pc) {
+        return 0;
+      }
     }
   } else {
     // We're in host code. Search backwards til we can get an idea of where
@@ -1336,22 +1403,29 @@ uint32_t Processor::StepToGuestSafePoint(uint32_t thread_id, bool ignore_host) {
     } else if (export_data) {
       // Non-blocking. Run until we return from the thunk.
       pc = static_cast<uint32_t>(thread->thread_state()->context()->lr);
-      StepToGuestAddress(thread_id, pc);
+      if (!StepToGuestAddress(thread_id, pc)) {
+        return 0;
+      }
     } else if (first_pc) {
       // We're in the MMIO handler/mfmsr/something calling out of the guest
       // that doesn't use an export. If the current instruction is
       // synchronizing, we can just save here. Otherwise, step forward
       // (and call ourselves again so we run the correct logic).
-      uint32_t code =
-          xe::load_and_swap<uint32_t>(memory()->TranslateVirtual(first_pc));
+      auto* first_host_ptr = memory()->TranslateVirtual(first_pc);
+      if (!first_host_ptr) {
+        return 0;
+      }
+      uint32_t code = xe::load_and_swap<uint32_t>(first_host_ptr);
       auto& opcode_info = xe::cpu::ppc::LookupOpcodeInfo(code);
       if (opcode_info.type == xe::cpu::ppc::PPCOpcodeType::kSync) {
         // Good to go.
         pc = first_pc;
       } else {
-        // Step forward and run this logic again.
-        StepToGuestAddress(thread_id, first_pc + 4);
-        return StepToGuestSafePoint(thread_id, true);
+        // Step forward and run this logic again (depth-bounded recursion).
+        if (!StepToGuestAddress(thread_id, first_pc + 4)) {
+          return 0;
+        }
+        return StepToGuestSafePoint(thread_id, true, depth + 1);
       }
     } else {
       // We've managed to catch a thread before it called into the guest.

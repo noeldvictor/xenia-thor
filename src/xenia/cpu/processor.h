@@ -200,8 +200,12 @@ class Processor {
   // context. Returns the PC after we've finished stepping.
   // Pass true for ignore_host if you've stopped the thread yourself
   // in host code you want to ignore.
-  // Returns the new PC guest address.
-  uint32_t StepToGuestSafePoint(uint32_t thread_id, bool ignore_host = false);
+  // Returns the new PC guest address, or 0 if a safe point could not be reached
+  // (e.g. the thread is spinning/blocked and won't advance) - callers must
+  // treat 0 as "could not step" and not as a valid guest PC.
+  // `depth` is internal recursion bookkeeping; callers should not pass it.
+  uint32_t StepToGuestSafePoint(uint32_t thread_id, bool ignore_host = false,
+                                int depth = 0);
 
  public:
   // TODO(benvanik): hide.
