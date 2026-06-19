@@ -104,10 +104,17 @@ the foliage pass (ALU is dead on BD; the win is the per-invocation discard/textu
   BD's GPU frame is per-covered-fragment raster+depth+alpha-test overdraw; foliage self-overdraw (43%) is the
   only big content-preserving wall-free slice.
 - CPU-bound titles: ~1.3-1.6x total ceiling (RPCS3 hand-JIT-vs-LLVM gap / Rosetta translation-tax floor).
-  Un-shipped CPU levers, priority order: (1) BL/RET return-address-stack pairing (Rosetta-2 trick; guest
-  returns use plain `br x9` defeating the X3 RAS predictor; ~1 day; device-free qemu-testable), (2) in-block
-  partial-dead-CR / compare->branch FLAGM2 fusion, (3) hot superblock/trace formation (2nd-tier). Lever C
-  (ADPF) is the cheapest CPU-side win + stacks.
+  Un-shipped CPU levers, priority order: ~~(1) BL/RET return-address-stack pairing~~ **DEAD - GATED OUT
+  2026-06-19: the a64 backend ALREADY does RAS-friendly call/return.** Regular guest calls emit host `blr`
+  (RAS-push, a64_emitter.cc:6160); the function epilog ends in `ret` (RAS-pop, :4027); a guest return (blr to
+  LR, CALL_POSSIBLE_RETURN) compares the target to the saved GUEST_RET_ADDR and on match branches to the
+  epilog `ret` (:6120) = RAS-predicted; only true CALL_TAIL uses `br` (correct, no return expected). So the
+  call/return is RAS-balanced - the Rosetta-2 "guest returns use plain br defeating the RAS" premise is FALSE
+  for this backend. Do NOT build it. (2) in-block partial-dead-CR / compare->branch FLAGM2 fusion, (3) hot
+  superblock/trace formation (2nd-tier). Lever C (ADPF) is the cheapest CPU-side win + stacks. NOTE: picking
+  the highest-impact CPU codegen lever needs DEVICE simpleperf on Burnout's hot guest fn (do NOT guess) per
+  [[cpu-track-lockfree-and-thorpack-gate]] - the generic peepholes (known-bits, const-range, rlwinm, CR
+  fast-paths, FLAGM ADD_CARRY) are shipped; remaining wins are trace-formation (big) or device-profiled.
 - DEAD (don't re-propose): mesh shaders (hard-absent both drivers), QCOM tile_shading (840+), VRS-as-ALU-fix
   (ALU dead), Hexagon FastRPC (slower than the GPU), generic opaque depth-prepass (primes wrong layer),
   alpha-to-coverage on BD (inert at msaa=0). ROAA: Turnip enumerates it + dynamic_rendering_local_read but the
