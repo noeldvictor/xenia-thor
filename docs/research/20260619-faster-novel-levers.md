@@ -18,7 +18,31 @@ scenes - it sank the VRS A/B). Two findings this session:
   confirm the frozen composition (rendered/alphatest counts) matches across the two launches before trusting
   the gpu_frame_us delta.
 
-## Lever A (#1, BIGGEST) — Foliage front-to-back reorder to revive Adreno LRZ-TEST reject  [BD, GPU-bound]
+## Lever A (#1) — ⚙️ BUILT as force-depth submode 2026-06-19 (reorder GATED OUT); device A/B pending
+**An adversarial design workflow (2 of 3 lenses sound=False on the reorder) CORRECTED this lever:**
+- **Reorder (front-to-back draw permutation) = GATED OUT.** Reordering alpha-test draws is output-identical
+  ONLY if depth-test-only / non-blended / single-pipeline / no-stencil-write / no-memexport, and real BD
+  foliage WRITES depth -> the reorder is both correctness-risky (blend/stencil/memexport/state-churn + an
+  insert-cursor bug) AND inert on the natural stream. Do NOT build the reorder.
+- **SHIPPED the real lever instead: `gpu_foliage_lrz_force_depth`** (commit 144cd2f92, default-off). One
+  mutation right after normalized_depth_control is computed (vulkan_command_processor.cc:4422): force the
+  alpha-test foliage class to depth-TEST (zfunc=kLess) / depth-WRITE-OFF on the host-RT path, so foliage
+  behind opaque geometry early-Z-rejects (LRZ-TEST survives discard; LRZ-WRITE doesn't). zfunc MUST be kLess
+  (write-off+kAlways normalizes to depth-OFF). Best paired with gpu_opaque_depth_prepass (primes opaque
+  depth); both allowlisted. Quality tradeoff (foliage depth sorting changes), validate visually.
+- **DEVICE A/B (rested session; validatable via gpu_freeze - guest-transparent depth-state change):** freeze
+  at an EARLY SETTLED motion-minimal heavy-foliage frame (idle the guest before T). MATCH-PRECONDITION (hard
+  gate): EXACT post-freeze guest_ms equality across legs + a screenshot PIXEL-DIFF as the decisive arbiter
+  (composition counters are self-confounded - a correct force-depth leaves rendered/verts unchanged) + matched
+  rendered/avg_vertices/comp. Legs (--ez vulkan_trace_draw_outcomes_per_frame true, one fire each, cool<55C
+  between): A = prepass on + force_depth off; B = prepass on + force_depth on; (optional C = force_depth on +
+  prepass off, to see if it helps without the prepass). B<<A at matched frozen frame = the LRZ-test-against-
+  opaque-depth lever is LIVE. CAVEAT: gpu_opaque_depth_prepass's cvar says "scaffold only" - the A vs C legs
+  reveal whether the prepass is actually functional. If null with prepass-on, LRZ-test is genuinely defeated
+  for this foliage class on Adreno.
+
+### (original reorder analysis, superseded - kept for context)
+## Lever A (orig) — Foliage front-to-back reorder to revive Adreno LRZ-TEST reject  [BD, GPU-bound]
 - **Insight (latest):** xenia emits `OpKill` (discard) for the Xenos alpha-test (spirv_shader_translator_rb.cc:619).
   On Adreno/Turnip `discard` disables LRZ-**WRITE** only — **LRZ-TEST (reject) SURVIVES** (ARM Early-Z 2024,
   Mesa/Igalia A7XX LRZ-feedback, Qualcomm Best-Practices Oct-2025). xenia replays guest draws in guest order
