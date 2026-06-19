@@ -53,7 +53,13 @@ $seq = $Seq
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 # 0. Never-thrash gate.
-& $adb -s $DeviceSerial reconnect | Out-Null; Start-Sleep -Seconds 1
+# A TCP/wifi serial (host:port) drops on `adb reconnect`; re-establish it with
+# `adb connect` instead. USB serials still use `reconnect`.
+if ($DeviceSerial -match ':') {
+  & $adb connect $DeviceSerial | Out-Null; Start-Sleep -Seconds 1
+} else {
+  & $adb -s $DeviceSerial reconnect | Out-Null; Start-Sleep -Seconds 1
+}
 $pid0 = "$(& $adb -s $DeviceSerial shell pidof $pkg)".Trim()
 if ($pid0) {
   # The Thor frontend (launcher) auto-restarts after a force-stop, so don't abort

@@ -20,7 +20,24 @@ workflow + code-grounded. >1.3x BD win IS available (GPU overdraw track). Three 
   class with colorWriteMask=0 + depth-write, one is_depth_only pipeline-key bit).
 - Files: vulkan_command_processor.cc:5794-5886 (classifier + prepass scaffolding already exists), :7258, :7638.
 
-## Lever B — VRS coarse-shading the foliage pass  [BD, GPU-bound] — ⚙️ BUILT 2026-06-19 (device-fire pending)
+## Lever B — VRS coarse-shading the foliage pass  [BD, GPU-bound] — ⚙️ BUILT + INFRA-VALIDATED, perf A/B BLOCKED 2026-06-19
+**DEVICE-FIRE RESULT (2026-06-19, commit 39e185ec0):** VRS infrastructure PROVEN working - boot log
+`* VK_KHR_fragment_shading_rate (pipelineFragmentShadingRate: yes)` (extension requested+enabled on Turnip),
+runs with gpu_vrs_foliage_rate=2 CLEAN (zero VK_ERROR/validation/device-lost, 4412 VdSwaps, guest_ms
+advancing normally = guest healthy). **BUT the perf A/B is UNMEASURED - scene-confound.** Baseline (VRS off)
+reached the BD town heavy field (rendered~1158, alphatest~470 + blended=387 draws, gpu_frame_us median
+~127-129ms, guest_ms truncated to "1" by logcat line-length on the longer slow-frame lines = actually
+~1xxxxx). VRS-on fired TWICE (155s + 185s) and BOTH times diverged to a LIGHT menu/load scene (max
+alphatest=93, max rendered=279, white screen, 28-31fps) - NEVER hit the foliage scene. Root cause: the
+wall-clock-timed auto-nav (hid_nop start@/a@ at fixed wall-ms) + VRS-on's faster light-scene pacing land the
+guest in different content; BD boot is NOT reproducible across the two configs (guest_ms is not a reliable
+content anchor here - at the same guest_ms the two runs show different scenes). **A free-running launch A/B
+cannot isolate a GPU lever on BD.** FIX FOR NEXT TIME: a SAVE-STATE anchored at the foliage scene loaded in
+both configs (save_state_at_guest_ms cvar + the TAS/save-state system) = identical scene = clean matched A/B.
+Until then VRS stays default-off (perf unvalidated). This scene-confound also blocks Lever A's free-running
+gate - build the save-state A/B harness FIRST before any further BD GPU-lever device validation.
+
+### (build map) — ⚙️ BUILT 2026-06-19
 **STATUS: fully built end-to-end, cvar-gated default-off (gpu_vrs_foliage_rate=0 = inert), compile-verify
 in progress.** Sites landed: (1) functions/device_khr_fragment_shading_rate.inc; (2) vulkan_device.h ext
 flag + Functions-struct .inc include; (3) vulkan_device.cc VulkanFeatures decl + STRUCT_EXTENSION request
