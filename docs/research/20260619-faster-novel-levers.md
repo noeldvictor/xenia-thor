@@ -31,6 +31,30 @@ workflow + code-grounded. >1.3x BD win IS available (GPU overdraw track). Three 
 - Build: add VK_KHR_fragment_shading_rate to vulkan_device.cc:140-213 request map + feature link; log
   vkGetPhysicalDeviceFragmentShadingRatesKHR tiers (one boot line); cvar gpu_vrs_foliage_rate ->
   CmdSetFragmentShadingRate when the classifier flags the draw alpha-test/blended (1x1 otherwise).
+- **VRS FULL SITE MAP (2026-06-19, all verified; cvar `gpu_vrs_foliage_rate` ALREADY ADDED to gpu_flags.cc/.h):**
+  1. NEW `src/xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc`: `XE_UI_VULKAN_FUNCTION(vkCmdSetFragmentShadingRateKHR)`.
+  2. vulkan_device.h: `bool ext_KHR_fragment_shading_rate=false;` in Extensions (after :199 region) + `#include` the
+     new .inc in the Functions struct (after :227 push_descriptor include).
+  3. vulkan_device.cc: (a) `VulkanFeatures<VkPhysicalDeviceFragmentShadingRateFeaturesKHR, VK_STRUCTURE_TYPE_
+     PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR>` decl near :325; (b) request via
+     `XE_UI_VULKAN_STRUCT_EXTENSION(KHR_fragment_shading_rate)` in the with_gpu_emulation block (sets
+     device->extensions_.ext_KHR_fragment_shading_rate, like ROAA :199); (c) `.Link()` near :361 gated on the
+     ext flag; (d) enable line after the query (~:372): `features.enabled.pipelineFragmentShadingRate =
+     features.supported.pipelineFragmentShadingRate;`; (e) loader `if(ext_KHR_fragment_shading_rate){#include
+     the .inc}` after :826.
+  4. deferred_command_buffer.h: `Command::kVkSetFragmentShadingRate` (enum :638), `struct ArgsVkSetFragment
+     ShadingRate{VkExtent2D size; VkFragmentShadingRateCombinerOpKHR ops[2];}` (:837 region), `CmdVkSet
+     FragmentShadingRate(...)` write method (:501 pattern).
+  5. deferred_command_buffer.cc: replay case (:320 pattern) -> `dfn.vkCmdSetFragmentShadingRateKHR(cb,&size,ops)`.
+  6. vulkan_command_processor.cc :5827: per-draw consumer -> if `cvars::gpu_vrs_foliage_rate && is_alphatest_draw`
+     set {rate,rate} else {1,1} (combiners KEEP,KEEP).
+  7. EmulatorActivity copyIntExtra("gpu_vrs_foliage_rate") + XeniaOptimizations IntCvar toggle.
+  **LAYERING NUANCE:** vulkan_device.cc (xenia-UI) can't read the xenia-GPU cvar gpu_vrs_foliage_rate. Either
+  (a) request the extension UNCONDITIONALLY when supported (low-risk: enabling a supported feature is inert
+  until the consumer sets a rate), or (b) add a separate UI-level enable cvar to gate the request. Prefer (a)
+  for simplicity (the gpu consumer cvar default-off = no rate set = inert), OR (b) for a fully-gated request.
+  Build on a RESTED device (compile-verify Android, then fire with gpu_vrs_foliage_rate=2 on BD heavy field;
+  log the vkGetPhysicalDeviceFragmentShadingRatesKHR tiers + A/B gpu_frame_us).
 
 ## Lever C — ADPF: register the frame-critical GUEST thread, not just the CP worker  [CPU-bound titles]
 - The shipped ADPF session (command_processor.cc:1444-1450) registers ONLY the CP-worker tid + reports the

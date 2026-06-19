@@ -195,6 +195,17 @@ DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
 DEFINE_int32(gpu_blue_dragon_kick_wait_token_budget, 16,
              "Maximum Blue Dragon wait-token kick log lines.", "GPU");
 DEFINE_int32(
+    gpu_vrs_foliage_rate, 0,
+    "Thor novel-hardware speed lever (VK_KHR_fragment_shading_rate, confirmed "
+    "present on both Thor drivers): apply a coarse NxN fragment shading rate to "
+    "alpha-test (foliage) draws so the fragment shader + alpha-test discard run "
+    "once per NxN block instead of per covered sample - up to N*N fewer "
+    "alpha-test invocations on the overdraw-heavy BD foliage. 0=off (1x1, normal); "
+    "2=2x2 (~4x fewer); 4=4x4. Quality-toggle (coarsens foliage edges). Gating "
+    "the extension REQUEST behind this cvar keeps the default device-creation "
+    "path byte-identical when off. Default off, validate per-title.",
+    "GPU");
+DEFINE_int32(
     thor_gpu_thread_affinity_cpu, -1,
     "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "
     "thread to this CPU core index (-1 = off / let the scheduler float it). The "
