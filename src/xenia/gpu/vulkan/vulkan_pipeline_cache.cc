@@ -2312,7 +2312,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 16> dynamic_states;
+  std::array<VkDynamicState, 18> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2389,6 +2389,18 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
         VK_DYNAMIC_STATE_STENCIL_WRITE_MASK;
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_STENCIL_REFERENCE;
+  }
+  // VRS (gpu_vrs_foliage_rate, Thor novel-hardware lever): mark the fragment
+  // shading rate dynamic so the per-draw consumer in VulkanCommandProcessor can
+  // coarse-shade the overdraw-heavy alpha-test/blended foliage class (1x1 for
+  // everything else). Gated on the cvar + device support; default-off (rate 0)
+  // = not added = the pipeline keeps the static 1x1 rate = fully inert. The cvar
+  // is constant per run (set at launch), like the EDS dynamic-state gates above,
+  // so it needs no pipeline-key entry.
+  if (cvars::gpu_vrs_foliage_rate > 0 &&
+      vulkan_device->extensions().ext_KHR_fragment_shading_rate) {
+    dynamic_states[dynamic_state.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;
   }
 
   VkGraphicsPipelineCreateInfo pipeline_create_info;

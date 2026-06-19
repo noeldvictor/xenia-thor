@@ -5824,6 +5824,35 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           collapse_this_draw = true;
         }
       }
+      // VRS (gpu_vrs_foliage_rate, Thor novel-hardware lever): coarse-shade the
+      // overdraw-heavy foliage class (alpha-test OR blended) at 2x2/4x4 to cut
+      // per-covered-fragment FS + alpha-test-discard + texture-fetch work on
+      // Adreno; 1x1 (full rate) for every other draw so only foliage coarsens.
+      // The pipeline declares the dynamic state only when this cvar is on (see
+      // vulkan_pipeline_cache.cc), so default-off (rate 0) short-circuits here =
+      // fully inert + zero per-draw overhead.
+      if (cvars::gpu_vrs_foliage_rate > 0 &&
+          GetVulkanDevice()->extensions().ext_KHR_fragment_shading_rate) {
+        uint32_t vrs_rate = cvars::gpu_vrs_foliage_rate >= 4   ? 4u
+                            : cvars::gpu_vrs_foliage_rate >= 2 ? 2u
+                                                              : 1u;
+        bool vrs_foliage = is_alphatest_draw;
+        if (!vrs_foliage) {
+          auto bc_vrs = register_file_->Get<reg::RB_BLENDCONTROL>();
+          vrs_foliage =
+              !(bc_vrs.color_srcblend == xenos::BlendFactor::kOne &&
+                bc_vrs.color_destblend == xenos::BlendFactor::kZero &&
+                bc_vrs.color_comb_fcn == xenos::BlendOp::kAdd &&
+                bc_vrs.alpha_srcblend == xenos::BlendFactor::kOne &&
+                bc_vrs.alpha_destblend == xenos::BlendFactor::kZero &&
+                bc_vrs.alpha_comb_fcn == xenos::BlendOp::kAdd);
+        }
+        const uint32_t r = vrs_foliage ? vrs_rate : 1u;
+        VkExtent2D frag_size = {r, r};
+        deferred_command_buffer_.CmdVkSetFragmentShadingRate(
+            frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+            VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
+      }
       deferred_command_buffer_.CmdVkDrawIndexed(
           collapse_this_draw
               ? std::min<uint32_t>(

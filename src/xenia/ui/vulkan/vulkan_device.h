@@ -196,6 +196,10 @@ class VulkanDevice {
     // EDRAM-in-GMEM render path that eliminates EDRAM ownership-transfer copies
     // (measured ~9ms / ~22% of the BTTF GPU frame).
     bool ext_EXT_rasterization_order_attachment_access = false;
+    // #227 VK_KHR_fragment_shading_rate (VRS): coarse-shade overdraw-heavy
+    // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
+    // drivers. pipelineFragmentShadingRate enabled when supported.
+    bool ext_KHR_fragment_shading_rate = false;
     // Max descriptors pushable per push (from
     // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
     // extension is unavailable.
@@ -225,6 +229,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_1_3_ext_extended_dynamic_state.inc"
     // VK_KHR_push_descriptor (#81)
 #include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
+    // VK_KHR_fragment_shading_rate (#227, VRS)
+#include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 #undef XE_UI_VULKAN_FUNCTION
   };

@@ -328,6 +328,13 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetDepthCompareOp(command_buffer, args.depth_compare_op);
       } break;
 
+      case Command::kVkSetFragmentShadingRate: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetFragmentShadingRate*>(stream);
+        dfn.vkCmdSetFragmentShadingRateKHR(command_buffer, &args.fragment_size,
+                                           args.combiner_ops);
+      } break;
+
       case Command::kVkSetStencilTestEnable: {
         auto& args =
             *reinterpret_cast<const ArgsVkSetStencilTestEnable*>(stream);

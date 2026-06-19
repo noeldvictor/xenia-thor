@@ -20,7 +20,22 @@ workflow + code-grounded. >1.3x BD win IS available (GPU overdraw track). Three 
   class with colorWriteMask=0 + depth-write, one is_depth_only pipeline-key bit).
 - Files: vulkan_command_processor.cc:5794-5886 (classifier + prepass scaffolding already exists), :7258, :7638.
 
-## Lever B — VRS coarse-shading the foliage pass  [BD, GPU-bound] — NEWLY-CONFIRMED PRESENT
+## Lever B — VRS coarse-shading the foliage pass  [BD, GPU-bound] — ⚙️ BUILT 2026-06-19 (device-fire pending)
+**STATUS: fully built end-to-end, cvar-gated default-off (gpu_vrs_foliage_rate=0 = inert), compile-verify
+in progress.** Sites landed: (1) functions/device_khr_fragment_shading_rate.inc; (2) vulkan_device.h ext
+flag + Functions-struct .inc include; (3) vulkan_device.cc VulkanFeatures decl + STRUCT_EXTENSION request
+(unconditional when supported = layering option (a)) + Link gate + manual pipelineFragmentShadingRate
+enable (NOT via FEATURE_2 - no properties_ member) + honest-flag downgrade + boot log line + loader .inc;
+(4) deferred_command_buffer.h Command::kVkSetFragmentShadingRate + ArgsVkSetFragmentShadingRate + Cmd write
+method; (5) deferred_command_buffer.cc replay case; (6) vulkan_pipeline_cache.cc dynamic_states[16]->[18] +
+VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR appended (cvar+device gated); (7) vulkan_command_processor.cc
+:5827 per-draw consumer (foliage = alpha-test OR blended -> {r,r} KEEP,KEEP, else 1x1); (8) EmulatorActivity
+allowlist + XeniaOptimizations opt_vrs_foliage toggle. **DEVICE FIRE PLAN:** BD heavy field, confirm boot log
+"VK_KHR_fragment_shading_rate (pipelineFragmentShadingRate: yes)", A/B gpu_vrs_foliage_rate 0 vs 2 at matched
+guest_ms+rendered, compare gpu_frame_us, read png (foliage intact, edges may be blockier). Expect 10-25% on
+the foliage pass (ALU is dead on BD; the win is the per-invocation discard/texture-fetch path).
+
+### (original analysis) — NEWLY-CONFIRMED PRESENT
 - **VK_KHR_fragment_shading_rate IS enumerated on BOTH Thor drivers** (Turnip scratch/banjo_gameplay.txt +
   Qualcomm scratch/burnout_base.txt) but requested NOWHERE in src - corrects the standing "unconfirmed". 2x2
   coarse rate on the classified alpha-test/blended foliage draws cuts per-covered-fragment FS + the

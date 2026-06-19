@@ -452,6 +452,32 @@ public final class XeniaOptimizations {
                 new IntCvar[]{new IntCvar("gpu_blended_thin_factor", 2)}));
 
         list.add(new Optimization(
+                "opt_vrs_foliage",
+                "Coarse-shade foliage (variable rate shading)",
+                "Uses the GPU's hardware Variable Rate Shading to shade dense foliage "
+                        + "at a lower rate, cutting per-pixel cost without removing geometry.",
+                "The Adreno 740 supports hardware Variable Rate Shading "
+                        + "(VK_KHR_fragment_shading_rate) - it can run one pixel-shader "
+                        + "invocation per 2x2 block of pixels instead of per pixel. Xenia "
+                        + "ships with it unused. This enables it for the overdraw-heavy "
+                        + "foliage class (alpha-test grass/leaves + alpha-blended "
+                        + "transparency), where the cut-out/transparent edges defeat the "
+                        + "GPU's early-depth rejection and every overlapping layer is fully "
+                        + "shaded. Coarse-shading that class cuts the per-covered-pixel "
+                        + "shader + alpha-test-discard + texture-fetch work (Qualcomm "
+                        + "reports up to ~30% GPU-power savings on coarse passes). Unlike "
+                        + "'Aggressive foliage reduction' it keeps ALL the foliage - it "
+                        + "just shades it more coarsely, so the tradeoff is slightly "
+                        + "softer/blockier foliage edges, not sparser foliage. Stacks with "
+                        + "the thinning toggles. Set to 2 for 2x2 (recommended) or 4 for "
+                        + "4x4 (more aggressive). Only takes effect on devices that expose "
+                        + "the extension (both Thor drivers do); inert otherwise. "
+                        + "Experimental, a per-game visual tradeoff.",
+                CATEGORY_GPU, false, false,
+                null,
+                new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 2)}));
+
+        list.add(new Optimization(
                 "opt_prime_core_router",
                 "Prime-core GPU-command priority",
                 "Pins the GPU-command thread to the 3.19 GHz Cortex-X3 and raises "

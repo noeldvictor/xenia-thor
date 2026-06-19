@@ -202,6 +202,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
           EXT_shader_demote_to_helper_invocation, 1, 3)
       // #423.
       XE_UI_VULKAN_LOCAL_EXTENSION(EXT_non_seamless_cube_map)
+      // #227 VK_KHR_fragment_shading_rate (VRS) - Thor novel-hardware speed lever:
+      // coarse-shade overdraw-heavy alpha-test foliage (1 FS+alpha-test per NxN
+      // block). Confirmed enumerable on both Thor drivers. Requested when supported;
+      // INERT until the gpu_vrs_foliage_rate consumer sets a coarse rate.
+      XE_UI_VULKAN_STRUCT_EXTENSION(KHR_fragment_shading_rate)
     }
     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
       // #237.
@@ -323,6 +328,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceNonSeamlessCubeMapFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT>
       features_EXT_non_seamless_cube_map;
+  // #227 VK_KHR_fragment_shading_rate (VRS) - coarse-shade overdraw foliage.
+  VulkanFeatures<
+      VkPhysicalDeviceFragmentShadingRateFeaturesKHR,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR>
+      features_KHR_fragment_shading_rate;
   VkPhysicalDevicePushDescriptorPropertiesKHR
       properties_KHR_push_descriptor = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
@@ -361,6 +371,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
     if (ext_EXT_non_seamless_cube_map) {
       features_EXT_non_seamless_cube_map.Link(supported_features_2,
+                                              device_create_info);
+    }
+    if (device->extensions_.ext_KHR_fragment_shading_rate) {
+      features_KHR_fragment_shading_rate.Link(supported_features_2,
                                               device_create_info);
     }
     if (device->extensions_.ext_KHR_push_descriptor) {
@@ -743,6 +757,25 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
   }
 
+  if (device->extensions_.ext_KHR_fragment_shading_rate) {
+    // Only the pipeline (per-draw, via vkCmdSetFragmentShadingRate) rate is used.
+    // Enable manually (not via XE_UI_VULKAN_FEATURE_2, which also mirrors into
+    // device->properties_ - a struct that has no VRS member).
+    if (with_gpu_emulation) {
+      features_KHR_fragment_shading_rate.enabled.pipelineFragmentShadingRate =
+          features_KHR_fragment_shading_rate.supported.pipelineFragmentShadingRate;
+    }
+    // Keep the extension flag honest: only count it available if the pipeline
+    // rate actually got enabled (the consumer guards on this flag before calling
+    // vkCmdSetFragmentShadingRateKHR).
+    device->extensions_.ext_KHR_fragment_shading_rate =
+        with_gpu_emulation &&
+        features_KHR_fragment_shading_rate.supported.pipelineFragmentShadingRate ==
+            VK_TRUE;
+    XELOGI("* VK_KHR_fragment_shading_rate (pipelineFragmentShadingRate: {})",
+           device->extensions_.ext_KHR_fragment_shading_rate ? "yes" : "no");
+  }
+
   if (device->extensions_.ext_KHR_push_descriptor) {
     device->extensions_.max_push_descriptors =
         properties_KHR_push_descriptor.maxPushDescriptors;
@@ -824,6 +857,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (device->extensions_.ext_KHR_push_descriptor) {
 #include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
+  }
+  if (device->extensions_.ext_KHR_fragment_shading_rate) {
+#include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
   }
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 

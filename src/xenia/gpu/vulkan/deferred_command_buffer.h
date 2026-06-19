@@ -510,6 +510,19 @@ class DeferredCommandBuffer {
     args.depth_compare_op = depth_compare_op;
   }
 
+  // VK_KHR_fragment_shading_rate (VRS) - coarse-shade per-draw (foliage lever).
+  void CmdVkSetFragmentShadingRate(
+      const VkExtent2D& fragment_size,
+      VkFragmentShadingRateCombinerOpKHR combiner_op0,
+      VkFragmentShadingRateCombinerOpKHR combiner_op1) {
+    auto& args = *reinterpret_cast<ArgsVkSetFragmentShadingRate*>(
+        WriteCommand(Command::kVkSetFragmentShadingRate,
+                     sizeof(ArgsVkSetFragmentShadingRate)));
+    args.fragment_size = fragment_size;
+    args.combiner_ops[0] = combiner_op0;
+    args.combiner_ops[1] = combiner_op1;
+  }
+
   void CmdVkSetStencilTestEnable(VkBool32 stencil_test_enable) {
     auto& args = *reinterpret_cast<ArgsVkSetStencilTestEnable*>(WriteCommand(
         Command::kVkSetStencilTestEnable, sizeof(ArgsVkSetStencilTestEnable)));
@@ -636,6 +649,7 @@ class DeferredCommandBuffer {
     kVkSetDepthCompareOp,
     kVkSetDepthTestEnable,
     kVkSetDepthWriteEnable,
+    kVkSetFragmentShadingRate,
     kVkSetFrontFace,
     kVkSetPrimitiveRestartEnable,
     kVkSetPrimitiveTopology,
@@ -840,6 +854,11 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetDepthCompareOp {
     VkCompareOp depth_compare_op;
+  };
+
+  struct ArgsVkSetFragmentShadingRate {
+    VkExtent2D fragment_size;
+    VkFragmentShadingRateCombinerOpKHR combiner_ops[2];
   };
 
   struct ArgsVkSetStencilTestEnable {
