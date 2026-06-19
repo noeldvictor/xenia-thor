@@ -41,6 +41,16 @@ scenes - it sank the VRS A/B). Two findings this session:
   reveal whether the prepass is actually functional. If null with prepass-on, LRZ-test is genuinely defeated
   for this foliage class on Adreno.
 
+- **FIRST DEVICE RESULT (free-running, 2026-06-19):** force_depth=on + prepass=on REACHED the town (alphatest
+  up to 1375; force_depth is guest-transparent enough to reach the scene, unlike VRS) + no Vulkan errors, BUT
+  ~137ms vs ~127ms baseline (~8% SLOWER) at composition-matched town frames AND a BLACK final screenshot. Root
+  cause = the opaque prepass: it's "scaffold only" and a FULL-COLOR reorder (re-renders opaque twice -> extra
+  cost + likely corrupts the present). **The real BD overdraw build is now clear: make the opaque prepass
+  FUNCTIONAL + DEPTH-ONLY** (is_depth_only pipeline-key bit -> colorWriteMask=0 + minimal FS for the no-alpha
+  opaque class) so it primes depth cheaply without double-color/black-out; THEN re-test force_depth via
+  gpu_freeze. force_depth (default-off) is correct + committed; it has no working partner until the prepass is
+  fixed.
+
 ### (original reorder analysis, superseded - kept for context)
 ## Lever A (orig) — Foliage front-to-back reorder to revive Adreno LRZ-TEST reject  [BD, GPU-bound]
 - **Insight (latest):** xenia emits `OpKill` (discard) for the Xenos alpha-test (spirv_shader_translator_rb.cc:619).
