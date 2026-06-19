@@ -196,8 +196,8 @@ public final class XeniaOptimizations {
                         + "known-bits analysis proves when a mask keeps every bit a "
                         + "value could possibly have, and drops it - fewer host "
                         + "instructions in branchy integer code. Bit-exact; "
-                        + "host-validated. Default off pending in-game validation.",
-                CATEGORY_CPU, false, false,
+                        + "host-validated + device-regression-clean on Gears.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("hir_known_bits_mask_fold")}, null));
 
         list.add(new Optimization(
@@ -209,9 +209,9 @@ public final class XeniaOptimizations {
                         + "result cannot have any bit set - an AND with a "
                         + "non-overlapping mask, or a right shift that moves every "
                         + "possible bit out. Common in bitfield and shifted-load "
-                        + "code. Bit-exact; host-validated. Default off pending "
-                        + "in-game validation.",
-                CATEGORY_CPU, false, false,
+                        + "code. Bit-exact; host-validated + device-regression-"
+                        + "clean on Gears.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("hir_const_range_fold")}, null));
 
         list.add(new Optimization(

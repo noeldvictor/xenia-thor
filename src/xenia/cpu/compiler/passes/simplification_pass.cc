@@ -32,7 +32,7 @@ DEFINE_bool(hir_fold_and_not, true,
             "CPU");
 
 DEFINE_bool(
-    hir_known_bits_mask_fold, false,
+    hir_known_bits_mask_fold, true,
     "Thor CPU codegen lever: known-bits (NZM) redundant-mask elimination. Drop "
     "an AND(x, constant) when a conservative upper bound on x's possibly-set "
     "bits already fits entirely inside the mask (x & c == x), so the AND is a "
@@ -41,20 +41,23 @@ DEFINE_bool(
     "exactly the branchy integer hot code of CPU-bound titles (Burnout, Lost "
     "Odyssey). Bit-exact (definitional). Additive to the per-instruction "
     "rlwinm fast-paths (this catches CROSS-instruction redundancy they can't). "
-    "Inspired by xenia-edge's NZM simplification_pass. Default-off until "
-    "host+qemu differential-validated; then a stacking XeniaOptimizations toggle.",
+    "Inspired by xenia-edge's NZM simplification_pass. DEFAULT-ON: bit-exact "
+    "op-reduction, host-x64 differential-tested + device-regression-clean on "
+    "Gears (boot->menu->campaign->load, no crash); a stacking XeniaOptimizations "
+    "toggle (off-switch).",
     "CPU");
 
 DEFINE_bool(
-    hir_const_range_fold, false,
+    hir_const_range_fold, true,
     "Thor CPU codegen lever (extends hir_known_bits_mask_fold): fold an integer "
     "op to a constant 0 when a conservative upper bound on its operands' bits "
     "(MaxNonzeroBits) proves the result CANNOT have any bit set - AND(x,const) "
     "where x's possible bits don't overlap the mask, and SHR(x,const) that "
     "shifts every possible bit of x out the bottom. Common in PPC bitfield/mask "
     "and shifted zero-extended-load code. Bit-exact (definitional); the dead op "
-    "is removed and DCE cleans the rest. Default-off until host+qemu validated, "
-    "then a stacking XeniaOptimizations toggle.",
+    "is removed and DCE cleans the rest. DEFAULT-ON: bit-exact op-reduction, "
+    "host-x64 differential-tested + device-regression-clean on Gears; a stacking "
+    "XeniaOptimizations toggle (off-switch).",
     "CPU");
 
 namespace xe {
@@ -160,11 +163,15 @@ uint64_t SimplificationPass::MaxNonzeroBits(const Value* v, int depth) {
     return (MaxNonzeroBits(s1, depth - 1) | MaxNonzeroBits(s2, depth - 1)) &
            type_mask;
   } else if (op == &OPCODE_SHL_info && s1 && s2 && s2->IsConstant()) {
-    uint64_t sh = s2->constant.u8 & 63;  // shift amount is i8 in HIR
+    // PPC/HIR shifts mask the amount to the OPERAND width (i8->&7 ... i64->&63),
+    // matching Value::Shl/Shr + the backends. Using &63 would over-shift narrow
+    // types and UNDER-estimate the bits, which is unsound for the folds that use
+    // MaxNonzeroBits (they'd drop/zero ops that aren't actually redundant).
+    uint64_t sh = s2->constant.u8 & (GetTypeSize(v->type) * 8 - 1);
     return (MaxNonzeroBits(s1, depth - 1) << sh) & type_mask;
   } else if (op == &OPCODE_SHR_info && s1 && s2 && s2->IsConstant()) {
     // Logical shift right: high bits zero-filled, so known bits move down.
-    uint64_t sh = s2->constant.u8 & 63;
+    uint64_t sh = s2->constant.u8 & (GetTypeSize(v->type) * 8 - 1);
     return (MaxNonzeroBits(s1, depth - 1) >> sh) & type_mask;
   }
 
@@ -242,8 +249,11 @@ bool SimplificationPass::SimplifyConstRange(HIRBuilder* builder) {
         } else if (op == &OPCODE_SHR_info && i->src2.value &&
                    i->src2.value->IsConstant()) {
           // logical shift right by a constant: 0 if every possible bit of x is
-          // below the shift amount. MaxNonzeroBits is already type-width-masked.
-          uint64_t sh = i->src2.value->constant.u8 & 63;
+          // below the shift amount. Mask the shift to the OPERAND width (i8->&7
+          // ... i64->&63) exactly as Value::Shr/the backends do - using &63
+          // would over-shift narrow types (e.g. Shr(i8,8) is &7=0, NOT a wipe).
+          uint64_t sh =
+              i->src2.value->constant.u8 & (GetTypeSize(i->dest->type) * 8 - 1);
           folds_to_zero = (MaxNonzeroBits(i->src1.value, 8) >> sh) == 0;
         }
         if (folds_to_zero) {

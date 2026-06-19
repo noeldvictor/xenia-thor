@@ -90,6 +90,23 @@ TEST_CASE("CONSTRANGE_SHR_BITS_REMAIN_NOT_FOLDED", "[instr]") {
            [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0x0Aull); });
 }
 
+TEST_CASE("CONSTRANGE_SHR_NARROW_IN_WIDE_NOT_OVERFOLDED", "[instr]") {
+  // The width-mask fix's real regression target: a zero-extended i8 living in an
+  // i32 (bits <= 0xFF) shifted right by 4 keeps bits -> must NOT fold; result =
+  // (byte) >> 4. Unambiguous shift (4 < 32) so backend + const-fold agree. This
+  // guards the &63-vs-&(width-1) shift-mask fix without touching the guest-
+  // impossible "i8 shift by >= width" backend-UB corner.
+  ConstRangeFoldGuard guard;
+  TestFunction test([](HIRBuilder& b) {
+    Value* x = b.ZeroExtend(b.Truncate(LoadGPR(b, 4), INT8_TYPE), INT32_TYPE);
+    Value* s = b.Shr(x, int8_t(4));
+    StoreGPR(b, 3, b.ZeroExtend(s, INT64_TYPE));
+    b.Return();
+  });
+  test.Run([](PPCContext* ctx) { ctx->r[4] = 0x000000ABull; },
+           [](PPCContext* ctx) { REQUIRE(ctx->r[3] == 0x0Aull); });
+}
+
 TEST_CASE("CONSTRANGE_FULL_VALUE_AND_NOT_FOLDED", "[instr]") {
   // A full-width i32 (unknown bits) AND 0xFF00 must NOT fold -> (r4 >> 8 ... )
   // i.e. result = low32(r4) & 0xFF00, here 0x3456 & 0xFF00 = 0x3400.
