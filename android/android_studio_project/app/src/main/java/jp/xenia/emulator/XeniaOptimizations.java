@@ -188,6 +188,33 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("hir_algebraic_identities")}, null));
 
         list.add(new Optimization(
+                "opt_known_bits_mask_fold",
+                "Redundant mask elimination (known-bits)",
+                "Drops AND masks a known-bits analysis proves are no-ops.",
+                "Emulating 32-bit PowerPC ops and zero-extending loads on the "
+                        + "64-bit ARM registers leaves redundant AND masks. A "
+                        + "known-bits analysis proves when a mask keeps every bit a "
+                        + "value could possibly have, and drops it - fewer host "
+                        + "instructions in branchy integer code. Bit-exact; "
+                        + "host-validated. Default off pending in-game validation.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("hir_known_bits_mask_fold")}, null));
+
+        list.add(new Optimization(
+                "opt_const_range_fold",
+                "Constant-zero range folding (known-bits)",
+                "Folds ops that provably produce zero to a constant.",
+                "Using the same known-bits analysis, folds an integer op to a "
+                        + "constant 0 when its operands' possible bits prove the "
+                        + "result cannot have any bit set - an AND with a "
+                        + "non-overlapping mask, or a right shift that moves every "
+                        + "possible bit out. Common in bitfield and shifted-load "
+                        + "code. Bit-exact; host-validated. Default off pending "
+                        + "in-game validation.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("hir_const_range_fold")}, null));
+
+        list.add(new Optimization(
                 "opt_and_not_fold",
                 "Fused AND-NOT codegen",
                 "Compiles 'x AND (NOT y)' into a single ARM64 instruction.",
