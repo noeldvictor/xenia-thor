@@ -3,6 +3,21 @@
 User goal: "get this emulator FASTER, novel hardware tricks, latest research." 6-agent WebSearch-backed
 workflow + code-grounded. >1.3x BD win IS available (GPU overdraw track). Three levers, all code-verified.
 
+## ⭐ VALIDATION UNBLOCK (2026-06-19): reorder levers are gpu_freeze-validatable; save-states are deadlocked
+The recurring BD GPU-lever validation wall is boot-nondeterminism (a free-running A/B races into different
+scenes - it sank the VRS A/B). Two findings this session:
+- **Save-state matched-A/B path is DEEPLY blocked** (deferred): SaveToFile hangs in (1) StepToGuestSafePoint
+  stepping a spinning thread - FIXED + shipped (6e4da5a97, bounded waits/scan/recursion + soft-skip), AND
+  (2) a global-lock DEADLOCK - KernelState::Save -> ObjectTable::GetObjectsByType does
+  global_critical_region_.Acquire() while a Pause()-suspended guest thread holds the global lock (SaveToFile
+  runs lockless by design, emulator.cc:1111). Per-object Save likely adds more. Multi-layer, uncertain payoff.
+- **KEY INSIGHT - a draw-REORDER lever is GUEST-TRANSPARENT**, so it needs NO save-state: it changes only GPU
+  draw-replay order, not guest CPU execution, so under gpu_freeze_at_guest_ms both gate variants run the guest
+  IDENTICALLY and freeze on the SAME scene = a clean deterministic A/B. (VRS could NOT - it changed GPU work
+  -> frame time -> VdSwap pacing -> different nav.) So **Lever A below is validatable NOW via gpu_freeze**;
+  confirm the frozen composition (rendered/alphatest counts) matches across the two launches before trusting
+  the gpu_frame_us delta.
+
 ## Lever A (#1, BIGGEST) — Foliage front-to-back reorder to revive Adreno LRZ-TEST reject  [BD, GPU-bound]
 - **Insight (latest):** xenia emits `OpKill` (discard) for the Xenos alpha-test (spirv_shader_translator_rb.cc:619).
   On Adreno/Turnip `discard` disables LRZ-**WRITE** only — **LRZ-TEST (reject) SURVIVES** (ARM Early-Z 2024,
