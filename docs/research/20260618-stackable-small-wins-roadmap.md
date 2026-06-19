@@ -17,6 +17,27 @@ compilation-lock + XMA plan. Full raw list: scratch/consult/codex.md. This is th
   Gears-load A/B can't see it — load is compile-bound, not resolution-bound). This is the corrected form of
   `cpu_lockfree_entry_lookup`.
 
+## INVESTIGATION FINDINGS 2026-06-19 (what's ALREADY DONE — do NOT re-chase)
+Grinding the batch revealed the backend/frontend are more optimized than Codex's generic list assumed:
+- **a64 backend ALREADY emits cbz (69×) / cbnz (42×) / csel (10×) / tbz+tbnz (4×)** → #35/#36/#28 (zero/bit-test
+  branches, csel diamonds) are LARGELY DONE. tbz/tbnz has only 4 uses — marginal room for more bit-test-branch
+  coverage, low priority.
+- **Self-op idioms ALREADY handled at PPC-emit**: `or rN,rN,rN` → `Yield()` (spin-hint!), `or rA,rB,rB` (mr) →
+  assign. So OR(x,x)/mr folds are not needed.
+- **FFmpeg XMA decode is ALREADY NEON** (config_android_aarch64.h HAVE_NEON=1; the build compiles
+  fft_neon.S/mdct_neon.S). The 21.5% is real, largely-irreducible NEON decode of load-screen audio, NOT a
+  missing-optimization. av_packet_/av_frame_ already reused (Codex #18 done). Remaining XMA lever = thread
+  affinity (keep XMA off the X3 — needs thor_topology check + DEVICE verify) + decode-cache (only if streams
+  repeat). Modest, device-gated.
+- **Compilation already runs OUTSIDE the global lock** (ResolveFunction→GetOrCreate takes it only to
+  create/spin, releases before Translate). The load-phase churn is acquisition FREQUENCY (new-fn creates).
+  The lock-free-GetOrCreate (landed) helps steady-state; load-phase needs sharded entry-table locks (a real
+  project, not a peephole) or the precompiler A/B (device-gated).
+- **CONCLUSION: the device-free quick-win codegen peephole batch is substantively COMPLETE** — open folds
+  landed (known-bits mask + const-range), the rest already-present. Remaining gains are bigger projects
+  (sharded entry-table lock, address-CSE) or DEVICE-gated A/Bs (steady-gameplay lock-free, precompiler,
+  XMA-affinity). Both folds surfaced as stacking XeniaOptimizations toggles (default-off, pending in-game flip).
+
 ## Reconciliation vs our walls (do NOT pursue — proven dead)
 - Codex #10 `jit_stub_first_publish`, anything that lets a worker compile while gameplay runs = the parallel-JIT
   DEADLOCK wall (recursive global lock). Only JOINED load-window precompile is safe.
