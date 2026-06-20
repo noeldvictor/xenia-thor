@@ -62,7 +62,16 @@ public final class GameProfiles {
         // guards on. Device-validated 2026-05-31. Keep it off for this title.
         PROFILES.put("4D5307DF", new Profile("Blue Dragon")
                 .add("gpu_uma_direct_shared_memory", Boolean.FALSE,
-                        "UMA-direct present-hangs Blue Dragon; keep it off"));
+                        "UMA-direct present-hangs Blue Dragon; keep it off")
+                .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
+                        "BD reads its pack files (item_rec.ipk etc.) async; its "
+                        + "async-completion path never consumes the (already-read) "
+                        + "result, so it polls STATUS_PENDING forever -> white-screen "
+                        + "boot stall (the same 'false dirty-disc' async race as "
+                        + "Banjo). Forcing synchronous completion routes BD to its "
+                        + "working sync-consume path -> it boots reliably to the 3D "
+                        + "field. Device-validated 2026-06-20 (reached rendered=2250 / "
+                        + "263k-vert foliage field; STATUS_PENDING polls 0)."));
 
         // Burnout Revenge (454107DC): UMA-direct present-hangs the EA/EAHD/CRRW
         // intro movie chain (VdSwap freezes). Off runs the movies through to a
