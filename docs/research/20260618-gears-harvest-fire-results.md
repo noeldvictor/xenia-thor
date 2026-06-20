@@ -57,10 +57,27 @@ not dead). **The 13.8% is real; its true lever is COMPILATION-lock churn -> A/B 
 1. **`cpu_precompile_guest_functions` A/B** (shipped, default-off) — attacks the measured 13.8% compilation-lock
    churn directly (pre-warm the call-graph on idle cores at load). Highest-evidence next gain.
 2. **Host XMA decoder NEON optimization** — 21.5% of load CPU in the XMA decoder thread; host-side, cross-title.
+   ⚠️ CAVEAT (2026-06-20): on Burnout the XMA Decoder runs on its OWN core with ~5/8 cores idle, so on a
+   Main/CP-thread-bound title it is a POWER/thermal win, not necessarily fps — fps-relevant only via reduced
+   thermal throttling. Validate it actually moves fps before claiming an fps win.
 3. **`hir_known_bits_mask_fold` -> default-on** (shipped, default-off, bit-exact host-tested) — pure op-count
    reduction; needs a device regression-check (boot+render clean) then flip + XeniaOptimizations toggle.
-4. **`cpu_lockfree_entry_lookup`** — gated on a steady-gameplay measurement (neutral at load).
+4. ~~**`cpu_lockfree_entry_lookup`**~~ — ⛔ RESOLVED DEAD FOR FPS (2026-06-20). Clean 2-fire matched A/B on the
+   Burnout TRAFFIC ATTACK **steady race** (rendered=2110, scene stable 128s, the gap this item flagged):
+   OFF 8.43 vs ON 8.43 VdSwap/s, median cpu_issuedraw 90111 vs 89894us = IDENTICAL within noise. So the
+   read-cache is neutral in steady gameplay too, not just at load. The lock machinery (~10-13% in profiles) is
+   kernel/memory locks, NOT EntryTable::Get/GetOrCreate hits. cpu_lockfree_entry_lookup stays default-off
+   (provably-correct but inert); do NOT re-chase it as an fps lever. [[burnout-hot-fn-ring-drain-spin]]
 5. **Guest spin-wait** (guest_8222F460) — spin-detect/yield; niche.
+
+## ⭐ Burnout race bottleneck CONFIRMED (2026-06-20, the A/B's real finding)
+The matched A/B re-confirmed Burnout's TRAFFIC ATTACK race is **cpu_issuedraw-bound (~90ms/frame)**, not lock
+or codegen: rendered=2110, total_vertices=626593, comp[opaque=1343 alphatest=562 blended=188], gpu_frame
+~46ms, fence_us ~46.7ms (CP waits a full GPU frame), cpu_setup ~49ms + cpu_beginsubmit ~47ms + cpu_bind
+~10.5ms. ~8.43 VdSwap/s. The per-draw CP issue cost (2110 draws, ~21us/draw of real work) + GPU/CP
+serialization is THE lever. Codegen (inlining already shipped: __savegprlr/__restgprlr byte-pattern-detected +
+ppc_thread_field_leaf), lock-free, and the ring-drain spin (guest_82382710, already optimally inlined) are all
+NOT it. Real escape = the per-draw IssueDraw cost -> bindless vertex fetch (big) OR cutting per-draw CP work.
 
 ## Net verdict
 The harvest did its job: it KILLED the CRT-port-is-a-win hypothesis for this scene (the hot leaf is
