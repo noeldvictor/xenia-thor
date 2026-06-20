@@ -262,6 +262,11 @@ class Emulator {
   std::optional<uint32_t> title_id_;  // Currently running title ID
 
   bool paused_;
+  // Set by Pause(): false if any guest thread failed to acknowledge its suspend
+  // within the bounded rendezvous (it may still be running / about to hold the
+  // global lock). SaveToFile aborts in that case rather than deadlocking the
+  // kernel save on a thread frozen while owning the global recursive_mutex.
+  bool pause_acknowledged_all_ = true;
   bool restoring_;
   threading::Fence restore_fence_;  // Fired on restore finish.
 };

@@ -802,18 +802,29 @@ void EmulatorApp::EmulatorThread() {
     // this EmulatorThread (owns the title lifecycle); the auto-save uses a host
     // poll-thread (SaveToFile pauses the GUEST threads, so a non-guest host
     // thread is safe, like the desktop UI-thread F7 path).
+    // Resolve relative save/restore paths against the WRITABLE storage root. On
+    // Android the process cwd is non-writable ("/"), so a relative default like
+    // "state.sav" must land in getFilesDir or MappedMemory::Open fails (the
+    // observed save-state file-open failure). Absolute paths pass through.
+    auto resolve_state_path =
+        [this](const std::filesystem::path& p) -> std::filesystem::path {
+      return p.is_relative() ? (emulator_->storage_root() / p) : p;
+    };
     if (!cvars::restore_state_path.empty()) {
-      if (emulator_->RestoreFromFile(cvars::restore_state_path)) {
+      const std::filesystem::path restore_path =
+          resolve_state_path(cvars::restore_state_path);
+      if (emulator_->RestoreFromFile(restore_path)) {
         XELOGI("save-state: restored from '{}'",
-               xe::path_to_utf8(cvars::restore_state_path));
+               xe::path_to_utf8(restore_path));
       } else {
         XELOGE("save-state: failed to restore from '{}'",
-               xe::path_to_utf8(cvars::restore_state_path));
+               xe::path_to_utf8(restore_path));
       }
     }
     if (cvars::save_state_at_guest_ms > 0) {
       const uint64_t target_ms = uint64_t(cvars::save_state_at_guest_ms);
-      const std::filesystem::path save_path = cvars::save_state_path;
+      const std::filesystem::path save_path =
+          resolve_state_path(cvars::save_state_path);
       Emulator* emu = emulator_.get();
       std::thread([emu, target_ms, save_path]() {
         while (xe::Clock::QueryGuestUptimeMillis() < target_ms) {

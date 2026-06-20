@@ -1052,6 +1052,7 @@ void Emulator::Pause() {
   auto current_thread = kernel::XThread::IsInThread()
                             ? kernel::XThread::GetCurrentThread()
                             : nullptr;
+  pause_acknowledged_all_ = true;
   for (auto thread : threads) {
     // Don't pause ourself or host threads.
     if (thread == current_thread || !thread->can_debugger_suspend()) {
@@ -1068,9 +1069,11 @@ void Emulator::Pause() {
       // the root cause of the SaveToFile hang in KernelState::Save (the POSIX
       // Suspend is async + returned before the victim parked). No-op on Windows.
       if (!thread->thread()->WaitForSuspendAcknowledged(2000)) {
+        pause_acknowledged_all_ = false;
         XELOGW(
-            "Emulator::Pause: suspend-acknowledge timed out for a guest thread; "
-            "a save-state taken now may be unsafe.");
+            "Emulator::Pause: suspend-acknowledge timed out for guest thread "
+            "'{}' (tid={:08X}); a save-state taken now would be unsafe.",
+            thread->name(), thread->thread_id());
       }
     }
   }
@@ -1105,6 +1108,18 @@ void Emulator::Resume() {
 
 bool Emulator::SaveToFile(const std::filesystem::path& path) {
   Pause();
+
+  // If any guest thread failed to acknowledge its suspend, it may still be
+  // running / about to take the global lock; proceeding into KernelState::Save
+  // (which acquires that lock) would deadlock with no way out. Abort cleanly so
+  // the emulator resumes instead of hanging frozen-paused.
+  if (!pause_acknowledged_all_) {
+    XELOGE(
+        "save-state: aborting save - a guest thread did not suspend in time "
+        "(the kernel save would deadlock on the global lock). Resuming.");
+    Resume();
+    return false;
+  }
 
   filesystem::CreateEmptyFile(path);
   auto map = MappedMemory::Open(path, MappedMemory::Mode::kReadWrite, 0, 2_GiB);
