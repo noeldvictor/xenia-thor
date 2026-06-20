@@ -56,10 +56,13 @@ not dead). **The 13.8% is real; its true lever is COMPILATION-lock churn -> A/B 
 ## "Every little gain" hit-list (evidence-ranked, each needs its own measured fire)
 1. **`cpu_precompile_guest_functions` A/B** (shipped, default-off) — attacks the measured 13.8% compilation-lock
    churn directly (pre-warm the call-graph on idle cores at load). Highest-evidence next gain.
-2. **Host XMA decoder NEON optimization** — 21.5% of load CPU in the XMA decoder thread; host-side, cross-title.
-   ⚠️ CAVEAT (2026-06-20): on Burnout the XMA Decoder runs on its OWN core with ~5/8 cores idle, so on a
-   Main/CP-thread-bound title it is a POWER/thermal win, not necessarily fps — fps-relevant only via reduced
-   thermal throttling. Validate it actually moves fps before claiming an fps win.
+2. ~~**Host XMA decoder NEON optimization**~~ — ⛔ DOWNGRADED (2026-06-20 scoping). (a) The XMA decoder is
+   FFmpeg's wmapro decoder (xma_context.cc), and the active ARM64 build ALREADY compiles the aarch64 NEON .S
+   files (third_party/FFmpeg/libavcodec/premake5.lua: fft_neon.S/mdct_neon.S/simple_idct_neon.S +
+   libavutil float_dsp_neon.S), so the heavy DSP (IMDCT/FFT/vector_fmul) of the 21.5% is ALREADY NEON. The
+   residual is scalar wmaprodec.c decode logic = a risky vendored-FFmpeg fork, needs a sub-fn profile, uncertain
+   ROI. (b) It runs on its OWN core with ~5/8 idle, so on a Main/CP-bound title it's a POWER/thermal win, not
+   direct fps. NOT a free win; deprioritized.
 3. **`hir_known_bits_mask_fold` -> default-on** (shipped, default-off, bit-exact host-tested) — pure op-count
    reduction; needs a device regression-check (boot+render clean) then flip + XeniaOptimizations toggle.
 4. ~~**`cpu_lockfree_entry_lookup`**~~ — ⛔ RESOLVED DEAD FOR FPS (2026-06-20). Clean 2-fire matched A/B on the
