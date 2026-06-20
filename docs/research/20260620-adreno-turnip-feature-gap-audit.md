@@ -4,6 +4,16 @@ Triggered by the user's (correct) certainty that "we are missing GPU enhancement
 LIVE device extension list (from the Burnout capture logcat — `vkEnumerateDeviceExtensionProperties`) against
 what xenia enables (`vulkan_device.h`/`.cc`). **Turnip exposes ~80 device extensions; xenia enables ~15.**
 
+## ✅ PROBE RESULTS (device, 2026-06-20) — ALL high-value FEATURE bits are ENABLED
+Shipped a one-time `GPU feature-gap audit` log in vulkan_device.cc; device init reports:
+`shaderFloat16=1 bufferDeviceAddress=1 descriptorIndexing=1 runtimeDescriptorArray=1
+sampledImageArrayNonUniformIndexing=1 descriptorBindingPartiallyBound=1 dynamicRendering=1
+synchronization2=1 roaa_color=1 roaa_depth=1`. So EVERY candidate FEATURE is usable (not just the extension).
+⭐ **BIGGEST: ROAA color+depth = 1** (memory roaa-edram-path recorded it FALSE on 2026-06-17 → Turnip flipped
+it ON). The single-pass EDRAM / FSI-alternative path is now FEASIBLE. Full bindless is confirmed
+(bufferDeviceAddress + descriptorIndexing + runtimeDescriptorArray + partiallyBound all = 1). FP16 shaders
+(shaderFloat16=1) confirmed. No feature-flag gamble remains — every lever below builds on a confirmed feature.
+
 ## ⚠️ CORRECTIONS to stale "ABSENT" beliefs (CLAUDE.md / memories) — these ARE exposed now
 The Thor's Turnip build has advanced. The following, previously documented ABSENT, are in the device list:
 - **VK_EXT_descriptor_buffer** (CLAUDE.md said absent) — exposed.
@@ -40,10 +50,13 @@ shipped foliage thinning). The rest are CPU/pass/stutter hygiene = neutral on th
 for lighter/CPU-bound titles.
 
 ## Recommended build order
-1. **Feature-flag probe** (one fire): confirm ROAA / descriptor_buffer / buffer_device_address /
-   dynamic_rendering_local_read / EDS3 sub-bits / shaderFloat16 FEATURE bits. Cheap, unblocks the rest.
-2. **Validate VRS on BD** (gpu_freeze-matched A/B): shipped, Adreno-native, unmeasured — cheapest potential win.
-3. **Bindless vertex fetch** (Burnout): gate (is pipeline-switch context-roll a measurable GPU cost?) → build.
-   The one big GPU lever for Burnout's churn; uses the now-confirmed buffer_device_address + descriptor_indexing.
-4. Sync2 + pipeline_creation_cache_control hygiene (low-risk stacking toggles).
-5. RelaxedPrecision/FP16 pixel shaders + load_store_op_none: bounded/risky, lower priority.
+1. ✅ **Feature-flag probe** — DONE (2026-06-20): all FEATURE bits = 1, ROAA color+depth flipped to TRUE.
+2. **ROAA single-pass EDRAM** (NOW UNBLOCKED, roaa_color/depth=1): the previously-blocked roaa-edram-path —
+   read-modify-write the framebuffer in-tile WITHOUT render-pass breaks/EDRAM transfers for the cases that
+   currently force them. ⚠️ gate: pass/transfer reduction was fps-NEUTRAL on HEAVY BD (B35) — target the
+   blended-transparency path (34% of BD) + verify it cuts gpu_frame, not just passes. Medium-large.
+3. **Validate VRS on BD** (gpu_freeze-matched A/B): shipped, Adreno-native, unmeasured — cheapest potential win.
+4. **Bindless vertex fetch** (Burnout): gate (is pipeline-switch context-roll a measurable GPU cost?) → build.
+   The one big GPU lever for Burnout's churn; buffer_device_address + descriptor_indexing CONFIRMED = 1.
+5. Sync2 + pipeline_creation_cache_control hygiene (low-risk stacking toggles).
+6. RelaxedPrecision/FP16 pixel shaders (shaderFloat16=1) + load_store_op_none: bounded/risky, lower priority.

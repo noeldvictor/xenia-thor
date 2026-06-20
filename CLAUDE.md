@@ -80,8 +80,9 @@ geometry/texture feeds).
 - ⚠️ **TURNIP EXPOSES FAR MORE THAN xenia USES** (device-audited 2026-06-20, ~80 device extensions vs ~15
   enabled — see docs/research/20260620-adreno-turnip-feature-gap-audit.md). Stale "ABSENT" beliefs CORRECTED:
   these ARE exposed now — **`VK_EXT_descriptor_buffer`**, **`VK_EXT_multi_draw`**,
-  **`VK_EXT_rasterization_order_attachment_access`** (ROAA — extension exposed; FEATURE bit pending the probe
-  log in vulkan_device.cc), **`VK_KHR_dynamic_rendering`**(+`local_read`), **`VK_KHR_buffer_device_address`**,
+  **`VK_EXT_rasterization_order_attachment_access`** (ROAA — ⭐ FEATURE roaa_color+depth = **TRUE** per the
+  device probe 2026-06-20, was false 2026-06-17; single-pass EDRAM/FSI-alt now FEASIBLE),
+  **`VK_KHR_dynamic_rendering`**(+`local_read`), **`VK_KHR_buffer_device_address`**,
   **`VK_EXT_descriptor_indexing`** (bindless enablers), **`VK_EXT_load_store_op_none`**,
   **`VK_KHR_synchronization2`**, **`VK_EXT_graphics_pipeline_library`**. Top unexploited levers: bindless
   vertex-fetch (Burnout shader-variant churn), VRS (shipped, unvalidated), FSI-alt (dynamic_rendering_local_read
