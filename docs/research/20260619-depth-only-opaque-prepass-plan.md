@@ -1,5 +1,27 @@
 # Opaque depth-prepass: black-frame fix + depth-only plan + the load-bearing falsifier (2026-06-19)
 
+## ⛔ FALSIFIER RESULT (2026-06-20): LEVER DEAD — do NOT build Part B
+Part A (black-frame fix) VALIDATED on the recovered device: force_depth+prepass now renders the BD town
+CORRECTLY (1.9MB png, Shu in the town, vs the earlier 15K black) - the host-state-tracker desync fix works.
+**But the falsifier KILLED the perf thesis.** Three free-running town captures (composition noted):
+- baseline (no prepass/fdepth): ~127ms @ alphatest~470
+- prepass-only (no fdepth):     ~131ms @ alphatest 521-527 (MORE foliage)
+- prepass + force_depth:        ~137.5ms @ alphatest 469 (FEWER foliage)
+Adding force_depth made it SLOWER (137.5) than prepass-only (131) even though the force_depth run had FEWER
+foliage draws -> **foliage discard does NOT early-Z-reject against primed depth on Adreno 740.** This CONFIRMS
+CLAUDE.md ("alpha-test defeats Adreno LRZ") and REFUTES the Lever-A latest-research hope ("LRZ-TEST survives
+discard") for BD's foliage on this HW. The full-color prepass overhead itself is small (~+4ms), so opaque is
+cheap - but there is no foliage-reject benefit to capture, so a cheaper depth-only Part B would still net ~0
+(no reject) -> **DO NOT BUILD PART B.** Caveat: free-running (scene-confounded, alphatest 469 vs 521); a
+gpu_freeze matched A/B would be airtight, but the direction is consistent + decisive across 3 runs and the
+adversarial `actually-cheaper` lens (sound=False) predicted exactly this. BD overdraw answer stays the SHIPPED
+foliage/blended thinning toggles (2.2x stacked) + VRS (coarse-shade, unvalidated). Part A black-fix is kept
+(a real bug fix: the prepass scaffold no longer black-screens) but the prepass has NO perf value on BD.
+force_depth stays default-off (no-op-to-negative).
+
+---
+
+
 An adversarial design workflow (8 agents, 770s) diagnosed why `gpu_opaque_depth_prepass` black-screened +
 ran ~8% slower on BD, and designed the fix. Two of three verify lenses returned **sound=False** — the
 findings below fold in their corrections. **The win rests on an UNRESOLVED hardware question; gate it.**
