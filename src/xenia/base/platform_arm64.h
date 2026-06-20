@@ -17,6 +17,16 @@ enum A64FeatureFlags : uint64_t {
   kA64EmitLSE = 1 << 0,
   kA64FZFlushesInputs = 1 << 1,
   kA64EmitFlagM = 1 << 2,
+  // Detection-only (no codegen consumer YET) - broadened 2026-06-20 to unblock
+  // the LDAPR barrier-weakening lever + expose fcma/dotprod for future heuristic
+  // units (see docs/research/20260620-ppc-arm64-nextgen-techniques.md). All
+  // present on the AYN Thor per /proc/cpuinfo. Inert until a lowering reads them.
+  kA64EmitLRCPC = 1 << 3,    // FEAT_LRCPC   (LDAPR weak-acquire load)
+  kA64EmitLRCPC2 = 1 << 4,   // FEAT_LRCPC2  (ldapur/stlur; ilrcpc)
+  kA64EmitLSE2 = 1 << 5,     // FEAT_LSE2    (single-op unaligned atomics)
+  kA64EmitJSCVT = 1 << 6,    // FEAT_JSCVT   (FJCVTZS)
+  kA64EmitFCMA = 1 << 7,     // FEAT_FCMA    (FCADD/FCMLA complex)
+  kA64EmitDotProd = 1 << 8,  // FEAT_DotProd (SDOT/UDOT int8; heuristics ONLY)
 };
 
 XE_NOALIAS

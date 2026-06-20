@@ -76,6 +76,33 @@ void InitFeatureFlags() {
 #endif
   }
 
+  // Detection-only broadening (no codegen consumer yet; inert until a lowering
+  // reads these). Correct arm64 HWCAP bits per asm/hwcap.h. Each gated by the
+  // a64_extension_mask so it can be force-disabled. Unblocks the LDAPR lever +
+  // exposes fcma/dotprod for future heuristic units.
+#if defined(__linux__)
+  {
+    const unsigned long hwcap = getauxval(AT_HWCAP);
+    const struct {
+      uint64_t flag;
+      unsigned long bit;
+    } probes[] = {
+        {kA64EmitJSCVT, 1UL << 13},    // HWCAP_JSCVT
+        {kA64EmitFCMA, 1UL << 14},     // HWCAP_FCMA
+        {kA64EmitLRCPC, 1UL << 15},    // HWCAP_LRCPC
+        {kA64EmitDotProd, 1UL << 20},  // HWCAP_ASIMDDP
+        {kA64EmitLSE2, 1UL << 25},     // HWCAP_USCAT (FEAT_LSE2)
+        {kA64EmitLRCPC2, 1UL << 26},   // HWCAP_ILRCPC
+    };
+    for (const auto& p : probes) {
+      if ((uint64_t(cvars::a64_extension_mask) & p.flag) == p.flag &&
+          (hwcap & p.bit)) {
+        feature_flags_ |= p.flag;
+      }
+    }
+  }
+#endif
+
   // Detect whether FPCR.FZ flushes denormal float32 inputs to zero.
   // The ARM spec says input flushing is implementation-defined.
   // Modern cores (Cortex-A76+, Apple M1+) flush inputs; older ones may not.
