@@ -127,7 +127,9 @@ void install_signal_handler(SignalType type) {
   action.sa_flags = SA_SIGINFO;
   action.sa_sigaction = signal_handler;
   sigemptyset(&action.sa_mask);
-  if (sigaction(GetSystemSignal(type), &action, nullptr) == -1)
+  // Mark installed on SUCCESS (was inverted: set on failure, so the early-return
+  // guard never fired and the disposition was needlessly re-installed each time).
+  if (sigaction(GetSystemSignal(type), &action, nullptr) != -1)
     signal_handler_installed[static_cast<size_t>(type)] = true;
 }
 
@@ -725,15 +727,29 @@ class PosixCondition<Thread> : public PosixConditionBase {
       *out_previous_suspend_count = 0;
     }
     WaitStarted();
+    uint32_t prev_suspend_count;
     {
+      prev_suspend_count = suspend_count_;
       if (out_previous_suspend_count) {
         *out_previous_suspend_count = suspend_count_;
       }
       state_ = State::kSuspended;
       ++suspend_count_;
     }
-    // Clear any stale acknowledgement from a prior suspend so a following
-    // WaitForSuspendAcknowledged() waits for THIS suspend's park, not an old one.
+    if (prev_suspend_count != 0) {
+      // Already suspended: the thread is parked in the SIGRTMIN handler's
+      // WaitSuspended(). The handler auto-masks SIGRTMIN (no SA_NODEFER), so a
+      // re-signal would be masked-pending and the handler would never re-enter -
+      // sem_post(suspend_ack_sem_) would never fire and a save-state's
+      // WaitForSuspendAcknowledged would time out (the observed tid=0x11 abort).
+      // The thread is already frozen (and not holding the global lock, having
+      // parked at its first suspend), so acknowledge it ourselves and skip the
+      // redundant signal. Keeps nested suspend/resume counting balanced.
+      sem_post(&suspend_ack_sem_);
+      return true;
+    }
+    // First suspend (0->1): clear any stale acknowledgement, then signal the
+    // thread so it parks in WaitSuspended and posts the ack.
     while (sem_trywait(&suspend_ack_sem_) == 0) {
     }
     int result =
