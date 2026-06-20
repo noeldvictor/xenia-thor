@@ -1060,6 +1060,18 @@ void Emulator::Pause() {
 
     if (thread->is_running()) {
       thread->thread()->Suspend(nullptr);
+      // Wait (while STILL holding the global lock acquired above) until this
+      // guest thread has actually parked. Holding the lock during the wait forces
+      // any victim that was about to enter the global critical region to stay
+      // blocked on Acquire() and park OUTSIDE the region, so when the lock is
+      // released no guest thread is frozen owning the global recursive_mutex -
+      // the root cause of the SaveToFile hang in KernelState::Save (the POSIX
+      // Suspend is async + returned before the victim parked). No-op on Windows.
+      if (!thread->thread()->WaitForSuspendAcknowledged(2000)) {
+        XELOGW(
+            "Emulator::Pause: suspend-acknowledge timed out for a guest thread; "
+            "a save-state taken now may be unsafe.");
+      }
     }
   }
 

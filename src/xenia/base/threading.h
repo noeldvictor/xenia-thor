@@ -498,6 +498,16 @@ class Thread : public WaitHandle {
   // Suspends the specified thread.
   virtual bool Suspend(uint32_t* out_previous_suspend_count = nullptr) = 0;
 
+  // Blocks until a prior Suspend() of this thread has actually taken effect (the
+  // target is genuinely parked), or the bounded timeout elapses; returns true if
+  // acknowledged. On backends whose Suspend is already synchronous w.r.t. the
+  // global critical region (e.g. Windows SuspendThread) this is a no-op that
+  // returns true. Used by Emulator::Pause so no guest thread is left frozen while
+  // it holds the global lock (the SaveToFile-hang fix).
+  virtual bool WaitForSuspendAcknowledged(uint32_t /*timeout_ms*/) {
+    return true;
+  }
+
   // Terminates the thread.
   // No destructors are called, and this function does not return.
   // The state of the thread object becomes signaled, releasing any other

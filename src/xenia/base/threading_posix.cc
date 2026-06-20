@@ -488,6 +488,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         state_(State::kUninitialized),
         suspend_count_(0) {
     sem_init(&suspend_sem_, 0, 0);
+    sem_init(&suspend_ack_sem_, 0, 0);
 #if XE_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -529,6 +530,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         exit_code_(0),
         state_(State::kRunning) {
     sem_init(&suspend_sem_, 0, 0);
+    sem_init(&suspend_ack_sem_, 0, 0);
 #if XE_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -551,6 +553,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
       }
     }
     sem_destroy(&suspend_sem_);
+    sem_destroy(&suspend_ack_sem_);
   }
 
   bool Signal() override { return true; }
@@ -729,9 +732,34 @@ class PosixCondition<Thread> : public PosixConditionBase {
       state_ = State::kSuspended;
       ++suspend_count_;
     }
+    // Clear any stale acknowledgement from a prior suspend so a following
+    // WaitForSuspendAcknowledged() waits for THIS suspend's park, not an old one.
+    while (sem_trywait(&suspend_ack_sem_) == 0) {
+    }
     int result =
         pthread_kill(thread_, GetSystemSignal(SignalType::kThreadSuspend));
     return result == 0;
+  }
+
+  // Block until the target thread's SIGRTMIN handler has actually parked in
+  // WaitSuspended (i.e. it is genuinely frozen), or the bounded timeout elapses.
+  // Used by Emulator::Pause while it holds the global critical region so that no
+  // guest thread can be left suspended while owning the global lock (the cause of
+  // the SaveToFile hang in KernelState::Save). Returns true if acknowledged.
+  bool WaitForSuspendAcknowledged(uint32_t timeout_ms) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += static_cast<time_t>(timeout_ms / 1000);
+    ts.tv_nsec += static_cast<long>((timeout_ms % 1000) * 1000000L);
+    if (ts.tv_nsec >= 1000000000L) {
+      ts.tv_sec += 1;
+      ts.tv_nsec -= 1000000000L;
+    }
+    int ret;
+    do {
+      ret = sem_timedwait(&suspend_ack_sem_, &ts);
+    } while (ret == -1 && errno == EINTR);
+    return ret == 0;
   }
 
   void Terminate(int exit_code) {
@@ -787,6 +815,11 @@ class PosixCondition<Thread> : public PosixConditionBase {
   /// async-signal-safe; the state_ = kRunning transition now happens in Resume()
   /// under state_mutex_. (Ported from edge 6f18c9850.)
   void WaitSuspended() {
+    // Acknowledge that we have actually parked (we are now frozen at the point
+    // the SIGRTMIN interrupted us) BEFORE blocking, so a suspender waiting in
+    // WaitForSuspendAcknowledged() can observe the freeze. sem_post is
+    // async-signal-safe; this runs in the SIGRTMIN handler.
+    sem_post(&suspend_ack_sem_);
     int ret;
     do {
       ret = sem_wait(&suspend_sem_);
@@ -819,6 +852,13 @@ class PosixCondition<Thread> : public PosixConditionBase {
   // suspend signal handler, where pthread_mutex_lock/condvar are NOT
   // async-signal-safe (deadlock/heap corruption). Ported from edge 6f18c9850.
   sem_t suspend_sem_;
+  // Suspend-acknowledged rendezvous (save-state hang fix): WaitSuspended (in the
+  // SIGRTMIN handler) sem_posts this the instant the target parks, so a suspender
+  // can block until the target is actually frozen. While the suspender holds the
+  // global critical region during that wait, the victim parks OUTSIDE the region
+  // (it cannot acquire the lock the suspender holds) - restoring the mutex.h
+  // suspend-safety invariant that the async POSIX Suspend otherwise defeats.
+  sem_t suspend_ack_sem_;
   mutable std::mutex state_mutex_;
   mutable std::mutex callback_mutex_;
   mutable std::condition_variable state_signal_;
@@ -1094,6 +1134,10 @@ class PosixThread : public PosixConditionHandle<Thread> {
   void Terminate(int exit_code) override { handle_.Terminate(exit_code); }
 
   void WaitSuspended() { handle_.WaitSuspended(); }
+
+  bool WaitForSuspendAcknowledged(uint32_t timeout_ms) override {
+    return handle_.WaitForSuspendAcknowledged(timeout_ms);
+  }
 };
 
 thread_local PosixThread* current_thread_ = nullptr;
