@@ -72,3 +72,17 @@ ARMv9 HW features, AOT/ML/novel) synthesized + adversarially realism-checked aga
 4. profile-gate indirect-dispatch → 5. tier-1 container to promote hot fns. Each ships default-off, qemu+host
 353-test gated, as a stacking XeniaOptimizations toggle. CPU-bound titles only (Burnout/LO); GPU-bound BD
 unaffected (its lever is the shipped overdraw thinning).
+
+## ⛔ UPDATE 2026-06-20 — lazy-carry GATED OUT by adversarial design review + the Burnout profile
+The top lever above did NOT survive design verification (2 of 3 lenses sound=False): (1) WIDTH bug - adde's
+XER[CA] is the carry of the LOW 32 bits but the result is a 64-bit add, so a fused single ADDS gives the
+wrong (64-bit) carry; correct lowering needs TWO adds/op (64-bit result + 32-bit WReg ADDS/ADCS for C), so
+the win shrinks; (2) the 'escape-spill is free via the unchanged StoreCA' invariant is FALSE in the fused
+path; (3) PAIRED_PREV is not honored by the a64 backend at all (zero refs) so the adjacency safety has no
+enforcement; (4) it needs a NEW HIR opcode + x64 build gating. DECISIVE: no profile shows adde/subfe hot -
+the device Burnout profile (memory burnout-hot-fn-ring-drain-spin) shows the bottleneck is the GPU ring-drain
+SPIN + ~10%% locking + per-draw CPU ISSUE, NOT carry codegen. Realistic lazy-carry win = sub-1%% on an
+unmeasured-hot op. DO NOT BUILD. The shipped feature-probe (fa7c53648) stands. Re-targeted: the real CPU
+levers are (a) Burnout per-draw issue (near floor; bindless is the only escape, big) + the ~10%% global_
+critical_region lock contention, and (b) LO broken->working (frame-55 HSIO). The macro-fusion/LDAPR items
+are similarly sub-1%% / overhyped - codegen is near its ceiling; the wins are elsewhere.
