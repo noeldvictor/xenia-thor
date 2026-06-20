@@ -82,6 +82,18 @@ for lighter/CPU-bound titles.
      game-logic JIT (43% guest code) + Main/GPU serialization, NOT CPU-throughput NOR GPU. VRS's fps payoff is
      on GPU-BOUND titles (BD's 43% foliage field, BTTF DeLorean). Shipped as the `opt_vrs_foliage` toggle
      (default-off, rate 2), description updated with the measured number.
+   - ✅ **VRS confirmed on BD too (2026-06-20, after the BD boot fix).** BD boot is now reliable
+     (xboxkrnl_ntreadfile_force_complete in its GameProfile = the async-read race fix), so BD reaches the 3D
+     field (gpu_frame ~127.7ms, GPU-BOUND ~6.9fps, alphatest 224-1429). The VRS-ON field A/B is BLOCKED: VRS-on
+     shifts GPU pacing → the wall-clock nav seq mis-aligns → BD stalls at the menu (2 tries white-screened;
+     0x103=0 so NOT the async race, it's nav). BUT a CLEAN matched comparison exists at the DETERMINISTIC early
+     foliage scene (rendered=279, alphatest=93, ~guest_ms 7800, reached by all runs before nav diverges): VRS
+     off 26935us vs on 26338/26318 = **−2.2% gpu_frame, consistent ×2**. That scene has only 93 alpha-test
+     draws; the field has 224-1429 + 263k verts (43% foliage) → VRS's field reduction scales much larger, and BD
+     being GPU-bound → real fps. The exact FIELD fps number needs a DETERMINISTIC field scene (save-state,
+     deadlocked) since wall-clock nav can't reach the field with VRS-on. NET: VRS is a validated GPU reducer on
+     BOTH Burnout (−7.5%) and BD (−2.2% on a light scene, scaling with foliage); the headline BD-field fps win
+     is gated on save-states.
 4. **Bindless vertex fetch** (Burnout): gate (is pipeline-switch context-roll a measurable GPU cost?) → build.
    The one big GPU lever for Burnout's churn; buffer_device_address + descriptor_indexing CONFIRMED = 1.
 5. Sync2 + pipeline_creation_cache_control hygiene (low-risk stacking toggles).
