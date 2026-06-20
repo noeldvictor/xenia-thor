@@ -5875,7 +5875,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // fully inert + zero per-draw overhead.
       if (cvars::gpu_vrs_foliage_rate > 0 &&
           GetVulkanDevice()->extensions().ext_KHR_fragment_shading_rate) {
-        uint32_t vrs_rate = cvars::gpu_vrs_foliage_rate >= 4   ? 4u
+        // Diagnostic: suppress VRS (1x1) until guest uptime crosses the gate, so
+        // a title can boot+navigate VRS-off (matching the VRS-off baseline's nav
+        // pacing + reaching the same scene) then enable VRS only in the target
+        // scene for a matched-scene A/B. The dynamic state stays set (to 1x1) so
+        // there is no undefined-shading-rate hazard.
+        const bool vrs_active =
+            cvars::gpu_vrs_enable_after_guest_ms == 0 ||
+            xe::Clock::QueryGuestUptimeMillis() >=
+                uint64_t(cvars::gpu_vrs_enable_after_guest_ms);
+        uint32_t vrs_rate = !vrs_active                        ? 1u
+                            : cvars::gpu_vrs_foliage_rate >= 4 ? 4u
                             : cvars::gpu_vrs_foliage_rate >= 2 ? 2u
                                                               : 1u;
         bool vrs_foliage = is_alphatest_draw;

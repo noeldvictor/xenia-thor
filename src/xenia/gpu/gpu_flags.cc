@@ -205,6 +205,16 @@ DEFINE_int32(
     "the extension REQUEST behind this cvar keeps the default device-creation "
     "path byte-identical when off. Default off, validate per-title.",
     "GPU");
+DEFINE_uint32(
+    gpu_vrs_enable_after_guest_ms, 0,
+    "Measurement helper for gpu_vrs_foliage_rate: when >0, VRS coarse-shading is "
+    "SUPPRESSED until guest uptime reaches this many ms, then applied. Lets a "
+    "title boot + auto-navigate VRS-OFF (so the wall-clock nav pacing matches the "
+    "VRS-off baseline and reaches the SAME scene), then turn VRS ON only in the "
+    "target scene - giving a matched-scene A/B that VRS's frame-pacing change would "
+    "otherwise break (e.g. Blue Dragon can't reach its field with VRS on). 0 = no "
+    "gate (VRS active from the start). Diagnostic; default 0.",
+    "GPU");
 DEFINE_int32(
     thor_gpu_thread_affinity_cpu, -1,
     "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "
