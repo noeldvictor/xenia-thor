@@ -3695,6 +3695,32 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     prepass_command_buffer_.Reset();
     prepass_insert_pos_ = deferred_command_buffer_.command_stream_size_elements();
     prepass_active_ = true;
+    // BLACK-FRAME FIX: the prepass records SELF-CONTAINED opaque draws (full
+    // pipeline + descriptor + dynamic-state binds) into prepass_command_buffer_,
+    // which EndRenderPass splices to the FRONT of this pass. That spliced block
+    // leaves a full set of host binds in effect at execute time, but the first
+    // ORIGINAL color command was recorded (emit-on-change) assuming the normal
+    // fresh-pass leading state - so it would NOT re-emit those binds and would
+    // execute against the prepass block's inherited (wrong) pipeline/descriptors/
+    // dynamic state = black/garbage. Invalidate the host-state tracker here so the
+    // first color draw of this pass re-emits ALL binds (mirrors the BeginSubmission
+    // reset at the top of BeginSubmission), overwriting whatever the spliced block
+    // left bound. Do NOT touch current_render_pass_/current_framebuffer_ (owned by
+    // this BeginRenderPass). Only runs when the cvar is on (default-off = no cost).
+    current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_external_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_guest_graphics_pipeline_layout_ = nullptr;
+    current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    dynamic_viewport_update_needed_ = true;
+    dynamic_scissor_update_needed_ = true;
+    dynamic_depth_bias_update_needed_ = true;
+    dynamic_blend_constants_update_needed_ = true;
+    dynamic_stencil_compare_mask_front_update_needed_ = true;
+    dynamic_stencil_compare_mask_back_update_needed_ = true;
+    dynamic_stencil_write_mask_front_update_needed_ = true;
+    dynamic_stencil_write_mask_back_update_needed_ = true;
+    dynamic_stencil_reference_front_update_needed_ = true;
+    dynamic_stencil_reference_back_update_needed_ = true;
   }
   RecordPassTimestamp(true);
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
