@@ -56,13 +56,16 @@ for lighter/CPU-bound titles.
    currently force them. ⚠️ gate: pass/transfer reduction was fps-NEUTRAL on HEAVY BD (B35) — target the
    blended-transparency path (34% of BD) + verify it cuts gpu_frame, not just passes. Medium-large.
 3. **Validate VRS on BD** (gpu_freeze-matched A/B): shipped, Adreno-native, unmeasured — cheapest potential win.
-   READY-TO-RUN PLAN (anchor found 2026-06-20, resolves the BD scene-confound): launch BD with
-   `--ei gpu_freeze_at_guest_ms 150000` (heavy field starts ~guest_ms 151000) so both runs render the SAME
-   frozen frame; baseline gpu_frame_us ~129ms at rendered ~1176. A/B = `--ei gpu_vrs_foliage_rate 0` (off) vs
-   `2` (2x2 coarse, 4x fewer foliage shader/texture invocations) vs `4` (4x4). Compare gpu_frame_us at the
-   frozen scene + READ the png for foliage edge-quality (VRS coarsens alpha-test edges). Both cvars allowlisted
-   (copyIntExtra). Foliage = 43% of BD + texture-bandwidth-heavy → plausible real win on the shader/texture
-   portion (NOT the fixed-function raster/depth/alpha-test part). Needs a cool device (2 heavy ~180s fires).
+   ⚠️ FREEZE APPROACH FAILED (2026-06-20 fire bdvrsoff): `gpu_freeze_at_guest_ms=151000` locked a WHITE
+   loading/error screen (rendered=172, alphatest=0, 0.0 FPS) because this build hit `XamShowDirtyDiscErrorUI`
+   ~21s in — BD's scene-vs-guest_ms mapping is non-deterministic (intermittent dirty-disc/load-timing race),
+   so a fixed guest_ms freeze is unreliable. CORRECTED PLAN: FREE-RUNNING (no freeze), DurationSec ~280 (give
+   BD time past any dirty-disc + into the field), `--ez gpu_uma_direct_shared_memory false`. The heavy field's
+   gpu_frame_us is STABLE (~129ms ±0.3% across frames) so NO frame-match is needed — just confirm BOTH runs
+   reach the field (rendered>800, comp alphatest>0) via the png, then compare the field's gpu_frame_us:
+   `--ei gpu_vrs_foliage_rate 0` vs `2` (2x2) vs `4`. WILDCARD: BD intermittently hits the dirty-disc error
+   (white screen) → retry until a clean boot reaches the field. The real fix to unblock all BD A/Bs is BD boot
+   reliability (the dirty-disc race). Both cvars allowlisted. Needs a cool device.
 4. **Bindless vertex fetch** (Burnout): gate (is pipeline-switch context-roll a measurable GPU cost?) → build.
    The one big GPU lever for Burnout's churn; buffer_device_address + descriptor_indexing CONFIRMED = 1.
 5. Sync2 + pipeline_creation_cache_control hygiene (low-risk stacking toggles).
