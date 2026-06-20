@@ -56,16 +56,32 @@ for lighter/CPU-bound titles.
    currently force them. ⚠️ gate: pass/transfer reduction was fps-NEUTRAL on HEAVY BD (B35) — target the
    blended-transparency path (34% of BD) + verify it cuts gpu_frame, not just passes. Medium-large.
 3. **Validate VRS on BD** (gpu_freeze-matched A/B): shipped, Adreno-native, unmeasured — cheapest potential win.
-   ⚠️ FREEZE APPROACH FAILED (2026-06-20 fire bdvrsoff): `gpu_freeze_at_guest_ms=151000` locked a WHITE
-   loading/error screen (rendered=172, alphatest=0, 0.0 FPS) because this build hit `XamShowDirtyDiscErrorUI`
-   ~21s in — BD's scene-vs-guest_ms mapping is non-deterministic (intermittent dirty-disc/load-timing race),
-   so a fixed guest_ms freeze is unreliable. CORRECTED PLAN: FREE-RUNNING (no freeze), DurationSec ~280 (give
-   BD time past any dirty-disc + into the field), `--ez gpu_uma_direct_shared_memory false`. The heavy field's
-   gpu_frame_us is STABLE (~129ms ±0.3% across frames) so NO frame-match is needed — just confirm BOTH runs
-   reach the field (rendered>800, comp alphatest>0) via the png, then compare the field's gpu_frame_us:
-   `--ei gpu_vrs_foliage_rate 0` vs `2` (2x2) vs `4`. WILDCARD: BD intermittently hits the dirty-disc error
-   (white screen) → retry until a clean boot reaches the field. The real fix to unblock all BD A/Bs is BD boot
-   reliability (the dirty-disc race). Both cvars allowlisted. Needs a cool device.
+   ⛔ VRS-on-BD A/B is BLOCKED (2026-06-20, fires bdvrsoff + bdvrsoff2 — 2 device fires, conclusion solid):
+   - CORRECTION: my "dirty-disc" read was WRONG — `XamShowDirtyDiscErrorUI` appeared ONCE = the import-table
+     dump at load (BD merely imports it), NOT a runtime call. BD boots FINE to its menu (rendered=172 = white
+     menu bg). The freeze locked the MENU, not a dirty-disc.
+   - REAL BLOCKER = BD navigation + non-reproducibility. The blind start/a mash seq does NOT reliably navigate
+     menu→heavy foliage field (both runs stalled at the menu, max rendered=279; the old bdinlineleaf reached
+     rendered=1176 by luck/timing). WORSE: BD scenes differ at the SAME guest_ms across runs (bdvrsoff:
+     rendered=267 stable 10-18s; bdvrsoff2: rendered=279 at 8s then 172) → NO fixed gpu_freeze value gives
+     matched scenes across the off/on runs. Free-running A/B = scene-confound; fixed-freeze A/B = mismatched.
+   - => a clean VRS-on-BD A/B is IMPOSSIBLE without a DETERMINISTIC scene source = a SAVE STATE. The save-state
+     path is itself blocked (SaveToFile hangs in kernel_state_->Save, a global-lock deadlock during Pause /
+     GetObjectsByType). **THE META-FIX: fix the save-state hang → load the same BD foliage scene deterministically
+     → unblocks the A/B for VRS *and* ROAA *and* bindless on BD.** This is the highest-leverage GPU-validation
+     unblock; pursue it before re-attempting any BD GPU A/B. Both cvars are allowlisted; the VRS lever is sound
+     and inert-correct (infra-proven) — only its measurement ON BD is blocked.
+   - ✅ **VRS VALIDATED on Burnout instead (the reliable vehicle, 2026-06-20).** The VRS condition is GENERAL
+     (is_alphatest_draw OR any non-opaque blend, vulkan_command_processor.cc:5881), not BD-specific, so it fires
+     on Burnout's 562 alpha-test + 188 blended draws. Clean A/B at the deterministic TRAFFIC ATTACK race
+     (rendered=2110): `gpu_vrs_foliage_rate` 0 vs 2 → median gpu_frame_us **46047 → 42612 = −7.5% GPU frame
+     time**, 1089 vs 1093 frames, png VISUALLY CLEAN (no blocky artifacts, crisp UI). **The lever WORKS** =
+     a real device-measured GPU-time reduction from an Adreno feature. BUT VdSwap/s unchanged (8.43→8.43) =
+     fps-NEUTRAL on Burnout because Burnout is Main-thread-bound, not GPU-bound. ⭐ TRIANGULATION: BOTH the
+     lock-free CPU A/B AND this VRS GPU A/B are fps-neutral on Burnout → its bottleneck is the Main-thread
+     game-logic JIT (43% guest code) + Main/GPU serialization, NOT CPU-throughput NOR GPU. VRS's fps payoff is
+     on GPU-BOUND titles (BD's 43% foliage field, BTTF DeLorean). Shipped as the `opt_vrs_foliage` toggle
+     (default-off, rate 2), description updated with the measured number.
 4. **Bindless vertex fetch** (Burnout): gate (is pipeline-switch context-roll a measurable GPU cost?) → build.
    The one big GPU lever for Burnout's churn; buffer_device_address + descriptor_indexing CONFIRMED = 1.
 5. Sync2 + pipeline_creation_cache_control hygiene (low-risk stacking toggles).
