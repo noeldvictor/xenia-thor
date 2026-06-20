@@ -853,6 +853,12 @@ void UserModule::CalculateHash() {
   XXH3_64bits_reset(&hash_state);
   XXH3_64bits_update(&hash_state, base_code_adr, end_address - start_address);
   hash_ = XXH3_64bits_digest(&hash_state);
+
+  // Log the code-section hash so .patch.toml files can be authored against it
+  // (the game-patch system matches title_id + this hash). Cheap, once per module
+  // load. Format matches what the patch-authoring workflow expects.
+  XELOGI("Module Hash: {:016X} (code {:08X}-{:08X})", hash_.value(),
+         start_address, end_address);
 }
 
 }  // namespace kernel
