@@ -75,11 +75,20 @@ geometry/texture feeds).
 - On-chip **GMEM** tile buffer (the EDRAM-emulation target), max 680 MHz, **LRZ** early-Z (DEFEATED by
   alpha-test/discard — the BD overdraw cause)
 - **SINGLE** graphics+compute queue (internal BR/BV binning — NO separately-schedulable async-compute queue)
-- **PRESENT:** push_descriptor, extended_dynamic_state 1/2/3, draw_indirect_count, **multiDrawIndirect**,
+- **PRESENT:** push_descriptor, extended_dynamic_state 1/2/**3**, draw_indirect_count, **multiDrawIndirect**,
   vertex_input_dynamic_state, `VK_QCOM_tile_properties`, shader_float16_int8
-- **ABSENT (device-confirmed):** `fragment_shader_interlock`, `rasterization_order_attachment_access`
-  (ROAA=false, confirmed 2026-06-17), `descriptor_buffer`, `external_memory_host`,
-  `tile_memory_heap`/`tile_shading` (840+ only), mesh shaders (unverified)
+- ⚠️ **TURNIP EXPOSES FAR MORE THAN xenia USES** (device-audited 2026-06-20, ~80 device extensions vs ~15
+  enabled — see docs/research/20260620-adreno-turnip-feature-gap-audit.md). Stale "ABSENT" beliefs CORRECTED:
+  these ARE exposed now — **`VK_EXT_descriptor_buffer`**, **`VK_EXT_multi_draw`**,
+  **`VK_EXT_rasterization_order_attachment_access`** (ROAA — extension exposed; FEATURE bit pending the probe
+  log in vulkan_device.cc), **`VK_KHR_dynamic_rendering`**(+`local_read`), **`VK_KHR_buffer_device_address`**,
+  **`VK_EXT_descriptor_indexing`** (bindless enablers), **`VK_EXT_load_store_op_none`**,
+  **`VK_KHR_synchronization2`**, **`VK_EXT_graphics_pipeline_library`**. Top unexploited levers: bindless
+  vertex-fetch (Burnout shader-variant churn), VRS (shipped, unvalidated), FSI-alt (dynamic_rendering_local_read
+  / ROAA). HONEST: most don't move BD/Burnout's GPU-binning + fixed-function-overdraw floors (Turnip binning-VS
+  wall stands) — see the audit doc for the bottleneck-fit table before building.
+- **ABSENT (device-confirmed):** `fragment_shader_interlock`, `external_memory_host`,
+  `tile_memory_heap`/`tile_shading` (840+ only), mesh shaders (not in the device list)
 
 **Also:** Hexagon DSP/NPU (HVX 1024-bit, idle; but FastRPC = 75µs–several-ms BLOCKING round-trip, batch-only).
 
@@ -216,8 +225,11 @@ stall/context-roll or an irreducible per-primitive binning floor — instead of 
   - Vulkan PRESENT (use): **VK_KHR_push_descriptor** (shipped), **VK_EXT_extended_dynamic_state 1/2** (core
     in 1.3) + EDS3, **VK_KHR_draw_indirect_count** + draw_indirect, `multiDrawIndirect` (feature, enableable),
     vertex_input_dynamic_state, maintenance1-4.
-  - Vulkan ABSENT (do NOT design around): **`VK_EXT_fragment_shader_interlock`** (no single-pass EDRAM),
-    `VK_EXT_multi_draw`, `VK_EXT_descriptor_buffer`, `VK_EXT_external_memory_host` (pure zero-copy UMA dead).
+  - ⚠️ CORRECTED 2026-06-20 (device-audited, see audit doc): `VK_EXT_multi_draw` + `VK_EXT_descriptor_buffer`
+    ARE exposed now (were wrongly listed absent). Vulkan ABSENT (do NOT design around): only
+    **`VK_EXT_fragment_shader_interlock`** (no FSI single-pass EDRAM — but `VK_KHR_dynamic_rendering_local_read`
+    + ROAA ARE exposed as FSI-alternatives), `VK_EXT_external_memory_host` (pure zero-copy UMA dead),
+    mesh shaders. The bottleneck is the Turnip binning-VS wall + fixed-function overdraw, not extension access.
 - **HW ↔ guest-math mapping (what's safe to exploit):** guest is PowerPC **VMX128** (128-bit FP32 SIMD) +
   scalar FP. NEON maps VMX128 1:1 (done in the a64 JIT; vector ops are not C-thunked). **`asimddp`/`i8mm`/
   `bf16` are int8/bf16 matrix units — NOT usable for guest FP32 geometry** (precision loss → guest-visible

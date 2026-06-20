@@ -383,6 +383,29 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
+
+    // GPU feature-gap audit (2026-06-20): one-time log of high-value FEATURE
+    // bits that Turnip exposes but xenia does not yet exploit, so a lever build
+    // targets confirmed-usable features (extension-listed != feature-enabled).
+    // See docs/research/20260620-adreno-turnip-feature-gap-audit.md.
+    XELOGI(
+        "GPU feature-gap audit: shaderFloat16={} bufferDeviceAddress={} "
+        "descriptorIndexing={} runtimeDescriptorArray={} "
+        "sampledImageArrayNonUniformIndexing={} descriptorBindingPartiallyBound={} "
+        "dynamicRendering={} synchronization2={} "
+        "roaa_color={} roaa_depth={}",
+        features_1_2.supported.shaderFloat16,
+        features_1_2.supported.bufferDeviceAddress,
+        features_1_2.supported.descriptorIndexing,
+        features_1_2.supported.runtimeDescriptorArray,
+        features_1_2.supported.shaderSampledImageArrayNonUniformIndexing,
+        features_1_2.supported.descriptorBindingPartiallyBound,
+        features_1_3.supported.dynamicRendering,
+        features_1_3.supported.synchronization2,
+        features_EXT_rasterization_order_attachment_access.supported
+            .rasterizationOrderColorAttachmentAccess,
+        features_EXT_rasterization_order_attachment_access.supported
+            .rasterizationOrderDepthAttachmentAccess);
   }
 
   uint32_t queue_family_count = 0;
