@@ -1469,6 +1469,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // save-state path.
   bool gpu_freeze_vrs_phase_on_ = false;
   uint32_t gpu_freeze_ab_frame_counter_ = 0;
+  // True when the VRS A/B alternation is live this frame (frozen OR free-running
+  // past gpu_vrs_enable_after_guest_ms). Free-running mode lets the A/B start the
+  // instant the field renders - robust to BD's variable field-reach wall-time +
+  // the thermal watchdog (no precise freeze window needed).
+  bool gpu_ab_alt_active_ = false;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.

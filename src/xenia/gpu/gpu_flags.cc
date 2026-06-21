@@ -217,16 +217,19 @@ DEFINE_uint32(
     "GPU");
 DEFINE_bool(
     gpu_freeze_ab_alternate_vrs, false,
-    "Single-run VRS A/B validator. Once gpu_freeze_at_guest_ms engages (scene "
-    "frozen, re-rendered identically every frame), ALTERNATE gpu_vrs_foliage_rate "
-    "ON/OFF in ~30-frame blocks within the SAME run and emit a 'VRS_AB: phase=...' "
-    "line per frame. Bucket gpu_frame_us by phase (median of each block, discard "
-    "the ~3 transition frames) for an airtight matched A/B - the scene is byte-"
-    "identical across phases, so the only variable is the shading rate. Sidesteps "
-    "BD boot non-determinism (different scene at the same guest_ms across runs) AND "
-    "the save-state path entirely (no two-run scene matching needed). Nav runs "
-    "VRS-off at baseline pacing so it reaches the field like the baseline. Requires "
-    "gpu_vrs_foliage_rate>0 (the ON rate) + gpu_freeze_at_guest_ms. Default off.",
+    "Single-run VRS A/B validator. ALTERNATE gpu_vrs_foliage_rate ON/OFF in "
+    "16-frame blocks within the SAME run and emit a 'VRS_AB: phase=...' line per "
+    "frame; bucket gpu_frame_us by phase (median of each block's middle frames, "
+    "discard the first ~3 GPU-latency transition frames). Two modes: (a) FROZEN - "
+    "with gpu_freeze_at_guest_ms, the scene is re-rendered identically every frame "
+    "so the A/B is byte-identical (cleanest); (b) FREE-RUNNING - with "
+    "gpu_vrs_enable_after_guest_ms>0 and no freeze, alternation starts the instant "
+    "guest uptime crosses the gate, so it begins the moment the target scene "
+    "renders (robust to variable scene-reach wall-time + the thermal watchdog; over "
+    "a near-static scene the tight blocks make residual drift affect both phases "
+    "about equally). Sidesteps BD boot non-determinism AND the save-state path "
+    "(no two-run scene matching). Requires gpu_vrs_foliage_rate>0 (the ON rate). "
+    "Default off.",
     "GPU");
 DEFINE_int32(
     thor_gpu_thread_affinity_cpu, -1,

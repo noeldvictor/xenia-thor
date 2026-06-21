@@ -2209,14 +2209,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
            xe::Clock::QueryGuestUptimeMillis());
   }
 
-  // Single-run VRS A/B (gpu_freeze_ab_alternate_vrs): once frozen, flip the VRS
-  // phase in ~30-frame blocks so the SAME frozen scene renders alternately with
-  // VRS off then on. The per-draw consumer reads gpu_freeze_vrs_phase_on_; the
-  // draw-outcomes path logs the phase so gpu_frame_us buckets cleanly by phase
-  // (median of each block, discard the ~3 GPU-latency transition frames).
-  if (gpu_scene_lock_frozen_ && cvars::gpu_freeze_ab_alternate_vrs) {
+  // Single-run VRS A/B (gpu_freeze_ab_alternate_vrs): flip the VRS phase in
+  // 16-frame blocks so the scene renders alternately with VRS off then on. Active
+  // when FROZEN (identical scene every frame - cleanest) OR FREE-RUNNING past
+  // gpu_vrs_enable_after_guest_ms (alternation starts the instant the field
+  // renders - robust to BD's variable field-reach wall-time + the thermal
+  // watchdog, since no precise freeze window is needed; over an idle/near-static
+  // field the 16-frame blocks interleave off/on tightly enough that residual
+  // scene drift affects both phases about equally). The per-draw consumer reads
+  // gpu_freeze_vrs_phase_on_; the draw-outcomes path logs the phase so gpu_frame_us
+  // buckets by phase (median of each block's middle frames, discard the first ~3
+  // GPU-latency transition frames).
+  gpu_ab_alt_active_ =
+      cvars::gpu_freeze_ab_alternate_vrs &&
+      (gpu_scene_lock_frozen_ ||
+       (cvars::gpu_vrs_enable_after_guest_ms != 0 &&
+        xe::Clock::QueryGuestUptimeMillis() >=
+            uint64_t(cvars::gpu_vrs_enable_after_guest_ms)));
+  if (gpu_ab_alt_active_) {
     gpu_freeze_vrs_phase_on_ =
-        ((gpu_freeze_ab_frame_counter_++ / 30u) & 1u) != 0;
+        ((gpu_freeze_ab_frame_counter_++ / 16u) & 1u) != 0;
   }
 
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
@@ -2655,9 +2667,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
     // Single-run VRS A/B: concise per-frame line so gpu_frame_us buckets by the
-    // frozen-scene VRS phase (rendered/alphatest/blended confirm the scene is
-    // identical across phases - the matched-A/B precondition).
-    if (cvars::gpu_freeze_ab_alternate_vrs && gpu_scene_lock_frozen_) {
+    // VRS phase (rendered/alphatest/blended confirm the scene matches across
+    // phases - the matched-A/B precondition; in free-running mode small drift is
+    // expected, so check they stay close when bucketing).
+    if (gpu_ab_alt_active_) {
       XELOGI(
           "VRS_AB: phase={} gpu_frame_us={} rendered={} alphatest={} blended={} "
           "guest_ms={}",
@@ -5905,9 +5918,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             cvars::gpu_vrs_enable_after_guest_ms == 0 ||
             xe::Clock::QueryGuestUptimeMillis() >=
                 uint64_t(cvars::gpu_vrs_enable_after_guest_ms);
-        // Single-run A/B: when alternating in the frozen scene, the per-frame
-        // phase decides VRS on/off (overrides the enable_after gate).
-        if (cvars::gpu_freeze_ab_alternate_vrs && gpu_scene_lock_frozen_) {
+        // Single-run A/B: when the alternation is live (frozen or free-running
+        // past the gate), the per-frame phase decides VRS on/off.
+        if (gpu_ab_alt_active_) {
           vrs_active = gpu_freeze_vrs_phase_on_;
         }
         uint32_t vrs_rate = !vrs_active                        ? 1u
