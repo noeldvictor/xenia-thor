@@ -11,6 +11,14 @@ decompress → capstone PPC (`CS_ARCH_PPC`, big-endian, 32-bit).
 ## Tools
 - `xex_disasm.py <file.xex> <guest_hex_addr> [n_insts]` — decompress + disassemble.
   Handles basic (comp=1), uncompressed (comp=0), and LZX (comp=2, via `xexlzx.exe`).
+- `scan_stores.py <file.xex> <disp_hex> [more...]` — scan the whole image for D-form
+  loads/stores (`lwz/stw/stb/...`) whose 16-bit displacement matches. Localizes the
+  `.text` accessors of a `.bss`/struct field by its low-16 displacement when a static
+  absolute xref fails (the access is `disp(rBase)` with `rBase` set elsewhere). Reuses
+  `xex_disasm.load_xex()`.
+- `scan_bl.py <file.xex> <target_hex> [more...]` — scan for I-form branches (`b/bl/ba/bla`)
+  whose computed target equals a guest address — i.e. find every caller/jumper to a
+  function (a device-free xref/callgraph probe).
 - `xexlzx.c` — standalone LZX-stream decompressor (libmspack `lzxd.c` + xenia's memory
   harness). Build once:
   ```
