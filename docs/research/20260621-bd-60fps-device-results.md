@@ -37,6 +37,16 @@ the producer signal). The only faint candidate = the logic/render decouple tramp
 table (0x820A2040) so it likely halves render too -> a <=30-min falsification test, NOT a build. **Verdict:
 frame-gen is the only robust 60fps path.**
 
+**DEVICE-CONFIRMED 2026-06-21 (interval-1 isolation test):** patched ONLY 0x8246AB68=li r10,1 (no NtSetEvent
+NOP this time), fired BD. The light EARLY phase (intro/menu, GPU-trivial) caps at **~30 VdSwap/s**, then
+declines into the GPU-bound field (~6/s). It NEVER exceeds 30. Since the render loop calls VdSwap, a loop
+pinned at 30 with interval-1 SET proves the 30 is enforced UPSTREAM of the present = logic-side (the
+one-present-per-logic-frame producer gate), NOT the swap interval. **Present-interval-1 is INERT even on a
+light scene (not just the GPU-bound field) - the user's "interval-1 unlocks light 60fps" hypothesis is
+REFUTED on device.** Combined with the gate-NOP hang, every isolated clean guest poke is now device-proven
+inert-or-hang. The clean single-edit guest 60fps lever does NOT exist; only the fragile fixed-timestep-retune
++ battle-counter grind (~25%) or the likely-blocked decouple trampoline remain. Frame-gen stands as the path.
+
 ## Track 1 (frame-gen) — grounded first-increment plan (the path)
 Format note: the presenter intermediate is ALREADY A2B10G10R10_UNORM_PACK32 (kGuestOutputFormat). Effects are
 GRAPHICS passes (not compute); shaders are offline-built (xb buildshaders -> committed SPIR-V .h).
