@@ -53,6 +53,21 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_rt_keep_ubwc, false,
+    "Efficiency (RT-bandwidth recovery): keep Adreno UBWC framebuffer compression "
+    "alive on color render targets that need MUTABLE_FORMAT (for the integer-aliased "
+    "ownership-transfer view) by attaching a VkImageFormatListCreateInfo listing the "
+    "exact 2 view formats (base + transfer alias). Pre-750 Adreno (the 740) disables "
+    "UBWC on a MUTABLE_FORMAT image unless a format list is provided; Turnip honors "
+    "the list. Recovers part of BD's RT-bandwidth slice (the efficiency-gap analysis "
+    "put ~10-18ms of the 126ms heavy frame on format/UBWC byte inflation - the clean "
+    "recoverable part, vs the a740-irreducible LRZ-defeat overdraw which is frame-gen's "
+    "job). The color RT has exactly these 2 views so the list is complete + correct. "
+    "Default off; A/B on a gpu_freeze_at_guest_ms field (on vs off, or vs "
+    "gpu_vulkan_driver_debug=noubwc) to size the win, then default-on per-title.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
     "image - settles whether geometry rasterized (depth has varying geometry Z) "
@@ -1983,6 +1998,9 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   image_create_info.pQueueFamilyIndices = nullptr;
   image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   VkFormat transfer_format;
+  VkFormat rt_view_formats[2] = {};
+  VkImageFormatListCreateInfo rt_format_list_info{
+      VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
   if (key.is_depth) {
     image_create_info.format = GetDepthVulkanFormat(key.GetDepthFormat());
     transfer_format = image_create_info.format;
@@ -1993,6 +2011,19 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
     transfer_format = GetColorOwnershipTransferVulkanFormat(color_format);
     if (image_create_info.format != transfer_format) {
       image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+      // RT-bandwidth recovery: MUTABLE_FORMAT disables UBWC on pre-750 Adreno
+      // unless we declare the exact view formats. The color RT is viewed only as
+      // its base format (color view) and the transfer alias (ownership-transfer
+      // view), so this 2-entry list is complete and keeps UBWC alive. cvar-gated.
+      if (cvars::gpu_vulkan_rt_keep_ubwc &&
+          vulkan_device->extensions().ext_1_2_KHR_image_format_list) {
+        rt_view_formats[0] = image_create_info.format;
+        rt_view_formats[1] = transfer_format;
+        rt_format_list_info.viewFormatCount = 2;
+        rt_format_list_info.pViewFormats = rt_view_formats;
+        rt_format_list_info.pNext = image_create_info.pNext;
+        image_create_info.pNext = &rt_format_list_info;
+      }
     }
     image_create_info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   }
