@@ -109,6 +109,43 @@ which is robust by construction (one logic clock, synthetic in-between frames). 
 parallel frame-gen track; it targets the same 60fps-visual goal without touching game logic.
 See [[fdm-overdraw-lever-next-major-build]] frame-gen integration map.
 
+## 8. BREAKTHROUGH LEAD (2026-06-21 follow-up RE): the single logic choke point
+The workflow's "double an unbounded set of scattered integer counters (~25%)" may be avoidable. Follow-up
+disassembly found BD's loop structure is task-dispatched, with a single per-frame logic entry:
+
+- **Main game loop at 0x820C5648** (verified): each iteration does `addi r3,r1,0x70; bl 0x82126AF8`
+  (bdMainGameStep), then **increments a GLOBAL FRAME COUNTER** at 0x820C5750 (`lwz r11,0(r31);
+  addi r11,r11,1; stw r11,0(r31)`), then loops (`b 0x820c5648`). That live frame counter (*r31) gives
+  frame parity for free.
+- **bdMainGameStep (0x82126AF8) is the per-frame LOGIC dispatcher** (verified top): reads the timebase
+  (bl 0x824665a0 → stores to +0x1ae0), then walks the game's task/object set (r30+0, r30+4, ...) and calls
+  each object's update via 0x8212a380 / 0x8212a2c8, guarded by the 0xDEAD validity sentinel
+  (andis. r11,0xdead; cmplw 0xDEAD0000). Battle/field/effects are tasks updated THROUGH this dispatcher
+  (consistent with bdBattleSystemUpdate/bdGameTaskUpdate having 0 direct callers = indirect task dispatch).
+
+**The lead:** if render is separate from bdMainGameStep (likely — bdRenderStep 0x82132BE8 has 0 direct
+callers = indirect, probably a separate render/present thread; the present worker 0x82488148 is already its
+own thread), then **gating bdMainGameStep to every-other-frame at 60Hz render = all logic (incl. battle)
+runs at a true 30Hz while rendering at 60Hz.** That is the clean decouple: ONE redirected call + a small
+parity trampoline, NO slotB=0.5, NO counter grind, battle-safe by construction. Patch shape: redirect
+0x820C5744 `bl 0x82126AF8` → `bl <trampoline>` in a code cave; trampoline reads *r31 (frame counter), tests
+LSB, calls 0x82126AF8 only on even frames (and must replicate r3=stack+0x70 setup / preserve regs). The
+patcher can write a trampoline into XEX padding (be32 stream); this is advanced but expressible.
+
+**MUST VERIFY before building (the load-bearing unknowns):**
+1. **Is render truly separate from bdMainGameStep?** If render happens INSIDE bdMainGameStep, gating it
+   halves render too (back to 30). Trace bdMainGameStep's body for a render/present/VdSwap call; and find
+   whether bdRenderStep (0x82132BE8) runs on its own thread (find the KeCreateThread/ExCreateThread site
+   referencing 0x82132BE8 as a data word / via the task table).
+2. **What paces the loop today, and does unthrottling the gate make the LOOP (0x820C5648) run at 60?** The
+   parity gate only yields 30Hz-logic/60Hz-render if the loop first runs at 60. Confirm the loop rate is set
+   by the bdRenderStep gate (0x82132F10) vs a wait inside bdMainGameStep.
+3. **Does any logic rely on running every frame (not every other)?** Input sampling/polling especially —
+   gating bdMainGameStep every-other-frame would halve input poll rate (may be acceptable at 60, or input
+   may need to stay per-frame). Check what bdMainGameStep does with controller input.
+This choke-point route is HIGHER-confidence than the counter grind IF (1) holds. It is the recommended Route
+B refinement; resolve (1)-(3) by RE + the one gate device test before building the trampoline.
+
 ## Reusable RE tooling produced
 tools/xex/xex_disasm.py + scan_stores.py + scan_bl.py (committed). CAUTION: scan_stores' raw disp match
 yields capstone false-positives on 0x82xxxxxx pointer-table words (they decode as bogus `lwz`) — always
