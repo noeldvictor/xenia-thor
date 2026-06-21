@@ -53,6 +53,19 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_fp10_color_as_unorm10, false,
+    "Efficiency (RT-bandwidth recovery): map the guest k_2_10_10_10_FLOAT (7e3) "
+    "color render target to the 32-bpp host format A2B10G10R10_UNORM_PACK32 "
+    "instead of the 64-bpp R16G16B16A16_SFLOAT default. Halves color render "
+    "target bandwidth/footprint on the dominant Blue Dragon color format while "
+    "keeping a full 10 bits per channel (strictly better than the 8-bit "
+    "vulkan_force_float_color_unorm diagnostic, same 32-bit format class so the "
+    "integer-aliased ownership-transfer view stays legal). Clamps the 7e3 [0, ~31) "
+    "extended range to [0, 1] -> correct for SDR scenes, loses HDR highlights "
+    "(bloom/tonemap intermediates); gate off for HDR-heavy titles. Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_rt_keep_ubwc, false,
     "Efficiency (RT-bandwidth recovery): keep Adreno UBWC framebuffer compression "
     "alive on color render targets that need MUTABLE_FORMAT (for the integer-aliased "
@@ -1860,9 +1873,17 @@ VkFormat VulkanRenderTargetCache::GetColorVulkanFormat(
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16:
       // Diagnostic: fall back to a non-float host format to isolate whether the
       // float color attachment is why color never renders on Turnip.
-      return cvars::vulkan_force_float_color_unorm
-                 ? VK_FORMAT_A8B8G8R8_UNORM_PACK32
-                 : VK_FORMAT_R16G16B16A16_SFLOAT;
+      if (cvars::vulkan_force_float_color_unorm) {
+        return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+      }
+      // Efficiency: the 7e3 float buffer fits a 32-bpp 10-bit-per-channel UNORM
+      // (half the 64-bpp float16 bandwidth) for SDR content. Same 32-bit format
+      // class as the integer transfer alias, so the mutable view stays legal.
+      // Clamps the >1.0 extended range -> gated off for HDR.
+      if (cvars::gpu_fp10_color_as_unorm10) {
+        return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+      }
+      return VK_FORMAT_R16G16B16A16_SFLOAT;
     case xenos::ColorRenderTargetFormat::k_16_16:
       // TODO(Triang3l): Fallback to float16 (disregarding clearing correctness
       // likely) - possibly on render target gathering, treating them entirely

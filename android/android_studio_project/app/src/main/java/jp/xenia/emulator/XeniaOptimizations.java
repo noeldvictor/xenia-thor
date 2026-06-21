@@ -353,6 +353,28 @@ public final class XeniaOptimizations {
                 CATEGORY_GPU, false, false,
                 new BoolCvar[]{new BoolCvar("spirv_fp16_relaxed_pixel_alu")}, null));
 
+        list.add(new Optimization(
+                "opt_fp10_color_32bpp",
+                "Compact HDR color buffer (32-bit, experimental)",
+                "Stores the 7e3 HDR color render target at 32 bits instead of 64, "
+                        + "halving its bandwidth.",
+                "Xbox 360 games (Blue Dragon's dominant color format) render into a "
+                        + "10-bit-per-channel floating HDR buffer (\"7e3\"). The emulator "
+                        + "currently emulates that with a 64-bit-per-pixel half-float "
+                        + "render target, which costs double the memory bandwidth - and on "
+                        + "this handheld's shared memory, color-buffer bandwidth is part of "
+                        + "the GPU cost. This stores it as a 32-bit 10-bit-per-channel "
+                        + "buffer instead (half the bytes, still a full 10 bits per "
+                        + "channel - sharper than the 8-bit diagnostic fallback). The "
+                        + "tradeoff: it clamps the format's extended brightness range to "
+                        + "[0,1], which is correct for ordinary (SDR) scenes but can clip "
+                        + "very bright bloom/glow highlights - so it's experimental and "
+                        + "per-game, and best left off for HDR-bloom-heavy titles. Helps "
+                        + "bandwidth-bound 3D scenes; no effect on titles that don't use "
+                        + "the 7e3 format. Pending device A/B validation.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_fp10_color_as_unorm10")}, null));
+
         // Binning-front-end levers. Blue Dragon's heavy scene is GPU-bound on the
         // Adreno binning stage (~1100-2180 tiny draws, ~263k verts/frame), which
         // bins per-vertex per-draw BEFORE culling - so the only lever is reducing
