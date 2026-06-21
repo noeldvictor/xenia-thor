@@ -286,6 +286,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_foliage_lrz_feedback");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_rt_keep_ubwc");
             copyBooleanExtra(intent, launchArguments, "gpu_fp10_color_as_unorm10");
+            copyBooleanExtra(intent, launchArguments, "gpu_2101010_color_as_unorm10");
             copyBooleanExtra(intent, launchArguments, "gpu_opaque_depth_prepass");
             copyBooleanExtra(intent, launchArguments, "gpu_force_no_color_write");
             copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");

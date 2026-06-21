@@ -66,6 +66,18 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_2101010_color_as_unorm10, false,
+    "Quality: map the guest k_2_10_10_10 (non-float, 10-bit UNORM) color render "
+    "target to the matching 32-bpp host format A2B10G10R10_UNORM_PACK32 instead of "
+    "the 8-bit A8B8G8R8_UNORM_PACK32 default. The guest format genuinely has 10 "
+    "bits per color channel; the 8-bit host fallback silently discards 2 bits per "
+    "channel (banding). This keeps the full 10 bits at identical 32-bpp footprint "
+    "(no bandwidth cost), same 32-bit format class so the integer-aliased "
+    "ownership-transfer view stays legal. Bit-exact-or-better; pending device A/B. "
+    "Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_rt_keep_ubwc, false,
     "Efficiency (RT-bandwidth recovery): keep Adreno UBWC framebuffer compression "
     "alive on color render targets that need MUTABLE_FORMAT (for the integer-aliased "
@@ -1868,7 +1880,12 @@ VkFormat VulkanRenderTargetCache::GetColorVulkanFormat(
                                              : VK_FORMAT_R8G8B8A8_UNORM;
     case xenos::ColorRenderTargetFormat::k_2_10_10_10:
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10:
-      return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+      // The guest format is 10-bit-per-channel UNORM; the historical 8-bit host
+      // fallback discards 2 bits/channel (banding) for no bandwidth benefit (both
+      // are 32-bpp). Keep the full 10 bits when enabled (same 32-bit format class).
+      return cvars::gpu_2101010_color_as_unorm10
+                 ? VK_FORMAT_A2B10G10R10_UNORM_PACK32
+                 : VK_FORMAT_A8B8G8R8_UNORM_PACK32;
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT:
     case xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16:
       // Diagnostic: fall back to a non-float host format to isolate whether the

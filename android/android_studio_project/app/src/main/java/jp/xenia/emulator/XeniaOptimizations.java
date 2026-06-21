@@ -369,11 +369,31 @@ public final class XeniaOptimizations {
                         + "tradeoff: it clamps the format's extended brightness range to "
                         + "[0,1], which is correct for ordinary (SDR) scenes but can clip "
                         + "very bright bloom/glow highlights - so it's experimental and "
-                        + "per-game, and best left off for HDR-bloom-heavy titles. Helps "
-                        + "bandwidth-bound 3D scenes; no effect on titles that don't use "
-                        + "the 7e3 format. Pending device A/B validation.",
+                        + "per-game, and best left off for HDR-bloom-heavy titles. "
+                        + "Device-measured on Blue Dragon's heavy field: ~10.5ms / ~8.5% "
+                        + "off the GPU frame (123.0 -> 112.5 ms) at a matched scene, and "
+                        + "visually correct on ordinary (SDR) scenes. The tradeoff is real "
+                        + "though: bright HDR highlights (e.g. battle bloom) get clipped, "
+                        + "so it stays off by default - a per-game SDR-vs-speed choice. No "
+                        + "effect on titles that don't use the 7e3 format.",
                 CATEGORY_GPU, false, false,
                 new BoolCvar[]{new BoolCvar("gpu_fp10_color_as_unorm10")}, null));
+
+        list.add(new Optimization(
+                "opt_2101010_10bit",
+                "Full 10-bit color buffer (quality, experimental)",
+                "Stores the 10-bit color render target at full 10-bit precision instead "
+                        + "of the 8-bit fallback - no speed cost, less banding.",
+                "Some Xbox 360 games render into a 10-bit-per-channel color buffer "
+                        + "(the non-float 2:10:10:10 format). The emulator currently "
+                        + "emulates it with an 8-bit-per-channel buffer, silently throwing "
+                        + "away 2 bits per channel (visible banding in smooth gradients "
+                        + "like skies). This keeps the full 10 bits at the same 32-bit "
+                        + "size, so it's a pure quality win with no bandwidth or speed "
+                        + "cost. Only affects titles that use this format. Experimental, "
+                        + "pending device validation.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_2101010_color_as_unorm10")}, null));
 
         // Binning-front-end levers. Blue Dragon's heavy scene is GPU-bound on the
         // Adreno binning stage (~1100-2180 tiny draws, ~263k verts/frame), which
