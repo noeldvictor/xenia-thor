@@ -71,7 +71,15 @@ public final class GameProfiles {
                         + "Banjo). Forcing synchronous completion routes BD to its "
                         + "working sync-consume path -> it boots reliably to the 3D "
                         + "field. Device-validated 2026-06-20 (reached rendered=2250 / "
-                        + "263k-vert foliage field; STATUS_PENDING polls 0)."));
+                        + "263k-vert foliage field; STATUS_PENDING polls 0).")
+                .add("gpu_vrs_foliage_rate", Integer.valueOf(2),
+                        "Adreno hardware VRS 2x2 coarse-shades BD's overdraw-heavy "
+                        + "foliage + blended transparency. Device-validated 2026-06-20: "
+                        + "-21.8% GPU frame time on the heavy foliage field "
+                        + "(125.9->98.5ms, scene-matched A/B via the single-run "
+                        + "alternation validator); BD is GPU-bound so this lands as real "
+                        + "fps (~5.9->7.9 in the field). Slightly softer foliage edges, "
+                        + "visually clean. Default-on for this GPU-bound priority title."));
 
         // Burnout Revenge (454107DC): UMA-direct present-hangs the EA/EAHD/CRRW
         // intro movie chain (VdSwap freezes). Off runs the movies through to a
