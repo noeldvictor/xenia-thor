@@ -381,6 +381,19 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       properties_KHR_push_descriptor.pNext = properties_2.pNext;
       properties_2.pNext = &properties_KHR_push_descriptor;
     }
+    // FDM lever sizing (2026-06-20): the Thor's Turnip enumerates
+    // VK_EXT_fragment_density_map (+ _offset for the A740 "LRZ-space" so FDM and
+    // LRZ coexist). Query-only (NOT enabling) the feature bits to decide the
+    // build path: with fragmentDensityMapNonSubsampledImages a density map can
+    // attach to the EXISTING render targets (~1wk); without it, RTs must be
+    // subsampled (bigger rearch). FDM shrinks whole GMEM tiles pre-raster ->
+    // cuts raster+depth+sample+texture overdraw (the BD ~95% fragment floor),
+    // harder than the shipped VRS (shading-rate only). Spec: unrecognized sType
+    // is ignored, so this is safe even if the struct/ext were absent.
+    VkPhysicalDeviceFragmentDensityMapFeaturesEXT fdm_features = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT};
+    fdm_features.pNext = supported_features_2.pNext;
+    supported_features_2.pNext = &fdm_features;
     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
 
@@ -406,6 +419,15 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
             .rasterizationOrderColorAttachmentAccess,
         features_EXT_rasterization_order_attachment_access.supported
             .rasterizationOrderDepthAttachmentAccess);
+    // FDM (Fragment Density Map) sizing for the foliage-overdraw lever. The
+    // nonSubsampledImages bit is the load-bearing one: true => ~1wk attach-to-
+    // existing-RTs path; false => subsampled-RT rearch.
+    XELOGI(
+        "GPU FDM audit: fragmentDensityMap={} nonSubsampledImages={} "
+        "dynamic={}",
+        fdm_features.fragmentDensityMap,
+        fdm_features.fragmentDensityMapNonSubsampledImages,
+        fdm_features.fragmentDensityMapDynamic);
   }
 
   uint32_t queue_family_count = 0;
