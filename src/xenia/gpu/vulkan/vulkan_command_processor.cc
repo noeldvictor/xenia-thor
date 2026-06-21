@@ -4496,6 +4496,31 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     normalized_depth_control.z_write_enable = 0;
     normalized_depth_control.zfunc = xenos::CompareFunction::kLess;
   }
+  // Lever A' (gpu_foliage_lrz_feedback): the discard/LRZ-defeat OVERDRAW FIX.
+  // Alpha-test foliage emits OpKill -> Turnip has_kill -> LRZ off in the binning
+  // pass, so the 43% foliage SELF-overdraw fully shades every overlapping leaf.
+  // Per Mesa's freedreno LRZ doc, a discarding draw that WRITES depth still feeds
+  // LRZ during the RENDERING pass (A7xx LRZ feedback), so later foliage layers
+  // early-Z-reject earlier ones. So force depth-WRITE-ON for the alpha-test class
+  // (opaque-where-passed -> writing depth is valid). Only when the draw already
+  // depth-tests with a REAL comparison: keep the guest zfunc (A7xx bidirectional
+  // LRZ handles less/greater, preserving reverse-Z) and skip kNever/kAlways, where
+  // forcing a write would corrupt depth. Distinct from Lever A above (write-OFF
+  // vs opaque-primed depth, device-killed); mutually exclusive with it.
+  // When the single-run A/B validator is alternating (gpu_freeze_ab_alternate_vrs),
+  // gate this lever on the phase too, so one frozen run measures lrz_feedback
+  // off vs on (set gpu_vrs_foliage_rate=0 to isolate it from VRS). Inert when the
+  // validator is off (gpu_ab_alt_active_ false -> always applies).
+  if (cvars::gpu_foliage_lrz_feedback && !cvars::gpu_foliage_lrz_force_depth &&
+      (!gpu_ab_alt_active_ || gpu_freeze_vrs_phase_on_) &&
+      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0 &&
+      normalized_depth_control.z_enable &&
+      normalized_depth_control.zfunc != xenos::CompareFunction::kNever &&
+      normalized_depth_control.zfunc != xenos::CompareFunction::kAlways &&
+      render_target_cache_->GetPath() ==
+          RenderTargetCache::Path::kHostRenderTargets) {
+    normalized_depth_control.z_write_enable = 1;
+  }
   uint32_t normalized_color_mask =
       pixel_shader ? draw_util::GetNormalizedColorMask(
                          regs, pixel_shader->writes_color_targets())

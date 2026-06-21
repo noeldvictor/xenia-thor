@@ -578,6 +578,25 @@ DEFINE_bool(
     "frozen frame. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_foliage_lrz_feedback, false,
+    "Discard/LRZ-defeat overdraw fix (Lever A'): make the alpha-test foliage "
+    "class WRITE depth so it contributes to LRZ via the Adreno A7xx LRZ-FEEDBACK "
+    "mechanism during the rendering pass. The 360's cheap alpha-test foliage emits "
+    "OpKill (discard) -> Turnip has_kill -> LRZ off in the BINNING pass, so every "
+    "overlapping foliage layer fully rasterizes/depth-tests/shades (BD's 43% "
+    "self-overdraw, the dominant fragment floor). Mesa's freedreno LRZ doc: a "
+    "discarding draw that WRITES depth can still feed LRZ during the RENDERING pass "
+    "(LRZ_FEEDBACK_ZMODE), so LATER foliage layers early-Z-reject earlier ones. "
+    "Distinct from gpu_foliage_lrz_force_depth (Lever A: forced write-OFF + tested "
+    "against OPAQUE-primed depth, device-killed) - this writes the foliage's OWN "
+    "depth for inter-foliage rejection. Only mutates draws that already depth-test "
+    "with a real comparison (keeps the guest zfunc so reverse-Z is preserved; skips "
+    "kNever/kAlways where a forced write would corrupt depth). alpha-test = "
+    "opaque-where-passed, so writing depth is semantically valid. Host-RT path "
+    "only; mutually exclusive with gpu_foliage_lrz_force_depth. Default off; "
+    "validate via the single-run gpu_freeze_ab alternation A/B + read the png.",
+    "GPU");
+DEFINE_bool(
     gpu_force_no_color_write, false,
     "DIAGNOSTIC (overdraw ROP/blend split): force colorWriteMask=0 on all color "
     "render targets, so every draw still rasterizes + depth-tests + runs (the "
