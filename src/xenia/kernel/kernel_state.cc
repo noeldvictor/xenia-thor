@@ -813,6 +813,7 @@ bool KernelState::Save(ByteStream* stream) {
   stream->Write(kKernelSaveSignature);
 
   // Save the object table
+  XELOGI("save-state/kernel: writing object table");
   object_table_.Save(stream);
 
   // Write the TLS allocation bitmap
@@ -824,14 +825,19 @@ bool KernelState::Save(ByteStream* stream) {
 
   // We save XThreads absolutely first, as they will execute code upon save
   // (which could modify the kernel state)
+  XELOGI("save-state/kernel: enumerating threads (acquires global lock)");
   auto threads = object_table_.GetObjectsByType<XThread>();
   uint32_t* num_threads_ptr =
       reinterpret_cast<uint32_t*>(stream->data() + stream->offset());
   stream->Write(static_cast<uint32_t>(threads.size()));
 
   size_t num_threads = threads.size();
-  XELOGD("Serializing {} threads...", threads.size());
+  XELOGI("save-state/kernel: serializing {} threads...", threads.size());
+  size_t thread_save_idx = 0;
   for (auto thread : threads) {
+    XELOGI("save-state/kernel: thread {}/{} handle={:08X} '{}' (guest={})",
+           thread_save_idx++, threads.size(), thread->handle(), thread->name(),
+           thread->is_guest_thread());
     if (!thread->is_guest_thread()) {
       // Don't save host threads. They can be reconstructed on startup.
       num_threads--;
@@ -845,17 +851,22 @@ bool KernelState::Save(ByteStream* stream) {
   }
 
   *num_threads_ptr = static_cast<uint32_t>(num_threads);
+  XELOGI("save-state/kernel: threads done (@{} bytes)", stream->offset());
 
   // Save all other objects
+  XELOGI("save-state/kernel: enumerating all objects (acquires global lock)");
   auto objects = object_table_.GetAllObjects();
   uint32_t* num_objects_ptr =
       reinterpret_cast<uint32_t*>(stream->data() + stream->offset());
   stream->Write(static_cast<uint32_t>(objects.size()));
 
   size_t num_objects = objects.size();
-  XELOGD("Serializing {} objects...", num_objects);
+  XELOGI("save-state/kernel: serializing {} objects...", num_objects);
+  size_t object_save_idx = 0;
   for (auto object : objects) {
     auto prev_offset = stream->offset();
+    XELOGI("save-state/kernel: object {}/{} type={} host={}", object_save_idx++,
+           objects.size(), uint32_t(object->type()), object->is_host_object());
 
     if (object->is_host_object() || object->type() == XObject::Type::Thread) {
       // Don't save host objects or save XThreads again
@@ -875,6 +886,8 @@ bool KernelState::Save(ByteStream* stream) {
   }
 
   *num_objects_ptr = static_cast<uint32_t>(num_objects);
+  XELOGI("save-state/kernel: objects done (@{} bytes), kernel save complete",
+         stream->offset());
   return true;
 }
 
