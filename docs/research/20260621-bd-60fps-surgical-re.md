@@ -161,6 +161,33 @@ whether the scene still presents new frames at 60 or drops to 30). Until then, t
 promising-but-unconfirmed lead, not a confirmed win. The simplest device experiment remains the staged gate
 A/B (scratch/4D5307DF-60fps-gate-experiment.patch.toml).
 
+## 9. DEVICE RESULT (2026-06-21) — gate hypothesis FALSIFIED
+Ran the staged gate experiment on the device (NOP 0x82132F10 + present interval ONE; patch confirmed applied
+via logcat "Patcher: Applying patch ... 60fps gate diagnostic"). **Result: BD HUNG immediately** — black
+screen, 0.0 FPS, ZERO real VdSwap calls, xenia log goes silent right after initial render-target creation
+(~7s in) for the remaining ~140s. Device cool throughout (peak 52C), no crash/abort — a clean hang.
+
+**Root cause (decisive): 0x82132F10's call 0x8248CF88 is `NtSetEvent` (import ord 0x0F6), not a wait.**
+bdRenderStep SIGNALS an event each frame (the producer telling the present-worker thread "frame ready").
+NOPing it = the worker is never signaled = waits forever = hang. So **0x82132F10 is the producer->consumer
+handoff, NOT the 30fps throttle** — re:Blue's "sole timing authority" label is imprecise. Hypothesis FALSIFIED.
+
+**Where the throttle actually is (refined):** the loop-body callees of bdRenderStep (0x82466640 0x824827F0
+0x824665A0[timebase x2] 0x8246B538/5A8/5E8[GPU] 0x82473088 0x82135960) contain NO wait-class import in their
+entry (0x82466640 = inactivity/msgbox housekeeping: XamResetInactivity/XamShowMessageBoxUIEx/NtCreateEvent).
+So the 30Hz is a DISTRIBUTED producer-consumer + vsync mechanism: bdRenderStep produces + NtSetEvent-signals
+the present worker (0x82488148), which KeWaitForSingleObject's the event (30ms timeout @0x82488160) then builds
+the swap packet + presents at vblank. The producer is paced by back-pressure from the vsync'd consumer. This
+is why present-interval=1 alone didn't raise fps and why there's no single pokeable "wait" to retune.
+
+**Implication for Route B:** there is no clean single-instruction throttle to poke; pacing is the
+buffer/vsync handshake between bdRenderStep and the present worker. A guest-patch 60fps would need to
+restructure that handshake (or the buffer count / the worker's vsync wait) — delicate, hang-prone (proven),
+and each experiment costs a device fire. The clean-surgical-patch confidence drops further. **Frame-gen
+(present-layer, logic untouched) is now the materially more robust path to 60fps visuals.** If continuing the
+guest route, the next target is the present worker 0x82488148 (its KeWaitForSingleObject + swap), not
+bdRenderStep — but treat it as a deep iterative dig, not a quick poke.
+
 ## Reusable RE tooling produced
 tools/xex/xex_disasm.py + scan_stores.py + scan_bl.py (committed). CAUTION: scan_stores' raw disp match
 yields capstone false-positives on 0x82xxxxxx pointer-table words (they decode as bogus `lwz`) — always
