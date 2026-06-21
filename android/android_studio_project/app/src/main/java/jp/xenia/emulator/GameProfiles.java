@@ -123,7 +123,16 @@ public final class GameProfiles {
         // mechanism, no core-steal.)
         PROFILES.put("443607D6", new Profile("Back to the Future: The Game")
                 .add("gpu_cp_worker_nice", Integer.valueOf(-15),
-                        "Raise the GPU-command thread's priority above the guest workers (-10) so it isn't descheduled -> GPU fed -> 30fps; -15 stays below the audio thread (-16) to avoid audio glitches"));
+                        "Raise the GPU-command thread's priority above the guest workers (-10) so it isn't descheduled -> GPU fed -> 30fps; -15 stays below the audio thread (-16) to avoid audio glitches")
+                .add("gpu_vrs_foliage_rate", Integer.valueOf(2),
+                        "Adreno hardware VRS 2x2 coarse-shades BTTF's overdraw-heavy "
+                        + "blended-transparency draws (its VRS-eligible class; this "
+                        + "title renders alphatest=0, all transparency is blended). "
+                        + "Device-validated 2026-06-20: -16.7% to -19.9% GPU frame time "
+                        + "on transparency-heavy gameplay (37.0->30.8ms, scene-matched "
+                        + "A/B by blended-draw count, 1633 samples). BTTF is GPU-bound so "
+                        + "this stacks with the CP-priority fix toward its 30fps target. "
+                        + "Mild transparency-edge softening, visually clean."));
     }
 
     private static String normalize(final String titleId) {
