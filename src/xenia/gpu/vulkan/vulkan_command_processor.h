@@ -1463,6 +1463,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).
   bool gpu_scene_lock_frozen_ = false;
+  // gpu_freeze_ab_alternate_vrs: once frozen, alternate VRS on/off in ~30-frame
+  // blocks within the SAME run so it yields a matched VRS A/B (phase logged per
+  // frame for gpu_frame_us bucketing). Sidesteps BD boot non-determinism + the
+  // save-state path.
+  bool gpu_freeze_vrs_phase_on_ = false;
+  uint32_t gpu_freeze_ab_frame_counter_ = 0;
 
   // Cache render pass currently started in the command buffer with the
   // framebuffer.

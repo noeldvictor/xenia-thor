@@ -215,6 +215,19 @@ DEFINE_uint32(
     "otherwise break (e.g. Blue Dragon can't reach its field with VRS on). 0 = no "
     "gate (VRS active from the start). Diagnostic; default 0.",
     "GPU");
+DEFINE_bool(
+    gpu_freeze_ab_alternate_vrs, false,
+    "Single-run VRS A/B validator. Once gpu_freeze_at_guest_ms engages (scene "
+    "frozen, re-rendered identically every frame), ALTERNATE gpu_vrs_foliage_rate "
+    "ON/OFF in ~30-frame blocks within the SAME run and emit a 'VRS_AB: phase=...' "
+    "line per frame. Bucket gpu_frame_us by phase (median of each block, discard "
+    "the ~3 transition frames) for an airtight matched A/B - the scene is byte-"
+    "identical across phases, so the only variable is the shading rate. Sidesteps "
+    "BD boot non-determinism (different scene at the same guest_ms across runs) AND "
+    "the save-state path entirely (no two-run scene matching needed). Nav runs "
+    "VRS-off at baseline pacing so it reaches the field like the baseline. Requires "
+    "gpu_vrs_foliage_rate>0 (the ON rate) + gpu_freeze_at_guest_ms. Default off.",
+    "GPU");
 DEFINE_int32(
     thor_gpu_thread_affinity_cpu, -1,
     "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "

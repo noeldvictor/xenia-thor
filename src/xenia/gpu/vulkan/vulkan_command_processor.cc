@@ -2209,6 +2209,16 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
            xe::Clock::QueryGuestUptimeMillis());
   }
 
+  // Single-run VRS A/B (gpu_freeze_ab_alternate_vrs): once frozen, flip the VRS
+  // phase in ~30-frame blocks so the SAME frozen scene renders alternately with
+  // VRS off then on. The per-draw consumer reads gpu_freeze_vrs_phase_on_; the
+  // draw-outcomes path logs the phase so gpu_frame_us buckets cleanly by phase
+  // (median of each block, discard the ~3 GPU-latency transition frames).
+  if (gpu_scene_lock_frozen_ && cvars::gpu_freeze_ab_alternate_vrs) {
+    gpu_freeze_vrs_phase_on_ =
+        ((gpu_freeze_ab_frame_counter_++ / 30u) & 1u) != 0;
+  }
+
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     // Read back the newest GPU-timestamp pair from a frame that has completed
     // and whose slot hasn't been reused by an in-flight frame (no host stall).
@@ -2644,6 +2654,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
+    // Single-run VRS A/B: concise per-frame line so gpu_frame_us buckets by the
+    // frozen-scene VRS phase (rendered/alphatest/blended confirm the scene is
+    // identical across phases - the matched-A/B precondition).
+    if (cvars::gpu_freeze_ab_alternate_vrs && gpu_scene_lock_frozen_) {
+      XELOGI(
+          "VRS_AB: phase={} gpu_frame_us={} rendered={} alphatest={} blended={} "
+          "guest_ms={}",
+          gpu_freeze_vrs_phase_on_ ? 1 : 0, gpu_frame_us_,
+          draw_outcomes_rendered_, draw_outcomes_alphatest_draws_,
+          draw_outcomes_blended_draws_, xe::Clock::QueryGuestUptimeMillis());
+    }
     draw_outcomes_rendered_ = 0;
     draw_outcomes_opaque_draws_ = 0;
     draw_outcomes_opaque_verts_ = 0;
@@ -5880,10 +5901,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         // pacing + reaching the same scene) then enable VRS only in the target
         // scene for a matched-scene A/B. The dynamic state stays set (to 1x1) so
         // there is no undefined-shading-rate hazard.
-        const bool vrs_active =
+        bool vrs_active =
             cvars::gpu_vrs_enable_after_guest_ms == 0 ||
             xe::Clock::QueryGuestUptimeMillis() >=
                 uint64_t(cvars::gpu_vrs_enable_after_guest_ms);
+        // Single-run A/B: when alternating in the frozen scene, the per-frame
+        // phase decides VRS on/off (overrides the enable_after gate).
+        if (cvars::gpu_freeze_ab_alternate_vrs && gpu_scene_lock_frozen_) {
+          vrs_active = gpu_freeze_vrs_phase_on_;
+        }
         uint32_t vrs_rate = !vrs_active                        ? 1u
                             : cvars::gpu_vrs_foliage_rate >= 4 ? 4u
                             : cvars::gpu_vrs_foliage_rate >= 2 ? 2u

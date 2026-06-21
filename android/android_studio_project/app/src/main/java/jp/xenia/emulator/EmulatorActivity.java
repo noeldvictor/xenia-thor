@@ -288,6 +288,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");
             copyIntExtra(intent, launchArguments, "gpu_freeze_at_guest_ms");
             copyIntExtra(intent, launchArguments, "gpu_vrs_enable_after_guest_ms");
+            copyBooleanExtra(intent, launchArguments, "gpu_freeze_ab_alternate_vrs");
             copyIntExtra(intent, launchArguments, "gpu_cull_max_per_frame");
             copyIntExtra(intent, launchArguments, "gpu_skip_draws_below_verts");
             copyIntExtra(intent, launchArguments, "gpu_merge_vf_index_stride_fix");

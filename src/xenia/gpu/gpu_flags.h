@@ -43,6 +43,7 @@ DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_int32(gpu_vrs_foliage_rate);
 DECLARE_uint32(gpu_vrs_enable_after_guest_ms);
+DECLARE_bool(gpu_freeze_ab_alternate_vrs);
 DECLARE_int32(thor_gpu_thread_affinity_cpu);
 DECLARE_int32(gpu_cp_worker_nice);
 DECLARE_bool(gpu_trace_swap);
