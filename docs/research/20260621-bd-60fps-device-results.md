@@ -47,6 +47,24 @@ REFUTED on device.** Combined with the gate-NOP hang, every isolated clean guest
 inert-or-hang. The clean single-edit guest 60fps lever does NOT exist; only the fragile fixed-timestep-retune
 + battle-counter grind (~25%) or the likely-blocked decouple trampoline remain. Frame-gen stands as the path.
 
+**VBLANK-DIVISOR test (2026-06-21) -> INERT; reveals the REAL mechanism.** Workflow w5fifo54z found a per-swap
+vblank countdown ctx+0x3b1c (armed @0x8246AAA8, decremented by the vblank IRQ callback @0x8246DC74) and
+hypothesized it divides the 60Hz host vblank to 30. Patched it to 1 (0x8246AAA0 b->li r8,1, device-applied):
+**peak 28 VdSwap/s, field ~6/s = INERT, no 60 anywhere.** Decoding the IRQ callback (0x8246DC58-DCB8) shows
+why: the swap-completion callback (ctx+0x3b10) fires EVERY vblank regardless of the countdown (both the
+countdown-zero and nonzero branches reach the fire-check @0x8246DC90); the countdown only gates a secondary
+0x3b18 snapshot. So the workflow MISattributed the divisor - the swap signal is already 60Hz-capable.
+**THE REAL LIMITER (now solid): the guest PRODUCTION rate. The swap fires at 60Hz, but BD only produces ~30
+frames/s because each frame waits a full GPU-RING round-trip in the 1-frame-deep serialized logic<->render
+lockstep.** This is HOST-SIDE latency, not a guest cap. => guest-patch 60fps is EXHAUSTED (interval/gate-NOP/
+vblank-div all device-tested inert-or-hang across 6 fires). The 60fps path is: (1) host-side ring-drain
+latency reduction (vulkan_lazy_completion_polls SHIPPED + gpu_early_primary_read_pointer_writeback BUILT - the
+clean lever for light/medium scenes, no speed-up/softlock risk; needs a light-INTERACTIVE-scene A/B which is
+the open methodology gap since BD early scenes are movies and the field is GPU-bound), (2) GPU-efficiency for
+the heavy field (VRS shipped, FP10 validated, FDM unbuilt), (3) frame-gen for visual smoothness. The user's
+"clever semi-RE" push WAS productive - it drove finding the real mechanism layer-by-layer - but the
+conclusion is the cap is host-side serialization, not a flippable guest switch.
+
 ## Track 1 (frame-gen) — grounded first-increment plan (the path)
 Format note: the presenter intermediate is ALREADY A2B10G10R10_UNORM_PACK32 (kGuestOutputFormat). Effects are
 GRAPHICS passes (not compute); shaders are offline-built (xb buildshaders -> committed SPIR-V .h).
