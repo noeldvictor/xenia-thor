@@ -146,6 +146,21 @@ patcher can write a trampoline into XEX padding (be32 stream); this is advanced 
 This choke-point route is HIGHER-confidence than the counter grind IF (1) holds. It is the recommended Route
 B refinement; resolve (1)-(3) by RE + the one gate device test before building the trampoline.
 
+**FOLLOW-UP (2026-06-21, tempering caution): render may be a per-frame TASK inside the dispatch.** Scanning
+the image for function-pointer data words found bdRenderStep(0x82132BE8) registered AS A POINTER at
+0x820A2040, clustered with bdMainGameStep(0x820A1C30), taskUpdateA(0x8212A380 @0x820A1D48),
+taskUpdateB(0x8212A2C8 @0x820A1D40); plus bdGameTaskUpdate@0x820654A0/0x8209F840 and
+bdBattleSystemUpdate@0x8206D838/0x820A41F8. The irregular spacing => these are per-object callback fields
+(task descriptors), not one uniform state table. **Implication: render is dispatched through the SAME task/
+callback machinery as logic, so it is NOT obviously a separate thread — gating ALL of bdMainGameStep could
+halve render too, defeating the choke point.** This does NOT kill the lead but downgrades its confidence: the
+clean version needs render to run on a separate context OR needs the gate applied to only the LOGIC tasks
+(battle/field), not the render task — which re-introduces per-task selection. **Unknown #1 is therefore the
+make-or-break and is best answered behaviorally on device** (gate bdMainGameStep every-other-frame, observe
+whether the scene still presents new frames at 60 or drops to 30). Until then, treat the choke point as a
+promising-but-unconfirmed lead, not a confirmed win. The simplest device experiment remains the staged gate
+A/B (scratch/4D5307DF-60fps-gate-experiment.patch.toml).
+
 ## Reusable RE tooling produced
 tools/xex/xex_disasm.py + scan_stores.py + scan_bl.py (committed). CAUTION: scan_stores' raw disp match
 yields capstone false-positives on 0x82xxxxxx pointer-table words (they decode as bogus `lwz`) — always
