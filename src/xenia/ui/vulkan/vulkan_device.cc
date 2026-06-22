@@ -207,6 +207,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // block). Confirmed enumerable on both Thor drivers. Requested when supported;
       // INERT until the gpu_vrs_foliage_rate consumer sets a coarse rate.
       XE_UI_VULKAN_STRUCT_EXTENSION(KHR_fragment_shading_rate)
+      // #219 VK_EXT_fragment_density_map (FDM) - Thor novel-hardware lever:
+      // per-bin HW resolution downscale (GRAS_BIN_FOVEAT, gate-confirmed distinct
+      // from VRS) cutting the fragment COUNT over the 3D viewport. Requested when
+      // supported; INERT until a density map is attached (gpu_fdm_foliage).
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_fragment_density_map)
     }
     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
       // #237.
@@ -333,6 +338,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceFragmentShadingRateFeaturesKHR,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR>
       features_KHR_fragment_shading_rate;
+  // #219 VK_EXT_fragment_density_map (FDM) - per-bin HW resolution downscale.
+  VulkanFeatures<
+      VkPhysicalDeviceFragmentDensityMapFeaturesEXT,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT>
+      features_EXT_fragment_density_map;
   VkPhysicalDevicePushDescriptorPropertiesKHR
       properties_KHR_push_descriptor = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
@@ -377,23 +387,20 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       features_KHR_fragment_shading_rate.Link(supported_features_2,
                                               device_create_info);
     }
+    if (device->extensions_.ext_EXT_fragment_density_map) {
+      features_EXT_fragment_density_map.Link(supported_features_2,
+                                             device_create_info);
+    }
     if (device->extensions_.ext_KHR_push_descriptor) {
       properties_KHR_push_descriptor.pNext = properties_2.pNext;
       properties_2.pNext = &properties_KHR_push_descriptor;
     }
-    // FDM lever sizing (2026-06-20): the Thor's Turnip enumerates
-    // VK_EXT_fragment_density_map (+ _offset for the A740 "LRZ-space" so FDM and
-    // LRZ coexist). Query-only (NOT enabling) the feature bits to decide the
-    // build path: with fragmentDensityMapNonSubsampledImages a density map can
-    // attach to the EXISTING render targets (~1wk); without it, RTs must be
-    // subsampled (bigger rearch). FDM shrinks whole GMEM tiles pre-raster ->
-    // cuts raster+depth+sample+texture overdraw (the BD ~95% fragment floor),
-    // harder than the shipped VRS (shading-rate only). Spec: unrecognized sType
-    // is ignored, so this is safe even if the struct/ext were absent.
-    VkPhysicalDeviceFragmentDensityMapFeaturesEXT fdm_features = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT};
-    fdm_features.pNext = supported_features_2.pNext;
-    supported_features_2.pNext = &fdm_features;
+    // FDM (VK_EXT_fragment_density_map) is now ENABLED (not query-only) via
+    // features_EXT_fragment_density_map above when supported - its .supported bits
+    // are populated by the vkGetPhysicalDeviceFeatures2 below. It shrinks whole
+    // GMEM bins pre-raster (GRAS_BIN_FOVEAT) -> cuts the raster/depth/shade
+    // fragment COUNT (the BD overdraw floor), distinct from the shipped VRS
+    // (shading-rate only). INERT until a density map is attached to a render pass.
     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
 
@@ -425,9 +432,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     XELOGI(
         "GPU FDM audit: fragmentDensityMap={} nonSubsampledImages={} "
         "dynamic={}",
-        fdm_features.fragmentDensityMap,
-        fdm_features.fragmentDensityMapNonSubsampledImages,
-        fdm_features.fragmentDensityMapDynamic);
+        features_EXT_fragment_density_map.supported.fragmentDensityMap,
+        features_EXT_fragment_density_map.supported
+            .fragmentDensityMapNonSubsampledImages,
+        features_EXT_fragment_density_map.supported.fragmentDensityMapDynamic);
   }
 
   uint32_t queue_family_count = 0;
@@ -819,6 +827,34 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
             VK_TRUE;
     XELOGI("* VK_KHR_fragment_shading_rate (pipelineFragmentShadingRate: {})",
            device->extensions_.ext_KHR_fragment_shading_rate ? "yes" : "no");
+  }
+
+  if (device->extensions_.ext_EXT_fragment_density_map) {
+    // Enable manually (like VRS): mirroring into device->properties_ via
+    // XE_UI_VULKAN_FEATURE_2 would assert (no FDM member there). Enable the base
+    // feature + nonSubsampledImages (the attach-to-existing-RTs path); leave
+    // dynamic off (a static/per-frame density map; =0 on the Thor anyway).
+    if (with_gpu_emulation) {
+      features_EXT_fragment_density_map.enabled.fragmentDensityMap =
+          features_EXT_fragment_density_map.supported.fragmentDensityMap;
+      features_EXT_fragment_density_map.enabled
+          .fragmentDensityMapNonSubsampledImages =
+          features_EXT_fragment_density_map.supported
+              .fragmentDensityMapNonSubsampledImages;
+    }
+    // Keep the flag honest: available only if the base feature actually enabled
+    // (the consumer guards on this before attaching a density map).
+    device->extensions_.ext_EXT_fragment_density_map =
+        with_gpu_emulation &&
+        features_EXT_fragment_density_map.supported.fragmentDensityMap == VK_TRUE;
+    XELOGI(
+        "* VK_EXT_fragment_density_map (fragmentDensityMap: {}, "
+        "nonSubsampledImages: {})",
+        device->extensions_.ext_EXT_fragment_density_map ? "yes" : "no",
+        features_EXT_fragment_density_map.supported
+                .fragmentDensityMapNonSubsampledImages == VK_TRUE
+            ? "yes"
+            : "no");
   }
 
   if (device->extensions_.ext_KHR_push_descriptor) {

@@ -200,6 +200,13 @@ class VulkanDevice {
     // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
     // drivers. pipelineFragmentShadingRate enabled when supported.
     bool ext_KHR_fragment_shading_rate = false;
+    // VK_EXT_fragment_density_map (FDM): per-bin HW resolution downscale
+    // (GRAS_BIN_FOVEAT, distinct from VRS coarse-shading per the Mesa-source gate
+    // 2026-06-22) -> cuts the COUNT of rasterized/depth-tested/shaded fragments
+    // over the 3D viewport = BD's confirmed raster/coverage floor. Enabled (incl.
+    // nonSubsampledImages, the attach-to-existing-RTs path) when supported; INERT
+    // until a density map is attached to a render pass (gpu_fdm_foliage consumer).
+    bool ext_EXT_fragment_density_map = false;
     // Max descriptors pushable per push (from
     // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
     // extension is unavailable.
