@@ -72,6 +72,23 @@ LOAD + mid-pass ClearAttachments + keep one compare direction, then re-enable th
 EDRAM-safe productization - if the spike shows a big drop, the occlusion win is real; if flat, BD's floor is
 co-planar/blended (not occluded) and LRZ won't help (drop it, go FDM/SGSR2).
 
+## SPIKE RESULT (2026-06-22): LRZ-restore did NOT pay off cheaply for BD -> likely co-planar/blended floor.
+Built + device-tested the spike (commit e61a2938d: gpu_lrz_spike_depth_clear forces depth loadOp=LOAD->CLEAR
++ depth clearValue=1.0 far; combined with gpu_foliage_lrz_force_depth). Result: spike field ~132-134ms at
+rendered~1113/alphatest~433 vs the ~121ms baseline at rendered~996/alphatest~360 AND the nolrz run ~123ms at a
+HEAVIER 1155/500. So at comparable depth the spike is FLAT-to-slightly-SLOWER = NO occlusion win (the
+loadOp=CLEAR clear + foliage depth-test added cost without a rejection payoff). Screenshot: field renders
+recognizably (depth ordering ~correct, so clear=1.0 direction is right, not a black over-rejection).
+=> Strongly supports the honest caveat: BD's overdraw is CO-PLANAR foliage + 34% BLENDED transparency (layers
+at similar depth, NOT occluded by opaque), so valid LRZ has little to reject. **CAVEAT (not 100% conclusive):
+the opaque depth prepass is scaffold-only/non-functional (gpu_flags.cc:566), so the spike relied on natural
+draw order to establish opaque-first Z; if BD interleaves opaque/foliage, LRZ couldn't reject even when valid.
+A conclusive test needs completing the prepass (draw deferral + stream splice = a bigger build, plan
+docs/research/20260617-bd-opaque-depth-prepass-plan.md).** VERDICT: the floor-reopening (LRZ dead + restorable)
+is REAL, but the BD payoff is small per the cheap probe -> pivot to the occlusion-INDEPENDENT levers: FDM
+(cheapens per-fragment cost) + SGSR2 (cuts total fragments via render-low+upscale), which don't need occlusion.
+Re-open LRZ only if the completed prepass + a matched-scene (gpu_freeze) A/B is worth the bigger build.
+
 ## DEAD / do-not-re-propose (validated this sweep)
 visibility-buffer/deferred-texturing (needs renderer re-arch, can't touch alpha-test/blended); GPU-driven
 clustered culling (binning ~5% of BD); async-spacewarp (subset of Mob-FGSR); learned-rule DBT / SIMD-widening
