@@ -516,6 +516,10 @@ class VulkanPresenter final : public Presenter {
   VkExtent2D frame_gen_history_extent_ = {0, 0};
   uint32_t frame_gen_history_writable_ = 0;
   uint32_t frame_gen_history_valid_count_ = 0;
+  // Properties of the last real guest frame, reused for synthesized frames (which
+  // don't consume the mailbox).
+  GuestOutputProperties frame_gen_last_properties_;
+  GuestOutputPaintConfig frame_gen_last_paint_config_;
 
   // UI submission completion timeline with the submission index that can be
   // given to UI drawers (accessible from the UI thread only, at any time).

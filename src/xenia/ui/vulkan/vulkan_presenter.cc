@@ -1963,7 +1963,28 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
   GuestOutputProperties guest_output_properties;
   GuestOutputPaintConfig guest_output_paint_config;
   std::shared_ptr<GuestOutputImage> guest_output_image;
-  {
+  // Frame generation: a synthesized present reuses the history ring instead of
+  // consuming a new guest frame (so the guest's frame rate is untouched).
+  const bool synthesize_frame =
+      current_paint_synthesize_frame_ && cvars::present_frame_extrapolation &&
+      frame_gen_history_valid_count_ >= kFrameGenHistorySize;
+  if (synthesize_frame) {
+    // Reuse the last real frame's properties (the mailbox isn't consumed here).
+    guest_output_properties = frame_gen_last_properties_;
+    guest_output_paint_config = frame_gen_last_paint_config_;
+    // Increment 2 (part 1): frame-repeat the most recent history frame to drive
+    // the synth present path end-to-end. The blend / optical-flow synth pass that
+    // makes this smooth replaces this selection (and must add cross-submission
+    // history synchronization before sampling a slot a real frame may still be
+    // writing). Non-owning shared_ptr: the history image is a presenter member
+    // that outlives any paint (freed only after AwaitAllSubmissions in the dtor).
+    uint32_t most_recent_history =
+        (frame_gen_history_writable_ + kFrameGenHistorySize - 1) %
+        kFrameGenHistorySize;
+    guest_output_image = std::shared_ptr<GuestOutputImage>(
+        std::shared_ptr<void>(),
+        frame_gen_history_images_[most_recent_history].get());
+  } else {
     uint32_t guest_output_mailbox_index;
     std::unique_lock<std::mutex> guest_output_consumer_lock(
         ConsumeGuestOutput(guest_output_mailbox_index, &guest_output_properties,
@@ -1980,12 +2001,16 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
     // multiple threads can't paint the main target at the same time).
   }
 
-  // Frame generation (increment 1): keep a history of recent guest-output color
-  // frames for a future synth pass. Recorded into the still-open
-  // draw_command_buffer; transparent to the effect chain below (leaves the image
-  // in kGuestOutputInternalLayout). Zero work when the cvar is off.
-  if (cvars::present_frame_extrapolation && guest_output_image) {
+  // Frame generation: on REAL frames, copy the consumed guest output into the
+  // history ring + cache its properties for synth frames. Skipped on synth frames
+  // (don't re-copy a synthesized frame). Recorded into the still-open
+  // draw_command_buffer; transparent to the effect chain (leaves the image in
+  // kGuestOutputInternalLayout). Zero work when the cvar is off.
+  if (cvars::present_frame_extrapolation && !synthesize_frame &&
+      guest_output_image) {
     RecordFrameGenHistoryCopy(draw_command_buffer, *guest_output_image);
+    frame_gen_last_properties_ = guest_output_properties;
+    frame_gen_last_paint_config_ = guest_output_paint_config;
   }
 
   if (guest_output_image) {

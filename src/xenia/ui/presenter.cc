@@ -1354,10 +1354,12 @@ bool Presenter::InSurfaceOnMonitorFromUIThread() const {
 #endif  // XE_PLATFORM
 }
 
-Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers) {
+Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers,
+                                                 bool synthesize_frame) {
   assert_false(execute_ui_drawers && !is_in_ui_thread_paint_);
   assert_true(surface_paint_connection_state_ ==
               SurfacePaintConnectionState::kConnectedPaintable);
+  current_paint_synthesize_frame_ = synthesize_frame;
   PaintResult result = PaintAndPresentImpl(execute_ui_drawers);
   switch (result) {
     case PaintResult::kPresented:

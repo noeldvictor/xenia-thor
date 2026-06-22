@@ -701,6 +701,12 @@ class Presenter {
   // For calling from the painting implementations if requested.
   void ExecuteUIDrawersFromUIThread(UIDrawContext& ui_draw_context);
 
+  // Frame generation: whether the current paint is a synthesized (frame-gen)
+  // present rather than a real guest frame. Set by PaintAndPresent before calling
+  // PaintAndPresentImpl; read by the implementation's synth branch. Paints are
+  // serialized (paint_mode_mutex_), so this is not concurrently accessed.
+  bool current_paint_synthesize_frame_ = false;
+
  private:
   enum class PaintMode {
     // Don't paint at all.
@@ -830,7 +836,8 @@ class Presenter {
   // may not be made outdated if that happens - though if it's
   // kPresentedSuboptimal rather than kNotPresentedConnectionOutdated, the image
   // has been successfully sent to the OS presentation at least.
-  PaintResult PaintAndPresent(bool execute_ui_drawers);
+  PaintResult PaintAndPresent(bool execute_ui_drawers,
+                              bool synthesize_frame = false);
 
   void HandleUIDrawersChangeFromUIThread(bool drawers_were_empty);
 
