@@ -528,6 +528,11 @@ bool VulkanPresenter::PaintContext::Submission::Initialize() {
 }
 
 VulkanPresenter::~VulkanPresenter() {
+  // Stop the frame-gen tick thread first: it paints via PaintAndPresentImpl, so
+  // it must not run once this derived presenter's painting state starts being
+  // torn down (or once the vtable reverts to the base).
+  ShutdownFrameGenTickThread();
+
   // Destroy the swapchain after its images are not used for drawing anymore.
   // This is a confusing part in Vulkan, as vkQueuePresentKHR doesn't signal a
   // fence clearly indicating when it's safe to destroy a swapchain, so we

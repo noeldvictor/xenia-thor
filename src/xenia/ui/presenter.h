@@ -707,7 +707,32 @@ class Presenter {
   // serialized (paint_mode_mutex_), so this is not concurrently accessed.
   bool current_paint_synthesize_frame_ = false;
 
+  // Frame generation tick scheduler: a timer thread that drives synthesized
+  // presents between real guest frames (PaintAndPresent(false, true)). The thread
+  // paints via PaintAndPresentImpl, so the MOST-DERIVED destructor MUST call
+  // ShutdownFrameGenTickThread() before tearing down derived painting state.
+  // StartFrameGenTickThread() is called once during common initialization.
+  void StartFrameGenTickThread();
+  void ShutdownFrameGenTickThread();
+
  private:
+  // The tick thread body + the actual synth present (taken under paint_mode_mutex_,
+  // NEVER while holding frame_gen_tick_mutex_ - lock order is frame_gen_tick_mutex_
+  // is dropped before paint_mode_mutex_ is taken).
+  void FrameGenTickThread();
+  void DoFrameGenSynthPresent();
+
+  std::thread frame_gen_tick_thread_;
+  std::mutex frame_gen_tick_mutex_;
+  std::condition_variable frame_gen_tick_cv_;
+  bool frame_gen_tick_thread_started_ = false;
+  bool frame_gen_tick_shutdown_ = false;
+  // Microsecond timestamp (steady clock) of the last real guest present, the
+  // smoothed real-present interval, and whether a synth has already been done in
+  // the current interval. Guarded by frame_gen_tick_mutex_.
+  uint64_t frame_gen_last_real_present_us_ = 0;
+  uint64_t frame_gen_guest_interval_us_ = 0;
+  bool frame_gen_synthed_this_interval_ = false;
   enum class PaintMode {
     // Don't paint at all.
     // Painting lifecycle is accessible only by the UI thread.

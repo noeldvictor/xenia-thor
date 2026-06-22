@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <utility>
 
 #include "xenia/base/assert.h"
@@ -106,6 +107,12 @@ namespace ui {
 
 namespace {
 
+uint64_t FrameGenNowMicroseconds() {
+  return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count());
+}
+
 std::atomic<int32_t> g_present_trace_guest_output_geometry_rows{0};
 
 bool ShouldTraceGuestOutputGeometry() {
@@ -132,6 +139,11 @@ Presenter::~Presenter() {
   // No intrusive lifetime management must be performed from UI drawers - defer
   // it if needed.
   assert_false(is_executing_ui_drawers_);
+
+  // Safety net: the frame-gen tick thread paints via the (now-pure) virtual
+  // PaintAndPresentImpl, so it must already have been shut down by the
+  // most-derived destructor. Idempotent (no-op if already joined).
+  ShutdownFrameGenTickThread();
 
 #if XE_PLATFORM_WIN32
   if (dxgi_ui_tick_thread_.joinable()) {
@@ -495,6 +507,31 @@ bool Presenter::RefreshGuestOutput(
         break;
     }
   }
+
+  // Frame generation: record the real guest present cadence (outside
+  // paint_mode_mutex_) so the tick thread can schedule a synth present at the
+  // interval midpoint. Notify after releasing the mutex (lock order: never hold
+  // paint_mode_mutex_ here).
+  if (cvars::present_frame_extrapolation) {
+    {
+      std::lock_guard<std::mutex> frame_gen_lock(frame_gen_tick_mutex_);
+      uint64_t now_us = FrameGenNowMicroseconds();
+      if (frame_gen_last_real_present_us_) {
+        uint64_t delta_us = now_us - frame_gen_last_real_present_us_;
+        // Smooth the interval; ignore startup / stall outliers.
+        if (delta_us > 1000 && delta_us < 200000) {
+          frame_gen_guest_interval_us_ =
+              frame_gen_guest_interval_us_
+                  ? (frame_gen_guest_interval_us_ * 3 + delta_us) / 4
+                  : delta_us;
+        }
+      }
+      frame_gen_last_real_present_us_ = now_us;
+      frame_gen_synthed_this_interval_ = false;
+    }
+    frame_gen_tick_cv_.notify_one();
+  }
+
   // Handle GPU loss when not in the middle of the function anymore, and
   // lifecycle management from the GPU loss callback is fine on the UI thread.
   if (host_gpu_loss_callback_) {
@@ -641,7 +678,86 @@ bool Presenter::InitializeCommonSurfaceIndependent() {
   dxgi_ui_tick_thread_ = std::thread(&Presenter::DXGIUITickThread, this);
 #endif  // XE_PLATFORM
 
+  StartFrameGenTickThread();
+
   return true;
+}
+
+void Presenter::StartFrameGenTickThread() {
+  if (frame_gen_tick_thread_started_) {
+    return;
+  }
+  frame_gen_tick_thread_started_ = true;
+  frame_gen_tick_thread_ = std::thread(&Presenter::FrameGenTickThread, this);
+}
+
+void Presenter::ShutdownFrameGenTickThread() {
+  if (!frame_gen_tick_thread_.joinable()) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(frame_gen_tick_mutex_);
+    frame_gen_tick_shutdown_ = true;
+  }
+  frame_gen_tick_cv_.notify_all();
+  frame_gen_tick_thread_.join();
+}
+
+void Presenter::FrameGenTickThread() {
+  std::unique_lock<std::mutex> lock(frame_gen_tick_mutex_);
+  while (!frame_gen_tick_shutdown_) {
+    if (!cvars::present_frame_extrapolation ||
+        frame_gen_guest_interval_us_ == 0 ||
+        frame_gen_synthed_this_interval_) {
+      // Frame generation off, no measured interval yet, or this interval's synth
+      // already done: idle until a real present (or shutdown) wakes us.
+      frame_gen_tick_cv_.wait(lock);
+      continue;
+    }
+    // Aim for the midpoint of the guest interval (factor 2 = one synth per real
+    // frame). present_frame_gen_factor will subdivide further later.
+    uint64_t target_us =
+        frame_gen_last_real_present_us_ + frame_gen_guest_interval_us_ / 2;
+    uint64_t now_us = FrameGenNowMicroseconds();
+    if (now_us + 250 < target_us) {
+      frame_gen_tick_cv_.wait_for(lock,
+                                  std::chrono::microseconds(target_us - now_us));
+      continue;
+    }
+    // Reached the midpoint with no new real present: synthesize one frame.
+    frame_gen_synthed_this_interval_ = true;
+    // Drop the timing lock BEFORE taking paint_mode_mutex_ (lock order).
+    lock.unlock();
+    DoFrameGenSynthPresent();
+    lock.lock();
+  }
+}
+
+void Presenter::DoFrameGenSynthPresent() {
+  PaintResult paint_result = PaintResult::kNotPresented;
+  {
+    std::lock_guard<std::mutex> paint_mode_mutex_lock(paint_mode_mutex_);
+    // Only the immediate-guest-output-thread present path supports painting off
+    // the UI thread; mirror RefreshGuestOutput's trigger for the synth present.
+    if (paint_mode_ != PaintMode::kGuestOutputThreadImmediately) {
+      return;
+    }
+    if (surface_paint_connection_state_ ==
+        SurfacePaintConnectionState::kConnectedPaintable) {
+      paint_result = PaintAndPresent(false, /*synthesize_frame=*/true);
+      if (surface_paint_connection_state_ ==
+          SurfacePaintConnectionState::kConnectedOutdated) {
+        RequestPaintOrConnectionRecoveryViaWindow(true);
+      }
+    }
+  }
+  if (host_gpu_loss_callback_) {
+    if (paint_result == PaintResult::kGpuLostResponsible) {
+      host_gpu_loss_callback_(true, false);
+    } else if (paint_result == PaintResult::kGpuLostExternally) {
+      host_gpu_loss_callback_(false, false);
+    }
+  }
 }
 
 std::unique_lock<std::mutex> Presenter::ConsumeGuestOutput(

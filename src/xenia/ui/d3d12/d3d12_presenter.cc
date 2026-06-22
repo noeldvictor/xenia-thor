@@ -49,6 +49,10 @@ namespace shaders {
 }  // namespace shaders
 
 D3D12Presenter::~D3D12Presenter() {
+  // Stop the frame-gen tick thread first (it paints via PaintAndPresentImpl, so
+  // it must not run during this derived presenter's teardown).
+  ShutdownFrameGenTickThread();
+
   // Await completion of the usage of everything before destroying anything,
   // irrespective of the declaration order in the class.
   // From most likely the latest to most likely the earliest to be signaled, so
