@@ -77,3 +77,17 @@ Frame-gen warps the whole frame including the 2D HUD, which has no real motion â
 (later): the guest 2D HUD is typically composited last; without per-element info the presenter can't cleanly
 exclude it. Acceptable for a first pass; a depth/stencil-aware mask (approach C territory) fixes it properly.
 This is a known frame-gen limitation, documented so it's not a surprise on device.
+
+## DEVICE RESULT â€” Increment 2 (cross-fade blend) VALIDATED (2026-06-22, commit fb0b2fefd)
+Built the 2-input cross-fade blend pass (InitializeFrameGenBlend + RecordFrameGenBlend in vulkan_presenter):
+the synth path now blends history N-1/N-2 (mix 0.5) into a synth target via the committed sampler-less
+guest_output_frame_blend_ps FS, reusing the rect VS + intermediate render pass; no extra cross-submission sync
+(paints mutex-serialized + 3-deep fence throttle on a single queue + the history copy's transfer->shader-read
+post-barrier); one blend descriptor set per submission slot. Build clean (gradle, native arm64).
+DEVICE (BD heavy field, 192.168.1.32:5555, present_frame_extrapolation=true gen_factor=2): field renders
+CORRECTLY (crisp, no corruption/black/flicker), NO Vulkan validation errors / device-lost / crash / SIGSEGV,
+blend pipeline created OK (no failure log), reached the full field (rendered~1201, total_vertices~251k,
+alphatest~534, blended~386), gpu_frame_us ~124-136ms unchanged (synth blend is a separate cheap present, does
+not touch real-frame GPU cost). HONEST: cross-fade = modest smoothness w/ ghosting (no MVs); perceived fps only
+(no input-latency reduction). NEXT increment = motion-warp (depth-aware MV splatting, Mob-FGSR-style), reusing
+this 2-input synth-pass infra. Default-off cvar.
