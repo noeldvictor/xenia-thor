@@ -65,6 +65,18 @@ the heavy field (VRS shipped, FP10 validated, FDM unbuilt), (3) frame-gen for vi
 "clever semi-RE" push WAS productive - it drove finding the real mechanism layer-by-layer - but the
 conclusion is the cap is host-side serialization, not a flippable guest switch.
 
+**LAST LAYER DECODED (2026-06-22) -> guest path CONCLUSIVELY exhausted.** The swap-completion callback at
+ctx+0x3b10 was the one untested layer (registered at 0x820C5624 in the main-loop fn: r4=0x820C5498). Decoded
+0x820C5498 = re:Blue's bdVBlankCallback = a 5-instruction NO-OP: `lis r11,-0x7d86; lwz r10,0x7cd0(r11);
+addi r10,1; stw r10,0x7cd0(r11); blr` - it just increments a vblank tally @0x827A7CD0. It does NOT signal the
+frame event, compare a target, or gate anything. So there is NO guest 30->60 gate at ANY layer (interval,
+producer-signal, vblank-countdown, AND now the vblank callback - all decoded/tested). The frame-event signal
+that releases the lockstep is the render thread's NtSetEvent (0x82132F10), gated by the render thread blocking
+on the GPU-ring drain. **DEFINITIVE: BD's 30fps = host-side GPU-ring-drain-gated 1-frame-deep lockstep
+round-trip. The 60fps lever is HOST-SIDE (gpu_early_primary_read_pointer_writeback / lazy-polls) for light/
+medium + GPU-efficiency for the heavy field + frame-gen. No guest patch exists. The guest-RE 60fps
+investigation is COMPLETE.**
+
 ## Track 1 (frame-gen) — grounded first-increment plan (the path)
 Format note: the presenter intermediate is ALREADY A2B10G10R10_UNORM_PACK32 (kGuestOutputFormat). Effects are
 GRAPHICS passes (not compute); shaders are offline-built (xb buildshaders -> committed SPIR-V .h).
