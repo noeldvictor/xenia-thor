@@ -758,6 +758,16 @@ void Presenter::DoFrameGenSynthPresent() {
       host_gpu_loss_callback_(false, false);
     }
   }
+
+  // Rate-limited confirmation that synth presents are firing (frame-gen device
+  // A/B diagnostic; only the tick thread reaches here).
+  if (paint_result == PaintResult::kPresented ||
+      paint_result == PaintResult::kPresentedSuboptimal) {
+    static uint64_t synth_present_count = 0;
+    if ((synth_present_count++ % 120) == 0) {
+      XELOGI("Frame generation: {} synthesized presents", synth_present_count);
+    }
+  }
 }
 
 std::unique_lock<std::mutex> Presenter::ConsumeGuestOutput(
