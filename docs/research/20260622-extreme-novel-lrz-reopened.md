@@ -52,7 +52,25 @@ yielding the project ZERO value today.
    hoist mutations serial). NOT the parallel-JIT deadlock (GPU translate never takes the code lock). Gate:
    profile the record-vs-mutation split on one frozen Burnout frame.
 
-## Best NEXT build: #1 (restore LRZ validity). Gated by the TU_DEBUG=perf/nolrz probe (1 device fire, no code).
+## DEVICE GATE RESULT (2026-06-22): LRZ confirmed DEAD (contributes ~nothing) -> thesis VALIDATED.
+TU_DEBUG=perf set OK ("set TU_DEBUG='perf' before driver load") but Turnip's perf/LRZ-disable logging does
+NOT reach our logcat (Mesa perf_debug -> stderr or compiled out in the bundled release Turnip), so the
+disabler name wasn't captured. Used the cleaner falsifier instead - TU_DEBUG=nolrz vs default A/B on the BD
+field: default(LRZ on) ~121-122ms @rendered~996/alphatest~360; nolrz(LRZ off) ~123-124ms @rendered~1155/
+alphatest~500. **Forcing LRZ OFF cost only ~2ms despite ~140 MORE foliage draws** -> LRZ is doing ~no
+early-rejection now = structurally DEAD, as predicted. (Caveat: scenes not perfectly matched; direction is
+clear - LRZ-off-on-heavier ~= LRZ-on-on-lighter.) So restoring LRZ is upside-from-zero; the WIN SIZE is still
+unmeasured (depends how much BD overdraw is genuinely occluded vs co-planar/blended-34%).
+
+## Best NEXT build: #1 (restore LRZ validity). Gate (LRZ-dead) CONFIRMED; the win-size needs the build+measure.
+The build is DELICATE - entangled with the EDRAM emulation model: depth loadOp=LOAD loads EDRAM-resident depth;
+the mid-pass vkCmdClearAttachments emulates the guest's depth clear. To be LRZ-valid AND correct: when the
+heavy depth pass BEGINS with a guest full-depth-clear, use loadOp=CLEAR (matching the guest clear) instead of
+LOAD + mid-pass ClearAttachments + keep one compare direction, then re-enable the parked opaque depth prepass
+(gpu_opaque_depth_prepass cvar exists). Cvar-gated + screenshot-validated. RECOMMENDED first: a throwaway SPIKE
+(force loadOp=CLEAR + prepass, tolerate temp incorrectness) to MEASURE the gpu_frame_us drop before the correct
+EDRAM-safe productization - if the spike shows a big drop, the occlusion win is real; if flat, BD's floor is
+co-planar/blended (not occluded) and LRZ won't help (drop it, go FDM/SGSR2).
 
 ## DEAD / do-not-re-propose (validated this sweep)
 visibility-buffer/deferred-texturing (needs renderer re-arch, can't touch alpha-test/blended); GPU-driven
