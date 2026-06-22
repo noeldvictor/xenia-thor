@@ -476,6 +476,20 @@ class VulkanPresenter final : public Presenter {
   void RecordFrameGenHistoryCopy(VkCommandBuffer command_buffer,
                                  GuestOutputImage& source);
 
+  // Frame generation increment 2: lazily build the blend-pass objects (a 2-input
+  // cross-fade pipeline that reuses guest_output_intermediate_render_pass_ and
+  // the rect VS). Non-fatal: on failure leaves frame_gen_blend_pipeline_ null and
+  // the synth path falls back to frame-repeat. Only called when the cvar is on.
+  bool InitializeFrameGenBlend();
+  // Records a cross-fade of the two most-recent history frames into the synth
+  // target (lazily allocated to the history extent). Returns the synth image to
+  // hand to the effect chain, or nullptr to fall back to frame-repeat. Recorded
+  // into the still-open paint command buffer (before the effect chain).
+  GuestOutputImage* RecordFrameGenBlend(VkCommandBuffer command_buffer,
+                                        uint64_t paint_submission_index,
+                                        uint32_t newest_history,
+                                        uint32_t older_history);
+
   VulkanDevice* vulkan_device_;
   const UISamplers* ui_samplers_;
 
@@ -520,6 +534,26 @@ class VulkanPresenter final : public Presenter {
   // don't consume the mailbox).
   GuestOutputProperties frame_gen_last_properties_;
   GuestOutputPaintConfig frame_gen_last_paint_config_;
+
+  // Frame generation increment 2: the cross-fade blend pass. The FS samples two
+  // history frames (texelFetch, sampler-less: two SAMPLED_IMAGE bindings) and
+  // writes a blended synth frame into frame_gen_synth_image_, which is then fed
+  // to the effect chain exactly like a real frame. Reuses guest_output_paint_vs_
+  // and guest_output_intermediate_render_pass_ (kGuestOutputFormat, ends
+  // SHADER_READ_ONLY). All created lazily when the cvar is on; inert otherwise.
+  VkDescriptorSetLayout frame_gen_blend_descriptor_set_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout frame_gen_blend_pipeline_layout_ = VK_NULL_HANDLE;
+  VkShaderModule frame_gen_blend_fs_ = VK_NULL_HANDLE;
+  VkPipeline frame_gen_blend_pipeline_ = VK_NULL_HANDLE;
+  VkDescriptorPool frame_gen_blend_descriptor_pool_ = VK_NULL_HANDLE;
+  // One set per in-flight paint slot so a synth frame never overwrites a set a
+  // still-pending paint is reading (the paint throttle reuses a slot only after
+  // its prior use completes).
+  std::array<VkDescriptorSet, PaintContext::kSubmissionCount>
+      frame_gen_blend_descriptor_sets_ = {};
+  std::unique_ptr<GuestOutputImage> frame_gen_synth_image_;
+  VkFramebuffer frame_gen_synth_framebuffer_ = VK_NULL_HANDLE;
+  VkExtent2D frame_gen_synth_extent_ = {0, 0};
 
   // UI submission completion timeline with the submission index that can be
   // given to UI drawers (accessible from the UI thread only, at any time).

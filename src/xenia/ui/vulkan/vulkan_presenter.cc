@@ -454,6 +454,7 @@ namespace shaders {
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_ffx_fsr_easu_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_ffx_fsr_rcas_dither_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_ffx_fsr_rcas_ps.h"
+#include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_blend_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_triangle_strip_rect_vs.h"
 }  // namespace shaders
 
@@ -595,6 +596,21 @@ VulkanPresenter::~VulkanPresenter() {
   }
   util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout, device,
                              guest_output_paint_image_descriptor_set_layout_);
+
+  // Frame-generation blend pass objects (synth image is a unique_ptr, destroyed
+  // implicitly). All paint submissions are already awaited above.
+  util::DestroyAndNullHandle(dfn.vkDestroyFramebuffer, device,
+                             frame_gen_synth_framebuffer_);
+  util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
+                             frame_gen_blend_descriptor_pool_);
+  util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
+                             frame_gen_blend_pipeline_);
+  util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
+                             frame_gen_blend_fs_);
+  util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
+                             frame_gen_blend_pipeline_layout_);
+  util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout, device,
+                             frame_gen_blend_descriptor_set_layout_);
 }
 
 Surface::TypeFlags VulkanPresenter::GetSurfaceTypesSupportedByInstance(
@@ -1856,6 +1872,138 @@ void VulkanPresenter::RecordFrameGenHistoryCopy(VkCommandBuffer command_buffer,
   }
 }
 
+VulkanPresenter::GuestOutputImage* VulkanPresenter::RecordFrameGenBlend(
+    VkCommandBuffer command_buffer, uint64_t paint_submission_index,
+    uint32_t newest_history, uint32_t older_history) {
+  if (frame_gen_blend_pipeline_ == VK_NULL_HANDLE ||
+      !frame_gen_history_images_[newest_history] ||
+      !frame_gen_history_images_[older_history]) {
+    return nullptr;
+  }
+  const VulkanDevice::Functions& dfn = vulkan_device_->functions();
+  const VkDevice device = vulkan_device_->device();
+  const VkExtent2D& extent = frame_gen_history_extent_;
+  if (!extent.width || !extent.height) {
+    return nullptr;
+  }
+
+  // Lazily (re)allocate the synth target + framebuffer to the history extent.
+  if (!frame_gen_synth_image_ ||
+      frame_gen_synth_extent_.width != extent.width ||
+      frame_gen_synth_extent_.height != extent.height) {
+    // Await the last paint usage before destroying a possibly in-flight image.
+    paint_context_.completion_timeline.AwaitSubmissionAndUpdateCompleted(
+        paint_context_.guest_output_image_paint_last_submission);
+    util::DestroyAndNullHandle(dfn.vkDestroyFramebuffer, device,
+                               frame_gen_synth_framebuffer_);
+    frame_gen_synth_image_.reset();
+    frame_gen_synth_extent_ = {0, 0};
+    frame_gen_synth_image_ = GuestOutputImage::Create(
+        vulkan_device_, extent.width, extent.height);
+    if (!frame_gen_synth_image_) {
+      return nullptr;
+    }
+    VkImageView synth_attachment = frame_gen_synth_image_->view();
+    VkFramebufferCreateInfo synth_framebuffer_create_info;
+    synth_framebuffer_create_info.sType =
+        VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    synth_framebuffer_create_info.pNext = nullptr;
+    synth_framebuffer_create_info.flags = 0;
+    synth_framebuffer_create_info.renderPass =
+        guest_output_intermediate_render_pass_;
+    synth_framebuffer_create_info.attachmentCount = 1;
+    synth_framebuffer_create_info.pAttachments = &synth_attachment;
+    synth_framebuffer_create_info.width = extent.width;
+    synth_framebuffer_create_info.height = extent.height;
+    synth_framebuffer_create_info.layers = 1;
+    if (dfn.vkCreateFramebuffer(device, &synth_framebuffer_create_info, nullptr,
+                                &frame_gen_synth_framebuffer_) != VK_SUCCESS) {
+      frame_gen_synth_image_.reset();
+      return nullptr;
+    }
+    frame_gen_synth_extent_ = extent;
+  }
+
+  // Bind the two history frames into this paint slot's blend descriptor set.
+  VkDescriptorSet blend_set =
+      frame_gen_blend_descriptor_sets_[paint_submission_index %
+                                       PaintContext::kSubmissionCount];
+  VkDescriptorImageInfo blend_image_infos[2];
+  blend_image_infos[0].sampler = VK_NULL_HANDLE;
+  blend_image_infos[0].imageView =
+      frame_gen_history_images_[newest_history]->view();
+  blend_image_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  blend_image_infos[1].sampler = VK_NULL_HANDLE;
+  blend_image_infos[1].imageView =
+      frame_gen_history_images_[older_history]->view();
+  blend_image_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkWriteDescriptorSet blend_writes[2];
+  for (uint32_t i = 0; i < 2; ++i) {
+    blend_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    blend_writes[i].pNext = nullptr;
+    blend_writes[i].dstSet = blend_set;
+    blend_writes[i].dstBinding = i;
+    blend_writes[i].dstArrayElement = 0;
+    blend_writes[i].descriptorCount = 1;
+    blend_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    blend_writes[i].pImageInfo = &blend_image_infos[i];
+    blend_writes[i].pBufferInfo = nullptr;
+    blend_writes[i].pTexelBufferView = nullptr;
+  }
+  dfn.vkUpdateDescriptorSets(device, 2, blend_writes, 0, nullptr);
+
+  // The history images are already in SHADER_READ_ONLY (left there by the copy);
+  // the synth target's UNDEFINED->COLOR_ATTACHMENT->SHADER_READ transitions are
+  // handled by the intermediate render pass's attachment layouts + EXTERNAL deps.
+  VkRenderPassBeginInfo blend_render_pass_begin_info;
+  blend_render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  blend_render_pass_begin_info.pNext = nullptr;
+  blend_render_pass_begin_info.renderPass =
+      guest_output_intermediate_render_pass_;
+  blend_render_pass_begin_info.framebuffer = frame_gen_synth_framebuffer_;
+  blend_render_pass_begin_info.renderArea.offset.x = 0;
+  blend_render_pass_begin_info.renderArea.offset.y = 0;
+  blend_render_pass_begin_info.renderArea.extent = extent;
+  blend_render_pass_begin_info.clearValueCount = 0;
+  blend_render_pass_begin_info.pClearValues = nullptr;
+  dfn.vkCmdBeginRenderPass(command_buffer, &blend_render_pass_begin_info,
+                           VK_SUBPASS_CONTENTS_INLINE);
+  VulkanPerfCountersRecordRenderPassBegin(true);
+
+  VkViewport blend_viewport;
+  blend_viewport.x = 0.0f;
+  blend_viewport.y = 0.0f;
+  blend_viewport.width = float(extent.width);
+  blend_viewport.height = float(extent.height);
+  blend_viewport.minDepth = 0.0f;
+  blend_viewport.maxDepth = 1.0f;
+  dfn.vkCmdSetViewport(command_buffer, 0, 1, &blend_viewport);
+  VkRect2D blend_scissor;
+  blend_scissor.offset.x = 0;
+  blend_scissor.offset.y = 0;
+  blend_scissor.extent = extent;
+  dfn.vkCmdSetScissor(command_buffer, 0, 1, &blend_scissor);
+
+  dfn.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        frame_gen_blend_pipeline_);
+  dfn.vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              frame_gen_blend_pipeline_layout_, 0, 1, &blend_set,
+                              0, nullptr);
+  // Full-screen rect in NDC (the VS maps a triangle strip into [-1,1]).
+  GuestOutputPaintRectangleConstants blend_rect_constants;
+  blend_rect_constants.x = -1.0f;
+  blend_rect_constants.y = -1.0f;
+  blend_rect_constants.width = 2.0f;
+  blend_rect_constants.height = 2.0f;
+  dfn.vkCmdPushConstants(command_buffer, frame_gen_blend_pipeline_layout_,
+                         VK_SHADER_STAGE_VERTEX_BIT, 0,
+                         sizeof(blend_rect_constants), &blend_rect_constants);
+  dfn.vkCmdDraw(command_buffer, 4, 1, 0, 0);
+  dfn.vkCmdEndRenderPass(command_buffer);
+
+  return frame_gen_synth_image_.get();
+}
+
 Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
     bool execute_ui_drawers) {
   // Begin the submission in place of the one not currently potentially used on
@@ -1977,18 +2125,30 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
     // Reuse the last real frame's properties (the mailbox isn't consumed here).
     guest_output_properties = frame_gen_last_properties_;
     guest_output_paint_config = frame_gen_last_paint_config_;
-    // Increment 2 (part 1): frame-repeat the most recent history frame to drive
-    // the synth present path end-to-end. The blend / optical-flow synth pass that
-    // makes this smooth replaces this selection (and must add cross-submission
-    // history synchronization before sampling a slot a real frame may still be
-    // writing). Non-owning shared_ptr: the history image is a presenter member
-    // that outlives any paint (freed only after AwaitAllSubmissions in the dtor).
-    uint32_t most_recent_history =
+    // Increment 2: cross-fade the two most-recent history frames into the synth
+    // target via the blend pass, then feed that to the effect chain. If the
+    // blend is unavailable (cvar off / setup failed), fall back to frame-repeat
+    // of the newest history frame so the synth present still completes. No extra
+    // cross-submission sync is needed: paints are mutex-serialized and the paint
+    // throttle reuses a slot only after its prior GPU use completes (single
+    // queue), and the history copy's post-barrier already orders transfer-write
+    // -> fragment-shader-read across submissions. Non-owning shared_ptr: both the
+    // synth and history images are presenter members that outlive any paint
+    // (freed only after AwaitAllSubmissions in the dtor).
+    uint32_t newest_history =
         (frame_gen_history_writable_ + kFrameGenHistorySize - 1) %
         kFrameGenHistorySize;
+    uint32_t older_history =
+        (frame_gen_history_writable_ + kFrameGenHistorySize - 2) %
+        kFrameGenHistorySize;
+    GuestOutputImage* synth_image =
+        RecordFrameGenBlend(draw_command_buffer, current_paint_submission_index,
+                            newest_history, older_history);
+    GuestOutputImage* selected_image =
+        synth_image ? synth_image
+                    : frame_gen_history_images_[newest_history].get();
     guest_output_image = std::shared_ptr<GuestOutputImage>(
-        std::shared_ptr<void>(),
-        frame_gen_history_images_[most_recent_history].get());
+        std::shared_ptr<void>(), selected_image);
   } else {
     uint32_t guest_output_mailbox_index;
     std::unique_lock<std::mutex> guest_output_consumer_lock(
@@ -3005,7 +3165,200 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
     return false;
   }
 
+  // Frame-generation blend pass (cross-fade). Non-fatal: failure leaves the
+  // pipeline null and the synth path falls back to frame-repeat.
+  InitializeFrameGenBlend();
+
   return InitializeCommonSurfaceIndependent();
+}
+
+bool VulkanPresenter::InitializeFrameGenBlend() {
+  if (!cvars::present_frame_extrapolation) {
+    return true;
+  }
+  const VulkanDevice::Functions& dfn = vulkan_device_->functions();
+  const VkDevice device = vulkan_device_->device();
+
+  // Descriptor set layout: two SAMPLED_IMAGE bindings (the FS uses texelFetch,
+  // so no sampler binding).
+  VkDescriptorSetLayoutBinding blend_bindings[2];
+  for (uint32_t i = 0; i < 2; ++i) {
+    blend_bindings[i].binding = i;
+    blend_bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    blend_bindings[i].descriptorCount = 1;
+    blend_bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    blend_bindings[i].pImmutableSamplers = nullptr;
+  }
+  VkDescriptorSetLayoutCreateInfo blend_dsl_create_info;
+  blend_dsl_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  blend_dsl_create_info.pNext = nullptr;
+  blend_dsl_create_info.flags = 0;
+  blend_dsl_create_info.bindingCount = uint32_t(xe::countof(blend_bindings));
+  blend_dsl_create_info.pBindings = blend_bindings;
+  if (dfn.vkCreateDescriptorSetLayout(
+          device, &blend_dsl_create_info, nullptr,
+          &frame_gen_blend_descriptor_set_layout_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen blend descriptor set layout");
+    return false;
+  }
+
+  // Pipeline layout: only the VS rect push constant (the blend FS has none).
+  VkPushConstantRange blend_push_constant_range;
+  blend_push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  blend_push_constant_range.offset = 0;
+  blend_push_constant_range.size = sizeof(GuestOutputPaintRectangleConstants);
+  VkPipelineLayoutCreateInfo blend_pipeline_layout_create_info;
+  blend_pipeline_layout_create_info.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  blend_pipeline_layout_create_info.pNext = nullptr;
+  blend_pipeline_layout_create_info.flags = 0;
+  blend_pipeline_layout_create_info.setLayoutCount = 1;
+  blend_pipeline_layout_create_info.pSetLayouts =
+      &frame_gen_blend_descriptor_set_layout_;
+  blend_pipeline_layout_create_info.pushConstantRangeCount = 1;
+  blend_pipeline_layout_create_info.pPushConstantRanges =
+      &blend_push_constant_range;
+  if (dfn.vkCreatePipelineLayout(device, &blend_pipeline_layout_create_info,
+                                 nullptr, &frame_gen_blend_pipeline_layout_) !=
+      VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen blend pipeline layout");
+    return false;
+  }
+
+  // Fragment shader module.
+  VkShaderModuleCreateInfo blend_fs_create_info;
+  blend_fs_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  blend_fs_create_info.pNext = nullptr;
+  blend_fs_create_info.flags = 0;
+  blend_fs_create_info.codeSize = sizeof(shaders::guest_output_frame_blend_ps);
+  blend_fs_create_info.pCode = shaders::guest_output_frame_blend_ps;
+  if (dfn.vkCreateShaderModule(device, &blend_fs_create_info, nullptr,
+                               &frame_gen_blend_fs_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen blend fragment shader module");
+    return false;
+  }
+
+  // Pipeline (mirrors CreateGuestOutputPaintPipeline: rect VS + blend FS,
+  // triangle-strip, no vertex input, dynamic viewport/scissor, blend disabled),
+  // rendering to the intermediate render pass (kGuestOutputFormat).
+  VkPipelineShaderStageCreateInfo blend_stages[2] = {};
+  for (uint32_t i = 0; i < 2; ++i) {
+    blend_stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    blend_stages[i].stage =
+        i ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+    blend_stages[i].pName = "main";
+  }
+  blend_stages[0].module = guest_output_paint_vs_;
+  blend_stages[1].module = frame_gen_blend_fs_;
+  VkPipelineVertexInputStateCreateInfo blend_vertex_input_state = {};
+  blend_vertex_input_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  VkPipelineInputAssemblyStateCreateInfo blend_input_assembly_state = {};
+  blend_input_assembly_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  blend_input_assembly_state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+  VkPipelineViewportStateCreateInfo blend_viewport_state = {};
+  blend_viewport_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  blend_viewport_state.viewportCount = 1;
+  blend_viewport_state.scissorCount = 1;
+  VkPipelineRasterizationStateCreateInfo blend_rasterization_state = {};
+  blend_rasterization_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  blend_rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
+  blend_rasterization_state.cullMode = VK_CULL_MODE_NONE;
+  blend_rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  blend_rasterization_state.lineWidth = 1.0f;
+  VkPipelineMultisampleStateCreateInfo blend_multisample_state = {};
+  blend_multisample_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  blend_multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineColorBlendAttachmentState blend_color_blend_attachment_state = {};
+  blend_color_blend_attachment_state.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo blend_color_blend_state = {};
+  blend_color_blend_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend_color_blend_state.attachmentCount = 1;
+  blend_color_blend_state.pAttachments = &blend_color_blend_attachment_state;
+  static const VkDynamicState kBlendDynamicStates[] = {
+      VK_DYNAMIC_STATE_VIEWPORT,
+      VK_DYNAMIC_STATE_SCISSOR,
+  };
+  VkPipelineDynamicStateCreateInfo blend_dynamic_state = {};
+  blend_dynamic_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  blend_dynamic_state.dynamicStateCount =
+      uint32_t(xe::countof(kBlendDynamicStates));
+  blend_dynamic_state.pDynamicStates = kBlendDynamicStates;
+  VkGraphicsPipelineCreateInfo blend_pipeline_create_info;
+  blend_pipeline_create_info.sType =
+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  blend_pipeline_create_info.pNext = nullptr;
+  blend_pipeline_create_info.flags = 0;
+  blend_pipeline_create_info.stageCount = uint32_t(xe::countof(blend_stages));
+  blend_pipeline_create_info.pStages = blend_stages;
+  blend_pipeline_create_info.pVertexInputState = &blend_vertex_input_state;
+  blend_pipeline_create_info.pInputAssemblyState = &blend_input_assembly_state;
+  blend_pipeline_create_info.pTessellationState = nullptr;
+  blend_pipeline_create_info.pViewportState = &blend_viewport_state;
+  blend_pipeline_create_info.pRasterizationState = &blend_rasterization_state;
+  blend_pipeline_create_info.pMultisampleState = &blend_multisample_state;
+  blend_pipeline_create_info.pDepthStencilState = nullptr;
+  blend_pipeline_create_info.pColorBlendState = &blend_color_blend_state;
+  blend_pipeline_create_info.pDynamicState = &blend_dynamic_state;
+  blend_pipeline_create_info.layout = frame_gen_blend_pipeline_layout_;
+  blend_pipeline_create_info.renderPass = guest_output_intermediate_render_pass_;
+  blend_pipeline_create_info.subpass = 0;
+  blend_pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
+  blend_pipeline_create_info.basePipelineIndex = -1;
+  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+                                    &blend_pipeline_create_info, nullptr,
+                                    &frame_gen_blend_pipeline_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen blend pipeline");
+    return false;
+  }
+
+  // Descriptor pool + one set per in-flight paint slot.
+  VkDescriptorPoolSize blend_pool_size;
+  blend_pool_size.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  blend_pool_size.descriptorCount =
+      2 * uint32_t(PaintContext::kSubmissionCount);
+  VkDescriptorPoolCreateInfo blend_pool_create_info;
+  blend_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  blend_pool_create_info.pNext = nullptr;
+  blend_pool_create_info.flags = 0;
+  blend_pool_create_info.maxSets = uint32_t(PaintContext::kSubmissionCount);
+  blend_pool_create_info.poolSizeCount = 1;
+  blend_pool_create_info.pPoolSizes = &blend_pool_size;
+  if (dfn.vkCreateDescriptorPool(device, &blend_pool_create_info, nullptr,
+                                 &frame_gen_blend_descriptor_pool_) !=
+      VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen blend descriptor pool");
+    return false;
+  }
+  VkDescriptorSetLayout blend_set_layouts[PaintContext::kSubmissionCount];
+  std::fill(blend_set_layouts,
+            blend_set_layouts + PaintContext::kSubmissionCount,
+            frame_gen_blend_descriptor_set_layout_);
+  VkDescriptorSetAllocateInfo blend_set_allocate_info;
+  blend_set_allocate_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  blend_set_allocate_info.pNext = nullptr;
+  blend_set_allocate_info.descriptorPool = frame_gen_blend_descriptor_pool_;
+  blend_set_allocate_info.descriptorSetCount =
+      uint32_t(PaintContext::kSubmissionCount);
+  blend_set_allocate_info.pSetLayouts = blend_set_layouts;
+  if (dfn.vkAllocateDescriptorSets(device, &blend_set_allocate_info,
+                                   frame_gen_blend_descriptor_sets_.data()) !=
+      VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to allocate the frame-gen blend descriptor sets");
+    return false;
+  }
+
+  return true;
 }
 
 VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(
