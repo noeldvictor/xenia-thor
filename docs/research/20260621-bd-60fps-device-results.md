@@ -77,6 +77,20 @@ round-trip. The 60fps lever is HOST-SIDE (gpu_early_primary_read_pointer_writeba
 medium + GPU-efficiency for the heavy field + frame-gen. No guest patch exists. The guest-RE 60fps
 investigation is COMPLETE.**
 
+**HOST-RING-LATENCY LEVER VALIDATED (2026-06-22) -> INERT on BD.** Tested gpu_early_primary_read_pointer_
+writeback ON via --ez (workflow wdmldsmaa audited it correctness-SAFE: command_processor.cc:1657-1660 only
+advances rptr to reader->read_offset(), already-parsed by the CPU-interpreter CP, so no corruption + it just
+changes writeback visibility timing). Device result (same nav as the inert interval-1 baseline): peak VdSwap/s
+= exactly 30 (early/light, identical to baseline), field ~5.9fps GPU-bound (unchanged). NO fps gain anywhere
+= INERT - exactly as predicted by the Burnout precedent (burnout-hot-fn-ring-drain-spin: the rptr already
+reflects ACTUAL consumption, so early writeback doesn't advance it faster). Caveat: the ideal ring-limited
+MEDIUM scene (the ~25.9ms/GPU-idle/30-capped target) wasn't isolated (it's post-field, and the heavy field
+heats to the 64C watchdog ~110s before a town is reachable in one fire) - but across all reachable scenes the
+lever is inert, consistent with the disproven mechanism. **BD 60fps via ANY single pacing/latency lever
+(guest-RE OR host-ring) is now EXHAUSTED. The real paths: (1) frame-gen for visual 60fps (logic untouched),
+(2) GPU-efficiency (VRS shipped, FP10 validated +8.5%, FDM unbuilt) to raise true throughput on lighter
+scenes. The pacing/RE investigation is DONE - pursue frame-gen + GPU-efficiency.**
+
 ## Track 1 (frame-gen) — grounded first-increment plan (the path)
 Format note: the presenter intermediate is ALREADY A2B10G10R10_UNORM_PACK32 (kGuestOutputFormat). Effects are
 GRAPHICS passes (not compute); shaders are offline-built (xb buildshaders -> committed SPIR-V .h).
