@@ -1,0 +1,39 @@
+/**
+ ******************************************************************************
+ * Xenia : Xbox 360 Emulator Research Project                                 *
+ ******************************************************************************
+ * Copyright 2026 Ben Vanik. All rights reserved.                             *
+ * Released under the BSD license - see LICENSE in the root for more details. *
+ ******************************************************************************
+ */
+
+// Frame generation: synthesize an in-between frame by cross-fading the two most
+// recent guest-output color frames (N and N-1). The synth target and both source
+// history images are the same (frontbuffer) size, so this is a 1:1 texel fetch
+// blend - no sampler or scaling needed. A later iteration can replace the 50%
+// mix with optical-flow warping.
+
+#include "xesl.xesli"
+
+entry_outputs_begin_xe
+  entry_out_target_xe(float4_xe, xe_frame_blend_color, 0)
+entry_outputs_end_stage_inputs_begin_xe
+entry_stage_inputs_end_bindings_begin_pixel_xe
+  texture_xe(texture_2d_xe, xe_frame_blend_source0, set=0, binding=0, t0, space0,
+             texture(0))
+  entry_binding_next_xe
+  texture_xe(texture_2d_xe, xe_frame_blend_source1, set=0, binding=1, t1, space0,
+             texture(1))
+entry_bindings_end_inputs_begin_xe
+  entry_in_pixel_coord_xe
+entry_inputs_end_code_begin_xe
+{
+  int2_xe coord = int2_xe(in_pixel_coord_xe.xy);
+  float4_xe color0 = texel_fetch_2d_xe(xe_frame_blend_source0, coord, 0);
+  float4_xe color1 = texel_fetch_2d_xe(xe_frame_blend_source1, coord, 0);
+  float4_xe blended;
+  blended.rgb = (color0.rgb + color1.rgb) * 0.5f;
+  blended.a = 1.0f;
+  out_xe(xe_frame_blend_color) = blended;
+}
+entry_code_end_xe
