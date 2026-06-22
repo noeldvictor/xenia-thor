@@ -345,7 +345,20 @@ void Presenter::PaintFromUIThread(bool force_paint) {
       // doesn't limit the frame rate.
       WaitForUITickFromUIThread();
 
-      paint_result = PaintAndPresent(draw_ui);
+      // Frame generation: if the tick thread requested a synth present (in
+      // kUIThreadOnRequest mode), consume the flag and paint this one as a synth
+      // frame (still drawing the UI overlays on top of it).
+      bool synthesize_frame =
+          frame_gen_synth_paint_requested_.exchange(false,
+                                                    std::memory_order_relaxed);
+      paint_result = PaintAndPresent(draw_ui, synthesize_frame);
+      if (synthesize_frame) {
+        static uint64_t ui_synth_count = 0;
+        if ((ui_synth_count++ % 120) == 0) {
+          XELOGI("Frame generation: {} UI-thread synth presents (result {})",
+                 ui_synth_count, int(paint_result));
+        }
+      }
       if (surface_paint_connection_state_ ==
           SurfacePaintConnectionState::kConnectedOutdated) {
         // Request another PaintFromUIThread which will try to recover from the
@@ -711,6 +724,14 @@ void Presenter::FrameGenTickThread() {
         frame_gen_synthed_this_interval_) {
       // Frame generation off, no measured interval yet, or this interval's synth
       // already done: idle until a real present (or shutdown) wakes us.
+      static uint64_t idle_log = 0;
+      if ((idle_log++ % 240) == 0) {
+        XELOGI(
+            "Frame generation tick idle: enabled={} interval_us={} synthed={}",
+            cvars::present_frame_extrapolation ? 1 : 0,
+            frame_gen_guest_interval_us_,
+            frame_gen_synthed_this_interval_ ? 1 : 0);
+      }
       frame_gen_tick_cv_.wait(lock);
       continue;
     }
@@ -737,18 +758,29 @@ void Presenter::DoFrameGenSynthPresent() {
   PaintResult paint_result = PaintResult::kNotPresented;
   {
     std::lock_guard<std::mutex> paint_mode_mutex_lock(paint_mode_mutex_);
-    // Only the immediate-guest-output-thread present path supports painting off
-    // the UI thread; mirror RefreshGuestOutput's trigger for the synth present.
-    if (paint_mode_ != PaintMode::kGuestOutputThreadImmediately) {
+    if (surface_paint_connection_state_ !=
+        SurfacePaintConnectionState::kConnectedPaintable) {
       return;
     }
-    if (surface_paint_connection_state_ ==
-        SurfacePaintConnectionState::kConnectedPaintable) {
-      paint_result = PaintAndPresent(false, /*synthesize_frame=*/true);
-      if (surface_paint_connection_state_ ==
-          SurfacePaintConnectionState::kConnectedOutdated) {
+    switch (paint_mode_) {
+      case PaintMode::kGuestOutputThreadImmediately:
+        // This thread may paint directly (mirrors RefreshGuestOutput's trigger).
+        paint_result = PaintAndPresent(false, /*synthesize_frame=*/true);
+        if (surface_paint_connection_state_ ==
+            SurfacePaintConnectionState::kConnectedOutdated) {
+          RequestPaintOrConnectionRecoveryViaWindow(true);
+        }
+        break;
+      case PaintMode::kUIThreadOnRequest:
+        // The UI thread owns painting in this mode (e.g. when a persistent UI
+        // overlay like the FPS counter is present - the common case on Android).
+        // Flag the next UI paint as a synth and wake the UI thread; it will pass
+        // the flag to PaintAndPresent in PaintFromUIThread.
+        frame_gen_synth_paint_requested_.store(true, std::memory_order_relaxed);
         RequestPaintOrConnectionRecoveryViaWindow(true);
-      }
+        break;
+      default:
+        break;
     }
   }
   if (host_gpu_loss_callback_) {

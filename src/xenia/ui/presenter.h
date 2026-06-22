@@ -733,6 +733,9 @@ class Presenter {
   uint64_t frame_gen_last_real_present_us_ = 0;
   uint64_t frame_gen_guest_interval_us_ = 0;
   bool frame_gen_synthed_this_interval_ = false;
+  // Set by the tick thread in kUIThreadOnRequest mode to mark the next UI-thread
+  // paint as a synthesized (frame-gen) present; consumed in PaintFromUIThread.
+  std::atomic<bool> frame_gen_synth_paint_requested_{false};
   enum class PaintMode {
     // Don't paint at all.
     // Painting lifecycle is accessible only by the UI thread.
