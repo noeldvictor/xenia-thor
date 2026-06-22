@@ -1708,9 +1708,7 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
   image_create_info.arrayLayers = 1;
   image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
   image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-  image_create_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                            VK_IMAGE_USAGE_SAMPLED_BIT |
-                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  image_create_info.usage = usage_;
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -1749,6 +1747,108 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
   }
 
   return true;
+}
+
+void VulkanPresenter::RecordFrameGenHistoryCopy(VkCommandBuffer command_buffer,
+                                                GuestOutputImage& source) {
+  const VkExtent2D& extent = source.extent();
+  // Lazily allocate the history ring at the first extent seen. On a later extent
+  // change, skip rather than free a possibly in-flight image in the hot path
+  // (the future synth pass checks the extent and valid count).
+  if (!frame_gen_history_images_[0]) {
+    bool allocated = true;
+    for (std::unique_ptr<GuestOutputImage>& image : frame_gen_history_images_) {
+      image = GuestOutputImage::Create(
+          vulkan_device_, extent.width, extent.height,
+          GuestOutputImage::kDefaultUsage | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+      if (!image) {
+        allocated = false;
+        break;
+      }
+    }
+    if (!allocated) {
+      for (std::unique_ptr<GuestOutputImage>& image : frame_gen_history_images_) {
+        image.reset();
+      }
+      return;
+    }
+    frame_gen_history_extent_ = extent;
+    frame_gen_history_writable_ = 0;
+    frame_gen_history_valid_count_ = 0;
+  }
+  if (frame_gen_history_extent_.width != extent.width ||
+      frame_gen_history_extent_.height != extent.height) {
+    return;
+  }
+
+  const VulkanDevice::Functions& dfn = vulkan_device_->functions();
+  GuestOutputImage& destination =
+      *frame_gen_history_images_[frame_gen_history_writable_];
+
+  // source: SHADER_READ_ONLY -> TRANSFER_SRC; destination: (discard) -> TRANSFER_DST.
+  std::array<VkImageMemoryBarrier, 2> pre_barriers;
+  VkImageMemoryBarrier& pre_src = pre_barriers[0];
+  pre_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  pre_src.pNext = nullptr;
+  pre_src.srcAccessMask = kGuestOutputInternalAccessMask;
+  pre_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  pre_src.oldLayout = kGuestOutputInternalLayout;
+  pre_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  pre_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  pre_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  pre_src.image = source.image();
+  pre_src.subresourceRange = util::InitializeSubresourceRange();
+  VkImageMemoryBarrier& pre_dst = pre_barriers[1];
+  pre_dst = pre_src;
+  pre_dst.srcAccessMask = 0;
+  pre_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  pre_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  pre_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  pre_dst.image = destination.image();
+  dfn.vkCmdPipelineBarrier(command_buffer, kGuestOutputInternalStageMask,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                           nullptr, uint32_t(pre_barriers.size()),
+                           pre_barriers.data());
+
+  VkImageCopy image_copy = {};
+  image_copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  image_copy.srcSubresource.layerCount = 1;
+  image_copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  image_copy.dstSubresource.layerCount = 1;
+  image_copy.extent.width = extent.width;
+  image_copy.extent.height = extent.height;
+  image_copy.extent.depth = 1;
+  dfn.vkCmdCopyImage(command_buffer, source.image(),
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination.image(),
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_copy);
+
+  // Restore source to the layout the effect chain expects; leave destination
+  // sampleable for the future synth pass.
+  std::array<VkImageMemoryBarrier, 2> post_barriers;
+  VkImageMemoryBarrier& post_src = post_barriers[0];
+  post_src = pre_src;
+  post_src.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  post_src.dstAccessMask = kGuestOutputInternalAccessMask;
+  post_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  post_src.newLayout = kGuestOutputInternalLayout;
+  post_src.image = source.image();
+  VkImageMemoryBarrier& post_dst = post_barriers[1];
+  post_dst = pre_src;
+  post_dst.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  post_dst.dstAccessMask = kGuestOutputInternalAccessMask;
+  post_dst.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  post_dst.newLayout = kGuestOutputInternalLayout;
+  post_dst.image = destination.image();
+  dfn.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           kGuestOutputInternalStageMask, 0, 0, nullptr, 0,
+                           nullptr, uint32_t(post_barriers.size()),
+                           post_barriers.data());
+
+  frame_gen_history_writable_ =
+      (frame_gen_history_writable_ + 1) % kFrameGenHistorySize;
+  if (frame_gen_history_valid_count_ < kFrameGenHistorySize) {
+    ++frame_gen_history_valid_count_;
+  }
 }
 
 Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
@@ -1878,6 +1978,14 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
     // the consumer critical section now as everything here either will be using
     // the new reference or is exclusively owned by main target painting (and
     // multiple threads can't paint the main target at the same time).
+  }
+
+  // Frame generation (increment 1): keep a history of recent guest-output color
+  // frames for a future synth pass. Recorded into the still-open
+  // draw_command_buffer; transparent to the effect chain below (leaves the image
+  // in kGuestOutputInternalLayout). Zero work when the cvar is off.
+  if (cvars::present_frame_extrapolation && guest_output_image) {
+    RecordFrameGenHistoryCopy(draw_command_buffer, *guest_output_image);
   }
 
   if (guest_output_image) {

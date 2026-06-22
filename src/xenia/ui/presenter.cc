@@ -83,6 +83,24 @@ DEFINE_int32(present_trace_guest_output_geometry_budget, 120,
              "all rows while present_trace_guest_output_geometry is enabled.",
              "Display");
 
+// Frame generation (increment 1: history ring only - inert until the synth pass).
+// For logic-locked-framerate guests (e.g. Blue Dragon's fixed 30Hz), synthesizing
+// in-between presented frames is the only way to raise the *presented* frame rate;
+// this keeps a small history of recent guest-output color frames so a later synth
+// pass can interpolate/extrapolate between them. Default off; when off the present
+// path is byte-identical to today.
+DEFINE_bool(
+    present_frame_extrapolation, false,
+    "Frame generation: synthesize intermediate frames between guest frames to "
+    "raise the presented frame rate above the guest's fixed rate (color-only, in "
+    "the presenter; experimental). Increment 1 only keeps a frame-history ring.",
+    "Display");
+DEFINE_int32(
+    present_frame_gen_factor, 2,
+    "Presented frames per guest frame when present_frame_extrapolation is on "
+    "(2 = one synthesized frame between each pair of guest frames).",
+    "Display");
+
 namespace xe {
 namespace ui {
 

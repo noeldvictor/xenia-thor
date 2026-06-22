@@ -168,13 +168,17 @@ class VulkanPresenter final : public Presenter {
   // Usable for both the guest output image itself and for intermediate images.
   class GuestOutputImage {
    public:
+    static constexpr VkImageUsageFlags kDefaultUsage =
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
     static std::unique_ptr<GuestOutputImage> Create(
         const VulkanDevice* const vulkan_device, const uint32_t width,
-        const uint32_t height) {
+        const uint32_t height, VkImageUsageFlags usage = kDefaultUsage) {
       assert_not_zero(width);
       assert_not_zero(height);
       auto image = std::unique_ptr<GuestOutputImage>(
-          new GuestOutputImage(vulkan_device, width, height));
+          new GuestOutputImage(vulkan_device, width, height, usage));
       if (!image->Initialize()) {
         return nullptr;
       }
@@ -193,8 +197,9 @@ class VulkanPresenter final : public Presenter {
 
    private:
     GuestOutputImage(const VulkanDevice* const vulkan_device,
-                     const uint32_t width, const uint32_t height)
-        : vulkan_device_(vulkan_device) {
+                     const uint32_t width, const uint32_t height,
+                     VkImageUsageFlags usage)
+        : vulkan_device_(vulkan_device), usage_(usage) {
       extent_.width = width;
       extent_.height = height;
     }
@@ -203,6 +208,7 @@ class VulkanPresenter final : public Presenter {
 
     const VulkanDevice* vulkan_device_;
 
+    VkImageUsageFlags usage_;
     VkExtent2D extent_;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
@@ -462,6 +468,14 @@ class VulkanPresenter final : public Presenter {
   [[nodiscard]] VkPipeline CreateGuestOutputPaintPipeline(
       GuestOutputPaintEffect effect, VkRenderPass render_pass);
 
+  // Frame generation increment 1: copy the just-consumed guest output color frame
+  // into the history ring (lazily allocated at the first extent seen). Recorded
+  // into the still-open paint command buffer; leaves `source` back in
+  // kGuestOutputInternalLayout so the effect chain samples it unchanged. No-op
+  // when present_frame_extrapolation is off (caller-guarded).
+  void RecordFrameGenHistoryCopy(VkCommandBuffer command_buffer,
+                                 GuestOutputImage& source);
+
   VulkanDevice* vulkan_device_;
   const UISamplers* ui_samplers_;
 
@@ -490,6 +504,18 @@ class VulkanPresenter final : public Presenter {
   std::array<GuestOutputImageInstance, kGuestOutputMailboxSize>
       guest_output_images_;
   VulkanGPUCompletionTimeline guest_output_image_refresher_completion_timeline_;
+
+  // Frame generation (present_frame_extrapolation): history ring of recent
+  // guest-output color frames (frontbuffer size, kGuestOutputFormat) for a future
+  // synth pass to interpolate/extrapolate between. Lazily allocated when the cvar
+  // is on; inert otherwise. unique_ptr-owned, so destroyed with the presenter
+  // (after AwaitAllSubmissions in the destructor ensures the GPU is idle first).
+  static constexpr size_t kFrameGenHistorySize = 2;
+  std::array<std::unique_ptr<GuestOutputImage>, kFrameGenHistorySize>
+      frame_gen_history_images_;
+  VkExtent2D frame_gen_history_extent_ = {0, 0};
+  uint32_t frame_gen_history_writable_ = 0;
+  uint32_t frame_gen_history_valid_count_ = 0;
 
   // UI submission completion timeline with the submission index that can be
   // given to UI drawers (accessible from the UI thread only, at any time).
