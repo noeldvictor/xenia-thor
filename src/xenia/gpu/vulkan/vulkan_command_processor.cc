@@ -3718,8 +3718,22 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // TODO(Triang3l): Actual dirty width / height in the deferred command
   // buffer.
   render_pass_begin_info.renderArea.extent = framebuffer->host_extent;
-  render_pass_begin_info.clearValueCount = 0;
-  render_pass_begin_info.pClearValues = nullptr;
+  // LRZ spike: when forcing depth loadOp=CLEAR (gpu_lrz_spike_depth_clear), a clear
+  // value must be supplied for the depth attachment (always attachments[0]). Clear
+  // to the far plane so the opaque depth establishes valid LRZ for foliage to
+  // early-reject against. CmdVkBeginRenderPass deep-copies pClearValues.
+  VkClearValue lrz_spike_clear_values[1];
+  if (cvars::gpu_lrz_spike_depth_clear &&
+      (render_target_cache_->last_update_render_pass_key().depth_and_color_used &
+       0b1)) {
+    lrz_spike_clear_values[0].depthStencil.depth = 1.0f;
+    lrz_spike_clear_values[0].depthStencil.stencil = 0;
+    render_pass_begin_info.clearValueCount = 1;
+    render_pass_begin_info.pClearValues = lrz_spike_clear_values;
+  } else {
+    render_pass_begin_info.clearValueCount = 0;
+    render_pass_begin_info.pClearValues = nullptr;
+  }
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
   // Opaque depth pre-pass: mark the splice point right AFTER BeginRenderPass so

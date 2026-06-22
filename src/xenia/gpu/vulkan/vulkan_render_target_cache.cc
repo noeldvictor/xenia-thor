@@ -1697,8 +1697,13 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     // proven fully overwritten by the pass's first draw.
     const bool dont_care = cvars::gpu_edram_passes_dont_care;
     const bool load_dont_care = dont_care || (load_dont_care_mask & 0b1);
-    attachment.loadOp = load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
-                                       : VK_ATTACHMENT_LOAD_OP_LOAD;
+    // LRZ spike: force the depth loadOp to CLEAR so Turnip keeps Adreno LRZ valid
+    // (it disables LRZ when depth enters via LOAD_OP_LOAD). The matching depth
+    // clearValue is supplied at pass-begin in vulkan_command_processor.cc.
+    attachment.loadOp = cvars::gpu_lrz_spike_depth_clear
+                            ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                        : load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                         : VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.storeOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                    : VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE

@@ -566,6 +566,18 @@ DEFINE_bool(
     "opaque-depth-prepass-plan.md). NOT YET FUNCTIONAL - scaffold only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_lrz_spike_depth_clear, false,
+    "THROWAWAY MEASUREMENT SPIKE (not productized): force the host depth attachment "
+    "loadOp to LOAD_OP_CLEAR on the geometry pass so Turnip keeps Adreno LRZ VALID "
+    "(Turnip disables LRZ when depth enters via LOAD_OP_LOAD, which xenia uses every "
+    "pass - the real reason BD's LRZ is dead, NOT alpha-test). Combine with "
+    "gpu_foliage_lrz_force_depth so occluded foliage early-Z-rejects against the "
+    "opaque depth, to MEASURE the gpu_frame_us occlusion win on Blue Dragon. "
+    "Discards EDRAM-resident depth at pass start = may be visually incorrect; a "
+    "throwaway probe, not a ship feature. Set at LAUNCH, never toggle mid-run (the "
+    "render-pass cache is built once under this loadOp). Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_foliage_lrz_force_depth, false,
     "Lever A (overdraw attack): force the alpha-test foliage class to depth-TEST "
     "(zfunc=Less) with depth-WRITE OFF against the opaque depth field, so foliage "
