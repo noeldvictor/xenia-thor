@@ -62,6 +62,48 @@ with the CHEAPEST falsifying device GATE (the LRZ lesson). 5 of 6 first-cut cand
   a fixed rate (vulkan_command_processor.cc:5963-5967), NOT 2x2-vs-4x4 — the "one free fire decides both" story
   is false; the rate-value comparison needs new code (=FDM gate A). FDM itself survives (rank 2).
 
+## FDM GATE B: PASSED (2026-06-22, device-free RE of Mesa 26.2.0-devel @ WSL /root/mesa)
+RE'd Turnip source: FDM and VRS are DISTINCT HW on the a740, FDM is a genuine fragment-COUNT reducer.
+- FDM path (tu_cmd_buffer.cc ~1580-1761): per-tile `frag_areas[]` (from the density map) -> if !=1, `bin_is_scaled`
+  -> `bin_scale_en = has_hw_bin_scaling && layers<=6 && !shared_viewport && bin_is_scaled` -> programs
+  **GRAS_BIN_FOVEAT / RB_BIN_FOVEAT** with `.binscaleen`, `.xscale=log2(frag_area.w)`, `.yscale=log2(frag_area.h)`
+  (enum a7xx_bin_scale, 2-bit -> frag_area 1/2/4/8). = renders each bin at LOWER RESOLUTION ("FOVEAT" =
+  foveated/subsampled) -> fewer fragments RASTERIZED+depth-tested+shaded, then upscaled at resolve.
+- VRS path (tu_cmd_buffer.cc:2189 / tu_pipeline.cc:819): `fd_gras_shading_rate_lut` + shading_rate_regid =
+  coarse SHADING at full raster resolution. Gated by `has_attachment_shading_rate` (DIFFERENT prop).
+- `has_hw_bin_scaling = True` for a7xx (freedreno_devices.py:830,860) + already device-confirmed on the Thor a740.
+- BD is single-view (layers=1 <= MAX_HW_SCALED_VIEWS=6) so bin_scale_en will be TRUE (no LRZ-disable fallback;
+  BD's LRZ is dead anyway). frag_area=2 -> ~4x fewer viewport fragments; =4 -> ~16x (quality tradeoff = blur).
+VERDICT: FDM is NOT a VRS alias. It attacks BD's exact confirmed floor (raster/coverage/depth fragment COUNT,
+established raster-bound by constant-color-FS + flat-UBWC) and STACKS with VRS (VRS coarse-shades the survivors).
+=> the ~1-2wk FDM build is JUSTIFIED. Caveat: density map is per-RENDER-PASS (whole bins), not per-draw, so
+author density LOW over the 3D viewport / FULL over the HUD; quality risk = foliage blur at frag_area>=2.
+
+## FDM INCREMENT 2 DE-RISKED (2026-06-22) — recipe ready, focused build is the next unit
+Increment 1 (extension+feature enable) shipped + device-validated (commit 26908456e: "* VK_EXT_fragment_
+density_map (fragmentDensityMap: yes, nonSubsampledImages: yes)", no device-creation error, BD renders).
+Increment 2 (the coupled density-map core) is fully de-risked from Mesa source — KEY finding that would have
+wasted a build:
+- ⚠️ **DENSITY FORMAT = VK_FORMAT_R16G16_SFLOAT, NOT R8G8_UNORM.** Turnip advertises the FDM format feature
+  only for vk_format_is_float 2-channel XY formats (tu_formats.cc:226-229); R8G8_UNORM (the spec-typical format)
+  is not float -> FDM silently unsupported on Turnip.
+- Texel size min 32 / max 1024 (tu_common.h) -> density image dims = max(1, ceil(host_extent/1024)) always
+  satisfies the per-framebuffer VUID (tiny, ~2x1 for 1280x720); per-fb-extent sizing required.
+- OPTIMAL tiling; uniform fill = vkCmdClearColorImage to {0.5,0.5,0,1} (frag_area 2 -> ~4x fewer fragments) with
+  FRAGMENT_DENSITY_MAP_BIT|TRANSFER_DST_BIT, then barrier TRANSFER_DST -> FRAGMENT_DENSITY_MAP_OPTIMAL (no
+  staging needed).
+- INTEGRATION (one coherent edit-set, cvar gpu_fdm_foliage uint32 default 0 = byte-identical when off; no
+  RenderPassKey bit since the cvar is constant-per-run): render pass (~1814) appends the FDM VkAttachmentDescription
+  at index bit_count(depth_and_color_used) + chains VkRenderPassFragmentDensityMapCreateInfoEXT in pNext (not a
+  subpass ref), enlarge attachments[] to [1+kMaxColorRenderTargets+1]; framebuffer (~2415) creates+clears the
+  per-fb density image (stored in the Framebuffer cache struct, destroyed with it) + appends its view; record the
+  clear+barriers into command_processor_.deferred_command_buffer before the pass begins.
+- REMAINING RISK (why it needs the focused effort + device validation): the EDRAM transfer/resolve interaction
+  (every host-RT pass gets FDM incl. transfer passes; nonSubsampledImages must keep full-size RTs correct) +
+  foliage blur at frag_area 2. VALIDATE: frozen heavy-field A/B (gpu_freeze_at_guest_ms~41000 on a cool device,
+  off vs on) -> expect gpu_frame_us drop > VRS's -22% + pixel-plausible. Full recipe in memory
+  fdm-overdraw-lever-next-major-build.md.
+
 ## Honest ceiling (the LRZ lesson restated)
 No proposal here is a clean path to "BD full speed". BD's per-covered-fragment overdraw on co-planar/blended/
 alpha-test remains a hard wall; these are stacking chips. Rank-1 UBWC just GATED FLAT (the cheap gate paid off
