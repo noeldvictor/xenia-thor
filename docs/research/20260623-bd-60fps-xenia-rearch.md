@@ -63,6 +63,26 @@ its commands reference are recycled per frame; replaying the retained stream aft
 = corruption. The synth re-render MUST target SEPARATE scratch RTs (touching the guest EDRAM corrupts frame N+1).
 A substantial NEW double-buffer/handle-pinning subsystem. De-risk with the CHEAP probe FIRST.
 
+## PROBE RESULT (2026-06-23, device + zero-fire mining) — render-ahead VIABLE but BOUNDED
+The load-bearing headroom probe, run two ways:
+- ZERO-FIRE (mined the existing free-running framegen capture): in the early light scene gpu_frame_us ~26ms but
+  VdSwap held ~28-30/s (a GPU-bound 26ms scene would be ~38/s) -> 30-CAPPED with ~7ms idle GPU. Headroom mechanism
+  confirmed, BUT that early scene may be a cinematic (MEASUREMENT RULE 0 ambiguity).
+- DEVICE FIRE (townprobe, aggressive skip-nav): landed in CONFIRMED INTERACTIVE gameplay (screenshot = Shu
+  controllable in the Talta Village outskirts, not a movie). Across the 150s/1249-frame capture: min gpu_frame_us
+  = 22.5ms, only 1 frame <16ms, 401 frames <33ms; peak VdSwap = 31/s (never the ~45/s a GPU-bound 22ms scene
+  would hit). => CONFIRMED on real interactive gameplay: light scenes (22-33ms) are 30-CAPPED with idle GPU
+  headroom (~10ms on a 22ms frame). BUT the reachable OUTDOOR gameplay (village outskirts) is GPU-BOUND ~6fps
+  (128ms) - render-ahead NET-NEGATIVE there.
+VERDICT: render-ahead is VIABLE (the 30-cap + idle-headroom premise is device-confirmed on interactive gameplay)
+but BOUNDED: the lightest reachable interactive scene is ~22.5ms with only ~10ms idle, so a FULL re-render (22ms)
+does NOT fit -> render-ahead must MASK to a CHEAP opaque-world-only re-render (~8-11ms) to fit the idle slot,
+yielding a real ~1.3-1.7x (30 -> ~40-50fps) on light interactive scenes, NOT a clean universal 60 (that needs a
+<16ms scene, essentially unreached - town interiors, not walkable via HID). Heavy outdoor gameplay stays
+GPU-bound -> per-scene gate MANDATORY (off on heavy). So render-ahead earns its build as a BOUNDED light-scene
+real-fps lever; FRAME-GEN remains the more UNIVERSAL perceived-60 win. The town-interior <16ms clean-60 scene
+stays unconfirmed (HID can't walk; needs a save-state [SaveToFile hangs] or a deeper nav).
+
 ## NET ANSWER to the user
 60 LOGIC fps = no (fixed-timestep wall, host already async 3-deep). ~45-60 REAL rendered gameplay fps = PLAUSIBLE
 via speculative render-ahead, contingent on the headroom probe. 60 perceived everywhere = yes via frame-gen.
