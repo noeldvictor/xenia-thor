@@ -14,6 +14,15 @@ DEFINE_bool(headless, false,
             "UI");
 DEFINE_bool(log_high_frequency_kernel_calls, false,
             "Log kernel calls with the kHighFrequency tag.", "Kernel");
+DEFINE_bool(kernel_call_log_skip_discarded, true,
+            "Skip formatting a kernel-call trace line when the active log level "
+            "would discard it (default Info drops the Debug-level call trace). "
+            "PURE optimization: device-profiled ~26% of the Blue Dragon heavy "
+            "frame was spent formatting kernel-call log strings that were then "
+            "immediately thrown away (PrintKernelCall formats BEFORE AppendLogLine "
+            "checks ShouldLog). Default on; set false to restore the old "
+            "format-then-discard behavior for A/B measurement.",
+            "Kernel");
 DEFINE_bool(xboxkrnl_file_io_trace, false,
             "Trace NtCreateFile, NtReadFile, NtReadFileScatter, "
             "NtQueryFullAttributesFile, and NtQueryDirectoryFile calls.",

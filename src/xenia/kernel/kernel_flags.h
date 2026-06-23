@@ -13,6 +13,7 @@
 
 DECLARE_bool(headless);
 DECLARE_bool(log_high_frequency_kernel_calls);
+DECLARE_bool(kernel_call_log_skip_discarded);
 DECLARE_bool(xboxkrnl_file_io_trace);
 DECLARE_int32(xboxkrnl_file_io_trace_budget);
 DECLARE_int32(xboxkrnl_file_io_status_log_budget);

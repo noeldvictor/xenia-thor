@@ -511,19 +511,27 @@ StringBuffer* thread_local_string_buffer();
 
 template <typename Tuple>
 void PrintKernelCall(cpu::Export* export_entry, const Tuple& params) {
+  const xe::LogLevel level =
+      (export_entry->tags & xe::cpu::ExportTag::kImportant)
+          ? xe::LogLevel::Info
+          : xe::LogLevel::Debug;
+  // PURE optimization (device-profiled ~26% of the BD heavy frame): the param
+  // formatting below (AppendKernelCallParams -> fmt) is the dominant cost on hot
+  // kernel exports lacking the kHighFrequency tag, and it was being done EVEN
+  // WHEN the active log level discards the line (AppendLogLine checks ShouldLog
+  // only AFTER the string is built). Skip the formatting entirely when the line
+  // would not be emitted.
+  if (cvars::kernel_call_log_skip_discarded && !xe::logging::ShouldLog(level)) {
+    return;
+  }
   auto& string_buffer = *thread_local_string_buffer();
   string_buffer.Reset();
   string_buffer.Append(export_entry->name);
   string_buffer.Append('(');
   AppendKernelCallParams(string_buffer, export_entry, params);
   string_buffer.Append(')');
-  if (export_entry->tags & xe::cpu::ExportTag::kImportant) {
-    xe::logging::AppendLogLine(xe::LogLevel::Info, 'i',
-                               string_buffer.to_string_view());
-  } else {
-    xe::logging::AppendLogLine(xe::LogLevel::Debug, 'd',
-                               string_buffer.to_string_view());
-  }
+  xe::logging::AppendLogLine(level, level == xe::LogLevel::Info ? 'i' : 'd',
+                             string_buffer.to_string_view());
 }
 
 template <typename F, typename Tuple, std::size_t... I>

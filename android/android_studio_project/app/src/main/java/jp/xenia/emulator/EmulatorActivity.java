@@ -277,6 +277,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "spirv_pos_collapse_only");
             copyBooleanExtra(intent, launchArguments, "gpu_force_tiny_draws");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_alphatest_coverage");
+            copyBooleanExtra(intent, launchArguments, "gpu_collapse_alphatest_depthonly");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_blended_coverage");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_opaque_coverage");
             copyIntExtra(intent, launchArguments, "gpu_blended_thin_factor");
@@ -293,6 +294,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_opaque_depth_prepass");
             copyBooleanExtra(intent, launchArguments, "gpu_lrz_spike_depth_clear");
             copyIntExtra(intent, launchArguments, "gpu_fdm_foliage");
+            copyIntExtra(intent, launchArguments, "draw_resolution_scale_x");
+            copyIntExtra(intent, launchArguments, "draw_resolution_scale_y");
             copyBooleanExtra(intent, launchArguments, "gpu_force_no_color_write");
             copyBooleanExtra(intent, launchArguments, "vulkan_force_float_color_unorm");
             copyIntExtra(intent, launchArguments, "gpu_freeze_at_guest_ms");
@@ -439,6 +442,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             // JIT host->guest symbol map for offline simpleperf symbolization
             // of the 43% guest-JIT cost (B86t/u). Default-off profiling aid.
             copyBooleanExtra(intent, launchArguments, "cpu_emit_jit_perf_map");
+            copyBooleanExtra(intent, launchArguments, "kernel_call_log_skip_discarded");
             copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_leaf");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
