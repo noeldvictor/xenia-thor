@@ -104,9 +104,11 @@ DEFINE_uint32(
     "render-pass path) are excluded so copies stay pixel-exact. Density map is "
     "R16G16_SFLOAT (Turnip advertises the FDM format feature only for float "
     "formats). Stacks with VRS (which coarse-shades the surviving fragments). "
-    "Default 0 (off). A/B on a gpu_freeze_at_guest_ms heavy field; expect a bigger "
-    "drop than VRS's -22% (cuts raster+depth, not just shading). Quality: foliage "
-    "blockiness grows with value.",
+    "Default 0 (off). KNOWN BROKEN on xenia's EDRAM-in-GMEM multi-pass renderer "
+    "(device-tested 2026-06-22): FDM applies but CORRUPTS output (per-bin foveation "
+    "offsets conflict with the GMEM tile config + cross-pass depth/color reuse) and "
+    "shows NO gpu_frame_us reduction (foveated-GMEM->full-RT resolve cancels the "
+    "fragment saving). Left as a gated experiment; do NOT enable expecting a win.",
     "GPU");
 
 DEFINE_bool(

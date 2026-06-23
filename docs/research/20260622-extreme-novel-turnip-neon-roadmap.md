@@ -104,6 +104,21 @@ wasted a build:
   off vs on) -> expect gpu_frame_us drop > VRS's -22% + pixel-plausible. Full recipe in memory
   fdm-overdraw-lever-next-major-build.md.
 
+## FDM INCREMENT 2 DEVICE RESULT (2026-06-22): CORRUPTS BD + FLAT PERF -> DEAD-END (joins the dead list)
+Built the full coupled core (commit 9f2e19e8d) + adversarial-reviewed (5 agents, wuqoq86jt, caught+fixed 2
+must-fix bugs pre-device: a vkCreateFramebuffer-failure UAF + the hardcoded maxTexel; fixes 4e0af25ee) + device-
+tested (BD frozen heavy field guest_ms=42000, gpu_fdm_foliage=2). RESULT: FDM confirmed APPLIED (log "enabled:
+yes, nonSubsampledImages: yes, maxTexelSize: 1024x1024", no validation error, no Turnip disable) but the output
+is SEVERELY CORRUPTED (garbled rainbow + horizontal bands) AND gpu_frame_us FLAT (~122ms vs ~123-126ms = no
+fragment-time reduction). => FDM bin-scaling (GRAS_BIN_FOVEAT) does NOT compose with xenia's EDRAM-in-GMEM
+MULTI-PASS renderer: per-bin foveation offsets conflict with the GMEM tile config (banded corruption) + cross-
+pass depth/color reuse at the foveated density + the foveated-GMEM->full-RT resolve overhead cancels the fragment
+saving (flat perf). The cheap-gate+review+device discipline WORKED (caught it before shipping; cvar default-off).
+Left in default-off + cvar labeled KNOWN BROKEN. FDM needs a single-pass non-EDRAM-tiled renderer = incompatible
+with xenia's arch. So the rank-2 "transformative" survivor is dead. NET: BD's real-fps GPU floor (LRZ dead,
+UBWC flat, FDM corrupt+flat, thinning+VRS shipped) is a HARD WALL for xenia's current renderer; the realistic
+BD-60fps path is PERCEIVED (frame-gen) not real-fps.
+
 ## Honest ceiling (the LRZ lesson restated)
 No proposal here is a clean path to "BD full speed". BD's per-covered-fragment overdraw on co-planar/blended/
 alpha-test remains a hard wall; these are stacking chips. Rank-1 UBWC just GATED FLAT (the cheap gate paid off
