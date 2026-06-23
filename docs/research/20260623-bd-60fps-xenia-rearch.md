@@ -83,6 +83,36 @@ GPU-bound -> per-scene gate MANDATORY (off on heavy). So render-ahead earns its 
 real-fps lever; FRAME-GEN remains the more UNIVERSAL perceived-60 win. The town-interior <16ms clean-60 scene
 stays unconfirmed (HID can't walk; needs a save-state [SaveToFile hangs] or a deeper nav).
 
+## RENDER-AHEAD DE-RISKED DEAD (2026-06-23) — ill-posed camera extrapolation, obviated by the motion-warp
+Investigating the rank-1 render-ahead crux killed it BEFORE the multi-week build (the de-risk discipline paying
+off again). Two findings:
+- LIFETIME (the synthesis's flagged hazard) is actually SIDESTEPPABLE: replay the retained DeferredCommandBuffer
+  EAGERLY (right after the guest frame, before the per-frame transient recycle at vulkan_command_processor.cc:
+  1616/1632), so the transient descriptors/uniform rings are still valid -> no pinning subsystem needed.
+- BUT THE CORE PREMISE IS ILL-POSED: render-ahead must re-render with an EXTRAPOLATED CAMERA, and xenia has NO
+  separable camera VP. DrawExtentEstimator::FastAffineReplay.m[4][4] (draw_extent_estimator.h:96-99) is the
+  PER-DRAW OBJECT->CLIP (full MVP, model folded in; bails kMultiLeaf on skinned/characters) - the SAME wall the
+  motion-warp's depth-reproject hit. You cannot factor the camera out of per-draw MVP. The only patch render-
+  ahead could apply is a GLOBAL clip-space translation to every draw = IDENTICAL RESULT to the 2D motion-warp,
+  but by RE-RENDERING all geometry (multi-week build + expensive per-frame GPU re-render, bounded to light
+  scenes) instead of a ~us 2D shift. Its claimed edge (correct depth/disocclusion) EVAPORATES (no correct
+  per-depth camera motion available either). => render-ahead offers NOTHING over the shipped 2D motion-warp at
+  vastly higher cost. DEAD. The 2D motion-warp (shipped, cheap, validated-correct) IS the frame-gen answer.
+
+## FINAL STATE of "do all three"
+- (1) PROBE: done - headroom device-confirmed (light interactive gameplay 22-33ms, 30-capped, ~10ms idle);
+  render-ahead bounded ~40-50 light scenes.
+- (3) FRAME-GEN: done - cross-fade shipped as the opt_frame_gen toggle; MOTION-WARP (2D global Lucas-Kanade)
+  built + adversarially-reviewed + device-validated-CORRECT (RGBA32F renderable, no crash/corruption), opt-in
+  via present_frame_gen_motion_warp. The warp-vs-cross-fade QUALITY A/B is the only residual (scene-dependent:
+  warp = sharp but global-shift parallax error; cross-fade = ghost but parallax-neutral; needs motion-video
+  judgment, not static screenshots - deferred).
+- (2) RENDER-AHEAD: de-risked DEAD (ill-posed camera extrapolation, obviated by the 2D warp). NOT built - correct
+  call (saved a multi-week dead-end).
+NET: BD 60fps = perceived-60 via frame-gen (shipped, the 2D motion-warp is the best synth xenia's per-draw-MVP
+arch allows); real-60 logic is impossible (fixed-timestep); real ~40-50 render-ahead is dead (ill-posed). The
+60fps story for BD is now COMPLETE + honestly bounded.
+
 ## NET ANSWER to the user
 60 LOGIC fps = no (fixed-timestep wall, host already async 3-deep). ~45-60 REAL rendered gameplay fps = PLAUSIBLE
 via speculative render-ahead, contingent on the headroom probe. 60 perceived everywhere = yes via frame-gen.
