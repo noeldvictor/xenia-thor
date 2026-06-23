@@ -5911,6 +5911,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       bool collapse_this_draw =
           cvars::gpu_force_tiny_draws ||
           (cvars::gpu_collapse_alphatest_coverage && is_alphatest_draw) ||
+          (cvars::gpu_collapse_alphatest_depthonly && is_alphatest_draw &&
+           normalized_color_mask == 0) ||
           (cvars::gpu_foliage_thin_factor >= 2 && is_alphatest_draw &&
            (draw_outcomes_alphatest_draws_ %
             uint32_t(cvars::gpu_foliage_thin_factor)) != 0);

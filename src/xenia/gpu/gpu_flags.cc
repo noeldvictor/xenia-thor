@@ -637,6 +637,18 @@ DEFINE_bool(
     "only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_collapse_alphatest_depthonly, false,
+    "BD multi-pass binning lever (max-effort RE): collapse index count to 3 ONLY "
+    "for ALPHA-TEST draws in DEPTH-ONLY passes (normalized_color_mask == 0 = the "
+    "shadow-map / depth passes where BD draws grass via bd_shadowmap_vs_wind). The "
+    "Adreno TBDR bins this grass geometry a SECOND time (main color pass + shadow "
+    "pass) - a re-binning cost the 360's immediate-mode + EDRAM never paid. "
+    "Collapsing the depth-only alpha-test grass cuts that re-binning at low visual "
+    "cost (softer/absent grass self-shadows; visible color-pass geometry intact). "
+    "gpu_frame_us ON vs OFF at a frozen heavy field = the grass shadow-pass "
+    "binning share. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_collapse_alphatest_coverage, false,
     "DIAGNOSTIC (alpha-test foliage overdraw isolation - the BD load-bearing "
     "falsifier): clamp index count to 3 ONLY for ALPHA-TEST draws "
