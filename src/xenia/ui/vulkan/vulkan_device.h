@@ -207,6 +207,11 @@ class VulkanDevice {
     // nonSubsampledImages, the attach-to-existing-RTs path) when supported; INERT
     // until a density map is attached to a render pass (gpu_fdm_foliage consumer).
     bool ext_EXT_fragment_density_map = false;
+    // VK_EXT_fragment_density_map's HW density-map texel size
+    // (maxFragmentDensityTexelSize); {0,0} if FDM is unavailable. The density
+    // image is sized ceil(framebuffer / this) = the per-framebuffer VUID lower
+    // bound.
+    VkExtent2D fragment_density_map_max_texel_size = {};
     // Max descriptors pushable per push (from
     // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
     // extension is unavailable.

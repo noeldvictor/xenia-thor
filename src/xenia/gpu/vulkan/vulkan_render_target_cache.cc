@@ -2553,32 +2553,52 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   framebuffer_entry.fdm_image = fdm_image;
   framebuffer_entry.fdm_memory = fdm_memory;
   framebuffer_entry.fdm_view = fdm_view;
+  // Fill the density map now that the framebuffer (which owns the image) exists -
+  // recording the clear+barriers only on the success path avoids a command
+  // referencing an image freed by the failure path above.
+  if (fdm_image != VK_NULL_HANDLE) {
+    FillFragmentDensityMap(fdm_image);
+  }
   return &framebuffer_entry;
 }
 
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
     VkExtent2D framebuffer_extent, VkImage& image_out,
     VkDeviceMemory& memory_out, VkImageView& view_out) {
+  // Establish a clean failure contract regardless of the helper's behavior.
+  image_out = VK_NULL_HANDLE;
+  memory_out = VK_NULL_HANDLE;
+  view_out = VK_NULL_HANDLE;
+
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
-  // 1 density texel per up-to-1024px region (Turnip's max FDM texel size) -> a
-  // tiny image whose dims always land in the per-framebuffer VUID window
-  // [ceil(fb/maxTexel), ceil(fb/minTexel)] = [ceil(fb/1024), ceil(fb/32)].
+  // 1 density texel per HW-max-texel region -> a tiny image whose dims always
+  // land in the per-framebuffer VUID window [ceil(fb/maxTexel), ceil(fb/minTexel)]
+  // (sizing at ceil(fb/maxTexel) = the lower bound). The texel size is queried at
+  // device init, not assumed - skip FDM if it didn't populate (defensive).
   // R16G16_SFLOAT because Turnip advertises the FDM format feature only for float
   // formats (not the spec-typical R8G8_UNORM).
+  const VkExtent2D max_texel =
+      vulkan_device->extensions().fragment_density_map_max_texel_size;
+  if (!max_texel.width || !max_texel.height) {
+    XELOGE("VulkanRenderTargetCache: FDM max texel size unavailable; skipping");
+    return false;
+  }
   VkImageCreateInfo image_create_info;
   image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   image_create_info.pNext = nullptr;
   image_create_info.flags = 0;
   image_create_info.imageType = VK_IMAGE_TYPE_2D;
   image_create_info.format = VK_FORMAT_R16G16_SFLOAT;
-  image_create_info.extent.width =
-      std::max(uint32_t(1), (framebuffer_extent.width + 1023u) / 1024u);
-  image_create_info.extent.height =
-      std::max(uint32_t(1), (framebuffer_extent.height + 1023u) / 1024u);
+  image_create_info.extent.width = std::max(
+      uint32_t(1),
+      (framebuffer_extent.width + max_texel.width - 1) / max_texel.width);
+  image_create_info.extent.height = std::max(
+      uint32_t(1),
+      (framebuffer_extent.height + max_texel.height - 1) / max_texel.height);
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
@@ -2625,12 +2645,20 @@ bool VulkanRenderTargetCache::CreateFragmentDensityMap(
     return false;
   }
 
+  // Image + view only - NO commands are recorded here, so the caller can safely
+  // destroy them synchronously if vkCreateFramebuffer then fails (the fill, which
+  // references the image in the command stream, runs only AFTER the framebuffer
+  // succeeds, via FillFragmentDensityMap).
+  return true;
+}
+
+void VulkanRenderTargetCache::FillFragmentDensityMap(VkImage image) {
   // Uniform-fill once via a clear (density = 1/value -> fragment area = value),
   // then leave it in FRAGMENT_DENSITY_MAP_OPTIMAL for the guest passes to read.
-  // Recorded into the open draw stream before the guest pass begins; one-time (the
-  // framebuffer + its filled density image are cached). Independent of the EDRAM
-  // transfers (a different image), so the framebuffer cache's effective ordering
-  // is preserved.
+  // Recorded into the open draw stream; one-time (the framebuffer + its filled
+  // density image are cached). Independent of the EDRAM transfers (a different
+  // image). Called only after vkCreateFramebuffer succeeds so a failed framebuffer
+  // never leaves a recorded command referencing a freed image.
   VkImageSubresourceRange range;
   range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   range.baseMipLevel = 0;
@@ -2638,7 +2666,7 @@ bool VulkanRenderTargetCache::CreateFragmentDensityMap(
   range.baseArrayLayer = 0;
   range.layerCount = 1;
   command_processor_.PushImageMemoryBarrier(
-      image_out, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      image, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   command_processor_.SubmitBarriers(true);
@@ -2649,15 +2677,14 @@ bool VulkanRenderTargetCache::CreateFragmentDensityMap(
   clear_color.float32[2] = 0.0f;
   clear_color.float32[3] = 1.0f;
   command_processor_.deferred_command_buffer().CmdVkClearColorImage(
-      image_out, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear_color, 1, &range);
+      image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear_color, 1, &range);
   command_processor_.PushImageMemoryBarrier(
-      image_out, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT,
       VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT);
   command_processor_.SubmitBarriers(true);
-  return true;
 }
 
 VkShaderModule VulkanRenderTargetCache::GetTransferShader(

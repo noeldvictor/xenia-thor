@@ -879,6 +879,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   bool CreateFragmentDensityMap(VkExtent2D framebuffer_extent,
                                 VkImage& image_out, VkDeviceMemory& memory_out,
                                 VkImageView& view_out);
+  // Records the one-time uniform fill (clear + barriers to
+  // FRAGMENT_DENSITY_MAP_OPTIMAL) of a density map created by
+  // CreateFragmentDensityMap. Called only AFTER its framebuffer is created so a
+  // framebuffer-creation failure never leaves a command referencing a freed image.
+  void FillFragmentDensityMap(VkImage image);
 
   VkShaderModule GetTransferShader(TransferShaderKey key);
   // With sample-rate shading, returns a pointer to one pipeline. Without

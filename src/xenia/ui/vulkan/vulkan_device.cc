@@ -343,6 +343,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceFragmentDensityMapFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT>
       features_EXT_fragment_density_map;
+  // FDM properties (the HW density-map texel size) - queried so the density-image
+  // consumer sizes it correctly instead of assuming a constant.
+  VkPhysicalDeviceFragmentDensityMapPropertiesEXT
+      properties_EXT_fragment_density_map = {
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT};
   VkPhysicalDevicePushDescriptorPropertiesKHR
       properties_KHR_push_descriptor = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
@@ -394,6 +399,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (device->extensions_.ext_KHR_push_descriptor) {
       properties_KHR_push_descriptor.pNext = properties_2.pNext;
       properties_2.pNext = &properties_KHR_push_descriptor;
+    }
+    if (device->extensions_.ext_EXT_fragment_density_map) {
+      properties_EXT_fragment_density_map.pNext = properties_2.pNext;
+      properties_2.pNext = &properties_EXT_fragment_density_map;
     }
     // FDM (VK_EXT_fragment_density_map) is now ENABLED (not query-only) via
     // features_EXT_fragment_density_map above when supported - its .supported bits
@@ -842,19 +851,32 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
           features_EXT_fragment_density_map.supported
               .fragmentDensityMapNonSubsampledImages;
     }
-    // Keep the flag honest: available only if the base feature actually enabled
-    // (the consumer guards on this before attaching a density map).
+    // Keep the flag honest: available only when BOTH the base feature AND
+    // nonSubsampledImages are enabled - xenia's render targets are NOT created
+    // with VK_IMAGE_CREATE_SUBSAMPLED_BIT, so attaching an FDM to them requires
+    // nonSubsampledImages (VUID-VkFramebufferCreateInfo-renderPass-02553). The
+    // consumer guards on this flag before attaching a density map.
     device->extensions_.ext_EXT_fragment_density_map =
         with_gpu_emulation &&
-        features_EXT_fragment_density_map.supported.fragmentDensityMap == VK_TRUE;
+        features_EXT_fragment_density_map.supported.fragmentDensityMap ==
+            VK_TRUE &&
+        features_EXT_fragment_density_map.supported
+                .fragmentDensityMapNonSubsampledImages == VK_TRUE;
+    // Store the HW density-map texel size so the consumer sizes the density image
+    // as ceil(framebuffer / maxTexel) (the per-framebuffer VUID lower bound),
+    // instead of a hardcoded constant. Zero if not populated -> consumer skips FDM.
+    device->extensions_.fragment_density_map_max_texel_size =
+        properties_EXT_fragment_density_map.maxFragmentDensityTexelSize;
     XELOGI(
-        "* VK_EXT_fragment_density_map (fragmentDensityMap: {}, "
-        "nonSubsampledImages: {})",
+        "* VK_EXT_fragment_density_map (enabled: {}, nonSubsampledImages: {}, "
+        "maxTexelSize: {}x{})",
         device->extensions_.ext_EXT_fragment_density_map ? "yes" : "no",
         features_EXT_fragment_density_map.supported
                 .fragmentDensityMapNonSubsampledImages == VK_TRUE
             ? "yes"
-            : "no");
+            : "no",
+        properties_EXT_fragment_density_map.maxFragmentDensityTexelSize.width,
+        properties_EXT_fragment_density_map.maxFragmentDensityTexelSize.height);
   }
 
   if (device->extensions_.ext_KHR_push_descriptor) {
