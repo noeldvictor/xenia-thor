@@ -257,6 +257,27 @@ public final class XeniaOptimizations {
                 new IntCvar[]{new IntCvar("gpu_frame_limit_fps", 60)}));
 
         list.add(new Optimization(
+                "opt_frame_gen",
+                "Frame generation (smoother motion)",
+                "Inserts a synthesized in-between frame so 30fps gameplay presents at ~60.",
+                "Xbox 360 games like Blue Dragon run their game logic at a fixed 30fps "
+                        + "that no emulator setting can raise (speeding the guest up just "
+                        + "fast-forwards the game). Frame generation leaves the 30fps logic "
+                        + "untouched and synthesizes an extra frame between each pair of real "
+                        + "ones, so the screen presents at ~60 for smoother motion. The guest "
+                        + "frame rate, game speed and save data are unchanged; this is "
+                        + "perceived smoothness, not faster gameplay, and it does not reduce "
+                        + "input latency. EXPERIMENTAL: the current synth frame is a 50% "
+                        + "cross-fade of the two latest frames, so fast camera motion can show "
+                        + "mild ghosting (a motion-warp upgrade is in progress). Best on "
+                        + "GPU-light scenes (towns/menus) where the GPU has idle time for the "
+                        + "extra frame; neutral-to-negative on the heaviest GPU-bound scenes. "
+                        + "Default off.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("present_frame_extrapolation")},
+                new IntCvar[]{new IntCvar("present_frame_gen_factor", 2)}));
+
+        list.add(new Optimization(
                 "opt_constants_arena",
                 "Dynamic constant streaming",
                 "Streams shader constants through one persistent GPU buffer.",
