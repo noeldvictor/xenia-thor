@@ -12,7 +12,24 @@
 #include <atomic>
 
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/threading.h"
+
+// The global critical region is xenia's single global lock, acquired on a very
+// hot path (kernel HLE, object-table lookups, etc.). NoteOwner() records the
+// last owner (thread ids + a QueryHostUptimeMillis timestamp + source) on EVERY
+// acquire, purely so the a64 idle-thread-snapshot watchdog can log who holds the
+// lock when it detects a stall. Device profiling (BD, 2026-06-23) pinned that
+// per-acquire bookkeeping at ~7-10% of CPU (QueryHostUptimeMillis ~7% alone) -
+// pure debug instrumentation on the hottest lock in the emulator. Gate it off by
+// default; enable it only when actually diagnosing a deadlock/stall.
+DEFINE_bool(global_lock_owner_tracking, false,
+            "Record the last global-critical-region owner (thread ids, host "
+            "uptime, source) on every acquire so the deadlock/stall watchdog can "
+            "report who holds the global lock. Off by default to keep the hot "
+            "lock path lean (the bookkeeping was ~7-10% of CPU on device); turn "
+            "on only when diagnosing a hang.",
+            "CPU");
 
 namespace xe {
 
@@ -32,6 +49,13 @@ std::recursive_mutex& global_critical_region::mutex() {
 }
 
 void global_critical_region::NoteOwner(const char* source) {
+  // Debug-only ownership bookkeeping; skip the per-acquire clock read +
+  // thread-id queries + atomic stores on the hot global-lock path unless a
+  // hang is actively being diagnosed. The stored owner fields stay at their
+  // last value (read only by the stall watchdog's diagnostic log).
+  if (!cvars::global_lock_owner_tracking) {
+    return;
+  }
   last_global_critical_owner_thread_id.store(xe::threading::current_thread_id(),
                                              std::memory_order_relaxed);
   last_global_critical_owner_system_thread_id.store(
