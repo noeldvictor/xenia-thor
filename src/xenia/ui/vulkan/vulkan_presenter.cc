@@ -1951,9 +1951,11 @@ VulkanPresenter::GuestOutputImage* VulkanPresenter::RecordFrameGenBlend(
   // Motion-warp path: estimate the global camera translation then forward-warp
   // the newest history frame, instead of the cross-fade. Falls back to cross-fade
   // if the warp objects failed to initialize.
-  if (cvars::present_frame_gen_motion_warp &&
-      frame_gen_warp_pipeline_ != VK_NULL_HANDLE &&
-      frame_gen_motion_estimate_pipeline_ != VK_NULL_HANDLE) {
+  // frame_gen_motion_warp_ready_ is set only after EVERY motion object (both
+  // pipelines, the 1x1 image, view, framebuffer, and descriptor sets) is created,
+  // so a partial init can't reach the null-deref path here - it falls through to
+  // the cross-fade.
+  if (cvars::present_frame_gen_motion_warp && frame_gen_motion_warp_ready_) {
     RecordFrameGenMotionWarp(command_buffer, paint_submission_index, extent,
                              newest_history, older_history);
     return frame_gen_synth_image_.get();
@@ -2125,6 +2127,12 @@ void VulkanPresenter::RecordFrameGenMotionWarp(
   warp_infos[0].imageView = frame_gen_history_images_[newest_history]->view();
   warp_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   warp_infos[1].sampler = VK_NULL_HANDLE;
+  // The 1x1 motion target is SHARED across the 3 in-flight slots (not per-slot).
+  // Its cross-frame WAR safety (a later frame's pass A overwriting it before this
+  // frame's pass B reads it) rests entirely on the motion render pass's EXTERNAL
+  // dependency dep[0] (prior FRAGMENT_SHADER/SHADER_READ -> COLOR_ATTACHMENT_WRITE)
+  // - do NOT weaken that dep (e.g. switching to dynamic_rendering) without making
+  // this image per-slot, or the shared target develops a silent cross-frame race.
   warp_infos[1].imageView = frame_gen_motion_view_;
   warp_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   VkWriteDescriptorSet warp_writes[2];
@@ -3539,7 +3547,30 @@ bool VulkanPresenter::InitializeFrameGenBlend() {
   // RGBA32F estimate render pass + image, the two pipelines, and per-slot
   // estimate/warp descriptor sets. Created whenever frame-gen is on (inert until
   // the cvar selects the warp path). On failure the cross-fade still works (the
-  // warp branch guards on frame_gen_warp_pipeline_).
+  // warp branch gates on frame_gen_motion_warp_ready_, set only after ALL of the
+  // below succeed).
+
+  // RGBA32F-as-color-attachment + sampled is OPTIONAL in core Vulkan; if the
+  // device doesn't advertise it, skip motion-warp entirely (ready stays false ->
+  // cross-fade) rather than building objects that would fail mid-way.
+  {
+    const auto& ifn = vulkan_device_->vulkan_instance()->functions();
+    VkFormatProperties motion_fmt_props;
+    ifn.vkGetPhysicalDeviceFormatProperties(vulkan_device_->physical_device(),
+                                            VK_FORMAT_R32G32B32A32_SFLOAT,
+                                            &motion_fmt_props);
+    const VkFormatFeatureFlags motion_needed =
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if ((motion_fmt_props.optimalTilingFeatures & motion_needed) !=
+        motion_needed) {
+      XELOGI(
+          "VulkanPresenter: RGBA32F not usable for the frame-gen motion target; "
+          "motion-warp disabled (cross-fade frame-gen only)");
+      return true;
+    }
+  }
+
   VkShaderModuleCreateInfo fg_fs_ci;
   fg_fs_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   fg_fs_ci.pNext = nullptr;
@@ -3734,6 +3765,8 @@ bool VulkanPresenter::InitializeFrameGenBlend() {
     }
   }
 
+  // Every motion object created -> the warp path is safe to take.
+  frame_gen_motion_warp_ready_ = true;
   return true;
 }
 

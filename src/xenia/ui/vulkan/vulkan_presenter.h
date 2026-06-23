@@ -583,6 +583,11 @@ class VulkanPresenter final : public Presenter {
       frame_gen_motion_estimate_sets_ = {};
   std::array<VkDescriptorSet, PaintContext::kSubmissionCount>
       frame_gen_motion_warp_sets_ = {};
+  // Set true only after EVERY motion object (pipelines, image, framebuffer,
+  // descriptor sets) is created - the warp path gates on this so a partial init
+  // (e.g. RGBA32F not renderable) falls back to the cross-fade instead of
+  // dereferencing a null framebuffer/set/view on the synth paint.
+  bool frame_gen_motion_warp_ready_ = false;
 
   // UI submission completion timeline with the submission index that can be
   // given to UI drawers (accessible from the UI thread only, at any time).
