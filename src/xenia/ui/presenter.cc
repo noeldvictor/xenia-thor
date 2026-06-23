@@ -101,6 +101,16 @@ DEFINE_int32(
     "Presented frames per guest frame when present_frame_extrapolation is on "
     "(2 = one synthesized frame between each pair of guest frames).",
     "Display");
+DEFINE_bool(
+    present_frame_gen_motion_warp, false,
+    "Frame generation: use a global motion-compensated warp for the synthesized "
+    "frame instead of the 50% cross-fade. Estimates the global 2D camera "
+    "translation between the two latest frames (separable Lucas-Kanade, a 1x1 "
+    "RGBA32F estimate pass) and forward-extrapolates the newest frame by half "
+    "that motion - sharper than the cross-fade on camera pans (no ghost), "
+    "captures camera/background motion only (fast local motion is not warped). "
+    "Requires present_frame_extrapolation. Default off (A/B vs cross-fade).",
+    "Display");
 
 namespace xe {
 namespace ui {

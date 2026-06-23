@@ -455,6 +455,8 @@ namespace shaders {
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_ffx_fsr_rcas_dither_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_ffx_fsr_rcas_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_blend_ps.h"
+#include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_motion_estimate_ps.h"
+#include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_warp_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_triangle_strip_rect_vs.h"
 }  // namespace shaders
 
@@ -611,6 +613,28 @@ VulkanPresenter::~VulkanPresenter() {
                              frame_gen_blend_pipeline_layout_);
   util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout, device,
                              frame_gen_blend_descriptor_set_layout_);
+
+  // Frame-gen motion-warp objects.
+  util::DestroyAndNullHandle(dfn.vkDestroyFramebuffer, device,
+                             frame_gen_motion_framebuffer_);
+  util::DestroyAndNullHandle(dfn.vkDestroyImageView, device,
+                             frame_gen_motion_view_);
+  util::DestroyAndNullHandle(dfn.vkDestroyImage, device,
+                             frame_gen_motion_image_);
+  util::DestroyAndNullHandle(dfn.vkFreeMemory, device,
+                             frame_gen_motion_memory_);
+  util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
+                             frame_gen_motion_descriptor_pool_);
+  util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
+                             frame_gen_warp_pipeline_);
+  util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
+                             frame_gen_motion_estimate_pipeline_);
+  util::DestroyAndNullHandle(dfn.vkDestroyRenderPass, device,
+                             frame_gen_motion_render_pass_);
+  util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
+                             frame_gen_warp_fs_);
+  util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
+                             frame_gen_motion_estimate_fs_);
 }
 
 Surface::TypeFlags VulkanPresenter::GetSurfaceTypesSupportedByInstance(
@@ -1924,6 +1948,17 @@ VulkanPresenter::GuestOutputImage* VulkanPresenter::RecordFrameGenBlend(
     frame_gen_synth_extent_ = extent;
   }
 
+  // Motion-warp path: estimate the global camera translation then forward-warp
+  // the newest history frame, instead of the cross-fade. Falls back to cross-fade
+  // if the warp objects failed to initialize.
+  if (cvars::present_frame_gen_motion_warp &&
+      frame_gen_warp_pipeline_ != VK_NULL_HANDLE &&
+      frame_gen_motion_estimate_pipeline_ != VK_NULL_HANDLE) {
+    RecordFrameGenMotionWarp(command_buffer, paint_submission_index, extent,
+                             newest_history, older_history);
+    return frame_gen_synth_image_.get();
+  }
+
   // Bind the two history frames into this paint slot's blend descriptor set.
   VkDescriptorSet blend_set =
       frame_gen_blend_descriptor_sets_[paint_submission_index %
@@ -2002,6 +2037,146 @@ VulkanPresenter::GuestOutputImage* VulkanPresenter::RecordFrameGenBlend(
   dfn.vkCmdEndRenderPass(command_buffer);
 
   return frame_gen_synth_image_.get();
+}
+
+void VulkanPresenter::RecordFrameGenMotionWarp(
+    VkCommandBuffer command_buffer, uint64_t paint_submission_index,
+    VkExtent2D extent, uint32_t newest_history, uint32_t older_history) {
+  const VulkanDevice::Functions& dfn = vulkan_device_->functions();
+  const VkDevice device = vulkan_device_->device();
+  const uint32_t slot =
+      uint32_t(paint_submission_index % PaintContext::kSubmissionCount);
+
+  // Full-screen NDC rect for the shared rect VS (both passes).
+  GuestOutputPaintRectangleConstants rect;
+  rect.x = -1.0f;
+  rect.y = -1.0f;
+  rect.width = 2.0f;
+  rect.height = 2.0f;
+
+  // --- Pass A: estimate the global motion (N-1, N-2 -> 1x1 RGBA32F sums). ---
+  VkDescriptorSet est_set = frame_gen_motion_estimate_sets_[slot];
+  VkDescriptorImageInfo est_infos[2];
+  est_infos[0].sampler = VK_NULL_HANDLE;
+  est_infos[0].imageView = frame_gen_history_images_[newest_history]->view();
+  est_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  est_infos[1].sampler = VK_NULL_HANDLE;
+  est_infos[1].imageView = frame_gen_history_images_[older_history]->view();
+  est_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkWriteDescriptorSet est_writes[2];
+  for (uint32_t i = 0; i < 2; ++i) {
+    est_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    est_writes[i].pNext = nullptr;
+    est_writes[i].dstSet = est_set;
+    est_writes[i].dstBinding = i;
+    est_writes[i].dstArrayElement = 0;
+    est_writes[i].descriptorCount = 1;
+    est_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    est_writes[i].pImageInfo = &est_infos[i];
+    est_writes[i].pBufferInfo = nullptr;
+    est_writes[i].pTexelBufferView = nullptr;
+  }
+  dfn.vkUpdateDescriptorSets(device, 2, est_writes, 0, nullptr);
+
+  VkRenderPassBeginInfo est_rp_begin;
+  est_rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  est_rp_begin.pNext = nullptr;
+  est_rp_begin.renderPass = frame_gen_motion_render_pass_;
+  est_rp_begin.framebuffer = frame_gen_motion_framebuffer_;
+  est_rp_begin.renderArea.offset.x = 0;
+  est_rp_begin.renderArea.offset.y = 0;
+  est_rp_begin.renderArea.extent.width = 1;
+  est_rp_begin.renderArea.extent.height = 1;
+  est_rp_begin.clearValueCount = 0;
+  est_rp_begin.pClearValues = nullptr;
+  dfn.vkCmdBeginRenderPass(command_buffer, &est_rp_begin,
+                           VK_SUBPASS_CONTENTS_INLINE);
+  VulkanPerfCountersRecordRenderPassBegin(true);
+  VkViewport est_vp;
+  est_vp.x = 0.0f;
+  est_vp.y = 0.0f;
+  est_vp.width = 1.0f;
+  est_vp.height = 1.0f;
+  est_vp.minDepth = 0.0f;
+  est_vp.maxDepth = 1.0f;
+  dfn.vkCmdSetViewport(command_buffer, 0, 1, &est_vp);
+  VkRect2D est_sc;
+  est_sc.offset.x = 0;
+  est_sc.offset.y = 0;
+  est_sc.extent.width = 1;
+  est_sc.extent.height = 1;
+  dfn.vkCmdSetScissor(command_buffer, 0, 1, &est_sc);
+  dfn.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        frame_gen_motion_estimate_pipeline_);
+  dfn.vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              frame_gen_blend_pipeline_layout_, 0, 1, &est_set, 0,
+                              nullptr);
+  dfn.vkCmdPushConstants(command_buffer, frame_gen_blend_pipeline_layout_,
+                         VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(rect), &rect);
+  dfn.vkCmdDraw(command_buffer, 4, 1, 0, 0);
+  dfn.vkCmdEndRenderPass(command_buffer);
+
+  // --- Pass B: warp N-1 by the estimated motion into the synth target. The
+  // motion render pass's 0->EXTERNAL dep makes pass A's RGBA32F write visible to
+  // this fragment read; N-1 is already SHADER_READ_ONLY from the history copy. ---
+  VkDescriptorSet warp_set = frame_gen_motion_warp_sets_[slot];
+  VkDescriptorImageInfo warp_infos[2];
+  warp_infos[0].sampler = VK_NULL_HANDLE;
+  warp_infos[0].imageView = frame_gen_history_images_[newest_history]->view();
+  warp_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  warp_infos[1].sampler = VK_NULL_HANDLE;
+  warp_infos[1].imageView = frame_gen_motion_view_;
+  warp_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkWriteDescriptorSet warp_writes[2];
+  for (uint32_t i = 0; i < 2; ++i) {
+    warp_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    warp_writes[i].pNext = nullptr;
+    warp_writes[i].dstSet = warp_set;
+    warp_writes[i].dstBinding = i;
+    warp_writes[i].dstArrayElement = 0;
+    warp_writes[i].descriptorCount = 1;
+    warp_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    warp_writes[i].pImageInfo = &warp_infos[i];
+    warp_writes[i].pBufferInfo = nullptr;
+    warp_writes[i].pTexelBufferView = nullptr;
+  }
+  dfn.vkUpdateDescriptorSets(device, 2, warp_writes, 0, nullptr);
+
+  VkRenderPassBeginInfo warp_rp_begin;
+  warp_rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  warp_rp_begin.pNext = nullptr;
+  warp_rp_begin.renderPass = guest_output_intermediate_render_pass_;
+  warp_rp_begin.framebuffer = frame_gen_synth_framebuffer_;
+  warp_rp_begin.renderArea.offset.x = 0;
+  warp_rp_begin.renderArea.offset.y = 0;
+  warp_rp_begin.renderArea.extent = extent;
+  warp_rp_begin.clearValueCount = 0;
+  warp_rp_begin.pClearValues = nullptr;
+  dfn.vkCmdBeginRenderPass(command_buffer, &warp_rp_begin,
+                           VK_SUBPASS_CONTENTS_INLINE);
+  VulkanPerfCountersRecordRenderPassBegin(true);
+  VkViewport warp_vp;
+  warp_vp.x = 0.0f;
+  warp_vp.y = 0.0f;
+  warp_vp.width = float(extent.width);
+  warp_vp.height = float(extent.height);
+  warp_vp.minDepth = 0.0f;
+  warp_vp.maxDepth = 1.0f;
+  dfn.vkCmdSetViewport(command_buffer, 0, 1, &warp_vp);
+  VkRect2D warp_sc;
+  warp_sc.offset.x = 0;
+  warp_sc.offset.y = 0;
+  warp_sc.extent = extent;
+  dfn.vkCmdSetScissor(command_buffer, 0, 1, &warp_sc);
+  dfn.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        frame_gen_warp_pipeline_);
+  dfn.vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              frame_gen_blend_pipeline_layout_, 0, 1, &warp_set,
+                              0, nullptr);
+  dfn.vkCmdPushConstants(command_buffer, frame_gen_blend_pipeline_layout_,
+                         VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(rect), &rect);
+  dfn.vkCmdDraw(command_buffer, 4, 1, 0, 0);
+  dfn.vkCmdEndRenderPass(command_buffer);
 }
 
 Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(
@@ -3356,6 +3531,207 @@ bool VulkanPresenter::InitializeFrameGenBlend() {
       VK_SUCCESS) {
     XELOGE("VulkanPresenter: Failed to allocate the frame-gen blend descriptor sets");
     return false;
+  }
+
+  // --- Motion-warp upgrade (present_frame_gen_motion_warp) ---
+  // Reuses the blend descriptor set layout (2 SAMPLED_IMAGE), pipeline layout
+  // (rect VS push-const) and the rect VS. Adds the estimate + warp FS, a 1x1
+  // RGBA32F estimate render pass + image, the two pipelines, and per-slot
+  // estimate/warp descriptor sets. Created whenever frame-gen is on (inert until
+  // the cvar selects the warp path). On failure the cross-fade still works (the
+  // warp branch guards on frame_gen_warp_pipeline_).
+  VkShaderModuleCreateInfo fg_fs_ci;
+  fg_fs_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  fg_fs_ci.pNext = nullptr;
+  fg_fs_ci.flags = 0;
+  fg_fs_ci.codeSize = sizeof(shaders::guest_output_frame_motion_estimate_ps);
+  fg_fs_ci.pCode = shaders::guest_output_frame_motion_estimate_ps;
+  if (dfn.vkCreateShaderModule(device, &fg_fs_ci, nullptr,
+                               &frame_gen_motion_estimate_fs_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion-estimate FS");
+    return false;
+  }
+  fg_fs_ci.codeSize = sizeof(shaders::guest_output_frame_warp_ps);
+  fg_fs_ci.pCode = shaders::guest_output_frame_warp_ps;
+  if (dfn.vkCreateShaderModule(device, &fg_fs_ci, nullptr,
+                               &frame_gen_warp_fs_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen warp FS");
+    return false;
+  }
+
+  // Estimate render pass: 1x1 RGBA32F (same shape as the intermediate pass, but
+  // float32 so the LK sums survive); contents read by the warp pass.
+  VkAttachmentDescription motion_attachment;
+  motion_attachment.flags = 0;
+  motion_attachment.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  motion_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+  motion_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  motion_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  motion_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  motion_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  motion_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  motion_attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkAttachmentReference motion_color_ref;
+  motion_color_ref.attachment = 0;
+  motion_color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  VkSubpassDescription motion_subpass = {};
+  motion_subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  motion_subpass.colorAttachmentCount = 1;
+  motion_subpass.pColorAttachments = &motion_color_ref;
+  VkSubpassDependency motion_deps[2];
+  motion_deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+  motion_deps[0].dstSubpass = 0;
+  motion_deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  motion_deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  motion_deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  motion_deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  motion_deps[0].dependencyFlags = 0;
+  motion_deps[1].srcSubpass = 0;
+  motion_deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+  motion_deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  motion_deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  motion_deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  motion_deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  motion_deps[1].dependencyFlags = 0;
+  VkRenderPassCreateInfo motion_rp_ci;
+  motion_rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  motion_rp_ci.pNext = nullptr;
+  motion_rp_ci.flags = 0;
+  motion_rp_ci.attachmentCount = 1;
+  motion_rp_ci.pAttachments = &motion_attachment;
+  motion_rp_ci.subpassCount = 1;
+  motion_rp_ci.pSubpasses = &motion_subpass;
+  motion_rp_ci.dependencyCount = uint32_t(xe::countof(motion_deps));
+  motion_rp_ci.pDependencies = motion_deps;
+  if (dfn.vkCreateRenderPass(device, &motion_rp_ci, nullptr,
+                             &frame_gen_motion_render_pass_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion render pass");
+    return false;
+  }
+
+  // Estimate + warp pipelines: reuse the blend pipeline state, swap FS + RP.
+  blend_stages[1].module = frame_gen_motion_estimate_fs_;
+  blend_pipeline_create_info.renderPass = frame_gen_motion_render_pass_;
+  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+                                    &blend_pipeline_create_info, nullptr,
+                                    &frame_gen_motion_estimate_pipeline_) !=
+      VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion-estimate pipeline");
+    return false;
+  }
+  blend_stages[1].module = frame_gen_warp_fs_;
+  blend_pipeline_create_info.renderPass = guest_output_intermediate_render_pass_;
+  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+                                    &blend_pipeline_create_info, nullptr,
+                                    &frame_gen_warp_pipeline_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen warp pipeline");
+    return false;
+  }
+
+  // 1x1 RGBA32F motion image + view + framebuffer.
+  VkImageCreateInfo motion_img_ci;
+  motion_img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  motion_img_ci.pNext = nullptr;
+  motion_img_ci.flags = 0;
+  motion_img_ci.imageType = VK_IMAGE_TYPE_2D;
+  motion_img_ci.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  motion_img_ci.extent.width = 1;
+  motion_img_ci.extent.height = 1;
+  motion_img_ci.extent.depth = 1;
+  motion_img_ci.mipLevels = 1;
+  motion_img_ci.arrayLayers = 1;
+  motion_img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+  motion_img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+  motion_img_ci.usage =
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  motion_img_ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  motion_img_ci.queueFamilyIndexCount = 0;
+  motion_img_ci.pQueueFamilyIndices = nullptr;
+  motion_img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (!util::CreateDedicatedAllocationImage(
+          vulkan_device_, motion_img_ci, util::MemoryPurpose::kDeviceLocal,
+          frame_gen_motion_image_, frame_gen_motion_memory_)) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion image");
+    return false;
+  }
+  VkImageViewCreateInfo motion_view_ci;
+  motion_view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  motion_view_ci.pNext = nullptr;
+  motion_view_ci.flags = 0;
+  motion_view_ci.image = frame_gen_motion_image_;
+  motion_view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  motion_view_ci.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  motion_view_ci.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  motion_view_ci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  motion_view_ci.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  motion_view_ci.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  motion_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  motion_view_ci.subresourceRange.baseMipLevel = 0;
+  motion_view_ci.subresourceRange.levelCount = 1;
+  motion_view_ci.subresourceRange.baseArrayLayer = 0;
+  motion_view_ci.subresourceRange.layerCount = 1;
+  if (dfn.vkCreateImageView(device, &motion_view_ci, nullptr,
+                            &frame_gen_motion_view_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion image view");
+    return false;
+  }
+  VkFramebufferCreateInfo motion_fb_ci;
+  motion_fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  motion_fb_ci.pNext = nullptr;
+  motion_fb_ci.flags = 0;
+  motion_fb_ci.renderPass = frame_gen_motion_render_pass_;
+  motion_fb_ci.attachmentCount = 1;
+  motion_fb_ci.pAttachments = &frame_gen_motion_view_;
+  motion_fb_ci.width = 1;
+  motion_fb_ci.height = 1;
+  motion_fb_ci.layers = 1;
+  if (dfn.vkCreateFramebuffer(device, &motion_fb_ci, nullptr,
+                              &frame_gen_motion_framebuffer_) != VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion framebuffer");
+    return false;
+  }
+
+  // Motion descriptor pool: an estimate set + a warp set per in-flight slot.
+  VkDescriptorPoolSize motion_pool_size;
+  motion_pool_size.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  motion_pool_size.descriptorCount =
+      4 * uint32_t(PaintContext::kSubmissionCount);
+  VkDescriptorPoolCreateInfo motion_pool_ci;
+  motion_pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  motion_pool_ci.pNext = nullptr;
+  motion_pool_ci.flags = 0;
+  motion_pool_ci.maxSets = 2 * uint32_t(PaintContext::kSubmissionCount);
+  motion_pool_ci.poolSizeCount = 1;
+  motion_pool_ci.pPoolSizes = &motion_pool_size;
+  if (dfn.vkCreateDescriptorPool(device, &motion_pool_ci, nullptr,
+                                 &frame_gen_motion_descriptor_pool_) !=
+      VK_SUCCESS) {
+    XELOGE("VulkanPresenter: Failed to create the frame-gen motion descriptor pool");
+    return false;
+  }
+  {
+    VkDescriptorSetLayout motion_layouts[2 * PaintContext::kSubmissionCount];
+    for (uint32_t i = 0; i < 2 * uint32_t(PaintContext::kSubmissionCount); ++i) {
+      motion_layouts[i] = frame_gen_blend_descriptor_set_layout_;
+    }
+    VkDescriptorSet motion_sets[2 * PaintContext::kSubmissionCount];
+    VkDescriptorSetAllocateInfo motion_alloc;
+    motion_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    motion_alloc.pNext = nullptr;
+    motion_alloc.descriptorPool = frame_gen_motion_descriptor_pool_;
+    motion_alloc.descriptorSetCount =
+        2 * uint32_t(PaintContext::kSubmissionCount);
+    motion_alloc.pSetLayouts = motion_layouts;
+    if (dfn.vkAllocateDescriptorSets(device, &motion_alloc, motion_sets) !=
+        VK_SUCCESS) {
+      XELOGE("VulkanPresenter: Failed to allocate the frame-gen motion sets");
+      return false;
+    }
+    for (uint32_t i = 0; i < uint32_t(PaintContext::kSubmissionCount); ++i) {
+      frame_gen_motion_estimate_sets_[i] = motion_sets[i];
+      frame_gen_motion_warp_sets_[i] =
+          motion_sets[uint32_t(PaintContext::kSubmissionCount) + i];
+    }
   }
 
   return true;

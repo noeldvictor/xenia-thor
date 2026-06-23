@@ -50,6 +50,7 @@ DECLARE_bool(present_trace_guest_output_geometry);
 DECLARE_int32(present_trace_guest_output_geometry_budget);
 DECLARE_bool(present_frame_extrapolation);
 DECLARE_int32(present_frame_gen_factor);
+DECLARE_bool(present_frame_gen_motion_warp);
 
 namespace xe {
 namespace ui {

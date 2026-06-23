@@ -289,6 +289,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_2101010_color_as_unorm10");
             copyBooleanExtra(intent, launchArguments, "present_frame_extrapolation");
             copyIntExtra(intent, launchArguments, "present_frame_gen_factor");
+            copyBooleanExtra(intent, launchArguments, "present_frame_gen_motion_warp");
             copyBooleanExtra(intent, launchArguments, "gpu_opaque_depth_prepass");
             copyBooleanExtra(intent, launchArguments, "gpu_lrz_spike_depth_clear");
             copyIntExtra(intent, launchArguments, "gpu_fdm_foliage");

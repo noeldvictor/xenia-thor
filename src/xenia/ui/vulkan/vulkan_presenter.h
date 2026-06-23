@@ -489,6 +489,13 @@ class VulkanPresenter final : public Presenter {
                                         uint64_t paint_submission_index,
                                         uint32_t newest_history,
                                         uint32_t older_history);
+  // Motion-warp synth (present_frame_gen_motion_warp): pass A estimates the global
+  // translation into the 1x1 motion target, pass B forward-warps the newest
+  // history frame into the synth target. Recorded in place of the cross-fade.
+  void RecordFrameGenMotionWarp(VkCommandBuffer command_buffer,
+                                uint64_t paint_submission_index,
+                                VkExtent2D extent, uint32_t newest_history,
+                                uint32_t older_history);
 
   VulkanDevice* vulkan_device_;
   const UISamplers* ui_samplers_;
@@ -554,6 +561,28 @@ class VulkanPresenter final : public Presenter {
   std::unique_ptr<GuestOutputImage> frame_gen_synth_image_;
   VkFramebuffer frame_gen_synth_framebuffer_ = VK_NULL_HANDLE;
   VkExtent2D frame_gen_synth_extent_ = {0, 0};
+
+  // Frame-gen motion-warp upgrade (present_frame_gen_motion_warp): a global
+  // Lucas-Kanade translation estimate into a 1x1 RGBA32F target, then a forward
+  // warp of the newest history frame by half that motion - sharper than the
+  // cross-fade on camera pans. Reuses the blend descriptor set layout + pipeline
+  // layout + the rect VS + the synth target/framebuffer; adds the estimate render
+  // pass (RGBA32F), the 1x1 motion image, and per-slot estimate/warp descriptor
+  // sets. All null/unused unless the cvar is on.
+  VkShaderModule frame_gen_motion_estimate_fs_ = VK_NULL_HANDLE;
+  VkShaderModule frame_gen_warp_fs_ = VK_NULL_HANDLE;
+  VkRenderPass frame_gen_motion_render_pass_ = VK_NULL_HANDLE;
+  VkPipeline frame_gen_motion_estimate_pipeline_ = VK_NULL_HANDLE;
+  VkPipeline frame_gen_warp_pipeline_ = VK_NULL_HANDLE;
+  VkImage frame_gen_motion_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory frame_gen_motion_memory_ = VK_NULL_HANDLE;
+  VkImageView frame_gen_motion_view_ = VK_NULL_HANDLE;
+  VkFramebuffer frame_gen_motion_framebuffer_ = VK_NULL_HANDLE;
+  VkDescriptorPool frame_gen_motion_descriptor_pool_ = VK_NULL_HANDLE;
+  std::array<VkDescriptorSet, PaintContext::kSubmissionCount>
+      frame_gen_motion_estimate_sets_ = {};
+  std::array<VkDescriptorSet, PaintContext::kSubmissionCount>
+      frame_gen_motion_warp_sets_ = {};
 
   // UI submission completion timeline with the submission index that can be
   // given to UI drawers (accessible from the UI thread only, at any time).
