@@ -92,6 +92,23 @@ DEFINE_bool(
     "gpu_vulkan_driver_debug=noubwc) to size the win, then default-on per-title.",
     "GPU");
 
+DEFINE_uint32(
+    gpu_fdm_foliage, 0,
+    "FDM (VK_EXT_fragment_density_map) overdraw lever: when nonzero, attach a "
+    "uniform fragment density map to GUEST-GEOMETRY host render passes so Turnip "
+    "renders bins at 1/value resolution (a7xx GRAS_BIN_FOVEAT - distinct HW from "
+    "VRS coarse-shading, gate-confirmed 2026-06-22), cutting the COUNT of "
+    "rasterized/depth-tested/shaded fragments on BD's per-covered-fragment "
+    "overdraw floor. value = fragment-area edge: 2 = half-res per axis (~4x fewer "
+    "fragments), 4 = quarter-res (~16x). EDRAM-transfer passes (which share the "
+    "render-pass path) are excluded so copies stay pixel-exact. Density map is "
+    "R16G16_SFLOAT (Turnip advertises the FDM format feature only for float "
+    "formats). Stacks with VRS (which coarse-shades the surviving fragments). "
+    "Default 0 (off). A/B on a gpu_freeze_at_guest_ms heavy field; expect a bigger "
+    "drop than VRS's -22% (cuts raster+depth, not just shading). Quality: foliage "
+    "blockiness grows with value.",
+    "GPU");
+
 DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
@@ -1113,8 +1130,14 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
 
   last_update_framebuffer_ = VK_NULL_HANDLE;
   for (const auto& framebuffer_pair : framebuffers_) {
-    dfn.vkDestroyFramebuffer(device, framebuffer_pair.second.framebuffer,
-                             nullptr);
+    const Framebuffer& fb = framebuffer_pair.second;
+    dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
+    // FDM density map (null when gpu_fdm_foliage is off).
+    if (fb.fdm_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, fb.fdm_view, nullptr);
+      dfn.vkDestroyImage(device, fb.fdm_image, nullptr);
+      dfn.vkFreeMemory(device, fb.fdm_memory, nullptr);
+    }
   }
   framebuffers_.clear();
 
@@ -1174,8 +1197,14 @@ void VulkanRenderTargetCache::ClearCache() {
   // attachment images, which may be removed by the common ClearCache.
   last_update_framebuffer_ = VK_NULL_HANDLE;
   for (const auto& framebuffer_pair : framebuffers_) {
-    dfn.vkDestroyFramebuffer(device, framebuffer_pair.second.framebuffer,
-                             nullptr);
+    const Framebuffer& fb = framebuffer_pair.second;
+    dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
+    // FDM density map (null when gpu_fdm_foliage is off).
+    if (fb.fdm_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, fb.fdm_view, nullptr);
+      dfn.vkDestroyImage(device, fb.fdm_image, nullptr);
+      dfn.vkFreeMemory(device, fb.fdm_memory, nullptr);
+    }
   }
   framebuffers_.clear();
 
@@ -1524,6 +1553,17 @@ bool VulkanRenderTargetCache::Update(
             depth_and_color_render_targets[4]->key().GetColorFormat();
       }
 
+      // FDM: mark this GUEST-GEOMETRY pass for a fragment density map (cuts the
+      // raster/depth/shade fragment count over the viewport). Set ONLY here, not
+      // on the EDRAM-transfer render_pass_key, so transfer copies stay pixel-exact;
+      // propagates via last_update_render_pass_key_ to the pipeline so the pipeline
+      // render pass == the draw render pass (compatible).
+      render_pass_key.use_fdm =
+          cvars::gpu_fdm_foliage != 0 &&
+          command_processor_.GetVulkanDevice()
+              ->extensions()
+              .ext_EXT_fragment_density_map;
+
       uint32_t pitch_tiles_at_32bpp =
           ((rb_surface_info.surface_pitch << uint32_t(
                 rb_surface_info.msaa_samples >= xenos::MsaaSamples::k4X)) +
@@ -1569,10 +1609,14 @@ bool VulkanRenderTargetCache::Update(
         return true;
       };
 
-      if (cvars::gpu_vulkan_inpass_edram_transfers > 0) {
+      if (cvars::gpu_vulkan_inpass_edram_transfers > 0 &&
+          !render_pass_key.use_fdm) {
         // In-pass transfer mode: resolve the guest pass objects first and hand
         // them to the transfer executor so eligible destinations can be
         // transferred inside the guest pass (left open for the guest draw).
+        // Forced OFF when FDM is on (use_fdm): in-pass transfers would render
+        // inside the FDM guest pass and get density-downscaled, corrupting the
+        // pixel-exact copies - the separate-pass path uses non-FDM transfer passes.
         if (!lookup_guest_pass_objects()) {
           return false;
         }
@@ -1685,7 +1729,8 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
       return VK_NULL_HANDLE;
   }
 
-  VkAttachmentDescription attachments[1 + xenos::kMaxColorRenderTargets];
+  // +1 trailing slot for an optional FDM (fragment density map) attachment.
+  VkAttachmentDescription attachments[1 + xenos::kMaxColorRenderTargets + 1];
   if (key.depth_and_color_used & 0b1) {
     VkAttachmentDescription& attachment = attachments[0];
     attachment.flags = 0;
@@ -1824,6 +1869,37 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
       key.depth_and_color_used ? uint32_t(xe::countof(subpass_dependencies))
                                : 0;
   render_pass_create_info.pDependencies = subpass_dependencies;
+
+  // FDM: append the fragment density map attachment + chain its create-info, only
+  // on guest-geometry passes (key.use_fdm). The attachment is referenced solely
+  // via pNext (never a subpass color/depth/input ref); the matching density image
+  // view is supplied by the framebuffer at this same trailing index. Must outlive
+  // the vkCreateRenderPass call below (same scope).
+  VkRenderPassFragmentDensityMapCreateInfoEXT fdm_create_info;
+  if (key.use_fdm) {
+    uint32_t fdm_attachment_index = render_pass_create_info.attachmentCount;
+    VkAttachmentDescription& fdm_attachment = attachments[fdm_attachment_index];
+    fdm_attachment.flags = 0;
+    fdm_attachment.format = VK_FORMAT_R16G16_SFLOAT;
+    fdm_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    fdm_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    fdm_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    fdm_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    fdm_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    fdm_attachment.initialLayout =
+        VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+    fdm_attachment.finalLayout =
+        VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+    fdm_create_info.sType =
+        VK_STRUCTURE_TYPE_RENDER_PASS_FRAGMENT_DENSITY_MAP_CREATE_INFO_EXT;
+    fdm_create_info.pNext = render_pass_create_info.pNext;
+    fdm_create_info.fragmentDensityMapAttachment.attachment =
+        fdm_attachment_index;
+    fdm_create_info.fragmentDensityMapAttachment.layout =
+        VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+    render_pass_create_info.pNext = &fdm_create_info;
+    ++render_pass_create_info.attachmentCount;
+  }
 
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
@@ -2393,7 +2469,8 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
     return nullptr;
   }
 
-  VkImageView attachments[1 + xenos::kMaxColorRenderTargets];
+  // +1 trailing slot for an optional FDM density-map attachment.
+  VkImageView attachments[1 + xenos::kMaxColorRenderTargets + 1];
   uint32_t attachment_count = 0;
   uint32_t depth_and_color_rts_remaining = render_pass_key.depth_and_color_used;
   uint32_t rt_index;
@@ -2417,7 +2494,6 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   framebuffer_create_info.pNext = nullptr;
   framebuffer_create_info.flags = 0;
   framebuffer_create_info.renderPass = render_pass;
-  framebuffer_create_info.attachmentCount = attachment_count;
   framebuffer_create_info.pAttachments = attachments;
   VkExtent2D host_extent;
   if (pitch_tiles_at_32bpp) {
@@ -2441,16 +2517,147 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   framebuffer_create_info.width = host_extent.width;
   framebuffer_create_info.height = host_extent.height;
   framebuffer_create_info.layers = 1;
+
+  // FDM: create + uniform-fill the per-framebuffer density map and append its view
+  // at the trailing index (matching the render pass's FDM attachment). The render
+  // pass declared the FDM attachment, so the framebuffer MUST supply it; on
+  // failure, fail the framebuffer (graceful - the guest pass is skipped, no crash).
+  VkImage fdm_image = VK_NULL_HANDLE;
+  VkDeviceMemory fdm_memory = VK_NULL_HANDLE;
+  VkImageView fdm_view = VK_NULL_HANDLE;
+  if (render_pass_key.use_fdm) {
+    if (!CreateFragmentDensityMap(host_extent, fdm_image, fdm_memory,
+                                  fdm_view)) {
+      return nullptr;
+    }
+    attachments[attachment_count++] = fdm_view;
+  }
+  framebuffer_create_info.attachmentCount = attachment_count;
+
   VkFramebuffer framebuffer;
   if (dfn.vkCreateFramebuffer(device, &framebuffer_create_info, nullptr,
                               &framebuffer) != VK_SUCCESS) {
+    if (fdm_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, fdm_view, nullptr);
+      dfn.vkDestroyImage(device, fdm_image, nullptr);
+      dfn.vkFreeMemory(device, fdm_memory, nullptr);
+    }
     return nullptr;
   }
   // Creates at a persistent location - safe to use pointers.
-  return &framebuffers_
-              .emplace(std::piecewise_construct, std::forward_as_tuple(key),
-                       std::forward_as_tuple(framebuffer, host_extent))
-              .first->second;
+  Framebuffer& framebuffer_entry =
+      framebuffers_
+          .emplace(std::piecewise_construct, std::forward_as_tuple(key),
+                   std::forward_as_tuple(framebuffer, host_extent))
+          .first->second;
+  framebuffer_entry.fdm_image = fdm_image;
+  framebuffer_entry.fdm_memory = fdm_memory;
+  framebuffer_entry.fdm_view = fdm_view;
+  return &framebuffer_entry;
+}
+
+bool VulkanRenderTargetCache::CreateFragmentDensityMap(
+    VkExtent2D framebuffer_extent, VkImage& image_out,
+    VkDeviceMemory& memory_out, VkImageView& view_out) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  // 1 density texel per up-to-1024px region (Turnip's max FDM texel size) -> a
+  // tiny image whose dims always land in the per-framebuffer VUID window
+  // [ceil(fb/maxTexel), ceil(fb/minTexel)] = [ceil(fb/1024), ceil(fb/32)].
+  // R16G16_SFLOAT because Turnip advertises the FDM format feature only for float
+  // formats (not the spec-typical R8G8_UNORM).
+  VkImageCreateInfo image_create_info;
+  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_create_info.pNext = nullptr;
+  image_create_info.flags = 0;
+  image_create_info.imageType = VK_IMAGE_TYPE_2D;
+  image_create_info.format = VK_FORMAT_R16G16_SFLOAT;
+  image_create_info.extent.width =
+      std::max(uint32_t(1), (framebuffer_extent.width + 1023u) / 1024u);
+  image_create_info.extent.height =
+      std::max(uint32_t(1), (framebuffer_extent.height + 1023u) / 1024u);
+  image_create_info.extent.depth = 1;
+  image_create_info.mipLevels = 1;
+  image_create_info.arrayLayers = 1;
+  image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_create_info.usage = VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT |
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_create_info.queueFamilyIndexCount = 0;
+  image_create_info.pQueueFamilyIndices = nullptr;
+  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          vulkan_device, image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, image_out,
+          memory_out)) {
+    XELOGE("VulkanRenderTargetCache: Failed to create the FDM density image");
+    return false;
+  }
+
+  VkImageViewCreateInfo view_create_info;
+  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_create_info.pNext = nullptr;
+  view_create_info.flags = 0;
+  view_create_info.image = image_out;
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_create_info.format = VK_FORMAT_R16G16_SFLOAT;
+  view_create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  view_create_info.subresourceRange.baseMipLevel = 0;
+  view_create_info.subresourceRange.levelCount = 1;
+  view_create_info.subresourceRange.baseArrayLayer = 0;
+  view_create_info.subresourceRange.layerCount = 1;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &view_out) !=
+      VK_SUCCESS) {
+    XELOGE(
+        "VulkanRenderTargetCache: Failed to create the FDM density image view");
+    dfn.vkDestroyImage(device, image_out, nullptr);
+    dfn.vkFreeMemory(device, memory_out, nullptr);
+    image_out = VK_NULL_HANDLE;
+    memory_out = VK_NULL_HANDLE;
+    return false;
+  }
+
+  // Uniform-fill once via a clear (density = 1/value -> fragment area = value),
+  // then leave it in FRAGMENT_DENSITY_MAP_OPTIMAL for the guest passes to read.
+  // Recorded into the open draw stream before the guest pass begins; one-time (the
+  // framebuffer + its filled density image are cached). Independent of the EDRAM
+  // transfers (a different image), so the framebuffer cache's effective ordering
+  // is preserved.
+  VkImageSubresourceRange range;
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.baseMipLevel = 0;
+  range.levelCount = 1;
+  range.baseArrayLayer = 0;
+  range.layerCount = 1;
+  command_processor_.PushImageMemoryBarrier(
+      image_out, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  float density = 1.0f / float(cvars::gpu_fdm_foliage);
+  VkClearColorValue clear_color;
+  clear_color.float32[0] = density;
+  clear_color.float32[1] = density;
+  clear_color.float32[2] = 0.0f;
+  clear_color.float32[3] = 1.0f;
+  command_processor_.deferred_command_buffer().CmdVkClearColorImage(
+      image_out, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear_color, 1, &range);
+  command_processor_.PushImageMemoryBarrier(
+      image_out, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT,
+      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT);
+  command_processor_.SubmitBarriers(true);
+  return true;
 }
 
 VkShaderModule VulkanRenderTargetCache::GetTransferShader(

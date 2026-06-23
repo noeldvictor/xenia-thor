@@ -67,6 +67,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       xenos::ColorRenderTargetFormat color_3_view_format
           : xenos::kColorRenderTargetFormatBits;    // 24
       uint32_t color_rts_use_transfer_formats : 1;  // 25
+      // FDM (gpu_fdm_foliage): set only on GUEST-GEOMETRY passes (not EDRAM
+      // transfers, which share this path) so a fragment density map is attached -
+      // makes the FDM render pass + framebuffer + pipeline variants distinct in
+      // the caches from the non-FDM transfer variants. Propagated via
+      // last_update_render_pass_key_ to the pipeline (so pipeline == draw pass).
+      uint32_t use_fdm : 1;  // 26
     };
     uint32_t key = 0;
     struct Hasher {
@@ -89,6 +95,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   struct Framebuffer {
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     VkExtent2D host_extent{};
+    // FDM (gpu_fdm_foliage): the per-framebuffer uniform fragment density map
+    // (R16G16_SFLOAT, Turnip requires a float format) + its dedicated allocation
+    // + view, all null when FDM is off. Cleared once to the uniform density at
+    // creation; destroyed with the framebuffer.
+    VkImage fdm_image = VK_NULL_HANDLE;
+    VkDeviceMemory fdm_memory = VK_NULL_HANDLE;
+    VkImageView fdm_view = VK_NULL_HANDLE;
     Framebuffer() = default;
     Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
         : framebuffer(framebuffer), host_extent(host_extent) {}
@@ -857,6 +870,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   const Framebuffer* GetHostRenderTargetsFramebuffer(
       RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
       const RenderTarget* const* depth_and_color_render_targets);
+
+  // FDM (gpu_fdm_foliage): creates a tiny R16G16_SFLOAT fragment density map
+  // sized for framebuffer_extent (1 texel / up-to-1024px region) and uniform-fills
+  // it (clear to 1/gpu_fdm_foliage) once, leaving it in
+  // FRAGMENT_DENSITY_MAP_OPTIMAL. Records the fill into the open draw stream.
+  // Returns false (and frees any partial allocation) on failure.
+  bool CreateFragmentDensityMap(VkExtent2D framebuffer_extent,
+                                VkImage& image_out, VkDeviceMemory& memory_out,
+                                VkImageView& view_out);
 
   VkShaderModule GetTransferShader(TransferShaderKey key);
   // With sample-rate shading, returns a pointer to one pipeline. Without
