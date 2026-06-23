@@ -79,6 +79,35 @@ DEFINE_bool(arm64_context_promotion_gpr_livein_r1_audit, false,
             "Thor ARM64 research: log attempted/replaced/skipped counters for "
             "arm64_context_promotion_gpr_livein_r1.",
             "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_crossblock, false,
+            "Thor ARM64 codegen (tier-2 cross-block register caching): carry "
+            "whole PPC GPR context slots (default: callee-saved r27-r31) across "
+            "single-dominating-predecessor block boundaries through HIR locals, "
+            "eliminating the redundant per-block LOAD_CONTEXT guest-context "
+            "reload our JIT emits for a register that stays live across a "
+            "call-free chain of blocks (loop counters / base pointers in a hot "
+            "loop body). Generalizes the proven dominated-pred carrier (same "
+            "mechanism + guards that already safely promote the r1 stack "
+            "pointer: resets at every volatile/call/barrier and on any "
+            "overlapping partial store; only seeds across a single DOMINATING "
+            "edge so merge points re-load). Default-off experiment.",
+            "CPU");
+DEFINE_uint32(arm64_context_promotion_gpr_crossblock_mask, 0xF8000000u,
+              "Bitmask of PPC GPR indices (bit i selects r[i]) promoted by "
+              "arm64_context_promotion_gpr_crossblock. Default 0xF8000000 = the "
+              "callee-saved set r27,r28,r29,r30,r31 (the registers the "
+              "nonclosed-cache audit identified as cross-block-live). Widen to "
+              "include e.g. r1 (bit 1) / r11 (bit 11) at higher host-register "
+              "pressure risk.",
+              "CPU");
+DEFINE_uint32(arm64_context_promotion_gpr_crossblock_function, 0,
+              "Optional guest function start address filter for "
+              "arm64_context_promotion_gpr_crossblock. 0 applies globally.",
+              "CPU");
+DEFINE_bool(arm64_context_promotion_gpr_crossblock_audit, false,
+            "Thor ARM64 codegen: log per-function cross-block GPR promotion "
+            "counters (loads replaced, local carriers inserted, resets).",
+            "CPU");
 DEFINE_bool(arm64_guest_state_register_cache_audit, false,
             "Thor ARM64 research: count clean INT64 r[1]/r[11] guest-state "
             "register-cache opportunities without changing generated code. "
@@ -176,6 +205,23 @@ struct GprLocalSlotPromotionStats {
   std::array<uint32_t, 2> local_stores_by_slot = {};
   std::array<uint32_t, 2> stores_tracked_by_slot = {};
   std::array<uint32_t, 2> overlap_resets_by_slot = {};
+};
+
+struct CrossBlockGprStats {
+  uint32_t function_address = 0;
+  uint32_t slots = 0;
+  uint32_t blocks = 0;
+  uint32_t dominated_blocks = 0;
+  uint32_t pred_state_hits = 0;
+  uint32_t pred_values_seeded = 0;
+  uint32_t loads_seen = 0;
+  uint32_t loads_seeded_from_context = 0;
+  uint32_t loads_replaced = 0;
+  uint32_t local_loads_inserted = 0;
+  uint32_t stores_tracked = 0;
+  uint32_t local_stores_inserted = 0;
+  uint32_t overlap_resets = 0;
+  uint32_t volatile_resets = 0;
 };
 
 enum class GuestStateRegisterCacheAuditMissReason {
@@ -826,8 +872,22 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
     block = block->next;
   }
 
-  if (cvars::arm64_context_promotion_gpr_local_slots &&
-      ShouldRunGprLocalSlotPromotion(builder)) {
+  if (cvars::arm64_context_promotion_gpr_crossblock &&
+      ShouldRunCrossBlockGprPromotion(builder)) {
+    // General cross-block carrier (tier-2): supersedes the narrow r1/r11
+    // local-slot promoter; both share the same dominated-pred mechanism, so
+    // running only one keeps each promoted slot owned by a single carrier.
+    std::vector<size_t> slot_offsets;
+    uint32_t mask = cvars::arm64_context_promotion_gpr_crossblock_mask;
+    for (uint32_t i = 0; i < 32; ++i) {
+      if (mask & (1u << i)) {
+        slot_offsets.push_back(offsetof(ppc::PPCContext, r) +
+                               i * sizeof(uint64_t));
+      }
+    }
+    PromoteCrossBlockGprSlots(builder, slot_offsets);
+  } else if (cvars::arm64_context_promotion_gpr_local_slots &&
+             ShouldRunGprLocalSlotPromotion(builder)) {
     PromoteDominatedGprLocalSlots(builder);
   }
   if (cvars::arm64_context_promotion_gpr_livein_r1 &&
@@ -1425,6 +1485,192 @@ void ContextPromotionPass::PromoteDominatedGprLocalSlots(HIRBuilder* builder) {
         stats.local_loads_by_slot[1], stats.stores_seen_by_slot[1],
         stats.stores_tracked_by_slot[1], stats.local_stores_by_slot[1],
         stats.overlap_resets_by_slot[1]);
+  }
+}
+
+bool ContextPromotionPass::ShouldRunCrossBlockGprPromotion(
+    HIRBuilder* builder) const {
+  uint32_t function_filter =
+      cvars::arm64_context_promotion_gpr_crossblock_function;
+  return !function_filter || FindFirstSourceOffset(builder) == function_filter;
+}
+
+void ContextPromotionPass::PromoteCrossBlockGprSlots(
+    HIRBuilder* builder, const std::vector<size_t>& slot_offsets) {
+  const size_t slot_count = slot_offsets.size();
+  if (slot_count == 0) {
+    return;
+  }
+
+  // One INT64 HIR local per promoted GPR slot. A LOAD_CONTEXT is an opaque,
+  // conservatively-aliased guest-memory read that the register allocator cannot
+  // hoist across blocks; a HIR local can be kept in a host register along a
+  // dominated chain. So replacing the redundant first per-block context reload
+  // of a still-live GPR with a single local carrier removes guest-context
+  // traffic in call-free hot loops (the same trick that already promotes r1).
+  std::vector<Value*> local_slots(slot_count);
+  for (size_t n = 0; n < slot_count; ++n) {
+    local_slots[n] = builder->AllocLocal(INT64_TYPE);
+  }
+
+  auto slot_index_for = [&](size_t offset, TypeName type) -> int {
+    if (type != INT64_TYPE) {
+      return -1;
+    }
+    for (size_t n = 0; n < slot_count; ++n) {
+      if (offset == slot_offsets[n]) {
+        return static_cast<int>(n);
+      }
+    }
+    return -1;
+  };
+
+  CrossBlockGprStats stats;
+  stats.function_address = FindFirstSourceOffset(builder);
+  stats.slots = static_cast<uint32_t>(slot_count);
+  std::unordered_map<Block*, std::vector<Value*>> outgoing_states;
+
+  for (auto block = builder->first_block(); block; block = block->next) {
+    ++stats.blocks;
+    std::vector<GprLocalSlotValue> current(slot_count);
+
+    // Seed only across a SINGLE DOMINATING predecessor edge: that guarantees the
+    // only runtime path into this block came from `pred`, so pred's deposited
+    // local carriers are valid here. Merge points (multi-pred) start empty and
+    // re-load from context.
+    if (Block* pred = GetSingleDominatingPredecessor(block)) {
+      ++stats.dominated_blocks;
+      auto pred_state = outgoing_states.find(pred);
+      if (pred_state != outgoing_states.end()) {
+        ++stats.pred_state_hits;
+        for (size_t n = 0; n < slot_count; ++n) {
+          current[n].value = pred_state->second[n];
+          if (current[n].value) {
+            ++stats.pred_values_seeded;
+          }
+        }
+      }
+    }
+
+    for (Instr* instr = block->instr_head; instr; instr = instr->next) {
+      // A pure intra-function branch (BRANCH / BRANCH_TRUE / BRANCH_FALSE) is
+      // marked volatile for scheduling but does NOT modify any guest register,
+      // so the carrier stays valid across it -> this is what lets a value
+      // survive to a dominated successor (the common conditional-branch block
+      // terminator). EVERY OTHER volatile op resets the carriers: calls
+      // (OPCODE_CALL*/CALL_EXTERN are also branch-flagged but transfer to other
+      // guest code/imports that share the PPCContext and can clobber it - we
+      // never assume EABI callee-save, per the cross-barrier-elision wall),
+      // context barriers, returns, traps, and any other volatile.
+      const bool is_intra_function_branch =
+          instr->opcode == &OPCODE_BRANCH_info ||
+          instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+          instr->opcode == &OPCODE_BRANCH_FALSE_info;
+      if ((instr->opcode->flags & OPCODE_FLAG_VOLATILE) &&
+          !is_intra_function_branch) {
+        for (auto& slot : current) {
+          if (slot.value) {
+            ++stats.volatile_resets;
+            break;
+          }
+        }
+        for (auto& slot : current) {
+          slot = {};
+        }
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        TypeName type = instr->dest ? instr->dest->type : MAX_TYPENAME;
+        int slot_index = slot_index_for(offset, type);
+        if (slot_index < 0) {
+          continue;
+        }
+        ++stats.loads_seen;
+        auto& slot = current[slot_index];
+        if (slot.value) {
+          // Carried value from an earlier block: its SSA def is not available
+          // here, so materialize it from the local carrier, then fold the load
+          // into an ASSIGN of that value.
+          if (slot.value->def && slot.value->def->block != block) {
+            Value* local_value = builder->LoadLocal(local_slots[slot_index]);
+            builder->last_instr()->MoveBefore(instr);
+            slot.value = local_value;
+            ++stats.local_loads_inserted;
+          }
+          instr->opcode = &OPCODE_ASSIGN_info;
+          instr->set_src1(slot.value);
+          ++stats.loads_replaced;
+        } else {
+          // First sight of this slot in this chain: keep the real load, but
+          // remember its value (and mark dirty so the tail deposits it).
+          slot.value = instr->dest;
+          slot.dirty = true;
+          ++stats.loads_seeded_from_context;
+        }
+        continue;
+      }
+
+      if (instr->opcode == &OPCODE_STORE_CONTEXT_info) {
+        size_t offset = instr->src1.offset;
+        Value* value = instr->src2.value;
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        int slot_index = value ? slot_index_for(offset, value->type) : -1;
+        if (slot_index >= 0) {
+          // Exact full-width store: the new value becomes the carrier (the real
+          // STORE_CONTEXT is kept so non-promoted readers stay coherent; DSE
+          // later strips it if dead).
+          current[slot_index].value = value;
+          current[slot_index].dirty = true;
+          ++stats.stores_tracked;
+          continue;
+        }
+        // A partial / differently-typed store overlapping a tracked slot
+        // invalidates the cached full-width value.
+        for (size_t n = 0; n < slot_count; ++n) {
+          if (RangesOverlap(offset, size, slot_offsets[n], kPromotedGprSize)) {
+            if (current[n].value) {
+              ++stats.overlap_resets;
+            }
+            current[n] = {};
+          }
+        }
+      }
+    }
+
+    // Deposit dirty carriers into their locals just before the block's tail
+    // branch so a dominated successor's LOAD_LOCAL reads the up-to-date value.
+    if (Instr* insert_before = FirstTailBranch(block)) {
+      for (size_t n = 0; n < slot_count; ++n) {
+        if (!current[n].value || !current[n].dirty) {
+          continue;
+        }
+        builder->StoreLocal(local_slots[n], current[n].value);
+        builder->last_instr()->MoveBefore(insert_before);
+        ++stats.local_stores_inserted;
+      }
+    }
+
+    std::vector<Value*> outgoing(slot_count);
+    for (size_t n = 0; n < slot_count; ++n) {
+      outgoing[n] = current[n].value;
+    }
+    outgoing_states.emplace(block, std::move(outgoing));
+  }
+
+  if (cvars::arm64_context_promotion_gpr_crossblock_audit) {
+    XELOGW(
+        "A64 cross-block GPR promotion fn {:08X}: slots={} blocks={} "
+        "dominated_blocks={} pred_state_hits={} pred_values_seeded={} "
+        "loads_seen={} loads_seeded={} loads_replaced={} local_loads={} "
+        "stores_tracked={} local_stores={} overlap_resets={} volatile_resets={}",
+        stats.function_address, stats.slots, stats.blocks,
+        stats.dominated_blocks, stats.pred_state_hits, stats.pred_values_seeded,
+        stats.loads_seen, stats.loads_seeded_from_context, stats.loads_replaced,
+        stats.local_loads_inserted, stats.stores_tracked,
+        stats.local_stores_inserted, stats.overlap_resets,
+        stats.volatile_resets);
   }
 }
 

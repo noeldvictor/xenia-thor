@@ -49,6 +49,9 @@ class ContextPromotionPass : public CompilerPass {
   void AuditGuestStateNonClosedCache(hir::HIRBuilder* builder);
   bool ShouldRunGprLocalSlotPromotion(hir::HIRBuilder* builder) const;
   void PromoteDominatedGprLocalSlots(hir::HIRBuilder* builder);
+  bool ShouldRunCrossBlockGprPromotion(hir::HIRBuilder* builder) const;
+  void PromoteCrossBlockGprSlots(hir::HIRBuilder* builder,
+                                 const std::vector<size_t>& slot_offsets);
   bool ShouldRunGprLiveInR1Promotion(hir::HIRBuilder* builder) const;
   void PromoteGprLiveInR1(hir::HIRBuilder* builder);
   void RemoveDeadStoresBlock(hir::Block* block);

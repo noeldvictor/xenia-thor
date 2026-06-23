@@ -445,6 +445,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "kernel_call_log_skip_discarded");
             copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_leaf");
+            copyBooleanExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock");
+            copyIntExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_mask");
+            copyIntExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_function");
+            copyBooleanExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_flagm_fastpath");
