@@ -161,6 +161,40 @@ decorations (Adreno 740 has native FP16; our translator emits none — never on 
 on-disk pipeline-cache pre-warm (kills shader-compile stutter), ARMv9 FLAGM CR/XER flag handling. Detail:
 [[bd-recomp-verdict]].
 
+### Recompilation & RE-toolchain harvest (2026-06-23, USER DIRECTION — "we WILL find a way to do this")
+Standing direction: aggressively harvest the Xbox-360 recompilation/RE ecosystem — **XenonRecomp** (PPC→C++
+static recomp), **XenosRecomp** (Xenos shader→HLSL/SPIR-V), **Ghidra** (+XEXLoaderWV), and the static decomps
+(**re:Blue** for BD, **Unleashed Recompiled** for Sonic) — to make BOTH the emulator faster AND dev faster.
+**Honest framing (do not lose it):** we ALREADY recompile — xenia is a dynamic PPC→HIR→**ARM64 JIT**, the SAME
+CLASS as RPCS3 (LLVM PPU/SPU JIT) and Cemu (hand PPC JIT). The static decomps are per-game NATIVE PORTS, not a
+generic speed drop-in, and they hit the SAME Adreno GPU wall on GPU-bound scenes (a native BD port still bins
+BD's draw stream). So the ecosystem pays off in THREE concrete tracks — pursue all, each cvar-gated + a
+XeniaOptimizations toggle where it ships:
+1. **RE / dev-velocity (highest immediate ROI):** XenonRecomp function-boundary maps (.pdata + its scanner) +
+   Ghidra xrefs → fast game-patch / compat / perf RE. STOP hand-rolling PPC scanners (they fail on multi-hop
+   xrefs); use re:Blue's map + Ghidra. IN PROGRESS: BD's named shader table is RE'd (effect table @0x82771D24;
+   foliage = `bd_normal_vs_grassland` + `bd_*_vs_wind` + their shadow passes) → a **surgical grass-LOD /
+   shadow-pass `.patch.toml`** is the real-30 lever for BD's GPU-bound heavy field (fewer DRAWS = the
+   device-proven lever; **render-downscale is DEAD** per the 480p test — pixel-independent, geometry/binning-
+   bound). [[bd-foliage-guest-re]] [[bd-real-bottleneck-overdraw]]
+2. **AOT hot-fn (the "ThorPack" re-try, CPU-bound titles ONLY):** AOT-translate hot guest fns to native ARM64
+   vs the JIT. GATED, **profile-FIRST**: the hotspots pinned so far are SPIN/SYNC (Burnout ring-drain, Gears
+   contention) which AOT CANNOT help (you can't AOT a busy-wait) — find a COMPUTE hotspot first, then kill-test
+   AOT-vs-JIT (>15-25% or DEAD; device-free via host/qemu). Seriously weigh a cross-game JIT FAST-PATH (no
+   infra, helps all titles) vs per-game AOT. Useless on GPU-bound BD. [[cpu-track-lockfree-and-thorpack-gate]]
+   [[ppc-thor-hw-accel-rearch]]
+3. **Shader translation (XenosRecomp harvest):** FP16/RelaxedPrecision SPIR-V decorations (Adreno 740 native
+   FP16) for **PIXEL shaders ONLY — NEVER position/geometry** (the approx-math wall black-screens BD) → helps
+   FRAGMENT-ALU-bound titles + shader-compile stutter + quality. HONEST: BD's heavy field is NOT shader-bound
+   (constant-color FS = no change) so this does NOT fix BD — it's a broad-library lever. First unit = FP16
+   RelaxedPrecision in the SPIR-V translator, per-shader-class gated + device-validated. [[bd-recomp-verdict]]
+**THE HONEST BD BOTTOM LINE (do not regress to false hope):** none of these crack BD's heavy-field Adreno
+geometry/binning wall (device-proven). BD's real-fps lever is FEWER DRAWS (the grass patch, track 1) + the
+shipped perceived-60 frame-gen ([[frame-gen-presenter-build]]); real-30 on the lighter interactive scenes is
+already met. These tracks make CPU-bound titles faster + dev faster + the broader library better — the right
+use of the ecosystem. Workflows running 2026-06-23: re:Blue grass-patch RE (wnfs1y3ra), AOT-hot-fn re-try
+(ww4yd22nu).
+
 ### Per-stage GPU profiling is a FULL-ADB job (not a GUI punt)
 The app is debuggable + we ship Turnip, so the per-stage GPU split (binning/vertex vs fragment vs stall,
 per-draw cost) is reachable over **full ADB, no root, no GUI** — via the Mesa/Turnip freedreno perfetto
