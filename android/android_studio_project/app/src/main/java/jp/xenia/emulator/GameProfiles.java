@@ -79,7 +79,18 @@ public final class GameProfiles {
                         + "(125.9->98.5ms, scene-matched A/B via the single-run "
                         + "alternation validator); BD is GPU-bound so this lands as real "
                         + "fps (~5.9->7.9 in the field). Slightly softer foliage edges, "
-                        + "visually clean. Default-on for this GPU-bound priority title."));
+                        + "visually clean. Default-on for this GPU-bound priority title.")
+                .add("kernel_object_handle_cache", Boolean.TRUE,
+                        "BD's heavy field is actually CPU/LOCK-bound, not GPU-bound "
+                        + "(device-profiled 2026-06-23: GPU idle ~98%, busy 0%, turnip "
+                        + "driver 0.25%; the CPU bottleneck is global_critical_region "
+                        + "contention from ObjectTable handle lookups). The lock-free "
+                        + "per-thread handle cache clears it: live +8% fps (13.3->14.4 "
+                        + "VdSwap/s), stacking on the default-on kernel-call-logging fix "
+                        + "(kernel_call_log_skip_discarded) for ~+25% from the 11.5 "
+                        + "baseline. Correctness-verified (generation counter + per-entry "
+                        + "ref, no use-after-free). Targeted: helps lock-bound BD, "
+                        + "net-flat on low-contention titles so it stays per-title here."));
 
         // Burnout Revenge (454107DC): UMA-direct present-hangs the EA/EAHD/CRRW
         // intro movie chain (VdSwap freezes). Off runs the movies through to a
