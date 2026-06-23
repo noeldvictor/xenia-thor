@@ -24,6 +24,7 @@
 DECLARE_bool(arm64_context_promotion_gpr_crossblock);
 DECLARE_uint32(arm64_context_promotion_gpr_crossblock_mask);
 DECLARE_bool(arm64_context_promotion_gpr_crossblock_audit);
+DECLARE_bool(arm64_context_promotion_gpr_crossblock_cond_branch_carry);
 
 using namespace xe;
 using namespace xe::cpu;
@@ -41,20 +42,28 @@ struct ScopedCrossBlockGpr {
     prev_enable_ = cvars::arm64_context_promotion_gpr_crossblock;
     prev_mask_ = cvars::arm64_context_promotion_gpr_crossblock_mask;
     prev_audit_ = cvars::arm64_context_promotion_gpr_crossblock_audit;
+    prev_cond_ = cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry;
     cvars::arm64_context_promotion_gpr_crossblock = enable;
     cvars::arm64_context_promotion_gpr_crossblock_mask = mask;
     // Emit promotion counters when enabled so the differential tests are
     // demonstrably non-vacuous (the audit line shows loads_replaced > 0).
     cvars::arm64_context_promotion_gpr_crossblock_audit = enable;
+    // These tests use conditional-branch CFGs; enable the (host-correct, but
+    // device-experimental) conditional-branch carry so the carrier actually
+    // fires here. This is exactly the aggressive path whose HOST correctness we
+    // validate differentially - the separate device crash is not host-visible.
+    cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry = enable;
   }
   ~ScopedCrossBlockGpr() {
     cvars::arm64_context_promotion_gpr_crossblock = prev_enable_;
     cvars::arm64_context_promotion_gpr_crossblock_mask = prev_mask_;
     cvars::arm64_context_promotion_gpr_crossblock_audit = prev_audit_;
+    cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry = prev_cond_;
   }
   bool prev_enable_;
   uint32_t prev_mask_;
   bool prev_audit_;
+  bool prev_cond_;
 };
 
 // Compile+run `gen` with promotion OFF and ON under the same inputs and require
@@ -165,7 +174,62 @@ void GenNestedDominatedChain(HIRBuilder& b) {
   b.Return();
 }
 
+// A counted loop whose body carries r31/r30 across a conditional branch (the
+// branch-carry path), inside a back-edge CFG (header is multi-pred -> not
+// seeded; body/inner/cont form single-dominating chains that DO carry). This is
+// the complex CFG the simpler tests don't cover. r31 is used as a "pointer"
+// base whose final value lands in r3, so a stale/wrong carry diverges.
+void GenLoopCarry(HIRBuilder& b) {
+  StoreGPR(b, 9, LoadGPR(b, 31));  // stash initial r31 (entry establishes it)
+  auto header = b.NewLabel();
+  b.Branch(header);
+  b.MarkLabel(header);  // multi-pred: entry + latch back-edge
+  auto cond = b.CompareSLT(LoadGPR(b, 5), LoadGPR(b, 6));
+  auto body = b.NewLabel();
+  auto exit = b.NewLabel();
+  b.BranchTrue(cond, body);
+  b.Branch(exit);
+  b.MarkLabel(body);  // dom by header
+  auto r31b = LoadGPR(b, 31);
+  auto r30b = LoadGPR(b, 30);
+  StoreGPR(b, 3, b.Add(r31b, r30b));
+  auto cond2 = b.CompareSLT(r31b, LoadGPR(b, 6));
+  auto inner = b.NewLabel();
+  auto cont = b.NewLabel();
+  b.BranchTrue(cond2, inner);
+  b.Branch(cont);
+  b.MarkLabel(inner);  // dom by body -> carries r31/r30
+  StoreGPR(b, 3, b.Sub(LoadGPR(b, 31), LoadGPR(b, 30)));
+  auto latch = b.NewLabel();
+  b.Branch(latch);
+  b.MarkLabel(cont);  // dom by body -> carries r31/r30
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 31), LoadGPR(b, 30)));
+  b.Branch(latch);
+  b.MarkLabel(latch);  // multi-pred inner+cont
+  StoreGPR(b, 5, b.Add(LoadGPR(b, 5), b.LoadConstantUint64(1)));
+  StoreGPR(b, 8, LoadGPR(b, 31));
+  b.Branch(header);  // back-edge
+  b.MarkLabel(exit);
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 31), LoadGPR(b, 30)));
+  b.Return();
+}
+
 }  // namespace
+
+TEST_CASE("CROSSBLOCK_GPR_LOOP_CARRY", "[instr]") {
+  RequireTransparent(GenLoopCarry, [](PPCContext* ctx) {
+    ctx->r[30] = 0x0000000000000010ull;
+    ctx->r[31] = 0x0000000080001000ull;
+    ctx->r[5] = 0;  // counter
+    ctx->r[6] = 3;  // limit (3 iterations)
+  });
+  RequireTransparent(GenLoopCarry, [](PPCContext* ctx) {
+    ctx->r[30] = 0xFFFFFFFFFFFFFFF0ull;
+    ctx->r[31] = 0x0000000000000008ull;
+    ctx->r[5] = 5;  // counter >= limit -> 0 iterations (straight to exit)
+    ctx->r[6] = 2;
+  });
+}
 
 TEST_CASE("CROSSBLOCK_GPR_CARRY_UNMODIFIED_TAKEN", "[instr]") {
   RequireTransparent(GenCarryUnmodified, [](PPCContext* ctx) {

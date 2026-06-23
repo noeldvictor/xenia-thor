@@ -108,6 +108,22 @@ DEFINE_bool(arm64_context_promotion_gpr_crossblock_audit, false,
             "Thor ARM64 codegen: log per-function cross-block GPR promotion "
             "counters (loads replaced, local carriers inserted, resets).",
             "CPU");
+DEFINE_bool(
+    arm64_context_promotion_gpr_crossblock_cond_branch_carry, false,
+    "Thor ARM64 codegen EXPERIMENTAL (default-off, do NOT enable): also carry "
+    "the cross-block GPR carrier across CONDITIONAL branches (BRANCH_TRUE / "
+    "BRANCH_FALSE), not just unconditional ones. A conditional branch does not "
+    "modify guest registers, so this is sound in isolation and is fully "
+    "host-validated (crossblock_gpr_promotion_test, x64) - BUT it CRASHES Blue "
+    "Dragon on-device (SIGBUS in JIT code ~2s into boot, 2026-06-23): a "
+    "real-guest-code / call-interaction pattern the synthetic host+qemu tests "
+    "don't reproduce makes a promoted register read a stale/zero carrier. With "
+    "this OFF, the main crossblock cvar resets the carrier at every volatile "
+    "(incl. conditional branches), matching the proven dominated-slot mechanism "
+    "that already promotes r1 (it still carries across UNCONDITIONAL branches / "
+    "straight-line fallthrough chains). Keep OFF until the device crash is "
+    "root-caused (needs device or a call-capable test harness).",
+    "CPU");
 DEFINE_bool(arm64_guest_state_register_cache_audit, false,
             "Thor ARM64 research: count clean INT64 r[1]/r[11] guest-state "
             "register-cache opportunities without changing generated code. "
@@ -1502,6 +1518,11 @@ void ContextPromotionPass::PromoteCrossBlockGprSlots(
     return;
   }
 
+  // Default-off experimental: carry across conditional branches too (host-
+  // correct but device-crashes BD). Off => proven reset-on-all-volatile.
+  const bool carry_cond_branches =
+      cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry;
+
   // One INT64 HIR local per promoted GPR slot. A LOAD_CONTEXT is an opaque,
   // conservatively-aliased guest-memory read that the register allocator cannot
   // hoist across blocks; a HIR local can be kept in a host register along a
@@ -1553,21 +1574,21 @@ void ContextPromotionPass::PromoteCrossBlockGprSlots(
     }
 
     for (Instr* instr = block->instr_head; instr; instr = instr->next) {
-      // A pure intra-function branch (BRANCH / BRANCH_TRUE / BRANCH_FALSE) is
-      // marked volatile for scheduling but does NOT modify any guest register,
-      // so the carrier stays valid across it -> this is what lets a value
-      // survive to a dominated successor (the common conditional-branch block
-      // terminator). EVERY OTHER volatile op resets the carriers: calls
-      // (OPCODE_CALL*/CALL_EXTERN are also branch-flagged but transfer to other
-      // guest code/imports that share the PPCContext and can clobber it - we
-      // never assume EABI callee-save, per the cross-barrier-elision wall),
-      // context barriers, returns, traps, and any other volatile.
-      const bool is_intra_function_branch =
-          instr->opcode == &OPCODE_BRANCH_info ||
-          instr->opcode == &OPCODE_BRANCH_TRUE_info ||
-          instr->opcode == &OPCODE_BRANCH_FALSE_info;
+      // An UNCONDITIONAL branch (OPCODE_BRANCH) is not volatile, so it never
+      // triggers this reset -> the carrier always survives straight-line
+      // fallthrough chains (the proven r1 dominated-slot behavior). CONDITIONAL
+      // branches (BRANCH_TRUE/FALSE) ARE volatile; carrying across them reaches
+      // dominated successors of if/loop blocks (the big win) but device-crashes
+      // BD, so it is gated behind the default-off cond_branch_carry flag. Calls
+      // (OPCODE_CALL*/CALL_EXTERN, also branch-flagged) transfer to guest
+      // code/imports that share the PPCContext and can clobber it - they ALWAYS
+      // reset (the cross-barrier-elision wall), as do barriers/returns/traps.
+      const bool is_carryable_cond_branch =
+          carry_cond_branches &&
+          (instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+           instr->opcode == &OPCODE_BRANCH_FALSE_info);
       if ((instr->opcode->flags & OPCODE_FLAG_VOLATILE) &&
-          !is_intra_function_branch) {
+          !is_carryable_cond_branch) {
         for (auto& slot : current) {
           if (slot.value) {
             ++stats.volatile_resets;
