@@ -10,6 +10,7 @@
 #include "xenia/cpu/compiler/passes/context_promotion_pass.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <unordered_map>
 
@@ -35,6 +36,23 @@ DECLARE_bool(a64_enable_host_guest_stack_synchronization);
 
 DEFINE_bool(store_all_context_values, false,
             "Don't strip dead context stores to aid in debugging.", "CPU");
+DEFINE_bool(
+    ppc_cross_block_dead_flag_elim, false,
+    "Thor codegen (guest-JIT tier-2): cross-block dead-store elimination for "
+    "the PowerPC condition register (CR0-7) and XER carry context slots. The "
+    "default block-scoped DSE resets liveness at each block boundary, so flag "
+    "stores dead across ALL successor paths survive to ARM64 (PPC sets "
+    "record-form CR / carry liberally). This computes per-block CR/XER live-out "
+    "via a backward dataflow (calls/returns/context barriers conservatively "
+    "mark all flag slots live, so live state is NEVER elided across a call - "
+    "only dead STORES are removed, staying on the safe side of the cross-"
+    "barrier wall) and drops the dead stores; DCE then reaps the feeding "
+    "compares. Bit-exact; default-off experiment, host-validated first.",
+    "CPU");
+DEFINE_bool(ppc_cross_block_dead_flag_elim_audit, false,
+            "Log per-function store/removal/iteration counts for "
+            "ppc_cross_block_dead_flag_elim (requires it to be enabled).",
+            "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
             "Thor ARM64 research: promote dominated first loads of selected "
             "whole PPC GPR context slots through HIR locals before register "
@@ -2134,6 +2152,184 @@ void ContextPromotionPass::MarkContextRange(size_t offset, size_t size) {
   for (size_t n = 0; n < size; ++n) {
     context_validity_.set(static_cast<uint32_t>(offset + n));
   }
+}
+
+// ===========================================================================
+// CrossBlockFlagDeadStoreEliminationPass
+// ===========================================================================
+namespace {
+
+// CR0-7 occupy 32 contiguous context bytes; the XER carry is one byte that is
+// NOT adjacent to the CR range (xer_ov/xer_so/padding sit between), so it is
+// tracked as a separate point. Slot index space: 0..31 = the 32 CR bytes
+// (CRn field = cr0 + 4*n + {0:lt,1:gt,2:eq,3:so}), 32 = xer_ca.
+constexpr size_t kCrRangeBegin = offsetof(xe::cpu::ppc::PPCContext, cr0);
+constexpr size_t kCrRangeEnd = kCrRangeBegin + 32;
+constexpr size_t kXerCaOffset = offsetof(xe::cpu::ppc::PPCContext, xer_ca);
+constexpr int kFlagSlotCount = 33;
+constexpr uint64_t kAllFlagSlots = (uint64_t(1) << kFlagSlotCount) - 1;
+
+// 33-bit mask of tracked flag slots that the byte range [offset, offset+size)
+// touches (0 if it touches none).
+uint64_t FlagSlotsTouched(size_t offset, size_t size) {
+  uint64_t mask = 0;
+  const size_t end = offset + size;
+  for (int i = 0; i < 32; ++i) {
+    const size_t b = kCrRangeBegin + static_cast<size_t>(i);
+    if (b >= offset && b < end) {
+      mask |= (uint64_t(1) << i);
+    }
+  }
+  if (kXerCaOffset >= offset && kXerCaOffset < end) {
+    mask |= (uint64_t(1) << 32);
+  }
+  return mask;
+}
+
+// Any instruction across which the guest CR/XER may be read or must be coherent
+// (forces all flag slots live, so a store before it is preserved - the safe side
+// of the cross-barrier wall): calls (callee shares PPCContext), returns (caller
+// reads + function exit), explicit context barriers, traps, and other volatile
+// host ops. CRUCIALLY this is NOT the plain volatile-superset: the intra-
+// function conditional branches BRANCH_TRUE / BRANCH_FALSE are volatile but do
+// NOT read guest CR/XER themselves (a CR-conditional branch reads CR via a
+// separate preceding LOAD_CONTEXT, handled as a normal flag load) - and their
+// cross-block flag flow is already captured by LIVE_OUT (the union of successor
+// LIVE_IN). Treating them as barriers would force all flags live and prevent
+// removing the dead flag store that precedes nearly every conditional branch,
+// defeating the pass. So branches are excluded; everything else volatile is a
+// barrier.
+bool IsFlagBarrier(const Instr* instr) {
+  const OpcodeInfo* op = instr->opcode;
+  if (op == &OPCODE_CONTEXT_BARRIER_info) {
+    return true;
+  }
+  if (!(op->flags & OPCODE_FLAG_VOLATILE)) {
+    // Non-volatile (CR/XER LOAD/STORE_CONTEXT, compares, plain BRANCH, ...) -
+    // never makes guest CR/XER live by itself.
+    return false;
+  }
+  if (op == &OPCODE_BRANCH_TRUE_info || op == &OPCODE_BRANCH_FALSE_info) {
+    return false;  // intra-function branch - flow captured by LIVE_OUT
+  }
+  return true;  // call / return[_true] / trap / atomic / memory barrier / ...
+}
+
+std::atomic<uint64_t> g_flag_dse_removed{0};
+
+}  // namespace
+
+uint64_t CrossBlockFlagDseStoresRemovedForTest() {
+  return g_flag_dse_removed.load(std::memory_order_relaxed);
+}
+
+CrossBlockFlagDeadStoreEliminationPass::
+    CrossBlockFlagDeadStoreEliminationPass() = default;
+CrossBlockFlagDeadStoreEliminationPass::
+    ~CrossBlockFlagDeadStoreEliminationPass() = default;
+
+bool CrossBlockFlagDeadStoreEliminationPass::Run(HIRBuilder* builder) {
+  if (!cvars::ppc_cross_block_dead_flag_elim) {
+    return true;  // default path is byte-identical
+  }
+
+  uint64_t stores_seen = 0;
+  // Backward transfer over one block: live := LIVE_OUT, walk tail->head. Shared
+  // by the fixpoint (remove=false) and the removal phase (remove=true).
+  auto transfer = [&stores_seen](Block* b, uint64_t live_out, bool remove,
+                                 uint64_t* removed_count) -> uint64_t {
+    uint64_t live = live_out;
+    for (Instr* i = b->instr_tail; i;) {
+      Instr* prev = i->prev;
+      if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
+        Value* value = i->src2.value;
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        uint64_t touched = FlagSlotsTouched(i->src1.offset, size);
+        if (touched) {
+          bool single = (size == 1) && ((touched & (touched - 1)) == 0);
+          if (single) {
+            if (remove) {
+              ++stores_seen;
+            }
+            if ((live & touched) == 0) {
+              // Dead: no path reads this slot before its next def/exit.
+              if (remove) {
+                i->Remove();
+                if (removed_count) {
+                  ++*removed_count;
+                }
+              }
+              // Slot stays not-live above (it was already not live).
+            } else {
+              live &= ~touched;  // real def kills upward liveness
+            }
+          } else {
+            // Multi-byte / overlapping store - never seen from the builder, but
+            // conservatively keep it and mark its slots live.
+            live |= touched;
+          }
+        }
+      } else if (i->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t size = i->dest ? GetTypeSize(i->dest->type) : 1;
+        live |= FlagSlotsTouched(i->src1.offset, size);
+      } else if (IsFlagBarrier(i)) {
+        live = kAllFlagSlots;  // all flags live above a barrier
+      }
+      i = prev;
+    }
+    return live;
+  };
+
+  // Per-block CR/XER LIVE-IN, keyed on Block* (block ordinals are not assigned
+  // at this pipeline stage). Monotone fixpoint - live sets only grow.
+  std::unordered_map<Block*, uint64_t> live_in;
+  size_t block_count = 0;
+  for (Block* b = builder->first_block(); b; b = b->next) {
+    live_in[b] = 0;
+    ++block_count;
+  }
+  if (!block_count) {
+    return true;
+  }
+
+  const size_t kMaxIters = block_count * 4 + 16;
+  bool changed = true;
+  size_t iters = 0;
+  while (changed && iters < kMaxIters) {
+    changed = false;
+    ++iters;
+    for (Block* b = builder->first_block(); b; b = b->next) {
+      uint64_t live_out = 0;
+      for (Edge* e = b->outgoing_edge_head; e; e = e->outgoing_next) {
+        live_out |= live_in[e->dest];
+      }
+      uint64_t new_in = transfer(b, live_out, false, nullptr);
+      if (new_in != live_in[b]) {
+        live_in[b] = new_in;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    // Not converged - correctness over win: remove nothing.
+    return true;
+  }
+
+  uint64_t removed = 0;
+  for (Block* b = builder->first_block(); b; b = b->next) {
+    uint64_t live_out = 0;
+    for (Edge* e = b->outgoing_edge_head; e; e = e->outgoing_next) {
+      live_out |= live_in[e->dest];
+    }
+    transfer(b, live_out, true, &removed);
+  }
+  g_flag_dse_removed.fetch_add(removed, std::memory_order_relaxed);
+
+  if (cvars::ppc_cross_block_dead_flag_elim_audit) {
+    XELOGI("CrossBlockFlagDSE: blocks={} iters={} stores_seen={} removed={}",
+           block_count, iters, stores_seen, removed);
+  }
+  return true;
 }
 
 }  // namespace passes

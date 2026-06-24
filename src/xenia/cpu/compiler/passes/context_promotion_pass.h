@@ -11,6 +11,7 @@
 #define XENIA_CPU_COMPILER_PASSES_CONTEXT_PROMOTION_PASS_H_
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include "xenia/base/platform.h"
@@ -65,6 +66,29 @@ class ContextPromotionPass : public CompilerPass {
   std::vector<hir::Value*> context_values_;
   llvm::BitVector context_validity_;
 };
+
+// Cross-block dead-store elimination for the PowerPC condition register (CR0-7)
+// and XER carry context slots. The block-scoped DSE in ContextPromotionPass
+// resets liveness at every block boundary, so flag stores dead across ALL
+// successor paths survive to ARM64 (PPC sets record-form CR / carry liberally).
+// This computes per-block CR/XER live-out via a backward dataflow - any call /
+// return / context barrier conservatively marks ALL flag slots live, so live
+// state is never elided across a call (it only removes dead STORES, staying on
+// the safe side of the cross-barrier wall) - and drops the stores dead on every
+// path; the following DeadCodeEliminationPass then reaps the feeding compares.
+// Gated by ppc_cross_block_dead_flag_elim (default-off). Backend-independent
+// (runs before register allocation), so it is host-x64 + qemu-a64 testable.
+class CrossBlockFlagDeadStoreEliminationPass : public CompilerPass {
+ public:
+  CrossBlockFlagDeadStoreEliminationPass();
+  ~CrossBlockFlagDeadStoreEliminationPass() override;
+
+  bool Run(hir::HIRBuilder* builder) override;
+};
+
+// Total CR/XER stores removed by CrossBlockFlagDeadStoreEliminationPass since
+// process start - used by the host differential test to prove non-vacuity.
+uint64_t CrossBlockFlagDseStoresRemovedForTest();
 
 }  // namespace passes
 }  // namespace compiler

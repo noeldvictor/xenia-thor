@@ -223,9 +223,13 @@ PPCTranslator::PPCTranslator(PPCFrontend* frontend) : frontend_(frontend) {
   }
   compiler_->AddPass(std::make_unique<passes::SimplificationPass>());
   if (validate) compiler_->AddPass(std::make_unique<passes::ValidationPass>());
-  // compiler_->AddPass(std::make_unique<passes::DeadStoreEliminationPass>());
-  // if (validate)
-  // compiler_->AddPass(std::make_unique<passes::ValidationPass>());
+  // Cross-block CR/XER dead-store elimination (default-off,
+  // ppc_cross_block_dead_flag_elim). Runs after simplification (flag stores in
+  // final form) and before DCE (which reaps the compares feeding the removed
+  // stores). No-op unless the cvar is set, so the default path is unchanged.
+  compiler_->AddPass(
+      std::make_unique<passes::CrossBlockFlagDeadStoreEliminationPass>());
+  if (validate) compiler_->AddPass(std::make_unique<passes::ValidationPass>());
   compiler_->AddPass(std::make_unique<passes::DeadCodeEliminationPass>());
   if (validate) compiler_->AddPass(std::make_unique<passes::ValidationPass>());
 

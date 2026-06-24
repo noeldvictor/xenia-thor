@@ -48,7 +48,10 @@ TestModule::TestModule(Processor* processor, const std::string_view name,
   compiler_->AddPass(std::make_unique<passes::SimplificationPass>());
   compiler_->AddPass(std::make_unique<passes::ConstantPropagationPass>());
   compiler_->AddPass(std::make_unique<passes::SimplificationPass>());
-  // compiler_->AddPass(std::make_unique<passes::DeadStoreEliminationPass>());
+  // Mirror the PPCTranslator pipeline so cross-block flag DSE is exercised by
+  // the host cpu-tests (no-op unless ppc_cross_block_dead_flag_elim is set).
+  compiler_->AddPass(
+      std::make_unique<passes::CrossBlockFlagDeadStoreEliminationPass>());
   compiler_->AddPass(std::make_unique<passes::DeadCodeEliminationPass>());
 
   //// Removes all unneeded variables. Try not to add new ones after this.
