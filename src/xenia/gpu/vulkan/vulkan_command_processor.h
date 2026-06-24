@@ -922,6 +922,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::vector<uint64_t> texture_descriptor_signature_pixel_;
   bool texture_descriptor_signature_vertex_valid_ = false;
   bool texture_descriptor_signature_pixel_valid_ = false;
+  // Reused per-draw scratch for building the above signatures without a fresh
+  // heap allocation each draw (UpdateBindings, CP worker thread only).
+  std::vector<uint64_t> texture_signature_scratch_;
 
   // Per-frame draw-outcome counters (vulkan_trace_draw_outcomes_per_frame).
   // Accumulated across a guest frame, logged and reset at the swap. Used to find

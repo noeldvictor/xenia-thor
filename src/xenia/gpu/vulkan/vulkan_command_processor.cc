@@ -8847,31 +8847,37 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
             }
           }
         };
-    // Vertex textures/samplers.
+    // Vertex/pixel textures/samplers. Build the signature into a REUSED scratch
+    // buffer (build_texture_signature clears it but keeps its capacity) instead
+    // of a fresh per-draw heap vector, and swap it into the stored signature on
+    // a mismatch so the old buffer's capacity is recycled. Device-profiled
+    // 2026-06-24: the per-draw std::vector alloc/realloc/free here (push_back ->
+    // __push_back_slow_path -> __split_buffer) was a hot cost on the GPU
+    // command-processor draw path. Behaviorally identical (the stored signatures
+    // are the same); only the per-draw allocation is removed.
     if (texture_count_vertex || sampler_count_vertex) {
-      std::vector<uint64_t> new_signature;
       build_texture_signature(true, texture_count_vertex, sampler_count_vertex,
                               &textures_vertex, current_samplers_vertex_,
-                              new_signature);
+                              texture_signature_scratch_);
       if (!texture_descriptor_signature_vertex_valid_ ||
-          new_signature != texture_descriptor_signature_vertex_) {
+          texture_signature_scratch_ != texture_descriptor_signature_vertex_) {
         current_graphics_descriptor_set_values_up_to_date_ &= ~(
             UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex);
-        texture_descriptor_signature_vertex_ = std::move(new_signature);
+        std::swap(texture_descriptor_signature_vertex_,
+                  texture_signature_scratch_);
         texture_descriptor_signature_vertex_valid_ = true;
       }
     }
-    // Pixel textures/samplers.
     if (texture_count_pixel || sampler_count_pixel) {
-      std::vector<uint64_t> new_signature;
       build_texture_signature(false, texture_count_pixel, sampler_count_pixel,
-                              textures_pixel,
-                              current_samplers_pixel_, new_signature);
+                              textures_pixel, current_samplers_pixel_,
+                              texture_signature_scratch_);
       if (!texture_descriptor_signature_pixel_valid_ ||
-          new_signature != texture_descriptor_signature_pixel_) {
+          texture_signature_scratch_ != texture_descriptor_signature_pixel_) {
         current_graphics_descriptor_set_values_up_to_date_ &= ~(
             UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
-        texture_descriptor_signature_pixel_ = std::move(new_signature);
+        std::swap(texture_descriptor_signature_pixel_,
+                  texture_signature_scratch_);
         texture_descriptor_signature_pixel_valid_ = true;
       }
     }
