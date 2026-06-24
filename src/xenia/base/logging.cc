@@ -16,6 +16,7 @@
 #include <mutex>
 #include <vector>
 
+#include "third_party/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/multi_threaded_claim_strategy.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/ring_buffer.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/sequence_barrier.hpp"
@@ -256,9 +257,17 @@ class Logger {
     return (byte_size + (kBlockSize - 1)) / kBlockSize;
   }
 
-  dp::spin_wait_strategy wait_strategy_;
-  dp::multi_threaded_claim_strategy<dp::spin_wait_strategy> claim_strategy_;
-  dp::sequence_barrier<dp::spin_wait_strategy> consumed_;
+  // Blocking (condition-variable) wait instead of spinning: the log-writer
+  // thread sleeps until a line is published rather than busy-spinning on an
+  // empty ring (which burned a core's worth of yields/short-sleeps - ~3-4% of
+  // CPU on device, and worse in steady gameplay where the ring is usually
+  // idle). Both wake paths are wired: multi_threaded_claim_strategy::publish and
+  // sequence_barrier::publish both call signal_all_when_blocking, so producers
+  // wake the consumer and the consumer wakes ring-full producers. Logging is not
+  // latency-critical, so the condvar wakeup cost is irrelevant.
+  dp::blocking_wait_strategy wait_strategy_;
+  dp::multi_threaded_claim_strategy<dp::blocking_wait_strategy> claim_strategy_;
+  dp::sequence_barrier<dp::blocking_wait_strategy> consumed_;
 
   std::vector<std::unique_ptr<LogSink>> sinks_;
 
