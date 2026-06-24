@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <unordered_map>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -28,6 +29,14 @@ DEFINE_uint32(arm64_register_allocation_audit_function, 0,
               "Optional guest function start address filter for "
               "arm64_register_allocation_audit. 0 applies globally.",
               "CPU");
+DEFINE_bool(
+    arm64_register_inheritance_audit, false,
+    "Thor ARM64 research (cross-block register caching U3): log per-function how "
+    "many HIR-local carriers are still in a host register at block exit and how "
+    "many internal single-dominating-predecessor successors could inherit that "
+    "register instead of reloading (the U4 speed opportunity). Analysis only - "
+    "records the block-exit register snapshot, changes no generated code.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -203,6 +212,12 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
   uint16_t block_ordinal = 0;
   uint32_t instr_ordinal = 0;
+  // U3 (cross-block register caching): snapshot, per block, which host register
+  // holds each HIR-local carrier at block exit, so U4 can inherit it into an
+  // internal successor instead of reloading. Analysis-only here (audit gate).
+  const bool inherit_audit = cvars::arm64_register_inheritance_audit;
+  std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
+      block_exit_local_regs;
   auto block = builder->first_block();
   while (block) {
     uint64_t block_spill_requests = 0;
@@ -212,6 +227,9 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
     // Sequential block ordinals.
     block->ordinal = block_ordinal++;
+
+    // U3: which host register currently holds each local within this block.
+    std::unordered_map<Value*, RegAssignment> block_local_regs;
 
     // Reset all state.
     PrepareBlockState();
@@ -235,6 +253,15 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
       // Update the register use heaps.
       AdvanceUses(instr);
+
+      // U3: a STORE_LOCAL deposits a value into a local; remember which host
+      // register held it (still valid as the value's reg even if AdvanceUses
+      // just retired it - the data is in that register until reused). U4 will
+      // inherit this into internal successors instead of reloading.
+      if (inherit_audit && instr->opcode == &OPCODE_STORE_LOCAL_info &&
+          instr->src2.value && instr->src2.value->reg.set) {
+        block_local_regs[instr->src1.value] = instr->src2.value->reg;
+      }
 
       // Check sources for retirement. If any are unused after this instruction
       // we can eagerly evict them to speed up register allocation.
@@ -351,7 +378,42 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     if (audit_enabled && block_spill_requests) {
       ++audit_stats.blocks_with_spills;
     }
+    // U3: record the block-exit local->register snapshot for the inheritance
+    // opportunity audit (consumed by U4).
+    if (inherit_audit && !block_local_regs.empty()) {
+      block_exit_local_regs[block] = std::move(block_local_regs);
+    }
     block = block->next;
+  }
+
+  // U3: quantify the cross-block register-inheritance opportunity - how many
+  // carrier registers live at block exit could be inherited by an internal
+  // (entry-excluded, single-DOMINATES-predecessor, fallthrough) successor
+  // instead of reloading from the local/context. Analysis only.
+  if (inherit_audit) {
+    uint64_t exit_carrier_regs = 0;
+    for (auto& kv : block_exit_local_regs) {
+      exit_carrier_regs += kv.second.size();
+    }
+    uint64_t inheritable = 0;
+    for (auto b = builder->first_block(); b; b = b->next) {
+      if (b == builder->first_block()) {
+        continue;
+      }
+      Edge* in = b->incoming_edge_head;
+      if (!in || in->incoming_next || !(in->flags & Edge::DOMINATES) ||
+          in->src != b->prev) {
+        continue;  // Externally enterable - not a safe inheritance target.
+      }
+      auto it = block_exit_local_regs.find(in->src);
+      if (it != block_exit_local_regs.end()) {
+        inheritable += it->second.size();
+      }
+    }
+    XELOGW(
+        "A64 register inheritance audit fn {:08X}: exit_carrier_regs={} "
+        "inheritable_into_internal_successors={}",
+        function_address, exit_carrier_regs, inheritable);
   }
 
   if (audit_enabled) {
