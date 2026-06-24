@@ -657,6 +657,48 @@ Block* GetSingleDominatingPredecessor(Block* block) {
   return edge->src;
 }
 
+// True if `block` can be entered at runtime by any path OTHER than the single
+// recorded DOMINATES edge from its emission-order predecessor. The cross-block
+// register carrier is only sound on blocks that are NOT externally enterable.
+//
+// CRITICAL (this is the BD ~2s-boot SIGBUS root cause): Edge::DOMINATES here
+// means "exactly one RECORDED incoming edge", and ControlFlowAnalysisPass records
+// edges ONLY for direct branches - indirect control flow (bctr/blr/bcctr/jump
+// tables -> OPCODE_CALL_INDIRECT) adds NO HIR edge. So a jump-table landing block
+// that also has one direct predecessor looks single-dominating-pred, yet is
+// really re-entered from the dispatcher on a path where the predecessor's carrier
+// deposit never ran. Seeding the carrier there promotes a LOAD_CONTEXT to a
+// LOAD_LOCAL that reads an uninitialized/stale stack slot -> wild base pointer ->
+// SIGBUS. The synthetic host/qemu tests miss it because they build only
+// direct-branch CFGs where DOMINATES really is the dominator.
+//
+// We cannot enumerate indirect targets (the scanner doesn't decode jump tables),
+// so this is the sound, cheap over-approximation: a block is INTERNAL (safe) only
+// if it is reached purely by a direct fallthrough from the immediately-preceding
+// emission block. Any other entry - function entry, CFG merge, forward/back-edge,
+// or a potential indirect target - is treated as enterable. (E4 in the design doc
+// later relaxes the fallthrough rule using a scanner address-taken bit.)
+bool IsExternallyEnterable(HIRBuilder* builder, Block* block) {
+  if (block == builder->first_block()) {
+    return true;  // E1: function entry - cold start from caller/dispatcher.
+  }
+  Edge* in = block->incoming_edge_head;
+  if (!in) {
+    return true;  // No recorded predecessor => reachable only indirectly or dead.
+  }
+  if (in->incoming_next) {
+    return true;  // E2: CFG merge (more than one recorded predecessor).
+  }
+  if (!(in->flags & Edge::DOMINATES)) {
+    return true;  // E2: not the sole recorded predecessor edge.
+  }
+  if (in->src != block->prev) {
+    return true;  // E3: not a straight-line fallthrough from the prior emission
+                  // block; a jump table could land here - be conservative.
+  }
+  return false;
+}
+
 Instr* FirstTailBranch(Block* block) {
   Instr* first_tail_branch = nullptr;
   Instr* instr = block->instr_tail;
@@ -1573,11 +1615,16 @@ void ContextPromotionPass::PromoteCrossBlockGprSlots(
     ++stats.blocks;
     std::vector<GprLocalSlotValue> current(slot_count);
 
-    // Seed only across a SINGLE DOMINATING predecessor edge: that guarantees the
-    // only runtime path into this block came from `pred`, so pred's deposited
-    // local carriers are valid here. Merge points (multi-pred) start empty and
-    // re-load from context.
-    if (Block* pred = GetSingleDominatingPredecessor(block)) {
+    // Seed only across a SINGLE DOMINATING predecessor edge that is ALSO a true
+    // internal (not externally-enterable) edge - see IsExternallyEnterable for
+    // why "single DOMINATES pred" is NOT sufficient (indirect/jump-table entries
+    // are edgeless, so a dispatcher re-entry can read an undeposited carrier ->
+    // SIGBUS). Merge points and enterable blocks start empty and re-load from
+    // context. This gate makes the carrier sound even with cond_branch_carry on.
+    Block* pred = IsExternallyEnterable(builder, block)
+                      ? nullptr
+                      : GetSingleDominatingPredecessor(block);
+    if (pred) {
       ++stats.dominated_blocks;
       auto pred_state = outgoing_states.find(pred);
       if (pred_state != outgoing_states.end()) {
