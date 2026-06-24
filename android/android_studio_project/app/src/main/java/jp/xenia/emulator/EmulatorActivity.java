@@ -223,6 +223,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "kernel_object_handle_cache");
             copyBooleanExtra(intent, launchArguments, "kernel_native_object_fast_path");
             copyBooleanExtra(intent, launchArguments, "cpu_drop_redundant_atomic_release_barrier");
+            copyBooleanExtra(intent, launchArguments, "apu_xma_skip_idle_context_lock");
             copyBooleanExtra(intent, launchArguments, "execute_unclipped_draw_vs_on_cpu");
             copyBooleanExtra(intent, launchArguments, "vulkan_sparse_shared_memory");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_texture_descriptors");

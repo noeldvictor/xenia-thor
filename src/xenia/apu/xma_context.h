@@ -202,8 +202,12 @@ class XmaContext {
   uint32_t id_ = 0;
   uint32_t guest_ptr_ = 0;
   std::mutex lock_;
-  bool is_allocated_ = false;
-  bool is_enabled_ = false;
+  // Atomic so XmaContext::Work() can check them lock-free before taking lock_
+  // (the worker scans all 320 contexts every iteration; idle ones skip the
+  // lock). Set under lock_ on the producer side; the contended path re-checks
+  // under the lock, so a relaxed lock-free read is safe.
+  std::atomic<bool> is_allocated_{false};
+  std::atomic<bool> is_enabled_{false};
   // bool is_dirty_ = true;
 
   // ffmpeg structures

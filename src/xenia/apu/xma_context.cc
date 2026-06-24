@@ -41,6 +41,21 @@ DEFINE_bool(xma_fast_silence, false,
             "Experimental bring-up path that advances XMA contexts with silent "
             "output instead of FFmpeg decoding.",
             "APU");
+DEFINE_bool(
+    apu_xma_skip_idle_context_lock, true,
+    "XMA audio: skip taking a context's mutex for contexts that are idle (not "
+    "allocated or not enabled). The decoder worker scans ALL 320 XMA contexts "
+    "every iteration and locks each one BEFORE checking whether it has work - "
+    "so while any audio plays (the worker never sleeps then) it spin-locks "
+    "hundreds of idle contexts at max rate, burning a large slice of CPU on "
+    "mutex/atomic contention (device-profiled 2026-06-24: the XMA worker's "
+    "std::mutex was ~13% of total CPU on Blue Dragon's field - the single "
+    "biggest host hotspot, stealing cores from the guest game thread). This "
+    "checks the (atomic) enabled/allocated flags lock-free first and only locks "
+    "contexts that actually have work; a context re-enabled in the race window "
+    "is caught the next loop, and the contended path still re-checks under the "
+    "lock. Memory-model-safe; cross-game (every title with audio).",
+    "APU");
 
 namespace xe {
 namespace apu {
@@ -99,6 +114,16 @@ int XmaContext::Setup(uint32_t id, Memory* memory, uint32_t guest_ptr) {
 }
 
 bool XmaContext::Work() {
+  // Lock-free fast skip: the decoder worker scans all 320 contexts every
+  // iteration; don't pay a mutex lock/unlock on the hundreds that are idle.
+  // The flags are atomic; a context enabled in the race window is caught the
+  // next loop, and the re-check below still runs under the lock for the
+  // contended case - so this is output-equivalent (idle contexts decode
+  // nothing whether locked or not).
+  if (cvars::apu_xma_skip_idle_context_lock &&
+      (!is_allocated() || !is_enabled())) {
+    return false;
+  }
   std::lock_guard<std::mutex> lock(lock_);
   if (!is_allocated() || !is_enabled()) {
     return false;

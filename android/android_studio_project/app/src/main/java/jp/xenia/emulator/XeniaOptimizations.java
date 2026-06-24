@@ -726,6 +726,26 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("cpu_drop_redundant_atomic_release_barrier")},
                 null));
 
+        list.add(new Optimization(
+                "opt_xma_skip_idle_lock",
+                "Audio decoder lock fix",
+                "Stops the audio decoder from spin-locking hundreds of idle voices "
+                        + "every loop while music plays.",
+                "The Xbox 360 has 320 hardware audio voices; the emulator's audio "
+                        + "decoder worker scans ALL of them every loop and grabbed each "
+                        + "voice's lock BEFORE checking whether it actually had audio to "
+                        + "decode. While any sound plays the worker never sleeps, so it "
+                        + "spin-locked the ~318 idle voices at full speed - device-"
+                        + "profiled as ~13% of the ENTIRE CPU on Blue Dragon's field, the "
+                        + "single biggest host-side hotspot, stealing cores from the "
+                        + "game's own thread (which is what caps the frame rate). This "
+                        + "checks each voice's enabled flag without the lock and only "
+                        + "locks the few that have work. Output-identical (idle voices "
+                        + "make no sound either way); helps every game with audio, most "
+                        + "on CPU-bound titles. Recommended on.",
+                CATEGORY_CPU, true, true,
+                new BoolCvar[]{new BoolCvar("apu_xma_skip_idle_context_lock")}, null));
+
         ALL = Collections.unmodifiableList(list);
     }
 
