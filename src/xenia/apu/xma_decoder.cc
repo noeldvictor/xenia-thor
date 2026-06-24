@@ -24,6 +24,19 @@ extern "C" {
 #include "third_party/FFmpeg/libavutil/log.h"
 }  // extern "C"
 
+DEFINE_int32(
+    apu_xma_worker_poll_ms, 1,
+    "XMA audio: cap the decoder worker's poll interval (ms) while audio plays. "
+    "The worker scans all 320 voices every loop and only sleeps after 500 "
+    "CONSECUTIVE fully-idle loops - so while any voice is active it spins the "
+    "320-voice scan at ~100kHz, burning CPU stolen from the guest game thread "
+    "(device-profiled 2026-06-24: even after the per-voice lock-skip fix, the "
+    "atomic enabled-scan was ~5% of total CPU). This waits this many ms between "
+    "busy passes instead of spinning; a kicked voice signals the worker's "
+    "(auto-reset) event and wakes it immediately, and audio already tolerates "
+    "the 20ms idle gap, so 1ms is safe. 0 = spin (old behavior). Cross-game.",
+    "APU");
+
 // As with normal Microsoft, there are like twelve different ways to access
 // the audio APIs. Early games use XMA*() methods almost exclusively to touch
 // decoders. Later games use XAudio*() and direct memory writes to the XMA
@@ -182,9 +195,17 @@ void XmaDecoder::WorkerThreadMain() {
       // Idle for an extended period. Introduce a 20ms wait.
       xe::threading::Wait(work_event_.get(), false,
                           std::chrono::milliseconds(20));
+    } else if (cvars::apu_xma_worker_poll_ms > 0) {
+      // Audio playing: cap the poll rate instead of spinning the 320-voice scan
+      // at max speed (it otherwise steals big cores from the guest game thread,
+      // the actual frame-rate cap). Wakes immediately when a voice is kicked
+      // (work_event_ is auto-reset); audio tolerates this gap (the idle path
+      // already waits 20ms).
+      xe::threading::Wait(work_event_.get(), false,
+                          std::chrono::milliseconds(cvars::apu_xma_worker_poll_ms));
+    } else {
+      xe::threading::MaybeYield();
     }
-
-    xe::threading::MaybeYield();
   }
 }
 

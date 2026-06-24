@@ -744,7 +744,8 @@ public final class XeniaOptimizations {
                         + "make no sound either way); helps every game with audio, most "
                         + "on CPU-bound titles. Recommended on.",
                 CATEGORY_CPU, true, true,
-                new BoolCvar[]{new BoolCvar("apu_xma_skip_idle_context_lock")}, null));
+                new BoolCvar[]{new BoolCvar("apu_xma_skip_idle_context_lock")},
+                new IntCvar[]{new IntCvar("apu_xma_worker_poll_ms", 1)}));
 
         ALL = Collections.unmodifiableList(list);
     }
