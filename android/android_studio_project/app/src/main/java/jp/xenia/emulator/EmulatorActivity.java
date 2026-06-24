@@ -227,6 +227,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "ppc_cross_block_dead_flag_elim_audit");
             copyBooleanExtra(intent, launchArguments, "apu_xma_skip_idle_context_lock");
             copyBooleanExtra(intent, launchArguments, "cpu_lockfree_check_global_lock");
+            copyBooleanExtra(intent, launchArguments, "timer_queue_sleep_idle");
+            copyIntExtra(intent, launchArguments, "timer_queue_idle_sleep_us");
             copyBooleanExtra(intent, launchArguments, "execute_unclipped_draw_vs_on_cpu");
             copyBooleanExtra(intent, launchArguments, "vulkan_sparse_shared_memory");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_texture_descriptors");

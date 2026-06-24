@@ -17,8 +17,32 @@
 #include "third_party/disruptorplus/include/disruptorplus/spin_wait_strategy.hpp"
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/threading.h"
 #include "xenia/base/threading_timer_queue.h"
+
+DEFINE_bool(
+    timer_queue_sleep_idle, false,
+    "Thor CPU: make the timer-dispatch thread SLEEP until the next timer "
+    "deadline instead of busy-spinning. The disruptor spin_wait_strategy polls "
+    "the clock continuously between timer events (device-profiled as the top "
+    "__kernel_clock_gettime cost on Blue Dragon - a core burned for nothing, "
+    "the same spinning-worker pathology as the XMA decoder). Existing timers "
+    "still fire on time (the thread sleeps only until the soonest armed due "
+    "time); a timer queued WHILE it sleeps is picked up within "
+    "timer_queue_idle_sleep_us. Device-validated on the BD heavy field (matched "
+    "A/B vs the lock-fix baseline): renders+runs correctly, TimerThreadMain "
+    "2.63%->1.79% (-0.84pp of the frame; the spin's wait_until_published "
+    "2.49%->1.48%). Default-OFF (it shifts newly-queued-timer pickup by up to "
+    "the cap, a timing change; flip on after multi-title validation).",
+    "CPU");
+DEFINE_int32(
+    timer_queue_idle_sleep_us, 1000,
+    "Max microseconds the timer-dispatch thread sleeps per idle iteration when "
+    "timer_queue_sleep_idle is on (bounds newly-queued-timer pickup latency; "
+    "armed timers are unaffected - they wake the thread at their exact due "
+    "time). 1000 = 1ms.",
+    "CPU");
 
 namespace dp = disruptorplus;
 
@@ -67,11 +91,16 @@ class TimerQueue {
 
     while (!shutdown_.load(std::memory_order_relaxed)) {
       {
-        // Consume new wait items and add them to sorted wait queue
+        // Consume new wait items and add them to sorted wait queue.
+        // When timer_queue_sleep_idle is on, drain non-blocking (timeout=now)
+        // and sleep at the loop tail instead of letting the spin_wait_strategy
+        // busy-poll the clock until the deadline.
         dp::sequence_t available = claim_strategy_.wait_until_published(
             next_sequence, next_sequence - 1,
-            wait_queue_.empty() ? clock::time_point::max()
-                                : wait_queue_.front()->due_);
+            cvars::timer_queue_sleep_idle
+                ? clock::now()
+                : (wait_queue_.empty() ? clock::time_point::max()
+                                       : wait_queue_.front()->due_));
 
         // Check for timeout
         if (available != next_sequence - 1) {
@@ -123,6 +152,27 @@ class TimerQueue {
         }
         wait_items.sort(comp);
         wait_queue_.merge(wait_items, comp);
+      }
+
+      // Bounded sleep instead of busy-spinning the dispatch thread (cvar-gated).
+      // Armed timers are unaffected - we sleep only until the soonest due time,
+      // so they still fire on time; this just stops the spin_wait_strategy from
+      // polling the clock continuously while idle. A timer queued during the
+      // sleep is picked up within timer_queue_idle_sleep_us on the next wake.
+      if (cvars::timer_queue_sleep_idle &&
+          !shutdown_.load(std::memory_order_relaxed)) {
+        const auto now = clock::now();
+        const auto cap = std::chrono::microseconds(
+            std::max(1, cvars::timer_queue_idle_sleep_us));
+        const clock::time_point sleep_until =
+            wait_queue_.empty()
+                ? now + cap
+                : (std::min)(wait_queue_.front()->due_, now + cap);
+        if (sleep_until > now) {
+          xe::threading::Sleep(
+              std::chrono::duration_cast<std::chrono::microseconds>(sleep_until -
+                                                                    now));
+        }
       }
     }
   }

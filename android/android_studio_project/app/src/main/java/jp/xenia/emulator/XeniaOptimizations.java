@@ -777,6 +777,30 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("cpu_lockfree_check_global_lock")},
                 null));
 
+        list.add(new Optimization(
+                "opt_timer_queue_sleep_idle",
+                "Timer thread sleep (experimental)",
+                "Stops the timer dispatch thread from busy-spinning a CPU core "
+                        + "between timer events.",
+                "The emulator has a dedicated thread that fires Xbox 360 guest "
+                        + "timers (KeSetTimer, thread wait timeouts). Between events "
+                        + "it was BUSY-WAITING: the lock-free timer queue's spin "
+                        + "strategy polls the system clock continuously, burning a "
+                        + "whole core for nothing - device-profiled as the top "
+                        + "clock-read cost on Blue Dragon, the same spinning-worker "
+                        + "pathology as the audio-decoder fix. This makes the thread "
+                        + "SLEEP until the next timer is actually due. Armed timers "
+                        + "still fire on time (it wakes at their exact due time); only "
+                        + "a timer queued while it sleeps waits up to 1ms. "
+                        + "Device-validated on Blue Dragon: renders and runs "
+                        + "correctly, timer thread 2.6%->1.8% of CPU and a core no "
+                        + "longer spins (cuts power/heat). Frees CPU on lock/timer-"
+                        + "heavy titles; no GPU effect. Off by default (it shifts "
+                        + "new-timer pickup by up to 1ms); enable to stack it.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("timer_queue_sleep_idle")},
+                new IntCvar[]{new IntCvar("timer_queue_idle_sleep_us", 1000)}));
+
         ALL = Collections.unmodifiableList(list);
     }
 
