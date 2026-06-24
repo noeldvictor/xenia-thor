@@ -37,6 +37,10 @@ class VulkanSharedMemory : public SharedMemory {
   void Shutdown(bool from_destructor = false);
 
   void CompletedSubmissionUpdated();
+  // Performs the double-buffer version switch at the submission boundary (no-op
+  // when double-buffering is off). Must be called by the command processor at
+  // submission begin, before any uploads/draws are recorded.
+  void BeginSubmission();
   void EndSubmission();
 
   enum class Usage {

@@ -464,6 +464,18 @@ void VulkanSharedMemory::CompletedSubmissionUpdated() {
 
 void VulkanSharedMemory::EndSubmission() { upload_buffer_pool_->FlushWrites(); }
 
+void VulkanSharedMemory::BeginSubmission() {
+  // Double-buffer version switch happens HERE, at the submission boundary (the
+  // command processor calls this from its BeginSubmission, after resetting the
+  // deferred command buffer and with no render pass open) - the only safe place
+  // to record the stale-range sync copy + barriers, and BEFORE any of this
+  // submission's uploads/draws, so every upload targets the version the GPU will
+  // read for this submission. No-op when double-buffering is off.
+  if (double_buffer_enabled_) {
+    MaybeSwitchVersionForWrite();
+  }
+}
+
 void VulkanSharedMemory::Use(Usage usage,
                              std::pair<uint32_t, uint32_t> written_range) {
   written_range.first = std::min(written_range.first, kBufferSize);
@@ -763,15 +775,14 @@ bool VulkanSharedMemory::UploadRangesDirect(
   const VkDevice device = vulkan_device->device();
   const uint32_t page_size_log2_local = page_size_log2();
 
-  // Double-buffer (gpu_shared_memory_double_buffer): if the version the GPU is
-  // currently reading has an in-flight reader, switch to the free version (GPU-
-  // copying its stale ranges current first) BEFORE writing, so this CPU upload
-  // never overwrites pages an in-flight deferred-tiler draw is still reading.
-  // Done once per UploadRangesDirect, before the writes below. May change
-  // current_version_, so buffer_mapping / current_buffer() are read after it.
-  if (double_buffer_enabled_) {
-    MaybeSwitchVersionForWrite();
-  }
+  // Double-buffer (gpu_shared_memory_double_buffer): the version switch + its
+  // stale-range GPU copy is performed at SUBMISSION BEGIN (BeginSubmission()),
+  // NOT here. Recording a transfer + barriers from inside UploadRangesDirect is
+  // illegal (this runs mid-command-recording, possibly inside a render pass) and
+  // hung the device. By switching at the submission boundary - before any of
+  // this submission's uploads or draws - every CPU write below already targets
+  // the version the GPU will read for this submission, so it never overwrites
+  // pages an in-flight prior submission is still reading.
   // Write into the version the GPU currently reads (== buffer_host_mapping_ when
   // double-buffering is off, so this is byte-identical then).
   uint8_t* const buffer_mapping =
@@ -796,11 +807,17 @@ bool VulkanSharedMemory::UploadRangesDirect(
   // submission by every Use(kRead), so the previous "< current" guard never
   // fired - it was effectively dead. Replaced by this explicit experiment.)
   //
-  // Double-buffer: the version switch above already guarantees we are NOT
-  // overwriting a version with an in-flight reader, so the serializing waits are
-  // unnecessary (and would re-introduce the very stall double-buffering removes).
-  // Skip them entirely when double_buffer_enabled_; otherwise the existing
-  // single-buffer waits are byte-identical.
+  // Double-buffer: the version switch at BeginSubmission moves writes to a
+  // version with no in-flight reader, so smart-sync usually finds nothing to
+  // wait for - but it is KEPT ON as a PER-VERSION safety net. (Disabling the
+  // guard entirely - trusting the switch alone - left the UMA race unguarded and
+  // hung the device, because the switch is not airtight on every path.) When
+  // double-buffering, the wait below keys off the PER-VERSION reader
+  // (version_last_read_submission_[current_version_]) instead of the global
+  // tracker, so a switch to a free version costs no wait while a still-contended
+  // current version is still correctly guarded. The brute serialize-before-write
+  // stays off for double-buffering (smart-sync is the guard); the single-buffer
+  // paths are byte-identical.
   if (!double_buffer_enabled_ && cvars::gpu_uma_serialize_before_write) {
     const uint64_t current_submission =
         command_processor_.GetCurrentSubmission();
@@ -809,7 +826,7 @@ bool VulkanSharedMemory::UploadRangesDirect(
       // Wait for everything submitted so far (current_submission - 1) to drain.
       command_processor_.AwaitSubmissionCompletion(current_submission - 1);
     }
-  } else if (!double_buffer_enabled_ && cvars::gpu_uma_smart_sync) {
+  } else if (cvars::gpu_uma_smart_sync) {
     // TDR FIX: wait ONLY for the last submission that read this buffer, and only
     // if it is a PRIOR (already-closed) submission that has not yet completed.
     // GetCurrentSubmission() is the still-OPEN submission being recorded now -
@@ -824,7 +841,12 @@ bool VulkanSharedMemory::UploadRangesDirect(
     // memcpy below. Submissions complete in order, so the single latest toucher
     // subsumes all earlier ones - still no full drain, no deadlock (never the
     // still-open current submission).
-    uint64_t wait_submission = uma_last_read_submission_;
+    // Per-version read tracker when double-buffering (so a switch to a free
+    // version waits for nothing); global tracker on the single-buffer path.
+    uint64_t wait_submission =
+        double_buffer_enabled_
+            ? version_last_read_submission_[current_version_]
+            : uma_last_read_submission_;
     if (cvars::gpu_uma_smart_sync_writes &&
         uma_last_write_submission_ > wait_submission) {
       wait_submission = uma_last_write_submission_;

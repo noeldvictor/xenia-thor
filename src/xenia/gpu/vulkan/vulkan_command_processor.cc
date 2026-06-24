@@ -7021,6 +7021,14 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     primitive_processor_->BeginSubmission();
 
     texture_cache_->BeginSubmission(GetCurrentSubmission());
+
+    // Double-buffer shared memory: perform the version switch + stale-range sync
+    // copy here, at the submission boundary - no render pass is open (just reset
+    // above) and the deferred command buffer is fresh, so recording the transfer
+    // + barriers is legal, and it happens before any of this submission's
+    // uploads/draws so they target the version the GPU will read. No-op unless
+    // gpu_shared_memory_double_buffer is active.
+    shared_memory_->BeginSubmission();
   }
 
   if (is_opening_frame) {
