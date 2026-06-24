@@ -706,6 +706,26 @@ public final class XeniaOptimizations {
                 CATEGORY_CPU, false, false,
                 new BoolCvar[]{new BoolCvar("kernel_native_object_fast_path")}, null));
 
+        list.add(new Optimization(
+                "opt_drop_redundant_atomic_barrier",
+                "Drop redundant atomic barrier (experimental)",
+                "Removes a duplicate memory fence after every guest atomic store.",
+                "PowerPC store-conditional (the core of every lock, refcount and "
+                        + "atomic the game uses) is compiled to an ARM64 acquire+release "
+                        + "atomic, which already orders the store against both earlier and "
+                        + "later memory accesses. The recompiler then emitted a SECOND "
+                        + "full memory barrier right after it - redundant work on one of "
+                        + "the hottest paths in multi-threaded game code. This drops the "
+                        + "duplicate fence. It is memory-model-safe (the atomic itself "
+                        + "still publishes the write); the much more common lightweight "
+                        + "barrier (lwsync) is deliberately left untouched because it "
+                        + "needs ordering ARM64's cheaper fences don't provide. Helps "
+                        + "CPU-bound, lock-heavy titles; no GPU effect. Experimental - "
+                        + "validate rendering per device.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("cpu_drop_redundant_atomic_release_barrier")},
+                null));
+
         ALL = Collections.unmodifiableList(list);
     }
 

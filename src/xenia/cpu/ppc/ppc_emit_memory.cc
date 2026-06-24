@@ -11,8 +11,24 @@
 
 #include <stddef.h>
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
+
+DEFINE_bool(
+    cpu_drop_redundant_atomic_release_barrier, false,
+    "Drop the full memory barrier emitted AFTER stwcx/stdcx (PowerPC store-"
+    "conditional). The store-conditional already lowers to an acquire+release "
+    "atomic (ARM64 LSE 'casal' / x86 'lock cmpxchg'), which orders the store "
+    "against both prior and subsequent accesses - so the trailing barrier is "
+    "redundant. Removes one full DMB per guest atomic store (locks, refcounts, "
+    "reservations), which are hot on multi-threaded titles. Memory-model-safe: "
+    "the atomic's release already publishes prior writes and its acquire orders "
+    "later reads. Default off; A/B + verify rendering per title. NOTE: the "
+    "lwsync->lighter-barrier weakening is deliberately NOT done here - lwsync "
+    "requires store-store ordering that ARM64 'dmb ishld' does not provide, so "
+    "weakening it would be a correctness bug.",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -825,8 +841,11 @@ int InstrEmit_stdcx(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreContext(offsetof(PPCContext, cr0.cr0_gt), f.LoadZeroInt8());
 
   // Issue memory barrier for when we go out of lock and want others to see our
-  // updates.
-  f.MemoryBarrier();
+  // updates. Redundant when the store-conditional's atomic compare-exchange
+  // already provides acquire+release ordering (casal / lock cmpxchg).
+  if (!cvars::cpu_drop_redundant_atomic_release_barrier) {
+    f.MemoryBarrier();
+  }
 
   return 0;
 }
@@ -858,8 +877,11 @@ int InstrEmit_stwcx(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreContext(offsetof(PPCContext, cr0.cr0_gt), f.LoadZeroInt8());
 
   // Issue memory barrier for when we go out of lock and want others to see our
-  // updates.
-  f.MemoryBarrier();
+  // updates. Redundant when the store-conditional's atomic compare-exchange
+  // already provides acquire+release ordering (casal / lock cmpxchg).
+  if (!cvars::cpu_drop_redundant_atomic_release_barrier) {
+    f.MemoryBarrier();
+  }
 
   return 0;
 }
