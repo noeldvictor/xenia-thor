@@ -411,6 +411,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "spirv_debug_position_probe");
             copyIntExtra(intent, launchArguments, "thor_gpu_thread_affinity_cpu");
             copyIntExtra(intent, launchArguments, "thor_guest_thread_affinity_mask");
+            copyIntExtra(intent, launchArguments, "thor_hot_thread_prime_core");
+            copyIntExtra(intent, launchArguments, "thor_hot_thread_interval_ms");
             copyIntExtra(intent, launchArguments, "gpu_cp_worker_nice");
             copyIntExtra(
                     intent, launchArguments, "vulkan_debug_pixel_shader_output_secondary_mode");

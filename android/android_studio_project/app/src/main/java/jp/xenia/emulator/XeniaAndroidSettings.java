@@ -246,7 +246,10 @@ public final class XeniaAndroidSettings {
         // User-selectable performance optimizations (registry-driven): each
         // enabled toggle contributes its engine cvar(s). Applied last so an
         // enabled optimization always wins over a stable-default override.
-        XeniaOptimizations.applyTo(preferences, launchArguments);
+        // Passing the titleId lets a per-game override (set in the launcher's
+        // "Performance optimizations" screen) force any optimization ON/OFF for
+        // this specific title, falling back to the global toggle otherwise.
+        XeniaOptimizations.applyTo(preferences, launchArguments, titleId);
         // Selected custom Vulkan ICD (GPU driver), if any -> gpu_vulkan_driver*
         // cvars for the libadrenotools loader (no-op for the system driver).
         GpuDriverManager.applyToLaunch(context, launchArguments);

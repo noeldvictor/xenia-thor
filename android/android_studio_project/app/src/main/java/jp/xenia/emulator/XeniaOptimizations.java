@@ -25,6 +25,15 @@ public final class XeniaOptimizations {
     public static final String CATEGORY_THREADS = "CPU · thread placement";
     public static final String CATEGORY_GPU = "GPU · Vulkan";
 
+    // Per-game override tri-state: a title may force an optimization ON or OFF
+    // for itself, or INHERIT the global toggle. Stored as a string under a
+    // title-scoped pref key ("" / absent = inherit). This is how the user sets
+    // every optimization per game from the UI; the launch path resolves the
+    // effective value with {@link Optimization#isEnabledForGame}.
+    public static final int OVERRIDE_DEFAULT = 0;
+    public static final int OVERRIDE_ON = 1;
+    public static final int OVERRIDE_OFF = 2;
+
     /** A boolean cvar set to true when the owning optimization is enabled. */
     static final class BoolCvar {
         final String name;
@@ -80,6 +89,23 @@ public final class XeniaOptimizations {
 
         public boolean isEnabled(final SharedPreferences prefs) {
             return prefs.getBoolean(prefKey, defaultEnabled);
+        }
+
+        /**
+         * Effective enabled state for a specific title: a per-game override
+         * (ON/OFF) wins; otherwise inherit the global toggle. Empty titleId =
+         * global (no per-game layer), so unprofiled launches are unchanged.
+         */
+        public boolean isEnabledForGame(
+                final SharedPreferences prefs, final String titleId) {
+            switch (getOverride(prefs, titleId, prefKey)) {
+                case OVERRIDE_ON:
+                    return true;
+                case OVERRIDE_OFF:
+                    return false;
+                default:
+                    return isEnabled(prefs);
+            }
         }
     }
 
@@ -579,6 +605,38 @@ public final class XeniaOptimizations {
                 }));
 
         list.add(new Optimization(
+                "opt_hot_thread_prime",
+                "Auto hot-thread on prime core",
+                "Continuously keeps whatever thread is busiest on the 3.19 GHz "
+                        + "Cortex-X3 - adapts per scene instead of guessing one thread.",
+                "The 'Prime-core GPU-command priority' option above always gives "
+                        + "the X3 to the GPU-command thread, which is right only when the "
+                        + "GPU is the bottleneck. Many scenes are the opposite: the GPU "
+                        + "sits idle while one CPU thread can't feed it fast enough - the "
+                        + "\"CPU makes the GPU slow\" case. Device-measured on Blue "
+                        + "Dragon's heavy field (2026-06-24): the GPU is idle ~98% and "
+                        + "the GPU-command thread is blocked on the GPU, while a single "
+                        + "guest game-logic thread runs at ~95% CPU with five cores idle - "
+                        + "and that hot thread is NOT the command thread NOR the guest "
+                        + "'main' thread (~14%), so any fixed pin guesses wrong. This adds "
+                        + "a light monitor that samples which thread is actually busiest a "
+                        + "few times a second and pins THAT one to the X3, releasing the "
+                        + "previous one - so the real bottleneck always runs on the fastest "
+                        + "core, whether it's the GPU-command thread (GPU-bound titles) or "
+                        + "the hot guest thread (CPU-bound titles). It also frees the "
+                        + "static command-thread pin so the two don't fight. Scheduling "
+                        + "hint only, no rendering change. Experimental, pending device A/B.",
+                CATEGORY_THREADS, false, false,
+                null,
+                new IntCvar[]{
+                        new IntCvar("thor_hot_thread_prime_core", 7),
+                        // Release the static command-thread X3 pin so the dynamic
+                        // tracker is the sole owner of the prime core (it will pin
+                        // the command thread there itself when it's the hottest).
+                        new IntCvar("thor_gpu_thread_affinity_cpu", -1),
+                }));
+
+        list.add(new Optimization(
                 "opt_adpf_perf_hints",
                 "ADPF performance hints",
                 "Tells Android which thread is frame-critical so it boosts the "
@@ -630,11 +688,23 @@ public final class XeniaOptimizations {
         ALL = Collections.unmodifiableList(list);
     }
 
-    /** Apply every enabled optimization's cvars into the launch arguments. */
+    /** Apply every globally-enabled optimization's cvars (no per-game layer). */
     public static void applyTo(
             final SharedPreferences prefs, final Bundle launchArguments) {
+        applyTo(prefs, launchArguments, "");
+    }
+
+    /**
+     * Apply every optimization enabled FOR THIS TITLE into the launch arguments:
+     * a per-game override (ON/OFF) wins over the global toggle. Empty titleId
+     * falls back to the global toggles, so unprofiled launches are unchanged.
+     */
+    public static void applyTo(
+            final SharedPreferences prefs,
+            final Bundle launchArguments,
+            final String titleId) {
         for (final Optimization opt : ALL) {
-            if (!opt.isEnabled(prefs)) {
+            if (!opt.isEnabledForGame(prefs, titleId)) {
                 continue;
             }
             if (opt.boolCvars != null) {
@@ -650,7 +720,7 @@ public final class XeniaOptimizations {
         }
     }
 
-    /** Number of optimizations currently enabled (for the UI "N of M active"). */
+    /** Number of optimizations currently enabled globally (UI "N of M active"). */
     public static int enabledCount(final SharedPreferences prefs) {
         int enabled = 0;
         for (final Optimization opt : ALL) {
@@ -659,6 +729,96 @@ public final class XeniaOptimizations {
             }
         }
         return enabled;
+    }
+
+    /** Number of optimizations enabled for a specific title (per-game effective). */
+    public static int enabledCountForGame(
+            final SharedPreferences prefs, final String titleId) {
+        int enabled = 0;
+        for (final Optimization opt : ALL) {
+            if (opt.isEnabledForGame(prefs, titleId)) {
+                enabled++;
+            }
+        }
+        return enabled;
+    }
+
+    // ---- Per-game overrides -------------------------------------------------
+
+    /** SharedPreferences key holding a title's override for one optimization. */
+    public static String perGameKey(final String titleId, final String prefKey) {
+        return "game_opt::" + normalizeTitleId(titleId) + "::" + prefKey;
+    }
+
+    /** Current override for (title, optimization): DEFAULT / ON / OFF. */
+    public static int getOverride(
+            final SharedPreferences prefs,
+            final String titleId,
+            final String prefKey) {
+        if (prefs == null || titleId == null || titleId.isEmpty()) {
+            return OVERRIDE_DEFAULT;
+        }
+        final String value = prefs.getString(perGameKey(titleId, prefKey), "");
+        if ("on".equals(value)) {
+            return OVERRIDE_ON;
+        }
+        if ("off".equals(value)) {
+            return OVERRIDE_OFF;
+        }
+        return OVERRIDE_DEFAULT;
+    }
+
+    /** Set (or clear, for DEFAULT) a title's override for one optimization. */
+    public static void setOverride(
+            final SharedPreferences prefs,
+            final String titleId,
+            final String prefKey,
+            final int state) {
+        if (prefs == null || titleId == null || titleId.isEmpty()) {
+            return;
+        }
+        final SharedPreferences.Editor editor = prefs.edit();
+        final String key = perGameKey(titleId, prefKey);
+        if (state == OVERRIDE_ON) {
+            editor.putString(key, "on");
+        } else if (state == OVERRIDE_OFF) {
+            editor.putString(key, "off");
+        } else {
+            editor.remove(key);
+        }
+        editor.apply();
+    }
+
+    /** How many optimizations this title has explicitly pinned (ON or OFF). */
+    public static int overrideCount(
+            final SharedPreferences prefs, final String titleId) {
+        if (prefs == null || titleId == null || titleId.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (final Optimization opt : ALL) {
+            if (getOverride(prefs, titleId, opt.prefKey) != OVERRIDE_DEFAULT) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Reset all of a title's per-game overrides back to inheriting the global. */
+    public static void clearOverrides(
+            final SharedPreferences prefs, final String titleId) {
+        if (prefs == null || titleId == null || titleId.isEmpty()) {
+            return;
+        }
+        final SharedPreferences.Editor editor = prefs.edit();
+        for (final Optimization opt : ALL) {
+            editor.remove(perGameKey(titleId, opt.prefKey));
+        }
+        editor.apply();
+    }
+
+    private static String normalizeTitleId(final String titleId) {
+        return titleId == null ? "" : titleId.trim().toUpperCase(java.util.Locale.US);
     }
 
     private XeniaOptimizations() {

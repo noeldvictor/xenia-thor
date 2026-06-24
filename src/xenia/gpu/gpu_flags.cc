@@ -241,6 +241,28 @@ DEFINE_int32(
     "effect). Set 7 to test the X3 on this device.",
     "GPU");
 DEFINE_int32(
+    thor_hot_thread_prime_core, -1,
+    "AYN Thor perf: dynamically keep whatever thread is CURRENTLY busiest pinned "
+    "to this CPU core (the prime Cortex-X3 is cpu7 @3.19GHz), releasing the "
+    "previous one back to the big cluster. Generalizes the static GPU-command "
+    "pin (thor_gpu_thread_affinity_cpu): on a GPU-bound title the command thread "
+    "is hottest and gets the X3 (as before), but on a CPU/sync-bound title the "
+    "hot GUEST game-logic thread is hottest and gets it instead. Device-measured "
+    "2026-06-24: Blue Dragon's heavy field is bound by a single guest XThread at "
+    "~95% CPU (NOT the fence-blocked command thread, NOR the guest 'main' thread "
+    "at ~14%), with 5 cores idle - so a static or main-thread pin guesses wrong; "
+    "this follows the actual hot thread. A low-overhead /proc sampler + "
+    "sched_setaffinity; hint only, no guest-visible effect. -1 = off (default). "
+    "Set 7 for the X3. Pair with thor_gpu_thread_affinity_cpu=-1 so the static "
+    "pin doesn't also claim the core. Android-only.",
+    "GPU");
+DEFINE_int32(
+    thor_hot_thread_interval_ms, 700,
+    "Sampling cadence (ms) for thor_hot_thread_prime_core: how often the busiest "
+    "thread is recomputed and re-pinned. Lower = follows hotness faster but more "
+    "/proc scans; 700ms smooths transient compile/IO spikes. Android-only.",
+    "GPU");
+DEFINE_int32(
     gpu_cp_worker_nice, 0,
     "AYN Thor perf: lower the 'GPU Commands' command-processor worker thread's "
     "nice value (Android setpriority) so the OS does not deschedule it under "

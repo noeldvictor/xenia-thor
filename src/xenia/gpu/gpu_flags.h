@@ -45,6 +45,8 @@ DECLARE_int32(gpu_vrs_foliage_rate);
 DECLARE_uint32(gpu_vrs_enable_after_guest_ms);
 DECLARE_bool(gpu_freeze_ab_alternate_vrs);
 DECLARE_int32(thor_gpu_thread_affinity_cpu);
+DECLARE_int32(thor_hot_thread_prime_core);
+DECLARE_int32(thor_hot_thread_interval_ms);
 DECLARE_int32(gpu_cp_worker_nice);
 DECLARE_bool(gpu_trace_swap);
 DECLARE_bool(gpu_trace_vd_swap);

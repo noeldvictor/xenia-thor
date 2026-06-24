@@ -23,6 +23,7 @@
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/ring_buffer.h"
+#include "xenia/base/thor_topology.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/gpu/sampler_info.h"
@@ -32,12 +33,20 @@
 #include "xenia/kernel/user_module.h"
 
 #if XE_PLATFORM_ANDROID
+#include <dirent.h>
 #include <dlfcn.h>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <thread>
+#include <unordered_map>
 #endif  // XE_PLATFORM_ANDROID
 
 namespace xe {
@@ -49,6 +58,153 @@ namespace {
 
 constexpr uint32_t kCpRbRptrRegister = 0x01C4;
 constexpr uint32_t kCpRbWptrRegister = 0x01C5;
+
+#if XE_PLATFORM_ANDROID
+// Thor "hot-thread on the prime core" tracker (thor_hot_thread_prime_core).
+// A low-overhead monitor that periodically finds the single busiest thread in
+// the process and pins it to the prime Cortex-X3, releasing the previous one
+// back to the big cluster. Generalizes the static GPU-command-thread pin: on a
+// GPU-bound title the command worker is hottest (it keeps the X3, as the static
+// router did), but on a CPU/sync-bound title (Blue Dragon's heavy field) the
+// hot guest game-logic thread is hottest and gets the X3 instead. Device-
+// measured 2026-06-24: BD's field is bound by a single guest XThread at ~95%
+// CPU - NOT the fence-blocked command worker, NOR the guest "main" thread
+// (~14%) - so any fixed pin guesses wrong; this follows the actual hot thread.
+// /proc/self/task sampling + sched_setaffinity, hint only, Android-only.
+class HotThreadPinner {
+ public:
+  void Start(int prime_core, int interval_ms) {
+    if (running_.exchange(true)) {
+      return;
+    }
+    prime_core_ = prime_core;
+    interval_ms_ = interval_ms > 0 ? interval_ms : 700;
+    thread_ = std::thread([this] { Run(); });
+  }
+
+  void Stop() {
+    if (!running_.exchange(false)) {
+      return;
+    }
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+
+ private:
+  // Sum of utime+stime (clock ticks) for one thread, from /proc/self/task/TID/
+  // stat. comm (field 2) can contain spaces/parens, so parse after the LAST ')'.
+  static uint64_t ReadThreadTicks(int tid) {
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/stat", tid);
+    FILE* f = std::fopen(path, "re");
+    if (!f) {
+      return 0;
+    }
+    char buf[512];
+    size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
+    std::fclose(f);
+    if (n == 0) {
+      return 0;
+    }
+    buf[n] = '\0';
+    char* after_comm = std::strrchr(buf, ')');
+    if (!after_comm) {
+      return 0;
+    }
+    ++after_comm;
+    // Tokens after ')' start at field 3 (state); utime=14, stime=15.
+    uint64_t utime = 0, stime = 0;
+    int field = 3;
+    for (char* tok = std::strtok(after_comm, " "); tok;
+         tok = std::strtok(nullptr, " "), ++field) {
+      if (field == 14) {
+        utime = std::strtoull(tok, nullptr, 10);
+      } else if (field == 15) {
+        stime = std::strtoull(tok, nullptr, 10);
+        break;
+      }
+    }
+    return utime + stime;
+  }
+
+  static void SetAffinity(int tid, uint64_t mask) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (int core = 0; core < 64; ++core) {
+      if (mask & (uint64_t(1) << core)) {
+        CPU_SET(core, &set);
+      }
+    }
+    sched_setaffinity(static_cast<pid_t>(tid), sizeof(set), &set);
+  }
+
+  void Run() {
+    pthread_setname_np(pthread_self(), "ThorHotPin");
+    const uint64_t reset_mask = ThorTopology::BigCoreMask();
+    const uint64_t prime_mask = uint64_t(1) << uint32_t(prime_core_);
+    std::unordered_map<int, uint64_t> prev;
+    int pinned_tid = -1;
+    while (running_.load(std::memory_order_relaxed)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms_));
+      if (!running_.load(std::memory_order_relaxed)) {
+        break;
+      }
+      DIR* dir = opendir("/proc/self/task");
+      if (!dir) {
+        continue;
+      }
+      std::unordered_map<int, uint64_t> cur;
+      int best_tid = -1;
+      uint64_t best_delta = 0;
+      uint64_t pinned_delta = 0;
+      for (struct dirent* ent = readdir(dir); ent; ent = readdir(dir)) {
+        if (ent->d_name[0] < '0' || ent->d_name[0] > '9') {
+          continue;
+        }
+        int tid = std::atoi(ent->d_name);
+        uint64_t ticks = ReadThreadTicks(tid);
+        cur[tid] = ticks;
+        auto it = prev.find(tid);
+        uint64_t delta =
+            (it != prev.end() && ticks >= it->second) ? ticks - it->second : 0;
+        if (delta > best_delta) {
+          best_delta = delta;
+          best_tid = tid;
+        }
+        if (tid == pinned_tid) {
+          pinned_delta = delta;
+        }
+      }
+      closedir(dir);
+      prev.swap(cur);
+      // Hysteresis: only migrate when the new candidate clearly beats the
+      // currently-pinned thread (avoid ping-pong between near-equal threads).
+      if (best_tid >= 0 && best_tid != pinned_tid &&
+          best_delta > pinned_delta + pinned_delta / 4 + 1) {
+        if (pinned_tid >= 0) {
+          SetAffinity(pinned_tid, reset_mask);
+        }
+        SetAffinity(best_tid, prime_mask);
+        pinned_tid = best_tid;
+      }
+    }
+    if (pinned_tid >= 0) {
+      SetAffinity(pinned_tid, reset_mask);
+    }
+  }
+
+  std::atomic<bool> running_{false};
+  std::thread thread_;
+  int prime_core_ = ThorTopology::kPrimeCore;
+  int interval_ms_ = 700;
+};
+
+HotThreadPinner* hot_thread_pinner() {
+  static HotThreadPinner pinner;
+  return &pinner;
+}
+#endif  // XE_PLATFORM_ANDROID
 
 std::atomic<int32_t> gpu_packet_trace_count{0};
 std::atomic<int32_t> gpu_interrupt_packet_trace_count{0};
@@ -417,6 +573,16 @@ bool CommandProcessor::Initialize() {
         uint64_t(1) << uint32_t(cvars::thor_gpu_thread_affinity_cpu));
   }
 
+#if XE_PLATFORM_ANDROID
+  // Thor dynamic hot-thread pin: keep whatever thread is busiest on the prime
+  // core. Supersedes the static pin above for CPU/sync-bound titles where the
+  // hot thread is a guest XThread, not the (fence-blocked) command worker.
+  if (cvars::thor_hot_thread_prime_core >= 0) {
+    hot_thread_pinner()->Start(cvars::thor_hot_thread_prime_core,
+                               cvars::thor_hot_thread_interval_ms);
+  }
+#endif  // XE_PLATFORM_ANDROID
+
   return true;
 }
 
@@ -424,6 +590,7 @@ void CommandProcessor::Shutdown() {
   EndTracing();
 
 #if XE_PLATFORM_ANDROID
+  hot_thread_pinner()->Stop();
   AdpfShutdown();
 #endif  // XE_PLATFORM_ANDROID
 
