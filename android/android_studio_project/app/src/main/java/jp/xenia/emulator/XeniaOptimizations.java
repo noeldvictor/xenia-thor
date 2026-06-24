@@ -685,6 +685,27 @@ public final class XeniaOptimizations {
                 CATEGORY_CPU, false, false,
                 new BoolCvar[]{new BoolCvar("kernel_object_handle_cache")}, null));
 
+        list.add(new Optimization(
+                "opt_native_object_fast_path",
+                "Lock-free event/wait resolve (experimental)",
+                "Skips the global kernel lock when resolving an event/timer/"
+                        + "semaphore that's already in use.",
+                "Every KeSetEvent / KeWaitForSingleObject the game makes resolves "
+                        + "its guest object to the host object under one global kernel "
+                        + "lock - even though, after the first use, the object's handle "
+                        + "is already recorded and never changes. On a multi-threaded "
+                        + "title all the guest threads serialize through that lock on "
+                        + "every event/wait, which is a large part of why the CPU can't "
+                        + "feed the GPU. This skips the lock on the already-initialized "
+                        + "path (the common case) and only locks on a brand-new object; "
+                        + "any race safely falls back to the locked path. Pairs with the "
+                        + "lock-free object-handle cache above to make a steady-state "
+                        + "event/wait fully lock-free. Helps CPU-bound, thread-heavy "
+                        + "titles; no effect on the GPU. Experimental - validate per "
+                        + "device.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("kernel_native_object_fast_path")}, null));
+
         ALL = Collections.unmodifiableList(list);
     }
 

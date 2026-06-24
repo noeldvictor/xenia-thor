@@ -13,6 +13,7 @@
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -25,6 +26,23 @@
 #include "xenia/kernel/xsemaphore.h"
 #include "xenia/kernel/xsymboliclink.h"
 #include "xenia/kernel/xthread.h"
+
+DEFINE_bool(
+    kernel_native_object_fast_path, false,
+    "Lock-free fast path for XObject::GetNativeObject - the kernel call that "
+    "resolves a guest dispatch struct (event/mutant/timer/semaphore) to its "
+    "host object on every KeSetEvent / KeWaitForSingleObject / KePulseEvent. "
+    "Today it takes the global critical-region lock UNCONDITIONALLY, even though "
+    "the lock only protects FIRST-USE initialization: once initialized, the "
+    "object's handle is published in the guest struct and never changes, so the "
+    "steady-state resolve is just a (lock-free, with kernel_object_handle_cache) "
+    "handle lookup. This skips the outer lock on the already-initialized path - "
+    "the dominant case on a multi-threaded title - and only locks on first use. "
+    "Correctness: any race (handle not yet visible, or a stale value) makes the "
+    "lookup miss and falls through to the locked path. Pairs with "
+    "kernel_object_handle_cache (which removes the inner lock) to make a "
+    "steady-state event/wait resolve fully lock-free. Default off; A/B per title.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -373,9 +391,28 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
   // We identify this by setting wait_list_flink to a magic value. When set,
   // wait_list_blink will hold a handle to our object.
 
-  auto global_lock = xe::global_critical_region::AcquireDirect();
-
   auto header = reinterpret_cast<X_DISPATCH_HEADER*>(native_ptr);
+
+  // Lock-free fast path (kernel_native_object_fast_path): once an object has
+  // been initialized on first use, its handle is published in the guest
+  // dispatch header (wait_list_flink == kXObjSignature, handle in
+  // wait_list_blink) and never changes. Resolving it then needs no lock - the
+  // global critical region below only protects the first-use INITIALIZATION,
+  // not the steady-state read (which the lock-free handle cache already serves).
+  // This removes the unconditional global-lock acquire that every steady-state
+  // KeSetEvent / KeWaitForSingleObject pays. Any race (signature published
+  // before the handle store is visible, or a stale value) makes LookupObject
+  // miss -> we fall through to the locked path, so correctness is preserved.
+  if (cvars::kernel_native_object_fast_path &&
+      header->wait_list_flink == kXObjSignature) {
+    uint32_t handle = header->wait_list_blink;
+    auto object = kernel_state->object_table()->LookupObject<XObject>(handle);
+    if (object) {
+      return object;
+    }
+  }
+
+  auto global_lock = xe::global_critical_region::AcquireDirect();
 
   if (as_type == -1) {
     as_type = header->type;
