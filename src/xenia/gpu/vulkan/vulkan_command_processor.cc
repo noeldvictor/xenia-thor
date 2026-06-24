@@ -806,17 +806,27 @@ bool VulkanCommandProcessor::SetupContext() {
   }
 
   // Shared memory and EDRAM common bindings.
+  // gpu_shared_memory_double_buffer: when the shared memory reports two
+  // host-visible versions, allocate a SECOND identical descriptor set whose
+  // binding 0 points at version 1, so each draw can bind the set matching the
+  // version the GPU currently reads. The pool then needs room for 2 sets and 2x
+  // the per-set descriptors. When off, this is exactly the single-set pool.
+  const bool shared_memory_double_buffer_active =
+      shared_memory_->double_buffer_active();
+  const uint32_t shared_memory_descriptor_set_count =
+      shared_memory_double_buffer_active ? 2u : 1u;
   VkDescriptorPoolSize descriptor_pool_sizes[1];
   descriptor_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   descriptor_pool_sizes[0].descriptorCount =
-      shared_memory_binding_count + uint32_t(edram_fragment_shader_interlock) +
-      uint32_t(cvars::gpu_binning_deinterleave_pos);
+      (shared_memory_binding_count + uint32_t(edram_fragment_shader_interlock) +
+       uint32_t(cvars::gpu_binning_deinterleave_pos)) *
+      shared_memory_descriptor_set_count;
   VkDescriptorPoolCreateInfo descriptor_pool_create_info;
   descriptor_pool_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   descriptor_pool_create_info.pNext = nullptr;
   descriptor_pool_create_info.flags = 0;
-  descriptor_pool_create_info.maxSets = 1;
+  descriptor_pool_create_info.maxSets = shared_memory_descriptor_set_count;
   descriptor_pool_create_info.poolSizeCount = 1;
   descriptor_pool_create_info.pPoolSizes = descriptor_pool_sizes;
   if (dfn.vkCreateDescriptorPool(device, &descriptor_pool_create_info, nullptr,
@@ -927,6 +937,60 @@ bool VulkanCommandProcessor::SetupContext() {
   }
   dfn.vkUpdateDescriptorSets(device, shared_memory_and_edram_write_count,
                              write_descriptor_sets, 0, nullptr);
+
+  // gpu_shared_memory_double_buffer: allocate + write the version-1 descriptor
+  // set. It is IDENTICAL to the version-0 set above except binding 0 (the shared
+  // memory storage buffer) points at shared memory version 1; the EDRAM and
+  // compact-position bindings (if any) reference the same buffers as version 0.
+  // The current version's set is selected per draw at bind time. On any failure
+  // here, fall back to single-buffer behavior by leaving the v1 set null (the
+  // shared memory will simply never switch off version 0 in practice - but to be
+  // safe the bind path treats a null v1 set as "use version 0").
+  if (shared_memory_double_buffer_active) {
+    VkDescriptorSetAllocateInfo v1_allocate_info;
+    v1_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    v1_allocate_info.pNext = nullptr;
+    v1_allocate_info.descriptorPool = shared_memory_and_edram_descriptor_pool_;
+    v1_allocate_info.descriptorSetCount = 1;
+    v1_allocate_info.pSetLayouts = &descriptor_set_layout_shared_memory_and_edram_;
+    if (dfn.vkAllocateDescriptorSets(
+            device, &v1_allocate_info,
+            &shared_memory_and_edram_descriptor_set_v1_) != VK_SUCCESS) {
+      XELOGW(
+          "gpu_shared_memory_double_buffer: failed to allocate the version-1 "
+          "shared memory descriptor set; double-buffer bind will fall back to "
+          "version 0");
+      shared_memory_and_edram_descriptor_set_v1_ = VK_NULL_HANDLE;
+    } else {
+      // Binding 0 buffer infos -> shared memory version 1.
+      VkDescriptorBufferInfo
+          v1_shared_memory_descriptor_buffers_info[SharedMemory::kBufferSize /
+                                                   (128 << 20)];
+      for (uint32_t i = 0; i < shared_memory_binding_count; ++i) {
+        VkDescriptorBufferInfo& info = v1_shared_memory_descriptor_buffers_info[i];
+        info.buffer = shared_memory_->buffer_version(1);
+        info.offset = shared_memory_binding_range * i;
+        info.range = shared_memory_binding_range;
+      }
+      // Reuse the version-0 write structs, just redirect dstSet + binding-0
+      // buffer info. The edram/compact-pos pBufferInfo already point at the same
+      // (version-independent) buffers, so only their dstSet needs to change.
+      write_descriptor_set_shared_memory.dstSet =
+          shared_memory_and_edram_descriptor_set_v1_;
+      write_descriptor_set_shared_memory.pBufferInfo =
+          v1_shared_memory_descriptor_buffers_info;
+      if (edram_fragment_shader_interlock) {
+        write_descriptor_sets[1].dstSet =
+            shared_memory_and_edram_descriptor_set_v1_;
+      }
+      if (cvars::gpu_binning_deinterleave_pos) {
+        write_descriptor_sets[shared_memory_and_edram_write_count - 1].dstSet =
+            shared_memory_and_edram_descriptor_set_v1_;
+      }
+      dfn.vkUpdateDescriptorSets(device, shared_memory_and_edram_write_count,
+                                 write_descriptor_sets, 0, nullptr);
+    }
+  }
 
   // Swap objects.
 
@@ -1566,6 +1630,10 @@ void VulkanCommandProcessor::ShutdownContext() {
   ui::vulkan::util::DestroyAndNullHandle(
       dfn.vkDestroyDescriptorPool, device,
       shared_memory_and_edram_descriptor_pool_);
+  // gpu_shared_memory_double_buffer: the version-1 set is freed implicitly with
+  // the pool above; just drop the handle and the cached bound version.
+  shared_memory_and_edram_descriptor_set_v1_ = VK_NULL_HANDLE;
+  shared_memory_descriptor_set_bound_version_ = 0;
   // R2: the dynamic constants set is freed implicitly with its pool.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
                                          constants_dynamic_descriptor_pool_);
@@ -5219,6 +5287,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     request_range_hoisted_lock.unlock();
   }
 
+  // gpu_shared_memory_double_buffer: the RequestRange uploads above may have
+  // switched the shared-memory version the GPU reads (MaybeSwitchVersionForWrite
+  // in the direct path). The shared-memory-and-EDRAM descriptor set was bound by
+  // UpdateBindings BEFORE those uploads, so it may now point at the wrong
+  // version. Re-point it to the current version and, since this draw is about to
+  // be recorded, immediately re-bind it so this draw's vfetch/index reads hit the
+  // version the new data was written into. No-op (and byte-identical) when off.
+  if (shared_memory_->double_buffer_active()) {
+    UpdateSharedMemoryDescriptorSetForCurrentVersion();
+    constexpr uint32_t kSharedMemorySet =
+        uint32_t(SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram);
+    if (current_guest_graphics_pipeline_layout_ != nullptr &&
+        !(current_graphics_descriptor_sets_bound_up_to_date_ &
+          (UINT32_C(1) << kSharedMemorySet))) {
+      deferred_command_buffer_.CmdVkBindDescriptorSets(
+          VK_PIPELINE_BIND_POINT_GRAPHICS,
+          current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
+          kSharedMemorySet, 1,
+          current_graphics_descriptor_sets_ + kSharedMemorySet, 0, nullptr);
+      current_graphics_descriptor_sets_bound_up_to_date_ |=
+          UINT32_C(1) << kSharedMemorySet;
+    }
+  }
+
   // Insert the shared memory barrier if needed.
   // TODO(Triang3l): Find some PM4 command that can be used for indication of
   // when memexports should be awaited instead of inserting the barrier in Use
@@ -6942,9 +7034,22 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     std::memset(current_graphics_descriptor_sets_, 0,
                 sizeof(current_graphics_descriptor_sets_));
     current_constant_buffers_up_to_date_ = 0;
-    current_graphics_descriptor_sets_
-        [SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram] =
-            shared_memory_and_edram_descriptor_set_;
+    // gpu_shared_memory_double_buffer: bind the descriptor set for the version
+    // the GPU currently reads. When off this is exactly
+    // shared_memory_and_edram_descriptor_set_ (version 0).
+    {
+      const uint32_t shared_memory_version =
+          shared_memory_->double_buffer_active()
+              ? shared_memory_->current_version()
+              : 0u;
+      current_graphics_descriptor_sets_
+          [SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram] =
+              (shared_memory_version == 1 &&
+               shared_memory_and_edram_descriptor_set_v1_ != VK_NULL_HANDLE)
+                  ? shared_memory_and_edram_descriptor_set_v1_
+                  : shared_memory_and_edram_descriptor_set_;
+      shared_memory_descriptor_set_bound_version_ = shared_memory_version;
+    }
     current_graphics_descriptor_set_values_up_to_date_ =
         UINT32_C(1)
         << SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram;
@@ -8368,6 +8473,32 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
     current_constant_buffers_up_to_date_ &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferSystem);
   }
+}
+
+void VulkanCommandProcessor::UpdateSharedMemoryDescriptorSetForCurrentVersion() {
+  // gpu_shared_memory_double_buffer: no-op (and byte-identical) when off.
+  if (!shared_memory_->double_buffer_active()) {
+    return;
+  }
+  const uint32_t version = shared_memory_->current_version();
+  if (version == shared_memory_descriptor_set_bound_version_) {
+    return;
+  }
+  // The shared memory switched versions - point the cached set at the version
+  // the GPU now reads (fall back to version 0's set if the v1 set could not be
+  // allocated) and invalidate it so the next bind re-records it.
+  VkDescriptorSet set =
+      (version == 1 &&
+       shared_memory_and_edram_descriptor_set_v1_ != VK_NULL_HANDLE)
+          ? shared_memory_and_edram_descriptor_set_v1_
+          : shared_memory_and_edram_descriptor_set_;
+  current_graphics_descriptor_sets_
+      [SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram] = set;
+  current_graphics_descriptor_set_values_up_to_date_ |=
+      UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram;
+  current_graphics_descriptor_sets_bound_up_to_date_ &=
+      ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram);
+  shared_memory_descriptor_set_bound_version_ = version;
 }
 
 bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,

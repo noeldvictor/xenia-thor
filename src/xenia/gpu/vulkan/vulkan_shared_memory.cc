@@ -85,6 +85,19 @@ DEFINE_bool(
     "Tests whether the intermittent GPU MMU fault is a coherency/visibility gap "
     "the desktop path never hit. No effect unless gpu_uma_direct_shared_memory.",
     "Vulkan");
+DEFINE_bool(
+    gpu_shared_memory_double_buffer, false,
+    "Adreno UMA double-buffer (race-free zero-staging shared memory). Keeps TWO "
+    "HOST_VISIBLE|DEVICE_LOCAL persistently-mapped 512 MB versions of the shared "
+    "buffer and writes guest pages into the version the GPU is NOT currently "
+    "reading, switching versions on contention so a CPU upload never overwrites "
+    "pages an in-flight deferred-tiler draw is still reading - fixing the "
+    "gpu_uma_direct_shared_memory TDR hang without the serializing smart-sync "
+    "wait. The off-version is brought current on switch by a GPU-side copy of the "
+    "stale ranges (no extra CPU). Requires gpu_uma_direct_shared_memory; "
+    "default-off, validate rendering per title on device. Doubles shared-memory "
+    "VRAM (1 GB, trivial on the 16 GB UMA Thor).",
+    "Vulkan");
 
 namespace xe {
 namespace gpu {
@@ -286,6 +299,109 @@ bool VulkanSharedMemory::Initialize() {
         return false;
       }
     }
+
+    // Double-buffer (gpu_shared_memory_double_buffer): allocate a SECOND
+    // host-visible|device-local persistently-mapped 512 MB buffer (version 1).
+    // version 0 is buffer_ / buffer_host_mapping_ created above. On contention
+    // the CP writes the version the GPU is NOT reading, so a direct CPU upload
+    // never overwrites pages an in-flight deferred-tiler draw is still reading.
+    // Correctness over the optimization: any failure here logs, frees the
+    // partial version-1 resources, and leaves double_buffer_enabled_ = false
+    // (the existing single-buffer path is then byte-identical).
+    if (cvars::gpu_shared_memory_double_buffer && buffer_host_visible_ &&
+        buffer_host_mapping_) {
+      bool version1_ok = true;
+      // Same buffer as version 0 - non-sparse (the sparse flags were already
+      // cleared above for the non-sparse buffer), same usage.
+      VkBufferCreateInfo version1_buffer_create_info = buffer_create_info;
+      version1_buffer_create_info.flags &= ~sparse_flags;
+      if (dfn.vkCreateBuffer(device, &version1_buffer_create_info, nullptr,
+                             &buffer_version1_) != VK_SUCCESS) {
+        XELOGW(
+            "Shared memory: gpu_shared_memory_double_buffer: failed to create "
+            "the version-1 buffer; falling back to single-buffer direct path");
+        buffer_version1_ = VK_NULL_HANDLE;
+        version1_ok = false;
+      }
+      if (version1_ok) {
+        // Mirror version 0's memory type (the HOST_VISIBLE|DEVICE_LOCAL type
+        // selected above). Allocate kBufferSize, not the version-1 buffer's
+        // reported size, to match version 0's persistent mapping.
+        VkMemoryAllocateInfo version1_allocate_info;
+        VkMemoryAllocateInfo* version1_allocate_info_last =
+            &version1_allocate_info;
+        version1_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        version1_allocate_info.pNext = nullptr;
+        version1_allocate_info.allocationSize = kBufferSize;
+        version1_allocate_info.memoryTypeIndex = buffer_memory_type_;
+        VkMemoryDedicatedAllocateInfo version1_dedicated_allocate_info;
+        if (vulkan_device->extensions().ext_1_1_KHR_dedicated_allocation) {
+          version1_allocate_info_last->pNext =
+              &version1_dedicated_allocate_info;
+          version1_allocate_info_last =
+              reinterpret_cast<VkMemoryAllocateInfo*>(
+                  &version1_dedicated_allocate_info);
+          version1_dedicated_allocate_info.sType =
+              VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+          version1_dedicated_allocate_info.pNext = nullptr;
+          version1_dedicated_allocate_info.image = VK_NULL_HANDLE;
+          version1_dedicated_allocate_info.buffer = buffer_version1_;
+        }
+        if (dfn.vkAllocateMemory(device, &version1_allocate_info, nullptr,
+                                 &buffer_version1_memory_) != VK_SUCCESS) {
+          XELOGW(
+              "Shared memory: gpu_shared_memory_double_buffer: failed to "
+              "allocate version-1 memory; falling back to single-buffer");
+          buffer_version1_memory_ = VK_NULL_HANDLE;
+          version1_ok = false;
+        }
+      }
+      if (version1_ok &&
+          dfn.vkBindBufferMemory(device, buffer_version1_,
+                                 buffer_version1_memory_, 0) != VK_SUCCESS) {
+        XELOGW(
+            "Shared memory: gpu_shared_memory_double_buffer: failed to bind "
+            "version-1 memory; falling back to single-buffer");
+        version1_ok = false;
+      }
+      if (version1_ok &&
+          dfn.vkMapMemory(device, buffer_version1_memory_, 0, VK_WHOLE_SIZE, 0,
+                          &buffer_version1_mapping_) != VK_SUCCESS) {
+        XELOGW(
+            "Shared memory: gpu_shared_memory_double_buffer: failed to map "
+            "version-1 memory; falling back to single-buffer");
+        buffer_version1_mapping_ = nullptr;
+        version1_ok = false;
+      }
+      if (version1_ok) {
+        const uint32_t page_count = kBufferSize >> page_size_log2();
+        const size_t stale_words = (page_count + 63) / 64;
+        for (uint32_t v = 0; v < kVersionCount; ++v) {
+          version_stale_bits_[v].assign(stale_words, uint64_t(0));
+        }
+        double_buffer_enabled_ = true;
+        current_version_ = 0;
+        XELOGGPU(
+            "Shared memory: gpu_shared_memory_double_buffer active (two {} MB "
+            "host-visible versions, memory type {})",
+            kBufferSize >> 20, buffer_memory_type_);
+      } else {
+        // Free any partial version-1 resources; stay single-buffer.
+        if (buffer_version1_mapping_) {
+          // vkFreeMemory below implicitly unmaps.
+          buffer_version1_mapping_ = nullptr;
+        }
+        if (buffer_version1_memory_ != VK_NULL_HANDLE) {
+          dfn.vkFreeMemory(device, buffer_version1_memory_, nullptr);
+          buffer_version1_memory_ = VK_NULL_HANDLE;
+        }
+        if (buffer_version1_ != VK_NULL_HANDLE) {
+          dfn.vkDestroyBuffer(device, buffer_version1_, nullptr);
+          buffer_version1_ = VK_NULL_HANDLE;
+        }
+        double_buffer_enabled_ = false;
+      }
+    }
   }
 
   // The first usage will likely be uploading.
@@ -315,6 +431,21 @@ void VulkanSharedMemory::Shutdown(bool from_destructor) {
   buffer_host_mapping_ = nullptr;
   buffer_host_visible_ = false;
   buffer_host_coherent_ = false;
+  // Double-buffer version 1 (gpu_shared_memory_double_buffer).
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyBuffer, device,
+                                         buffer_version1_);
+  // vkFreeMemory implicitly unmaps the persistent mapping.
+  buffer_version1_mapping_ = nullptr;
+  if (buffer_version1_memory_ != VK_NULL_HANDLE) {
+    dfn.vkFreeMemory(device, buffer_version1_memory_, nullptr);
+    buffer_version1_memory_ = VK_NULL_HANDLE;
+  }
+  double_buffer_enabled_ = false;
+  current_version_ = 0;
+  for (uint32_t v = 0; v < kVersionCount; ++v) {
+    version_stale_bits_[v].clear();
+    version_last_read_submission_[v] = 0;
+  }
   for (VkDeviceMemory memory : buffer_memory_) {
     dfn.vkFreeMemory(device, memory, nullptr);
   }
@@ -352,11 +483,32 @@ void VulkanSharedMemory::Use(Usage usage,
         command_processor_.GetCurrentSubmission();
     if (usage == Usage::kRead || usage == Usage::kGuestDrawReadWrite) {
       uma_last_read_submission_ = current_submission;
+      // Double-buffer: record that the GPU reads the CURRENT version in this
+      // submission, so MaybeSwitchVersionForWrite knows the version has an
+      // in-flight reader and must not be overwritten in place.
+      MarkVersionRead(current_submission);
     }
     if (usage == Usage::kComputeWrite ||
         usage == Usage::kTransferDestination ||
         usage == Usage::kGuestDrawReadWrite) {
       uma_last_write_submission_ = current_submission;
+      // Double-buffer: a GPU write of guest data (EDRAM->shared resolve =
+      // kComputeWrite, memexport = kGuestDrawReadWrite, transfer dest) lands ONLY
+      // in the current version (its barrier/descriptor targets current_buffer()).
+      // Mark those pages stale in the OTHER version so a later version switch
+      // GPU-copies them current too - otherwise a switch would expose a version
+      // missing the resolved/exported data. CPU uploads do this per-range in
+      // UploadRangesDirect; this covers the GPU-write paths that bypass it.
+      if (double_buffer_enabled_ && written_range.second) {
+        const uint32_t page_size_log2_local = page_size_log2();
+        const uint32_t page_first = written_range.first >> page_size_log2_local;
+        const uint32_t page_end =
+            (written_range.first + written_range.second +
+             ((uint32_t(1) << page_size_log2_local) - 1)) >>
+            page_size_log2_local;
+        SetPageStaleInOtherVersions(page_first, page_end - page_first,
+                                    current_version_);
+      }
     }
   }
   if (last_usage_ != usage || last_written_range_.second) {
@@ -378,10 +530,12 @@ void VulkanSharedMemory::Use(Usage usage,
       size = VK_WHOLE_SIZE;
       last_usage_ = usage;
     }
+    // Double-buffer: barrier the version the GPU currently reads (current_buffer
+    // == buffer_ when double-buffering is off, so this is unchanged then).
     command_processor_.PushBufferMemoryBarrier(
-        buffer_, offset, size, src_stage_mask, dst_stage_mask, src_access_mask,
-        dst_access_mask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
-        false);
+        current_buffer(), offset, size, src_stage_mask, dst_stage_mask,
+        src_access_mask, dst_access_mask, VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED, false);
   }
   last_written_range_ = written_range;
 }
@@ -607,9 +761,21 @@ bool VulkanSharedMemory::UploadRangesDirect(
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
-  uint8_t* const buffer_mapping =
-      reinterpret_cast<uint8_t*>(buffer_host_mapping_);
   const uint32_t page_size_log2_local = page_size_log2();
+
+  // Double-buffer (gpu_shared_memory_double_buffer): if the version the GPU is
+  // currently reading has an in-flight reader, switch to the free version (GPU-
+  // copying its stale ranges current first) BEFORE writing, so this CPU upload
+  // never overwrites pages an in-flight deferred-tiler draw is still reading.
+  // Done once per UploadRangesDirect, before the writes below. May change
+  // current_version_, so buffer_mapping / current_buffer() are read after it.
+  if (double_buffer_enabled_) {
+    MaybeSwitchVersionForWrite();
+  }
+  // Write into the version the GPU currently reads (== buffer_host_mapping_ when
+  // double-buffering is off, so this is byte-identical then).
+  uint8_t* const buffer_mapping =
+      reinterpret_cast<uint8_t*>(current_buffer_mapping());
 
   // Adreno is a tile-based DEFERRED renderer: vertex/index buffer reads happen
   // during binning + per-tile passes that execute long after a draw is recorded
@@ -629,7 +795,13 @@ bool VulkanSharedMemory::UploadRangesDirect(
   // (direct_last_read_submission_ was a single scalar clobbered to the open
   // submission by every Use(kRead), so the previous "< current" guard never
   // fired - it was effectively dead. Replaced by this explicit experiment.)
-  if (cvars::gpu_uma_serialize_before_write) {
+  //
+  // Double-buffer: the version switch above already guarantees we are NOT
+  // overwriting a version with an in-flight reader, so the serializing waits are
+  // unnecessary (and would re-introduce the very stall double-buffering removes).
+  // Skip them entirely when double_buffer_enabled_; otherwise the existing
+  // single-buffer waits are byte-identical.
+  if (!double_buffer_enabled_ && cvars::gpu_uma_serialize_before_write) {
     const uint64_t current_submission =
         command_processor_.GetCurrentSubmission();
     if (current_submission > 1 &&
@@ -637,7 +809,7 @@ bool VulkanSharedMemory::UploadRangesDirect(
       // Wait for everything submitted so far (current_submission - 1) to drain.
       command_processor_.AwaitSubmissionCompletion(current_submission - 1);
     }
-  } else if (cvars::gpu_uma_smart_sync) {
+  } else if (!double_buffer_enabled_ && cvars::gpu_uma_smart_sync) {
     // TDR FIX: wait ONLY for the last submission that read this buffer, and only
     // if it is a PRIOR (already-closed) submission that has not yet completed.
     // GetCurrentSubmission() is the still-OPEN submission being recorded now -
@@ -680,6 +852,12 @@ bool VulkanSharedMemory::UploadRangesDirect(
                 memory().TranslatePhysical(start_byte), length_bytes);
     ui::vulkan::VulkanPerfCountersRecordSharedMemoryDirectWrite(
         uint64_t(length_bytes));
+    // Double-buffer: these pages are now fresh ONLY in the current version; mark
+    // them stale in the other version so a later switch GPU-copies them current.
+    if (double_buffer_enabled_) {
+      SetPageStaleInOtherVersions(upload_range.first, upload_range.second,
+                                  current_version_);
+    }
   }
 
   // Make the host writes visible to the device. Flushing the whole buffer
@@ -692,7 +870,11 @@ bool VulkanSharedMemory::UploadRangesDirect(
     VkMappedMemoryRange flush_range;
     flush_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
     flush_range.pNext = nullptr;
-    flush_range.memory = buffer_memory_.front();
+    // Double-buffer: flush the version we just wrote (version 1 has its own
+    // memory; version 0 == buffer_memory_.front(), so this is unchanged off).
+    flush_range.memory = (double_buffer_enabled_ && current_version_ == 1)
+                             ? buffer_version1_memory_
+                             : buffer_memory_.front();
     flush_range.offset = 0;
     flush_range.size = VK_WHOLE_SIZE;
     dfn.vkFlushMappedMemoryRanges(device, 1, &flush_range);
@@ -703,15 +885,17 @@ bool VulkanSharedMemory::UploadRangesDirect(
   // EXPERIMENT (b): gpu_uma_strong_coherency widens this to the WHOLE buffer
   // with ALL_COMMANDS / MEMORY_READ, in case the span-bounded HOST->read barrier
   // under-covers what the deferred tiler actually reads (and when).
+  // Double-buffer: barrier the version we wrote (current_buffer() == buffer_
+  // when double-buffering is off, so these are byte-identical then).
   if (cvars::gpu_uma_strong_coherency) {
     command_processor_.PushBufferMemoryBarrier(
-        buffer_, 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_HOST_BIT,
+        current_buffer(), 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_HOST_WRITE_BIT,
         VK_ACCESS_MEMORY_READ_BIT);
   } else {
     command_processor_.PushBufferMemoryBarrier(
-        buffer_, barrier_first_byte, barrier_end_byte - barrier_first_byte,
-        VK_PIPELINE_STAGE_HOST_BIT,
+        current_buffer(), barrier_first_byte,
+        barrier_end_byte - barrier_first_byte, VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | guest_shader_pipeline_stages_,
         VK_ACCESS_HOST_WRITE_BIT,
         VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
@@ -721,6 +905,123 @@ bool VulkanSharedMemory::UploadRangesDirect(
   last_written_range_ = std::make_pair(uint32_t(0), uint32_t(0));
 
   return true;
+}
+
+void VulkanSharedMemory::MarkVersionRead(uint64_t submission) {
+  if (!double_buffer_enabled_) {
+    return;
+  }
+  version_last_read_submission_[current_version_] = submission;
+}
+
+void VulkanSharedMemory::SetPageStaleInOtherVersions(uint32_t page_first,
+                                                     uint32_t page_count,
+                                                     uint32_t fresh_version) {
+  for (uint32_t v = 0; v < kVersionCount; ++v) {
+    if (v == fresh_version) {
+      continue;
+    }
+    for (uint32_t p = page_first; p < page_first + page_count; ++p) {
+      version_stale_bits_[v][p >> 6] |= (uint64_t(1) << (p & 63));
+    }
+  }
+}
+
+void VulkanSharedMemory::MaybeSwitchVersionForWrite() {
+  if (!double_buffer_enabled_) {
+    return;
+  }
+  const uint64_t completed = command_processor_.GetCompletedSubmission();
+  const uint64_t current_open = command_processor_.GetCurrentSubmission();
+  const uint32_t cur = current_version_;
+  // Contended ONLY if a PRIOR, already-CLOSED submission is still reading the
+  // current version (completed < reader < current_open). A read recorded in the
+  // still-open current submission is NOT a race - our in-place write here is
+  // ordered before that submission executes by the host->device barrier - so it
+  // must not force a switch (that would thrash + self-stall every submission).
+  // Mirrors gpu_uma_smart_sync's "wait_submission < current_submission" guard.
+  auto version_has_closed_inflight_reader = [&](uint32_t v) {
+    const uint64_t reader = version_last_read_submission_[v];
+    return reader > completed && reader < current_open;
+  };
+  if (!version_has_closed_inflight_reader(cur)) {
+    return;
+  }
+  // The current version is being read by a closed in-flight submission - switch
+  // to the other version so we don't overwrite pages it is still reading.
+  const uint32_t other = cur ^ 1u;
+  // If the OTHER version is ALSO read by a closed in-flight submission, we can't
+  // safely switch to it either - fall back to waiting for the current version's
+  // reader (correctness; rare). After the wait the current version is safe to
+  // overwrite in place; keep using it.
+  if (version_has_closed_inflight_reader(other)) {
+    command_processor_.AwaitSubmissionCompletion(
+        version_last_read_submission_[cur]);
+    return;
+  }
+
+  // Bring the OTHER version current by GPU-copying its stale ranges from the
+  // current (up-to-date) version, then make it the new current version.
+  const uint32_t page_size_log2_local = page_size_log2();
+  const uint32_t page_count = kBufferSize >> page_size_log2_local;
+  std::vector<uint64_t>& other_stale = version_stale_bits_[other];
+
+  // Coalesce contiguous stale pages of `other` into byte ranges for the copy
+  // (one VkBufferCopy per contiguous run, not one per page).
+  std::vector<VkBufferCopy> copy_regions;
+  uint32_t run_first_page = 0;
+  bool in_run = false;
+  for (uint32_t p = 0; p < page_count; ++p) {
+    const bool stale =
+        (other_stale[p >> 6] & (uint64_t(1) << (p & 63))) != 0;
+    if (stale && !in_run) {
+      run_first_page = p;
+      in_run = true;
+    } else if (!stale && in_run) {
+      VkBufferCopy& region = copy_regions.emplace_back();
+      region.srcOffset = VkDeviceSize(run_first_page) << page_size_log2_local;
+      region.dstOffset = region.srcOffset;
+      region.size = VkDeviceSize(p - run_first_page) << page_size_log2_local;
+      in_run = false;
+    }
+  }
+  if (in_run) {
+    VkBufferCopy& region = copy_regions.emplace_back();
+    region.srcOffset = VkDeviceSize(run_first_page) << page_size_log2_local;
+    region.dstOffset = region.srcOffset;
+    region.size = VkDeviceSize(page_count - run_first_page)
+                  << page_size_log2_local;
+  }
+
+  if (!copy_regions.empty()) {
+    // Make prior CPU (host) writes to the SOURCE (current) version visible to
+    // the transfer read. The host-visible-device-local writes happened via the
+    // persistent mapping with no command-buffer ordering, so without this the
+    // copy could read stale source bytes.
+    command_processor_.PushBufferMemoryBarrier(
+        buffer_for_version(cur), 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT);
+    // Submit the pre-copy barrier so it is ordered before the copy commands.
+    command_processor_.SubmitBarriers(false);
+    command_processor_.deferred_command_buffer().CmdVkCopyBuffer(
+        buffer_for_version(cur), buffer_for_version(other),
+        uint32_t(copy_regions.size()), copy_regions.data());
+    // Make the copy (TRANSFER_WRITE into `other`) available + visible to the
+    // subsequent guest reads of `other` (index/vfetch/shader-storage). This is
+    // queued and flushed by the draw flow's SubmitBarriers before the draw, like
+    // the Use()/UploadRangesDirect host->read barriers.
+    command_processor_.PushBufferMemoryBarrier(
+        buffer_for_version(other), 0, VK_WHOLE_SIZE,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | guest_shader_pipeline_stages_,
+        VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+  }
+
+  // `other` is now fully current; clear its staleness and switch to it.
+  std::fill(other_stale.begin(), other_stale.end(), uint64_t(0));
+  current_version_ = other;
 }
 
 void VulkanSharedMemory::GetUsageMasks(Usage usage,

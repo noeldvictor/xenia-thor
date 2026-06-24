@@ -214,6 +214,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_vd_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_direct_shared_memory");
+            copyBooleanExtra(intent, launchArguments, "gpu_shared_memory_double_buffer");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_serialize_before_write");
             copyBooleanExtra(intent, launchArguments, "gpu_uma_strong_coherency");
             copyBooleanExtra(intent, launchArguments, "gpu_adpf_performance_hints");

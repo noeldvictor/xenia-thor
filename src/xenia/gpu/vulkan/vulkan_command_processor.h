@@ -739,6 +739,23 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   VkDescriptorPool shared_memory_and_edram_descriptor_pool_ = VK_NULL_HANDLE;
   VkDescriptorSet shared_memory_and_edram_descriptor_set_;
+  // gpu_shared_memory_double_buffer: a SECOND shared-memory-and-EDRAM descriptor
+  // set whose binding 0 points at shared-memory version 1 (the set above points
+  // at version 0). Only allocated + written when the shared memory reports
+  // double-buffering active; VK_NULL_HANDLE (and unused) otherwise. The current
+  // version's set is selected per frame / on version switch.
+  VkDescriptorSet shared_memory_and_edram_descriptor_set_v1_ = VK_NULL_HANDLE;
+  // Which shared-memory version's descriptor set is currently cached in
+  // current_graphics_descriptor_sets_[kDescriptorSetSharedMemoryAndEdram]. Used
+  // to detect a mid-frame version switch and re-point + re-bind the set.
+  uint32_t shared_memory_descriptor_set_bound_version_ = 0;
+  // Returns the cached descriptor set for the shared memory version the GPU
+  // currently reads (version 0's set if double-buffering is off or the v1 set is
+  // unavailable). When the version differs from
+  // shared_memory_descriptor_set_bound_version_, re-points
+  // current_graphics_descriptor_sets_[kDescriptorSetSharedMemoryAndEdram] and
+  // clears its bound/value up-to-date bits so the next draw rebinds it.
+  void UpdateSharedMemoryDescriptorSetForCurrentVersion();
 
   // Bytes 0x0...0x3FF - 256-entry gamma ramp table with B10G10R10X2 data (read
   // as R10G10B10X2 with swizzle).

@@ -51,7 +51,16 @@ class VulkanSharedMemory : public SharedMemory {
   // read-write accesses are ordered with each other.
   void Use(Usage usage, std::pair<uint32_t, uint32_t> written_range = {});
 
-  VkBuffer buffer() const { return buffer_; }
+  VkBuffer buffer() const {
+    return (double_buffer_enabled_ && current_version_ == 1) ? buffer_version1_
+                                                             : buffer_;
+  }
+
+  // Double-buffer (gpu_shared_memory_double_buffer) public accessors for the
+  // command processor's per-version cached descriptor sets.
+  bool double_buffer_active() const { return double_buffer_enabled_; }
+  uint32_t current_version() const { return current_version_; }
+  VkBuffer buffer_version(uint32_t v) const { return buffer_for_version(v); }
 
   // Returns true if any downloads were submitted to the command processor.
   bool InitializeTraceSubmitDownloads();
@@ -85,6 +94,48 @@ class VulkanSharedMemory : public SharedMemory {
   bool buffer_host_visible_ = false;
   bool buffer_host_coherent_ = false;
   void* buffer_host_mapping_ = nullptr;
+
+  // Double-buffer (gpu_shared_memory_double_buffer): two host-visible versions
+  // of the buffer. version 0 is the existing buffer_ / buffer_host_mapping_;
+  // version 1 is below. current_version_ is the one the GPU reads + CP writes.
+  static constexpr uint32_t kVersionCount = 2;
+  bool double_buffer_enabled_ = false;
+  uint32_t current_version_ = 0;
+  VkBuffer buffer_version1_ = VK_NULL_HANDLE;
+  VkDeviceMemory buffer_version1_memory_ = VK_NULL_HANDLE;
+  void* buffer_version1_mapping_ = nullptr;
+  // Per-version page staleness: bit set = that page was written to the OTHER
+  // version since this version was last current, so this version is behind on it
+  // and must be re-synced (GPU copy from the current version) before the GPU
+  // reads it here. Indexed [version][page]. Sized to the page count.
+  std::vector<uint64_t> version_stale_bits_[kVersionCount];
+  // Submission in which each version was last READ by the GPU (for contention).
+  uint64_t version_last_read_submission_[kVersionCount] = {0, 0};
+
+  // The buffer the GPU currently reads / the CP currently writes (== buffer_ +
+  // buffer_host_mapping_ for version 0). When double-buffering is off these
+  // always return buffer_ / buffer_host_mapping_.
+  VkBuffer current_buffer() const {
+    return (double_buffer_enabled_ && current_version_ == 1) ? buffer_version1_
+                                                             : buffer_;
+  }
+  void* current_buffer_mapping() const {
+    return (double_buffer_enabled_ && current_version_ == 1)
+               ? buffer_version1_mapping_
+               : buffer_host_mapping_;
+  }
+  VkBuffer buffer_for_version(uint32_t v) const {
+    return v == 1 ? buffer_version1_ : buffer_;
+  }
+  // Switches to a free version if the current one has an in-flight reader and we
+  // are about to overwrite it; GPU-copies the new version's stale ranges from the
+  // old current version first. Call at submission begin (from EndSubmission of
+  // the prior submission is wrong; call it lazily before the first direct write
+  // of a submission - see .cc). Returns the (possibly switched) current version.
+  void MaybeSwitchVersionForWrite();
+  void MarkVersionRead(uint64_t submission);
+  void SetPageStaleInOtherVersions(uint32_t page_first, uint32_t page_count,
+                                   uint32_t fresh_version);
 
   // Direct (host-visible) variant of UploadRanges.
   bool UploadRangesDirect(const std::vector<std::pair<uint32_t, uint32_t>>&
