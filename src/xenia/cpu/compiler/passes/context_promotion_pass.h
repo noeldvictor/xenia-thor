@@ -90,6 +90,9 @@ class CrossBlockFlagDeadStoreEliminationPass : public CompilerPass {
 // process start - used by the host differential test to prove non-vacuity.
 uint64_t CrossBlockFlagDseStoresRemovedForTest();
 
+// Total GPR stores removed by the cross-block GPR DSE (ppc_cross_block_dead_gpr_elim).
+uint64_t CrossBlockGprDseStoresRemovedForTest();
+
 }  // namespace passes
 }  // namespace compiler
 }  // namespace cpu

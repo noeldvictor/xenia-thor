@@ -53,6 +53,24 @@ DEFINE_bool(ppc_cross_block_dead_flag_elim_audit, false,
             "Log per-function store/removal/iteration counts for "
             "ppc_cross_block_dead_flag_elim (requires it to be enabled).",
             "CPU");
+DEFINE_bool(
+    ppc_cross_block_dead_gpr_elim, false,
+    "Thor codegen (guest-JIT tier-2): cross-block dead-store elimination for the "
+    "32 PowerPC GPR (r0-r31) context slots - the same backward-dataflow as "
+    "ppc_cross_block_dead_flag_elim but for whole 8-byte GPR slots. The per-block "
+    "register allocator stores every dirty GPR to PPCContext at block boundaries; "
+    "this removes the stores whose value is dead across ALL successor paths. SAFE "
+    "(only removes dead STORES, never elides live state): calls/returns/traps/"
+    "indirect branches force all GPRs live (they share PPCContext); guest memory "
+    "faults read the HOST fault context, not PPCContext GPRs (mmio_handler.cc), so "
+    "a removed dead GPR store cannot be observed by fault handling. Only full "
+    "8-byte aligned stores are eligible (partial writes kept conservatively). "
+    "Bit-exact; default-off, host-validated first. The cpu_todo DeadStoreElim item.",
+    "CPU");
+DEFINE_bool(ppc_cross_block_dead_gpr_elim_audit, false,
+            "Log per-function GPR store/removal/iteration counts for "
+            "ppc_cross_block_dead_gpr_elim (requires it to be enabled).",
+            "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
             "Thor ARM64 research: promote dominated first loads of selected "
             "whole PPC GPR context slots through HIR locals before register "
@@ -2295,10 +2313,130 @@ bool IsFlagBarrier(const Instr* instr) {
 
 std::atomic<uint64_t> g_flag_dse_removed{0};
 
+// --- GPR cross-block DSE (ppc_cross_block_dead_gpr_elim) ---------------------
+// The 32 PowerPC GPRs (r0-r31) are 8 contiguous context bytes each.
+constexpr size_t kGprBase = offsetof(xe::cpu::ppc::PPCContext, r);
+constexpr int kGprSlotCount = 32;
+constexpr uint64_t kAllGprSlots = (uint64_t(1) << kGprSlotCount) - 1;
+
+// 32-bit mask of GPR slots whose 8-byte range overlaps [offset, offset+size).
+uint64_t GprSlotsTouched(size_t offset, size_t size) {
+  uint64_t mask = 0;
+  const size_t end = offset + size;
+  for (int n = 0; n < kGprSlotCount; ++n) {
+    const size_t slot_begin = kGprBase + static_cast<size_t>(n) * 8;
+    const size_t slot_end = slot_begin + 8;
+    if (offset < slot_end && end > slot_begin) {
+      mask |= (uint64_t(1) << n);
+    }
+  }
+  return mask;
+}
+
+std::atomic<uint64_t> g_gpr_dse_removed{0};
+
+// Cross-block dead-store elimination for GPR context slots. Identical backward-
+// dataflow + barrier safety as the flag DSE (IsFlagBarrier forces all GPRs live
+// at calls/returns/traps/indirect branches - they share PPCContext), but for
+// whole 8-byte GPR slots: only a full 8-byte store covering exactly ONE slot is
+// an eligible complete def; partial/misaligned writes are kept and marked live.
+// Returns the number of dead GPR stores removed.
+uint64_t RunGprDse(HIRBuilder* builder) {
+  uint64_t stores_seen = 0;
+  auto transfer = [&stores_seen](Block* b, uint64_t live_out, bool remove,
+                                 uint64_t* removed_count) -> uint64_t {
+    uint64_t live = live_out;
+    for (Instr* i = b->instr_tail; i;) {
+      Instr* prev = i->prev;
+      if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
+        Value* value = i->src2.value;
+        size_t size = value ? GetTypeSize(value->type) : 1;
+        uint64_t touched = GprSlotsTouched(i->src1.offset, size);
+        if (touched) {
+          bool single = (size == 8) && ((touched & (touched - 1)) == 0);
+          if (single) {
+            if (remove) {
+              ++stores_seen;
+            }
+            if ((live & touched) == 0) {
+              if (remove) {
+                i->Remove();
+                if (removed_count) {
+                  ++*removed_count;
+                }
+              }
+            } else {
+              live &= ~touched;  // real def kills upward liveness
+            }
+          } else {
+            live |= touched;  // partial/overlapping store - keep, mark live
+          }
+        }
+      } else if (i->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        size_t size = i->dest ? GetTypeSize(i->dest->type) : 1;
+        live |= GprSlotsTouched(i->src1.offset, size);
+      } else if (IsFlagBarrier(i)) {
+        live = kAllGprSlots;  // all GPRs live above a call/return/trap/indirect
+      }
+      i = prev;
+    }
+    return live;
+  };
+
+  std::unordered_map<Block*, uint64_t> live_in;
+  size_t block_count = 0;
+  for (Block* b = builder->first_block(); b; b = b->next) {
+    live_in[b] = 0;
+    ++block_count;
+  }
+  if (!block_count) {
+    return 0;
+  }
+  const size_t kMaxIters = block_count * 4 + 16;
+  bool changed = true;
+  size_t iters = 0;
+  while (changed && iters < kMaxIters) {
+    changed = false;
+    ++iters;
+    for (Block* b = builder->first_block(); b; b = b->next) {
+      uint64_t live_out = 0;
+      for (Edge* e = b->outgoing_edge_head; e; e = e->outgoing_next) {
+        live_out |= live_in[e->dest];
+      }
+      uint64_t new_in = transfer(b, live_out, false, nullptr);
+      if (new_in != live_in[b]) {
+        live_in[b] = new_in;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    return 0;  // not converged - correctness over win: remove nothing
+  }
+  uint64_t removed = 0;
+  for (Block* b = builder->first_block(); b; b = b->next) {
+    uint64_t live_out = 0;
+    for (Edge* e = b->outgoing_edge_head; e; e = e->outgoing_next) {
+      live_out |= live_in[e->dest];
+    }
+    transfer(b, live_out, true, &removed);
+  }
+  g_gpr_dse_removed.fetch_add(removed, std::memory_order_relaxed);
+  if (cvars::ppc_cross_block_dead_gpr_elim_audit) {
+    XELOGI("CrossBlockGprDSE: blocks={} iters={} stores_seen={} removed={}",
+           block_count, iters, stores_seen, removed);
+  }
+  return removed;
+}
+
 }  // namespace
 
 uint64_t CrossBlockFlagDseStoresRemovedForTest() {
   return g_flag_dse_removed.load(std::memory_order_relaxed);
+}
+
+uint64_t CrossBlockGprDseStoresRemovedForTest() {
+  return g_gpr_dse_removed.load(std::memory_order_relaxed);
 }
 
 CrossBlockFlagDeadStoreEliminationPass::
@@ -2307,6 +2445,11 @@ CrossBlockFlagDeadStoreEliminationPass::
     ~CrossBlockFlagDeadStoreEliminationPass() = default;
 
 bool CrossBlockFlagDeadStoreEliminationPass::Run(HIRBuilder* builder) {
+  // GPR cross-block DSE is independent of (and additive to) the flag DSE; runs
+  // here to reuse the same pipeline slot. Default-off, byte-identical when off.
+  if (cvars::ppc_cross_block_dead_gpr_elim) {
+    RunGprDse(builder);
+  }
   if (!cvars::ppc_cross_block_dead_flag_elim) {
     return true;  // default path is byte-identical
   }
