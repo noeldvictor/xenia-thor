@@ -28,6 +28,8 @@ DECLARE_bool(ppc_cross_block_dead_flag_elim);
 DECLARE_bool(ppc_cross_block_dead_flag_elim_audit);
 DECLARE_bool(ppc_cross_block_dead_gpr_elim);
 DECLARE_bool(ppc_cross_block_dead_gpr_elim_audit);
+DECLARE_bool(ppc_cross_block_const_promotion);
+DECLARE_bool(ppc_cross_block_const_promotion_audit);
 
 // Forward-declared (context_promotion_pass.h pulls in llvm headers not on the
 // test include path). Defined in context_promotion_pass.cc.
@@ -37,6 +39,7 @@ namespace compiler {
 namespace passes {
 uint64_t CrossBlockFlagDseStoresRemovedForTest();
 uint64_t CrossBlockGprDseStoresRemovedForTest();
+uint64_t CrossBlockConstPromotedForTest();
 }  // namespace passes
 }  // namespace compiler
 }  // namespace cpu
@@ -300,6 +303,84 @@ void GenGprLiveCrossBlock(HIRBuilder& b) {
   b.Return();
 }
 
+// --- Unit #3: cross-block constant promotion (ppc_cross_block_const_promotion) ---
+struct ScopedConstPromo {
+  explicit ScopedConstPromo(bool enable) {
+    prev_ = cvars::ppc_cross_block_const_promotion;
+    prev_audit_ = cvars::ppc_cross_block_const_promotion_audit;
+    cvars::ppc_cross_block_const_promotion = enable;
+    cvars::ppc_cross_block_const_promotion_audit = enable;
+  }
+  ~ScopedConstPromo() {
+    cvars::ppc_cross_block_const_promotion = prev_;
+    cvars::ppc_cross_block_const_promotion_audit = prev_audit_;
+  }
+  bool prev_;
+  bool prev_audit_;
+};
+
+void RequireConstTransparent(std::function<void(HIRBuilder&)> gen,
+                             std::function<void(PPCContext*)> pre) {
+  uint64_t off_r[32] = {}, on_r[32] = {};
+  uint32_t off_cr[8] = {}, on_cr[8] = {};
+  uint8_t off_ca = 0, on_ca = 0;
+  auto capture = [](PPCContext* ctx, uint64_t* r, uint32_t* cr, uint8_t* ca) {
+    for (int i = 0; i < 32; ++i) r[i] = ctx->r[i];
+    for (int i = 0; i < 8; ++i) cr[i] = (&ctx->cr0.value)[i];
+    *ca = ctx->xer_ca;
+  };
+  {
+    ScopedConstPromo scope(false);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, off_r, off_cr, &off_ca); });
+  }
+  {
+    ScopedConstPromo scope(true);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, on_r, on_cr, &on_ca); });
+  }
+  for (int i = 0; i < 32; ++i) {
+    INFO("GPR r[" << i << "] mismatch (off vs const-promo)");
+    REQUIRE(on_r[i] == off_r[i]);
+  }
+  for (int i = 0; i < 8; ++i) {
+    INFO("CR" << i << " mismatch (off vs const-promo)");
+    REQUIRE(on_cr[i] == off_cr[i]);
+  }
+  INFO("XER carry mismatch (off vs const-promo)");
+  REQUIRE(on_ca == off_ca);
+}
+
+uint64_t PromotedConstDelta(std::function<void(HIRBuilder&)> gen) {
+  ScopedConstPromo scope(true);
+  uint64_t before =
+      xe::cpu::compiler::passes::CrossBlockConstPromotedForTest();
+  TestFunction test(gen);
+  test.Run([](PPCContext*) {}, [](PPCContext*) {});
+  return xe::cpu::compiler::passes::CrossBlockConstPromotedForTest() - before;
+}
+
+// Block A stores r3 = constant, then conditionally branches (so A keeps two
+// successors and is NOT merged with the fallthrough). The fallthrough block B is
+// a single-DOMINATES fallthrough of A, so it inherits A's constant and its
+// load_context(r3) is cross-block-promoted to the constant (block-scoped
+// promotion can't - the store is in a different block). Expect promoted > 0,
+// behavior unchanged.
+void GenCrossBlockConst(HIRBuilder& b) {
+  StoreGPR(b, 3, b.LoadConstantUint64(0x12345678ull));  // const in block A
+  auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 8), INT32_TYPE),
+                          b.Truncate(LoadGPR(b, 9), INT32_TYPE));
+  auto taken = b.NewLabel();
+  auto fall = b.NewLabel();
+  b.BranchTrue(cmp, taken);
+  b.Branch(fall);
+  b.MarkLabel(fall);  // block B: single-DOMINATES fallthrough of A
+  StoreGPR(b, 12, LoadGPR(b, 3));  // load r3 -> promoted to the constant
+  b.Return();
+  b.MarkLabel(taken);
+  b.Return();
+}
+
 }  // namespace
 
 TEST_CASE("cross_block_flag_dse_dead_overwrite_transparent",
@@ -357,4 +438,14 @@ TEST_CASE("cross_block_gpr_dse_live_cross_block_kept", "[CROSSBLOCK_GPR_DSE]") {
   RequireGprTransparent(GenGprLiveCrossBlock, MakePre(3, 9, 0, 0, 9, 1, 0, 0));
   // r3 is read in a successor -> live across the edge -> not removed.
   REQUIRE(RemovedGprDelta(GenGprLiveCrossBlock) == 0);
+}
+
+TEST_CASE("cross_block_const_promotion_transparent", "[CROSSBLOCK_CONST]") {
+  RequireConstTransparent(GenCrossBlockConst, MakePre(1, 2, 3, 4, 5, 6, 7, 8));
+  RequireConstTransparent(GenCrossBlockConst, MakePre(0, 0, 0, 0, 0, 0, 0, 0));
+}
+
+TEST_CASE("cross_block_const_promotion_nonvacuous", "[CROSSBLOCK_CONST]") {
+  // r3's constant store in block A dominates the cross-block load in B -> promoted.
+  REQUIRE(PromotedConstDelta(GenCrossBlockConst) >= 1);
 }

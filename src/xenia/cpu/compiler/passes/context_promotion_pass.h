@@ -93,6 +93,9 @@ uint64_t CrossBlockFlagDseStoresRemovedForTest();
 // Total GPR stores removed by the cross-block GPR DSE (ppc_cross_block_dead_gpr_elim).
 uint64_t CrossBlockGprDseStoresRemovedForTest();
 
+// Total load_context promoted to constants by ppc_cross_block_const_promotion.
+uint64_t CrossBlockConstPromotedForTest();
+
 }  // namespace passes
 }  // namespace compiler
 }  // namespace cpu

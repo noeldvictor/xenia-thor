@@ -71,6 +71,24 @@ DEFINE_bool(ppc_cross_block_dead_gpr_elim_audit, false,
             "Log per-function GPR store/removal/iteration counts for "
             "ppc_cross_block_dead_gpr_elim (requires it to be enabled).",
             "CPU");
+DEFINE_bool(
+    ppc_cross_block_const_promotion, false,
+    "Thor codegen (guest-JIT tier-2): cross-block CONSTANT context promotion - "
+    "unit #3 of the whole-function optimizer. The per-block context promotion "
+    "only replaces load_context with a dominating store's value WITHIN a block; "
+    "this carries CONSTANT context values across DOMINATES edges (single-pred "
+    "chains) so a load_context of a slot last stored a constant in a predecessor "
+    "is replaced with that constant (then the existing const-prop + DCE cascade). "
+    "SAFE: constants are inline-materialized so reuse across the barrier wall is "
+    "hazard-free (unlike the value-carrier that SIGBUS'd); calls/returns/traps/"
+    "volatile clear all tracked constants; overlapping stores invalidate; only "
+    "exact offset+size load matches are replaced. Byte-identical; default-off, "
+    "host-validated first. The cpu_todo cross-block constant-propagation item.",
+    "CPU");
+DEFINE_bool(ppc_cross_block_const_promotion_audit, false,
+            "Log per-function constant-promotion counts for "
+            "ppc_cross_block_const_promotion (requires it to be enabled).",
+            "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
             "Thor ARM64 research: promote dominated first loads of selected "
             "whole PPC GPR context slots through HIR locals before register "
@@ -964,6 +982,80 @@ bool ContextPromotionPass::Initialize(Compiler* compiler) {
   return true;
 }
 
+namespace {
+std::atomic<uint64_t> g_const_promoted{0};
+
+// Unit #3 of the whole-function optimizer: cross-block CONSTANT context
+// promotion. Carries constant context values across SOUND single-dominating-
+// predecessor edges (the IsExternallyEnterable gate makes this safe vs edgeless
+// indirect-branch entries - the same gate that made the GPR carrier sound) and
+// replaces a load_context of a constant-holding slot with that constant; the
+// existing constant-prop + DCE then cascade. Constants are inline-materialized
+// so reusing a predecessor's constant Value across the edge is hazard-free.
+uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
+  const bool fn_has_indirect_jump = FunctionHasNonReturnIndirectBranch(builder);
+  std::unordered_map<Block*,
+                     std::unordered_map<size_t, std::pair<Value*, size_t>>>
+      exit_state;
+  uint64_t promoted = 0;
+  for (Block* b = builder->first_block(); b; b = b->next) {
+    std::unordered_map<size_t, std::pair<Value*, size_t>> cur;
+    Block* pred = IsExternallyEnterable(builder, b, fn_has_indirect_jump)
+                      ? nullptr
+                      : GetSingleDominatingPredecessor(b);
+    if (pred) {
+      auto it = exit_state.find(pred);
+      if (it != exit_state.end()) {
+        cur = it->second;
+      }
+    }
+    for (Instr* i = b->instr_head; i; i = i->next) {
+      if ((i->opcode->flags & OPCODE_FLAG_VOLATILE) &&
+          i->opcode != &OPCODE_BRANCH_TRUE_info &&
+          i->opcode != &OPCODE_BRANCH_FALSE_info) {
+        // call/return/trap/atomic/barrier: callee may overwrite any slot ->
+        // all context overdefined. Intra-function conditional branches are
+        // volatile but do NOT write context, so they do NOT invalidate (same
+        // exclusion as the flag-DSE barrier).
+        cur.clear();
+      } else if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
+        size_t off = i->src1.offset;
+        Value* v = i->src2.value;
+        size_t size = v ? GetTypeSize(v->type) : 1;
+        for (auto it = cur.begin(); it != cur.end();) {
+          if (off < it->first + it->second.second && it->first < off + size) {
+            it = cur.erase(it);  // overlapping store invalidates
+          } else {
+            ++it;
+          }
+        }
+        if (v && v->IsConstant()) {
+          cur[off] = std::make_pair(v, size);
+        }
+      } else if (i->opcode == &OPCODE_LOAD_CONTEXT_info) {
+        if (i->dest) {
+          auto it = cur.find(i->src1.offset);
+          if (it != cur.end() &&
+              it->second.second == GetTypeSize(i->dest->type) &&
+              it->second.first->type == i->dest->type) {
+            i->opcode = &hir::OPCODE_ASSIGN_info;
+            i->set_src1(it->second.first);
+            ++promoted;
+          }
+        }
+      }
+    }
+    exit_state[b] = std::move(cur);
+  }
+  g_const_promoted.fetch_add(promoted, std::memory_order_relaxed);
+  return promoted;
+}
+}  // namespace
+
+uint64_t CrossBlockConstPromotedForTest() {
+  return g_const_promoted.load(std::memory_order_relaxed);
+}
+
 bool ContextPromotionPass::Run(HIRBuilder* builder) {
   // Like mem2reg, but because context memory is unaliasable it's easier to
   // check and convert LoadContext/StoreContext into value operations.
@@ -992,6 +1084,16 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
   while (block) {
     PromoteBlock(block);
     block = block->next;
+  }
+
+  // Unit #3: cross-block constant context promotion (default-off, byte-identical
+  // when off). Runs after per-block promotion so loads that survived block-scoped
+  // promotion can still pick up a predecessor's constant.
+  if (cvars::ppc_cross_block_const_promotion) {
+    uint64_t n = PromoteCrossBlockConstants(builder);
+    if (n && cvars::ppc_cross_block_const_promotion_audit) {
+      XELOGI("CrossBlockConstPromotion: promoted={}", n);
+    }
   }
 
   if (cvars::arm64_context_promotion_gpr_crossblock &&
