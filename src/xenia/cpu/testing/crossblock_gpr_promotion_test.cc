@@ -25,6 +25,8 @@ DECLARE_bool(arm64_context_promotion_gpr_crossblock);
 DECLARE_uint32(arm64_context_promotion_gpr_crossblock_mask);
 DECLARE_bool(arm64_context_promotion_gpr_crossblock_audit);
 DECLARE_bool(arm64_context_promotion_gpr_crossblock_cond_branch_carry);
+DECLARE_bool(arm64_register_cache_inherit);
+DECLARE_bool(arm64_register_inheritance_audit);
 
 using namespace xe;
 using namespace xe::cpu;
@@ -43,6 +45,8 @@ struct ScopedCrossBlockGpr {
     prev_mask_ = cvars::arm64_context_promotion_gpr_crossblock_mask;
     prev_audit_ = cvars::arm64_context_promotion_gpr_crossblock_audit;
     prev_cond_ = cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry;
+    prev_inherit_ = cvars::arm64_register_cache_inherit;
+    prev_inherit_audit_ = cvars::arm64_register_inheritance_audit;
     cvars::arm64_context_promotion_gpr_crossblock = enable;
     cvars::arm64_context_promotion_gpr_crossblock_mask = mask;
     // Emit promotion counters when enabled so the differential tests are
@@ -53,17 +57,26 @@ struct ScopedCrossBlockGpr {
     // fires here. This is exactly the aggressive path whose HOST correctness we
     // validate differentially - the separate device crash is not host-visible.
     cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry = enable;
+    // U4: the "ON" case also enables register-allocator inheritance so the
+    // differential validates carrier+inheritance is byte-identical to baseline,
+    // and the inheritance audit reports elided_loads (the non-vacuity evidence).
+    cvars::arm64_register_cache_inherit = enable;
+    cvars::arm64_register_inheritance_audit = enable;
   }
   ~ScopedCrossBlockGpr() {
     cvars::arm64_context_promotion_gpr_crossblock = prev_enable_;
     cvars::arm64_context_promotion_gpr_crossblock_mask = prev_mask_;
     cvars::arm64_context_promotion_gpr_crossblock_audit = prev_audit_;
     cvars::arm64_context_promotion_gpr_crossblock_cond_branch_carry = prev_cond_;
+    cvars::arm64_register_cache_inherit = prev_inherit_;
+    cvars::arm64_register_inheritance_audit = prev_inherit_audit_;
   }
   bool prev_enable_;
   uint32_t prev_mask_;
   bool prev_audit_;
   bool prev_cond_;
+  bool prev_inherit_;
+  bool prev_inherit_audit_;
 };
 
 // Compile+run `gen` with promotion OFF and ON under the same inputs and require

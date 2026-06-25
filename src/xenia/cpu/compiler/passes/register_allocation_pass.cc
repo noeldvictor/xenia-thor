@@ -37,6 +37,20 @@ DEFINE_bool(
     "register instead of reloading (the U4 speed opportunity). Analysis only - "
     "records the block-exit register snapshot, changes no generated code.",
     "CPU");
+DEFINE_bool(
+    arm64_register_cache_inherit, false,
+    "Thor ARM64 codegen (cross-block register caching U4, default-off): keep a "
+    "guest register in its host register ACROSS a safe internal block edge "
+    "instead of reloading it. At the entry of a non-externally-enterable block "
+    "with a single dominating predecessor, reserve the host registers that held "
+    "the predecessor's carrier locals at its exit; a LOAD_LOCAL of one of those "
+    "locals then binds to the reserved register and the load is dropped (the "
+    "register still physically holds the value - the block is the only runtime "
+    "entry, the reservation is never spilled, and the predecessor's deposit ran "
+    "on this path). This is the speed unit of the cross-block carrier (U0-U3 are "
+    "correctness/analysis only). Fail-safe: an un-elided load just reloads. "
+    "Requires arm64_context_promotion_gpr_crossblock (the HIR-local carrier).",
+    "CPU");
 
 namespace xe {
 namespace cpu {
@@ -126,6 +140,28 @@ uint32_t FindFirstSourceOffset(HIRBuilder* builder) {
   return 0;
 }
 
+// Returns the dominating predecessor of `block` IF `block` is a safe INTERNAL
+// inheritance target, else nullptr. Mirrors the cross-block carrier's
+// IsExternallyEnterable (U1): a block is safe to inherit registers into only if
+// it is NOT the function entry, has exactly one recorded DOMINATES predecessor,
+// and that predecessor is its emission-order predecessor (a direct fallthrough).
+// CRITICAL: Edge::DOMINATES means "one recorded edge" and indirect branches
+// (bctr/jump tables) are edgeless, so this fallthrough rule is what keeps a
+// jump-table landing block (which could be entered with the register NOT holding
+// the value) out of inheritance. The inheritance's correctness rests on `block`
+// being reachable ONLY via this edge at runtime.
+Block* GetInternalInheritPredecessor(HIRBuilder* builder, Block* block) {
+  if (block == builder->first_block()) {
+    return nullptr;
+  }
+  Edge* in = block->incoming_edge_head;
+  if (!in || in->incoming_next || !(in->flags & Edge::DOMINATES) ||
+      in->src != block->prev) {
+    return nullptr;
+  }
+  return in->src;
+}
+
 void EmitRegisterAllocationAudit(const RegisterAllocationAuditStats& stats) {
   uint64_t local_slots_added =
       stats.local_slots_after >= stats.local_slots_before
@@ -212,12 +248,16 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
   uint16_t block_ordinal = 0;
   uint32_t instr_ordinal = 0;
-  // U3 (cross-block register caching): snapshot, per block, which host register
-  // holds each HIR-local carrier at block exit, so U4 can inherit it into an
-  // internal successor instead of reloading. Analysis-only here (audit gate).
+  // Cross-block register caching: snapshot, per block, which host register holds
+  // each HIR-local carrier at block exit (U3), so U4 can inherit it into an
+  // internal successor instead of reloading. The snapshot is built whenever the
+  // audit OR the live inheritance (U4) is on.
+  const bool inherit_active = cvars::arm64_register_cache_inherit;
   const bool inherit_audit = cvars::arm64_register_inheritance_audit;
+  const bool inherit_track = inherit_active || inherit_audit;
   std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
       block_exit_local_regs;
+  uint64_t elided_inherited_loads = 0;
   auto block = builder->first_block();
   while (block) {
     uint64_t block_spill_requests = 0;
@@ -230,6 +270,37 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
     // U3: which host register currently holds each local within this block.
     std::unordered_map<Value*, RegAssignment> block_local_regs;
+
+    // U4: if this block is a safe internal successor (entry-excluded, single
+    // DOMINATES pred, fallthrough), RESERVE the int registers that held the
+    // predecessor's carrier locals at its exit. A reserved register (availability
+    // bit cleared, no tracked value) is never chosen by allocation and never
+    // spilled by SpillOneRegister (it only spills tracked upcoming_uses), so it
+    // stays physically holding the value until a LOAD_LOCAL of that local elides
+    // into it below. Capped to keep allocation headroom (never reserve more than
+    // half the int set).
+    std::unordered_map<Value*, RegAssignment> inherited_locals;
+    if (inherit_active) {
+      if (Block* pred = GetInternalInheritPredecessor(builder, block)) {
+        auto pit = block_exit_local_regs.find(pred);
+        if (pit != block_exit_local_regs.end()) {
+          const size_t reserve_cap = size_t(usage_sets_.int_set->count) / 2;
+          for (auto& lr : pit->second) {
+            if (lr.second.set != usage_sets_.int_set->set) {
+              continue;  // Only guest GPR (int-set) carriers for now.
+            }
+            if (inherited_locals.size() >= reserve_cap) {
+              break;
+            }
+            if (!usage_sets_.int_set->availability.test(lr.second.index)) {
+              continue;  // Already occupied - skip (shouldn't happen post-reset).
+            }
+            usage_sets_.int_set->availability.set(lr.second.index, false);
+            inherited_locals[lr.first] = lr.second;
+          }
+        }
+      }
+    }
 
     // Reset all state.
     PrepareBlockState();
@@ -258,9 +329,30 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
       // register held it (still valid as the value's reg even if AdvanceUses
       // just retired it - the data is in that register until reused). U4 will
       // inherit this into internal successors instead of reloading.
-      if (inherit_audit && instr->opcode == &OPCODE_STORE_LOCAL_info &&
+      if (inherit_track && instr->opcode == &OPCODE_STORE_LOCAL_info &&
           instr->src2.value && instr->src2.value->reg.set) {
         block_local_regs[instr->src1.value] = instr->src2.value->reg;
+      }
+
+      // U4: elide a LOAD_LOCAL whose local was inherited into a register reserved
+      // at this block's entry. The reserved register still physically holds the
+      // value (never reallocated/spilled since entry; this block is the only
+      // runtime entry into itself), so bind the dest to it and drop the load.
+      // The dest then lives/retires through the normal upcoming_uses machinery.
+      if (inherit_active && instr->opcode == &OPCODE_LOAD_LOCAL_info &&
+          instr->dest && !inherited_locals.empty()) {
+        auto iit = inherited_locals.find(instr->src1.value);
+        if (iit != inherited_locals.end()) {
+          SortUsageList(instr->dest);
+          instr->dest->reg = iit->second;
+          MarkRegUsed(iit->second, instr->dest, instr->dest->use_head);
+          inherited_locals.erase(iit);
+          ++elided_inherited_loads;
+          Instr* next_instr = instr->next;
+          instr->Remove();
+          instr = next_instr;
+          continue;
+        }
       }
 
       // Check sources for retirement. If any are unused after this instruction
@@ -378,9 +470,8 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     if (audit_enabled && block_spill_requests) {
       ++audit_stats.blocks_with_spills;
     }
-    // U3: record the block-exit local->register snapshot for the inheritance
-    // opportunity audit (consumed by U4).
-    if (inherit_audit && !block_local_regs.empty()) {
+    // U3: record the block-exit local->register snapshot for inheritance.
+    if (inherit_track && !block_local_regs.empty()) {
       block_exit_local_regs[block] = std::move(block_local_regs);
     }
     block = block->next;
@@ -390,30 +481,25 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
   // carrier registers live at block exit could be inherited by an internal
   // (entry-excluded, single-DOMINATES-predecessor, fallthrough) successor
   // instead of reloading from the local/context. Analysis only.
-  if (inherit_audit) {
+  if (inherit_track) {
     uint64_t exit_carrier_regs = 0;
     for (auto& kv : block_exit_local_regs) {
       exit_carrier_regs += kv.second.size();
     }
     uint64_t inheritable = 0;
     for (auto b = builder->first_block(); b; b = b->next) {
-      if (b == builder->first_block()) {
-        continue;
-      }
-      Edge* in = b->incoming_edge_head;
-      if (!in || in->incoming_next || !(in->flags & Edge::DOMINATES) ||
-          in->src != b->prev) {
-        continue;  // Externally enterable - not a safe inheritance target.
-      }
-      auto it = block_exit_local_regs.find(in->src);
-      if (it != block_exit_local_regs.end()) {
-        inheritable += it->second.size();
+      if (Block* pred = GetInternalInheritPredecessor(builder, b)) {
+        auto it = block_exit_local_regs.find(pred);
+        if (it != block_exit_local_regs.end()) {
+          inheritable += it->second.size();
+        }
       }
     }
     XELOGW(
         "A64 register inheritance audit fn {:08X}: exit_carrier_regs={} "
-        "inheritable_into_internal_successors={}",
-        function_address, exit_carrier_regs, inheritable);
+        "inheritable_into_internal_successors={} elided_loads={}",
+        function_address, exit_carrier_regs, inheritable,
+        elided_inherited_loads);
   }
 
   if (audit_enabled) {
