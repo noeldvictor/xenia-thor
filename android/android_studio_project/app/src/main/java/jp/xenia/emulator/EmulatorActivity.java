@@ -462,6 +462,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_function");
             copyBooleanExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_audit");
             copyBooleanExtra(intent, launchArguments, "arm64_context_promotion_gpr_crossblock_cond_branch_carry");
+            copyBooleanExtra(intent, launchArguments, "arm64_register_cache_inherit");
+            copyBooleanExtra(intent, launchArguments, "arm64_register_inheritance_audit");
             copyBooleanExtra(intent, launchArguments, "global_lock_owner_tracking");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "arm64_vmx_dot_f32_fastpath");

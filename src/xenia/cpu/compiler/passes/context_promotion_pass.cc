@@ -678,9 +678,37 @@ Block* GetSingleDominatingPredecessor(Block* block) {
 // emission block. Any other entry - function entry, CFG merge, forward/back-edge,
 // or a potential indirect target - is treated as enterable. (E4 in the design doc
 // later relaxes the fallthrough rule using a scanner address-taken bit.)
-bool IsExternallyEnterable(HIRBuilder* builder, Block* block) {
+// True if the function contains a non-return indirect branch (a bctr/bcctr jump
+// table or an indirect call). Those lower to OPCODE_CALL_INDIRECT WITHOUT the
+// CALL_POSSIBLE_RETURN flag (returns/blr set it). If a function has one, the
+// scanner could not decode the indirect target addresses into edges, so any
+// LABELED block may be entered at an address E1-E3 never accounted for - which
+// is exactly the residual that crashed Blue Dragon on-device.
+bool FunctionHasNonReturnIndirectBranch(HIRBuilder* builder) {
+  for (auto block = builder->first_block(); block; block = block->next) {
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_CALL_INDIRECT_info &&
+          !(instr->flags & CALL_POSSIBLE_RETURN)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool IsExternallyEnterable(HIRBuilder* builder, Block* block,
+                          bool fn_has_indirect_jump) {
   if (block == builder->first_block()) {
     return true;  // E1: function entry - cold start from caller/dispatcher.
+  }
+  // E4 (DEVICE-REQUIRED - E1-E3 alone crashed BD): in a function with a
+  // non-return indirect branch (jump table), ANY labeled block can be an
+  // indirect target the scanner never recorded as an edge. The residual that
+  // crashed BD was a FALLTHROUGH block (passes E3) that was ALSO a jump-table
+  // target; a stale carrier on the indirect entry -> SIGBUS. So a labeled block
+  // in such a function is conservatively enterable.
+  if (fn_has_indirect_jump && block->label_head) {
+    return true;
   }
   Edge* in = block->incoming_edge_head;
   if (!in) {
@@ -1610,6 +1638,9 @@ void ContextPromotionPass::PromoteCrossBlockGprSlots(
   stats.function_address = FindFirstSourceOffset(builder);
   stats.slots = static_cast<uint32_t>(slot_count);
   std::unordered_map<Block*, std::vector<Value*>> outgoing_states;
+  // E4: compute once whether this function has a jump table / non-return
+  // indirect branch, so a labeled block in it is treated as enterable.
+  const bool fn_has_indirect_jump = FunctionHasNonReturnIndirectBranch(builder);
 
   for (auto block = builder->first_block(); block; block = block->next) {
     ++stats.blocks;
@@ -1621,7 +1652,7 @@ void ContextPromotionPass::PromoteCrossBlockGprSlots(
     // are edgeless, so a dispatcher re-entry can read an undeposited carrier ->
     // SIGBUS). Merge points and enterable blocks start empty and re-load from
     // context. This gate makes the carrier sound even with cond_branch_carry on.
-    Block* pred = IsExternallyEnterable(builder, block)
+    Block* pred = IsExternallyEnterable(builder, block, fn_has_indirect_jump)
                       ? nullptr
                       : GetSingleDominatingPredecessor(block);
     if (pred) {

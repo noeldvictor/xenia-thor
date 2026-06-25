@@ -152,8 +152,30 @@ uint32_t FindFirstSourceOffset(HIRBuilder* builder) {
 // jump-table landing block (which could be entered with the register NOT holding
 // the value) out of inheritance. The inheritance's correctness rests on `block`
 // being reachable ONLY via this edge at runtime.
-Block* GetInternalInheritPredecessor(HIRBuilder* builder, Block* block) {
+// True if the function has a non-return indirect branch (jump table / indirect
+// call) - OPCODE_CALL_INDIRECT without CALL_POSSIBLE_RETURN. See the carrier's
+// copy: in such a function any labeled block can be an edgeless indirect target,
+// so inheriting registers into it is unsound (the E3-only version crashed BD).
+bool FunctionHasNonReturnIndirectBranch(HIRBuilder* builder) {
+  for (auto block = builder->first_block(); block; block = block->next) {
+    for (auto instr = block->instr_head; instr; instr = instr->next) {
+      if (instr->opcode == &OPCODE_CALL_INDIRECT_info &&
+          !(instr->flags & CALL_POSSIBLE_RETURN)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+Block* GetInternalInheritPredecessor(HIRBuilder* builder, Block* block,
+                                     bool fn_has_indirect_jump) {
   if (block == builder->first_block()) {
+    return nullptr;
+  }
+  // E4 (device-required): a labeled block in a jump-table function may be an
+  // indirect target - never inherit into it.
+  if (fn_has_indirect_jump && block->label_head) {
     return nullptr;
   }
   Edge* in = block->incoming_edge_head;
@@ -257,6 +279,10 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
   const bool inherit_active = cvars::arm64_register_cache_inherit;
   const bool inherit_audit = cvars::arm64_register_inheritance_audit;
   const bool inherit_track = inherit_active || inherit_audit;
+  // E4: does this function have a jump table / non-return indirect branch? If so,
+  // labeled blocks are conservatively enterable and not inheritance targets.
+  const bool fn_has_indirect_jump =
+      inherit_track ? FunctionHasNonReturnIndirectBranch(builder) : false;
   std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
       block_exit_local_regs;
   uint64_t elided_inherited_loads = 0;
@@ -287,7 +313,8 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     // half the int set).
     std::unordered_map<Value*, RegAssignment> inherited_locals;
     if (inherit_active) {
-      if (Block* pred = GetInternalInheritPredecessor(builder, block)) {
+      if (Block* pred = GetInternalInheritPredecessor(builder, block,
+                                                       fn_has_indirect_jump)) {
         auto pit = block_exit_local_regs.find(pred);
         if (pit != block_exit_local_regs.end()) {
           const size_t reserve_cap = size_t(usage_sets_.int_set->count) / 2;
@@ -529,7 +556,8 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     }
     uint64_t inheritable = 0;
     for (auto b = builder->first_block(); b; b = b->next) {
-      if (Block* pred = GetInternalInheritPredecessor(builder, b)) {
+      if (Block* pred =
+              GetInternalInheritPredecessor(builder, b, fn_has_indirect_jump)) {
         auto it = block_exit_local_regs.find(pred);
         if (it != block_exit_local_regs.end()) {
           inheritable += it->second.size();
