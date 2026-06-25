@@ -1003,6 +1003,15 @@ uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
   uint64_t promoted = 0;
   for (Block* b = builder->first_block(); b; b = b->next) {
     std::unordered_map<size_t, std::pair<Value*, size_t>> cur;
+    // NOTE (the structural dead-end, device-proven 2026-06-25): a SOUND promotion
+    // gate would also exclude any block that carries a label (a jumpable guest
+    // address an edgeless longjmp/EH/dispatcher re-entry could target with no
+    // recorded HIR edge). But in xenia EVERY non-entry block is started by a
+    // MarkLabel, so that sound gate excludes ALL blocks => promoted=0 (inert).
+    // The only blocks this loose gate DOES promote into are labeled blocks in
+    // functions without a *local* indirect branch - exactly the ones an external
+    // re-entry can reach => the device crash. So promotion is inert-or-unsafe
+    // until the scanner records the real edges; this stays default-off.
     Block* pred = IsExternallyEnterable(builder, b, fn_has_indirect_jump)
                       ? nullptr
                       : GetSingleDominatingPredecessor(b);
