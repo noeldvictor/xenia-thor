@@ -99,6 +99,19 @@ DEFINE_bool(arm64_jit_inline_leaf, false,
             "the SAFE alternative to cross-barrier elision (see the cross-barrier "
             "elision wall verdict). Default off.",
             "CPU");
+DEFINE_bool(arm64_jit_inline_extern_thunk, false,
+            "Thor JIT inlining: at a direct unconditional guest bl whose target "
+            "is a kExtern import thunk (xenia's `sc 2; blr` redirect to a kernel "
+            "export), emit the extern call AT THE CALL SITE instead of CALLing "
+            "the thunk function. Eliminates the thunk's own frame (call + double "
+            "context_barrier + indirect return) which runs per-call as a hot "
+            "separately-dispatched function, and lets the a64 high-frequency "
+            "export fast-paths (RtlEnter/LeaveCriticalSection CAS, etc.) fold "
+            "directly into the caller. Semantically identical to the thunk (same "
+            "CallExtern it makes internally); SAFE - eliminates a call, does not "
+            "elide across a barrier. BD's #1 CPU cost is this CS thunk path. "
+            "Default off.",
+            "CPU");
 DEFINE_bool(cpu_precompile_guest_functions, false,
             "Parallel JIT pre-warm: during module load (the window AFTER the "
             "module image is committed but BEFORE any guest thread starts "

@@ -186,6 +186,22 @@ int InstrEmit_branch(PPCHIRBuilder& f, const char* src, uint64_t cia,
           return 0;  // inlined - no call emitted
         }
       }
+      // Thor JIT: inline a direct unconditional bl to a kExtern import thunk -
+      // emit the extern call HERE instead of CALLing the thunk function. The
+      // thunk is xenia's own `sc 2; blr` redirect to a kernel export (xex_module
+      // SetupExtern), so f.CallExtern(thunk) is exactly what the thunk runs
+      // internally (InstrEmit_sc LEV=2) - inlined it drops the thunk's own frame
+      // (the call + double context_barrier + indirect return) that otherwise runs
+      // per-call as a hot separately-dispatched function, and lets the a64
+      // backend's high-frequency export fast-paths (RtlEnter/LeaveCriticalSection
+      // CAS, spinlocks) fold into the caller. SAFE: eliminate a call, do not
+      // elide across a barrier (see the cross-barrier elision wall verdict). BD's
+      // #1 CPU cost is this critical-section thunk path.
+      if (cvars::arm64_jit_inline_extern_thunk && lk && !cond && function &&
+          function->behavior() == Function::Behavior::kExtern) {
+        f.CallExtern(function);
+        return 0;  // inlined - no OPCODE_CALL to the thunk emitted
+      }
       if (cond) {
         if (!expect_true) {
           cond = f.IsFalse(cond);

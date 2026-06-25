@@ -171,6 +171,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_shared_function_fastpath");
             copyBooleanExtra(intent, launchArguments, "cpu_shared_function_harvest");
             copyBooleanExtra(intent, launchArguments, "cpu_lockfree_entry_lookup");
+            copyBooleanExtra(intent, launchArguments, "arm64_jit_inline_extern_thunk");
             copyBooleanExtra(intent, launchArguments, "cpu_precompile_guest_functions");
             copyIntExtra(intent, launchArguments, "cpu_precompile_threads");
             copyIntExtra(intent, launchArguments, "cpu_precompile_budget_ms");

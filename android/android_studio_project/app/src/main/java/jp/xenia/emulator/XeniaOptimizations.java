@@ -127,6 +127,23 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("arm64_use_flat_membase")}, null));
 
         list.add(new Optimization(
+                "opt_inline_extern_thunk",
+                "Inline kernel import-call thunks",
+                "Calls kernel functions directly instead of through a per-call stub.",
+                "Every guest call to a kernel function (RtlEnter/LeaveCriticalSection, "
+                        + "waits, memory ops) goes through a tiny `sc 2; blr` import "
+                        + "thunk that the recompiler runs as a SEPARATE function - a "
+                        + "call, two context barriers, and an indirect return on every "
+                        + "single call. This emits the kernel call directly at the call "
+                        + "site instead, dropping that per-call thunk frame and letting "
+                        + "the critical-section/spinlock fast-paths fold into the caller. "
+                        + "Blue Dragon's #1 CPU cost is its critical-section thunk path; "
+                        + "device-validated render-correct with the RtlEnter/Leave thunk "
+                        + "frames eliminated (8.1% -> 0% of CPU).",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("arm64_jit_inline_extern_thunk")}, null));
+
+        list.add(new Optimization(
                 "opt_rlwinm_shift",
                 "Fast rotate/shift codegen",
                 "Compiles common PowerPC rotate-and-mask ops to a single shift.",
