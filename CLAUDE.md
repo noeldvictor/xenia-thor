@@ -11,9 +11,21 @@ commit → next). Don't ask which task / re-confirm direction / analysis-paralyz
 to start, not to ask. Surface only genuine external blockers. The thermal + no-fabrication rules below are
 safety, not "asking" — they always hold.
 
-## ⚠️ MEASUREMENT IS THE #1 TRAP — most past A/Bs here were CONFOUNDED (garbage)
-**Device-measured 2026-06-25: BD's GPU scene complexity changes ~4× in 500ms of guest time** (267 draws @
-guest_ms 14007 → 1126 @ 14516). Consequences, learned the hard way:
+## ⚠️ PLAN FROM FIRST PRINCIPLES — device A/Bs here LOOP on confounds
+**Derive the structural cause from CODE + the known 360/Xenon/Adreno ARCHITECTURE + the DBT/emulation
+literature FIRST. Form a falsifiable hypothesis. ONLY THEN fire the device — to CONFIRM that one
+hypothesis, never to "explore."** Device experiments here have repeatedly produced a wrong number → a
+wrong verdict → weeks chasing a non-lever (GPU-bound⇄CPU-bound flip-flops, "pixel-independent", "FDM is
+THE lever" → FDM was device-DEAD). The real structural taxes are DERIVABLE without the device and don't
+need firing to find: per-block register round-trips through PPCContext memory, CPU↔GPU fence
+serialization, the global guest-atomic lock, the single-threaded guest, the EDRAM RAM-round-trip — all
+code-facts + arch-mismatches. **Build the model from code/arch/literature; the device only validates the
+FINAL hypothesis. The emulation gap (~5× beyond typical) is a STACK of compounding ~2× structural taxes,
+not one bug — attack the stack, derived not measured.**
+
+### Measurement is the #1 trap (for when you must measure)
+**BD's GPU scene complexity changes ~4× in 500ms of guest time** (267 draws @ guest_ms 14007 → 1126 @
+14516, device-measured 2026-06-25). Consequences, learned the hard way:
 - **Cross-fire / relaunch A/Bs are WORTHLESS.** Two separate launches reach different guest_ms = different
   scenes = invalid comparison. EVERY "config X = N fps vs baseline M" from separate runs is confounded —
   including the historical "BD GPU-bound on binning", "pixel-independent / 480p inert", "thinning 1.7×",
