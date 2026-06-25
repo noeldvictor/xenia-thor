@@ -13,6 +13,8 @@
 #include <array>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -258,6 +260,10 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
   std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
       block_exit_local_regs;
   uint64_t elided_inherited_loads = 0;
+  uint64_t elided_inherited_stores = 0;
+  // U5: locals whose LOAD_LOCAL was elided by inheritance (U4). After the pass,
+  // a local in this set with NO remaining LOAD_LOCAL reader has a dead deposit.
+  std::unordered_set<Value*> elided_load_locals;
   auto block = builder->first_block();
   while (block) {
     uint64_t block_spill_requests = 0;
@@ -346,6 +352,7 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
           SortUsageList(instr->dest);
           instr->dest->reg = iit->second;
           MarkRegUsed(iit->second, instr->dest, instr->dest->use_head);
+          elided_load_locals.insert(iit->first);  // U5: candidate dead deposit.
           inherited_locals.erase(iit);
           ++elided_inherited_loads;
           Instr* next_instr = instr->next;
@@ -481,6 +488,40 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
   // carrier registers live at block exit could be inherited by an internal
   // (entry-excluded, single-DOMINATES-predecessor, fallthrough) successor
   // instead of reloading from the local/context. Analysis only.
+  // U5: a carrier deposit (STORE_LOCAL) whose local now has NO remaining
+  // LOAD_LOCAL reader - because every reader inherited the register (U4) - is a
+  // dead store; remove it. This completes the round-trip elimination (U4 removed
+  // the reload, U5 removes the deposit). Scoped to U4-elided locals so it only
+  // touches carrier deposits the inheritance made redundant. Correct because a
+  // local with no load is unread (standard dead-store elimination on internal
+  // HIR locals, which are not guest-visible state). Fail-safe: if any enterable
+  // successor still reloads the local, a LOAD_LOCAL remains and the deposit stays.
+  if (inherit_active && !elided_load_locals.empty()) {
+    std::unordered_map<Value*, uint32_t> remaining_loads;
+    std::unordered_map<Value*, std::vector<Instr*>> stores;
+    for (auto b = builder->first_block(); b; b = b->next) {
+      for (auto i = b->instr_head; i; i = i->next) {
+        if (i->opcode == &OPCODE_LOAD_LOCAL_info) {
+          ++remaining_loads[i->src1.value];
+        } else if (i->opcode == &OPCODE_STORE_LOCAL_info) {
+          stores[i->src1.value].push_back(i);
+        }
+      }
+    }
+    for (Value* local : elided_load_locals) {
+      if (remaining_loads.find(local) != remaining_loads.end()) {
+        continue;  // Still has a reader (an enterable successor) - keep deposit.
+      }
+      auto sit = stores.find(local);
+      if (sit != stores.end()) {
+        for (Instr* s : sit->second) {
+          s->Remove();
+          ++elided_inherited_stores;
+        }
+      }
+    }
+  }
+
   if (inherit_track) {
     uint64_t exit_carrier_regs = 0;
     for (auto& kv : block_exit_local_regs) {
@@ -497,9 +538,10 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     }
     XELOGW(
         "A64 register inheritance audit fn {:08X}: exit_carrier_regs={} "
-        "inheritable_into_internal_successors={} elided_loads={}",
+        "inheritable_into_internal_successors={} elided_loads={} "
+        "elided_stores={}",
         function_address, exit_carrier_regs, inheritable,
-        elided_inherited_loads);
+        elided_inherited_loads, elided_inherited_stores);
   }
 
   if (audit_enabled) {
