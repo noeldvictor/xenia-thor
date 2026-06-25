@@ -90,6 +90,28 @@ DEFINE_bool(ppc_cross_block_const_promotion_audit, false,
             "Log per-function constant-promotion counts for "
             "ppc_cross_block_const_promotion (requires it to be enabled).",
             "CPU");
+DEFINE_bool(
+    ppc_cross_block_value_promotion, false,
+    "Thor codegen (guest-JIT tier-2): cross-block VALUE promotion = REGISTER "
+    "RESIDENCY. Generalizes const promotion to carry ANY guest SSA value across "
+    "the same sound fallthrough/branch edges, so a load_context of a slot last "
+    "stored a live value in a dominating predecessor becomes assign V - the value "
+    "stays in a host register across the block boundary instead of round-tripping "
+    "through PPCContext memory (the per-block-reset tax; xenia's main gap vs "
+    "RPCS3's whole-function regalloc). Subsumes ppc_cross_block_const_promotion. "
+    "Uses the device-validated branch-snapshot (edge_in_state) + post-call gate "
+    "from const promotion. ***DEVICE-UNSAFE in THIS pass - DO NOT ENABLE.*** "
+    "Host byte-identical (4 cases/207 assertions) and the DATAFLOW is sound, but "
+    "it DEVICE-CRASHES BD in the Main XThread after 122 promotions: it emits a "
+    "cross-block SSA reference (assign V where V is defined in the predecessor), "
+    "and xenia's a64 register allocator resets per block (PrepareBlockState) so it "
+    "does NOT keep V's live range across the boundary -> the assign reads a "
+    "clobbered register. Const promotion avoids this by materializing a FRESH "
+    "in-block constant (CloneValue). CONCLUSION: register residency must be done "
+    "IN register_allocation_pass (inherit reg->value mappings across the sound "
+    "edge, reusing this edge_in_state gate), NOT via cross-block HIR refs here. "
+    "Kept as host-validated infra + reference dataflow for that regalloc build.",
+    "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
             "Thor ARM64 research: promote dominated first loads of selected "
             "whole PPC GPR context slots through HIR locals before register "
@@ -1015,9 +1037,20 @@ uint32_t PromoBlockGuestAddr(Block* b) {
 // below already drops all tracked constants at the call. This is SOUND without
 // being inert: most fallthrough blocks (the not-taken side of a conditional that
 // is not immediately after a call) are still promoted into. It is the reusable
-// complete-CFG foundation for every promotion-class pass (const-prop here,
-// register residency next).
-uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
+// complete-CFG foundation for every promotion-class pass.
+//
+// constants_only=true  => cross-block CONSTANT promotion (device-validated safe).
+// constants_only=false => cross-block VALUE promotion = REGISTER RESIDENCY: carry
+//   ANY guest value (not just constants) across the same sound edges, so a
+//   load_context of a slot last stored a live SSA value V in a (dominating)
+//   predecessor becomes assign V - the value stays in a host register across the
+//   block boundary instead of round-tripping through PPCContext memory. The
+//   register allocator then keeps V resident (or spills to a local slot, still
+//   cheaper than the guest-memory round-trip). Sound for the same reason as
+//   constants: V is only tracked while reachable (cleared at every call/volatile,
+//   snapshotted at branches, gated by IsExternallyEnterable + post-call), and the
+//   single-DOMINATES-pred gate guarantees V's def dominates the use.
+uint64_t PromoteCrossBlockContext(HIRBuilder* builder, bool constants_only) {
   const bool fn_has_indirect_jump = FunctionHasNonReturnIndirectBranch(builder);
   const uint32_t fn_addr = FindFirstSourceOffset(builder);
 
@@ -1101,7 +1134,7 @@ uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
             ++it;
           }
         }
-        if (v && v->IsConstant()) {
+        if (v && (!constants_only || v->IsConstant())) {
           cur[off] = std::make_pair(v, size);
         }
       } else if (i->opcode == &OPCODE_LOAD_CONTEXT_info) {
@@ -1121,8 +1154,13 @@ uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
               XELOGI("ConstPromoSite fn={:08X} block={:08X} off={}", fn_addr,
                      b_addr, uint32_t(i->src1.offset));
             }
+            Value* src = it->second.first;
             i->opcode = &hir::OPCODE_ASSIGN_info;
-            i->set_src1(builder->CloneValue(it->second.first));
+            // Constants: materialize a fresh in-block copy (no cross-block
+            // lifetime). Non-constant SSA values (residency): reference the
+            // predecessor's value directly so its host-register live range
+            // extends across the block boundary - that IS the residency.
+            i->set_src1(src->IsConstant() ? builder->CloneValue(src) : src);
             ++promoted;
           }
         }
@@ -1169,13 +1207,17 @@ bool ContextPromotionPass::Run(HIRBuilder* builder) {
     block = block->next;
   }
 
-  // Unit #3: cross-block constant context promotion (default-off, byte-identical
-  // when off). Runs after per-block promotion so loads that survived block-scoped
-  // promotion can still pick up a predecessor's constant.
-  if (cvars::ppc_cross_block_const_promotion) {
-    uint64_t n = PromoteCrossBlockConstants(builder);
+  // Cross-block context promotion (default-off). Runs after per-block promotion
+  // so loads that survived block-scoped promotion pick up a predecessor's value.
+  // value_promotion (register residency) subsumes const_promotion; if both are
+  // set, value wins (constants_only=false carries constants too).
+  if (cvars::ppc_cross_block_value_promotion ||
+      cvars::ppc_cross_block_const_promotion) {
+    const bool constants_only = !cvars::ppc_cross_block_value_promotion;
+    uint64_t n = PromoteCrossBlockContext(builder, constants_only);
     if (n && cvars::ppc_cross_block_const_promotion_audit) {
-      XELOGI("CrossBlockConstPromotion: promoted={}", n);
+      XELOGI("CrossBlock{}Promotion: promoted={}",
+             constants_only ? "Const" : "Value", n);
     }
   }
 

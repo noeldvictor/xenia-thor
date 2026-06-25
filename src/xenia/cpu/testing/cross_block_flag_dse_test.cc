@@ -30,6 +30,7 @@ DECLARE_bool(ppc_cross_block_dead_gpr_elim);
 DECLARE_bool(ppc_cross_block_dead_gpr_elim_audit);
 DECLARE_bool(ppc_cross_block_const_promotion);
 DECLARE_bool(ppc_cross_block_const_promotion_audit);
+DECLARE_bool(ppc_cross_block_value_promotion);
 
 // Forward-declared (context_promotion_pass.h pulls in llvm headers not on the
 // test include path). Defined in context_promotion_pass.cc.
@@ -381,6 +382,84 @@ void GenCrossBlockConst(HIRBuilder& b) {
   b.Return();
 }
 
+// --- cross-block VALUE promotion (register residency) ---
+struct ScopedValuePromo {
+  explicit ScopedValuePromo(bool enable) {
+    prev_ = cvars::ppc_cross_block_value_promotion;
+    prev_audit_ = cvars::ppc_cross_block_const_promotion_audit;
+    cvars::ppc_cross_block_value_promotion = enable;
+    cvars::ppc_cross_block_const_promotion_audit = enable;
+  }
+  ~ScopedValuePromo() {
+    cvars::ppc_cross_block_value_promotion = prev_;
+    cvars::ppc_cross_block_const_promotion_audit = prev_audit_;
+  }
+  bool prev_;
+  bool prev_audit_;
+};
+
+void RequireValueTransparent(std::function<void(HIRBuilder&)> gen,
+                             std::function<void(PPCContext*)> pre) {
+  uint64_t off_r[32] = {}, on_r[32] = {};
+  uint32_t off_cr[8] = {}, on_cr[8] = {};
+  uint8_t off_ca = 0, on_ca = 0;
+  auto capture = [](PPCContext* ctx, uint64_t* r, uint32_t* cr, uint8_t* ca) {
+    for (int i = 0; i < 32; ++i) r[i] = ctx->r[i];
+    for (int i = 0; i < 8; ++i) cr[i] = (&ctx->cr0.value)[i];
+    *ca = ctx->xer_ca;
+  };
+  {
+    ScopedValuePromo scope(false);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, off_r, off_cr, &off_ca); });
+  }
+  {
+    ScopedValuePromo scope(true);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, on_r, on_cr, &on_ca); });
+  }
+  for (int i = 0; i < 32; ++i) {
+    INFO("GPR r[" << i << "] mismatch (off vs value-promo)");
+    REQUIRE(on_r[i] == off_r[i]);
+  }
+  for (int i = 0; i < 8; ++i) {
+    INFO("CR" << i << " mismatch (off vs value-promo)");
+    REQUIRE(on_cr[i] == off_cr[i]);
+  }
+  INFO("XER carry mismatch (off vs value-promo)");
+  REQUIRE(on_ca == off_ca);
+}
+
+uint64_t PromotedValueDelta(std::function<void(HIRBuilder&)> gen) {
+  ScopedValuePromo scope(true);
+  uint64_t before =
+      xe::cpu::compiler::passes::CrossBlockConstPromotedForTest();
+  TestFunction test(gen);
+  test.Run([](PPCContext*) {}, [](PPCContext*) {});
+  return xe::cpu::compiler::passes::CrossBlockConstPromotedForTest() - before;
+}
+
+// Block A stores r3 = a NON-constant computed value (r8 + r9), then conditionally
+// branches. Block B (single-DOMINATES fallthrough) loads r3 -> value promotion
+// replaces it with `assign (r8+r9)` (the live SSA value), keeping it resident
+// across the boundary. Constant promotion can NOT do this (r8+r9 is not a
+// constant); only value promotion fires. Expect promoted > 0, behavior unchanged.
+void GenCrossBlockValue(HIRBuilder& b) {
+  Value* sum = b.Add(LoadGPR(b, 8), LoadGPR(b, 9));  // non-constant
+  StoreGPR(b, 3, sum);
+  auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 10), INT32_TYPE),
+                          b.Truncate(LoadGPR(b, 11), INT32_TYPE));
+  auto taken = b.NewLabel();
+  auto fall = b.NewLabel();
+  b.BranchTrue(cmp, taken);
+  b.Branch(fall);
+  b.MarkLabel(fall);  // block B
+  StoreGPR(b, 12, LoadGPR(b, 3));  // load r3 -> promoted to the value `sum`
+  b.Return();
+  b.MarkLabel(taken);
+  b.Return();
+}
+
 }  // namespace
 
 TEST_CASE("cross_block_flag_dse_dead_overwrite_transparent",
@@ -448,4 +527,18 @@ TEST_CASE("cross_block_const_promotion_transparent", "[CROSSBLOCK_CONST]") {
 TEST_CASE("cross_block_const_promotion_nonvacuous", "[CROSSBLOCK_CONST]") {
   // r3's constant store in block A dominates the cross-block load in B -> promoted.
   REQUIRE(PromotedConstDelta(GenCrossBlockConst) >= 1);
+}
+
+TEST_CASE("cross_block_value_promotion_transparent", "[CROSSBLOCK_VALUE]") {
+  // Carrying a NON-constant SSA value (r8+r9) across the boundary is byte-
+  // identical to reloading r3 from context.
+  RequireValueTransparent(GenCrossBlockValue, MakePre(1, 2, 3, 4, 5, 6, 7, 8));
+  RequireValueTransparent(GenCrossBlockValue, MakePre(9, 8, 7, 6, 5, 4, 3, 2));
+  RequireValueTransparent(GenCrossBlockValue,
+                          MakePre(0xFFFFFFFF, 1, 0, 0, 0, 0, 0, 0));
+}
+
+TEST_CASE("cross_block_value_promotion_nonvacuous", "[CROSSBLOCK_VALUE]") {
+  // The non-constant r3 value is carried cross-block (constant promotion can't).
+  REQUIRE(PromotedValueDelta(GenCrossBlockValue) >= 1);
 }
