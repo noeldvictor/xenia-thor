@@ -285,6 +285,16 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
       inherit_track ? FunctionHasNonReturnIndirectBranch(builder) : false;
   std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
       block_exit_local_regs;
+  // Branch-target carrier state, snapshotted AT each conditional branch (mirrors
+  // the device-validated edge_in_state fix in cross-block const promotion). A
+  // branch target reached via a CFG-merged branch (its emission-prev IS the
+  // branching block, so GetInternalInheritPredecessor accepts it) must inherit
+  // the carrier->register map AS OF THE BRANCH, not the predecessor's end-of-block
+  // map - the latter includes not-taken-path STORE_LOCAL deposits the taken entry
+  // never ran, so reserving those registers binds stale values (a residency crash
+  // cause). Keyed by target block.
+  std::unordered_map<Block*, std::unordered_map<Value*, RegAssignment>>
+      edge_in_local_regs;
   uint64_t elided_inherited_loads = 0;
   uint64_t elided_inherited_stores = 0;
   // U5: locals whose LOAD_LOCAL was elided by inheritance (U4). After the pass,
@@ -321,10 +331,24 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
     if (inherit_active) {
       if (Block* pred = GetInternalInheritPredecessor(builder, block,
                                                        fn_has_indirect_jump)) {
-        auto pit = block_exit_local_regs.find(pred);
-        if (pit != block_exit_local_regs.end()) {
+        // Branch target (its emission-prev is the branching block): inherit the
+        // carrier map snapshotted AT the branch. True fallthrough: inherit the
+        // predecessor's end-of-block map. (The edge_in_state fix - inheriting the
+        // end map into a branch target reserves registers for not-taken-path
+        // deposits the taken entry never ran.)
+        const std::unordered_map<Value*, RegAssignment>* inherit_src = nullptr;
+        auto eit = edge_in_local_regs.find(block);
+        if (eit != edge_in_local_regs.end()) {
+          inherit_src = &eit->second;
+        } else {
+          auto pit = block_exit_local_regs.find(pred);
+          if (pit != block_exit_local_regs.end()) {
+            inherit_src = &pit->second;
+          }
+        }
+        if (inherit_src) {
           const size_t reserve_cap = size_t(usage_sets_.int_set->count) / 2;
-          for (auto& lr : pit->second) {
+          for (auto& lr : *inherit_src) {
             if (lr.second.set != usage_sets_.int_set->set) {
               continue;  // Only guest GPR (int-set) carriers for now.
             }
@@ -368,6 +392,16 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
       if (inherit_track && instr->opcode == &OPCODE_STORE_LOCAL_info &&
           instr->src2.value && instr->src2.value->reg.set) {
         block_local_regs[instr->src1.value] = instr->src2.value->reg;
+      }
+
+      // Snapshot the carrier->register map AT each conditional branch for the
+      // branch target (the edge_in_state fix). The target inherits this, not the
+      // block's end-of-block map (which includes not-taken-path deposits).
+      if (inherit_track &&
+          (instr->opcode == &OPCODE_BRANCH_TRUE_info ||
+           instr->opcode == &OPCODE_BRANCH_FALSE_info) &&
+          instr->src2.label && instr->src2.label->block) {
+        edge_in_local_regs[instr->src2.label->block] = block_local_regs;
       }
 
       // U4: elide a LOAD_LOCAL whose local was inherited into a register reserved
