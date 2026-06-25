@@ -26,6 +26,8 @@
 
 DECLARE_bool(ppc_cross_block_dead_flag_elim);
 DECLARE_bool(ppc_cross_block_dead_flag_elim_audit);
+DECLARE_bool(ppc_cross_block_dead_gpr_elim);
+DECLARE_bool(ppc_cross_block_dead_gpr_elim_audit);
 
 // Forward-declared (context_promotion_pass.h pulls in llvm headers not on the
 // test include path). Defined in context_promotion_pass.cc.
@@ -34,6 +36,7 @@ namespace cpu {
 namespace compiler {
 namespace passes {
 uint64_t CrossBlockFlagDseStoresRemovedForTest();
+uint64_t CrossBlockGprDseStoresRemovedForTest();
 }  // namespace passes
 }  // namespace compiler
 }  // namespace cpu
@@ -196,6 +199,107 @@ void GenLiveCrossBlock(HIRBuilder& b) {
   b.Return();
 }
 
+// --- GPR cross-block DSE (ppc_cross_block_dead_gpr_elim) --------------------
+struct ScopedGprDse {
+  explicit ScopedGprDse(bool enable) {
+    prev_ = cvars::ppc_cross_block_dead_gpr_elim;
+    prev_audit_ = cvars::ppc_cross_block_dead_gpr_elim_audit;
+    cvars::ppc_cross_block_dead_gpr_elim = enable;
+    cvars::ppc_cross_block_dead_gpr_elim_audit = enable;
+  }
+  ~ScopedGprDse() {
+    cvars::ppc_cross_block_dead_gpr_elim = prev_;
+    cvars::ppc_cross_block_dead_gpr_elim_audit = prev_audit_;
+  }
+  bool prev_;
+  bool prev_audit_;
+};
+
+void RequireGprTransparent(std::function<void(HIRBuilder&)> gen,
+                           std::function<void(PPCContext*)> pre) {
+  uint64_t off_r[32] = {}, on_r[32] = {};
+  uint32_t off_cr[8] = {}, on_cr[8] = {};
+  uint8_t off_ca = 0, on_ca = 0;
+  auto capture = [](PPCContext* ctx, uint64_t* r, uint32_t* cr, uint8_t* ca) {
+    for (int i = 0; i < 32; ++i) r[i] = ctx->r[i];
+    for (int i = 0; i < 8; ++i) cr[i] = (&ctx->cr0.value)[i];
+    *ca = ctx->xer_ca;
+  };
+  {
+    ScopedGprDse scope(false);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, off_r, off_cr, &off_ca); });
+  }
+  {
+    ScopedGprDse scope(true);
+    TestFunction test(gen);
+    test.Run(pre, [&](PPCContext* ctx) { capture(ctx, on_r, on_cr, &on_ca); });
+  }
+  for (int i = 0; i < 32; ++i) {
+    INFO("GPR r[" << i << "] mismatch (off vs gpr-DSE)");
+    REQUIRE(on_r[i] == off_r[i]);
+  }
+  for (int i = 0; i < 8; ++i) {
+    INFO("CR" << i << " mismatch (off vs gpr-DSE)");
+    REQUIRE(on_cr[i] == off_cr[i]);
+  }
+  INFO("XER carry mismatch (off vs gpr-DSE)");
+  REQUIRE(on_ca == off_ca);
+}
+
+uint64_t RemovedGprDelta(std::function<void(HIRBuilder&)> gen) {
+  ScopedGprDse scope(true);
+  uint64_t before =
+      xe::cpu::compiler::passes::CrossBlockGprDseStoresRemovedForTest();
+  TestFunction test(gen);
+  test.Run([](PPCContext*) {}, [](PPCContext*) {});
+  return xe::cpu::compiler::passes::CrossBlockGprDseStoresRemovedForTest() -
+         before;
+}
+
+// Entry sets r3 = r4+r5 (DEAD: both successors overwrite r3 before returning, no
+// read between). Two-block-deep so block-scoped DSE can't catch it - only the
+// cross-block GPR pass can. Expect removed > 0, behavior unchanged.
+void GenDeadGpr(HIRBuilder& b) {
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 4), LoadGPR(b, 5)));  // dead
+  auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 8), INT32_TYPE),
+                          b.Truncate(LoadGPR(b, 9), INT32_TYPE));
+  auto taken = b.NewLabel();
+  auto fall = b.NewLabel();
+  b.BranchTrue(cmp, taken);
+  b.Branch(fall);
+  b.MarkLabel(taken);
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 6), LoadGPR(b, 7)));  // overwrite
+  b.Return();
+  b.MarkLabel(fall);
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 10), LoadGPR(b, 11)));  // overwrite
+  b.Return();
+}
+
+// Entry sets r3, returns with no overwrite. The return barrier forces all GPRs
+// live for the caller. Expect removed == 0, behavior unchanged.
+void GenGprLiveAtReturn(HIRBuilder& b) {
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 4), LoadGPR(b, 5)));
+  b.Return();
+}
+
+// Entry sets r3; a successor re-reads r3 cross-block (into r12). r3 is LIVE across
+// the edge and must be KEPT. Expect removed == 0, behavior unchanged.
+void GenGprLiveCrossBlock(HIRBuilder& b) {
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 4), LoadGPR(b, 5)));  // live cross-block
+  auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 8), INT32_TYPE),
+                          b.Truncate(LoadGPR(b, 9), INT32_TYPE));
+  auto taken = b.NewLabel();
+  auto fall = b.NewLabel();
+  b.BranchTrue(cmp, taken);
+  b.Branch(fall);
+  b.MarkLabel(taken);
+  StoreGPR(b, 12, LoadGPR(b, 3));  // cross-block read of r3
+  b.Return();
+  b.MarkLabel(fall);
+  b.Return();
+}
+
 }  // namespace
 
 TEST_CASE("cross_block_flag_dse_dead_overwrite_transparent",
@@ -227,4 +331,30 @@ TEST_CASE("cross_block_flag_dse_live_cross_block_kept",
   RequireTransparent(GenLiveCrossBlock, MakePre(7, 7, 0, 0, 1, 2, 0, 0));
   // The eq store is read in a successor -> live across the edge -> not removed.
   REQUIRE(RemovedDelta(GenLiveCrossBlock) == 0);
+}
+
+TEST_CASE("cross_block_gpr_dse_dead_overwrite_transparent",
+          "[CROSSBLOCK_GPR_DSE]") {
+  RequireGprTransparent(GenDeadGpr, MakePre(1, 2, 3, 4, 5, 6, 7, 8));
+  RequireGprTransparent(GenDeadGpr, MakePre(9, 8, 7, 6, 60, 5, 4, 3));
+  RequireGprTransparent(GenDeadGpr, MakePre(-5, -5, 0, 0, 0, 0, 0, 0));
+}
+
+TEST_CASE("cross_block_gpr_dse_dead_overwrite_nonvacuous",
+          "[CROSSBLOCK_GPR_DSE]") {
+  // The entry's r3 store is dead on both successor paths -> removed.
+  REQUIRE(RemovedGprDelta(GenDeadGpr) >= 1);
+}
+
+TEST_CASE("cross_block_gpr_dse_live_at_return_kept", "[CROSSBLOCK_GPR_DSE]") {
+  RequireGprTransparent(GenGprLiveAtReturn, MakePre(1, 2, 0, 0, 0, 0, 0, 0));
+  // Return barrier => all GPRs live for the caller => nothing removed.
+  REQUIRE(RemovedGprDelta(GenGprLiveAtReturn) == 0);
+}
+
+TEST_CASE("cross_block_gpr_dse_live_cross_block_kept", "[CROSSBLOCK_GPR_DSE]") {
+  RequireGprTransparent(GenGprLiveCrossBlock, MakePre(3, 3, 0, 0, 1, 2, 0, 0));
+  RequireGprTransparent(GenGprLiveCrossBlock, MakePre(3, 9, 0, 0, 9, 1, 0, 0));
+  // r3 is read in a successor -> live across the edge -> not removed.
+  REQUIRE(RemovedGprDelta(GenGprLiveCrossBlock) == 0);
 }
