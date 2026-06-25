@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstddef>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "xenia/apu/apu_flags.h"
 #include "xenia/base/cvar.h"
@@ -75,18 +76,15 @@ DEFINE_bool(
     ppc_cross_block_const_promotion, false,
     "Thor codegen (guest-JIT tier-2): cross-block CONSTANT context promotion - "
     "unit #3 of the whole-function optimizer. Carries constant context values "
-    "across DOMINATES edges so a load_context of a slot last stored a constant in "
-    "a predecessor is replaced with that constant. ***DEVICE-UNSAFE - DO NOT "
-    "ENABLE.*** Host-byte-identical on x64 but DETERMINISTICALLY CRASHES Blue "
-    "Dragon on a64 (controlled device A/B 2026-06-25; Scudo heap corruption; both "
-    "the Value-reuse AND the fresh-CloneValue variants crash, so it is NOT a "
-    "backend constant-ref bug). Root cause = the IsExternallyEnterable gate is "
-    "sound for DEAD-STORE removal (units #1/#2 are device-clean) but NOT for "
-    "value PROMOTION: real BD code has edgeless re-entry (longjmp/guest-EH/"
-    "dispatcher) the scanner records no edge for, so a block that looks single-"
-    "fallthrough-pred inherits a constant never stored on the indirect-entry path "
-    "=> miscompile. The cross-barrier-elision wall (3rd hit). Re-enable only after "
-    "xenia records indirect/edgeless entry edges. Kept default-off as infra.",
+    "across SOUND fallthrough edges so a load_context of a slot last stored a "
+    "constant in a predecessor is replaced with that constant. An earlier version "
+    "(without the call-return-address exclusion) device-crashed BD because the gate "
+    "let a post-call resume block (longjmp/guest-EH/dispatcher re-enter at "
+    "call+4) inherit a constant never stored on the re-entry path. The pass now "
+    "additionally refuses to inherit into any block whose guest address is a call "
+    "return address, closing that edgeless-re-entry hole - the reusable complete-"
+    "CFG foundation for the whole promotion class. Default-off pending a64 device "
+    "re-validation of the sound gate.",
     "CPU");
 DEFINE_bool(ppc_cross_block_const_promotion_audit, false,
             "Log per-function constant-promotion counts for "
@@ -988,47 +986,109 @@ bool ContextPromotionPass::Initialize(Compiler* compiler) {
 namespace {
 std::atomic<uint64_t> g_const_promoted{0};
 
+// Guest start address of a block = its first SOURCE_OFFSET marker (0 if none).
+uint32_t PromoBlockGuestAddr(Block* b) {
+  for (Instr* i = b->instr_head; i; i = i->next) {
+    if (i->opcode == &OPCODE_SOURCE_OFFSET_info) {
+      return static_cast<uint32_t>(i->src1.offset);
+    }
+  }
+  return 0;
+}
+
 // Unit #3 of the whole-function optimizer: cross-block CONSTANT context
-// promotion. Carries constant context values across SOUND single-dominating-
-// predecessor edges (the IsExternallyEnterable gate makes this safe vs edgeless
-// indirect-branch entries - the same gate that made the GPR carrier sound) and
+// promotion. Carries constant context values across SOUND fallthrough edges and
 // replaces a load_context of a constant-holding slot with that constant; the
-// existing constant-prop + DCE then cascade. Constants are inline-materialized
-// so reusing a predecessor's constant Value across the edge is hazard-free.
+// existing constant-prop + DCE then cascade.
+//
+// SOUND-CFG FOUNDATION (the fix for the 2026-06-25 device crash, replacing the
+// earlier "inert-or-unsafe" verdict): IsExternallyEnterable already excludes the
+// function entry, CFG merges, non-fallthrough preds, no-recorded-edge blocks
+// (pure indirect / unwind landing pads), and labeled blocks in jump-table
+// functions. The ONE residual hole that crashed BD is a block with a recorded
+// fallthrough edge that is ALSO an external resume point. Every such resume -
+// longjmp, guest-EH unwind, kernel dispatcher Reenter - resumes at a saved
+// RETURN ADDRESS (the instruction after a call) with no recorded HIR edge, on a
+// path where the predecessor's store never ran. So we additionally refuse to
+// inherit into any block whose guest start address is a call-return address
+// (call_guest_addr + 4). Mid-block calls need no handling - the volatile-clear
+// below already drops all tracked constants at the call. This is SOUND without
+// being inert: most fallthrough blocks (the not-taken side of a conditional that
+// is not immediately after a call) are still promoted into. It is the reusable
+// complete-CFG foundation for every promotion-class pass (const-prop here,
+// register residency next).
 uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
   const bool fn_has_indirect_jump = FunctionHasNonReturnIndirectBranch(builder);
-  std::unordered_map<Block*,
-                     std::unordered_map<size_t, std::pair<Value*, size_t>>>
-      exit_state;
+  const uint32_t fn_addr = FindFirstSourceOffset(builder);
+
+  // Collect call-return addresses (call_guest_addr + 4). A SOURCE_OFFSET marker
+  // precedes each guest instruction, so the offset live at a call IS the call's
+  // guest address.
+  std::unordered_set<uint32_t> post_call_return_addrs;
+  {
+    uint32_t cur_off = 0;
+    for (Block* b = builder->first_block(); b; b = b->next) {
+      for (Instr* i = b->instr_head; i; i = i->next) {
+        if (i->opcode == &OPCODE_SOURCE_OFFSET_info) {
+          cur_off = static_cast<uint32_t>(i->src1.offset);
+        } else if (i->opcode == &OPCODE_CALL_info ||
+                   i->opcode == &OPCODE_CALL_TRUE_info ||
+                   i->opcode == &OPCODE_CALL_INDIRECT_info ||
+                   i->opcode == &OPCODE_CALL_INDIRECT_TRUE_info ||
+                   i->opcode == &OPCODE_CALL_EXTERN_info) {
+          post_call_return_addrs.insert(cur_off + 4u);
+        }
+      }
+    }
+  }
+
+  using SlotMap = std::unordered_map<size_t, std::pair<Value*, size_t>>;
+  // exit_state[p] = constants live at the END of block p (for a FALLTHROUGH
+  // successor, which executes all of p including post-branch stores).
+  // edge_in_state[t] = constants live where a conditional branch JUMPS to t,
+  // snapshotted AT the branch - before any stores later in the branching block.
+  // A branch target MUST inherit edge_in_state, never the predecessor's end
+  // state: CFG-simplification merges a branch's not-taken block into the
+  // branching block, so a not-taken-path store would otherwise pollute the
+  // taken target. This was the device-proven BD crash: `li r3,-1` on the bne
+  // not-taken path leaked into the bne-TAKEN block, clobbering the call's r3
+  // return value with a wrong constant -> miscompile -> heap corruption.
+  std::unordered_map<Block*, SlotMap> exit_state;
+  std::unordered_map<Block*, SlotMap> edge_in_state;
   uint64_t promoted = 0;
   for (Block* b = builder->first_block(); b; b = b->next) {
-    std::unordered_map<size_t, std::pair<Value*, size_t>> cur;
-    // NOTE (the structural dead-end, device-proven 2026-06-25): a SOUND promotion
-    // gate would also exclude any block that carries a label (a jumpable guest
-    // address an edgeless longjmp/EH/dispatcher re-entry could target with no
-    // recorded HIR edge). But in xenia EVERY non-entry block is started by a
-    // MarkLabel, so that sound gate excludes ALL blocks => promoted=0 (inert).
-    // The only blocks this loose gate DOES promote into are labeled blocks in
-    // functions without a *local* indirect branch - exactly the ones an external
-    // re-entry can reach => the device crash. So promotion is inert-or-unsafe
-    // until the scanner records the real edges; this stays default-off.
-    Block* pred = IsExternallyEnterable(builder, b, fn_has_indirect_jump)
-                      ? nullptr
-                      : GetSingleDominatingPredecessor(b);
-    if (pred) {
-      auto it = exit_state.find(pred);
-      if (it != exit_state.end()) {
-        cur = it->second;
+    SlotMap cur;
+    const uint32_t b_addr = PromoBlockGuestAddr(b);
+    const bool externally_enterable =
+        IsExternallyEnterable(builder, b, fn_has_indirect_jump) ||
+        (b_addr != 0 && post_call_return_addrs.count(b_addr) != 0);
+    if (!externally_enterable) {
+      auto edge_it = edge_in_state.find(b);
+      if (edge_it != edge_in_state.end()) {
+        // b is the target of a conditional branch: inherit the state AT the
+        // branch (single-pred guarantees this branch is b's only entry).
+        cur = edge_it->second;
+      } else if (Block* pred = GetSingleDominatingPredecessor(b)) {
+        // b falls through from its single dominating predecessor.
+        auto it = exit_state.find(pred);
+        if (it != exit_state.end()) {
+          cur = it->second;
+        }
       }
     }
     for (Instr* i = b->instr_head; i; i = i->next) {
-      if ((i->opcode->flags & OPCODE_FLAG_VOLATILE) &&
-          i->opcode != &OPCODE_BRANCH_TRUE_info &&
-          i->opcode != &OPCODE_BRANCH_FALSE_info) {
+      if (i->opcode == &OPCODE_BRANCH_TRUE_info ||
+          i->opcode == &OPCODE_BRANCH_FALSE_info) {
+        // Conditional branch: does NOT write context (cur unchanged), but it is
+        // a CFG exit - snapshot the state jumping to the target so the target
+        // inherits the state AT the branch, not stores after it on the not-taken
+        // fall-through path.
+        if (i->src2.label && i->src2.label->block) {
+          edge_in_state[i->src2.label->block] = cur;
+        }
+      } else if (i->opcode->flags & OPCODE_FLAG_VOLATILE) {
         // call/return/trap/atomic/barrier: callee may overwrite any slot ->
-        // all context overdefined. Intra-function conditional branches are
-        // volatile but do NOT write context, so they do NOT invalidate (same
-        // exclusion as the flag-DSE barrier).
+        // all context overdefined.
         cur.clear();
       } else if (i->opcode == &OPCODE_STORE_CONTEXT_info) {
         size_t off = i->src1.offset;
@@ -1050,26 +1110,17 @@ uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
           if (it != cur.end() &&
               it->second.second == GetTypeSize(i->dest->type) &&
               it->second.first->type == i->dest->type) {
-            // Use a FRESH in-block constant (CloneValue: def=NULL, reg.index=-1),
-            // not a reference to the predecessor's Value*. NOTE: this does NOT
-            // make the pass device-safe - it was tried specifically to test the
-            // "a64 mishandles a cross-block constant-Value ref" hypothesis, and
-            // the clone variant STILL deterministically crashed Blue Dragon
-            // (controlled device A/B 2026-06-25, Scudo heap corruption in the
-            // Kernel Dispatch worker, both the reuse AND clone variants). The
-            // real cause is the GATE below: IsExternallyEnterable +
-            // GetSingleDominatingPredecessor is sound for DEAD-STORE removal
-            // (units #1/#2 are device-clean) but NOT for value PROMOTION on real
-            // BD code, which has edgeless re-entry (longjmp / guest EH /
-            // dispatcher re-enter) the scanner records no HIR edge for, so a
-            // block that looks single-fallthrough-pred is really reachable on a
-            // path where this constant was never stored => wrong reaching value
-            // => miscompiled guest fn => wrong HLE arg => host heap corruption.
-            // This is the cross-barrier-elision wall (3rd confirmation, after the
-            // GPR value-carrier SIGBUS and the CR-triplet crash). DO NOT ENABLE
-            // ppc_cross_block_const_promotion until xenia records indirect/
-            // edgeless entry edges (the real unblock for the whole promotion
-            // class). The clone is kept as the correct form to build on then.
+            // Materialize a FRESH in-block constant (CloneValue: def=NULL,
+            // reg.index=-1), not a reference to the predecessor's Value*. The
+            // 2026-06-25 device crash proved this clone is NOT sufficient alone
+            // (both reuse and clone crashed BD) - the cause was the GATE letting
+            // a post-call resume block inherit. With the call-return-address
+            // exclusion above, the gate is now sound, so the clone is the correct
+            // (cross-block-lifetime-free) form to actually perform the promotion.
+            if (cvars::ppc_cross_block_const_promotion_audit) {
+              XELOGI("ConstPromoSite fn={:08X} block={:08X} off={}", fn_addr,
+                     b_addr, uint32_t(i->src1.offset));
+            }
             i->opcode = &hir::OPCODE_ASSIGN_info;
             i->set_src1(builder->CloneValue(it->second.first));
             ++promoted;
