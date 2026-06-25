@@ -74,16 +74,19 @@ DEFINE_bool(ppc_cross_block_dead_gpr_elim_audit, false,
 DEFINE_bool(
     ppc_cross_block_const_promotion, false,
     "Thor codegen (guest-JIT tier-2): cross-block CONSTANT context promotion - "
-    "unit #3 of the whole-function optimizer. The per-block context promotion "
-    "only replaces load_context with a dominating store's value WITHIN a block; "
-    "this carries CONSTANT context values across DOMINATES edges (single-pred "
-    "chains) so a load_context of a slot last stored a constant in a predecessor "
-    "is replaced with that constant (then the existing const-prop + DCE cascade). "
-    "SAFE: constants are inline-materialized so reuse across the barrier wall is "
-    "hazard-free (unlike the value-carrier that SIGBUS'd); calls/returns/traps/"
-    "volatile clear all tracked constants; overlapping stores invalidate; only "
-    "exact offset+size load matches are replaced. Byte-identical; default-off, "
-    "host-validated first. The cpu_todo cross-block constant-propagation item.",
+    "unit #3 of the whole-function optimizer. Carries constant context values "
+    "across DOMINATES edges so a load_context of a slot last stored a constant in "
+    "a predecessor is replaced with that constant. ***DEVICE-UNSAFE - DO NOT "
+    "ENABLE.*** Host-byte-identical on x64 but DETERMINISTICALLY CRASHES Blue "
+    "Dragon on a64 (controlled device A/B 2026-06-25; Scudo heap corruption; both "
+    "the Value-reuse AND the fresh-CloneValue variants crash, so it is NOT a "
+    "backend constant-ref bug). Root cause = the IsExternallyEnterable gate is "
+    "sound for DEAD-STORE removal (units #1/#2 are device-clean) but NOT for "
+    "value PROMOTION: real BD code has edgeless re-entry (longjmp/guest-EH/"
+    "dispatcher) the scanner records no edge for, so a block that looks single-"
+    "fallthrough-pred inherits a constant never stored on the indirect-entry path "
+    "=> miscompile. The cross-barrier-elision wall (3rd hit). Re-enable only after "
+    "xenia records indirect/edgeless entry edges. Kept default-off as infra.",
     "CPU");
 DEFINE_bool(ppc_cross_block_const_promotion_audit, false,
             "Log per-function constant-promotion counts for "
@@ -1038,8 +1041,28 @@ uint64_t PromoteCrossBlockConstants(HIRBuilder* builder) {
           if (it != cur.end() &&
               it->second.second == GetTypeSize(i->dest->type) &&
               it->second.first->type == i->dest->type) {
+            // Use a FRESH in-block constant (CloneValue: def=NULL, reg.index=-1),
+            // not a reference to the predecessor's Value*. NOTE: this does NOT
+            // make the pass device-safe - it was tried specifically to test the
+            // "a64 mishandles a cross-block constant-Value ref" hypothesis, and
+            // the clone variant STILL deterministically crashed Blue Dragon
+            // (controlled device A/B 2026-06-25, Scudo heap corruption in the
+            // Kernel Dispatch worker, both the reuse AND clone variants). The
+            // real cause is the GATE below: IsExternallyEnterable +
+            // GetSingleDominatingPredecessor is sound for DEAD-STORE removal
+            // (units #1/#2 are device-clean) but NOT for value PROMOTION on real
+            // BD code, which has edgeless re-entry (longjmp / guest EH /
+            // dispatcher re-enter) the scanner records no HIR edge for, so a
+            // block that looks single-fallthrough-pred is really reachable on a
+            // path where this constant was never stored => wrong reaching value
+            // => miscompiled guest fn => wrong HLE arg => host heap corruption.
+            // This is the cross-barrier-elision wall (3rd confirmation, after the
+            // GPR value-carrier SIGBUS and the CR-triplet crash). DO NOT ENABLE
+            // ppc_cross_block_const_promotion until xenia records indirect/
+            // edgeless entry edges (the real unblock for the whole promotion
+            // class). The clone is kept as the correct form to build on then.
             i->opcode = &hir::OPCODE_ASSIGN_info;
-            i->set_src1(it->second.first);
+            i->set_src1(builder->CloneValue(it->second.first));
             ++promoted;
           }
         }
