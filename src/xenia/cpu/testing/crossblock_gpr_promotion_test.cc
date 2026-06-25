@@ -227,7 +227,55 @@ void GenLoopCarry(HIRBuilder& b) {
   b.Return();
 }
 
+// HIGH REGISTER PRESSURE across an inherited fallthrough. Block A carries r31;
+// the fallthrough block B loads r31 EARLY (the elided inherited load), then
+// builds many simultaneously-live values (forcing the allocator to SPILL), and
+// uses the inherited r31 LAST so its next-use is furthest - making it a prime
+// spill VICTIM. This reaches the path where an inherited value (whose defining
+// LOAD_LOCAL was removed) is chosen for spilling - the real-code path that
+// crashed BD (SpillOneRegister dereferenced the removed def -> heap corruption)
+// and that the small fixtures never reach. Must stay byte-identical.
+void GenHighPressureInheritSpill(HIRBuilder& b) {
+  auto r31 = LoadGPR(b, 31);
+  StoreGPR(b, 20, b.Add(r31, b.LoadConstantUint64(1)));  // dirty r31 in entry
+  auto cmp = b.CompareSLT(b.Truncate(LoadGPR(b, 4), INT32_TYPE),
+                          b.Truncate(LoadGPR(b, 5), INT32_TYPE));
+  auto taken = b.NewLabel();
+  auto fall = b.NewLabel();
+  b.BranchTrue(cmp, taken);
+  b.Branch(fall);
+  b.MarkLabel(taken);
+  StoreGPR(b, 3, b.Add(LoadGPR(b, 31), b.LoadConstantUint64(7)));
+  b.Return();
+  b.MarkLabel(fall);
+  auto r31b = LoadGPR(b, 31);  // INHERITED (elided) load, loaded early
+  // Build a wall of simultaneously-live values to force spills.
+  Value* acc[16];
+  for (int i = 0; i < 16; ++i) {
+    acc[i] = b.Add(LoadGPR(b, 6 + i), b.LoadConstantUint64(0x100 + i));
+  }
+  Value* sum = acc[0];
+  for (int i = 1; i < 16; ++i) {
+    sum = b.Add(sum, acc[i]);
+  }
+  // Use the inherited r31 LAST: furthest next-use -> prime spill victim under
+  // the pressure above.
+  StoreGPR(b, 3, b.Add(r31b, sum));
+  b.Return();
+}
+
 }  // namespace
+
+TEST_CASE("CROSSBLOCK_GPR_HIGH_PRESSURE_INHERIT_SPILL", "[instr]") {
+  RequireTransparent(GenHighPressureInheritSpill, [](PPCContext* ctx) {
+    ctx->r[31] = 0x00000000ABCDEF01ull;
+    ctx->r[4] = 9;  // 9 < 2 false -> fallthrough (the high-pressure block)
+    ctx->r[5] = 2;
+    for (int i = 6; i <= 21; ++i) {
+      ctx->r[i] = 0x1000ull * i + 0x37;
+    }
+  });
+}
 
 TEST_CASE("CROSSBLOCK_GPR_LOOP_CARRY", "[instr]") {
   RequireTransparent(GenLoopCarry, [](PPCContext* ctx) {

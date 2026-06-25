@@ -381,6 +381,20 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
         if (iit != inherited_locals.end()) {
           SortUsageList(instr->dest);
           instr->dest->reg = iit->second;
+          // Make this inherited value SAFELY SPILLABLE. We are about to remove
+          // its defining LOAD_LOCAL, leaving instr->dest->def DANGLING. If the
+          // value is later chosen as a spill victim under real register pressure,
+          // SpillOneRegister dereferences that dangling def (->next, line ~830) to
+          // place the spill store - corrupting the instruction arena/heap (the
+          // device crash: a misaligned free() surfaced far away in a kernel list).
+          // Pointing local_slot at the carrier local (which already holds the
+          // deposited value) makes SpillOneRegister take its "already has a slot"
+          // fast path - it SKIPS the def-dereferencing store insertion and just
+          // reloads from the carrier local. U5's remaining-load scan then sees
+          // that reload and keeps the deposit, so the spill source stays valid.
+          // The synthetic host fixtures never spill (low pressure), so they never
+          // exercised this path - only real BD code with 7 GPRs does.
+          instr->dest->local_slot = iit->first;
           MarkRegUsed(iit->second, instr->dest, instr->dest->use_head);
           elided_load_locals.insert(iit->first);  // U5: candidate dead deposit.
           inherited_locals.erase(iit);
