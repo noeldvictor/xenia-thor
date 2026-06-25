@@ -99,18 +99,16 @@ DEFINE_bool(
     "stays in a host register across the block boundary instead of round-tripping "
     "through PPCContext memory (the per-block-reset tax; xenia's main gap vs "
     "RPCS3's whole-function regalloc). Subsumes ppc_cross_block_const_promotion. "
-    "Uses the device-validated branch-snapshot (edge_in_state) + post-call gate "
-    "from const promotion. ***DEVICE-UNSAFE in THIS pass - DO NOT ENABLE.*** "
-    "Host byte-identical (4 cases/207 assertions) and the DATAFLOW is sound, but "
-    "it DEVICE-CRASHES BD in the Main XThread after 122 promotions: it emits a "
-    "cross-block SSA reference (assign V where V is defined in the predecessor), "
-    "and xenia's a64 register allocator resets per block (PrepareBlockState) so it "
-    "does NOT keep V's live range across the boundary -> the assign reads a "
-    "clobbered register. Const promotion avoids this by materializing a FRESH "
-    "in-block constant (CloneValue). CONCLUSION: register residency must be done "
-    "IN register_allocation_pass (inherit reg->value mappings across the sound "
-    "edge, reusing this edge_in_state gate), NOT via cross-block HIR refs here. "
-    "Kept as host-validated infra + reference dataflow for that regalloc build.",
+    "Uses the device-validated branch-snapshot (edge_in_state) + post-call gate. "
+    "A direct cross-block `assign V` crashed (the a64 regalloc resets per block, so "
+    "V's register is clobbered); FIXED by routing each cross-block non-constant V "
+    "through a LOCAL SLOT (StoreLocal after V's def, LOAD_LOCAL at the use) - the "
+    "regalloc-supported cross-block carrier. DEVICE-VALIDATED: BD boots pixel- "
+    "correct, 0 faults (host byte-identical, 207 assertions). On its own this just "
+    "moves the round-trip from PPCContext to a local; the actual residency (keeping "
+    "the local resident in a host register across the boundary, eliding the "
+    "StoreLocal/LoadLocal) comes from arm64_register_cache_inherit stacked on top. "
+    "Default-off pending the inherit-stacked fps measurement.",
     "CPU");
 DEFINE_bool(arm64_context_promotion_gpr_local_slots, false,
             "Thor ARM64 research: promote dominated first loads of selected "
@@ -1088,6 +1086,10 @@ uint64_t PromoteCrossBlockContext(HIRBuilder* builder, bool constants_only) {
   // return value with a wrong constant -> miscompile -> heap corruption.
   std::unordered_map<Block*, SlotMap> exit_state;
   std::unordered_map<Block*, SlotMap> edge_in_state;
+  // Residency: per cross-block non-constant value V, the local slot it is
+  // deposited into (StoreLocal after V's def) so cross-block uses load it via
+  // LOAD_LOCAL - the regalloc-safe cross-block carrier. One local per V (deduped).
+  std::unordered_map<Value*, Value*> value_locals;
   uint64_t promoted = 0;
   for (Block* b = builder->first_block(); b; b = b->next) {
     SlotMap cur;
@@ -1143,25 +1145,48 @@ uint64_t PromoteCrossBlockContext(HIRBuilder* builder, bool constants_only) {
           if (it != cur.end() &&
               it->second.second == GetTypeSize(i->dest->type) &&
               it->second.first->type == i->dest->type) {
-            // Materialize a FRESH in-block constant (CloneValue: def=NULL,
-            // reg.index=-1), not a reference to the predecessor's Value*. The
-            // 2026-06-25 device crash proved this clone is NOT sufficient alone
-            // (both reuse and clone crashed BD) - the cause was the GATE letting
-            // a post-call resume block inherit. With the call-return-address
-            // exclusion above, the gate is now sound, so the clone is the correct
-            // (cross-block-lifetime-free) form to actually perform the promotion.
             if (cvars::ppc_cross_block_const_promotion_audit) {
               XELOGI("ConstPromoSite fn={:08X} block={:08X} off={}", fn_addr,
                      b_addr, uint32_t(i->src1.offset));
             }
             Value* src = it->second.first;
-            i->opcode = &hir::OPCODE_ASSIGN_info;
-            // Constants: materialize a fresh in-block copy (no cross-block
-            // lifetime). Non-constant SSA values (residency): reference the
-            // predecessor's value directly so its host-register live range
-            // extends across the block boundary - that IS the residency.
-            i->set_src1(src->IsConstant() ? builder->CloneValue(src) : src);
-            ++promoted;
+            if (src->IsConstant()) {
+              // Constant: materialize a fresh in-block copy (no cross-block
+              // lifetime, no regalloc support needed).
+              i->opcode = &hir::OPCODE_ASSIGN_info;
+              i->set_src1(builder->CloneValue(src));
+              ++promoted;
+            } else if (src->def && src->def->block == b) {
+              // Defined in THIS block: an intra-block assign is fine (the
+              // regalloc handles same-block live ranges).
+              i->opcode = &hir::OPCODE_ASSIGN_info;
+              i->set_src1(src);
+              ++promoted;
+            } else {
+              // Cross-block NON-CONSTANT value = REGISTER RESIDENCY. A direct
+              // cross-block `assign V` reads a clobbered register (the a64
+              // regalloc resets per block) - the device crash. Route V through a
+              // LOCAL SLOT: deposit it right after its def (once per V), and turn
+              // this load into a LOAD_LOCAL. The register-inheritance pass keeps
+              // that local resident in a host register across the boundary (the
+              // residency), and locals are the regalloc-supported cross-block
+              // carrier so it is crash-safe.
+              Value* local = nullptr;
+              auto vlit = value_locals.find(src);
+              if (vlit != value_locals.end()) {
+                local = vlit->second;
+              } else if (src->def && src->def->next) {
+                local = builder->AllocLocal(src->type);
+                builder->StoreLocal(local, src);
+                builder->last_instr()->MoveBefore(src->def->next);
+                value_locals[src] = local;
+              }
+              if (local) {
+                i->opcode = &hir::OPCODE_LOAD_LOCAL_info;
+                i->set_src1(local);
+                ++promoted;
+              }
+            }
           }
         }
       }
