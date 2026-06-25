@@ -302,16 +302,22 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
 
     // U3: which host register currently holds each local within this block.
     std::unordered_map<Value*, RegAssignment> block_local_regs;
-
-    // U4: if this block is a safe internal successor (entry-excluded, single
-    // DOMINATES pred, fallthrough), RESERVE the int registers that held the
-    // predecessor's carrier locals at its exit. A reserved register (availability
-    // bit cleared, no tracked value) is never chosen by allocation and never
-    // spilled by SpillOneRegister (it only spills tracked upcoming_uses), so it
-    // stays physically holding the value until a LOAD_LOCAL of that local elides
-    // into it below. Capped to keep allocation headroom (never reserve more than
-    // half the int set).
+    // U4: registers reserved at this block's entry to inherit carrier values from
+    // the dominating predecessor. Populated AFTER PrepareBlockState below - it
+    // calls availability.set() (all free), so reserving BEFORE it would be wiped
+    // by the reset (the bug that crashed BD under real register pressure).
     std::unordered_map<Value*, RegAssignment> inherited_locals;
+
+    // Reset all state.
+    PrepareBlockState();
+
+    // U4: NOW that availability is reset, RESERVE the int registers that held the
+    // predecessor's carrier locals at its exit, for a safe internal successor
+    // (entry-excluded, single DOMINATES pred, fallthrough). A reserved register
+    // (availability bit cleared, no tracked value) is never chosen by allocation
+    // and never spilled by SpillOneRegister (it only spills tracked upcoming_uses),
+    // so it stays physically holding the value until a LOAD_LOCAL of that local
+    // elides into it below. Capped to keep allocation headroom (half the int set).
     if (inherit_active) {
       if (Block* pred = GetInternalInheritPredecessor(builder, block,
                                                        fn_has_indirect_jump)) {
@@ -334,9 +340,6 @@ bool RegisterAllocationPass::Run(HIRBuilder* builder) {
         }
       }
     }
-
-    // Reset all state.
-    PrepareBlockState();
 
     // Renumber all instructions in the block. This is required so that
     // we can sort the usage pointers below.
