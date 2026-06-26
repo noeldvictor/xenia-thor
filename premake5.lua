@@ -111,9 +111,13 @@ filter("platforms:Linux")
   if _OPTIONS["linux-arm64"] then
     toolset("gcc")
     -- The GCC-15 cross compiler is stricter about transitive std includes than
-    -- MSVC/clang; force-include the common headers so the device-free a64 build
-    -- doesn't need a header-by-header <cstdint>/<cstring> sweep.
-    forceincludes({"cstdint", "cstddef", "cstring"})
+    -- MSVC/clang; force-include common stdint/stddef/string so the device-free
+    -- a64 build doesn't need a header-by-header sweep. Use the C-style headers
+    -- (stdint.h, NOT cstdint) so the same forceinclude works in BOTH the C++ TUs
+    -- (they get global uint32_t/size_t) and the third-party C libraries
+    -- (capstone/lzma/mspack/zlib) - -include <cstdint> on a C file is a fatal
+    -- error (cstdint is a C++-only header).
+    forceincludes({"stdint.h", "stddef.h", "string.h"})
   else
     toolset("clang")
   end
