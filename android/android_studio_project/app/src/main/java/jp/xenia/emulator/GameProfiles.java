@@ -230,19 +230,14 @@ public final class GameProfiles {
                         + "dirty-disc was already fixed in code (XctdCompressionInformation "
                         + "-> INVALID_PARAMETER); this font-cache redirect was the "
                         + "remaining boot blocker.")
-                .add("xam_suppress_dirty_disc_error", Boolean.TRUE,
-                        "BOOT FIX #2 (device-validated 2026-06-26): even with the "
-                        + "XFileSectorInformation kernel fix (which cut the content-lookup "
-                        + "failures from hundreds to ~31), Banjo still trips ONE residual "
-                        + "FALSE dirty-disc check and calls XamShowDirtyDiscErrorUI, which "
-                        + "shows xenia's 'Disc Read Error' popup and exit(1)s the title. "
-                        + "Banjo's content is actually fine here (complete 7.3GB ISO, the "
-                        + "same mmap path serves Burnout/Gears, reads succeed) - the check "
-                        + "is a false positive (likely an a64 hash mismatch in Banjo's own "
-                        + "verify). Suppressing the error UI lets the title continue past "
-                        + "the false check: Banjo boots past the popup to a clean RARE "
-                        + "splash (VdSwap flowing, no exit). Pairs with the "
-                        + "XFileSectorInformation fix + font-cache redirect."));
+                // NOTE: xam_suppress_dirty_disc_error is intentionally NOT set here.
+                // Device-RE 2026-06-26: it only hides the popup - Banjo still calls
+                // XamLoaderLaunchTitle(NULL) (exit to dashboard) right after the failed
+                // verify, so suppressing just turns the popup into a RARE-logo limbo.
+                // The real blocker is Banjo's content-verify FAILING on a64 (passes on
+                // PC/x64): an ARM64 recompiler or crypto/hash-API correctness bug in
+                // Banjo's verify routine, NOT the FS/mmap/async/font-cache (all ruled
+                // out). Needs a focused Ghidra/codegen RE; tracked outside the profile.
     }
 
     private static String normalize(final String titleId) {
