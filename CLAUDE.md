@@ -52,7 +52,9 @@ the app UI launch) + **`GameProfiles.java`** (per-game overrides). **`am start -
 is CONFOUNDED: it silently runs WITHOUT flat_membase, the rlwinm/CR/vector fast-paths, `vulkan_gate_rt_update`
 (+34% Burnout), `opt_prime_core_router` (+25%), `vulkan_lazy_completion_polls` (the Turnip fence fix, +46-78%),
 constants-arena, etc. This invalidated a whole session of "Burnout 8.3 / BD 9.9 / GPU-paced" measurements; with
-the real stack on, Burnout 8.3→14.83, BD heavy field 7.9→11.67.
+the real stack on, the Burnout RACE hits **46.2 fps** (device-validated 2026-06-25, VdSwap 462/10s, 0 faults) —
+it was reported 8.3, then a STILL-partial 14.83 that was itself missing `gate_rt_update` + the GPU stack. The lesson
+compounded: even a "stack" measurement is confounded unless it is the COMPLETE validated set. BD heavy field 7.9→11.67.
 - **Effective-value layering (highest wins):** app launch Bundle [`XeniaOptimizations` global → `GameProfiles`
   per-game → user `--ez`] **beats** the persisted `files/xenia.config.toml` **beats** the compiled `DEFINE_bool`
   default. ONLY the launch Bundle (intent extras / `--ez`) beats the device config — the "phantom config" gotcha.
@@ -61,8 +63,25 @@ the real stack on, Burnout 8.3→14.83, BD heavy field 7.9→11.67.
   check BOTH the `DEFINE_bool` default AND `run-as <pkg> grep <cvar> files/xenia.config.toml`.
 - **THE TEST STACK:** every device A/B must `--ez` the full validated set — reuse the `$opts` array in
   `scratch/thor-debug/measure_const_promo.ps1`. Bisect off that, don't build up from nothing.
-- **When you validate an opt for a game, ADD IT to that game's `GameProfiles` profile** (it persists + beats the
-  config); cross-game wins → flip `XeniaOptimizations` `defaultEnabled=true`.
+- **VALIDATED-SETTING PROPAGATION — do ALL of these EVERY time a game's best settings are found.** This is the
+  only way the device actually gets the win; skipping step 3 is exactly what shipped a 10fps Burnout to the UI
+  while `--ez` tests read 46:
+  1. **Per-game win → add the cvar to that title's `GameProfiles` profile** (persists + beats the config, with the
+     device-validated "why"). **Cross-game win → flip `XeniaOptimizations` `defaultEnabled=true`.**
+  2. **Frame cap per game = the title's NATIVE rate** via `gpu_frame_limit_fps` in its profile (BD / Gears / Lost
+     Odyssey / Banjo = 30, Burnout Revenge = 60). **Resolution per game** via `kernel_display_resolution` (BD = 720p
+     — its heavy field is CPU/lock-bound so resolution is near-free; sharper image at ~same fps).
+  3. **REBUILD the APK and REINSTALL it.** The registry + profiles are Java — they DO NOT reach the device until the
+     APK is repackaged and installed. A stale APK silently runs the OLD defaults = the silent-default-off confound,
+     ON the device. (Root cause of the 10fps Burnout: the installed APK predated the default-on + fence-fix commits.)
+  4. **VERIFY from the in-app UI launch (NOT `--ez`):** pick the game in-app and confirm it reproduces the measured
+     fps. If menus run uncapped (hundreds of fps) the registry/profile is NOT being applied → the install is stale.
+- **BUILD GOTCHA — the repo path has a space ("New project 8")** so ndk-build's `$(wildcard)` fails the native
+  configure ("unknown file"). The documented `subst X:` is NOT visible to background gradle tasks; use a directory
+  JUNCTION instead: `cmd /c mklink /J C:\xt "<repo>"`, then build from `C:\xt\android\android_studio_project`.
+  `mergeResources` is flaky with `!directory.isDirectory` on a fresh model — run `:app:mergeGithubDebugResources`
+  once in isolation to prime it, then `assembleGithubDebug`. (You do NOT need to recompile the native `.so` for a
+  Java-only registry/profile change — but a stale `.cc` makes gradle try, so the junction path is required anyway.)
 - **ALWAYS MEASURE temp before assuming thermal saturation** — the Thor cools to ~38°C within ~90s of idle; never
   say "thermally blocked" without reading `/sys/class/kgsl/kgsl-3d0/temp`.
 - **`screencap` can grab the SECONDARY display** (post-reboot the Thor shows the launcher on a 2nd display, so a
