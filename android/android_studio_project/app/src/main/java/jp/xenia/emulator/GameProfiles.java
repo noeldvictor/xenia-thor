@@ -218,9 +218,22 @@ public final class GameProfiles {
         PROFILES.put("4D5307ED", new Profile("Banjo-Kazooie: Nuts & Bolts")
                 .add("gpu_frame_limit_fps", Integer.valueOf(30),
                         "Banjo-Kazooie: Nuts & Bolts is a 30fps-native Xbox 360 title - "
-                        + "cap at 30 (its native ceiling). NOTE: Banjo has a separate "
-                        + "unresolved boot blocker (a guest-side false dirty-disc "
-                        + "verification) tracked outside the profile."));
+                        + "cap at 30 (its native ceiling).")
+                .add("xam_redirect_xui_font_cache", Boolean.TRUE,
+                        "BOOT FIX (device-validated 2026-06-26): Banjo creates its XUI "
+                        + "font cache (xuifontcachefont/meta) relative to the READ-ONLY "
+                        + "game disc then polls for it - the create fails, the files "
+                        + "never appear, and the UI never initializes (black screen, "
+                        + "VdSwap frozen at ~267). Redirecting those basenames to the "
+                        + "writable cache: device lets create+poll+read succeed: Banjo "
+                        + "boots past it and renders (VdSwap 267->3016, ~30fps). The "
+                        + "dirty-disc was already fixed in code (XctdCompressionInformation "
+                        + "-> INVALID_PARAMETER); this font-cache redirect was the "
+                        + "remaining boot blocker.")
+                .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
+                        "Async-IO completion fix (same class as Blue Dragon's): forces "
+                        + "synchronous NtReadFile completion so the guest's async-consume "
+                        + "path doesn't stall. Part of the validated Banjo boot stack."));
     }
 
     private static String normalize(final String titleId) {
