@@ -90,14 +90,51 @@ public final class GameProfiles {
                         + "(kernel_call_log_skip_discarded) for ~+25% from the 11.5 "
                         + "baseline. Correctness-verified (generation counter + per-entry "
                         + "ref, no use-after-free). Targeted: helps lock-bound BD, "
-                        + "net-flat on low-contention titles so it stays per-title here."));
+                        + "net-flat on low-contention titles so it stays per-title here.")
+                .add("gpu_frame_limit_fps", Integer.valueOf(30),
+                        "Blue Dragon is a 30fps-native Xbox 360 title. Cap the host "
+                        + "frame limiter at 30 so light/menu scenes hold a steady 30 "
+                        + "(instead of oscillating up to 60) and the guest loop is "
+                        + "paced - throttling CPU+GPU work cuts heat/power, which also "
+                        + "extends the thermal budget for the GPU-heavy foliage field. "
+                        + "30 is the target, not a regression: the heavy field is below "
+                        + "the cap regardless; the cap only smooths the scenes that "
+                        + "exceed it.")
+                .add("kernel_display_resolution", "720p",
+                        "Render Blue Dragon at 720p by default. BD's heavy field is "
+                        + "CPU/lock-bound, NOT fragment/fill-bound (device-profiled "
+                        + "2026-06-23: GPU idle ~98% on the heavy field; resolution "
+                        + "barely moves its frame time), so the higher resolution is "
+                        + "near-free here while giving a much sharper image than 480p. "
+                        + "The 30fps cap above and the full optimization stack keep it "
+                        + "paced; validated on-device at 720p."));
 
         // Burnout Revenge (454107DC): UMA-direct present-hangs the EA/EAHD/CRRW
         // intro movie chain (VdSwap freezes). Off runs the movies through to a
         // live menu ~55-63fps. Device-validated (A/B, docs 20260530).
         PROFILES.put("454107DC", new Profile("Burnout Revenge")
                 .add("gpu_uma_direct_shared_memory", Boolean.FALSE,
-                        "UMA-direct present-hangs the intro movies; keep it off"));
+                        "UMA-direct present-hangs the intro movies; keep it off")
+                .add("gpu_frame_limit_fps", Integer.valueOf(60),
+                        "Burnout Revenge is a 60fps-native Xbox 360 title - cap the "
+                        + "host limiter at 60 (its native ceiling). Device-validated "
+                        + "2026-06-25: with the full global optimization stack on "
+                        + "(gate_rt_update, dynamic_constants_arena, lazy_completion_"
+                        + "polls + the CPU fast-paths), the race runs 46.2fps (VdSwap "
+                        + "462/10s, 0 faults, pixel-correct) - up from a confounded "
+                        + "14.83 measured with a PARTIAL stack. cpu_issuedraw collapsed "
+                        + "43.8->14.9ms (cpu_rt 10->1ms via gate_rt_update), gpu_frame "
+                        + "45->23.6ms. Solidly in the 30-60 target.")
+                .add("gpu_cp_worker_nice", Integer.valueOf(-15),
+                        "Raise the GPU-command (CP) thread above the guest workers so "
+                        + "it isn't descheduled under contention - Burnout's Main thread "
+                        + "busy-waits on the GPU ring read-pointer, so a continuously-fed "
+                        + "CP shortens that bubble. Part of the validated 46.2fps stack.")
+                .add("gpu_vrs_foliage_rate", Integer.valueOf(2),
+                        "Adreno hardware VRS 2x2 coarse-shades Burnout's overdraw-heavy "
+                        + "blended draws. Device-validated -46% earlier; part of the "
+                        + "46.2fps full-stack measurement. Keeps all geometry (fragment-"
+                        + "shading coarsen only, not polygon reduction)."));
 
         // Infinite Undiscovery (535107DB): the default 65536 a64 stackpoints
         // array overflows ~37s in (Overflowed stackpoints! -> SIGABRT) from a
