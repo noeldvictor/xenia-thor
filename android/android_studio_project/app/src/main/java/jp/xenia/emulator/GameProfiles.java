@@ -181,6 +181,46 @@ public final class GameProfiles {
                         + "A/B by blended-draw count, 1633 samples). BTTF is GPU-bound so "
                         + "this stacks with the CP-priority fix toward its 30fps target. "
                         + "Mild transparency-edge softening, visually clean."));
+
+        // Gears of War (4D5307D5): a 30fps-native UE3 title, heavily multi-threaded
+        // and LOCK-bound (object-handle lookups under the global kernel lock were
+        // device-profiled at ~20% of CPU on Gears). The global default-on stack
+        // already serves it well: the lock-free object-handle cache + native-object
+        // fast-path clear the lock contention, and the Turnip fence fix (lazy
+        // completion polls) overlaps CPU/GPU (menu device-measured ~18->29.6fps).
+        // Profile adds the native 30fps cap so it paces cleanly.
+        PROFILES.put("4D5307D5", new Profile("Gears of War")
+                .add("gpu_frame_limit_fps", Integer.valueOf(30),
+                        "Gears of War is a 30fps-native Xbox 360 title - cap the host "
+                        + "limiter at 30 (its native ceiling) so it paces cleanly. The "
+                        + "global default-on stack (lock-free object-handle cache + "
+                        + "native-object fast-path for its global-lock contention, plus "
+                        + "the Turnip fence fix) supplies the speed."));
+
+        // Lost Odyssey (4D5307FA): 30fps-native JRPG. KNOWN BOOT BLOCKER - it can
+        // hang on a stuck LOADING screen (a file-not-found IO stall, device-observed
+        // 2026-05-30; NOT fixed by xboxkrnl_ntreadfile_force_complete, that was ruled
+        // out for LO specifically). The loading screen also pegged 943fps/72.5C
+        // before the frame cap. Profile sets the native 30 cap (also caps the
+        // loading-screen heat); the boot stall is separate, unresolved RE work.
+        PROFILES.put("4D5307FA", new Profile("Lost Odyssey")
+                .add("gpu_frame_limit_fps", Integer.valueOf(30),
+                        "Lost Odyssey is a 30fps-native Xbox 360 title - cap at 30 (its "
+                        + "native ceiling; also tames the loading-screen overheat, "
+                        + "device-measured 943fps/72.5C uncapped -> ~61fps). NOTE: LO has "
+                        + "a separate unresolved boot blocker (stuck loading-screen IO "
+                        + "stall) tracked outside the profile."));
+
+        // Banjo-Kazooie: Nuts & Bolts (4D5307ED): 30fps-native. KNOWN BOOT BLOCKER -
+        // a guest-side false "dirty disc" verification (deep RE; the current patch
+        // sites are wrong-target, per CLAUDE.md). Profile sets the native 30 cap for
+        // when it runs; booting it past the dirty-disc check is separate RE work.
+        PROFILES.put("4D5307ED", new Profile("Banjo-Kazooie: Nuts & Bolts")
+                .add("gpu_frame_limit_fps", Integer.valueOf(30),
+                        "Banjo-Kazooie: Nuts & Bolts is a 30fps-native Xbox 360 title - "
+                        + "cap at 30 (its native ceiling). NOTE: Banjo has a separate "
+                        + "unresolved boot blocker (a guest-side false dirty-disc "
+                        + "verification) tracked outside the profile."));
     }
 
     private static String normalize(final String titleId) {
