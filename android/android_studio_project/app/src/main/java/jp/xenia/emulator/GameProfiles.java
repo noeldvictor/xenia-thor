@@ -211,10 +211,22 @@ public final class GameProfiles {
                         + "a separate unresolved boot blocker (stuck loading-screen IO "
                         + "stall) tracked outside the profile."));
 
-        // Banjo-Kazooie: Nuts & Bolts (4D5307ED): 30fps-native. KNOWN BOOT BLOCKER -
-        // a guest-side false "dirty disc" verification (deep RE; the current patch
-        // sites are wrong-target, per CLAUDE.md). Profile sets the native 30 cap for
-        // when it runs; booting it past the dirty-disc check is separate RE work.
+        // Banjo-Kazooie: Nuts & Bolts (4D5307ED): 30fps-native. STILL BOOT-BLOCKED
+        // by a false "Disc Read Error" (deep multi-gate verify; continued RE).
+        // PROVEN (2026-06-26, fork-vs-canary file-IO trace diff): NOT the
+        // filesystem/mount/disc-parse, NOT the reads (byte-identical to a canary
+        // run that boots), NOT a codegen optimization (opts-off still fails).
+        // FIXED one real gap: 3 crypto exports the fork declared but never
+        // implemented (XeKeysGetKey -> XeCryptRotSumSha -> XeCryptBnQwBeSigVerify)
+        // now stubbed to success in xboxkrnl_crypt.cc (match canary) - necessary
+        // but NOT sufficient. The FINAL dirty-disc gate is guest 0x82273090:
+        // r11 = *(r4+0x138); if 0 -> dirty-disc. That field is the loaded-content
+        // pointer = the content never loaded into the verify context even though
+        // the bytes were read. Lead: the async IO-completion DELIVERY for
+        // async-opened \bundle files (force_complete below changes the return
+        // status but the guest still doesn't consume the completion). The two
+        // cvars below are correct canary-matching helpers, kept for the eventual
+        // fix. Banjo is the lowest-priority title (BD-30 is #1).
         PROFILES.put("4D5307ED", new Profile("Banjo-Kazooie: Nuts & Bolts")
                 .add("gpu_frame_limit_fps", Integer.valueOf(30),
                         "Banjo-Kazooie: Nuts & Bolts is a 30fps-native Xbox 360 title - "
@@ -222,22 +234,17 @@ public final class GameProfiles {
                 .add("xam_redirect_xui_font_cache", Boolean.TRUE,
                         "BOOT FIX (device-validated 2026-06-26): Banjo creates its XUI "
                         + "font cache (xuifontcachefont/meta) relative to the READ-ONLY "
-                        + "game disc then polls for it - the create fails, the files "
-                        + "never appear, and the UI never initializes (black screen, "
-                        + "VdSwap frozen at ~267). Redirecting those basenames to the "
-                        + "writable cache: device lets create+poll+read succeed: Banjo "
-                        + "boots past it and renders (VdSwap 267->3016, ~30fps). The "
-                        + "dirty-disc was already fixed in code (XctdCompressionInformation "
-                        + "-> INVALID_PARAMETER); this font-cache redirect was the "
-                        + "remaining boot blocker.")
-                // NOTE: xam_suppress_dirty_disc_error is intentionally NOT set here.
-                // Device-RE 2026-06-26: it only hides the popup - Banjo still calls
-                // XamLoaderLaunchTitle(NULL) (exit to dashboard) right after the failed
-                // verify, so suppressing just turns the popup into a RARE-logo limbo.
-                // The real blocker is Banjo's content-verify FAILING on a64 (passes on
-                // PC/x64): an ARM64 recompiler or crypto/hash-API correctness bug in
-                // Banjo's verify routine, NOT the FS/mmap/async/font-cache (all ruled
-                // out). Needs a focused Ghidra/codegen RE; tracked outside the profile.
+                        + "game disc then polls for it - the create fails so the UI never "
+                        + "initializes (black screen, VdSwap frozen at ~267). Redirecting "
+                        + "those basenames to the writable cache: device lets "
+                        + "create+poll+read succeed.")
+                .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
+                        "BOOT FIX: Banjo opens its \\bundle content files async; the fork "
+                        + "returned STATUS_PENDING and the guest's async-completion path "
+                        + "did not consume it, leaving its content table empty. Forcing "
+                        + "synchronous completion (return the real success status, "
+                        + "matching canary) routes Banjo to its working sync-consume "
+                        + "path."));
     }
 
     private static String normalize(final String titleId) {
