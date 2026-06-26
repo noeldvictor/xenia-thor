@@ -58,6 +58,8 @@
 
 #if XE_ARCH_ARM64
 #include "xenia/cpu/backend/arm64/arm64_backend.h"
+#include "xenia/cpu/backend/llvm/llvm_backend.h"
+DECLARE_bool(cpu_backend_llvm);  // defined in backend/llvm/llvm_backend.cc
 #endif  // XE_ARCH_ARM64
 #if XE_ARCH_AMD64
 #include "xenia/cpu/backend/x64/x64_backend.h"
@@ -831,7 +833,14 @@ X_STATUS Emulator::Setup(
 #endif  // XE_ARCH_AMD64
 #if XE_ARCH_ARM64
   if (cvars::cpu == "arm64") {
-    backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
+    // LLVM-JIT backend (whole-function recompile at load for register residency)
+    // when enabled AND its libLLVM is linked (P0); else the a64 per-block JIT.
+    if (cvars::cpu_backend_llvm &&
+        xe::cpu::backend::llvm_backend::LLVMBackend::IsAvailable()) {
+      backend.reset(new xe::cpu::backend::llvm_backend::LLVMBackend());
+    } else {
+      backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
+    }
   }
 #endif  // XE_ARCH_ARM64
   if (cvars::cpu == "any") {

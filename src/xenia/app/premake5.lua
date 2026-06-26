@@ -78,6 +78,7 @@ project("xenia-app")
   filter("architecture:ARM64")
     links({
       "xenia-cpu-backend-arm64",
+      "xenia-cpu-backend-llvm",
     })
 
   files({
