@@ -9,23 +9,34 @@
 
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
 
+#include <string>
+
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
+#include "xenia/cpu/backend/llvm/llvm_jit_context.h"
 
 // P0 gating: defined by the build once libLLVM is cross-built + linked for
-// android-arm64 (LLVM 18.1.8, AArch64-only, ORC + JITLink). Until then the
+// android-arm64 (LLVM 20.1.8, AArch64-only, ORC + JITLink). Until then the
 // backend is a compile-only skeleton and IsAvailable() returns false so the
 // processor keeps the a64 backend.
 #ifndef XE_LLVM_BACKEND_ENABLED
 #define XE_LLVM_BACKEND_ENABLED 0
 #endif
 
+#if XE_LLVM_BACKEND_ENABLED
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/TargetSelect.h"
+#endif  // XE_LLVM_BACKEND_ENABLED
+
 DEFINE_bool(cpu_backend_llvm, false,
             "Use the LLVM-JIT CPU backend (whole-function recompile at module "
-            "load for register residency) instead of the a64 per-block JIT. "
-            "Requires a libLLVM build (XE_LLVM_BACKEND_ENABLED); default-off "
-            "while P0-P5 of the build are in progress. See "
+            "load for register residency) for guest functions it can lower, "
+            "falling back to the a64 per-block JIT otherwise. Requires a "
+            "libLLVM build (XE_LLVM_BACKEND_ENABLED). See "
             "docs/research/20260626-llvm-jit-backend-build-plan.md.",
             "CPU");
 
@@ -34,12 +45,7 @@ namespace cpu {
 namespace backend {
 namespace llvm_backend {
 
-// The real definition lands in P0/P4 (holds llvm::orc::LLJIT + LLVMContext +
-// the JITLink ObjectLinkingLayer with the W^X dual-mapping memory manager).
-struct LlvmJitContext {
-  // TODO(P0): std::unique_ptr<llvm::orc::LLJIT> jit; etc.
-  bool initialized = false;
-};
+// LlvmJitContext is defined in llvm_jit_context.h (shared with the assembler).
 
 LLVMBackend::LLVMBackend() = default;
 LLVMBackend::~LLVMBackend() = default;
@@ -53,46 +59,55 @@ bool LLVMBackend::IsAvailable() {
 }
 
 bool LLVMBackend::Initialize(Processor* processor) {
-  if (!Backend::Initialize(processor)) {
+  // Bring up the a64 base FIRST: it creates the host<->guest thunks, the code
+  // cache + indirection table, the backend context, and the kernel-HLE glue.
+  // The LLVM path reuses ALL of it (an LLVM function is ABI-identical to an a64
+  // one), so a64 stays the fallback and a64<->LLVM calls interoperate.
+  if (!a64::A64Backend::Initialize(processor)) {
     return false;
   }
+
 #if XE_LLVM_BACKEND_ENABLED
-  // TODO(P0/P4): InitializeNativeTarget + AsmPrinter; build LLJIT with a
-  // JITLink ObjectLinkingLayer + dual RW/RX (memfd) memory manager; allocate
-  // the code cache; set up the resolve thunks (reuse the a64 entry-table path).
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+
+  auto jtmb_or = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!jtmb_or) {
+    XELOGE("LLVMBackend: JITTargetMachineBuilder::detectHost failed");
+    return false;
+  }
+  auto jtmb = std::move(*jtmb_or);
+  // Reserve x20 (guest PPCContext*) and x21 (guest membase) so the register
+  // allocator never clobbers them. The host->guest thunk loads them before
+  // entering the function; the function reads them via @llvm.read_register.
+  jtmb.addFeatures({"+reserve-x20", "+reserve-x21"});
+
+  auto jit_or = llvm::orc::LLJITBuilder()
+                    .setJITTargetMachineBuilder(std::move(jtmb))
+                    .create();
+  if (!jit_or) {
+    std::string msg = llvm::toString(jit_or.takeError());
+    XELOGE("LLVMBackend: LLJIT creation failed: {}", msg);
+    return false;
+  }
+
   jit_ = std::make_unique<LlvmJitContext>();
-  XELOGI("LLVMBackend: initialized (P-stub)");
+  jit_->jit = std::move(*jit_or);
+  jit_->initialized = true;
+  XELOGI(
+      "LLVMBackend: ORCv2 LLJIT initialized (AArch64, x20=ctx/x21=membase "
+      "reserved). LLVM lowers what it can; a64 handles the rest.");
   return true;
 #else
   XELOGW(
       "LLVMBackend::Initialize: libLLVM not linked (XE_LLVM_BACKEND_ENABLED=0) "
-      "- the LLVM backend is not yet usable; keep cpu_backend_llvm=false.");
+      "- keep cpu_backend_llvm=false.");
   return false;
 #endif
 }
 
-void LLVMBackend::CommitExecutableRange(uint32_t guest_low,
-                                        uint32_t guest_high) {
-  // TODO(P4): invalidate the host icache for the compiled range. With JITLink
-  // the object layer manages this; likely a no-op or a __builtin___clear_cache.
-}
-
 std::unique_ptr<Assembler> LLVMBackend::CreateAssembler() {
   return std::make_unique<LLVMAssembler>(this);
-}
-
-std::unique_ptr<GuestFunction> LLVMBackend::CreateGuestFunction(
-    Module* module, uint32_t address) {
-  // TODO(P1/P4): return an LLVMFunction holding the JIT'd code pointer + the
-  // guest metadata (model on a64_function). For now this path is unreachable
-  // (Initialize fails when LLVM is unlinked).
-  return nullptr;
-}
-
-uint64_t LLVMBackend::CalculateNextHostInstruction(ThreadDebugInfo* thread_info,
-                                                   uint64_t current_pc) {
-  // TODO(P6): debugger single-step support. Not needed for boot/perf.
-  return current_pc;
 }
 
 }  // namespace llvm_backend

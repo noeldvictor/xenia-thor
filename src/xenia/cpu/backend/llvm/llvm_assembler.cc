@@ -10,69 +10,751 @@
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 
 #include "xenia/base/logging.h"
+#include "xenia/cpu/backend/a64/a64_backend.h"
+#include "xenia/cpu/backend/a64/a64_function.h"
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
+#include "xenia/cpu/backend/llvm/llvm_jit_context.h"
 #include "xenia/cpu/hir/hir_builder.h"
+#include "xenia/cpu/hir/instr.h"
+#include "xenia/cpu/hir/label.h"
 
 #ifndef XE_LLVM_BACKEND_ENABLED
 #define XE_LLVM_BACKEND_ENABLED 0
 #endif
+
+#if XE_LLVM_BACKEND_ENABLED
+#include <string>
+#include <unordered_map>
+
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/raw_ostream.h"
+#endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
 namespace cpu {
 namespace backend {
 namespace llvm_backend {
 
+using namespace xe::cpu::hir;
+
 LLVMAssembler::LLVMAssembler(LLVMBackend* backend)
     : Assembler(backend), llvm_backend_(backend) {}
 
 LLVMAssembler::~LLVMAssembler() = default;
 
-bool LLVMAssembler::Initialize() { return Assembler::Initialize(); }
+bool LLVMAssembler::Initialize() {
+  if (!Assembler::Initialize()) {
+    return false;
+  }
+  // The fallback is a plain a64 assembler bound to the same backend (which IS-A
+  // A64Backend). Qualified call to skip LLVMBackend's CreateAssembler override.
+  fallback_ = llvm_backend_->a64::A64Backend::CreateAssembler();
+  if (!fallback_ || !fallback_->Initialize()) {
+    XELOGE("LLVMAssembler: failed to create a64 fallback assembler");
+    return false;
+  }
+  return true;
+}
 
 void LLVMAssembler::Reset() { Assembler::Reset(); }
+
+#if XE_LLVM_BACKEND_ENABLED
+
+namespace {
+
+// Per-function HIR -> LLVM IR lowering. Direct-context model (milestone 1):
+// LOAD/STORE_CONTEXT lower to loads/stores on the real PPCContext pointer; the
+// LLVM optimizer (GVN/SROA) gives cross-block residency. Returns false on any
+// opcode it does not handle, so the caller falls back to a64.
+class Lowerer {
+ public:
+  Lowerer(llvm::LLVMContext& ctx, llvm::Module* mod, llvm::Function* fn)
+      : ctx_(ctx), mod_(mod), fn_(fn), b_(ctx) {}
+
+  bool Run(HIRBuilder* builder);
+
+ private:
+  llvm::Type* T(TypeName t) {
+    switch (t) {
+      case INT8_TYPE:
+        return llvm::Type::getInt8Ty(ctx_);
+      case INT16_TYPE:
+        return llvm::Type::getInt16Ty(ctx_);
+      case INT32_TYPE:
+        return llvm::Type::getInt32Ty(ctx_);
+      case INT64_TYPE:
+        return llvm::Type::getInt64Ty(ctx_);
+      case FLOAT32_TYPE:
+        return llvm::Type::getFloatTy(ctx_);
+      case FLOAT64_TYPE:
+        return llvm::Type::getDoubleTy(ctx_);
+      case VEC128_TYPE:
+      default:
+        return nullptr;  // vectors -> fallback
+    }
+  }
+
+  bool IsInt(TypeName t) { return t <= INT64_TYPE; }
+  bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
+
+  // Resolve an HIR value to an LLVM value (constant materialized inline, else
+  // looked up from the def map).
+  llvm::Value* V(Value* v) {
+    if (!v) return nullptr;
+    if (v->IsConstant()) {
+      switch (v->type) {
+        case INT8_TYPE:
+          return b_.getInt8(uint8_t(v->constant.i8));
+        case INT16_TYPE:
+          return b_.getInt16(uint16_t(v->constant.i16));
+        case INT32_TYPE:
+          return b_.getInt32(uint32_t(v->constant.i32));
+        case INT64_TYPE:
+          return b_.getInt64(uint64_t(v->constant.i64));
+        case FLOAT32_TYPE:
+          return llvm::ConstantFP::get(b_.getFloatTy(), v->constant.f32);
+        case FLOAT64_TYPE:
+          return llvm::ConstantFP::get(b_.getDoubleTy(), v->constant.f64);
+        default:
+          return nullptr;
+      }
+    }
+    auto it = values_.find(v->ordinal);
+    return it == values_.end() ? nullptr : it->second;
+  }
+
+  void Def(Value* dest, llvm::Value* lv) { values_[dest->ordinal] = lv; }
+
+  // Host pointer into the guest context (x20 + offset).
+  llvm::Value* CtxPtr(uint64_t offset) {
+    return b_.CreateGEP(b_.getInt8Ty(), ctx_ptr_, b_.getInt64(offset));
+  }
+  // Host pointer into guest memory (x21 + ea, ea zero-extended to 64-bit).
+  llvm::Value* MemPtr(llvm::Value* ea) {
+    auto* ea64 = b_.CreateZExtOrTrunc(ea, b_.getInt64Ty());
+    return b_.CreateGEP(b_.getInt8Ty(), membase_, ea64);
+  }
+  llvm::Value* MaybeByteSwap(llvm::Value* v, llvm::Type* ty, uint16_t flags) {
+    if (!(flags & LOAD_STORE_BYTE_SWAP)) return v;
+    if (ty->isFloatingPointTy()) {
+      auto* it = ty->isFloatTy() ? b_.getInt32Ty() : b_.getInt64Ty();
+      auto* iv = b_.CreateBitCast(v, it);
+      iv = b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, iv);
+      return b_.CreateBitCast(iv, ty);
+    }
+    if (ty->getIntegerBitWidth() <= 8) return v;
+    return b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, v);
+  }
+  // i1 truth test of an HIR boolean/scalar value.
+  llvm::Value* Truth(llvm::Value* v) {
+    if (v->getType()->isFloatingPointTy()) {
+      return b_.CreateFCmpUNE(v, llvm::ConstantFP::get(v->getType(), 0.0));
+    }
+    return b_.CreateICmpNE(v, llvm::ConstantInt::get(v->getType(), 0));
+  }
+
+  llvm::BasicBlock* BlockFor(Block* hb) { return block_map_[hb->ordinal]; }
+
+  bool LowerInstr(Instr* i);
+
+  llvm::LLVMContext& ctx_;
+  llvm::Module* mod_;
+  llvm::Function* fn_;
+  llvm::IRBuilder<> b_;
+  llvm::Value* ctx_ptr_ = nullptr;
+  llvm::Value* membase_ = nullptr;
+  std::unordered_map<uint32_t, llvm::Value*> values_;
+  std::unordered_map<uint32_t, llvm::AllocaInst*> locals_;
+  std::unordered_map<uint16_t, llvm::BasicBlock*> block_map_;
+};
+
+// Reads a reserved AArch64 register (x20=ctx, x21=membase) set up by the
+// host->guest thunk. Matches the a64 ABI so the same thunk + a64<->LLVM calls
+// all interoperate.
+static llvm::Value* ReadReg(llvm::IRBuilder<>& b, llvm::Module* mod,
+                            const char* name) {
+  auto& ctx = b.getContext();
+  auto* i64 = llvm::Type::getInt64Ty(ctx);
+  auto* decl = llvm::Intrinsic::getOrInsertDeclaration(
+      mod, llvm::Intrinsic::read_register, {i64});
+  auto* md = llvm::MDNode::get(ctx, {llvm::MDString::get(ctx, name)});
+  return b.CreateCall(decl, {llvm::MetadataAsValue::get(ctx, md)});
+}
+
+bool Lowerer::Run(HIRBuilder* builder) {
+  auto* entry = llvm::BasicBlock::Create(ctx_, "entry", fn_);
+  b_.SetInsertPoint(entry);
+  ctx_ptr_ = b_.CreateIntToPtr(ReadReg(b_, mod_, "x20"), b_.getPtrTy(), "ctx");
+  membase_ =
+      b_.CreateIntToPtr(ReadReg(b_, mod_, "x21"), b_.getPtrTy(), "membase");
+
+  // One llvm BB per HIR block, created up front so branches can target them.
+  for (Block* blk = builder->first_block(); blk; blk = blk->next) {
+    block_map_[blk->ordinal] =
+        llvm::BasicBlock::Create(ctx_, "b", fn_);
+  }
+  Block* first = builder->first_block();
+  if (!first) {
+    b_.CreateRetVoid();
+    return true;
+  }
+  b_.CreateBr(block_map_[first->ordinal]);
+
+  for (Block* blk = first; blk; blk = blk->next) {
+    b_.SetInsertPoint(block_map_[blk->ordinal]);
+    for (Instr* i = blk->instr_head; i; i = i->next) {
+      if (!LowerInstr(i)) {
+        return false;  // unsupported -> fallback
+      }
+    }
+    // Fall through to the next sequential block if no terminator was emitted.
+    if (!b_.GetInsertBlock()->getTerminator()) {
+      if (blk->next) {
+        b_.CreateBr(block_map_[blk->next->ordinal]);
+      } else {
+        b_.CreateRetVoid();
+      }
+    }
+  }
+  return true;
+}
+
+bool Lowerer::LowerInstr(Instr* i) {
+  const Opcode op = i->opcode->num;
+  switch (op) {
+    // ---- ignorable / meta ----
+    case OPCODE_COMMENT:
+    case OPCODE_NOP:
+    case OPCODE_SOURCE_OFFSET:
+    case OPCODE_CONTEXT_BARRIER:  // direct-ctx model: every access hits memory
+      return true;
+    case OPCODE_MEMORY_BARRIER:
+      b_.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
+      return true;
+
+    // ---- context ----
+    case OPCODE_LOAD_CONTEXT: {
+      auto* ty = T(i->dest->type);
+      if (!ty) return false;
+      Def(i->dest, b_.CreateLoad(ty, CtxPtr(i->src1.offset)));
+      return true;
+    }
+    case OPCODE_STORE_CONTEXT: {
+      auto* val = V(i->src2.value);
+      if (!val) return false;
+      b_.CreateStore(val, CtxPtr(i->src1.offset));
+      return true;
+    }
+
+    // ---- locals (function-private stack slots) ----
+    case OPCODE_LOAD_LOCAL: {
+      auto* ty = T(i->dest->type);
+      if (!ty) return false;
+      auto key = i->src1.value->ordinal;
+      auto it = locals_.find(key);
+      if (it == locals_.end()) return false;  // store-before-load expected
+      Def(i->dest, b_.CreateLoad(ty, it->second));
+      return true;
+    }
+    case OPCODE_STORE_LOCAL: {
+      auto* val = V(i->src2.value);
+      if (!val) return false;
+      auto key = i->src1.value->ordinal;
+      auto it = locals_.find(key);
+      llvm::AllocaInst* slot;
+      if (it == locals_.end()) {
+        llvm::IRBuilder<> eb(&fn_->getEntryBlock(),
+                             fn_->getEntryBlock().begin());
+        slot = eb.CreateAlloca(val->getType());
+        locals_[key] = slot;
+      } else {
+        slot = it->second;
+      }
+      b_.CreateStore(val, slot);
+      return true;
+    }
+
+    // ---- moves / conversions ----
+    case OPCODE_ASSIGN:
+      Def(i->dest, V(i->src1.value));
+      return true;
+    case OPCODE_CAST: {
+      // Reinterpret bits between same-size int/float.
+      auto* ty = T(i->dest->type);
+      auto* src = V(i->src1.value);
+      if (!ty || !src) return false;
+      Def(i->dest, b_.CreateBitCast(src, ty));
+      return true;
+    }
+    case OPCODE_ZERO_EXTEND: {
+      auto* ty = T(i->dest->type);
+      auto* src = V(i->src1.value);
+      if (!ty || !src) return false;
+      Def(i->dest, b_.CreateZExt(src, ty));
+      return true;
+    }
+    case OPCODE_SIGN_EXTEND: {
+      auto* ty = T(i->dest->type);
+      auto* src = V(i->src1.value);
+      if (!ty || !src) return false;
+      Def(i->dest, b_.CreateSExt(src, ty));
+      return true;
+    }
+    case OPCODE_TRUNCATE: {
+      auto* ty = T(i->dest->type);
+      auto* src = V(i->src1.value);
+      if (!ty || !src) return false;
+      Def(i->dest, b_.CreateTrunc(src, ty));
+      return true;
+    }
+    case OPCODE_CONVERT: {
+      // int<->float numeric conversion (not bit reinterpret).
+      auto dt = i->dest->type;
+      auto st = i->src1.value->type;
+      auto* ty = T(dt);
+      auto* src = V(i->src1.value);
+      if (!ty || !src) return false;
+      if (IsFloat(dt) && IsInt(st)) {
+        Def(i->dest, b_.CreateSIToFP(src, ty));
+      } else if (IsInt(dt) && IsFloat(st)) {
+        Def(i->dest, b_.CreateFPToSI(src, ty));
+      } else if (IsFloat(dt) && IsFloat(st)) {
+        Def(i->dest, dt > st ? b_.CreateFPExt(src, ty)
+                             : b_.CreateFPTrunc(src, ty));
+      } else {
+        return false;
+      }
+      return true;
+    }
+
+    // ---- integer / float arithmetic ----
+    case OPCODE_ADD: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFAdd(a, c)
+                                          : b_.CreateAdd(a, c));
+      return true;
+    }
+    case OPCODE_SUB: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFSub(a, c)
+                                          : b_.CreateSub(a, c));
+      return true;
+    }
+    case OPCODE_MUL: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFMul(a, c)
+                                          : b_.CreateMul(a, c));
+      return true;
+    }
+    case OPCODE_DIV: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      if (IsFloat(i->dest->type)) {
+        Def(i->dest, b_.CreateFDiv(a, c));
+      } else {
+        Def(i->dest, (i->flags & ARITHMETIC_UNSIGNED) ? b_.CreateUDiv(a, c)
+                                                       : b_.CreateSDiv(a, c));
+      }
+      return true;
+    }
+    case OPCODE_MUL_HI: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c || !IsInt(i->dest->type)) return false;
+      unsigned w = a->getType()->getIntegerBitWidth();
+      auto* wide = llvm::Type::getIntNTy(ctx_, w * 2);
+      bool uns = (i->flags & ARITHMETIC_UNSIGNED) != 0;
+      auto* aw = uns ? b_.CreateZExt(a, wide) : b_.CreateSExt(a, wide);
+      auto* cw = uns ? b_.CreateZExt(c, wide) : b_.CreateSExt(c, wide);
+      auto* prod = b_.CreateMul(aw, cw);
+      auto* hi = b_.CreateLShr(prod, w);
+      Def(i->dest, b_.CreateTrunc(hi, a->getType()));
+      return true;
+    }
+    case OPCODE_NEG: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFNeg(a)
+                                          : b_.CreateNeg(a));
+      return true;
+    }
+    case OPCODE_ABS: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      if (IsFloat(i->dest->type)) {
+        Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, a));
+      } else {
+        Def(i->dest, b_.CreateBinaryIntrinsic(llvm::Intrinsic::abs, a,
+                                              b_.getInt1(false)));
+      }
+      return true;
+    }
+    case OPCODE_SQRT: {
+      auto* a = V(i->src1.value);
+      if (!a || !IsFloat(i->dest->type)) return false;
+      Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, a));
+      return true;
+    }
+    case OPCODE_MAX: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      if (IsFloat(i->dest->type)) {
+        Def(i->dest, b_.CreateBinaryIntrinsic(llvm::Intrinsic::maxnum, a, c));
+      } else {
+        Def(i->dest, b_.CreateBinaryIntrinsic(llvm::Intrinsic::smax, a, c));
+      }
+      return true;
+    }
+    case OPCODE_MIN: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      if (IsFloat(i->dest->type)) {
+        Def(i->dest, b_.CreateBinaryIntrinsic(llvm::Intrinsic::minnum, a, c));
+      } else {
+        Def(i->dest, b_.CreateBinaryIntrinsic(llvm::Intrinsic::smin, a, c));
+      }
+      return true;
+    }
+
+    // ---- bitwise / shifts ----
+    case OPCODE_AND: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateAnd(a, c));
+      return true;
+    }
+    case OPCODE_AND_NOT: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateAnd(a, b_.CreateNot(c)));
+      return true;
+    }
+    case OPCODE_OR: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateOr(a, c));
+      return true;
+    }
+    case OPCODE_XOR: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateXor(a, c));
+      return true;
+    }
+    case OPCODE_NOT: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      Def(i->dest, b_.CreateNot(a));
+      return true;
+    }
+    case OPCODE_SHL: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateShl(a, b_.CreateZExtOrTrunc(c, a->getType())));
+      return true;
+    }
+    case OPCODE_SHR: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateLShr(a, b_.CreateZExtOrTrunc(c, a->getType())));
+      return true;
+    }
+    case OPCODE_SHA: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      Def(i->dest, b_.CreateAShr(a, b_.CreateZExtOrTrunc(c, a->getType())));
+      return true;
+    }
+    case OPCODE_ROTATE_LEFT: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      auto* amt = b_.CreateZExtOrTrunc(c, a->getType());
+      Def(i->dest, b_.CreateIntrinsic(llvm::Intrinsic::fshl, {a->getType()},
+                                      {a, a, amt}));
+      return true;
+    }
+    case OPCODE_CNTLZ: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      auto* r = b_.CreateBinaryIntrinsic(llvm::Intrinsic::ctlz, a,
+                                         b_.getInt1(false));
+      Def(i->dest, b_.CreateZExtOrTrunc(r, T(i->dest->type)));
+      return true;
+    }
+    case OPCODE_BYTE_SWAP: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      if (a->getType()->getIntegerBitWidth() <= 8) {
+        Def(i->dest, a);
+      } else {
+        Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, a));
+      }
+      return true;
+    }
+
+    // ---- compares / selects ----
+    case OPCODE_COMPARE_EQ:
+    case OPCODE_COMPARE_NE:
+    case OPCODE_COMPARE_SLT:
+    case OPCODE_COMPARE_SLE:
+    case OPCODE_COMPARE_SGT:
+    case OPCODE_COMPARE_SGE:
+    case OPCODE_COMPARE_ULT:
+    case OPCODE_COMPARE_ULE:
+    case OPCODE_COMPARE_UGT:
+    case OPCODE_COMPARE_UGE: {
+      auto *a = V(i->src1.value), *c = V(i->src2.value);
+      if (!a || !c) return false;
+      llvm::Value* r;
+      bool fp = a->getType()->isFloatingPointTy();
+      switch (op) {
+        case OPCODE_COMPARE_EQ:
+          r = fp ? b_.CreateFCmpOEQ(a, c) : b_.CreateICmpEQ(a, c);
+          break;
+        case OPCODE_COMPARE_NE:
+          r = fp ? b_.CreateFCmpUNE(a, c) : b_.CreateICmpNE(a, c);
+          break;
+        case OPCODE_COMPARE_SLT:
+          r = fp ? b_.CreateFCmpOLT(a, c) : b_.CreateICmpSLT(a, c);
+          break;
+        case OPCODE_COMPARE_SLE:
+          r = fp ? b_.CreateFCmpOLE(a, c) : b_.CreateICmpSLE(a, c);
+          break;
+        case OPCODE_COMPARE_SGT:
+          r = fp ? b_.CreateFCmpOGT(a, c) : b_.CreateICmpSGT(a, c);
+          break;
+        case OPCODE_COMPARE_SGE:
+          r = fp ? b_.CreateFCmpOGE(a, c) : b_.CreateICmpSGE(a, c);
+          break;
+        case OPCODE_COMPARE_ULT:
+          r = fp ? b_.CreateFCmpOLT(a, c) : b_.CreateICmpULT(a, c);
+          break;
+        case OPCODE_COMPARE_ULE:
+          r = fp ? b_.CreateFCmpOLE(a, c) : b_.CreateICmpULE(a, c);
+          break;
+        case OPCODE_COMPARE_UGT:
+          r = fp ? b_.CreateFCmpOGT(a, c) : b_.CreateICmpUGT(a, c);
+          break;
+        default:
+          r = fp ? b_.CreateFCmpOGE(a, c) : b_.CreateICmpUGE(a, c);
+          break;
+      }
+      Def(i->dest, b_.CreateZExt(r, T(i->dest->type)));
+      return true;
+    }
+    case OPCODE_IS_TRUE: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      Def(i->dest, b_.CreateZExt(Truth(a), T(i->dest->type)));
+      return true;
+    }
+    case OPCODE_IS_FALSE: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      Def(i->dest, b_.CreateZExt(b_.CreateNot(Truth(a)), T(i->dest->type)));
+      return true;
+    }
+    case OPCODE_SELECT: {
+      auto* cond = V(i->src1.value);
+      auto* tv = V(i->src2.value);
+      auto* fv = V(i->src3.value);
+      if (!cond || !tv || !fv) return false;
+      Def(i->dest, b_.CreateSelect(Truth(cond), tv, fv));
+      return true;
+    }
+
+    // ---- guest memory ----
+    case OPCODE_LOAD: {
+      auto* ty = T(i->dest->type);
+      auto* ea = V(i->src1.value);
+      if (!ty || !ea) return false;
+      auto* v = b_.CreateLoad(ty, MemPtr(ea));
+      Def(i->dest, MaybeByteSwap(v, ty, i->flags));
+      return true;
+    }
+    case OPCODE_STORE: {
+      auto* ea = V(i->src1.value);
+      auto* val = V(i->src2.value);
+      if (!ea || !val) return false;
+      val = MaybeByteSwap(val, val->getType(), i->flags);
+      b_.CreateStore(val, MemPtr(ea));
+      return true;
+    }
+    case OPCODE_LOAD_OFFSET: {
+      auto* ty = T(i->dest->type);
+      auto* base = V(i->src1.value);
+      auto* off = V(i->src2.value);
+      if (!ty || !base || !off) return false;
+      auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
+                              b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
+      auto* v = b_.CreateLoad(ty, MemPtr(ea));
+      Def(i->dest, MaybeByteSwap(v, ty, i->flags));
+      return true;
+    }
+    case OPCODE_STORE_OFFSET: {
+      auto* base = V(i->src1.value);
+      auto* off = V(i->src2.value);
+      auto* val = V(i->src3.value);
+      if (!base || !off || !val) return false;
+      auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
+                              b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
+      val = MaybeByteSwap(val, val->getType(), i->flags);
+      b_.CreateStore(val, MemPtr(ea));
+      return true;
+    }
+
+    // ---- control flow ----
+    case OPCODE_BRANCH: {
+      b_.CreateBr(BlockFor(i->src1.label->block));
+      return true;
+    }
+    case OPCODE_BRANCH_TRUE:
+    case OPCODE_BRANCH_FALSE: {
+      auto* cond = V(i->src1.value);
+      if (!cond) return false;
+      auto* c1 = Truth(cond);
+      auto* target = BlockFor(i->src2.label->block);
+      llvm::BasicBlock* other;
+      if (i->next) {
+        other = llvm::BasicBlock::Create(ctx_, "c", fn_);
+      } else {
+        other = i->block->next ? BlockFor(i->block->next) : nullptr;
+        if (!other) other = llvm::BasicBlock::Create(ctx_, "c", fn_);
+      }
+      if (op == OPCODE_BRANCH_TRUE) {
+        b_.CreateCondBr(c1, target, other);
+      } else {
+        b_.CreateCondBr(c1, other, target);
+      }
+      if (i->next || !i->block->next) {
+        b_.SetInsertPoint(other);
+        if (!i->next) b_.CreateRetVoid();  // dangling guard block
+      }
+      return true;
+    }
+    case OPCODE_RETURN:
+      b_.CreateRetVoid();
+      return true;
+    case OPCODE_RETURN_TRUE: {
+      auto* cond = V(i->src1.value);
+      if (!cond) return false;
+      auto* ret_bb = llvm::BasicBlock::Create(ctx_, "ret", fn_);
+      llvm::BasicBlock* cont;
+      if (i->next) {
+        cont = llvm::BasicBlock::Create(ctx_, "c", fn_);
+      } else {
+        cont = i->block->next ? BlockFor(i->block->next)
+                              : llvm::BasicBlock::Create(ctx_, "c", fn_);
+      }
+      b_.CreateCondBr(Truth(cond), ret_bb, cont);
+      b_.SetInsertPoint(ret_bb);
+      b_.CreateRetVoid();
+      b_.SetInsertPoint(cont);
+      if (!i->next && !i->block->next) b_.CreateRetVoid();
+      return true;
+    }
+
+    default:
+      // Unsupported (calls, vectors, atomics, packs, ...) -> a64 fallback.
+      return false;
+  }
+}
+
+}  // namespace
+
+bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
+  auto* jit_holder = llvm_backend_->jit();
+  if (!jit_holder || !jit_holder->jit) return false;
+  auto& jit = *jit_holder->jit;
+
+  auto ctx_owner = std::make_unique<llvm::LLVMContext>();
+  auto& ctx = *ctx_owner;
+  auto mod = std::make_unique<llvm::Module>("guest", ctx);
+  mod->setDataLayout(jit.getDataLayout());
+  mod->setTargetTriple(jit.getTargetTriple().str());
+
+  std::string name = "guest_" + std::to_string(function->address());
+  auto* fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), false);
+  auto* fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, name,
+                                    mod.get());
+  // x20/x21 are reserved at the target level; nothing else to annotate.
+
+  Lowerer lowerer(ctx, mod.get(), fn);
+  if (!lowerer.Run(builder)) {
+    return false;  // unsupported opcode -> caller falls back to a64
+  }
+
+  if (llvm::verifyFunction(*fn, &llvm::errs())) {
+    XELOGE("LLVMAssembler: verifyFunction failed for {}", name);
+    return false;
+  }
+
+  // Optimize (mem2reg/SROA/GVN/instcombine/...) for residency before codegen.
+  {
+    llvm::PassBuilder pb;
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+    auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    mpm.run(*mod, mam);
+  }
+
+  if (auto err = jit.addIRModule(
+          llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
+    XELOGE("LLVMAssembler: addIRModule failed: {}",
+           llvm::toString(std::move(err)));
+    return false;
+  }
+  auto sym = jit.lookup(name);
+  if (!sym) {
+    XELOGE("LLVMAssembler: lookup failed: {}",
+           llvm::toString(sym.takeError()));
+    return false;
+  }
+  auto* code = reinterpret_cast<uint8_t*>(sym->getValue());
+  static_cast<a64::A64Function*>(function)->Setup(code, 0);
+  return true;
+}
+
+#else  // !XE_LLVM_BACKEND_ENABLED
+
+bool LLVMAssembler::LowerAndJit(GuestFunction*, HIRBuilder*) { return false; }
+
+#endif  // XE_LLVM_BACKEND_ENABLED
 
 bool LLVMAssembler::Assemble(GuestFunction* function, hir::HIRBuilder* builder,
                              uint32_t debug_info_flags,
                              std::unique_ptr<FunctionDebugInfo> debug_info) {
 #if XE_LLVM_BACKEND_ENABLED
-  // TODO(P2-P3): the HIR -> LLVM IR lowering.
-  //
-  //   auto ctx = std::make_unique<llvm::LLVMContext>();
-  //   auto mod = std::make_unique<llvm::Module>("guest", *ctx);
-  //   // void @guest_<addr>(i8* %ctx, i8* %membase)
-  //   auto fn = llvm::Function::Create(fn_ty, ExternalLinkage, name, *mod);
-  //   RegTable regs;  // per-fn SSA value cache, indexed by guest reg slot
-  //   for (hir::Block* b = builder->first_block(); b; b = b->next) {
-  //     auto* bb = GetOrCreateBlock(b);
-  //     for (hir::Instr* i = b->instr_head; i; i = i->next) {
-  //       switch (i->opcode->num) {
-  //         case OPCODE_LOAD_CONTEXT:  dest = regs.Load(i->src1.offset); break;
-  //         case OPCODE_STORE_CONTEXT: regs.Store(i->src1.offset, V(i->src2)); break;
-  //         case OPCODE_ADD: ... = b.CreateAdd(...); break;
-  //         case OPCODE_LOAD:  ... = LoadGuestMem(addr, type); break;  // base+rev
-  //         case OPCODE_COMPARE_SLT: ... = b.CreateICmpSLT(...); break;
-  //         case OPCODE_BRANCH_TRUE: regs.Flush(); b.CreateCondBr(...); break;
-  //         case OPCODE_CALL: regs.Flush(); EmitGuestCall(...); break;
-  //         case OPCODE_RETURN: regs.Flush(); b.CreateRetVoid(); break;
-  //         ... (full opcode table in the build-plan doc)
-  //       }
-  //     }
-  //   }
-  //   RunPasses(*mod);  // mem2reg, GVN, instcombine, simplifycfg
-  //   auto addr = JitAndLookup(std::move(mod), std::move(ctx), name);
-  //   function->SetupCode(addr);  // (mirror a64_function)
-  //   return true;
-  XELOGW("LLVMAssembler::Assemble: lowering not yet implemented (P2-P3 TODO)");
-  return false;
-#else
-  // No LLVM linked; this assembler should never be reached (the backend's
-  // Initialize fails). Return false so the caller treats it as a failure.
-  (void)function;
-  (void)builder;
-  (void)debug_info_flags;
-  (void)debug_info;
-  return false;
+  if (LowerAndJit(function, builder)) {
+    function->set_debug_info(std::move(debug_info));
+    return true;
+  }
 #endif
+  // Fall back to the a64 per-block JIT for anything the LLVM path can't lower.
+  return fallback_->Assemble(function, builder, debug_info_flags,
+                             std::move(debug_info));
 }
 
 }  // namespace llvm_backend

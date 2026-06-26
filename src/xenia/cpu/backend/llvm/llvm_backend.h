@@ -12,50 +12,53 @@
 
 #include <memory>
 
-#include "xenia/cpu/backend/backend.h"
+#include "xenia/cpu/backend/a64/a64_backend.h"
 
-// LLVM-JIT backend (authorized 2026-06-26): lowers xenia HIR -> LLVM IR -> ORCv2
-// LLJIT -> native ARM64, precompiled at module load. The win is register
+// LLVM-JIT backend (authorized 2026-06-26): lowers xenia HIR -> LLVM IR ->
+// ORCv2 LLJIT -> native ARM64, precompiled at module load. The win is register
 // RESIDENCY from LLVM's whole-function optimizer, eliminating the per-block
-// PPCContext round-trip tax the a64 per-block JIT pays (see
-// docs/research/20260626-llvm-jit-backend-build-plan.md).
+// PPCContext round-trip tax the a64 per-block JIT pays. Build plan:
+// docs/research/20260626-llvm-jit-backend-build-plan.md.
 //
-// Build phases (P0..P7) in the build-plan doc. This skeleton (P1) compiles
-// without LLVM linked yet (the ORC JIT lives behind LlvmJitContext, a pimpl
-// defined only in the .cc once libLLVM is cross-built for android-arm64, P0).
-// Default-off cvar cpu_backend_llvm; the a64 backend stays the default until P4.
+// HYBRID DESIGN: LLVMBackend DERIVES from A64Backend so it inherits the entire
+// runtime integration that already works on-device:
+//   - the host<->guest thunks (host_to_guest sets x20=ctx, x21=membase),
+//   - the code cache + indirection table + guest-call dispatch/resolve,
+//   - A64Function (machine_code()/CallImpl) as the GuestFunction type,
+//   - InitializeBackendContext + all the kernel-HLE interop.
+// A JIT'd LLVM function is ABI-identical to an a64 one (reads ctx from x20 and
+// membase from x21 via reserved-register reads, saves x30/LR, rets), so the
+// a64 thunk calls it unchanged and a64<->LLVM calls interoperate.
+//
+// LLVMAssembler lowers each guest function to LLVM IR when every opcode is
+// supported, JITs it, and Setup()s the resulting native pointer onto the
+// A64Function; for any unsupported opcode it FALLS BACK to the a64 assembler,
+// so coverage can grow incrementally without ever breaking a title.
 
 namespace xe {
 namespace cpu {
 namespace backend {
 namespace llvm_backend {
 
-// Opaque holder for the LLVM ORCv2 JIT (LLVMContext, LLJIT, JITLink object
-// layer). Forward-declared so this header never pulls in LLVM headers; the real
-// definition is in llvm_backend.cc behind #if XE_LLVM_BACKEND_ENABLED.
+// Opaque holder for the LLVM ORCv2 JIT (LLVMContext + LLJIT configured with the
+// AArch64 target and x20/x21 reserved). Forward-declared so this header never
+// pulls in LLVM headers; the real definition is in llvm_backend.cc behind
+// #if XE_LLVM_BACKEND_ENABLED.
 struct LlvmJitContext;
 
-class LLVMBackend : public Backend {
+class LLVMBackend : public a64::A64Backend {
  public:
   LLVMBackend();
   ~LLVMBackend() override;
 
-  // Returns true once libLLVM is cross-built + linked (XE_LLVM_BACKEND_ENABLED)
-  // AND the host ORC JIT initialized. Until P0 lands this is false and the
-  // processor must keep the a64 backend.
+  // True once libLLVM is cross-built + linked (XE_LLVM_BACKEND_ENABLED). The
+  // processor only instantiates this backend when cpu_backend_llvm is set AND
+  // this returns true; otherwise it keeps the plain a64 backend.
   static bool IsAvailable();
 
   bool Initialize(Processor* processor) override;
 
-  void CommitExecutableRange(uint32_t guest_low, uint32_t guest_high) override;
-
   std::unique_ptr<Assembler> CreateAssembler() override;
-
-  std::unique_ptr<GuestFunction> CreateGuestFunction(Module* module,
-                                                     uint32_t address) override;
-
-  uint64_t CalculateNextHostInstruction(ThreadDebugInfo* thread_info,
-                                        uint64_t current_pc) override;
 
   LlvmJitContext* jit() const { return jit_.get(); }
 

@@ -19,6 +19,8 @@ project("xenia-cpu-backend-llvm")
   links({
     "xenia-base",
     "xenia-cpu",
+    "xenia-cpu-backend-a64",  -- LLVMBackend derives from A64Backend (thunks,
+                              -- code cache, dispatch, A64Function, fallback).
   })
   files({
     llvm_dir.."/*.cc",
@@ -28,8 +30,10 @@ project("xenia-cpu-backend-llvm")
   if has_llvm then
     defines({ "XE_LLVM_BACKEND_ENABLED=1" })
     includedirs({ llvm_prebuilt.."/include" })
-    -- C++17, no RTTI (LLVM is built -fno-rtti); match to avoid link errors.
-    rtti("Off")
+    -- NOTE: keep RTTI ON (xenia's cvar.h -> cpptoml uses dynamic_cast). LLVM is
+    -- built -fno-rtti but uses its own isa<>/cast<> (no C++ RTTI), and we never
+    -- subclass LLVM polymorphic types here, so cpptoml's RTTI stays self-
+    -- contained and linking against the -fno-rtti libLLVM is fine.
     libdirs({ llvm_prebuilt.."/lib" })
     links({ "LLVM" })
   else

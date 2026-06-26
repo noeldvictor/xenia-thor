@@ -104,3 +104,4 @@ node_modules/.bin/
 /third_party/vasm/
 /tools/shader-playground/*.dll
 docs/evidence/
+/third_party/llvm-android/

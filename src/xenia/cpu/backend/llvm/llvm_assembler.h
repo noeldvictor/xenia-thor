@@ -15,17 +15,17 @@
 #include "xenia/cpu/backend/assembler.h"
 
 // LLVMAssembler: the HIR -> LLVM IR -> ORC JIT seam. Per guest function:
-//   1. Build an llvm::Function(i8* ctx_ptr, i8* membase) in a fresh Module.
+//   1. Build void @guest_<addr>() with x20=ctx / x21=membase read via reserved
+//      registers (ABI-identical to an a64 function).
 //   2. Lower each HIR Block -> llvm::BasicBlock, each HIR Instr -> LLVM IR.
-//      RESIDENCY: keep a per-function SSA-value table indexed by guest reg
-//      (RPCS3 m_locals model). LOAD_CONTEXT returns the cached value or emits
-//      ONE load; STORE_CONTEXT just updates the table; FLUSH to the PPCContext
-//      struct only at CALL/CALL_INDIRECT/RETURN/CONTEXT_BARRIER boundaries.
-//      (First impl: alloca-per-reg + mem2reg, identical effect, less code.)
-//   3. Run the LLVM pass pipeline (mem2reg, GVN, instcombine, ...).
-//   4. addIRModule to the LLJIT; lookup -> native code pointer -> GuestFunction.
-// Full design + the opcode lowering table: build-plan doc, sections "Residency",
-// "Flags", "Memory model", "Dispatch", "Integration map".
+//      Guest regs flow across blocks through LOAD/STORE_CONTEXT, which lower to
+//      ctx-memory loads/stores that LLVM's whole-function optimizer (GVN /
+//      SROA / mem2reg) promotes to SSA = register RESIDENCY, the win over the
+//      a64 per-block JIT.
+//   3. Run the LLVM pass pipeline; addIRModule to the LLJIT; lookup -> native
+//      code pointer -> A64Function::Setup.
+// Any opcode not yet lowered makes Assemble fall back to the a64 assembler, so
+// coverage grows incrementally without breaking a title.
 
 namespace xe {
 namespace cpu {
@@ -47,7 +47,14 @@ class LLVMAssembler : public Assembler {
                 std::unique_ptr<FunctionDebugInfo> debug_info) override;
 
  private:
+  // Lowers the whole function to LLVM IR, JITs it, and Setup()s the native
+  // pointer onto the A64Function. Returns false (leaving `function` untouched)
+  // if any opcode is unsupported, so the caller can fall back to a64.
+  bool LowerAndJit(GuestFunction* function, hir::HIRBuilder* builder);
+
   LLVMBackend* llvm_backend_;
+  // a64 assembler used for functions the LLVM path can't lower yet.
+  std::unique_ptr<Assembler> fallback_;
 };
 
 }  // namespace llvm_backend
