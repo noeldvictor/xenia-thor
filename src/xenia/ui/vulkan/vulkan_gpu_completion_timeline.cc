@@ -27,10 +27,14 @@
 // strictly require: awaits early-out on the last-known completed value and
 // otherwise wait only on fences <= the awaited submission; fence reuse polls
 // only when no free fence is available.
-DEFINE_bool(vulkan_lazy_completion_polls, false,
+DEFINE_bool(vulkan_lazy_completion_polls, true,
             "Never query Vulkan fence status beyond what an await strictly "
             "requires (Turnip/KGSL status queries on in-flight fences block "
-            "until GPU completion, serializing the CPU to the GPU).",
+            "until GPU completion, serializing the CPU to the GPU). DEFAULT-ON: "
+            "this is the validated Turnip fence fix (+46-78% across BD/Burnout/"
+            "BTTF/Gears, pixel-correct); it was regressed to default-off, which "
+            "silently disabled the project's biggest GPU win - device A/B "
+            "2026-06-25 reconfirmed Burnout 8.3 (off) -> 14.83 fps (on).",
             "Vulkan");
 
 namespace xe {
