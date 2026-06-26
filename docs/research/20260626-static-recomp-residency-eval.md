@@ -43,6 +43,31 @@ So localization removes the exact per-iteration round-trip tax the JIT pays and 
 JIT-residency retrofit crashes trying to remove — soundly, for free, from the host
 compiler. The mechanism is proven.
 
+## Real hot-code characterization (guest_824694A0 — BD's hottest JIT'd fn)
+Disassembled its 4 tight loops (from cached `scratch/blue-dragon/default.xex`) — all
+the SAME pattern, a sorted linked-list / tree traversal (STL map/set-style):
+```
+loop: cmplw cr6, r10, r11 ; beq exit                 // end-of-list check
+      lhz r8, -8(r11) ; cmplw cr6, r9, r8 ; ble exit // 16-bit key compare
+      lwz r11, 0(r11)                                // r11 = node->next
+      stw r11, 0x84(r31)                             // update iterator field (guest obj)
+      b loop
+```
+Implications — this is the IDEAL case for static-recomp localization:
+- **Pointer-chasing.** The node ptr `r11`, search key `r9`, bound `r10` round-trip
+  through PPCContext **every block, every iteration** in the JIT (the loop is 3 blocks
+  via its 2 conditional exits) = the tax. Localized → they stay in host registers
+  across all 3 blocks; only the real guest mem ops (lhz/lwz/stw) remain.
+- **Flag cost ≈ 0.** Every `cmplw` is immediately consumed by its branch → direct C
+  `if` / lazy flags, no CR materialization. The expensive static-recomp case (flags
+  read far from their compare) does NOT occur here.
+- **Confirms the JIT crash:** the in-JIT residency inheritance binds the list
+  node-pointer `r11` stale across this multi-block loop → `r11=0xfffffff8` →
+  `lhz/lwz r11` → SIGBUS (the observed `fault addr 0x1fffffff8`).
+
+Net: BD's real hot code is exactly the shape localization helps most (pointer-chasing
+loops + trivial flags), and exactly the shape the in-JIT lever crashes on. Strengthens GO.
+
 ## The hard parts (the real cost / risk of the full system)
 1. **Precise flags** — CR0-7, XER (CA/OV/SO), FPSCR must be bit-exact. The residency
    win COMPOUNDS with **lazy flags** (compute CR/XER on demand from the operands) —
