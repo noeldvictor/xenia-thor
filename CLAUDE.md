@@ -45,6 +45,30 @@ not one bug — attack the stack, derived not measured.**
   do not claim a fps number.** Reliable evidence: code facts (file:line), host cpu-tests (byte-identical),
   qemu-a64, single-run alternating deltas, pixel-correctness (screenshot), commit hashes / what shipped.
 
+### ⚠️⚠️ TEST WITH ALL OPTIMIZATIONS ON — the silent-default-off confound (learned the hard way 2026-06-25)
+The single source of truth for shipped optimizations is **`XeniaOptimizations.java`** (global, auto-applied by
+the app UI launch) + **`GameProfiles.java`** (per-game overrides). **`am start --ez` test launches BYPASS BOTH**
+— they set ONLY the cvars you explicitly pass. So any device test that does not pass the FULL validated stack
+is CONFOUNDED: it silently runs WITHOUT flat_membase, the rlwinm/CR/vector fast-paths, `vulkan_gate_rt_update`
+(+34% Burnout), `opt_prime_core_router` (+25%), `vulkan_lazy_completion_polls` (the Turnip fence fix, +46-78%),
+constants-arena, etc. This invalidated a whole session of "Burnout 8.3 / BD 9.9 / GPU-paced" measurements; with
+the real stack on, Burnout 8.3→14.83, BD heavy field 7.9→11.67.
+- **Effective-value layering (highest wins):** app launch Bundle [`XeniaOptimizations` global → `GameProfiles`
+  per-game → user `--ez`] **beats** the persisted `files/xenia.config.toml` **beats** the compiled `DEFINE_bool`
+  default. ONLY the launch Bundle (intent extras / `--ez`) beats the device config — the "phantom config" gotcha.
+- **A cvar's compiled default can silently disagree with the registry's intended-on** (the fence fix was
+  `DEFINE_bool(...,false,...)` AND pinned `=false` in the device config). When a validated win seems absent,
+  check BOTH the `DEFINE_bool` default AND `run-as <pkg> grep <cvar> files/xenia.config.toml`.
+- **THE TEST STACK:** every device A/B must `--ez` the full validated set — reuse the `$opts` array in
+  `scratch/thor-debug/measure_const_promo.ps1`. Bisect off that, don't build up from nothing.
+- **When you validate an opt for a game, ADD IT to that game's `GameProfiles` profile** (it persists + beats the
+  config); cross-game wins → flip `XeniaOptimizations` `defaultEnabled=true`.
+- **ALWAYS MEASURE temp before assuming thermal saturation** — the Thor cools to ~38°C within ~90s of idle; never
+  say "thermally blocked" without reading `/sys/class/kgsl/kgsl-3d0/temp`.
+- **`screencap` can grab the SECONDARY display** (post-reboot the Thor shows the launcher on a 2nd display, so a
+  screenshot looks like the home screen while the game renders fine on the primary). Confirm rendering via the
+  `GPU draw outcomes/frame` logcat line + `dumpsys activity activities | grep topResumedActivity`, not the shot alone.
+
 ## ⚠️ Never thrash the Thor (hard safety rule — heavy firing crashed it once)
 Before ANY launch read `/sys/class/kgsl/kgsl-3d0/temp` (milli-°C) + `gpu_busy_percentage`; launch only if
 temp < 50-55°C and busy low. ONE launch per cooldown; force-stop `jp.xenia.emulator.github.debug` when temp
@@ -97,6 +121,28 @@ skill. Banjo dirty-disc = a guest-side false verification (deep RE; current patc
 - **qemu-a64** (real ARM64 backend, no device): WSL + aarch64-linux-gnu-g++ + qemu-aarch64; `make -C build
   config=debug_linux xenia-cpu-tests CXX=aarch64-linux-gnu-g++`. Recipe: [[a64-qemu-harness]].
 - Mine existing captures (log-grep) instead of re-firing where possible.
+
+## Guest RE + CPU hot-spot tooling (the BD CPU is guest-game-logic-bound)
+Confound-free simpleperf at the BD field (2026-06-25, 480p): guest-JIT **48%** (the guest main
+XThread running game-logic = **67%** of samples), CP worker 16.8%, kernel 7.4%, libc 5.4%. The
+guest-JIT is a **hot CLUSTER, not flat** — top: `guest_8273EF74`+`8273EF84` (7.6% of ALL cpu),
+`826EE7C0`+`826EE728` (4.0%), the `8270B1F8/2D8/298` cluster (3.9%), `826FF288`+`298` (2.2%). So
+the BD CPU lever = RE/accelerate BD's hottest guest code (codegen quality on a 48% chunk), not the CP.
+- **Find hot guest fns (confound-free, the method that works):** `simpleperf record --app <pkg> -g
+  --call-graph fp -f 1000` at a confirmed field; pull `jit.map` (`cpu_perf_map_path` →
+  `files/jit.map`); bin the `unknown[+host]` samples by guest fn via the map
+  (`scratch/thor-debug/_bin.py`). Symbolize host C++ offline w/ the unstripped `.so` +
+  `llvm-symbolizer`. %-of-samples is reliable; `gpu_frame_us` is NOT.
+- **Dump a hot fn's codegen (PPC + RawHIR + OptHIR + a64 machine code) straight from the JIT:** launch
+  with `--es disassemble_function_filter "8273EF74,826EE7C0-826EE800"` (allowlisted; single addrs or
+  `start-end` ranges) → grep logcat `Filtered function dump`. Shows EXACTLY how the JIT lowers it
+  (register round-trips, flag stores) — the codegen-inefficiency, directly. `scratch/thor-debug/dump_hot_disasm.ps1`.
+- **Semantic RE (device-free):** Ghidra **12.0.4_PUBLIC** at
+  `C:\Users\leanerdesigner\Documents\SteamPortableTools\toolchains\ghidra_12.0.4_PUBLIC`
+  (`support\analyzeHeadless.bat`; JDK `…\toolchains\jdk-21.0.11+10`). Scripts `scratch/ghidra/scripts/*.java`;
+  projects `scratch/ghidra/proj/` (banjo, sylpheed — **BD NOT imported yet**, import `scratch/blue-dragon/default.xex`
+  via XEXLoaderWV). Run headless in the MAIN loop w/ LONG timeout (600000), never in a workflow subagent —
+  see the `xenia-ghidra-ooda-loop` + `xenia-thor-ghidra-game-patch` skills.
 
 ## Config + git rules
 - Device persists `files/xenia.config.toml` which OVERRIDES compiled cvar defaults (only `--ez/--ei/--es`

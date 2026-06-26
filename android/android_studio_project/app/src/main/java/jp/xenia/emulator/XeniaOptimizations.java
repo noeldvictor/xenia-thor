@@ -140,7 +140,7 @@ public final class XeniaOptimizations {
                         + "Blue Dragon's #1 CPU cost is its critical-section thunk path; "
                         + "device-validated render-correct with the RtlEnter/Leave thunk "
                         + "frames eliminated (8.1% -> 0% of CPU).",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("arm64_jit_inline_extern_thunk")}, null));
 
         list.add(new Optimization(
@@ -699,7 +699,7 @@ public final class XeniaOptimizations {
                         + "holding a reference to each cached object. Helps CPU-bound "
                         + "multi-threaded titles; no effect on GPU-bound scenes. "
                         + "Experimental - validate per device.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("kernel_object_handle_cache")}, null));
 
         list.add(new Optimization(
@@ -720,7 +720,7 @@ public final class XeniaOptimizations {
                         + "event/wait fully lock-free. Helps CPU-bound, thread-heavy "
                         + "titles; no effect on the GPU. Experimental - validate per "
                         + "device.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("kernel_native_object_fast_path")}, null));
 
         list.add(new Optimization(
@@ -739,7 +739,7 @@ public final class XeniaOptimizations {
                         + "needs ordering ARM64's cheaper fences don't provide. Helps "
                         + "CPU-bound, lock-heavy titles; no GPU effect. Experimental - "
                         + "validate rendering per device.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("cpu_drop_redundant_atomic_release_barrier")},
                 null));
 
@@ -814,7 +814,7 @@ public final class XeniaOptimizations {
                         + "longer spins (cuts power/heat). Frees CPU on lock/timer-"
                         + "heavy titles; no GPU effect. Off by default (it shifts "
                         + "new-timer pickup by up to 1ms); enable to stack it.",
-                CATEGORY_CPU, false, false,
+                CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("timer_queue_sleep_idle")},
                 new IntCvar[]{new IntCvar("timer_queue_idle_sleep_us", 1000)}));
 
