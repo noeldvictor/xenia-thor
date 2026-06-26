@@ -92,10 +92,19 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     case XFileSectorInformation: {
-      // TODO(benvanik): return sector this file's on.
-      XELOGE("NtQueryInformationFile(XFileSectorInformation) unimplemented");
-      status = X_STATUS_INVALID_PARAMETER;
-      out_length = 0;
+      // SW that uses this uses the output as a way to uniquely identify a file
+      // for sorting/lookup, so an arbitrary stable 4-byte integer suffices.
+      // Banjo-Kazooie: Nuts & Bolts queries this to identify its hash-addressed
+      // \bundle content files; the fork previously returned INVALID_PARAMETER
+      // (unimplemented), which made Banjo's content lookup fail and threw a
+      // bogus "Disc Read Error" at the RARE splash (its file IO, dirty-disc and
+      // font-cache paths are all fine). Match upstream xenia-canary: return a
+      // stable path-hash. (Device-RE 2026-06-26: this fork-vs-canary diff was
+      // the real Banjo boot blocker behind the disc-read-error.)
+      auto info = info_ptr.as<uint32_t*>();
+      size_t fname_hash = xe::memory::hash_combine(82589933LL, file->path());
+      *info = static_cast<uint32_t>(fname_hash ^ (fname_hash >> 32));
+      out_length = sizeof(uint32_t);
       break;
     }
     case XFileXctdCompressionInformation: {
