@@ -727,6 +727,34 @@ bool Lowerer::LowerInstr(Instr* i) {
       // Return flows via the host stack (helper + thunk) in this model; the
       // guest return-address slot isn't needed for correctness.
       return true;
+    case OPCODE_CALL_TRUE:
+    case OPCODE_CALL_INDIRECT_TRUE: {
+      auto* cond = V(i->src1.value);
+      if (!cond) return false;
+      llvm::Value* target;
+      if (op == OPCODE_CALL_TRUE) {
+        target = b_.getInt32(i->src2.symbol->address());
+      } else {
+        auto* t = V(i->src2.value);
+        if (!t) return false;
+        target = b_.CreateZExtOrTrunc(t, b_.getInt32Ty());
+      }
+      auto* call_bb = llvm::BasicBlock::Create(ctx_, "call", fn_);
+      llvm::BasicBlock* cont_bb;
+      if (i->next) {
+        cont_bb = llvm::BasicBlock::Create(ctx_, "c", fn_);
+      } else {
+        cont_bb = i->block->next ? BlockFor(i->block->next)
+                                 : llvm::BasicBlock::Create(ctx_, "c", fn_);
+      }
+      b_.CreateCondBr(Truth(cond), call_bb, cont_bb);
+      b_.SetInsertPoint(call_bb);
+      EmitGuestCall(target);
+      b_.CreateBr(cont_bb);
+      b_.SetInsertPoint(cont_bb);
+      if (!i->next && !i->block->next) b_.CreateRetVoid();
+      return true;
+    }
 
     // ---- lane-typed vector arithmetic ----
     case OPCODE_VECTOR_ADD:

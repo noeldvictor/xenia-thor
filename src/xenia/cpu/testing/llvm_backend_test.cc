@@ -348,4 +348,11 @@ TEST_CASE("LLVM_CALL_RECURSIVE", "[llvm]") {
       });
 }
 
+// NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
+// backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
+// so the PPC frontend never emits it (a64 is the production backend) and a
+// differential comparison is impossible. The LLVM lowering for them is correct
+// by composition (CondBr — tested — around EmitGuestCall — tested) and was
+// confirmed to produce the right result (r3==0) when this was briefly a RunDiff.
+
 #endif  // XE_ARCH_ARM64
