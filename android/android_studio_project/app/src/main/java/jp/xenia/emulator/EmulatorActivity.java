@@ -130,6 +130,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "gpu");
             copyStringExtra(intent, launchArguments, "kernel_display_resolution");
             copyStringExtra(intent, launchArguments, "cpu");
+            copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm");
+            copyIntExtra(intent, launchArguments, "cpu_backend_llvm_opt");
             copyStringExtra(intent, launchArguments, "cpu_perf_map_path");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyStringExtra(intent, launchArguments, "apu");

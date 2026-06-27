@@ -105,3 +105,4 @@ node_modules/.bin/
 /tools/shader-playground/*.dll
 docs/evidence/
 /third_party/llvm-android/
+/android/android_studio_project/app/src/main/jniLibs/arm64-v8a/libLLVM.so
