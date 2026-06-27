@@ -128,7 +128,20 @@ extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
     const std::string& s = cvars::cpu_backend_llvm_trace_addr;
     return s.empty() ? 0u : uint32_t(std::strtoull(s.c_str(), nullptr, 16));
   }();
+  // When tracing is armed, also log the full call SEQUENCE (target+depth) for
+  // the first calls AFTER the first ENTER of the trace target, to reveal the
+  // recursive path (which helper 0x826BEF98 wrongly calls that loops back).
+  static std::atomic<bool> s_trace_armed{false};
+  static std::atomic<uint32_t> s_seq_n{0};
+  if (s_trace_addr != 0 && s_trace_armed.load(std::memory_order_relaxed)) {
+    uint32_t sn = s_seq_n.fetch_add(1, std::memory_order_relaxed);
+    if (sn < 80) {
+      XELOGE("LLVMseqcall #{} depth={} target=0x{:08X} ret=0x{:08X}", sn,
+             s_depth, target, ret_addr);
+    }
+  }
   bool trace = (s_trace_addr != 0) && (target == s_trace_addr);
+  if (trace) s_trace_armed.store(true, std::memory_order_relaxed);
   static std::atomic<uint32_t> s_trace_n{0};
   uint32_t tn = 0;
   if (trace) {
