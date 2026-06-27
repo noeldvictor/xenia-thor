@@ -27,9 +27,20 @@ test_suite("xenia-cpu-tests", project_root, ".", {
       filter = 'architecture:ARM64',
       links = {
         "xenia-cpu-backend-arm64",
+        "xenia-cpu-backend-llvm",  -- LLVM-JIT backend (differential tests)
         "xbyak_aarch64",
         "mspack",
       },
     },
   },
 })
+
+-- The LLVM-JIT backend pulls in libLLVM (glibc, linux-arm64) for the qemu
+-- differential tests. Only when the prebuilt is staged
+-- (scratch/thor-debug/p0b_build_glibc.sh); otherwise the backend is a stub.
+if os.isfile(project_root.."/third_party/llvm-linux-arm64/lib/libLLVM.so") then
+  filter("platforms:Linux")
+    libdirs({ project_root.."/third_party/llvm-linux-arm64/lib" })
+    links({ "LLVM" })
+  filter({})
+end

@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
 
+#include <cstdio>
 #include <string>
 
 #include "xenia/base/cvar.h"
@@ -25,11 +26,15 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/TaskDispatch.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 DEFINE_bool(cpu_backend_llvm, false,
@@ -39,6 +44,13 @@ DEFINE_bool(cpu_backend_llvm, false,
             "libLLVM build (XE_LLVM_BACKEND_ENABLED). See "
             "docs/research/20260626-llvm-jit-backend-build-plan.md.",
             "CPU");
+
+DEFINE_int32(cpu_backend_llvm_opt, 2,
+             "LLVM middle-end optimization level for the LLVM-JIT backend "
+             "(0=none/fast-correctness, 1=O1, 2=O2, 3=O3). O2/O3 give the "
+             "register-residency win but are slow to run under qemu-user "
+             "(emulated); set 0 for device-free correctness tests.",
+             "CPU");
 
 namespace xe {
 namespace cpu {
@@ -68,23 +80,19 @@ bool LLVMBackend::Initialize(Processor* processor) {
   }
 
 #if XE_LLVM_BACKEND_ENABLED
+  fprintf(stderr, "[LLVM] initA: a64 base done\n"); fflush(stderr);
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
+  fprintf(stderr, "[LLVM] initB: native target done\n"); fflush(stderr);
 
-  auto jtmb_or = llvm::orc::JITTargetMachineBuilder::detectHost();
-  if (!jtmb_or) {
-    XELOGE("LLVMBackend: JITTargetMachineBuilder::detectHost failed");
-    return false;
-  }
-  auto jtmb = std::move(*jtmb_or);
-  // Reserve x20 (guest PPCContext*) and x21 (guest membase) so the register
-  // allocator never clobbers them. The host->guest thunk loads them before
-  // entering the function; the function reads them via @llvm.read_register.
-  jtmb.addFeatures({"+reserve-x20", "+reserve-x21"});
-
-  auto jit_or = llvm::orc::LLJITBuilder()
-                    .setJITTargetMachineBuilder(std::move(jtmb))
-                    .create();
+  fprintf(stderr, "[LLVM] initC: pre-create\n"); fflush(stderr);
+  // Default LLJIT — matches the proven-fast standalone smoke. Building the
+  // TargetMachine from a JITTargetMachineBuilder hangs create() under qemu-user
+  // inside xenia's process, so x20 (ctx) / x21 (membase) are reserved instead
+  // via a per-function "target-features" attribute in the lowering (the host
+  // ->guest thunk loads them; the function reads them via @llvm.read_register).
+  auto jit_or = llvm::orc::LLJITBuilder().create();
+  fprintf(stderr, "[LLVM] initD: LLJIT create returned\n"); fflush(stderr);
   if (!jit_or) {
     std::string msg = llvm::toString(jit_or.takeError());
     XELOGE("LLVMBackend: LLJIT creation failed: {}", msg);

@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_function.h"
@@ -42,6 +43,8 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
+
+DECLARE_int32(cpu_backend_llvm_opt);
 
 namespace xe {
 namespace cpu {
@@ -692,7 +695,11 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   auto* fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), false);
   auto* fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, name,
                                     mod.get());
-  // x20/x21 are reserved at the target level; nothing else to annotate.
+  // Reserve x20 (guest ctx) / x21 (membase) for this function's codegen so the
+  // allocator never clobbers them (set by the host->guest thunk, read via
+  // @llvm.read_register). Per-function attribute, not the JTMB (which hangs
+  // create() under qemu).
+  fn->addFnAttr("target-features", "+reserve-x20,+reserve-x21");
 
   Lowerer lowerer(ctx, mod.get(), fn);
   if (!lowerer.Run(builder)) {
@@ -705,7 +712,10 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   }
 
   // Optimize (mem2reg/SROA/GVN/instcombine/...) for residency before codegen.
-  {
+  // O2/O3 give the win but are very slow emulated under qemu, so the opt level
+  // is a cvar (0 = skip = fast device-free correctness tests).
+  int opt = cvars::cpu_backend_llvm_opt;
+  if (opt > 0) {
     llvm::PassBuilder pb;
     llvm::LoopAnalysisManager lam;
     llvm::FunctionAnalysisManager fam;
@@ -716,7 +726,10 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     pb.registerFunctionAnalyses(fam);
     pb.registerLoopAnalyses(lam);
     pb.crossRegisterProxies(lam, fam, cgam, mam);
-    auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    auto level = opt >= 3   ? llvm::OptimizationLevel::O3
+                 : opt == 1 ? llvm::OptimizationLevel::O1
+                            : llvm::OptimizationLevel::O2;
+    auto mpm = pb.buildPerModuleDefaultPipeline(level);
     mpm.run(*mod, mam);
   }
 
