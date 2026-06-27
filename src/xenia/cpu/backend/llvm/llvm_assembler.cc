@@ -326,6 +326,10 @@ class Lowerer {
   }
   llvm::Value* MaybeByteSwap(llvm::Value* v, llvm::Type* ty, uint16_t flags) {
     if (!(flags & LOAD_STORE_BYTE_SWAP)) return v;
+    if (ty->isVectorTy()) {
+      // VEC128 = rev32 (bswap each 32-bit lane).
+      return b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, v);
+    }
     if (ty->isFloatingPointTy()) {
       auto* it = ty->isFloatTy() ? b_.getInt32Ty() : b_.getInt64Ty();
       auto* iv = b_.CreateBitCast(v, it);
@@ -865,7 +869,11 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_BYTE_SWAP: {
       auto* a = V(i->src1.value);
       if (!a) return false;
-      if (a->getType()->getIntegerBitWidth() <= 8) {
+      if (a->getType()->isVectorTy()) {
+        // VEC128 byteswap = a64 rev32 = byte-reverse within each 32-bit lane =
+        // llvm.bswap on the <4 x i32> carrier.
+        Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, a));
+      } else if (a->getType()->getIntegerBitWidth() <= 8) {
         Def(i->dest, a);
       } else {
         Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, a));
@@ -950,7 +958,6 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ty = T(i->dest->type);
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
-      if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
@@ -959,7 +966,6 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       auto* val = V(i->src2.value);
       if (!ea || !val) return false;
-      if (IsVec(val)) return false;  // vector mem+byteswap -> a64 (P3)
       val = MaybeByteSwap(val, val->getType(), i->flags);
       b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
@@ -969,7 +975,6 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* base = V(i->src1.value);
       auto* off = V(i->src2.value);
       if (!ty || !base || !off) return false;
-      if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
@@ -981,7 +986,6 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* off = V(i->src2.value);
       auto* val = V(i->src3.value);
       if (!base || !off || !val) return false;
-      if (IsVec(val)) return false;  // vector mem+byteswap -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       val = MaybeByteSwap(val, val->getType(), i->flags);
@@ -1036,6 +1040,10 @@ bool Lowerer::LowerInstr(Instr* i) {
       b_.CreateMemSet(MemPtr(addr), val, len, llvm::MaybeAlign(1));
       return true;
     }
+    // OPCODE_LVL/LVR/STVL/STVR are unemittable dead opcodes: the PPC frontend
+    // lowers lvlx/lvrx/stvlx/stvrx as PERMUTE + LOAD_VECTOR_SHL/SHR + a vector
+    // LOAD/STORE + BYTE_SWAP (all handled above), never these opcodes. So they
+    // need no lowering (they'd just fall through to the a64 fallback if emitted).
 
     // ---- control flow ----
     case OPCODE_BRANCH: {

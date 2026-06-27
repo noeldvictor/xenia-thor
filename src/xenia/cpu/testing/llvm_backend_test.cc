@@ -747,6 +747,29 @@ TEST_CASE("LLVM_MEMSET", "[llvm]") {
       [](PPCContext*) {});
 }
 
+TEST_CASE("LLVM_VECTOR_LOAD_STORE", "[llvm]") {
+  // 128-bit vector load + store with the VEC128 byte-swap (the real path lvlx/
+  // lvrx and all VMX memory use; OPCODE_LVL/LVR/STVL/STVR are unemittable). Load
+  // a vector, byteswap-store it elsewhere, byteswap-load it back, compare.
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* src = b.LoadConstantUint64(0x10002000ull);
+        auto* dst = b.LoadConstantUint64(0x10002010ull);
+        b.Store(src, b.LoadConstantUint64(0x0011223344556677ull));
+        b.Store(b.LoadConstantUint64(0x10002008ull),
+                b.LoadConstantUint64(0x8899AABBCCDDEEFFull));
+        StoreVR(b, 0, b.Load(src, VEC128_TYPE));              // raw vector load
+        StoreVR(b, 1, b.ByteSwap(b.Load(src, VEC128_TYPE)));  // rev32 byteswap
+        b.Store(dst, LoadVR(b, 4));                           // raw vector store
+        StoreVR(b, 2, b.Load(dst, VEC128_TYPE));              // load it back
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x11223344u; ctx->v[4].u32[1] = 0x55667788u;
+        ctx->v[4].u32[2] = 0x99AABBCCu; ctx->v[4].u32[3] = 0xDDEEFF00u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
