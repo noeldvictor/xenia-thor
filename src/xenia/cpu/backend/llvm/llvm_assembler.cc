@@ -796,6 +796,26 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(b_.CreateSExt(m, int_lt), T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_VECTOR_SHL:
+    case OPCODE_VECTOR_SHR:
+    case OPCODE_VECTOR_SHA: {
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags);  // whole flags = part_type
+      auto* lt = LaneVecTy(pt);
+      if (!lt || pt == FLOAT32_TYPE) return false;  // integer lanes only
+      auto* av = b_.CreateBitCast(a, lt);
+      auto* cv = b_.CreateBitCast(c, lt);
+      // VMX masks the per-lane shift amount to (lane_width-1) (matches a64).
+      unsigned w = lt->getScalarSizeInBits();
+      auto* amt = b_.CreateAnd(cv, llvm::ConstantInt::get(lt, w - 1));
+      llvm::Value* r = (op == OPCODE_VECTOR_SHL)   ? b_.CreateShl(av, amt)
+                       : (op == OPCODE_VECTOR_SHR) ? b_.CreateLShr(av, amt)
+                                                   : b_.CreateAShr(av, amt);
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
