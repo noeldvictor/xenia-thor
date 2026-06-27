@@ -26,6 +26,7 @@
 
 #if XE_LLVM_BACKEND_ENABLED
 #include <cstdlib>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -1095,6 +1096,18 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   auto* jit_holder = llvm_backend_->jit();
   if (!jit_holder || !jit_holder->jit) return false;
   auto& jit = *jit_holder->jit;
+
+  // Serialize ALL LLVM compilation across guest threads. Each guest thread has
+  // its own LLVMAssembler, but they share ONE LLJIT; BD starts several guest
+  // threads (Main XThread, MainThread, ...) that hit uncompiled functions at the
+  // same time, driving the LLJIT's codegen (AsmPrinter/MCAssembler) concurrently
+  // -> heap corruption -> non-deterministic SIGBUS deep inside libLLVM
+  // (MCAssembler::computeFragmentSize, device-pinned) or a bogus-ctx storm.
+  // The lock is acquired AFTER xenia's compile/global lock (consistent order, no
+  // deadlock) and released before the JIT'd code ever runs (helpers run lock-
+  // free at runtime). Correctness-first; per-fn compile is one-time.
+  static std::mutex s_llvm_compile_mutex;
+  std::lock_guard<std::mutex> compile_guard(s_llvm_compile_mutex);
 
   auto ctx_owner = std::make_unique<llvm::LLVMContext>();
   auto& ctx = *ctx_owner;
