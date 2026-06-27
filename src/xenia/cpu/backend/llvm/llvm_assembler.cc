@@ -396,6 +396,16 @@ bool Lowerer::Run(HIRBuilder* builder) {
     }
     for (Instr* i = blk->instr_head; i; i = i->next) {
       if (!LowerInstr(i)) {
+        // Diagnostic (rate-limited): which opcode forced this function to fall
+        // back to a64. A histogram of these across boot pinpoints the highest-
+        // value opcodes to lower next so HOT functions get the residency win
+        // (BD's hottest fn 0x824694A0 falls back today).
+        static std::atomic<uint32_t> s_fb{0};
+        uint32_t fb = s_fb.fetch_add(1, std::memory_order_relaxed);
+        if (fb < 120) {
+          XELOGW("LLVMfallback fn=0x{:08X} opcode={} (#{}) -> a64", guest_addr_,
+                 i->opcode->name, fb);
+        }
         return false;  // unsupported -> fallback
       }
       // A handler may emit a block terminator (a `ret` from a guest tail call /
@@ -533,6 +543,36 @@ bool Lowerer::LowerInstr(Instr* i) {
                                           : b_.CreateAdd(a, c));
       return true;
     }
+    case OPCODE_ADD_CARRY: {
+      // dest = src1 + src2 + (carry & 1). src3 (carry, i8) is provably {0,1};
+      // mask defensively. No carry-OUT here. Matches a64's add-the-carry path.
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      auto* carry = V(i->src3.value);
+      auto* dt = T(i->dest->type);
+      if (!a || !c || !carry || !dt) return false;
+      auto* cy = b_.CreateAnd(b_.CreateZExtOrTrunc(carry, dt),
+                              llvm::ConstantInt::get(dt, 1));
+      Def(i->dest, b_.CreateAdd(b_.CreateAdd(a, c), cy));
+      return true;
+    }
+    case OPCODE_IS_NAN: {
+      // dest(i8) = isnan(src). fcmp uno src,src (unordered = NaN). Matches a64
+      // (fcmp s,s; cset VS).
+      auto* a = V(i->src1.value);
+      auto* dt = T(i->dest->type);
+      if (!a || !dt || !a->getType()->isFloatingPointTy()) return false;
+      Def(i->dest, b_.CreateZExt(b_.CreateFCmpUNO(a, a), dt));
+      return true;
+    }
+    case OPCODE_YIELD:
+      // Guest spin-wait hint. a64 emits an ARM64 `yield`, but inline asm
+      // report_fatal_errors in the ORCv2 AsmPrinter (no integrated assembler),
+      // and llvm.aarch64.hint risks the same path - so lower it to a NO-OP. The
+      // yield is a hint only, so this is correctness-exact; it just doesn't back
+      // off a spinning core. BD's hottest fn 0x824694A0 uses this, so lowering it
+      // (vs falling the whole fn back to a64) is what gets it the residency win.
+      return true;
     case OPCODE_SUB: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;
