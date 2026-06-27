@@ -18,6 +18,7 @@
 #include "xenia/cpu/hir/hir_builder.h"
 #include "xenia/cpu/hir/instr.h"
 #include "xenia/cpu/hir/label.h"
+#include "xenia/cpu/ppc/ppc_context.h"
 
 #ifndef XE_LLVM_BACKEND_ENABLED
 #define XE_LLVM_BACKEND_ENABLED 0
@@ -138,10 +139,41 @@ class Lowerer {
   // Emit a call to the runtime guest-call helper (resolves the target guest
   // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
   void EmitGuestCall(llvm::Value* target_i32) {
-    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
-                                        {llvm::Type::getInt32Ty(ctx_)}, false);
+    auto* i32 = llvm::Type::getInt32Ty(ctx_);
+    // xe_llvm_guest_call(target, ret_addr): resolve + invoke. ret_addr (the
+    // guest return address stashed by SET_RETURN_ADDRESS) is forwarded to the
+    // callee's x0 via the host->guest thunk, so the callee recognizes its own
+    // blr RETURN. Defaults to 0 if SET_RETURN_ADDRESS was not emitted.
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), {i32, i32},
+                                        false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
-    b_.CreateCall(callee, {target_i32});
+    auto* ret_addr = b_.CreateTrunc(
+        b_.CreateLoad(b_.getInt64Ty(), next_call_ret_addr_), i32);
+    b_.CreateCall(callee, {target_i32, ret_addr});
+  }
+
+  // A guest TAIL call (b/bctr in tail position): resolve the target host entry
+  // and `musttail`-jump to it, REUSING this frame (vs nesting a host frame per
+  // call, which overflowed the host stack on a guest tail-call loop = the device
+  // signal storm). Passes THIS function's return address (x0) straight through,
+  // matching a64's CALL_TAIL (`ldr x0,[GUEST_RET_ADDR]; br x9`). Emits the call
+  // + a `ret` terminator. Returns false if the target can't be wired for a
+  // guaranteed tail call (caller falls back to a64 for this function).
+  bool EmitGuestTailCall(llvm::Value* target_i32) {
+    auto* i32 = llvm::Type::getInt32Ty(ctx_);
+    auto* i64 = llvm::Type::getInt64Ty(ctx_);
+    auto* voidTy = llvm::Type::getVoidTy(ctx_);
+    // void* xe_llvm_resolve_function(uint32_t target)
+    auto* rfty = llvm::FunctionType::get(b_.getPtrTy(), {i32}, false);
+    auto resolve = mod_->getOrInsertFunction("xe_llvm_resolve_function", rfty);
+    auto* host = b_.CreateCall(resolve, {target_i32});
+    // Callee ABI == this function's: void(i64 guest_return_address).
+    auto* callee_ty = llvm::FunctionType::get(voidTy, {i64}, false);
+    auto* my_ret = b_.CreateLoad(i64, my_ret_addr_);
+    auto* call = b_.CreateCall(callee_ty, host, {my_ret});
+    call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+    b_.CreateRetVoid();
+    return true;
   }
 
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
@@ -226,6 +258,14 @@ class Lowerer {
   llvm::IRBuilder<> b_;
   llvm::Value* ctx_ptr_ = nullptr;
   llvm::Value* membase_ = nullptr;
+  // a64 guest-call ABI: x0 = this function's guest return address (saved at
+  // entry into my_ret_addr_). next_call_ret_addr_ is the return address that
+  // SET_RETURN_ADDRESS stashes for the NEXT guest call. A CALL_INDIRECT whose
+  // target == my_ret_addr_ is a guest `blr` RETURN, lowered to `ret` (not a
+  // forward call) - otherwise the host stack never unwinds and overflows (the
+  // device signal-storm root cause).
+  llvm::AllocaInst* my_ret_addr_ = nullptr;
+  llvm::AllocaInst* next_call_ret_addr_ = nullptr;
   std::unordered_map<uint32_t, llvm::Value*> values_;
   std::unordered_map<uint32_t, llvm::AllocaInst*> locals_;
   std::unordered_map<uint16_t, llvm::BasicBlock*> block_map_;
@@ -250,6 +290,24 @@ bool Lowerer::Run(HIRBuilder* builder) {
   ctx_ptr_ = b_.CreateIntToPtr(ReadReg(b_, mod_, "x20"), b_.getPtrTy(), "ctx");
   membase_ =
       b_.CreateIntToPtr(ReadReg(b_, mod_, "x21"), b_.getPtrTy(), "membase");
+
+  // Save the incoming guest return address (x0, per the a64 host->guest thunk:
+  // "mov x0, x2 // x0 = guest return address") and init the next-call slot.
+  // Entry-block allocas are promoted to SSA by mem2reg at opt>0.
+  my_ret_addr_ = b_.CreateAlloca(b_.getInt64Ty(), nullptr, "my_ret_addr");
+  next_call_ret_addr_ =
+      b_.CreateAlloca(b_.getInt64Ty(), nullptr, "next_call_ret_addr");
+  // Return-address basis for recognizing this function's OWN blr RETURN = the
+  // guest LR at ENTRY. The frontend maintains context->lr (StoreLR on every bl,
+  // restored before blr), so this is correct for both bl- AND bctr-entered
+  // functions. The x0 parameter is NOT used for this: it is 0 for bctr-entered
+  // functions (no SET_RETURN_ADDRESS), which broke return detection -> the
+  // return became a forward call -> unbounded recursion -> host-stack overflow.
+  b_.CreateStore(
+      b_.CreateLoad(b_.getInt64Ty(),
+                    CtxPtr(offsetof(xe::cpu::ppc::PPCContext, lr))),
+      my_ret_addr_);
+  b_.CreateStore(b_.getInt64(0), next_call_ret_addr_);
 
   // One llvm BB per HIR block, created up front so branches can target them.
   for (Block* blk = builder->first_block(); blk; blk = blk->next) {
@@ -725,21 +783,77 @@ bool Lowerer::LowerInstr(Instr* i) {
     }
 
     // ---- guest calls (P4) ----
-    case OPCODE_CALL:
+    case OPCODE_CALL: {
+      auto* tgt = b_.getInt32(i->src1.symbol->address());
+      if (i->flags & CALL_TAIL) {
+        if (!EmitGuestTailCall(tgt)) return false;
+      } else {
+        EmitGuestCall(tgt);
+      }
+      return true;
+    }
     case OPCODE_CALL_EXTERN: {
+      // Externs (kernel imports/builtins) have no guest machine_code to tail-
+      // jump to; always route through the resolving (non-tail) helper.
       EmitGuestCall(b_.getInt32(i->src1.symbol->address()));
       return true;
     }
     case OPCODE_CALL_INDIRECT: {
       auto* t = V(i->src1.value);
       if (!t) return false;
-      EmitGuestCall(b_.CreateZExtOrTrunc(t, b_.getInt32Ty()));
+      auto* t32 = b_.CreateZExtOrTrunc(t, b_.getInt32Ty());
+      bool is_tail = (i->flags & CALL_TAIL) != 0;
+      if (i->flags & CALL_POSSIBLE_RETURN) {
+        // A guest `blr` whose target == our own guest return address (x0) is a
+        // RETURN, not a forward call. Lower it to `ret` so the host stack
+        // unwinds. Without this, EVERY guest return became a forward call and
+        // the host stack only ever grew -> overflow = the device signal storm.
+        // Mirrors A64Emitter::CallIndirect's CALL_POSSIBLE_RETURN check.
+        auto* mine = b_.CreateTrunc(
+            b_.CreateLoad(b_.getInt64Ty(), my_ret_addr_), b_.getInt32Ty());
+        auto* is_ret =
+            b_.CreateICmpEQ(b_.CreateZExtOrTrunc(t, b_.getInt32Ty()), mine);
+        auto* ret_bb = llvm::BasicBlock::Create(ctx_, "blr_ret", fn_);
+        auto* call_bb = llvm::BasicBlock::Create(ctx_, "blr_call", fn_);
+        b_.CreateCondBr(is_ret, ret_bb, call_bb);
+        b_.SetInsertPoint(ret_bb);
+        b_.CreateRetVoid();
+        b_.SetInsertPoint(call_bb);
+        if (is_tail) {
+          // Not a return -> a tail call; reuse the frame (musttail + ret).
+          if (!EmitGuestTailCall(t32)) return false;
+        } else {
+          EmitGuestCall(t32);
+          // Continue after a (non-return) forward call. Leave call_bb
+          // terminated for the block->next case so Run()'s fall-through adds
+          // no self-branch.
+          if (i->next) {
+            auto* cont_bb = llvm::BasicBlock::Create(ctx_, "c", fn_);
+            b_.CreateBr(cont_bb);
+            b_.SetInsertPoint(cont_bb);
+          } else if (i->block->next) {
+            b_.CreateBr(BlockFor(i->block->next));
+          } else {
+            b_.CreateRetVoid();
+          }
+        }
+      } else if (is_tail) {
+        if (!EmitGuestTailCall(t32)) return false;
+      } else {
+        EmitGuestCall(t32);
+      }
       return true;
     }
-    case OPCODE_SET_RETURN_ADDRESS:
-      // Return flows via the host stack (helper + thunk) in this model; the
-      // guest return-address slot isn't needed for correctness.
+    case OPCODE_SET_RETURN_ADDRESS: {
+      // Stash the return address for the NEXT guest call (a64 stores it to its
+      // GUEST_CALL_RET_ADDR stack slot; EmitGuestCall forwards it as the
+      // callee's x0). Required so the callee can recognize its own blr RETURN.
+      auto* v = V(i->src1.value);
+      if (!v) return false;
+      b_.CreateStore(b_.CreateZExtOrTrunc(v, b_.getInt64Ty()),
+                     next_call_ret_addr_);
       return true;
+    }
     case OPCODE_CALL_TRUE:
     case OPCODE_CALL_INDIRECT_TRUE: {
       auto* cond = V(i->src1.value);
@@ -956,7 +1070,11 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   mod->setTargetTriple(jit.getTargetTriple().str());
 
   std::string name = "guest_" + std::to_string(function->address());
-  auto* fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), false);
+  // void guest_<addr>(i64 x0_guest_return_address): matches the a64 ABI - the
+  // host->guest thunk passes the guest return address in x0, and it's used to
+  // recognize a guest `blr` RETURN in CALL_INDIRECT.
+  auto* fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                        {llvm::Type::getInt64Ty(ctx)}, false);
   auto* fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, name,
                                     mod.get());
   // Reserve x20 (guest ctx) / x21 (membase) for this function's codegen so the

@@ -9,6 +9,7 @@
 
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
 
+#include <atomic>
 #include <cstdio>
 #include <string>
 
@@ -63,12 +64,49 @@ DEFINE_int32(cpu_backend_llvm_opt, 2,
 // AAPCS callee-saved across this C call so they survive; the callee re-derives
 // them via the host->guest thunk inside Call(). Correctness-first (resolve per
 // call); the indirection-table fast path is a later perf step.
-extern "C" void xe_llvm_guest_call(uint32_t target) {
+//   ret_addr = the guest return address the guest's SET_RETURN_ADDRESS stashed;
+//   it is forwarded to the callee as its x0 (guest return address) by the
+//   host->guest thunk, so the callee can recognize its own `blr` RETURN
+//   (CALL_INDIRECT target == x0). Previously this passed context()->lr, which
+//   this backend does not maintain -> callees never matched their return and
+//   every guest return became a forward call -> host stack overflow.
+extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
   auto* ts = xe::cpu::ThreadState::Get();
+  // DIAGNOSTIC (rate-limited): host-call nesting depth, to localize the stack-
+  // overflow storm. ALL guest calls route here, so if this climbs without bound
+  // the call/return tree isn't unwinding; target/ret_addr show WHAT recurses.
+  static thread_local uint32_t s_depth = 0;
+  static std::atomic<uint32_t> s_deep_log{0};
+  ++s_depth;
+  if (s_depth >= 300 && (s_depth & 0xFF) == 0) {
+    uint32_t n = s_deep_log.fetch_add(1, std::memory_order_relaxed);
+    if (n < 24) {
+      XELOGE(
+          "xe_llvm_guest_call DEEP depth={} target=0x{:08X} ret_addr=0x{:08X}",
+          s_depth, target, ret_addr);
+    }
+  }
   auto* fn = ts->processor()->ResolveFunction(target);
   if (fn) {
-    fn->Call(ts, static_cast<uint32_t>(ts->context()->lr));
+    fn->Call(ts, ret_addr);
   }
+  --s_depth;
+}
+
+// Resolve a guest call target to its host machine-code entry (compiling it if
+// needed) WITHOUT calling it. Used to emit a TRUE tail call (musttail) from
+// JIT'd code: a guest tail-call (b/bctr in tail position) must REUSE the host
+// frame, not nest one per call. The old path nested via fn->Call, so a guest
+// tail-call loop (e.g. 0x8273EFB4) grew the host stack unboundedly -> overflow
+// = the device signal storm. The returned entry is callable directly with x20/
+// x21 live and x0 = guest return address (the a64 guest->guest ABI, no thunk).
+extern "C" void* xe_llvm_resolve_function(uint32_t target) {
+  auto* ts = xe::cpu::ThreadState::Get();
+  auto* fn = ts->processor()->ResolveFunction(target);
+  // Only GuestFunctions have host machine_code to tail-jump to; externs/
+  // builtins have none and must go through the non-tail xe_llvm_guest_call path.
+  auto* gf = fn ? dynamic_cast<xe::cpu::GuestFunction*>(fn) : nullptr;
+  return gf ? reinterpret_cast<void*>(gf->machine_code()) : nullptr;
 }
 #endif  // XE_LLVM_BACKEND_ENABLED
 
@@ -117,6 +155,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_guest_call),
                    llvm::JITSymbolFlags::Exported |
                        llvm::JITSymbolFlags::Callable)}})));
+    auto rname = jit_->jit->mangleAndIntern("xe_llvm_resolve_function");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {rname, llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_resolve_function),
+                    llvm::JITSymbolFlags::Exported |
+                        llvm::JITSymbolFlags::Callable)}})));
   }
 #endif
 
