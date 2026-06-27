@@ -1020,6 +1020,22 @@ bool Lowerer::LowerInstr(Instr* i) {
       // civac here, neither of which changes guest-visible state -> a no-op is
       // byte-identical to the a64 result (and lets the function stay in LLVM).
       return true;
+    case OPCODE_MEMSET: {
+      // dcbz/dcbz128: zero `length` bytes at membase+addr (value const 0, length
+      // const). GPU coherence comes from the page-fault write-watch (a store to a
+      // watched page faults -> unprotect -> retry, per page); the a64's
+      // EmitGuestStoreWatch is a default-off debug tracer, so a plain memset is
+      // byte-identical.
+      auto* addr = V(i->src1.value);
+      auto* val = V(i->src2.value);
+      auto* len = V(i->src3.value);
+      if (!addr || !val || !len) return false;
+      if (!val->getType()->isIntegerTy(8)) {
+        val = b_.CreateTrunc(val, b_.getInt8Ty());
+      }
+      b_.CreateMemSet(MemPtr(addr), val, len, llvm::MaybeAlign(1));
+      return true;
+    }
 
     // ---- control flow ----
     case OPCODE_BRANCH: {

@@ -731,6 +731,22 @@ TEST_CASE("LLVM_PERMUTE_V128", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_MEMSET", "[llvm]") {
+  // dcbz: zero a 32-byte region (value 0, const length); read two words back.
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* a0 = b.LoadConstantUint64(0x10002000ull);
+        auto* a8 = b.LoadConstantUint64(0x10002008ull);
+        b.Store(a0, b.LoadConstantUint64(0xDEADBEEFCAFEF00Dull));
+        b.Store(a8, b.LoadConstantUint64(0x1122334455667788ull));
+        b.Memset(a0, b.LoadConstantInt8(0), b.LoadConstantUint64(32));
+        StoreGPR(b, 3, b.Load(a0, INT64_TYPE));
+        StoreGPR(b, 4, b.Load(a8, INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext*) {});
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
