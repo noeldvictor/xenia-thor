@@ -10,7 +10,17 @@ zero-copy [FIXED + enabled default-on 2026-06-27, present-hang gone]; (3) CPU/GP
 dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct path; the KGSL blocking-fence
 fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
 
-### LLVM 100%-coverage progress (toward zero a64 fallback)
+### ✅ LLVM 100% EMITTABLE-OPCODE COVERAGE ACHIEVED (2026-06-27, device-validated)
+Every opcode the PPC frontend EMITS is now LLVM-native (verified: `comm` of opcodes.h vs llvm_assembler.cc
+cases leaves only ATOMIC_EXCHANGE, LVR/STVL/STVR, RESERVED_LOAD/STORE — all UNEMITTABLE dead opcodes:
+ATOMIC_EXCHANGE has no a64 sequence; lvlx/lvrx/stvlx/stvrx are lowered by the frontend as
+PERMUTE+LoadVectorShl+vector-LOAD/STORE+BYTE_SWAP; lwarx/stwcx use LoadContext(reserved_val)). BD renders
+with full coverage (VdSwap 758, 0 faults). The final additions: PACK/UNPACK (all 18 formats via xe_llvm_pack/
+unpack/pack2 C helpers), vector LOAD/STORE (4×32-bit decodable), MEMSET, DID_SATURATE (stub 0), LOAD_MMIO/
+STORE_MMIO (baked MMIORange callback), LOAD_CLOCK, + the SVE-disable fix. Detail: [[llvm-jit-backend-build]].
+**NEXT for LLVM = PERF (residency/codegen quality), not coverage.**
+
+### LLVM coverage history (how it got to 100%)
 DONE — ~28 opcode handlers, ALL qemu-a64 differential byte-identical (31 tests / 1984 assertions) and the
 core set DEVICE-VALIDATED on BD (VdSwap 816, 0 faults, default-on): scalar core, 8 vector groups, calls,
 control (DELAY_EXECUTION, SET_ROUNDING_MODE, SET_NJM, DEBUG_BREAK/_TRUE), atomic CAS, cache_control,
