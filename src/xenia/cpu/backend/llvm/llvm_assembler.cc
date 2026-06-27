@@ -900,7 +900,9 @@ bool Lowerer::LowerInstr(Instr* i) {
         if (!t) return false;
         target = b_.CreateZExtOrTrunc(t, b_.getInt32Ty());
       }
-      auto* call_bb = llvm::BasicBlock::Create(ctx_, "call", fn_);
+      bool is_tail = (i->flags & CALL_TAIL) != 0;
+      bool poss_ret = (i->flags & CALL_POSSIBLE_RETURN) != 0;
+      auto* taken_bb = llvm::BasicBlock::Create(ctx_, "ctrue", fn_);
       llvm::BasicBlock* cont_bb;
       if (i->next) {
         cont_bb = llvm::BasicBlock::Create(ctx_, "c", fn_);
@@ -908,10 +910,36 @@ bool Lowerer::LowerInstr(Instr* i) {
         cont_bb = i->block->next ? BlockFor(i->block->next)
                                  : llvm::BasicBlock::Create(ctx_, "c", fn_);
       }
-      b_.CreateCondBr(Truth(cond), call_bb, cont_bb);
-      b_.SetInsertPoint(call_bb);
-      EmitGuestCall(target);
-      b_.CreateBr(cont_bb);
+      b_.CreateCondBr(Truth(cond), taken_bb, cont_bb);
+      b_.SetInsertPoint(taken_bb);
+      // When the condition is TRUE this is a conditional guest blr/bctr. Honor
+      // POSSIBLE_RETURN (a RETURN when target == our entry LR) and TAIL, exactly
+      // like CALL_INDIRECT. Without this, a conditional RETURN became a forward
+      // call + fall-through: e.g. strncpy's `bclr if count==0` (0x826C0DA0) ran
+      // the copy loop with count wrapping 0 -> 0xFFFFFFFF = a multi-billion-
+      // iteration livelock (device-pinned: thread spun 49s at this fn).
+      if (poss_ret) {
+        auto* mine = b_.CreateTrunc(
+            b_.CreateLoad(b_.getInt64Ty(), my_ret_addr_), b_.getInt32Ty());
+        auto* is_ret = b_.CreateICmpEQ(target, mine);
+        auto* ret_bb = llvm::BasicBlock::Create(ctx_, "ctrue_ret", fn_);
+        auto* fwd_bb = llvm::BasicBlock::Create(ctx_, "ctrue_fwd", fn_);
+        b_.CreateCondBr(is_ret, ret_bb, fwd_bb);
+        b_.SetInsertPoint(ret_bb);
+        b_.CreateRetVoid();
+        b_.SetInsertPoint(fwd_bb);
+        if (is_tail) {
+          if (!EmitGuestTailCall(target)) return false;
+        } else {
+          EmitGuestCall(target);
+          b_.CreateBr(cont_bb);
+        }
+      } else if (is_tail) {
+        if (!EmitGuestTailCall(target)) return false;
+      } else {
+        EmitGuestCall(target);
+        b_.CreateBr(cont_bb);
+      }
       b_.SetInsertPoint(cont_bb);
       if (!i->next && !i->block->next) b_.CreateRetVoid();
       return true;
