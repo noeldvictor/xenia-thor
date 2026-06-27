@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "xenia/base/cvar.h"
@@ -83,6 +84,14 @@ DEFINE_bool(cpu_backend_llvm_dump_ir, false,
             "a single function and read off codegen bugs device-free-ishly.",
             "CPU");
 
+DEFINE_string(cpu_backend_llvm_trace_addr, "",
+              "Hex guest address. When an LLVM-compiled CALLER invokes this guest "
+              "fn via xe_llvm_guest_call, log its input regs (r3/r4/r5/r1/lr) "
+              "before and output (r3) after the call (grep 'LLVMtrace'). Compare "
+              "across max_fns=K-1 (callee a64) vs K (callee LLVM) on the same "
+              "deterministic input to pin a miscompiled fn's exact value bug.",
+              "CPU");
+
 #if XE_LLVM_BACKEND_ENABLED
 // Runtime helper the JIT'd code calls for a guest CALL/CALL_INDIRECT/CALL_EXTERN:
 // resolve the target guest function and invoke it. x20/x21 (ctx/membase) are
@@ -111,9 +120,35 @@ extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
           s_depth, target, ret_addr);
     }
   }
+  // VALUE TRACE: if `target` matches cpu_backend_llvm_trace_addr, log input regs
+  // before the call and the result (r3) after. The caller routes here regardless
+  // of the callee's backend, so running max_fns=K-1 (callee a64) vs K (callee
+  // LLVM) on the same deterministic input pins a miscompiled callee's value bug.
+  static uint32_t s_trace_addr = [] {
+    const std::string& s = cvars::cpu_backend_llvm_trace_addr;
+    return s.empty() ? 0u : uint32_t(std::strtoull(s.c_str(), nullptr, 16));
+  }();
+  bool trace = (s_trace_addr != 0) && (target == s_trace_addr);
+  static std::atomic<uint32_t> s_trace_n{0};
+  uint32_t tn = 0;
+  if (trace) {
+    auto* c = ts->context();
+    tn = s_trace_n.fetch_add(1, std::memory_order_relaxed);
+    if (tn < 40) {
+      XELOGE(
+          "LLVMtrace #{} ENTER 0x{:08X} r3=0x{:016X} r4=0x{:016X} r5=0x{:016X} "
+          "r1=0x{:016X} lr=0x{:08X}",
+          tn, target, c->r[3], c->r[4], c->r[5], c->r[1], ret_addr);
+    }
+  }
   auto* fn = ts->processor()->ResolveFunction(target);
   if (fn) {
     fn->Call(ts, ret_addr);
+  }
+  if (trace && tn < 40) {
+    auto* c = ts->context();
+    XELOGE("LLVMtrace #{} EXIT  0x{:08X} r3=0x{:016X} r4=0x{:016X}", tn, target,
+           c->r[3], c->r[4]);
   }
   --s_depth;
 }
