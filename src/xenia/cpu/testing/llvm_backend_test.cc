@@ -884,6 +884,21 @@ TEST_CASE("LLVM_PACK_INT_NARROW", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_DID_SATURATE", "[llvm]") {
+  // Saturation tracking is a stub (a64 + x64 both return 0); confirm 0.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreGPR(b, 3, b.ZeroExtend(b.DidSaturate(LoadVR(b, 4)), INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) { ctx->v[4].u32[0] = 0xFFFFFFFFu; });
+}
+
+// LOAD_MMIO / STORE_MMIO have no differential test: the test harness maps no
+// MMIO ranges and there is no public builder, so they are lowered by
+// composition (a direct call to the baked MMIORange read/write callback,
+// matching a64's CallNativeSafe) and validated on-device.
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

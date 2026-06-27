@@ -17,6 +17,7 @@
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
 #include "xenia/cpu/hir/hir_builder.h"
 #include "xenia/cpu/hir/instr.h"
+#include "xenia/cpu/mmio_handler.h"
 #include "xenia/cpu/hir/label.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 
@@ -1658,6 +1659,49 @@ bool Lowerer::LowerInstr(Instr* i) {
                                   false));
       b_.CreateCall(callee, {scratch, b_.getInt32(i->flags)});
       Def(i->dest, b_.CreateLoad(i32x4, scratch));
+      return true;
+    }
+    case OPCODE_DID_SATURATE:
+      // Saturation tracking is unimplemented in BOTH the a64 and x64 backends
+      // (they `mov dest, 0`), so the byte-identical lowering is a constant 0.
+      Def(i->dest, b_.getInt8(0));
+      return true;
+    case OPCODE_LOAD_MMIO: {
+      // MMIO register read: the MMIORange* (src1) + address (src2) are baked in
+      // by the constant-propagation pass. Call range->read(ppc_ctx=x20,
+      // callback_context, addr) and byte-swap (matches a64 CallNativeSafe + rev).
+      auto* range = reinterpret_cast<xe::cpu::MMIORange*>(i->src1.offset);
+      uint32_t addr = uint32_t(i->src2.offset);
+      auto* i32 = b_.getInt32Ty();
+      auto* fty = llvm::FunctionType::get(
+          i32, {b_.getPtrTy(), b_.getPtrTy(), i32}, false);
+      auto* fn = b_.CreateIntToPtr(
+          b_.getInt64(reinterpret_cast<uint64_t>(range->read)), b_.getPtrTy());
+      auto* cbctx = b_.CreateIntToPtr(
+          b_.getInt64(reinterpret_cast<uint64_t>(range->callback_context)),
+          b_.getPtrTy());
+      auto* res = b_.CreateCall(fty, fn, {ctx_ptr_, cbctx, b_.getInt32(addr)});
+      Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, res));
+      return true;
+    }
+    case OPCODE_STORE_MMIO: {
+      // MMIO register write: range->write(ppc_ctx=x20, callback_context, addr,
+      // byteswap(value)). MMIORange* + addr baked in (src1/src2); value = src3.
+      auto* range = reinterpret_cast<xe::cpu::MMIORange*>(i->src1.offset);
+      uint32_t addr = uint32_t(i->src2.offset);
+      auto* val = V(i->src3.value);
+      if (!val) return false;
+      val = b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, val);
+      auto* i32 = b_.getInt32Ty();
+      auto* fty = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(ctx_), {b_.getPtrTy(), b_.getPtrTy(), i32, i32},
+          false);
+      auto* fn = b_.CreateIntToPtr(
+          b_.getInt64(reinterpret_cast<uint64_t>(range->write)), b_.getPtrTy());
+      auto* cbctx = b_.CreateIntToPtr(
+          b_.getInt64(reinterpret_cast<uint64_t>(range->callback_context)),
+          b_.getPtrTy());
+      b_.CreateCall(fty, fn, {ctx_ptr_, cbctx, b_.getInt32(addr), val});
       return true;
     }
     case OPCODE_VECTOR_DENORMFLUSH: {
