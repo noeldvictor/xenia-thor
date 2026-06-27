@@ -39,7 +39,7 @@ enum class Be { kA64, kLLVM };
 // pre_call, calls it, and captures the resulting GPRs.
 static void Capture(Be be, const std::function<void(HIRBuilder&)>& generator,
                     const std::function<void(PPCContext*)>& pre_call,
-                    uint64_t out_r[32]) {
+                    uint64_t out_r[32], uint32_t out_v[32]) {
   const uint32_t memory_size = 16 * 1024 * 1024;
   auto memory = std::make_unique<Memory>();
   memory->Initialize();
@@ -76,6 +76,11 @@ static void Capture(Be be, const std::function<void(HIRBuilder&)>& generator,
   for (int i = 0; i < 32; ++i) {
     out_r[i] = ctx->r[i];
   }
+  for (int i = 0; i < 8; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      out_v[i * 4 + j] = ctx->v[i].u32[j];
+    }
+  }
 }
 
 // Asserts the LLVM backend produces GPRs identical to the a64 backend.
@@ -89,11 +94,16 @@ static void RunDiff(const std::function<void(HIRBuilder&)>& generator,
   // direct-ctx lowering. The residency win (O2) is validated on-device.
   cvars::cpu_backend_llvm_opt = 0;
   uint64_t ra[32] = {0}, rl[32] = {0};
-  Capture(Be::kA64, generator, pre_call, ra);
-  Capture(Be::kLLVM, generator, pre_call, rl);
+  uint32_t va[32] = {0}, vl[32] = {0};
+  Capture(Be::kA64, generator, pre_call, ra, va);
+  Capture(Be::kLLVM, generator, pre_call, rl, vl);
   for (int i = 0; i < 32; ++i) {
     INFO("GPR r" << i);
     REQUIRE(rl[i] == ra[i]);
+  }
+  for (int i = 0; i < 32; ++i) {
+    INFO("VR v" << (i / 4) << " lane " << (i % 4));
+    REQUIRE(vl[i] == va[i]);
   }
 }
 
@@ -188,6 +198,22 @@ TEST_CASE("LLVM_BRANCH_I64", "[llvm]") {
         ctx->r[5] = 8;
         ctx->r[6] = 0x1111111111111111ull;
         ctx->r[7] = 0x2222222222222222ull;
+      });
+}
+
+TEST_CASE("LLVM_VECTOR_LOGIC", "[llvm]") {
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 3, b.And(LoadVR(b, 4), LoadVR(b, 5)));
+        StoreVR(b, 6, b.Or(LoadVR(b, 4), LoadVR(b, 5)));
+        StoreVR(b, 7, b.Xor(LoadVR(b, 4), LoadVR(b, 5)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0xF0F0F0F0u; ctx->v[4].u32[1] = 0x12345678u;
+        ctx->v[4].u32[2] = 0xFFFF0000u; ctx->v[4].u32[3] = 0xAAAAAAAAu;
+        ctx->v[5].u32[0] = 0x0F0F0F0Fu; ctx->v[5].u32[1] = 0x87654321u;
+        ctx->v[5].u32[2] = 0x0000FFFFu; ctx->v[5].u32[3] = 0x55555555u;
       });
 }
 

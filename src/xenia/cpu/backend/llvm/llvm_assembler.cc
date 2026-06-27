@@ -105,10 +105,17 @@ class Lowerer {
       case FLOAT64_TYPE:
         return llvm::Type::getDoubleTy(ctx_);
       case VEC128_TYPE:
+        // 128-bit vector. <4 x i32> is the canonical carrier; lane-agnostic ops
+        // (vand/vor/vxor/vnot, copies) are correct on it and lower to NEON.
+        // Lane-typed arith, vsel, and vector mem+byteswap still fall back (the
+        // type-mismatched cases are guarded in their handlers below).
+        return llvm::VectorType::get(llvm::Type::getInt32Ty(ctx_), 4, false);
       default:
-        return nullptr;  // vectors -> fallback
+        return nullptr;
     }
   }
+
+  bool IsVec(llvm::Value* v) { return v && v->getType()->isVectorTy(); }
 
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
   bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
@@ -577,6 +584,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* tv = V(i->src2.value);
       auto* fv = V(i->src3.value);
       if (!cond || !tv || !fv) return false;
+      if (IsVec(tv) || IsVec(cond)) return false;  // vsel is per-bit -> a64 (P3)
       Def(i->dest, b_.CreateSelect(Truth(cond), tv, fv));
       return true;
     }
@@ -586,6 +594,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ty = T(i->dest->type);
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
+      if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
       auto* v = b_.CreateLoad(ty, MemPtr(ea));
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
@@ -594,6 +603,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       auto* val = V(i->src2.value);
       if (!ea || !val) return false;
+      if (IsVec(val)) return false;  // vector mem+byteswap -> a64 (P3)
       val = MaybeByteSwap(val, val->getType(), i->flags);
       b_.CreateStore(val, MemPtr(ea));
       return true;
@@ -603,6 +613,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* base = V(i->src1.value);
       auto* off = V(i->src2.value);
       if (!ty || !base || !off) return false;
+      if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       auto* v = b_.CreateLoad(ty, MemPtr(ea));
@@ -614,6 +625,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* off = V(i->src2.value);
       auto* val = V(i->src3.value);
       if (!base || !off || !val) return false;
+      if (IsVec(val)) return false;  // vector mem+byteswap -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       val = MaybeByteSwap(val, val->getType(), i->flags);
