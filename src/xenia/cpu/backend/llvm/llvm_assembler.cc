@@ -801,18 +801,21 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* cond = V(i->src1.value);
       if (!cond) return false;
       auto* ret_bb = llvm::BasicBlock::Create(ctx_, "ret", fn_);
-      llvm::BasicBlock* cont;
-      if (i->next) {
-        cont = llvm::BasicBlock::Create(ctx_, "c", fn_);
-      } else {
-        cont = i->block->next ? BlockFor(i->block->next)
-                              : llvm::BasicBlock::Create(ctx_, "c", fn_);
-      }
+      // Same insert-point rule as BRANCH_TRUE / CALL_INDIRECT_TRUE: only step
+      // into a FRESH continuation; if the false edge flows to the next block's
+      // existing LLVM block, leave the insert point on the terminated ret path
+      // so Run() adds no spurious self-branch.
+      bool fresh_cont = (i->next != nullptr) || (i->block->next == nullptr);
+      llvm::BasicBlock* cont = fresh_cont
+                                   ? llvm::BasicBlock::Create(ctx_, "c", fn_)
+                                   : BlockFor(i->block->next);
       b_.CreateCondBr(Truth(cond), ret_bb, cont);
       b_.SetInsertPoint(ret_bb);
       b_.CreateRetVoid();
-      b_.SetInsertPoint(cont);
-      if (!i->next && !i->block->next) b_.CreateRetVoid();
+      if (fresh_cont) {
+        b_.SetInsertPoint(cont);
+        if (!i->next && !i->block->next) b_.CreateRetVoid();
+      }
       return true;
     }
 
@@ -903,21 +906,25 @@ bool Lowerer::LowerInstr(Instr* i) {
       bool is_tail = (i->flags & CALL_TAIL) != 0;
       bool poss_ret = (i->flags & CALL_POSSIBLE_RETURN) != 0;
       auto* taken_bb = llvm::BasicBlock::Create(ctx_, "ctrue", fn_);
-      llvm::BasicBlock* cont_bb;
-      if (i->next) {
-        cont_bb = llvm::BasicBlock::Create(ctx_, "c", fn_);
-      } else {
-        cont_bb = i->block->next ? BlockFor(i->block->next)
-                                 : llvm::BasicBlock::Create(ctx_, "c", fn_);
-      }
+      // The cond-FALSE (not-taken) destination. CRITICAL (mirrors BRANCH_TRUE):
+      // when this conditional call is the LAST instr of the block and the block
+      // has a successor, the false edge flows DIRECTLY to that successor's LLVM
+      // block and we must NOT leave the IRBuilder insert point there - otherwise
+      // Run()'s end-of-block fall-through sees that (terminator-less) successor
+      // and emits `CreateBr(successor)` INTO it = an empty `br self` infinite
+      // loop (device-pinned: strncpy 0x826C0D98's copy-loop block became
+      // `b1: br b1` -> livelock). `fresh_cont` = the false block is a fresh
+      // continuation we keep emitting into.
+      bool fresh_cont = (i->next != nullptr) || (i->block->next == nullptr);
+      llvm::BasicBlock* cont_bb =
+          fresh_cont ? llvm::BasicBlock::Create(ctx_, "c", fn_)
+                     : BlockFor(i->block->next);
       b_.CreateCondBr(Truth(cond), taken_bb, cont_bb);
       b_.SetInsertPoint(taken_bb);
       // When the condition is TRUE this is a conditional guest blr/bctr. Honor
       // POSSIBLE_RETURN (a RETURN when target == our entry LR) and TAIL, exactly
-      // like CALL_INDIRECT. Without this, a conditional RETURN became a forward
-      // call + fall-through: e.g. strncpy's `bclr if count==0` (0x826C0DA0) ran
-      // the copy loop with count wrapping 0 -> 0xFFFFFFFF = a multi-billion-
-      // iteration livelock (device-pinned: thread spun 49s at this fn).
+      // like CALL_INDIRECT. Without that, a conditional RETURN became a forward
+      // call (e.g. strncpy's `bclr if count==0`).
       if (poss_ret) {
         auto* mine = b_.CreateTrunc(
             b_.CreateLoad(b_.getInt64Ty(), my_ret_addr_), b_.getInt32Ty());
@@ -929,19 +936,24 @@ bool Lowerer::LowerInstr(Instr* i) {
         b_.CreateRetVoid();
         b_.SetInsertPoint(fwd_bb);
         if (is_tail) {
-          if (!EmitGuestTailCall(target)) return false;
+          if (!EmitGuestTailCall(target)) return false;  // terminates fwd_bb
         } else {
           EmitGuestCall(target);
-          b_.CreateBr(cont_bb);
+          b_.CreateBr(cont_bb);  // taken (non-return) rejoins the false path
         }
       } else if (is_tail) {
-        if (!EmitGuestTailCall(target)) return false;
+        if (!EmitGuestTailCall(target)) return false;  // terminates taken_bb
       } else {
         EmitGuestCall(target);
-        b_.CreateBr(cont_bb);
+        b_.CreateBr(cont_bb);  // taken rejoins the false path
       }
-      b_.SetInsertPoint(cont_bb);
-      if (!i->next && !i->block->next) b_.CreateRetVoid();
+      // Position for the rest of lowering. Only step into cont_bb when it is a
+      // fresh continuation; otherwise leave the insert point on the (terminated)
+      // taken/fwd block so Run() adds no spurious fall-through branch.
+      if (fresh_cont) {
+        b_.SetInsertPoint(cont_bb);
+        if (!i->next && !i->block->next) b_.CreateRetVoid();
+      }
       return true;
     }
 
