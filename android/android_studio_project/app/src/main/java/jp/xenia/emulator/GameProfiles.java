@@ -57,12 +57,12 @@ public final class GameProfiles {
     private static final Map<String, Profile> PROFILES = new HashMap<>();
 
     static {
-        // Blue Dragon (4D5307DF): UMA-direct shared memory present-hangs the
-        // title (black screen, VdSwap=0, GPU 0%) even with the smart-sync
-        // guards on. Device-validated 2026-05-31. Keep it off for this title.
+        // Blue Dragon (4D5307DF): the old UMA-direct present-hang (2026-05-31)
+        // is GONE - with the matured smart-sync guards (default-on) UMA-direct
+        // renders BD (device-validated 2026-06-27: VdSwap=349, 0 TDR, 0 faults,
+        // host-coherent direct-write path). So the per-title disable is removed;
+        // BD inherits the global UMA toggle (default-on). [[uma-safe-but-not-bd-heavy-lever]]
         PROFILES.put("4D5307DF", new Profile("Blue Dragon")
-                .add("gpu_uma_direct_shared_memory", Boolean.FALSE,
-                        "UMA-direct present-hangs Blue Dragon; keep it off")
                 .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
                         "BD reads its pack files (item_rec.ipk etc.) async; its "
                         + "async-completion path never consumes the (already-read) "

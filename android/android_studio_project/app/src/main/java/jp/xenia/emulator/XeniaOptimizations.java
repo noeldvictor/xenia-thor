@@ -134,6 +134,25 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("cpu_backend_llvm")}, null));
 
         list.add(new Optimization(
+                "opt_uma_direct",
+                "UMA zero-copy guest memory",
+                "Writes guest memory straight into a host-visible GPU buffer "
+                        + "(no staging copy) - the Thor is a unified-memory device.",
+                "Normally every guest memory page the GPU reads is copied through a "
+                        + "staging buffer into VRAM. The AYN Thor has UNIFIED memory "
+                        + "(CPU and GPU share the same 16 GB), so that copy is pure "
+                        + "waste - bandwidth, power and heat. This maps a host-visible, "
+                        + "host-coherent 512 MB buffer and writes guest pages directly "
+                        + "into it (zero-copy), with smart-sync guards that wait only "
+                        + "for the exact prior GPU read of a written range (not a full "
+                        + "GPU serialize) to avoid the Adreno tiler TDR. Lower memory "
+                        + "bandwidth = lower wattage + heat. Device-validated on Blue "
+                        + "Dragon (renders, 0 TDR, 0 faults); the old present-hang is "
+                        + "fixed. Experimental on other titles.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("gpu_uma_direct_shared_memory")}, null));
+
+        list.add(new Optimization(
                 "opt_flat_membase",
                 "Flat guest memory addressing",
                 "Folds every guest load/store into one indexed CPU instruction.",
