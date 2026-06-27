@@ -1036,11 +1036,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       // byte-identical to the a64 result (and lets the function stay in LLVM).
       return true;
     case OPCODE_MEMSET: {
-      // dcbz/dcbz128: zero `length` bytes at membase+addr (value const 0, length
-      // const). GPU coherence comes from the page-fault write-watch (a store to a
-      // watched page faults -> unprotect -> retry, per page); the a64's
-      // EmitGuestStoreWatch is a default-off debug tracer, so a plain memset is
-      // byte-identical.
+      // dcbz/dcbz128: zero `length` bytes at membase+addr (value const 0).
       auto* addr = V(i->src1.value);
       auto* val = V(i->src2.value);
       auto* len = V(i->src3.value);
@@ -1801,7 +1797,15 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // allocator never clobbers them (set by the host->guest thunk, read via
   // @llvm.read_register). Per-function attribute, not the JTMB (which hangs
   // create() under qemu).
-  fn->addFnAttr("target-features", "+reserve-x20,+reserve-x21");
+  // ALSO disable SVE/SVE2/SME: detectHost enables SVE2 on the Cortex-X3, but it
+  // is NOT usable on the Thor's Android (executing an SVE instruction faults
+  // SIGILL) - DEVICE-CONFIRMED 2026-06-27: llvm.memset codegen emitted an SVE
+  // instruction (insn=0x04A84D02, code=2 SIGILL storm). Forcing -sve keeps all
+  // codegen on NEON/scalar (NEON = +fp-armv8/+neon, unaffected), the only SIMD
+  // the device supports. This is what unblocks MEMSET (and any future op LLVM
+  // would otherwise vectorize via SVE) instead of falling back to a64.
+  fn->addFnAttr("target-features",
+                "+reserve-x20,+reserve-x21,-sve,-sve2,-sve2-bitperm,-sme,-sme2");
 
   Lowerer lowerer(ctx, mod.get(), fn, function->address());
   if (!lowerer.Run(builder)) {

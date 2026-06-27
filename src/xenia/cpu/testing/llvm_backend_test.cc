@@ -732,7 +732,9 @@ TEST_CASE("LLVM_PERMUTE_V128", "[llvm]") {
 }
 
 TEST_CASE("LLVM_MEMSET", "[llvm]") {
-  // dcbz: zero a 32-byte region (value 0, const length); read two words back.
+  // dcbz -> llvm.memset (NEON/scalar codegen; SVE disabled in target-features so
+  // it can't emit the SVE form that SIGILL-storms the Thor). Zero a 32-byte
+  // region, read two words back.
   RunDiff(
       [](HIRBuilder& b) {
         auto* a0 = b.LoadConstantUint64(0x10002000ull);
