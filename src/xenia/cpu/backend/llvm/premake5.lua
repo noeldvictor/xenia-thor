@@ -25,8 +25,9 @@ project("xenia-cpu-backend-llvm")
   links({
     "xenia-base",
     "xenia-cpu",
-    "xenia-cpu-backend-a64",  -- LLVMBackend derives from A64Backend (thunks,
-                              -- code cache, dispatch, A64Function, fallback).
+    "xenia-cpu-backend-arm64",  -- the a64 backend project (a64::A64Backend);
+                                -- LLVMBackend derives from it (thunks, code
+                                -- cache, dispatch, A64Function, fallback).
   })
   files({
     llvm_dir.."/*.cc",
