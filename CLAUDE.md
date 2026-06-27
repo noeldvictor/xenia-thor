@@ -2,33 +2,45 @@
 
 ## Goal
 Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740) via this xenia fork.
-Priority: **Blue Dragon → 30fps**; then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a
-cvar-gated, stacking `XeniaOptimizations` toggle.
+Priority: **Blue Dragon → 30fps at 720p with default foliage**; then Burnout, Gears, Lost Odyssey, Banjo →
+30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
+improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) LLVM backend
+improvements [the way forward: full register residency, opcode coverage], (2) UMA zero-copy [must be fixed +
+enabled], (3) CPU/GPU NEON [VMX→NEON, FP32 dot=fmul+faddv]. Fix LLVM bugs as found.**
 
-## ⭐ PRIMARY BUILD (authorized 2026-06-26): static-recomp LLVM backend
-The dominant CPU tax = guest PPC registers round-trip through PPCContext MEMORY at every basic-block
-boundary (xenia's per-block regalloc resets all host regs per block). Device-proven this session: BD's
-hottest fn `guest_824694A0` pays **~1770 LOAD/STORE_CONTEXT ops**, and a kill-test
-(`scratch/thor-debug/residency_killtest.c`, aarch64-gcc -O2) showed register LOCALIZATION takes a guest
-hot loop from ~4 context round-trips/iteration to **ZERO**. The in-JIT residency retrofit
-(`arm64_register_cache_inherit`) CRASHES (back-edge soundness; default-off, do not chase). **The clean
-win = a whole-function recompiler where the host compiler's allocator keeps guest regs resident —
-RPCS3 / XenonRecomp model.** User authorized 2026-06-26: "do the static recomp llvm backend", "work
-24/7 max".
-- **Architecture:** PPC → HIR (REUSE xenia's frontend) → **LLVM IR** (new lowering; PPCContext field
-  accesses → `llvm load/store` that mem2reg/GVN promote to SSA across the whole function = residency)
-  → LLVM whole-function opt + ARM64 codegen → native, **PRECOMPILED AT LOAD** (RPCS3-style; extend the
-  shipped load-window precompiler, [[parallel-jit-precompiler-wall]]).
-- **New backend:** `src/xenia/cpu/backend/llvm/` (model on `backend/a64/`). Default-off cvar
-  `cpu_backend=llvm`; hybrid (LLVM for hot fns, a64 JIT for the rest) sharing the dispatcher.
-- **Hard parts:** link libLLVM in the NDK ARM64 build (the first hurdle); precise CR/XER/FPSCR (lazy
-  flags); indirect branches/jump tables (DolRecomp-style PC-switch entry); memory model (membase +
-  opaque guest-mem helpers so locals stay resident); runtime/dispatcher/kernel-HLE interop; SMC fallback.
-- **Validation:** the qemu-a64 differential harness ([[a64-qemu-harness]]) + RequireTransparent
-  OFF==ON byte-identical, then device. Go/no-go kill-test in docs/research/20260626-static-recomp-residency-eval.md.
-- This **SUPERSEDES** the per-block JIT residency grind as the BD/Gears CPU lever. Serves every
-  CPU-bound title (Burnout is scene-dependent CPU-bound too; UMA is NOT the lever —
-  [[uma-safe-but-not-bd-heavy-lever]]).
+## ⭐ PRIMARY BUILD: LLVM whole-function CPU backend — SHIPPED, default-on, now PERF-tuning
+**LLVM is the way forward, no matter what (user, 2026-06-27).** The whole-function HIR→LLVM IR→ORCv2
+recompiler RENDERS Blue Dragon gameplay on the AYN Thor (full LLVM, 3793 fns, 683 frames, 0 faults) and
+is **default-on** via the `opt_llvm_backend` XeniaOptimizations toggle (cvar `cpu_backend_llvm`, opt
+level `cpu_backend_llvm_opt`=2). Lives in `src/xenia/cpu/backend/llvm/`; `LLVMBackend:A64Backend`,
+x20=ctx/x21=membase reserved ABI, hybrid (unsupported opcodes fall back to the a64 JIT). Full detail +
+the build recipe: memory file [[llvm-jit-backend-build]].
+- **What it cost to get rendering (all committed, qemu 896/896):** CALL_EXTERN recursion, 32-bit guest
+  EA sign-ext, conditional-call self-loop, terminator-in-block, compile-race SIGBUS, POSSIBLE_RETURN/TAIL,
+  and the FINAL one = the **return-address basis for tail-call-entered fns** (`my_ret_addr_=(x0!=0)?x0:
+  context->lr`; __restgprlr restores context->lr so an entry-lr basis mis-detected its blr as a forward
+  call → infinite recursion). Tooling built: `cpu_backend_llvm_max_fns` (monotonic count-gate bisection),
+  `_range_lo/_hi`, `_dump_ir`, `_trace_addr`, `LLVMfallback` opcode histogram — all gated, 0 default cost.
+- **PERF FOCUS NOW (user priority 2026-06-27): steady-state smoothness, LOWER WATTAGE + HEAT, more perf —
+  NOT boot time** ("boot compile doesn't bother us if the game is smoother"). So the on-disk object cache
+  is DEPRIORITIZED; the lever is making the JIT'd code FAST:
+  1. **RESIDENCY (the core win) — currently PARTIAL.** Direct-context model: LOAD/STORE_CONTEXT →
+     load/store on the opaque PPCContext ptr. At opt=2 GVN forwards LOADS across blocks (hot fn 0x824694A0:
+     ~1770 ctx ops → 181 loads, a real win vs a64's per-block reloads) but 372 STORES remain (GVN can't
+     prove dead-store elimination through the opaque ptr + call barriers). **FULL residency (RPCS3-class) =
+     switch guest regs to ALLOCAs at entry → mem2reg promotes to SSA → host regs, store back only at
+     calls/exit.** This is the #1 LLVM perf lever; verify each change with the `_dump_ir` ctx-access count.
+  2. **OPCODE COVERAGE** (fewer a64 fallbacks = more fns get residency). Lowered so far: scalar core, 8
+     vector groups, calls, YIELD, ADD_CARRY, IS_NAN, TRAP/TRAP_TRUE. Top remaining fallbacks (LLVMfallback
+     histogram): atomic_compare_exchange, mul_add/mul_sub (FMA — keep PPC NaN propagation), load_vector_shl/shr,
+     cache_control, unpack. NOTE: inline asm report_fatal_errors in the ORCv2 AsmPrinter — use intrinsics/IR, never inline asm.
+  3. **NEON for vectors** (VMX→NEON; user "improve gpu/neon stuff"): DOT_PRODUCT=fmul+faddv (FP32, NEVER
+     int8 sdot), PERMUTE/SWIZZLE=shufflevector/tbl, PACK/UNPACK, vector mem+byteswap.
+- **⚠️ UMA MUST BE FIXED (user directive 2026-06-27):** `gpu_uma_direct_shared_memory` is default-off +
+  was found SAFE but fps-neutral on BD's heavy field ([[uma-safe-but-not-bd-heavy-lever]]) — the user
+  wants it working/enabled regardless (zero-copy guest↔GPU memory = lower bandwidth/heat on the Thor's
+  UMA). Re-evaluate, fix any bug, and enable it (smart_sync or double-buffer path).
+- **Validation:** qemu-a64 differential ([[a64-qemu-harness]]) 896/896 + device render/no-fault, every change.
 
 ## Autonomous mode (standing user directive)
 Pick the highest-value unit yourself and execute end-to-end (implement → build-verify → device-test →
