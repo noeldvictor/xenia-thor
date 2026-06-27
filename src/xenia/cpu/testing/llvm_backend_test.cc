@@ -508,6 +508,45 @@ TEST_CASE("LLVM_MUL_SUB_V128", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_DOT_PRODUCT", "[llvm]") {
+  // vmsum3fp/vmsum4fp (F32 dest from the HIR builder). Result bits -> GPR for a
+  // byte-identical compare. Covers clean dot, overflow->QNaN, denormal-input
+  // flush, and NaN-input propagation.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreGPR(b, 3,
+                 b.ZeroExtend(b.Cast(b.DotProduct3(LoadVR(b, 4), LoadVR(b, 5)),
+                                     INT32_TYPE),
+                              INT64_TYPE));
+        StoreGPR(b, 4,
+                 b.ZeroExtend(b.Cast(b.DotProduct4(LoadVR(b, 4), LoadVR(b, 5)),
+                                     INT32_TYPE),
+                              INT64_TYPE));
+        StoreGPR(b, 5,
+                 b.ZeroExtend(b.Cast(b.DotProduct4(LoadVR(b, 6), LoadVR(b, 6)),
+                                     INT32_TYPE),
+                              INT64_TYPE));
+        StoreGPR(b, 7,
+                 b.ZeroExtend(b.Cast(b.DotProduct3(LoadVR(b, 7), LoadVR(b, 5)),
+                                     INT32_TYPE),
+                              INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        // v4 = {1,2,3,4}, v5 = {4,5,6,7}.
+        ctx->v[4].u32[0] = 0x3F800000u; ctx->v[4].u32[1] = 0x40000000u;
+        ctx->v[4].u32[2] = 0x40400000u; ctx->v[4].u32[3] = 0x40800000u;
+        ctx->v[5].u32[0] = 0x40800000u; ctx->v[5].u32[1] = 0x40A00000u;
+        ctx->v[5].u32[2] = 0x40C00000u; ctx->v[5].u32[3] = 0x40E00000u;
+        // v6 ~ 1e20 each -> dot4 overflows float -> QNaN.
+        ctx->v[6].u32[0] = ctx->v[6].u32[1] = ctx->v[6].u32[2] =
+            ctx->v[6].u32[3] = 0x60AD78ECu;
+        // v7 = {denormal, qNaN, 3.0, 4.0}: denormal flushes, NaN propagates.
+        ctx->v[7].u32[0] = 0x00000001u; ctx->v[7].u32[1] = 0x7FC00000u;
+        ctx->v[7].u32[2] = 0x40400000u; ctx->v[7].u32[3] = 0x40800000u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

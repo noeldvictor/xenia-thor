@@ -1407,6 +1407,58 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(resi, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_DOT_PRODUCT_3:
+    case OPCODE_DOT_PRODUCT_4: {
+      // vmsum3fp / vmsum4fp: dot product in DOUBLE precision (so f32*f32 is
+      // exact), summed in the exact a64 lane order, narrowed to f32, with VMX
+      // denormal flush (in + out, via the FZ the a64 path relies on) and the
+      // a64 overflow rule (|result| == +inf -> 0x7FC00000 QNaN). Result is a
+      // scalar (F32 dest) or splatted to all 4 lanes (V128 dest).
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c || !IsVec(a) || !IsVec(c)) return false;
+      auto* i32x4 = T(VEC128_TYPE);
+      auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+      auto* dblx4 = llvm::VectorType::get(b_.getDoubleTy(), 4, false);
+      auto* fa = b_.CreateBitCast(VmxFlushDenorm(b_.CreateBitCast(a, i32x4)),
+                                  f32x4);
+      auto* fb = b_.CreateBitCast(VmxFlushDenorm(b_.CreateBitCast(c, i32x4)),
+                                  f32x4);
+      auto* prod = b_.CreateFMul(b_.CreateFPExt(fa, dblx4),
+                                 b_.CreateFPExt(fb, dblx4));  // exact products
+      auto* p0 = b_.CreateExtractElement(prod, b_.getInt32(0));
+      auto* p1 = b_.CreateExtractElement(prod, b_.getInt32(1));
+      auto* p2 = b_.CreateExtractElement(prod, b_.getInt32(2));
+      llvm::Value* sum;
+      if (op == OPCODE_DOT_PRODUCT_3) {
+        sum = b_.CreateFAdd(b_.CreateFAdd(p0, p1), p2);  // (p0+p1)+p2
+      } else {
+        auto* p3 = b_.CreateExtractElement(prod, b_.getInt32(3));
+        sum = b_.CreateFAdd(b_.CreateFAdd(p0, p2),
+                            b_.CreateFAdd(p1, p3));  // (p0+p2)+(p1+p3)
+      }
+      auto* sumi = b_.CreateBitCast(b_.CreateFPTrunc(sum, b_.getFloatTy()),
+                                    b_.getInt32Ty());
+      // Flush a denormal output to signed zero.
+      auto* den = b_.CreateICmpULT(
+          b_.CreateSub(b_.CreateShl(sumi, b_.getInt32(1)), b_.getInt32(1)),
+          b_.getInt32(0x00FFFFFF));
+      sumi = b_.CreateSelect(
+          den, b_.CreateAnd(sumi, b_.getInt32(0x80000000)), sumi);
+      // |result| == +inf -> PPC QNaN 0x7FC00000.
+      auto* isinf = b_.CreateICmpEQ(
+          b_.CreateAnd(sumi, b_.getInt32(0x7FFFFFFF)), b_.getInt32(0x7F800000));
+      sumi = b_.CreateSelect(isinf, b_.getInt32(0x7FC00000), sumi);
+      if (i->dest->type == VEC128_TYPE) {
+        Def(i->dest,
+            b_.CreateBitCast(b_.CreateVectorSplat(4, sumi), T(VEC128_TYPE)));
+      } else if (i->dest->type == FLOAT32_TYPE) {
+        Def(i->dest, b_.CreateBitCast(sumi, b_.getFloatTy()));
+      } else {
+        return false;
+      }
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
