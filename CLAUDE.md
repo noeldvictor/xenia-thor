@@ -11,18 +11,24 @@ dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct 
 fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
 
 ### LLVM 100%-coverage progress (toward zero a64 fallback)
-DONE (all qemu-a64 differential byte-identical): scalar core, 8 vector groups, calls, atomic CAS,
-cache_control, lvsl/lvsr, INSERT/EXTRACT, MUL_ADD/MUL_SUB V128 (full VMX denormal-flush + PPC NaN fixup),
-DOT_PRODUCT_3/4. Reusable VMX FP helpers in llvm_assembler.cc: `VmxFlushDenorm` (denormal→±0) +
-`VmxNanFixup` (PPC positional NaN). REMAINING (~26, enumerate via `comm` of opcodes.h vs llvm_assembler.cc
-cases — skip the OPCODE_SIG_*/FLAG_* enum noise): PERMUTE, SWIZZLE, PACK, UNPACK, VECTOR_AVERAGE,
-VECTOR_DENORMFLUSH (trivial — reuse helper), ATOMIC_EXCHANGE, RESERVED_LOAD/STORE (lwarx/stwcx),
-RECIP/RSQRT/ROUND/TO_SINGLE/LOG2/POW2 (FP unary — check a64 for estimate precision, guest-visible), LVL/LVR/
-STVL/STVR (unaligned vec mem), LOAD_MMIO/STORE_MMIO, MEMSET, LOAD_CLOCK, DELAY_EXECUTION, DEBUG_BREAK/_TRUE,
-DID_SATURATE (needs saturation-flag tracking), SET_NJM, SET_ROUNDING_MODE. Method: read the a64 sequence,
-match byte-for-byte, add a differential test with adversarial inputs (NaN/denormal/inf), `bash
-scratch/thor-debug/build_run_llvm.sh` (qemu). Vector LOAD/STORE+byteswap still falls back too (the P3 guard
-in OPCODE_LOAD/STORE — fault-handler decodability concern; defer/careful).
+DONE — ~28 opcode handlers, ALL qemu-a64 differential byte-identical (31 tests / 1984 assertions) and the
+core set DEVICE-VALIDATED on BD (VdSwap 816, 0 faults, default-on): scalar core, 8 vector groups, calls,
+control (DELAY_EXECUTION, SET_ROUNDING_MODE, SET_NJM, DEBUG_BREAK/_TRUE), atomic CAS, cache_control,
+lvsl/lvsr, INSERT/EXTRACT, MUL_ADD/MUL_SUB V128 (full VMX denormal-flush + PPC NaN fixup), DOT_PRODUCT_3/4,
+VECTOR_AVERAGE, VECTOR_DENORMFLUSH, SWIZZLE, PERMUTE (I32 word + V128 byte tbl2 + V128 halfword), TO_SINGLE,
+ROUND, RECIP, RSQRT (f32 inline / f64+V128 via runtime helpers), LOG2/POW2, and V128-constant
+materialization in `V()`. Reusable infra in llvm_assembler.cc: `VmxFlushDenorm` / `VmxNanFixup` (PPC FP
+semantics) + `EmitVecLaneCall` (per-lane runtime helper). Runtime helpers in llvm_backend.cc
+(absoluteSymbols): xe_llvm_vrsqrte_lane / xe_llvm_frsqrte (replicated 360 estimate tables, qemu-verified) +
+xe_llvm_log2_lane / xe_llvm_exp2_lane (libm). ATOMIC_EXCHANGE has NO a64 seq (unemittable) → skip.
+REMAINING long-tail (each needs dedicated infra; a64 fallback works meanwhile): PACK/UNPACK (many formats,
+float16 — V128 consts now help), MEMSET (dcbz — GPU write-watch coherence, device-untestable → needs a
+helper replicating EmitGuestStoreWatch), RESERVED_LOAD/STORE (lwarx/stwcx — needs A64BackendContext access;
+the LLVM backend doesn't reserve x19), LVL/LVR/STVL/STVR (unaligned vec partial mem), LOAD_MMIO/STORE_MMIO
+(MMIO range callbacks), LOAD_CLOCK (non-deterministic → untestable, lower via helper), DID_SATURATE (cross-op
+saturation-flag tracking — hard), vector LOAD/STORE+byteswap (the P3 guard — fault-handler decodability).
+Method: read the a64 sequence, match byte-for-byte, add a differential test with adversarial inputs
+(NaN/denormal/inf), `bash scratch/thor-debug/build_run_llvm.sh` (qemu).
 
 ## ⭐ PRIMARY BUILD: LLVM whole-function CPU backend — SHIPPED, default-on, now PERF-tuning
 **LLVM is the way forward, no matter what (user, 2026-06-27).** The whole-function HIR→LLVM IR→ORCv2
