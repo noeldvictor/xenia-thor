@@ -10,12 +10,15 @@
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/math.h"
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
 #include "xenia/cpu/function.h"
@@ -250,6 +253,100 @@ extern "C" void xe_llvm_trap(uint32_t trap_type) {
       break;
   }
 }
+
+// vrsqrtefp per-lane estimate (PowerISA reciprocal-sqrt estimate). Byte-exact
+// replica of a64_sequences.cc PpcVrsqrtefpLane (pure integer math, no FPCR);
+// the qemu differential verifies it lane-for-lane against the a64 original.
+extern "C" uint32_t xe_llvm_vrsqrte_lane(uint32_t bits) {
+  static const uint32_t table[32] = {
+      0x0568B4FD, 0x04F3AF97, 0x048DAAA5, 0x0435A618, 0x03E7A1E4, 0x03A29DFE,
+      0x03659A5C, 0x032E96F8, 0x02FC93CA, 0x02D090CE, 0x02A88DFE, 0x02838B57,
+      0x026188D4, 0x02438673, 0x02268431, 0x020B820B, 0x03D27FFA, 0x03807C29,
+      0x033878AA, 0x02F97572, 0x02C27279, 0x02926FB7, 0x02666D26, 0x023F6AC0,
+      0x021D6881, 0x01FD6665, 0x01E16468, 0x01C76287, 0x01AF60C1, 0x01995F12,
+      0x01855D79, 0x01735BF4,
+  };
+  uint32_t sign = bits >> 31;
+  uint32_t biased_exp = (bits >> 23) & 0xFF;
+  uint32_t mantissa = bits & 0x007FFFFF;
+  if (bits == 0xFF800000u) return 0x7FC00000u;          // -Inf -> QNaN
+  if (biased_exp == 0) return sign ? 0xFF800000u : 0x7F800000u;  // 0/denorm
+  if (biased_exp == 255) {
+    if (mantissa == 0) return 0;                         // +Inf -> +0
+    return bits | 0x00400000u;                           // NaN -> QNaN
+  }
+  if (sign) return 0x7FC00000u;                          // negative -> QNaN
+  int32_t unbiased_exp = (int32_t)biased_exp - 127;
+  uint32_t exp_parity = ((uint32_t)(unbiased_exp << 4)) & 16;
+  uint32_t top4 = mantissa >> 19;
+  uint32_t index = (exp_parity | top4) ^ 16;
+  uint32_t interp = (mantissa >> 9) & 1023;
+  int32_t result_exp = (127 - (int32_t)biased_exp) >> 1;
+  uint32_t entry = table[index];
+  uint32_t slope = entry >> 16;
+  uint32_t base = (entry << 10) & 0x3FFFC00u;
+  int32_t raw = (int32_t)base - (int32_t)(interp * slope);
+  if (!(raw & (1 << 25))) {
+    uint32_t val = (uint32_t)raw & 0x1FFFFFF;
+    uint32_t lz = (uint32_t)xe::lzcnt(val);
+    int32_t shift = (int32_t)lz - 6;
+    result_exp += 6;
+    result_exp -= (int32_t)lz;
+    raw <<= shift;
+  }
+  if ((raw & 5) && (raw & 2)) raw += 4;
+  uint32_t res_exp = (uint32_t)((result_exp << 23) + 0x3F800000);
+  uint32_t res_man = ((uint32_t)raw >> 2) & 0x7FFFFF;
+  uint32_t result = res_exp | res_man;
+  if (((result >> 23) & 0xFF) == 0 && (result & 0x7FFFFF)) result = 0;  // DAZ
+  return result;
+}
+
+// frsqrte scalar f64 estimate (PowerISA Table E-5). Byte-exact replica of
+// a64_sequences.cc PpcFrsqrte; verified by the qemu differential.
+extern "C" uint64_t xe_llvm_frsqrte(uint64_t bits) {
+  uint32_t sign = (uint32_t)(bits >> 63);
+  uint32_t exp = (uint32_t)((bits >> 52) & 0x7FF);
+  uint64_t mantissa = bits & 0x000FFFFFFFFFFFFFULL;
+  if (exp == 0x7FF && mantissa != 0) return bits | (1ULL << 51);  // NaN -> QNaN
+  if (exp == 0 && mantissa == 0)
+    return sign ? 0xFFF0000000000000ULL : 0x7FF0000000000000ULL;  // 0 -> inf
+  if (exp == 0x7FF && !sign) return 0;                            // +inf -> +0
+  if (sign) return 0x7FF8000000000000ULL;                         // neg -> QNaN
+  int32_t effective_exp = (int32_t)exp;
+  uint64_t norm_mantissa = mantissa;
+  if (exp == 0) {
+    int lz = (int)xe::lzcnt(mantissa);
+    norm_mantissa = mantissa << (lz - 11);
+    effective_exp = 12 - lz;
+  }
+  static const uint8_t table[] = {241, 216, 192, 168, 152, 136, 128, 112,
+                                  96,  76,  60,  48,  32,  24,  16,  8};
+  uint32_t top3 = (uint32_t)(norm_mantissa >> 49) & 7;
+  uint32_t index = (((uint32_t)effective_exp & 1) << 3) | top3;
+  index ^= 8;
+  int32_t unbiased = effective_exp - 1023;
+  int32_t half = unbiased >> 1;
+  uint32_t result_exp = (uint32_t)(1022 - half);
+  return ((uint64_t)result_exp << 52) | ((uint64_t)table[index] << 44);
+}
+
+// vlogefp / vexptefp per-lane (log2 / exp2 of a float, bit-in/bit-out). The a64
+// path runs std::log2/std::exp2 in host FPCR via CallNativeSafe; same here.
+extern "C" uint32_t xe_llvm_log2_lane(uint32_t bits) {
+  float f;
+  std::memcpy(&f, &bits, 4);
+  f = std::log2(f);
+  std::memcpy(&bits, &f, 4);
+  return bits;
+}
+extern "C" uint32_t xe_llvm_exp2_lane(uint32_t bits) {
+  float f;
+  std::memcpy(&f, &bits, 4);
+  f = std::exp2(f);
+  std::memcpy(&bits, &f, 4);
+  return bits;
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -321,6 +418,23 @@ bool LLVMBackend::Initialize(Processor* processor) {
                      llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trap),
                      llvm::JITSymbolFlags::Exported |
                          llvm::JITSymbolFlags::Callable)}})));
+    // PPC vector-math runtime helpers (estimate tables / libm), called per-lane
+    // from the lowered RSQRT / LOG2 / POW2.
+    auto define_helper = [&](const char* nm, void* fp) {
+      auto n = jit_->jit->mangleAndIntern(nm);
+      llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+          {n, llvm::orc::ExecutorSymbolDef(
+                  llvm::orc::ExecutorAddr::fromPtr(fp),
+                  llvm::JITSymbolFlags::Exported |
+                      llvm::JITSymbolFlags::Callable)}})));
+    };
+    define_helper("xe_llvm_vrsqrte_lane",
+                  reinterpret_cast<void*>(&xe_llvm_vrsqrte_lane));
+    define_helper("xe_llvm_frsqrte", reinterpret_cast<void*>(&xe_llvm_frsqrte));
+    define_helper("xe_llvm_log2_lane",
+                  reinterpret_cast<void*>(&xe_llvm_log2_lane));
+    define_helper("xe_llvm_exp2_lane",
+                  reinterpret_cast<void*>(&xe_llvm_exp2_lane));
   }
 #endif
 

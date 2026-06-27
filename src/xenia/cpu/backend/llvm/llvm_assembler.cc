@@ -182,6 +182,24 @@ class Lowerer {
     return b_.CreateSelect(is_nan(res), pick, res);
   }
 
+  // Apply a u32->u32 runtime helper to each of the 4 i32 lanes of a VEC128 and
+  // return the rebuilt <4 x i32> carrier (vrsqrtefp/vlogefp/vexptefp). The
+  // helper is a pure function (no x20/x21 dependency; AAPCS-callee-saved).
+  llvm::Value* EmitVecLaneCall(const char* name, llvm::Value* vec) {
+    auto* i32 = b_.getInt32Ty();
+    auto callee = mod_->getOrInsertFunction(
+        name, llvm::FunctionType::get(i32, {i32}, false));
+    auto* lt = LaneVecTy(INT32_TYPE);
+    auto* xv = b_.CreateBitCast(vec, lt);
+    llvm::Value* r = llvm::PoisonValue::get(lt);
+    for (int lane = 0; lane < 4; lane++) {
+      auto* c = b_.CreateCall(
+          callee, {b_.CreateExtractElement(xv, b_.getInt32(lane))});
+      r = b_.CreateInsertElement(r, c, b_.getInt32(lane));
+    }
+    return b_.CreateBitCast(r, T(VEC128_TYPE));
+  }
+
   // Emit a call to the runtime guest-call helper (resolves the target guest
   // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
   void EmitGuestCall(llvm::Value* target_i32) {
@@ -1618,9 +1636,8 @@ bool Lowerer::LowerInstr(Instr* i) {
       return true;
     }
     case OPCODE_RSQRT: {
-      // Scalar f32: full-precision 1/sqrt(x) (a64 fsqrt+fdiv). F64 (PpcFrsqrte)
-      // and V128 (PpcVrsqrtefpLane) use the 360 lookup-table estimate -> a64
-      // fallback until the runtime helper is wired.
+      // Scalar f32: full-precision 1/sqrt(x) (a64 fsqrt+fdiv). F64 (frsqrte) and
+      // V128 (vrsqrtefp) use the 360 lookup-table estimate via runtime helpers.
       auto* a = V(i->src1.value);
       if (!a) return false;
       if (a->getType()->isFloatTy()) {
@@ -1629,7 +1646,33 @@ bool Lowerer::LowerInstr(Instr* i) {
                           b_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, a)));
         return true;
       }
+      if (a->getType()->isDoubleTy()) {
+        auto* i64 = b_.getInt64Ty();
+        auto callee = mod_->getOrInsertFunction(
+            "xe_llvm_frsqrte", llvm::FunctionType::get(i64, {i64}, false));
+        auto* res = b_.CreateCall(callee, {b_.CreateBitCast(a, i64)});
+        Def(i->dest, b_.CreateBitCast(res, b_.getDoubleTy()));
+        return true;
+      }
+      if (IsVec(a)) {
+        Def(i->dest, EmitVecLaneCall("xe_llvm_vrsqrte_lane", a));
+        return true;
+      }
       return false;
+    }
+    case OPCODE_LOG2: {
+      // vlogefp: per-lane log2(float) via libm helper (V128 only).
+      auto* a = V(i->src1.value);
+      if (!a || !IsVec(a)) return false;
+      Def(i->dest, EmitVecLaneCall("xe_llvm_log2_lane", a));
+      return true;
+    }
+    case OPCODE_POW2: {
+      // vexptefp: per-lane exp2(float) via libm helper (V128 only).
+      auto* a = V(i->src1.value);
+      if (!a || !IsVec(a)) return false;
+      Def(i->dest, EmitVecLaneCall("xe_llvm_exp2_lane", a));
+      return true;
     }
 
     default:

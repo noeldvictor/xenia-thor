@@ -669,6 +669,46 @@ TEST_CASE("LLVM_RSQRT_F32", "[llvm]") {
       [](PPCContext* ctx) { ctx->r[3] = 0x40800000u; });  // 4.0 -> 0.5
 }
 
+TEST_CASE("LLVM_RSQRT_VEC_F64", "[llvm]") {
+  // vrsqrtefp (V128 lookup estimate) + frsqrte (f64 lookup estimate) via the
+  // replicated runtime helpers; differential vs the a64 originals catches any
+  // table transcription error.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.RSqrt(LoadVR(b, 4)));
+        StoreGPR(b, 3, b.Cast(b.RSqrt(LoadFPR(b, 1)), INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x40800000u;  // 4.0
+        ctx->v[4].u32[1] = 0x3E800000u;  // 0.25
+        ctx->v[4].u32[2] = 0x00000001u;  // denormal
+        ctx->v[4].u32[3] = 0x7FC00000u;  // NaN
+        ctx->f[1] = 4.0;
+      });
+}
+
+TEST_CASE("LLVM_LOG2_POW2", "[llvm]") {
+  // vlogefp / vexptefp per-lane via libm helpers. Powers of two -> exact
+  // results (no last-bit FPCR sensitivity), validating the lowering mechanism.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Log2(LoadVR(b, 4)));
+        StoreVR(b, 1, b.Pow2(LoadVR(b, 5)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x41000000u;  // 8 -> 3
+        ctx->v[4].u32[1] = 0x40000000u;  // 2 -> 1
+        ctx->v[4].u32[2] = 0x3F800000u;  // 1 -> 0
+        ctx->v[4].u32[3] = 0x40800000u;  // 4 -> 2
+        ctx->v[5].u32[0] = 0x40400000u;  // 3 -> 8
+        ctx->v[5].u32[1] = 0x3F800000u;  // 1 -> 2
+        ctx->v[5].u32[2] = 0x00000000u;  // 0 -> 1
+        ctx->v[5].u32[3] = 0x40000000u;  // 2 -> 4
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
