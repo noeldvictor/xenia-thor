@@ -1610,11 +1610,8 @@ bool Lowerer::LowerInstr(Instr* i) {
     }
     case OPCODE_UNPACK: {
       // VMX unpack via the xe_llvm_unpack C helper (reuses xenos_half_to_float +
-      // the magic-float math). 8_IN_16 / 16_IN_32 (intricate lane juggling) still
-      // fall back to a64. Pass the VEC128 by pointer through an entry-block
-      // scratch alloca.
-      uint32_t mode = i->flags & PACK_TYPE_MODE;
-      if (mode == PACK_TYPE_8_IN_16 || mode == PACK_TYPE_16_IN_32) return false;
+      // the magic-float math; all formats incl. 8_IN_16 / 16_IN_32). Pass the
+      // VEC128 by pointer through an entry-block scratch alloca.
       auto* val = V(i->src1.value);
       if (!val) return false;
       auto* i32x4 = T(VEC128_TYPE);

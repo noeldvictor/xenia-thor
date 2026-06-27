@@ -839,6 +839,27 @@ TEST_CASE("LLVM_PACK_INT", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_UNPACK_INT_WIDEN", "[llvm]") {
+  // UNPACK 8_IN_16 / 16_IN_32: byte->halfword and halfword->word widening, both
+  // to_hi/to_lo and signed/unsigned (the 0x80.. lanes exercise sign-extension).
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Unpack(LoadVR(b, 4), PACK_TYPE_8_IN_16 | PACK_TYPE_TO_HI |
+                                                 PACK_TYPE_OUT_UNSIGNED));
+        StoreVR(b, 1, b.Unpack(LoadVR(b, 4), PACK_TYPE_8_IN_16 | PACK_TYPE_TO_LO));
+        StoreVR(b, 2, b.Unpack(LoadVR(b, 4), PACK_TYPE_16_IN_32 |
+                                                 PACK_TYPE_TO_HI |
+                                                 PACK_TYPE_OUT_UNSIGNED));
+        StoreVR(b, 3,
+                b.Unpack(LoadVR(b, 4), PACK_TYPE_16_IN_32 | PACK_TYPE_TO_LO));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x80FF7F01u; ctx->v[4].u32[1] = 0x00FE0280u;
+        ctx->v[4].u32[2] = 0x12348ABCu; ctx->v[4].u32[3] = 0xDEF05678u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

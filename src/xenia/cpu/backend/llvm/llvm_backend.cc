@@ -424,6 +424,41 @@ extern "C" void xe_llvm_unpack(void* vd, uint32_t flags) {
       v->u32[3] = w + 0x3F800000u;
       break;
     }
+    case xe::cpu::hir::PACK_TYPE_8_IN_16: {
+      // vupkhsb/vupklsb-class: widen 8 bytes -> 8 halfwords. a64 = rev32.8H
+      // (swap the 2 halfwords within each 32-bit word) then uxtl/sxtl of the
+      // low 8 bytes (to_hi) or uxtl2/sxtl2 of the high 8 bytes (to_lo).
+      bool to_hi = xe::cpu::hir::IsPackToHi(flags);
+      bool uns = xe::cpu::hir::IsPackOutUnsigned(flags);
+      uint8_t rb[16];
+      for (int w = 0; w < 4; w++) {
+        rb[4 * w + 0] = v->u8[4 * w + 2];
+        rb[4 * w + 1] = v->u8[4 * w + 3];
+        rb[4 * w + 2] = v->u8[4 * w + 0];
+        rb[4 * w + 3] = v->u8[4 * w + 1];
+      }
+      const uint8_t* b = to_hi ? rb : rb + 8;
+      xe::vec128_t r = {};
+      for (int k = 0; k < 8; k++)
+        r.u16[k] = uns ? uint16_t(b[k]) : uint16_t(int16_t(int8_t(b[k])));
+      *v = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_16_IN_32: {
+      // widen 4 halfwords -> 4 words. a64 = uxtl/sxtl of low 4 hw (to_hi) or
+      // uxtl2/sxtl2 of high 4 hw (to_lo), then rev64.s4 (swap word pairs).
+      bool to_hi = xe::cpu::hir::IsPackToHi(flags);
+      bool uns = xe::cpu::hir::IsPackOutUnsigned(flags);
+      int base = to_hi ? 0 : 4;
+      uint32_t w[4];
+      for (int k = 0; k < 4; k++)
+        w[k] = uns ? uint32_t(v->u16[base + k])
+                   : uint32_t(int32_t(int16_t(v->u16[base + k])));
+      xe::vec128_t r = {};
+      r.u32[0] = w[1]; r.u32[1] = w[0]; r.u32[2] = w[3]; r.u32[3] = w[2];
+      *v = r;
+      break;
+    }
     default:
       break;  // caller doesn't invoke for unsupported modes
   }
