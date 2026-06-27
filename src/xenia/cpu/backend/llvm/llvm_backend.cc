@@ -69,6 +69,12 @@ DEFINE_string(cpu_backend_llvm_range_hi, "",
               "Empty = no upper bound (compile all in range). See _range_lo.",
               "CPU");
 
+DEFINE_bool(cpu_backend_llvm_dump_ir, false,
+            "Dump the generated LLVM IR (post-opt) for each LLVM-compiled guest "
+            "function to the log (grep 'LLVMir'). Use with _range_lo/_hi to dump "
+            "a single function and read off codegen bugs device-free-ishly.",
+            "CPU");
+
 #if XE_LLVM_BACKEND_ENABLED
 // Runtime helper the JIT'd code calls for a guest CALL/CALL_INDIRECT/CALL_EXTERN:
 // resolve the target guest function and invoke it. x20/x21 (ctx/membase) are

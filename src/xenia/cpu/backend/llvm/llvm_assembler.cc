@@ -49,6 +49,7 @@
 DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_string(cpu_backend_llvm_range_lo);
 DECLARE_string(cpu_backend_llvm_range_hi);
+DECLARE_bool(cpu_backend_llvm_dump_ir);
 
 namespace xe {
 namespace cpu {
@@ -242,7 +243,17 @@ class Lowerer {
   // (LOAD/STORE_CONTEXT, LOAD/STORE_LOCAL) stay non-volatile and are still
   // promoted to SSA registers; only true guest-memory traffic is pinned.
   llvm::Value* MemPtr(llvm::Value* ea) {
-    auto* ea64 = b_.CreateZExtOrTrunc(ea, b_.getInt64Ty());
+    // The guest effective address is 32-bit (Xbox 360 has a 4GB guest space;
+    // PPC EAs wrap at 32 bits). CRITICAL: reduce ea to 32 bits and ZERO-extend
+    // before adding membase. HIR constants for guest addresses >= 0x80000000
+    // (very common - e.g. 0x82751C6C) arrive SIGN-extended to i64
+    // (0xFFFFFFFF82751C6C); adding that to membase via GEP subtracts instead of
+    // adds (membase - 0x7D8AE394) -> a wild host address below membase -> reads
+    // garbage. Truncate-then-zext makes membase + 0x0000000082751C6C, matching
+    // a64's 32-bit address computation (and correctly wraps 32-bit overflow).
+    auto* ea32 = b_.CreateTrunc(b_.CreateZExtOrTrunc(ea, b_.getInt64Ty()),
+                                b_.getInt32Ty());
+    auto* ea64 = b_.CreateZExt(ea32, b_.getInt64Ty());
     return b_.CreateGEP(b_.getInt8Ty(), membase_, ea64);
   }
   llvm::Value* MaybeByteSwap(llvm::Value* v, llvm::Type* ty, uint16_t flags) {
@@ -1143,6 +1154,20 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     mpm.run(*mod, mam);
   }
 
+  if (cvars::cpu_backend_llvm_dump_ir) {
+    // Post-opt IR, module still owned locally (before addIRModule moves it).
+    // Per-line so logcat doesn't truncate. Read off codegen bugs device-free.
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    fn->print(os);
+    size_t pos = 0;
+    while (pos < ir.size()) {
+      size_t nl = ir.find('\n', pos);
+      if (nl == std::string::npos) nl = ir.size();
+      XELOGI("LLVMir {}: {}", name, ir.substr(pos, nl - pos));
+      pos = nl + 1;
+    }
+  }
   if (auto err = jit.addIRModule(
           llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
     XELOGE("LLVMAssembler: addIRModule failed: {}",
