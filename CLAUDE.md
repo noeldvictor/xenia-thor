@@ -21,14 +21,19 @@ materialization in `V()`. Reusable infra in llvm_assembler.cc: `VmxFlushDenorm` 
 semantics) + `EmitVecLaneCall` (per-lane runtime helper). Runtime helpers in llvm_backend.cc
 (absoluteSymbols): xe_llvm_vrsqrte_lane / xe_llvm_frsqrte (replicated 360 estimate tables, qemu-verified) +
 xe_llvm_log2_lane / xe_llvm_exp2_lane (libm). ATOMIC_EXCHANGE has NO a64 seq (unemittable) → skip.
-REMAINING long-tail (each needs dedicated infra; a64 fallback works meanwhile): PACK/UNPACK (many formats,
-float16 — V128 consts now help), MEMSET (dcbz — GPU write-watch coherence, device-untestable → needs a
-helper replicating EmitGuestStoreWatch), RESERVED_LOAD/STORE (lwarx/stwcx — needs A64BackendContext access;
-the LLVM backend doesn't reserve x19), LVL/LVR/STVL/STVR (unaligned vec partial mem), LOAD_MMIO/STORE_MMIO
-(MMIO range callbacks), LOAD_CLOCK (non-deterministic → untestable, lower via helper), DID_SATURATE (cross-op
-saturation-flag tracking — hard), vector LOAD/STORE+byteswap (the P3 guard — fault-handler decodability).
-Method: read the a64 sequence, match byte-for-byte, add a differential test with adversarial inputs
-(NaN/denormal/inf), `bash scratch/thor-debug/build_run_llvm.sh` (qemu).
+ALSO DONE + DEVICE-VALIDATED (2026-06-27, fixed FORWARD per user "FIX... FORWARD", not reverted): **vector
+128-bit LOAD/STORE** (as 4 volatile 32-bit accesses = each decodable by the fault handler; a single q-access
+that faults can't be decoded → BD hangs), **MEMSET** (llvm.memset), **VEC128 BYTE_SWAP** (llvm.bswap.v4i32),
+and the **SVE-disable codegen fix** (`-sve,-sve2,-sme` in target-features — detectHost enabled SVE2 on the
+X3 but it SIGILLs on the Thor; was the MEMSET storm root cause). LVL/LVR/STVL/STVR are UNEMITTABLE (frontend
+uses the vector-LOAD+PERMUTE path). See [[llvm-jit-backend-build]] for the SVE + 4-scalar details.
+REMAINING long-tail (a64 fallback works meanwhile): PACK/UNPACK (9 formats each — D3DCOLOR/FLOAT16/SHORT/
+2101010/8_IN_16/16_IN_32, custom Xenos half-float + TBL + clamps, delicate; BD histogram = UNPACK),
+RESERVED_LOAD/STORE (lwarx/stwcx — needs A64BackendContext reservation state; reserve x19 or a thread-local
+helper), LOAD_MMIO/STORE_MMIO (MMIO range callbacks — rare), LOAD_CLOCK (non-deterministic → untestable),
+DID_SATURATE (cross-op saturation-flag tracking — hard). Method: read the a64 sequence, match byte-for-byte,
+add a differential test with adversarial inputs, `bash scratch/thor-debug/build_run_llvm.sh` (qemu), then a
+device render check (qemu CANNOT catch SVE-SIGILL / q-decode hangs — always device-validate new mem/codegen).
 
 ## ⭐ PRIMARY BUILD: LLVM whole-function CPU backend — SHIPPED, default-on, now PERF-tuning
 **LLVM is the way forward, no matter what (user, 2026-06-27).** The whole-function HIR→LLVM IR→ORCv2
