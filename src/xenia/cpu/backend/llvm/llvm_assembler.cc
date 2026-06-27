@@ -340,6 +340,12 @@ bool Lowerer::Run(HIRBuilder* builder) {
       if (!LowerInstr(i)) {
         return false;  // unsupported -> fallback
       }
+      // A handler may emit a block terminator (a `ret` from a guest tail call /
+      // return) BEFORE the HIR block's last instr; anything after it in the
+      // block is then unreachable. Stop so we don't append instructions after a
+      // terminator (invalid IR = "Terminator found in the middle of a basic
+      // block", which forced an a64 fallback).
+      if (b_.GetInsertBlock()->getTerminator()) break;
     }
     // Fall through to the next sequential block if no terminator was emitted.
     if (!b_.GetInsertBlock()->getTerminator()) {
@@ -1101,9 +1107,15 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     return false;  // unsupported opcode -> caller falls back to a64
   }
 
-  if (llvm::verifyFunction(*fn, &llvm::errs())) {
-    XELOGE("LLVMAssembler: verifyFunction failed for {}", name);
-    return false;
+  {
+    // Capture the verifier's reason (errs() isn't in logcat) so invalid-IR
+    // codegen bugs are diagnosable instead of a silent a64 fallback.
+    std::string verr;
+    llvm::raw_string_ostream vos(verr);
+    if (llvm::verifyFunction(*fn, &vos)) {
+      XELOGE("LLVMAssembler: verifyFunction failed for {}: {}", name, verr);
+      return false;
+    }
   }
 
   // Optimize (mem2reg/SROA/GVN/instcombine/...) for residency before codegen.
@@ -1142,6 +1154,11 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   }
   auto* code = reinterpret_cast<uint8_t*>(sym->getValue());
   static_cast<a64::A64Function*>(function)->Setup(code, 0);
+  // Host<->guest map for localizing on-device faults in JIT'd code: grep
+  // "LLVMmap" and find the entry whose host addr is the greatest <= a faulting
+  // pc. (Use `adb logcat -G 16M` so early entries don't wrap before the fault.)
+  XELOGI("LLVMmap guest=0x{:08X} host=0x{:016X}", function->address(),
+         reinterpret_cast<uint64_t>(code));
   return true;
 }
 
