@@ -816,6 +816,20 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_VECTOR_ROTATE_LEFT: {
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags);  // whole flags = part_type
+      auto* lt = LaneVecTy(pt);
+      if (!lt || pt == FLOAT32_TYPE) return false;
+      auto* av = b_.CreateBitCast(a, lt);
+      auto* cv = b_.CreateBitCast(c, lt);
+      // fshl(x, x, amt) = rotate left by (amt mod width) == a64's amt & (width-1).
+      auto* r = b_.CreateIntrinsic(llvm::Intrinsic::fshl, {lt}, {av, av, cv});
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
