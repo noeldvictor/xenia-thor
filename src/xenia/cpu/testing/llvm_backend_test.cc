@@ -238,4 +238,25 @@ TEST_CASE("LLVM_VECTOR_ADD_SUB", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_VECTOR_MINMAX_CMP", "[llvm]") {
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.VectorMax(LoadVR(b, 6), LoadVR(b, 7), INT32_TYPE));
+        StoreVR(b, 1, b.VectorMin(LoadVR(b, 6), LoadVR(b, 7), INT32_TYPE));
+        StoreVR(b, 2, b.VectorMax(LoadVR(b, 6), LoadVR(b, 7), FLOAT32_TYPE));
+        StoreVR(b, 3, b.VectorCompareEQ(LoadVR(b, 6), LoadVR(b, 7), INT32_TYPE));
+        StoreVR(b, 4, b.VectorCompareSGT(LoadVR(b, 6), LoadVR(b, 7), INT32_TYPE));
+        StoreVR(b, 5,
+                b.VectorCompareEQ(LoadVR(b, 6), LoadVR(b, 7), FLOAT32_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        // Clean floats; lane 0 equal, others differ (exercises max/min/eq/gt).
+        ctx->v[6].u32[0] = 0x3F800000u; ctx->v[6].u32[1] = 0x40000000u;
+        ctx->v[6].u32[2] = 0x40400000u; ctx->v[6].u32[3] = 0x40800000u;
+        ctx->v[7].u32[0] = 0x3F800000u; ctx->v[7].u32[1] = 0x3F800000u;
+        ctx->v[7].u32[2] = 0x41000000u; ctx->v[7].u32[3] = 0x40000000u;
+      });
+}
+
 #endif  // XE_ARCH_ARM64

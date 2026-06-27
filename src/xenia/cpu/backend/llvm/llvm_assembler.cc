@@ -733,6 +733,69 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_VECTOR_MAX:
+    case OPCODE_VECTOR_MIN: {
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags >> 8);  // part_type in high
+      auto* lt = LaneVecTy(pt);
+      if (!lt) return false;
+      bool mx = (op == OPCODE_VECTOR_MAX);
+      auto* av = b_.CreateBitCast(a, lt);
+      auto* cv = b_.CreateBitCast(c, lt);
+      llvm::Value* r;
+      if (pt == FLOAT32_TYPE) {
+        r = b_.CreateBinaryIntrinsic(
+            mx ? llvm::Intrinsic::maxnum : llvm::Intrinsic::minnum, av, cv);
+      } else {
+        bool uns = (i->flags & ARITHMETIC_UNSIGNED) != 0;
+        auto id = mx ? (uns ? llvm::Intrinsic::umax : llvm::Intrinsic::smax)
+                     : (uns ? llvm::Intrinsic::umin : llvm::Intrinsic::smin);
+        r = b_.CreateBinaryIntrinsic(id, av, cv);
+      }
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
+    case OPCODE_VECTOR_COMPARE_EQ:
+    case OPCODE_VECTOR_COMPARE_SGT:
+    case OPCODE_VECTOR_COMPARE_SGE:
+    case OPCODE_VECTOR_COMPARE_UGT:
+    case OPCODE_VECTOR_COMPARE_UGE: {
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags);  // whole flags = part_type
+      auto* lt = LaneVecTy(pt);
+      if (!lt) return false;
+      bool fp = (pt == FLOAT32_TYPE);
+      auto* av = b_.CreateBitCast(a, lt);
+      auto* cv = b_.CreateBitCast(c, lt);
+      llvm::Value* m;  // <N x i1>
+      switch (op) {
+        case OPCODE_VECTOR_COMPARE_EQ:
+          m = fp ? b_.CreateFCmpOEQ(av, cv) : b_.CreateICmpEQ(av, cv);
+          break;
+        case OPCODE_VECTOR_COMPARE_SGT:
+          m = fp ? b_.CreateFCmpOGT(av, cv) : b_.CreateICmpSGT(av, cv);
+          break;
+        case OPCODE_VECTOR_COMPARE_SGE:
+          m = fp ? b_.CreateFCmpOGE(av, cv) : b_.CreateICmpSGE(av, cv);
+          break;
+        case OPCODE_VECTOR_COMPARE_UGT:
+          m = fp ? b_.CreateFCmpOGT(av, cv) : b_.CreateICmpUGT(av, cv);
+          break;
+        default:  // UGE
+          m = fp ? b_.CreateFCmpOGE(av, cv) : b_.CreateICmpUGE(av, cv);
+          break;
+      }
+      // All-1s/0s per lane: sext the i1 mask to the integer lane width.
+      auto* int_lt = fp ? llvm::VectorType::get(llvm::Type::getInt32Ty(ctx_), 4,
+                                                false)
+                        : lt;
+      Def(i->dest, b_.CreateBitCast(b_.CreateSExt(m, int_lt), T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
