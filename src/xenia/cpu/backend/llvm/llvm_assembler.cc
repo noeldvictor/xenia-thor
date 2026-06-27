@@ -152,6 +152,19 @@ class Lowerer {
     b_.CreateCall(callee, {target_i32, ret_addr});
   }
 
+  // Guest CALL_EXTERN: call the extern HANDLER (C++) via xe_llvm_call_extern,
+  // NOT the guest thunk address (calling the address re-enters the `sc; bclr`
+  // thunk -> infinite recursion). The symbol Function* is baked in as a constant
+  // (stable across the run); the helper dispatches to handler/extern_handler.
+  void EmitCallExtern(xe::cpu::Function* fn) {
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                        {b_.getPtrTy()}, false);
+    auto callee = mod_->getOrInsertFunction("xe_llvm_call_extern", fty);
+    auto* sym_ptr = b_.CreateIntToPtr(
+        b_.getInt64(reinterpret_cast<uint64_t>(fn)), b_.getPtrTy());
+    b_.CreateCall(callee, {sym_ptr});
+  }
+
   // A guest TAIL call (b/bctr in tail position): resolve the target host entry
   // and `musttail`-jump to it, REUSING this frame (vs nesting a host frame per
   // call, which overflowed the host stack on a guest tail-call loop = the device
@@ -793,9 +806,9 @@ bool Lowerer::LowerInstr(Instr* i) {
       return true;
     }
     case OPCODE_CALL_EXTERN: {
-      // Externs (kernel imports/builtins) have no guest machine_code to tail-
-      // jump to; always route through the resolving (non-tail) helper.
-      EmitGuestCall(b_.getInt32(i->src1.symbol->address()));
+      // Call the extern HANDLER (C++), NOT the guest thunk address - calling the
+      // address re-enters the `sc; bclr` thunk -> infinite recursion = the storm.
+      EmitCallExtern(i->src1.symbol);
       return true;
     }
     case OPCODE_CALL_INDIRECT: {

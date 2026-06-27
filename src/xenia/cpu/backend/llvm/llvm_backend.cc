@@ -108,6 +108,28 @@ extern "C" void* xe_llvm_resolve_function(uint32_t target) {
   auto* gf = fn ? dynamic_cast<xe::cpu::GuestFunction*>(fn) : nullptr;
   return gf ? reinterpret_cast<void*>(gf->machine_code()) : nullptr;
 }
+
+// Invoke a guest CALL_EXTERN target. The HIR symbol is the extern Function (a
+// kExtern GuestFunction whose guest body is just `sc; bclr`, e.g.
+// RtlImageXexHeaderField). Calling its guest ADDRESS re-enters that thunk ->
+// infinite recursion -> host-stack overflow = the device signal storm. Instead
+// call its extern_handler (the C++ HLE function), exactly like a64's
+// EmitKernelExternHostCall: handler(context, context->kernel_state).
+extern "C" void xe_llvm_call_extern(void* sym_ptr) {
+  auto* ts = xe::cpu::ThreadState::Get();
+  auto* fn = reinterpret_cast<xe::cpu::Function*>(sym_ptr);
+  if (fn->behavior() == xe::cpu::Function::Behavior::kExtern) {
+    auto* gf = static_cast<xe::cpu::GuestFunction*>(fn);
+    auto handler = gf->extern_handler();
+    if (handler) {
+      handler(ts->context(), ts->context()->kernel_state);
+    }
+  } else {
+    // kBuiltin: BuiltinFunction::Call dispatches to its C++ handler. kDefault:
+    // an ordinary guest fn (shouldn't appear as call_extern; handle anyway).
+    fn->Call(ts, static_cast<uint32_t>(ts->context()->lr));
+  }
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -159,6 +181,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
     llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
         {rname, llvm::orc::ExecutorSymbolDef(
                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_resolve_function),
+                    llvm::JITSymbolFlags::Exported |
+                        llvm::JITSymbolFlags::Callable)}})));
+    auto ename = jit_->jit->mangleAndIntern("xe_llvm_call_extern");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {ename, llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_call_extern),
                     llvm::JITSymbolFlags::Exported |
                         llvm::JITSymbolFlags::Callable)}})));
   }
