@@ -469,6 +469,45 @@ TEST_CASE("LLVM_EXTRACT", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_MUL_ADD_V128", "[llvm]") {
+  // VMX vmaddfp: dest = s1*s2 + s3. Adversarial lanes exercise the full PPC
+  // semantics (denormal flush, NaN priority/quieting, generated default NaN).
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.MulAdd(LoadVR(b, 4), LoadVR(b, 5), LoadVR(b, 6)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        // lane0 clean: 2*3+1=7. lane1 denormal s1 -> flush to 0 -> 0*2+1=1.
+        // lane2 SNaN s1 (priority over s3 NaN) -> quieted. lane3 inf*0 ->
+        // generated NaN -> PPC default 0xFFC00000.
+        ctx->v[4].u32[0] = 0x40000000u; ctx->v[4].u32[1] = 0x00000001u;
+        ctx->v[4].u32[2] = 0x7F800001u; ctx->v[4].u32[3] = 0x7F800000u;
+        ctx->v[5].u32[0] = 0x40400000u; ctx->v[5].u32[1] = 0x40000000u;
+        ctx->v[5].u32[2] = 0x40000000u; ctx->v[5].u32[3] = 0x00000000u;
+        ctx->v[6].u32[0] = 0x3F800000u; ctx->v[6].u32[1] = 0x3F800000u;
+        ctx->v[6].u32[2] = 0x7FC00005u; ctx->v[6].u32[3] = 0x3F800000u;
+      });
+}
+
+TEST_CASE("LLVM_MUL_SUB_V128", "[llvm]") {
+  // VMX vnmsubfp-style: dest = s1*s2 - s3. Lanes: output-denormal flush, input-
+  // denormal flush on s3, qNaN s2 priority, -inf*0 generated NaN.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 1, b.MulSub(LoadVR(b, 4), LoadVR(b, 5), LoadVR(b, 6)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x00800000u; ctx->v[4].u32[1] = 0x3F800000u;
+        ctx->v[4].u32[2] = 0x40000000u; ctx->v[4].u32[3] = 0xFF800000u;
+        ctx->v[5].u32[0] = 0x3F000000u; ctx->v[5].u32[1] = 0x3F800000u;
+        ctx->v[5].u32[2] = 0x7FC00000u; ctx->v[5].u32[3] = 0x00000000u;
+        ctx->v[6].u32[0] = 0x00000000u; ctx->v[6].u32[1] = 0x00000001u;
+        ctx->v[6].u32[2] = 0x3F800000u; ctx->v[6].u32[3] = 0x3F800000u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

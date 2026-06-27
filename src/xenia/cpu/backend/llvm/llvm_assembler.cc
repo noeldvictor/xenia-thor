@@ -144,6 +144,43 @@ class Lowerer {
     }
   }
 
+  // VMX float32x4 denormal flush on a <4 x i32> bit-pattern vector: per lane a
+  // denormal (exp==0, mantissa!=0) becomes SIGNED zero, exactly as a64's
+  // FlushDenormals_V128. Predicate: ((val<<1) - 1) <u 0x00FFFFFF; flushed value
+  // = val & 0x80000000 (keep sign). Zeros (val<<1==0 -> 0xFFFFFFFF) and normals
+  // are untouched. Branchless so it matches the a64 lane-for-lane.
+  llvm::Value* VmxFlushDenorm(llvm::Value* iv) {
+    auto* vty = iv->getType();  // <4 x i32>
+    auto* one = llvm::ConstantInt::get(vty, 1);
+    auto* shifted = b_.CreateShl(iv, one);
+    auto* m1 = b_.CreateSub(shifted, one);
+    auto* is_den =
+        b_.CreateICmpULT(m1, llvm::ConstantInt::get(vty, 0x00FFFFFF));
+    auto* sign = b_.CreateAnd(iv, llvm::ConstantInt::get(vty, 0x80000000));
+    return b_.CreateSelect(is_den, sign, iv);
+  }
+  // PPC NaN propagation fixup on a <4 x i32> FP result, given the flushed source
+  // bit-patterns in PRIORITY order (srcs[0] highest). Matches a64's
+  // FixupVmxNan_V128*: where the result lane is NaN, take the first NaN source
+  // (quieted: | 0x00400000); if no source is NaN it's a generated NaN -> the PPC
+  // default 0xFFC00000. NaN predicate: (val<<1) >u 0xFF000000 (excludes +/-inf).
+  llvm::Value* VmxNanFixup(llvm::Value* res,
+                           std::initializer_list<llvm::Value*> srcs) {
+    auto* vty = res->getType();  // <4 x i32>
+    auto* one = llvm::ConstantInt::get(vty, 1);
+    auto* nan_thr = llvm::ConstantInt::get(vty, 0xFF000000);
+    auto* qbit = llvm::ConstantInt::get(vty, 0x00400000);
+    auto is_nan = [&](llvm::Value* v) {
+      return b_.CreateICmpUGT(b_.CreateShl(v, one), nan_thr);
+    };
+    llvm::Value* pick = llvm::ConstantInt::get(vty, 0xFFC00000);
+    // Fold from lowest priority up so the highest-priority NaN source wins.
+    for (auto it = std::rbegin(srcs); it != std::rend(srcs); ++it) {
+      pick = b_.CreateSelect(is_nan(*it), b_.CreateOr(*it, qbit), pick);
+    }
+    return b_.CreateSelect(is_nan(res), pick, res);
+  }
+
   // Emit a call to the runtime guest-call helper (resolves the target guest
   // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
   void EmitGuestCall(llvm::Value* target_i32) {
@@ -1340,6 +1377,34 @@ bool Lowerer::LowerInstr(Instr* i) {
       if (xorm) idx = b_.CreateXor(idx, b_.getInt32(xorm));
       idx = b_.CreateAnd(idx, b_.getInt32(mask));
       Def(i->dest, b_.CreateExtractElement(b_.CreateBitCast(vec, lt), idx));
+      return true;
+    }
+    case OPCODE_MUL_ADD:
+    case OPCODE_MUL_SUB: {
+      // VMX float32x4 fused multiply-add/sub (vmaddfp / vnmsubfp): dest =
+      // s1*s2 (+/-) s3, single-rounded (llvm.fma), with the full PPC semantics =
+      // flush denormal inputs -> fma -> PPC NaN fixup -> flush denormal output.
+      // Byte-identical to a64 MUL_ADD_V128 / MUL_SUB_V128. Scalar f32/f64 FMA
+      // still falls back to a64.
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      auto* d = V(i->src3.value);
+      if (!a || !c || !d || !IsVec(a) || !IsVec(c) || !IsVec(d)) return false;
+      auto* i32x4 = T(VEC128_TYPE);
+      auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+      auto* s1i = VmxFlushDenorm(b_.CreateBitCast(a, i32x4));
+      auto* s2i = VmxFlushDenorm(b_.CreateBitCast(c, i32x4));
+      auto* s3i = VmxFlushDenorm(b_.CreateBitCast(d, i32x4));
+      auto* f3 = b_.CreateBitCast(s3i, f32x4);
+      if (op == OPCODE_MUL_SUB) f3 = b_.CreateFNeg(f3);  // s1*s2 - s3
+      auto* res = b_.CreateIntrinsic(
+          llvm::Intrinsic::fma, {f32x4},
+          {b_.CreateBitCast(s1i, f32x4), b_.CreateBitCast(s2i, f32x4), f3});
+      auto* resi = b_.CreateBitCast(res, i32x4);
+      // NaN fixup uses the UN-negated flushed sources (a64 saves un-negated s3).
+      resi = VmxNanFixup(resi, {s1i, s2i, s3i});
+      resi = VmxFlushDenorm(resi);
+      Def(i->dest, b_.CreateBitCast(resi, T(VEC128_TYPE)));
       return true;
     }
 
