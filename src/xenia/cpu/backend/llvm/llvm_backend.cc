@@ -71,40 +71,34 @@ bool LLVMBackend::IsAvailable() {
 }
 
 bool LLVMBackend::Initialize(Processor* processor) {
-  // Bring up the a64 base FIRST: it creates the host<->guest thunks, the code
-  // cache + indirection table, the backend context, and the kernel-HLE glue.
-  // The LLVM path reuses ALL of it (an LLVM function is ABI-identical to an a64
-  // one), so a64 stays the fallback and a64<->LLVM calls interoperate.
-  if (!a64::A64Backend::Initialize(processor)) {
-    return false;
-  }
-
 #if XE_LLVM_BACKEND_ENABLED
-  fprintf(stderr, "[LLVM] initA: a64 base done\n"); fflush(stderr);
+  // Init LLVM + create the LLJIT BEFORE A64Backend::Initialize installs its
+  // SIGSEGV handler / reserves address space (create() crashes/hangs if it runs
+  // after, though it works standalone). x20/x21 reserved per-function in the
+  // lowering via a target-features attribute.
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
-  fprintf(stderr, "[LLVM] initB: native target done\n"); fflush(stderr);
-
-  fprintf(stderr, "[LLVM] initC: pre-create\n"); fflush(stderr);
-  // Default LLJIT — matches the proven-fast standalone smoke. Building the
-  // TargetMachine from a JITTargetMachineBuilder hangs create() under qemu-user
-  // inside xenia's process, so x20 (ctx) / x21 (membase) are reserved instead
-  // via a per-function "target-features" attribute in the lowering (the host
-  // ->guest thunk loads them; the function reads them via @llvm.read_register).
   auto jit_or = llvm::orc::LLJITBuilder().create();
-  fprintf(stderr, "[LLVM] initD: LLJIT create returned\n"); fflush(stderr);
   if (!jit_or) {
     std::string msg = llvm::toString(jit_or.takeError());
     XELOGE("LLVMBackend: LLJIT creation failed: {}", msg);
     return false;
   }
-
   jit_ = std::make_unique<LlvmJitContext>();
   jit_->jit = std::move(*jit_or);
   jit_->initialized = true;
+#endif
+
+  // Bring up the a64 base: host<->guest thunks, code cache + indirection table,
+  // backend context, kernel-HLE glue. The LLVM path reuses ALL of it.
+  if (!a64::A64Backend::Initialize(processor)) {
+    return false;
+  }
+
+#if XE_LLVM_BACKEND_ENABLED
   XELOGI(
-      "LLVMBackend: ORCv2 LLJIT initialized (AArch64, x20=ctx/x21=membase "
-      "reserved). LLVM lowers what it can; a64 handles the rest.");
+      "LLVMBackend: ORCv2 LLJIT initialized; LLVM lowers what it can, a64 the "
+      "rest.");
   return true;
 #else
   XELOGW(
