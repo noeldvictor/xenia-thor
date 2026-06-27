@@ -958,6 +958,14 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ty = T(i->dest->type);
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
+      // Vector (128-bit) guest memory -> a64 (P3). DEVICE-CONFIRMED 2026-06-27:
+      // a volatile q-load/store is one instruction and qemu-byte-identical, but
+      // on-device it HANGS BD - a q-access that faults into the access-violation
+      // handler (GPU write-watch / MMIO) can't be decoded (the handler only
+      // recognizes a single 32-bit LDR/STR, mmio_handler.cc) so it re-faults
+      // forever. a64 emits a decodable form. (Extending the decoder for q is a
+      // known dead end.) Lifting this guard reverted; do not re-lift.
+      if (ty->isVectorTy()) return false;
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
@@ -966,6 +974,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       auto* val = V(i->src2.value);
       if (!ea || !val) return false;
+      if (IsVec(val)) return false;  // vector mem -> a64 (P3, device-confirmed)
       val = MaybeByteSwap(val, val->getType(), i->flags);
       b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
@@ -975,6 +984,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* base = V(i->src1.value);
       auto* off = V(i->src2.value);
       if (!ty || !base || !off) return false;
+      if (ty->isVectorTy()) return false;  // vector mem -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
@@ -986,6 +996,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* off = V(i->src2.value);
       auto* val = V(i->src3.value);
       if (!base || !off || !val) return false;
+      if (IsVec(val)) return false;  // vector mem -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       val = MaybeByteSwap(val, val->getType(), i->flags);
