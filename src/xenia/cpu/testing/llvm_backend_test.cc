@@ -293,4 +293,23 @@ TEST_CASE("LLVM_VECTOR_ROTATE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_VECTOR_CONVERT", "[llvm]") {
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.VectorConvertI2F(LoadVR(b, 6)));
+        StoreVR(b, 1, b.VectorConvertI2F(LoadVR(b, 6), ARITHMETIC_UNSIGNED));
+        StoreVR(b, 2, b.VectorConvertF2I(LoadVR(b, 7)));
+        StoreVR(b, 3, b.VectorConvertF2I(LoadVR(b, 7), ARITHMETIC_UNSIGNED));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[6].u32[0] = 5u; ctx->v[6].u32[1] = 0xFFFFFFFFu;
+        ctx->v[6].u32[2] = 0x80000000u; ctx->v[6].u32[3] = 100u;
+        ctx->v[7].u32[0] = 0x42280000u;  // 42.0
+        ctx->v[7].u32[1] = 0x50000000u;  // ~8.6e9 (saturates int32/uint32)
+        ctx->v[7].u32[2] = 0xC2280000u;  // -42.0
+        ctx->v[7].u32[3] = 0x7FC00000u;  // NaN -> 0
+      });
+}
+
 #endif  // XE_ARCH_ARM64

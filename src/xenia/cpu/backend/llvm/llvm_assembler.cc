@@ -830,6 +830,27 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_VECTOR_CONVERT_I2F: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      auto* iv = b_.CreateBitCast(a, LaneVecTy(INT32_TYPE));
+      auto* fv = (i->flags & ARITHMETIC_UNSIGNED)
+                     ? b_.CreateUIToFP(iv, LaneVecTy(FLOAT32_TYPE))
+                     : b_.CreateSIToFP(iv, LaneVecTy(FLOAT32_TYPE));
+      Def(i->dest, b_.CreateBitCast(fv, T(VEC128_TYPE)));
+      return true;
+    }
+    case OPCODE_VECTOR_CONVERT_F2I: {
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      auto* fv = b_.CreateBitCast(a, LaneVecTy(FLOAT32_TYPE));
+      // fptosi/fptoui.sat: NaN->0, saturate on overflow (matches a64 fcvtzs/zu).
+      auto id = (i->flags & ARITHMETIC_UNSIGNED) ? llvm::Intrinsic::fptoui_sat
+                                                 : llvm::Intrinsic::fptosi_sat;
+      auto* iv = b_.CreateIntrinsic(LaneVecTy(INT32_TYPE), id, {fv});
+      Def(i->dest, b_.CreateBitCast(iv, T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
