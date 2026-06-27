@@ -428,6 +428,87 @@ extern "C" void xe_llvm_unpack(void* vd, uint32_t flags) {
       break;  // caller doesn't invoke for unsupported modes
   }
 }
+
+// VMX PACK (in-place on a vec128_t scratch). Reverse of xe_llvm_unpack for the
+// single-input float formats. Clamps are NaN-aware (std::fmax/fmin = ARM
+// fmaxnm/fminnm: NaN -> the other operand = the min). Byte-exact vs a64;
+// 8_IN_16/16_IN_32 (2-input + saturate) fall back to a64. qemu-verified.
+extern "C" void xe_llvm_pack(void* vd, uint32_t flags) {
+  auto* v = reinterpret_cast<xe::vec128_t*>(vd);
+  auto bits = [](float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; };
+  auto fbits = [](uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; };
+  auto clampbits = [&](float f, uint32_t mnb, uint32_t mxb) {
+    return bits(std::fmin(std::fmax(f, fbits(mnb)), fbits(mxb)));
+  };
+  switch (flags & xe::cpu::hir::PACK_TYPE_MODE) {
+    case xe::cpu::hir::PACK_TYPE_D3DCOLOR: {
+      auto enc = [&](float f) { return clampbits(f, 0x40400000u, 0x404000FFu) & 0xFFu; };
+      uint32_t l0 = enc(v->f32[0]), l1 = enc(v->f32[1]);
+      uint32_t l2 = enc(v->f32[2]), l3 = enc(v->f32[3]);
+      v->u32[0] = 0; v->u32[1] = 0; v->u32[2] = 0;
+      v->u32[3] = l2 | (l1 << 8) | (l0 << 16) | (l3 << 24);
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_FLOAT16_2: {
+      uint16_t h0 = xe::float_to_xenos_half(v->f32[0]);
+      uint16_t h1 = xe::float_to_xenos_half(v->f32[1]);
+      xe::vec128_t r = {};
+      r.u16[7] = h0; r.u16[6] = h1;
+      *v = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_FLOAT16_4: {
+      uint16_t h[4];
+      for (int k = 0; k < 4; k++)
+        h[k] = xe::float_to_xenos_half(v->f32[k], false, true);
+      xe::vec128_t r = {};
+      r.u16[5] = h[0]; r.u16[4] = h[1]; r.u16[7] = h[2]; r.u16[6] = h[3];
+      *v = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_SHORT_2: {
+      auto enc = [&](float f) { return clampbits(f, 0x403F8001u, 0x40407FFFu) & 0xFFFFu; };
+      uint32_t s0 = enc(v->f32[0]), s1 = enc(v->f32[1]);
+      xe::vec128_t r = {};
+      r.u32[3] = s1 | (s0 << 16);
+      *v = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_SHORT_4: {
+      auto enc = [&](float f) { return clampbits(f, 0x403F8001u, 0x40407FFFu) & 0xFFFFu; };
+      uint32_t s[4];
+      for (int k = 0; k < 4; k++) s[k] = enc(v->f32[k]);
+      xe::vec128_t r = {};
+      r.u32[2] = s[1] | (s[0] << 16);
+      r.u32[3] = s[3] | (s[2] << 16);
+      *v = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_UINT_2101010: {
+      uint32_t x = clampbits(v->f32[0], 0x403FFE01u, 0x404001FFu) & 0x3FFu;
+      uint32_t y = clampbits(v->f32[1], 0x403FFE01u, 0x404001FFu) & 0x3FFu;
+      uint32_t z = clampbits(v->f32[2], 0x403FFE01u, 0x404001FFu) & 0x3FFu;
+      uint32_t w = clampbits(v->f32[3], 0x40400000u, 0x40400003u) & 0x3u;
+      uint32_t p = x | (y << 10) | (z << 20) | (w << 30);
+      v->u32[0] = p; v->u32[1] = p; v->u32[2] = p; v->u32[3] = p;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_ULONG_4202020: {
+      uint64_t x = clampbits(v->f32[0], 0x40380001u, 0x4047FFFFu) & 0xFFFFFu;
+      uint64_t y = clampbits(v->f32[1], 0x40380001u, 0x4047FFFFu) & 0xFFFFFu;
+      uint64_t z = clampbits(v->f32[2], 0x40380001u, 0x4047FFFFu) & 0xFFFFFu;
+      uint64_t wv = clampbits(v->f32[3], 0x40400000u, 0x4040000Fu) & 0xFu;
+      uint64_t pk = x | (y << 20) | (z << 40) | (wv << 60);
+      xe::vec128_t r = {};
+      r.u32[2] = uint32_t(pk >> 32);
+      r.u32[3] = uint32_t(pk);
+      *v = r;
+      break;
+    }
+    default:
+      break;
+  }
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -517,6 +598,7 @@ bool LLVMBackend::Initialize(Processor* processor) {
     define_helper("xe_llvm_exp2_lane",
                   reinterpret_cast<void*>(&xe_llvm_exp2_lane));
     define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
+    define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
   }
 #endif
 

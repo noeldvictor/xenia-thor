@@ -1628,6 +1628,26 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateLoad(i32x4, scratch));
       return true;
     }
+    case OPCODE_PACK: {
+      // VMX pack via xe_llvm_pack (clamp + float_to_xenos_half + bit-pack) for
+      // the single-input float formats. 8_IN_16/16_IN_32 (2-input + saturate)
+      // fall back to a64. src1 = the float vector; src2 is the const-zero second
+      // operand the single-input packs ignore.
+      uint32_t mode = i->flags & PACK_TYPE_MODE;
+      if (mode == PACK_TYPE_8_IN_16 || mode == PACK_TYPE_16_IN_32) return false;
+      auto* val = V(i->src1.value);
+      if (!val) return false;
+      auto* i32x4 = T(VEC128_TYPE);
+      auto* scratch = EntryAlloca(i32x4);
+      b_.CreateStore(b_.CreateBitCast(val, i32x4), scratch);
+      auto callee = mod_->getOrInsertFunction(
+          "xe_llvm_pack",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                  {b_.getPtrTy(), b_.getInt32Ty()}, false));
+      b_.CreateCall(callee, {scratch, b_.getInt32(i->flags)});
+      Def(i->dest, b_.CreateLoad(i32x4, scratch));
+      return true;
+    }
     case OPCODE_VECTOR_DENORMFLUSH: {
       // Per-lane: exp==0 (zero or denormal) -> keep only the sign bit (signed
       // zero); else unchanged. Identical result to a64 VECTOR_DENORMFLUSH and

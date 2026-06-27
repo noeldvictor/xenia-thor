@@ -805,6 +805,40 @@ TEST_CASE("LLVM_UNPACK_INT", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_PACK_FLOAT", "[llvm]") {
+  // PACK FLOAT16_2/4 (regular floats), D3DCOLOR/SHORT_2/SHORT_4 (magic floats),
+  // via xe_llvm_pack. Byte-identical vs a64.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Pack(LoadVR(b, 4), PACK_TYPE_FLOAT16_2));
+        StoreVR(b, 1, b.Pack(LoadVR(b, 4), PACK_TYPE_FLOAT16_4));
+        StoreVR(b, 2, b.Pack(LoadVR(b, 5), PACK_TYPE_D3DCOLOR));
+        StoreVR(b, 3, b.Pack(LoadVR(b, 5), PACK_TYPE_SHORT_2));
+        StoreVR(b, 6, b.Pack(LoadVR(b, 5), PACK_TYPE_SHORT_4));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x3F800000u; ctx->v[4].u32[1] = 0x40000000u;
+        ctx->v[4].u32[2] = 0x3F000000u; ctx->v[4].u32[3] = 0xBFC00000u;
+        ctx->v[5].u32[0] = 0x40400080u; ctx->v[5].u32[1] = 0x40400040u;
+        ctx->v[5].u32[2] = 0x403F8200u; ctx->v[5].u32[3] = 0x404001F0u;
+      });
+}
+
+TEST_CASE("LLVM_PACK_INT", "[llvm]") {
+  // PACK UINT_2101010 / ULONG_4202020 (clamp + bitfield pack + OR-fold).
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Pack(LoadVR(b, 4), PACK_TYPE_UINT_2101010));
+        StoreVR(b, 1, b.Pack(LoadVR(b, 4), PACK_TYPE_ULONG_4202020));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x40400100u; ctx->v[4].u32[1] = 0x40400200u;
+        ctx->v[4].u32[2] = 0x40400055u; ctx->v[4].u32[3] = 0x40400002u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
