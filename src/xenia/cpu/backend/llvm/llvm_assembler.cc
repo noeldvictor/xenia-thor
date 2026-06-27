@@ -1487,6 +1487,49 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_SWIZZLE: {
+      // INT32/FLOAT32 word swizzle within one vector: dest[k] = src[(mask>>2k)&3]
+      // (32-bit lanes aren't byte-swap-remapped, VEC128_D(n)=n) -> a constant
+      // shufflevector. The mask is the src2 offset; identity is folded to Assign
+      // by the builder so it never reaches here.
+      auto* v = V(i->src1.value);
+      if (!v) return false;
+      TypeName pt = static_cast<TypeName>(i->flags);
+      if (pt != INT32_TYPE && pt != FLOAT32_TYPE) return false;
+      uint32_t mask = static_cast<uint32_t>(i->src2.offset);
+      auto* lt = LaneVecTy(INT32_TYPE);
+      int m[4] = {int(mask & 3), int((mask >> 2) & 3), int((mask >> 4) & 3),
+                  int((mask >> 6) & 3)};
+      auto* r = b_.CreateShuffleVector(b_.CreateBitCast(v, lt),
+                                       llvm::PoisonValue::get(lt),
+                                       llvm::ArrayRef<int>(m, 4));
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
+    case OPCODE_PERMUTE: {
+      // I32-control word permute across src2/src3 (vmrghw/vmrglw etc.): each
+      // control byte k selects dword (sel&3) from src2 (bit2=0) or src3 (bit2=1)
+      // -> a constant 2-input shufflevector on <4 x i32>. The V128-control byte/
+      // halfword permute form still falls back to a64.
+      if (i->src1.value->type != INT32_TYPE || !i->src1.value->IsConstant()) {
+        return false;
+      }
+      uint32_t ctrl = i->src1.value->constant.i32;
+      auto* s2 = V(i->src2.value);
+      auto* s3 = V(i->src3.value);
+      if (!s2 || !s3) return false;
+      auto* lt = LaneVecTy(INT32_TYPE);
+      int m[4];
+      for (int idx = 0; idx < 4; idx++) {
+        uint8_t sel = (ctrl >> (idx * 8)) & 0xFF;
+        m[idx] = int(sel & 3) + (((sel >> 2) & 1) ? 4 : 0);
+      }
+      auto* r = b_.CreateShuffleVector(b_.CreateBitCast(s2, lt),
+                                       b_.CreateBitCast(s3, lt),
+                                       llvm::ArrayRef<int>(m, 4));
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.

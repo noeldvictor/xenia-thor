@@ -573,6 +573,28 @@ TEST_CASE("LLVM_VECTOR_AVERAGE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_SWIZZLE_PERMUTE", "[llvm]") {
+  // SWIZZLE = word reorder within one vector; PERMUTE (I32 control) = word
+  // permute across two vectors (vmrghw/vmrglw). Both byte-exact.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Swizzle(LoadVR(b, 4), INT32_TYPE, 0x1B));  // {3,2,1,0}
+        StoreVR(b, 1, b.Swizzle(LoadVR(b, 4), INT32_TYPE, 0x00));  // broadcast x
+        StoreVR(b, 2, b.Swizzle(LoadVR(b, 4), INT32_TYPE, 0xB1));  // {1,0,3,2}
+        StoreVR(b, 3, b.Permute(b.LoadConstantUint32(0x05010400u), LoadVR(b, 4),
+                                LoadVR(b, 5), INT32_TYPE));  // vmrghw
+        StoreVR(b, 6, b.Permute(b.LoadConstantUint32(0x07030602u), LoadVR(b, 4),
+                                LoadVR(b, 5), INT32_TYPE));  // vmrglw
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x11111111u; ctx->v[4].u32[1] = 0x22222222u;
+        ctx->v[4].u32[2] = 0x33333333u; ctx->v[4].u32[3] = 0x44444444u;
+        ctx->v[5].u32[0] = 0xAAAAAAAAu; ctx->v[5].u32[1] = 0xBBBBBBBBu;
+        ctx->v[5].u32[2] = 0xCCCCCCCCu; ctx->v[5].u32[3] = 0xDDDDDDDDu;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
