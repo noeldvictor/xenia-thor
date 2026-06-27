@@ -295,6 +295,13 @@ class Lowerer {
     auto callee = mod_->getOrInsertFunction("xe_llvm_trace_entry", fty);
     b_.CreateCall(callee, {b_.getInt32(tag)});
   }
+  // Guest TRAP -> call the xe_llvm_trap runtime helper with the trap-type flags.
+  void EmitTrapCall(uint32_t flags) {
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                        {b_.getInt32Ty()}, false);
+    auto callee = mod_->getOrInsertFunction("xe_llvm_trap", fty);
+    b_.CreateCall(callee, {b_.getInt32(flags)});
+  }
   llvm::Value* ctx_ptr_ = nullptr;
   llvm::Value* membase_ = nullptr;
   // a64 guest-call ABI: x0 = this function's guest return address (saved at
@@ -573,6 +580,33 @@ bool Lowerer::LowerInstr(Instr* i) {
       // off a spinning core. BD's hottest fn 0x824694A0 uses this, so lowering it
       // (vs falling the whole fn back to a64) is what gets it the residency win.
       return true;
+    case OPCODE_TRAP:
+      // Unconditional guest trap (tw/td). Call the runtime trap helper; control
+      // continues after (the helpers just log; the trap is rarely reached).
+      EmitTrapCall(i->flags);
+      return true;
+    case OPCODE_TRAP_TRUE: {
+      // Conditional guest trap: if cond != 0, call the trap helper, then CONTINUE
+      // (the trap doesn't branch/return). Both edges rejoin the continuation.
+      auto* cond = V(i->src1.value);
+      if (!cond) return false;
+      bool fresh_cont = (i->next != nullptr) || (i->block->next == nullptr);
+      llvm::BasicBlock* cont = fresh_cont
+                                   ? llvm::BasicBlock::Create(ctx_, "c", fn_)
+                                   : BlockFor(i->block->next);
+      auto* trap_bb = llvm::BasicBlock::Create(ctx_, "trap", fn_);
+      b_.CreateCondBr(Truth(cond), trap_bb, cont);
+      b_.SetInsertPoint(trap_bb);
+      EmitTrapCall(i->flags);
+      b_.CreateBr(cont);
+      if (fresh_cont) {
+        b_.SetInsertPoint(cont);
+        if (!i->next && !i->block->next) b_.CreateRetVoid();
+      }
+      // else: cont is the next block; leave the insert point on the terminated
+      // trap_bb so Run()'s fall-through adds no spurious branch.
+      return true;
+    }
     case OPCODE_SUB: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;

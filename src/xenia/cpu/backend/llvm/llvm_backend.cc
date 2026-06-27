@@ -224,6 +224,32 @@ extern "C" void xe_llvm_call_extern(void* sym_ptr) {
     fn->Call(ts, static_cast<uint32_t>(ts->context()->lr));
   }
 }
+
+// Guest TRAP (PPC tw/twi/td forced trap). Replicates a64's A64Emitter::Trap:
+// type 20/26 = debug print (r3 -> string), 0/22 = forced-trap log, 25/other =
+// no-op. Rarely taken (a guest assertion). Lets functions with trap/trap_true
+// LLVM-compile instead of falling the whole function back to a64.
+extern "C" void xe_llvm_trap(uint32_t trap_type) {
+  auto* ts = xe::cpu::ThreadState::Get();
+  auto* c = ts ? ts->context() : nullptr;
+  switch (trap_type) {
+    case 20:
+    case 26:
+      if (c && c->virtual_membase) {
+        uint32_t str_ptr = static_cast<uint32_t>(c->r[3]);
+        auto str = reinterpret_cast<const char*>(c->virtual_membase + str_ptr);
+        XELOGD("(DebugPrint) {}", str ? str : "");
+      }
+      break;
+    case 0:
+    case 22:
+      XELOGE("tw/td forced trap hit (LLVM) thid {:08X}",
+             c ? c->thread_id : 0u);
+      break;
+    default:
+      break;
+  }
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -289,6 +315,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trace_entry),
                     llvm::JITSymbolFlags::Exported |
                         llvm::JITSymbolFlags::Callable)}})));
+    auto trname = jit_->jit->mangleAndIntern("xe_llvm_trap");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {trname, llvm::orc::ExecutorSymbolDef(
+                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trap),
+                     llvm::JITSymbolFlags::Exported |
+                         llvm::JITSymbolFlags::Callable)}})));
   }
 #endif
 
