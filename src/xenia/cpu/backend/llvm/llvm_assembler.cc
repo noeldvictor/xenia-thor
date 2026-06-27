@@ -1295,6 +1295,53 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_INSERT: {
+      // dest = src1 with element[idx] = src3. The logical lane index is remapped
+      // to the byte-swapped physical lane exactly as a64's VEC128_B/W/D macros:
+      // i8 ^ 3, i16 ^ 1, i32 unchanged (byte/halfword swap within 32-bit words).
+      auto* vec = V(i->src1.value);
+      auto* idxv = V(i->src2.value);
+      auto* val = V(i->src3.value);
+      if (!vec || !idxv || !val) return false;
+      TypeName et = i->src3.value->type;
+      unsigned xorm;
+      switch (et) {
+        case INT8_TYPE: xorm = 3; break;
+        case INT16_TYPE: xorm = 1; break;
+        case INT32_TYPE: xorm = 0; break;
+        default: return false;  // f32/i64 element inserts -> a64
+      }
+      auto* lt = LaneVecTy(et);
+      if (!lt || val->getType() != lt->getScalarType()) return false;
+      auto* idx = b_.CreateZExtOrTrunc(idxv, b_.getInt32Ty());
+      if (xorm) idx = b_.CreateXor(idx, b_.getInt32(xorm));
+      auto* r = b_.CreateInsertElement(b_.CreateBitCast(vec, lt), val, idx);
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
+    case OPCODE_EXTRACT: {
+      // dest(iN) = src1.element[idx], same byte-swapped lane remap as INSERT.
+      // Mask the (possibly dynamic) physical index to the lane count, matching
+      // a64's `and w, lanes-1` so an out-of-range index can't be UB.
+      auto* vec = V(i->src1.value);
+      auto* idxv = V(i->src2.value);
+      if (!vec || !idxv) return false;
+      TypeName dt = i->dest->type;
+      unsigned xorm, mask;
+      switch (dt) {
+        case INT8_TYPE: xorm = 3; mask = 0xF; break;
+        case INT16_TYPE: xorm = 1; mask = 0x7; break;
+        case INT32_TYPE: xorm = 0; mask = 0x3; break;
+        default: return false;
+      }
+      auto* lt = LaneVecTy(dt);
+      if (!lt) return false;
+      auto* idx = b_.CreateZExtOrTrunc(idxv, b_.getInt32Ty());
+      if (xorm) idx = b_.CreateXor(idx, b_.getInt32(xorm));
+      idx = b_.CreateAnd(idx, b_.getInt32(mask));
+      Def(i->dest, b_.CreateExtractElement(b_.CreateBitCast(vec, lt), idx));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.

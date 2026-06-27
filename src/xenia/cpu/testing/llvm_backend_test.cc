@@ -420,6 +420,55 @@ TEST_CASE("LLVM_LOAD_VECTOR_SHL_SHR", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_INSERT", "[llvm]") {
+  // i8/i16/i32 element insert at constant lanes (index is always constant for
+  // INSERT). Validates the byte-swapped lane remap (^3 / ^1 / unchanged).
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* v = LoadVR(b, 4);
+        v = b.Insert(v, uint64_t(5), b.Truncate(LoadGPR(b, 3), INT8_TYPE));
+        v = b.Insert(v, uint64_t(3), b.Truncate(LoadGPR(b, 3), INT16_TYPE));
+        v = b.Insert(v, uint64_t(1), b.Truncate(LoadGPR(b, 3), INT32_TYPE));
+        StoreVR(b, 0, v);
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x00112233u; ctx->v[4].u32[1] = 0x44556677u;
+        ctx->v[4].u32[2] = 0x8899AABBu; ctx->v[4].u32[3] = 0xCCDDEEFFu;
+        ctx->r[3] = 0x000000DEADBEEFCAull;
+      });
+}
+
+TEST_CASE("LLVM_EXTRACT", "[llvm]") {
+  // i8/i16/i32 element extract, constant AND dynamic (GPR) indices - the dynamic
+  // path exercises the masked byte-swapped index.
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* v = LoadVR(b, 4);
+        StoreGPR(b, 3,
+                 b.ZeroExtend(b.Extract(v, uint8_t(5), INT8_TYPE), INT64_TYPE));
+        StoreGPR(b, 4,
+                 b.ZeroExtend(b.Extract(v, uint8_t(3), INT16_TYPE), INT64_TYPE));
+        StoreGPR(b, 5,
+                 b.ZeroExtend(b.Extract(v, uint8_t(2), INT32_TYPE), INT64_TYPE));
+        StoreGPR(b, 7,
+                 b.ZeroExtend(b.Extract(v, b.Truncate(LoadGPR(b, 6), INT8_TYPE),
+                                        INT8_TYPE),
+                              INT64_TYPE));
+        StoreGPR(b, 9,
+                 b.ZeroExtend(b.Extract(v, b.Truncate(LoadGPR(b, 8), INT8_TYPE),
+                                        INT32_TYPE),
+                              INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x00112233u; ctx->v[4].u32[1] = 0x44556677u;
+        ctx->v[4].u32[2] = 0x8899AABBu; ctx->v[4].u32[3] = 0xCCDDEEFFu;
+        ctx->r[6] = 7;  // dynamic byte index
+        ctx->r[8] = 2;  // dynamic word index
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
