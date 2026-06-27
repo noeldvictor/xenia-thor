@@ -217,4 +217,25 @@ TEST_CASE("LLVM_VECTOR_LOGIC", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_VECTOR_ADD_SUB", "[llvm]") {
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.VectorAdd(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE));
+        StoreVR(b, 1, b.VectorSub(LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE));
+        StoreVR(b, 2, b.VectorAdd(LoadVR(b, 4), LoadVR(b, 5), FLOAT32_TYPE));
+        StoreVR(b, 3, b.VectorAdd(LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE,
+                                  ARITHMETIC_UNSIGNED | ARITHMETIC_SATURATE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        // Clean float bit patterns (1.0/2.0/3.0/4.0 and 0.5) so the float add
+        // has no NaN/inf (whose a64-vs-LLVM bit patterns could differ); the
+        // int/saturating ops use the same bytes deterministically.
+        ctx->v[4].u32[0] = 0x3F800000u; ctx->v[4].u32[1] = 0x40000000u;
+        ctx->v[4].u32[2] = 0x40400000u; ctx->v[4].u32[3] = 0x40800000u;
+        ctx->v[5].u32[0] = 0x3F000000u; ctx->v[5].u32[1] = 0x3F000000u;
+        ctx->v[5].u32[2] = 0x3F000000u; ctx->v[5].u32[3] = 0x3F000000u;
+      });
+}
+
 #endif  // XE_ARCH_ARM64

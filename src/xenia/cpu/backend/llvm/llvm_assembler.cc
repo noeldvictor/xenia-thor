@@ -117,6 +117,24 @@ class Lowerer {
 
   bool IsVec(llvm::Value* v) { return v && v->getType()->isVectorTy(); }
 
+  // Lane vector type for a VMX part_type; the <4 x i32> VEC128 carrier is
+  // bitcast to/from this for lane-typed ops (element-wise ops match a64
+  // bit-for-bit regardless of lane order, since both work the same 128 bits).
+  llvm::Type* LaneVecTy(TypeName pt) {
+    switch (pt) {
+      case INT8_TYPE:
+        return llvm::VectorType::get(llvm::Type::getInt8Ty(ctx_), 16, false);
+      case INT16_TYPE:
+        return llvm::VectorType::get(llvm::Type::getInt16Ty(ctx_), 8, false);
+      case INT32_TYPE:
+        return llvm::VectorType::get(llvm::Type::getInt32Ty(ctx_), 4, false);
+      case FLOAT32_TYPE:
+        return llvm::VectorType::get(llvm::Type::getFloatTy(ctx_), 4, false);
+      default:
+        return nullptr;
+    }
+  }
+
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
   bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
 
@@ -684,8 +702,40 @@ bool Lowerer::LowerInstr(Instr* i) {
       return true;
     }
 
+    // ---- lane-typed vector arithmetic ----
+    case OPCODE_VECTOR_ADD:
+    case OPCODE_VECTOR_SUB: {
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags & 0xFF);
+      auto* lt = LaneVecTy(pt);
+      if (!lt) return false;
+      bool add = (op == OPCODE_VECTOR_ADD);
+      auto* av = b_.CreateBitCast(a, lt);
+      auto* cv = b_.CreateBitCast(c, lt);
+      llvm::Value* r;
+      if (pt == FLOAT32_TYPE) {
+        r = add ? b_.CreateFAdd(av, cv) : b_.CreateFSub(av, cv);
+      } else {
+        uint32_t arith = i->flags >> 8;
+        if (arith & ARITHMETIC_SATURATE) {
+          bool uns = (arith & ARITHMETIC_UNSIGNED) != 0;
+          auto id = add ? (uns ? llvm::Intrinsic::uadd_sat
+                               : llvm::Intrinsic::sadd_sat)
+                        : (uns ? llvm::Intrinsic::usub_sat
+                               : llvm::Intrinsic::ssub_sat);
+          r = b_.CreateBinaryIntrinsic(id, av, cv);
+        } else {
+          r = add ? b_.CreateAdd(av, cv) : b_.CreateSub(av, cv);
+        }
+      }
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+      return true;
+    }
+
     default:
-      // Unsupported (calls, vectors, atomics, packs, ...) -> a64 fallback.
+      // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
       return false;
   }
 }
