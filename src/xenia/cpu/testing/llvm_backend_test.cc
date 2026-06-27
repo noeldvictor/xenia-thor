@@ -312,4 +312,18 @@ TEST_CASE("LLVM_VECTOR_CONVERT", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_VECTOR_SPLAT", "[llvm]") {
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* i32 = b.Truncate(LoadGPR(b, 4), INT32_TYPE);
+        StoreVR(b, 0, b.Splat(i32, VEC128_TYPE));
+        StoreVR(b, 1, b.Splat(b.Truncate(LoadGPR(b, 4), INT8_TYPE), VEC128_TYPE));
+        StoreVR(b, 2,
+                b.Splat(b.Truncate(LoadGPR(b, 4), INT16_TYPE), VEC128_TYPE));
+        StoreVR(b, 3, b.Splat(b.Cast(i32, FLOAT32_TYPE), VEC128_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) { ctx->r[4] = 0x0000000040490FDBull; });
+}
+
 #endif  // XE_ARCH_ARM64

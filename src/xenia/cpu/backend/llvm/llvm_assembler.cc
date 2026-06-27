@@ -851,6 +851,23 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(iv, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_SPLAT: {
+      // Broadcast a scalar to all lanes (a64 dup). All lanes equal => lane order
+      // is irrelevant; element count follows the scalar's type.
+      auto* s = V(i->src1.value);
+      if (!s) return false;
+      unsigned lanes;
+      switch (i->src1.value->type) {
+        case INT8_TYPE: lanes = 16; break;
+        case INT16_TYPE: lanes = 8; break;
+        case INT32_TYPE:
+        case FLOAT32_TYPE: lanes = 4; break;
+        default: return false;
+      }
+      Def(i->dest,
+          b_.CreateBitCast(b_.CreateVectorSplat(lanes, s), T(VEC128_TYPE)));
+      return true;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.
