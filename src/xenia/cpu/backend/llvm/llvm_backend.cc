@@ -58,6 +58,17 @@ DEFINE_int32(cpu_backend_llvm_opt, 2,
              "(emulated); set 0 for device-free correctness tests.",
              "CPU");
 
+DEFINE_string(cpu_backend_llvm_range_lo, "",
+              "Only LLVM-compile guest functions with address >= this (hex, "
+              "e.g. 82467198). With _range_hi, restricts the LLVM backend to a "
+              "guest-address window (the rest use a64) - used to BISECT which "
+              "function's LLVM codegen corrupts state. Empty = no lower bound.",
+              "CPU");
+DEFINE_string(cpu_backend_llvm_range_hi, "",
+              "Only LLVM-compile guest functions with address < this (hex). "
+              "Empty = no upper bound (compile all in range). See _range_lo.",
+              "CPU");
+
 #if XE_LLVM_BACKEND_ENABLED
 // Runtime helper the JIT'd code calls for a guest CALL/CALL_INDIRECT/CALL_EXTERN:
 // resolve the target guest function and invoke it. x20/x21 (ctx/membase) are

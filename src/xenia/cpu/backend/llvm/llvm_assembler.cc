@@ -25,6 +25,7 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include <cstdlib>
 #include <string>
 #include <unordered_map>
 
@@ -46,6 +47,8 @@
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 DECLARE_int32(cpu_backend_llvm_opt);
+DECLARE_string(cpu_backend_llvm_range_lo);
+DECLARE_string(cpu_backend_llvm_range_hi);
 
 namespace xe {
 namespace cpu {
@@ -1172,7 +1175,16 @@ bool LLVMAssembler::Assemble(GuestFunction* function, hir::HIRBuilder* builder,
                              uint32_t debug_info_flags,
                              std::unique_ptr<FunctionDebugInfo> debug_info) {
 #if XE_LLVM_BACKEND_ENABLED
-  if (LowerAndJit(function, builder)) {
+  // Range gate (bisection): only LLVM-compile functions in [range_lo, range_hi);
+  // the rest use a64. Used to localize which function's LLVM codegen corrupts
+  // state. Empty (default) bounds = no restriction = compile everything.
+  uint32_t addr = function->address();
+  const std::string& lo_s = cvars::cpu_backend_llvm_range_lo;
+  const std::string& hi_s = cvars::cpu_backend_llvm_range_hi;
+  uint32_t lo = lo_s.empty() ? 0 : uint32_t(std::strtoull(lo_s.c_str(), nullptr, 16));
+  uint32_t hi = hi_s.empty() ? 0 : uint32_t(std::strtoull(hi_s.c_str(), nullptr, 16));
+  bool in_range = addr >= lo && (hi == 0 || addr < hi);
+  if (in_range && LowerAndJit(function, builder)) {
     function->set_debug_info(std::move(debug_info));
     return true;
   }
