@@ -109,44 +109,48 @@ DEFINE_string(cpu_backend_llvm_trace_addr, "",
 //   (CALL_INDIRECT target == x0). Previously this passed context()->lr, which
 //   this backend does not maintain -> callees never matched their return and
 //   every guest return became a forward call -> host stack overflow.
+// Lock-free direct-mapped cache: guest target addr -> resolved Function*. The
+// EntryTable hash lookup (std::unordered_map<uint32, Entry_t*>::find) is the top
+// host CPU hot spot on the guest-call path (~3% of BD CPU, device-profiled
+// 2026-06-27); this skips it on hits. Process-wide; benign races (a miss just
+// re-resolves). A resolved Function* is stable - the EntryTable owns it and
+// patches apply at module load, before execution.
+namespace {
+constexpr uint32_t kResolveCacheSize = 1u << 13;  // 8192 entries (128 KB)
+struct ResolveCacheEntry {
+  std::atomic<uint32_t> target{0};
+  std::atomic<xe::cpu::Function*> fn{nullptr};
+};
+ResolveCacheEntry g_resolve_cache[kResolveCacheSize];
+inline xe::cpu::Function* xe_llvm_resolve_cached(xe::cpu::ThreadState* ts,
+                                                 uint32_t target) {
+  auto& e = g_resolve_cache[(target >> 2) & (kResolveCacheSize - 1)];
+  if (e.target.load(std::memory_order_acquire) == target) {
+    if (auto* fn = e.fn.load(std::memory_order_relaxed)) return fn;
+  }
+  auto* fn = ts->processor()->ResolveFunction(target);
+  if (fn) {
+    e.fn.store(fn, std::memory_order_relaxed);
+    e.target.store(target, std::memory_order_release);
+  }
+  return fn;
+}
+}  // namespace
+
 extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
   auto* ts = xe::cpu::ThreadState::Get();
-  // DIAGNOSTIC (rate-limited): host-call nesting depth, to localize the stack-
-  // overflow storm. ALL guest calls route here, so if this climbs without bound
-  // the call/return tree isn't unwinding; target/ret_addr show WHAT recurses.
-  static thread_local uint32_t s_depth = 0;
-  static std::atomic<uint32_t> s_deep_log{0};
-  ++s_depth;
-  if (s_depth >= 300 && (s_depth & 0xFF) == 0) {
-    uint32_t n = s_deep_log.fetch_add(1, std::memory_order_relaxed);
-    if (n < 24) {
-      XELOGE(
-          "xe_llvm_guest_call DEEP depth={} target=0x{:08X} ret_addr=0x{:08X}",
-          s_depth, target, ret_addr);
-    }
-  }
-  // VALUE TRACE: if `target` matches cpu_backend_llvm_trace_addr, log input regs
-  // before the call and the result (r3) after. The caller routes here regardless
-  // of the callee's backend, so running max_fns=K-1 (callee a64) vs K (callee
-  // LLVM) on the same deterministic input pins a miscompiled callee's value bug.
+  // VALUE TRACE (debug, off by default via cpu_backend_llvm_trace_addr): log a
+  // target's input regs before the call and r3/nonvolatiles after, to pin a
+  // miscompiled callee. Cheap when disabled (s_trace_addr == 0 short-circuits).
+  // NOTE: the old per-call thread_local depth probe was REMOVED - it cost an
+  // __emutls_get_address per guest call (~1.8% of BD CPU) and only existed to
+  // diagnose the (since-fixed) stack-overflow storm; the UNHANDLED-fault log is
+  // the storm detector now.
   static uint32_t s_trace_addr = [] {
     const std::string& s = cvars::cpu_backend_llvm_trace_addr;
     return s.empty() ? 0u : uint32_t(std::strtoull(s.c_str(), nullptr, 16));
   }();
-  // When tracing is armed, also log the full call SEQUENCE (target+depth) for
-  // the first calls AFTER the first ENTER of the trace target, to reveal the
-  // recursive path (which helper 0x826BEF98 wrongly calls that loops back).
-  static std::atomic<bool> s_trace_armed{false};
-  static std::atomic<uint32_t> s_seq_n{0};
-  if (s_trace_addr != 0 && s_trace_armed.load(std::memory_order_relaxed)) {
-    uint32_t sn = s_seq_n.fetch_add(1, std::memory_order_relaxed);
-    if (sn < 80) {
-      XELOGE("LLVMseqcall #{} depth={} target=0x{:08X} ret=0x{:08X}", sn,
-             s_depth, target, ret_addr);
-    }
-  }
   bool trace = (s_trace_addr != 0) && (target == s_trace_addr);
-  if (trace) s_trace_armed.store(true, std::memory_order_relaxed);
   static std::atomic<uint32_t> s_trace_n{0};
   uint32_t tn = 0;
   if (trace) {
@@ -159,20 +163,17 @@ extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
           tn, target, c->r[3], c->r[28], c->r[29], c->r[30], c->r[31]);
     }
   }
-  auto* fn = ts->processor()->ResolveFunction(target);
+  auto* fn = xe_llvm_resolve_cached(ts, target);
   if (fn) {
     fn->Call(ts, ret_addr);
   }
   if (trace && tn < 40) {
     auto* c = ts->context();
-    // After the call, nonvolatile r28-r31 MUST equal the ENTER values (callee
-    // preserves them). A mismatch = the callee corrupted them (save/restore bug).
     XELOGE(
         "LLVMtrace #{} EXIT  0x{:08X} r3=0x{:X} | r28=0x{:X} r29=0x{:X} "
         "r30=0x{:X} r31=0x{:X}",
         tn, target, c->r[3], c->r[28], c->r[29], c->r[30], c->r[31]);
   }
-  --s_depth;
 }
 
 // Entry trace: logged at the START of an LLVM-compiled fn whose address matches
@@ -201,7 +202,7 @@ extern "C" void xe_llvm_trace_entry(uint32_t addr) {
 // x21 live and x0 = guest return address (the a64 guest->guest ABI, no thunk).
 extern "C" void* xe_llvm_resolve_function(uint32_t target) {
   auto* ts = xe::cpu::ThreadState::Get();
-  auto* fn = ts->processor()->ResolveFunction(target);
+  auto* fn = xe_llvm_resolve_cached(ts, target);
   // Only GuestFunctions have host machine_code to tail-jump to; externs/
   // builtins have none and must go through the non-tail xe_llvm_guest_call path.
   auto* gf = fn ? dynamic_cast<xe::cpu::GuestFunction*>(fn) : nullptr;
