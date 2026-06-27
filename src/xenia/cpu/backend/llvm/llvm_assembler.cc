@@ -38,6 +38,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
@@ -1457,6 +1458,33 @@ bool Lowerer::LowerInstr(Instr* i) {
       } else {
         return false;
       }
+      return true;
+    }
+    case OPCODE_VECTOR_DENORMFLUSH: {
+      // Per-lane: exp==0 (zero or denormal) -> keep only the sign bit (signed
+      // zero); else unchanged. Identical result to a64 VECTOR_DENORMFLUSH and
+      // exactly the VmxFlushDenorm helper.
+      auto* v = V(i->src1.value);
+      if (!v) return false;
+      Def(i->dest, VmxFlushDenorm(b_.CreateBitCast(v, T(VEC128_TYPE))));
+      return true;
+    }
+    case OPCODE_VECTOR_AVERAGE: {
+      // Rounding halving add (a+b+1)>>1 per lane = a64 urhadd/srhadd. Integer
+      // lanes only; signed vs unsigned from the ARITHMETIC_UNSIGNED flag.
+      auto* a = V(i->src1.value);
+      auto* c = V(i->src2.value);
+      if (!a || !c) return false;
+      TypeName pt = static_cast<TypeName>(i->flags & 0xFF);
+      bool uns = ((i->flags >> 8) & ARITHMETIC_UNSIGNED) != 0;
+      auto* lt = LaneVecTy(pt);
+      if (!lt || pt == FLOAT32_TYPE) return false;
+      auto id = uns ? llvm::Intrinsic::aarch64_neon_urhadd
+                    : llvm::Intrinsic::aarch64_neon_srhadd;
+      auto* r = b_.CreateIntrinsic(id, {lt},
+                                   {b_.CreateBitCast(a, lt),
+                                    b_.CreateBitCast(c, lt)});
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
 

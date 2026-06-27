@@ -547,6 +547,32 @@ TEST_CASE("LLVM_DOT_PRODUCT", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_VECTOR_AVERAGE", "[llvm]") {
+  // Rounding halving add, signed + unsigned, i8/i16/i32. (VECTOR_DENORMFLUSH is
+  // the VmxFlushDenorm helper, already exercised by the FMA/DOT denormal lanes,
+  // and has no public HIR builder, so it is covered transitively.)
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.VectorAverage(LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE,
+                                      ARITHMETIC_UNSIGNED));
+        StoreVR(b, 1, b.VectorAverage(LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE, 0));
+        StoreVR(b, 2, b.VectorAverage(LoadVR(b, 4), LoadVR(b, 5), INT16_TYPE,
+                                      ARITHMETIC_UNSIGNED));
+        StoreVR(b, 3, b.VectorAverage(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE,
+                                      ARITHMETIC_UNSIGNED));
+        StoreVR(b, 6,
+                b.VectorAverage(LoadVR(b, 4), LoadVR(b, 5), INT32_TYPE, 0));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        // Odd sums exercise rounding; near-extremes exercise overflow-free add.
+        ctx->v[4].u32[0] = 0xFF01FE02u; ctx->v[4].u32[1] = 0x7F80017Fu;
+        ctx->v[4].u32[2] = 0x12345678u; ctx->v[4].u32[3] = 0x80000000u;
+        ctx->v[5].u32[0] = 0x01FF02FEu; ctx->v[5].u32[1] = 0x80017F80u;
+        ctx->v[5].u32[2] = 0x87654321u; ctx->v[5].u32[3] = 0x7FFFFFFFu;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

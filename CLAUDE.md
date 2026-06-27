@@ -4,9 +4,25 @@
 Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740) via this xenia fork.
 Priority: **Blue Dragon → 30fps at 720p with default foliage**; then Burnout, Gears, Lost Odyssey, Banjo →
 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
-improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) LLVM backend
-improvements [the way forward: full register residency, opcode coverage], (2) UMA zero-copy [must be fixed +
-enabled], (3) CPU/GPU NEON [VMX→NEON, FP32 dot=fmul+faddv]. Fix LLVM bugs as found.**
+improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) LLVM backend, the
+way forward: drive to FULL 100% opcode coverage (no a64 fallback) — user "we need LLVM FULL 100%"; (2) UMA
+zero-copy [FIXED + enabled default-on 2026-06-27, present-hang gone]; (3) CPU/GPU NEON [VMX→NEON, FP32
+dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct path; the KGSL blocking-fence
+fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
+
+### LLVM 100%-coverage progress (toward zero a64 fallback)
+DONE (all qemu-a64 differential byte-identical): scalar core, 8 vector groups, calls, atomic CAS,
+cache_control, lvsl/lvsr, INSERT/EXTRACT, MUL_ADD/MUL_SUB V128 (full VMX denormal-flush + PPC NaN fixup),
+DOT_PRODUCT_3/4. Reusable VMX FP helpers in llvm_assembler.cc: `VmxFlushDenorm` (denormal→±0) +
+`VmxNanFixup` (PPC positional NaN). REMAINING (~26, enumerate via `comm` of opcodes.h vs llvm_assembler.cc
+cases — skip the OPCODE_SIG_*/FLAG_* enum noise): PERMUTE, SWIZZLE, PACK, UNPACK, VECTOR_AVERAGE,
+VECTOR_DENORMFLUSH (trivial — reuse helper), ATOMIC_EXCHANGE, RESERVED_LOAD/STORE (lwarx/stwcx),
+RECIP/RSQRT/ROUND/TO_SINGLE/LOG2/POW2 (FP unary — check a64 for estimate precision, guest-visible), LVL/LVR/
+STVL/STVR (unaligned vec mem), LOAD_MMIO/STORE_MMIO, MEMSET, LOAD_CLOCK, DELAY_EXECUTION, DEBUG_BREAK/_TRUE,
+DID_SATURATE (needs saturation-flag tracking), SET_NJM, SET_ROUNDING_MODE. Method: read the a64 sequence,
+match byte-for-byte, add a differential test with adversarial inputs (NaN/denormal/inf), `bash
+scratch/thor-debug/build_run_llvm.sh` (qemu). Vector LOAD/STORE+byteswap still falls back too (the P3 guard
+in OPCODE_LOAD/STORE — fault-handler decodability concern; defer/careful).
 
 ## ⭐ PRIMARY BUILD: LLVM whole-function CPU backend — SHIPPED, default-on, now PERF-tuning
 **LLVM is the way forward, no matter what (user, 2026-06-27).** The whole-function HIR→LLVM IR→ORCv2
