@@ -200,6 +200,19 @@ class Lowerer {
     return b_.CreateBitCast(r, T(VEC128_TYPE));
   }
 
+  // Store a VEC128 as FOUR volatile 32-bit stores (base+0/4/8/12). Each is a
+  // single decodable STR for the access-violation handler (a q-store that faults
+  // on a GPU write-watch / MMIO page can't be decoded -> BD hangs); volatile
+  // stops LLVM re-merging them into a q-store. Mirrors the 4-load vector LOAD.
+  void StoreVec128AsWords(llvm::Value* val, llvm::Value* base) {
+    auto* v = b_.CreateBitCast(val, LaneVecTy(INT32_TYPE));
+    for (int k = 0; k < 4; k++) {
+      auto* p = b_.CreateGEP(b_.getInt8Ty(), base, b_.getInt64(4 * k));
+      b_.CreateStore(b_.CreateExtractElement(v, b_.getInt32(k)), p,
+                     /*isVolatile=*/true);
+    }
+  }
+
   // Emit a call to the runtime guest-call helper (resolves the target guest
   // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
   void EmitGuestCall(llvm::Value* target_i32) {
@@ -958,14 +971,23 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ty = T(i->dest->type);
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
-      // Vector (128-bit) guest memory -> a64 (P3). DEVICE-CONFIRMED 2026-06-27:
-      // a volatile q-load/store is one instruction and qemu-byte-identical, but
-      // on-device it HANGS BD - a q-access that faults into the access-violation
-      // handler (GPU write-watch / MMIO) can't be decoded (the handler only
-      // recognizes a single 32-bit LDR/STR, mmio_handler.cc) so it re-faults
-      // forever. a64 emits a decodable form. (Extending the decoder for q is a
-      // known dead end.) Lifting this guard reverted; do not re-lift.
-      if (ty->isVectorTy()) return false;
+      if (ty->isVectorTy()) {
+        // 128-bit vector load as FOUR volatile 32-bit loads (base+0/4/8/12).
+        // Each is a single decodable LDR for the access-violation handler (a
+        // single q-load that faults can't be decoded). volatile => LLVM won't
+        // re-merge them into a q-load. Element k = word k, matching a q-load.
+        auto* base = MemPtr(ea);
+        auto* i32x4 = LaneVecTy(INT32_TYPE);
+        llvm::Value* vec = llvm::PoisonValue::get(i32x4);
+        for (int k = 0; k < 4; k++) {
+          auto* p = b_.CreateGEP(b_.getInt8Ty(), base, b_.getInt64(4 * k));
+          vec = b_.CreateInsertElement(
+              vec, b_.CreateLoad(b_.getInt32Ty(), p, /*isVolatile=*/true),
+              b_.getInt32(k));
+        }
+        Def(i->dest, MaybeByteSwap(vec, ty, i->flags));
+        return true;
+      }
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
@@ -974,8 +996,11 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       auto* val = V(i->src2.value);
       if (!ea || !val) return false;
-      if (IsVec(val)) return false;  // vector mem -> a64 (P3, device-confirmed)
       val = MaybeByteSwap(val, val->getType(), i->flags);
+      if (IsVec(val)) {
+        StoreVec128AsWords(val, MemPtr(ea));
+        return true;
+      }
       b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
     }
@@ -984,9 +1009,21 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* base = V(i->src1.value);
       auto* off = V(i->src2.value);
       if (!ty || !base || !off) return false;
-      if (ty->isVectorTy()) return false;  // vector mem -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
+      if (ty->isVectorTy()) {
+        auto* hp = MemPtr(ea);
+        auto* i32x4 = LaneVecTy(INT32_TYPE);
+        llvm::Value* vec = llvm::PoisonValue::get(i32x4);
+        for (int k = 0; k < 4; k++) {
+          auto* p = b_.CreateGEP(b_.getInt8Ty(), hp, b_.getInt64(4 * k));
+          vec = b_.CreateInsertElement(
+              vec, b_.CreateLoad(b_.getInt32Ty(), p, /*isVolatile=*/true),
+              b_.getInt32(k));
+        }
+        Def(i->dest, MaybeByteSwap(vec, ty, i->flags));
+        return true;
+      }
       auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
@@ -996,10 +1033,13 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* off = V(i->src2.value);
       auto* val = V(i->src3.value);
       if (!base || !off || !val) return false;
-      if (IsVec(val)) return false;  // vector mem -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       val = MaybeByteSwap(val, val->getType(), i->flags);
+      if (IsVec(val)) {
+        StoreVec128AsWords(val, MemPtr(ea));
+        return true;
+      }
       b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
     }

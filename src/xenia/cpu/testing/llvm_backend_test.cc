@@ -750,11 +750,10 @@ TEST_CASE("LLVM_MEMSET", "[llvm]") {
 }
 
 TEST_CASE("LLVM_VECTOR_LOAD_STORE", "[llvm]") {
-  // Vector (128-bit) guest LOAD/STORE deliberately fall back to a64 (P3 guard -
-  // a faulting q-access can't be decoded by the host fault handler, which HANGS
-  // BD on-device, 2026-06-27). This validates that the LLVM backend's a64
-  // fallback for vector memory stays byte-identical (interop), and exercises the
-  // VEC128 BYTE_SWAP lowering.
+  // Vector (128-bit) guest LOAD/STORE lowered as four volatile 32-bit accesses
+  // (each decodable by the host fault handler - a single q-access that faults
+  // can't be, which hung BD). Plus the VEC128 BYTE_SWAP (rev32). Load a vector,
+  // byteswap it, store a vector + load it back; byte-identical vs a64.
   RunDiff(
       [](HIRBuilder& b) {
         auto* src = b.LoadConstantUint64(0x10002000ull);
