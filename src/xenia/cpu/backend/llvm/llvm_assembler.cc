@@ -135,6 +135,15 @@ class Lowerer {
     }
   }
 
+  // Emit a call to the runtime guest-call helper (resolves the target guest
+  // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
+  void EmitGuestCall(llvm::Value* target_i32) {
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                        {llvm::Type::getInt32Ty(ctx_)}, false);
+    auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
+    b_.CreateCall(callee, {target_i32});
+  }
+
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
   bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
 
@@ -701,6 +710,23 @@ bool Lowerer::LowerInstr(Instr* i) {
       if (!i->next && !i->block->next) b_.CreateRetVoid();
       return true;
     }
+
+    // ---- guest calls (P4) ----
+    case OPCODE_CALL:
+    case OPCODE_CALL_EXTERN: {
+      EmitGuestCall(b_.getInt32(i->src1.symbol->address()));
+      return true;
+    }
+    case OPCODE_CALL_INDIRECT: {
+      auto* t = V(i->src1.value);
+      if (!t) return false;
+      EmitGuestCall(b_.CreateZExtOrTrunc(t, b_.getInt32Ty()));
+      return true;
+    }
+    case OPCODE_SET_RETURN_ADDRESS:
+      // Return flows via the host stack (helper + thunk) in this model; the
+      // guest return-address slot isn't needed for correctness.
+      return true;
 
     // ---- lane-typed vector arithmetic ----
     case OPCODE_VECTOR_ADD:

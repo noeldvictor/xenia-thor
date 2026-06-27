@@ -326,4 +326,26 @@ TEST_CASE("LLVM_VECTOR_SPLAT", "[llvm]") {
       [](PPCContext* ctx) { ctx->r[4] = 0x0000000040490FDBull; });
 }
 
+TEST_CASE("LLVM_CALL_RECURSIVE", "[llvm]") {
+  // Recursive sum of r3..1 into r4: a self-CALL exercises OPCODE_CALL_INDIRECT,
+  // the xe_llvm_guest_call runtime helper, and the dispatch/return path. The
+  // shared context accumulates across the recursion (no per-frame locals needed
+  // to validate the call mechanism). Differential vs the a64 backend.
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* r3 = LoadGPR(b, 3);
+        auto* done = b.NewLabel();
+        b.BranchTrue(b.IsFalse(r3), done);  // if r3 == 0 -> done
+        StoreGPR(b, 4, b.Add(LoadGPR(b, 4), r3));
+        StoreGPR(b, 3, b.Sub(r3, b.LoadConstantInt64(1)));
+        b.CallIndirect(b.LoadConstantUint32(0x80000000));  // recurse (self)
+        b.MarkLabel(done);
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->r[3] = 5;  // expect r4 == 15, r3 == 0
+        ctx->r[4] = 0;
+      });
+}
+
 #endif  // XE_ARCH_ARM64

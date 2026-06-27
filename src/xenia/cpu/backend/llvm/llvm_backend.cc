@@ -16,6 +16,10 @@
 #include "xenia/base/logging.h"
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
+#include "xenia/cpu/function.h"
+#include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/processor.h"
+#include "xenia/cpu/thread_state.h"
 
 // P0 gating: defined by the build once libLLVM is cross-built + linked for
 // android-arm64 (LLVM 20.1.8, AArch64-only, ORC + JITLink). Until then the
@@ -26,6 +30,7 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
@@ -51,6 +56,21 @@ DEFINE_int32(cpu_backend_llvm_opt, 2,
              "register-residency win but are slow to run under qemu-user "
              "(emulated); set 0 for device-free correctness tests.",
              "CPU");
+
+#if XE_LLVM_BACKEND_ENABLED
+// Runtime helper the JIT'd code calls for a guest CALL/CALL_INDIRECT/CALL_EXTERN:
+// resolve the target guest function and invoke it. x20/x21 (ctx/membase) are
+// AAPCS callee-saved across this C call so they survive; the callee re-derives
+// them via the host->guest thunk inside Call(). Correctness-first (resolve per
+// call); the indirection-table fast path is a later perf step.
+extern "C" void xe_llvm_guest_call(uint32_t target) {
+  auto* ts = xe::cpu::ThreadState::Get();
+  auto* fn = ts->processor()->ResolveFunction(target);
+  if (fn) {
+    fn->Call(ts, static_cast<uint32_t>(ts->context()->lr));
+  }
+}
+#endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
 namespace cpu {
@@ -87,6 +107,17 @@ bool LLVMBackend::Initialize(Processor* processor) {
   jit_ = std::make_unique<LlvmJitContext>();
   jit_->jit = std::move(*jit_or);
   jit_->initialized = true;
+
+  // Make the guest-call runtime helper resolvable by name from the JIT'd code.
+  {
+    auto& jd = jit_->jit->getMainJITDylib();
+    auto name = jit_->jit->mangleAndIntern("xe_llvm_guest_call");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {name, llvm::orc::ExecutorSymbolDef(
+                   llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_guest_call),
+                   llvm::JITSymbolFlags::Exported |
+                       llvm::JITSymbolFlags::Callable)}})));
+  }
 #endif
 
   // Bring up the a64 base: host<->guest thunks, code cache + indirection table,
