@@ -1573,6 +1573,64 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
+    case OPCODE_ROUND: {
+      // Round-to-integral, scalar f32/f64 or V128 f32x4. Mode from flags maps to
+      // the frint variant: zero=trunc, nearest=roundeven (round-half-to-EVEN, not
+      // llvm.round), -inf=floor, +inf=ceil, dynamic->nearest (baked-in mode).
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      llvm::Intrinsic::ID id;
+      switch (i->flags) {
+        case ROUND_TO_ZERO: id = llvm::Intrinsic::trunc; break;
+        case ROUND_TO_NEAREST: id = llvm::Intrinsic::roundeven; break;
+        case ROUND_TO_MINUS_INFINITY: id = llvm::Intrinsic::floor; break;
+        case ROUND_TO_POSITIVE_INFINITY: id = llvm::Intrinsic::ceil; break;
+        default: id = llvm::Intrinsic::roundeven; break;
+      }
+      if (IsVec(a)) {
+        auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+        Def(i->dest, b_.CreateBitCast(
+                         b_.CreateUnaryIntrinsic(id, b_.CreateBitCast(a, f32x4)),
+                         T(VEC128_TYPE)));
+      } else {
+        if (!a->getType()->isFloatingPointTy()) return false;
+        Def(i->dest, b_.CreateUnaryIntrinsic(id, a));
+      }
+      return true;
+    }
+    case OPCODE_RECIP: {
+      // vrefp / fres: FULL-precision 1.0/x (xenia implements the estimate as a
+      // real divide). Scalar (FPU mode) = no flush; V128 (VMX) = denormal flush
+      // in + out. Plain fdiv NaN (no PPC NaN fixup).
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      if (IsVec(a)) {
+        auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+        auto* xi = VmxFlushDenorm(b_.CreateBitCast(a, T(VEC128_TYPE)));
+        auto* r = b_.CreateFDiv(llvm::ConstantFP::get(f32x4, 1.0),
+                                b_.CreateBitCast(xi, f32x4));
+        Def(i->dest, VmxFlushDenorm(b_.CreateBitCast(r, T(VEC128_TYPE))));
+      } else {
+        if (!a->getType()->isFloatingPointTy()) return false;
+        Def(i->dest,
+            b_.CreateFDiv(llvm::ConstantFP::get(a->getType(), 1.0), a));
+      }
+      return true;
+    }
+    case OPCODE_RSQRT: {
+      // Scalar f32: full-precision 1/sqrt(x) (a64 fsqrt+fdiv). F64 (PpcFrsqrte)
+      // and V128 (PpcVrsqrtefpLane) use the 360 lookup-table estimate -> a64
+      // fallback until the runtime helper is wired.
+      auto* a = V(i->src1.value);
+      if (!a) return false;
+      if (a->getType()->isFloatTy()) {
+        Def(i->dest,
+            b_.CreateFDiv(llvm::ConstantFP::get(a->getType(), 1.0),
+                          b_.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, a)));
+        return true;
+      }
+      return false;
+    }
 
     default:
       // Unsupported (calls, other vectors, atomics, packs, ...) -> a64 fallback.

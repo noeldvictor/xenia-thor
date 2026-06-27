@@ -613,6 +613,62 @@ TEST_CASE("LLVM_SET_ROUNDING_MODE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_ROUND", "[llvm]") {
+  // Vector f32x4 round, all 4 directed modes (frintz/n/m/p). 2.5/-2.5 exercise
+  // round-half-to-even.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Round(LoadVR(b, 4), ROUND_TO_ZERO));
+        StoreVR(b, 1, b.Round(LoadVR(b, 4), ROUND_TO_NEAREST));
+        StoreVR(b, 2, b.Round(LoadVR(b, 4), ROUND_TO_MINUS_INFINITY));
+        StoreVR(b, 3, b.Round(LoadVR(b, 4), ROUND_TO_POSITIVE_INFINITY));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x40200000u;  // 2.5
+        ctx->v[4].u32[1] = 0xC0200000u;  // -2.5
+        ctx->v[4].u32[2] = 0x4019999Au;  // 2.4
+        ctx->v[4].u32[3] = 0xC0266666u;  // -2.6
+      });
+}
+
+TEST_CASE("LLVM_RECIP", "[llvm]") {
+  // vrefp full-precision 1/x: V128 (denormal flush) + scalar f32.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Recip(LoadVR(b, 4)));
+        StoreGPR(b, 3,
+                 b.ZeroExtend(
+                     b.Cast(b.Recip(b.Cast(b.Truncate(LoadGPR(b, 3), INT32_TYPE),
+                                           FLOAT32_TYPE)),
+                            INT32_TYPE),
+                     INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x40000000u;  // 2.0 -> 0.5
+        ctx->v[4].u32[1] = 0x3F000000u;  // 0.5 -> 2.0
+        ctx->v[4].u32[2] = 0x00000000u;  // 0 -> +inf
+        ctx->v[4].u32[3] = 0x7FC00000u;  // NaN -> NaN
+        ctx->r[3] = 0x40800000u;         // 4.0 -> 0.25
+      });
+}
+
+TEST_CASE("LLVM_RSQRT_F32", "[llvm]") {
+  // Scalar f32 1/sqrt(x) full precision.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreGPR(b, 3,
+                 b.ZeroExtend(
+                     b.Cast(b.RSqrt(b.Cast(b.Truncate(LoadGPR(b, 3), INT32_TYPE),
+                                           FLOAT32_TYPE)),
+                            INT32_TYPE),
+                     INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) { ctx->r[3] = 0x40800000u; });  // 4.0 -> 0.5
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
