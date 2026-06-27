@@ -149,9 +149,9 @@ extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
     tn = s_trace_n.fetch_add(1, std::memory_order_relaxed);
     if (tn < 40) {
       XELOGE(
-          "LLVMtrace #{} ENTER 0x{:08X} r3=0x{:016X} r4=0x{:016X} r5=0x{:016X} "
-          "r1=0x{:016X} lr=0x{:08X}",
-          tn, target, c->r[3], c->r[4], c->r[5], c->r[1], ret_addr);
+          "LLVMtrace #{} ENTER 0x{:08X} r3=0x{:X} | r28=0x{:X} r29=0x{:X} "
+          "r30=0x{:X} r31=0x{:X}",
+          tn, target, c->r[3], c->r[28], c->r[29], c->r[30], c->r[31]);
     }
   }
   auto* fn = ts->processor()->ResolveFunction(target);
@@ -160,10 +160,31 @@ extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
   }
   if (trace && tn < 40) {
     auto* c = ts->context();
-    XELOGE("LLVMtrace #{} EXIT  0x{:08X} r3=0x{:016X} r4=0x{:016X}", tn, target,
-           c->r[3], c->r[4]);
+    // After the call, nonvolatile r28-r31 MUST equal the ENTER values (callee
+    // preserves them). A mismatch = the callee corrupted them (save/restore bug).
+    XELOGE(
+        "LLVMtrace #{} EXIT  0x{:08X} r3=0x{:X} | r28=0x{:X} r29=0x{:X} "
+        "r30=0x{:X} r31=0x{:X}",
+        tn, target, c->r[3], c->r[28], c->r[29], c->r[30], c->r[31]);
   }
   --s_depth;
+}
+
+// Entry trace: logged at the START of an LLVM-compiled fn whose address matches
+// cpu_backend_llvm_trace_addr. Unlike the call-site trace, this fires regardless
+// of the CALLER's backend, so it captures a fn's input regs even when an a64
+// caller invokes it - letting us diff a callee's args across a caller's backends.
+extern "C" void xe_llvm_trace_entry(uint32_t addr) {
+  auto* ts = xe::cpu::ThreadState::Get();
+  auto* c = ts->context();
+  static std::atomic<uint32_t> s_entry_n{0};
+  uint32_t n = s_entry_n.fetch_add(1, std::memory_order_relaxed);
+  if (n < 160) {
+    XELOGE(
+        "LLVMentry #{} 0x{:08X} r3=0x{:X} r1=0x{:X} | r28=0x{:X} r29=0x{:X} "
+        "r30=0x{:X} r31=0x{:X}",
+        n, addr, c->r[3], c->r[1], c->r[28], c->r[29], c->r[30], c->r[31]);
+  }
 }
 
 // Resolve a guest call target to its host machine-code entry (compiling it if
@@ -260,6 +281,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
     llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
         {ename, llvm::orc::ExecutorSymbolDef(
                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_call_extern),
+                    llvm::JITSymbolFlags::Exported |
+                        llvm::JITSymbolFlags::Callable)}})));
+    auto tname = jit_->jit->mangleAndIntern("xe_llvm_trace_entry");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {tname, llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trace_entry),
                     llvm::JITSymbolFlags::Exported |
                         llvm::JITSymbolFlags::Callable)}})));
   }

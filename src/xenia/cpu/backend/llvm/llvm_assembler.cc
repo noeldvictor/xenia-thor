@@ -52,6 +52,7 @@ DECLARE_string(cpu_backend_llvm_range_lo);
 DECLARE_string(cpu_backend_llvm_range_hi);
 DECLARE_bool(cpu_backend_llvm_dump_ir);
 DECLARE_int32(cpu_backend_llvm_max_fns);
+DECLARE_string(cpu_backend_llvm_trace_addr);
 
 namespace xe {
 namespace cpu {
@@ -91,8 +92,9 @@ namespace {
 // opcode it does not handle, so the caller falls back to a64.
 class Lowerer {
  public:
-  Lowerer(llvm::LLVMContext& ctx, llvm::Module* mod, llvm::Function* fn)
-      : ctx_(ctx), mod_(mod), fn_(fn), b_(ctx) {}
+  Lowerer(llvm::LLVMContext& ctx, llvm::Module* mod, llvm::Function* fn,
+          uint32_t guest_addr)
+      : ctx_(ctx), mod_(mod), fn_(fn), b_(ctx), guest_addr_(guest_addr) {}
 
   bool Run(HIRBuilder* builder);
 
@@ -285,6 +287,14 @@ class Lowerer {
   llvm::Module* mod_;
   llvm::Function* fn_;
   llvm::IRBuilder<> b_;
+  uint32_t guest_addr_ = 0;
+  bool trace_this_ = false;
+  void EmitTrace(uint32_t tag) {
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                        {b_.getInt32Ty()}, false);
+    auto callee = mod_->getOrInsertFunction("xe_llvm_trace_entry", fty);
+    b_.CreateCall(callee, {b_.getInt32(tag)});
+  }
   llvm::Value* ctx_ptr_ = nullptr;
   llvm::Value* membase_ = nullptr;
   // a64 guest-call ABI: x0 = this function's guest return address (saved at
@@ -326,17 +336,39 @@ bool Lowerer::Run(HIRBuilder* builder) {
   my_ret_addr_ = b_.CreateAlloca(b_.getInt64Ty(), nullptr, "my_ret_addr");
   next_call_ret_addr_ =
       b_.CreateAlloca(b_.getInt64Ty(), nullptr, "next_call_ret_addr");
-  // Return-address basis for recognizing this function's OWN blr RETURN = the
-  // guest LR at ENTRY. The frontend maintains context->lr (StoreLR on every bl,
-  // restored before blr), so this is correct for both bl- AND bctr-entered
-  // functions. The x0 parameter is NOT used for this: it is 0 for bctr-entered
-  // functions (no SET_RETURN_ADDRESS), which broke return detection -> the
-  // return became a forward call -> unbounded recursion -> host-stack overflow.
-  b_.CreateStore(
-      b_.CreateLoad(b_.getInt64Ty(),
-                    CtxPtr(offsetof(xe::cpu::ppc::PPCContext, lr))),
-      my_ret_addr_);
+  // Return-address basis for recognizing this function's OWN blr RETURN.
+  // HYBRID (matches a64's GUEST_RET_ADDR slot): use x0 when non-zero, else the
+  // guest LR at entry.
+  //  - bl-entered: the host->guest thunk passes x0 = the guest return address
+  //    (== context->lr); both agree.
+  //  - TAIL-call-entered (musttail, e.g. __savegprlr/__restgprlr): the caller
+  //    passes x0 = the ORIGINAL return address, but context->lr is the tail-
+  //    caller's last set value (stale) - AND __restgprlr RESTORES context->lr
+  //    from the stack before its blr, so a context->lr basis never matches the
+  //    restored target -> the blr became a forward call -> the wrapper that
+  //    tail-returns through __restgprlr recursed forever (device-pinned: callee
+  //    returned correct values but never EXITed; r28-r31 working, no unwind).
+  //  - bctr-entered (indirect jump, not a call): x0 == 0 -> fall back to
+  //    context->lr (the original reason this was context->lr, not x0).
+  {
+    auto* x0 = fn_->getArg(0);
+    auto* ctx_lr = b_.CreateLoad(
+        b_.getInt64Ty(), CtxPtr(offsetof(xe::cpu::ppc::PPCContext, lr)));
+    auto* use_x0 = b_.CreateICmpNE(x0, b_.getInt64(0));
+    b_.CreateStore(b_.CreateSelect(use_x0, x0, ctx_lr), my_ret_addr_);
+  }
   b_.CreateStore(b_.getInt64(0), next_call_ret_addr_);
+
+  // Entry trace (diagnostic): if this fn matches cpu_backend_llvm_trace_addr,
+  // call xe_llvm_trace_entry(addr) to log its input regs - fires for ANY caller
+  // backend (unlike the call-site trace), so a callee's args can be diffed
+  // across a caller being a64 vs LLVM.
+  {
+    const std::string& ts = cvars::cpu_backend_llvm_trace_addr;
+    uint32_t ta = ts.empty() ? 0 : uint32_t(std::strtoull(ts.c_str(), nullptr, 16));
+    trace_this_ = (ta != 0 && ta == guest_addr_);
+    if (trace_this_) EmitTrace(guest_addr_);  // entry: tag = fn addr
+  }
 
   // One llvm BB per HIR block, created up front so branches can target them.
   for (Block* blk = builder->first_block(); blk; blk = blk->next) {
@@ -352,6 +384,16 @@ bool Lowerer::Run(HIRBuilder* builder) {
 
   for (Block* blk = first; blk; blk = blk->next) {
     b_.SetInsertPoint(block_map_[blk->ordinal]);
+    // Block trace: log the block's guest address + register state at entry, so
+    // the LLVM control-flow path (and where it diverges from the expected
+    // return path) is visible on-device.
+    if (trace_this_) {
+      uint32_t ga = 0;
+      for (Instr* i = blk->instr_head; i && !ga; i = i->next)
+        ga = i->GuestAddressFor();
+      // tag = block guest addr if found, else 0x9B0000|ordinal as a fallback.
+      EmitTrace(ga ? ga : (0x9B0000u | (blk->ordinal & 0xFFFF)));
+    }
     for (Instr* i = blk->instr_head; i; i = i->next) {
       if (!LowerInstr(i)) {
         return false;  // unsupported -> fallback
@@ -1170,7 +1212,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // create() under qemu).
   fn->addFnAttr("target-features", "+reserve-x20,+reserve-x21");
 
-  Lowerer lowerer(ctx, mod.get(), fn);
+  Lowerer lowerer(ctx, mod.get(), fn, function->address());
   if (!lowerer.Run(builder)) {
     return false;  // unsupported opcode -> caller falls back to a64
   }
