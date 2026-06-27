@@ -200,6 +200,14 @@ class Lowerer {
     return b_.CreateBitCast(r, T(VEC128_TYPE));
   }
 
+  // A scratch alloca placed in the function ENTRY block (allocated once, so it
+  // doesn't grow the stack if the using instruction is in a loop). For passing a
+  // VEC128 by pointer to a C runtime helper (e.g. xe_llvm_unpack).
+  llvm::AllocaInst* EntryAlloca(llvm::Type* ty) {
+    llvm::IRBuilder<> eb(&fn_->getEntryBlock(), fn_->getEntryBlock().begin());
+    return eb.CreateAlloca(ty);
+  }
+
   // Store a VEC128 as FOUR volatile 32-bit stores (base+0/4/8/12). Each is a
   // single decodable STR for the access-violation handler (a q-store that faults
   // on a GPU write-watch / MMIO page can't be decoded -> BD hangs); volatile
@@ -1598,6 +1606,26 @@ bool Lowerer::LowerInstr(Instr* i) {
       } else {
         return false;
       }
+      return true;
+    }
+    case OPCODE_UNPACK: {
+      // VMX unpack via the xe_llvm_unpack C helper (reuses xenos_half_to_float +
+      // the magic-float math). 8_IN_16 / 16_IN_32 (intricate lane juggling) still
+      // fall back to a64. Pass the VEC128 by pointer through an entry-block
+      // scratch alloca.
+      uint32_t mode = i->flags & PACK_TYPE_MODE;
+      if (mode == PACK_TYPE_8_IN_16 || mode == PACK_TYPE_16_IN_32) return false;
+      auto* val = V(i->src1.value);
+      if (!val) return false;
+      auto* i32x4 = T(VEC128_TYPE);
+      auto* scratch = EntryAlloca(i32x4);
+      b_.CreateStore(b_.CreateBitCast(val, i32x4), scratch);
+      auto callee = mod_->getOrInsertFunction(
+          "xe_llvm_unpack",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                  {b_.getPtrTy(), b_.getInt32Ty()}, false));
+      b_.CreateCall(callee, {scratch, b_.getInt32(i->flags)});
+      Def(i->dest, b_.CreateLoad(i32x4, scratch));
       return true;
     }
     case OPCODE_VECTOR_DENORMFLUSH: {

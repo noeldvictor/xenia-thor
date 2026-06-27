@@ -773,6 +773,38 @@ TEST_CASE("LLVM_VECTOR_LOAD_STORE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_UNPACK_FLOAT", "[llvm]") {
+  // UNPACK D3DCOLOR / FLOAT16_2 / FLOAT16_4 / SHORT_2 / SHORT_4 via xe_llvm_unpack
+  // (byte-identical vs a64). 8_IN_16/16_IN_32 still fall back to a64.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Unpack(LoadVR(b, 4), PACK_TYPE_D3DCOLOR));
+        StoreVR(b, 1, b.Unpack(LoadVR(b, 4), PACK_TYPE_FLOAT16_2));
+        StoreVR(b, 2, b.Unpack(LoadVR(b, 4), PACK_TYPE_FLOAT16_4));
+        StoreVR(b, 3, b.Unpack(LoadVR(b, 4), PACK_TYPE_SHORT_2));
+        StoreVR(b, 6, b.Unpack(LoadVR(b, 4), PACK_TYPE_SHORT_4));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x3C00BC00u; ctx->v[4].u32[1] = 0x40004900u;
+        ctx->v[4].u32[2] = 0x12345678u; ctx->v[4].u32[3] = 0xAABBCCDDu;
+      });
+}
+
+TEST_CASE("LLVM_UNPACK_INT", "[llvm]") {
+  // UNPACK UINT_2101010 / ULONG_4202020 (sign-extended bitfields + magic float).
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Unpack(LoadVR(b, 4), PACK_TYPE_UINT_2101010));
+        StoreVR(b, 1, b.Unpack(LoadVR(b, 4), PACK_TYPE_ULONG_4202020));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x11223344u; ctx->v[4].u32[1] = 0x55667788u;
+        ctx->v[4].u32[2] = 0x9ABCDEF0u; ctx->v[4].u32[3] = 0x8ABCDEF1u;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

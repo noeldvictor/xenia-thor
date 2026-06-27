@@ -22,6 +22,7 @@
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
 #include "xenia/cpu/function.h"
+#include "xenia/cpu/hir/opcodes.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/thread_state.h"
@@ -347,6 +348,86 @@ extern "C" uint32_t xe_llvm_exp2_lane(uint32_t bits) {
   std::memcpy(&bits, &f, 4);
   return bits;
 }
+
+// VMX UNPACK (in-place on a vec128_t scratch). Byte-exact replica of a64 UNPACK
+// for the formats with a clean spec; the caller only invokes this for those
+// modes (8_IN_16 / 16_IN_32 fall back to a64). The qemu differential verifies
+// each lane vs the a64 sequence. Magic-float trick: an integer add of a bias
+// constant to a sign-extended field reinterprets as the target float.
+extern "C" void xe_llvm_unpack(void* vd, uint32_t flags) {
+  auto* v = reinterpret_cast<xe::vec128_t*>(vd);
+  switch (flags & xe::cpu::hir::PACK_TYPE_MODE) {
+    case xe::cpu::hir::PACK_TYPE_D3DCOLOR: {
+      uint32_t r0 = uint32_t(v->u8[14]) | 0x3F800000u;
+      uint32_t r1 = uint32_t(v->u8[13]) | 0x3F800000u;
+      uint32_t r2 = uint32_t(v->u8[12]) | 0x3F800000u;
+      uint32_t r3 = uint32_t(v->u8[15]) | 0x3F800000u;
+      v->u32[0] = r0; v->u32[1] = r1; v->u32[2] = r2; v->u32[3] = r3;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_FLOAT16_2: {
+      float f0 = xe::xenos_half_to_float(v->u16[7]);
+      float f1 = xe::xenos_half_to_float(v->u16[6]);
+      v->f32[0] = f0; v->f32[1] = f1; v->f32[2] = 0.0f; v->u32[3] = 0x3F800000u;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_FLOAT16_4: {
+      float f[4];
+      for (int k = 0; k < 4; k++) f[k] = xe::xenos_half_to_float(v->u16[(4 + k) ^ 1]);
+      for (int k = 0; k < 4; k++) v->f32[k] = f[k];
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_SHORT_2: {
+      uint32_t r0 = uint32_t(int32_t(int16_t(v->u16[7]))) + 0x40400000u;
+      uint32_t r1 = uint32_t(int32_t(int16_t(v->u16[6]))) + 0x40400000u;
+      v->u32[0] = (r0 == 0x403F8000u) ? 0x7FC00000u : r0;
+      v->u32[1] = (r1 == 0x403F8000u) ? 0x7FC00000u : r1;
+      v->u32[2] = 0;
+      v->u32[3] = 0x3F800000u;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_SHORT_4: {
+      const int idx[4] = {5, 4, 7, 6};
+      for (int k = 0; k < 4; k++) {
+        uint32_t r = uint32_t(int32_t(int16_t(v->u16[idx[k]]))) + 0x40400000u;
+        v->u32[k] = (r == 0x403F8000u) ? 0x7FC00000u : r;
+      }
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_UINT_2101010: {
+      uint32_t p = v->u32[3];
+      int32_t x = int32_t((p & 0x3FFu) << 22) >> 22;
+      int32_t y = int32_t(((p >> 10) & 0x3FFu) << 22) >> 22;
+      int32_t z = int32_t(((p >> 20) & 0x3FFu) << 22) >> 22;
+      uint32_t w = (p >> 30) & 0x3u;
+      uint32_t r0 = uint32_t(x) + 0x40400000u;
+      uint32_t r1 = uint32_t(y) + 0x40400000u;
+      uint32_t r2 = uint32_t(z) + 0x40400000u;
+      v->u32[0] = (r0 == 0x403FFE00u) ? 0x7FC00000u : r0;
+      v->u32[1] = (r1 == 0x403FFE00u) ? 0x7FC00000u : r1;
+      v->u32[2] = (r2 == 0x403FFE00u) ? 0x7FC00000u : r2;
+      v->u32[3] = w + 0x3F800000u;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_ULONG_4202020: {
+      uint64_t pk = (uint64_t(v->u32[2]) << 32) | uint64_t(v->u32[3]);
+      int32_t x = int32_t(int64_t(pk << 44) >> 44);
+      int32_t y = int32_t(int64_t(pk << 24) >> 44);
+      int32_t z = int32_t(int64_t(pk << 4) >> 44);
+      uint32_t w = uint32_t((pk >> 60) & 0xFu);
+      uint32_t r0 = uint32_t(x) + 0x40400000u;
+      uint32_t r1 = uint32_t(y) + 0x40400000u;
+      uint32_t r2 = uint32_t(z) + 0x40400000u;
+      v->u32[0] = (r0 == 0x40380000u) ? 0x7FC00000u : r0;
+      v->u32[1] = (r1 == 0x40380000u) ? 0x7FC00000u : r1;
+      v->u32[2] = (r2 == 0x40380000u) ? 0x7FC00000u : r2;
+      v->u32[3] = w + 0x3F800000u;
+      break;
+    }
+    default:
+      break;  // caller doesn't invoke for unsupported modes
+  }
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -435,6 +516,7 @@ bool LLVMBackend::Initialize(Processor* processor) {
                   reinterpret_cast<void*>(&xe_llvm_log2_lane));
     define_helper("xe_llvm_exp2_lane",
                   reinterpret_cast<void*>(&xe_llvm_exp2_lane));
+    define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
   }
 #endif
 
