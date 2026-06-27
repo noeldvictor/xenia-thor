@@ -51,6 +51,7 @@ DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_string(cpu_backend_llvm_range_lo);
 DECLARE_string(cpu_backend_llvm_range_hi);
 DECLARE_bool(cpu_backend_llvm_dump_ir);
+DECLARE_int32(cpu_backend_llvm_max_fns);
 
 namespace xe {
 namespace cpu {
@@ -1262,7 +1263,17 @@ bool LLVMAssembler::Assemble(GuestFunction* function, hir::HIRBuilder* builder,
   uint32_t lo = lo_s.empty() ? 0 : uint32_t(std::strtoull(lo_s.c_str(), nullptr, 16));
   uint32_t hi = hi_s.empty() ? 0 : uint32_t(std::strtoull(hi_s.c_str(), nullptr, 16));
   bool in_range = addr >= lo && (hi == 0 || addr < hi);
-  if (in_range && LowerAndJit(function, builder)) {
+  // Count gate (monotonic bisection): LLVM-compile at most the first N functions
+  // (in compile order). The counter increments only on SUCCESSFUL LLVM compiles,
+  // so Set(N) is a strict subset of Set(N+1) -> binary-searching N pins the fn
+  // whose LLVM codegen breaks boot. LLVMseq logs seq->addr for the map.
+  static std::atomic<int32_t> s_llvm_seq{0};
+  int32_t max_fns = cvars::cpu_backend_llvm_max_fns;
+  bool under_cap = (max_fns <= 0) || (s_llvm_seq.load(std::memory_order_relaxed) <
+                                      max_fns);
+  if (in_range && under_cap && LowerAndJit(function, builder)) {
+    int32_t seq = s_llvm_seq.fetch_add(1, std::memory_order_relaxed);
+    XELOGI("LLVMseq {} guest=0x{:08X}", seq, addr);
     function->set_debug_info(std::move(debug_info));
     return true;
   }

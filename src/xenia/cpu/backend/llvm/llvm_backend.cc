@@ -69,6 +69,14 @@ DEFINE_string(cpu_backend_llvm_range_hi, "",
               "Empty = no upper bound (compile all in range). See _range_lo.",
               "CPU");
 
+DEFINE_int32(cpu_backend_llvm_max_fns, 0,
+             "LLVM-compile at most the FIRST N guest functions (in compile "
+             "order); the rest use a64. 0 = unlimited. Monotonic - Set(N) is a "
+             "subset of Set(N+1) - so binary-searching N pins the exact function "
+             "whose LLVM codegen breaks boot (no address-bisection confound). "
+             "Each accepted compile logs 'LLVMseq <n> guest=0x..' for the map.",
+             "CPU");
+
 DEFINE_bool(cpu_backend_llvm_dump_ir, false,
             "Dump the generated LLVM IR (post-opt) for each LLVM-compiled guest "
             "function to the log (grep 'LLVMir'). Use with _range_lo/_hi to dump "
