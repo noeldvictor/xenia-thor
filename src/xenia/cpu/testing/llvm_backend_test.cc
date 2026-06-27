@@ -43,6 +43,13 @@ static void Capture(Be be, const std::function<void(HIRBuilder&)>& generator,
   const uint32_t memory_size = 16 * 1024 * 1024;
   auto memory = std::make_unique<Memory>();
   memory->Initialize();
+  // Commit a scratch guest data region so memory-touching tests (atomic CAS,
+  // cache control) have a valid read/write address. Mirrors the PPC test
+  // harness's dummy region; harmless for the register-only tests.
+  memory->LookupHeap(0)->AllocFixed(
+      0x10001000, 0x10000, 0,
+      kMemoryAllocationReserve | kMemoryAllocationCommit,
+      kMemoryProtectRead | kMemoryProtectWrite);
 
   std::unique_ptr<backend::Backend> backend;
   if (be == Be::kA64) {
@@ -345,6 +352,71 @@ TEST_CASE("LLVM_CALL_RECURSIVE", "[llvm]") {
       [](PPCContext* ctx) {
         ctx->r[3] = 5;  // expect r4 == 15, r3 == 0
         ctx->r[4] = 0;
+      });
+}
+
+TEST_CASE("LLVM_ATOMIC_COMPARE_EXCHANGE", "[llvm]") {
+  // i32 + i64 strong CAS against committed scratch memory. Validates success/
+  // fail bool and the post-CAS memory value match the a64 backend bit-for-bit.
+  RunDiff(
+      [](HIRBuilder& b) {
+        // Guest EAs are i64 in HIR (the a64 LOAD/STORE/ATOMIC sequences are
+        // typed I64Op for the address); match real frontend usage.
+        auto* a32 = b.LoadConstantUint64(0x10002000ull);
+        b.Store(a32, b.LoadConstantUint32(0x11111111u));
+        // expected matches -> swaps to 0x22222222, returns 1.
+        auto* ok1 = b.AtomicCompareExchange(
+            a32, b.LoadConstantUint32(0x11111111u),
+            b.LoadConstantUint32(0x22222222u));
+        // expected no longer matches -> returns 0, memory unchanged.
+        auto* ok2 = b.AtomicCompareExchange(
+            a32, b.LoadConstantUint32(0x11111111u),
+            b.LoadConstantUint32(0x33333333u));
+        StoreGPR(b, 3, b.ZeroExtend(ok1, INT64_TYPE));
+        StoreGPR(b, 4, b.ZeroExtend(ok2, INT64_TYPE));
+        StoreGPR(b, 5, b.ZeroExtend(b.Load(a32, INT32_TYPE), INT64_TYPE));
+
+        auto* a64v = b.LoadConstantUint64(0x10002010ull);
+        b.Store(a64v, b.LoadConstantUint64(0xCAFEF00DDEADBEEFull));
+        auto* ok3 = b.AtomicCompareExchange(
+            a64v, b.LoadConstantUint64(0xCAFEF00DDEADBEEFull),
+            b.LoadConstantUint64(0x0123456789ABCDEFull));
+        StoreGPR(b, 6, b.ZeroExtend(ok3, INT64_TYPE));
+        StoreGPR(b, 7, b.Load(a64v, INT64_TYPE));
+        b.Return();
+      },
+      [](PPCContext*) {});
+}
+
+TEST_CASE("LLVM_CACHE_CONTROL", "[llvm]") {
+  // Cache hints are architectural no-ops; r3 must be untouched through them
+  // (both backends produce r3 == 42).
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* addr = b.LoadConstantUint64(0x10002000ull);  // i64 EA (see above)
+        b.CacheControl(addr, 128, CACHE_CONTROL_TYPE_DATA_TOUCH);
+        b.CacheControl(addr, 128, CACHE_CONTROL_TYPE_DATA_TOUCH_FOR_STORE);
+        b.CacheControl(addr, 128, CACHE_CONTROL_TYPE_DATA_STORE);
+        StoreGPR(b, 3, b.Add(LoadGPR(b, 3), b.LoadConstantInt64(1)));
+        b.Return();
+      },
+      [](PPCContext* ctx) { ctx->r[3] = 41; });
+}
+
+TEST_CASE("LLVM_LOAD_VECTOR_SHL_SHR", "[llvm]") {
+  // lvsl/lvsr permute-control vectors, runtime + constant shift amounts.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.LoadVectorShl(b.Truncate(LoadGPR(b, 3), INT8_TYPE)));
+        StoreVR(b, 1, b.LoadVectorShr(b.Truncate(LoadGPR(b, 4), INT8_TYPE)));
+        StoreVR(b, 2, b.LoadVectorShl(b.LoadConstantInt8(0)));
+        StoreVR(b, 3, b.LoadVectorShr(b.LoadConstantInt8(15)));
+        StoreVR(b, 4, b.LoadVectorShl(b.LoadConstantInt8(7)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->r[3] = 5;
+        ctx->r[4] = 11;
       });
 }
 

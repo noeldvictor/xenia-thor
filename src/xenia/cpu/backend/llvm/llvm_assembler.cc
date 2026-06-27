@@ -881,6 +881,38 @@ bool Lowerer::LowerInstr(Instr* i) {
       b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
     }
+    case OPCODE_ATOMIC_COMPARE_EXCHANGE: {
+      // dest(i8 success) = CAS(*[membase+EA], expected, desired). Matches a64's
+      // casal / ldaxr-stlxr-retry: strong CAS, dest = (old == expected). src1 =
+      // guest EA, src2 = expected, src3 = desired (i32 or i64). Acquire-release
+      // ordering == casal (acquire on the load, release on the store).
+      auto* ea = V(i->src1.value);
+      auto* expected = V(i->src2.value);
+      auto* desired = V(i->src3.value);
+      if (!ea || !expected || !desired) return false;
+      auto* ity = expected->getType();
+      if (!ity->isIntegerTy() || expected->getType() != desired->getType()) {
+        return false;
+      }
+      unsigned bits = ity->getIntegerBitWidth();
+      if (bits != 32 && bits != 64) return false;
+      auto* cx = b_.CreateAtomicCmpXchg(
+          MemPtr(ea), expected, desired, llvm::MaybeAlign(bits / 8),
+          llvm::AtomicOrdering::AcquireRelease, llvm::AtomicOrdering::Acquire,
+          llvm::SyncScope::System);
+      // strong CAS (no spurious failure) = the a64 retry loop / LSE casal.
+      cx->setWeak(false);
+      Def(i->dest, b_.CreateZExt(b_.CreateExtractValue(cx, 1), T(i->dest->type)));
+      return true;
+    }
+    case OPCODE_CACHE_CONTROL:
+      // Prefetch / cache-flush hints only (dcbt/dcbtst/dcbf/dcbst). No
+      // architectural effect in the emulator: host guest-memory is always
+      // coherent, and dcbz (zero a line) is lowered as a store by the PPC
+      // frontend, NOT as CACHE_CONTROL. The a64 backend emits only prfm / dc
+      // civac here, neither of which changes guest-visible state -> a no-op is
+      // byte-identical to the a64 result (and lets the function stay in LLVM).
+      return true;
 
     // ---- control flow ----
     case OPCODE_BRANCH: {
@@ -1238,6 +1270,29 @@ bool Lowerer::LowerInstr(Instr* i) {
       }
       Def(i->dest,
           b_.CreateBitCast(b_.CreateVectorSplat(lanes, s), T(VEC128_TYPE)));
+      return true;
+    }
+    case OPCODE_LOAD_VECTOR_SHL:
+    case OPCODE_LOAD_VECTOR_SHR: {
+      // lvsl/lvsr permute-control vector: a base byte pattern +/- splat(sh & 0xF)
+      // (8-bit wrapping), exactly matching the a64 sequence. The base is in PPC
+      // byte order (byte-swapped within each 32-bit word): SHL indices 0..15 ->
+      // {3,2,1,0, 7,6,5,4, 11,10,9,8, 15,14,13,12}; SHR is indices 16..31. The
+      // <16 x i8> element k maps to memory byte k (little-endian carrier), so it
+      // is byte-identical to the a64 store. Pure integer => exact.
+      auto* sh = V(i->src1.value);  // i8 shift amount
+      if (!sh) return false;
+      bool shl = (op == OPCODE_LOAD_VECTOR_SHL);
+      const uint8_t shl_base[16] = {3, 2, 1, 0,  7,  6,  5,  4,
+                                    11, 10, 9, 8, 15, 14, 13, 12};
+      const uint8_t shr_base[16] = {19, 18, 17, 16, 23, 22, 21, 20,
+                                    27, 26, 25, 24, 31, 30, 29, 28};
+      auto* base = llvm::ConstantDataVector::get(
+          ctx_, llvm::ArrayRef<uint8_t>(shl ? shl_base : shr_base, 16));
+      auto* amt = b_.CreateVectorSplat(
+          16, b_.CreateAnd(sh, b_.getInt8(0xF)));  // <16 x i8>
+      auto* r = shl ? b_.CreateAdd(base, amt) : b_.CreateSub(base, amt);
+      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
       return true;
     }
 
