@@ -10,6 +10,7 @@
 #include "xenia/cpu/mmio_handler.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <utility>
 
@@ -480,7 +481,29 @@ bool MMIOHandler::ExceptionCallback(Exception* ex) {
   auto p = reinterpret_cast<const uint8_t*>(rip);
   DecodedLoadStore decoded_load_store{};
   if (!TryDecodeLoadStore(p, decoded_load_store)) {
-    XELOGE("Unable to decode MMIO load or store instruction at {}", p);
+    // The faulting instruction is in a form the (a64-JIT-tuned) decoder doesn't
+    // recognize. This is the on-device "signal storm" signature for the LLVM-JIT
+    // backend: its optimizer can emit merged / paired (LDP/STP) / widened (64-
+    // bit) / vectorized / reordered guest load-store forms the decoder rejects.
+    // A rejected MMIO fault is never resolved nor advanced, so the instruction
+    // re-executes and re-faults forever (0 fps). Log the EXACT encoding (rate-
+    // limited) so the offending form can be eliminated at codegen (preferred:
+    // emit single decodable LDR/STR) or added to the decoder, instead of
+    // silently re-faulting. The LLVM lowering now marks guest accesses volatile
+    // to keep them in the simple a64-identical single-register form.
+    static std::atomic<uint32_t> s_decode_fail_log_count{0};
+    uint32_t fail_n =
+        s_decode_fail_log_count.fetch_add(1, std::memory_order_relaxed);
+    if (fail_n < 32) {
+      uint32_t instr_word = *reinterpret_cast<const uint32_t*>(p);
+      XELOGE(
+          "MMIO: undecodable load/store @ host_pc={} instr=0x{:08X} "
+          "fault_host=0x{:X} guest_va=0x{:08X} is_write={} (#{}) - fault left "
+          "UNRESOLVED (will re-execute). If this repeats, the active CPU backend "
+          "emitted a guest memory access form the MMIO decoder can't handle.",
+          p, instr_word, reinterpret_cast<uintptr_t>(fault_host_address),
+          fault_guest_virtual_address, is_write, fail_n);
+    }
     assert_always("Unknown MMIO instruction type");
     return false;
   }

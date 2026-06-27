@@ -180,6 +180,19 @@ class Lowerer {
     return b_.CreateGEP(b_.getInt8Ty(), ctx_ptr_, b_.getInt64(offset));
   }
   // Host pointer into guest memory (x21 + ea, ea zero-extended to 64-bit).
+  // IMPORTANT: every guest LOAD/STORE through this pointer is emitted VOLATILE
+  // (see OPCODE_LOAD/STORE below). Guest memory accesses can fault into xenia's
+  // access-violation handler (MMIO ranges + GPU write-watches). For MMIO the
+  // handler hand-decodes the faulting ARM64 instruction and only recognizes a
+  // SINGLE 32-bit LDR/STR (the exact form the a64 JIT emits, mmio_handler.cc
+  // TryDecodeLoadStore). LLVM's optimizer, left unconstrained, merges / pairs
+  // (LDP/STP) / widens (64-bit) / vectorizes / reorders these accesses, so the
+  // handler can't decode them -> the fault is never resolved -> the instruction
+  // re-faults forever (the device "signal storm" = 0 fps). Volatile forbids all
+  // of that, keeping each guest access a single decodable LDR/STR with its byte-
+  // swap REV adjacent. This does NOT cost the residency win: context/local slots
+  // (LOAD/STORE_CONTEXT, LOAD/STORE_LOCAL) stay non-volatile and are still
+  // promoted to SSA registers; only true guest-memory traffic is pinned.
   llvm::Value* MemPtr(llvm::Value* ea) {
     auto* ea64 = b_.CreateZExtOrTrunc(ea, b_.getInt64Ty());
     return b_.CreateGEP(b_.getInt8Ty(), membase_, ea64);
@@ -622,7 +635,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
       if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
-      auto* v = b_.CreateLoad(ty, MemPtr(ea));
+      auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
     }
@@ -632,7 +645,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       if (!ea || !val) return false;
       if (IsVec(val)) return false;  // vector mem+byteswap -> a64 (P3)
       val = MaybeByteSwap(val, val->getType(), i->flags);
-      b_.CreateStore(val, MemPtr(ea));
+      b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
     }
     case OPCODE_LOAD_OFFSET: {
@@ -643,7 +656,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       if (ty->isVectorTy()) return false;  // vector mem+byteswap -> a64 (P3)
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
-      auto* v = b_.CreateLoad(ty, MemPtr(ea));
+      auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
       Def(i->dest, MaybeByteSwap(v, ty, i->flags));
       return true;
     }
@@ -656,7 +669,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = b_.CreateAdd(b_.CreateZExtOrTrunc(base, b_.getInt64Ty()),
                               b_.CreateZExtOrTrunc(off, b_.getInt64Ty()));
       val = MaybeByteSwap(val, val->getType(), i->flags);
-      b_.CreateStore(val, MemPtr(ea));
+      b_.CreateStore(val, MemPtr(ea), /*isVolatile=*/true);
       return true;
     }
 

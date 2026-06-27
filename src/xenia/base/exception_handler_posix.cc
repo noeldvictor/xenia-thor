@@ -11,6 +11,7 @@
 
 #include <signal.h>
 #include <ucontext.h>
+#include <atomic>
 #include <cstdint>
 
 #include "xenia/base/assert.h"
@@ -230,6 +231,34 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
       return;
     }
   }
+
+  // No xenia handler resolved this fault. On POSIX we then fall through and
+  // RETURN from the signal handler WITHOUT advancing the PC or chaining to the
+  // original handler -> the kernel re-executes the faulting instruction. If the
+  // fault is deterministic this is an infinite re-fault "signal storm" (0 fps,
+  // no crash). This is exactly what the LLVM-JIT backend hit: a fault in
+  // ORCv2-JIT'd code whose PC is outside the a64 code cache, so MMIOHandler /
+  // A64Backend / Emulator all reject it. Log the fault (rate-limited) so the
+  // offending PC / instruction / address / guest ctx+membase is visible instead
+  // of a silent hang. x[20]=guest PPCContext, x[21]=guest membase (a wrong x21
+  // here => the JIT emitted/clobbered membase => wild guest address).
+#if XE_ARCH_ARM64
+  {
+    static std::atomic<uint32_t> s_unhandled_log{0};
+    uint32_t un = s_unhandled_log.fetch_add(1, std::memory_order_relaxed);
+    if (un < 16) {
+      uint32_t insn = *reinterpret_cast<const uint32_t*>(mcontext.pc);
+      XELOGE(
+          "UNHANDLED host fault #{}: code={} pc={:016X} insn=0x{:08X} "
+          "fault_addr={:016X} x20_ctx={:016X} x21_membase={:016X} x30_lr={:016X}"
+          " - no handler resolved it; return will re-fault (signal storm). "
+          "Likely a JIT codegen bug (wild addr / bad instr / membase).",
+          un, static_cast<uint32_t>(ex.code()), uint64_t(mcontext.pc), insn,
+          uint64_t(ex.fault_address()), uint64_t(mcontext.regs[20]),
+          uint64_t(mcontext.regs[21]), uint64_t(mcontext.regs[30]));
+    }
+  }
+#endif  // XE_ARCH_ARM64
 }
 
 void ExceptionHandler::Install(Handler fn, void* data) {
