@@ -274,6 +274,14 @@ class Lowerer {
           return llvm::ConstantFP::get(b_.getFloatTy(), v->constant.f32);
         case FLOAT64_TYPE:
           return llvm::ConstantFP::get(b_.getDoubleTy(), v->constant.f64);
+        case VEC128_TYPE: {
+          // Materialize a 128-bit constant as the <4 x i32> carrier (element k =
+          // word k = vec128_t.u32[k], matching the a64 LoadV128Const byte order).
+          uint32_t w[4] = {v->constant.v128.u32[0], v->constant.v128.u32[1],
+                           v->constant.v128.u32[2], v->constant.v128.u32[3]};
+          return llvm::ConstantDataVector::get(ctx_,
+                                               llvm::ArrayRef<uint32_t>(w, 4));
+        }
         default:
           return nullptr;
       }
@@ -1568,28 +1576,68 @@ bool Lowerer::LowerInstr(Instr* i) {
       return true;
     }
     case OPCODE_PERMUTE: {
-      // I32-control word permute across src2/src3 (vmrghw/vmrglw etc.): each
-      // control byte k selects dword (sel&3) from src2 (bit2=0) or src3 (bit2=1)
-      // -> a constant 2-input shufflevector on <4 x i32>. The V128-control byte/
-      // halfword permute form still falls back to a64.
-      if (i->src1.value->type != INT32_TYPE || !i->src1.value->IsConstant()) {
-        return false;
-      }
-      uint32_t ctrl = i->src1.value->constant.i32;
       auto* s2 = V(i->src2.value);
       auto* s3 = V(i->src3.value);
       if (!s2 || !s3) return false;
-      auto* lt = LaneVecTy(INT32_TYPE);
-      int m[4];
-      for (int idx = 0; idx < 4; idx++) {
-        uint8_t sel = (ctrl >> (idx * 8)) & 0xFF;
-        m[idx] = int(sel & 3) + (((sel >> 2) & 1) ? 4 : 0);
+      if (i->src1.value->type == INT32_TYPE) {
+        // I32-control word permute (vmrghw/vmrglw): each control byte k selects a
+        // dword (sel&3) from src2 (bit2=0) or src3 (bit2=1) -> 2-input shuffle.
+        if (!i->src1.value->IsConstant()) return false;
+        uint32_t ctrl = i->src1.value->constant.i32;
+        auto* lt = LaneVecTy(INT32_TYPE);
+        int m[4];
+        for (int idx = 0; idx < 4; idx++) {
+          uint8_t sel = (ctrl >> (idx * 8)) & 0xFF;
+          m[idx] = int(sel & 3) + (((sel >> 2) & 1) ? 4 : 0);
+        }
+        Def(i->dest, b_.CreateBitCast(
+                         b_.CreateShuffleVector(b_.CreateBitCast(s2, lt),
+                                                b_.CreateBitCast(s3, lt),
+                                                llvm::ArrayRef<int>(m, 4)),
+                         T(VEC128_TYPE)));
+        return true;
       }
-      auto* r = b_.CreateShuffleVector(b_.CreateBitCast(s2, lt),
-                                       b_.CreateBitCast(s3, lt),
-                                       llvm::ArrayRef<int>(m, 4));
-      Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
-      return true;
+      // V128-control byte/halfword permute across {src2, src3}.
+      auto* i8x16 = LaneVecTy(INT8_TYPE);
+      auto* a = b_.CreateBitCast(s2, i8x16);
+      auto* bb = b_.CreateBitCast(s3, i8x16);
+      TypeName pt = static_cast<TypeName>(i->flags);
+      if (pt == INT8_TYPE) {
+        // remap = (control ^ 3) & 0x1F (PPC byte index -> LE, 5-bit table range)
+        // then a 2-table TBL (tbl2). Works for dynamic AND constant control.
+        auto* c = V(i->src1.value);
+        if (!c) return false;
+        auto* remap = b_.CreateAnd(
+            b_.CreateXor(b_.CreateBitCast(c, i8x16),
+                         llvm::ConstantInt::get(i8x16, 3)),
+            llvm::ConstantInt::get(i8x16, 0x1F));
+        Def(i->dest,
+            b_.CreateBitCast(
+                b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl2, {i8x16},
+                                   {a, bb, remap}),
+                T(VEC128_TYPE)));
+        return true;
+      }
+      if (pt == INT16_TYPE) {
+        // Constant halfword control -> precomputed byte-level shuffle mask: PPC
+        // halfword H maps to NEON u16 (H&7)^1, +16 bytes if H>=8 (from src3).
+        if (!i->src1.value->IsConstant()) return false;
+        auto& cv = i->src1.value->constant.v128;
+        int m[16];
+        for (int k = 0; k < 8; k++) {
+          uint16_t h = cv.u16[k] & 0xF;
+          int base = (h >= 8) ? 16 : 0;
+          int neon_hw = (h & 7) ^ 1;
+          m[2 * k] = base + 2 * neon_hw;
+          m[2 * k + 1] = base + 2 * neon_hw + 1;
+        }
+        Def(i->dest,
+            b_.CreateBitCast(
+                b_.CreateShuffleVector(a, bb, llvm::ArrayRef<int>(m, 16)),
+                T(VEC128_TYPE)));
+        return true;
+      }
+      return false;
     }
     case OPCODE_ROUND: {
       // Round-to-integral, scalar f32/f64 or V128 f32x4. Mode from flags maps to

@@ -709,6 +709,28 @@ TEST_CASE("LLVM_LOG2_POW2", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_PERMUTE_V128", "[llvm]") {
+  // INT8 byte permute (dynamic control vector, tbl2) + INT16 halfword permute
+  // (constant control, byte-level shuffle) across src2/src3.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0,
+                b.Permute(LoadVR(b, 6), LoadVR(b, 4), LoadVR(b, 5), INT8_TYPE));
+        vec128_t h{};
+        for (int k = 0; k < 8; k++) h.u16[k] = (uint16_t)((k * 3 + 1) & 0xF);
+        StoreVR(b, 1, b.Permute(b.LoadConstantVec128(h), LoadVR(b, 4),
+                                LoadVR(b, 5), INT16_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        for (int k = 0; k < 16; k++) {
+          ctx->v[4].u8[k] = (uint8_t)(0x10 + k);
+          ctx->v[5].u8[k] = (uint8_t)(0x20 + k);
+          ctx->v[6].u8[k] = (uint8_t)((k * 5 + 2) & 0x1F);
+        }
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a
