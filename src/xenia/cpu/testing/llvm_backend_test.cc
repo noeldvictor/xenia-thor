@@ -860,6 +860,30 @@ TEST_CASE("LLVM_UNPACK_INT_WIDEN", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_PACK_INT_NARROW", "[llvm]") {
+  // PACK 8_IN_16 / 16_IN_32 (2-input narrows): saturate s->u, modulo, signed
+  // sat, unsigned sat. The 0x7FFF/0x8000/0xFFFE lanes exercise saturation.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 0, b.Pack(LoadVR(b, 4), LoadVR(b, 5),
+                             PACK_TYPE_8_IN_16 | PACK_TYPE_OUT_UNSIGNED |
+                                 PACK_TYPE_OUT_SATURATE));
+        StoreVR(b, 1, b.Pack(LoadVR(b, 4), LoadVR(b, 5), PACK_TYPE_8_IN_16));
+        StoreVR(b, 2, b.Pack(LoadVR(b, 4), LoadVR(b, 5),
+                             PACK_TYPE_16_IN_32 | PACK_TYPE_OUT_SATURATE));
+        StoreVR(b, 3, b.Pack(LoadVR(b, 4), LoadVR(b, 5),
+                             PACK_TYPE_16_IN_32 | PACK_TYPE_IN_UNSIGNED |
+                                 PACK_TYPE_OUT_UNSIGNED | PACK_TYPE_OUT_SATURATE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->v[4].u32[0] = 0x7FFF8000u; ctx->v[4].u32[1] = 0x00FF0100u;
+        ctx->v[4].u32[2] = 0x12345678u; ctx->v[4].u32[3] = 0x9ABCDEF0u;
+        ctx->v[5].u32[0] = 0x80007FFFu; ctx->v[5].u32[1] = 0xFFFE0001u;
+        ctx->v[5].u32[2] = 0xCAFEBABEu; ctx->v[5].u32[3] = 0x0BADF00Du;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

@@ -1626,21 +1626,36 @@ bool Lowerer::LowerInstr(Instr* i) {
       return true;
     }
     case OPCODE_PACK: {
-      // VMX pack via xe_llvm_pack (clamp + float_to_xenos_half + bit-pack) for
-      // the single-input float formats. 8_IN_16/16_IN_32 (2-input + saturate)
-      // fall back to a64. src1 = the float vector; src2 is the const-zero second
-      // operand the single-input packs ignore.
+      // VMX pack. Single-input float formats -> xe_llvm_pack(scratch, flags).
+      // 8_IN_16/16_IN_32 are TWO-input integer narrows -> xe_llvm_pack2(s1, s2,
+      // flags). Both pass VEC128s by pointer via entry-block scratch allocas.
       uint32_t mode = i->flags & PACK_TYPE_MODE;
-      if (mode == PACK_TYPE_8_IN_16 || mode == PACK_TYPE_16_IN_32) return false;
+      auto* i32x4 = T(VEC128_TYPE);
+      auto* voidTy = llvm::Type::getVoidTy(ctx_);
+      if (mode == PACK_TYPE_8_IN_16 || mode == PACK_TYPE_16_IN_32) {
+        auto* s1 = V(i->src1.value);
+        auto* s2 = V(i->src2.value);
+        if (!s1 || !s2) return false;
+        auto* sc1 = EntryAlloca(i32x4);
+        auto* sc2 = EntryAlloca(i32x4);
+        b_.CreateStore(b_.CreateBitCast(s1, i32x4), sc1);
+        b_.CreateStore(b_.CreateBitCast(s2, i32x4), sc2);
+        auto callee2 = mod_->getOrInsertFunction(
+            "xe_llvm_pack2",
+            llvm::FunctionType::get(
+                voidTy, {b_.getPtrTy(), b_.getPtrTy(), b_.getInt32Ty()}, false));
+        b_.CreateCall(callee2, {sc1, sc2, b_.getInt32(i->flags)});
+        Def(i->dest, b_.CreateLoad(i32x4, sc1));
+        return true;
+      }
       auto* val = V(i->src1.value);
       if (!val) return false;
-      auto* i32x4 = T(VEC128_TYPE);
       auto* scratch = EntryAlloca(i32x4);
       b_.CreateStore(b_.CreateBitCast(val, i32x4), scratch);
       auto callee = mod_->getOrInsertFunction(
           "xe_llvm_pack",
-          llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
-                                  {b_.getPtrTy(), b_.getInt32Ty()}, false));
+          llvm::FunctionType::get(voidTy, {b_.getPtrTy(), b_.getInt32Ty()},
+                                  false));
       b_.CreateCall(callee, {scratch, b_.getInt32(i->flags)});
       Def(i->dest, b_.CreateLoad(i32x4, scratch));
       return true;

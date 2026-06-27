@@ -544,6 +544,76 @@ extern "C" void xe_llvm_pack(void* vd, uint32_t flags) {
       break;
   }
 }
+
+// VMX PACK 8_IN_16 / 16_IN_32 (TWO inputs: src1=VA, src2=VB). Narrows
+// halfwords->bytes or words->halfwords with saturate/modulo, then rev32.8H
+// (swap the two sub-elements within each 32-bit word). vs1_dst is src1 in and
+// the result out. Byte-exact vs a64; qemu-verified.
+extern "C" void xe_llvm_pack2(void* vs1_dst, void* vs2, uint32_t flags) {
+  auto* s1 = reinterpret_cast<xe::vec128_t*>(vs1_dst);
+  auto* s2 = reinterpret_cast<xe::vec128_t*>(vs2);
+  bool sat = xe::cpu::hir::IsPackOutSaturate(flags);
+  bool in_u = xe::cpu::hir::IsPackInUnsigned(flags);
+  bool out_u = xe::cpu::hir::IsPackOutUnsigned(flags);
+  switch (flags & xe::cpu::hir::PACK_TYPE_MODE) {
+    case xe::cpu::hir::PACK_TYPE_8_IN_16: {
+      auto nrw = [&](uint16_t h) -> uint8_t {
+        if (!sat) return uint8_t(h & 0xFFu);
+        if (in_u && out_u) return h > 255u ? 255u : uint8_t(h);          // uqxtn
+        if (!in_u && out_u) {                                            // sqxtun
+          int v = int16_t(h);
+          return uint8_t(v < 0 ? 0 : (v > 255 ? 255 : v));
+        }
+        if (!in_u && !out_u) {                                          // sqxtn
+          int v = int16_t(h);
+          return uint8_t(int8_t(v < -128 ? -128 : (v > 127 ? 127 : v)));
+        }
+        return h > 255u ? 255u : uint8_t(h);                            // uqxtn
+      };
+      uint8_t nb[16];
+      for (int k = 0; k < 8; k++) {
+        nb[k] = nrw(s1->u16[k]);
+        nb[8 + k] = nrw(s2->u16[k]);
+      }
+      xe::vec128_t r = {};
+      for (int w = 0; w < 4; w++) {
+        r.u8[4 * w + 0] = nb[4 * w + 2]; r.u8[4 * w + 1] = nb[4 * w + 3];
+        r.u8[4 * w + 2] = nb[4 * w + 0]; r.u8[4 * w + 3] = nb[4 * w + 1];
+      }
+      *s1 = r;
+      break;
+    }
+    case xe::cpu::hir::PACK_TYPE_16_IN_32: {
+      auto nrw = [&](uint32_t wv) -> uint16_t {
+        if (!sat) return uint16_t(wv & 0xFFFFu);
+        if (in_u && out_u) return wv > 0xFFFFu ? 0xFFFFu : uint16_t(wv);  // uqxtn
+        if (!in_u && out_u) {                                            // sqxtun
+          int64_t v = int32_t(wv);
+          return uint16_t(v < 0 ? 0 : (v > 0xFFFF ? 0xFFFF : v));
+        }
+        if (!in_u && !out_u) {                                          // sqxtn
+          int64_t v = int32_t(wv);
+          return uint16_t(int16_t(v < -32768 ? -32768 : (v > 32767 ? 32767 : v)));
+        }
+        return wv > 0xFFFFu ? 0xFFFFu : uint16_t(wv);                    // uqxtn
+      };
+      uint16_t nhw[8];
+      for (int k = 0; k < 4; k++) {
+        nhw[k] = nrw(s1->u32[k]);
+        nhw[4 + k] = nrw(s2->u32[k]);
+      }
+      xe::vec128_t r = {};
+      for (int w = 0; w < 4; w++) {
+        r.u16[2 * w] = nhw[2 * w + 1];
+        r.u16[2 * w + 1] = nhw[2 * w];
+      }
+      *s1 = r;
+      break;
+    }
+    default:
+      break;
+  }
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 namespace xe {
@@ -634,6 +704,7 @@ bool LLVMBackend::Initialize(Processor* processor) {
                   reinterpret_cast<void*>(&xe_llvm_exp2_lane));
     define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
     define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
+    define_helper("xe_llvm_pack2", reinterpret_cast<void*>(&xe_llvm_pack2));
   }
 #endif
 
