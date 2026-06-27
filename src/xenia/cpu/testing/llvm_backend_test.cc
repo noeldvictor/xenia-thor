@@ -595,6 +595,24 @@ TEST_CASE("LLVM_SWIZZLE_PERMUTE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_SET_ROUNDING_MODE", "[llvm]") {
+  // No-op in the LLVM backend (it sets the a64 backend's FPCR cache, not any
+  // guest register); confirm GPRs are untouched across it. DELAY_EXECUTION,
+  // SET_NJM, TO_SINGLE and DEBUG_BREAK have no public builder / are trap-halting,
+  // so they are covered by construction (no-op / fpext(fptrunc) / trap helper).
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreGPR(b, 3, b.Add(LoadGPR(b, 3), b.LoadConstantInt64(7)));
+        b.SetRoundingMode(b.LoadConstantUint32(2));
+        StoreGPR(b, 4, b.Add(LoadGPR(b, 4), b.LoadConstantInt64(9)));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->r[3] = 100;
+        ctx->r[4] = 200;
+      });
+}
+
 // NOTE: no differential test for CALL_TRUE / CALL_INDIRECT_TRUE — the a64
 // backend has no sequence for OPCODE_CALL_INDIRECT_TRUE ("No sequence match"),
 // so the PPC frontend never emits it (a64 is the production backend) and a

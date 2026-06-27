@@ -645,6 +645,49 @@ bool Lowerer::LowerInstr(Instr* i) {
       // trap_bb so Run()'s fall-through adds no spurious branch.
       return true;
     }
+    case OPCODE_DELAY_EXECUTION:
+      // Guest delay/spin hint (a64 emits `yield`). No architectural effect.
+      return true;
+    case OPCODE_SET_ROUNDING_MODE:
+    case OPCODE_SET_NJM:
+      // Set the a64 backend's CACHED FPCR (rounding mode / VMX flush-to-zero) -
+      // backend-internal state, not guest PPCContext; no guest register changes.
+      // The LLVM backend bakes in round-to-nearest + VMX denormal flush (the
+      // common 360 mode, NJM=1), so this is a no-op. (Guest non-nearest rounding
+      // / NJM=0 are not honored - rare; revisit only if a title needs them.)
+      return true;
+    case OPCODE_TO_SINGLE: {
+      // frsp: round a double to single precision and back. fcvt round-to-nearest
+      // (scalar FPU mode, no FZ); fcvt preserves NaN sign, so no fixup needed.
+      auto* a = V(i->src1.value);
+      if (!a || !a->getType()->isDoubleTy()) return false;
+      Def(i->dest, b_.CreateFPExt(b_.CreateFPTrunc(a, b_.getFloatTy()),
+                                  b_.getDoubleTy()));
+      return true;
+    }
+    case OPCODE_DEBUG_BREAK:
+      // Guest debug breakpoint -> trap (a64 emits BRK). Not differential-testable
+      // (it halts); correct by composition with the trap helper.
+      EmitTrapCall(0);
+      return true;
+    case OPCODE_DEBUG_BREAK_TRUE: {
+      auto* cond = V(i->src1.value);
+      if (!cond) return false;
+      bool fresh_cont = (i->next != nullptr) || (i->block->next == nullptr);
+      llvm::BasicBlock* cont = fresh_cont
+                                   ? llvm::BasicBlock::Create(ctx_, "c", fn_)
+                                   : BlockFor(i->block->next);
+      auto* brk_bb = llvm::BasicBlock::Create(ctx_, "brk", fn_);
+      b_.CreateCondBr(Truth(cond), brk_bb, cont);
+      b_.SetInsertPoint(brk_bb);
+      EmitTrapCall(0);
+      b_.CreateBr(cont);
+      if (fresh_cont) {
+        b_.SetInsertPoint(cont);
+        if (!i->next && !i->block->next) b_.CreateRetVoid();
+      }
+      return true;
+    }
     case OPCODE_SUB: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;
