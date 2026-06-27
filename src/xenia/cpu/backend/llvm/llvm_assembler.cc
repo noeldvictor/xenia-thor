@@ -1666,6 +1666,15 @@ bool Lowerer::LowerInstr(Instr* i) {
       // (they `mov dest, 0`), so the byte-identical lowering is a constant 0.
       Def(i->dest, b_.getInt8(0));
       return true;
+    case OPCODE_LOAD_CLOCK: {
+      // mftb: current guest tick count via the runtime helper. Non-deterministic
+      // (not differential-testable); matches a64 LoadClock.
+      auto callee = mod_->getOrInsertFunction(
+          "xe_llvm_load_clock",
+          llvm::FunctionType::get(b_.getInt64Ty(), {}, false));
+      Def(i->dest, b_.CreateCall(callee, {}));
+      return true;
+    }
     case OPCODE_LOAD_MMIO: {
       // MMIO register read: the MMIORange* (src1) + address (src2) are baked in
       // by the constant-propagation pass. Call range->read(ppc_ctx=x20,

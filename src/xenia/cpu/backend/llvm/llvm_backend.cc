@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -347,6 +348,12 @@ extern "C" uint32_t xe_llvm_exp2_lane(uint32_t bits) {
   f = std::exp2(f);
   std::memcpy(&bits, &f, 4);
   return bits;
+}
+
+// mftb (LOAD_CLOCK): the current guest tick count. Non-deterministic, so it is
+// not differential-testable; matches a64 LoadClock (Clock::QueryGuestTickCount).
+extern "C" uint64_t xe_llvm_load_clock() {
+  return xe::Clock::QueryGuestTickCount();
 }
 
 // VMX UNPACK (in-place on a vec128_t scratch). Byte-exact replica of a64 UNPACK
@@ -705,6 +712,8 @@ bool LLVMBackend::Initialize(Processor* processor) {
     define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
     define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
     define_helper("xe_llvm_pack2", reinterpret_cast<void*>(&xe_llvm_pack2));
+    define_helper("xe_llvm_load_clock",
+                  reinterpret_cast<void*>(&xe_llvm_load_clock));
   }
 #endif
 
