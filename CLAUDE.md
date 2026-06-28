@@ -17,14 +17,22 @@ fix was the project's biggest win; lever = driver-level perf + Adreno features).
 - **RPCS3 APPROACH = PRECOMPILE EVERYTHING AOT. Compile/boot time is IRRELEVANT** — do NOT optimize for it, do
   NOT report it as a cost, do NOT gate features on it. The only thing that matters is EFFICIENT codegen running
   during GAMEPLAY. (So residency's larger IR / slower compile is a non-problem: precompile it.)
-- **#1 codegen inefficiency (found 2026-06-28): the LLVM backend does NOT do register residency** — guest regs
-  are `ctx+offset` MEMORY, never promoted (IR-proven: 47 loads/52 stores/1 alloca). The guest thread is
-  memory-bound. Fix = `cpu_backend_llvm_context_residency` (built+gated+qemu-correct, 092eacdc3) MADE TO RENDER
-  via precompile (the compile cost is irrelevant) + AOT cache + (optional) liveness-only reload. [[llvm-jit-backend-build]]
-- **BD heavy field bottleneck (device-mapped, GPU IDLE so NOT GPU-bound): 3 ~equal CPU threads** — CP draw-issue
-  ~30% (per-draw RequestRange residency ~77ms), guest logic ~28% (memory-bound, the residency lever), PM4
-  `CommandProcessor::WriteRegister` ~27% (register-stream parse). Serialized. Stacked levers (residency ~3-5× +
-  CPU↔GPU de-serialization ~3× + per-draw/PM4 ~2×) = ~18-30× → closes the ~15× gap → 30fps.
+- **✅ THE #1 INEFFICIENCY WAS THE BUILD ITSELF (-O0) — found+fixed 2026-06-28.** `githubDebug` mapped its
+  native ndkBuild to PREMAKE config `Debug` = `optimize("Off")` = -O0, so the ENTIRE host emulator (CP, dispatch,
+  kernel) ran UNOPTIMIZED — confounding EVERY prior BD perf number. Switched the debug variant's native config to
+  Release/-O2 (cc1924d82): libxenia-app.so 301MB→99MB, ~15% trivial-accessor overhead (`__cxx_atomic_load`,
+  `Function::address`, `unique_ptr::get`) inlined away. **BD ~4fps → 19.9fps (≈5×, reliable VdSwap-window count, UNHANDLED=0).** [[thor-build-was-o0-now-o2]]
+- **Real -O2 bottleneck = GUEST-CALL DISPATCH plumbing** (BD is call-heavy) — NOT rendering / register-residency /
+  3-thread-serialization (those were -O0-confounded verdicts). SHIPPED (qemu byte-validated, device-confirmed at
+  19.9fps, b34a0f69b): per-call `ThreadState::Get()` TLS → derive `ts` from ctx/x20 (TLS 11.7%→6.4%); RTTI
+  `dynamic_cast<GuestFunction*>` → `is_guest()` (−4.7pp, gone from profile). **NEXT levers from the -O2 profile:**
+  non-tail guest-call INLINE-CACHE (resolve→direct machine_code call, skip helper+thunk+virtual `Function::Call`,
+  ~13%: `xe_llvm_guest_call` 8.3% + `GuestFunction::Call` 2.8% + `A64Function::CallImpl` 2.1%); `xe_llvm_call_extern`
+  TLS (residual ~6%); PM4 `WriteRegister` ~6.6%; HLE RtlEnter/Leave critical-section trampolines ~5.4%; `cas2`/
+  global-lock 2.3%. Residency (092eacdc3) is DEPRIORITIZED — it CRASHES at opt=2 on device + only touches the
+  guest thread (~1.2×); the dispatch wins are bigger + lower-risk.
+- **RELIABLE-FPS GOTCHA: clear logcat + 64M buffer + count VdSwap in a TIMED WINDOW** (`bd_hostprofile.ps1`) — the
+  sw1−sw0 delta goes NEGATIVE at -O2 (higher log throughput rotates the buffer → sw1<sw0 → bogus negative fps).
 - **DO NOT REBOOT THE DEVICE.** It does NOT degrade from repeated launches; never blame the device for a result.
 
 ### ✅ LLVM 100% EMITTABLE-OPCODE COVERAGE ACHIEVED (2026-06-27, device-validated)
