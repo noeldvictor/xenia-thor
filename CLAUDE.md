@@ -10,6 +10,23 @@ zero-copy [FIXED + enabled default-on 2026-06-27, present-hang gone]; (3) CPU/GP
 dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct path; the KGSL blocking-fence
 fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
 
+### 🔑🔑 BD-30 APPROACH — read before any perf work (user, 2026-06-28)
+- **THE THOR IS 10-20× MORE POWERFUL THAN THE XBOX 360.** BD ran ~30fps on the 360, so 30fps on the Thor is
+  EASILY achievable. BD at ~5fps = a **~15× EMULATION INEFFICIENCY to CLOSE**, NOT a hardware/foliage limit.
+  NEVER conclude "can't hit 30 / GPU-capped / content too heavy" — that is wrong; find the inefficiency.
+- **RPCS3 APPROACH = PRECOMPILE EVERYTHING AOT. Compile/boot time is IRRELEVANT** — do NOT optimize for it, do
+  NOT report it as a cost, do NOT gate features on it. The only thing that matters is EFFICIENT codegen running
+  during GAMEPLAY. (So residency's larger IR / slower compile is a non-problem: precompile it.)
+- **#1 codegen inefficiency (found 2026-06-28): the LLVM backend does NOT do register residency** — guest regs
+  are `ctx+offset` MEMORY, never promoted (IR-proven: 47 loads/52 stores/1 alloca). The guest thread is
+  memory-bound. Fix = `cpu_backend_llvm_context_residency` (built+gated+qemu-correct, 092eacdc3) MADE TO RENDER
+  via precompile (the compile cost is irrelevant) + AOT cache + (optional) liveness-only reload. [[llvm-jit-backend-build]]
+- **BD heavy field bottleneck (device-mapped, GPU IDLE so NOT GPU-bound): 3 ~equal CPU threads** — CP draw-issue
+  ~30% (per-draw RequestRange residency ~77ms), guest logic ~28% (memory-bound, the residency lever), PM4
+  `CommandProcessor::WriteRegister` ~27% (register-stream parse). Serialized. Stacked levers (residency ~3-5× +
+  CPU↔GPU de-serialization ~3× + per-draw/PM4 ~2×) = ~18-30× → closes the ~15× gap → 30fps.
+- **DO NOT REBOOT THE DEVICE.** It does NOT degrade from repeated launches; never blame the device for a result.
+
 ### ✅ LLVM 100% EMITTABLE-OPCODE COVERAGE ACHIEVED (2026-06-27, device-validated)
 Every opcode the PPC frontend EMITS is now LLVM-native (verified: `comm` of opcodes.h vs llvm_assembler.cc
 cases leaves only ATOMIC_EXCHANGE, LVR/STVL/STVR, RESERVED_LOAD/STORE — all UNEMITTABLE dead opcodes:
