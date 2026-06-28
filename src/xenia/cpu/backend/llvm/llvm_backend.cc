@@ -116,23 +116,21 @@ DEFINE_string(cpu_backend_llvm_trace_addr, "",
 // re-resolves). A resolved Function* is stable - the EntryTable owns it and
 // patches apply at module load, before execution.
 namespace {
-constexpr uint32_t kResolveCacheSize = 1u << 13;  // 8192 entries (128 KB)
-struct ResolveCacheEntry {
-  std::atomic<uint32_t> target{0};
-  std::atomic<xe::cpu::Function*> fn{nullptr};
-};
-ResolveCacheEntry g_resolve_cache[kResolveCacheSize];
+constexpr uint32_t kResolveCacheSize = 1u << 13;  // 8192 entries (64 KB)
+// SELF-VALIDATING: one atomic<Function*> per slot, no separate target field.
+// On a hit we verify fn->address() == target, so a stale entry (index
+// collision) OR a torn multi-writer update simply fails the check and
+// re-resolves - there is no way to return the WRONG Function* (a separate
+// target+fn pair is racy: an interleaved update can leave target=tA,fn=fnB and
+// hand back fnB for tA -> wild call -> fault storm; this avoids that entirely).
+std::atomic<xe::cpu::Function*> g_resolve_cache[kResolveCacheSize];
 inline xe::cpu::Function* xe_llvm_resolve_cached(xe::cpu::ThreadState* ts,
                                                  uint32_t target) {
-  auto& e = g_resolve_cache[(target >> 2) & (kResolveCacheSize - 1)];
-  if (e.target.load(std::memory_order_acquire) == target) {
-    if (auto* fn = e.fn.load(std::memory_order_relaxed)) return fn;
-  }
-  auto* fn = ts->processor()->ResolveFunction(target);
-  if (fn) {
-    e.fn.store(fn, std::memory_order_relaxed);
-    e.target.store(target, std::memory_order_release);
-  }
+  auto& slot = g_resolve_cache[(target >> 2) & (kResolveCacheSize - 1)];
+  auto* fn = slot.load(std::memory_order_acquire);
+  if (fn && fn->address() == target) return fn;
+  fn = ts->processor()->ResolveFunction(target);
+  if (fn) slot.store(fn, std::memory_order_release);
   return fn;
 }
 }  // namespace
