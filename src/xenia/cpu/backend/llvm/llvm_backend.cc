@@ -92,6 +92,18 @@ DEFINE_bool(cpu_backend_llvm_dump_ir, false,
             "a single function and read off codegen bugs device-free-ishly.",
             "CPU");
 
+DEFINE_bool(cpu_backend_llvm_context_residency, false,
+            "LLVM backend: promote guest registers (LOAD/STORE_CONTEXT) to "
+            "entry-block ALLOCAS that mem2reg lifts into host registers, instead "
+            "of the direct ctx+offset memory accesses the backend emits today. "
+            "Device-confirmed the IR has ~99 ctx memory ops + 1 alloca = NO "
+            "register residency (the guest thread is memory-bound, ~half of BD's "
+            "field CPU). Guest regs are loaded from the context once at entry, "
+            "used as allocas (-> registers), and written back to the context at "
+            "call/return barriers (the callee/caller reads the context via x20). "
+            "Default off pending qemu-differential + device A/B validation.",
+            "CPU");
+
 DEFINE_string(cpu_backend_llvm_skip_addrs, "",
               "Comma/space-separated hex guest addresses to FORCE onto the a64 "
               "backend (skip LLVM) WITHOUT a rebuild. Use to pin/mitigate a "

@@ -62,6 +62,7 @@ DECLARE_bool(cpu_backend_llvm_dump_ir);
 DECLARE_int32(cpu_backend_llvm_max_fns);
 DECLARE_string(cpu_backend_llvm_trace_addr);
 DECLARE_string(cpu_backend_llvm_skip_addrs);
+DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 
@@ -250,6 +251,7 @@ class Lowerer {
     auto* ret_addr = b_.CreateTrunc(
         b_.CreateLoad(b_.getInt64Ty(), next_call_ret_addr_), i32);
     b_.CreateCall(callee, {target_i32, ret_addr});
+    if (residency_) ReloadCtxRegs();  // callee may have changed guest state
   }
 
   // Guest CALL_EXTERN: call the extern HANDLER (C++) via xe_llvm_call_extern,
@@ -263,6 +265,7 @@ class Lowerer {
     auto* sym_ptr = b_.CreateIntToPtr(
         b_.getInt64(reinterpret_cast<uint64_t>(fn)), b_.getPtrTy());
     b_.CreateCall(callee, {sym_ptr});
+    if (residency_) ReloadCtxRegs();  // handler may have changed guest state
     baked_host_pointer_ = true;  // run-specific fn ptr -> not AOT-cacheable
   }
 
@@ -284,6 +287,8 @@ class Lowerer {
     // Callee ABI == this function's: void(i64 guest_return_address).
     auto* callee_ty = llvm::FunctionType::get(voidTy, {i64}, false);
     auto* my_ret = b_.CreateLoad(i64, my_ret_addr_);
+    // No flush needed: STORE_CONTEXT is write-through, so the context the
+    // tail-callee reads via x20 is already current.
     auto* call = b_.CreateCall(callee_ty, host, {my_ret});
     call->setTailCallKind(llvm::CallInst::TCK_MustTail);
     b_.CreateRetVoid();
@@ -426,6 +431,41 @@ class Lowerer {
   std::unordered_map<uint32_t, llvm::Value*> values_;
   std::unordered_map<uint32_t, llvm::AllocaInst*> locals_;
   std::unordered_map<uint16_t, llvm::BasicBlock*> block_map_;
+
+  // Guest-register residency (cpu_backend_llvm_context_residency): mirror
+  // LOAD/STORE_CONTEXT through entry-block allocas (mem2reg -> host registers)
+  // instead of ctx+offset memory, with write-back/reload at call barriers.
+  bool residency_ = false;
+  std::unordered_map<uint64_t, llvm::AllocaInst*> ctx_regs_;  // offset -> alloca
+  std::unordered_map<uint64_t, llvm::Type*> ctx_reg_ty_;      // offset -> type
+
+  // Get (lazily create) the alloca mirroring guest-context offset `offset`. The
+  // alloca + its init-load-from-ctx are inserted right after the entry x20/x21
+  // setup (so ctx_ptr_ dominates the init, and the alloca is in the entry block
+  // for mem2reg). Returns nullptr if a prior access used a different type (the
+  // offset then stays on the direct-ctx path - byte-exact, just not promoted).
+  llvm::AllocaInst* GetCtxReg(uint64_t offset, llvm::Type* ty) {
+    auto it = ctx_regs_.find(offset);
+    if (it != ctx_regs_.end()) {
+      return ctx_reg_ty_[offset] == ty ? it->second : nullptr;
+    }
+    auto* anchor = llvm::cast<llvm::Instruction>(membase_)->getNextNode();
+    llvm::IRBuilder<> eb(anchor);
+    auto* slot = eb.CreateAlloca(ty, nullptr, "gr");
+    auto* p = eb.CreateGEP(eb.getInt8Ty(), ctx_ptr_, eb.getInt64(offset));
+    eb.CreateStore(eb.CreateLoad(ty, p), slot);
+    ctx_regs_[offset] = slot;
+    ctx_reg_ty_[offset] = ty;
+    return slot;
+  }
+  // Reload all mirrored regs from the context (after a call: the callee may have
+  // changed guest state). The mirrors then match the post-call context.
+  void ReloadCtxRegs() {
+    for (auto& kv : ctx_regs_) {
+      auto* ty = ctx_reg_ty_[kv.first];
+      b_.CreateStore(b_.CreateLoad(ty, CtxPtr(kv.first)), kv.second);
+    }
+  }
 };
 
 // Reads a reserved AArch64 register (x20=ctx, x21=membase) set up by the
@@ -447,6 +487,11 @@ bool Lowerer::Run(HIRBuilder* builder) {
   ctx_ptr_ = b_.CreateIntToPtr(ReadReg(b_, mod_, "x20"), b_.getPtrTy(), "ctx");
   membase_ =
       b_.CreateIntToPtr(ReadReg(b_, mod_, "x21"), b_.getPtrTy(), "membase");
+  // Guest-register residency. The allocas are correct at any opt level (mem2reg
+  // at opt>0 lifts them to registers; at opt=0 they are correct-but-unpromoted
+  // memory) - so the qemu differential validates the LOGIC at opt=0. GetCtxReg
+  // anchors its allocas after membase_, so both x20/x21 are set first.
+  residency_ = cvars::cpu_backend_llvm_context_residency;
 
   // Save the incoming guest return address (x0, per the a64 host->guest thunk:
   // "mov x0, x2 // x0 = guest return address") and init the next-call slot.
@@ -486,6 +531,25 @@ bool Lowerer::Run(HIRBuilder* builder) {
     uint32_t ta = ts.empty() ? 0 : uint32_t(std::strtoull(ts.c_str(), nullptr, 16));
     trace_this_ = (ta != 0 && ta == guest_addr_);
     if (trace_this_) EmitTrace(guest_addr_);  // entry: tag = fn addr
+  }
+
+  // Residency: pre-create ALL guest-register allocas up front (eager) so the
+  // reload-after-call refresh covers every reg - including ones FIRST used after
+  // a call. A lazily-created alloca would have missed the earlier reloads and
+  // kept its stale entry-block init value (device: BD hung on a wrong post-call
+  // register). The entry init-load (in GetCtxReg) dominates all uses; the
+  // reload-at-call then keeps every mirror in sync with the context.
+  if (residency_) {
+    for (Block* blk = builder->first_block(); blk; blk = blk->next) {
+      for (Instr* i = blk->instr_head; i; i = i->next) {
+        Opcode op = i->opcode->num;
+        if (op == OPCODE_LOAD_CONTEXT) {
+          if (auto* ty = T(i->dest->type)) GetCtxReg(i->src1.offset, ty);
+        } else if (op == OPCODE_STORE_CONTEXT && i->src2.value) {
+          if (auto* ty = T(i->src2.value->type)) GetCtxReg(i->src1.offset, ty);
+        }
+      }
+    }
   }
 
   // One llvm BB per HIR block, created up front so branches can target them.
@@ -562,12 +626,29 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_LOAD_CONTEXT: {
       auto* ty = T(i->dest->type);
       if (!ty) return false;
+      if (residency_) {
+        if (auto* slot = GetCtxReg(i->src1.offset, ty)) {
+          Def(i->dest, b_.CreateLoad(ty, slot));
+          return true;
+        }
+      }
       Def(i->dest, b_.CreateLoad(ty, CtxPtr(i->src1.offset)));
       return true;
     }
     case OPCODE_STORE_CONTEXT: {
       auto* val = V(i->src2.value);
       if (!val) return false;
+      if (residency_) {
+        if (auto* slot = GetCtxReg(i->src1.offset, val->getType())) {
+          // WRITE-THROUGH: mirror to the alloca (mem2reg -> register for fast
+          // subsequent loads) AND the context memory, so the context is always
+          // current for callees/helpers reading via x20 - no flush-at-barrier
+          // needed (only a reload after calls, since the callee may change it).
+          b_.CreateStore(val, slot);
+          b_.CreateStore(val, CtxPtr(i->src1.offset));
+          return true;
+        }
+      }
       b_.CreateStore(val, CtxPtr(i->src1.offset));
       return true;
     }

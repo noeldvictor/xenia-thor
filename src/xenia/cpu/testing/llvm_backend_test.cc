@@ -23,6 +23,7 @@
 #include "xenia/cpu/testing/util.h"
 
 DECLARE_int32(cpu_backend_llvm_opt);
+DECLARE_bool(cpu_backend_llvm_context_residency);
 
 using namespace xe;                // xe::Memory
 using namespace xe::cpu;
@@ -100,6 +101,10 @@ static void RunDiff(const std::function<void(HIRBuilder&)>& generator,
   // O0: skip the (qemu-slow) middle-end passes; correctness needs only the
   // direct-ctx lowering. The residency win (O2) is validated on-device.
   cvars::cpu_backend_llvm_opt = 0;
+  // Validate the context-register residency lowering (allocas + write-through +
+  // reload) byte-for-byte against a64. Correct at opt=0 (allocas as memory);
+  // mem2reg only changes speed, not semantics.
+  cvars::cpu_backend_llvm_context_residency = true;
   uint64_t ra[32] = {0}, rl[32] = {0};
   uint32_t va[32] = {0}, vl[32] = {0};
   Capture(Be::kA64, generator, pre_call, ra, va);
