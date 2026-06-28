@@ -33,6 +33,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
@@ -58,6 +59,7 @@ DECLARE_string(cpu_backend_llvm_range_hi);
 DECLARE_bool(cpu_backend_llvm_dump_ir);
 DECLARE_int32(cpu_backend_llvm_max_fns);
 DECLARE_string(cpu_backend_llvm_trace_addr);
+DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 
@@ -2065,6 +2067,12 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     mod->setModuleIdentifier(idbuf);
   }
 
+  // Diagnostic: log the function address IMMEDIATELY BEFORE codegen (addIRModule
+  // -> lazy lookup triggers libLLVM AsmPrinter/MC). A function whose codegen
+  // CRASHES libLLVM (the intermittent re-fault storm device-pinned to libLLVM.so)
+  // never reaches its LLVMmap/LLVMseq line, so the LAST "LLVMbegin" with no
+  // matching "LLVMmap" pins the crashing guest function. Cheap; one line/fn.
+  XELOGI("LLVMbegin guest=0x{:08X}", function->address());
   if (auto err = jit.addIRModule(
           llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
     XELOGE("LLVMAssembler: addIRModule failed: {}",
@@ -2101,6 +2109,28 @@ bool LLVMAssembler::Assemble(GuestFunction* function, hir::HIRBuilder* builder,
   // the rest use a64. Used to localize which function's LLVM codegen corrupts
   // state. Empty (default) bounds = no restriction = compile everything.
   uint32_t addr = function->address();
+  // Force-a64 skip list (cpu_backend_llvm_skip_addrs): mitigate a libLLVM
+  // codegen-crashing function by falling it back to a64 WITHOUT a rebuild. Parsed
+  // once into a set (Assemble runs per-function).
+  static const std::unordered_set<uint32_t> s_skip_addrs = [] {
+    std::unordered_set<uint32_t> s;
+    const std::string& v = cvars::cpu_backend_llvm_skip_addrs;
+    size_t i = 0;
+    while (i < v.size()) {
+      while (i < v.size() && (v[i] == ',' || v[i] == ' ')) ++i;
+      size_t j = i;
+      while (j < v.size() && v[j] != ',' && v[j] != ' ') ++j;
+      if (j > i) {
+        s.insert(uint32_t(std::strtoull(v.substr(i, j - i).c_str(), nullptr, 16)));
+      }
+      i = j;
+    }
+    return s;
+  }();
+  if (!s_skip_addrs.empty() && s_skip_addrs.count(addr)) {
+    return fallback_->Assemble(function, builder, debug_info_flags,
+                               std::move(debug_info));
+  }
   const std::string& lo_s = cvars::cpu_backend_llvm_range_lo;
   const std::string& hi_s = cvars::cpu_backend_llvm_range_hi;
   uint32_t lo = lo_s.empty() ? 0 : uint32_t(std::strtoull(lo_s.c_str(), nullptr, 16));

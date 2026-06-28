@@ -137,6 +137,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_dump_ir");
             copyIntExtra(intent, launchArguments, "cpu_backend_llvm_max_fns");
             copyStringExtra(intent, launchArguments, "cpu_backend_llvm_trace_addr");
+            copyStringExtra(intent, launchArguments, "cpu_backend_llvm_skip_addrs");
             copyStringExtra(intent, launchArguments, "cpu_perf_map_path");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyStringExtra(intent, launchArguments, "apu");

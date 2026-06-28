@@ -92,6 +92,14 @@ DEFINE_bool(cpu_backend_llvm_dump_ir, false,
             "a single function and read off codegen bugs device-free-ishly.",
             "CPU");
 
+DEFINE_string(cpu_backend_llvm_skip_addrs, "",
+              "Comma/space-separated hex guest addresses to FORCE onto the a64 "
+              "backend (skip LLVM) WITHOUT a rebuild. Use to pin/mitigate a "
+              "function whose LLVM codegen crashes libLLVM (the intermittent "
+              "AsmPrinter re-fault storm): find the last 'LLVMbegin' with no "
+              "matching 'LLVMmap' in logcat, then list that address here.",
+              "CPU");
+
 DEFINE_string(cpu_backend_llvm_trace_addr, "",
               "Hex guest address. When an LLVM-compiled CALLER invokes this guest "
               "fn via xe_llvm_guest_call, log its input regs (r3/r4/r5/r1/lr) "
