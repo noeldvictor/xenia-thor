@@ -241,12 +241,15 @@ class Lowerer {
   // function + invokes it). x20/x21 are AAPCS callee-saved across this C call.
   void EmitGuestCall(llvm::Value* target_i32) {
     auto* i32 = llvm::Type::getInt32Ty(ctx_);
-    // xe_llvm_guest_call(target, ret_addr): resolve + invoke. ret_addr (the
-    // guest return address stashed by SET_RETURN_ADDRESS) is forwarded to the
-    // callee's x0 via the host->guest thunk, so the callee recognizes its own
-    // blr RETURN. Defaults to 0 if SET_RETURN_ADDRESS was not emitted.
-    // Pass the guest context (x20) as arg0 so the helper derives ThreadState from
-    // ctx->thread_state instead of a per-call thread_local (TLS) lookup.
+    // xe_llvm_guest_call(ctx, target, ret_addr): resolve + invoke via the helper
+    // (C dispatch + host_to_guest_thunk). ctx (x20) lets it skip the per-call
+    // thread_local lookup. A non-tail INLINE-CACHE (resolve -> direct machine_code
+    // call) was tried TWICE (with and without TCK_NoTail): qemu byte-correct
+    // (2624 assertions) but CRASHES BD natively at opt=2 on device. The JIT'd
+    // direct call doesn't replicate the host_to_guest_thunk's frame setup that the
+    // callee needs (a64 does the equivalent in raw asm; LLVM CreateCall at opt=2
+    // does not). Helper path kept; revisit only with a full opt=2 bisection
+    // (cpu_backend_llvm_max_fns / _dump_ir - the residency playbook).
     auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
                                         {b_.getPtrTy(), i32, i32}, false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
@@ -261,12 +264,14 @@ class Lowerer {
   // thunk -> infinite recursion). The symbol Function* is baked in as a constant
   // (stable across the run); the helper dispatches to handler/extern_handler.
   void EmitCallExtern(xe::cpu::Function* fn) {
+    // Pass ctx (x20) so the helper derives context/thread_state from it instead
+    // of a per-call thread_local ThreadState::Get() TLS lookup.
     auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
-                                        {b_.getPtrTy()}, false);
+                                        {b_.getPtrTy(), b_.getPtrTy()}, false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_call_extern", fty);
     auto* sym_ptr = b_.CreateIntToPtr(
         b_.getInt64(reinterpret_cast<uint64_t>(fn)), b_.getPtrTy());
-    b_.CreateCall(callee, {sym_ptr});
+    b_.CreateCall(callee, {ctx_ptr_, sym_ptr});
     if (residency_) ReloadCtxRegs();  // handler may have changed guest state
     baked_host_pointer_ = true;  // run-specific fn ptr -> not AOT-cacheable
   }

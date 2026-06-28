@@ -265,19 +265,21 @@ extern "C" void* xe_llvm_resolve_function(void* ctx, uint32_t target) {
 // infinite recursion -> host-stack overflow = the device signal storm. Instead
 // call its extern_handler (the C++ HLE function), exactly like a64's
 // EmitKernelExternHostCall: handler(context, context->kernel_state).
-extern "C" void xe_llvm_call_extern(void* sym_ptr) {
-  auto* ts = xe::cpu::ThreadState::Get();
+extern "C" void xe_llvm_call_extern(void* ctx, void* sym_ptr) {
+  // context from x20 (passed by the JIT'd caller) instead of a per-call
+  // thread_local ThreadState::Get() (residual emutls/pthread_getspecific cost).
+  auto* context = reinterpret_cast<xe::cpu::ppc::PPCContext*>(ctx);
   auto* fn = reinterpret_cast<xe::cpu::Function*>(sym_ptr);
   if (fn->behavior() == xe::cpu::Function::Behavior::kExtern) {
     auto* gf = static_cast<xe::cpu::GuestFunction*>(fn);
     auto handler = gf->extern_handler();
     if (handler) {
-      handler(ts->context(), ts->context()->kernel_state);
+      handler(context, context->kernel_state);
     }
   } else {
     // kBuiltin: BuiltinFunction::Call dispatches to its C++ handler. kDefault:
     // an ordinary guest fn (shouldn't appear as call_extern; handle anyway).
-    fn->Call(ts, static_cast<uint32_t>(ts->context()->lr));
+    fn->Call(context->thread_state, static_cast<uint32_t>(context->lr));
   }
 }
 
