@@ -2180,11 +2180,18 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
         code_hash = (code_hash ^ bytes[off]) * 0x100000001b3ull;
       }
     }
-    char idbuf[48];
-    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX",
+    // The key must also disambiguate CODEGEN CONFIG: opt level and guest-register
+    // residency produce different native code from the same guest bytes. Without
+    // this suffix a residency-on run would load a stale non-resident .o (a silent
+    // perf regression - correct code, but none of the residency win), and opt=0
+    // qemu .o's would leak into an opt=2 device run. "_o<opt>r<residency>".
+    char idbuf[64];
+    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%d",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
-                  static_cast<unsigned long long>(code_hash));
+                  static_cast<unsigned long long>(code_hash),
+                  cvars::cpu_backend_llvm_opt,
+                  cvars::cpu_backend_llvm_context_residency ? 1 : 0);
     mod->setModuleIdentifier(idbuf);
   }
 
