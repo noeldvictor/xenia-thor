@@ -182,6 +182,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_precompile_guest_functions");
             copyIntExtra(intent, launchArguments, "cpu_precompile_threads");
             copyIntExtra(intent, launchArguments, "cpu_precompile_budget_ms");
+            copyBooleanExtra(intent, launchArguments, "cpu_llvm_object_cache");
+            copyStringExtra(intent, launchArguments, "cpu_llvm_object_cache_path");
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
             // NOTE: permit_float_constant_evaluation is deliberately NOT

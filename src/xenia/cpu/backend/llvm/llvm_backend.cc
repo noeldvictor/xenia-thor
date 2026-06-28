@@ -22,6 +22,7 @@
 #include "xenia/base/math.h"
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
+#include "xenia/cpu/backend/llvm/llvm_object_cache.h"
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/hir/opcodes.h"
 #include "xenia/cpu/ppc/ppc_context.h"
@@ -37,6 +38,8 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include <filesystem>
+
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -95,6 +98,26 @@ DEFINE_string(cpu_backend_llvm_trace_addr, "",
               "before and output (r3) after the call (grep 'LLVMtrace'). Compare "
               "across max_fns=K-1 (callee a64) vs K (callee LLVM) on the same "
               "deterministic input to pin a miscompiled fn's exact value bug.",
+              "CPU");
+
+DEFINE_bool(cpu_llvm_object_cache, false,
+            "AOT object cache: persist each LLVM-compiled guest function's "
+            "machine code (.o) to disk and reuse it on the next launch / on "
+            "re-entry, skipping the LLVM codegen (AsmPrinter/MCAssembler) that is "
+            "~3-6% of BD CPU during play and the whole relaunch warm-up. The .o "
+            "keeps external calls (xe_llvm_*) UNRESOLVED and is re-linked by name "
+            "per load, so it is ASLR-safe across runs. The cache key is the guest "
+            "address + a hash of the guest CODE BYTES, so a .o is reused only for "
+            "byte-identical code (disambiguates titles, game versions, and "
+            "self-modified code); a per-version+opt subdir guards against xenia "
+            "lowering changes. RPCS3-style precompile builds on this. Needs "
+            "cpu_llvm_object_cache_path. Default off pending device validation.",
+            "CPU");
+DEFINE_string(cpu_llvm_object_cache_path, "",
+              "Directory for the LLVM AOT object cache (set by the Android app to "
+              "its private files dir). MUST be per-title-safe; the code-byte hash "
+              "in the key disambiguates titles even if shared. Empty disables the "
+              "object cache regardless of cpu_llvm_object_cache.",
               "CPU");
 
 #if XE_LLVM_BACKEND_ENABLED
@@ -648,13 +671,33 @@ bool LLVMBackend::Initialize(Processor* processor) {
   // lowering via a target-features attribute.
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
-  auto jit_or = llvm::orc::LLJITBuilder().create();
+  llvm::orc::LLJITBuilder builder;
+
+  // AOT object cache (cpu_llvm_object_cache): persist each compiled function's
+  // .o + reuse it next launch / on re-entry, skipping codegen. The cache subclass
+  // + SimpleCompiler wiring live in the -fno-rtti llvm_object_cache.cc (see that
+  // header for the typeinfo-link reason); we only build the per-version dir here.
+  std::unique_ptr<llvm::ObjectCache> object_cache;
+  if (cvars::cpu_llvm_object_cache &&
+      !cvars::cpu_llvm_object_cache_path.empty()) {
+    std::filesystem::path dir =
+        std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
+        ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
+         std::to_string(cvars::cpu_backend_llvm_opt));
+    object_cache = CreateAndWireObjectCache(builder, dir.string());
+    XELOGI("LLVMBackend: AOT object cache enabled at '{}'", dir.string());
+  }
+
+  auto jit_or = builder.create();
   if (!jit_or) {
     std::string msg = llvm::toString(jit_or.takeError());
     XELOGE("LLVMBackend: LLJIT creation failed: {}", msg);
     return false;
   }
   jit_ = std::make_unique<LlvmJitContext>();
+  // The cache must outlive the LLJIT (its compiler holds a raw pointer to it);
+  // LlvmJitContext destroys `jit` before `object_cache` (declaration order).
+  jit_->object_cache = std::move(object_cache);
   jit_->jit = std::move(*jit_or);
   jit_->initialized = true;
 

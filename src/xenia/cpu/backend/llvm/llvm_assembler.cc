@@ -20,12 +20,15 @@
 #include "xenia/cpu/mmio_handler.h"
 #include "xenia/cpu/hir/label.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/processor.h"
+#include "xenia/memory.h"
 
 #ifndef XE_LLVM_BACKEND_ENABLED
 #define XE_LLVM_BACKEND_ENABLED 0
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <string>
@@ -55,6 +58,8 @@ DECLARE_string(cpu_backend_llvm_range_hi);
 DECLARE_bool(cpu_backend_llvm_dump_ir);
 DECLARE_int32(cpu_backend_llvm_max_fns);
 DECLARE_string(cpu_backend_llvm_trace_addr);
+DECLARE_bool(cpu_llvm_object_cache);
+DECLARE_string(cpu_llvm_object_cache_path);
 
 namespace xe {
 namespace cpu {
@@ -99,6 +104,11 @@ class Lowerer {
       : ctx_(ctx), mod_(mod), fn_(fn), b_(ctx), guest_addr_(guest_addr) {}
 
   bool Run(HIRBuilder* builder);
+
+  // True if Run() baked any run-specific host pointer into the code (CALL_EXTERN
+  // target / MMIO ptrs) - the function's machine code is then NOT reusable across
+  // launches and must not be persisted to the AOT object cache.
+  bool baked_host_pointer() const { return baked_host_pointer_; }
 
  private:
   llvm::Type* T(TypeName t) {
@@ -249,6 +259,7 @@ class Lowerer {
     auto* sym_ptr = b_.CreateIntToPtr(
         b_.getInt64(reinterpret_cast<uint64_t>(fn)), b_.getPtrTy());
     b_.CreateCall(callee, {sym_ptr});
+    baked_host_pointer_ = true;  // run-specific fn ptr -> not AOT-cacheable
   }
 
   // A guest TAIL call (b/bctr in tail position): resolve the target host entry
@@ -379,6 +390,12 @@ class Lowerer {
   llvm::IRBuilder<> b_;
   uint32_t guest_addr_ = 0;
   bool trace_this_ = false;
+  // Set when this function bakes a RUN-SPECIFIC host pointer as an immediate
+  // (CALL_EXTERN's target Function*, MMIO range/callback ptrs). Such code is NOT
+  // portable across process launches (ASLR moves the pointer), so LowerAndJit
+  // must exclude the function from the AOT object cache (a cached .o would carry
+  // the previous run's address -> wild call). See baked_host_pointer().
+  bool baked_host_pointer_ = false;
   void EmitTrace(uint32_t tag) {
     auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
                                         {b_.getInt32Ty()}, false);
@@ -1691,6 +1708,7 @@ bool Lowerer::LowerInstr(Instr* i) {
           b_.getPtrTy());
       auto* res = b_.CreateCall(fty, fn, {ctx_ptr_, cbctx, b_.getInt32(addr)});
       Def(i->dest, b_.CreateUnaryIntrinsic(llvm::Intrinsic::bswap, res));
+      baked_host_pointer_ = true;  // run-specific MMIO ptrs -> not AOT-cacheable
       return true;
     }
     case OPCODE_STORE_MMIO: {
@@ -1711,6 +1729,7 @@ bool Lowerer::LowerInstr(Instr* i) {
           b_.getInt64(reinterpret_cast<uint64_t>(range->callback_context)),
           b_.getPtrTy());
       b_.CreateCall(fty, fn, {ctx_ptr_, cbctx, b_.getInt32(addr), val});
+      baked_host_pointer_ = true;  // run-specific MMIO ptrs -> not AOT-cacheable
       return true;
     }
     case OPCODE_VECTOR_DENORMFLUSH: {
@@ -1934,6 +1953,10 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
 
   auto ctx_owner = std::make_unique<llvm::LLVMContext>();
   auto& ctx = *ctx_owner;
+
+  // Named "guest" for now; if the AOT object cache is on, the module is renamed
+  // to its cache KEY after lowering (the key must reflect whether lowering baked
+  // a non-portable host pointer, only known post-Run). See below, pre-addIRModule.
   auto mod = std::make_unique<llvm::Module>("guest", ctx);
   mod->setDataLayout(jit.getDataLayout());
   mod->setTargetTriple(jit.getTargetTriple().str());
@@ -2012,6 +2035,36 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
       pos = nl + 1;
     }
   }
+  // AOT object cache key: rename the module to its cache KEY just before the
+  // compile layer consults the ObjectCache (which keys on getModuleIdentifier).
+  // Key = "g<addr>_<codehash>": guest address + FNV-1a of the guest CODE BYTES,
+  // so a cached .o is reused only for byte-identical code (disambiguates titles,
+  // game versions, self-modified code). If lowering baked a run-specific host
+  // pointer (CALL_EXTERN target / MMIO ptr), the code is NOT portable across
+  // launches -> prefix "nocache_" so getObject/notifyObjectCompiled skip it and
+  // it always codegens fresh. Off => stays "guest" (no caching).
+  if (cvars::cpu_llvm_object_cache &&
+      !cvars::cpu_llvm_object_cache_path.empty()) {
+    uint64_t code_hash = 0xcbf29ce484222325ull;  // FNV-1a offset basis
+    if (function->has_end_address() &&
+        function->end_address() > function->address()) {
+      const uint32_t lo = function->address();
+      const uint32_t hi = function->end_address();
+      const uint8_t* bytes =
+          llvm_backend_->processor()->memory()->TranslateVirtual<const uint8_t*>(
+              lo);
+      for (uint32_t off = 0, n = hi - lo; off < n; ++off) {
+        code_hash = (code_hash ^ bytes[off]) * 0x100000001b3ull;
+      }
+    }
+    char idbuf[48];
+    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX",
+                  lowerer.baked_host_pointer() ? "nocache_" : "",
+                  function->address(),
+                  static_cast<unsigned long long>(code_hash));
+    mod->setModuleIdentifier(idbuf);
+  }
+
   if (auto err = jit.addIRModule(
           llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
     XELOGE("LLVMAssembler: addIRModule failed: {}",

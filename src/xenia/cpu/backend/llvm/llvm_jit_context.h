@@ -20,6 +20,7 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include "llvm/ExecutionEngine/ObjectCache.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #endif
 
@@ -32,6 +33,10 @@ namespace llvm_backend {
 // its own Module, addIRModule'd, then looked up for its native code pointer.
 struct LlvmJitContext {
 #if XE_LLVM_BACKEND_ENABLED
+  // Declared BEFORE `jit`: members are destroyed in reverse order, so `jit`
+  // (whose compile layer holds a raw ObjectCache*) is torn down before the cache
+  // it points at. Null unless cpu_llvm_object_cache is enabled.
+  std::unique_ptr<llvm::ObjectCache> object_cache;
   std::unique_ptr<llvm::orc::LLJIT> jit;
 #endif
   bool initialized = false;

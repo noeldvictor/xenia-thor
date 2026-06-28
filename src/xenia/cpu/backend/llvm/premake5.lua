@@ -33,6 +33,12 @@ project("xenia-cpu-backend-llvm")
     llvm_dir.."/*.cc",
     llvm_dir.."/*.h",
   })
+  -- NOTE: llvm_object_cache.cc subclasses llvm::ObjectCache + instantiates
+  -- llvm::orc::SimpleCompiler, which (built -frtti like the rest of this lib for
+  -- cvar.h's dynamic_cast) reference those classes' typeinfo - absent in the
+  -- -fno-rtti libLLVM. A per-file rtti("Off") is NOT portable (the androidndk
+  -- generator only sets RTTI per-module), so that file instead provides weak
+  -- placeholder typeinfo symbols. See llvm_object_cache.cc.
 
   -- Enable the real backend per platform where libLLVM is staged. The .cc guard
   -- all LLVM use behind XE_LLVM_BACKEND_ENABLED, so platforms without a staged
