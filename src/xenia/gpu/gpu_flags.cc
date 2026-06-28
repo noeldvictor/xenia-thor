@@ -294,9 +294,12 @@ DEFINE_bool(gpu_use_vd_scaler_output_for_swap, false,
 DEFINE_bool(gpu_trace_texture_cache_actions, false,
             "Trace texture cache create/load actions. Very noisy in games.",
             "GPU");
-DEFINE_int32(gpu_unknown_register_log_budget, 128,
+DEFINE_int32(gpu_unknown_register_log_budget, 0,
              "Maximum unknown GPU register read/write log lines per source; "
-             "negative means unlimited, zero suppresses them.",
+             "negative means unlimited, zero suppresses them. Default 0 (was 128): "
+             "this gates a per-write RegisterFile::GetRegisterInfo() switch that ran "
+             "on EVERY register write (~530k/frame in Blue Dragon, ~1% of CPU, "
+             "device-profiled); 0 short-circuits it. Set >0 to debug unknown regs.",
              "GPU");
 DEFINE_bool(gpu_trace_swap_frontbuffer_checksum, false,
             "Trace a sparse CPU-side checksum of the physical frontbuffer "
