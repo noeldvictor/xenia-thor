@@ -112,6 +112,31 @@ DEFINE_string(cpu_backend_llvm_skip_addrs, "",
               "matching 'LLVMmap' in logcat, then list that address here.",
               "CPU");
 
+DEFINE_string(cpu_backend_llvm_skip_opcodes, "",
+              "Comma/space-separated DECIMAL HIR opcode numbers (xe::cpu::hir::"
+              "Opcode enum order) to FORCE onto the a64 backend: any guest function "
+              "that uses one of these opcodes falls back entirely to a64. Bisects "
+              "WHICH opcode's LLVM lowering corrupts a scene (e.g. the BD post-load "
+              "3D 'cyan-bars' miscompile) WITHOUT a rebuild - skip a swath, see if "
+              "the corruption clears, then narrow. e.g. 110=UNPACK, 109=PACK, "
+              "82=RSQRT, 86/87=DOT_PRODUCT_3/4, 77/78=MUL_ADD/SUB.",
+              "CPU");
+
+DEFINE_bool(cpu_backend_llvm_lower_vmaddfp, false,
+            "Lower VECTOR MUL_ADD/MUL_SUB (vmaddfp/vnmsubfp) in the LLVM backend. "
+            "DEFAULT FALSE = fall back to the a64 backend for any guest function "
+            "using vector vmaddfp. WHY: the LLVM lowering is qemu-byte-correct in "
+            "isolation, but on-device it MISCOMPILES a function that uses vmaddfp "
+            "TOGETHER with other vector ops (BD's vertex-transform routine, e.g. "
+            "0x82282490) -> degenerate geometry ('cyan-bars'), at opt=0 AND opt=2. "
+            "It is a device codegen/regalloc INTERACTION bug (the IR is correct), "
+            "not fixable from the IR; a64's vmaddfp (FPCR-mode + lazy NaN fixup) is "
+            "correct, so falling back renders BD's 3D correctly (device-proven via "
+            "cpu_backend_llvm_skip_opcodes=77). Set TRUE only to re-investigate the "
+            "lowering (needs device asm-level debugging). See memory "
+            "bd-llvm-postload-3d-cyan-bug.",
+            "CPU");
+
 DEFINE_string(cpu_backend_llvm_trace_addr, "",
               "Hex guest address. When an LLVM-compiled CALLER invokes this guest "
               "fn via xe_llvm_guest_call, log its input regs (r3/r4/r5/r1/lr) "

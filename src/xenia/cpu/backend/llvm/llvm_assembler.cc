@@ -61,6 +61,8 @@ DECLARE_string(cpu_backend_llvm_range_hi);
 DECLARE_bool(cpu_backend_llvm_dump_ir);
 DECLARE_int32(cpu_backend_llvm_max_fns);
 DECLARE_string(cpu_backend_llvm_trace_addr);
+DECLARE_string(cpu_backend_llvm_skip_opcodes);
+DECLARE_bool(cpu_backend_llvm_lower_vmaddfp);
 DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_llvm_object_cache);
@@ -620,6 +622,25 @@ bool Lowerer::Run(HIRBuilder* builder) {
 
 bool Lowerer::LowerInstr(Instr* i) {
   const Opcode op = i->opcode->num;
+  // DIAGNOSTIC (cpu_backend_llvm_skip_opcodes): force the listed HIR opcodes onto
+  // the a64 backend - any guest function using one falls back entirely (the caller
+  // treats a false return like an unsupported opcode). Bisects WHICH opcode's LLVM
+  // lowering corrupts a scene. Comma/space-separated DECIMAL opcode numbers, parsed
+  // once (LowerInstr is per-instruction).
+  static const std::unordered_set<int> s_skip_ops = [] {
+    std::unordered_set<int> s;
+    const std::string& v = cvars::cpu_backend_llvm_skip_opcodes;
+    size_t p = 0;
+    while (p < v.size()) {
+      while (p < v.size() && (v[p] == ',' || v[p] == ' ')) ++p;
+      size_t q = p;
+      while (q < v.size() && v[q] != ',' && v[q] != ' ') ++q;
+      if (q > p) s.insert(std::atoi(v.substr(p, q - p).c_str()));
+      p = q;
+    }
+    return s;
+  }();
+  if (!s_skip_ops.empty() && s_skip_ops.count(int(op))) return false;
   switch (op) {
     // ---- ignorable / meta ----
     case OPCODE_COMMENT:
@@ -1642,6 +1663,12 @@ bool Lowerer::LowerInstr(Instr* i) {
     }
     case OPCODE_MUL_ADD:
     case OPCODE_MUL_SUB: {
+      // Vector vmaddfp/vnmsubfp DEVICE-miscompiles when LLVM-lowered together with
+      // other vector ops in one function (a codegen/regalloc INTERACTION bug; the IR
+      // is qemu-byte-correct). Fall back to a64 (correct) by default; the lowering
+      // below is preserved behind the cvar for future root-cause work. Device-proven
+      // fix (cpu_backend_llvm_skip_opcodes=77 rendered BD's field correctly).
+      if (!cvars::cpu_backend_llvm_lower_vmaddfp) return false;
       // VMX float32x4 fused multiply-add/sub (vmaddfp / vnmsubfp): dest =
       // s1*s2 (+/-) s3, single-rounded (llvm.fma), with the full PPC semantics =
       // flush denormal inputs -> fma -> PPC NaN fixup -> flush denormal output.
