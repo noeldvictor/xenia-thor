@@ -226,6 +226,15 @@ class ExceptionHandler {
 
   // Uninstalls a previously-installed exception handler.
   static void Uninstall(Handler fn, void* data);
+
+  // Number of faults that NO installed handler resolved (host crashes / JIT
+  // codegen bugs). Normally 0. A nonzero value means a thread hit an unrecovered
+  // fault and the handler is re-executing the faulting instruction (a re-fault
+  // "signal storm" that pins a core) - device-observed for an intermittent
+  // libLLVM codegen crash. Consumers (e.g. the LLVM compiler path) poll this to
+  // degrade gracefully (fall back to a64) instead of hanging on a lock the
+  // storming thread will never release. Monotonic, lock-free.
+  static uint32_t GetUnhandledFaultCount();
 };
 
 }  // namespace xe

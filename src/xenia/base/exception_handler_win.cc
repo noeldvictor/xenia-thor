@@ -156,4 +156,9 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
   }
 }
 
+uint32_t ExceptionHandler::GetUnhandledFaultCount() {
+  // Windows uses VEH (no re-fault signal storm to track); always 0.
+  return 0;
+}
+
 }  // namespace xe

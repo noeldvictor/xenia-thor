@@ -10,6 +10,7 @@
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 
 #include "xenia/base/cvar.h"
+#include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_function.h"
@@ -28,6 +29,7 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -1950,8 +1952,32 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // The lock is acquired AFTER xenia's compile/global lock (consistent order, no
   // deadlock) and released before the JIT'd code ever runs (helpers run lock-
   // free at runtime). Correctness-first; per-fn compile is one-time.
-  static std::mutex s_llvm_compile_mutex;
-  std::lock_guard<std::mutex> compile_guard(s_llvm_compile_mutex);
+  // STORM GUARD (device-found): an intermittent libLLVM AArch64-codegen crash
+  // re-faults forever WHILE HOLDING this mutex, which hangs every other guest
+  // thread that then needs a compile -> BD stalls (0 fps). Degrade to a64 instead
+  // of hanging: (1) if a fault storm is already active (some compile crashed and
+  // is re-faulting), skip LLVM entirely; (2) acquire with a timeout so no thread
+  // blocks forever on the dead mutex. The storming thread (stuck in the signal
+  // handler) still burns its core, but BD keeps rendering on a64. The unhandled-
+  // fault count is the definitive storm signal; the timeout only unblocks threads
+  // already waiting when the storm began. 10s never false-trips a real compile
+  // (those are milliseconds); a rare slow one merely uses a64 for that function.
+  if (xe::ExceptionHandler::GetUnhandledFaultCount() != 0) {
+    return false;
+  }
+  static std::timed_mutex s_llvm_compile_mutex;
+  std::unique_lock<std::timed_mutex> compile_guard(s_llvm_compile_mutex,
+                                                   std::chrono::seconds(10));
+  if (!compile_guard.owns_lock()) {
+    XELOGW(
+        "LLVMAssembler: compile lock timed out (a prior compile is stuck / "
+        "storming) - falling back to a64 for 0x{:08X}",
+        function->address());
+    return false;
+  }
+  if (xe::ExceptionHandler::GetUnhandledFaultCount() != 0) {
+    return false;  // a storm began while we waited for the lock
+  }
 
   auto ctx_owner = std::make_unique<llvm::LLVMContext>();
   auto& ctx = *ctx_owner;

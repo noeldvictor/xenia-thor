@@ -10,6 +10,7 @@
 #include "xenia/base/exception_handler.h"
 
 #include <signal.h>
+#include <time.h>
 #include <ucontext.h>
 #include <atomic>
 #include <cstdint>
@@ -34,6 +35,16 @@ constexpr size_t kMaxHandlerCount = 8;
 // All custom handlers, left-aligned and null terminated.
 // Executed in order.
 std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
+
+// Count of faults no installed handler resolved. The handler re-executes the
+// faulting instruction on an unresolved fault, so a climbing value is a re-fault
+// storm pinning a core (see exception_handler.h / GetUnhandledFaultCount).
+std::atomic<uint32_t> unhandled_fault_count_{0};
+// Re-fault storm detection: the pc + consecutive-repeat count of the last
+// unresolved fault. When the SAME pc repeats, the thread is in an infinite
+// re-fault loop and is parked (see the storm guard in ExceptionHandlerCallback).
+std::atomic<uint64_t> unhandled_last_pc_{0};
+std::atomic<uint32_t> unhandled_repeat_count_{0};
 
 static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                                      void* signal_context) {
@@ -244,8 +255,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
   // here => the JIT emitted/clobbered membase => wild guest address).
 #if XE_ARCH_ARM64
   {
-    static std::atomic<uint32_t> s_unhandled_log{0};
-    uint32_t un = s_unhandled_log.fetch_add(1, std::memory_order_relaxed);
+    uint32_t un = unhandled_fault_count_.fetch_add(1, std::memory_order_relaxed);
     if (un < 16) {
       uint32_t insn = *reinterpret_cast<const uint32_t*>(mcontext.pc);
       XELOGE(
@@ -256,6 +266,34 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
           un, static_cast<uint32_t>(ex.code()), uint64_t(mcontext.pc), insn,
           uint64_t(ex.fault_address()), uint64_t(mcontext.regs[20]),
           uint64_t(mcontext.regs[21]), uint64_t(mcontext.regs[30]));
+    }
+    // STORM GUARD: returning re-executes the faulting instruction; a
+    // deterministic unresolved fault therefore re-faults FOREVER, pinning a core
+    // AND saturating the signal-delivery path (libsigchain/kernel) so other
+    // threads' faults - the renderer's write-watch - stall too => BD freezes
+    // (device-observed for an intermittent libLLVM codegen crash). If the SAME pc
+    // repeats, PARK this thread instead of returning: the storm stops, other
+    // threads resume, and in-flight/future LLVM compiles fall back to a64 via
+    // GetUnhandledFaultCount(). The stuck thread is sacrificed (it was already
+    // lost to the re-fault loop). Async-signal-safe: only atomics + nanosleep.
+    uint64_t storm_pc = uint64_t(mcontext.pc);
+    if (storm_pc == unhandled_last_pc_.load(std::memory_order_relaxed)) {
+      if (unhandled_repeat_count_.fetch_add(1, std::memory_order_relaxed) >= 8) {
+        XELOGE(
+            "UNHANDLED fault STORM at pc={:016X} - parking this thread to stop "
+            "the infinite re-fault (other threads continue; LLVM compiles fall "
+            "back to a64). Root cause: a libLLVM/JIT codegen crash.",
+            storm_pc);
+        for (;;) {
+          struct timespec ts;
+          ts.tv_sec = 3600;
+          ts.tv_nsec = 0;
+          nanosleep(&ts, nullptr);
+        }
+      }
+    } else {
+      unhandled_last_pc_.store(storm_pc, std::memory_order_relaxed);
+      unhandled_repeat_count_.store(0, std::memory_order_relaxed);
     }
   }
 #endif  // XE_ARCH_ARM64
@@ -318,6 +356,10 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
       signal_handlers_installed_ = false;
     }
   }
+}
+
+uint32_t ExceptionHandler::GetUnhandledFaultCount() {
+  return unhandled_fault_count_.load(std::memory_order_relaxed);
 }
 
 }  // namespace xe
