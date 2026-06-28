@@ -178,8 +178,13 @@ inline xe::cpu::Function* xe_llvm_resolve_cached(xe::cpu::ThreadState* ts,
 }
 }  // namespace
 
-extern "C" void xe_llvm_guest_call(uint32_t target, uint32_t ret_addr) {
-  auto* ts = xe::cpu::ThreadState::Get();
+extern "C" void xe_llvm_guest_call(void* ctx, uint32_t target,
+                                   uint32_t ret_addr) {
+  // ts from the guest context (x20, passed by the JIT'd caller) instead of a
+  // thread_local lookup: ThreadState::Get() is a TLS read (emutls /
+  // pthread_getspecific) that cost ~5% of BD CPU per guest call (device-profiled
+  // 2026-06-28). ctx->thread_state (offset 0) is the same value, one load off x20.
+  auto* ts = reinterpret_cast<xe::cpu::ppc::PPCContext*>(ctx)->thread_state;
   // VALUE TRACE (debug, off by default via cpu_backend_llvm_trace_addr): log a
   // target's input regs before the call and r3/nonvolatiles after, to pin a
   // miscompiled callee. Cheap when disabled (s_trace_addr == 0 short-circuits).
@@ -241,12 +246,16 @@ extern "C" void xe_llvm_trace_entry(uint32_t addr) {
 // tail-call loop (e.g. 0x8273EFB4) grew the host stack unboundedly -> overflow
 // = the device signal storm. The returned entry is callable directly with x20/
 // x21 live and x0 = guest return address (the a64 guest->guest ABI, no thunk).
-extern "C" void* xe_llvm_resolve_function(uint32_t target) {
-  auto* ts = xe::cpu::ThreadState::Get();
+extern "C" void* xe_llvm_resolve_function(void* ctx, uint32_t target) {
+  auto* ts = reinterpret_cast<xe::cpu::ppc::PPCContext*>(ctx)->thread_state;
   auto* fn = xe_llvm_resolve_cached(ts, target);
   // Only GuestFunctions have host machine_code to tail-jump to; externs/
   // builtins have none and must go through the non-tail xe_llvm_guest_call path.
-  auto* gf = fn ? dynamic_cast<xe::cpu::GuestFunction*>(fn) : nullptr;
+  // is_guest() (behavior_ != kBuiltin) is EXACTLY "is a GuestFunction" - the only
+  // non-guest Function subclass is BuiltinFunction - so this replaces a hot RTTI
+  // dynamic_cast (~2.2% of BD CPU, device-profiled) with one enum compare.
+  auto* gf =
+      (fn && fn->is_guest()) ? static_cast<xe::cpu::GuestFunction*>(fn) : nullptr;
   return gf ? reinterpret_cast<void*>(gf->machine_code()) : nullptr;
 }
 

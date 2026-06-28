@@ -245,12 +245,14 @@ class Lowerer {
     // guest return address stashed by SET_RETURN_ADDRESS) is forwarded to the
     // callee's x0 via the host->guest thunk, so the callee recognizes its own
     // blr RETURN. Defaults to 0 if SET_RETURN_ADDRESS was not emitted.
-    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), {i32, i32},
-                                        false);
+    // Pass the guest context (x20) as arg0 so the helper derives ThreadState from
+    // ctx->thread_state instead of a per-call thread_local (TLS) lookup.
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                        {b_.getPtrTy(), i32, i32}, false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
     auto* ret_addr = b_.CreateTrunc(
         b_.CreateLoad(b_.getInt64Ty(), next_call_ret_addr_), i32);
-    b_.CreateCall(callee, {target_i32, ret_addr});
+    b_.CreateCall(callee, {ctx_ptr_, target_i32, ret_addr});
     if (residency_) ReloadCtxRegs();  // callee may have changed guest state
   }
 
@@ -280,10 +282,12 @@ class Lowerer {
     auto* i32 = llvm::Type::getInt32Ty(ctx_);
     auto* i64 = llvm::Type::getInt64Ty(ctx_);
     auto* voidTy = llvm::Type::getVoidTy(ctx_);
-    // void* xe_llvm_resolve_function(uint32_t target)
-    auto* rfty = llvm::FunctionType::get(b_.getPtrTy(), {i32}, false);
+    // void* xe_llvm_resolve_function(void* ctx, uint32_t target) - ctx (x20) lets
+    // the helper skip the per-call thread_local ThreadState lookup.
+    auto* rfty =
+        llvm::FunctionType::get(b_.getPtrTy(), {b_.getPtrTy(), i32}, false);
     auto resolve = mod_->getOrInsertFunction("xe_llvm_resolve_function", rfty);
-    auto* host = b_.CreateCall(resolve, {target_i32});
+    auto* host = b_.CreateCall(resolve, {ctx_ptr_, target_i32});
     // Callee ABI == this function's: void(i64 guest_return_address).
     auto* callee_ty = llvm::FunctionType::get(voidTy, {i64}, false);
     auto* my_ret = b_.CreateLoad(i64, my_ret_addr_);
