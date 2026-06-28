@@ -1811,18 +1811,32 @@ bool Lowerer::LowerInstr(Instr* i) {
       TypeName pt = static_cast<TypeName>(i->flags);
       if (pt == INT8_TYPE) {
         // remap = (control ^ 3) & 0x1F (PPC byte index -> LE, 5-bit table range)
-        // then a 2-table TBL (tbl2). Works for dynamic AND constant control.
+        // then a 2-table byte permute across {a, bb}.
         auto* c = V(i->src1.value);
         if (!c) return false;
         auto* remap = b_.CreateAnd(
             b_.CreateXor(b_.CreateBitCast(c, i8x16),
                          llvm::ConstantInt::get(i8x16, 3)),
             llvm::ConstantInt::get(i8x16, 0x1F));
+        // Emit TWO single-table TBL1s OR'd, NOT one TBL2. DEVICE-CONFIRMED: the
+        // aarch64.neon.tbl2 intrinsic needs its two tables in a CONSECUTIVE
+        // register pair; with x20/x21 reserved + high register pressure the
+        // AArch64 backend can't satisfy that and CRASHES in the AsmPrinter (a
+        // wild-pointer re-fault storm inside libLLVM.so that freezes BD - the
+        // intermittent storm root-caused 2026-06-27 to THIS op via range-limited
+        // IR dump). tbl1 takes a single table (no pair constraint). For each lane
+        // exactly one of the two TBL1s is in range (the other returns 0, since
+        // tbl1 zeroes out-of-range indices), so OR reconstructs tbl2 exactly:
+        //   tbl1(a, remap)        -> a[remap]      for remap in 0..15 else 0
+        //   tbl1(bb, remap - 16)  -> bb[remap-16]  for remap in 16..31 else 0
+        auto* remap_hi =
+            b_.CreateSub(remap, llvm::ConstantInt::get(i8x16, 16));
+        auto* lo = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl1,
+                                      {i8x16}, {a, remap});
+        auto* hi = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl1,
+                                      {i8x16}, {bb, remap_hi});
         Def(i->dest,
-            b_.CreateBitCast(
-                b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl2, {i8x16},
-                                   {a, bb, remap}),
-                T(VEC128_TYPE)));
+            b_.CreateBitCast(b_.CreateOr(lo, hi), T(VEC128_TYPE)));
         return true;
       }
       if (pt == INT16_TYPE) {

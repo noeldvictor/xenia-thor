@@ -595,6 +595,27 @@ TEST_CASE("LLVM_SWIZZLE_PERMUTE", "[llvm]") {
       });
 }
 
+TEST_CASE("LLVM_PERMUTE_BYTE", "[llvm]") {
+  // Byte-granular vperm across two vectors (INT8 control). The LLVM lowering uses
+  // TWO single-table aarch64.neon.tbl1 OR'd (NOT one tbl2 - tbl2's consecutive
+  // register-pair constraint crashes the AArch64 AsmPrinter under x20/x21-reserve
+  // + register pressure, the device storm root-caused 2026-06-27). This confirms
+  // the tbl1-pair result is byte-exact vs a64 for an arbitrary dynamic control.
+  RunDiff(
+      [](HIRBuilder& b) {
+        StoreVR(b, 3, b.Permute(LoadVR(b, 6), LoadVR(b, 4), LoadVR(b, 5),
+                                INT8_TYPE));
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        for (int i = 0; i < 16; i++) {
+          ctx->v[4].u8[i] = uint8_t(0x10 + i);
+          ctx->v[5].u8[i] = uint8_t(0xA0 + i);
+          ctx->v[6].u8[i] = uint8_t((i * 7 + 1) & 0x1F);  // pick from both tables
+        }
+      });
+}
+
 TEST_CASE("LLVM_SET_ROUNDING_MODE", "[llvm]") {
   // No-op in the LLVM backend (it sets the a64 backend's FPCR cache, not any
   // guest register); confirm GPRs are untouched across it. DELAY_EXECUTION,

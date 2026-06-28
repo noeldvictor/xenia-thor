@@ -36,10 +36,27 @@
 // SimpleCompiler - LLVM dispatches both purely through vtables), so a placeholder
 // is safe. Itanium ABI mangling is identical on Clang (android) and GCC (linux).
 // (This TU deliberately does NOT include cvar.h - all config arrives as args.)
+#if defined(__clang__)
+// Clang (the Android/device target, -fno-rtti libLLVM): weak null data symbols.
+// Device-proven (the APK links + runs).
 extern "C" {
 [[gnu::weak]] const void* _ZTIN4llvm11ObjectCacheE = nullptr;
 [[gnu::weak]] const void* _ZTIN4llvm3orc14SimpleCompilerE = nullptr;
 }
+#else
+// GCC (the qemu/linux cpu-tests build) emits a std::type_info reference for these
+// same mangled names and rejects a `const void*` DEFINITION of them ("conflicting
+// declaration"); a bare `.weak` DECLARATION doesn't resolve under that build's LTO
+// ("undefined reference to typeinfo"). So DEFINE them via asm as weak 8-byte data
+// (no C++ type = no conflict; a real definition = survives LTO). Value 0, never
+// dereferenced; a real libLLVM typeinfo, if present, is strong and overrides.
+asm(".pushsection .data.rel.ro,\"aw\"\n"
+    ".weak _ZTIN4llvm11ObjectCacheE\n"
+    "_ZTIN4llvm11ObjectCacheE: .quad 0\n"
+    ".weak _ZTIN4llvm3orc14SimpleCompilerE\n"
+    "_ZTIN4llvm3orc14SimpleCompilerE: .quad 0\n"
+    ".popsection");
+#endif
 
 namespace xe {
 namespace cpu {
