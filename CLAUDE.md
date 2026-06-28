@@ -150,6 +150,11 @@ compounded: even a "stack" measurement is confounded unless it is the COMPLETE v
      ON the device. (Root cause of the 10fps Burnout: the installed APK predated the default-on + fence-fix commits.)
   4. **VERIFY from the in-app UI launch (NOT `--ez`):** pick the game in-app and confirm it reproduces the measured
      fps. If menus run uncapped (hundreds of fps) the registry/profile is NOT being applied → the install is stale.
+- **`--ez`/`--es` CVAR ALLOWLIST — a NEW cvar will NOT reach C++ via an intent extra until you add it to the
+  `copyBooleanExtra`/`copyStringExtra`/`copyIntExtra` allowlist in `EmulatorActivity.java onCreate` (~line 129+).**
+  An un-allowlisted `--ez my_new_cvar true` is silently dropped → the cvar stays default → you measure the WRONG
+  thing (cost me a full validation cycle: the LLVM object cache looked inert until I saw no "enabled" log line).
+  Add the line, rebuild+reinstall the APK (Java change), THEN test. Grep your enable/init log to confirm it took.
 - **BUILD GOTCHA — the repo path has a space ("New project 8")** so ndk-build's `$(wildcard)` fails the native
   configure ("unknown file"). The documented `subst X:` is NOT visible to background gradle tasks; use a directory
   JUNCTION instead: `cmd /c mklink /J C:\xt "<repo>"`, then build from `C:\xt\android\android_studio_project`.
