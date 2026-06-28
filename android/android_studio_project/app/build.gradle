@@ -63,7 +63,15 @@ android {
             debuggable true
             externalNativeBuild {
                 ndkBuild {
-                    arguments 'PREMAKE_ANDROIDNDK_CONFIGURATIONS:=Debug'
+                    // THOR perf fork: build the NATIVE code optimized (Release =
+                    // optimize("Speed")/-O2 + NDEBUG) while keeping the APK
+                    // debuggable + un-minified so cvars (--ez/--es) and symbols
+                    // (symbols("On") is global) still work. The stock Debug config
+                    // is optimize("Off")/-O0 - the entire host emulator (CP, guest-
+                    // call dispatch, kernel) ran unoptimized, which a device profile
+                    // showed wasting ~15%+ on un-inlined trivial accessors
+                    // (__cxx_atomic_load, Function::address, unique_ptr::get).
+                    arguments 'PREMAKE_ANDROIDNDK_CONFIGURATIONS:=Release'
                 }
             }
         }
