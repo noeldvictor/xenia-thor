@@ -170,7 +170,12 @@ std::atomic<xe::cpu::Function*> g_resolve_cache[kResolveCacheSize];
 inline xe::cpu::Function* xe_llvm_resolve_cached(xe::cpu::ThreadState* ts,
                                                  uint32_t target) {
   auto& slot = g_resolve_cache[(target >> 2) & (kResolveCacheSize - 1)];
-  auto* fn = slot.load(std::memory_order_acquire);
+  // RELAXED load (was acquire): the resolved Function* and its fields are stable
+  // before any execution (EntryTable owns it; patches apply at module load), so
+  // there is no producer->consumer data to acquire here - and the self-validating
+  // fn->address()==target check below rejects any stale/torn read (re-resolves).
+  // Drops the ldar barrier on this per-guest-call hot path.
+  auto* fn = slot.load(std::memory_order_relaxed);
   if (fn && fn->address() == target) return fn;
   fn = ts->processor()->ResolveFunction(target);
   if (fn) slot.store(fn, std::memory_order_release);
@@ -211,7 +216,14 @@ extern "C" void xe_llvm_guest_call(void* ctx, uint32_t target,
   }
   auto* fn = xe_llvm_resolve_cached(ts, target);
   if (fn) {
-    fn->Call(ts, ret_addr);
+    // ts is the current thread's (ctx->thread_state above), so for GuestFunctions
+    // skip Call()'s per-call ThreadState::Get() TLS lookup + bind and invoke
+    // CallImpl directly. Builtins keep the full Call() path (own bind + handler).
+    if (fn->is_guest()) {
+      static_cast<xe::cpu::GuestFunction*>(fn)->CallOnCurrentThread(ts, ret_addr);
+    } else {
+      fn->Call(ts, ret_addr);
+    }
   }
   if (trace && tn < 40) {
     auto* c = ts->context();

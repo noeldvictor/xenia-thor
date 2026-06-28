@@ -132,6 +132,16 @@ class GuestFunction : public Function {
 
   bool Call(ThreadState* thread_state, uint32_t return_address) override;
 
+  // Like Call(), but ASSUMES thread_state is already the current (bound) thread
+  // state, so it skips Call()'s ThreadState::Get() TLS lookup + the bind/restore
+  // it does to handle cross-thread invocation. The LLVM guest-call helper derives
+  // thread_state from the guest ctx (x20 = the running thread's own context), so
+  // this precondition always holds there - and Call()'s self-time was almost
+  // entirely that per-call TLS Get() (~3% of BD CPU, device-profiled).
+  bool CallOnCurrentThread(ThreadState* thread_state, uint32_t return_address) {
+    return CallImpl(thread_state, return_address);
+  }
+
  protected:
   virtual bool CallImpl(ThreadState* thread_state, uint32_t return_address) = 0;
 
