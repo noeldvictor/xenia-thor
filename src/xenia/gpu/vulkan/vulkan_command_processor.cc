@@ -3929,20 +3929,24 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         framebuffer->host_extent.width, framebuffer->host_extent.height,
         reinterpret_cast<uintptr_t>(framebuffer->color_view), feedback_extent_match,
         feedback_distinct_views);
+    // In-place feedback (producer == consumer RT) uses the 1-attachment self-
+    // dependency variant; distinct producer/consumer RTs use the 2-attachment
+    // variant. BD's composites are all in-place.
+    bool feedback_in_place = !feedback_distinct_views;
     VulkanRenderTargetCache::RenderPassKey consumer_key =
         render_target_cache_->last_update_render_pass_key();
     VkRenderPass feedback_render_pass = render_target_cache_->GetFeedbackRenderPass(
         consumer_key.color_0_view_format, consumer_key.color_0_view_format,
-        consumer_key.msaa_samples);
+        consumer_key.msaa_samples, feedback_in_place);
     VkFramebuffer feedback_framebuffer =
         feedback_render_pass != VK_NULL_HANDLE
             ? render_target_cache_->GetFeedbackFramebuffer(
                   current_framebuffer_->color_view, framebuffer->color_view,
-                  framebuffer->host_extent, feedback_render_pass)
+                  framebuffer->host_extent, feedback_render_pass, feedback_in_place)
             : VK_NULL_HANDLE;
-    if (feedback_extent_match && feedback_distinct_views &&
-        feedback_render_pass != VK_NULL_HANDLE &&
+    if (feedback_extent_match && feedback_render_pass != VK_NULL_HANDLE &&
         feedback_framebuffer != VK_NULL_HANDLE) {
+      feedback_merge_in_place_ = feedback_in_place;
       FlushPendingMergeRun();
       // Discard the pending barriers (the producer->SHADER_READ is the render
       // pass's job; emitting it would move the producer out of COLOR_ATTACHMENT).

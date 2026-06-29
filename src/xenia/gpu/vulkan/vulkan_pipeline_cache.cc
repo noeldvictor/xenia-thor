@@ -468,12 +468,19 @@ bool VulkanPipelineCache::ConfigurePipeline(
   // description). Merge eligibility (gated in the command processor) requires
   // producer fmt == consumer fmt, so the feedback RP is derivable from this
   // render_pass_key's color_0 format.
+  // in_place=true: BD's composites are ALL in-place (producer == consumer RT),
+  // so the consumer pipeline targets the 1-attachment self-dependency variant
+  // (subpass 1 input=att0 + color=att0). Pinned true rather than read from the
+  // command processor because the pipeline is created (and cached) BEFORE the
+  // merge redirect resolves in-place, so a getter would cache the wrong variant
+  // on the first frame. The distinct-RT (2-attachment) pipeline path is not wired
+  // (no title exercises it yet; the merge is gated default-off + BD-only).
   VkRenderPass render_pass =
       feedback_merge
           ? render_target_cache_.GetFeedbackRenderPass(
                 render_pass_key.color_0_view_format,
                 render_pass_key.color_0_view_format,
-                render_pass_key.msaa_samples)
+                render_pass_key.msaa_samples, /*in_place=*/true)
       : render_target_cache_.GetPath() ==
               RenderTargetCache::Path::kPixelShaderInterlock
           ? render_target_cache_.GetFragmentShaderInterlockRenderPass()

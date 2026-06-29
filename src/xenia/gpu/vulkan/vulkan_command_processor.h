@@ -262,6 +262,11 @@ class VulkanCommandProcessor : public CommandProcessor {
       size_t texture_count_vertex, size_t sampler_count_vertex,
       bool pixel_textures_input_attachment = false);
 
+  // BD input-attachment merge: whether the active merge consumer uses the
+  // 1-attachment in-place feedback render pass (read by the pipeline cache to
+  // pick the matching feedback render pass for the consumer's subpass-1 pipeline).
+  bool feedback_merge_in_place() const { return feedback_merge_in_place_; }
+
   // Returns a single temporary GPU-side buffer within a submission for tasks
   // like texture untiling and resolving. May push a buffer memory barrier into
   // the initial usage. Submission must be open.
@@ -1627,6 +1632,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // (subpass 1), and the input-attachment descriptor write. Cleared after the
   // consumer draw / when not merging.
   bool feedback_merge_active_ = false;
+  // Set at the merge redirect: true if the merge uses the 1-attachment in-place
+  // (producer == consumer RT) feedback render pass, false for the 2-attachment
+  // variant. Read by the pipeline cache to pick the matching feedback render pass.
+  bool feedback_merge_in_place_ = false;
   uint32_t feedback_merge_producer_fetch_constant_ = 0;
   VkImageView feedback_merge_producer_view_ = VK_NULL_HANDLE;
   // Count of feedback merges performed this frame (diagnostic, logged in the

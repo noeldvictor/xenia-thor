@@ -1988,16 +1988,19 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
 VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
     xenos::ColorRenderTargetFormat producer_format,
     xenos::ColorRenderTargetFormat consumer_format,
-    xenos::MsaaSamples msaa_samples) {
+    xenos::MsaaSamples msaa_samples, bool in_place) {
   // BD input-attachment merge (Inc2): the 2-subpass feedback render pass that
   // lets a same-pixel render-to-texture composite read its producer RT as a
   // Vulkan INPUT ATTACHMENT (GMEM-resident) instead of the store->DRAM->sample
   // round-trip (the ~79ms EDRAM tile-I/O lever). Subpass 0 renders the producer
-  // (attachment 0); subpass 1 reads it as input + renders the consumer
-  // (attachment 1). Dormant until Inc3 routes a merge through it.
+  // (attachment 0); subpass 1 reads it as input + renders the consumer.
+  // in_place=true: producer == consumer RT (BD's composites read+write the same
+  // image) -> ONE attachment, subpass1 input=att0 + color=att0 (GENERAL), with a
+  // 1->1 self-dependency = programmable blending / framebuffer fetch.
   uint32_t key = (uint32_t(producer_format) & 0xF) |
                  ((uint32_t(consumer_format) & 0xF) << 4) |
-                 ((uint32_t(msaa_samples) & 0x3) << 8);
+                 ((uint32_t(msaa_samples) & 0x3) << 8) |
+                 (in_place ? (uint32_t(1) << 10) : 0);
   auto it = feedback_render_passes_.find(key);
   if (it != feedback_render_passes_.end()) {
     return it->second;
@@ -2031,10 +2034,15 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
   producer_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
   VkAttachmentReference producer_input_ref;
   producer_input_ref.attachment = 0;
-  producer_input_ref.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  // In-place: att0 is BOTH input and color in subpass 1 -> GENERAL (one layout
+  // valid for read+write). The 2-RT case reads att0 read-only.
+  producer_input_ref.layout = in_place
+                                  ? VK_IMAGE_LAYOUT_GENERAL
+                                  : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   VkAttachmentReference consumer_color_ref;
-  consumer_color_ref.attachment = 1;
-  consumer_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
+  consumer_color_ref.attachment = in_place ? 0 : 1;
+  consumer_color_ref.layout =
+      in_place ? VK_IMAGE_LAYOUT_GENERAL : VulkanRenderTarget::kColorDrawLayout;
 
   VkSubpassDescription subpasses[2] = {};
   subpasses[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -2048,7 +2056,7 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
 
   // External deps mirror the normal pass; 0->1 carries the producer's color
   // write to the consumer's same-pixel input-attachment read (BY_REGION).
-  VkSubpassDependency dependencies[3];
+  VkSubpassDependency dependencies[4];
   dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
   dependencies[0].dstSubpass = 0;
   dependencies[0].srcStageMask = VulkanRenderTarget::kColorDrawStageMask;
@@ -2063,21 +2071,44 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
   dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
   dependencies[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
   dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-  dependencies[2].srcSubpass = 1;
-  dependencies[2].dstSubpass = VK_SUBPASS_EXTERNAL;
-  dependencies[2].srcStageMask = VulkanRenderTarget::kColorDrawStageMask;
-  dependencies[2].dstStageMask = VulkanRenderTarget::kColorDrawStageMask;
-  dependencies[2].srcAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
-  dependencies[2].dstAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
-  dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  uint32_t dependency_count = 2;
+  if (in_place) {
+    // Feedback self-dependency: subpass 1 reads att0 as input while writing it
+    // as color. BY_REGION + a once-per-pixel composite = well-defined without
+    // rasterization-order-attachment-access (absent on Turnip).
+    dependencies[dependency_count].srcSubpass = 1;
+    dependencies[dependency_count].dstSubpass = 1;
+    dependencies[dependency_count].srcStageMask =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[dependency_count].dstStageMask =
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[dependency_count].srcAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[dependency_count].dstAccessMask =
+        VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+    dependencies[dependency_count].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    ++dependency_count;
+  }
+  dependencies[dependency_count].srcSubpass = 1;
+  dependencies[dependency_count].dstSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[dependency_count].srcStageMask =
+      VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[dependency_count].dstStageMask =
+      VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[dependency_count].srcAccessMask =
+      VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[dependency_count].dstAccessMask =
+      VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[dependency_count].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  ++dependency_count;
 
   VkRenderPassCreateInfo render_pass_create_info = {};
   render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  render_pass_create_info.attachmentCount = 2;
+  render_pass_create_info.attachmentCount = in_place ? 1 : 2;
   render_pass_create_info.pAttachments = attachments;
   render_pass_create_info.subpassCount = 2;
   render_pass_create_info.pSubpasses = subpasses;
-  render_pass_create_info.dependencyCount = 3;
+  render_pass_create_info.dependencyCount = dependency_count;
   render_pass_create_info.pDependencies = dependencies;
 
   const ui::vulkan::VulkanDevice* const vulkan_device =
@@ -2097,12 +2128,13 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
 
 VkFramebuffer VulkanRenderTargetCache::GetFeedbackFramebuffer(
     VkImageView producer_view, VkImageView consumer_view, VkExtent2D extent,
-    VkRenderPass feedback_render_pass) {
+    VkRenderPass feedback_render_pass, bool in_place) {
   // BD input-attachment merge: a 2-attachment framebuffer for the feedback
   // render pass - attachment 0 = producer (subpass 0 color / subpass 1 input),
-  // attachment 1 = consumer (subpass 1 color). Cached by the (producer,consumer)
-  // view pair; the views are stable while their RTs are cached, so a steady scene
-  // reuses one framebuffer (no per-frame leak). Destroyed in ClearCache.
+  // attachment 1 = consumer (subpass 1 color). in_place => ONE attachment (the
+  // shared view; producer_view == consumer_view). Cached by the (producer,
+  // consumer) view pair; the views are stable while their RTs are cached, so a
+  // steady scene reuses one framebuffer (no per-frame leak). Destroyed in ClearCache.
   for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
     if (fb.producer_view == producer_view && fb.consumer_view == consumer_view) {
       return fb.framebuffer;
@@ -2114,7 +2146,7 @@ VkFramebuffer VulkanRenderTargetCache::GetFeedbackFramebuffer(
   create_info.pNext = nullptr;
   create_info.flags = 0;
   create_info.renderPass = feedback_render_pass;
-  create_info.attachmentCount = 2;
+  create_info.attachmentCount = in_place ? 1 : 2;
   create_info.pAttachments = attachments;
   create_info.width = extent.width;
   create_info.height = extent.height;

@@ -205,17 +205,21 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // same-pixel producer write to the consumer's subpassLoad). Cached by
   // (producer fmt, consumer fmt, samples). Used only when a feedback merge is
   // routed (Inc3); VK_NULL_HANDLE on failure.
+  // in_place=true builds the 1-attachment self-dependency variant for an
+  // IN-PLACE composite (producer == consumer RT, read+write the same image):
+  // subpass1 reads att0 as input AND writes it as color (GENERAL layout).
   VkRenderPass GetFeedbackRenderPass(
       xenos::ColorRenderTargetFormat producer_format,
       xenos::ColorRenderTargetFormat consumer_format,
-      xenos::MsaaSamples msaa_samples);
-  // BD input-attachment merge: a 2-attachment framebuffer (producer, consumer)
-  // for the feedback render pass, cached by the view pair. VK_NULL_HANDLE on
-  // failure.
+      xenos::MsaaSamples msaa_samples, bool in_place = false);
+  // BD input-attachment merge: a feedback-render-pass framebuffer cached by the
+  // view pair. 2 attachments (producer, consumer), or 1 (the shared view) when
+  // in_place. VK_NULL_HANDLE on failure.
   VkFramebuffer GetFeedbackFramebuffer(VkImageView producer_view,
                                        VkImageView consumer_view,
                                        VkExtent2D extent,
-                                       VkRenderPass feedback_render_pass);
+                                       VkRenderPass feedback_render_pass,
+                                       bool in_place = false);
   // Returns the load-DONT_CARE variant of the last Update()'s render pass for
   // beginning it, or `original` unchanged when not applicable (mask empty
   // after clamping to the bound attachments, not the host-render-targets path,
