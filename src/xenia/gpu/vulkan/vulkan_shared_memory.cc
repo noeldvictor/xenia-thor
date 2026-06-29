@@ -18,6 +18,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
@@ -134,7 +135,13 @@ bool VulkanSharedMemory::Initialize() {
   buffer_create_info.size = kBufferSize;
   buffer_create_info.usage =
       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+      // gpu_hw_vertex_fetch: also allow binding the shared-memory buffer as a
+      // vertex buffer so the fixed-function vertex-input unit can fetch
+      // attributes from it. Only added when the cvar is on so the default buffer
+      // creation is byte-identical. Propagates to the non-sparse and version-1
+      // (double-buffer) buffers, which copy this create info.
+      (cvars::gpu_hw_vertex_fetch ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : 0);
   buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   buffer_create_info.queueFamilyIndexCount = 0;
   buffer_create_info.pQueueFamilyIndices = nullptr;

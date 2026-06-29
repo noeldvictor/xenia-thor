@@ -2091,6 +2091,65 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   vertex_input_state.sType =
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
+  // gpu_hw_vertex_fetch: declare fixed-function vertex input for the eligible
+  // attributes the translated VS reads (the vectors live until the create call
+  // below). When off (or no eligible attributes / not host-type kVertex), the
+  // counts stay 0 from the zero-init above - xenia's programmable-fetch pipeline
+  // is byte-identical. The enumeration is identical to the translator's and the
+  // command processor's, so locations/bindings agree without communication.
+  std::vector<VkVertexInputBindingDescription> hw_vf_bindings;
+  std::vector<VkVertexInputAttributeDescription> hw_vf_attributes;
+  if (cvars::gpu_hw_vertex_fetch &&
+      SpirvShaderTranslator::Modification(
+          creation_arguments.vertex_shader->modification())
+              .vertex.host_vertex_shader_type ==
+          Shader::HostVertexShaderType::kVertex) {
+    for (const SpirvShaderTranslator::HwVertexFetchAttribute& hw_attr :
+         SpirvShaderTranslator::GetHwVertexFetchAttributes(
+             creation_arguments.vertex_shader->shader())) {
+      bool binding_present = false;
+      for (const VkVertexInputBindingDescription& existing : hw_vf_bindings) {
+        if (existing.binding == hw_attr.binding) {
+          binding_present = true;
+          break;
+        }
+      }
+      if (!binding_present) {
+        VkVertexInputBindingDescription binding_desc;
+        binding_desc.binding = hw_attr.binding;
+        binding_desc.stride =
+            uint32_t(hw_attr.stride_words * sizeof(uint32_t));
+        binding_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        hw_vf_bindings.push_back(binding_desc);
+      }
+      VkVertexInputAttributeDescription attr_desc;
+      attr_desc.location = hw_attr.location;
+      attr_desc.binding = hw_attr.binding;
+      switch (hw_attr.word_count) {
+        case 1:
+          attr_desc.format = VK_FORMAT_R32_UINT;
+          break;
+        case 2:
+          attr_desc.format = VK_FORMAT_R32G32_UINT;
+          break;
+        case 3:
+          attr_desc.format = VK_FORMAT_R32G32B32_UINT;
+          break;
+        default:
+          attr_desc.format = VK_FORMAT_R32G32B32A32_UINT;
+          break;
+      }
+      attr_desc.offset = uint32_t(hw_attr.offset_words * sizeof(uint32_t));
+      hw_vf_attributes.push_back(attr_desc);
+    }
+    vertex_input_state.vertexBindingDescriptionCount =
+        uint32_t(hw_vf_bindings.size());
+    vertex_input_state.pVertexBindingDescriptions = hw_vf_bindings.data();
+    vertex_input_state.vertexAttributeDescriptionCount =
+        uint32_t(hw_vf_attributes.size());
+    vertex_input_state.pVertexAttributeDescriptions = hw_vf_attributes.data();
+  }
+
   VkPipelineInputAssemblyStateCreateInfo input_assembly_state;
   input_assembly_state.sType =
       VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;

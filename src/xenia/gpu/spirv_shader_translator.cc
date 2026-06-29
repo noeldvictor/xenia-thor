@@ -214,6 +214,7 @@ void SpirvShaderTranslator::Reset() {
 
   sampler_bindings_.clear();
   texture_bindings_.clear();
+  hw_vertex_fetch_inputs_.clear();
 
   main_interface_.clear();
   var_main_registers_ = spv::NoResult;
@@ -1373,6 +1374,110 @@ void SpirvShaderTranslator::EnsureBuildPointAvailable() {
   builder_->setBuildPoint(&new_block);
 }
 
+std::vector<SpirvShaderTranslator::HwVertexFetchAttribute>
+SpirvShaderTranslator::GetHwVertexFetchAttributes(const Shader& shader) {
+  // Canonical enumeration shared by the translator (input variable declaration +
+  // redirect load) and the Vulkan backend (pipeline vertex input state + draw-
+  // time vertex buffer binding). Iterates the shader's vertex binding listing,
+  // then each binding's attribute listing, assigning sequential compact bindings
+  // and locations to the eligible attributes. Eligibility is purely static (a
+  // property of the shader); per-draw correctness (index endian / base) is gated
+  // separately via kSysFlag_HwVertexFetch.
+  std::vector<HwVertexFetchAttribute> attributes;
+  uint32_t next_location = 0;
+  uint32_t next_binding = 0;
+  for (const Shader::VertexBinding& binding : shader.vertex_bindings()) {
+    // A well-defined per-vertex stride is required (stride 0 is the constant /
+    // per-instance-like case the SSBO path keeps). The whole binding shares one
+    // VkVertexInputBindingDescription::stride, so it must fit the spec minimum.
+    uint32_t stride_words = binding.stride_words;
+    if (!stride_words ||
+        stride_words * sizeof(uint32_t) > kMaxHwVertexFetchStrideBytes) {
+      continue;
+    }
+    bool binding_allocated = false;
+    uint32_t binding_number = 0;
+    for (const Shader::VertexBinding::Attribute& attr : binding.attributes) {
+      const ParsedVertexFetchInstruction& fetch_instr = attr.fetch_instr;
+      // Only the common vfetch_full base+index*stride case. vfetch_mini reuses a
+      // previous fetch's address (var_main_vfetch_address_), which the SSBO path
+      // keeps; the fixed-function unit can't chain it.
+      if (fetch_instr.is_mini_fetch) {
+        continue;
+      }
+      // The fixed-function unit indexes by raw gl_VertexIndex, so this is only
+      // correct when the guest's fetch index IS that vertex index. Statically
+      // require the index operand to be the conventional vertex-index register
+      // (r0.x, which xenia populates from gl_VertexIndex) read directly, with no
+      // modifiers. This is a HEURISTIC, not a proof - it does not verify r0 is
+      // unmodified before the fetch - but it excludes the obvious manipulated-
+      // index cases (skinning palettes, computed indices) that would fetch the
+      // wrong element; those keep the SSBO path. Validate per title on device.
+      const InstructionOperand& index_op = fetch_instr.operands[0];
+      if (index_op.storage_source != InstructionStorageSource::kRegister ||
+          index_op.storage_addressing_mode !=
+              InstructionStorageAddressingMode::kAbsolute ||
+          index_op.storage_index != 0 ||
+          index_op.GetComponent(0) != SwizzleSource::kX ||
+          index_op.is_negated || index_op.is_absolute_value) {
+        continue;
+      }
+      uint32_t used_result_components =
+          fetch_instr.result.GetUsedResultComponents();
+      uint32_t needed_words = xenos::GetVertexFormatNeededWords(
+          fetch_instr.attributes.data_format, used_result_components);
+      if (!needed_words) {
+        continue;
+      }
+      uint32_t word_count = xe::bit_count(needed_words);
+      uint32_t first_word;
+      xe::bit_scan_forward(needed_words, &first_word);
+      // The raw-words input delivers a single contiguous uvecN; sparse word
+      // masks (rare) stay on the SSBO path. word_count is 1-4 by construction.
+      bool words_contiguous =
+          needed_words == (((uint32_t(1) << word_count) - 1) << first_word);
+      if (!words_contiguous) {
+        continue;
+      }
+      // The first fetched word's dword offset within the per-vertex element must
+      // be non-negative and within the spec's attribute-offset minimum.
+      int32_t offset_words_signed = fetch_instr.attributes.offset + int(first_word);
+      if (offset_words_signed < 0 ||
+          uint32_t(offset_words_signed) * sizeof(uint32_t) >
+              kMaxHwVertexFetchOffsetBytes) {
+        continue;
+      }
+      // Respect the location/binding budgets (kept within the Vulkan minimums).
+      if (next_location >= kMaxHwVertexFetchAttributes) {
+        return attributes;
+      }
+      if (!binding_allocated) {
+        if (next_binding >= kMaxHwVertexFetchBindings) {
+          // No more bindings available - skip the rest of this binding.
+          break;
+        }
+        binding_number = next_binding++;
+        binding_allocated = true;
+      }
+      HwVertexFetchAttribute out{};
+      out.location = next_location++;
+      out.binding = binding_number;
+      out.fetch_constant = binding.fetch_constant;
+      out.stride_words = stride_words;
+      out.offset_words = uint32_t(offset_words_signed);
+      out.word_count = word_count;
+      out.source_offset = fetch_instr.attributes.offset;
+      out.source_format = fetch_instr.attributes.data_format;
+      out.source_is_mini_fetch = fetch_instr.is_mini_fetch;
+      out.source_result_target = fetch_instr.result.storage_target;
+      out.source_result_index = fetch_instr.result.storage_index;
+      out.source_used_result_components = used_result_components;
+      attributes.push_back(out);
+    }
+  }
+  return attributes;
+}
+
 void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   // Create the inputs.
   if (IsSpirvTessEvalShader()) {
@@ -1387,6 +1492,41 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
     builder_->addDecoration(input_vertex_index_, spv::DecorationBuiltIn,
                             spv::BuiltInVertexIndex);
     main_interface_.push_back(input_vertex_index_);
+  }
+
+  // gpu_hw_vertex_fetch: declare the fixed-function vertex-input variables for
+  // eligible attributes (only for the plain host-type-kVertex case; the
+  // remapping host types - point/rect expansion, compute, tessellation - keep
+  // the SSBO path because their per-vertex index doesn't map to gl_VertexIndex).
+  // Each holds the raw uint words; the redirect in ProcessVertexFetchInstruction
+  // reads them under kSysFlag_HwVertexFetch instead of the shared-memory load.
+  // INPUT locations are a separate space from the interpolator OUTPUT locations
+  // below, so they start at 0 independently.
+  if (cvars::gpu_hw_vertex_fetch && IsSpirvVertexShader() &&
+      GetSpirvShaderModification().vertex.host_vertex_shader_type ==
+          Shader::HostVertexShaderType::kVertex) {
+    for (const HwVertexFetchAttribute& hw_attr :
+         GetHwVertexFetchAttributes(current_shader())) {
+      spv::Id var_type = type_uint_vectors_[hw_attr.word_count - 1];
+      spv::Id hw_input = builder_->createVariable(
+          spv::NoPrecision, spv::StorageClassInput, var_type,
+          fmt::format("xe_in_vf_{}", hw_attr.location).c_str());
+      builder_->addDecoration(hw_input, spv::DecorationLocation,
+                              int(hw_attr.location));
+      main_interface_.push_back(hw_input);
+      HwVertexFetchInputVar input_var{};
+      input_var.variable = hw_input;
+      input_var.word_count = hw_attr.word_count;
+      input_var.source_offset = hw_attr.source_offset;
+      input_var.source_format = hw_attr.source_format;
+      input_var.source_is_mini_fetch = hw_attr.source_is_mini_fetch;
+      input_var.source_result_target = hw_attr.source_result_target;
+      input_var.source_result_index = hw_attr.source_result_index;
+      input_var.source_used_result_components =
+          hw_attr.source_used_result_components;
+      input_var.fetch_constant = hw_attr.fetch_constant;
+      hw_vertex_fetch_inputs_.push_back(input_var);
+    }
   }
 
   uint32_t output_location = 0;

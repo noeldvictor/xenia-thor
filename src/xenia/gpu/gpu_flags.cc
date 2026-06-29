@@ -116,6 +116,28 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_hw_vertex_fetch, false,
+    "EXPERIMENTAL (Thor/Adreno): fetch eligible vertex attributes through the "
+    "GPU's fixed-function vertex-input unit (hardware vertex buffers) instead "
+    "of the programmable per-word SSBO fetch (LoadUint32FromSharedMemory). The "
+    "SSBO load is latency-bound on Adreno; reading the same bytes through the "
+    "vertex-input unit hides that latency (the remaining binning/vertex GPU "
+    "lever on Blue Dragon's heavy field). 'Raw words' variant - the input "
+    "delivers the RAW guest dwords (one R32_UINT per word) and the shader's "
+    "unchanged endian-swap / unpack / format-conversion consumes them, so it is "
+    "format-agnostic (no shader specialization). Only engages per draw when the "
+    "fixed-function unit selects the SAME guest element the SSBO path would: the "
+    "unit indexes by raw gl_VertexIndex, while the guest computes "
+    "EndianSwap(gl_VertexIndex) + base, so the kSysFlag_HwVertexFetch redirect "
+    "is set only when the index needs no endian swap AND the vertex base index "
+    "is zero (otherwise the shader's SSBO arm runs, byte-identical). Eligibility "
+    "is also limited to the common constant-stride base+index*stride case with "
+    "contiguous words. Changes the vertex shader interface + pipeline vertex "
+    "input state when on, so toggling invalidates cached shaders/pipelines once "
+    "(use a clean run). Default off until validated per title.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

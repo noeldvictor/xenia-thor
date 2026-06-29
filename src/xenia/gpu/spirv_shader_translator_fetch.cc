@@ -186,6 +186,27 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
     return word_composite_constituents[0];
   };
 
+  // gpu_hw_vertex_fetch: find the fixed-function vertex-input variable declared
+  // for this exact vfetch instruction (matched by its identity), if any. Only
+  // when the position-stream redirect above is NOT handling this instruction.
+  const HwVertexFetchInputVar* hw_input = nullptr;
+  if (!pos_fetch_redirect && !hw_vertex_fetch_inputs_.empty()) {
+    uint32_t instr_fetch_constant =
+        uint32_t(instr.operands[1].storage_index);
+    for (const HwVertexFetchInputVar& candidate : hw_vertex_fetch_inputs_) {
+      if (candidate.fetch_constant == instr_fetch_constant &&
+          candidate.source_offset == instr.attributes.offset &&
+          candidate.source_format == instr.attributes.data_format &&
+          candidate.source_is_mini_fetch == instr.is_mini_fetch &&
+          candidate.source_result_target == instr.result.storage_target &&
+          candidate.source_result_index == instr.result.storage_index &&
+          candidate.source_used_result_components == used_result_components) {
+        hw_input = &candidate;
+        break;
+      }
+    }
+  }
+
   spv::Id words;
   if (pos_fetch_redirect && pos_fetch_element_index != spv::NoResult) {
     // G1-lite: under kSysFlag_PosFetchRedirect, load this vfetch's needed
@@ -260,6 +281,33 @@ void SpirvShaderTranslator::ProcessVertexFetchInstruction(
     spv::Id interleaved_words = load_interleaved_words();
     redirect_if.makeEndIf();
     words = redirect_if.createMergePhi(compact_words, interleaved_words);
+  } else if (hw_input) {
+    // gpu_hw_vertex_fetch: under kSysFlag_HwVertexFetch, take this attribute's
+    // raw words from the fixed-function vertex-input variable (filled by the
+    // GPU's vertex-input unit from the bound shared-memory vertex buffer) rather
+    // than the per-word shared-memory SSBO loads. The input holds the words in
+    // ascending word order - exactly the layout load_interleaved_words()
+    // produces - and the same type (uint or uintN), so the unchanged endian swap
+    // and unpacking below consume either source. The flag is set per draw only
+    // when the unit's raw-gl_VertexIndex addressing matches the guest's, so the
+    // SSBO arm runs (byte-identical) for every other draw. The interleaved
+    // ADDRESS computation above stays unconditional because a chained vfetch_mini
+    // may still read var_main_vfetch_address_.
+    spv::Id redirect_cond = builder_->createBinOp(
+        spv::OpINotEqual, type_bool_,
+        builder_->createBinOp(
+            spv::OpBitwiseAnd, type_uint_, main_system_constant_flags_,
+            builder_->makeUintConstant(
+                static_cast<unsigned int>(kSysFlag_HwVertexFetch))),
+        const_uint_0_);
+    SpirvBuilder::IfBuilder redirect_if(
+        redirect_cond, spv::SelectionControlDontFlattenMask, *builder_);
+    spv::Id hw_words =
+        builder_->createLoad(hw_input->variable, spv::NoPrecision);
+    redirect_if.makeBeginElse();
+    spv::Id interleaved_words = load_interleaved_words();
+    redirect_if.makeEndIf();
+    words = redirect_if.createMergePhi(hw_words, interleaved_words);
   } else {
     words = load_interleaved_words();
   }

@@ -134,6 +134,15 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // bandwidth. Raw guest dwords - same endian swap and unpacking.
     kSysFlag_PosFetchRedirect_Shift,
 
+    // Vertex shaders (host type kVertex) translated with gpu_hw_vertex_fetch:
+    // read eligible attributes' raw words from fixed-function vertex-input
+    // variables instead of the SSBO shared-memory stride. Set per draw only
+    // when the fixed-function unit (which indexes by raw gl_VertexIndex) selects
+    // the SAME guest element the SSBO path would - i.e. the index needs no
+    // endian swap and the vertex base index is zero. Cleared otherwise so the
+    // unchanged SSBO arm runs (byte-identical).
+    kSysFlag_HwVertexFetch_Shift,
+
     kSysFlag_Count,
 
     // For HostVertexShaderType kVertex, if fullDrawIndexUint32 is not
@@ -174,6 +183,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kSysFlag_FSIDepthStencilEarlyWrite =
         1u << kSysFlag_FSIDepthStencilEarlyWrite_Shift,
     kSysFlag_PosFetchRedirect = 1u << kSysFlag_PosFetchRedirect_Shift,
+    kSysFlag_HwVertexFetch = 1u << kSysFlag_HwVertexFetch_Shift,
   };
   static_assert(kSysFlag_Count <= 32, "Too many flags in the system constants");
 
@@ -386,6 +396,59 @@ class SpirvShaderTranslator : public ShaderTranslator {
     return GetSharedMemoryStorageBufferCountLog2(
         features_.max_storage_buffer_range);
   }
+
+  // gpu_hw_vertex_fetch: deterministic description of one hardware-vertex-input
+  // attribute the translated vertex shader reads in place of an SSBO load. The
+  // enumeration (GetHwVertexFetchAttributes) produces these in an order that is
+  // identical on the translator side (input variable declaration + the redirect
+  // load) and the Vulkan side (pipeline vertex input state + the draw-time
+  // vertex buffer binding), so both agree on the location/binding mapping
+  // without communicating - everything is keyed off the shader's vertex binding
+  // listing.
+  struct HwVertexFetchAttribute {
+    // SPIR-V input Location and VkVertexInputAttributeDescription::location.
+    uint32_t location;
+    // Compact VkVertexInputBindingDescription::binding (0-based over the eligible
+    // bindings, NOT the fetch constant slot, to stay within maxVertexInputBindings).
+    uint32_t binding;
+    // Vertex fetch constant slot [0-95] - the source of the buffer base address
+    // at draw time (the binding's buffer offset).
+    uint32_t fetch_constant;
+    // Binding stride in dwords (VkVertexInputBindingDescription::stride = * 4).
+    uint32_t stride_words;
+    // Dword offset of the first fetched word within the per-vertex element
+    // (VkVertexInputAttributeDescription::offset = * 4). Always >= 0.
+    uint32_t offset_words;
+    // Number of consecutive 32-bit words fetched (1-4); selects the R32[GBA]_UINT
+    // format and the uvecN input type.
+    uint32_t word_count;
+    // Identity of the source vfetch instruction, for the translator to match the
+    // ParsedVertexFetchInstruction it is currently lowering to its declared
+    // input variable.
+    int32_t source_offset;  // ParsedVertexFetchInstruction::attributes.offset
+    xenos::VertexFormat source_format;
+    bool source_is_mini_fetch;
+    InstructionStorageTarget source_result_target;
+    uint32_t source_result_index;
+    uint32_t source_used_result_components;
+  };
+  // Caps kept at or below the Vulkan guaranteed minimums (maxVertexInputAttributes
+  // and maxVertexInputBindings are both >= 16) so the enumeration is valid on any
+  // conformant device without consulting device limits (keeping it shareable
+  // between the device-independent translator and the Vulkan backend).
+  static constexpr uint32_t kMaxHwVertexFetchAttributes = 16;
+  static constexpr uint32_t kMaxHwVertexFetchBindings = 16;
+  // Conservative within-spec limits (maxVertexInputBindingStride >= 2048,
+  // maxVertexInputAttributeOffset >= 2047) used as eligibility gates.
+  static constexpr uint32_t kMaxHwVertexFetchStrideBytes = 2048;
+  static constexpr uint32_t kMaxHwVertexFetchOffsetBytes = 2047;
+  // Enumerates every hardware-vertex-input-eligible attribute of `shader` in the
+  // canonical (vertex binding listing, then attribute listing) order. Only
+  // meaningful for vertex shaders used as host type kVertex; the caller is
+  // responsible for that gate (the same list is produced regardless, since it
+  // depends only on the shader's vertex bindings). Empty when there are none.
+  static std::vector<HwVertexFetchAttribute> GetHwVertexFetchAttributes(
+      const Shader& shader);
 
   // Creates a special fragment shader without color outputs - this resets the
   // state of the translator.
@@ -855,6 +918,25 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // Compact de-interleaved position stream (kSysFlag_PosFetchRedirect);
   // spv::NoResult when not declared for this translation.
   spv::Id buffer_compact_pos_;
+
+  // gpu_hw_vertex_fetch: the fixed-function vertex-input variables declared for
+  // this translation (one per eligible attribute), populated before main from
+  // GetHwVertexFetchAttributes. Empty when the cvar is off or the shader is not
+  // an eligible host-type-kVertex shader. ProcessVertexFetchInstruction looks up
+  // the current vfetch here by its instruction identity.
+  struct HwVertexFetchInputVar {
+    spv::Id variable;
+    uint32_t word_count;
+    // Source instruction identity (mirrors HwVertexFetchAttribute::source_*).
+    int32_t source_offset;
+    xenos::VertexFormat source_format;
+    bool source_is_mini_fetch;
+    InstructionStorageTarget source_result_target;
+    uint32_t source_result_index;
+    uint32_t source_used_result_components;
+    uint32_t fetch_constant;
+  };
+  std::vector<HwVertexFetchInputVar> hw_vertex_fetch_inputs_;
 
   // Not using combined images and samplers because
   // maxPerStageDescriptorSamplers is often lower than

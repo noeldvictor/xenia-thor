@@ -5359,6 +5359,50 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       render_target_cache_->last_update_render_pass(),
       render_target_cache_->last_update_framebuffer());
 
+  // gpu_hw_vertex_fetch: bind the shared-memory buffer as the Vulkan vertex
+  // buffers the translated VS's fixed-function inputs read. Bound for every
+  // host-type-kVertex draw when the cvar is on (the per-draw
+  // kSysFlag_HwVertexFetch decides whether the shader actually consumes them);
+  // the binding must exist whenever the pipeline declares vertex input. The
+  // enumeration is identical to the pipeline cache's, so the compact binding
+  // numbers agree; the per-binding offset is the fetch constant's base address
+  // (the vertex ranges were already made resident by the loop above). Recorded
+  // before the merge-cursor snapshot so it counts as a state change - this
+  // conservatively prevents draw merging from stitching across it rather than
+  // corrupting a run (the two levers aren't combined). Byte-identical when off.
+  if (cvars::gpu_hw_vertex_fetch &&
+      primitive_processing_result.host_vertex_shader_type ==
+          Shader::HostVertexShaderType::kVertex) {
+    const std::vector<SpirvShaderTranslator::HwVertexFetchAttribute>
+        hw_vf_attributes =
+            SpirvShaderTranslator::GetHwVertexFetchAttributes(*vertex_shader);
+    if (!hw_vf_attributes.empty()) {
+      VkBuffer hw_vf_buffers[SpirvShaderTranslator::kMaxHwVertexFetchBindings];
+      VkDeviceSize
+          hw_vf_offsets[SpirvShaderTranslator::kMaxHwVertexFetchBindings];
+      uint32_t hw_vf_binding_count = 0;
+      VkBuffer shared_memory_buffer = shared_memory_->buffer();
+      for (const SpirvShaderTranslator::HwVertexFetchAttribute& hw_attr :
+           hw_vf_attributes) {
+        uint32_t binding = hw_attr.binding;
+        if (binding >= SpirvShaderTranslator::kMaxHwVertexFetchBindings) {
+          continue;
+        }
+        if (binding + 1 > hw_vf_binding_count) {
+          hw_vf_binding_count = binding + 1;
+        }
+        xenos::xe_gpu_vertex_fetch_t vfetch_constant =
+            regs.GetVertexFetch(hw_attr.fetch_constant);
+        hw_vf_buffers[binding] = shared_memory_buffer;
+        hw_vf_offsets[binding] = VkDeviceSize(vfetch_constant.address << 2);
+      }
+      if (hw_vf_binding_count) {
+        deferred_command_buffer_.CmdVkBindVertexBuffers(
+            0, hw_vf_binding_count, hw_vf_buffers, hw_vf_offsets);
+      }
+    }
+  }
+
   // Lever 2 (vulkan_merge_draws): did this draw record ANY command (state setup,
   // descriptors, dynamic state, render-pass begin/end, barriers, pipeline bind)
   // since IssueDraw entry? If so, state changed -> a pending concatenation run
@@ -8199,6 +8243,24 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
   }
   dirty |= system_constants_.compact_pos_base_dwords != compact_pos_base_dwords;
   system_constants_.compact_pos_base_dwords = compact_pos_base_dwords;
+
+  // gpu_hw_vertex_fetch: redirect eligible attributes to the fixed-function
+  // vertex-input variables only when the unit's element selection matches the
+  // guest's. The guest computes EndianSwap(gl_VertexIndex) + vertex_base_index;
+  // the fixed-function unit indexes by raw gl_VertexIndex - so the redirect is
+  // valid iff the index needs no endian swap and the base index is zero. Only
+  // the plain host-type-kVertex shader is translated with the input variables.
+  // Any other draw keeps the flag clear and runs the unchanged SSBO arm
+  // (byte-identical). The vertex buffers are bound in IssueDraw when the cvar is
+  // on, independent of this flag, so the declared inputs always have a buffer.
+  if (cvars::gpu_hw_vertex_fetch &&
+      primitive_processing_result.host_vertex_shader_type ==
+          Shader::HostVertexShaderType::kVertex &&
+      primitive_processing_result.host_shader_index_endian ==
+          xenos::Endian::kNone &&
+      vgt_indx_offset == 0) {
+    flags |= SpirvShaderTranslator::kSysFlag_HwVertexFetch;
+  }
 
   dirty |= system_constants_.flags != flags;
   system_constants_.flags = flags;
