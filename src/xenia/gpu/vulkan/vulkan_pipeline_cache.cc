@@ -450,8 +450,25 @@ bool VulkanPipelineCache::ConfigurePipeline(
       return false;
     }
   }
+  // BD input-attachment merge (gpu_vulkan_feedback_merge, Inc3 step 4b): a
+  // consumer shader whose modification flags feedback_input_attachment renders
+  // into SUBPASS 1 of the 2-subpass feedback render pass (reading the producer
+  // RT as an input attachment instead of sampling its stored copy). It keys a
+  // distinct pipeline automatically (pixel_shader_modification is part of the
+  // description). Merge eligibility (gated in the command processor) requires
+  // producer fmt == consumer fmt, so the feedback RP is derivable from this
+  // render_pass_key's color_0 format.
+  bool feedback_merge =
+      pixel_shader &&
+      SpirvShaderTranslator::Modification(pixel_shader->modification())
+              .pixel.feedback_input_attachment != 0;
   VkRenderPass render_pass =
-      render_target_cache_.GetPath() ==
+      feedback_merge
+          ? render_target_cache_.GetFeedbackRenderPass(
+                render_pass_key.color_0_view_format,
+                render_pass_key.color_0_view_format,
+                render_pass_key.msaa_samples)
+      : render_target_cache_.GetPath() ==
               RenderTargetCache::Path::kPixelShaderInterlock
           ? render_target_cache_.GetFragmentShaderInterlockRenderPass()
           : render_target_cache_.GetHostRenderTargetsRenderPass(
@@ -467,6 +484,7 @@ bool VulkanPipelineCache::ConfigurePipeline(
   creation_arguments.pixel_shader = pixel_shader;
   creation_arguments.geometry_shader = geometry_shader;
   creation_arguments.render_pass = render_pass;
+  creation_arguments.feedback_merge = feedback_merge;
   if (!EnsurePipelineCreated(creation_arguments)) {
     return false;
   }
@@ -2480,7 +2498,10 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   pipeline_create_info.layout =
       creation_arguments.pipeline->second.pipeline_layout->GetPipelineLayout();
   pipeline_create_info.renderPass = creation_arguments.render_pass;
-  pipeline_create_info.subpass = 0;
+  // BD input-attachment merge: the consumer pipeline targets subpass 1 of the
+  // 2-subpass feedback render pass (subpass 0 is the producer); normal passes
+  // are single-subpass (0).
+  pipeline_create_info.subpass = creation_arguments.feedback_merge ? 1 : 0;
   pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
   pipeline_create_info.basePipelineIndex = -1;
 

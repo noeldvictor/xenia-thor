@@ -217,6 +217,10 @@ class VulkanPipelineCache {
     const VulkanShader::VulkanTranslation* pixel_shader;
     VkShaderModule geometry_shader;
     VkRenderPass render_pass;
+    // BD input-attachment merge: render_pass is a 2-subpass feedback render
+    // pass and this pipeline is the consumer in SUBPASS 1 (reads the producer
+    // as an input attachment). False = normal single-subpass (subpass 0).
+    bool feedback_merge;
   };
 
   union GeometryShaderKey {
