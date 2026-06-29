@@ -1600,6 +1600,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t brk_img_sr_rtsrc_ = 0;
   uint32_t brk_img_sr_texsample_ = 0;
   uint32_t brk_img_sr_fscomposite_ = 0;
+  // sr_rtsrc_fscomp_ = of the RENDER-TO-TEXTURE breaks (rtsrc: a just-rendered
+  // RT transitions COLOR/DEPTH_ATTACHMENT -> SHADER_READ so a later pass can
+  // sample it), those whose consumer draw is a full-screen composite. This is
+  // the ACTUAL input-attachment-eligible set for BD's village field (0 ownership
+  // transfers => all brk_img_sr are rtsrc), which sr_fscomposite_ structurally
+  // CANNOT count (it gates on the texsample path, oldLayout=TRANSFER_DST, which
+  // is empty for rtsrc breaks). This counter sizes the GMEM-residency win.
+  uint32_t brk_img_sr_rtsrc_fscomp_ = 0;
   uint32_t brk_img_sr_detail_logged_ = 0;
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).

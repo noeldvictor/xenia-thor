@@ -2595,7 +2595,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "await={} up={} comp={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} "
-        "sr_cls[rtsrc={} tex={} fscomp={}] "
+        "sr_cls[rtsrc={} tex={} fscomp={} rtfc={}] "
         "comp[opaque={} opaque_verts={} alphatest={} blended={}] guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
@@ -2689,7 +2689,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
         brk_img_other_, brk_img_sr_rtsrc_, brk_img_sr_texsample_,
-        brk_img_sr_fscomposite_, draw_outcomes_opaque_draws_,
+        brk_img_sr_fscomposite_, brk_img_sr_rtsrc_fscomp_,
+        draw_outcomes_opaque_draws_,
         draw_outcomes_opaque_verts_, draw_outcomes_alphatest_draws_,
         draw_outcomes_blended_draws_, xe::Clock::QueryGuestUptimeMillis(),
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPointList)],
@@ -2936,6 +2937,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     brk_img_sr_rtsrc_ = 0;
     brk_img_sr_texsample_ = 0;
     brk_img_sr_fscomposite_ = 0;
+    brk_img_sr_rtsrc_fscomp_ = 0;
     brk_img_sr_detail_logged_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
@@ -3768,6 +3770,7 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
           rect_or_quad && d.ps_hash != 0 && d.color_mask != 0;
     }
     bool any_texsample_this_break = false;
+    bool any_rtsrc_this_break = false;
     for (const VkImageMemoryBarrier& imb :
          pending_barriers_image_memory_barriers_) {
       if (imb.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
@@ -3787,6 +3790,7 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
               imb.oldLayout == VK_IMAGE_LAYOUT_GENERAL) {
             ++brk_img_sr_rtsrc_;
+            any_rtsrc_this_break = true;
           } else {
             ++brk_img_sr_texsample_;
             any_texsample_this_break = true;
@@ -3794,16 +3798,24 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
           // Throttled per-break detail (consumer identity + the broken image's
           // layout transition) for offline same-pixel confirmation via dumped
           // shaders. Capped per frame to keep the log readable.
-          if (brk_img_sr_detail_logged_ < 16) {
+          if (brk_img_sr_detail_logged_ < 48) {
             ++brk_img_sr_detail_logged_;
             const GuestDrawDesc& d = last_guest_draw_desc_;
             XELOGI(
                 "IMG_SR break: consumer prim={} host_verts={} idx={} "
                 "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} "
-                "colormask={:04X} fscomp={} oldlayout={} newlayout={}",
+                "colormask={:04X} fscomp={} rtsrc={} oldlayout={} newlayout={}",
                 d.prim_type, d.host_vertex_count, d.index_count, d.ps_hash,
                 d.vs_hash, d.blendcontrol0, d.color_mask,
                 consumer_is_fullscreen_composite ? 1 : 0,
+                (imb.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL ||
+                 imb.oldLayout ==
+                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||
+                 imb.oldLayout ==
+                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
+                 imb.oldLayout == VK_IMAGE_LAYOUT_GENERAL)
+                    ? 1
+                    : 0,
                 uint32_t(imb.oldLayout), uint32_t(imb.newLayout));
           }
         }
@@ -3818,6 +3830,16 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
     if (classify_img_sr && any_texsample_this_break &&
         consumer_is_fullscreen_composite) {
       ++brk_img_sr_fscomposite_;
+    }
+    // The render-to-texture (rtsrc) eligible set: a just-rendered RT goes
+    // ATTACHMENT->SHADER_READ and the consumer is a full-screen composite. This
+    // is the input-attachment / GMEM-residency candidate for BD's village field
+    // (where every brk_img_sr is rtsrc, so sr_fscomposite_ above counts 0). The
+    // consumer ps_hash in the detail log lets the same-pixel texcoord be
+    // confirmed per shader before the merge is built.
+    if (classify_img_sr && any_rtsrc_this_break &&
+        consumer_is_fullscreen_composite) {
+      ++brk_img_sr_rtsrc_fscomp_;
     }
   }
   EndRenderPass();
