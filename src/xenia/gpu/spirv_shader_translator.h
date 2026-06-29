@@ -536,6 +536,12 @@ class SpirvShaderTranslator : public ShaderTranslator {
     bool is_signed;
 
     spv::Id variable;
+    // BD input-attachment merge (PixelShaderModification.feedback_input_
+    // attachment): when this fetch constant is the flagged producer RT, the
+    // subpassInput (DimSubpassData) variable read via OpImageRead at the
+    // fragment's own position instead of sampling `variable`. NoResult
+    // otherwise (the normal sampled-image path).
+    spv::Id subpass_input_variable = spv::NoResult;
   };
 
   struct SamplerBinding {
