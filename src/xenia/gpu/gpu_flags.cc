@@ -671,6 +671,17 @@ DEFINE_bool(
     "only. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_clamp_renderarea_to_scissor, false,
+    "BD-30 GPU lever: set the render pass renderArea to the guest scissor's max "
+    "extent instead of the full EDRAM-tile-rounded host framebuffer. BD allocates "
+    "RTs up to 1280x2048 (and x4096/x8192) tall for a 720p game; with renderArea = "
+    "full host_extent the Adreno TBDR load/store/bins the oversized off-screen rows "
+    "every pass = the dominant per-pass GPU overhead (per-pass timestamps: a 1-draw "
+    "pass over a 720x1824 RT cost 51ms). Clamps only when the scissor is smaller. "
+    "Validate render correctness (a too-small renderArea clips later draws). "
+    "Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_collapse_alphatest_depthonly, false,
     "BD multi-pass binning lever (max-effort RE): collapse index count to 3 ONLY "
     "for ALPHA-TEST draws in DEPTH-ONLY passes (normalized_color_mask == 0 = the "

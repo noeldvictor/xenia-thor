@@ -3786,6 +3786,25 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // TODO(Triang3l): Actual dirty width / height in the deferred command
   // buffer.
   render_pass_begin_info.renderArea.extent = framebuffer->host_extent;
+  // BD-30 lever: the EDRAM RT cache allocates host RTs at the EDRAM-tile-rounded
+  // height (1280x720 guest -> 1280x2048 host, some up to x8192), and renderArea =
+  // full host_extent makes the Adreno TBDR load/store/bin the oversized off-screen
+  // rows every pass = the dominant GPU emulation overhead (per-pass timestamps:
+  // a 1-draw pass over a 720x1824 RT cost 51ms). Clamp renderArea to the guest
+  // scissor's max extent so only the active region is tiled. Gated for safe A/B;
+  // validate render correctness (a too-small renderArea would clip later draws).
+  if (cvars::gpu_clamp_renderarea_to_scissor) {
+    draw_util::Scissor scissor;
+    draw_util::GetScissor(*register_file_, scissor);
+    uint32_t max_x = scissor.offset[0] + scissor.extent[0];
+    uint32_t max_y = scissor.offset[1] + scissor.extent[1];
+    if (max_x > 0 && max_x < render_pass_begin_info.renderArea.extent.width) {
+      render_pass_begin_info.renderArea.extent.width = max_x;
+    }
+    if (max_y > 0 && max_y < render_pass_begin_info.renderArea.extent.height) {
+      render_pass_begin_info.renderArea.extent.height = max_y;
+    }
+  }
   // LRZ spike: when forcing depth loadOp=CLEAR (gpu_lrz_spike_depth_clear), a clear
   // value must be supplied for the depth attachment (always attachments[0]). Clear
   // to the far plane so the opaque depth establishes valid LRZ for foliage to
