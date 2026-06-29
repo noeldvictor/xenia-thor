@@ -37,9 +37,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -53,6 +55,8 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 DECLARE_int32(cpu_backend_llvm_opt);
@@ -63,6 +67,7 @@ DECLARE_int32(cpu_backend_llvm_max_fns);
 DECLARE_string(cpu_backend_llvm_trace_addr);
 DECLARE_string(cpu_backend_llvm_skip_opcodes);
 DECLARE_bool(cpu_backend_llvm_lower_vmaddfp);
+DECLARE_bool(cpu_backend_llvm_dump_asm);
 DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_llvm_object_cache);
@@ -2192,6 +2197,40 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
       if (nl == std::string::npos) nl = ir.size();
       XELOGI("LLVMir {}: {}", name, ir.substr(pos, nl - pos));
       pos = nl + 1;
+    }
+  }
+  if (cvars::cpu_backend_llvm_dump_asm) {
+    // Post-codegen ASSEMBLY for this fn (the IR->asm step where device codegen/
+    // regalloc bugs live; dump_ir only shows IR). Emits via a detectHost
+    // TargetMachine matching the JIT; the per-fn reserve-x20/x21 + -sve attrs ride
+    // along in the cloned IR. Use with _range_lo/_hi to dump ONE fn. grep 'LLVMasm'.
+    if (auto tmb = llvm::orc::JITTargetMachineBuilder::detectHost()) {
+      if (auto tm_or = tmb->createTargetMachine()) {
+        auto tm = std::move(*tm_or);
+        auto clone = llvm::CloneModule(*mod);
+        clone->setDataLayout(tm->createDataLayout());
+        llvm::SmallString<0> sv;
+        llvm::raw_svector_ostream os(sv);
+        llvm::legacy::PassManager pm;
+        if (!tm->addPassesToEmitFile(pm, os, nullptr,
+                                     llvm::CodeGenFileType::AssemblyFile)) {
+          pm.run(*clone);
+          std::string a(sv.begin(), sv.end());
+          size_t pos = 0;
+          while (pos < a.size()) {
+            size_t nl = a.find('\n', pos);
+            if (nl == std::string::npos) nl = a.size();
+            XELOGI("LLVMasm {}: {}", name, a.substr(pos, nl - pos));
+            pos = nl + 1;
+          }
+        } else {
+          XELOGW("LLVMasm: addPassesToEmitFile unsupported for {}", name);
+        }
+      } else {
+        llvm::consumeError(tm_or.takeError());
+      }
+    } else {
+      llvm::consumeError(tmb.takeError());
     }
   }
   // AOT object cache key: rename the module to its cache KEY just before the

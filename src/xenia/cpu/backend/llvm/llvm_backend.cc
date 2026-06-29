@@ -92,6 +92,14 @@ DEFINE_bool(cpu_backend_llvm_dump_ir, false,
             "a single function and read off codegen bugs device-free-ishly.",
             "CPU");
 
+DEFINE_bool(cpu_backend_llvm_dump_asm, false,
+            "Dump the post-CODEGEN AArch64 ASSEMBLY for each LLVM-compiled guest "
+            "function to the log (grep 'LLVMasm'), via a detectHost TargetMachine "
+            "matching the JIT. Unlike _dump_ir (which shows correct-looking IR), "
+            "this shows the IR->asm output where device codegen/regalloc bugs live. "
+            "Use with _range_lo/_hi to dump ONE function's machine code.",
+            "CPU");
+
 DEFINE_bool(cpu_backend_llvm_context_residency, false,
             "LLVM backend: promote guest registers (LOAD/STORE_CONTEXT) to "
             "entry-block ALLOCAS that mem2reg lifts into host registers, instead "
