@@ -205,6 +205,15 @@ DEFINE_int32(
     "the extension REQUEST behind this cvar keeps the default device-creation "
     "path byte-identical when off. Default off, validate per-title.",
     "GPU");
+DEFINE_bool(
+    gpu_vrs_all_draws, false,
+    "DIAGNOSTIC: apply gpu_vrs_foliage_rate to ALL draws (not just alpha-test/"
+    "blended foliage). Coarsens the whole scene's fragment shading - used to "
+    "isolate how much GPU time is OPAQUE fragment shading vs vertex/geometry "
+    "(if enabling this cuts gpu_frame_us beyond VRS-foliage, opaque overdraw is "
+    "significant; if not, the remainder is vertex/blend-ROP). Quality-destructive "
+    "for the whole scene; default off, diagnostic only.",
+    "GPU");
 DEFINE_uint32(
     gpu_vrs_enable_after_guest_ms, 0,
     "Measurement helper for gpu_vrs_foliage_rate: when >0, VRS coarse-shading is "

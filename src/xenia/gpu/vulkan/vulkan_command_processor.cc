@@ -6060,7 +6060,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                             : cvars::gpu_vrs_foliage_rate >= 4 ? 4u
                             : cvars::gpu_vrs_foliage_rate >= 2 ? 2u
                                                               : 1u;
-        bool vrs_foliage = is_alphatest_draw;
+        bool vrs_foliage = cvars::gpu_vrs_all_draws || is_alphatest_draw;
         if (!vrs_foliage) {
           auto bc_vrs = register_file_->Get<reg::RB_BLENDCONTROL>();
           vrs_foliage =
