@@ -1016,6 +1016,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // tile load was elided.
   uint32_t draw_outcomes_dc_safe_passes_ = 0;
   uint32_t draw_outcomes_dc_safe_atts_ = 0;
+  // gpu_vulkan_skip_unused_depth_store: whether THIS guest draw provably never
+  // accesses depth/stencil (set per-draw in IssueDraw, consumed if it opens a
+  // pass); whether the currently-open guest pass began with the depth-store-NONE
+  // variant (so a later depth-using draw must break it first); + telemetry count
+  // of passes begun in that mode.
+  bool depth_store_none_pending_ = false;
+  bool current_pass_depth_store_none_ = false;
+  uint32_t draw_outcomes_depth_none_passes_ = 0;
   // host_draws= telemetry: draw stats of completed submissions are folded into
   // the accumulator at Execute time (the per-recording stat zeroes on Reset);
   // the print marker turns the monotone total into a per-frame delta.

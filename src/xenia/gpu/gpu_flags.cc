@@ -102,6 +102,24 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_skip_unused_depth_store, false,
+    "EXPERIMENTAL (Thor/TBDR, BD-30 GPU lever): for guest render passes whose "
+    "draws provably never test or write depth/stencil (RB_DEPTHCONTROL "
+    "z_enable / z_write_enable / stencil_enable all off - e.g. the full-screen "
+    "blended/replace composite passes), begin the (oversized, EDRAM-tile-rounded) "
+    "depth attachment with loadOp=DONT_CARE + storeOp=NONE instead of LOAD+STORE, "
+    "skipping its per-pass GMEM tile reload+store on tile-based GPUs. STORE_OP_NONE "
+    "(Vulkan 1.3 core) PRESERVES the depth EDRAM memory (unlike STORE_OP_DONT_CARE, "
+    "which would undefine it and corrupt aliasing render targets), so this is "
+    "content-preserving. The command processor breaks the pass before any "
+    "depth-using draw (the preserved memory is reloaded by the next normal pass), "
+    "so it is also safe across multi-draw passes. Inert when the device is below "
+    "Vulkan 1.3 or no depth attachment is bound. Default off; validate render "
+    "correctness on a 3D field and watch for extra pass breaks when depth state "
+    "alternates within one framebuffer.",
+    "GPU");
+
+DEFINE_bool(
     gpu_binning_deinterleave_pos, false,
     "EXPERIMENTAL (Thor/TBDR): de-interleave the position vertex stream into a "
     "compact raw-dword buffer so the tiler's binning pass fetches only "

@@ -1707,14 +1707,20 @@ bool VulkanRenderTargetCache::Update(
 }
 
 VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
-    RenderPassKey key, uint32_t load_dont_care_mask) {
+    RenderPassKey key, uint32_t load_dont_care_mask, bool depth_store_op_none) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
   // Only attachments that are actually bound can be marked.
   load_dont_care_mask &= key.depth_and_color_used;
-  uint64_t load_dont_care_key =
-      (uint64_t(key.key) << 5) | uint64_t(load_dont_care_mask);
-  if (load_dont_care_mask) {
+  // Depth-store-NONE only applies when a depth/stencil attachment is bound.
+  depth_store_op_none =
+      depth_store_op_none && (key.depth_and_color_used & 0b1) != 0;
+  // Variant key layout: [.. key ..][depth_store_op_none:1][load_dont_care:5].
+  bool is_variant = load_dont_care_mask != 0 || depth_store_op_none;
+  uint64_t load_dont_care_key = (uint64_t(key.key) << 6) |
+                                (uint64_t(depth_store_op_none) << 5) |
+                                uint64_t(load_dont_care_mask);
+  if (is_variant) {
     auto variant_it = load_dont_care_render_passes_.find(load_dont_care_key);
     if (variant_it != load_dont_care_render_passes_.end()) {
       return variant_it->second;
@@ -1769,6 +1775,22 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
                                               : VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.stencilStoreOp = dont_care ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                           : VK_ATTACHMENT_STORE_OP_STORE;
+    // gpu_vulkan_skip_unused_depth_store: this variant is selected by the command
+    // processor only for guest passes whose draws provably never test or write
+    // depth/stencil (it breaks the pass before any depth-using draw), so the
+    // attachment is never accessed. Skip the oversized depth tile load AND store:
+    // DONT_CARE the load (no draw reads it) and STORE_OP_NONE the store so the
+    // depth EDRAM memory is PRESERVED (STORE_OP_DONT_CARE would undefine it and
+    // corrupt render targets that alias those tiles). Takes precedence over the
+    // load_dont_care / lrz-spike-clear paths above (mutually exclusive by caller).
+    // STORE_OP_NONE is Vulkan 1.3 core; the variant accessor gates on the device
+    // API version, so this enum is only reached when it is valid.
+    if (depth_store_op_none) {
+      attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      attachment.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+      attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_NONE;
+    }
     attachment.initialLayout = VulkanRenderTarget::kDepthDrawLayout;
     attachment.finalLayout = VulkanRenderTarget::kDepthDrawLayout;
   }
@@ -1923,7 +1945,7 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
                              &render_pass) != VK_SUCCESS) {
     XELOGE("VulkanRenderTargetCache: Failed to create a render pass");
-    if (load_dont_care_mask) {
+    if (is_variant) {
       load_dont_care_render_passes_.emplace(load_dont_care_key,
                                             VK_NULL_HANDLE);
     } else {
@@ -1931,7 +1953,7 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     }
     return VK_NULL_HANDLE;
   }
-  if (load_dont_care_mask) {
+  if (is_variant) {
     load_dont_care_render_passes_.emplace(load_dont_care_key, render_pass);
   } else {
     render_passes_.emplace(key, render_pass);
@@ -1953,6 +1975,28 @@ VkRenderPass VulkanRenderTargetCache::GetLoadDontCareVariantForLastUpdate(
   }
   VkRenderPass variant =
       GetHostRenderTargetsRenderPass(key, load_dont_care_mask);
+  return variant != VK_NULL_HANDLE ? variant : original;
+}
+
+VkRenderPass VulkanRenderTargetCache::GetDepthStoreNoneVariantForLastUpdate(
+    VkRenderPass original) {
+  if (GetPath() != Path::kHostRenderTargets ||
+      original != last_update_render_pass_ || original == VK_NULL_HANDLE) {
+    return original;
+  }
+  RenderPassKey key = last_update_render_pass_key_;
+  // Only meaningful when a depth/stencil attachment is actually bound.
+  if (!(key.depth_and_color_used & 0b1)) {
+    return original;
+  }
+  // VK_ATTACHMENT_STORE_OP_NONE is Vulkan 1.3 core (and has no feature bit); fall
+  // back to the normal pass on older devices rather than emitting an invalid enum.
+  if (command_processor_.GetVulkanDevice()->properties().apiVersion <
+      VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+    return original;
+  }
+  VkRenderPass variant =
+      GetHostRenderTargetsRenderPass(key, 0, /*depth_store_op_none=*/true);
   return variant != VK_NULL_HANDLE ? variant : original;
 }
 

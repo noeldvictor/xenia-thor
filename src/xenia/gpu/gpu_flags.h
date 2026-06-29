@@ -25,6 +25,7 @@ DECLARE_bool(gpu_vulkan_edram_roaa);
 DECLARE_int32(gpu_vulkan_inpass_edram_transfers);
 DECLARE_bool(gpu_binning_deinterleave_pos);
 DECLARE_bool(gpu_edram_passes_dont_care_safe);
+DECLARE_bool(gpu_vulkan_skip_unused_depth_store);
 DECLARE_bool(gpu_hw_vertex_fetch);
 DECLARE_bool(gpu_hw_vertex_fetch_force);
 

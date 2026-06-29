@@ -2586,7 +2586,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
         "gather_us={} bails={}] "
-        "dc_safe[p={} att={}] host_draws={} "
+        "dc_safe[p={} att={}] depthnone_p={} host_draws={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2638,7 +2638,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_deint_redir_verts_,
         draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
         draw_outcomes_dc_safe_passes_, draw_outcomes_dc_safe_atts_,
-        host_draws_frame,
+        draw_outcomes_depth_none_passes_, host_draws_frame,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2817,6 +2817,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_hwvtx_redir_draws_ = 0;
     draw_outcomes_dc_safe_passes_ = 0;
     draw_outcomes_dc_safe_atts_ = 0;
+    draw_outcomes_depth_none_passes_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -3813,7 +3814,26 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // compatibility, so pipelines and the framebuffer remain valid, and
   // current_render_pass_ keeps tracking the original for the resume compare).
   VkRenderPass begin_render_pass = render_pass;
-  if (dc_safe_pending_state_mask_) {
+  // gpu_vulkan_skip_unused_depth_store: when the draw opening this GUEST pass
+  // provably never touches depth/stencil, begin the depth attachment with
+  // loadOp=DONT_CARE + storeOp=NONE (skips its oversized tile load+store while
+  // preserving the depth EDRAM memory). Guarded to guest passes so transfer /
+  // resolve passes - which DO write their attachment - stay normal. The draw path
+  // breaks this pass before any depth-using draw, so the attachment is never
+  // accessed (STORE_OP_NONE validity) and its memory is reloaded by that next
+  // normal pass. Same-variant compatibility as the dc_safe variant above.
+  current_pass_depth_store_none_ = false;
+  if (cvars::gpu_vulkan_skip_unused_depth_store && depth_store_none_pending_ &&
+      pass_kind == GpuPassKind::kGuest) {
+    VkRenderPass depth_none_variant =
+        render_target_cache_->GetDepthStoreNoneVariantForLastUpdate(render_pass);
+    if (depth_none_variant != render_pass) {
+      begin_render_pass = depth_none_variant;
+      current_pass_depth_store_none_ = true;
+      ++draw_outcomes_depth_none_passes_;
+    }
+  }
+  if (begin_render_pass == render_pass && dc_safe_pending_state_mask_) {
     const VkExtent2D& dc_safe_extent = framebuffer->host_extent;
     if (dc_safe_pending_rect_[0] <= 0 && dc_safe_pending_rect_[1] <= 0 &&
         dc_safe_pending_rect_[2] >= int32_t(dc_safe_extent.width) &&
@@ -3952,6 +3972,10 @@ void VulkanCommandProcessor::EndRenderPass() {
   MaybeLogSmallGuestPass();
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
+  // gpu_vulkan_skip_unused_depth_store: the depth-store-NONE state belongs to the
+  // pass that just ended; clear it so a stale value can't be observed before the
+  // next begin (which re-derives it).
+  current_pass_depth_store_none_ = false;
 }
 
 void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin,
@@ -4753,6 +4777,22 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           RenderTargetCache::Path::kHostRenderTargets) {
     normalized_depth_control.z_write_enable = 1;
   }
+  // gpu_vulkan_skip_unused_depth_store: does THIS draw provably never test or
+  // write depth/stencil? Computed from the FINAL normalized depth control (after
+  // the foliage-LRZ overrides above), so it reflects what the draw will actually
+  // do. Consumed at pass begin (skip the depth tile load+store) and reused below
+  // to break a depth-store-NONE pass before a depth-using draw. Conservative -
+  // any test/write/stencil use leaves it false. Skipped when the LRZ depth-clear
+  // lever is forcing a depth loadOp=CLEAR (that path writes depth), and when
+  // in-pass EDRAM transfers are enabled (a depth ownership-transfer would be
+  // recorded inside this guest pass and its depth write would be dropped by
+  // STORE_OP_NONE) - mutually exclusive, mirroring the dc_safe gate.
+  depth_store_none_pending_ = cvars::gpu_vulkan_skip_unused_depth_store &&
+                              !cvars::gpu_lrz_spike_depth_clear &&
+                              !cvars::gpu_vulkan_inpass_edram_transfers &&
+                              !normalized_depth_control.z_enable &&
+                              !normalized_depth_control.z_write_enable &&
+                              !normalized_depth_control.stencil_enable;
   uint32_t normalized_color_mask =
       pixel_shader ? draw_util::GetNormalizedColorMask(
                          regs, pixel_shader->writes_color_targets())
@@ -5495,6 +5535,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                        memexport_extent_end - memexport_extent_start));
   } else {
     shared_memory_->Use(VulkanSharedMemory::Usage::kRead);
+  }
+
+  // gpu_vulkan_skip_unused_depth_store: if the open guest pass began in the
+  // depth-store-NONE mode (its depth attachment skips load+store) but THIS draw
+  // tests or writes depth/stencil, end that pass first. STORE_OP_NONE preserved
+  // the depth EDRAM memory (no draw in the pass touched depth), so the re-enter
+  // below reloads it correctly via the normal render pass. Without this the draw
+  // would read the un-loaded (DONT_CARE) depth or lose its write to STORE_OP_NONE.
+  if (current_pass_depth_store_none_ &&
+      current_render_pass_ != VK_NULL_HANDLE && !depth_store_none_pending_) {
+    EndRenderPass();
   }
 
   // After all commands that may dispatch, copy or insert barriers, submit the

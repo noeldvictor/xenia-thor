@@ -188,14 +188,26 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // overwrites the whole render area (gpu_edram_passes_dont_care_safe).
   // Variants are compatible with pipelines and framebuffers created against
   // the mask-0 pass (load/store ops don't affect render pass compatibility).
+  // depth_store_op_none (gpu_vulkan_skip_unused_depth_store) requests a variant
+  // whose depth/stencil attachment uses loadOp=DONT_CARE + storeOp=NONE (skips
+  // the GMEM tile load+store while PRESERVING the depth EDRAM memory). Like the
+  // load_dont_care variants, it differs from the mask-0 pass only in load/store
+  // ops, so it stays compatible with the same pipelines and framebuffers.
   VkRenderPass GetHostRenderTargetsRenderPass(RenderPassKey key,
-                                              uint32_t load_dont_care_mask = 0);
+                                              uint32_t load_dont_care_mask = 0,
+                                              bool depth_store_op_none = false);
   // Returns the load-DONT_CARE variant of the last Update()'s render pass for
   // beginning it, or `original` unchanged when not applicable (mask empty
   // after clamping to the bound attachments, not the host-render-targets path,
   // or `original` is not the last update's render pass).
   VkRenderPass GetLoadDontCareVariantForLastUpdate(VkRenderPass original,
                                                    uint32_t load_dont_care_mask);
+  // Returns the depth-store-NONE variant of the last Update()'s render pass
+  // (gpu_vulkan_skip_unused_depth_store), or `original` unchanged when not
+  // applicable (no depth attachment bound, the device is below Vulkan 1.3 so
+  // STORE_OP_NONE is unavailable, not the host-render-targets path, or
+  // `original` is not the last update's render pass).
+  VkRenderPass GetDepthStoreNoneVariantForLastUpdate(VkRenderPass original);
   VkRenderPass GetFragmentShaderInterlockRenderPass() const {
     assert_true(GetPath() == Path::kPixelShaderInterlock);
     return fsi_render_pass_;
