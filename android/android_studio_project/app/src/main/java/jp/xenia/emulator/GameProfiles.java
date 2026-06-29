@@ -90,6 +90,14 @@ public final class GameProfiles {
                         + "Voice Language screen render at full shading rate (crisp text), "
                         + "and the 4x4 coarsening engages only once the heavy 3D field is "
                         + "reached. Per-title gameplay gate.")
+                .add("gpu_clamp_rt_framebuffer_height", Integer.valueOf(768),
+                        "BD's host render targets are tile-rounded to huge heights "
+                        + "(4096/8192) for EDRAM aliasing, but at 720p only ~720 rows ever "
+                        + "render; the TBDR storeOp/loadOp cover the framebuffer height, so "
+                        + "the unused rows are stored+loaded every pass (wasted tile I/O). "
+                        + "Clamping to 768 trims it, lossless (BD aliasing transfers = 0). "
+                        + "Device-validated 2026-06-29 matched-OSD: 8.3->9.1 fps no-VRS; "
+                        + "stacks ~+10% on the VRS ceiling. Commit 87cde3efd.")
                 .add("kernel_object_handle_cache", Boolean.TRUE,
                         "BD's heavy field is actually CPU/LOCK-bound, not GPU-bound "
                         + "(device-profiled 2026-06-23: GPU idle ~98%, busy 0%, turnip "
