@@ -78,6 +78,16 @@ class SpirvShaderTranslator : public ShaderTranslator {
       uint32_t param_gen_point : 1;
       // For host render targets - depth / stencil output mode.
       DepthStencilMode depth_stencil_mode : 3;
+      // BD input-attachment / GMEM-residency merge (gpu_vulkan_feedback_input_
+      // attachment): when nonzero, the texture fetch whose fetch constant ==
+      // (feedback_input_attachment - 1) reads the producer render target as a
+      // Vulkan INPUT ATTACHMENT (subpassLoad at the fragment's own position),
+      // keeping it GMEM-resident across a same-pixel render-to-texture break
+      // instead of the store->DRAM->sample round-trip (the ~79ms BD-30 lever).
+      // 0 = disabled (normal sampled-image fetch); else fetch_constant + 1.
+      // A distinct shader VARIANT - the same guest PS used as a normal sampler
+      // elsewhere keeps modification 0, so existing behavior is byte-identical.
+      uint32_t feedback_input_attachment : 6;
     } pixel;
     uint64_t value = 0;
 
