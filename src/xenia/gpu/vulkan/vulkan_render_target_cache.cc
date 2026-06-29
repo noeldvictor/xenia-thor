@@ -5265,6 +5265,77 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         inpass_dest_count, inpass_skip_format, inpass_skip_other);
   }
 
+  // gpu_vulkan_classify_img_sr_breaks (input-attachment feasibility, BD-30):
+  // independently of the inpass eligibility above (and regardless of
+  // gpu_vulkan_inpass_edram_transfers), measure the FEEDBACK EDRAM ownership
+  // transfers - those whose SOURCE (or a distinct host-depth source) is also one
+  // of the currently-bound framebuffer attachments. This is exactly the subset
+  // gpu_vulkan_inpass_edram_transfers always leaves on the legacy
+  // EndRenderPass(store source)+BeginRenderPass(load dest) break (BD's ~42
+  // brk_img_sr breaks / the device-confirmed ~79ms). For each, decide whether the
+  // source->dest transform GetTransferShader emits is SAME-PIXEL: the identity
+  // map, requiring same EDRAM base (source_to_dest == 0), same pitch, same MSAA,
+  // same bpp class and same color/depth class (color<->depth swaps 40-sample tile
+  // columns). Same-pixel is the ONLY case a Vulkan input attachment (subpassLoad
+  // reads strictly the fragment's own position) could replace the store/load. A
+  // different base/pitch/class means the shader reads the source at a REMAPPED
+  // texel (texelFetch of computed EDRAM coordinates) that subpassLoad cannot
+  // express -> input attachments do not apply. Read-only counters + a throttled
+  // detail log; byte-identical when the cvar is off.
+  if (cvars::gpu_vulkan_classify_img_sr_breaks && render_target_transfers &&
+      render_target_count <= 1 + xenos::kMaxColorRenderTargets) {
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      RenderTarget* dest_rt = render_targets[i];
+      if (!dest_rt) {
+        continue;
+      }
+      RenderTargetKey dest_rt_key =
+          static_cast<VulkanRenderTarget*>(dest_rt)->key();
+      for (const Transfer& transfer : render_target_transfers[i]) {
+        bool feedback = false;
+        for (uint32_t j = 0; j < render_target_count; ++j) {
+          if (!render_targets[j]) {
+            continue;
+          }
+          if (transfer.source == render_targets[j] ||
+              (transfer.host_depth_source &&
+               transfer.host_depth_source != dest_rt &&
+               transfer.host_depth_source == render_targets[j])) {
+            feedback = true;
+            break;
+          }
+        }
+        if (!feedback || !transfer.source) {
+          continue;
+        }
+        RenderTargetKey source_rt_key =
+            static_cast<VulkanRenderTarget*>(transfer.source)->key();
+        bool same_pixel =
+            source_rt_key.base_tiles == dest_rt_key.base_tiles &&
+            source_rt_key.GetPitchTiles() == dest_rt_key.GetPitchTiles() &&
+            source_rt_key.msaa_samples == dest_rt_key.msaa_samples &&
+            source_rt_key.Is64bpp() == dest_rt_key.Is64bpp() &&
+            source_rt_key.is_depth == dest_rt_key.is_depth;
+        command_processor_.AddFeedbackTransferStats(same_pixel);
+        if (command_processor_.ShouldLogFeedbackDetail()) {
+          XELOGI(
+              "EDRAM_FEEDBACK xfer: src_base={} src_pitch={} src_depth={} "
+              "src_msaa={} src_fmt={} dst_base={} dst_pitch={} dst_depth={} "
+              "dst_msaa={} dst_fmt={} src_to_dst={} samepix={}",
+              source_rt_key.base_tiles, source_rt_key.GetPitchTiles(),
+              uint32_t(source_rt_key.is_depth),
+              uint32_t(source_rt_key.msaa_samples),
+              source_rt_key.resource_format, dest_rt_key.base_tiles,
+              dest_rt_key.GetPitchTiles(), uint32_t(dest_rt_key.is_depth),
+              uint32_t(dest_rt_key.msaa_samples), dest_rt_key.resource_format,
+              int32_t(dest_rt_key.base_tiles) -
+                  int32_t(source_rt_key.base_tiles),
+              same_pixel ? 1 : 0);
+        }
+      }
+    }
+  }
+
   // Do host depth storing for the depth destination (assuming there can be only
   // one depth destination) where depth destination == host depth source.
   bool host_depth_store_set_up = false;

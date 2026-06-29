@@ -2785,6 +2785,18 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     XELOGI("hwvtx engage: elig={} redir={} (cvar={})",
            draw_outcomes_hwvtx_elig_draws_, draw_outcomes_hwvtx_redir_draws_,
            cvars::gpu_hw_vertex_fetch ? 1 : 0);
+    // gpu_vulkan_classify_img_sr_breaks: of the feedback EDRAM ownership
+    // transfers (the brk_img_sr store/load subset the inpass path can't take),
+    // how many are same-pixel input-attachment (subpassLoad) eligible. If
+    // same_pixel=0 across the frame, the input-attachment lever does NOT apply
+    // to this scene (the transfers read the source at a remapped EDRAM texel).
+    if (cvars::gpu_vulkan_classify_img_sr_breaks) {
+      XELOGI(
+          "EDRAM feedback transfers/frame: total={} same_pixel_eligible={} "
+          "remapped={}",
+          rt_feedback_transfers_, rt_feedback_samepix_,
+          rt_feedback_transfers_ - rt_feedback_samepix_);
+    }
     // Single-run VRS A/B: concise per-frame line so gpu_frame_us buckets by the
     // VRS phase (rendered/alphatest/blended confirm the scene matches across
     // phases - the matched-A/B precondition; in free-running mode small drift is
@@ -2930,6 +2942,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_inpass_transfer_dests_ = 0;
     rt_inpass_skipped_format_ = 0;
     rt_inpass_skipped_other_ = 0;
+    rt_feedback_transfers_ = 0;
+    rt_feedback_samepix_ = 0;
+    rt_feedback_detail_logged_ = 0;
     draw_cpu_total_ns_ = 0;
     draw_cpu_process_ns_ = 0;
     draw_cpu_textures_ns_ = 0;

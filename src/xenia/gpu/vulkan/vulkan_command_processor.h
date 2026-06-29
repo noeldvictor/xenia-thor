@@ -1528,6 +1528,29 @@ class VulkanCommandProcessor : public CommandProcessor {
     rt_inpass_skipped_format_ += skipped_format;
     rt_inpass_skipped_other_ += skipped_other;
   }
+  // gpu_vulkan_classify_img_sr_breaks (input-attachment feasibility, BD-30):
+  // tally a FEEDBACK EDRAM ownership transfer (source bound as a current
+  // framebuffer attachment - the subset gpu_vulkan_inpass_edram_transfers always
+  // leaves on the legacy store/load pass break, i.e. BD's ~42 brk_img_sr breaks
+  // / ~79ms). same_pixel == the source->dest EDRAM coordinate transform is the
+  // identity (same base, pitch, MSAA, bpp, color/depth class), the ONLY case a
+  // Vulkan input attachment (subpassLoad, strictly the fragment's own position)
+  // could replace the store/load; otherwise the transfer reads a REMAPPED texel.
+  void AddFeedbackTransferStats(bool same_pixel) {
+    ++rt_feedback_transfers_;
+    if (same_pixel) {
+      ++rt_feedback_samepix_;
+    }
+  }
+  // Throttle (<=16/frame) for the per-feedback-transfer detail log in the render
+  // target cache; returns true and consumes a slot while under the cap.
+  bool ShouldLogFeedbackDetail() {
+    if (rt_feedback_detail_logged_ >= 16) {
+      return false;
+    }
+    ++rt_feedback_detail_logged_;
+    return true;
+  }
 
  private:
   uint32_t rt_transfer_calls_ = 0;
@@ -1543,6 +1566,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_inpass_transfer_dests_ = 0;
   uint32_t rt_inpass_skipped_format_ = 0;
   uint32_t rt_inpass_skipped_other_ = 0;
+  // gpu_vulkan_classify_img_sr_breaks: feedback EDRAM ownership transfers this
+  // frame (source bound as a current attachment - the legacy-break subset) and
+  // how many are same-pixel (input-attachment / subpassLoad eligible). _detail
+  // throttles the per-transfer base/pitch/class log. All read-only; byte-
+  // identical when the cvar is off.
+  uint32_t rt_feedback_transfers_ = 0;
+  uint32_t rt_feedback_samepix_ = 0;
+  uint32_t rt_feedback_detail_logged_ = 0;
   // Per-frame attribution of WHAT barriers actually end an open render pass
   // (the tiler-killing breaks). Tallied in SubmitBarriers when it ends a live
   // pass: how many such break-flushes, and the composition of the flushed
