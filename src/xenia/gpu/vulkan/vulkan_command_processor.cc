@@ -2595,6 +2595,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "await={} up={} comp={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} "
+        "sr_cls[rtsrc={} tex={} fscomp={}] "
         "comp[opaque={} opaque_verts={} alphatest={} blended={}] guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
@@ -2687,7 +2688,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().msaa_samples),
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
-        brk_img_other_, draw_outcomes_opaque_draws_,
+        brk_img_other_, brk_img_sr_rtsrc_, brk_img_sr_texsample_,
+        brk_img_sr_fscomposite_, draw_outcomes_opaque_draws_,
         draw_outcomes_opaque_verts_, draw_outcomes_alphatest_draws_,
         draw_outcomes_blended_draws_, xe::Clock::QueryGuestUptimeMillis(),
         draw_prim_counts_[uint32_t(xenos::PrimitiveType::kPointList)],
@@ -2919,6 +2921,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     brk_buffer_barriers_ = 0;
     brk_img_shaderread_ = 0;
     brk_img_other_ = 0;
+    brk_img_sr_rtsrc_ = 0;
+    brk_img_sr_texsample_ = 0;
+    brk_img_sr_fscomposite_ = 0;
+    brk_img_sr_detail_logged_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
     rt_inpass_transfer_dests_ = 0;
@@ -3728,13 +3734,75 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
     ++brk_open_breaks_;
     brk_buffer_barriers_ +=
         uint32_t(pending_barriers_buffer_memory_barriers_.size());
+    // gpu_vulkan_classify_img_sr_breaks: does THIS break's triggering guest draw
+    // look like a full-screen composite (the same-pixel input-attachment
+    // candidate)? last_guest_draw_desc_ holds the draw whose barriers are ending
+    // this pass (captured earlier in IssueDraw). A composite is a rect-list or a
+    // small (<=6-vertex) quad that runs a pixel shader and writes color - the
+    // shape of a post-process / blend pass sampling the prior render target.
+    // Read-only classification; per-break detail logged (throttled) so the
+    // consumer shader can be dumped and its texcoord confirmed same-pixel.
+    bool classify_img_sr = cvars::gpu_vulkan_classify_img_sr_breaks;
+    bool consumer_is_fullscreen_composite = false;
+    if (classify_img_sr) {
+      const GuestDrawDesc& d = last_guest_draw_desc_;
+      bool rect_or_quad =
+          d.prim_type == uint32_t(xenos::PrimitiveType::kRectangleList) ||
+          (d.host_vertex_count >= 3 && d.host_vertex_count <= 6);
+      consumer_is_fullscreen_composite =
+          rect_or_quad && d.ps_hash != 0 && d.color_mask != 0;
+    }
+    bool any_texsample_this_break = false;
     for (const VkImageMemoryBarrier& imb :
          pending_barriers_image_memory_barriers_) {
       if (imb.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         ++brk_img_shaderread_;
+        if (classify_img_sr) {
+          // A render target transitions to SHADER_READ from a color/depth
+          // ATTACHMENT layout (it was just rendered) - i.e. an EDRAM
+          // ownership-transfer or resolve SOURCE read. A guest texture loaded
+          // from shared memory transitions from TRANSFER_DST / UNDEFINED /
+          // PREINITIALIZED (an upload), so it is a sampled texture (e.g. a
+          // resolved-scene composite source - the GMEM-residency rework's
+          // target). GENERAL is treated as a render target (FSI/aliasing RTs).
+          if (imb.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL ||
+              imb.oldLayout ==
+                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||
+              imb.oldLayout ==
+                  VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
+              imb.oldLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            ++brk_img_sr_rtsrc_;
+          } else {
+            ++brk_img_sr_texsample_;
+            any_texsample_this_break = true;
+          }
+          // Throttled per-break detail (consumer identity + the broken image's
+          // layout transition) for offline same-pixel confirmation via dumped
+          // shaders. Capped per frame to keep the log readable.
+          if (brk_img_sr_detail_logged_ < 16) {
+            ++brk_img_sr_detail_logged_;
+            const GuestDrawDesc& d = last_guest_draw_desc_;
+            XELOGI(
+                "IMG_SR break: consumer prim={} host_verts={} idx={} "
+                "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} "
+                "colormask={:04X} fscomp={} oldlayout={} newlayout={}",
+                d.prim_type, d.host_vertex_count, d.index_count, d.ps_hash,
+                d.vs_hash, d.blendcontrol0, d.color_mask,
+                consumer_is_fullscreen_composite ? 1 : 0,
+                uint32_t(imb.oldLayout), uint32_t(imb.newLayout));
+          }
+        }
       } else {
         ++brk_img_other_;
       }
+    }
+    // fscomposite counts a break only when it carries an actual texture-sample
+    // barrier (not a pure RT-source transfer/resolve, where last_guest_draw_desc_
+    // would be a stale previous draw) AND its consumer draw is a full-screen
+    // composite - the same-pixel input-attachment candidate.
+    if (classify_img_sr && any_texsample_this_break &&
+        consumer_is_fullscreen_composite) {
+      ++brk_img_sr_fscomposite_;
     }
   }
   EndRenderPass();
@@ -5185,8 +5253,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // gpu_trace_resolve_timing: cheaply snapshot this guest draw's identity + ROP
   // state so a small-draw oversized-RT pass can be characterized at pass end
   // (which guest draw the anomalous 52ms 1-draw pass actually renders). Cheap
-  // register reads; gated -> byte-identical when off.
-  if (cvars::gpu_trace_resolve_timing) {
+  // register reads; gated -> byte-identical when off. Also captured under
+  // gpu_vulkan_classify_img_sr_breaks, which reads last_guest_draw_desc_ to tell
+  // whether a brk_img_sr break's consumer is a full-screen composite.
+  if (cvars::gpu_trace_resolve_timing ||
+      cvars::gpu_vulkan_classify_img_sr_breaks) {
     GuestDrawDesc& d = last_guest_draw_desc_;
     d.ps_hash = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
     d.vs_hash = vertex_shader->ucode_data_hash();

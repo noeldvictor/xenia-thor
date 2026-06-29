@@ -1553,6 +1553,23 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t brk_buffer_barriers_ = 0;
   uint32_t brk_img_shaderread_ = 0;
   uint32_t brk_img_other_ = 0;
+  // gpu_vulkan_classify_img_sr_breaks: sub-classification of the brk_img_sr
+  // (sampled-as-SHADER_READ) breaks, to scope the input-attachment / GMEM-
+  // residency lever. sr_rtsrc_ = the SHADER_READ image was a render target
+  // (oldLayout a color/depth ATTACHMENT layout): an EDRAM ownership-transfer /
+  // resolve SOURCE read (already addressable via gpu_vulkan_inpass_edram_
+  // transfers, except the feedback subset). sr_texsample_ = a non-attachment
+  // image (a guest texture loaded from shared memory, e.g. a resolved-scene
+  // composite source) - the class needing the full GMEM-residency rework.
+  // sr_fscomposite_ = of ALL brk_img_sr breaks, those whose triggering guest
+  // draw is a full-screen composite (rect / <=6-vert quad + pixel shader +
+  // color write) - the same-pixel input-attachment CANDIDATE count (per-shader
+  // same-pixel confirmation still required). All read-only; byte-identical when
+  // off. brk_img_sr_detail_logged_ throttles the per-break detail log.
+  uint32_t brk_img_sr_rtsrc_ = 0;
+  uint32_t brk_img_sr_texsample_ = 0;
+  uint32_t brk_img_sr_fscomposite_ = 0;
+  uint32_t brk_img_sr_detail_logged_ = 0;
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).
   bool gpu_scene_lock_frozen_ = false;

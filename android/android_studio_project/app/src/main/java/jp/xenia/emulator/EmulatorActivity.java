@@ -310,6 +310,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_clamp_renderarea_to_scissor");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_resolve_timing");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_skip_unused_depth_store");
+            copyBooleanExtra(intent, launchArguments, "gpu_vulkan_classify_img_sr_breaks");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_alphatest_coverage");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_alphatest_depthonly");
             copyBooleanExtra(intent, launchArguments, "gpu_collapse_blended_coverage");

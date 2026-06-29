@@ -120,6 +120,28 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_classify_img_sr_breaks, false,
+    "DIAGNOSTIC (Thor/TBDR, BD-30 GPU lever scoping): for the input-attachment / "
+    "GMEM-residency lever, classify each brk_img_sr render-pass break (an image "
+    "transitioned to SHADER_READ_ONLY while a guest pass is open - a "
+    "sampled-as-texture hazard) to measure how many are same-pixel "
+    "input-attachment eligible. Splits brk_img_sr into sr_rtsrc (the image was a "
+    "render target - oldLayout a color/depth ATTACHMENT layout - i.e. an EDRAM "
+    "ownership-transfer / resolve SOURCE read, the in-pass-transfer lever's "
+    "domain) vs sr_tex (a non-attachment image - a guest texture loaded from "
+    "shared memory, e.g. a resolved-scene composite source), and counts sr_fscomp "
+    "= breaks whose triggering guest draw is a full-screen composite (rect or "
+    "<=6-vertex quad with a pixel shader and color write - the same-pixel "
+    "input-attachment CANDIDATE class, pending per-shader same-pixel "
+    "confirmation). Also logs a throttled per-break detail line (consumer "
+    "ps_hash / prim / verts / blend / colormask / old->new layout) so dumped "
+    "shaders can be inspected to confirm the texcoord == own-fragment-position "
+    "(same-pixel) read. Read-only counters + logging only - byte-identical render "
+    "whether on or off. Requires vulkan_trace_draw_outcomes_per_frame for the "
+    "summary line (where sr_* are printed).",
+    "GPU");
+
+DEFINE_bool(
     gpu_binning_deinterleave_pos, false,
     "EXPERIMENTAL (Thor/TBDR): de-interleave the position vertex stream into a "
     "compact raw-dword buffer so the tiler's binning pass fetches only "
