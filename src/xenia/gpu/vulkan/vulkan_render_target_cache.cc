@@ -1401,8 +1401,12 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
                 sizeof(copy_shader_constants), &copy_shader_constants);
           }
           command_processor_.SubmitBarriers(true);
+          command_processor_.RecordResolveTimingBracket(
+              true, VulkanCommandProcessor::GpuPassKind::kResolveCopyDispatch);
           command_buffer.CmdVkDispatch(copy_group_count_x, copy_group_count_y,
                                        1);
+          command_processor_.RecordResolveTimingBracket(
+              false, VulkanCommandProcessor::GpuPassKind::kResolveCopyDispatch);
 
           // Invalidate textures and mark the range as scaled if needed.
           texture_cache.MarkRangeAsResolved(
@@ -1466,8 +1470,12 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
               resolve_fsi_clear_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
               0, sizeof(depth_clear_constants), &depth_clear_constants);
           command_processor_.SubmitBarriers(true);
+          command_processor_.RecordResolveTimingBracket(
+              true, VulkanCommandProcessor::GpuPassKind::kResolveClearDispatch);
           command_buffer.CmdVkDispatch(clear_group_count.first,
                                        clear_group_count.second, 1);
+          command_processor_.RecordResolveTimingBracket(
+              false, VulkanCommandProcessor::GpuPassKind::kResolveClearDispatch);
         }
         if (clear_color) {
           command_processor_.BindExternalComputePipeline(
@@ -1490,8 +1498,12 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
                 0, sizeof(color_clear_constants), &color_clear_constants);
           }
           command_processor_.SubmitBarriers(true);
+          command_processor_.RecordResolveTimingBracket(
+              true, VulkanCommandProcessor::GpuPassKind::kResolveClearDispatch);
           command_buffer.CmdVkDispatch(clear_group_count.first,
                                        clear_group_count.second, 1);
+          command_processor_.RecordResolveTimingBracket(
+              false, VulkanCommandProcessor::GpuPassKind::kResolveClearDispatch);
         }
         MarkEdramBufferModified();
         cleared = true;
@@ -5292,7 +5304,11 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
             sizeof(host_depth_store_rectangle_constant),
             &host_depth_store_rectangle_constant);
         command_processor_.SubmitBarriers(true);
+        command_processor_.RecordResolveTimingBracket(
+            true, VulkanCommandProcessor::GpuPassKind::kHostDepthStoreDispatch);
         command_buffer.CmdVkDispatch(group_count_x, group_count_y, 1);
+        command_processor_.RecordResolveTimingBracket(
+            false, VulkanCommandProcessor::GpuPassKind::kHostDepthStoreDispatch);
         MarkEdramBufferModified();
       }
     }
@@ -5712,7 +5728,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       // Perform the transfers for the render target.
 
       command_processor_.SubmitBarriersAndEnterRenderTargetCacheRenderPass(
-          transfer_render_pass, transfer_framebuffer);
+          transfer_render_pass, transfer_framebuffer,
+          VulkanCommandProcessor::GpuPassKind::kEdramTransfer);
 
       if (stencil_clear_rectangle_count) {
         VkClearAttachment* stencil_clear_attachment;
@@ -6079,7 +6096,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     // Perform the clear.
     if (resolve_clear_needed) {
       command_processor_.SubmitBarriersAndEnterRenderTargetCacheRenderPass(
-          transfer_render_pass, transfer_framebuffer);
+          transfer_render_pass, transfer_framebuffer,
+          VulkanCommandProcessor::GpuPassKind::kResolveClear);
       VkClearAttachment resolve_clear_attachment;
       resolve_clear_attachment.colorAttachment = 0;
       std::memset(&resolve_clear_attachment.clearValue, 0,

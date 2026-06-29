@@ -2362,11 +2362,21 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               };
               uint64_t top_gap_ticks = 0;
               uint32_t top_gap_index = UINT32_MAX;
+              // gpu_trace_resolve_timing: split the summed in-pass GPU time by
+              // bracket kind (guest geometry vs EDRAM transfer / resolve-clear
+              // pass vs resolve-copy / clear / host-depth-store compute dispatch).
+              uint64_t kind_ticks[uint32_t(GpuPassKind::kCount)] = {};
+              uint32_t kind_count[uint32_t(GpuPassKind::kCount)] = {};
               for (uint32_t i = 0; i < n; ++i) {
                 if (pts[2u * i + 1u] > pts[2u * i]) {
                   uint64_t span_ticks = pts[2u * i + 1u] - pts[2u * i];
                   sum_ticks += span_ticks;
                   top3_insert(top_pass, span_ticks);
+                  uint8_t bk = gap_snap_begin_[best_slot][i].kind;
+                  if (bk < uint8_t(GpuPassKind::kCount)) {
+                    kind_ticks[bk] += span_ticks;
+                    ++kind_count[bk];
+                  }
                 }
                 if (i + 1u < n && pts[2u * (i + 1u)] > pts[2u * i + 1u]) {
                   uint64_t one_gap_ticks = pts[2u * (i + 1u)] - pts[2u * i + 1u];
@@ -2453,6 +2463,42 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                   gpu_swap_bracket_[best_slot], top_gap_index, flank_prev_fb,
                   flank_prev_draws, top_gap_index + 1u, flank_next_fb,
                   flank_next_draws);
+              // gpu_trace_resolve_timing: per-kind GPU-time breakdown. guest =
+              // geometry passes' in-pass time; xfer = EDRAM ownership-transfer
+              // passes (RT store/load drawn as quads); rclear = resolve-clear
+              // passes; rcopy/clrd/hds = resolve-copy / FSI-clear / host-depth-
+              // store compute dispatches (otherwise hidden inside the gaps). The
+              // remaining gap_us after subtracting rcopy/clrd/hds is the TBDR
+              // deferred tile store/render of the preceding pass.
+              if (cvars::gpu_trace_resolve_timing) {
+                XELOGI(
+                    "GPU pass kinds (us): guest={} xfer={} rclear={} rcopy={} "
+                    "clrd={} hds={} n[guest={} xfer={} rclear={} rcopy={} "
+                    "clrd={} hds={}]",
+                    uint64_t(double(kind_ticks[uint32_t(GpuPassKind::kGuest)]) *
+                             tick_us),
+                    uint64_t(
+                        double(kind_ticks[uint32_t(GpuPassKind::kEdramTransfer)]) *
+                        tick_us),
+                    uint64_t(
+                        double(kind_ticks[uint32_t(GpuPassKind::kResolveClear)]) *
+                        tick_us),
+                    uint64_t(double(kind_ticks[uint32_t(
+                                 GpuPassKind::kResolveCopyDispatch)]) *
+                             tick_us),
+                    uint64_t(double(kind_ticks[uint32_t(
+                                 GpuPassKind::kResolveClearDispatch)]) *
+                             tick_us),
+                    uint64_t(double(kind_ticks[uint32_t(
+                                 GpuPassKind::kHostDepthStoreDispatch)]) *
+                             tick_us),
+                    kind_count[uint32_t(GpuPassKind::kGuest)],
+                    kind_count[uint32_t(GpuPassKind::kEdramTransfer)],
+                    kind_count[uint32_t(GpuPassKind::kResolveClear)],
+                    kind_count[uint32_t(GpuPassKind::kResolveCopyDispatch)],
+                    kind_count[uint32_t(GpuPassKind::kResolveClearDispatch)],
+                    kind_count[uint32_t(GpuPassKind::kHostDepthStoreDispatch)]);
+              }
             }
           }
         }
@@ -3730,7 +3776,8 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
 
 void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     VkRenderPass render_pass,
-    const VulkanRenderTargetCache::Framebuffer* framebuffer) {
+    const VulkanRenderTargetCache::Framebuffer* framebuffer,
+    GpuPassKind pass_kind) {
   // Instrumentation: attribute per-draw render-pass breaks. A break here is
   // caused either by SubmitBarriers ending the pass for a pending barrier, or by
   // the render pass / framebuffer changing (RT reconfiguration).
@@ -3754,6 +3801,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // End-of-pass timestamp AFTER EndRenderPass so it captures the TBDR tile
     // store/flush (the deferred binning+fragment work), not just draw recording.
     RecordPassTimestamp(false);
+    // gpu_trace_resolve_timing: identify the small-draw oversized-RT pass that
+    // just ended (current_pass_kind_ / current_framebuffer_ still the old pass).
+    MaybeLogSmallGuestPass();
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
@@ -3862,7 +3912,14 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     dynamic_stencil_reference_front_update_needed_ = true;
     dynamic_stencil_reference_back_update_needed_ = true;
   }
-  RecordPassTimestamp(true);
+  RecordPassTimestamp(true, pass_kind);
+  // gpu_trace_resolve_timing: remember this pass's kind + its draw-count baseline
+  // so MaybeLogSmallGuestPass can compute the pass draw count at end. Set only on
+  // an actual begin (the early-return above keeps the first enter's kind).
+  if (cvars::gpu_trace_resolve_timing) {
+    current_pass_kind_ = pass_kind;
+    pass_begin_draws_ = deferred_command_buffer_.record_stats().draws;
+  }
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
 
@@ -3890,11 +3947,15 @@ void VulkanCommandProcessor::EndRenderPass() {
   deferred_command_buffer_.CmdVkEndRenderPass();
   // End-of-pass timestamp AFTER EndRenderPass to capture the TBDR tile store.
   RecordPassTimestamp(false);
+  // gpu_trace_resolve_timing: identify the small-draw oversized-RT pass that just
+  // ended (current_pass_kind_ / current_framebuffer_ still valid here).
+  MaybeLogSmallGuestPass();
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
 }
 
-void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
+void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin,
+                                                 GpuPassKind kind) {
   if (!cvars::vulkan_trace_pass_timestamps ||
       gpu_pass_timestamp_pool_ == VK_NULL_HANDLE ||
       gpu_pass_bracket_count_ >= kMaxPassBrackets) {
@@ -3922,6 +3983,12 @@ void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
     snap.framebuffer_id = uint32_t(
         (reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) & 0xFFFFu);
     snap.buffer_copy_bytes = record_stats.buffer_copy_bytes;
+    // gpu_trace_resolve_timing: tag the begin bracket with its kind so the
+    // readback can split GPU time into guest / transfer / resolve / store. The
+    // end bracket's kind is unused (the begin snap carries it).
+    if (is_begin) {
+      snap.kind = uint8_t(kind);
+    }
   }
   // Identify each pass's render target (correlate fb id from "GPU pass split" to
   // its host dimensions) to find what an anomalously expensive 1-draw pass renders.
@@ -3935,6 +4002,56 @@ void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
   if (!is_begin) {
     ++gpu_pass_bracket_count_;
   }
+}
+
+void VulkanCommandProcessor::RecordResolveTimingBracket(bool is_begin,
+                                                        GpuPassKind kind) {
+  if (!cvars::gpu_trace_resolve_timing) {
+    return;
+  }
+  // Reuses the per-pass timestamp pool/counter (so it also needs
+  // vulkan_trace_pass_timestamps for the readback). These resolve / clear /
+  // host-depth-store dispatches run with no render pass open, so each
+  // begin/end pair is a self-contained balanced bracket in the chronological
+  // stream, and its measured span is attributed OUT of the inter-pass gap.
+  RecordPassTimestamp(is_begin, kind);
+}
+
+void VulkanCommandProcessor::MaybeLogSmallGuestPass() {
+  if (!cvars::gpu_trace_resolve_timing) {
+    return;
+  }
+  // Only guest-geometry passes carry a meaningful last_guest_draw_desc_.
+  if (current_pass_kind_ != GpuPassKind::kGuest || !current_framebuffer_) {
+    return;
+  }
+  uint32_t pass_draws_now = deferred_command_buffer_.record_stats().draws;
+  uint32_t pass_draws = pass_draws_now >= pass_begin_draws_
+                            ? pass_draws_now - pass_begin_draws_
+                            : 0;
+  if (pass_draws < 1 || pass_draws > kResolveTimingSmallPassDraws) {
+    return;
+  }
+  // Only the EDRAM-tile-oversized RTs (a 720p game gets 720x1824 / 1280x2048 /
+  // x4096 / x8192 host RTs) are the ~52ms deferred-store suspects; skip the
+  // normal-height passes to keep the log readable.
+  uint32_t host_w = current_framebuffer_->host_extent.width;
+  uint32_t host_h = current_framebuffer_->host_extent.height;
+  if (host_h < 1024) {
+    return;
+  }
+  const GuestDrawDesc& d = last_guest_draw_desc_;
+  XELOGI(
+      "SMALLPASS fb={:04x} {}x{} draws={} host_verts={} idx={} prim={} "
+      "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} colorctl={:08X} "
+      "colormask={:04X} depthctl={:08X} color0_info={:08X} depth_info={:08X} "
+      "ps_zwrite={} ps_kill={}",
+      uint32_t((reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) &
+               0xFFFFu),
+      host_w, host_h, pass_draws, d.host_vertex_count, d.index_count,
+      d.prim_type, d.ps_hash, d.vs_hash, d.blendcontrol0, d.colorcontrol,
+      d.color_mask, d.depthcontrol, d.color0_info, d.depth_info,
+      d.ps_writes_depth, d.ps_kills);
 }
 
 VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
@@ -5024,6 +5141,29 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (used_texture_mask_pixel) {
       texture_cache_->TraceActiveTextureState(used_texture_mask_pixel, "pixel");
     }
+  }
+  // gpu_trace_resolve_timing: cheaply snapshot this guest draw's identity + ROP
+  // state so a small-draw oversized-RT pass can be characterized at pass end
+  // (which guest draw the anomalous 52ms 1-draw pass actually renders). Cheap
+  // register reads; gated -> byte-identical when off.
+  if (cvars::gpu_trace_resolve_timing) {
+    GuestDrawDesc& d = last_guest_draw_desc_;
+    d.ps_hash = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
+    d.vs_hash = vertex_shader->ucode_data_hash();
+    d.blendcontrol0 = regs[reg::RB_BLENDCONTROL::rt_register_indices[0]];
+    d.colorcontrol = regs.Get<reg::RB_COLORCONTROL>().value;
+    d.color_mask = normalized_color_mask;
+    d.depthcontrol = normalized_depth_control.value;
+    d.color0_info =
+        regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[0])
+            .value;
+    d.depth_info = regs.Get<reg::RB_DEPTH_INFO>().value;
+    d.host_vertex_count =
+        primitive_processing_result.host_draw_vertex_count;
+    d.index_count = index_count;
+    d.prim_type = uint32_t(prim_type);
+    d.ps_writes_depth = pixel_shader && pixel_shader->writes_depth() ? 1u : 0u;
+    d.ps_kills = pixel_shader && pixel_shader->kills_pixels() ? 1u : 0u;
   }
   if (pixel_shader && normalized_color_mask &&
       cvars::vulkan_trace_shader_constants) {

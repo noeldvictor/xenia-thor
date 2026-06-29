@@ -714,6 +714,22 @@ DEFINE_bool(
     "Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_trace_resolve_timing, false,
+    "BD-30 GPU diagnostic: attribute the DEFERRED per-pass GPU time (the ~52ms "
+    "inter-pass gaps the Adreno TBDR spends on tile store / EDRAM resolve / RT "
+    "ownership-transfer after a render pass ends). Two outputs: (1) brackets the "
+    "EDRAM resolve-copy / FSI-clear / host-depth-store COMPUTE dispatches with GPU "
+    "timestamps and tags every render pass by KIND (guest-geometry vs EDRAM-transfer "
+    "vs resolve-clear), then logs a 'GPU pass kinds' line splitting the frame's GPU "
+    "time into guest/transfer/resolve/store buckets - needs vulkan_trace_pass_timestamps "
+    "+ vulkan_trace_draw_outcomes_per_frame on too (reuses that pass-timestamp pool). "
+    "(2) logs a 'SMALLPASS' line for every GUEST pass that has a tiny draw count over "
+    "an EDRAM-tile-oversized RT (the fb 6c57 720x1824-class 1-draw pass) with its pixel "
+    "shader hash, blend/color-mask/depth-control/ROP state, RT format and vertex/index "
+    "count - identifying WHAT the anomalous 1-draw pass actually renders. Pure logging, "
+    "no rendering change, byte-identical when off. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_collapse_alphatest_depthonly, false,
     "BD multi-pass binning lever (max-effort RE): collapse index count to 3 ONLY "
     "for ALPHA-TEST draws in DEPTH-ONLY passes (normalized_color_mask == 0 = the "

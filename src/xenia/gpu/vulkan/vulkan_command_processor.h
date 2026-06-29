@@ -211,11 +211,33 @@ class VulkanCommandProcessor : public CommandProcessor {
   // render pass will also be closed.
   bool SubmitBarriers(bool force_end_render_pass);
 
+  // gpu_trace_resolve_timing: classifies each per-pass GPU-timestamp bracket so
+  // the readback can split the frame's GPU time into guest-geometry vs deferred
+  // EDRAM (transfer / resolve / store) work. kGuest..kResolveClear are render
+  // passes; kResolveCopyDispatch..kHostDepthStoreDispatch are compute dispatches
+  // bracketed in the inter-pass gaps.
+  enum class GpuPassKind : uint8_t {
+    kGuest = 0,
+    kEdramTransfer = 1,
+    kResolveClear = 2,
+    kResolveCopyDispatch = 3,
+    kResolveClearDispatch = 4,
+    kHostDepthStoreDispatch = 5,
+    kCount
+  };
+  // Brackets an EDRAM resolve / clear / host-depth-store COMPUTE dispatch with a
+  // GPU timestamp pair (reusing the per-pass pool) so its time is attributed out
+  // of the inter-pass gap. No-op unless gpu_trace_resolve_timing AND the per-pass
+  // timestamp machinery are both on -> byte-identical when off. Call begin before
+  // the dispatch, end after.
+  void RecordResolveTimingBracket(bool is_begin, GpuPassKind kind);
+
   // If not started yet, begins a render pass from the render target cache.
   // Submission must be open.
   void SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       VkRenderPass render_pass,
-      const VulkanRenderTargetCache::Framebuffer* framebuffer);
+      const VulkanRenderTargetCache::Framebuffer* framebuffer,
+      GpuPassKind pass_kind = GpuPassKind::kGuest);
   // Must be called before doing anything outside the render pass scope,
   // including adding pipeline barriers that are not a part of the render pass
   // scope. Submission must be open.
@@ -1400,8 +1422,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t gpu_pass_count_written_[kMaxFramesInFlight] = {};  // per frame slot
   uint64_t gpu_pass_us_ = 0;  // last read in-render-pass GPU time (us)
   // Records a GPU timestamp (begin or end of a render-pass span) into the pass
-  // pool via the deferred command buffer. No-op unless the cvar is on.
-  void RecordPassTimestamp(bool is_begin);
+  // pool via the deferred command buffer. No-op unless the cvar is on. kind tags
+  // the begin bracket for gpu_trace_resolve_timing's per-kind GPU-time split.
+  void RecordPassTimestamp(bool is_begin,
+                           GpuPassKind kind = GpuPassKind::kGuest);
+  // gpu_trace_resolve_timing: at a guest render-pass end, log the pixel-shader
+  // hash / blend / ROP / depth / RT-format of a small-draw pass over an
+  // EDRAM-tile-oversized RT (the fb 6c57 720x1824-class 1-draw pass). Recording
+  // time only; no GPU readback. No-op unless gpu_trace_resolve_timing is on.
+  void MaybeLogSmallGuestPass();
 
   // Recording-time composition snapshots taken at each pass-timestamp bracket
   // (cumulative DeferredCommandBuffer::RecordStats at pass begin/end). The
@@ -1418,6 +1447,9 @@ class VulkanCommandProcessor : public CommandProcessor {
     // to tell which render passes flank the dominant gap.
     uint32_t framebuffer_id;
     uint64_t buffer_copy_bytes;
+    // gpu_trace_resolve_timing: GpuPassKind of this bracket (set at begin) so the
+    // readback can sum span ticks per kind. 0 (kGuest) for untagged brackets.
+    uint8_t kind;
   };
   PassBoundarySnap gap_snap_begin_[kMaxFramesInFlight][kMaxPassBrackets] = {};
   PassBoundarySnap gap_snap_end_[kMaxFramesInFlight][kMaxPassBrackets] = {};
@@ -1425,6 +1457,34 @@ class VulkanCommandProcessor : public CommandProcessor {
   // guest swap/present teardown lands in (if the dominant empty gap sits right
   // here, the hole is present/pacing interaction, not GPU work).
   uint32_t gpu_swap_bracket_[kMaxFramesInFlight] = {};
+
+  // gpu_trace_resolve_timing diagnostic state. current_pass_kind_ = kind of the
+  // currently open render pass (set when it is entered); pass_begin_draws_ =
+  // cumulative recorded draw count at that pass's begin (the pass's own draw
+  // count is record_stats().draws - pass_begin_draws_ at end). Threshold for
+  // "small-draw pass" worth logging.
+  static constexpr uint32_t kResolveTimingSmallPassDraws = 4;
+  GpuPassKind current_pass_kind_ = GpuPassKind::kGuest;
+  uint32_t pass_begin_draws_ = 0;
+  // Descriptor of the most recent guest draw issued (captured in IssueDraw under
+  // gpu_trace_resolve_timing); logged at pass end for small-draw passes to
+  // identify what the anomalous 1-draw 52ms pass actually renders.
+  struct GuestDrawDesc {
+    uint64_t ps_hash;
+    uint64_t vs_hash;
+    uint32_t blendcontrol0;
+    uint32_t colorcontrol;
+    uint32_t color_mask;
+    uint32_t depthcontrol;
+    uint32_t color0_info;
+    uint32_t depth_info;
+    uint32_t host_vertex_count;
+    uint32_t index_count;
+    uint32_t prim_type;
+    uint32_t ps_writes_depth;
+    uint32_t ps_kills;
+  };
+  GuestDrawDesc last_guest_draw_desc_ = {};
 
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
