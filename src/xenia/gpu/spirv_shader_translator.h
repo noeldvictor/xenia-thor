@@ -537,11 +537,12 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
     spv::Id variable;
     // BD input-attachment merge (PixelShaderModification.feedback_input_
-    // attachment): when this fetch constant is the flagged producer RT, the
-    // subpassInput (DimSubpassData) variable read via OpImageRead at the
-    // fragment's own position instead of sampling `variable`. NoResult
-    // otherwise (the normal sampled-image path).
-    spv::Id subpass_input_variable = spv::NoResult;
+    // attachment): when true, `variable` is a Vulkan INPUT ATTACHMENT
+    // (DimSubpassData) for the flagged producer RT - read via OpImageRead at
+    // the fragment's own position instead of sampled, and declared as
+    // VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT in the descriptor set layout. False =
+    // the normal sampled-image binding.
+    bool is_input_attachment = false;
   };
 
   struct SamplerBinding {

@@ -827,11 +827,11 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
     spv::Id image_2d_array_or_cube_signed = spv::NoResult;
     spv::Id image_3d_unsigned = spv::NoResult;
     spv::Id image_3d_signed = spv::NoResult;
-    // BD input-attachment merge: the producer-RT subpassInput for this fetch
-    // (NoResult unless this is the flagged same-pixel composite consumer);
-    // captured here from the unsigned 2D binding because its binding index is
-    // scoped to the block below but the sample site needs it.
-    spv::Id ia_subpass_var = spv::NoResult;
+    // BD input-attachment merge: true when this fetch's image is the producer-RT
+    // INPUT ATTACHMENT (read via OpImageRead at the fragment's own position
+    // instead of sampled). Captured from the unsigned 2D binding because its
+    // index is scoped to the block below but the sample site needs it.
+    bool ia_is_input_attachment = false;
     if (instr.opcode != ucode::FetchOpcode::kGetTextureWeights) {
       bool bindings_set_up = true;
       // While GL_ARB_texture_query_lod specifies the value for
@@ -892,8 +892,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           texture_bindings_[image_2d_array_or_cube_unsigned_index];
       image_2d_array_or_cube_unsigned = builder_->createLoad(
           image_2d_array_or_cube_unsigned_binding.variable, spv::NoPrecision);
-      ia_subpass_var =
-          image_2d_array_or_cube_unsigned_binding.subpass_input_variable;
+      ia_is_input_attachment =
+          image_2d_array_or_cube_unsigned_binding.is_input_attachment;
       const TextureBinding& image_2d_array_or_cube_signed_binding =
           texture_bindings_[image_2d_array_or_cube_signed_index];
       image_2d_array_or_cube_signed = builder_->createLoad(
@@ -2157,7 +2157,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
               sample_result_unsigned_3d, sample_result_unsigned_stacked);
           sample_result_signed = if_data_is_3d.createMergePhi(
               sample_result_signed_3d, sample_result_signed_stacked);
-        } else if (ia_subpass_var != spv::NoResult) {
+        } else if (ia_is_input_attachment) {
           // BD input-attachment merge: read the producer RT at this fragment's
           // own position (subpassLoad) instead of sampling it - keeps it GMEM-
           // resident across the same-pixel render-to-texture break (the ~79ms
@@ -2171,9 +2171,10 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
           id_vector_temp_.push_back(builder_->makeIntConstant(0));
           spv::Id subpass_coord =
               builder_->makeCompositeConstant(type_int2_, id_vector_temp_);
+          // image_2d_array_or_cube_unsigned is the producer's input-attachment
+          // image, already loaded above (it IS the subpassInput variable now).
           id_vector_temp_.clear();
-          id_vector_temp_.push_back(
-              builder_->createLoad(ia_subpass_var, spv::NoPrecision));
+          id_vector_temp_.push_back(image_2d_array_or_cube_unsigned);
           id_vector_temp_.push_back(subpass_coord);
           sample_result_unsigned =
               builder_->createOp(spv::OpImageRead, type_float4_, id_vector_temp_);
@@ -2527,56 +2528,51 @@ size_t SpirvShaderTranslator::FindOrAddTextureBinding(
       is_array = true;
       dimension_name = "2d";
   }
-  new_texture_binding.variable = builder_->createVariable(
-      spv::NoPrecision, spv::StorageClassUniformConstant,
-      builder_->makeImageType(type_float_, type_dimension, false, is_array,
-                              false, 1, spv::ImageFormatUnknown),
-      fmt::format("xe_texture{}_{}_{}", fetch_constant, dimension_name,
-                  is_signed ? 's' : 'u')
-          .c_str());
+  // BD input-attachment merge (gpu_vulkan_feedback_merge): when this fetch
+  // constant is the flagged producer RT, declare the binding's image as a
+  // Vulkan INPUT ATTACHMENT (DimSubpassData, read via OpImageRead at the
+  // fragment's own position) instead of a sampled 2D image - the consumer reads
+  // the producer GMEM-resident across a same-pixel render-to-texture break
+  // instead of store->DRAM->sample. ONE variable per binding (the image IS the
+  // subpassInput) => no descriptor-binding collision. A distinct shader variant
+  // (pixel_shader_modification differs) keeps existing shaders byte-identical.
+  // 2D only (the composite case); both the unsigned and signed bindings of the
+  // producer constant become input attachments reading attachment 0.
+  bool is_input_attachment =
+      is_pixel_shader() && type_dimension == spv::Dim2D &&
+      GetSpirvShaderModification().pixel.feedback_input_attachment != 0 &&
+      (GetSpirvShaderModification().pixel.feedback_input_attachment - 1) ==
+          fetch_constant;
+  new_texture_binding.is_input_attachment = is_input_attachment;
+  if (is_input_attachment) {
+    builder_->addCapability(spv::CapabilityInputAttachment);
+    new_texture_binding.variable = builder_->createVariable(
+        spv::NoPrecision, spv::StorageClassUniformConstant,
+        builder_->makeImageType(type_float_, spv::DimSubpassData, false, false,
+                                false, 2, spv::ImageFormatUnknown),
+        fmt::format("xe_subpass_in{}_{}", fetch_constant, is_signed ? 's' : 'u')
+            .c_str());
+  } else {
+    new_texture_binding.variable = builder_->createVariable(
+        spv::NoPrecision, spv::StorageClassUniformConstant,
+        builder_->makeImageType(type_float_, type_dimension, false, is_array,
+                                false, 1, spv::ImageFormatUnknown),
+        fmt::format("xe_texture{}_{}_{}", fetch_constant, dimension_name,
+                    is_signed ? 's' : 'u')
+            .c_str());
+  }
   builder_->addDecoration(
       new_texture_binding.variable, spv::DecorationDescriptorSet,
       int(is_vertex_shader() ? kDescriptorSetTexturesVertex
                              : kDescriptorSetTexturesPixel));
   builder_->addDecoration(new_texture_binding.variable, spv::DecorationBinding,
                           int(new_texture_binding_index));
+  if (is_input_attachment) {
+    builder_->addDecoration(new_texture_binding.variable,
+                            spv::DecorationInputAttachmentIndex, 0);
+  }
   if (features_.spirv_version >= spv::Spv_1_4) {
     main_interface_.push_back(new_texture_binding.variable);
-  }
-  // BD input-attachment merge: if this fetch constant is the flagged producer
-  // RT, ALSO declare a subpassInput (read via subpassLoad/OpImageRead at the
-  // fragment's own position) so the producer stays GMEM-resident across a
-  // same-pixel render-to-texture break instead of store->DRAM->sample. Only on
-  // the unsigned 2D binding (the one the composite path samples) to avoid a
-  // duplicate input attachment. Dormant unless the merged shader VARIANT sets
-  // feedback_input_attachment, so existing shaders are byte-identical. The
-  // binding number + INPUT_ATTACHMENT descriptor + render-pass input attachment
-  // are reconciled in Inc3 (detection/wiring); new_texture_binding_index is the
-  // placeholder binding for now.
-  if (is_pixel_shader() && !is_signed &&
-      dimension != xenos::FetchOpDimension::k3DOrStacked) {
-    uint32_t input_attachment_fetch_constant_plus_1 =
-        GetSpirvShaderModification().pixel.feedback_input_attachment;
-    if (input_attachment_fetch_constant_plus_1 != 0 &&
-        (input_attachment_fetch_constant_plus_1 - 1) == fetch_constant) {
-      builder_->addCapability(spv::CapabilityInputAttachment);
-      new_texture_binding.subpass_input_variable = builder_->createVariable(
-          spv::NoPrecision, spv::StorageClassUniformConstant,
-          builder_->makeImageType(type_float_, spv::DimSubpassData, false, false,
-                                  false, 2, spv::ImageFormatUnknown),
-          fmt::format("xe_subpass_in_{}", fetch_constant).c_str());
-      builder_->addDecoration(new_texture_binding.subpass_input_variable,
-                              spv::DecorationDescriptorSet,
-                              int(kDescriptorSetTexturesPixel));
-      builder_->addDecoration(new_texture_binding.subpass_input_variable,
-                              spv::DecorationBinding,
-                              int(new_texture_binding_index));
-      builder_->addDecoration(new_texture_binding.subpass_input_variable,
-                              spv::DecorationInputAttachmentIndex, 0);
-      if (features_.spirv_version >= spv::Spv_1_4) {
-        main_interface_.push_back(new_texture_binding.subpass_input_variable);
-      }
-    }
   }
   return new_texture_binding_index;
 }
