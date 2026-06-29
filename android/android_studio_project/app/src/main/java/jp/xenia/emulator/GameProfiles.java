@@ -72,14 +72,24 @@ public final class GameProfiles {
                         + "working sync-consume path -> it boots reliably to the 3D "
                         + "field. Device-validated 2026-06-20 (reached rendered=2250 / "
                         + "263k-vert foliage field; STATUS_PENDING polls 0).")
-                .add("gpu_vrs_foliage_rate", Integer.valueOf(2),
-                        "Adreno hardware VRS 2x2 coarse-shades BD's overdraw-heavy "
-                        + "foliage + blended transparency. Device-validated 2026-06-20: "
-                        + "-21.8% GPU frame time on the heavy foliage field "
-                        + "(125.9->98.5ms, scene-matched A/B via the single-run "
-                        + "alternation validator); BD is GPU-bound so this lands as real "
-                        + "fps (~5.9->7.9 in the field). Slightly softer foliage edges, "
-                        + "visually clean. Default-on for this GPU-bound priority title.")
+                .add("gpu_vrs_foliage_rate", Integer.valueOf(4),
+                        "Adreno hardware VRS 4x4 coarse-shades BD's overdraw-heavy "
+                        + "foliage + blended transparency (foliage GEOMETRY/density "
+                        + "untouched - VRS lowers only the per-fragment shading RATE). "
+                        + "Device-validated 2026-06-29 single-run alternation: -51% GPU "
+                        + "foliage-fragment time, ~7.6->13.2 fps on the heavy field; the "
+                        + "4x4 shading is visually clean on the naturally-noisy foliage "
+                        + "(coverage/geometry intact). This is the GPU CEILING for the "
+                        + "heavy field: the residual ~79ms is EDRAM render-to-texture tile "
+                        + "I/O, which is FSI-HARDWARE-BLOCKED on the Adreno 740 (no "
+                        + "fragment_shader_interlock / rasterization_order_attachment_"
+                        + "access, device-confirmed) - not software-fixable on this GPU. "
+                        + "Lower to rate 2 for slightly cleaner shading at ~7.9fps.")
+                .add("gpu_vrs_enable_after_guest_ms", Integer.valueOf(130000),
+                        "Gate VRS to in-game (guest uptime > 130s) so BD's boot menus / "
+                        + "Voice Language screen render at full shading rate (crisp text), "
+                        + "and the 4x4 coarsening engages only once the heavy 3D field is "
+                        + "reached. Per-title gameplay gate.")
                 .add("kernel_object_handle_cache", Boolean.TRUE,
                         "BD's heavy field is actually CPU/LOCK-bound, not GPU-bound "
                         + "(device-profiled 2026-06-23: GPU idle ~98%, busy 0%, turnip "
