@@ -111,6 +111,18 @@ DEFINE_uint32(
     "fragment saving). Left as a gated experiment; do NOT enable expecting a win.",
     "GPU");
 
+DEFINE_uint32(
+    gpu_clamp_rt_framebuffer_height, 0,
+    "BD tile-I/O cut: clamp the host render-target FRAMEBUFFER height to this many "
+    "pixels (0 = off = full tile-rounded height). Host RTs are tile-rounded to huge "
+    "heights (e.g. 4096 / 8192) so overlapping EDRAM ranges alias correctly, but at "
+    "720p only ~720 rows are ever rendered; the TBDR storeOp/loadOp cover the "
+    "framebuffer height, so the unused rows are stored+loaded every pass (the bulk of "
+    "BD's ~79ms tile I/O for the tall RTs). LOSSLESS only when no EDRAM aliasing "
+    "transfer reads the clamped rows (BD: aliasing transfers measured = 0). Set e.g. "
+    "768 for 720p. Default 0 (off).",
+    "GPU");
+
 DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
@@ -2781,6 +2793,16 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
                                device_properties.maxFramebufferWidth);
   host_extent.height = std::min(host_extent.height * draw_resolution_scale_y(),
                                 device_properties.maxFramebufferHeight);
+  // BD tile-I/O cut: the host RT is tile-rounded to a huge height (e.g. 4096 /
+  // 8192) for EDRAM aliasing, but at 720p only ~720 rows are ever rendered. On a
+  // TBDR the storeOp/loadOp cover the FRAMEBUFFER height, so the unused rows are
+  // stored+loaded wastefully (the bulk of the ~79ms tile I/O for the tall RTs).
+  // Clamp the framebuffer height when no EDRAM aliasing reads the clamped rows
+  // (BD: aliasing transfers measured = 0). Gated default-0 (off, lossless).
+  if (cvars::gpu_clamp_rt_framebuffer_height &&
+      host_extent.height > cvars::gpu_clamp_rt_framebuffer_height) {
+    host_extent.height = cvars::gpu_clamp_rt_framebuffer_height;
+  }
   framebuffer_create_info.width = host_extent.width;
   framebuffer_create_info.height = host_extent.height;
   framebuffer_create_info.layers = 1;
