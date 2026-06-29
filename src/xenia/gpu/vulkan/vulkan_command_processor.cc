@@ -3906,6 +3906,29 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       current_framebuffer_->color_view != VK_NULL_HANDLE && framebuffer &&
       framebuffer->color_view != VK_NULL_HANDLE &&
       render_pass != current_render_pass_) {
+    // BD merge diag: the input attachment is read 1:1 with the framebuffer, so
+    // the producer + consumer RTs must be the SAME extent or subpassLoad samples
+    // the wrong texels (BD's composites render to oversized tile-rounded RTs of
+    // varying heights). Log + gate on it.
+    bool feedback_extent_match =
+        current_framebuffer_->host_extent.width ==
+            framebuffer->host_extent.width &&
+        current_framebuffer_->host_extent.height ==
+            framebuffer->host_extent.height;
+    // Also require DISTINCT producer/consumer color views: identical views = an
+    // in-place feedback (attachment 0 == attachment 1) which is degenerate for a
+    // 2-attachment render pass (read+write the same image in subpass 1).
+    bool feedback_distinct_views =
+        current_framebuffer_->color_view != framebuffer->color_view;
+    XELOGI(
+        "feedback merge attempt: producer {}x{} pv={:#x} consumer {}x{} cv={:#x} "
+        "extent_match={} distinct={}",
+        current_framebuffer_->host_extent.width,
+        current_framebuffer_->host_extent.height,
+        reinterpret_cast<uintptr_t>(current_framebuffer_->color_view),
+        framebuffer->host_extent.width, framebuffer->host_extent.height,
+        reinterpret_cast<uintptr_t>(framebuffer->color_view), feedback_extent_match,
+        feedback_distinct_views);
     VulkanRenderTargetCache::RenderPassKey consumer_key =
         render_target_cache_->last_update_render_pass_key();
     VkRenderPass feedback_render_pass = render_target_cache_->GetFeedbackRenderPass(
@@ -3917,7 +3940,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                   current_framebuffer_->color_view, framebuffer->color_view,
                   framebuffer->host_extent, feedback_render_pass)
             : VK_NULL_HANDLE;
-    if (feedback_render_pass != VK_NULL_HANDLE &&
+    if (feedback_extent_match && feedback_distinct_views &&
+        feedback_render_pass != VK_NULL_HANDLE &&
         feedback_framebuffer != VK_NULL_HANDLE) {
       FlushPendingMergeRun();
       // Discard the pending barriers (the producer->SHADER_READ is the render
