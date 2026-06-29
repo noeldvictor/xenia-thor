@@ -3899,6 +3899,15 @@ void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin) {
         (reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) & 0xFFFFu);
     snap.buffer_copy_bytes = record_stats.buffer_copy_bytes;
   }
+  // Identify each pass's render target (correlate fb id from "GPU pass split" to
+  // its host dimensions) to find what an anomalously expensive 1-draw pass renders.
+  if (is_begin && current_framebuffer_) {
+    XELOGI("PASS fb={:04x} {}x{}",
+           uint32_t((reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) &
+                    0xFFFFu),
+           current_framebuffer_->host_extent.width,
+           current_framebuffer_->host_extent.height);
+  }
   if (!is_begin) {
     ++gpu_pass_bracket_count_;
   }
