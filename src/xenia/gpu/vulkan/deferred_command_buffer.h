@@ -387,6 +387,15 @@ class DeferredCommandBuffer {
 
   void CmdVkEndRenderPass() { WriteCommand(Command::kVkEndRenderPass, 0); }
 
+  // BD input-attachment merge (Inc3): advance to the next subpass of a merged
+  // 2-subpass feedback render pass (producer in subpass 0, the same-pixel
+  // composite consumer reading it as an input attachment in subpass 1).
+  void CmdVkNextSubpass(VkSubpassContents contents) {
+    auto& args = *reinterpret_cast<ArgsVkNextSubpass*>(
+        WriteCommand(Command::kVkNextSubpass, sizeof(ArgsVkNextSubpass)));
+    args.contents = contents;
+  }
+
   // pNext of all barriers must be null.
   void CmdVkPipelineBarrier(VkPipelineStageFlags src_stage_mask,
                             VkPipelineStageFlags dst_stage_mask,
@@ -640,6 +649,7 @@ class DeferredCommandBuffer {
     kVkDrawIndexedIndirect,
     kVkDrawIndexedIndirectCount,
     kVkEndRenderPass,
+    kVkNextSubpass,
     kVkPipelineBarrier,
     kVkPushConstants,
     kVkPushDescriptorSetKHR,
@@ -834,6 +844,10 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetBlendConstants {
     float blend_constants[4];
+  };
+
+  struct ArgsVkNextSubpass {
+    VkSubpassContents contents;
   };
 
   struct ArgsVkSetCullMode {

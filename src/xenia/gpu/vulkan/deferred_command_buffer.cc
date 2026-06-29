@@ -223,6 +223,11 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdEndRenderPass(command_buffer);
         break;
 
+      case Command::kVkNextSubpass: {
+        auto& args = *reinterpret_cast<const ArgsVkNextSubpass*>(stream);
+        dfn.vkCmdNextSubpass(command_buffer, args.contents);
+      } break;
+
       case Command::kVkPipelineBarrier: {
         auto& args = *reinterpret_cast<const ArgsVkPipelineBarrier*>(stream);
         size_t barrier_offset_bytes = sizeof(ArgsVkPipelineBarrier);
