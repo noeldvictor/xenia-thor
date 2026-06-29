@@ -252,11 +252,22 @@ class Lowerer {
     // (C dispatch + host_to_guest_thunk). ctx (x20) lets it skip the per-call
     // thread_local lookup. A non-tail INLINE-CACHE (resolve -> direct machine_code
     // call) was tried TWICE (with and without TCK_NoTail): qemu byte-correct
-    // (2624 assertions) but CRASHES BD natively at opt=2 on device. The JIT'd
-    // direct call doesn't replicate the host_to_guest_thunk's frame setup that the
-    // callee needs (a64 does the equivalent in raw asm; LLVM CreateCall at opt=2
-    // does not). Helper path kept; revisit only with a full opt=2 bisection
-    // (cpu_backend_llvm_max_fns / _dump_ir - the residency playbook).
+    // (2624 assertions) but CRASHES BD at opt=2 on device.
+    // ROOT CAUSE (derived 2026-06-28 from the call ABI, the ~13% dispatch lever):
+    // a guest fn is ENTERED with x0 = its GUEST return address and "returns" by
+    // BRANCHING to x0 through the dispatcher (see xe_llvm_resolve_function: "x0 =
+    // guest return address, the a64 guest->guest ABI") - it does NOT do a host RET.
+    // host_to_guest_thunk works because it passes x0 = a sentinel HOST return stub,
+    // so the callee's branch-to-x0 lands back in host code right after the call. A
+    // plain LLVM CreateCall provides no such stub: the callee branches to the guest
+    // ret_addr, re-dispatching the caller's continuation in a fresh frame while THIS
+    // frame is abandoned -> the opt=2 crash. (Tail calls work precisely because x0 =
+    // the CALLER's own guest ret addr, which already has a valid stub up the chain.)
+    // FIX DIRECTION: emit a per-call-site host return trampoline - a blockaddress of
+    // the post-call point, registered in the guest->host map as the x0 the callee
+    // branches back to (i.e. replicate the thunk's return path inline), NOT a bare
+    // CreateCall. Until then the helper path stays. Bisection tooling if revisited:
+    // cpu_backend_llvm_max_fns / _dump_ir (the residency playbook).
     auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
                                         {b_.getPtrTy(), i32, i32}, false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
