@@ -2,8 +2,9 @@
 
 ## Goal
 Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740) via this xenia fork.
-Priority: **Blue Dragon → 30fps at 720p with default foliage**; then Burnout, Gears, Lost Odyssey, Banjo →
-30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
+**TARGET = FULL-SPEED Xbox 360 emulation. Blue Dragon → locked 30fps at 720p with FULL default foliage**
+(the 360 ran it at 30; the Thor is 10-20× more powerful + the emulation needs only ~4× the 360 ⇒ full speed
+has large margin — see the ~4× budget below). Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
 improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) LLVM backend, the
 way forward: drive to FULL 100% opcode coverage (no a64 fallback) — user "we need LLVM FULL 100%"; (2) UMA
 zero-copy [FIXED + enabled default-on 2026-06-27, present-hang gone]; (3) CPU/GPU NEON [VMX→NEON, FP32
@@ -11,9 +12,24 @@ dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct 
 fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
 
 ### 🔑🔑 BD-30 APPROACH — read before any perf work (user, 2026-06-28)
-- **THE THOR IS 10-20× MORE POWERFUL THAN THE XBOX 360.** BD ran ~30fps on the 360, so 30fps on the Thor is
-  EASILY achievable. BD at ~5fps = a **~15× EMULATION INEFFICIENCY to CLOSE**, NOT a hardware/foliage limit.
-  NEVER conclude "can't hit 30 / GPU-capped / content too heavy" — that is wrong; find the inefficiency.
+- **THE THOR IS 10-20× MORE POWERFUL THAN THE XBOX 360 → full-speed emulation IS the target + achievable.**
+  BD ran ~30fps on the 360. **The emulation realistically needs only ~4× the 360's work (EDRAM handling +
+  CPU recompilation/LLVM) — well within the 10-20× headroom (≈4×/15× ⇒ ~100fps-class).** So 30fps at full
+  foliage has LARGE margin. BD at ~5-8fps = a ~15-58× EMULATION INEFFICIENCY to CLOSE, NOT a hardware/foliage
+  limit. NEVER conclude "can't hit 30 / GPU-capped / content too heavy / needs foliage thinning" — find the
+  emulation inefficiency. The job = drive emulation overhead DOWN toward the ~4× budget.
+- **✅ BD FIELD FRAME DECOMPOSED (device isolation tests, 2026-06-29) — proves the target + names the levers.**
+  The 128ms village-field frame = **~24ms REAL rendering** (geometry/binning 16 + color-ROP/overdraw 8 — the
+  Thor renders BD's actual pixels FASTER than the 360's 33ms, so HARDWARE IS NOT THE LIMIT) **+ ~104ms pure
+  EMULATION OVERHEAD**: EDRAM tile store/load **~79ms** (the 360's free on-die EDRAM emulated as RAM
+  round-trips = 42 "feedback" ownership-transfers) + per-draw structure **~25ms** (1196 draws). That's ~58× vs
+  the ~4× target. **PATH TO 30 = cut the ~104ms emulation overhead toward ~9ms (over the 24ms real → 33ms).
+  #1 lever = the 79ms EDRAM tile I/O** (keep the feedback transfers GMEM-resident via input-attachment/subpass,
+  not RAM round-trips); #2 = the 25ms per-draw structure (per-draw bind/CP overhead — does NOT merge). Method:
+  `gpu_edram_passes_dont_care` (skip ALL tile I/O) is the CEILING probe → 128→49ms/19.8fps. **REFUTED dead-ends
+  (device-proven, DON'T re-chase): vertex/hw-fetch, VRS-stacking (subsumed by tile-I/O), renderArea-clamp,
+  dont_care_safe, skip_edram_transfers, depth-store-skip, pass-merge (flat), draw-merge (BD draws don't merge),
+  foliage thinning (overdraw is only ~8ms).** Full evidence: [[bd-edram-tile-io-bottleneck]].
 - **RPCS3 APPROACH = PRECOMPILE EVERYTHING AOT. Compile/boot time is IRRELEVANT** — do NOT optimize for it, do
   NOT report it as a cost, do NOT gate features on it. The only thing that matters is EFFICIENT codegen running
   during GAMEPLAY. (So residency's larger IR / slower compile is a non-problem: precompile it.)
@@ -21,7 +37,7 @@ fix was the project's biggest win; lever = driver-level perf + Adreno features).
   native ndkBuild to PREMAKE config `Debug` = `optimize("Off")` = -O0, so the ENTIRE host emulator (CP, dispatch,
   kernel) ran UNOPTIMIZED — confounding EVERY prior BD perf number. Switched the debug variant's native config to
   Release/-O2 (cc1924d82): libxenia-app.so 301MB→99MB, ~15% trivial-accessor overhead (`__cxx_atomic_load`,
-  `Function::address`, `unique_ptr::get`) inlined away. **BD ~4fps → 19.9fps (≈5×, reliable VdSwap-window count, UNHANDLED=0).** [[thor-build-was-o0-now-o2]]
+  `Function::address`, `unique_ptr::get`) inlined away. **⚠️ FPS CLAIM CORRECTED 2026-06-28: the "~4→19.9fps ≈5×" was OVERSTATED. (1) The VdSwap-window count is ~2× the TRUE rate — the in-app OSD (green "X FPS" box, screenshot it) is the truth (e.g. BD title screen OSD=29.7fps). USE THE OSD, NOT VdSwap-count. (2) The heavy scene I profiled rendered as GARBLED cyan-bars (screenshot-caught), NOT BD's verified 3D field — so its fps was of a wrong/corrupt scene. LLVM renders BD CORRECTLY at the title (~30fps OSD); a heavier scene corrupts (gpu_uma_direct_shared_memory suspect). The -O2 + dispatch CODE wins are still real (qemu-validated, .so 301→99MB); only the fps NUMBERS were wrong. Re-measure the CORRECT field via OSD before any fps claim.** [[thor-build-was-o0-now-o2]]
 - **Real -O2 bottleneck = GUEST-CALL DISPATCH plumbing** (BD is call-heavy) — NOT rendering / register-residency /
   3-thread-serialization (those were -O0-confounded verdicts). SHIPPED (qemu byte-validated, device-confirmed at
   19.9fps, b34a0f69b): per-call `ThreadState::Get()` TLS → derive `ts` from ctx/x20 (TLS 11.7%→6.4%); RTTI
