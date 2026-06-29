@@ -20,6 +20,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/shader.h"
@@ -960,6 +961,68 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
         }
       }
     }
+
+    // gpu_hw_vertex_fetch (Thor/Adreno): if this draw is still a raw guest-DMA
+    // index buffer whose indices need an endian swap in the vertex shader,
+    // pre-swap them to native (host little-endian) order here and bind the
+    // converted buffer instead of the shared-memory guest indices. This makes the
+    // raw gl_VertexIndex equal the guest vertex index, which is what lets the
+    // per-draw hardware-vertex-fetch redirect engage (the command processor gate
+    // requires host_shader_index_endian == kNone). Rendering stays bit-exact: the
+    // shader's EndianSwap(gl_VertexIndex, vertex_index_endian) becomes a no-op
+    // with kNone, and the SPIR-V EndianSwap32Uint matches xenos::GpuSwap for every
+    // endian, so the pre-swapped value equals what the SSBO arm computed from the
+    // raw index before. The only host primitive-reset sentinel that can reach a
+    // still-kGuestDMA draw is 0xFFFF (kInt16) or 0xFFFFFFFF (kInt32); both are byte
+    // palindromes, and GpuSwap is a bijection that fixes them and maps no other
+    // value onto them, so primitive reset is preserved exactly. Only the plain
+    // host-type-kVertex shader carries the HW inputs; tessellation / point /
+    // rectangle expansion draws keep the SSBO path. 32-bit conversion produces a
+    // real host 32-bit index buffer, so it requires full 32-bit host index support
+    // (always true on the Thor). Entirely gated on the cvar - byte-identical when
+    // off. A per-draw VGT_INDX_OFFSET != 0 still renders correctly through the SSBO
+    // arm (the command processor gate keeps the redirect flag clear for it, while
+    // the shader applies vertex_base_index to the kNone-swapped, i.e. unchanged,
+    // index).
+    if (cvars::gpu_hw_vertex_fetch && guest_draw_vertex_count &&
+        host_vertex_shader_type == Shader::HostVertexShaderType::kVertex &&
+        cacheable.index_buffer_type == ProcessedIndexBufferType::kGuestDMA &&
+        cacheable.host_shader_index_endian != xenos::Endian::kNone &&
+        (guest_index_format == xenos::IndexFormat::kInt16 ||
+         full_32bit_vertex_indices_used_)) {
+      // Writing to the trace irrespective of the cache lookup result because
+      // cache behavior depends on runtime configuration and state.
+      trace_writer_.WriteMemoryRead(guest_index_base,
+                                    guest_index_buffer_needed_bytes);
+      // Keyed with hw_vertex_fetch_preswap so this native-order entry never
+      // collides with the same range's normal (shader-swapped) kGuestDMA cache
+      // entry that the reset logic above may have created.
+      CacheTransaction cache_transaction(
+          *this, CacheKey(guest_index_base, guest_draw_vertex_count,
+                          guest_index_format, guest_index_endian,
+                          guest_primitive_reset_enabled,
+                          xenos::PrimitiveType::kNone,
+                          /*hw_vertex_fetch_preswap=*/true));
+      if (cache_transaction.GetFoundResult()) {
+        cacheable = *cache_transaction.GetFoundResult();
+      } else {
+        const void* guest_indices_ptr =
+            memory_.TranslatePhysical(guest_index_base);
+        void* host_indices_ptr = RequestHostConvertedIndexBufferForCurrentFrame(
+            guest_index_format, guest_draw_vertex_count,
+            /*coalign_for_simd=*/false, guest_index_base,
+            cacheable.host_index_buffer_handle);
+        if (!host_indices_ptr) {
+          return false;
+        }
+        SwapDmaIndexBufferToNative(host_indices_ptr, guest_indices_ptr,
+                                   guest_draw_vertex_count, guest_index_format,
+                                   guest_index_endian);
+        cacheable.index_buffer_type = ProcessedIndexBufferType::kHostConverted;
+        cacheable.host_shader_index_endian = xenos::Endian::kNone;
+        cache_transaction.SetNewResult(cacheable);
+      }
+    }
   }
 
   // Request the indices in the shared memory if they need to be accessed from
@@ -1266,6 +1329,35 @@ void PrimitiveProcessor::ReplaceResetIndex16To24(
   while (count--) {
     uint16_t index = *(source++);
     *(dest++) = index != reset_index_guest_endian ? index : UINT32_MAX;
+  }
+}
+
+void PrimitiveProcessor::SwapDmaIndexBufferToNative(void* dest,
+                                                    const void* source,
+                                                    uint32_t index_count,
+                                                    xenos::IndexFormat format,
+                                                    xenos::Endian endian) {
+  // Byte-swap each guest index from its big-endian DMA layout to native (host
+  // little-endian) order. `source[i]` read as a native integer is exactly the
+  // value Vulkan would read in the kGuestDMA case, and xenos::GpuSwap matches the
+  // shader's EndianSwap32Uint for every endian, so GpuSwap(source[i], endian) is
+  // the guest vertex index; storing it natively makes a raw little-endian fetch
+  // (Vulkan index read / fixed-function gl_VertexIndex) return that index. No
+  // 24-bit masking (matches the unmasked shader swap on full-32-bit hosts). The
+  // 0xFFFF / 0xFFFFFFFF reset sentinel is a palindrome under GpuSwap, so reset is
+  // preserved. Cheap and run at most once per (range, frame) via the cache.
+  if (format == xenos::IndexFormat::kInt16) {
+    auto src = reinterpret_cast<const uint16_t*>(source);
+    auto dst = reinterpret_cast<uint16_t*>(dest);
+    for (uint32_t i = 0; i < index_count; ++i) {
+      dst[i] = xenos::GpuSwap(src[i], endian);
+    }
+  } else {
+    auto src = reinterpret_cast<const uint32_t*>(source);
+    auto dst = reinterpret_cast<uint32_t*>(dest);
+    for (uint32_t i = 0; i < index_count; ++i) {
+      dst[i] = xenos::GpuSwap(src[i], endian);
+    }
   }
 }
 

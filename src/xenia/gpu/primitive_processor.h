@@ -407,6 +407,20 @@ class PrimitiveProcessor {
   static void ReplaceResetIndex16To24(uint32_t* dest, const uint16_t* source,
                                       uint32_t count,
                                       uint16_t reset_index_guest_endian);
+  // gpu_hw_vertex_fetch: copy a guest DMA index buffer into a new host buffer
+  // with every index byte-swapped from its big-endian guest layout to native
+  // (host little-endian) order, so a raw little-endian fetch (the Vulkan index
+  // read and the fixed-function vertex-input gl_VertexIndex) yields the guest
+  // vertex index directly. Same element count and format as the source. No
+  // 24-bit masking is applied, to stay bit-exact with the shader's unmasked
+  // EndianSwap on hosts with full 32-bit index support. A host primitive-reset
+  // sentinel (0xFFFF for kInt16, 0xFFFFFFFF for kInt32) is a byte palindrome and
+  // is preserved. For kInt16, endian must be kNone or k8in16 (the only normalized
+  // values); for kInt32, any guest endian is accepted.
+  static void SwapDmaIndexBufferToNative(void* dest, const void* source,
+                                         uint32_t index_count,
+                                         xenos::IndexFormat format,
+                                         xenos::Endian endian);
   // The reset index and the low 24 bits mask are taken explicitly because this
   // function may be used two ways:
   // - Passthrough - when the vertex shader swaps the indices (when 32-bit
@@ -731,13 +745,19 @@ class PrimitiveProcessor {
       uint32_t is_reset_enabled : 1;  // 53
       // kNone if not changing the type (like only processing the reset index).
       xenos::PrimitiveType conversion_guest_primitive_type : 6;  // 59
+      // gpu_hw_vertex_fetch: this entry holds indices pre-swapped to native (host
+      // little-endian) order for the hardware vertex-fetch redirect. Keyed
+      // separately so it never collides with the same range's normal
+      // (shader-endian-swapped) kGuestDMA entry.
+      uint32_t hw_vertex_fetch_preswap : 1;  // 60
     };
 
     CacheKey() : key(0) { static_assert_size(*this, sizeof(key)); }
     CacheKey(uint32_t base, uint32_t count, xenos::IndexFormat format,
              xenos::Endian endian, bool is_reset_enabled,
              xenos::PrimitiveType conversion_guest_primitive_type =
-                 xenos::PrimitiveType::kNone) {
+                 xenos::PrimitiveType::kNone,
+             bool hw_vertex_fetch_preswap = false) {
       // Clear unused bits, then set each field explicitly, not via the
       // initializer list (which causes `uint64_t key = 0;` to be ignored, and
       // also can't contain initializers for aliasing union members).
@@ -748,6 +768,7 @@ class PrimitiveProcessor {
       this->endian = endian;
       this->is_reset_enabled = is_reset_enabled;
       this->conversion_guest_primitive_type = conversion_guest_primitive_type;
+      this->hw_vertex_fetch_preswap = hw_vertex_fetch_preswap;
     }
 
     struct Hasher {
