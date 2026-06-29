@@ -1638,6 +1638,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool feedback_merge_in_place_ = false;
   uint32_t feedback_merge_producer_fetch_constant_ = 0;
   VkImageView feedback_merge_producer_view_ = VK_NULL_HANDLE;
+  // Consumer pixel-shader texture count for the active composite. 1 = the merge
+  // path; >1 = a multi-texture composite (logged for structure; the mixed-
+  // descriptor merge gates on this).
+  uint32_t feedback_merge_texcount_ = 0;
   // Count of feedback merges performed this frame (diagnostic, logged in the
   // draw-outcomes line; reset per frame).
   uint32_t rt_feedback_merges_ = 0;

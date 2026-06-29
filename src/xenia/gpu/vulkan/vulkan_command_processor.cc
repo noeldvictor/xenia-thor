@@ -3922,13 +3922,13 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         current_framebuffer_->color_view != framebuffer->color_view;
     XELOGI(
         "feedback merge attempt: producer {}x{} pv={:#x} consumer {}x{} cv={:#x} "
-        "extent_match={} distinct={}",
+        "extent_match={} distinct={} texcount={}",
         current_framebuffer_->host_extent.width,
         current_framebuffer_->host_extent.height,
         reinterpret_cast<uintptr_t>(current_framebuffer_->color_view),
         framebuffer->host_extent.width, framebuffer->host_extent.height,
         reinterpret_cast<uintptr_t>(framebuffer->color_view), feedback_extent_match,
-        feedback_distinct_views);
+        feedback_distinct_views, feedback_merge_texcount_);
     // In-place feedback (producer == consumer RT) uses the 1-attachment self-
     // dependency variant; distinct producer/consumer RTs use the 2-attachment
     // variant. BD's composites are all in-place.
@@ -3944,7 +3944,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                   current_framebuffer_->color_view, framebuffer->color_view,
                   framebuffer->host_extent, feedback_render_pass, feedback_in_place)
             : VK_NULL_HANDLE;
-    if (feedback_extent_match && feedback_render_pass != VK_NULL_HANDLE &&
+    if (feedback_merge_texcount_ == 1 && feedback_extent_match &&
+        feedback_render_pass != VK_NULL_HANDLE &&
         feedback_framebuffer != VK_NULL_HANDLE) {
       feedback_merge_in_place_ = feedback_in_place;
       FlushPendingMergeRun();
@@ -4860,14 +4861,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           prim_type == xenos::PrimitiveType::kRectangleList ||
           (index_count >= 3 && index_count <= 6);
       const auto& ps_textures = pixel_shader->texture_bindings();
-      // Exactly one texture: it must be the producer (the just-rendered RT we
-      // bind as the input attachment). A multi-texture composite would force its
-      // non-producer textures to INPUT_ATTACHMENT too (descriptor type mismatch
-      // vs the shader's sampled bindings -> GPU fault). Single-texture only for now.
-      if (composite_prim && ps_textures.size() == 1) {
+      // Multi-texture: the producer is the FIRST texture (the primary input =
+      // the just-rendered RT); other textures stay sampled (mixed descriptor set,
+      // wired below). Detection fires for ALL composites so the redirect can LOG
+      // their texcount + in-place/2-RT structure; the modification + merge are
+      // gated to texcount==1 until the mixed descriptor path is validated.
+      if (composite_prim && !ps_textures.empty()) {
         feedback_merge_active_ = true;
         feedback_merge_producer_fetch_constant_ = ps_textures[0].fetch_constant;
         feedback_merge_producer_view_ = current_framebuffer_->color_view;
+        feedback_merge_texcount_ = uint32_t(ps_textures.size());
       }
     }
 
@@ -4884,7 +4887,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // its pixel shader to read the producer fetch constant as a Vulkan INPUT
     // ATTACHMENT (subpassLoad). Selects the variant shader (subpassInput), the
     // feedback pipeline at subpass 1, and the input-attachment descriptor.
-    if (feedback_merge_active_ && pixel_shader) {
+    if (feedback_merge_active_ && feedback_merge_texcount_ == 1 && pixel_shader) {
       pixel_shader_modification.pixel.feedback_input_attachment =
           feedback_merge_producer_fetch_constant_ + 1;
     }
