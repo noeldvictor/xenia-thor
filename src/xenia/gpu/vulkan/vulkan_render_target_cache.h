@@ -196,6 +196,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkRenderPass GetHostRenderTargetsRenderPass(RenderPassKey key,
                                               uint32_t load_dont_care_mask = 0,
                                               bool depth_store_op_none = false);
+  // BD input-attachment merge (Inc2): a 2-subpass feedback render pass - subpass
+  // 0 renders the producer color RT, subpass 1 reads it as an INPUT attachment
+  // and renders the consumer color RT (a 0->1 BY_REGION dependency carries the
+  // same-pixel producer write to the consumer's subpassLoad). Cached by
+  // (producer fmt, consumer fmt, samples). Used only when a feedback merge is
+  // routed (Inc3); VK_NULL_HANDLE on failure.
+  VkRenderPass GetFeedbackRenderPass(
+      xenos::ColorRenderTargetFormat producer_format,
+      xenos::ColorRenderTargetFormat consumer_format,
+      xenos::MsaaSamples msaa_samples);
   // Returns the load-DONT_CARE variant of the last Update()'s render pass for
   // beginning it, or `original` unchanged when not applicable (mask empty
   // after clamping to the bound attachments, not the host-render-targets path,
@@ -948,6 +958,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // Safe DONT_CARE variants, keyed (uint64_t(RenderPassKey::key) << 5) |
   // load_dont_care_mask. VK_NULL_HANDLE if failed to create.
   std::unordered_map<uint64_t, VkRenderPass> load_dont_care_render_passes_;
+  // BD input-attachment merge (Inc2): 2-subpass feedback render passes, keyed by
+  // (producer color format) | (consumer color format << 4) | (msaa << 8).
+  // VK_NULL_HANDLE if creation failed. Dormant until Inc3 routes a merge.
+  std::unordered_map<uint32_t, VkRenderPass> feedback_render_passes_;
 
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;

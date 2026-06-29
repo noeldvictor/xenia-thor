@@ -1156,6 +1156,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   load_dont_care_render_passes_.clear();
+  for (const auto& render_pass_pair : feedback_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  feedback_render_passes_.clear();
 
   for (VkPipeline& resolve_copy_pipeline : resolve_copy_pipelines_) {
     ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
@@ -1221,6 +1227,12 @@ void VulkanRenderTargetCache::ClearCache() {
     }
   }
   load_dont_care_render_passes_.clear();
+  for (const auto& render_pass_pair : feedback_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  feedback_render_passes_.clear();
 
   RenderTargetCache::ClearCache();
 }
@@ -1958,6 +1970,116 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   } else {
     render_passes_.emplace(key, render_pass);
   }
+  return render_pass;
+}
+
+VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
+    xenos::ColorRenderTargetFormat producer_format,
+    xenos::ColorRenderTargetFormat consumer_format,
+    xenos::MsaaSamples msaa_samples) {
+  // BD input-attachment merge (Inc2): the 2-subpass feedback render pass that
+  // lets a same-pixel render-to-texture composite read its producer RT as a
+  // Vulkan INPUT ATTACHMENT (GMEM-resident) instead of the store->DRAM->sample
+  // round-trip (the ~79ms EDRAM tile-I/O lever). Subpass 0 renders the producer
+  // (attachment 0); subpass 1 reads it as input + renders the consumer
+  // (attachment 1). Dormant until Inc3 routes a merge through it.
+  uint32_t key = (uint32_t(producer_format) & 0xF) |
+                 ((uint32_t(consumer_format) & 0xF) << 4) |
+                 ((uint32_t(msaa_samples) & 0x3) << 8);
+  auto it = feedback_render_passes_.find(key);
+  if (it != feedback_render_passes_.end()) {
+    return it->second;
+  }
+
+  VkSampleCountFlagBits samples =
+      VkSampleCountFlagBits(uint32_t(1) << uint32_t(msaa_samples));
+
+  VkAttachmentDescription attachments[2] = {};
+  // Attachment 0: producer RT - rendered in subpass 0, read as input in subpass 1.
+  attachments[0].format = GetColorVulkanFormat(producer_format);
+  attachments[0].samples = samples;
+  attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[0].initialLayout = VulkanRenderTarget::kColorDrawLayout;
+  attachments[0].finalLayout = VulkanRenderTarget::kColorDrawLayout;
+  // Attachment 1: consumer RT - rendered in subpass 1.
+  attachments[1].format = GetColorVulkanFormat(consumer_format);
+  attachments[1].samples = samples;
+  attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[1].initialLayout = VulkanRenderTarget::kColorDrawLayout;
+  attachments[1].finalLayout = VulkanRenderTarget::kColorDrawLayout;
+
+  VkAttachmentReference producer_color_ref;
+  producer_color_ref.attachment = 0;
+  producer_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
+  VkAttachmentReference producer_input_ref;
+  producer_input_ref.attachment = 0;
+  producer_input_ref.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkAttachmentReference consumer_color_ref;
+  consumer_color_ref.attachment = 1;
+  consumer_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
+
+  VkSubpassDescription subpasses[2] = {};
+  subpasses[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpasses[0].colorAttachmentCount = 1;
+  subpasses[0].pColorAttachments = &producer_color_ref;
+  subpasses[1].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpasses[1].inputAttachmentCount = 1;
+  subpasses[1].pInputAttachments = &producer_input_ref;
+  subpasses[1].colorAttachmentCount = 1;
+  subpasses[1].pColorAttachments = &consumer_color_ref;
+
+  // External deps mirror the normal pass; 0->1 carries the producer's color
+  // write to the consumer's same-pixel input-attachment read (BY_REGION).
+  VkSubpassDependency dependencies[3];
+  dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass = 0;
+  dependencies[0].srcStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[0].dstStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[0].srcAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[0].dstAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  dependencies[1].srcSubpass = 0;
+  dependencies[1].dstSubpass = 1;
+  dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+  dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  dependencies[2].srcSubpass = 1;
+  dependencies[2].dstSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[2].srcStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[2].dstStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[2].srcAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[2].dstAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+  VkRenderPassCreateInfo render_pass_create_info = {};
+  render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  render_pass_create_info.attachmentCount = 2;
+  render_pass_create_info.pAttachments = attachments;
+  render_pass_create_info.subpassCount = 2;
+  render_pass_create_info.pSubpasses = subpasses;
+  render_pass_create_info.dependencyCount = 3;
+  render_pass_create_info.pDependencies = dependencies;
+
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  VkRenderPass render_pass;
+  if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
+                             &render_pass) != VK_SUCCESS) {
+    XELOGE("VulkanRenderTargetCache: Failed to create a feedback render pass");
+    feedback_render_passes_.emplace(key, VK_NULL_HANDLE);
+    return VK_NULL_HANDLE;
+  }
+  feedback_render_passes_.emplace(key, render_pass);
   return render_pass;
 }
 
