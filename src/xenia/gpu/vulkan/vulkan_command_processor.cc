@@ -4760,6 +4760,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         pixel_shader ? pipeline_cache_->GetCurrentPixelShaderModification(
                            *pixel_shader, interpolator_mask, ps_param_gen_pos)
                      : SpirvShaderTranslator::Modification(0);
+    // BD input-attachment merge (4a): when this draw is the merge consumer, flag
+    // its pixel shader to read the producer fetch constant as a Vulkan INPUT
+    // ATTACHMENT (subpassLoad). Selects the variant shader (subpassInput), the
+    // feedback pipeline at subpass 1, and the input-attachment descriptor.
+    if (feedback_merge_active_ && pixel_shader) {
+      pixel_shader_modification.pixel.feedback_input_attachment =
+          feedback_merge_producer_fetch_constant_ + 1;
+    }
 
     // Translate the shaders now to obtain the sampler bindings.
     vertex_shader_translation = static_cast<VulkanShader::VulkanTranslation*>(

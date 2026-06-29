@@ -1615,6 +1615,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // repoint it (PatchBeginRenderPassTargets) to the 2-subpass feedback render
   // pass (this pass = producer subpass 0). SIZE_MAX = none captured / cvar off.
   size_t feedback_producer_begin_pos_ = SIZE_MAX;
+  // Set by the break-time detection when the CURRENT draw is a merge CONSUMER (a
+  // same-pixel composite reading the producer RT as an input attachment). Drives
+  // the shader modification (feedback_input_attachment), the feedback pipeline
+  // (subpass 1), and the input-attachment descriptor write. Cleared after the
+  // consumer draw / when not merging.
+  bool feedback_merge_active_ = false;
+  uint32_t feedback_merge_producer_fetch_constant_ = 0;
+  VkImageView feedback_merge_producer_view_ = VK_NULL_HANDLE;
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).
   bool gpu_scene_lock_frozen_ = false;
