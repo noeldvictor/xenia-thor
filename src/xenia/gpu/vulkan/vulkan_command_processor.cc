@@ -1698,6 +1698,11 @@ void VulkanCommandProcessor::ShutdownContext() {
   sparse_memory_binds_.clear();
 
   deferred_command_buffer_.Reset();
+  // BD input-attachment merge: the captured producer BeginRenderPass position is
+  // a command_stream_ index, invalid after a Reset (a stale index -> out-of-bounds
+  // patch -> heap corruption). Invalidate it together with the stream.
+  feedback_producer_begin_pos_ = SIZE_MAX;
+  feedback_merge_active_ = false;
   for (const auto& command_buffer_pair : command_buffers_submitted_) {
     dfn.vkDestroyCommandPool(device, command_buffer_pair.second.pool, nullptr);
   }
@@ -2595,7 +2600,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "await={} up={} comp={}] "
         "gpu_frame_us={} gpu_pass_us={} msaa={} surf_pitch={} "
         "brk_open={} brk_buf={} brk_img_sr={} brk_img_oth={} "
-        "sr_cls[rtsrc={} tex={} fscomp={} rtfc={}] "
+        "sr_cls[rtsrc={} tex={} fscomp={} rtfc={}] merges={} "
         "comp[opaque={} opaque_verts={} alphatest={} blended={}] guest_ms={} "
         "prim[pt={} ll={} ls={} tl={} tf={} ts={} rect={} quad={} poly={}] "
         "vtx[tiny={} sm={} med={} big={}] "
@@ -2689,7 +2694,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         uint32_t(register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch),
         brk_open_breaks_, brk_buffer_barriers_, brk_img_shaderread_,
         brk_img_other_, brk_img_sr_rtsrc_, brk_img_sr_texsample_,
-        brk_img_sr_fscomposite_, brk_img_sr_rtsrc_fscomp_,
+        brk_img_sr_fscomposite_, brk_img_sr_rtsrc_fscomp_, rt_feedback_merges_,
         draw_outcomes_opaque_draws_,
         draw_outcomes_opaque_verts_, draw_outcomes_alphatest_draws_,
         draw_outcomes_blended_draws_, xe::Clock::QueryGuestUptimeMillis(),
@@ -2938,6 +2943,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     brk_img_sr_texsample_ = 0;
     brk_img_sr_fscomposite_ = 0;
     brk_img_sr_rtsrc_fscomp_ = 0;
+    rt_feedback_merges_ = 0;
     brk_img_sr_detail_logged_ = 0;
     rt_transfer_same_format_ = 0;
     rt_transfer_diff_format_ = 0;
@@ -3893,7 +3899,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // sample). The producer's color->input layout move is the render pass's 0->1
   // subpass dependency, so the pending producer->SHADER_READ barrier is discarded.
   if (feedback_merge_active_ && current_render_pass_ != VK_NULL_HANDLE &&
-      feedback_producer_begin_pos_ != SIZE_MAX && current_framebuffer_ &&
+      feedback_producer_begin_pos_ != SIZE_MAX &&
+      deferred_command_buffer_.IsCommandPositionInRange(
+          feedback_producer_begin_pos_) &&
+      current_framebuffer_ &&
       current_framebuffer_->color_view != VK_NULL_HANDLE && framebuffer &&
       framebuffer->color_view != VK_NULL_HANDLE &&
       render_pass != current_render_pass_) {
@@ -4277,7 +4286,8 @@ VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
 }
 
 VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
-    bool is_vertex, size_t texture_count, size_t sampler_count) {
+    bool is_vertex, size_t texture_count, size_t sampler_count,
+    bool input_attachment) {
   size_t binding_count = texture_count + sampler_count;
   if (!binding_count) {
     return descriptor_set_layout_empty_;
@@ -4286,6 +4296,8 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
   TextureDescriptorSetLayoutKey texture_descriptor_set_layout_key;
   texture_descriptor_set_layout_key.texture_count = uint32_t(texture_count);
   texture_descriptor_set_layout_key.sampler_count = uint32_t(sampler_count);
+  texture_descriptor_set_layout_key.pixel_textures_input_attachment =
+      input_attachment ? 1 : 0;
   texture_descriptor_set_layout_key.is_vertex = uint32_t(is_vertex);
   auto it_existing =
       descriptor_set_layouts_textures_.find(texture_descriptor_set_layout_key);
@@ -4306,7 +4318,8 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
         descriptor_set_layout_bindings_.emplace_back();
     descriptor_set_layout_binding.binding = uint32_t(i);
     descriptor_set_layout_binding.descriptorType =
-        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        input_attachment ? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+                         : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     descriptor_set_layout_binding.descriptorCount = 1;
     descriptor_set_layout_binding.stageFlags = stage_flags;
   }
@@ -4347,9 +4360,16 @@ const VulkanPipelineCache::PipelineLayoutProvider*
 VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
                                           size_t sampler_count_pixel,
                                           size_t texture_count_vertex,
-                                          size_t sampler_count_vertex) {
+                                          size_t sampler_count_vertex,
+                                          bool pixel_textures_input_attachment) {
   PipelineLayoutKey pipeline_layout_key;
-  pipeline_layout_key.texture_count_pixel = uint16_t(texture_count_pixel);
+  // BD input-attachment merge: distinguish the feedback variant (pixel textures
+  // as input attachments) in the cache key. texture_count_pixel here is only
+  // used for hashing (the real count goes to GetTextureDescriptorSetLayout
+  // below), and guest texture counts are small, so the high bit is free.
+  pipeline_layout_key.texture_count_pixel =
+      uint16_t(texture_count_pixel) |
+      (pixel_textures_input_attachment ? uint16_t(0x8000) : uint16_t(0));
   pipeline_layout_key.sampler_count_pixel = uint16_t(sampler_count_pixel);
   pipeline_layout_key.texture_count_vertex = uint16_t(texture_count_vertex);
   pipeline_layout_key.sampler_count_vertex = uint16_t(sampler_count_vertex);
@@ -4372,7 +4392,8 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
   }
   VkDescriptorSetLayout descriptor_set_layout_textures_pixel =
       GetTextureDescriptorSetLayout(false, texture_count_pixel,
-                                    sampler_count_pixel);
+                                    sampler_count_pixel,
+                                    pixel_textures_input_attachment);
   if (descriptor_set_layout_textures_pixel == VK_NULL_HANDLE) {
     XELOGE(
         "Failed to obtain a Vulkan descriptor set layout for {} sampled images "
@@ -4811,7 +4832,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           prim_type == xenos::PrimitiveType::kRectangleList ||
           (index_count >= 3 && index_count <= 6);
       const auto& ps_textures = pixel_shader->texture_bindings();
-      if (composite_prim && !ps_textures.empty()) {
+      // Exactly one texture: it must be the producer (the just-rendered RT we
+      // bind as the input attachment). A multi-texture composite would force its
+      // non-producer textures to INPUT_ATTACHMENT too (descriptor type mismatch
+      // vs the shader's sampled bindings -> GPU fault). Single-texture only for now.
+      if (composite_prim && ps_textures.size() == 1) {
         feedback_merge_active_ = true;
         feedback_merge_producer_fetch_constant_ = ps_textures[0].fetch_constant;
         feedback_merge_producer_view_ = current_framebuffer_->color_view;
@@ -7444,6 +7469,10 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     deferred_command_buffer_.Reset();
 
     // Reset cached state of the command buffer.
+    // BD input-attachment merge: invalidate the captured producer position (a
+    // command_stream_ index) with the stream.
+    feedback_producer_begin_pos_ = SIZE_MAX;
+    feedback_merge_active_ = false;
     dynamic_viewport_update_needed_ = true;
     dynamic_scissor_update_needed_ = true;
     dynamic_depth_bias_update_needed_ = true;
@@ -9426,10 +9455,14 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
          *textures_pixel) {
       VkDescriptorImageInfo& descriptor_image_info =
           descriptor_write_image_info_.emplace_back();
+      // BD input-attachment merge: the variant reads the producer RT as an input
+      // attachment, so bind the producer view (not the sampled guest texture).
       descriptor_image_info.imageView =
-          texture_cache_->GetActiveBindingOrNullImageView(
-              texture_binding.fetch_constant, texture_binding.dimension,
-              bool(texture_binding.is_signed));
+          feedback_merge_active_
+              ? feedback_merge_producer_view_
+              : texture_cache_->GetActiveBindingOrNullImageView(
+                    texture_binding.fetch_constant, texture_binding.dimension,
+                    bool(texture_binding.is_signed));
       descriptor_image_info.imageLayout =
           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
@@ -9589,7 +9622,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           descriptor_write_image_info_.data() + pixel_texture_image_info_offset,
           descriptor_write_image_info_.data() +
               pixel_sampler_image_info_offset,
-          push_writes.data());
+          push_writes.data(), feedback_merge_active_);
       deferred_command_buffer_.CmdVkPushDescriptorSetKHR(
           VK_PIPELINE_BIND_POINT_GRAPHICS,
           current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
@@ -9748,7 +9781,12 @@ uint32_t VulkanCommandProcessor::WriteTransientTextureBindings(
     descriptor_set_write.dstBinding = 0;
     descriptor_set_write.dstArrayElement = 0;
     descriptor_set_write.descriptorCount = texture_count;
-    descriptor_set_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    // BD input-attachment merge: pixel textures of the feedback consumer are
+    // input attachments (read via subpassLoad), not sampled images.
+    descriptor_set_write.descriptorType =
+        (!is_vertex && feedback_merge_active_)
+            ? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+            : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     descriptor_set_write.pImageInfo = texture_image_info;
     descriptor_set_write.pBufferInfo = nullptr;
     descriptor_set_write.pTexelBufferView = nullptr;
@@ -9775,7 +9813,7 @@ uint32_t VulkanCommandProcessor::WritePushTextureBindings(
     uint32_t texture_count, uint32_t sampler_count,
     const VkDescriptorImageInfo* texture_image_info,
     const VkDescriptorImageInfo* sampler_image_info,
-    VkWriteDescriptorSet* descriptor_set_writes_out) {
+    VkWriteDescriptorSet* descriptor_set_writes_out, bool input_attachment) {
   // Builds VkWriteDescriptorSet entries for vkCmdPushDescriptorSetKHR: no
   // descriptor set is allocated, dstSet is left null (ignored by push).
   uint32_t descriptor_set_write_count = 0;
@@ -9788,7 +9826,11 @@ uint32_t VulkanCommandProcessor::WritePushTextureBindings(
     descriptor_set_write.dstBinding = 0;
     descriptor_set_write.dstArrayElement = 0;
     descriptor_set_write.descriptorCount = texture_count;
-    descriptor_set_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    // BD input-attachment merge: feedback consumer's pixel textures are input
+    // attachments (subpassLoad), not sampled images.
+    descriptor_set_write.descriptorType =
+        input_attachment ? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+                         : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     descriptor_set_write.pImageInfo = texture_image_info;
     descriptor_set_write.pBufferInfo = nullptr;
     descriptor_set_write.pTexelBufferView = nullptr;

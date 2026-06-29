@@ -79,6 +79,14 @@ class DeferredCommandBuffer {
     args.framebuffer = framebuffer;
   }
 
+  // BD input-attachment merge: validate a captured BeginRenderPass position is
+  // still in-range before patching it. Defense against a stale index surviving a
+  // stream Reset (an out-of-bounds patch corrupts the heap -> wild guest fault).
+  bool IsCommandPositionInRange(size_t element_pos) const {
+    return element_pos != SIZE_MAX &&
+           element_pos + kCommandHeaderSizeElements < command_stream_.size();
+  }
+
   // Cheap recording-time composition counters for the between-render-pass GPU
   // gap attribution (snapshotted by the command processor at the pass
   // timestamp brackets; reset together with the buffer). Cumulative within one

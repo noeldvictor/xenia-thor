@@ -253,13 +253,14 @@ class VulkanCommandProcessor : public CommandProcessor {
       SingleTransientDescriptorLayout transient_descriptor_layout);
 
   // The returned reference is valid until a cache clear.
-  VkDescriptorSetLayout GetTextureDescriptorSetLayout(bool is_vertex,
-                                                      size_t texture_count,
-                                                      size_t sampler_count);
+  VkDescriptorSetLayout GetTextureDescriptorSetLayout(
+      bool is_vertex, size_t texture_count, size_t sampler_count,
+      bool input_attachment = false);
   // The returned reference is valid until a cache clear.
   const VulkanPipelineCache::PipelineLayoutProvider* GetPipelineLayout(
       size_t texture_count_pixel, size_t sampler_count_pixel,
-      size_t texture_count_vertex, size_t sampler_count_vertex);
+      size_t texture_count_vertex, size_t sampler_count_vertex,
+      bool pixel_textures_input_attachment = false);
 
   // Returns a single temporary GPU-side buffer within a submission for tasks
   // like texture untiling and resolving. May push a buffer memory barrier into
@@ -379,7 +380,11 @@ class VulkanCommandProcessor : public CommandProcessor {
       // If texture and sampler counts are both 0, use
       // descriptor_set_layout_empty_ instead as these are owning references.
       uint32_t texture_count : 16;
-      uint32_t sampler_count : 15;
+      uint32_t sampler_count : 14;
+      // BD input-attachment merge: the texture bindings are VK_DESCRIPTOR_TYPE_
+      // INPUT_ATTACHMENT (the feedback variant reads the producer RT via
+      // subpassLoad) instead of SAMPLED_IMAGE. Pixel sets only.
+      uint32_t pixel_textures_input_attachment : 1;
       uint32_t is_vertex : 1;
     };
 
@@ -571,7 +576,8 @@ class VulkanCommandProcessor : public CommandProcessor {
       uint32_t texture_count, uint32_t sampler_count,
       const VkDescriptorImageInfo* texture_image_info,
       const VkDescriptorImageInfo* sampler_image_info,
-      VkWriteDescriptorSet* descriptor_set_writes_out);
+      VkWriteDescriptorSet* descriptor_set_writes_out,
+      bool input_attachment = false);
 
   bool device_lost_ = false;
 

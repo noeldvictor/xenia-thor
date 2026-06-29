@@ -415,6 +415,15 @@ bool VulkanPipelineCache::ConfigurePipeline(
     return true;
   }
 
+  // BD input-attachment merge: a consumer pixel shader whose modification flags
+  // feedback_input_attachment reads the producer RT as an input attachment, so
+  // its pixel-texture descriptor set + pipeline layout use INPUT_ATTACHMENT and
+  // its pipeline targets the feedback render pass at subpass 1.
+  bool feedback_merge =
+      pixel_shader &&
+      SpirvShaderTranslator::Modification(pixel_shader->modification())
+              .pixel.feedback_input_attachment != 0;
+
   // Create the pipeline if not the latest and not already existing.
   const PipelineLayoutProvider* pipeline_layout =
       command_processor_.GetPipelineLayout(
@@ -433,7 +442,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
               .size(),
           static_cast<const VulkanShader&>(vertex_shader->shader())
               .GetSamplerBindingsAfterTranslation()
-              .size());
+              .size(),
+          feedback_merge);
   if (!pipeline_layout) {
     return false;
   }
@@ -458,10 +468,6 @@ bool VulkanPipelineCache::ConfigurePipeline(
   // description). Merge eligibility (gated in the command processor) requires
   // producer fmt == consumer fmt, so the feedback RP is derivable from this
   // render_pass_key's color_0 format.
-  bool feedback_merge =
-      pixel_shader &&
-      SpirvShaderTranslator::Modification(pixel_shader->modification())
-              .pixel.feedback_input_attachment != 0;
   VkRenderPass render_pass =
       feedback_merge
           ? render_target_cache_.GetFeedbackRenderPass(
