@@ -1623,6 +1623,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool feedback_merge_active_ = false;
   uint32_t feedback_merge_producer_fetch_constant_ = 0;
   VkImageView feedback_merge_producer_view_ = VK_NULL_HANDLE;
+  // Count of feedback merges performed this frame (diagnostic, logged in the
+  // draw-outcomes line; reset per frame).
+  uint32_t rt_feedback_merges_ = 0;
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).
   bool gpu_scene_lock_frozen_ = false;

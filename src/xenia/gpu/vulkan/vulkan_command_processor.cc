@@ -3884,6 +3884,51 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     VkRenderPass render_pass,
     const VulkanRenderTargetCache::Framebuffer* framebuffer,
     GpuPassKind pass_kind) {
+  // BD input-attachment merge (redirect): this draw was detected as a same-pixel
+  // composite consumer of the current (producer) pass's RT. Instead of ending the
+  // producer pass + barrier + a new pass, merge them: patch the producer's
+  // recorded BeginRenderPass to the 2-subpass feedback render pass + a dual-RT
+  // framebuffer {producer, consumer}, and advance to subpass 1 - the consumer
+  // reads the producer as an INPUT ATTACHMENT (GMEM-resident, no store->DRAM->
+  // sample). The producer's color->input layout move is the render pass's 0->1
+  // subpass dependency, so the pending producer->SHADER_READ barrier is discarded.
+  if (feedback_merge_active_ && current_render_pass_ != VK_NULL_HANDLE &&
+      feedback_producer_begin_pos_ != SIZE_MAX && current_framebuffer_ &&
+      current_framebuffer_->color_view != VK_NULL_HANDLE && framebuffer &&
+      framebuffer->color_view != VK_NULL_HANDLE &&
+      render_pass != current_render_pass_) {
+    VulkanRenderTargetCache::RenderPassKey consumer_key =
+        render_target_cache_->last_update_render_pass_key();
+    VkRenderPass feedback_render_pass = render_target_cache_->GetFeedbackRenderPass(
+        consumer_key.color_0_view_format, consumer_key.color_0_view_format,
+        consumer_key.msaa_samples);
+    VkFramebuffer feedback_framebuffer =
+        feedback_render_pass != VK_NULL_HANDLE
+            ? render_target_cache_->GetFeedbackFramebuffer(
+                  current_framebuffer_->color_view, framebuffer->color_view,
+                  framebuffer->host_extent, feedback_render_pass)
+            : VK_NULL_HANDLE;
+    if (feedback_render_pass != VK_NULL_HANDLE &&
+        feedback_framebuffer != VK_NULL_HANDLE) {
+      FlushPendingMergeRun();
+      // Discard the pending barriers (the producer->SHADER_READ is the render
+      // pass's job; emitting it would move the producer out of COLOR_ATTACHMENT).
+      pending_barriers_.clear();
+      pending_barriers_buffer_memory_barriers_.clear();
+      pending_barriers_image_memory_barriers_.clear();
+      current_pending_barrier_.buffer_memory_barriers_offset = 0;
+      current_pending_barrier_.image_memory_barriers_offset = 0;
+      deferred_command_buffer_.PatchBeginRenderPassTargets(
+          feedback_producer_begin_pos_, feedback_render_pass,
+          feedback_framebuffer);
+      deferred_command_buffer_.CmdVkNextSubpass(VK_SUBPASS_CONTENTS_INLINE);
+      current_render_pass_ = feedback_render_pass;
+      current_framebuffer_ = framebuffer;
+      feedback_producer_begin_pos_ = SIZE_MAX;
+      ++rt_feedback_merges_;
+      return;
+    }
+  }
   // Instrumentation: attribute per-draw render-pass breaks. A break here is
   // caused either by SubmitBarriers ending the pass for a pending barrier, or by
   // the render pass / framebuffer changing (RT reconfiguration).
@@ -4749,6 +4794,28 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         primitive_processing_result.host_vertex_shader_type !=
             Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
       return false;
+    }
+
+    // BD input-attachment merge (detection): before computing the pixel shader
+    // modification, detect whether THIS draw is a same-pixel composite consumer
+    // of the current (producer) pass's render target, so 4a/4b/4c engage. v1
+    // heuristic: a rect-list / small (<=6-vert) primitive whose pixel shader
+    // samples a texture, while a producer pass is captured. Producer fetch
+    // constant = the shader's first texture binding; producer view = the current
+    // (producer) framebuffer's color view (stable until the pass entry redirect).
+    feedback_merge_active_ = false;
+    if (cvars::gpu_vulkan_feedback_merge && pixel_shader &&
+        feedback_producer_begin_pos_ != SIZE_MAX && current_framebuffer_ &&
+        current_framebuffer_->color_view != VK_NULL_HANDLE) {
+      bool composite_prim =
+          prim_type == xenos::PrimitiveType::kRectangleList ||
+          (index_count >= 3 && index_count <= 6);
+      const auto& ps_textures = pixel_shader->texture_bindings();
+      if (composite_prim && !ps_textures.empty()) {
+        feedback_merge_active_ = true;
+        feedback_merge_producer_fetch_constant_ = ps_textures[0].fetch_constant;
+        feedback_merge_producer_view_ = current_framebuffer_->color_view;
+      }
     }
 
     // Shader modifications.
