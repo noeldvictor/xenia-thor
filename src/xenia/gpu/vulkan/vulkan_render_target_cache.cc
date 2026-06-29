@@ -1162,6 +1162,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   feedback_render_passes_.clear();
+  for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
+    if (fb.framebuffer != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
+    }
+  }
+  feedback_framebuffers_.clear();
 
   for (VkPipeline& resolve_copy_pipeline : resolve_copy_pipelines_) {
     ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
@@ -1233,6 +1239,12 @@ void VulkanRenderTargetCache::ClearCache() {
     }
   }
   feedback_render_passes_.clear();
+  for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
+    if (fb.framebuffer != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
+    }
+  }
+  feedback_framebuffers_.clear();
 
   RenderTargetCache::ClearCache();
 }
@@ -2083,6 +2095,42 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
   return render_pass;
 }
 
+VkFramebuffer VulkanRenderTargetCache::GetFeedbackFramebuffer(
+    VkImageView producer_view, VkImageView consumer_view, VkExtent2D extent,
+    VkRenderPass feedback_render_pass) {
+  // BD input-attachment merge: a 2-attachment framebuffer for the feedback
+  // render pass - attachment 0 = producer (subpass 0 color / subpass 1 input),
+  // attachment 1 = consumer (subpass 1 color). Cached by the (producer,consumer)
+  // view pair; the views are stable while their RTs are cached, so a steady scene
+  // reuses one framebuffer (no per-frame leak). Destroyed in ClearCache.
+  for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
+    if (fb.producer_view == producer_view && fb.consumer_view == consumer_view) {
+      return fb.framebuffer;
+    }
+  }
+  VkImageView attachments[2] = {producer_view, consumer_view};
+  VkFramebufferCreateInfo create_info;
+  create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  create_info.pNext = nullptr;
+  create_info.flags = 0;
+  create_info.renderPass = feedback_render_pass;
+  create_info.attachmentCount = 2;
+  create_info.pAttachments = attachments;
+  create_info.width = extent.width;
+  create_info.height = extent.height;
+  create_info.layers = 1;
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  VkFramebuffer framebuffer;
+  if (dfn.vkCreateFramebuffer(vulkan_device->device(), &create_info, nullptr,
+                              &framebuffer) != VK_SUCCESS) {
+    return VK_NULL_HANDLE;
+  }
+  feedback_framebuffers_.push_back({producer_view, consumer_view, framebuffer});
+  return framebuffer;
+}
+
 VkRenderPass VulkanRenderTargetCache::GetLoadDontCareVariantForLastUpdate(
     VkRenderPass original, uint32_t load_dont_care_mask) {
   if (GetPath() != Path::kHostRenderTargets ||
@@ -2654,6 +2702,10 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   uint32_t attachment_count = 0;
   uint32_t depth_and_color_rts_remaining = render_pass_key.depth_and_color_used;
   uint32_t rt_index;
+  // BD input-attachment merge: remember the first color RT view so a feedback
+  // merge can assemble a 2-RT framebuffer from the producer + consumer
+  // framebuffers' color attachments.
+  VkImageView main_color_view = VK_NULL_HANDLE;
   while (xe::bit_scan_forward(depth_and_color_rts_remaining, &rt_index)) {
     depth_and_color_rts_remaining &= ~(uint32_t(1) << rt_index);
     const auto& vulkan_rt = *static_cast<const VulkanRenderTarget*>(
@@ -2663,6 +2715,9 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
       attachment = render_pass_key.color_rts_use_transfer_formats
                        ? vulkan_rt.view_color_transfer()
                        : vulkan_rt.view_depth_color();
+      if (main_color_view == VK_NULL_HANDLE) {
+        main_color_view = attachment;
+      }
     } else {
       attachment = vulkan_rt.view_depth_stencil();
     }
@@ -2730,6 +2785,7 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
           .emplace(std::piecewise_construct, std::forward_as_tuple(key),
                    std::forward_as_tuple(framebuffer, host_extent))
           .first->second;
+  framebuffer_entry.color_view = main_color_view;
   framebuffer_entry.fdm_image = fdm_image;
   framebuffer_entry.fdm_memory = fdm_memory;
   framebuffer_entry.fdm_view = fdm_view;

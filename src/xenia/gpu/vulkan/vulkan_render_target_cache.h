@@ -95,6 +95,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   struct Framebuffer {
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     VkExtent2D host_extent{};
+    // BD input-attachment merge: the first color RT view (for assembling a
+    // 2-RT feedback framebuffer from the producer + consumer framebuffers).
+    VkImageView color_view = VK_NULL_HANDLE;
     // FDM (gpu_fdm_foliage): the per-framebuffer uniform fragment density map
     // (R16G16_SFLOAT, Turnip requires a float format) + its dedicated allocation
     // + view, all null when FDM is off. Cleared once to the uniform density at
@@ -206,6 +209,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       xenos::ColorRenderTargetFormat producer_format,
       xenos::ColorRenderTargetFormat consumer_format,
       xenos::MsaaSamples msaa_samples);
+  // BD input-attachment merge: a 2-attachment framebuffer (producer, consumer)
+  // for the feedback render pass, cached by the view pair. VK_NULL_HANDLE on
+  // failure.
+  VkFramebuffer GetFeedbackFramebuffer(VkImageView producer_view,
+                                       VkImageView consumer_view,
+                                       VkExtent2D extent,
+                                       VkRenderPass feedback_render_pass);
   // Returns the load-DONT_CARE variant of the last Update()'s render pass for
   // beginning it, or `original` unchanged when not applicable (mask empty
   // after clamping to the bound attachments, not the host-render-targets path,
@@ -962,6 +972,14 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // (producer color format) | (consumer color format << 4) | (msaa << 8).
   // VK_NULL_HANDLE if creation failed. Dormant until Inc3 routes a merge.
   std::unordered_map<uint32_t, VkRenderPass> feedback_render_passes_;
+  // BD input-attachment merge: transient 2-RT framebuffers keyed by the
+  // (producer, consumer) color-view pair. Destroyed in ClearCache.
+  struct FeedbackFramebuffer {
+    VkImageView producer_view;
+    VkImageView consumer_view;
+    VkFramebuffer framebuffer;
+  };
+  std::vector<FeedbackFramebuffer> feedback_framebuffers_;
 
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;
