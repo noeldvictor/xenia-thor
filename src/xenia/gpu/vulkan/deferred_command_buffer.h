@@ -61,6 +61,24 @@ class DeferredCommandBuffer {
     record_stats_.barriers += other.record_stats_.barriers;
   }
 
+  // BD input-attachment merge (Inc3): retroactively repoint an already-recorded
+  // BeginRenderPass (at the element_pos captured from command_stream_size_
+  // elements() right BEFORE it was recorded) to a different render pass +
+  // framebuffer. Turns a producer pass into subpass 0 of a 2-subpass feedback
+  // merge once its same-pixel composite consumer is detected. The args are
+  // stored inline right after the command header, so this overwrites them in
+  // place; element_pos stays valid because nothing splices before a pass's own
+  // begin (InsertStreamFrom only inserts later, after it).
+  void PatchBeginRenderPassTargets(size_t element_pos, VkRenderPass render_pass,
+                                   VkFramebuffer framebuffer) {
+    assert_true(element_pos + kCommandHeaderSizeElements <
+                command_stream_.size());
+    auto& args = *reinterpret_cast<ArgsVkBeginRenderPass*>(
+        &command_stream_[element_pos + kCommandHeaderSizeElements]);
+    args.render_pass = render_pass;
+    args.framebuffer = framebuffer;
+  }
+
   // Cheap recording-time composition counters for the between-render-pass GPU
   // gap attribution (snapshotted by the command processor at the pass
   // timestamp brackets; reset together with the buffer). Cumulative within one

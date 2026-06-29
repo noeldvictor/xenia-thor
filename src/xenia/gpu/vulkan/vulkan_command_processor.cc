@@ -4001,6 +4001,14 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     render_pass_begin_info.clearValueCount = 0;
     render_pass_begin_info.pClearValues = nullptr;
   }
+  // BD input-attachment merge (gpu_vulkan_feedback_merge): capture this pass's
+  // BeginRenderPass stream position BEFORE recording it, so a same-pixel
+  // composite consumer detected at the next break can repoint this command to
+  // the 2-subpass feedback render pass (this pass becomes producer subpass 0).
+  feedback_producer_begin_pos_ =
+      cvars::gpu_vulkan_feedback_merge
+          ? deferred_command_buffer_.command_stream_size_elements()
+          : SIZE_MAX;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
   // Opaque depth pre-pass: mark the splice point right AFTER BeginRenderPass so

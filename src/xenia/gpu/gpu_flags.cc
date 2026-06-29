@@ -120,6 +120,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_feedback_merge, false,
+    "BD-30 GPU lever (WIP, input-attachment / GMEM-residency merge): when a guest "
+    "render-to-texture composite samples the just-rendered producer RT at its own "
+    "pixel (a same-pixel rtfc break - see gpu_vulkan_classify_img_sr_breaks), merge "
+    "the producer and consumer into ONE 2-subpass render pass and read the producer "
+    "as a Vulkan INPUT ATTACHMENT (subpassLoad), keeping it GMEM-resident across the "
+    "break instead of the store->DRAM->sample round-trip (~79ms of EDRAM tile I/O on "
+    "BD's village field). Default off until validated.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_classify_img_sr_breaks, false,
     "DIAGNOSTIC (Thor/TBDR, BD-30 GPU lever scoping): for the input-attachment / "
     "GMEM-residency lever, classify each brk_img_sr render-pass break (an image "

@@ -1609,6 +1609,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // is empty for rtsrc breaks). This counter sizes the GMEM-residency win.
   uint32_t brk_img_sr_rtsrc_fscomp_ = 0;
   uint32_t brk_img_sr_detail_logged_ = 0;
+  // BD input-attachment merge (gpu_vulkan_feedback_merge): deferred-stream
+  // position of the CURRENT pass's BeginRenderPass, captured at pass begin so a
+  // same-pixel composite consumer detected at the next break can retroactively
+  // repoint it (PatchBeginRenderPassTargets) to the 2-subpass feedback render
+  // pass (this pass = producer subpass 0). SIZE_MAX = none captured / cvar off.
+  size_t feedback_producer_begin_pos_ = SIZE_MAX;
   // Scene-lock: set once when gpu_freeze_at_guest_ms fires (guest near-frozen
   // for confound-free GPU A/B on an identical frame).
   bool gpu_scene_lock_frozen_ = false;
