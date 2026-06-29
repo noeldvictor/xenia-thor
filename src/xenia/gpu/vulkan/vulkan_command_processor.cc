@@ -2734,6 +2734,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
+    XELOGI("hwvtx engage: elig={} redir={} (cvar={})",
+           draw_outcomes_hwvtx_elig_draws_, draw_outcomes_hwvtx_redir_draws_,
+           cvars::gpu_hw_vertex_fetch ? 1 : 0);
     // Single-run VRS A/B: concise per-frame line so gpu_frame_us buckets by the
     // VRS phase (rendered/alphatest/blended confirm the scene matches across
     // phases - the matched-A/B precondition; in free-running mode small drift is
@@ -2764,6 +2767,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_deint_redir_verts_ = 0;
     draw_outcomes_deint_gather_ns_ = 0;
     draw_outcomes_deint_bails_ = 0;
+    draw_outcomes_hwvtx_elig_draws_ = 0;
+    draw_outcomes_hwvtx_redir_draws_ = 0;
     draw_outcomes_dc_safe_passes_ = 0;
     draw_outcomes_dc_safe_atts_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
@@ -8255,11 +8260,15 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
   // on, independent of this flag, so the declared inputs always have a buffer.
   if (cvars::gpu_hw_vertex_fetch &&
       primitive_processing_result.host_vertex_shader_type ==
-          Shader::HostVertexShaderType::kVertex &&
-      primitive_processing_result.host_shader_index_endian ==
-          xenos::Endian::kNone &&
-      vgt_indx_offset == 0) {
-    flags |= SpirvShaderTranslator::kSysFlag_HwVertexFetch;
+          Shader::HostVertexShaderType::kVertex) {
+    ++draw_outcomes_hwvtx_elig_draws_;
+    if (cvars::gpu_hw_vertex_fetch_force ||
+        (primitive_processing_result.host_shader_index_endian ==
+             xenos::Endian::kNone &&
+         vgt_indx_offset == 0)) {
+      flags |= SpirvShaderTranslator::kSysFlag_HwVertexFetch;
+      ++draw_outcomes_hwvtx_redir_draws_;
+    }
   }
 
   dirty |= system_constants_.flags != flags;

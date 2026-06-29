@@ -979,6 +979,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t draw_outcomes_deint_redir_verts_ = 0;
   uint64_t draw_outcomes_deint_gather_ns_ = 0;
   uint32_t draw_outcomes_deint_bails_ = 0;
+  // gpu_hw_vertex_fetch engagement diagnostic (per frame): elig = draws that
+  // reached the redirect gate (cvar on + host kVertex shader); redir = draws that
+  // passed it (kNone index endian + base 0) and set kSysFlag_HwVertexFetch.
+  uint32_t draw_outcomes_hwvtx_elig_draws_ = 0;
+  uint32_t draw_outcomes_hwvtx_redir_draws_ = 0;
   // Safe DONT_CARE (gpu_edram_passes_dont_care_safe): the current draw's
   // provable full-cover overwrite state - attachment deadness mask (bit 0
   // depth, bits 1-4 color 0-3) and the covered pixel rect (x0,y0,x1,y1; x1/y1

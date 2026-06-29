@@ -138,6 +138,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_hw_vertex_fetch_force, false,
+    "DIAGNOSTIC (Thor): with gpu_hw_vertex_fetch on, force the HW vertex-input "
+    "redirect for EVERY eligible draw, ignoring the index-endian/base correctness "
+    "gate. Render GARBLES for DMA-indexed (byte-swapped-index) draws (wrong vertex "
+    "selection) but the GPU TIME is valid - it measures whether the heavy foliage "
+    "vertex cost is fetch-latency (HW path much faster => build real index "
+    "pre-swap) or vertex shading (no change => HW input can't help). Never ship on.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "
