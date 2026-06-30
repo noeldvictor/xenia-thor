@@ -169,6 +169,27 @@ DEFINE_bool(
     "Setting this to false results in higher accuracy in rare cases, but may "
     "increase the amount of copying that needs to be done sometimes.",
     "GPU");
+DEFINE_uint32(
+    gpu_force_max_msaa_samples, 0,
+    "BD-30 fragment lever: clamp the guest's MSAA mode to at most this many samples "
+    "(0 = off, 1 = force no MSAA, 2, 4). The Turnip GPU render-stage trace pinned "
+    "BD's field bottleneck to the 720x1824 MSAA-2x main-scene draws (foliage "
+    "overdraw x2 samples, LRZ disabled = ~64s of the 83s draw time); BD inherits "
+    "MSAA from the 360 (EDRAM made it free), the Adreno pays ~2x. Clamped at the "
+    "single rb_surface_info.msaa_samples read so the host RTs, render passes, pixel "
+    "shaders and EDRAM range sizing derive the lower count consistently. Quality "
+    "trade (jaggier edges, like lower-bloom). Default 0 (off). "
+    "⚠️ DEVICE 2026-06-29: =1 CORRUPTS BD (black screen + a stray white rectangle) "
+    "- clamping at this single read is NOT enough: other paths (the resolve "
+    "resolve_info.*_edram_info.msaa, the EDRAM range/aliasing sizing, the texture "
+    "cache sampling the RT) still assume the guest's 2x, so the 1x host RT mismatches "
+    "the 2x EDRAM tile layout -> RTs at wrong offsets. AND even the (corrupt) faster "
+    "run was only ~97ms vs ~111ms (~16%), NOT 2x - the MSAA-2 draws are "
+    "fragment+GEOMETRY and forcing 1x only halves the fragment half. So MSAA "
+    "reduction needs a DEEP multi-site EDRAM-MSAA-layout rearch for a modest ~16% - "
+    "low ROI. Working fragment lever = VRS (shipped). Kept gated-off as a documented "
+    "dead-end. See [[bd-gpu-trace-draws-not-tileio]].",
+    "GPU");
 DEFINE_bool(
     native_2x_msaa, true,
     "Use host 2x MSAA when available. Can be disabled for scalability testing "
@@ -586,6 +607,20 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
     XELOGE("{}x MSAA requested by the guest, Xenos only supports up to 4x",
            uint32_t(1) << uint32_t(msaa_samples));
     return false;
+  }
+  // BD-30 fragment lever (gpu_force_max_msaa_samples): clamp the guest's MSAA mode
+  // here, the single source of msaa_samples for the host RT keys (rt_key.msaa_samples
+  // below), render passes, pixel shaders and EDRAM range sizing - so they all derive
+  // the lower sample count consistently. The trace pinned BD's bottleneck to MSAA-2x
+  // main-scene draws (foliage overdraw x2 samples). Default 0 = off; quality trade.
+  if (cvars::gpu_force_max_msaa_samples) {
+    xenos::MsaaSamples msaa_cap =
+        cvars::gpu_force_max_msaa_samples >= 4   ? xenos::MsaaSamples::k4X
+        : cvars::gpu_force_max_msaa_samples >= 2 ? xenos::MsaaSamples::k2X
+                                                 : xenos::MsaaSamples::k1X;
+    if (msaa_samples > msaa_cap) {
+      msaa_samples = msaa_cap;
+    }
   }
   uint32_t msaa_samples_x_log2 =
       uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);

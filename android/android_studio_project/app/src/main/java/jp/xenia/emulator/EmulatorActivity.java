@@ -134,6 +134,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "cpu_backend_llvm_opt");
             copyIntExtra(intent, launchArguments, "gpu_clamp_rt_framebuffer_height");
             copyIntExtra(intent, launchArguments, "gpu_clamp_rt_image_height");
+            copyIntExtra(intent, launchArguments, "gpu_force_max_msaa_samples");
             copyStringExtra(intent, launchArguments, "cpu_backend_llvm_range_lo");
             copyStringExtra(intent, launchArguments, "cpu_backend_llvm_range_hi");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_dump_ir");
