@@ -1521,6 +1521,31 @@ class VulkanCommandProcessor : public CommandProcessor {
       ++rt_resolve_clears_;
     }
   }
+  // RT-as-texture rearch detector (increment 1): each guest EDRAM->shared-memory
+  // resolve COPY and its dest byte length. The GPU trace pinned ~13% of BD's GPU to
+  // these ResolveCopy compute dispatches + their RAM round-trip; this sizes how much
+  // data BD round-trips through shared memory per frame (the volume the RT-as-texture
+  // bridge would eliminate by sampling resident RTs directly). dest_base recorded so a
+  // later increment can match it against texture fetch bases (the re-sampled subset).
+  void AddResolveCopyStats(uint32_t dest_base, uint32_t dest_length) {
+    ++rt_resolve_copies_;
+    rt_resolve_copy_bytes_ += dest_length;
+    if (frame_resolve_dest_ranges_.size() < 256 && dest_length) {
+      frame_resolve_dest_ranges_.emplace_back(dest_base, dest_length);
+    }
+  }
+  // Increment 1 correlation: is this texture-fetch base inside a resolve dest written
+  // this frame? (i.e. RT-fed = a render-to-texture that the RT-as-texture bridge could
+  // serve from the resident RT, skipping the resolve compute + the texture load).
+  bool IsResolveFedTextureBase(uint32_t base) const {
+    for (const auto& r : frame_resolve_dest_ranges_) {
+      if (base >= r.first && base < r.first + r.second) {
+        return true;
+      }
+    }
+    return false;
+  }
+  void AddRtFedTextureStat() { ++rt_fed_textures_; }
   // Per dest-RT transfer pass: would it be format-compatible with the guest
   // draw pass (eligible for render-pass reuse to avoid a tile flush)?
   void AddTransferFormatStats(bool same_format_as_guest_pass) {
@@ -1567,6 +1592,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_transfer_calls_ = 0;
   uint32_t rt_transfers_ = 0;
   uint32_t rt_resolve_clears_ = 0;
+  // RT-as-texture rearch detector (increment 1), reset at swap.
+  uint32_t rt_resolve_copies_ = 0;
+  uint32_t rt_resolve_copy_bytes_ = 0;
+  uint32_t rt_fed_textures_ = 0;
+  std::vector<std::pair<uint32_t, uint32_t>> frame_resolve_dest_ranges_;
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
   // render pass / framebuffer changed (RT reconfiguration).

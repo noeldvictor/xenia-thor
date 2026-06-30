@@ -1323,6 +1323,11 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
   // Copying.
   bool copied = false;
   if (resolve_info.copy_dest_extent_length) {
+    // RT-as-texture rearch detector (increment 1): record this EDRAM->shared-memory
+    // resolve copy + its dest range so the command processor can size the RAM
+    // round-trip and match it against texture fetch bases (the RT-fed subset).
+    command_processor_.AddResolveCopyStats(resolve_info.copy_dest_extent_start,
+                                           resolve_info.copy_dest_extent_length);
     if (GetPath() == Path::kHostRenderTargets) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.

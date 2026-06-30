@@ -2930,9 +2930,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     merge_miss_noncontig_ = 0;
     draw_outcomes_pipeline_binds_ = 0;
     draw_outcomes_descriptor_binds_ = 0;
+    if (cvars::vulkan_trace_draw_outcomes_per_frame && rt_resolve_copies_) {
+      XELOGI(
+          "RTtex detector: resolve_copies={} resolve_KB={} rt_fed_textures={} "
+          "(RT-as-texture bridge would eliminate this per-frame ResolveCopy compute "
+          "+ RAM round-trip by sampling the resident RTs directly)",
+          rt_resolve_copies_, rt_resolve_copy_bytes_ / 1024, rt_fed_textures_);
+    }
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
     rt_resolve_clears_ = 0;
+    rt_resolve_copies_ = 0;
+    rt_resolve_copy_bytes_ = 0;
+    rt_fed_textures_ = 0;
+    frame_resolve_dest_ranges_.clear();
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
     brk_open_breaks_ = 0;
