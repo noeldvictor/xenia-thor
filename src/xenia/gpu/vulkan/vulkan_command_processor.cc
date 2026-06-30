@@ -6592,12 +6592,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
             VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
       }
-      deferred_command_buffer_.CmdVkDrawIndexed(
-          collapse_this_draw
-              ? std::min<uint32_t>(
-                    primitive_processing_result.host_draw_vertex_count, 3u)
-              : primitive_processing_result.host_draw_vertex_count,
-          1, 0, 0, 0);
+      // BD-30 post-process lever (gpu_skip_bloom, user-approved lower bloom/blur):
+      // skip ADDITIVE full-screen composite draws (bloom / glow accumulation = a
+      // <=6-vertex quad whose blend destination factor is ONE, i.e. it ADDS to the
+      // scene). Transparent FOLIAGE is also blended but submits many vertices
+      // (excluded -> foliage stays full); the alpha-blended HUD uses dest=INV_SRC_ALPHA
+      // (not ONE, so kept); the opaque tonemap/copy isn't blended (kept). Hypothesis:
+      // xenia resolves RTs lazily on SAMPLE, so dropping the consumer that samples a
+      // bloom producer RT also drops that producer's ~1.7ms per-pass tile-resolve.
+      bool skip_bloom_draw = false;
+      if (cvars::gpu_skip_bloom && !collapse_this_draw &&
+          primitive_processing_result.host_draw_vertex_count <= 6) {
+        auto bc_bloom = register_file_->Get<reg::RB_BLENDCONTROL>();
+        skip_bloom_draw =
+            bc_bloom.color_destblend == xenos::BlendFactor::kOne &&
+            bc_bloom.color_srcblend != xenos::BlendFactor::kZero;
+      }
+      if (!skip_bloom_draw) {
+        deferred_command_buffer_.CmdVkDrawIndexed(
+            collapse_this_draw
+                ? std::min<uint32_t>(
+                      primitive_processing_result.host_draw_vertex_count, 3u)
+                : primitive_processing_result.host_draw_vertex_count,
+            1, 0, 0, 0);
+      }
       // Opaque depth pre-pass (Unit 3): if this is an opaque candidate, emit a
       // self-contained copy to the FRONT of the pass (spliced at EndRenderPass)
       // so alpha-test foliage behind it early-Z-rejects. v1 gated to EDS-off +

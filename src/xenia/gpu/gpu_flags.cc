@@ -928,6 +928,25 @@ DEFINE_bool(
     "performance-mode experiment; measure via gpu_frame_us + read the frame.",
     "GPU");
 
+DEFINE_bool(
+    gpu_skip_bloom, false,
+    "BD-30 post-process lever (USER-APPROVED 2026-06-29: 'lower bloom/blur is "
+    "acceptable'). Skip BLENDED full-screen composite draws = bloom / glow / blur "
+    "overlays: a draw that blends color (not opaque src=ONE,dst=ZERO,ADD) AND "
+    "submits <= 6 host vertices (a full-screen quad). Transparent FOLIAGE is also "
+    "blended but submits MANY vertices, so the <=6-vertex gate excludes it (foliage "
+    "stays full); the opaque final tonemap/copy is not blended, so it's kept. "
+    "⚠️ REFUTED 2026-06-29 (device): the consumer-skip hypothesis is WRONG. Skipping "
+    "the additive composites left gpu_frame_us FLAT (~122ms) and brk_img_sr=42 "
+    "UNCHANGED -> xenia does NOT resolve render targets lazily-on-sample; the 42 "
+    "producer resolves happen regardless of whether a consumer samples them. AND it "
+    "over-skips: additive blend (dest=ONE) is also dynamic LIGHTING, so the scene goes "
+    "darker, not just less bloom. So consumer-skip removes visuals for ZERO fps. The "
+    "real BD-field lever is the PRODUCER-pass skip (skip rendering+resolving the "
+    "downsampled bloom/blur producer RTs, storeOp=DONT_CARE) - a deeper build. Kept "
+    "default-off as the consumer half of that future producer+consumer skip. Default off.",
+    "GPU");
+
 DEFINE_int32(
     gpu_skip_draws_below_verts, 0,
     "Thor/Adreno measurement+perf: skip emitting the GPU draw command for draws "
