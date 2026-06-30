@@ -2943,7 +2943,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_copies_ = 0;
     rt_resolve_copy_bytes_ = 0;
     rt_fed_textures_ = 0;
-    frame_resolve_dest_ranges_.clear();
+    frame_resolve_edges_.clear();
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
     brk_open_breaks_ = 0;
@@ -5079,7 +5079,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // subset the RT-as-texture bridge would serve from the resident RT (the resolve
   // precedes the sample within a frame). Trace-gated, read-only.
   if (cvars::vulkan_trace_draw_outcomes_per_frame &&
-      !frame_resolve_dest_ranges_.empty()) {
+      !frame_resolve_edges_.empty()) {
     std::vector<VulkanTextureCache::ActiveTextureSourceRange> rtfed_src;
     texture_cache_->CollectActiveTextureSourceRanges(used_texture_mask, rtfed_src);
     for (const VulkanTextureCache::ActiveTextureSourceRange& s : rtfed_src) {

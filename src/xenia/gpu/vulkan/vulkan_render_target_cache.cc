@@ -1323,11 +1323,25 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
   // Copying.
   bool copied = false;
   if (resolve_info.copy_dest_extent_length) {
-    // RT-as-texture rearch detector (increment 1): record this EDRAM->shared-memory
-    // resolve copy + its dest range so the command processor can size the RAM
-    // round-trip and match it against texture fetch bases (the RT-fed subset).
-    command_processor_.AddResolveCopyStats(resolve_info.copy_dest_extent_start,
-                                           resolve_info.copy_dest_extent_length);
+    // EDRAM-recompiler first brick: record the resolve->sample dependency EDGE -
+    // the dest range PLUS the source RT identity - so a later texture fetch that
+    // lands in this dest range can be routed to the resident source RT directly
+    // (RT-as-texture) or have this resolve deferred (lazy), instead of the
+    // EDRAM->RAM->reload round-trip the increment-1 detector only measured.
+    const bool resolve_is_depth = resolve_info.IsCopyingDepth();
+    const draw_util::ResolveEdramInfo& src_edram =
+        resolve_is_depth ? resolve_info.depth_edram_info
+                         : resolve_info.color_edram_info;
+    VulkanCommandProcessor::ResolveEdge resolve_edge;
+    resolve_edge.dest_start = resolve_info.copy_dest_extent_start;
+    resolve_edge.dest_length = resolve_info.copy_dest_extent_length;
+    resolve_edge.dest_base = resolve_info.copy_dest_base;
+    resolve_edge.src_edram_base_tiles = src_edram.base_tiles;
+    resolve_edge.src_pitch_tiles = src_edram.pitch_tiles;
+    resolve_edge.src_format = src_edram.format;
+    resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
+    resolve_edge.src_is_depth = resolve_is_depth;
+    command_processor_.AddResolveCopyStats(resolve_edge);
     if (GetPath() == Path::kHostRenderTargets) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.

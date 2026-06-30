@@ -1527,23 +1527,41 @@ class VulkanCommandProcessor : public CommandProcessor {
   // data BD round-trips through shared memory per frame (the volume the RT-as-texture
   // bridge would eliminate by sampling resident RTs directly). dest_base recorded so a
   // later increment can match it against texture fetch bases (the re-sampled subset).
-  void AddResolveCopyStats(uint32_t dest_base, uint32_t dest_length) {
+  // EDRAM-recompiler FIRST BRICK - the resolve->sample dependency EDGE. Each
+  // EDRAM->shared-memory resolve records not just its dest range but the SOURCE
+  // RT identity (EDRAM base/pitch/format/msaa/depth), so a later texture fetch
+  // landing in the dest range can be routed to the resident source RT directly
+  // (RT-as-texture) or have its resolve deferred (lazy). Promotes the increment-1
+  // detector from "counts the round-trip" to "knows the graph edge".
+  struct ResolveEdge {
+    uint32_t dest_start;  // copy_dest_extent_start (matched vs a fetch base)
+    uint32_t dest_length;
+    uint32_t dest_base;   // copy_dest_base (texture origin)
+    uint32_t src_edram_base_tiles;
+    uint32_t src_pitch_tiles;
+    uint32_t src_format;  // xenos Color/DepthRenderTargetFormat value, as uint
+    uint8_t src_msaa;     // xenos::MsaaSamples
+    bool src_is_depth;
+  };
+  void AddResolveCopyStats(const ResolveEdge& edge) {
     ++rt_resolve_copies_;
-    rt_resolve_copy_bytes_ += dest_length;
-    if (frame_resolve_dest_ranges_.size() < 256 && dest_length) {
-      frame_resolve_dest_ranges_.emplace_back(dest_base, dest_length);
+    rt_resolve_copy_bytes_ += edge.dest_length;
+    if (frame_resolve_edges_.size() < 256 && edge.dest_length) {
+      frame_resolve_edges_.push_back(edge);
     }
   }
-  // Increment 1 correlation: is this texture-fetch base inside a resolve dest written
-  // this frame? (i.e. RT-fed = a render-to-texture that the RT-as-texture bridge could
-  // serve from the resident RT, skipping the resolve compute + the texture load).
-  bool IsResolveFedTextureBase(uint32_t base) const {
-    for (const auto& r : frame_resolve_dest_ranges_) {
-      if (base >= r.first && base < r.first + r.second) {
-        return true;
+  // The resolve edge whose dest range contains this texture-fetch base (the graph
+  // edge: fetch <- source RT), or nullptr if the fetch is not RT-fed this frame.
+  const ResolveEdge* ResolveEdgeForBase(uint32_t base) const {
+    for (const ResolveEdge& e : frame_resolve_edges_) {
+      if (base >= e.dest_start && base < e.dest_start + e.dest_length) {
+        return &e;
       }
     }
-    return false;
+    return nullptr;
+  }
+  bool IsResolveFedTextureBase(uint32_t base) const {
+    return ResolveEdgeForBase(base) != nullptr;
   }
   void AddRtFedTextureStat() { ++rt_fed_textures_; }
   // Per dest-RT transfer pass: would it be format-compatible with the guest
@@ -1596,7 +1614,7 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_resolve_copies_ = 0;
   uint32_t rt_resolve_copy_bytes_ = 0;
   uint32_t rt_fed_textures_ = 0;
-  std::vector<std::pair<uint32_t, uint32_t>> frame_resolve_dest_ranges_;
+  std::vector<ResolveEdge> frame_resolve_edges_;
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
   // render pass / framebuffer changed (RT reconfiguration).
