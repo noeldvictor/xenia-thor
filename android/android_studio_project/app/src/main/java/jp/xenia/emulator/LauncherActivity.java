@@ -73,6 +73,9 @@ public class LauncherActivity extends Activity {
 
         setContentView(R.layout.activity_launcher);
         XeniaAndroidSettings.ensureInitialized(this);
+        // Pre-install the APK-bundled Turnip driver (one-time, off the UI thread)
+        // so the first game launch uses the validated Mesa ICD out-of-the-box.
+        GpuDriverManager.ensureBundledDriverInstalledAsync(this);
         // Resolve any crash from the previous session (native/app death) before
         // we render the last-run status, so it shows the real cause + a log.
         CrashReporter.reconcile(this);

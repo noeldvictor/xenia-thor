@@ -9,3 +9,7 @@
 *.props     text eol=crlf -whitespace merge=union
 
 src/**/shaders/bytecode/** linguist-generated=true
+
+# Bundled GPU driver package (zip wrapping a Vulkan ICD .so) — force binary so
+# line-ending normalization can never corrupt the 17MB asset on commit/checkout.
+android/android_studio_project/app/src/main/assets/drivers/*.zip binary

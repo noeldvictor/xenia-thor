@@ -25,6 +25,13 @@ public final class XeniaAndroidSettings {
     public static final String KEY_GPU_DRIVER = "gpu_driver";
     /** Selected custom Vulkan ICD package id ("" = system driver). */
     public static final String KEY_GPU_DRIVER_PACKAGE = "gpu_driver_package";
+    /**
+     * Version tag of the APK-bundled GPU driver that has already been
+     * auto-installed (see {@link GpuDriverManager#BUNDLED_TURNIP_VERSION}).
+     * Empty until the one-time bundled-driver install has run.
+     */
+    public static final String KEY_BUNDLED_GPU_DRIVER_VERSION =
+            "gpu_driver_bundled_version";
     public static final String KEY_INTERNAL_RESOLUTION = "internal_resolution";
     public static final String KEY_APU_DRIVER = "apu_driver";
     public static final String KEY_HID_DRIVER = "hid_driver";
@@ -250,6 +257,12 @@ public final class XeniaAndroidSettings {
         // "Performance optimizations" screen) force any optimization ON/OFF for
         // this specific title, falling back to the global toggle otherwise.
         XeniaOptimizations.applyTo(preferences, launchArguments, titleId);
+        // Ensure the APK-bundled Turnip driver is installed + selected (one-time,
+        // version-pinned, idempotent) so the launch picks up the validated Mesa
+        // ICD out-of-the-box. Synchronous here guarantees it is ready before
+        // applyToLaunch reads the selection, even if the launcher's background
+        // pre-install has not finished on a fresh install. No-op after first run.
+        GpuDriverManager.ensureBundledDriverInstalled(context);
         // Selected custom Vulkan ICD (GPU driver), if any -> gpu_vulkan_driver*
         // cvars for the libadrenotools loader (no-op for the system driver).
         GpuDriverManager.applyToLaunch(context, launchArguments);

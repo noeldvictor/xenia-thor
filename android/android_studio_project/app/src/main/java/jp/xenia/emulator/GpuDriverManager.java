@@ -1,7 +1,9 @@
 package jp.xenia.emulator;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -41,6 +43,19 @@ public final class GpuDriverManager {
 
     private static final int MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
     private static final int SCAN_DEPTH = 3;
+
+    private static final String TAG = "GpuDriverManager";
+
+    /**
+     * Version tag for the Turnip ICD bundled in the APK assets
+     * ({@code assets/drivers/turnip.zip}). Mirrors the asset's meta.json
+     * ("Mesa Turnip driver v26.0.0 - R8", Vulkan 1.4.335). Bump this whenever
+     * the bundled {@code .so} is replaced so the one-time auto-install re-runs.
+     */
+    public static final String BUNDLED_TURNIP_VERSION = "26.0.0-r8";
+
+    /** APK asset path of the bundled adrenotools driver zip. */
+    private static final String BUNDLED_ASSET = "drivers/turnip.zip";
 
     private GpuDriverManager() {
     }
@@ -212,6 +227,79 @@ public final class GpuDriverManager {
         if (hooks != null && !hooks.isEmpty()) {
             launchArguments.putString("gpu_vulkan_driver_hooks_path", hooks);
         }
+    }
+
+    // ---- bundled driver (works out-of-the-box) ----------------------------
+
+    /**
+     * Fire-and-forget {@link #ensureBundledDriverInstalled} on a background
+     * thread. Call this at app start to pre-install the bundled driver off the
+     * UI thread so the first game launch is not delayed by the one-time copy.
+     */
+    public static void ensureBundledDriverInstalledAsync(final Context context) {
+        // Use the application context so the worker never pins an Activity.
+        final Context app = context.getApplicationContext();
+        new Thread(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        ensureBundledDriverInstalled(app);
+                    }
+                },
+                "bundled-driver-install").start();
+    }
+
+    /**
+     * Install the Turnip driver bundled in the APK assets so the emulator uses
+     * the validated Mesa Turnip ICD out-of-the-box, with no manual download.
+     *
+     * <p>Idempotent + version-pinned by {@link #BUNDLED_TURNIP_VERSION}: it does
+     * its one-time work once per bundled version, then no-ops (a cheap prefs
+     * read). It only seeds when the user has no custom driver installed, so it
+     * never overrides or duplicates a driver the user imported themselves — the
+     * manual {@link GpuDriverManagerActivity} path is untouched. On a fresh
+     * install it also selects the bundled driver as the active one. Best-effort:
+     * any failure (missing asset, bad zip) is swallowed so app start can never
+     * be blocked — the system driver and the manual import path remain available.
+     *
+     * <p>Safe to call from multiple threads / call sites ({@code synchronized});
+     * the marker check inside the lock collapses concurrent callers to a single
+     * install.
+     */
+    public static synchronized void ensureBundledDriverInstalled(final Context context) {
+        final SharedPreferences prefs = XeniaAndroidSettings.getPreferences(context);
+        if (BUNDLED_TURNIP_VERSION.equals(
+                prefs.getString(XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_VERSION, ""))) {
+            return;  // Already handled this bundled version.
+        }
+        // Respect a user-curated driver list: only seed when none is installed.
+        if (!listInstalled(context).isEmpty()) {
+            markBundledVersionHandled(prefs);
+            return;
+        }
+        try (InputStream in = context.getAssets().open(BUNDLED_ASSET)) {
+            final GpuDriverPackage pkg = installFromZip(context, in);
+            // Make the bundled Turnip the default/active driver out of the box,
+            // unless something is already selected (cannot happen when no custom
+            // driver is installed, but guarded for safety).
+            final String selected = getSelectedId(context);
+            if (selected == null || selected.isEmpty()) {
+                setSelectedId(context, pkg.id);
+            }
+            markBundledVersionHandled(prefs);
+            Log.i(TAG, "Bundled Turnip installed + selected: " + pkg.id);
+        } catch (final Exception e) {
+            // Leave the marker unset so a transient failure retries next launch.
+            Log.w(TAG, "Bundled Turnip auto-install failed", e);
+        }
+    }
+
+    private static void markBundledVersionHandled(final SharedPreferences prefs) {
+        prefs.edit()
+                .putString(
+                        XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_VERSION,
+                        BUNDLED_TURNIP_VERSION)
+                .apply();
     }
 
     // ---- install ----------------------------------------------------------
