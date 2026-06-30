@@ -603,6 +603,17 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
                     bool fixed_rgba16_truncated_to_minus_1_to_1,
                     ResolveInfo& info_out);
 
+// BD-30 foliage ROP lever (gpu_force_max_msaa_samples): clamp the guest's MSAA
+// sample count down to the configured cap (>=4 -> 4x, >=2 -> 2x, else 1x; cvar 0
+// = off, returns the guest value unchanged). MUST be applied at EVERY independent
+// read of RB_SURFACE_INFO::msaa_samples that feeds host RT keys, render passes,
+// EDRAM tile/pitch/range math, resolve addressing and shader system flags - the
+// EDRAM tile layout is a closed loop parameterized by this one value, so an
+// inconsistent subset desyncs tile offsets (RTs at wrong addresses -> corruption,
+// the failure of the earlier single-site clamp). Lowering all sites together is
+// coherent: textures are always 1-sample and the resolved image size is unchanged.
+xenos::MsaaSamples ClampForcedMsaaSamples(xenos::MsaaSamples guest_samples);
+
 }  // namespace draw_util
 }  // namespace gpu
 }  // namespace xe

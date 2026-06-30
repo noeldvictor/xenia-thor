@@ -1589,7 +1589,11 @@ bool VulkanRenderTargetCache::Update(
   RenderPassKey render_pass_key;
   // Needed even with the fragment shader interlock render backend for passing
   // the sample count to the pipeline cache.
-  render_pass_key.msaa_samples = rb_surface_info.msaa_samples;
+  // BD-30 foliage ROP lever: clamp the MSAA consistently with the RT-cache key and
+  // the resolve path (gpu_force_max_msaa_samples) so the render pass + pipeline
+  // sample count match the (lowered) host RT image.
+  render_pass_key.msaa_samples =
+      draw_util::ClampForcedMsaaSamples(rb_surface_info.msaa_samples);
 
   switch (GetPath()) {
     case Path::kHostRenderTargets: {
@@ -1636,8 +1640,10 @@ bool VulkanRenderTargetCache::Update(
               .ext_EXT_fragment_density_map;
 
       uint32_t pitch_tiles_at_32bpp =
-          ((rb_surface_info.surface_pitch << uint32_t(
-                rb_surface_info.msaa_samples >= xenos::MsaaSamples::k4X)) +
+          ((rb_surface_info.surface_pitch
+            << uint32_t(draw_util::ClampForcedMsaaSamples(
+                            rb_surface_info.msaa_samples) >=
+                        xenos::MsaaSamples::k4X)) +
            (xenos::kEdramTileWidthSamples - 1)) /
           xenos::kEdramTileWidthSamples;
 

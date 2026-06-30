@@ -308,7 +308,12 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
   modification.pixel.interpolators_centroid =
       interpolator_mask &
       ~xenos::GetInterpolatorSamplingPattern(
-          regs.Get<reg::RB_SURFACE_INFO>().msaa_samples,
+          // BD-30 foliage ROP lever: clamp consistently so the pixel-shader
+          // centroid variant matches the actual (lowered) rasterization sample
+          // count (gpu_force_max_msaa_samples; centroid degenerates to center at
+          // 1x, so this only avoids a needless 2x centroid variant).
+          draw_util::ClampForcedMsaaSamples(
+              regs.Get<reg::RB_SURFACE_INFO>().msaa_samples),
           regs.Get<reg::SQ_CONTEXT_MISC>().sc_sample_cntl,
           regs.Get<reg::SQ_INTERPOLATOR_CNTL>().sampling_pattern);
 

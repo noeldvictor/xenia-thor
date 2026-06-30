@@ -8678,7 +8678,9 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
     flags |= SpirvShaderTranslator::kSysFlag_PrimitiveLine;
   }
   // MSAA sample count.
-  flags |= uint32_t(rb_surface_info.msaa_samples)
+  // BD-30 foliage ROP lever: clamp consistently so the pixel shader's sample-count
+  // view matches the (lowered) host RT / render pass (gpu_force_max_msaa_samples).
+  flags |= uint32_t(draw_util::ClampForcedMsaaSamples(rb_surface_info.msaa_samples))
            << SpirvShaderTranslator::kSysFlag_MsaaSamples_Shift;
   // Depth format.
   if (rb_depth_info.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {

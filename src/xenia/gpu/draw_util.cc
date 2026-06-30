@@ -35,9 +35,23 @@ DEFINE_bool(
     "is necessary for certain games to display the scene graphics).",
     "GPU");
 
+// Defined in render_target_cache.cc (the BD-30 foliage MSAA-clamp lever).
+DECLARE_uint32(gpu_force_max_msaa_samples);
+
 namespace xe {
 namespace gpu {
 namespace draw_util {
+
+xenos::MsaaSamples ClampForcedMsaaSamples(xenos::MsaaSamples guest_samples) {
+  if (!cvars::gpu_force_max_msaa_samples) {
+    return guest_samples;
+  }
+  xenos::MsaaSamples cap =
+      cvars::gpu_force_max_msaa_samples >= 4   ? xenos::MsaaSamples::k4X
+      : cvars::gpu_force_max_msaa_samples >= 2 ? xenos::MsaaSamples::k2X
+                                               : xenos::MsaaSamples::k1X;
+  return guest_samples > cap ? cap : guest_samples;
+}
 
 bool IsRasterizationPotentiallyDone(const RegisterFile& regs,
                                     bool primitive_polygonal) {
@@ -911,6 +925,16 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
         uint32_t(1) << uint32_t(rb_surface_info.msaa_samples));
     return false;
   }
+
+  // BD-30 foliage ROP lever: clamp the resolve's view of the guest MSAA in-place so
+  // EVERY downstream use in this function (the edram base/pitch tile math, the
+  // depth/color edram_info.msaa_samples descriptors, the clear-rect sizing) derives
+  // the same lowered sample count as the RT-cache create key and the render pass.
+  // This is the site whose absence corrupted BD (the resolve read 2x while the RT
+  // was created at 1x -> wrong base tile -> black screen + mis-sized clear rect ->
+  // the stray white box). gpu_force_max_msaa_samples; 0 = off (returns guest value).
+  rb_surface_info.msaa_samples =
+      ClampForcedMsaaSamples(rb_surface_info.msaa_samples);
 
   // Clamp to the EDRAM surface pitch (maximum possible surface pitch is also
   // assumed to be the largest resolvable size).

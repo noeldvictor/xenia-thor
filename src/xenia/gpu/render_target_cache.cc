@@ -608,20 +608,16 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
            uint32_t(1) << uint32_t(msaa_samples));
     return false;
   }
-  // BD-30 fragment lever (gpu_force_max_msaa_samples): clamp the guest's MSAA mode
-  // here, the single source of msaa_samples for the host RT keys (rt_key.msaa_samples
-  // below), render passes, pixel shaders and EDRAM range sizing - so they all derive
-  // the lower sample count consistently. The trace pinned BD's bottleneck to MSAA-2x
-  // main-scene draws (foliage overdraw x2 samples). Default 0 = off; quality trade.
-  if (cvars::gpu_force_max_msaa_samples) {
-    xenos::MsaaSamples msaa_cap =
-        cvars::gpu_force_max_msaa_samples >= 4   ? xenos::MsaaSamples::k4X
-        : cvars::gpu_force_max_msaa_samples >= 2 ? xenos::MsaaSamples::k2X
-                                                 : xenos::MsaaSamples::k1X;
-    if (msaa_samples > msaa_cap) {
-      msaa_samples = msaa_cap;
-    }
-  }
+  // BD-30 foliage ROP lever (gpu_force_max_msaa_samples): clamp the guest's MSAA
+  // down to the configured cap. This is ONE of the sites that must agree - the same
+  // clamp is applied at the resolve path (draw_util::GetResolveInfo), the Vulkan
+  // render-pass key + framebuffer pitch, and the shader system flags - so the host
+  // RT key built here and the resolve-time lookup key derive the IDENTICAL sample
+  // count and the EDRAM tile layout stays coherent (an inconsistent subset desyncs
+  // tile offsets -> corruption, the failure of the earlier single-site clamp). The
+  // trace pinned BD's cost to MSAA-2x foliage overdraw (per-sample ROP doubled); 1x
+  // ~halves it. Default 0 = off; quality trade (loses MSAA edge smoothing).
+  msaa_samples = draw_util::ClampForcedMsaaSamples(msaa_samples);
   uint32_t msaa_samples_x_log2 =
       uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);
   uint32_t pitch_pixels = rb_surface_info.surface_pitch;
