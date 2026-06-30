@@ -383,6 +383,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_hooks_path");
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_debug");
             copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_ir3_debug");
+            copyStringExtra(intent, launchArguments, "gpu_vulkan_driver_env");
             copyBooleanExtra(
                     intent, launchArguments, "vulkan_trace_texture_source_checksum");
             copyStringExtra(

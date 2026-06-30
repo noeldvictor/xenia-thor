@@ -74,6 +74,16 @@ DEFINE_string(
     "from TU_DEBUG). For A/B-ing compiler behavior without a rebuild, e.g. 'nofp16' "
     "(no fp16/mediump lowering), 'noopt', 'nocp', 'disasm'. Default empty = unset.",
     "Vulkan");
+DEFINE_string(
+    gpu_vulkan_driver_env, "",
+    "When gpu_vulkan_driver=turnip: a ';'-separated list of VAR=value pairs, each "
+    "setenv'd before the in-process driver dlopen so the Mesa/Turnip driver reads them "
+    "at init. General escape hatch for any Mesa env without a rebuild - e.g. "
+    "'MESA_GPU_TRACES=print;MESA_GPU_TRACEFILE=/sdcard/tu_trace.txt' to capture the "
+    "u_trace per-render-stage GPU timing (binning/render/RESOLVE) to a FILE (bypassing "
+    "the stderr-not-in-logcat problem) and localize the deferred per-pass tile-resolve "
+    "cost. Default empty = unset.",
+    "Vulkan");
 #endif
 
 namespace xe {
@@ -137,6 +147,28 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
              /*overwrite=*/1);
       XELOGI("Turnip: set IR3_SHADER_DEBUG='{}' before driver load",
              cvars::gpu_vulkan_driver_ir3_debug);
+    }
+    // General driver-env escape hatch: "VAR=val;VAR2=val2" -> setenv each before the
+    // in-process dlopen. For MESA_GPU_TRACES/MESA_GPU_TRACEFILE (per-render-stage GPU
+    // resolve timing to a file) and any other Mesa env, no rebuild needed.
+    if (!cvars::gpu_vulkan_driver_env.empty()) {
+      const std::string& env_list = cvars::gpu_vulkan_driver_env;
+      size_t pos = 0;
+      while (pos < env_list.size()) {
+        size_t sep = env_list.find(';', pos);
+        if (sep == std::string::npos) {
+          sep = env_list.size();
+        }
+        const std::string kv = env_list.substr(pos, sep - pos);
+        const size_t eq = kv.find('=');
+        if (eq != std::string::npos && eq > 0) {
+          const std::string key = kv.substr(0, eq);
+          const std::string val = kv.substr(eq + 1);
+          setenv(key.c_str(), val.c_str(), /*overwrite=*/1);
+          XELOGI("Turnip: set {}='{}' before driver load", key, val);
+        }
+        pos = sep + 1;
+      }
     }
     vulkan_instance->loader_ = adrenotools_open_libvulkan(
         RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
