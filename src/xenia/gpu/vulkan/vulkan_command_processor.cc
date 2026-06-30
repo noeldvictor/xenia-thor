@@ -5074,6 +5074,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             std::chrono::steady_clock::now() - tex_t0)
             .count());
   }
+  // RT-as-texture detector (increment 1b): count texture fetches whose source falls
+  // in a resolve dest written so far THIS frame = the re-sampled render-to-texture
+  // subset the RT-as-texture bridge would serve from the resident RT (the resolve
+  // precedes the sample within a frame). Trace-gated, read-only.
+  if (cvars::vulkan_trace_draw_outcomes_per_frame &&
+      !frame_resolve_dest_ranges_.empty()) {
+    std::vector<VulkanTextureCache::ActiveTextureSourceRange> rtfed_src;
+    texture_cache_->CollectActiveTextureSourceRanges(used_texture_mask, rtfed_src);
+    for (const VulkanTextureCache::ActiveTextureSourceRange& s : rtfed_src) {
+      if (s.base_length && IsResolveFedTextureBase(s.base_address)) {
+        AddRtFedTextureStat();
+      }
+    }
+  }
   if (pixel_shader && normalized_color_mask &&
       cvars::vulkan_trace_texture_source_checksum) {
     if (used_texture_mask_vertex &&
