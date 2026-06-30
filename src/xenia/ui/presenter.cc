@@ -50,6 +50,18 @@ DEFINE_bool(
     "Display");
 
 DEFINE_bool(
+    gpu_present_fxaa, false,
+    "BD-30 anti-aliasing lever: apply a present-time FXAA pass to the guest "
+    "output. Pairs with gpu_force_max_msaa_samples=1 - dropping the guest MSAA "
+    "2x->1x halves per-sample foliage ROP (the fps win) but aliases bright thin "
+    "geometry into over-bright glints; FXAA re-averages those edges at a fixed "
+    "~0.5ms/720p cost (vs MSAA's scene-scaling per-sample cost), restoring the "
+    "MSAA-like look. Replaces the final bilinear blit (reusing its bindings); a "
+    "flat-region early-out preserves texture/HUD detail. Default off; per-title "
+    "(on for Blue Dragon, which ships gpu_force_max_msaa_samples=1).",
+    "GPU");
+
+DEFINE_bool(
     present_letterbox, true,
     "Maintain aspect ratio when stretching by displaying bars around the image "
     "when there's no more overscan area to crop out.",
@@ -1155,7 +1167,13 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
     assert_true(flow.effect_count < flow.effects.size());
     flow.effect_output_sizes[flow.effect_count] =
         std::make_pair(output_width, output_height);
-    flow.effects[flow.effect_count++] = GuestOutputPaintEffect::kBilinear;
+    // BD-30 AA lever: swap the final bilinear blit for FXAA when enabled, to
+    // anti-alias the guest output (restoring the edges lost to the MSAA 2x->1x
+    // ROP-saving clamp). FXAA reuses the bilinear bindings/layout and the same
+    // source->swapchain blit, so it drops in as the final effect.
+    flow.effects[flow.effect_count++] =
+        cvars::gpu_present_fxaa ? GuestOutputPaintEffect::kFxaa
+                                : GuestOutputPaintEffect::kBilinear;
   }
 
   assert_not_zero(flow.effect_count);

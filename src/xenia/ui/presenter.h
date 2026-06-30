@@ -402,6 +402,12 @@ class Presenter {
     kFsrRcas,
     kFsrRcasDither,
 
+    // BD-30 anti-aliasing lever (gpu_present_fxaa): present-time FXAA that
+    // restores MSAA-like edge smoothing after gpu_force_max_msaa_samples drops
+    // the guest MSAA 2x->1x. Swapped in for kBilinear as the final effect; reuses
+    // the bilinear bindings/pipeline layout.
+    kFxaa,
+
     kCount,
   };
 

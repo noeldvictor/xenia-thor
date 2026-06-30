@@ -267,6 +267,9 @@ class VulkanPresenter final : public Presenter {
     switch (effect) {
       case GuestOutputPaintEffect::kBilinear:
       case GuestOutputPaintEffect::kBilinearDither:
+      // FXAA samples the source texture (with neighbor offsets) exactly like
+      // bilinear - same bindings, same push constants, so it reuses the layout.
+      case GuestOutputPaintEffect::kFxaa:
         return kGuestOutputPaintPipelineLayoutIndexBilinear;
       case GuestOutputPaintEffect::kCasSharpen:
       case GuestOutputPaintEffect::kCasSharpenDither:

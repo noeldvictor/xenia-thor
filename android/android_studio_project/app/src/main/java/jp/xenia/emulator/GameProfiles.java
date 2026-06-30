@@ -101,6 +101,15 @@ public final class GameProfiles {
                         + "so thin bright highlights alias and BD's bloom over-brightens "
                         + "them (user accepted fps-over-quality 2026-06-30). No gate - "
                         + "applied from boot (not pacing-sensitive like VRS).")
+                .add("gpu_present_fxaa", Boolean.TRUE,
+                        "BD-30 anti-aliasing: present-time FXAA restoring the edge "
+                        + "smoothing lost when gpu_force_max_msaa_samples=1 drops the "
+                        + "guest MSAA 2x->1x (the ROP fps win). FXAA re-averages the "
+                        + "aliased bright thin geometry (wires/specular) back to a "
+                        + "MSAA-like look at a fixed ~0.5ms/720p cost - taming the "
+                        + "over-bright glints - while a flat-region early-out keeps "
+                        + "textures/HUD crisp. Replaces the final bilinear blit; paired "
+                        + "with the MSAA clamp above (2026-06-30).")
                 .add("gpu_vrs_enable_after_guest_ms", Integer.valueOf(130000),
                         "Gate VRS to in-game (guest uptime > 130s) so BD's boot menus / "
                         + "Voice Language screen render at full shading rate (crisp text), "

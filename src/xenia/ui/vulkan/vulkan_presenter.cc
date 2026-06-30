@@ -457,6 +457,7 @@ namespace shaders {
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_blend_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_motion_estimate_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_frame_warp_ps.h"
+#include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_fxaa_ps.h"
 #include "xenia/ui/shaders/bytecode/vulkan_spirv/guest_output_triangle_strip_rect_vs.h"
 }  // namespace shaders
 
@@ -3179,6 +3180,11 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
             sizeof(shaders::guest_output_ffx_fsr_rcas_dither_ps);
         shader_module_create_info.pCode =
             shaders::guest_output_ffx_fsr_rcas_dither_ps;
+        break;
+      case GuestOutputPaintEffect::kFxaa:
+        shader_module_create_info.codeSize =
+            sizeof(shaders::guest_output_fxaa_ps);
+        shader_module_create_info.pCode = shaders::guest_output_fxaa_ps;
         break;
       default:
         // Not supported by this implementation.
