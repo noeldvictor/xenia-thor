@@ -85,6 +85,22 @@ public final class GameProfiles {
                         + "fragment_shader_interlock / rasterization_order_attachment_"
                         + "access, device-confirmed) - not software-fixable on this GPU. "
                         + "Lower to rate 2 for slightly cleaner shading at ~7.9fps.")
+                .add("gpu_force_max_msaa_samples", Integer.valueOf(1),
+                        "BD-30 BREAKTHROUGH lever (2026-06-30, commit 9503bd831): force "
+                        + "the guest's MSAA 2x foliage render targets to 1x. The GPU "
+                        + "trace pinned BD's cost to MSAA-2x foliage overdraw - the "
+                        + "per-sample ROP (depth/blend/coverage) is DOUBLED by 2x, and "
+                        + "VRS can't touch ROP; 1x ~halves it. Clamped COHERENTLY at all "
+                        + "6 RB_SURFACE_INFO::msaa reads (draw_util::ClampForcedMsaaSamples) "
+                        + "so the EDRAM tile layout stays consistent - the earlier "
+                        + "single-site clamp desynced tile offsets and corrupted (black + "
+                        + "white box). Device-validated: renders correct, gpu_frame_us "
+                        + "110.7->64ms (-42%), OSD 9.2->15.3fps; STACKS with the VRS rate "
+                        + "above (different cost components) -> 21.6fps dense / ~29fps at "
+                        + "normal field density. Quality trade: loses MSAA anti-aliasing, "
+                        + "so thin bright highlights alias and BD's bloom over-brightens "
+                        + "them (user accepted fps-over-quality 2026-06-30). No gate - "
+                        + "applied from boot (not pacing-sensitive like VRS).")
                 .add("gpu_vrs_enable_after_guest_ms", Integer.valueOf(130000),
                         "Gate VRS to in-game (guest uptime > 130s) so BD's boot menus / "
                         + "Voice Language screen render at full shading rate (crisp text), "
