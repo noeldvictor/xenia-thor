@@ -123,6 +123,22 @@ DEFINE_uint32(
     "768 for 720p. Default 0 (off).",
     "GPU");
 
+DEFINE_uint32(
+    gpu_clamp_rt_image_height, 0,
+    "BD tile-I/O cut (THE REAL KNOB - gpu_clamp_rt_framebuffer_height was inert "
+    "because on Turnip the per-pass GMEM resolve / storeOp covers the full "
+    "ATTACHMENT IMAGE extent, NOT the renderArea/framebuffer). Host RT VkImages are "
+    "allocated tile-rounded to huge heights (4096 / 8192) for EDRAM aliasing "
+    "reserve, but only ~720 rows are ever rendered at 720p, so every render pass "
+    "resolves an 8192-tall tile grid (the resolution-invariant ~74ms tile-resolve "
+    "floor). Clamp the IMAGE allocation height to this many pixels so the store "
+    "target itself shrinks to the used rows. Set EQUAL TO OR ABOVE the rendered "
+    "height (e.g. 768 for 720p) AND together with gpu_clamp_rt_framebuffer_height "
+    "(framebuffer must be <= image). LOSSLESS only when no draw renders beyond the "
+    "clamp AND no EDRAM aliasing transfer reads the clamped rows (BD: aliasing "
+    "transfers measured = 0; max rendered height 720 < 768). Default 0 (off).",
+    "GPU");
+
 DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
@@ -2365,6 +2381,17 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   image_create_info.extent.height =
       GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) *
       draw_resolution_scale_y();
+  // BD tile-I/O cut (THE REAL KNOB): Turnip's per-pass GMEM resolve / storeOp
+  // covers the full ATTACHMENT IMAGE extent, not the renderArea - so clamping only
+  // the framebuffer (host_extent, in GetHostRenderTargetsFramebuffer) was inert and
+  // every resolve walked the 8192-tall tile-rounded image. Shrink the IMAGE
+  // allocation to the used rows. Safe only when no draw renders past the clamp and
+  // no EDRAM aliasing reads the clamped rows (BD: max render height 720 < 768,
+  // aliasing transfers = 0). Default-0 (off, lossless). See the cvar comment.
+  if (cvars::gpu_clamp_rt_image_height &&
+      image_create_info.extent.height > cvars::gpu_clamp_rt_image_height) {
+    image_create_info.extent.height = cvars::gpu_clamp_rt_image_height;
+  }
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
@@ -2802,6 +2829,14 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   if (cvars::gpu_clamp_rt_framebuffer_height &&
       host_extent.height > cvars::gpu_clamp_rt_framebuffer_height) {
     host_extent.height = cvars::gpu_clamp_rt_framebuffer_height;
+  }
+  // The framebuffer height must not exceed the (possibly clamped) attachment IMAGE
+  // height (gpu_clamp_rt_image_height) - a framebuffer larger than its attachment is
+  // invalid. So the image clamp transitively clamps the framebuffer too, making
+  // gpu_clamp_rt_image_height self-sufficient (no need to also set the framebuffer one).
+  if (cvars::gpu_clamp_rt_image_height &&
+      host_extent.height > cvars::gpu_clamp_rt_image_height) {
+    host_extent.height = cvars::gpu_clamp_rt_image_height;
   }
   framebuffer_create_info.width = host_extent.width;
   framebuffer_create_info.height = host_extent.height;

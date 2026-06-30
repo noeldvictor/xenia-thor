@@ -98,6 +98,18 @@ public final class GameProfiles {
                         + "Clamping to 768 trims it, lossless (BD aliasing transfers = 0). "
                         + "Device-validated 2026-06-29 matched-OSD: 8.3->9.1 fps no-VRS; "
                         + "stacks ~+10% on the VRS ceiling. Commit 87cde3efd.")
+                .add("gpu_clamp_rt_image_height", Integer.valueOf(768),
+                        "THE REAL KNOB the framebuffer clamp above missed: on Turnip the "
+                        + "per-pass GMEM resolve / storeOp covers the full ATTACHMENT IMAGE "
+                        + "extent, not the renderArea - so clamping only the framebuffer left "
+                        + "every one of BD's ~42 render-to-texture resolves walking the "
+                        + "8192-tall tile-rounded image. Clamping the IMAGE allocation to 768 "
+                        + "shrinks the store target itself. Device-validated 2026-06-29 720p: "
+                        + "~122->111ms (~10%) at a HEAVIER scene (1083 vs 983 draws), render "
+                        + "correct, 0 faults. Safe: BD max render height 720 < 768, aliasing "
+                        + "transfers = 0. NOTE the resolve is mostly per-pass LATENCY (this is "
+                        + "the ~10% size component); the bulk 74ms tile-resolve is the 42-pass "
+                        + "fixed pipeline (bloom/blur/shadow) that runs regardless of scene.")
                 .add("kernel_object_handle_cache", Boolean.TRUE,
                         "BD's heavy field is actually CPU/LOCK-bound, not GPU-bound "
                         + "(device-profiled 2026-06-23: GPU idle ~98%, busy 0%, turnip "
@@ -119,13 +131,14 @@ public final class GameProfiles {
                         + "the cap regardless; the cap only smooths the scenes that "
                         + "exceed it.")
                 .add("kernel_display_resolution", "720p",
-                        "Render Blue Dragon at 720p by default. BD's heavy field is "
-                        + "CPU/lock-bound, NOT fragment/fill-bound (device-profiled "
-                        + "2026-06-23: GPU idle ~98% on the heavy field; resolution "
-                        + "barely moves its frame time), so the higher resolution is "
-                        + "near-free here while giving a much sharper image than 480p. "
-                        + "The 30fps cap above and the full optimization stack keep it "
-                        + "paced; validated on-device at 720p."));
+                        "Render Blue Dragon at 720p by default. Resolution is near-free "
+                        + "on BD's field - but NOT because it's CPU-bound (the old "
+                        + "2026-06-23 'GPU idle 98%' verdict was a pre-O0-fix CONFOUND). "
+                        + "Clean 2026-06-29 retest: the field is GPU-BOUND at 99% busy, "
+                        + "yet 640px (480p) and 1280px (720p) give IDENTICAL gpu_frame_us "
+                        + "(~122ms) - BD is STRUCTURE-bound (42-pass pipeline + binning), "
+                        + "NOT pixel/fill-bound, so 720p costs ~nothing over 480p while "
+                        + "looking far sharper. The 30fps cap + full stack keep it paced."));
 
         // Burnout Revenge (454107DC): UMA-direct present-hangs the EA/EAHD/CRRW
         // intro movie chain (VdSwap freezes). Off runs the movies through to a
