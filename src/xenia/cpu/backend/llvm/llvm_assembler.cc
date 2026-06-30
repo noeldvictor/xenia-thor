@@ -16,6 +16,7 @@
 #include "xenia/cpu/backend/a64/a64_function.h"
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
 #include "xenia/cpu/backend/llvm/llvm_jit_context.h"
+#include "xenia/cpu/backend/llvm/llvm_object_cache.h"
 #include "xenia/cpu/hir/hir_builder.h"
 #include "xenia/cpu/hir/instr.h"
 #include "xenia/cpu/mmio_handler.h"
@@ -32,6 +33,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -54,6 +56,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -72,6 +75,7 @@ DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
+DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
 
 namespace xe {
 namespace cpu {
@@ -2137,6 +2141,60 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   mod->setTargetTriple(jit.getTargetTriple().str());
 
   std::string name = "guest_" + std::to_string(function->address());
+
+  // AOT object cache INCREMENT 2 (cpu_llvm_object_cache_skip_lowering, the full
+  // ReXGlue/RPCS3 precompile model): on a warm HIT, skip IR-build + the O2
+  // pipeline + codegen ENTIRELY by loading the cached .o via addObjectFile.
+  // (Increment 1's ObjectCache only skipped codegen - IR-build + O2 still ran per
+  // fn on warm.) The key matches the post-lowering cache key WITHOUT the
+  // "nocache_" prefix; baked-host-pointer fns never wrote that .o (increment 1
+  // skips them) so they MISS here and fall through to a fresh IR-build (correct).
+  // Serialized by the compile lock above (addObjectFile mutates the shared LLJIT).
+  // Gated default-off; needs device validation of warm-load symbol resolution.
+  if (cvars::cpu_llvm_object_cache && cvars::cpu_llvm_object_cache_skip_lowering &&
+      !cvars::cpu_llvm_object_cache_path.empty() &&
+      function->has_end_address() &&
+      function->end_address() > function->address()) {
+    uint64_t code_hash = 0xcbf29ce484222325ull;  // FNV-1a (must match below)
+    const uint32_t lo = function->address();
+    const uint32_t hi = function->end_address();
+    const uint8_t* bytes =
+        llvm_backend_->processor()->memory()->TranslateVirtual<const uint8_t*>(lo);
+    for (uint32_t off = 0, n = hi - lo; off < n; ++off) {
+      code_hash = (code_hash ^ bytes[off]) * 0x100000001b3ull;
+    }
+    char keybuf[64];
+    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%d",
+                  function->address(),
+                  static_cast<unsigned long long>(code_hash),
+                  cvars::cpu_backend_llvm_opt,
+                  cvars::cpu_backend_llvm_context_residency ? 1 : 0);
+    std::filesystem::path opath =
+        std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
+        ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
+         std::to_string(cvars::cpu_backend_llvm_opt)) /
+        (std::string(keybuf) + ".o");
+    std::error_code fs_ec;
+    if (std::filesystem::exists(opath, fs_ec)) {
+      auto buf = llvm::MemoryBuffer::getFile(opath.string());
+      if (buf) {
+        if (auto err = jit.addObjectFile(std::move(*buf))) {
+          llvm::consumeError(std::move(err));  // load failed -> fresh IR-build
+        } else {
+          auto sym = jit.lookup(name);
+          if (sym) {
+            auto* code = reinterpret_cast<uint8_t*>(sym->getValue());
+            static_cast<a64::A64Function*>(function)->Setup(code, 0);
+            XELOGI(
+                "LLVMobjload guest=0x{:08X} host=0x{:016X} (skipped IR+lowering)",
+                function->address(), reinterpret_cast<uint64_t>(code));
+            return true;
+          }
+          llvm::consumeError(sym.takeError());  // symbol missing -> fresh build
+        }
+      }
+    }
+  }
   // void guest_<addr>(i64 x0_guest_return_address): matches the a64 ABI - the
   // host->guest thunk passes the guest return address in x0, and it's used to
   // recognize a guest `blr` RETURN in CALL_INDIRECT.

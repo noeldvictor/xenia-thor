@@ -172,6 +172,18 @@ DEFINE_string(cpu_llvm_object_cache_path, "",
               "in the key disambiguates titles even if shared. Empty disables the "
               "object cache regardless of cpu_llvm_object_cache.",
               "CPU");
+DEFINE_bool(cpu_llvm_object_cache_skip_lowering, false,
+            "AOT object cache INCREMENT 2 (the full ReXGlue/RPCS3 precompile model). "
+            "Requires cpu_llvm_object_cache. On a warm cache HIT, skip the LLVM "
+            "IR-build AND the O2 optimization pipeline AND codegen ENTIRELY by "
+            "loading the cached .o directly via LLJIT::addObjectFile (increment 1's "
+            "ObjectCache only skipped codegen - the per-fn IR-build + O2 still ran "
+            "every warm launch). This is the real relaunch/revisit/stutter win. "
+            "Baked-host-pointer fns (CALL_EXTERN/MMIO) never wrote a cacheable .o so "
+            "they miss and rebuild fresh (correct). Default off pending device "
+            "validation of warm-load symbol resolution. Helps boot/stutter, not the "
+            "GPU-bound steady-state field.",
+            "CPU");
 
 #if XE_LLVM_BACKEND_ENABLED
 // Runtime helper the JIT'd code calls for a guest CALL/CALL_INDIRECT/CALL_EXTERN:
