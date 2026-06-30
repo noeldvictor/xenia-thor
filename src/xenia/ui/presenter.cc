@@ -1171,6 +1171,15 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
     // anti-alias the guest output (restoring the edges lost to the MSAA 2x->1x
     // ROP-saving clamp). FXAA reuses the bilinear bindings/layout and the same
     // source->swapchain blit, so it drops in as the final effect.
+    static bool xe_present_fxaa_branch_logged = false;
+    if (!xe_present_fxaa_branch_logged) {
+      xe_present_fxaa_branch_logged = true;
+      XELOGI(
+          "Present final-blit branch reached: config_effect={} "
+          "gpu_present_fxaa={} -> {}",
+          int(config.GetEffect()), cvars::gpu_present_fxaa ? 1 : 0,
+          cvars::gpu_present_fxaa ? "kFxaa" : "kBilinear");
+    }
     flow.effects[flow.effect_count++] =
         cvars::gpu_present_fxaa ? GuestOutputPaintEffect::kFxaa
                                 : GuestOutputPaintEffect::kBilinear;

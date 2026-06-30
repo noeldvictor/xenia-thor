@@ -847,6 +847,16 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   RenderTargetKey rt_keys[1 + xenos::kMaxColorRenderTargets];
   RenderTarget* rts[1 + xenos::kMaxColorRenderTargets];
   uint32_t rt_lengths_tiles[1 + xenos::kMaxColorRenderTargets];
+  // NOTE (BD-30 MSAA ghost, 2026-06-30): forcing a guest 2x surface to host 1x
+  // (gpu_force_max_msaa_samples) HALVES its EDRAM tile footprint - MSAA samples
+  // ARE tiles. BD packs a 2x main scene + 4x effect buffers into shared EDRAM
+  // bases, so the halved range lets the bright effect buffer bleed in (the
+  // "bright dupe of objects"). Reserving the range at the guest msaa here fixes
+  // the bleed but then OVER-CLAIMS into the next RT's tiles (clamped to
+  // rt_max_distance below) -> displaces the output RT -> letterbox. So cap=1 is
+  // intrinsically not clean; the clean ceiling is cap=2 (foliage stays 2x). The
+  // real fix is the EDRAM-recompiler reimagine (handle packing via the frame
+  // graph), not a per-site clamp. Keep the literal (clamped) length here.
   uint32_t length_used_tiles_at_32bpp =
       ((height_used << uint32_t(msaa_samples >= xenos::MsaaSamples::k2X)) +
        (xenos::kEdramTileHeightSamples - 1)) /

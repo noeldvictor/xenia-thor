@@ -85,8 +85,16 @@ public final class GameProfiles {
                         + "fragment_shader_interlock / rasterization_order_attachment_"
                         + "access, device-confirmed) - not software-fixable on this GPU. "
                         + "Lower to rate 2 for slightly cleaner shading at ~7.9fps.")
-                .add("gpu_force_max_msaa_samples", Integer.valueOf(1),
-                        "BD-30 BREAKTHROUGH lever (2026-06-30, commit 9503bd831): force "
+                .add("gpu_force_max_msaa_samples", Integer.valueOf(2),
+                        "BD-30 MSAA lever (2026-06-30): cap MSAA at 2x = the CLEAN ceiling "
+                        + "(~17fps, 1.9x over the 9fps baseline, no artifact). cap=1 "
+                        + "(foliage 2x->1x) is faster (~21fps) BUT the 2x->1x EDRAM tile "
+                        + "footprint HALVING lets BD's packed 4x effect buffer bleed in "
+                        + "(the bright-dupe ghost) - intrinsic to forcing 1x on a packed "
+                        + "surface, not cleanly fixable per-site (the EDRAM-recompiler "
+                        + "reimagine is the real path to clean >17fps). cap=2 keeps foliage "
+                        + "2x (no ghost) while 4x->2x + VRS + clamps still net ~1.9x. "
+                        + "Set 1 for max fps + the artifact. History (commit 9503bd831): force "
                         + "the guest's MSAA 2x foliage render targets to 1x. The GPU "
                         + "trace pinned BD's cost to MSAA-2x foliage overdraw - the "
                         + "per-sample ROP (depth/blend/coverage) is DOUBLED by 2x, and "
@@ -101,15 +109,15 @@ public final class GameProfiles {
                         + "so thin bright highlights alias and BD's bloom over-brightens "
                         + "them (user accepted fps-over-quality 2026-06-30). No gate - "
                         + "applied from boot (not pacing-sensitive like VRS).")
-                .add("gpu_present_fxaa", Boolean.TRUE,
-                        "BD-30 anti-aliasing: present-time FXAA restoring the edge "
-                        + "smoothing lost when gpu_force_max_msaa_samples=1 drops the "
-                        + "guest MSAA 2x->1x (the ROP fps win). FXAA re-averages the "
-                        + "aliased bright thin geometry (wires/specular) back to a "
-                        + "MSAA-like look at a fixed ~0.5ms/720p cost - taming the "
-                        + "over-bright glints - while a flat-region early-out keeps "
-                        + "textures/HUD crisp. Replaces the final bilinear blit; paired "
-                        + "with the MSAA clamp above (2026-06-30).")
+                .add("gpu_present_fxaa", Boolean.FALSE,
+                        "Present-time FXAA + highlight-compression. OFF at cap=2 (the "
+                        + "current default): cap=2 keeps foliage 2x so edges are already "
+                        + "MSAA'd and there's no over-bright to tame, and the highlight "
+                        + "roll-off would needlessly dim bright surfaces ~5-18%. Turn ON "
+                        + "only together with gpu_force_max_msaa_samples=1, where it "
+                        + "re-averages the aliased bright thin geometry at ~0.5ms/720p. "
+                        + "Engagement device-confirmed (kFxaa replaces the final bilinear "
+                        + "blit); reuses the bilinear pipeline layout (2026-06-30).")
                 .add("gpu_vrs_enable_after_guest_ms", Integer.valueOf(130000),
                         "Gate VRS to in-game (guest uptime > 130s) so BD's boot menus / "
                         + "Voice Language screen render at full shading rate (crisp text), "

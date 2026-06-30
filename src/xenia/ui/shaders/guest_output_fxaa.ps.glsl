@@ -51,8 +51,8 @@ const float kReduceMin = 1.0 / 128.0;
 // knee here is the right place to pull those blown-out highlights back toward
 // range (edge-AA alone can't - the bloomed glow is a soft region, not an edge).
 // Normal brightness (< knee) passes through unchanged.
-const float kHighlightKnee = 0.70;
-const float kHighlightStrength = 2.5;
+const float kHighlightKnee = 0.50;
+const float kHighlightStrength = 3.0;
 
 float XeLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
