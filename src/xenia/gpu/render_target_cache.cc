@@ -1057,6 +1057,77 @@ uint32_t RenderTargetCache::GetRenderTargetHeight(
   return tile_rows * (xenos::kEdramTileHeightSamples >> msaa_samples_y_log2);
 }
 
+RenderTargetCache::RenderTarget*
+RenderTargetCache::ResolveSourceResidentRenderTarget(
+    uint32_t src_edram_base_tiles, uint32_t src_pitch_tiles,
+    uint32_t src_format, uint32_t src_msaa, bool src_is_depth) const {
+  // Only the host render target path tracks EDRAM tile ownership and keeps
+  // resident host render targets to sample.
+  if (GetPath() != Path::kHostRenderTargets) {
+    return nullptr;
+  }
+  // Color only in increment 1 (depth has separate host-encoding ownership).
+  if (src_is_depth) {
+    return nullptr;
+  }
+  // Point-query the render target that currently OWNS the source base tile.
+  // ResolveEdramInfo::base_tiles is the resolve-region base; the owning
+  // RenderTargetKey::base_tiles is the RT origin and differs - so the owner must
+  // be looked up here, not reconstructed from the edge. Mirrors the ownership
+  // walk in GetResolveCopyRectangles.
+  uint32_t tile = src_edram_base_tiles;
+  auto it = ownership_ranges_.lower_bound(tile);
+  if (it != ownership_ranges_.cbegin()) {
+    auto it_pre = std::prev(it);
+    if (it_pre->second.end_tiles > tile) {
+      it = it_pre;
+    }
+  }
+  if (it == ownership_ranges_.cend() || it->first > tile ||
+      tile >= it->second.end_tiles || it->second.render_target.IsEmpty()) {
+    return nullptr;
+  }
+  RenderTargetKey owner_key = it->second.render_target;
+  // The current owner must still be the surface that was resolved (not since
+  // reused by a different render target for the same tile): same color/depth
+  // class, MSAA and real-bpp pitch. RenderTargetKey stores the pitch normalized
+  // to 32bpp; GetPitchTiles() restores the real-bpp pitch, which is the unit
+  // ResolveEdramInfo::pitch_tiles is in (see the >>1 for 64bpp at the resolve
+  // source key construction).
+  if (bool(owner_key.is_depth) != src_is_depth) {
+    return nullptr;
+  }
+  if (uint32_t(owner_key.msaa_samples) != src_msaa) {
+    return nullptr;
+  }
+  if (owner_key.GetPitchTiles() != src_pitch_tiles) {
+    return nullptr;
+  }
+  // Reconstruct the stored color resource format exactly as the resolve source
+  // key does (GetColorResourceFormat of the guest color format) and require a
+  // match.
+  uint32_t expected_resource_format = uint32_t(
+      GetColorResourceFormat(xenos::ColorRenderTargetFormat(src_format)));
+  if (owner_key.resource_format != expected_resource_format) {
+    return nullptr;
+  }
+  // Must still be resident as a host render target.
+  auto rt_it = render_targets_.find(owner_key);
+  if (rt_it == render_targets_.end() || !rt_it->second) {
+    return nullptr;
+  }
+  RenderTarget* render_target = rt_it->second;
+  // Must not be one of the render targets bound by the last successful binding
+  // update - sampling a current attachment would be a read-after-write feedback
+  // loop. Index 0 is depth, color from 1.
+  for (size_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+    if (last_update_used_render_targets_[i] == render_target) {
+      return nullptr;
+    }
+  }
+  return render_target;
+}
+
 void RenderTargetCache::GetHostDepthStoreRectangleInfo(
     const Transfer::Rectangle& transfer_rectangle,
     xenos::MsaaSamples msaa_samples,

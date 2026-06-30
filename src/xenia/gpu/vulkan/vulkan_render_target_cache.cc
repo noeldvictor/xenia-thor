@@ -140,6 +140,15 @@ DEFINE_uint32(
     "GPU");
 
 DEFINE_bool(
+    gpu_rt_as_texture, false,
+    "EDRAM-recompiler RT-as-texture: when a pixel-texture fetch samples a still-"
+    "resident render target that was resolved this frame (non-converting format, "
+    "1-sample, no resolution scale), bind the RT image view directly instead of "
+    "reloading the resolved texture from shared memory - skipping the "
+    "resolve->RAM->reload round-trip. Default off.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
     "image - settles whether geometry rasterized (depth has varying geometry Z) "
@@ -2262,6 +2271,61 @@ VkFormat VulkanRenderTargetCache::GetDepthVulkanFormat(
     return VK_FORMAT_D24_UNORM_S8_UINT;
   }
   return VK_FORMAT_D32_SFLOAT_S8_UINT;
+}
+
+VkImageView
+VulkanRenderTargetCache::GetResolveSourceRenderTargetViewForSampling(
+    uint32_t src_edram_base_tiles, uint32_t src_pitch_tiles,
+    uint32_t src_format, uint8_t src_msaa, bool src_is_depth,
+    VkFormat expected_texture_host_format) {
+  // EDRAM-recompiler RT-as-texture, increment 1 (gpu_rt_as_texture, default-off):
+  // if a pixel-texture fetch samples data a resolve wrote to shared memory this
+  // frame and the SOURCE render target is still resident, 1-sample, not
+  // resolution-scaled and host-format-identical, bind that render target's image
+  // view directly instead of reloading the resolved copy from shared memory.
+  if (!cvars::gpu_rt_as_texture) {
+    return VK_NULL_HANDLE;
+  }
+  // Resolution scaling gives the host RT a different footprint than the reloaded
+  // guest texture - not a 1:1 substitute.
+  if (IsDrawResolutionScaled()) {
+    return VK_NULL_HANDLE;
+  }
+  // 1-sample color only in increment 1.
+  if (src_msaa != uint8_t(xenos::MsaaSamples::k1X) || src_is_depth) {
+    return VK_NULL_HANDLE;
+  }
+  // Resident, identity-matched, not-a-current-attachment lookup (private state -
+  // done on the base class).
+  RenderTarget* render_target_base = ResolveSourceResidentRenderTarget(
+      src_edram_base_tiles, src_pitch_tiles, src_format, uint32_t(src_msaa),
+      src_is_depth);
+  if (!render_target_base) {
+    return VK_NULL_HANDLE;
+  }
+  auto& render_target = *static_cast<VulkanRenderTarget*>(render_target_base);
+  // Non-converting only: the resident RT's host color format must exactly match
+  // the unsigned host format the texture cache would have produced for the fetch.
+  if (GetColorVulkanFormat(render_target.key().GetColorFormat()) !=
+      expected_texture_host_format) {
+    return VK_NULL_HANDLE;
+  }
+  // Make the render target readable by the guest shaders as a sampled image.
+  // Usually it was already left SHADER_READ_ONLY_OPTIMAL by the resolve's
+  // DumpRenderTargets, so this is at most a stage/access-only barrier (no layout
+  // change); skip_if_equal drops it entirely if it is a complete no-op. Mirrors
+  // the dump barrier (current_*_mask() as src).
+  command_processor_.PushImageMemoryBarrier(
+      render_target.image(),
+      ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT),
+      render_target.current_stage_mask(),
+      command_processor_.guest_shader_pipeline_stages_,
+      render_target.current_access_mask(), VK_ACCESS_SHADER_READ_BIT,
+      render_target.current_layout(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  render_target.SetUsage(command_processor_.guest_shader_pipeline_stages_,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  return render_target.view_color_transfer();
 }
 
 VkFormat VulkanRenderTargetCache::GetColorVulkanFormat(

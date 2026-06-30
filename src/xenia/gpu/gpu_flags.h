@@ -140,6 +140,11 @@ DECLARE_bool(vulkan_trace_draw_outcomes_per_frame);
 DECLARE_bool(gpu_early_primary_read_pointer_writeback);
 DECLARE_bool(gpu_bulk_pm4_type0);
 DECLARE_bool(gpu_edram_passes_dont_care);
+// EDRAM-recompiler RT-as-texture (increment 1): bind a still-resident resolved
+// render target directly to a sampling texture descriptor, skipping the
+// resolve->shared-memory->reload round-trip. Defined in
+// vulkan_render_target_cache.cc; used there and in vulkan_command_processor.cc.
+DECLARE_bool(gpu_rt_as_texture);
 DECLARE_bool(gpu_skip_edram_transfers);
 DECLARE_bool(gpu_skip_bloom);
 DECLARE_uint32(gpu_freeze_at_guest_ms);

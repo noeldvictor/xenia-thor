@@ -243,6 +243,21 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       xenos::ColorRenderTargetFormat format,
       bool* is_integer_out = nullptr) const;
 
+  // EDRAM-recompiler RT-as-texture (increment 1, gpu_rt_as_texture, default-off).
+  // Given a recorded resolve SOURCE (the VulkanCommandProcessor::ResolveEdge
+  // fields, passed by value because that nested type is not visible in this
+  // header), returns the image view of the resident source render target to bind
+  // directly to a sampling texture descriptor - or VK_NULL_HANDLE if not eligible
+  // (cvar off, resolution-scaled, multisampled, depth, not resident, format-
+  // converting, or currently a draw attachment). Transitions the render target to
+  // SHADER_READ_ONLY_OPTIMAL for sampling. expected_texture_host_format is the
+  // unsigned host VkFormat the texture cache would produce for the fetch; only a
+  // 1:1 (non-converting) match is served.
+  VkImageView GetResolveSourceRenderTargetViewForSampling(
+      uint32_t src_edram_base_tiles, uint32_t src_pitch_tiles,
+      uint32_t src_format, uint8_t src_msaa, bool src_is_depth,
+      VkFormat expected_texture_host_format);
+
  protected:
   bool IsGammaFormatHostStorageSeparate() const override;
 

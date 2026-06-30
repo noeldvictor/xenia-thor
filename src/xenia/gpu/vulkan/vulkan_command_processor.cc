@@ -2933,9 +2933,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     if (cvars::vulkan_trace_draw_outcomes_per_frame && rt_resolve_copies_) {
       XELOGI(
           "RTtex detector: resolve_copies={} resolve_KB={} rt_fed_textures={} "
-          "(RT-as-texture bridge would eliminate this per-frame ResolveCopy compute "
-          "+ RAM round-trip by sampling the resident RTs directly)",
-          rt_resolve_copies_, rt_resolve_copy_bytes_ / 1024, rt_fed_textures_);
+          "rt_served={} (RT-as-texture bridge eliminates this per-frame "
+          "ResolveCopy compute + RAM round-trip by sampling the resident RTs "
+          "directly; rt_served = fetches bound straight to a resident RT this "
+          "frame via gpu_rt_as_texture)",
+          rt_resolve_copies_, rt_resolve_copy_bytes_ / 1024, rt_fed_textures_,
+          rt_served_textures_);
     }
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
@@ -2943,6 +2946,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_copies_ = 0;
     rt_resolve_copy_bytes_ = 0;
     rt_fed_textures_ = 0;
+    rt_served_textures_ = 0;
     frame_resolve_edges_.clear();
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
@@ -9394,6 +9398,53 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     sampler_count_pixel = 0;
     texture_count_pixel = 0;
   }
+
+  // EDRAM-recompiler RT-as-texture (increment 1, gpu_rt_as_texture, default-off):
+  // for each pixel texture fetch that samples data a resolve wrote to shared
+  // memory this frame, if the SOURCE render target is still resident and a 1:1
+  // host-format match, override the descriptor to sample that render target's
+  // image directly (skipping the resolve->shared-memory->reload round-trip).
+  // Computed once here so BOTH the descriptor signature and the descriptor write
+  // loop below bind the same view; if they disagreed, the descriptor cache
+  // (vulkan_cache_texture_descriptors) would keep a stale view. Filled every draw
+  // (cheap, 32 pointers) so the unconditional override reads below stay valid even
+  // with the cvar off (then all VK_NULL_HANDLE = no behavior change).
+  rt_as_texture_views_pixel_.fill(VK_NULL_HANDLE);
+  if (cvars::gpu_rt_as_texture && pixel_shader && texture_count_pixel &&
+      !feedback_merge_active_) {
+    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
+      uint32_t fetch_constant = texture_binding.fetch_constant;
+      // Only non-signed, identity-RGBA-swizzle fetches can sample the native RT
+      // image directly; the texture reload path is what applies sign/swizzle
+      // remaps, which a direct RT bind would skip.
+      if (texture_binding.is_signed ||
+          texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
+              xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
+        continue;
+      }
+      uint32_t texture_base_address = 0;
+      VkFormat texture_host_format_unsigned = VK_FORMAT_UNDEFINED;
+      if (!texture_cache_->GetActiveTextureGuestInfo(
+              fetch_constant, &texture_base_address,
+              &texture_host_format_unsigned)) {
+        continue;
+      }
+      const ResolveEdge* resolve_edge = ResolveEdgeForBase(texture_base_address);
+      if (!resolve_edge) {
+        continue;
+      }
+      VkImageView rt_view =
+          render_target_cache_->GetResolveSourceRenderTargetViewForSampling(
+              resolve_edge->src_edram_base_tiles, resolve_edge->src_pitch_tiles,
+              resolve_edge->src_format, resolve_edge->src_msaa,
+              resolve_edge->src_is_depth, texture_host_format_unsigned);
+      if (rt_view != VK_NULL_HANDLE) {
+        rt_as_texture_views_pixel_[fetch_constant] = rt_view;
+        ++rt_served_textures_;
+      }
+    }
+  }
+
   // Reuse texture and sampler bindings if not changed since the last draw
   // (vulkan_cache_texture_descriptors). Allocating a transient descriptor set
   // and calling vkUpdateDescriptorSets for the textures/samplers on every draw
@@ -9419,10 +9470,23 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           if (texture_count && textures) {
             for (const VulkanShader::TextureBinding& texture_binding :
                  *textures) {
-              signature_out.push_back(reinterpret_cast<uint64_t>(
-                  texture_cache_->GetActiveBindingOrNullImageView(
-                      texture_binding.fetch_constant, texture_binding.dimension,
-                      bool(texture_binding.is_signed))));
+              // RT-as-texture override (pixel only) takes precedence and MUST
+              // match the descriptor write loop below exactly, or the descriptor
+              // cache keeps a stale view. Vertex textures are never overridden.
+              VkImageView view =
+                  is_vertex
+                      ? VK_NULL_HANDLE
+                      : rt_as_texture_views_pixel_[texture_binding
+                                                       .fetch_constant];
+              if (view == VK_NULL_HANDLE) {
+                view = (!is_vertex && feedback_merge_active_)
+                           ? feedback_merge_producer_view_
+                           : texture_cache_->GetActiveBindingOrNullImageView(
+                                 texture_binding.fetch_constant,
+                                 texture_binding.dimension,
+                                 bool(texture_binding.is_signed));
+              }
+              signature_out.push_back(reinterpret_cast<uint64_t>(view));
             }
           }
           if (sampler_count) {
@@ -9531,14 +9595,22 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
          *textures_pixel) {
       VkDescriptorImageInfo& descriptor_image_info =
           descriptor_write_image_info_.emplace_back();
+      // RT-as-texture override (gpu_rt_as_texture) takes precedence: sample the
+      // resident resolve-source render target directly. Must match the signature
+      // builder above exactly. Otherwise -
       // BD input-attachment merge: the variant reads the producer RT as an input
       // attachment, so bind the producer view (not the sampled guest texture).
-      descriptor_image_info.imageView =
-          feedback_merge_active_
-              ? feedback_merge_producer_view_
-              : texture_cache_->GetActiveBindingOrNullImageView(
-                    texture_binding.fetch_constant, texture_binding.dimension,
-                    bool(texture_binding.is_signed));
+      VkImageView view =
+          rt_as_texture_views_pixel_[texture_binding.fetch_constant];
+      if (view == VK_NULL_HANDLE) {
+        view = feedback_merge_active_
+                   ? feedback_merge_producer_view_
+                   : texture_cache_->GetActiveBindingOrNullImageView(
+                         texture_binding.fetch_constant,
+                         texture_binding.dimension,
+                         bool(texture_binding.is_signed));
+      }
+      descriptor_image_info.imageView = view;
       descriptor_image_info.imageLayout =
           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }

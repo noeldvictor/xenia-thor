@@ -958,6 +958,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Reused per-draw scratch for building the above signatures without a fresh
   // heap allocation each draw (UpdateBindings, CP worker thread only).
   std::vector<uint64_t> texture_signature_scratch_;
+  // EDRAM-recompiler RT-as-texture (increment 1, gpu_rt_as_texture): per-draw
+  // override of the pixel texture descriptor image views, indexed by texture
+  // fetch constant. VK_NULL_HANDLE = no override (use the texture cache). Filled
+  // once per draw in UpdateBindings BEFORE both the descriptor signature and the
+  // descriptor write loop, which must read it identically or the descriptor
+  // cache would keep a stale view.
+  std::array<VkImageView, xenos::kTextureFetchConstantCount>
+      rt_as_texture_views_pixel_{};
 
   // Per-frame draw-outcome counters (vulkan_trace_draw_outcomes_per_frame).
   // Accumulated across a guest frame, logged and reset at the swap. Used to find
@@ -1614,6 +1622,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_resolve_copies_ = 0;
   uint32_t rt_resolve_copy_bytes_ = 0;
   uint32_t rt_fed_textures_ = 0;
+  // RT-as-texture (increment 1): pixel texture fetches actually bound straight to
+  // a resident render target this frame (the served subset of rt_fed_textures_).
+  uint32_t rt_served_textures_ = 0;
   std::vector<ResolveEdge> frame_resolve_edges_;
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the

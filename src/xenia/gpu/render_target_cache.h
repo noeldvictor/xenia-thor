@@ -510,6 +510,21 @@ class RenderTargetCache {
   uint32_t GetRenderTargetHeight(uint32_t pitch_tiles_at_32bpp,
                                  xenos::MsaaSamples msaa_samples) const;
 
+  // EDRAM-recompiler RT-as-texture (increment 1) support, used by the Vulkan
+  // implementation. Point-queries current EDRAM tile ownership for the recorded
+  // resolve SOURCE (fields taken by value because the implementation's ResolveEdge
+  // type is not visible here), validates that the resident host render target is
+  // still the resolved surface (same color class, MSAA, real-bpp pitch, color
+  // resource format), and that it is not currently bound as a draw attachment
+  // (which would be a sampling feedback loop). Returns that host render target,
+  // or nullptr if not eligible / not resident (color, host-render-target path
+  // only). Accesses private ownership/residency state, so it lives on the base.
+  RenderTarget* ResolveSourceResidentRenderTarget(uint32_t src_edram_base_tiles,
+                                                  uint32_t src_pitch_tiles,
+                                                  uint32_t src_format,
+                                                  uint32_t src_msaa,
+                                                  bool src_is_depth) const;
+
   virtual RenderTarget* CreateRenderTarget(RenderTargetKey key) = 0;
 
   // Whether depth buffer is encoded differently on the host, thus after

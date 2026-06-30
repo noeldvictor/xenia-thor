@@ -121,6 +121,14 @@ class VulkanTextureCache final : public TextureCache {
                                               xenos::FetchOpDimension dimension,
                                               bool is_signed) const;
 
+  // EDRAM-recompiler RT-as-texture (increment 1): for the active binding of this
+  // fetch constant, report the guest base address (to match against a resolve
+  // dest range) and the unsigned host VkFormat (to require a non-converting
+  // RT-as-texture bind). Returns false if the binding is invalid.
+  bool GetActiveTextureGuestInfo(uint32_t fetch_constant,
+                                 uint32_t* base_address_out,
+                                 VkFormat* host_format_unsigned_out) const;
+
   SamplerParameters GetSamplerParameters(
       const VulkanShader::SamplerBinding& binding) const;
 

@@ -733,6 +733,22 @@ VkImageView VulkanTextureCache::GetActiveBindingOrNullImageView(
   }
 }
 
+bool VulkanTextureCache::GetActiveTextureGuestInfo(
+    uint32_t fetch_constant, uint32_t* base_address_out,
+    VkFormat* host_format_unsigned_out) const {
+  // EDRAM-recompiler RT-as-texture (increment 1): same active binding lookup as
+  // CollectActiveTextureSourceRanges, exposing just the base address and the
+  // unsigned host format the RT-as-texture override needs to match.
+  const TextureBinding* binding = GetValidTextureBinding(fetch_constant);
+  if (!binding) {
+    return false;
+  }
+  *base_address_out = binding->key.base_page << 12;
+  *host_format_unsigned_out =
+      GetHostFormatPair(binding->key).format_unsigned.format;
+  return true;
+}
+
 VulkanTextureCache::SamplerParameters VulkanTextureCache::GetSamplerParameters(
     const VulkanShader::SamplerBinding& binding) const {
   const auto& regs = register_file();
