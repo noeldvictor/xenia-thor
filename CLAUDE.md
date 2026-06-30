@@ -5,11 +5,13 @@ Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno
 **TARGET = FULL-SPEED Xbox 360 emulation. Blue Dragon → locked 30fps at 720p with FULL default foliage**
 (the 360 ran it at 30; the Thor is 10-20× more powerful + the emulation needs only ~4× the 360 ⇒ full speed
 has large margin — see the ~4× budget below). Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
-improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) LLVM backend, the
-way forward: drive to FULL 100% opcode coverage (no a64 fallback) — user "we need LLVM FULL 100%"; (2) UMA
-zero-copy [FIXED + enabled default-on 2026-06-27, present-hang gone]; (3) CPU/GPU NEON [VMX→NEON, FP32
-dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver (the fast+correct path; the KGSL blocking-fence
-fix was the project's biggest win; lever = driver-level perf + Adreno features). Fix LLVM bugs as found.**
+improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) ⭐ AOT LLVM = THE CORE
+DIRECTION (user 2026-06-29): the ReXGlue / XenonRecomp model — STATIC AHEAD-OF-TIME recompilation, precompile
+the whole title to native, NO JIT/dispatch at gameplay (opcode coverage is already 100%; the work now is AOT +
+residency + direct calls — see the AOT bullet below); (2) UMA zero-copy [FIXED + enabled default-on 2026-06-27,
+present-hang gone]; (3) CPU/GPU NEON [VMX→NEON, FP32 dot=fmul+faddv]; (4) TURNIP — the Mesa/Adreno Vulkan driver
+(the fast+correct path; the KGSL blocking-fence fix was the project's biggest win; lever = driver-level perf +
+Adreno features). Fix LLVM bugs as found.**
 
 ### 🔑🔑 BD-30 APPROACH — read before any perf work (user, 2026-06-28)
 - **THE THOR IS 10-20× MORE POWERFUL THAN THE XBOX 360 → full-speed emulation IS the target + achievable.**
@@ -18,21 +20,43 @@ fix was the project's biggest win; lever = driver-level perf + Adreno features).
   foliage has LARGE margin. BD at ~5-8fps = a ~15-58× EMULATION INEFFICIENCY to CLOSE, NOT a hardware/foliage
   limit. NEVER conclude "can't hit 30 / GPU-capped / content too heavy / needs foliage thinning" — find the
   emulation inefficiency. The job = drive emulation overhead DOWN toward the ~4× budget.
-- **✅ BD FIELD FRAME DECOMPOSED (device isolation tests, 2026-06-29) — proves the target + names the levers.**
-  The 128ms village-field frame = **~24ms REAL rendering** (geometry/binning 16 + color-ROP/overdraw 8 — the
-  Thor renders BD's actual pixels FASTER than the 360's 33ms, so HARDWARE IS NOT THE LIMIT) **+ ~104ms pure
-  EMULATION OVERHEAD**: EDRAM tile store/load **~79ms** (the 360's free on-die EDRAM emulated as RAM
-  round-trips = 42 "feedback" ownership-transfers) + per-draw structure **~25ms** (1196 draws). That's ~58× vs
-  the ~4× target. **PATH TO 30 = cut the ~104ms emulation overhead toward ~9ms (over the 24ms real → 33ms).
-  #1 lever = the 79ms EDRAM tile I/O** (keep the feedback transfers GMEM-resident via input-attachment/subpass,
-  not RAM round-trips); #2 = the 25ms per-draw structure (per-draw bind/CP overhead — does NOT merge). Method:
-  `gpu_edram_passes_dont_care` (skip ALL tile I/O) is the CEILING probe → 128→49ms/19.8fps. **REFUTED dead-ends
-  (device-proven, DON'T re-chase): vertex/hw-fetch, VRS-stacking (subsumed by tile-I/O), renderArea-clamp,
-  dont_care_safe, skip_edram_transfers, depth-store-skip, pass-merge (flat), draw-merge (BD draws don't merge),
-  foliage thinning (overdraw is only ~8ms).** Full evidence: [[bd-edram-tile-io-bottleneck]].
-- **RPCS3 APPROACH = PRECOMPILE EVERYTHING AOT. Compile/boot time is IRRELEVANT** — do NOT optimize for it, do
-  NOT report it as a cost, do NOT gate features on it. The only thing that matters is EFFICIENT codegen running
-  during GAMEPLAY. (So residency's larger IR / slower compile is a non-problem: precompile it.)
+- **✅ BD FIELD = STRUCTURE-BOUND, not pixel-bound (CLEAN same-resolution isolation 2026-06-29 — supersedes the
+  earlier CONFOUNDED cross-run "24ms real + 79ms tile-I/O" decomposition).** The field is GPU-bound (CPU does
+  ~3ms then waits ~127ms on the GPU fence; 99% busy) AND **resolution-INVARIANT: 640px (480p) and 1280px (720p)
+  give IDENTICAL gpu_frame_us (~122ms)** ⇒ fragments / fill / overdraw / resolution / foliage-COVERAGE are all
+  FREE. Same-res single-cvar isolation: **`gpu_edram_passes_dont_care` (skip per-pass tile load/store) → 122→49ms,
+  so the per-pass GMEM tile-RESOLVE ≈ 74ms (60%); residual ≈49ms = binning (260k verts) + 1083 draws + 46
+  transfers.** The 74ms is **per-pass LATENCY, not bandwidth** (resolution-invariant; image+framebuffer clamp =
+  ~10% only) = ~42 render-to-texture passes × ~1.7ms FIXED resolve each. **Those 42 are BD's FIXED post-process
+  pipeline (bloom/blur/shadow/tonemap) that runs EVERY frame regardless of scene** — a sparse village is still
+  99% GPU because it pays the full pipeline. On the 360 these resolves were free (on-die EDRAM); the Adreno pays.
+- **BD-30 LEVERS (revised 2026-06-29):** (1) ⛔ the input-attachment / subpass MERGE is DEAD — proven 4 ways
+  (25/26 composites read a producer rendered several passes earlier = non-adjacent, can't stay GMEM-resident on a
+  TBDR; the 1 adjacent is in-place needing FSI/ROAV, ABSENT on Adreno 740). DON'T rebuild it. (2) ✅ image-alloc
+  clamp SHIPPED (`gpu_clamp_rt_image_height=768`, ~10%, f1836c559 — Turnip's storeOp follows the IMAGE not the
+  renderArea, so the old framebuffer clamp missed it). (3) ⭐ **USER-APPROVED 2026-06-29 ("lower bloom/blur is
+  acceptable") → THE big lever = REDUCE THE 42 POST-PROCESS PASSES.** Even gutting all post-process → ~15-20fps
+  (the DONT_CARE floor); locked-30 needs post-process reduction AND residual (binning/draw) cuts = a STACK.
+  FOLIAGE STAYS FULL (coverage is free — thinning is pointless AND forbidden). (4) residual = binning/draws.
+- **⛔ REFUTED dead-ends (device-proven CLEAN this session, DON'T re-chase): LRZ restore** (spike flat WITH the
+  now-functional opaque prepass — BD foliage is co-planar + 34% blended, nothing to occlude); **VRS** (fragments
+  free ⇒ its "−22%" was a scene confound; likely inert — re-verify or drop from BD's profile); resolution / SGSR /
+  render-low (pixels free); hw-vertex-fetch, FDM, UBWC, sysmem, renderArea-clamp, dont_care_safe, depth-store-skip,
+  input-attachment merge, foliage thinning. Full evidence: [[bd-resolution-invariant-structure-bound]] [[bd-edram-tile-io-bottleneck]].
+- **⭐⭐ AOT LLVM = THE CORE CPU DIRECTION (user mandate 2026-06-29). Model = ReXGlue / XenonRecomp + RPCS3:
+  PRECOMPILE EVERYTHING AHEAD OF TIME, zero JIT/dispatch at gameplay.** ReXGlue (github.com/rexglue/rexglue-sdk)
+  is a static PPC→C++→native `-O3` recompiler (Xenia/XenonRecomp lineage) — its whole speed comes from turning
+  guest regs into C++ locals the host compiler keeps in registers across the whole function, and direct native
+  calls with no dispatch. Adopt that here: **(a) precompile every guest function** (AOT object cache, started
+  123a6095a — push to addObjectFile / skip lowering); **(b) full register RESIDENCY** (guest regs as allocas at
+  entry → mem2reg → SSA → host regs, store back only at calls/exit — the #1 perf lever, currently partial);
+  **(c) DIRECT native calls** (inline-cache the guest call: resolve→direct machine_code, kill the ~13% helper +
+  thunk + virtual `Function::Call`); **(d) NEON for VMX.** Compile/boot time is IRRELEVANT — never optimize for
+  it, report it as a cost, or gate features on it; only GAMEPLAY codegen quality matters. Payoff: CPU-bound
+  titles (Burnout/Gears → 30) directly, and BD's HEAT/wattage → sustained GPU clock (BD field is GPU-bound, so
+  AOT lifts its SUSTAINED fps + smoothness, not its peak). OPEN BLOCKERS to make AOT the default BD backend: the
+  opt=2 residency crash (092eacdc3) + the LLVM-renders-BD-cyan codegen bug [[bd-llvm-postload-3d-cyan-bug]] —
+  fix forward. [[llvm-jit-backend-build]]
 - **✅ THE #1 INEFFICIENCY WAS THE BUILD ITSELF (-O0) — found+fixed 2026-06-28.** `githubDebug` mapped its
   native ndkBuild to PREMAKE config `Debug` = `optimize("Off")` = -O0, so the ENTIRE host emulator (CP, dispatch,
   kernel) ran UNOPTIMIZED — confounding EVERY prior BD perf number. Switched the debug variant's native config to
@@ -185,7 +209,7 @@ compounded: even a "stack" measurement is confounded unless it is the COMPLETE v
      device-validated "why"). **Cross-game win → flip `XeniaOptimizations` `defaultEnabled=true`.**
   2. **Frame cap per game = the title's NATIVE rate** via `gpu_frame_limit_fps` in its profile (BD / Gears / Lost
      Odyssey / Banjo = 30, Burnout Revenge = 60). **Resolution per game** via `kernel_display_resolution` (BD = 720p
-     — its heavy field is CPU/lock-bound so resolution is near-free; sharper image at ~same fps).
+     — its field is GPU-bound but RESOLUTION-INVARIANT/structure-bound, so 720p costs ~nothing over 480p; sharper).
   3. **REBUILD the APK and REINSTALL it.** The registry + profiles are Java — they DO NOT reach the device until the
      APK is repackaged and installed. A stale APK silently runs the OLD defaults = the silent-default-off confound,
      ON the device. (Root cause of the 10fps Burnout: the installed APK predated the default-on + fence-fix commits.)
@@ -244,8 +268,11 @@ Every win = a cvar-gated engine flag + a `XeniaOptimizations` registry entry (au
 Settings UI, auto-wires the cvar) + the cvar **allowlisted in `EmulatorActivity.java`** (copyBooleanExtra/
 copyIntExtra/copyStringExtra — REQUIRED or `--ez/--ei/--es` silently no-op). Default-off until validated;
 per-game defaults via the GameProfile system. Two tracks: CPU (codegen/JIT/locks — CPU-bound titles) + GPU
-(overdraw/draws/EDRAM — GPU-bound scenes). The BD bottleneck is currently UNRESOLVED (the prior verdicts
-were confounded — re-measure with single-run alternating before building a lever on it).
+(structure/EDRAM — GPU-bound scenes). **BD's bottleneck IS RESOLVED (clean 2026-06-29): the field is GPU-bound +
+STRUCTURE-bound (resolution-invariant) — ~74ms per-pass tile-resolve latency × 42 fixed post-process passes +
+~49ms binning/draws. The BD-30 lever is post-process-pass reduction (user-approved lower bloom) + residual cuts,
+NOT pixels/foliage/VRS. See [[bd-resolution-invariant-structure-bound]].** Still re-measure any NEW lever with a
+single-run / same-resolution single-cvar A/B (cross-run fps is noise) before building on it.
 
 ## Game patches
 `.patch.toml` (src/xenia/patcher/, in xenia-core): be8/16/32/64 writes into guest memory, matched by title_id
