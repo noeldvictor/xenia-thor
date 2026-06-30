@@ -245,11 +245,25 @@ AYN Thor, ADB `c3ca0370`. Snapdragon 8 Gen 2 (QCS8550), Android 13, ~16GB UMA. A
   @2.0GHz. NEON is the ONLY SIMD (no SVE). asimddp/i8mm/bf16 = int8/bf16 matrix (heuristics only, NEVER
   guest FP32 geometry — it black-screens, [[approx-math-guest-visible-vs-heuristics]]); fphp/asimdhp = FP16
   (pixel-shader only); flagm (NZCV flags), atomics (LSE locks), rcpc.
-- **GPU:** Adreno 740v2, TBDR, Vulkan 1.3, **Turnip (Mesa)** = the fast+correct driver path. On-chip GMEM =
+- **GPU:** Adreno 740v2, TBDR, Vulkan 1.3, **Turnip (Mesa) = the fast+correct driver path.** On-chip GMEM =
   the EDRAM-emulation target. SINGLE graphics+compute queue. LRZ early-Z (defeated by alpha-test/discard).
-  EDRAM resolves are per-pixel COMPUTE dispatches. Turnip exposes ~80 extensions, most unused (audit doc
-  docs/research/20260620-adreno-turnip-feature-gap-audit.md). Absent: fragment_shader_interlock,
-  external_memory_host, mesh shaders.
+  EDRAM resolves are per-pixel COMPUTE dispatches.
+- **🔌 DRIVER = custom Mesa Turnip 26.0 (K11MCH1 "v26.0.0 - R8" = `v26.0.0-rc08`, Vulkan 1.4.335), now BUNDLED
+  in-APK** (`assets/drivers/turnip.zip`, auto-installs first run via GpuDriverManager; commit daccaa604). The
+  whole stack depends on ITS extension set (the device-enumerated **156-extension** Turnip list, NOT the ~80/113
+  the old notes claimed). **⚠️⚠️ DRIVER TRAP — do NOT "update" to the newer-looking `Qualcomm Driver v840/v837`
+  in K11MCH1's repo: those are the PROPRIETARY QUALCOMM BLOB (113 ext), NOT Turnip — they are MISSING ROAA,
+  `dynamic_rendering_local_read`, `multisampled_render_to_single_sampled`, the whole EDRAM toolkit the reimagine
+  depends on, so "the newest release" is a DOWNGRADE for us.** R8/rc08 IS the latest + validated *Turnip*; treat
+  any driver swap as a deliberate, re-benchmarked change (a newer Mesa can regress/shift behavior). [[bd-edram-reimagine-and-recompiler]]
+- **Vulkan extensions (Turnip 26.0, from the 2026-06-30 EDRAM research) — PRESENT:** ROAA
+  (rasterization_order_attachment_access → ordered in-place programmable blend), dynamic_rendering_local_read,
+  attachment_feedback_loop_layout, multisampled_render_to_single_sampled ("free MSAA"), custom_resolve,
+  load_store_op_none + LAZILY_ALLOCATED/TRANSIENT_ATTACHMENT, external_memory_dma_buf, descriptor_buffer.
+  **ABSENT (the real walls):** fragment_shader_interlock (→ no unified EDRAM-as-one-buffer model), shader_tile_image,
+  QCOM_tile_shading/tile_memory_heap, external_memory_host, mesh shaders; + the TBDR LAW: cannot read an RT from
+  an EARLIER SEPARATE render pass (GMEM evicted) — the real "subpass-merge dead for BD" cause. Audit:
+  docs/research/20260620-adreno-turnip-feature-gap-audit.md.
 
 ## Build / deploy / run
 - Path has spaces → `subst X: "C:\Users\leanerdesigner\Documents\New project 8\xenia-thor"` for builds.
