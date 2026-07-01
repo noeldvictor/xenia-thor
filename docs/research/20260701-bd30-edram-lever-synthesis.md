@@ -98,8 +98,12 @@ composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-textur
     A composite-compute shader mirrors this but READS the producer address + WRITES the blended dest.
   - Compute-pipeline-over-EDRAM host template: `resolve_fsi_clear_32bpp_pipeline_` in vulkan_render_target_cache.cc
     (CreateComputePipeline + `descriptor_set_layout_storage_buffer_` + push consts) — mirror for the postproc pipeline.
-  - Toolchain: `xenia-gpu-shader-compiler` build target exists; `.xesl`->SPIR-V validated in a prior session
-    (`scratch/xesl_wrap_test.frag`/`.spv`). New `.xesl` -> `bytecode/vulkan_spirv/<name>_cs.h` (checked-in header).
+  - Toolchain (VERIFIED 2026-07-01): glslangValidator IS available (`/c/Program Files/RenderDoc/plugins/spirv/`).
+    BUT the `.xesl` macro framework (byte_buffer_align16_store16_xe, entry_bindings_begin_compute_xe, etc.) is
+    resolved by xenia's SHADER-PRECOMPILE build step (the `xenia-gpu-shader-compiler` target + premake), which
+    emits the committed `bytecode/vulkan_spirv/<name>_cs.h`. A standalone glslang call does NOT work (the
+    `scratch/xesl_wrap_test` probe fails on the framework includes). So adding a compute shader = author the
+    `.xesl` + run xenia's shader-precompile flow (multi-session setup, but confirmed-doable — the flow exists).
 - **Build order (next session, COOL device, validate each step on-device):** (a) pick ONE simple full-screen
   composite (tonemap), emit a compute variant, dispatch it into the EDRAM SSBO, confirm pixel-correct vs the
   render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
