@@ -147,6 +147,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // renders pass-less with no host-RT transfer/pass. Mirrors the kPixelShader-
   // Interlock branch of Update() while path_ stays host-RT.
   bool UpdateForHybridPostprocessComposite();
+  // Reset the post-process phase at frame end (from IssueSwap) so it spans exactly
+  // one frame's post-process run (not per-draw, which thrashed on BD's interleaved
+  // composites). The main scene of the NEXT frame re-owns its ranges host-side.
+  void ResetHybridPostprocessPhase() { hybrid_postprocess_phase_active_ = false; }
 
   VkBuffer edram_buffer() const { return edram_buffer_; }
 

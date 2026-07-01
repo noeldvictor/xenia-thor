@@ -1377,13 +1377,15 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
     resolve_edge.src_is_depth = resolve_is_depth;
     command_processor_.AddResolveCopyStats(resolve_edge);
-    // THE EDRAM SOLVE, hybrid form: once the post-process phase is active, EDRAM is
-    // buffer-authoritative (BeginHybridPostprocessPhase dumped the main scene +
-    // cleared ownership; composites write edram_buffer_ via FSI ROP), so SKIP the
-    // host-RT dump - the resolve-copy dispatch below already reads edram_buffer_.
-    // This is what removes the per-composite producer-sample pass-breaks.
-    if (GetPath() == Path::kHostRenderTargets &&
-        !hybrid_postprocess_phase_active_) {
+    // THE EDRAM SOLVE, hybrid form: DumpRenderTargets is inherently PER-RANGE - it
+    // only dumps ranges owned by a HOST render target. After BeginHybridPostprocess-
+    // Phase cleared ownership to buffer-authoritative, the composite ranges are
+    // buffer-owned so this dumps NOTHING for them (the resolve-copy reads
+    // edram_buffer_ = the composite's FSI output). Interleaved MAIN-scene draws
+    // re-own their ranges host-side (host-RT Update), so their ranges ARE dumped
+    // here (correct). No global phase gate needed - per-range ownership handles
+    // BD's interleaved composites + main-scene draws without thrashing.
+    if (GetPath() == Path::kHostRenderTargets) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.
       // TODO(Triang3l): Direct host render target -> shared memory resolve
@@ -1652,11 +1654,12 @@ bool VulkanRenderTargetCache::Update(
 
   switch (GetPath()) {
     case Path::kHostRenderTargets: {
-      // THE EDRAM SOLVE, hybrid form: a normal host-RT (main-scene) draw resets the
-      // post-process phase - it marks the start of the next frame's main scene
-      // (composites go through UpdateForHybridPostprocessComposite, not here). So
-      // the buffer-authoritative phase spans exactly one frame's post-process run.
-      hybrid_postprocess_phase_active_ = false;
+      // THE EDRAM SOLVE, hybrid form: an interleaved main-scene draw during the
+      // post-process phase re-owns its RT ranges host-side here (ChangeOwnership
+      // below), so its resolves dump correctly while composite ranges stay buffer-
+      // owned. The phase is NOT reset per-draw (that thrashed on BD's interleaved
+      // composites, re-bridging every cluster) - it resets once per frame at swap
+      // (ResetHybridPostprocessPhase from IssueSwap).
       RenderTarget* const* depth_and_color_render_targets =
           last_update_accumulated_render_targets();
 

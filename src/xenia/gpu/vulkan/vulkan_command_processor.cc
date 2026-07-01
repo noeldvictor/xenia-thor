@@ -2267,6 +2267,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  // THE EDRAM SOLVE, hybrid form: the guest swap ends the frame - reset the
+  // post-process phase so the next frame's main scene starts on host RTs and the
+  // first composite re-bridges once. (Per-frame, not per-draw = no thrash across
+  // BD's composites that are interleaved with main-scene draws.)
+  render_target_cache_->ResetHybridPostprocessPhase();
+
   // Lever 2 (vulkan_merge_draws): realize any pending concatenation run before
   // the frame's present/teardown work.
   FlushPendingMergeRun();
