@@ -1109,7 +1109,14 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
     }
     fsi_framebuffer_.host_extent.width = fsi_framebuffer_create_info.width;
     fsi_framebuffer_.host_extent.height = fsi_framebuffer_create_info.height;
-  } else {
+  } else if (path_ != Path::kHostRenderTargets) {
+    // The host-RT branch (path_ == kHostRenderTargets) is handled above at its
+    // own `if` and is a valid terminal path even when the FSI/hybrid branch does
+    // not run (hybrid_postprocess_ == false). Only a genuinely unhandled path
+    // (neither host-RT nor PSI) reaches here. Regression guard: when the FSI
+    // block was un-chained from the host-RT `if` into a standalone `if`, this
+    // trailing `else` was left bound to the FSI branch and rejected the DEFAULT
+    // host-RT + hybrid-off path via assert_unhandled_case (silent init failure).
     assert_unhandled_case(path_);
     Shutdown();
     return false;
