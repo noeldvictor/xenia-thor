@@ -261,6 +261,18 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
     by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
     correct per-pass/per-attachment elision).**
+  - **🚨🚨 INPASS=2 DECISIVE (2026-07-01): PASS-COUNT IS NOT THE LEVER EITHER.** inpass=2 (depth folding,
+    Turnip has EXT_shader_stencil_export) ENGAGES massively: inpass[x=34 skip_fmt=0 skip_oth=1], n[xfer]
+    35->24-25, TOTAL brackets 95->70 (25% pass-count cut), stable, UNHANDLED=0. **Frame UNCHANGED (~100ms;
+    drains [36.5,35.5]ms).** So the drains are INVARIANT to: pass count (95->70), barrier scope (90MB->4KB),
+    gmem-force, ops-elision (classes empty). ONLY dont_care (removing load/store VOLUME) collapses them
+    (33ms). The folded transfer passes were SMALL-attachment passes (320/160/400x768 per the coverage diag,
+    ~2-4MB round-trips = noise); the ~72ms volume lives in the BIG main-RT-sized attachments' load/stores.
+    NOTE: my bandwidth arithmetic persistently UNDER-predicts the measured cost 3-5x => the per-pass cost
+    model (2xMSAA sample planes, D32S8 two planes, UBWC meta, GMEM tile-walk latency, unclamped transfer
+    framebuffers?) is wrong somewhere big. NEXT INSTRUMENT (authoritative, next session): PERFETTO Adreno
+    GPU trace (per-surface load/store byte counters; gpu_perfetto_config.txt + prior pftrace exist in repo
+    root) to attribute the 72ms per-attachment/per-pass. inpass=2 itself = SAFE + free 25% pass cut; keep.
   - **🔍🔍 INCREMENT B(a) VERDICT (2026-07-01, per-pass coverage end-diagnostic): the full-coverage
     color-load-elision class has ~ZERO population on BD — CLOSED by measurement.** The end summaries show
     the captured passes are the bloom-pyramid levels (ext 320/160/400/720 x768) + the main 1280x768 pass;
