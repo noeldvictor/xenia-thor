@@ -2887,6 +2887,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_dc_safe_atts_ = 0;
     draw_outcomes_depth_none_passes_ = 0;
     draw_outcomes_retro_depth_none_ = 0;
+    draw_outcomes_retro_depth_none_diag_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -6006,12 +6007,33 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // gpu_vulkan_retro_depth_none: mark depth/stencil use of THIS draw in the now-
   // open pass. Placed AFTER the pass enter so the pass-OPENING draw's use is not
   // lost to the begin-capture reset. Uses the final normalized depth control
-  // (post foliage-LRZ overrides), i.e. what the draw actually does.
-  if (retro_depth_begin_pos_ != SIZE_MAX &&
-      (normalized_depth_control.z_enable ||
-       normalized_depth_control.z_write_enable ||
-       normalized_depth_control.stencil_enable)) {
-    retro_pass_depth_used_ = true;
+  // (post foliage-LRZ overrides), i.e. what the draw actually does. Refined
+  // predicate: z_enable with zfunc==ALWAYS and z_write off never touches the
+  // attachment (every fragment passes without a comparison read, nothing is
+  // written; in Vulkan depth writes require the test to be enabled AND
+  // depthWriteEnable) - such draws leave the pass eligible.
+  if (retro_depth_begin_pos_ != SIZE_MAX) {
+    bool draw_uses_depth =
+        (normalized_depth_control.z_enable &&
+         (normalized_depth_control.zfunc != xenos::CompareFunction::kAlways ||
+          normalized_depth_control.z_write_enable)) ||
+        normalized_depth_control.stencil_enable;
+    if (draw_uses_depth) {
+      retro_pass_depth_used_ = true;
+      // Diagnostic (throttled): why this pass will not be depth-elided - the
+      // first depth-using draw's control. Shows what BD's composite passes set.
+      if (draw_outcomes_retro_depth_none_diag_ < 12) {
+        ++draw_outcomes_retro_depth_none_diag_;
+        XELOGI(
+            "retro_depth_none: pass NOT eligible - draw z_en={} zfunc={} "
+            "z_wr={} stencil={} prim={} idx={}",
+            uint32_t(normalized_depth_control.z_enable),
+            uint32_t(normalized_depth_control.zfunc),
+            uint32_t(normalized_depth_control.z_write_enable),
+            uint32_t(normalized_depth_control.stencil_enable),
+            uint32_t(prim_type), index_count);
+      }
+    }
   }
 
   // gpu_hw_vertex_fetch: bind the shared-memory buffer as the Vulkan vertex

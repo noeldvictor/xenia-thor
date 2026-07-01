@@ -1063,6 +1063,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   VkFramebuffer retro_depth_framebuffer_ = VK_NULL_HANDLE;
   bool retro_pass_depth_used_ = false;
   uint32_t draw_outcomes_retro_depth_none_ = 0;
+  // Throttled why-not-eligible diagnostic count (reset per frame with the rest).
+  uint32_t draw_outcomes_retro_depth_none_diag_ = 0;
   // host_draws= telemetry: draw stats of completed submissions are folded into
   // the accumulator at Execute time (the per-recording stat zeroes on Reset);
   // the print marker turns the monotone total into a per-frame delta.
