@@ -154,5 +154,16 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
   synchronized against LIVE host-RT rendering, mid-frame on Turnip. `resolve_fsi_clear` only proved compute
   at FSI-resolve time on the FSI path; this proves it on the DEFAULT host-RT path. Once green on-device, the
   identity op is replaced by the real composite op (build order (a) above) — the plumbing is then done.
-- **Device validation = BD renders byte-identical with the cvar on** (script: mirror `bd_hybrid.ps1`, add
-  `--ez gpu_vulkan_compute_postprocess_probe true`, screenshot-compare to baseline). Pending a cool device.
+- **✅ DEVICE-VALIDATED (2026-07-01, commit c8ece5fc1).** BD, Turnip, full stack, cap=2, 720p
+  (`scratch/thor-debug/bd_compute_probe.ps1`): dispatch PROVEN engaged (heartbeat log "recorded identity
+  EDRAM dispatch #54000..#55800" — the cvar reaches C++ and the dispatch records, not early-returns), BD
+  renders pixel-correct (opening-credits village scene clean), UNHANDLED=0, no VK_ERROR, no init-fail —
+  robust across 54000+ dispatches in one session. **The dispatch + sync plumbing on the DEFAULT host-RT
+  path is DONE.** Next = brick 2 below.
+- **BRICK 2 (the fps lever, next):** replace the identity op with a REAL composite op. Concrete first cut:
+  pick ONE simple full-screen composite from BD's post-process (tonemap/copy), author its compute variant
+  (read the producer EDRAM address, write the blended dest into the EDRAM SSBO / present target), dispatch
+  it IN PLACE OF that composite's fragment draws (skip the render-to-texture pass for it), confirm
+  pixel-correct vs the render-pass version, then measure `brk_img_sr` drop + single-run A/B gpu time. That
+  removes real composite tile-I/O; extend to bloom-downsample (SPD) + the rest. The ceiling analysis above
+  says the full composite set moving to compute is plausibly sufficient for 30 when stacked with cap=2+VRS.
