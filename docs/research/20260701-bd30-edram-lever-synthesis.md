@@ -210,7 +210,39 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `2A0674C564A8A8C5` = 1-tap + tonemap (dp3/muls). `05775DE8A2B0B3F5` = DOF/bloom, log/exp + predicated
     multi-tap. All read via `tfetch2D` at INTERPOLATED `r0.xy` (NOT gl_FragCoord) => texcoord is TRANSFORMED,
     definitively confirming same-pixel input-attachments cannot express these (the compute rationale holds).
-- **🚨🚨 DECISIVE HEAVY-FIELD MEASUREMENT (2026-07-01, user-authorized 75C heat-danger run reached the
+- **🚨🚨🚨 BUFFER-PATH FORCED + MEASURED ON THE HEAVY FIELD (2026-07-01, gpu_vulkan_edram_atomic=true, racy
+  ROP) — MECHANISM PROVEN, but 4.7x SLOWER; the real blocker is per-pass SSBO SYNC, not correctness.** Forced
+  the whole scene through the single EDRAM SSBO. Results (heavy field, 6 frames):
+  - **✅ Ownership transfers ELIMINATED BY CONSTRUCTION: `n[xfer]` 35 -> 0, `gap_xfer` ~78ms -> 0.** The
+    ~80ms-tile-I/O prediction's transfer half is confirmed removed exactly as reasoned.
+  - **✅ RENDERS BD RECOGNIZABLY** (windmill/tower, character, rocks, "Microsoft Game Studios Presents"),
+    ONE white-box race artifact (missing atomicMin depth/blend ordering — the racy path; atomicMin/task #31
+    would clean it). Boots, UNHANDLED=0, no device-lost. So the buffer path is REAL and close-to-correct.
+  - **🚨 BUT 4.7x SLOWER: `gpu_frame_us` 98ms -> 466ms; `gap_guest` 1-40ms -> ~450ms.** With no hardware FSI,
+    ordering still forces ~20 guest passes (n[guest]=20) and a full-buffer barrier/flush on the 90MB EDRAM
+    SSBO between each => ~450ms of GPU sync (gpu_busy=99%, real). The software-ROP/sync cost DWARFS the ~78ms
+    tile-I/O it removed. This MEASURES + CONFIRMS the memory's old unproven guess "full buffer path likely
+    LOSES to software ROP" and is why xenia ships host-RT ("FSI path much slower").
+  - **⭐ KEY REDIRECT: atomicMin (task #31) fixes CORRECTNESS (the white box) but NOT the 450ms — it would
+    yield a correct-but-4.7x-slower frame. The REAL problem to solve first is the per-pass SSBO barrier/sync
+    cost (~450ms / ~20 passes ≈ 22ms per pass-barrier on 90MB).** So do NOT build atomicMin next. Next lever =
+    kill the inter-pass barrier cost: (a) SCOPE each barrier to only the EDRAM byte-range the pass touches
+    (not the whole 90MB), (b) MERGE passes so there are far fewer barriers, (c) investigate whether the racy
+    path even NEEDS a barrier between non-overlapping passes. The measurement saved the multi-session atomic
+    build from producing a correct-but-useless result. Instrumentation + `scratch/thor-debug/
+    bd_edram_atomic_measure.ps1` reusable. Screenshot: scratch/thor-debug/bd_edram_atomic.png.
+  - **⭐ ROOT CAUSE of the 450ms LOCATED (device-free): `CommitEdramBufferShaderWrites` (vulkan_render_target_
+    cache.cc:3015) places a barrier on the ENTIRE 90MB EDRAM buffer `PushBufferMemoryBarrier(edram_buffer_,
+    0, VK_WHOLE_SIZE, ...)` as a SHADER_WRITE->SHADER_READ, ~20x/frame (once per guest pass commit). Each is
+    a full-buffer cache flush + full pass-to-pass serialization (pass N+1 waits for ALL of pass N) => ~22ms x
+    20 ≈ 450ms.** THE NEXT LEVER (the actual BD-30 path now): cut this barrier cost, three angles, cheapest
+    first — (a) SCOPE the barrier to only the EDRAM byte-range each pass actually touches (its RT tile range),
+    not 0..WHOLE_SIZE, so the driver flushes/serializes less; (b) ELIDE the barrier entirely between passes
+    that don't ALIAS in EDRAM (independent RTs need no ordering) — likely the big win since most of BD's 20
+    passes write disjoint EDRAM regions; (c) MERGE passes (the original one-pass vision). Build (b)+(a) as a
+    cvar, re-run bd_edram_atomic_measure.ps1, watch gap_guest fall from 450ms. If gap_guest drops below the
+    ~78ms it replaced, the buffer path becomes a NET WIN and atomicMin (task #31) then makes it correct.
+- **DECISIVE HEAVY-FIELD MEASUREMENT (2026-07-01, user-authorized 75C heat-danger run reached the
   ~98.5ms field) — REDIRECTS THE WHOLE STRATEGY. Brick 2 (composites) is a ~2% lever; the REAL ~80% is the
   EDRAM ownership-TRANSFER + geometry-RT deferred tile-I/O.** Heavy field confirmed (gpu_frame_us≈98500,
   n[composite=20 xfer=35 guest=15-17], stable x6). Per-kind GPU time (us):
