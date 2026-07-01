@@ -1377,7 +1377,13 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
     resolve_edge.src_is_depth = resolve_is_depth;
     command_processor_.AddResolveCopyStats(resolve_edge);
-    if (GetPath() == Path::kHostRenderTargets) {
+    // THE EDRAM SOLVE, hybrid form: once the post-process phase is active, EDRAM is
+    // buffer-authoritative (BeginHybridPostprocessPhase dumped the main scene +
+    // cleared ownership; composites write edram_buffer_ via FSI ROP), so SKIP the
+    // host-RT dump - the resolve-copy dispatch below already reads edram_buffer_.
+    // This is what removes the per-composite producer-sample pass-breaks.
+    if (GetPath() == Path::kHostRenderTargets &&
+        !hybrid_postprocess_phase_active_) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.
       // TODO(Triang3l): Direct host render target -> shared memory resolve
@@ -1646,6 +1652,11 @@ bool VulkanRenderTargetCache::Update(
 
   switch (GetPath()) {
     case Path::kHostRenderTargets: {
+      // THE EDRAM SOLVE, hybrid form: a normal host-RT (main-scene) draw resets the
+      // post-process phase - it marks the start of the next frame's main scene
+      // (composites go through UpdateForHybridPostprocessComposite, not here). So
+      // the buffer-authoritative phase spans exactly one frame's post-process run.
+      hybrid_postprocess_phase_active_ = false;
       RenderTarget* const* depth_and_color_render_targets =
           last_update_accumulated_render_targets();
 
@@ -1816,6 +1827,42 @@ bool VulkanRenderTargetCache::Update(
   }
 
   return true;
+}
+
+bool VulkanRenderTargetCache::UpdateForHybridPostprocessComposite() {
+  // THE EDRAM SOLVE, hybrid form: RT update for a post-process composite - the FSI
+  // (edram_buffer_/SSBO) representation, mirroring the kPixelShaderInterlock branch
+  // of Update(), while path_ stays host-RT. The composite renders PASS-LESS into
+  // edram_buffer_ via the 0-attachment FSI render pass (no host-RT transfer/pass),
+  // so it does not break the tiler. Ownership is already buffer-authoritative
+  // (BeginHybridPostprocessPhase), so producer resolves read edram_buffer_.
+  auto rb_surface_info = register_file().Get<reg::RB_SURFACE_INFO>();
+  RenderPassKey render_pass_key;
+  render_pass_key.msaa_samples =
+      draw_util::ClampForcedMsaaSamples(rb_surface_info.msaa_samples);
+  UseEdramBuffer(EdramBufferUsage::kFragmentReadWrite);
+  CommitEdramBufferShaderWrites(EdramBufferModificationStatus::kViaUnordered);
+  MarkEdramBufferModified(
+      EdramBufferModificationStatus::kViaFragmentShaderInterlock);
+  last_update_render_pass_key_ = render_pass_key;
+  last_update_render_pass_ = fsi_render_pass_;
+  last_update_framebuffer_ = &fsi_framebuffer_;
+  return true;
+}
+
+void VulkanRenderTargetCache::BeginHybridPostprocessPhase() {
+  // THE EDRAM SOLVE, hybrid form: the first post-process composite of the frame.
+  // Bridge the main-scene host RTs INTO edram_buffer_ (a full-EDRAM dump - the one
+  // unavoidable host->buffer transfer), then hand EDRAM ownership to the buffer so
+  // every subsequent composite resolve reads edram_buffer_ (not the host images)
+  // and the composites chain coherently with NO render-to-texture pass-breaks.
+  // The command processor ends the open host render pass before calling this.
+  if (hybrid_postprocess_phase_active_) {
+    return;
+  }
+  DumpRenderTargets(0, xenos::kEdramTileCount, 1, xenos::kEdramTileCount);
+  ClearOwnershipForEdramBufferAuthoritative();
+  hybrid_postprocess_phase_active_ = true;
 }
 
 VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(

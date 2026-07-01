@@ -132,6 +132,21 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // composites through the EDRAM-buffer/SSBO ROP while the main scene keeps
   // host-RT GMEM ROP. True only on the host-RT path with the cvar enabled.
   bool hybrid_postprocess() const { return hybrid_postprocess_; }
+  // Active once the first post-process composite of the frame has begun (the
+  // main-scene host RTs have been bridged into edram_buffer_ and EDRAM ownership
+  // handed to the buffer). While active, resolves/clears and RT-as-texture use
+  // edram_buffer_, not the host RT images. Reset at frame/submission start.
+  bool hybrid_postprocess_phase_active() const {
+    return hybrid_postprocess_phase_active_;
+  }
+  // Enter the post-process phase: bridge the current main-scene host RTs into
+  // edram_buffer_ (DumpRenderTargets) and clear EDRAM ownership to buffer-
+  // authoritative, so subsequent composite resolves read edram_buffer_.
+  void BeginHybridPostprocessPhase();
+  // RT update for a composite draw: the FSI (edram_buffer_) representation, so it
+  // renders pass-less with no host-RT transfer/pass. Mirrors the kPixelShader-
+  // Interlock branch of Update() while path_ stays host-RT.
+  bool UpdateForHybridPostprocessComposite();
 
   VkBuffer edram_buffer() const { return edram_buffer_; }
 
@@ -375,6 +390,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // Set at Initialize; the path selection below stays kHostRenderTargets - this
   // flag only enables the per-draw composite rerouting (built incrementally).
   bool hybrid_postprocess_ = false;
+  // Set once the first composite of the frame bridges the main scene into
+  // edram_buffer_ (BeginHybridPostprocessPhase); reset at frame/submission start.
+  bool hybrid_postprocess_phase_active_ = false;
 
   // Accessible in fragment and compute shaders.
   VkDescriptorSetLayout descriptor_set_layout_storage_buffer_ = VK_NULL_HANDLE;

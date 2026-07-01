@@ -610,6 +610,12 @@ class RenderTargetCache {
   // EDRAM memory are committed with a memory barrier.
   void PixelShaderInterlockFullEdramBarrierPlaced();
 
+  // THE EDRAM SOLVE, hybrid form: hand all EDRAM ownership to the edram_buffer_
+  // (clear ownership_ranges_ to one empty full-EDRAM range, so no host RT owns any
+  // EDRAM), after the main scene has been dumped into the buffer. Subsequent
+  // composite resolves then read edram_buffer_ instead of the host RT images.
+  void ClearOwnershipForEdramBufferAuthoritative();
+
  private:
   const RegisterFile& register_file_;
   uint32_t draw_resolution_scale_x_;

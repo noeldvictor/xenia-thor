@@ -551,6 +551,19 @@ void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
 
 void RenderTargetCache::ShutdownCommon() { DestroyAllRenderTargets(true); }
 
+void RenderTargetCache::ClearOwnershipForEdramBufferAuthoritative() {
+  // THE EDRAM SOLVE, hybrid form: after the main scene is dumped into
+  // edram_buffer_, reset ownership to one empty full-EDRAM range so no host RT
+  // owns any EDRAM. Keeps the render targets alive (unlike DestroyAllRenderTargets)
+  // - only the ownership map is reset, matching the buffer-authoritative state the
+  // full kPixelShaderInterlock path runs in.
+  ownership_ranges_.clear();
+  ownership_ranges_.emplace(
+      std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
+      std::forward_as_tuple(xenos::kEdramTileCount, RenderTargetKey(),
+                            RenderTargetKey(), RenderTargetKey()));
+}
+
 void RenderTargetCache::ClearCache() {
   // Keep only render targets currently owning any EDRAM data.
   if (!render_targets_.empty()) {

@@ -5222,7 +5222,21 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     rt_t0 = std::chrono::steady_clock::now();
   }
   bool rt_update_ok;
-  if (cvars::vulkan_gate_rt_update) {
+  if (hybrid_current_draw_composite_) {
+    // THE EDRAM SOLVE, hybrid form: a post-process composite renders PASS-LESS into
+    // edram_buffer_. On the FIRST composite of the frame, end the open host render
+    // pass, bridge the main scene INTO edram_buffer_ + hand EDRAM ownership to the
+    // buffer (BeginHybridPostprocessPhase); then use the FSI (edram_buffer_) RT
+    // update so this + every following composite has NO host-RT transfer/pass and
+    // resolves its producer FROM edram_buffer_ (no producer-sample pass-break).
+    // Bypasses the host-RT gate/Update entirely.
+    if (!render_target_cache_->hybrid_postprocess_phase_active()) {
+      EndRenderPass();
+      render_target_cache_->BeginHybridPostprocessPhase();
+    }
+    rt_update_ok = render_target_cache_->UpdateForHybridPostprocessComposite();
+    rt_gate_valid_ = false;
+  } else if (cvars::vulkan_gate_rt_update) {
     // Skip the redundant per-draw RenderTargetCache::Update when the RT config
     // is byte-identical to the last real Update AND the render pass is still
     // open. A pass break, EDRAM transfer, or frame/submission boundary nulls
