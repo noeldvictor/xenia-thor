@@ -309,6 +309,17 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
       a BD-profile CANDIDATE pending a side-by-side quality judgment; the underlying bloom artifact is a
       PRE-EXISTING baseline bug worth its own hunt. Also: noubwc globally = timing-neutral on BD (UBWC not a
       perf factor here).
+  - **🚨🚨 RESOLUTION-INVARIANCE DOGMA VOIDED (2026-07-01, 480p + trace): `kernel_display_resolution 480p`
+    does NOT change BD's render passes — the trace shows the IDENTICAL 720x768 CPP=16 main config and
+    identical timing (~95.6ms). The cvar changes the display/window mode, not the guest's internal render
+    size (BD renders 1280x720 regardless).** So every historic "resolution-invariant => structure-bound /
+    pixels-are-free" conclusion (2026-06-29 cornerstone) tested NOTHING — the resolution lever is UNTESTED,
+    and the evidence now re-coheres PIXEL-side: cap=1 −42% (sample/ROP), VRS −22% (shading rate), fp10 −8ms
+    real (bytes/fragment). The main pass's 36.6ms is substantially sample/ROP/fragment-bound. Actual
+    render-resolution reduction (guest surface downscale a la draw_resolution_scale-but-DOWN, or internal
+    0.75x with SGSR upscale) = an untested major lever; requires RT-cache scale rearch (authorized). Also
+    note: the main pass reports WIDTH=720 (x768) not 1280-wide — axes/pitch semantics worth checking in
+    tu trace vs the guest 1280x720 surface.
   - **🎯 LEVER 2: attribute + cut the ~54ms un-bracketed drain** (WFI per barrier? CP? preemption?). Tools:
     TU_DEBUG_FILE runtime toggles, TU_DEBUG=flushall/no_concurrent_binning perturbation, perfetto counters.
   - Trace tooling now permanent: bd_gputrace.ps1 + the parse snippets; MESA_GPU_TRACES via
