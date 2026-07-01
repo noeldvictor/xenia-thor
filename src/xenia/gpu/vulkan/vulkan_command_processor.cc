@@ -2386,6 +2386,13 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               // pass vs resolve-copy / clear / host-depth-store compute dispatch).
               uint64_t kind_ticks[uint32_t(GpuPassKind::kCount)] = {};
               uint32_t kind_count[uint32_t(GpuPassKind::kCount)] = {};
+              // Deferred TBDR tile store/render lands in the GAP after each pass
+              // (not inside the bracket, which is only the pass's draw/shade
+              // time). Attribute each gap to the PRECEDING pass's kind so
+              // gap_by_kind[kGuestComposite] = the composite passes' deferred
+              // tile-I/O = brick 2's true ceiling (compute writes the dest
+              // directly, removing exactly this).
+              uint64_t gap_ticks_by_kind[uint32_t(GpuPassKind::kCount)] = {};
               for (uint32_t i = 0; i < n; ++i) {
                 if (pts[2u * i + 1u] > pts[2u * i]) {
                   uint64_t span_ticks = pts[2u * i + 1u] - pts[2u * i];
@@ -2400,6 +2407,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                 if (i + 1u < n && pts[2u * (i + 1u)] > pts[2u * i + 1u]) {
                   uint64_t one_gap_ticks = pts[2u * (i + 1u)] - pts[2u * i + 1u];
                   gap_ticks += one_gap_ticks;
+                  uint8_t pk = gap_snap_begin_[best_slot][i].kind;
+                  if (pk < uint8_t(GpuPassKind::kCount)) {
+                    gap_ticks_by_kind[pk] += one_gap_ticks;
+                  }
                   top3_insert(top_gap, one_gap_ticks);
                   if (one_gap_ticks > top_gap_ticks) {
                     top_gap_ticks = one_gap_ticks;
@@ -2490,9 +2501,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               // remaining gap_us after subtracting rcopy/clrd/hds is the TBDR
               // deferred tile store/render of the preceding pass.
               if (cvars::gpu_trace_resolve_timing) {
+                // gap_* = deferred TBDR tile store/render attributed to the
+                // preceding pass kind. gap_composite = brick 2's measured ceiling
+                // (the composite passes' tile-I/O, removed by composite->compute);
+                // gap_guest = the geometry passes' tile-I/O (the residual).
                 XELOGI(
                     "GPU pass kinds (us): guest={} composite={} xfer={} rclear={} "
-                    "rcopy={} clrd={} hds={} n[guest={} composite={} xfer={} "
+                    "rcopy={} clrd={} hds={} gap_composite={} gap_guest={} "
+                    "gap_xfer={} gap_total={} n[guest={} composite={} xfer={} "
                     "rclear={} rcopy={} clrd={} hds={}]",
                     uint64_t(double(kind_ticks[uint32_t(GpuPassKind::kGuest)]) *
                              tick_us),
@@ -2514,6 +2530,16 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                     uint64_t(double(kind_ticks[uint32_t(
                                  GpuPassKind::kHostDepthStoreDispatch)]) *
                              tick_us),
+                    uint64_t(double(gap_ticks_by_kind[uint32_t(
+                                 GpuPassKind::kGuestComposite)]) *
+                             tick_us),
+                    uint64_t(
+                        double(gap_ticks_by_kind[uint32_t(GpuPassKind::kGuest)]) *
+                        tick_us),
+                    uint64_t(double(gap_ticks_by_kind[uint32_t(
+                                 GpuPassKind::kEdramTransfer)]) *
+                             tick_us),
+                    uint64_t(double(gap_ticks) * tick_us),
                     kind_count[uint32_t(GpuPassKind::kGuest)],
                     kind_count[uint32_t(GpuPassKind::kGuestComposite)],
                     kind_count[uint32_t(GpuPassKind::kEdramTransfer)],
