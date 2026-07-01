@@ -176,3 +176,23 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
   confirm same-pixel vs transformed), emit its compute variant, dispatch in place of its fragment draws,
   confirm pixel-correct, measure the `brk_img_sr` drop + single-run A/B. Removing 28/42 breaks is the bulk of
   the ~74ms tile-I/O; stacked with cap=2 (+VRS) the ceiling analysis says that is plausibly sufficient for 30.
+- **⭐ BRICK 2 COMPOSITE INVENTORY (2026-07-01, per-composite IMG_SR-break detail, BD field) — the authoring
+  spec.** 16 distinct composite pixel shaders drive the 28 rtfc breaks (all consumer `prim=13 host_verts=6`
+  quads or `prim=8 host_verts=3` tris; `oldlayout` 2=COLOR/3=DEPTH -> `newlayout` 5=SHADER_READ). Ranked by
+  frequency, split by blend mode:
+  - **OPAQUE `blendctl0=00010001` (src=ONE dst=ZERO = replace, NO dest read) — the simple majority, do FIRST:**
+    `2E372EA28CC404B7` (top, prim8/3v, cm=000F), `1B132051B5504DA9` (prim13/6v), `1E70EB9513D670C9` (prim13/6v),
+    `2A0674C564A8A8C5`, `0ABADD9DA4373CBA`, `05775DE8A2B0B3F5` (prim13/6v family, shared `vs_hash=A3431D6AB36AB469`).
+    These are read-producer -> ALU -> write-dest, NO read-modify-write => trivially a compute store (no atomics,
+    no blend). dst is `dst_color0_info=00030000` (RB_COLOR_INFO: base=0, fmt=3). This class is the first target.
+  - **BLENDED `blendctl0=07060706` (src_alpha / inv_src_alpha = needs dest read+blend) — do LATER:**
+    `9567C79307ACC6F5` (cm=000F), `5E6B8038D6E50B65` (cm=0007), `EE2DB831D964AFCA`. Compute must read dest from
+    the SSBO, blend, write back (still no render pass; just a heavier op).
+  - `ps_hash=0000000000000000` (14k samples) = depth-only / clear draws (cm=0000, fscomp=0) — NOT composites, ignore.
+  - Producer `producer_img` ptrs repeat across a ~dozen RTs (0x76374f1470, 0x7637501c60, 0x76374fcf20, ...) =
+    the bloom/blur pyramid ping-pong. Next data needed (COOL device): `--dump_shaders` to get `2E37..B7`'s guest
+    microcode + texcoord (confirm same-pixel vs transformed) + map `producer_img` -> EDRAM base/pitch/fmt via the
+    RT-cache image map. Then hand-author that ONE opaque composite's compute variant, intercept its draw, dispatch,
+    validate pixel-correct + measure brk_img_sr 42->~41 (proof-of-concept for the class), then generalize.
+  - NOTE: consumer-draw SKIPS are already device-proven INERT (memory: xenia has no lazy-resolve; the pass runs
+    with 0 draws), so the ONLY lever is REPLACEMENT-by-compute, not skipping.
