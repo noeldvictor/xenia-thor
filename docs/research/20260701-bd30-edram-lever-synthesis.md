@@ -242,6 +242,20 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     passes write disjoint EDRAM regions; (c) MERGE passes (the original one-pass vision). Build (b)+(a) as a
     cvar, re-run bd_edram_atomic_measure.ps1, watch gap_guest fall from 450ms. If gap_guest drops below the
     ~78ms it replaced, the buffer path becomes a NET WIN and atomicMin (task #31) then makes it correct.
+  - **🚫 DIAGNOSTIC RESULT (2026-07-01, gpu_edram_atomic_barrier_bytes=4096): scoping the barrier 90MB->4KB
+    changed NOTHING — gap_guest stayed ~447ms, gpu_frame_us ~468ms (6 frames). The cost is NOT the cache flush;
+    it is pipeline SERIALIZATION / deferred software-ROP fragment execution (per-fragment atomic-less depth+
+    color RMW over BD's overdraw runs in the TBDR deferred phase = the "gap"). Barrier optimization CANNOT fix
+    it. => THE FULL BUFFER PATH IS DEAD FOR BD's HEAVY FIELD: removes ~78ms transfer tile-I/O, adds ~450ms
+    software-ROP/serialization = 4.7x net LOSS. MEASURED + CLOSED (vindicates xenia shipping host-RT; confirms
+    "software ROP loses on overdraw"). Do NOT build atomicMin (task #31) / global buffer path for BD.**
+  - **⭐ WHERE BD-30 ACTUALLY IS (host-RT is the 4.7x-faster base; its ~80ms tile-I/O is the target):** ~80ms =
+    gap_xfer (~40-78ms EDRAM ownership transfers = RT<->EDRAM copies when guest RTs alias tiles) + gap_guest
+    (~1-40ms geometry RT deferred stores). Lever = REDUCE those ON host-RT, NOT switch storage model: (1) cut
+    OWNERSHIP TRANSFERS (big chunk) — keep more RTs simultaneously resident so tile-alias ownership changes
+    don't force copies, and/or reorder passes to minimize ownership flips (task #28); (2) reduce PASS COUNT.
+    Buffer path AND composite-compute are both now closed by measurement; the live EDRAM lever = host-RT
+    ownership-transfer / pass-count reduction.
 - **DECISIVE HEAVY-FIELD MEASUREMENT (2026-07-01, user-authorized 75C heat-danger run reached the
   ~98.5ms field) — REDIRECTS THE WHOLE STRATEGY. Brick 2 (composites) is a ~2% lever; the REAL ~80% is the
   EDRAM ownership-TRANSFER + geometry-RT deferred tile-I/O.** Heavy field confirmed (gpu_frame_us≈98500,
