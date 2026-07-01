@@ -8779,7 +8779,14 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
       }
     }
   }
-  if (edram_fragment_shader_interlock && depth_stencil_enabled) {
+  // THE EDRAM SOLVE, hybrid form: a full-screen post-process composite overwrites
+  // the whole pixel, so it doesn't need the FSI depth/stencil ROP (which on the
+  // interlock path is the slow, in-shader, no-early-Z per-sample work the research
+  // flags as the ROP tax). Skip it for composites to cut the composite software-ROP
+  // overhead. Gated on hybrid_current_draw_composite_ (default off); no effect on
+  // composites that already run depth-off. Measure the delta next session.
+  if (edram_fragment_shader_interlock && depth_stencil_enabled &&
+      !hybrid_current_draw_composite_) {
     flags |= SpirvShaderTranslator::kSysFlag_FSIDepthStencil;
     if (normalized_depth_control.z_enable) {
       flags |= uint32_t(normalized_depth_control.zfunc)
