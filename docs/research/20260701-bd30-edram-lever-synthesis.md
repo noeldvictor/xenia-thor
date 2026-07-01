@@ -261,6 +261,17 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
     by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
     correct per-pass/per-attachment elision).**
+  - **PROGRESS LOG (2026-07-01, increment A built + device-tested twice):** (1) `gpu_vulkan_retro_depth_none`
+    SHIPPED (default-off): hindsight depth elision at pass end via recorded-begin patch — mechanically
+    CORRECT on device (retro_dn=2 patched, renders pixel-correct, UNHANDLED=0) but ENGAGEMENT-LIMITED: only
+    the same 2 passes the begin-time version caught => BD's composites set depth state; A2 (zfunc==ALWAYS
+    refinement + why-not-eligible diagnostic) built, validation pending. (2) `mesa.tu.debug=gmem` (force
+    GMEM) = NULL (gaps/frame unchanged) => autotuner-sysmem hypothesis REFUTED, passes already GMEM. (3)
+    RECONCILED MODEL: the two giant gaps are DRAIN points where the ~42 small passes' ACCUMULATED deferred
+    tile load/store executes (small-pass timestamps retire early; the main pass's VSC serialization forces
+    the drain) — consistent with dont_care collapsing them, gmem-force not, and the aggregate bandwidth math
+    (~2-2.6GB/frame at ~30GB/s ≈ 70-87ms). The elision target is therefore ALL passes' load/store aggregate,
+    attributed by the drain, not per-pass timestamps.
   - **⭐⭐ THE BUILD (the goal's "major rearch", now with a measured 59ms payoff): SUBMIT-TIME FRAME-GRAPH
     LOAD/STORE RECOMPILER.** xenia records the WHOLE frame deferred before vkQueueSubmit, and patching a
     recorded BeginRenderPass is PROVEN in-tree (feedback-merge: feedback_producer_begin_pos_ +
