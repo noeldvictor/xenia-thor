@@ -222,3 +222,25 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
   cheaper INTERMEDIATE that IS independently shippable: keep producers as GMEM-RESIDENT storage images and
   have the compute consumer read them as storage images (no render-pass-to-texture transition) — worth a
   feasibility check next, on a cool device, starting from the 1E70 copy.
+- **⭐ COUPLING RESOLVED — the win + metric CORRECTED (2026-07-01, reasoned from ALU + TBDR hardware fact).**
+  Worked the tile-I/O accounting through precisely. Hardware fact: on a TBDR (Adreno/Turnip) a COMPUTE
+  dispatch does NOT use the tiling/GMEM/binning path — it reads/writes DRAM images & buffers directly (this
+  is why xenia's EDRAM resolves are already compute dispatches). Therefore for a composite consumer C (reads
+  producer P as texture tf0, writes dest D):
+  - As a FRAGMENT draw in its own render pass: (1) P must be stored to DRAM to be sampled = the brk_img_sr
+    (P ATTACHMENT->SHADER_READ); (2) C's render pass LOADS D's tiles, renders, STORES D's tiles.
+  - As a COMPUTE dispatch: (1) P still stored (unchanged); (2) compute samples P and writes D straight to a
+    DRAM storage image — **NO render-pass tile load/store for D at all.**
+  - So converting C to compute REMOVES D's tile load+store (~a tile-resolve's worth), and for a CHAIN
+    (blur pyramid P->C1->C2->C3: the 13-tap 1B13 + friends) it removes ALL the intermediate stores+loads —
+    each Di is compute-written to DRAM and compute-read by the next, zero render-pass tile-I/O across the chain.
+    The initial P store stays (that's the residual brk_img_sr; removing it needs the producer-SSBO buffer path).
+  - **TWO corrections to my own earlier plan: (a) the SUCCESS METRIC is `gpu_frame_us` (single-run A/B), NOT
+    `brk_img_sr` — the break count barely moves (P stores remain) while the TIME drops as D/chain tile-I/O
+    vanishes; measuring brk_img_sr would have made a real win look like a failure. (b) The producer-writes-SSBO
+    (full buffer path) is NOT required for this first win — compute can sample P as a normal texture and write
+    D as a storage image. So brick 2's first win is SIMPLER and independently shippable; the buffer path is a
+    LATER increment that removes the remaining P stores.** Biggest bang = the multi-pass blur CHAINS, not the
+    single 1E70 copy. Next-session build: compute-target mode in SpirvShaderTranslator (gl_FragCoord->
+    GlobalInvocationID, oC0 export->storage-image store, tfetch stays a normal sampledImage read), intercept
+    the composite consumer draws, dispatch, validate pixel-correct + measure gpu_frame_us single-run A/B.
