@@ -163,6 +163,26 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_retro_depth_none, false,
+    "Frame-graph load/store recompiler, increment A (Thor/TBDR, BD-30): "
+    "RETROACTIVE depth load/store elision. At guest render pass END, if "
+    "hindsight shows NO draw in the pass enabled depth test/write or stencil, "
+    "PATCH the already-recorded BeginRenderPass to the depth loadOp=DONT_CARE + "
+    "storeOp=NONE variant (STORE_OP_NONE preserves the depth memory the pass "
+    "never accessed; load/store ops do not affect Vulkan render pass "
+    "compatibility, so the recorded framebuffer and pipelines stay valid). "
+    "Catches EVERY depth-untouched post-process/composite/segment pass, unlike "
+    "gpu_vulkan_skip_unused_depth_store which decides pessimistically at pass "
+    "BEGIN from the opening draw only (and must break the pass on a depth draw; "
+    "the retro form never breaks - it simply does not patch). Skips the "
+    "oversized 2xMSAA depth tile load+store per elided pass (the dont_care "
+    "budget measurement attributes ~59ms/frame to BD's total pass load/store "
+    "traffic). Skipped when the LRZ depth-clear spike, in-pass EDRAM transfers, "
+    "or the opaque depth prepass are active (those write depth outside the "
+    "draws' RB_DEPTHCONTROL). Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_feedback_merge, false,
     "BD-30 GPU lever (WIP, input-attachment / GMEM-residency merge): when a guest "
     "render-to-texture composite samples the just-rendered producer RT at its own "

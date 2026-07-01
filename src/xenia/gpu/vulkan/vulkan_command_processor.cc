@@ -1711,6 +1711,9 @@ void VulkanCommandProcessor::ShutdownContext() {
   // patch -> heap corruption). Invalidate it together with the stream.
   feedback_producer_begin_pos_ = SIZE_MAX;
   feedback_merge_active_ = false;
+  // gpu_vulkan_retro_depth_none: same invalidation for the retro depth-none
+  // captured begin position.
+  retro_depth_begin_pos_ = SIZE_MAX;
   for (const auto& command_buffer_pair : command_buffers_submitted_) {
     dfn.vkDestroyCommandPool(device, command_buffer_pair.second.pool, nullptr);
   }
@@ -2635,7 +2638,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
         "gather_us={} bails={}] "
-        "dc_safe[p={} att={}] depthnone_p={} host_draws={} "
+        "dc_safe[p={} att={}] depthnone_p={} retro_dn={} host_draws={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2688,7 +2691,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_deint_redir_verts_,
         draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
         draw_outcomes_dc_safe_passes_, draw_outcomes_dc_safe_atts_,
-        draw_outcomes_depth_none_passes_, host_draws_frame,
+        draw_outcomes_depth_none_passes_, draw_outcomes_retro_depth_none_,
+        host_draws_frame,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2882,6 +2886,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_dc_safe_passes_ = 0;
     draw_outcomes_dc_safe_atts_ = 0;
     draw_outcomes_depth_none_passes_ = 0;
+    draw_outcomes_retro_depth_none_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -4048,6 +4053,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // the pending concatenation run (it belongs to the old pass) before ending it.
     FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
+    // gpu_vulkan_retro_depth_none: this direct end bypasses EndRenderPass() -
+    // apply the hindsight depth-none patch for the ending pass here too.
+    RetroPatchDepthNoneAtPassEnd();
     deferred_command_buffer_.CmdVkEndRenderPass();
     // End-of-pass timestamp AFTER EndRenderPass so it captures the TBDR tile
     // store/flush (the deferred binning+fragment work), not just draw recording.
@@ -4154,6 +4162,35 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       cvars::gpu_vulkan_feedback_merge
           ? deferred_command_buffer_.command_stream_size_elements()
           : SIZE_MAX;
+  // gpu_vulkan_retro_depth_none (frame-graph recompiler increment A): capture
+  // this pass's recorded begin position + its depth-none render-pass variant so
+  // EndRenderPass can retroactively patch the begin if hindsight shows no draw
+  // in the pass touched depth/stencil. Guest/composite passes only (EDRAM
+  // transfer passes write attachments outside guest depth state); skipped when
+  // another variant was already chosen for this begin, when the LRZ depth-clear
+  // forces depth writes, when in-pass transfers may fold depth-writing quads
+  // into this pass, or when the opaque depth prepass splices depth writes in.
+  retro_depth_begin_pos_ = SIZE_MAX;
+  retro_pass_depth_used_ = false;
+  if (cvars::gpu_vulkan_retro_depth_none &&
+      begin_render_pass == render_pass &&
+      (pass_kind == GpuPassKind::kGuest ||
+       pass_kind == GpuPassKind::kGuestComposite) &&
+      !cvars::gpu_lrz_spike_depth_clear &&
+      !cvars::gpu_vulkan_inpass_edram_transfers &&
+      !cvars::gpu_opaque_depth_prepass &&
+      (render_target_cache_->last_update_render_pass_key().depth_and_color_used &
+       0b1)) {
+    VkRenderPass retro_depth_variant =
+        render_target_cache_->GetDepthStoreNoneVariantForLastUpdate(render_pass);
+    if (retro_depth_variant != VK_NULL_HANDLE &&
+        retro_depth_variant != render_pass) {
+      retro_depth_variant_ = retro_depth_variant;
+      retro_depth_framebuffer_ = framebuffer->framebuffer;
+      retro_depth_begin_pos_ =
+          deferred_command_buffer_.command_stream_size_elements();
+    }
+  }
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
   // Opaque depth pre-pass: mark the splice point right AFTER BeginRenderPass so
@@ -4201,11 +4238,36 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
 
+void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
+  // gpu_vulkan_retro_depth_none (frame-graph recompiler increment A): hindsight
+  // patch. If the pass that is ending had a depth attachment, was captured at
+  // begin, and NO draw in it enabled depth test/write or stencil, repoint its
+  // already-recorded BeginRenderPass to the depth loadOp=DONT_CARE +
+  // storeOp=NONE variant. Load/store ops do not affect Vulkan render pass
+  // compatibility, so the recorded framebuffer and all pipelines stay valid;
+  // STORE_OP_NONE preserves the depth contents the pass never accessed. Unlike
+  // the begin-time gpu_vulkan_skip_unused_depth_store, this never has to break
+  // a pass - a depth-using draw simply leaves the recorded begin unpatched.
+  if (retro_depth_begin_pos_ != SIZE_MAX) {
+    if (!retro_pass_depth_used_ &&
+        deferred_command_buffer_.IsCommandPositionInRange(
+            retro_depth_begin_pos_)) {
+      deferred_command_buffer_.PatchBeginRenderPassTargets(
+          retro_depth_begin_pos_, retro_depth_variant_,
+          retro_depth_framebuffer_);
+      ++draw_outcomes_retro_depth_none_;
+    }
+    retro_depth_begin_pos_ = SIZE_MAX;
+  }
+}
+
 void VulkanCommandProcessor::EndRenderPass() {
   assert_true(submission_open_);
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
   }
+  // gpu_vulkan_retro_depth_none: hindsight depth-none patch for the ending pass.
+  RetroPatchDepthNoneAtPassEnd();
   // Lever 2 (vulkan_merge_draws): the pending draw-concatenation run's draws
   // belong to THIS render pass - realize them before it ends. This is the master
   // pass-end flush (covers SubmitBarriers force/barrier breaks and the IssueCopy/
@@ -5940,6 +6002,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         render_target_cache_->last_update_framebuffer(),
         current_draw_is_composite_consumer_ ? GpuPassKind::kGuestComposite
                                             : GpuPassKind::kGuest);
+  }
+  // gpu_vulkan_retro_depth_none: mark depth/stencil use of THIS draw in the now-
+  // open pass. Placed AFTER the pass enter so the pass-OPENING draw's use is not
+  // lost to the begin-capture reset. Uses the final normalized depth control
+  // (post foliage-LRZ overrides), i.e. what the draw actually does.
+  if (retro_depth_begin_pos_ != SIZE_MAX &&
+      (normalized_depth_control.z_enable ||
+       normalized_depth_control.z_write_enable ||
+       normalized_depth_control.stencil_enable)) {
+    retro_pass_depth_used_ = true;
   }
 
   // gpu_hw_vertex_fetch: bind the shared-memory buffer as the Vulkan vertex

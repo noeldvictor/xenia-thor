@@ -247,6 +247,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // including adding pipeline barriers that are not a part of the render pass
   // scope. Submission must be open.
   void EndRenderPass();
+  // gpu_vulkan_retro_depth_none: hindsight-patch the ending pass's recorded
+  // begin to the depth DONT_CARE/STORE_OP_NONE variant if no draw used depth.
+  // Called from EndRenderPass AND the direct CmdVkEndRenderPass (RT-change) path.
+  void RetroPatchDepthNoneAtPassEnd();
 
   VkDescriptorSetLayout GetSingleTransientDescriptorLayout(
       SingleTransientDescriptorLayout transient_descriptor_layout) const {
@@ -1048,6 +1052,17 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool depth_store_none_pending_ = false;
   bool current_pass_depth_store_none_ = false;
   uint32_t draw_outcomes_depth_none_passes_ = 0;
+  // gpu_vulkan_retro_depth_none (frame-graph recompiler increment A): the
+  // currently-open guest pass's recorded BeginRenderPass position + the depth
+  // DONT_CARE/STORE_OP_NONE render-pass variant + framebuffer captured at begin,
+  // and whether any draw in the pass has used depth/stencil so far. At
+  // EndRenderPass, if unused, the recorded begin is PATCHED to the variant
+  // (hindsight elision - never breaks the pass). SIZE_MAX = not capturing.
+  size_t retro_depth_begin_pos_ = SIZE_MAX;
+  VkRenderPass retro_depth_variant_ = VK_NULL_HANDLE;
+  VkFramebuffer retro_depth_framebuffer_ = VK_NULL_HANDLE;
+  bool retro_pass_depth_used_ = false;
+  uint32_t draw_outcomes_retro_depth_none_ = 0;
   // host_draws= telemetry: draw stats of completed submissions are folded into
   // the accumulator at Execute time (the per-recording stat zeroes on Reset);
   // the print marker turns the monotone total into a per-frame delta.
