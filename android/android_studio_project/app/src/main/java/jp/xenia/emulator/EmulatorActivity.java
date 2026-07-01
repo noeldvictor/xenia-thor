@@ -241,6 +241,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_adpf_thermal_throttle");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_edram_roaa");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_edram_atomic");
+            copyIntExtra(intent, launchArguments, "gpu_edram_atomic_barrier_bytes");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_hybrid_postprocess");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_compute_postprocess_probe");
             copyBooleanExtra(intent, launchArguments, "kernel_object_handle_cache");

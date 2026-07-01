@@ -23,6 +23,7 @@ DECLARE_bool(gpu_adpf_performance_hints);
 DECLARE_bool(gpu_adpf_thermal_throttle);
 DECLARE_bool(gpu_vulkan_edram_roaa);
 DECLARE_bool(gpu_vulkan_edram_atomic);
+DECLARE_uint32(gpu_edram_atomic_barrier_bytes);
 DECLARE_bool(gpu_vulkan_hybrid_postprocess);
 DECLARE_int32(gpu_vulkan_inpass_edram_transfers);
 DECLARE_bool(gpu_binning_deinterleave_pos);

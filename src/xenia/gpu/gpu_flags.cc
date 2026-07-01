@@ -89,6 +89,17 @@ DEFINE_bool(
     "FSI SPIR-V the driver rejects.",
     "GPU");
 
+DEFINE_uint32(
+    gpu_edram_atomic_barrier_bytes, 0,
+    "DIAGNOSTIC (gpu_vulkan_edram_atomic path): scope the per-pass EDRAM-buffer "
+    "SHADER_WRITE->SHADER_READ barrier to this many bytes instead of the whole "
+    "90MB buffer (0 = VK_WHOLE_SIZE, the default). Isolates whether the ~450ms "
+    "buffer-path regression is the 90MB cache FLUSH (a small value collapses "
+    "gap_guest => scoping is the real fix) or the pipeline SERIALIZATION (gap_guest "
+    "stays => the barrier is fundamental to no-FSI ordering). May render "
+    "incorrectly when small - a diagnostic, not a shipping value. Default 0.",
+    "GPU");
+
 DEFINE_bool(
     gpu_vulkan_hybrid_postprocess, false,
     "THE EDRAM SOLVE, hybrid form (the BD-30 lever): keep the overdraw-heavy "

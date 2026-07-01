@@ -3012,8 +3012,16 @@ void VulkanRenderTargetCache::CommitEdramBufferShaderWrites(
   VkAccessFlags access_mask;
   GetEdramBufferUsageMasks(edram_buffer_usage_, stage_mask, access_mask);
   assert_not_zero(access_mask & VK_ACCESS_SHADER_WRITE_BIT);
+  // DIAGNOSTIC (gpu_edram_atomic_barrier_bytes): scope the barrier to a smaller
+  // byte range to isolate whether the ~450ms buffer-path cost is the 90MB cache
+  // flush (a small size collapses gap_guest => scoping is the fix) or the pipeline
+  // serialization (unchanged => the barrier is fundamental to no-FSI ordering).
+  VkDeviceSize barrier_size = VK_WHOLE_SIZE;
+  if (cvars::gpu_edram_atomic_barrier_bytes != 0) {
+    barrier_size = VkDeviceSize(cvars::gpu_edram_atomic_barrier_bytes);
+  }
   command_processor_.PushBufferMemoryBarrier(
-      edram_buffer_, 0, VK_WHOLE_SIZE, stage_mask, stage_mask, access_mask,
+      edram_buffer_, 0, barrier_size, stage_mask, stage_mask, access_mask,
       access_mask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false);
   edram_buffer_modification_status_ =
       EdramBufferModificationStatus::kUnmodified;
