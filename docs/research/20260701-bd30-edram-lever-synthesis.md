@@ -320,7 +320,23 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     0.75x with SGSR upscale) = an untested major lever; requires RT-cache scale rearch (authorized). Also
     note: the main pass reports WIDTH=720 (x768) not 1280-wide — axes/pitch semantics worth checking in
     tu trace vs the guest 1280x720 surface.
-  - **🎯 LEVER 2: attribute + cut the ~54ms un-bracketed drain** (WFI per barrier? CP? preemption?). Tools:
+  - **🏆🏆 LEVER-2 ATTRIBUTION COMPLETE (2026-07-01, hole analysis of the u_trace stream itself — the
+    "unbracketed 52ms" FOUND):** the holes are BETWEEN `end_gmem_load` and `start_gmem_store` INSIDE each
+    bin: 167.4ms/3.2-frame tail (~52ms/frame) over 251 bins = **the per-bin FRAGMENT RENDERING (post-load,
+    pre-store) that u_trace does not bracket.** Biggest single holes ≈ 20.7/20.5/19.4/19.2ms = ONE BIN of
+    the main pass each. **FINAL ANATOMY: BD's ~95ms frame is ~90% pure draw/fragment execution** (bin render
+    holes ~52ms + bracketed draw path ~37ms + ~6ms everything else). Not structure, not I/O, not CP, not
+    binning. Per-sample arithmetic: main-pass bin ≈ 180k px @2x ≈ 360k samples in ~20ms ≈ **55ns ≈ ~750 GPU
+    cycles PER SAMPLE** — the translated pixel shaders + overdraw burn two orders of magnitude more than a
+    lean forward shader should. EVERYTHING now coheres: VRS −22% (real, shading rate), cap=1 −42% (real,
+    sample rate), foliage thinning helped (overdraw), fp10 −8ms (bytes/fragment), LRZ defeated by
+    alpha-test co-planar foliage (overdraw unculled). **THE BD-30 ENDGAME (fragment-side stack): (1)
+    IR3_SHADER_DEBUG=stats via the env hatch -> instruction counts of BD's foliage/main pixel shaders
+    (identify the ALU bloat: emulated vfetch? fp32-everything? gamma? per-sample interpolation?); (2)
+    mediump/RelaxedPrecision in the SPIR-V translator (Adreno half-rate fp32: fp16 doubles ALU throughput);
+    (3) VRS RE-VALIDATE with the trace harness (−22% was real); (4) LRZ/early-Z restoration for the
+    alpha-tested foliage (sort opaque-first already tried? prepass exists); (5) sample-rate->pixel-rate
+    shading. Each measurable per-run via the bin-hole metric.** (WFI per barrier? CP? preemption?). Tools:
     TU_DEBUG_FILE runtime toggles, TU_DEBUG=flushall/no_concurrent_binning perturbation, perfetto counters.
   - Trace tooling now permanent: bd_gputrace.ps1 + the parse snippets; MESA_GPU_TRACES via
     gpu_vulkan_driver_env (delivery confirmed in logcat).
