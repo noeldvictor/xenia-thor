@@ -407,16 +407,25 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       vulkan_device->properties();
 
   bool fsi_requested = cvars::render_target_path_vulkan == "fsi";
-  if (fsi_requested) {
+  // THE EDRAM SOLVE (gpu_vulkan_edram_atomic): force the interlock BUFFER path on
+  // Turnip with NO FSI - the depth+color RMW is ordered by atomics instead of the
+  // fragment-shader-interlock, so the interlock feature requirement below is
+  // bypassed. The buffer path has NO render-to-texture passes (one EDRAM SSBO),
+  // collapsing BD's 42 tile-I/O passes by construction. Non-functional until the
+  // atomic ROP SPIR-V lands (forcing it earlier emits FSI SPIR-V the driver
+  // rejects); default off.
+  bool atomic_no_fsi = cvars::gpu_vulkan_edram_atomic;
+  if (fsi_requested || atomic_no_fsi) {
     path_ = Path::kPixelShaderInterlock;
   } else {
     path_ = Path::kHostRenderTargets;
   }
+  edram_atomic_no_fsi_ = atomic_no_fsi;
   // Fragment shader interlock is a feature implemented by pretty advanced GPUs,
   // closer to Direct3D 11 / OpenGL ES 3.2 level mainly, not Direct3D 10 /
   // OpenGL ES 3.1. Thus, it's fine to demand a wide range of other optional
   // features for the fragment shader interlock backend to work.
-  if (path_ == Path::kPixelShaderInterlock) {
+  if (path_ == Path::kPixelShaderInterlock && !atomic_no_fsi) {
     // Interlocking between fragments with common sample coverage is enough, but
     // interlocking more is acceptable too (fragmentShaderShadingRateInterlock
     // would be okay too, but it's unlikely that an implementation would

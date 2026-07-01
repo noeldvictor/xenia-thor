@@ -17,6 +17,7 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/draw_util.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/render_target_cache.h"
 
 namespace xe {
@@ -727,8 +728,12 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
       FSI_LoadEdramOffsets(msaa_samples);
       // Begin the critical section on the outermost control flow level so it's
       // entered exactly once on any control flow path as required by the SPIR-V
-      // extension specification.
-      builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
+      // extension specification. EDRAM SOLVE (gpu_vulkan_edram_atomic): no FSI -
+      // the depth+color RMW is ordered by atomics instead (races for the first
+      // proof-of-path build until the atomicMin depth lands).
+      if (!cvars::gpu_vulkan_edram_atomic) {
+        builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
+      }
       // Do the depth / stencil test.
       // The sample mask might have been made narrower than the initially loaded
       // mask by various conditions that discard the whole pixel, as well as by
@@ -1308,7 +1313,9 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
       builder_->setBuildPoint(main_fsi_early_depth_stencil_execute_quad_merge_);
     }
 
-    builder_->createNoResultOp(spv::OpEndInvocationInterlockEXT);
+    if (!cvars::gpu_vulkan_edram_atomic) {
+      builder_->createNoResultOp(spv::OpEndInvocationInterlockEXT);
+    }
   }
 }
 

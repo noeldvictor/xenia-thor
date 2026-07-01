@@ -353,6 +353,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // attachment-access feature are all present; only gates the few differing
   // sites (transfer / render-pass / pipeline / pixel shader). Default off.
   bool edram_roaa_ = false;
+  // THE EDRAM SOLVE (gpu_vulkan_edram_atomic): the interlock BUFFER path is forced
+  // on Turnip with the FSI-ordered depth+color RMW replaced by order-independent
+  // atomics (atomicMin packed depth+id). Set at Initialize; drives the no-FSI atomic
+  // ROP SPIR-V variant. The buffer path has no render-to-texture passes, so it
+  // collapses BD's 42 tile-I/O passes by construction.
+  bool edram_atomic_no_fsi_ = false;
 
   // Accessible in fragment and compute shaders.
   VkDescriptorSetLayout descriptor_set_layout_storage_buffer_ = VK_NULL_HANDLE;

@@ -893,7 +893,11 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
       builder_->addExecutionMode(function_main_,
                                  spv::ExecutionModeEarlyFragmentTests);
     }
-    if (edram_fragment_shader_interlock_) {
+    // EDRAM SOLVE (gpu_vulkan_edram_atomic): the buffer path runs on Turnip with
+    // NO FSI - the depth+color RMW is ordered by atomics, so DON'T declare the
+    // fragment-shader-interlock capability / execution mode (Turnip would reject
+    // that SPIR-V). The OpBegin/EndInvocationInterlock ops are likewise skipped.
+    if (edram_fragment_shader_interlock_ && !cvars::gpu_vulkan_edram_atomic) {
       // Accessing per-sample values, so interlocking just when there's common
       // coverage is enough if the device exposes that.
       if (features_.fragment_shader_sample_interlock) {
@@ -2536,7 +2540,11 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     spv::Id msaa_samples = LoadMsaaSamplesFromFlags();
     FSI_LoadSampleMask(msaa_samples);
     FSI_LoadEdramOffsets(msaa_samples);
-    builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
+    // EDRAM SOLVE (gpu_vulkan_edram_atomic): no FSI interlock - the depth RMW is
+    // ordered by atomics instead (or races for the first proof-of-path build).
+    if (!cvars::gpu_vulkan_edram_atomic) {
+      builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
+    }
     FSI_DepthStencilTest(msaa_samples, false);
     if (!is_depth_only_fragment_shader_) {
       // Skip the rest of the shader if the whole quad (due to derivatives) has

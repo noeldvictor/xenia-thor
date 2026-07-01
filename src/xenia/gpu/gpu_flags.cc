@@ -73,6 +73,22 @@ DEFINE_bool(
     "off or unsupported. Default off until the path is complete + validated.",
     "GPU");
 
+DEFINE_bool(
+    gpu_vulkan_edram_atomic, false,
+    "THE EDRAM SOLVE (Thor/Turnip FSI workaround, in progress): force the "
+    "kPixelShaderInterlock EDRAM-as-ONE-BUFFER path on Adreno (no FSI) by "
+    "replacing the fragment-shader-interlock-ordered depth+color RMW with "
+    "order-INDEPENDENT 64-bit atomicMin on packed (depth|fragment-id) for the "
+    "depth test + winner-gated color. The buffer path has NO render-to-texture "
+    "passes (one EDRAM SSBO, arbitrary-address reads), so it collapses BD's 42 "
+    "tile-I/O passes by construction and handles transformed cross-pass composite "
+    "reads (which the same-pixel feedback-merge/ROAA cannot). Opaque/depth draws "
+    "are correct-by-construction; blends race (minor) until the visibility-buffer "
+    "color resolve lands. Bypasses the FSI feature gate. Default off until the "
+    "atomic ROP SPIR-V is complete + validated - forcing it without that emits "
+    "FSI SPIR-V the driver rejects.",
+    "GPU");
+
 DEFINE_int32(
     gpu_vulkan_inpass_edram_transfers, 0,
     "EXPERIMENTAL (Thor/TBDR): perform EDRAM ownership-transfer draws INSIDE "
