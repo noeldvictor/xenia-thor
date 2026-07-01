@@ -210,7 +210,32 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `2A0674C564A8A8C5` = 1-tap + tonemap (dp3/muls). `05775DE8A2B0B3F5` = DOF/bloom, log/exp + predicated
     multi-tap. All read via `tfetch2D` at INTERPOLATED `r0.xy` (NOT gl_FragCoord) => texcoord is TRANSFORMED,
     definitively confirming same-pixel input-attachments cannot express these (the compute rationale holds).
-- **⭐⭐ BRICK 2 CEILING — FIRST MEASUREMENT (2026-07-01, kGuestComposite + gap-by-kind instrumentation,
+- **🚨🚨 DECISIVE HEAVY-FIELD MEASUREMENT (2026-07-01, user-authorized 75C heat-danger run reached the
+  ~98.5ms field) — REDIRECTS THE WHOLE STRATEGY. Brick 2 (composites) is a ~2% lever; the REAL ~80% is the
+  EDRAM ownership-TRANSFER + geometry-RT deferred tile-I/O.** Heavy field confirmed (gpu_frame_us≈98500,
+  n[composite=20 xfer=35 guest=15-17], stable x6). Per-kind GPU time (us):
+  `guest(shade)=6-10k composite(shade)=0.5-4k xfer(shade)=2.3-2.6k rcopy=1-4.7k | gap_composite=1.5-2.9k
+  gap_guest=1-40k gap_xfer=37-78k gap_total≈83k`. So of the 98.5ms frame:
+  - **gap_composite ≈ 2ms ≈ 2% => BRICK 2 (composite->compute) IS NOT THE BD-30 LEVER.** The many turns
+    scoping the composite fragment->compute translator targeted a ~2% win. The measurement kills it as the
+    top lever (the ALU-capture + coupling work stays valid, just not the priority).
+  - **gap_guest + gap_xfer ≈ 79ms ≈ 80% of the frame = the deferred TBDR tile stores of the GEOMETRY RTs +
+    the 35 EDRAM OWNERSHIP-TRANSFER passes (RT<->EDRAM store/load quads).** (Attribution shifts between
+    gap_guest and gap_xfer frame-to-frame — pass-ordering noise — but their SUM ≈79ms is rock-stable and
+    gap_composite is consistently ~2ms.) THIS is the ~74ms tile-I/O the memory always cited, now
+    kind-attributed: it's the per-RT stores + ownership transfers, NOT the composites.
+  - **THE LEVER = eliminate the per-RT tile stores + ownership transfers = the SINGLE-EDRAM-SSBO buffer path
+    (atomic-ROP, task #31).** With all rendering in ONE EDRAM SSBO there are NO separate RT VkImages => NO
+    per-RT deferred tile stores and NO RT<->EDRAM ownership-transfer passes => gap_guest + gap_xfer (~80%)
+    vanish BY CONSTRUCTION. The cost moves to software ROP (atomic depth/blend) in the fragment shaders. The
+    memory earlier guessed "full buffer path likely LOSES to software ROP on BD's overdraw" — but that was
+    never measured, and this shows the tile-I/O it removes is ~80ms, a HUGE budget to trade against per-
+    fragment ROP ALU. **This VINDICATES the user's "solve the EDRAM issue via the buffer/FUSION path, don't
+    rescope" mandate and REDIRECTS effort from composite-compute back to the buffer path.** NEXT: re-measure
+    a full-scene buffer-path A/B (does software ROP cost < the ~80ms tile-I/O it removes?), and drive the
+    atomic-ROP SPIR-V (task #31) which is the mechanism. Instrumentation (kGuestComposite + gap-by-kind) is
+    committed + reusable for verifying the buffer path removes gap_guest+gap_xfer.
+- **BRICK 2 CEILING — first (light-scene) measurement, SUPERSEDED by the heavy-field run above (2026-07-01,
   committed). TEMPERS the hypothesis; HEAVY-FIELD CONFIRMATION STILL PENDING.** Built a non-corrupting GPU-
   timestamp split: composite-consumer guest passes -> kGuestComposite, and each deferred-tile-I/O GAP
   attributed to its preceding pass kind (the tile store is deferred into the gap, NOT the bracket, which is
