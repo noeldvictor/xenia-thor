@@ -89,6 +89,22 @@ DEFINE_bool(
     "FSI SPIR-V the driver rejects.",
     "GPU");
 
+DEFINE_bool(
+    gpu_vulkan_hybrid_postprocess, false,
+    "THE EDRAM SOLVE, hybrid form (the BD-30 lever): keep the overdraw-heavy "
+    "MAIN scene on host render targets (fast hardware GMEM ROP + early-Z, "
+    "correct fixed-function blend for the 844 alpha-test/blended foliage draws), "
+    "and route ONLY the full-screen 1x-coverage POST-PROCESS composites (BD's 26 "
+    "bloom/blur/tonemap fscomp draws = the geometry that causes the 42 pass-"
+    "breaks / ~74ms tile-I/O) through the kPixelShaderInterlock EDRAM-buffer/SSBO "
+    "path, which has NO render-to-texture passes and reads arbitrary EDRAM "
+    "addresses (handling the transformed cross-pass reads). Composites are 1x "
+    "coverage so the buffer path's software-ROP tax is negligible for them, while "
+    "the main scene keeps GMEM speed = combining buffer with GMEM ROP, each where "
+    "it wins. Needs the scene->EDRAM-SSBO bridge resolve + a coexisting FSI-mode "
+    "composite translation. Default off; in progress.",
+    "GPU");
+
 DEFINE_int32(
     gpu_vulkan_inpass_edram_transfers, 0,
     "EXPERIMENTAL (Thor/TBDR): perform EDRAM ownership-transfer draws INSIDE "

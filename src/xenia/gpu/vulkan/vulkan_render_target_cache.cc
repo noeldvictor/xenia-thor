@@ -486,6 +486,16 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       vulkan_device->properties().rasterizationOrderColorAttachmentAccess;
   XELOGI("VulkanRenderTargetCache: edram_roaa={}", edram_roaa_);
 
+  // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): keep the host-RT
+  // path for the overdraw-heavy main scene (GMEM ROP) and reroute only the
+  // 1x-coverage post-process composites through the EDRAM buffer/SSBO path. Only
+  // meaningful on the host-RT path (it augments it); ignored under the forced
+  // full-buffer atomic path. The rerouting itself is built incrementally - this
+  // just latches the intent + logs it as the entry point.
+  hybrid_postprocess_ =
+      cvars::gpu_vulkan_hybrid_postprocess && path_ == Path::kHostRenderTargets;
+  XELOGI("VulkanRenderTargetCache: hybrid_postprocess={}", hybrid_postprocess_);
+
   // Format support.
   constexpr VkFormatFeatureFlags kUsedDepthFormatFeatures =
       VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |

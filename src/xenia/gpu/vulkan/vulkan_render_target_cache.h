@@ -359,6 +359,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // ROP SPIR-V variant. The buffer path has no render-to-texture passes, so it
   // collapses BD's 42 tile-I/O passes by construction.
   bool edram_atomic_no_fsi_ = false;
+  // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): main scene stays
+  // on host RTs (GMEM ROP), only the 1x-coverage post-process composites route
+  // through the EDRAM buffer/SSBO path to collapse their tile-I/O pass-breaks.
+  // Set at Initialize; the path selection below stays kHostRenderTargets - this
+  // flag only enables the per-draw composite rerouting (built incrementally).
+  bool hybrid_postprocess_ = false;
 
   // Accessible in fragment and compute shaders.
   VkDescriptorSetLayout descriptor_set_layout_storage_buffer_ = VK_NULL_HANDLE;
