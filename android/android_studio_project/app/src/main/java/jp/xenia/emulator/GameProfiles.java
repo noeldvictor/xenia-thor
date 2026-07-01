@@ -85,6 +85,16 @@ public final class GameProfiles {
                         + "fragment_shader_interlock / rasterization_order_attachment_"
                         + "access, device-confirmed) - not software-fixable on this GPU. "
                         + "Lower to rate 2 for slightly cleaner shading at ~7.9fps.")
+                .add("gpu_fp10_color_as_unorm10", Boolean.TRUE,
+                        "BD's EDRAM color is 7e3 float (k_2_10_10_10_FLOAT), which the "
+                        + "host maps to RGBA16F = 64bpp - 2x the 360's 32bpp EDRAM cost "
+                        + "on every fragment. This maps it to A2B10G10R10_UNORM (32bpp): "
+                        + "device-validated 2026-07-01 via driver GPU-trace on the heavy "
+                        + "field: main-pass CPP 24->16, bins 5->3, per-segment draw time "
+                        + "-36%, frame ~103->95.5ms. Stacks with VRS (fp10+VRS2=17.0fps "
+                        + "live OSD, fp10+VRS4=19.8, from the 10.8 baseline). Bloom "
+                        + "highlights >1.0 clamp (SDR-safe; BD's pre-existing bloom-region "
+                        + "artifact changes appearance but does not worsen materially).")
                 .add("gpu_force_max_msaa_samples", Integer.valueOf(2),
                         "BD-30 MSAA lever (2026-06-30): cap MSAA at 2x = the CLEAN ceiling "
                         + "(~17fps, 1.9x over the 9fps baseline, no artifact). cap=1 "
