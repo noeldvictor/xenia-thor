@@ -115,6 +115,12 @@ composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-textur
     emits the committed `bytecode/vulkan_spirv/<name>_cs.h`. A standalone glslang call does NOT work (the
     `scratch/xesl_wrap_test` probe fails on the framework includes). So adding a compute shader = author the
     `.xesl` + run xenia's shader-precompile flow (multi-session setup, but confirmed-doable — the flow exists).
+  - DEFINITIVE COMMAND (2026-07-01): committed `_cs.h` say `// Generated with \`xb buildshaders\``. So the flow is
+    **`xb buildshaders`**, which needs the HOST `xenia-gpu-shader-compiler` tool BUILT (NOT built here — no binary
+    found) via the HOST toolchain (premake5 + MSVC — neither in PATH; this env builds the Android APK via gradle,
+    a different toolchain). `xb`/`xb.bat` + premake5.lua exist at root. So STEP 0 of the compute build = provide
+    premake5 + a host C++ compiler, build the shader-compiler tool, `xb buildshaders`. That is the concrete first
+    multi-session task, BEFORE any composite logic — the reason the compute core cannot be finished in one sitting.
 - **Build order (next session, COOL device, validate each step on-device):** (a) pick ONE simple full-screen
   composite (tonemap), emit a compute variant, dispatch it into the EDRAM SSBO, confirm pixel-correct vs the
   render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
