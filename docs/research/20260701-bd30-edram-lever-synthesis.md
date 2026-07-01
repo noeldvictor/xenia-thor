@@ -261,6 +261,20 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
     by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
     correct per-pass/per-attachment elision).**
+  - **🔍 INCREMENT A VERDICT (2026-07-01, A2 diagnostic run): the depth-elision CLASS is ~2 passes on BD's
+    heavy field — root-caused, not a bug.** The why-not-eligible diagnostic shows the blockers are REAL
+    depth geometry: `z_en=1 zfunc=3(LESSEQUAL) z_wr=1` draws with idx=52-493 inside nearly every guest/
+    composite-opened pass (pass KIND is classified by the opening draw; the passes then contain genuine
+    3D draws), plus `zfunc=7(ALWAYS)+z_wr=1+stencil=1` depth-writing clears. So BD does NOT have ~35
+    depth-free passes; retro depth-none is mechanically PROVEN (patches apply, renders pixel-correct,
+    UNHANDLED=0 across two runs) but its BD yield is bounded ~2 passes. KEEP it (free, correct, will help
+    other titles); the 59ms budget lives in COLOR/TRANSFER traffic => increment B: (a) retro COLOR-load
+    elision - track the UNION of full-coverage replace draws across the pass (BD clears in strips; the
+    per-draw dc_safe estimator exists, retro can OR coverage rects), patch load_dont_care_mask variant at
+    pass end; (b) transfer-pass STORE/LOAD liveness via the steady-state frame graph (BD's pass sequence is
+    IDENTICAL every frame - n constant; last frame's observed consumption = this frame's); (c) dead-transfer
+    elision (transfers into dests whose contents are fully overwritten before any read). All ride the proven
+    recorded-begin patch mechanism.
   - **PROGRESS LOG (2026-07-01, increment A built + device-tested twice):** (1) `gpu_vulkan_retro_depth_none`
     SHIPPED (default-off): hindsight depth elision at pass end via recorded-begin patch — mechanically
     CORRECT on device (retro_dn=2 patched, renders pixel-correct, UNHANDLED=0) but ENGAGEMENT-LIMITED: only
