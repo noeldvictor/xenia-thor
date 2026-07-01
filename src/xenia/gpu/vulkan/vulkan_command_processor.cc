@@ -725,9 +725,17 @@ bool VulkanCommandProcessor::SetupContext() {
   }
 
   // Shared memory and EDRAM descriptor set layout.
+  // THE EDRAM SOLVE, hybrid form: also expose the EDRAM SSBO descriptor (binding
+  // 1) when hybrid_postprocess is on, so the composite FSI pipelines can write the
+  // EDRAM buffer while the frame path stays host-RT (the main scene ignores the
+  // extra binding). First cut uses the SHARED layout - note the compact_pos
+  // binding index is 1 + this flag, so gpu_binning_deinterleave_pos must stay OFF
+  // under hybrid until a dedicated hybrid-FSI layout lands (it's off in the BD
+  // test stack). Default off => byte-identical.
   bool edram_fragment_shader_interlock =
       render_target_cache_->GetPath() ==
-      RenderTargetCache::Path::kPixelShaderInterlock;
+          RenderTargetCache::Path::kPixelShaderInterlock ||
+      render_target_cache_->hybrid_postprocess();
   VkDescriptorSetLayoutBinding
       shared_memory_and_edram_descriptor_set_layout_bindings[3];
   shared_memory_and_edram_descriptor_set_layout_bindings[0].binding = 0;
@@ -5858,9 +5866,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // After all commands that may dispatch, copy or insert barriers, submit the
   // barriers (may end the render pass), and (re)enter the render pass before
   // drawing.
-  SubmitBarriersAndEnterRenderTargetCacheRenderPass(
-      render_target_cache_->last_update_render_pass(),
-      render_target_cache_->last_update_framebuffer());
+  // THE EDRAM SOLVE, hybrid form: a post-process composite renders PASS-LESS into
+  // the EDRAM buffer via the 0-attachment FSI render pass (so it has no render-to-
+  // texture pass-break) while the main scene used the host-RT pass above. Entering
+  // the FSI pass here ends the last host-RT pass (the phase-2 transition) - the one
+  // unavoidable break where the first composite reads the finished main scene.
+  if (hybrid_current_draw_composite_) {
+    SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+        render_target_cache_->GetFragmentShaderInterlockRenderPass(),
+        render_target_cache_->GetFragmentShaderInterlockFramebuffer());
+  } else {
+    SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+        render_target_cache_->last_update_render_pass(),
+        render_target_cache_->last_update_framebuffer());
+  }
 
   // gpu_hw_vertex_fetch: bind the shared-memory buffer as the Vulkan vertex
   // buffers the translated VS's fixed-function inputs read. Bound for every

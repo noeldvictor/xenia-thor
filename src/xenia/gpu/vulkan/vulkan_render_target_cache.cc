@@ -968,7 +968,14 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       Shutdown();
       return false;
     }
-  } else if (path_ == Path::kPixelShaderInterlock) {
+  }
+  // THE EDRAM SOLVE, hybrid form: also build the FSI render pass + framebuffer +
+  // EDRAM-buffer resolve/clear pipelines when hybrid_postprocess is on, so the
+  // 1x-coverage post-process composites can render PASS-LESS into the EDRAM buffer
+  // while the main scene uses the host-RT infra above. Un-chained from the host-RT
+  // branch (a separate if, not else-if) so BOTH run under hybrid; the FSI
+  // resources are additive (FSI-specific handles, shared layouts already built).
+  if (path_ == Path::kPixelShaderInterlock || hybrid_postprocess_) {
     // Pixel (fragment) shader interlock.
 
     // Piecewise linear gamma is 8-bit with programmable blending.

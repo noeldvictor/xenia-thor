@@ -238,8 +238,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // `original` is not the last update's render pass).
   VkRenderPass GetDepthStoreNoneVariantForLastUpdate(VkRenderPass original);
   VkRenderPass GetFragmentShaderInterlockRenderPass() const {
-    assert_true(GetPath() == Path::kPixelShaderInterlock);
+    assert_true(GetPath() == Path::kPixelShaderInterlock || hybrid_postprocess_);
     return fsi_render_pass_;
+  }
+  // THE EDRAM SOLVE, hybrid form: the 0-attachment FSI framebuffer that the
+  // pass-less post-process composite draws enter (built under hybrid too).
+  const Framebuffer* GetFragmentShaderInterlockFramebuffer() const {
+    return &fsi_framebuffer_;
   }
 
   VkFormat GetDepthVulkanFormat(xenos::DepthRenderTargetFormat format) const;

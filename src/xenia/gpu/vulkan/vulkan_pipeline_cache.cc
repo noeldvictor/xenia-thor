@@ -467,6 +467,17 @@ bool VulkanPipelineCache::ConfigurePipeline(
       SpirvShaderTranslator::Modification(pixel_shader->modification())
               .pixel.feedback_input_attachment != 0;
 
+  // THE EDRAM SOLVE, hybrid form: a post-process composite pixel shader
+  // (modification hybrid_fsi_composite) is built with the EDRAM-buffer/SSBO ROP
+  // structure (no color/depth attachment) targeting the fragment-shader-interlock
+  // render pass, even though the frame path is host-RT - so its output lands in
+  // the EDRAM buffer with no render-to-texture pass. Caches as a distinct pipeline
+  // (the modification is part of the description key).
+  bool hybrid_fsi_composite =
+      pixel_shader &&
+      SpirvShaderTranslator::Modification(pixel_shader->modification())
+              .pixel.hybrid_fsi_composite != 0;
+
   // Create the pipeline if not the latest and not already existing.
   const PipelineLayoutProvider* pipeline_layout =
       command_processor_.GetPipelineLayout(
@@ -524,8 +535,9 @@ bool VulkanPipelineCache::ConfigurePipeline(
                 render_pass_key.color_0_view_format,
                 render_pass_key.color_0_view_format,
                 render_pass_key.msaa_samples, /*in_place=*/true)
-      : render_target_cache_.GetPath() ==
-              RenderTargetCache::Path::kPixelShaderInterlock
+      : (render_target_cache_.GetPath() ==
+             RenderTargetCache::Path::kPixelShaderInterlock ||
+         hybrid_fsi_composite)
           ? render_target_cache_.GetFragmentShaderInterlockRenderPass()
           : render_target_cache_.GetHostRenderTargetsRenderPass(
                 render_pass_key);
@@ -893,8 +905,17 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
     description_out.front_face_clockwise = 0;
   }
 
+  // THE EDRAM SOLVE, hybrid form: a composite (pixel modification
+  // hybrid_fsi_composite) does depth/stencil/blend in-shader against the EDRAM
+  // buffer, so skip the host-RT fixed-function depth/stencil/blend description
+  // (exactly like the kPixelShaderInterlock path).
+  bool hybrid_fsi_composite =
+      pixel_shader &&
+      SpirvShaderTranslator::Modification(pixel_shader->modification())
+              .pixel.hybrid_fsi_composite != 0;
   if (render_target_cache_.GetPath() ==
-      RenderTargetCache::Path::kHostRenderTargets) {
+          RenderTargetCache::Path::kHostRenderTargets &&
+      !hybrid_fsi_composite) {
     if (render_pass_key.depth_and_color_used & 1) {
       if (normalized_depth_control.z_enable) {
         description_out.depth_write_enable =
@@ -2098,7 +2119,11 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
 
   bool edram_fragment_shader_interlock =
       render_target_cache_.GetPath() ==
-      RenderTargetCache::Path::kPixelShaderInterlock;
+          RenderTargetCache::Path::kPixelShaderInterlock ||
+      (creation_arguments.pixel_shader &&
+       SpirvShaderTranslator::Modification(
+           creation_arguments.pixel_shader->modification())
+               .pixel.hybrid_fsi_composite != 0);
 
   std::array<VkPipelineShaderStageCreateInfo, 3> shader_stages;
   uint32_t shader_stage_count = 0;
