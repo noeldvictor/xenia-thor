@@ -121,6 +121,16 @@ composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-textur
     a different toolchain). `xb`/`xb.bat` + premake5.lua exist at root. So STEP 0 of the compute build = provide
     premake5 + a host C++ compiler, build the shader-compiler tool, `xb buildshaders`. That is the concrete first
     multi-session task, BEFORE any composite logic — the reason the compute core cannot be finished in one sitting.
+  - ⭐ CORRECTION (2026-07-01, VERIFIED — the toolchain is NOT actually a blocker): the `_cs.h` are just SPIR-V
+    bytecode arrays. A hand-written PLAIN-GLSL compute shader that binds the EDRAM SSBO directly (set0/binding0,
+    std430 `uint xe_edram[]`, push const offset/count) COMPILES with the available RenderDoc glslangValidator
+    (`-V --target-env vulkan1.2`) — verified: `scratch/compute_probe/edram_identity.comp` -> 1504-byte `.spv`.
+    Hex-dump that `.spv` into the `_cs.h` uint-array format and the experimental compute path needs NEITHER
+    `xb buildshaders` NOR the host tool NOR xesl. So the next session starts DIRECTLY at composite-compute LOGIC.
+    The compute<->EDRAM-buffer PLUMBING (compute pipeline + storage-buffer descriptor + dispatch) is ALREADY
+    proven in-tree by `resolve_fsi_clear_32bpp_pipeline_` (a working compute dispatch over the EDRAM SSBO), so the
+    remaining novel work is: author the composite op in GLSL (per-composite, or a generic fragment->compute) +
+    dispatch it in the hybrid context in place of the composite fragment draws + sync + device-validate.
 - **Build order (next session, COOL device, validate each step on-device):** (a) pick ONE simple full-screen
   composite (tonemap), emit a compute variant, dispatch it into the EDRAM SSBO, confirm pixel-correct vs the
   render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
