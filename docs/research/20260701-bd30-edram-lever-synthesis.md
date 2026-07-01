@@ -43,7 +43,11 @@ renders BD correctly with brk_img_sr 42->21. This is the right shape and the use
    `edram_fsi_no_hardware_interlock_` at spirv_shader_translator_rb.cc:734/1316); the depth/color RMW
    for composites needs no atomics (barrier-separated). So the composite buffer path may need NO
    atomicMin at all — validate the plain-store composite path renders correctly first (cheapest test).
-3. **Stack `inpass_edram_transfers=1`** for the 16 non-feedback transfer breaks.
+3. **Do NOT naively stack `inpass_edram_transfers=1` with hybrid** — device-tested 2026-07-01:
+   they FIGHT over pass boundaries (hybrid ends the host pass per composite; inpass folds transfers
+   INTO the guest pass) → brk_img_oth exploded 21->254, pass_break_barrier 15->137, + black-streak
+   CORRUPTION. To combine, inpass must be suppressed on the passes/frames the hybrid rewrites, or the
+   composite routing must not fragment transfer passes. inpass ALONE (clean host-RT) is safe.
 4. Measure with a SINGLE-RUN alternating A/B (never cross-run gpu_frame_us).
 
 ## Honest ceiling (why even complete fusion may not reach 30)
