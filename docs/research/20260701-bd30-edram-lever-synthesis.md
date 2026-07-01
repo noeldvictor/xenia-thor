@@ -1,5 +1,24 @@
 # BD-30 EDRAM lever synthesis (2026-07-01)
 
+## NEXT SESSION ENTRY POINT (2026-07-01 close): render-scale-down = the last mountain
+State: BD SHIPPED at 19.8fps (fp10+VRS4+cap2 in GameProfile, installed). Cvar space exhausted (14 verdicts).
+LRZ closed by upper-bound (spike = zero delta; co-planar foliage rigorously unoccludable). Honest arithmetic:
+VRS4 49ms - scale-down(0.7x area, fragment share scales with pixels, ~-10-15ms) - segment-merge (~-3-5ms)
+= ~33-40ms = 25-30fps borderline; more aggressive scale (0.5x) clears 30.
+BUILD: fractional guest render scale k<1 on the host-RT path - invert the existing draw_resolution_scale
+machinery (integer-only today: draw_resolution_scale_x/y plumbed through RT cache, resolves, transfers,
+texture cache "draw_resolution_scaled" paths). Design options: (a) global fractional k through the same
+plumbing (invasive: every scaled coordinate multiply becomes rational k_num/k_den - grep draw_resolution_scale
+call sites); (b) main-scene-only half-size RT + upscale at first consumer (smaller blast radius but breaks
+EDRAM pitch/alias assumptions - needs the transfer/resolve coordinate remap for ONE surface class);
+(c) VK_KHR_fragment_shading_rate attachment-based (per-region rate image = pseudo-scale-down without RT
+size changes - NO RT-cache surgery at all, reuses the proven VRS path at finer grain + a present-time
+sharpen). OPTION (c) IS THE CHEAP FIRST INCREMENT: a full-screen 2x2 VRS attachment on the main pass only
+(vs the current per-draw foliage classification) approximates 0.5x-area shading with zero layout risk.
+No SGSR/render-low code exists in-tree (memory reference was design-talk); present-upscale would be a new
+blit/shader at swap.
+
+
 Consolidates this session's device + research findings into an actionable next-session plan
 and an honest ceiling analysis. Goal unchanged: Blue Dragon 30fps via the EDRAM/fusion solve;
 other games 30-60. Do NOT re-walk the dead-ends below.
