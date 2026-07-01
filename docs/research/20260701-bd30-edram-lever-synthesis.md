@@ -160,10 +160,19 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
   renders pixel-correct (opening-credits village scene clean), UNHANDLED=0, no VK_ERROR, no init-fail —
   robust across 54000+ dispatches in one session. **The dispatch + sync plumbing on the DEFAULT host-RT
   path is DONE.** Next = brick 2 below.
-- **BRICK 2 (the fps lever, next):** replace the identity op with a REAL composite op. Concrete first cut:
-  pick ONE simple full-screen composite from BD's post-process (tonemap/copy), author its compute variant
-  (read the producer EDRAM address, write the blended dest into the EDRAM SSBO / present target), dispatch
-  it IN PLACE OF that composite's fragment draws (skip the render-to-texture pass for it), confirm
-  pixel-correct vs the render-pass version, then measure `brk_img_sr` drop + single-run A/B gpu time. That
-  removes real composite tile-I/O; extend to bloom-downsample (SPD) + the rest. The ceiling analysis above
-  says the full composite set moving to compute is plausibly sufficient for 30 when stacked with cap=2+VRS.
+- **BRICK 2 (the fps lever) — TARGET NOW DEVICE-SCOPED (2026-07-01, classify capture on BD field):**
+  `sr_cls[rtsrc=42 tex=0 fscomp=0 rtfc=28]` at `brk_img_sr=42`. So ALL 42 tile-I/O breaks are a just-rendered
+  producer RT going ATTACHMENT->SHADER_READ (a producer read), and **28 of the 42 have a consumer that is a
+  full-screen composite** (rect/quad, ps_hash!=0, writes color) reading that producer. The `EDRAM_FEEDBACK
+  xfer` (PerformTransfers ownership-transfer) path logged NOTHING => BD's breaks are NOT ownership transfers,
+  they are the guest's OWN composite draws sampling producer RTs. **Brick 2 = convert those ~28 full-screen
+  composite guest draws to COMPUTE dispatches over the EDRAM SSBO** (read the producer from the SSBO at its
+  EDRAM address — arbitrary-address read expresses the TRANSFORMED cross-pass texcoord that killed same-pixel
+  input-attachments — run the guest composite ALU, write the dest into the SSBO; no render pass => no break).
+  Mechanism = a COMPUTE-TARGET mode in SpirvShaderTranslator (gl_FragCoord->gl_GlobalInvocationID, producer
+  texture-sample->EDRAM SSBO read, color export->EDRAM SSBO write). This is the research-grade piece; brick 1
+  proved the dispatch+sync it rides on. FIRST cut = the SIMPLEST of the 28 (per-composite ps_hash from the
+  fixed `IMG_SR break` detail grep in bd_feedback_inventory.ps1 — re-capture on a COOL device to pick it +
+  confirm same-pixel vs transformed), emit its compute variant, dispatch in place of its fragment draws,
+  confirm pixel-correct, measure the `brk_img_sr` drop + single-run A/B. Removing 28/42 breaks is the bulk of
+  the ~74ms tile-I/O; stacked with cap=2 (+VRS) the ceiling analysis says that is plausibly sufficient for 30.
