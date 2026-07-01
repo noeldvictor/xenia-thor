@@ -254,11 +254,26 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
   TOTAL — the 42-pass tile-I/O model of the frame is WRONG.** Also: inpass=1 folds guest+composite passes
   15-17+19-21 -> 7-9+9-10 but n[xfer]=35 and the giant gaps unchanged; frame 98.5->94-95ms (~4%, noise-level)
   => inpass stays MODEST-confirmed on the right metric.
-  - **DISCRIMINATOR FIRED (in progress): `gpu_edram_passes_dont_care` + pass-split log.** Historic 122->49ms
-    (-73ms) EXACTLY matches the two giant gaps. If dont_care collapses top_gap[0..1] => the 73ms is per-pass
-    LOAD/STORE traffic (lever = load/store elision: STORE_OP_NONE for unread RTs, partial-range, dc-safe
-    unions — buildable). If the gaps survive => it's BINNING/VERTEX-bound (260k verts x2 phases through fat
-    translated VS with in-shader SSBO fetch+bswap; lever = the vertex/binning path). One run decides.
+  - **✅✅✅ DISCRIMINATOR ANSWERED (2026-07-01, dont_care + pass-split, heavy field, stable x5): THE 73ms IS
+    PER-PASS TILE LOAD/STORE TRAFFIC.** With dont_care: **top_gap [38.5,35] -> [7.1,7.0]ms (−59ms); gap_total
+    82.5 -> 22.2ms; gpu_frame_us ≈ 32.9ms = 30fps-CLASS on an even HEAVIER frame (366-draw main pass).** The
+    surviving 7+7ms = the main pass's REAL bin+render. Bandwidth math checks: ~42 passes x (~16MB load +
+    ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
+    by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
+    correct per-pass/per-attachment elision).**
+  - **⭐⭐ THE BUILD (the goal's "major rearch", now with a measured 59ms payoff): SUBMIT-TIME FRAME-GRAPH
+    LOAD/STORE RECOMPILER.** xenia records the WHOLE frame deferred before vkQueueSubmit, and patching a
+    recorded BeginRenderPass is PROVEN in-tree (feedback-merge: feedback_producer_begin_pos_ +
+    IsCommandPositionInRange + patch). So at submit time we have PERFECT HINDSIGHT: walk the recorded passes,
+    compute per-attachment liveness (is this pass's write READ later — by a pass that blends/ztests, a
+    texture bind of the RT image, a transfer source, a resolve — before being fully overwritten?), and PATCH
+    each recorded pass to a render-pass VARIANT with per-attachment loadOp=DONT_CARE (nothing read) /
+    storeOp=NONE (nothing consumed). Variant machinery EXISTS (load_dont_care_mask variants +
+    depth_store_op_none + framebuffer keying). Increments: (A) record pass table (begin position,
+    attachments, EDRAM ranges) + liveness walk + patch loadOp for provably-unread loads; (B) color
+    STORE_OP_NONE variant + store elision; (C) partial-range/strip unions. Conservative = correct: any
+    uncertainty leaves LOAD/STORE. Verify each increment with the pass-split log (top_gap shrink) +
+    pixel-correct screenshot.
   - **🚫 DIAGNOSTIC RESULT (2026-07-01, gpu_edram_atomic_barrier_bytes=4096): scoping the barrier 90MB->4KB
     changed NOTHING — gap_guest stayed ~447ms, gpu_frame_us ~468ms (6 frames). The cost is NOT the cache flush;
     it is pipeline SERIALIZATION / deferred software-ROP fragment execution (per-fragment atomic-less depth+
