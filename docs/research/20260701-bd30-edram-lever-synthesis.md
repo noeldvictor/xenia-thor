@@ -270,6 +270,14 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `gpu_vulkan_driver_ir3_debug`. Driver binary also supports TU_DEBUG_FILE (RUNTIME-watched option file =
     single-run driver-mode A/B!) and logs "Autotune selected sysmem" + "TU_DEBUG=0x%lx" (delivery
     confirmable in logcat). Re-running the sysmem discriminator through the real hatch.
+- **THE STACK WORKS - BD 10.8 -> 17.0 FPS LIVE OSD (2026-07-01).** gpu_fp10_color_as_unorm10 +
+  gpu_vrs_foliage_rate=2: frame 95.5 -> ~58.5ms (-39%), drains [33,29.7] -> [16.6,16.5]ms, on a HOT 47C
+  launch + heavier scene (321 draws) => underestimate. Renders recognizably (bd_vrs.png; artifacts = the
+  same pre-existing bloom class; no visible foliage coarsening). The fragment-bound anatomy CONFIRMED by
+  successful prediction. fp16-relaxed = REGRESSION (+11ms, x2 runs, mixed-precision conversion overhead) -
+  closed as-built. Remaining to 30fps: 58.5 -> 33ms; next: VRS rate 4, vrs_all_draws diagnostic (opaque
+  share), cap=1 revisit, LRZ-alpha-test Turnip patch, bloom-artifact hunt. SHIP CANDIDATE: fp10+VRS2 ->
+  BD GameProfile after quality sign-off.
 - **🏆🏆🏆 THE AUTHORITATIVE FRAME DECOMPOSITION (2026-07-01, driver u_trace via MESA_GPU_TRACES — ends all
   inference).** Parsed 3.04 frames of per-event GPU timestamps (scratch/thor-debug/gputrace_tail.txt +
   bd_gputrace.ps1; 4M-line full trace on device):
