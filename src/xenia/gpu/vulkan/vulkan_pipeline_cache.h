@@ -297,6 +297,12 @@ class VulkanPipelineCache {
   StringBuffer ucode_disasm_buffer_;
   // Reusable shader translator on the command processor thread.
   std::unique_ptr<SpirvShaderTranslator> shader_translator_;
+  // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): a second
+  // translator in EDRAM-buffer/SSBO ROP mode (edram_fragment_shader_interlock),
+  // used ONLY for the post-process composite pixel shaders (modification
+  // pixel.hybrid_fsi_composite set) while the frame's path stays host-RT.
+  // Non-null only when the render target cache reports hybrid_postprocess().
+  std::unique_ptr<SpirvShaderTranslator> shader_translator_hybrid_fsi_;
 
   struct LayoutUID {
     size_t uid;

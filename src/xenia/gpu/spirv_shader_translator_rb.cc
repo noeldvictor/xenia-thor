@@ -731,7 +731,7 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
       // extension specification. EDRAM SOLVE (gpu_vulkan_edram_atomic): no FSI -
       // the depth+color RMW is ordered by atomics instead (races for the first
       // proof-of-path build until the atomicMin depth lands).
-      if (!cvars::gpu_vulkan_edram_atomic) {
+      if (!edram_fsi_no_hardware_interlock_) {
         builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
       }
       // Do the depth / stencil test.
@@ -1313,7 +1313,7 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
       builder_->setBuildPoint(main_fsi_early_depth_stencil_execute_quad_merge_);
     }
 
-    if (!cvars::gpu_vulkan_edram_atomic) {
+    if (!edram_fsi_no_hardware_interlock_) {
       builder_->createNoResultOp(spv::OpEndInvocationInterlockEXT);
     }
   }

@@ -893,11 +893,12 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
       builder_->addExecutionMode(function_main_,
                                  spv::ExecutionModeEarlyFragmentTests);
     }
-    // EDRAM SOLVE (gpu_vulkan_edram_atomic): the buffer path runs on Turnip with
-    // NO FSI - the depth+color RMW is ordered by atomics, so DON'T declare the
-    // fragment-shader-interlock capability / execution mode (Turnip would reject
-    // that SPIR-V). The OpBegin/EndInvocationInterlock ops are likewise skipped.
-    if (edram_fragment_shader_interlock_ && !cvars::gpu_vulkan_edram_atomic) {
+    // EDRAM SOLVE (edram_fsi_no_hardware_interlock_): the buffer path runs on
+    // Turnip with NO FSI (forced full-buffer atomic path, or the hybrid FSI
+    // composite translator) - the RMW is ordered by atomics / draw barriers, so
+    // DON'T declare the fragment-shader-interlock capability / execution mode
+    // (Turnip would reject that SPIR-V). The OpBegin/End ops are likewise skipped.
+    if (edram_fragment_shader_interlock_ && !edram_fsi_no_hardware_interlock_) {
       // Accessing per-sample values, so interlocking just when there's common
       // coverage is enough if the device exposes that.
       if (features_.fragment_shader_sample_interlock) {
@@ -2540,9 +2541,9 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
     spv::Id msaa_samples = LoadMsaaSamplesFromFlags();
     FSI_LoadSampleMask(msaa_samples);
     FSI_LoadEdramOffsets(msaa_samples);
-    // EDRAM SOLVE (gpu_vulkan_edram_atomic): no FSI interlock - the depth RMW is
-    // ordered by atomics instead (or races for the first proof-of-path build).
-    if (!cvars::gpu_vulkan_edram_atomic) {
+    // EDRAM SOLVE (edram_fsi_no_hardware_interlock_): no FSI on Turnip - the depth
+    // RMW is ordered by atomics (full-buffer) / draw barriers (hybrid composites).
+    if (!edram_fsi_no_hardware_interlock_) {
       builder_->createNoResultOp(spv::OpBeginInvocationInterlockEXT);
     }
     FSI_DepthStencilTest(msaa_samples, false);

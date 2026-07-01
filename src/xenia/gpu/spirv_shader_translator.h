@@ -88,6 +88,16 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // A distinct shader VARIANT - the same guest PS used as a normal sampler
       // elsewhere keeps modification 0, so existing behavior is byte-identical.
       uint32_t feedback_input_attachment : 6;
+      // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): when set,
+      // this pixel shader is a full-screen 1x-coverage POST-PROCESS composite
+      // translated in the EDRAM-buffer/SSBO ROP mode (like kPixelShaderInterlock)
+      // even though the frame's path is kHostRenderTargets - so its output goes
+      // to the EDRAM buffer with NO render-to-texture pass (collapsing the
+      // tile-I/O pass-break), while the overdraw main scene keeps host-RT GMEM
+      // ROP. A distinct VARIANT (modification bit) so it caches separately from
+      // the same guest PS's normal host-RT translation; routed to the FSI-mode
+      // translator instance in EnsureShadersTranslated. 0 = normal host-RT.
+      uint32_t hybrid_fsi_composite : 1;
     } pixel;
     uint64_t value = 0;
 
@@ -379,11 +389,13 @@ class SpirvShaderTranslator : public ShaderTranslator {
   SpirvShaderTranslator(const Features& features,
                         bool native_2x_msaa_with_attachments,
                         bool native_2x_msaa_no_attachments,
-                        bool edram_fragment_shader_interlock)
+                        bool edram_fragment_shader_interlock,
+                        bool edram_fsi_no_hardware_interlock = false)
       : features_(features),
         native_2x_msaa_with_attachments_(native_2x_msaa_with_attachments),
         native_2x_msaa_no_attachments_(native_2x_msaa_no_attachments),
-        edram_fragment_shader_interlock_(edram_fragment_shader_interlock) {}
+        edram_fragment_shader_interlock_(edram_fragment_shader_interlock),
+        edram_fsi_no_hardware_interlock_(edram_fsi_no_hardware_interlock) {}
 
   uint64_t GetDefaultVertexShaderModification(
       uint32_t dynamic_addressable_register_count,
@@ -810,6 +822,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // flow of the main function, and that there are no returns before either
   // (there's a single return from the shader).
   bool edram_fragment_shader_interlock_;
+  // THE EDRAM SOLVE (Turnip has no FSI): the EDRAM-buffer ROP path is in use but
+  // the device has NO fragment-shader-interlock, so the OpBegin/EndInvocation-
+  // InterlockEXT capability + ordering ops must NOT be emitted (the driver would
+  // reject them). Set for the forced full-buffer atomic path AND for the hybrid
+  // FSI composite translator. Without hardware ordering the per-pixel RMW races,
+  // which is fine for 1x-coverage barrier-separated composites and handled by
+  // atomics for the overdraw full-buffer path.
+  bool edram_fsi_no_hardware_interlock_ = false;
 
   // Is currently writing the empty depth-only pixel shader, such as for depth
   // and stencil testing with fragment shader interlock.

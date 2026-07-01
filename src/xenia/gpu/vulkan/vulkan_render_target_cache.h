@@ -128,6 +128,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   Path GetPath() const override { return path_; }
 
+  // THE EDRAM SOLVE, hybrid form: route only the 1x-coverage post-process
+  // composites through the EDRAM-buffer/SSBO ROP while the main scene keeps
+  // host-RT GMEM ROP. True only on the host-RT path with the cvar enabled.
+  bool hybrid_postprocess() const { return hybrid_postprocess_; }
+
   VkBuffer edram_buffer() const { return edram_buffer_; }
 
   // Performs the resolve to a shared memory area according to the current

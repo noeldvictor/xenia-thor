@@ -134,12 +134,21 @@ bool VulkanPipelineCache::Initialize() {
   bool edram_fragment_shader_interlock =
       render_target_cache_.GetPath() ==
       RenderTargetCache::Path::kPixelShaderInterlock;
+  // THE EDRAM SOLVE: on Turnip the interlock path is FORCED without hardware FSI
+  // (gpu_vulkan_edram_atomic) - detect that so the translator skips the interlock
+  // capability + ordering ops the driver would reject (replaces the old per-op
+  // cvar gate with a correctness-based device-feature gate).
+  bool device_has_fsi =
+      vulkan_device->properties().fragmentShaderSampleInterlock ||
+      vulkan_device->properties().fragmentShaderPixelInterlock;
 
   shader_translator_ = std::make_unique<SpirvShaderTranslator>(
       SpirvShaderTranslator::Features(vulkan_device),
       render_target_cache_.msaa_2x_attachments_supported(),
       render_target_cache_.msaa_2x_no_attachments_supported(),
-      edram_fragment_shader_interlock);
+      edram_fragment_shader_interlock,
+      /*edram_fsi_no_hardware_interlock=*/edram_fragment_shader_interlock &&
+          !device_has_fsi);
 
   if (edram_fragment_shader_interlock) {
     std::vector<uint8_t> depth_only_fragment_shader_code =
@@ -156,6 +165,24 @@ bool VulkanPipelineCache::Initialize() {
           "implementation");
       return false;
     }
+  }
+
+  // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): a second
+  // translator in EDRAM-buffer/SSBO ROP mode for the 1x-coverage post-process
+  // composites, used while the frame path stays kHostRenderTargets. Built only
+  // when the render target cache enabled the hybrid; inert until composite
+  // draws are routed to it via the pixel-shader modification hybrid_fsi_composite
+  // bit in EnsureShadersTranslated (a later increment).
+  if (render_target_cache_.hybrid_postprocess()) {
+    shader_translator_hybrid_fsi_ = std::make_unique<SpirvShaderTranslator>(
+        SpirvShaderTranslator::Features(vulkan_device),
+        render_target_cache_.msaa_2x_attachments_supported(),
+        render_target_cache_.msaa_2x_no_attachments_supported(),
+        /*edram_fragment_shader_interlock=*/true,
+        /*edram_fsi_no_hardware_interlock=*/!device_has_fsi);
+    XELOGI(
+        "VulkanPipelineCache: hybrid FSI composite translator created "
+        "(post-process composites -> EDRAM buffer, main scene stays host-RT)");
   }
 
   // Create an in-memory pipeline cache (spec-transparent vs VK_NULL_HANDLE) so
@@ -369,7 +396,18 @@ bool VulkanPipelineCache::EnsureShadersTranslated(
   if (pixel_shader != nullptr) {
     if (!pixel_shader->is_translated()) {
       pixel_shader->shader().AnalyzeUcode(ucode_disasm_buffer_);
-      if (!TranslateAnalyzedShader(*shader_translator_, *pixel_shader)) {
+      // THE EDRAM SOLVE, hybrid form: a post-process composite pixel shader
+      // (modification pixel.hybrid_fsi_composite set) is translated in EDRAM-
+      // buffer/SSBO ROP mode by the FSI translator, so its output lands in the
+      // EDRAM buffer with NO render-to-texture pass (collapsing the tile-I/O
+      // pass-break); every other pixel shader uses the host-RT translator.
+      SpirvShaderTranslator& ps_translator =
+          (shader_translator_hybrid_fsi_ != nullptr &&
+           SpirvShaderTranslator::Modification(pixel_shader->modification())
+               .pixel.hybrid_fsi_composite)
+              ? *shader_translator_hybrid_fsi_
+              : *shader_translator_;
+      if (!TranslateAnalyzedShader(ps_translator, *pixel_shader)) {
         XELOGE("Failed to translate the pixel shader!");
         return false;
       }
