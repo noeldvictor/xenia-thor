@@ -261,6 +261,15 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
     by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
     correct per-pass/per-attachment elision).**
+  - **⚠️ CORRECTION (2026-07-01): the mesa.tu.debug property FORCE results (gmem null, sysmem null) are
+    VOID — the bundled Turnip reads options via getenv ONLY (binary-verified: no "mesa."/property option
+    strings; TU_DEBUG parsed from env; property_get present only for gralloc). The autotuner-sysmem /
+    binning hypotheses are back OPEN. The RIGHT delivery mechanism ALREADY EXISTS in-tree:
+    `gpu_vulkan_driver_debug` (setenv TU_DEBUG before the in-process dlopen, vulkan_instance.cc:135,
+    allowlisted) + `gpu_vulkan_driver_env` (arbitrary "VAR=val;..." - e.g. MESA_GPU_TRACES) +
+    `gpu_vulkan_driver_ir3_debug`. Driver binary also supports TU_DEBUG_FILE (RUNTIME-watched option file =
+    single-run driver-mode A/B!) and logs "Autotune selected sysmem" + "TU_DEBUG=0x%lx" (delivery
+    confirmable in logcat). Re-running the sysmem discriminator through the real hatch.
   - **🚨🚨 INPASS=2 DECISIVE (2026-07-01): PASS-COUNT IS NOT THE LEVER EITHER.** inpass=2 (depth folding,
     Turnip has EXT_shader_stencil_export) ENGAGES massively: inpass[x=34 skip_fmt=0 skip_oth=1], n[xfer]
     35->24-25, TOTAL brackets 95->70 (25% pass-count cut), stable, UNHANDLED=0. **Frame UNCHANGED (~100ms;
