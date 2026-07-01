@@ -210,6 +210,24 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `2A0674C564A8A8C5` = 1-tap + tonemap (dp3/muls). `05775DE8A2B0B3F5` = DOF/bloom, log/exp + predicated
     multi-tap. All read via `tfetch2D` at INTERPOLATED `r0.xy` (NOT gl_FragCoord) => texcoord is TRANSFORMED,
     definitively confirming same-pixel input-attachments cannot express these (the compute rationale holds).
+- **⭐⭐ BRICK 2 CEILING — FIRST MEASUREMENT (2026-07-01, kGuestComposite + gap-by-kind instrumentation,
+  committed). TEMPERS the hypothesis; HEAVY-FIELD CONFIRMATION STILL PENDING.** Built a non-corrupting GPU-
+  timestamp split: composite-consumer guest passes -> kGuestComposite, and each deferred-tile-I/O GAP
+  attributed to its preceding pass kind (the tile store is deferred into the gap, NOT the bracket, which is
+  only shading). `gap_composite` = the composites' deferred tile-I/O = exactly what brick 2 (composite->
+  compute) removes. **Measured (device, but the device is HEAT-SOAKED from ~8 runs and watchdogs at 60-120s
+  BEFORE the ~100ms heavy field, so this is the ~22ms LIGHT scene — a lower bound, NOT the heavy-field
+  verdict):** per-frame, stable x6: `gpu_frame_us≈22300  composite(shade)≈2.5ms  gap_composite≈2.0ms
+  gap_guest≈2.1ms  gap_xfer≈4.4ms  gap_total≈13.4ms  rcopy≈3.3ms  n[composite=19-20 xfer=26 guest=11]`. So
+  in THIS scene: (1) brick 2's ceiling `gap_composite ≈ 2.0ms / 22.3ms ≈ 9%` — MODEST; (2) the EDRAM
+  ownership-TRANSFER passes' tile-I/O `gap_xfer ≈ 4.4ms` is 2x BIGGER than the composites'. **Implication:
+  the NARROW brick-2 (composites only) is NOT sufficient alone; the bigger lever is the FULL "everything in
+  one EDRAM SSBO" model that removes composite + transfer + producer tile-I/O together (composite-compute +
+  the atomic-ROP/buffer producer path, unified) — which reinforces that brick 2 and the buffer path are two
+  halves of one model, not independent.** CAVEAT (rigorous): this is the LIGHT scene; the heavy field may
+  shift the ratios (more/larger composites). NEXT: a genuinely cooled device (long idle) OR a save-state to
+  reach the field fast, then re-read gap_composite/gap_xfer on the ~100ms field before committing the big
+  translator build. The instrumentation is committed + ready.
 - **⚠️ ARCHITECTURAL COUPLING the ALU exposes (reshapes brick 2 — important):** the composites sample the
   producer as a BOUND TEXTURE (`tfetch2D tf0`). On the host-RT path the tile-I/O break is the producer
   RT->SHADER_READ transition (end the producer's render pass = GMEM store). Moving the CONSUMER to compute
