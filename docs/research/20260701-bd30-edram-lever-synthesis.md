@@ -270,6 +270,28 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `gpu_vulkan_driver_ir3_debug`. Driver binary also supports TU_DEBUG_FILE (RUNTIME-watched option file =
     single-run driver-mode A/B!) and logs "Autotune selected sysmem" + "TU_DEBUG=0x%lx" (delivery
     confirmable in logcat). Re-running the sysmem discriminator through the real hatch.
+- **🏆🏆🏆 THE AUTHORITATIVE FRAME DECOMPOSITION (2026-07-01, driver u_trace via MESA_GPU_TRACES — ends all
+  inference).** Parsed 3.04 frames of per-event GPU timestamps (scratch/thor-debug/gputrace_tail.txt +
+  bd_gputrace.ps1; 4M-line full trace on device):
+  - **`draw_ib_gmem` (per-bin draw execution) = ~43ms/frame — THE dominant cost. ONE config holds 96%:
+    samples=2, CPP=24 (R16G16B16A16_FLOAT color + Z24S8), 720x768, 5 bins = the MAIN SCENE, rendered as
+    ~4.3 pass-SEGMENTS/frame at ~9.6ms/segment (124.8 of 130.4ms tail draw time).** All other passes ~1ms.
+  - **GMEM loads ≈ 0.7ms/frame, stores ≈ 0.13ms/frame TOTAL — the "70ms tile-I/O" NEVER EXISTED as
+    loads/stores.** (Kills the load/store-volume model; dont_care's 70ms win = Turnip SKIPPING dead bin
+    rendering, not saving I/O. Also explains why retro elision classes were empty AND why their win would
+    have been ~0 even if full.) compute ≈ 2.9ms/f, concurrent_binning ≈ 2.7ms/f, pass overhead ~0.5ms/f.
+  - **~54ms/frame of GPU time is OUTSIDE all u_trace brackets** — WFI/barrier/CP drains between work items.
+    Explains why inpass=2's 25-pass cut changed nothing: the BARRIERS (WFIs) remained. THE second lever.
+  - **🎯 LEVER 1 (measured, novel, Adreno-max): 64bpp -> 32bpp COLOR.** xenia maps BD's EDRAM color format
+    to RGBA16F (64bpp) — the 360 paid 32bpp in EDRAM. At 2xMSAA that is 4x the 360's per-fragment ROP+
+    bandwidth on 43ms/frame of draw work. Map to B10G11R11_UFLOAT (no alpha) or A2B10G10R10 where blend
+    semantics allow (cvar'd, per-game): direct ROP/bandwidth halving on the dominant cost. Check
+    draw_util/GetColorVulkanFormat for where k_2_10_10_10_FLOAT (or k_16_16_16_16_FLOAT?) maps — confirm
+    which guest format BD uses first (the trace says host=RGBA16F).
+  - **🎯 LEVER 2: attribute + cut the ~54ms un-bracketed drain** (WFI per barrier? CP? preemption?). Tools:
+    TU_DEBUG_FILE runtime toggles, TU_DEBUG=flushall/no_concurrent_binning perturbation, perfetto counters.
+  - Trace tooling now permanent: bd_gputrace.ps1 + the parse snippets; MESA_GPU_TRACES via
+    gpu_vulkan_driver_env (delivery confirmed in logcat).
   - **🚨 SYSMEM REAL RESULT (2026-07-01, delivery CONFIRMED via gpu_vulkan_driver_debug setenv log):
     TU_DEBUG=sysmem => frame ~103ms, drains [37.5,36.5]ms — UNCHANGED vs GMEM baseline.** Kills the
     binning/per-tile-replay hypothesis genuinely (sysmem has no binning or tile machinery). GMEM ≈ SYSMEM ≈
