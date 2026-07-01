@@ -261,6 +261,22 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     ~16MB store of 1280x768x2xMSAA color+depth) ≈ 1.3GB/frame GMEM<->DRAM. **=> BD-30 IS DIRECTLY REACHABLE
     by eliminating the DEAD load/stores correctly (dont_care kills live traffic too => garbage; the build =
     correct per-pass/per-attachment elision).**
+  - **🔍🔍 INCREMENT B(a) VERDICT (2026-07-01, per-pass coverage end-diagnostic): the full-coverage
+    color-load-elision class has ~ZERO population on BD — CLOSED by measurement.** The end summaries show
+    the captured passes are the bloom-pyramid levels (ext 320/160/400/720 x768) + the main 1280x768 pass;
+    their in-pass replace writes are PARTIAL SLIVERS ([640,672) of a 720-wide pass, [0,320) of 400-wide) -
+    BD NEVER full-clears an attachment within a pass; the loads are LIVE (levels accumulate onto prior
+    contents). retro_cl=0 with tolerance 48 is the true class size, not a bug. Both A (depth, ~2 passes)
+    and B(a) (color, ~0) are mechanically proven + correct but BD's load/store OPS are almost all live.
+    **=> THE 73ms is live ops made expensive by STRUCTURE: ~70 render passes x full-attachment GMEM<->DRAM
+    round-trips (~2.1GB/frame). The eliminable slack is the PASSES (35 EDRAM-aliasing transfer passes +
+    composite ping-pong), not their load/store flags - the user's original FUSION thesis, now proven by
+    elimination of every alternative (buffer path 4.7x loss; composite-compute 2%; depth elision 2 passes;
+    color elision 0; barrier scope inert; gmem force null). NEXT THREAD: the measured inconsistency that
+    inpass folding engaged (x=22) yet n[xfer] stayed 35 - if folding genuinely removed transfer passes the
+    count should drop; resolving that either unlocks the fold (pass-count cut ~35->13) or explains why
+    folding can't work, pointing at RT-image aliasing/sharing (one memory per EDRAM range, images as
+    views) as the structural fix.**
   - **🔍 INCREMENT A VERDICT (2026-07-01, A2 diagnostic run): the depth-elision CLASS is ~2 passes on BD's
     heavy field — root-caused, not a bug.** The why-not-eligible diagnostic shows the blockers are REAL
     depth geometry: `z_en=1 zfunc=3(LESSEQUAL) z_wr=1` draws with idx=52-493 inside nearly every guest/
