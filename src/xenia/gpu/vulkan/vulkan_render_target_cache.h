@@ -1095,6 +1095,18 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkPipelineLayout resolve_fsi_clear_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline resolve_fsi_clear_32bpp_pipeline_ = VK_NULL_HANDLE;
   VkPipeline resolve_fsi_clear_64bpp_pipeline_ = VK_NULL_HANDLE;
+
+  // Compute-post-process foundation probe (gpu_vulkan_compute_postprocess_probe).
+  // Created unconditionally (all paths) so the host-RT path can exercise a
+  // mid-frame identity compute dispatch over the EDRAM buffer. Push constants =
+  // {uint xe_offset_dwords; uint xe_count_dwords;} (8 bytes, compute stage);
+  // descriptor set 0 = descriptor_set_layout_storage_buffer_ (the EDRAM SSBO).
+  VkPipelineLayout compute_postprocess_probe_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline compute_postprocess_probe_pipeline_ = VK_NULL_HANDLE;
+  uint64_t compute_postprocess_probe_dispatch_count_ = 0;
+  // Run the identity probe dispatch over the EDRAM buffer (no-op unless the cvar
+  // is on). Must be called outside a render pass (e.g. at resolve time).
+  void RunComputePostProcessProbe();
 };
 
 }  // namespace vulkan

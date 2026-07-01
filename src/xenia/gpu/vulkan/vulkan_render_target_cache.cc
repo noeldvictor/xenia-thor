@@ -149,6 +149,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_compute_postprocess_probe, false,
+    "EDRAM compute-post-process FOUNDATION probe (brick 1 of the compute fusion "
+    "core): on the host-RT path, dispatch an IDENTITY compute shader over the "
+    "EDRAM SSBO at each resolve (reads then writes back the SAME dwords, so EDRAM "
+    "contents are byte-unchanged and rendering must stay pixel-identical). "
+    "Validates that a mid-frame compute dispatch + barriers over the EDRAM buffer "
+    "works and stays synchronized against live host-RT rendering on Turnip - the "
+    "unproven foundation the composite-compute fusion is built on. Default off.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_trace_dump_depth_image, false,
     "Diagnostic: like vulkan_trace_dump_rt_image but for the DEPTH render target "
     "image - settles whether geometry rasterized (depth has varying geometry Z) "
@@ -250,6 +261,7 @@ const char* ResolveCopyShaderName(draw_util::ResolveCopyShaderIndex shader) {
 
 // Generated with `xb buildshaders`.
 namespace shaders {
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/edram_identity_probe_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_1xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_2xmsaa_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/host_depth_store_4xmsaa_cs.h"
@@ -685,6 +697,50 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   edram_storage_buffer_descriptor_write.pTexelBufferView = nullptr;
   dfn.vkUpdateDescriptorSets(device, 1, &edram_storage_buffer_descriptor_write,
                              0, nullptr);
+
+  // Compute-post-process foundation probe pipeline. Created on ALL paths (cheap,
+  // idle unless gpu_vulkan_compute_postprocess_probe is on) so the host-RT path
+  // can validate a mid-frame identity compute dispatch over the EDRAM buffer.
+  // Push constants = 8 bytes {offset_dwords, count_dwords}; descriptor set 0 =
+  // the EDRAM storage buffer layout (matches edram_storage_buffer_descriptor_set_).
+  {
+    VkPushConstantRange probe_push_constant_range;
+    probe_push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    probe_push_constant_range.offset = 0;
+    probe_push_constant_range.size = sizeof(uint32_t) * 2;
+    VkPipelineLayoutCreateInfo probe_pipeline_layout_create_info;
+    probe_pipeline_layout_create_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    probe_pipeline_layout_create_info.pNext = nullptr;
+    probe_pipeline_layout_create_info.flags = 0;
+    probe_pipeline_layout_create_info.setLayoutCount = 1;
+    probe_pipeline_layout_create_info.pSetLayouts =
+        &descriptor_set_layout_storage_buffer_;
+    probe_pipeline_layout_create_info.pushConstantRangeCount = 1;
+    probe_pipeline_layout_create_info.pPushConstantRanges =
+        &probe_push_constant_range;
+    if (dfn.vkCreatePipelineLayout(
+            device, &probe_pipeline_layout_create_info, nullptr,
+            &compute_postprocess_probe_pipeline_layout_) != VK_SUCCESS) {
+      XELOGE(
+          "VulkanRenderTargetCache: Failed to create the compute-post-process "
+          "probe pipeline layout");
+      Shutdown();
+      return false;
+    }
+    compute_postprocess_probe_pipeline_ =
+        ui::vulkan::util::CreateComputePipeline(
+            vulkan_device, compute_postprocess_probe_pipeline_layout_,
+            shaders::edram_identity_probe_cs,
+            sizeof(shaders::edram_identity_probe_cs));
+    if (compute_postprocess_probe_pipeline_ == VK_NULL_HANDLE) {
+      XELOGE(
+          "VulkanRenderTargetCache: Failed to create the compute-post-process "
+          "probe pipeline");
+      Shutdown();
+      return false;
+    }
+  }
 
   bool draw_resolution_scaled = IsDrawResolutionScaled();
 
@@ -1148,6 +1204,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   DestroyAllRenderTargets(true);
 
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
+                                         compute_postprocess_probe_pipeline_);
+  ui::vulkan::util::DestroyAndNullHandle(
+      dfn.vkDestroyPipelineLayout, device,
+      compute_postprocess_probe_pipeline_layout_);
+
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                          resolve_fsi_clear_64bpp_pipeline_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                          resolve_fsi_clear_32bpp_pipeline_);
@@ -1329,6 +1391,55 @@ void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
 void VulkanRenderTargetCache::EndSubmission() {
   if (transfer_vertex_buffer_pool_) {
     transfer_vertex_buffer_pool_->FlushWrites();
+  }
+}
+
+void VulkanRenderTargetCache::RunComputePostProcessProbe() {
+  if (!cvars::gpu_vulkan_compute_postprocess_probe ||
+      compute_postprocess_probe_pipeline_ == VK_NULL_HANDLE) {
+    return;
+  }
+  // Compute-post-process FOUNDATION probe (brick 1). Dispatch an IDENTITY
+  // compute shader over the EDRAM buffer: it reads then writes back the SAME
+  // dwords, so EDRAM contents are byte-unchanged and no rendered result can
+  // change. The point is only to prove that a mid-frame compute dispatch +
+  // barrier over the EDRAM SSBO records, submits, and stays synchronized
+  // against live host-RT rendering on Turnip - the unproven foundation the
+  // composite-compute fusion is built on. Must be called outside a render pass.
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+  // Transition the EDRAM buffer to compute write and flush the pending barrier
+  // (UseEdramBuffer queues it; SubmitBarriers records it before the dispatch).
+  // The next real EDRAM user transitions out of kComputeWrite, providing the
+  // barrier that makes the identity writes visible. Deliberately does NOT call
+  // MarkEdramBufferModified - the contents are identical, so the buffer<->RT
+  // ownership model must keep saying "unmodified".
+  UseEdramBuffer(EdramBufferUsage::kComputeWrite);
+  command_buffer.CmdVkBindDescriptorSets(
+      VK_PIPELINE_BIND_POINT_COMPUTE,
+      compute_postprocess_probe_pipeline_layout_, 0, 1,
+      &edram_storage_buffer_descriptor_set_, 0, nullptr);
+  command_processor_.BindExternalComputePipeline(
+      compute_postprocess_probe_pipeline_);
+  // 8x8 workgroup; the shader early-returns for indices >= count. One group =>
+  // 64 identity dwords from EDRAM dword offset 0. Bounded and harmless.
+  uint32_t probe_push_constants[2] = {0u /* offset_dwords */,
+                                      64u /* count_dwords */};
+  command_buffer.CmdVkPushConstants(
+      compute_postprocess_probe_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT,
+      0, sizeof(probe_push_constants), probe_push_constants);
+  command_processor_.SubmitBarriers(true);
+  command_buffer.CmdVkDispatch(1, 1, 1);
+  // Prove engagement (that the cvar reached C++ and the dispatch was actually
+  // recorded, not silently early-returned) - log the first dispatch and then a
+  // heartbeat, so the device log can confirm the probe ran without spamming.
+  ++compute_postprocess_probe_dispatch_count_;
+  if (compute_postprocess_probe_dispatch_count_ == 1 ||
+      (compute_postprocess_probe_dispatch_count_ % 600) == 0) {
+    XELOGI(
+        "compute-post-process probe: recorded identity EDRAM dispatch #{} "
+        "(host-RT path, offset_dwords=0 count_dwords=64)",
+        compute_postprocess_probe_dispatch_count_);
   }
 }
 
@@ -1634,6 +1745,15 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     }
   } else {
     cleared = true;
+  }
+
+  // Compute-post-process foundation probe: exercise a mid-frame identity compute
+  // dispatch over the EDRAM buffer on the host-RT path (no-op unless the cvar is
+  // on). Resolve() runs outside a render pass, the required precondition. The
+  // FSI path already drives real EDRAM compute, so restrict the probe to the
+  // host-RT path we're validating.
+  if (GetPath() == Path::kHostRenderTargets) {
+    RunComputePostProcessProbe();
   }
 
   return copied && cleared;

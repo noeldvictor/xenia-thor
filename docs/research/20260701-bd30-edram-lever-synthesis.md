@@ -136,3 +136,23 @@ composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-textur
   render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
   single-run A/B gpu time. Expected order-of-magnitude cut on the composite tile-I/O (~74ms -> ~5-10ms) IF the
   residual geometry/ROP doesn't dominate (the honest ceiling above still applies to the non-composite work).
+
+## ⭐ BRICK 1 BUILT (2026-07-01) — mid-frame EDRAM compute-dispatch foundation
+The first concrete piece of the compute core is IMPLEMENTED (not just planned), default-off, in
+`vulkan_render_target_cache.cc`:
+- `scratch/compute_probe/edram_identity.comp` compiled -> `bytecode/vulkan_spirv/edram_identity_probe_cs.h`
+  (376-word SPIR-V, hex-dumped via python, NO xb buildshaders — the toolchain-unblocked path, proven).
+- cvar `gpu_vulkan_compute_postprocess_probe` (default false), allowlisted in EmulatorActivity.java.
+- `compute_postprocess_probe_pipeline_[_layout_]` created UNCONDITIONALLY (all paths) reusing
+  `descriptor_set_layout_storage_buffer_` (the EDRAM SSBO layout) + an 8-byte push const {offset,count}.
+- `RunComputePostProcessProbe()` called at the END of `Resolve()` on the host-RT path (outside any render
+  pass — the required precondition): `UseEdramBuffer(kComputeWrite)` -> bind EDRAM descriptor set -> bind
+  pipeline -> push {0,64} -> `SubmitBarriers(true)` -> `CmdVkDispatch(1,1,1)`. The shader reads then writes
+  back the SAME dwords => EDRAM byte-unchanged, so BD MUST render pixel-identical. Deliberately does NOT call
+  `MarkEdramBufferModified` (identity => ownership stays "unmodified").
+- **What it validates (the one genuinely-unproven thing):** a compute dispatch over the EDRAM buffer,
+  synchronized against LIVE host-RT rendering, mid-frame on Turnip. `resolve_fsi_clear` only proved compute
+  at FSI-resolve time on the FSI path; this proves it on the DEFAULT host-RT path. Once green on-device, the
+  identity op is replaced by the real composite op (build order (a) above) — the plumbing is then done.
+- **Device validation = BD renders byte-identical with the cvar on** (script: mirror `bd_hybrid.ps1`, add
+  `--ez gpu_vulkan_compute_postprocess_probe true`, screenshot-compare to baseline). Pending a cool device.
