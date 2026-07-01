@@ -3825,7 +3825,8 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
             XELOGI(
                 "IMG_SR break: consumer prim={} host_verts={} idx={} "
                 "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} "
-                "colormask={:04X} fscomp={} rtsrc={} oldlayout={} newlayout={}",
+                "colormask={:04X} fscomp={} rtsrc={} oldlayout={} newlayout={} "
+                "dst_color0_info={:08X} dst_depth_info={:08X} producer_img={:#x}",
                 d.prim_type, d.host_vertex_count, d.index_count, d.ps_hash,
                 d.vs_hash, d.blendcontrol0, d.color_mask,
                 consumer_is_fullscreen_composite ? 1 : 0,
@@ -3837,7 +3838,9 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
                  imb.oldLayout == VK_IMAGE_LAYOUT_GENERAL)
                     ? 1
                     : 0,
-                uint32_t(imb.oldLayout), uint32_t(imb.newLayout));
+                uint32_t(imb.oldLayout), uint32_t(imb.newLayout),
+                d.color0_info, d.depth_info,
+                reinterpret_cast<uintptr_t>(imb.image));
           }
         }
       } else {
@@ -4907,6 +4910,24 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           feedback_merge_producer_fetch_constant_ + 1;
     }
 
+    // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): route a
+    // full-screen post-process composite (rect-list / <=6-vertex quad whose pixel
+    // shader samples a texture - a bloom/blur/tonemap pass reading a prior render
+    // target) through the EDRAM-buffer/SSBO ROP path, so its result lands in the
+    // EDRAM buffer with NO render-to-texture pass (collapsing the tile-I/O
+    // pass-break) while the overdraw main scene keeps host-RT GMEM ROP. The
+    // modification bit selects the FSI-mode translation (EnsureShadersTranslated);
+    // hybrid_current_draw_composite_ makes the draw helpers take the FSI path.
+    hybrid_current_draw_composite_ = false;
+    if (render_target_cache_->hybrid_postprocess() && pixel_shader) {
+      bool composite_prim = prim_type == xenos::PrimitiveType::kRectangleList ||
+                            (index_count >= 3 && index_count <= 6);
+      if (composite_prim && !pixel_shader->texture_bindings().empty()) {
+        hybrid_current_draw_composite_ = true;
+        pixel_shader_modification.pixel.hybrid_fsi_composite = 1;
+      }
+    }
+
     // Translate the shaders now to obtain the sampler bindings.
     vertex_shader_translation = static_cast<VulkanShader::VulkanTranslation*>(
         vertex_shader->GetOrCreateTranslation(
@@ -5121,9 +5142,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       pixel_shader &&
       !pixel_shader->kills_pixels() &&
       !draw_util::DoesCoverageDependOnAlpha(
-          regs.Get<reg::RB_COLORCONTROL>()) &&
-      regs.Get<reg::RB_SURFACE_INFO>().msaa_samples ==
-          xenos::MsaaSamples::k1X) {
+          regs.Get<reg::RB_COLORCONTROL>())) {
+    // MSAA-safe (was gated msaa==1X): the coverage estimator rounds INWARD to
+    // FULLY-sample-covered pixels at 2x/4x (round_min/max=255), and the
+    // load-DONT_CARE variant is applied only when the covered rect spans the
+    // WHOLE render area (~line 4041) - so a proven full overwrite is load-dead
+    // for EVERY sample. The old 1x gate is exactly why dc_safe caught 0 of BD's
+    // clears (2E372EA28CC404B7 etc. run at the scene's 2x MSAA) - device dump
+    // 2026-06-30. Allowing MSAA lets the ~15 guest clears elide their tile load.
     uint32_t dc_safe_state_mask = 0;
     // Depth/stencil: every covered sample takes an unconditional depth write,
     // and stencil is not in use.
@@ -5177,6 +5203,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       }
     }
   }
+  // dc_safe note (device-measured 2026-06-30): on BD's heavy field the detection
+  // fires (~16896 draws) but the covered rect is [0,0,320,720] = a 320-wide strip
+  // of the 1280-wide RT (partial, not full-screen), so the full-area check (~4041)
+  // correctly rejects the load-DONT_CARE - dc_safe[p=0]. BD's pass-openers are
+  // partial overwrites; the safe load-skip is not applicable to this title.
 
   std::chrono::steady_clock::time_point rt_t0;
   if (trace_draw_cpu) {
@@ -8451,7 +8482,8 @@ void VulkanCommandProcessor::UpdateDynamicState(
       GetVulkanDevice()->properties().apiVersion >=
           VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       render_target_cache_->GetPath() !=
-          RenderTargetCache::Path::kPixelShaderInterlock) {
+          RenderTargetCache::Path::kPixelShaderInterlock &&
+      !hybrid_current_draw_composite_) {
     uint32_t key_depth_write = 0;
     xenos::CompareFunction key_compare = xenos::CompareFunction::kAlways;
     if (normalized_depth_control.z_enable) {
@@ -8496,7 +8528,8 @@ void VulkanCommandProcessor::UpdateDynamicState(
       GetVulkanDevice()->properties().apiVersion >=
           VK_MAKE_API_VERSION(0, 1, 3, 0) &&
       render_target_cache_->GetPath() !=
-          RenderTargetCache::Path::kPixelShaderInterlock) {
+          RenderTargetCache::Path::kPixelShaderInterlock &&
+      !hybrid_current_draw_composite_) {
     VkBool32 stencil_test_enable =
         normalized_depth_control.stencil_enable ? VK_TRUE : VK_FALSE;
     VkStencilOp front_fail = VK_STENCIL_OP_KEEP, front_pass = VK_STENCIL_OP_KEEP,
@@ -8598,7 +8631,8 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
 
   bool edram_fragment_shader_interlock =
       render_target_cache_->GetPath() ==
-      RenderTargetCache::Path::kPixelShaderInterlock;
+          RenderTargetCache::Path::kPixelShaderInterlock ||
+      hybrid_current_draw_composite_;
   uint32_t draw_resolution_scale_x = texture_cache_->draw_resolution_scale_x();
   uint32_t draw_resolution_scale_y = texture_cache_->draw_resolution_scale_y();
 

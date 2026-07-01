@@ -1513,6 +1513,16 @@ class VulkanCommandProcessor : public CommandProcessor {
   };
   GuestDrawDesc last_guest_draw_desc_ = {};
 
+  // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): set per-draw in
+  // IssueDraw when this draw is a full-screen 1x-coverage post-process composite
+  // being routed through the EDRAM-buffer/SSBO ROP path (edram_fragment_shader_
+  // interlock machinery) while the frame's path stays kHostRenderTargets. The
+  // draw helpers OR this into their GetPath()==kPixelShaderInterlock checks so the
+  // composite takes the FSI (no-attachment, EDRAM-buffer-write) draw path,
+  // collapsing its tile-I/O pass-break, while the overdraw main scene keeps host-
+  // RT GMEM ROP. Always false unless the hybrid cvar is on (default byte-identical).
+  bool hybrid_current_draw_composite_ = false;
+
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
   // render target cache; logged + reset at swap. transfer_calls = times
