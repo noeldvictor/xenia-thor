@@ -288,6 +288,16 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     semantics allow (cvar'd, per-game): direct ROP/bandwidth halving on the dominant cost. Check
     draw_util/GetColorVulkanFormat for where k_2_10_10_10_FLOAT (or k_16_16_16_16_FLOAT?) maps — confirm
     which guest format BD uses first (the trace says host=RGBA16F).
+  - **✅⚠️ LEVER 1 FIRST MEASUREMENT (2026-07-01, gpu_fp10_color_as_unorm10=true — the cvar ALREADY EXISTED,
+    default-off, never in the test stack): REAL WIN + a correctness bug.** Same-scene-class heavy field:
+    main config CPP 24->16, **bins 5->3, draw time 9.6->6.1 ms/segment (−36%), draws ~41->36.6 ms/frame,
+    drains [37.5,36.5]->[33,29.7], gap_total 87->72, gpu_frame_us ~103->~95.5 (−8ms), OSD 9.9->10.5 fps.**
+    The FIRST actual frame-time reduction of the campaign, aimed by the trace. BUT the screenshot shows NEW
+    artifacts vs baseline (RGB-noise blocks + glitch strips in overlay/effect regions) => NOT shippable yet;
+    prime suspect = the EDRAM ownership-transfer alias for the k_2_10_10_10_FLOAT class when fp10 is on
+    (GetColorOwnershipTransferVulkanFormat must match the changed host format class; transfers may
+    reinterpret stale RGBA16F-encoded data / vice versa). FIX = align the transfer alias + host-depth-copy
+    paths with the fp10 mapping, revalidate pixel-correctness, then per-game-profile it for BD.
   - **🎯 LEVER 2: attribute + cut the ~54ms un-bracketed drain** (WFI per barrier? CP? preemption?). Tools:
     TU_DEBUG_FILE runtime toggles, TU_DEBUG=flushall/no_concurrent_binning perturbation, perfetto counters.
   - Trace tooling now permanent: bd_gputrace.ps1 + the parse snippets; MESA_GPU_TRACES via
