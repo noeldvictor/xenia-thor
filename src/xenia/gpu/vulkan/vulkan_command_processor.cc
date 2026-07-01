@@ -4313,6 +4313,19 @@ void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
       const RetroCoverage& cov = retro_color_cov_[i];
       if (cov.complete && !cov.poisoned) {
         load_dont_care_mask |= uint32_t(1) << (1 + i);
+      } else if (cov.interval_count &&
+                 draw_outcomes_retro_depth_none_diag_ < 12) {
+        // Diagnostic (throttled, shares the retro diag budget): the union got
+        // PARTIAL coverage - log what it reached so the miss can be explained
+        // (e.g. strips stopping at the guest height below the tile-rounded
+        // extent, or a poisoning write).
+        ++draw_outcomes_retro_depth_none_diag_;
+        XELOGI(
+            "retro_color: att {} PARTIAL n={} first=[{},{}) poisoned={} "
+            "extent={}x{}",
+            i, cov.interval_count, cov.x0[0], cov.x1[0],
+            uint32_t(cov.poisoned), retro_pass_extent_.width,
+            retro_pass_extent_.height);
       }
     }
   }
@@ -6177,7 +6190,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       if (retro_cover_state != 1) {
         continue;
       }
-      if (retro_y0 <= 0 && retro_y1 >= int32_t(retro_pass_extent_.height) &&
+      // Height tolerance: the host image is EDRAM-tile-rounded taller than the
+      // guest surface (720 guest -> 768 host rows); guest clears stop at the
+      // guest height. The tolerance admits them, leaving only the surface's
+      // own final-tile padding rows undefined (see the cvar comment).
+      int32_t retro_required_height =
+          int32_t(retro_pass_extent_.height) -
+          int32_t(cvars::gpu_vulkan_retro_color_height_tolerance);
+      if (retro_y0 <= 0 && retro_y1 >= retro_required_height &&
           retro_x0 < retro_x1) {
         if (!retro_cov.AddInterval(retro_x0, retro_x1)) {
           retro_cov.poisoned = true;

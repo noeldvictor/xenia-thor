@@ -31,6 +31,7 @@ DECLARE_bool(gpu_edram_passes_dont_care_safe);
 DECLARE_bool(gpu_vulkan_skip_unused_depth_store);
 DECLARE_bool(gpu_vulkan_retro_depth_none);
 DECLARE_bool(gpu_vulkan_retro_color_dontcare);
+DECLARE_uint32(gpu_vulkan_retro_color_height_tolerance);
 DECLARE_bool(gpu_vulkan_classify_img_sr_breaks);
 DECLARE_bool(gpu_vulkan_feedback_merge);
 DECLARE_bool(gpu_hw_vertex_fetch);

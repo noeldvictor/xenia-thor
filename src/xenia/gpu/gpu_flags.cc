@@ -200,6 +200,19 @@ DEFINE_bool(
     "leaves the load. Default off.",
     "GPU");
 
+DEFINE_uint32(
+    gpu_vulkan_retro_color_height_tolerance, 0,
+    "gpu_vulkan_retro_color_dontcare: accept the coverage union as complete "
+    "when it reaches renderArea.height minus this many rows. The host RT image "
+    "is EDRAM-tile-rounded TALLER than the guest surface (e.g. 1280x720 guest "
+    "-> 768-tall host rows), and guest clears cover only the guest height - a "
+    "strict full-height test then never engages. The uncovered PADDING rows "
+    "belong to the surface's own final tile row; eliding the load leaves them "
+    "undefined, which is unobservable unless an EDRAM ownership transfer reads "
+    "that final tile row's padding this frame (rare; validate per game with a "
+    "screenshot). 0 = strict (always safe). BD: 48 (768-720). Default 0.",
+    "GPU");
+
 DEFINE_bool(
     gpu_vulkan_feedback_merge, false,
     "BD-30 GPU lever (WIP, input-attachment / GMEM-residency merge): when a guest "
