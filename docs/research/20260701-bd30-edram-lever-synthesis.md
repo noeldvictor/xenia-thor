@@ -242,6 +242,23 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     passes write disjoint EDRAM regions; (c) MERGE passes (the original one-pass vision). Build (b)+(a) as a
     cvar, re-run bd_edram_atomic_measure.ps1, watch gap_guest fall from 450ms. If gap_guest drops below the
     ~78ms it replaced, the buffer path becomes a NET WIN and atomicMin (task #31) then makes it correct.
+- **🚨🚨🚨 GAP-ATTRIBUTION CORRECTED — THE REAL FRAME MODEL (2026-07-01, `GPU pass split` top-gap log, heavy
+  field, inpass=1 run, stable x20 frames).** The per-kind gap attribution (gap_xfer≈78ms "transfer tile-I/O")
+  was a MISLEAD. The pass-split decomposition shows the ~82ms gap is **TWO GIANT GAPS: top_gap≈[38.5ms, 35ms,
+  0.9ms] — ~73ms in just two holes flanking the MAIN GEOMETRY PASS** (fb=670b, 233-275 draws; the giant gaps
+  merely FOLLOW tiny 1-2-draw transfer passes adjacent to it, so the kind-attribution credited them to xfer;
+  also explains the earlier unstable guest<->xfer attribution whose SUM stayed ~79ms). All 79 pass BRACKETS
+  sum to only ~13.5ms; nothing is recorded inside the holes (disp=0 bufcp=0 barr=0) = pure deferred GPU
+  execution. **So BD's ~94ms frame ≈ 73ms main-pass deferred work (bin ~38.5 + render/store ~35) + ~13.5ms
+  all pass brackets + ~9ms small gaps. The EDRAM pass STRUCTURE (transfers/composites/count) is only ~20ms
+  TOTAL — the 42-pass tile-I/O model of the frame is WRONG.** Also: inpass=1 folds guest+composite passes
+  15-17+19-21 -> 7-9+9-10 but n[xfer]=35 and the giant gaps unchanged; frame 98.5->94-95ms (~4%, noise-level)
+  => inpass stays MODEST-confirmed on the right metric.
+  - **DISCRIMINATOR FIRED (in progress): `gpu_edram_passes_dont_care` + pass-split log.** Historic 122->49ms
+    (-73ms) EXACTLY matches the two giant gaps. If dont_care collapses top_gap[0..1] => the 73ms is per-pass
+    LOAD/STORE traffic (lever = load/store elision: STORE_OP_NONE for unread RTs, partial-range, dc-safe
+    unions — buildable). If the gaps survive => it's BINNING/VERTEX-bound (260k verts x2 phases through fat
+    translated VS with in-shader SSBO fetch+bswap; lever = the vertex/binning path). One run decides.
   - **🚫 DIAGNOSTIC RESULT (2026-07-01, gpu_edram_atomic_barrier_bytes=4096): scoping the barrier 90MB->4KB
     changed NOTHING — gap_guest stayed ~447ms, gpu_frame_us ~468ms (6 frames). The cost is NOT the cache flush;
     it is pipeline SERIALIZATION / deferred software-ROP fragment execution (per-fragment atomic-less depth+
