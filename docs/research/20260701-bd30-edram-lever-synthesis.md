@@ -196,3 +196,29 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     validate pixel-correct + measure brk_img_sr 42->~41 (proof-of-concept for the class), then generalize.
   - NOTE: consumer-draw SKIPS are already device-proven INERT (memory: xenia has no lazy-resolve; the pass runs
     with 0 draws), so the ONLY lever is REPLACEMENT-by-compute, not skipping.
+- **⭐⭐ BRICK 2 GUEST ALU CAPTURED (2026-07-01, dump_shaders on-device; ucode archived in
+  docs/research/bd_composite_ucode/).** dump_shaders now allowlisted (EmulatorActivity.java); the target
+  composites' Xenos microcode is in hand (filenames = the ps_hash = ucode_data_hash, confirmed same hash).
+  Decoded:
+  - `1E70EB9513D670C9` (11k) = **`tfetch2D r0, r0.xy, tf0; max oC0, r0, r0`** = a pure 1-TAP TEXTURE COPY
+    (sample producer at interpolated texcoord, output it). **THE ideal first target** — minimal but it DOES
+    read the producer, so it exercises the one novel thing (arbitrary-coord producer read in compute).
+  - `2E372EA28CC404B7` (26k, top by count) = **`max oC0, r0, r0`** = passthrough of interpolant r0, NO tfetch
+    => does NOT read the producer (a fill/resolve-target, not a resample). Skip as a demo despite being #1.
+  - `1B132051B5504DA9` (15k) = **13-tap separable blur** (tfetch tf0 at r0.xy + c0..c12 offsets, weighted mad
+    c13..c25, predicated early-outs). `0ABADD9DA4373CBA` = 9-tap multi-texture (tf0..tf8) accumulate.
+    `2A0674C564A8A8C5` = 1-tap + tonemap (dp3/muls). `05775DE8A2B0B3F5` = DOF/bloom, log/exp + predicated
+    multi-tap. All read via `tfetch2D` at INTERPOLATED `r0.xy` (NOT gl_FragCoord) => texcoord is TRANSFORMED,
+    definitively confirming same-pixel input-attachments cannot express these (the compute rationale holds).
+- **⚠️ ARCHITECTURAL COUPLING the ALU exposes (reshapes brick 2 — important):** the composites sample the
+  producer as a BOUND TEXTURE (`tfetch2D tf0`). On the host-RT path the tile-I/O break is the producer
+  RT->SHADER_READ transition (end the producer's render pass = GMEM store). Moving the CONSUMER to compute
+  does NOT remove that transition BY ITSELF — a compute shader sampling a just-rendered RT-as-texture still
+  forces the same store. The break only vanishes if the compute reads the producer from a buffer already in
+  DRAM, i.e. **the PRODUCER pass must have written the EDRAM SSBO** (the buffer-path producer model). So
+  composite-compute and the atomic-ROP buffer path are TWO HALVES of one "everything renders to one EDRAM
+  SSBO" model, not independent levers. Brick 2's honest scope = (a) producer writes to the EDRAM SSBO
+  (atomic-ROP / buffer path, task #31), THEN (b) consumer composite reads it from the SSBO in compute. The
+  cheaper INTERMEDIATE that IS independently shippable: keep producers as GMEM-RESIDENT storage images and
+  have the compute consumer read them as storage images (no render-pass-to-texture transition) — worth a
+  feasibility check next, on a cool device, starting from the 1E70 copy.

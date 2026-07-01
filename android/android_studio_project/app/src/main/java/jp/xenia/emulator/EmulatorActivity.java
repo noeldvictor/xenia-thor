@@ -147,6 +147,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_context_residency");
             copyStringExtra(intent, launchArguments, "cpu_perf_map_path");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
+            copyStringExtra(intent, launchArguments, "dump_shaders");
             copyStringExtra(intent, launchArguments, "apu");
             copyBooleanExtra(intent, launchArguments, "mute");
             copyIntExtra(intent, launchArguments, "log_level");
