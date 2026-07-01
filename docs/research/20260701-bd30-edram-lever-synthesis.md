@@ -90,6 +90,16 @@ composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-textur
   2-3 dispatches). Re-verify the extension list before relying on it.
 - **Precedent:** Xenia's own EDRAM render-target-cache rework already gave 3.4x (Halo3 menu 79.8->23.5ms) by
   eliminating copies — same "kill the round-trip" lever; compute fusion extends it to the passes the cache can't.
+- **BUILDING BLOCKS CONFIRMED (2026-07-01, in-repo — the core is NOT blocked on missing infra):**
+  - xenia ALREADY runs compute post-process: `src/xenia/gpu/shaders/apply_gamma_pwl.cs.xesl` (+ `_fxaa_luma`)
+    apply gamma/FXAA as a COMPUTE dispatch over the framebuffer. Compute post-process is precedented here.
+  - EDRAM-buffer compute template: `src/xenia/gpu/shaders/resolve_clear_32bpp.xesli` — 8x8 workgroup, binds the
+    EDRAM byte_buffer (set0 binding0/1), `XeEdramOffsetBytes(...)` address calc, `byte_buffer_align16_store16_xe`.
+    A composite-compute shader mirrors this but READS the producer address + WRITES the blended dest.
+  - Compute-pipeline-over-EDRAM host template: `resolve_fsi_clear_32bpp_pipeline_` in vulkan_render_target_cache.cc
+    (CreateComputePipeline + `descriptor_set_layout_storage_buffer_` + push consts) — mirror for the postproc pipeline.
+  - Toolchain: `xenia-gpu-shader-compiler` build target exists; `.xesl`->SPIR-V validated in a prior session
+    (`scratch/xesl_wrap_test.frag`/`.spv`). New `.xesl` -> `bytecode/vulkan_spirv/<name>_cs.h` (checked-in header).
 - **Build order (next session, COOL device, validate each step on-device):** (a) pick ONE simple full-screen
   composite (tonemap), emit a compute variant, dispatch it into the EDRAM SSBO, confirm pixel-correct vs the
   render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
