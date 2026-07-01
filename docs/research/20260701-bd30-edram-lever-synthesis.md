@@ -270,6 +270,19 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     `gpu_vulkan_driver_ir3_debug`. Driver binary also supports TU_DEBUG_FILE (RUNTIME-watched option file =
     single-run driver-mode A/B!) and logs "Autotune selected sysmem" + "TU_DEBUG=0x%lx" (delivery
     confirmable in logcat). Re-running the sysmem discriminator through the real hatch.
+  - **🚨 SYSMEM REAL RESULT (2026-07-01, delivery CONFIRMED via gpu_vulkan_driver_debug setenv log):
+    TU_DEBUG=sysmem => frame ~103ms, drains [37.5,36.5]ms — UNCHANGED vs GMEM baseline.** Kills the
+    binning/per-tile-replay hypothesis genuinely (sysmem has no binning or tile machinery). GMEM ≈ SYSMEM ≈
+    103ms while GMEM+dont_care = 33ms => the ~70ms is the DRAM TRAFFIC OF THE ATTACHMENT DATA ITSELF
+    (stores of what passes render + consumer loads; sysmem pays the same volume as direct per-fragment
+    writes). dont_care only "wins" by DISCARDING results. **The correct-rendering lever = CROSS-PASS STORE
+    LIVENESS: BD leaves z_write=1 during composites (lazy guest state, the LESSEQUAL+write diag draws), so
+    nearly every pass STORES DEPTH NOBODY READS - dead cross-pass depth stores plausibly ~40-50% of the
+    traffic. That is increment B(b) (store elision via the steady-state frame graph), now the top build.**
+    ALSO DISCOVERED (driver binary map): the bundled Turnip has u_trace GPU tracepoints (render_pass /
+    gmem_load / gmem_store begin+end) exposed via MESA_GPU_TRACES/MESA_GPU_TRACEFILE (env hatch exists in
+    tree + allowlisted) = per-stage authoritative attribution WITHOUT perfetto; TU_DEBUG_FILE = runtime-
+    watched options (single-run driver-mode A/B); "Autotune selected sysmem" logging. Attribution run fired.
   - **🚨🚨 INPASS=2 DECISIVE (2026-07-01): PASS-COUNT IS NOT THE LEVER EITHER.** inpass=2 (depth folding,
     Turnip has EXT_shader_stencil_export) ENGAGES massively: inpass[x=34 skip_fmt=0 skip_oth=1], n[xfer]
     35->24-25, TOTAL brackets 95->70 (25% pass-count cut), stable, UNHANDLED=0. **Frame UNCHANGED (~100ms;
