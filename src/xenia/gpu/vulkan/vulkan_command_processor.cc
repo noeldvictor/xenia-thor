@@ -2491,11 +2491,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               // deferred tile store/render of the preceding pass.
               if (cvars::gpu_trace_resolve_timing) {
                 XELOGI(
-                    "GPU pass kinds (us): guest={} xfer={} rclear={} rcopy={} "
-                    "clrd={} hds={} n[guest={} xfer={} rclear={} rcopy={} "
-                    "clrd={} hds={}]",
+                    "GPU pass kinds (us): guest={} composite={} xfer={} rclear={} "
+                    "rcopy={} clrd={} hds={} n[guest={} composite={} xfer={} "
+                    "rclear={} rcopy={} clrd={} hds={}]",
                     uint64_t(double(kind_ticks[uint32_t(GpuPassKind::kGuest)]) *
                              tick_us),
+                    uint64_t(
+                        double(kind_ticks[uint32_t(GpuPassKind::kGuestComposite)]) *
+                        tick_us),
                     uint64_t(
                         double(kind_ticks[uint32_t(GpuPassKind::kEdramTransfer)]) *
                         tick_us),
@@ -2512,6 +2515,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                  GpuPassKind::kHostDepthStoreDispatch)]) *
                              tick_us),
                     kind_count[uint32_t(GpuPassKind::kGuest)],
+                    kind_count[uint32_t(GpuPassKind::kGuestComposite)],
                     kind_count[uint32_t(GpuPassKind::kEdramTransfer)],
                     kind_count[uint32_t(GpuPassKind::kResolveClear)],
                     kind_count[uint32_t(GpuPassKind::kResolveCopyDispatch)],
@@ -4933,13 +4937,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // modification bit selects the FSI-mode translation (EnsureShadersTranslated);
     // hybrid_current_draw_composite_ makes the draw helpers take the FSI path.
     hybrid_current_draw_composite_ = false;
-    if (render_target_cache_->hybrid_postprocess() && pixel_shader) {
-      bool composite_prim = prim_type == xenos::PrimitiveType::kRectangleList ||
-                            (index_count >= 3 && index_count <= 6);
-      if (composite_prim && !pixel_shader->texture_bindings().empty()) {
-        hybrid_current_draw_composite_ = true;
-        pixel_shader_modification.pixel.hybrid_fsi_composite = 1;
-      }
+    // Composite-consumer detection (rect-list / <=6-vertex quad whose pixel
+    // shader samples a texture = a bloom/blur/tonemap pass reading a prior RT).
+    // Computed UNGATED for the gpu_trace_resolve_timing brick-2 measurement (times
+    // these passes under kGuestComposite); the hybrid routing below reuses it.
+    current_draw_is_composite_consumer_ =
+        pixel_shader &&
+        (prim_type == xenos::PrimitiveType::kRectangleList ||
+         (index_count >= 3 && index_count <= 6)) &&
+        !pixel_shader->texture_bindings().empty();
+    if (render_target_cache_->hybrid_postprocess() &&
+        current_draw_is_composite_consumer_) {
+      hybrid_current_draw_composite_ = true;
+      pixel_shader_modification.pixel.hybrid_fsi_composite = 1;
     }
 
     // Translate the shaders now to obtain the sampler bindings.
@@ -5896,9 +5906,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         render_target_cache_->GetFragmentShaderInterlockRenderPass(),
         render_target_cache_->GetFragmentShaderInterlockFramebuffer());
   } else {
+    // Time composite-consumer guest passes under kGuestComposite (brick-2 ceiling
+    // measurement) vs kGuest for ordinary geometry. Classification only - the
+    // render pass object + rendering are identical either way.
     SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         render_target_cache_->last_update_render_pass(),
-        render_target_cache_->last_update_framebuffer());
+        render_target_cache_->last_update_framebuffer(),
+        current_draw_is_composite_consumer_ ? GpuPassKind::kGuestComposite
+                                            : GpuPassKind::kGuest);
   }
 
   // gpu_hw_vertex_fetch: bind the shared-memory buffer as the Vulkan vertex

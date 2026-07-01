@@ -223,6 +223,11 @@ class VulkanCommandProcessor : public CommandProcessor {
     kResolveCopyDispatch = 3,
     kResolveClearDispatch = 4,
     kHostDepthStoreDispatch = 5,
+    // Full-screen post-process COMPOSITE consumer guest passes (rect/quad whose
+    // pixel shader samples a producer RT) - split out of kGuest so
+    // gpu_trace_resolve_timing measures exactly the tile-I/O brick 2 (composite
+    // ->compute) would remove. Timing classification only; renders identically.
+    kGuestComposite = 6,
     kCount
   };
   // Brackets an EDRAM resolve / clear / host-depth-store COMPUTE dispatch with a
@@ -1522,6 +1527,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // collapsing its tile-I/O pass-break, while the overdraw main scene keeps host-
   // RT GMEM ROP. Always false unless the hybrid cvar is on (default byte-identical).
   bool hybrid_current_draw_composite_ = false;
+
+  // gpu_trace_resolve_timing measurement (brick 2 ceiling): the current draw is a
+  // full-screen post-process composite consumer (rect/quad whose pixel shader
+  // samples a texture) - computed UNGATED (independent of the hybrid cvar) so a
+  // guest pass opened by such a draw is timed under GpuPassKind::kGuestComposite.
+  // Diagnostic classification only; does not change any rendering.
+  bool current_draw_is_composite_consumer_ = false;
 
   // EDRAM render-target transfer counters (per frame), the suspected source of
   // the per-draw render-pass breaks / Adreno tile flushes. Incremented by the
