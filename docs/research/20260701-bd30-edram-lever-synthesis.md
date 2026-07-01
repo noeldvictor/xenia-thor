@@ -298,6 +298,17 @@ The first concrete piece of the compute core is IMPLEMENTED (not just planned), 
     (GetColorOwnershipTransferVulkanFormat must match the changed host format class; transfers may
     reinterpret stale RGBA16F-encoded data / vice versa). FIX = align the transfer alias + host-depth-copy
     paths with the fp10 mapping, revalidate pixel-correctness, then per-game-profile it for BD.
+    - **UBWC REFUTED (fp10 + TU_DEBUG=noubwc, delivery confirmed): artifacts persist identically; timing
+      unchanged (~95.8ms).** Transfer alias also already consistent (falls through to GetColorVulkanFormat).
+      REFINED READ: comparing same-scene baseline (bd_retro.png) — the baseline ALREADY shows corruption in
+      the SAME regions (white/purple sparkles + black blobs, the known BD bloom-region artifacts at cap=2,
+      present all session). fp10 CHANGES their appearance (RGB noise/strips) rather than cleanly introducing
+      new ones — consistent with the VALUE-DOMAIN difference: 7e3 float carries >1.0 bloom highlights,
+      UNORM10 clamps to [0,1], so the (already-glitchy) bloom composite chain produces differently-wrong
+      pixels. Since the user approved "lower bloom acceptable", fp10 (−8ms, OSD ~10.5-10.8 vs ~9.9-10.2) is
+      a BD-profile CANDIDATE pending a side-by-side quality judgment; the underlying bloom artifact is a
+      PRE-EXISTING baseline bug worth its own hunt. Also: noubwc globally = timing-neutral on BD (UBWC not a
+      perf factor here).
   - **🎯 LEVER 2: attribute + cut the ~54ms un-bracketed drain** (WFI per barrier? CP? preemption?). Tools:
     TU_DEBUG_FILE runtime toggles, TU_DEBUG=flushall/no_concurrent_binning perturbation, perfetto counters.
   - Trace tooling now permanent: bd_gputrace.ps1 + the parse snippets; MESA_GPU_TRACES via
