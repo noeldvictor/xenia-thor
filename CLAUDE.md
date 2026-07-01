@@ -13,36 +13,34 @@ present-hang gone]; (3) CPU/GPU NEON [VMX→NEON, FP32 dot=fmul+faddv]; (4) TURN
 (the fast+correct path; the KGSL blocking-fence fix was the project's biggest win; lever = driver-level perf +
 Adreno features). Fix LLVM bugs as found.**
 
-### 🔑🔑 BD-30 APPROACH — read before any perf work (user, 2026-06-28)
-- **THE THOR IS 10-20× MORE POWERFUL THAN THE XBOX 360 → full-speed emulation IS the target + achievable.**
-  BD ran ~30fps on the 360. **The emulation realistically needs only ~4× the 360's work (EDRAM handling +
-  CPU recompilation/LLVM) — well within the 10-20× headroom (≈4×/15× ⇒ ~100fps-class).** So 30fps at full
-  foliage has LARGE margin. BD at ~5-8fps = a ~15-58× EMULATION INEFFICIENCY to CLOSE, NOT a hardware/foliage
-  limit. NEVER conclude "can't hit 30 / GPU-capped / content too heavy / needs foliage thinning" — find the
-  emulation inefficiency. The job = drive emulation overhead DOWN toward the ~4× budget.
-- **✅ BD FIELD = STRUCTURE-BOUND, not pixel-bound (CLEAN same-resolution isolation 2026-06-29 — supersedes the
-  earlier CONFOUNDED cross-run "24ms real + 79ms tile-I/O" decomposition).** The field is GPU-bound (CPU does
-  ~3ms then waits ~127ms on the GPU fence; 99% busy) AND **resolution-INVARIANT: 640px (480p) and 1280px (720p)
-  give IDENTICAL gpu_frame_us (~122ms)** ⇒ fragments / fill / overdraw / resolution / foliage-COVERAGE are all
-  FREE. Same-res single-cvar isolation: **`gpu_edram_passes_dont_care` (skip per-pass tile load/store) → 122→49ms,
-  so the per-pass GMEM tile-RESOLVE ≈ 74ms (60%); residual ≈49ms = binning (260k verts) + 1083 draws + 46
-  transfers.** The 74ms is **per-pass LATENCY, not bandwidth** (resolution-invariant; image+framebuffer clamp =
-  ~10% only) = ~42 render-to-texture passes × ~1.7ms FIXED resolve each. **Those 42 are BD's FIXED post-process
-  pipeline (bloom/blur/shadow/tonemap) that runs EVERY frame regardless of scene** — a sparse village is still
-  99% GPU because it pays the full pipeline. On the 360 these resolves were free (on-die EDRAM); the Adreno pays.
-- **BD-30 LEVERS (revised 2026-06-29):** (1) ⛔ the input-attachment / subpass MERGE is DEAD — proven 4 ways
-  (25/26 composites read a producer rendered several passes earlier = non-adjacent, can't stay GMEM-resident on a
-  TBDR; the 1 adjacent is in-place needing FSI/ROAV, ABSENT on Adreno 740). DON'T rebuild it. (2) ✅ image-alloc
-  clamp SHIPPED (`gpu_clamp_rt_image_height=768`, ~10%, f1836c559 — Turnip's storeOp follows the IMAGE not the
-  renderArea, so the old framebuffer clamp missed it). (3) ⭐ **USER-APPROVED 2026-06-29 ("lower bloom/blur is
-  acceptable") → THE big lever = REDUCE THE 42 POST-PROCESS PASSES.** Even gutting all post-process → ~15-20fps
-  (the DONT_CARE floor); locked-30 needs post-process reduction AND residual (binning/draw) cuts = a STACK.
-  FOLIAGE STAYS FULL (coverage is free — thinning is pointless AND forbidden). (4) residual = binning/draws.
-- **⛔ REFUTED dead-ends (device-proven CLEAN this session, DON'T re-chase): LRZ restore** (spike flat WITH the
-  now-functional opaque prepass — BD foliage is co-planar + 34% blended, nothing to occlude); **VRS** (fragments
-  free ⇒ its "−22%" was a scene confound; likely inert — re-verify or drop from BD's profile); resolution / SGSR /
-  render-low (pixels free); hw-vertex-fetch, FDM, UBWC, sysmem, renderArea-clamp, dont_care_safe, depth-store-skip,
-  input-attachment merge, foliage thinning. Full evidence: [[bd-resolution-invariant-structure-bound]] [[bd-edram-tile-io-bottleneck]].
+### 🔑🔑 BD-30 APPROACH — read before any perf work (REWRITTEN 2026-07-01 from driver-measured data)
+- **CURRENT STATE: BD SHIPPED at ~19.8fps** (GameProfile: `gpu_fp10_color_as_unorm10` + `gpu_vrs_foliage_rate=4`
+  + `gpu_force_max_msaa_samples=2`; quality option = VRS 2x2 at 17.0fps). Baseline was 10.8. Frame floor
+  ~49ms on the heaviest field scenes. Target remains locked-30 (33ms).
+- **✅✅ THE FRAME ANATOMY IS DRIVER-MEASURED (2026-07-01, Turnip u_trace via MESA_GPU_TRACES — supersedes ALL
+  prior models): BD's frame is ~90% pure draw/fragment execution.** GMEM tile loads+stores ≈ 1ms/frame TOTAL
+  (the historic "74ms tile-I/O" model was WRONG — dont_care's win came from skipping dead bin rendering).
+  Pass count, barriers, and EDRAM structure ≈ ~6ms. The cost = per-bin fragment work (raster + ROP + residual
+  shading + VS-replay) of the main scene (2xMSAA, now-32bpp color), ~750 GPU cycles/sample pre-VRS.
+- **🚨 "RESOLUTION-INVARIANT" WAS VOID: `kernel_display_resolution` never changes BD's internal render size**
+  (BD hard-renders 1280x720; device-proven — identical GPU passes at 480p setting). Every "pixels are free /
+  structure-bound" conclusion built on it tested nothing. BD is substantially pixel/sample-bound.
+- **MEASURED LEVER VERDICTS (2026-07-01, all heavy-field, driver-trace era):** SHIPPED: fp10 32bpp color
+  (−8ms), VRS foliage (2x2 clean / 4x4 perf). CLOSED: fp16-relaxed (+11ms regression), cap=1-on-stack (no win
+  + ghost), vrs_all_draws (null => opaque shading insignificant), LRZ (upper-bound ZERO — co-planar foliage
+  unoccludable; do NOT build the driver patch), buffer path (4.7x loss), barrier scoping, gmem/sysmem force,
+  inpass=2 (safe 25% pass cut, frame flat), retro depth/color elision (classes ~2/~0), UBWC (timing-neutral).
+- **THE ROAD TO 30 (user-directed 2026-07-01):** (1) ⭐ Cemu-style GUEST PATCHES for internal render
+  resolution (user-authorized; .patch.toml; 4 candidate li-immediate sites found at 0x8212F41C/0x82133400/
+  0x82136E40/0x8221D270 — apply-path debugging in progress, patcher diagnostic added), multiple resolutions +
+  per-game patch-toggle UI/UX for end users; (2) host-side fractional render-scale-down as the general
+  fallback (~190 draw_resolution_scale sites); (3) frame-gen at present = cherry-on-top; (4) AOT/LLVM in
+  parallel (may open BD doors: sustained clocks/heat + CPU cost of 1000+ draws).
+- **MEASUREMENT: use the driver-trace harness for every verdict** — `gpu_vulkan_driver_env
+  'MESA_GPU_TRACES=print;MESA_GPU_TRACEFILE=...'` (per-pass render_pass/gmem_load/gmem_store GPU timestamps;
+  parse + hole analysis = where untraced time sits), plus the pass-split log (vulkan_trace_pass_timestamps +
+  gpu_trace_resolve_timing). TU_DEBUG via `gpu_vulkan_driver_debug` (setenv pre-dlopen; mesa.tu.debug property
+  does NOT reach the driver). Scene tell for nav-desync: gpu_busy < 90% + tiny screenshot = menu, discard run.
 - **⭐⭐ AOT LLVM = THE CORE CPU DIRECTION (user mandate 2026-06-29). Model = ReXGlue / XenonRecomp + RPCS3:
   PRECOMPILE EVERYTHING AHEAD OF TIME, zero JIT/dispatch at gameplay.** ReXGlue (github.com/rexglue/rexglue-sdk)
   is a static PPC→C++→native `-O3` recompiler (Xenia/XenonRecomp lineage) — its whole speed comes from turning
@@ -282,10 +280,7 @@ Every win = a cvar-gated engine flag + a `XeniaOptimizations` registry entry (au
 Settings UI, auto-wires the cvar) + the cvar **allowlisted in `EmulatorActivity.java`** (copyBooleanExtra/
 copyIntExtra/copyStringExtra — REQUIRED or `--ez/--ei/--es` silently no-op). Default-off until validated;
 per-game defaults via the GameProfile system. Two tracks: CPU (codegen/JIT/locks — CPU-bound titles) + GPU
-(structure/EDRAM — GPU-bound scenes). **BD's bottleneck IS RESOLVED (clean 2026-06-29): the field is GPU-bound +
-STRUCTURE-bound (resolution-invariant) — ~74ms per-pass tile-resolve latency × 42 fixed post-process passes +
-~49ms binning/draws. The BD-30 lever is post-process-pass reduction (user-approved lower bloom) + residual cuts,
-NOT pixels/foliage/VRS. See [[bd-resolution-invariant-structure-bound]].** Still re-measure any NEW lever with a
+(structure/EDRAM — GPU-bound scenes). **BD's bottleneck (driver-measured 2026-07-01): ~90% fragment/draw execution; EDRAM structure ~6ms; loads/stores ~1ms. Shipped: fp10+VRS (19.8fps). Road to 30 = internal-resolution guest patches + host scale-down. The old 'structure-bound/resolution-invariant' model is VOID.** Still re-measure any NEW lever with a
 single-run / same-resolution single-cvar A/B (cross-run fps is noise) before building on it.
 
 ## Game patches
@@ -323,6 +318,13 @@ the BD CPU lever = RE/accelerate BD's hottest guest code (codegen quality on a 4
   projects `scratch/ghidra/proj/` (banjo, sylpheed — **BD NOT imported yet**, import `scratch/blue-dragon/default.xex`
   via XEXLoaderWV). Run headless in the MAIN loop w/ LONG timeout (600000), never in a workflow subagent —
   see the `xenia-ghidra-ooda-loop` + `xenia-thor-ghidra-game-patch` skills.
+
+## Research finding history (compressed)
+Mobile BD-30 is frontier territory (no documented mobile 360 emulator runs BD's field at 30; desktop "fable
+@60" = immediate-mode GPU). The 2026-07-01 measurement campaign (driver u_trace) ended the EDRAM-fusion era:
+the frame is ~90% fragment execution, EDRAM structure ~6ms — see the BD-30 APPROACH section above for the
+current model, shipped stack, and road to 30. Historical detail: docs/research/20260701-bd30-edram-lever-
+synthesis.md + memory [[bd-edram-atomic-rop-solve]].
 
 ## Config + git rules
 - Device persists `files/xenia.config.toml` which OVERRIDES compiled cvar defaults (only `--ez/--ei/--es`

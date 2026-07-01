@@ -27,6 +27,10 @@ Patcher::~Patcher() {
 void Patcher::ApplyPatchesForTitle(Memory* memory, const uint32_t title_id,
                                    const std::optional<uint64_t> hash) {
   const auto title_patches = patch_db_->GetTitlePatches(title_id, hash);
+  // Diagnostic: show the match inputs + result so a silent no-apply (wrong
+  // hash/title/parse) is visible in one run instead of guessed at.
+  XELOGI("Patcher: title {:08X} hash {:016X} -> {} matching patch file(s)",
+         title_id, hash.value_or(0), title_patches.size());
 
   for (const PatchFileEntry& patchFile : title_patches) {
     for (const PatchInfoEntry& patchEntry : patchFile.patch_info) {
