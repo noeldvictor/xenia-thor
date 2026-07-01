@@ -1097,6 +1097,7 @@ class VulkanCommandProcessor : public CommandProcessor {
   };
   RetroCoverage retro_color_cov_[4];
   uint32_t draw_outcomes_retro_color_atts_ = 0;
+  uint32_t draw_outcomes_retro_color_diag_ = 0;
   // host_draws= telemetry: draw stats of completed submissions are folded into
   // the accumulator at Execute time (the per-recording stat zeroes on Reset);
   // the print marker turns the monotone total into a per-frame delta.

@@ -2890,6 +2890,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_retro_depth_none_ = 0;
     draw_outcomes_retro_depth_none_diag_ = 0;
     draw_outcomes_retro_color_atts_ = 0;
+    draw_outcomes_retro_color_diag_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -4313,20 +4314,32 @@ void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
       const RetroCoverage& cov = retro_color_cov_[i];
       if (cov.complete && !cov.poisoned) {
         load_dont_care_mask |= uint32_t(1) << (1 + i);
-      } else if (cov.interval_count &&
-                 draw_outcomes_retro_depth_none_diag_ < 12) {
-        // Diagnostic (throttled, shares the retro diag budget): the union got
-        // PARTIAL coverage - log what it reached so the miss can be explained
-        // (e.g. strips stopping at the guest height below the tile-rounded
-        // extent, or a poisoning write).
-        ++draw_outcomes_retro_depth_none_diag_;
-        XELOGI(
-            "retro_color: att {} PARTIAL n={} first=[{},{}) poisoned={} "
-            "extent={}x{}",
-            i, cov.interval_count, cov.x0[0], cov.x1[0],
-            uint32_t(cov.poisoned), retro_pass_extent_.width,
-            retro_pass_extent_.height);
       }
+    }
+    // Diagnostic (own budget - the depth diag exhausts the shared one): per
+    // ended captured pass, the coverage state of every bound color attachment,
+    // so a zero-engagement run shows exactly where the chain breaks (no
+    // contributors at all vs partial union vs poisoned).
+    if (draw_outcomes_retro_color_diag_ < 8 &&
+        (retro_pass_key_.depth_and_color_used >> 1)) {
+      ++draw_outcomes_retro_color_diag_;
+      XELOGI(
+          "retro_color end: used={:02x} n=[{} {} {} {}] first0=[{},{}) "
+          "poi=[{}{}{}{}] comp=[{}{}{}{}] ext={}x{}",
+          retro_pass_key_.depth_and_color_used, retro_color_cov_[0].interval_count,
+          retro_color_cov_[1].interval_count, retro_color_cov_[2].interval_count,
+          retro_color_cov_[3].interval_count,
+          retro_color_cov_[0].interval_count ? retro_color_cov_[0].x0[0] : 0,
+          retro_color_cov_[0].interval_count ? retro_color_cov_[0].x1[0] : 0,
+          uint32_t(retro_color_cov_[0].poisoned),
+          uint32_t(retro_color_cov_[1].poisoned),
+          uint32_t(retro_color_cov_[2].poisoned),
+          uint32_t(retro_color_cov_[3].poisoned),
+          uint32_t(retro_color_cov_[0].complete),
+          uint32_t(retro_color_cov_[1].complete),
+          uint32_t(retro_color_cov_[2].complete),
+          uint32_t(retro_color_cov_[3].complete), retro_pass_extent_.width,
+          retro_pass_extent_.height);
     }
   }
   bool depth_none = cvars::gpu_vulkan_retro_depth_none &&
