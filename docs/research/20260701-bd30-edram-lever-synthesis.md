@@ -66,3 +66,32 @@ Regression fix `52c16faff` restored the default host-RT init path (was SIGABRT-i
 launch). Device-validated in-target + correct: **Burnout Revenge** (~30-42fps, Car Select) and
 **Back to the Future** (31.6fps, DeLorean/mall). Untested/available: Gears 1/2/3/Judgment, Lost
 Odyssey, Infinite Undiscovery, Magna Carta 2, Project Sylpheed (spot-check when device is cool).
+Device-note: the 64C thermal watchdog tripped 3x this session — heavy frames need extended rest between fires.
+
+## Compute-post-process implementation recipe (the ceiling-breaker — 2026-07-01 research)
+The one path that removes composite passes with NO ROP tradeoff: run the zero-overdraw post-process
+composites as COMPUTE dispatches over the EDRAM SSBO instead of render-to-texture passes. Concrete recipe:
+- **Downsample/bloom chain -> ONE dispatch (AMD FidelityFX SPD pattern):** 256-thread workgroup, 64x64
+  input tile/group, LDS `float4[16][16]`, hierarchical 2x2 reductions produce up to 12 mips in a single
+  dispatch with ONE inter-workgroup sync (atomic last-group finishes the low mips). Box/tent kernel =
+  bloom needs no separate blur pass. This alone collapses the multi-pass downsample.
+- **Upsample+composite -> a 2nd dispatch:** 8x8 groups, read the mip pyramid, 3x3 tent, additive/blend write.
+- **Fragment->compute translation table (mechanical):** gl_FragCoord.xy -> gl_GlobalInvocationID.xy;
+  texture(uv) -> imageLoad(ivec2(uv*size)) (SSBO random read ~= texture sampling perf on Adreno, TLB-backed
+  — so the TRANSFORMED producer reads are fine in compute); ROP blend -> explicit imageLoad+combine+imageStore
+  (additive can be unordered; ordered blend needs interlock/atomics, but composites are barrier-separated so
+  plain RMW is fine). HARD CONSTRAINTS that BREAK the translation: dFdx/dFdy (NOT in compute — pass precomputed
+  or neighbor-sample), `discard` (-> early return, no store), per-sample MSAA (resolve input first),
+  interpolated varyings (must feed via per-pixel SSBO). BD's composites are simple full-screen sample+blend =
+  inside the "works" set; audit each composite shader for dFdx/discard/MSAA before converting.
+- **On-chip residency:** `VK_QCOM_tile_memory_heap` would keep intermediates in GMEM across dispatches, BUT it
+  is ABSENT on this Thor Turnip build (device-enumerated, CLAUDE.md gap audit) — NOT required: SPD keeps its
+  mips in LDS WITHIN one dispatch, so the fusion works without it (just uses device-local images between the
+  2-3 dispatches). Re-verify the extension list before relying on it.
+- **Precedent:** Xenia's own EDRAM render-target-cache rework already gave 3.4x (Halo3 menu 79.8->23.5ms) by
+  eliminating copies — same "kill the round-trip" lever; compute fusion extends it to the passes the cache can't.
+- **Build order (next session, COOL device, validate each step on-device):** (a) pick ONE simple full-screen
+  composite (tonemap), emit a compute variant, dispatch it into the EDRAM SSBO, confirm pixel-correct vs the
+  render-pass version; (b) extend to the bloom downsample via SPD; (c) route the rest, measure pass-count +
+  single-run A/B gpu time. Expected order-of-magnitude cut on the composite tile-I/O (~74ms -> ~5-10ms) IF the
+  residual geometry/ROP doesn't dominate (the honest ceiling above still applies to the non-composite work).
