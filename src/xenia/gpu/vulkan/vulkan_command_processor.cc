@@ -2638,7 +2638,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
         "gather_us={} bails={}] "
-        "dc_safe[p={} att={}] depthnone_p={} retro_dn={} host_draws={} "
+        "dc_safe[p={} att={}] depthnone_p={} retro_dn={} retro_cl={} "
+        "host_draws={} "
         "cpu_issuedraw_us={} cpu_process_us={} cpu_process_pct={} "
         "cpu_tex_us={} cpu_rt_us={} cpu_pipe_us={} cpu_bind_us={} cpu_other_us={} "
         "cpu_setup_us={} cpu_emit_us={} cpu_beginsubmit_us={} "
@@ -2692,7 +2693,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_deint_gather_ns_ / 1000, draw_outcomes_deint_bails_,
         draw_outcomes_dc_safe_passes_, draw_outcomes_dc_safe_atts_,
         draw_outcomes_depth_none_passes_, draw_outcomes_retro_depth_none_,
-        host_draws_frame,
+        draw_outcomes_retro_color_atts_, host_draws_frame,
         draw_cpu_total_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_total_ns_
             ? (draw_cpu_process_ns_ * 100 / draw_cpu_total_ns_)
@@ -2888,6 +2889,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_depth_none_passes_ = 0;
     draw_outcomes_retro_depth_none_ = 0;
     draw_outcomes_retro_depth_none_diag_ = 0;
+    draw_outcomes_retro_color_atts_ = 0;
     draw_outcomes_affine_mvp_vertices_ = 0;
     draw_outcomes_affine_mvp_pos_draws_ = 0;
     draw_outcomes_affine_mvp_pos_vertices_ = 0;
@@ -4173,20 +4175,36 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // into this pass, or when the opaque depth prepass splices depth writes in.
   retro_depth_begin_pos_ = SIZE_MAX;
   retro_pass_depth_used_ = false;
-  if (cvars::gpu_vulkan_retro_depth_none &&
-      begin_render_pass == render_pass &&
-      (pass_kind == GpuPassKind::kGuest ||
-       pass_kind == GpuPassKind::kGuestComposite) &&
-      !cvars::gpu_lrz_spike_depth_clear &&
-      !cvars::gpu_vulkan_inpass_edram_transfers &&
-      !cvars::gpu_opaque_depth_prepass &&
-      (render_target_cache_->last_update_render_pass_key().depth_and_color_used &
-       0b1)) {
-    VkRenderPass retro_depth_variant =
-        render_target_cache_->GetDepthStoreNoneVariantForLastUpdate(render_pass);
-    if (retro_depth_variant != VK_NULL_HANDLE &&
-        retro_depth_variant != render_pass) {
-      retro_depth_variant_ = retro_depth_variant;
+  retro_depth_variant_ = VK_NULL_HANDLE;
+  {
+    VulkanRenderTargetCache::RenderPassKey retro_key =
+        render_target_cache_->last_update_render_pass_key();
+    bool retro_want_depth = cvars::gpu_vulkan_retro_depth_none &&
+                            (retro_key.depth_and_color_used & 0b1) != 0;
+    bool retro_want_color = cvars::gpu_vulkan_retro_color_dontcare &&
+                            (retro_key.depth_and_color_used >> 1) != 0;
+    if ((retro_want_depth || retro_want_color) &&
+        begin_render_pass == render_pass &&
+        (pass_kind == GpuPassKind::kGuest ||
+         pass_kind == GpuPassKind::kGuestComposite) &&
+        !cvars::gpu_lrz_spike_depth_clear &&
+        !cvars::gpu_vulkan_inpass_edram_transfers &&
+        !cvars::gpu_opaque_depth_prepass) {
+      if (retro_want_depth) {
+        // Captured at begin: encodes the Vulkan 1.3 STORE_OP_NONE availability
+        // gate; also proves this render pass is last_update's (variant != it).
+        VkRenderPass retro_depth_variant =
+            render_target_cache_->GetDepthStoreNoneVariantForLastUpdate(
+                render_pass);
+        retro_depth_variant_ = (retro_depth_variant != render_pass)
+                                   ? retro_depth_variant
+                                   : VK_NULL_HANDLE;
+      }
+      for (RetroCoverage& retro_cov : retro_color_cov_) {
+        retro_cov.Reset();
+      }
+      retro_pass_key_ = retro_key;
+      retro_pass_extent_ = framebuffer->host_extent;
       retro_depth_framebuffer_ = framebuffer->framebuffer;
       retro_depth_begin_pos_ =
           deferred_command_buffer_.command_stream_size_elements();
@@ -4239,27 +4257,85 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   ui::vulkan::VulkanPerfCountersRecordRenderPassBegin(false);
 }
 
-void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
-  // gpu_vulkan_retro_depth_none (frame-graph recompiler increment A): hindsight
-  // patch. If the pass that is ending had a depth attachment, was captured at
-  // begin, and NO draw in it enabled depth test/write or stencil, repoint its
-  // already-recorded BeginRenderPass to the depth loadOp=DONT_CARE +
-  // storeOp=NONE variant. Load/store ops do not affect Vulkan render pass
-  // compatibility, so the recorded framebuffer and all pipelines stay valid;
-  // STORE_OP_NONE preserves the depth contents the pass never accessed. Unlike
-  // the begin-time gpu_vulkan_skip_unused_depth_store, this never has to break
-  // a pass - a depth-using draw simply leaves the recorded begin unpatched.
-  if (retro_depth_begin_pos_ != SIZE_MAX) {
-    if (!retro_pass_depth_used_ &&
-        deferred_command_buffer_.IsCommandPositionInRange(
-            retro_depth_begin_pos_)) {
-      deferred_command_buffer_.PatchBeginRenderPassTargets(
-          retro_depth_begin_pos_, retro_depth_variant_,
-          retro_depth_framebuffer_);
-      ++draw_outcomes_retro_depth_none_;
-    }
-    retro_depth_begin_pos_ = SIZE_MAX;
+bool VulkanCommandProcessor::RetroCoverage::AddInterval(int32_t a, int32_t b) {
+  if (a >= b) {
+    return true;
   }
+  // Merge [a,b) with any overlapping or adjacent existing intervals; restart
+  // the scan after each merge because the widened interval may now touch
+  // earlier entries.
+  for (uint32_t i = 0; i < interval_count;) {
+    if (x0[i] <= b && a <= x1[i]) {
+      a = std::min(a, x0[i]);
+      b = std::max(b, x1[i]);
+      --interval_count;
+      x0[i] = x0[interval_count];
+      x1[i] = x1[interval_count];
+      i = 0;
+      continue;
+    }
+    ++i;
+  }
+  if (interval_count >= kMaxIntervals) {
+    return false;
+  }
+  x0[interval_count] = a;
+  x1[interval_count] = b;
+  ++interval_count;
+  return true;
+}
+
+void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
+  // Frame-graph recompiler retro patch (increments A + B(a)): hindsight
+  // load/store elision for the ending pass. Combines:
+  // - gpu_vulkan_retro_depth_none: if NO draw enabled depth test/write or
+  //   stencil, the depth attachment gets loadOp=DONT_CARE + storeOp=NONE
+  //   (STORE_OP_NONE preserves the contents the pass never accessed).
+  // - gpu_vulkan_retro_color_dontcare: color attachments whose coverage UNION
+  //   of provable replace draws spans the whole render area (without any
+  //   dst-reading write before that) get loadOp=DONT_CARE (the load is dead -
+  //   every texel is unconditionally overwritten, and replace writes never
+  //   read what the load would have brought in).
+  // The recorded BeginRenderPass is repointed to a render-pass VARIANT derived
+  // from the KEY captured at begin (at the RT-change end path last_update has
+  // already moved to the NEXT pass, so ForLastUpdate getters must not be used
+  // here). Load/store ops do not affect Vulkan render pass compatibility, so
+  // the recorded framebuffer and all pipelines stay valid. Never breaks a pass
+  // - an ineligible pass simply keeps its original begin.
+  if (retro_depth_begin_pos_ == SIZE_MAX) {
+    return;
+  }
+  size_t begin_pos = retro_depth_begin_pos_;
+  retro_depth_begin_pos_ = SIZE_MAX;
+  uint32_t load_dont_care_mask = 0;
+  if (cvars::gpu_vulkan_retro_color_dontcare) {
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      const RetroCoverage& cov = retro_color_cov_[i];
+      if (cov.complete && !cov.poisoned) {
+        load_dont_care_mask |= uint32_t(1) << (1 + i);
+      }
+    }
+  }
+  bool depth_none = cvars::gpu_vulkan_retro_depth_none &&
+                    retro_depth_variant_ != VK_NULL_HANDLE &&
+                    !retro_pass_depth_used_;
+  if (!load_dont_care_mask && !depth_none) {
+    return;
+  }
+  if (!deferred_command_buffer_.IsCommandPositionInRange(begin_pos)) {
+    return;
+  }
+  VkRenderPass variant = render_target_cache_->GetHostRenderTargetsRenderPass(
+      retro_pass_key_, load_dont_care_mask, depth_none);
+  if (variant == VK_NULL_HANDLE) {
+    return;
+  }
+  deferred_command_buffer_.PatchBeginRenderPassTargets(begin_pos, variant,
+                                                       retro_depth_framebuffer_);
+  if (depth_none) {
+    ++draw_outcomes_retro_depth_none_;
+  }
+  draw_outcomes_retro_color_atts_ += xe::bit_count(load_dont_care_mask);
 }
 
 void VulkanCommandProcessor::EndRenderPass() {
@@ -6032,6 +6108,82 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             uint32_t(normalized_depth_control.z_write_enable),
             uint32_t(normalized_depth_control.stencil_enable),
             uint32_t(prim_type), index_count);
+      }
+    }
+  }
+  // gpu_vulkan_retro_color_dontcare (increment B(a)): per-attachment coverage
+  // union for retro color-load elision. Poison rules (conservative): a write
+  // that can READ the pre-pass content - partial write mask (unwritten CHANNELS
+  // of covered texels keep would-be-loaded data) or non-replace blending -
+  // poisons the attachment while its union is incomplete. A full-mask replace
+  // write never reads dst, so a conditional/partial-area one is merely neutral
+  // (contributes no coverage). Only unconditional 3-index rect-list draws with
+  // no kills/alpha-coverage contribute, clamped to their scissor; only
+  // full-render-area-HEIGHT rects enter the X-interval union (the guest
+  // strip-clear idiom - e.g. BD clears in vertical strips no single-draw check
+  // can prove). Once complete, later draws read this pass's own writes - fine.
+  if (cvars::gpu_vulkan_retro_color_dontcare &&
+      retro_depth_begin_pos_ != SIZE_MAX && pixel_shader) {
+    bool retro_contributor_shape =
+        prim_type == xenos::PrimitiveType::kRectangleList && index_count == 3 &&
+        !pixel_shader->kills_pixels() &&
+        !draw_util::DoesCoverageDependOnAlpha(regs.Get<reg::RB_COLORCONTROL>());
+    // 0 = not yet estimated for this draw, 1 = valid, 2 = failed.
+    uint32_t retro_cover_state = 0;
+    int32_t retro_x0 = 0, retro_y0 = 0, retro_x1 = 0, retro_y1 = 0;
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      if (!(retro_pass_key_.depth_and_color_used & (uint32_t(1) << (1 + i)))) {
+        continue;
+      }
+      RetroCoverage& retro_cov = retro_color_cov_[i];
+      if (retro_cov.complete || retro_cov.poisoned) {
+        continue;
+      }
+      if (!pixel_shader->writes_color_target(i)) {
+        continue;
+      }
+      bool retro_reads_dst =
+          ((normalized_color_mask >> (i * 4)) & 0xF) != 0xF ||
+          (regs[reg::RB_BLENDCONTROL::rt_register_indices[i]] & 0x1FFF1FFF) !=
+              0x00010001;
+      if (retro_reads_dst) {
+        retro_cov.poisoned = true;
+        continue;
+      }
+      if (!retro_contributor_shape) {
+        // Full-mask replace but conditional/non-rect: no read, no coverage.
+        continue;
+      }
+      if (retro_cover_state == 0) {
+        if (!cull_extent_estimator_) {
+          cull_extent_estimator_ = std::make_unique<DrawExtentEstimator>(
+              *register_file_, *memory_, nullptr);
+        }
+        if (cull_extent_estimator_->EstimateRectListCoverage(
+                *vertex_shader, retro_x0, retro_y0, retro_x1, retro_y1)) {
+          draw_util::Scissor retro_scissor;
+          draw_util::GetScissor(regs, retro_scissor);
+          retro_x0 = std::max(retro_x0, int32_t(retro_scissor.offset[0]));
+          retro_y0 = std::max(retro_y0, int32_t(retro_scissor.offset[1]));
+          retro_x1 = std::min(retro_x1, int32_t(retro_scissor.offset[0] +
+                                                retro_scissor.extent[0]));
+          retro_y1 = std::min(retro_y1, int32_t(retro_scissor.offset[1] +
+                                                retro_scissor.extent[1]));
+          retro_cover_state = 1;
+        } else {
+          retro_cover_state = 2;
+        }
+      }
+      if (retro_cover_state != 1) {
+        continue;
+      }
+      if (retro_y0 <= 0 && retro_y1 >= int32_t(retro_pass_extent_.height) &&
+          retro_x0 < retro_x1) {
+        if (!retro_cov.AddInterval(retro_x0, retro_x1)) {
+          retro_cov.poisoned = true;
+        } else if (retro_cov.Covers(int32_t(retro_pass_extent_.width))) {
+          retro_cov.complete = true;
+        }
       }
     }
   }

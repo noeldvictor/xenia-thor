@@ -1065,6 +1065,38 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_retro_depth_none_ = 0;
   // Throttled why-not-eligible diagnostic count (reset per frame with the rest).
   uint32_t draw_outcomes_retro_depth_none_diag_ = 0;
+  // gpu_vulkan_retro_color_dontcare (frame-graph recompiler increment B(a)):
+  // per-open-pass retro color-load elision state. The RenderPassKey + extent are
+  // captured at begin (at the RT-change end path last_update has already moved
+  // to the NEXT pass, so the end-time variant must be derived from the captured
+  // key, never from ForLastUpdate). Per color attachment: the union of
+  // full-height provable-replace draw coverage as disjoint X-intervals (the
+  // guest strip-clear idiom), a poisoned flag (a non-replace write happened
+  // while the union was still incomplete => pre-pass content may be read), and
+  // a complete flag (union covers the whole render area => load is dead).
+  VulkanRenderTargetCache::RenderPassKey retro_pass_key_;
+  VkExtent2D retro_pass_extent_{};
+  struct RetroCoverage {
+    static constexpr uint32_t kMaxIntervals = 8;
+    int32_t x0[kMaxIntervals];
+    int32_t x1[kMaxIntervals];
+    uint32_t interval_count = 0;
+    bool poisoned = false;
+    bool complete = false;
+    void Reset() {
+      interval_count = 0;
+      poisoned = false;
+      complete = false;
+    }
+    // Merge [a,b) into the disjoint set; returns false when the set overflows
+    // (treated as poisoned by the caller - conservative).
+    bool AddInterval(int32_t a, int32_t b);
+    bool Covers(int32_t width) const {
+      return interval_count == 1 && x0[0] <= 0 && x1[0] >= width;
+    }
+  };
+  RetroCoverage retro_color_cov_[4];
+  uint32_t draw_outcomes_retro_color_atts_ = 0;
   // host_draws= telemetry: draw stats of completed submissions are folded into
   // the accumulator at Execute time (the per-recording stat zeroes on Reset);
   // the print marker turns the monotone total into a per-frame delta.

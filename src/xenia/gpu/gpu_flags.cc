@@ -183,6 +183,24 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_retro_color_dontcare, false,
+    "Frame-graph load/store recompiler, increment B(a) (Thor/TBDR, BD-30): "
+    "RETROACTIVE color-load elision via COVERAGE UNION. Per guest pass, track "
+    "the union of full-height replace-draw coverage X-intervals per color "
+    "attachment (provable unconditional overwrites: 3-index rect list, no pixel "
+    "kills, no alpha-coverage, full write mask, ONE/ZERO/ADD blend - the guest "
+    "clear idiom, which e.g. Blue Dragon issues as multiple vertical STRIPS "
+    "that no single-draw check can prove). If the union covers the whole render "
+    "area before any non-replace write touched the attachment, the recorded "
+    "BeginRenderPass is PATCHED at pass END to a variant with that attachment's "
+    "loadOp=DONT_CARE, skipping its GMEM tile load. Combines with "
+    "gpu_vulkan_retro_depth_none into one end-of-pass patch. Conservative: any "
+    "uncertainty (blend that reads, partial mask, kills, non-rect geometry "
+    "writing the attachment before full coverage) poisons the attachment and "
+    "leaves the load. Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_feedback_merge, false,
     "BD-30 GPU lever (WIP, input-attachment / GMEM-residency merge): when a guest "
     "render-to-texture composite samples the just-rendered producer RT at its own "
