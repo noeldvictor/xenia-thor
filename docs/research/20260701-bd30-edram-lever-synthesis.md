@@ -1,5 +1,15 @@
 # BD-30 EDRAM lever synthesis (2026-07-01)
 
+## GUEST-PATCH BREAKTHROUGH (2026-07-01 late night): 29.6 FPS OSD - route PROVEN, patch incomplete
+Patched BD's REAL resolution-selection code (0x82132D30/38 + 0x82272C60/68: `if(mode>=1280){1280,720}
+else{640,480}` -> 960x540). RESULT: 960-wide passes in the driver trace, gpu_frame 49->20ms, gpu_busy 65%
+(game 30fps cap), OSD 29.6 FPS. BUT render GARBLED: unpatched dimension sources survive (720x768 CPP=8
+class, 1280-wide composites, struct-loaded site-4 dims, 305 float 1280.0f/720.0f constants) => EDRAM/
+composite mismatch. COMPLETE-THE-PATCH iteration: find remaining creation sites (Ghidra bd project +
+BdRtCallers/BdRtDeep.java; store-pattern scans), patch, verify trace pass inventory + clean screenshot.
+The 30fps target is DEMONSTRABLY reachable via this route - it is now a correctness completion, not a
+performance question. (Fallback if BD fights coherent scaling: host-side fractional scale-down.)
+
 ## NEXT SESSION ENTRY POINT (2026-07-01 close): render-scale-down = the last mountain
 State: BD SHIPPED at 19.8fps (fp10+VRS4+cap2 in GameProfile, installed). Cvar space exhausted (14 verdicts).
 LRZ closed by upper-bound (spike = zero delta; co-planar foliage rigorously unoccludable). Honest arithmetic:
