@@ -1377,15 +1377,15 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
     resolve_edge.src_is_depth = resolve_is_depth;
     command_processor_.AddResolveCopyStats(resolve_edge);
-    // THE EDRAM SOLVE, hybrid form: DumpRenderTargets is inherently PER-RANGE - it
-    // only dumps ranges owned by a HOST render target. After BeginHybridPostprocess-
-    // Phase cleared ownership to buffer-authoritative, the composite ranges are
-    // buffer-owned so this dumps NOTHING for them (the resolve-copy reads
-    // edram_buffer_ = the composite's FSI output). Interleaved MAIN-scene draws
-    // re-own their ranges host-side (host-RT Update), so their ranges ARE dumped
-    // here (correct). No global phase gate needed - per-range ownership handles
-    // BD's interleaved composites + main-scene draws without thrashing.
-    if (GetPath() == Path::kHostRenderTargets) {
+    // THE EDRAM SOLVE, hybrid form: while the post-process phase is active, EDRAM is
+    // buffer-authoritative (BeginHybridPostprocessPhase dumped the main scene +
+    // cleared ownership), so SKIP the host-RT dump - the resolve-copy reads
+    // edram_buffer_ (the composite's FSI output + the bridged main scene). This
+    // renders BD CORRECTLY (device-proven). The per-range no-gate variant GARBLED
+    // BD - composites read the EVOLVING main scene which interleaved main-scene
+    // draws re-own host-side, so it must stay bridged in edram_buffer_. Global gate.
+    if (GetPath() == Path::kHostRenderTargets &&
+        !hybrid_postprocess_phase_active_) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.
       // TODO(Triang3l): Direct host render target -> shared memory resolve
@@ -1654,12 +1654,15 @@ bool VulkanRenderTargetCache::Update(
 
   switch (GetPath()) {
     case Path::kHostRenderTargets: {
-      // THE EDRAM SOLVE, hybrid form: an interleaved main-scene draw during the
-      // post-process phase re-owns its RT ranges host-side here (ChangeOwnership
-      // below), so its resolves dump correctly while composite ranges stay buffer-
-      // owned. The phase is NOT reset per-draw (that thrashed on BD's interleaved
-      // composites, re-bridging every cluster) - it resets once per frame at swap
-      // (ResetHybridPostprocessPhase from IssueSwap).
+      // THE EDRAM SOLVE, hybrid form: a main-scene draw resets the post-process
+      // phase, so the NEXT composite re-bridges (DumpRenderTargets) - this captures
+      // the main-scene updates that interleave with BD's composites (without the
+      // re-bridge the composites read the stale phase-start main scene = garble,
+      // device-proven). Costs a re-bridge per interleaved cluster (brk_img_sr ~21
+      // not the ~16 ideal) but renders CORRECTLY. Per-frame IssueSwap reset backs
+      // this up at frame boundaries. Reducing the re-bridge cost (targeted dump
+      // instead of full-EDRAM) is the next optimization - NOT removing this reset.
+      hybrid_postprocess_phase_active_ = false;
       RenderTarget* const* depth_and_color_render_targets =
           last_update_accumulated_render_targets();
 
