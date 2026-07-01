@@ -50,6 +50,17 @@ renders BD correctly with brk_img_sr 42->21. This is the right shape and the use
    composite routing must not fragment transfer passes. inpass ALONE (clean host-RT) is safe.
 4. Measure with a SINGLE-RUN alternating A/B (never cross-run gpu_frame_us).
 
+## CEILING RE-ESTIMATE (2026-07-01, corrects my own pessimism — compute core may be SUFFICIENT for 30)
+My earlier "fusion+cap = ~15fps ceiling" rested on the img_sr BREAK-OVERHEAD proxy (~0.6ms/break -> ~13ms for
+the composites). That UNDERCOUNTS: the device-isolated `gpu_edram_passes_dont_care` test measured ~74ms of
+tile-I/O, and the composites' FULL cost is the store+reload of their oversized tile-rounded RTs, not just the
+per-break barrier. So compute-fusing the composites (keeping intermediates on-chip in LDS, zero render passes)
+plausibly saves TENS of ms, not ~13ms. If it recovers even half of the 74ms, BD goes ~103ms -> ~65ms (~15fps);
+if it approaches the recipe's "74ms->5-10ms", BD -> ~35-45ms (~22-28fps), and STACKED with clean cap=2 MSAA +
+VRS could cross 30. CONCLUSION: the compute-post-process is not merely the ceiling-breaker — it is PLAUSIBLY
+SUFFICIENT for BD-30. The exact save is unmeasured (needs the build); do NOT anchor on the old ~15fps number.
+The residual below still applies to the NON-composite work (geometry/main-scene), but that is the smaller part.
+
 ## Honest ceiling (why even complete fusion may not reach 30)
 Device decomposition: complete composite fusion removes the composite tile-I/O (~13-26ms), but a
 **~66ms residual of NECESSARY rendering remains** (geometry/binning ~19ms + per-sample hardware ROP
