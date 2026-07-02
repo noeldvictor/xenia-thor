@@ -116,6 +116,20 @@ DEFINE_bool(
     "composite translation. Default off; in progress.",
     "GPU");
 
+DEFINE_bool(
+    gpu_diag_skip_alpha_test_draws, false,
+    "BOTTLENECK DIAGNOSTIC (default-off, breaks pixels): skip alpha-test "
+    "(foliage) draws. Large frame-time drop => the field's cost is that "
+    "geometry (vertex-bound => foliage LOD/decimation is the lever).",
+    "GPU");
+
+DEFINE_int32(
+    gpu_diag_skip_draws_min_indices, 0,
+    "BOTTLENECK DIAGNOSTIC (default-off, breaks pixels): skip any draw with "
+    ">= this many indices (heavy geometry). Isolates vertex/geometry cost from "
+    "per-draw overhead. 0 = off.",
+    "GPU");
+
 DEFINE_int32(
     gpu_resolution_downscale_pct, 0,
     "EXPERIMENTAL (Thor, BD-30): render into DOWNSCALED host render-target "

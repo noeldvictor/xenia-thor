@@ -4922,6 +4922,22 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     return IssueCopy();
   }
 
+  // BOTTLENECK-ISOLATION DIAGNOSTIC (default-off, breaks pixels on purpose):
+  // gpu_diag_skip_alpha_test_draws drops the alpha-test (foliage) draws, and
+  // gpu_diag_skip_draws_min_indices drops any draw with >= N indices (heavy
+  // geometry). Since the field proved NOT fill-bound (resolution downscale was
+  // inert), a large frame-time drop here localizes the cost to vertex/geometry
+  // processing of those draws (=> foliage LOD/decimation is the BD-30 lever);
+  // a small drop means the cost is per-draw overhead / binning instead.
+  if (cvars::gpu_diag_skip_alpha_test_draws &&
+      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0) {
+    return true;
+  }
+  if (cvars::gpu_diag_skip_draws_min_indices > 0 &&
+      index_count >= uint32_t(cvars::gpu_diag_skip_draws_min_indices)) {
+    return true;
+  }
+
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       GetVulkanDevice()->properties();
 

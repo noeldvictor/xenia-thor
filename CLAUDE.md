@@ -17,25 +17,19 @@ Adreno features). Fix LLVM bugs as found.**
 - **CURRENT STATE: BD SHIPPED at ~19.8fps** (GameProfile: `gpu_fp10_color_as_unorm10` + `gpu_vrs_foliage_rate=4`
   + `gpu_force_max_msaa_samples=2`; quality option = VRS 2x2 at 17.0fps). Baseline was 10.8. Frame floor
   ~49ms on the heaviest field scenes. Target remains locked-30 (33ms).
-- **✅✅ THE FRAME ANATOMY IS DRIVER-MEASURED (2026-07-01, Turnip u_trace via MESA_GPU_TRACES — supersedes ALL
-  prior models): BD's frame is ~90% pure draw/fragment execution.** GMEM tile loads+stores ≈ 1ms/frame TOTAL
-  (the historic "74ms tile-I/O" model was WRONG — dont_care's win came from skipping dead bin rendering).
-  Pass count, barriers, and EDRAM structure ≈ ~6ms. The cost = per-bin fragment work (raster + ROP + residual
-  shading + VS-replay) of the main scene (2xMSAA, now-32bpp color), ~750 GPU cycles/sample pre-VRS.
-- **🚨 "RESOLUTION-INVARIANT" WAS VOID: `kernel_display_resolution` never changes BD's internal render size**
-  (BD hard-renders 1280x720; device-proven — identical GPU passes at 480p setting). Every "pixels are free /
-  structure-bound" conclusion built on it tested nothing. BD is substantially pixel/sample-bound.
+- **✅✅ THE FRAME ANATOMY IS DRIVER-MEASURED (2026-07-01, Turnip u_trace): GMEM tile loads+stores ≈ 1ms/frame
+  TOTAL** (the historic "74ms tile-I/O" model was WRONG). Pass count, barriers, EDRAM structure ≈ ~6ms. **⚠️ The
+  "~90% fragment execution" read of this trace was WRONG — 2026-07-02 device tests prove the "draw execution"
+  bulk is VERTEX/GEOMETRY (foliage), NOT fragment (see THE REAL BOTTLENECK below).**
+- **🚨 "RESOLUTION-INVARIANT" was RIGHT (for the wrong reason): resolution changes DON'T help BD not because
+  pixels are structure-bound but because BD is NOT fill-bound at all — it's foliage-VERTEX-bound. Confirmed
+  2026-07-02: `gpu_resolution_downscale_pct=71` (half pixel area, dims confirmed shrunk) = FLAT frame time.**
 - **MEASURED LEVER VERDICTS (2026-07-01, all heavy-field, driver-trace era):** SHIPPED: fp10 32bpp color
   (−8ms), VRS foliage (2x2 clean / 4x4 perf). CLOSED: fp16-relaxed (+11ms regression), cap=1-on-stack (no win
   + ghost), vrs_all_draws (null => opaque shading insignificant), LRZ (upper-bound ZERO — co-planar foliage
   unoccludable; do NOT build the driver patch), buffer path (4.7x loss), barrier scoping, gmem/sysmem force,
   inpass=2 (safe 25% pass cut, frame flat), retro depth/color elision (classes ~2/~0), UBWC (timing-neutral).
-- **THE ROAD TO 30 (user-directed 2026-07-01):** (1) ⭐ Cemu-style GUEST PATCHES for internal render
-  resolution (user-authorized; .patch.toml; 4 candidate li-immediate sites found at 0x8212F41C/0x82133400/
-  0x82136E40/0x8221D270 — apply-path debugging in progress, patcher diagnostic added), multiple resolutions +
-  per-game patch-toggle UI/UX for end users; (2) host-side fractional render-scale-down as the general
-  fallback (~190 draw_resolution_scale sites); (3) frame-gen at present = cherry-on-top; (4) AOT/LLVM in
-  parallel (may open BD doors: sustained clocks/heat + CPU cost of 1000+ draws).
+- **🚨 THE REAL BOTTLENECK (device-proven 2026-07-02, two clean single-run tests): BD's field is VERTEX/GEOMETRY-bound, specifically FOLIAGE. NOT fill/EDRAM/overdraw.** (1) `gpu_resolution_downscale_pct=71` shrank all RT images to half pixel AREA (pass dims 720x768->511x545, confirmed) => frame time FLAT 49->50ms = NOT fill-bound. (2) `gpu_diag_skip_alpha_test_draws` (drop foliage) => 49->34ms (20->29fps) = foliage costs 15ms; and since downscale also shrank foliage fragments with no effect, that 15ms is foliage VERTEX processing (262k verts, ~600x native via Turnip SSBO vertex-fetch latency), not its alpha-test overdraw. **=> THE BD-30 LEVER = cut foliage vertex cost: hardware vertex-fetch (SSBO->native input assembly, [[bd-hw-vertex-fetch-lever]]) and/or foliage decimation/LOD.** This RETIRES the fill/EDRAM/MSAA/resolution premise (why VRS/cap/fp10/downscale/11-resolution-patches were all limited or inert). The flatten's 49->31ms was real but from dropping needed DRAWS (broke pixels) - same root (geometry cost), wrong method. Non-foliage scene = 34ms floor, so foliage reduction + a small extra cut reaches 33ms/30fps.
 - **MEASUREMENT: use the driver-trace harness for every verdict** — `gpu_vulkan_driver_env
   'MESA_GPU_TRACES=print;MESA_GPU_TRACEFILE=...'` (per-pass render_pass/gmem_load/gmem_store GPU timestamps;
   parse + hole analysis = where untraced time sits), plus the pass-split log (vulkan_trace_pass_timestamps +
