@@ -24,6 +24,7 @@
 #include "xenia/base/profiling.h"
 #include "xenia/base/ring_buffer.h"
 #include "xenia/base/thor_topology.h"
+#include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/gpu/sampler_info.h"
@@ -1515,6 +1516,7 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
       uint32_t value = reader->ReadAndSwap<uint32_t>();
       bin_select_ = (bin_select_ & 0xFFFFFFFF00000000ull) | value;
       ++flatten_bin_passes_seen_;
+      UpdateFlattenResolveOffsetSkip();
       if (cvars::gpu_trace_bin_select) {
         uint32_t win_off = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
         uint32_t sc_tl = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
@@ -1557,6 +1559,7 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
       uint64_t val_lo = reader->ReadAndSwap<uint32_t>();
       bin_select_ = (val_hi << 32) | val_lo;
       ++flatten_bin_passes_seen_;
+      UpdateFlattenResolveOffsetSkip();
       // gpu_trace_bin_select: each select change = a new predicated-tiling tile
       // pass. Log the transition + the pass/skip counts accumulated under the
       // PREVIOUS select value, plus the tile's window offset/scissor registers
@@ -1764,6 +1767,15 @@ void CommandProcessor::AdpfShutdown() {
 }
 #endif  // XE_PLATFORM_ANDROID
 
+void CommandProcessor::UpdateFlattenResolveOffsetSkip() {
+  bool in_tile_pass =
+      (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+  draw_util::resolve_ignore_window_offset =
+      cvars::gpu_flatten_predicated_tiling &&
+      cvars::gpu_flatten_predicated_tiling_widen && in_tile_pass &&
+      flatten_bin_passes_seen_ >= 3;
+}
+
 bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
                                                   uint32_t packet,
                                                   uint32_t count) {
@@ -1781,6 +1793,7 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   }
   flatten_bin_passes_seen_ = 0;
   flatten_dropped_draws_ = 0;
+  UpdateFlattenResolveOffsetSkip();
 
   Profiler::Flip();
 

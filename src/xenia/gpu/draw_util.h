@@ -591,6 +591,14 @@ struct ResolveInfo {
   }
 };
 
+// gpu_flatten_predicated_tiling: while a tile-REPLAY pass is active (draws
+// dropped, first content tile rendered the whole surface at true screen
+// positions with a widened scissor), the replay tile's resolve must read the
+// EDRAM at SCREEN positions - skip the PA_SC_WINDOW_OFFSET remap in the
+// resolve rect. Set by the command processor at bin-select transitions (CP
+// worker thread only, read on the same thread during Resolve()).
+extern bool resolve_ignore_window_offset;
+
 // Returns false if there was an error obtaining the info making it totally
 // invalid. fixed_rg[ba]16_truncated_to_minus_1_to_1 is false if 16_16[_16_16]
 // color render target formats are properly emulated as -32...32, true if

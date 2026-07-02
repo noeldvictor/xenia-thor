@@ -318,6 +318,9 @@ class CommandProcessor {
   // draws). Also counted per frame for the trace summary.
   uint32_t flatten_bin_passes_seen_ = 0;
   uint32_t flatten_dropped_draws_ = 0;
+  // Keeps draw_util::resolve_ignore_window_offset in sync with the flatten
+  // state (replay tile passes resolve at screen positions).
+  void UpdateFlattenResolveOffsetSkip();
 
   Shader* active_vertex_shader_ = nullptr;
   Shader* active_pixel_shader_ = nullptr;

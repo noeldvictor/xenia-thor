@@ -42,6 +42,10 @@ namespace xe {
 namespace gpu {
 namespace draw_util {
 
+// See draw_util.h - maintained by the command processor at bin-select
+// transitions for the predicated-tiling flatten.
+bool resolve_ignore_window_offset = false;
+
 xenos::MsaaSamples ClampForcedMsaaSamples(xenos::MsaaSamples guest_samples) {
   if (!cvars::gpu_force_max_msaa_samples) {
     return guest_samples;
@@ -882,7 +886,12 @@ bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
   auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
 
   // Apply the window offset to the vertices.
-  if (regs.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable) {
+  // resolve_ignore_window_offset: predicated-tiling flatten replay pass - the
+  // EDRAM holds the whole surface at true screen positions (rendered by the
+  // widened first tile pass), so the resolve rect must NOT be remapped to the
+  // tile-local origin.
+  if (regs.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable &&
+      !resolve_ignore_window_offset) {
     x0 += pa_sc_window_offset.window_x_offset;
     y0 += pa_sc_window_offset.window_y_offset;
     x1 += pa_sc_window_offset.window_x_offset;
