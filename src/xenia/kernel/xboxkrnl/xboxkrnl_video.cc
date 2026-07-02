@@ -54,6 +54,14 @@ DEFINE_string(
     "(720x480), 720p (1280x720), 1080p (1920x1080). This changes the "
     "resolution games see, not Vulkan render-target upscaling.",
     "Kernel");
+DEFINE_bool(
+    kernel_video_widescreen, true,
+    "Report widescreen (16:9) in VdQueryVideoMode. Titles that select their "
+    "internal render mode from this bit (e.g. Blue Dragon: widescreen -> "
+    "1280x720 with two-tile EDRAM predicated tiling, 4:3 -> single-tile "
+    "640x480) will pick their lighter, fully-supported mode when false. "
+    "Combine with kernel_display_resolution=480p.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -208,7 +216,12 @@ void VdQueryVideoMode(X_VIDEO_MODE* video_mode) {
     video_mode->display_height = 720;
   }
   video_mode->is_interlaced = 0;
-  video_mode->is_widescreen = 1;
+  // kernel_video_widescreen: hardcoding widescreen=1 forces titles that pick
+  // their internal render mode from this bit (e.g. Blue Dragon: widescreen ->
+  // 1280x720 two-tile predicated tiling, else 640x480 single-tile) to always
+  // choose the heavy mode regardless of kernel_display_resolution. Reporting
+  // 4:3 lets such titles select their own lighter, fully-supported mode.
+  video_mode->is_widescreen = cvars::kernel_video_widescreen ? 1 : 0;
   video_mode->is_hi_def = video_mode->display_height >= 720 ? 1 : 0;
   video_mode->refresh_rate = 60.0f;
   video_mode->video_standard = 1;  // NTSC
