@@ -261,6 +261,10 @@ commit → next). Don't ask which task / re-confirm direction / analysis-paralyz
 to start, not to ask. Surface only genuine external blockers. The thermal + no-fabrication rules below are
 safety, not "asking" — they always hold.
 
+
+
+### ⚠️ PERFORMANCE-MODE SHADING STACK FAILS 30 (measured 2026-07-02, OSD): downscale 45% + decimation 55% + VRS 4x4 + fp10 + cap2 = **8.9 FPS OSD** (heavy bloom field, gpu_busy 99%) - WORSE than the 19.8 baseline. Render is CORRECT (coherent, thinner foliage, softer) but downscale REGRESSES fps (confirms the earlier rigorous 'downscale makes BD slower' via RT-scaling overhead). => built shading levers do NOT reach 30 (cap ~20 or regress). BD-30 needs the HLE bin-once (multi-session, target 82487F58) + working levers, NOT the shading stack. Do NOT re-chase aggressive downscale for fps.
+
 ## ⚠️ PLAN FROM FIRST PRINCIPLES — device A/Bs here LOOP on confounds
 **Derive the structural cause from CODE + the known 360/Xenon/Adreno ARCHITECTURE + the DBT/emulation
 literature FIRST. Form a falsifiable hypothesis. ONLY THEN fire the device — to CONFIRM that one
