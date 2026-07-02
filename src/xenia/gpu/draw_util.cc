@@ -45,6 +45,13 @@ namespace draw_util {
 // See draw_util.h - maintained by the command processor at bin-select
 // transitions for the predicated-tiling flatten.
 bool resolve_ignore_window_offset = false;
+// gpu_flatten_predicated_tiling: during the force-pass phase, tile-2 draws
+// carry PA_SC_WINDOW_OFFSET (e.g. -608) that maps their geometry into a tile's
+// EDRAM origin. When flattening all tiles into one full-surface pass, that
+// offset must NOT be applied so the geometry rasterizes at its true screen
+// position. Set by the CP during the flatten force-pass; consumed in
+// GetViewportInfo + GetScissor.
+bool draw_ignore_window_offset = false;
 
 xenos::MsaaSamples ClampForcedMsaaSamples(xenos::MsaaSamples guest_samples) {
   if (!cvars::gpu_force_max_msaa_samples) {
@@ -354,7 +361,7 @@ void GetHostViewportInfo(const RegisterFile& regs,
   // precision, separately so it can be used in other integer calculations
   // without double rounding if needed.
   float offset_add_xy[2] = {};
-  if (pa_su_sc_mode_cntl.vtx_window_offset_enable) {
+  if (pa_su_sc_mode_cntl.vtx_window_offset_enable && !draw_ignore_window_offset) {
     auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
     offset_add_xy[0] += float(pa_sc_window_offset.window_x_offset);
     offset_add_xy[1] += float(pa_sc_window_offset.window_y_offset);
@@ -582,7 +589,8 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
   auto pa_sc_window_scissor_br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
   int32_t br_x = int32_t(pa_sc_window_scissor_br.br_x);
   int32_t br_y = int32_t(pa_sc_window_scissor_br.br_y);
-  if (!pa_sc_window_scissor_tl.window_offset_disable) {
+  if (!pa_sc_window_scissor_tl.window_offset_disable &&
+      !(draw_ignore_window_offset || resolve_ignore_window_offset)) {
     auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
     tl_x += pa_sc_window_offset.window_x_offset;
     tl_y += pa_sc_window_offset.window_y_offset;

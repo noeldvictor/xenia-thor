@@ -598,6 +598,10 @@ struct ResolveInfo {
 // resolve rect. Set by the command processor at bin-select transitions (CP
 // worker thread only, read on the same thread during Resolve()).
 extern bool resolve_ignore_window_offset;
+// gpu_flatten_predicated_tiling: skip PA_SC_WINDOW_OFFSET on DRAWS during the
+// force-pass phase so flattened tile geometry rasterizes at true screen
+// position. Set by the command processor per bin pass.
+extern bool draw_ignore_window_offset;
 
 // Returns false if there was an error obtaining the info making it totally
 // invalid. fixed_rg[ba]16_truncated_to_minus_1_to_1 is false if 16_16[_16_16]

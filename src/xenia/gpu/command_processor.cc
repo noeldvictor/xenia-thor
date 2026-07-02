@@ -1770,10 +1770,16 @@ void CommandProcessor::AdpfShutdown() {
 void CommandProcessor::UpdateFlattenResolveOffsetSkip() {
   bool in_tile_pass =
       (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+  bool flatten_widen = cvars::gpu_flatten_predicated_tiling &&
+                       cvars::gpu_flatten_predicated_tiling_widen;
   draw_util::resolve_ignore_window_offset =
-      cvars::gpu_flatten_predicated_tiling &&
-      cvars::gpu_flatten_predicated_tiling_widen && in_tile_pass &&
-      flatten_bin_passes_seen_ >= 3;
+      flatten_widen && in_tile_pass && flatten_bin_passes_seen_ >= 3;
+  // During the force-pass content tile (pass 2), all draws (including the other
+  // tiles' geometry, force-passed) render into one full-surface pass - drop the
+  // per-tile window offset so they rasterize at true screen position instead of
+  // the tile's EDRAM origin (the fix for the flatten's off-screen/streak bug).
+  draw_util::draw_ignore_window_offset =
+      flatten_widen && in_tile_pass && flatten_bin_passes_seen_ == 2;
 }
 
 bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
