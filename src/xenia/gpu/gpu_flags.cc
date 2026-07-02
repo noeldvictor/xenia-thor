@@ -117,6 +117,20 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_int32(
+    gpu_resolution_downscale_pct, 0,
+    "EXPERIMENTAL (Thor, BD-30): render into DOWNSCALED host render-target "
+    "images at this percent of native (e.g. 71 ~= half area, 50 = quarter "
+    "area) with draws' viewport + scissor scaled to match. Cuts the fragment/"
+    "ROP/sample cost of the expensive main scene (BD's field is a 1280x720 "
+    "2xMSAA overdraw-bound surface). Works transparently ONLY where the guest "
+    "samples the RT as a texture with normalized [0,1] UVs (BD's composites) - "
+    "the sampler upscales the smaller image. Pixel-exact EDRAM copies / "
+    "resolves are NOT rescaled here (increment 1), so titles that resolve the "
+    "RT by copy will misalign. 0 = off (default). Applies globally to all host "
+    "render targets while set.",
+    "GPU");
+
+DEFINE_int32(
     gpu_vulkan_inpass_edram_transfers, 0,
     "EXPERIMENTAL (Thor/TBDR): perform EDRAM ownership-transfer draws INSIDE "
     "the guest render pass instead of dedicated single-attachment transfer "

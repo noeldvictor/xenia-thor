@@ -249,6 +249,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_flatten_predicated_tiling");
             copyBooleanExtra(intent, launchArguments, "gpu_flatten_predicated_tiling_widen");
             copyBooleanExtra(intent, launchArguments, "kernel_video_widescreen");
+            copyIntExtra(intent, launchArguments, "gpu_resolution_downscale_pct");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_hybrid_postprocess");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_compute_postprocess_probe");
             copyBooleanExtra(intent, launchArguments, "kernel_object_handle_cache");

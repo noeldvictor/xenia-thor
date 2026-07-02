@@ -2687,6 +2687,18 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
       image_create_info.extent.height > cvars::gpu_clamp_rt_image_height) {
     image_create_info.extent.height = cvars::gpu_clamp_rt_image_height;
   }
+  // gpu_resolution_downscale_pct (increment 1): shrink the host RT image so the
+  // expensive main scene renders fewer fragments. Draws' viewport/scissor are
+  // scaled by the same factor (vulkan_command_processor); composites sampling
+  // the RT with normalized UVs upscale it transparently. Keep >=1.
+  if (cvars::gpu_resolution_downscale_pct > 0 &&
+      cvars::gpu_resolution_downscale_pct < 100) {
+    uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
+    image_create_info.extent.width =
+        std::max(1u, image_create_info.extent.width * pct / 100u);
+    image_create_info.extent.height =
+        std::max(1u, image_create_info.extent.height * pct / 100u);
+  }
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
@@ -3140,6 +3152,14 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   if (cvars::gpu_clamp_rt_image_height &&
       host_extent.height > cvars::gpu_clamp_rt_image_height) {
     host_extent.height = cvars::gpu_clamp_rt_image_height;
+  }
+  // gpu_resolution_downscale_pct: match the framebuffer to the downscaled
+  // attachment images (created shrunk above by the same factor).
+  if (cvars::gpu_resolution_downscale_pct > 0 &&
+      cvars::gpu_resolution_downscale_pct < 100) {
+    uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
+    host_extent.width = std::max(1u, host_extent.width * pct / 100u);
+    host_extent.height = std::max(1u, host_extent.height * pct / 100u);
   }
   framebuffer_create_info.width = host_extent.width;
   framebuffer_create_info.height = host_extent.height;

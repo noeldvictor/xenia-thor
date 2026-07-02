@@ -8599,6 +8599,18 @@ void VulkanCommandProcessor::UpdateDynamicState(
   }
   viewport.minDepth = viewport_info.z_min;
   viewport.maxDepth = viewport_info.z_max;
+  // gpu_resolution_downscale_pct: the host RT images/framebuffers are shrunk by
+  // this factor; scale the draw viewport to match so geometry covers the whole
+  // smaller target (fewer fragments). Composites sample the RT with normalized
+  // UVs and upscale it back.
+  if (cvars::gpu_resolution_downscale_pct > 0 &&
+      cvars::gpu_resolution_downscale_pct < 100) {
+    float f = float(cvars::gpu_resolution_downscale_pct) / 100.0f;
+    viewport.x *= f;
+    viewport.y *= f;
+    viewport.width *= f;
+    viewport.height *= f;
+  }
   SetViewport(viewport);
 
   // Scissor.
@@ -8609,6 +8621,14 @@ void VulkanCommandProcessor::UpdateDynamicState(
   scissor_rect.offset.y = int32_t(scissor.offset[1]);
   scissor_rect.extent.width = scissor.extent[0];
   scissor_rect.extent.height = scissor.extent[1];
+  if (cvars::gpu_resolution_downscale_pct > 0 &&
+      cvars::gpu_resolution_downscale_pct < 100) {
+    uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
+    scissor_rect.offset.x = scissor_rect.offset.x * int32_t(pct) / 100;
+    scissor_rect.offset.y = scissor_rect.offset.y * int32_t(pct) / 100;
+    scissor_rect.extent.width = scissor_rect.extent.width * pct / 100u;
+    scissor_rect.extent.height = scissor_rect.extent.height * pct / 100u;
+  }
   // gpu_flatten_predicated_tiling stage 2: during the frame's FIRST bin pass
   // (the one the flatten force-passes all predicated draws into), the guest's
   // scissor covers only tile 1's rect - widen it so the single surviving pass
