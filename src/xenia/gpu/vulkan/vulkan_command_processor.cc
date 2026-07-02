@@ -7482,6 +7482,26 @@ bool VulkanCommandProcessor::IssueCopy() {
   // executed - realize any pending concatenation run first.
   FlushPendingMergeRun();
 
+  // Predicated-tiling flatten diagnosis: at every resolve, log where in the
+  // bin-pass sequence it runs + the window state the resolve rect will use.
+  // This is the direct observation of BD's tile-resolve timing that all three
+  // pixel-fix attempts lacked.
+  if (cvars::gpu_trace_bin_select) {
+    const RegisterFile& regs = *register_file_;
+    XELOGI(
+        "RESOLVE ctx: passes_seen={} select={:08X} win_off={:08X} "
+        "offset_en={} scissor_tl={:08X} br={:08X} color={:08X} depth={:08X} "
+        "surf={:08X} ignore_off={}",
+        flatten_bin_passes_seen_, uint32_t(bin_select_ & 0xFFFFFFFFull),
+        regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET],
+        uint32_t(regs.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable),
+        regs[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL],
+        regs[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR],
+        regs[XE_GPU_REG_RB_COLOR_INFO], regs[XE_GPU_REG_RB_DEPTH_INFO],
+        regs[XE_GPU_REG_RB_SURFACE_INFO],
+        draw_util::resolve_ignore_window_offset ? 1 : 0);
+  }
+
   uint64_t copy_sequence = ++trace_copy_sequence_;
   bool trace_copy_state = ShouldTraceVulkanCopyState();
   if (trace_copy_state) {
