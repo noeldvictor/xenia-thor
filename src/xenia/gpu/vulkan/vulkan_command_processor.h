@@ -983,6 +983,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t draw_outcomes_skipped_no_vs_ = 0;
   uint32_t draw_outcomes_skipped_no_rast_ = 0;
   uint32_t draw_outcomes_copy_ = 0;
+  // gpu_foliage_decimate_pct: per-frame counter of alpha-test (foliage) draws,
+  // used to evenly spread the decimation skips. Reset at swap.
+  uint32_t foliage_draw_counter_ = 0;
   uint64_t draw_outcomes_total_vertices_ = 0;
   uint32_t draw_outcomes_max_vertices_ = 0;
   // Depth-prepass eligibility classification (Unit 1 of the opaque depth

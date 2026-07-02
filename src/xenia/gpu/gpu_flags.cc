@@ -116,6 +116,16 @@ DEFINE_bool(
     "composite translation. Default off; in progress.",
     "GPU");
 
+DEFINE_int32(
+    gpu_foliage_decimate_pct, 0,
+    "SHIPPABLE Performance lever (Thor, BD-30): BD's field is foliage-vertex-"
+    "bound (~15ms; device-proven not fill-bound). Skip this percent of the "
+    "alpha-test (foliage) draws each frame (evenly spread), thinning foliage "
+    "density to cut vertex-shader cost. E.g. 50 ~= half the foliage draws "
+    "skipped ~= ~7ms saved. Quality tradeoff: sparser foliage. 0 = off "
+    "(default, full foliage).",
+    "GPU");
+
 DEFINE_bool(
     gpu_diag_skip_alpha_test_draws, false,
     "BOTTLENECK DIAGNOSTIC (default-off, breaks pixels): skip alpha-test "

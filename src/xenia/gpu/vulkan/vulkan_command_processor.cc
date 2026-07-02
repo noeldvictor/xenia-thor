@@ -2919,6 +2919,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_outcomes_skipped_no_vs_ = 0;
     draw_outcomes_skipped_no_rast_ = 0;
     draw_outcomes_copy_ = 0;
+    foliage_draw_counter_ = 0;
     draw_outcomes_total_vertices_ = 0;
     draw_outcomes_max_vertices_ = 0;
     std::memset(draw_prim_counts_, 0, sizeof(draw_prim_counts_));
@@ -4929,13 +4930,29 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // inert), a large frame-time drop here localizes the cost to vertex/geometry
   // processing of those draws (=> foliage LOD/decimation is the BD-30 lever);
   // a small drop means the cost is per-draw overhead / binning instead.
-  if (cvars::gpu_diag_skip_alpha_test_draws &&
-      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0) {
+  const bool draw_is_alpha_test =
+      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0;
+  if (cvars::gpu_diag_skip_alpha_test_draws && draw_is_alpha_test) {
     return true;
   }
   if (cvars::gpu_diag_skip_draws_min_indices > 0 &&
       index_count >= uint32_t(cvars::gpu_diag_skip_draws_min_indices)) {
     return true;
+  }
+  // gpu_foliage_decimate_pct (shippable Performance lever): BD's field is
+  // foliage-vertex-bound (~15ms; device-proven not fill-bound). Skip this
+  // percent of the alpha-test (foliage) draws, spread deterministically by a
+  // per-frame foliage-draw counter, thinning foliage density to cut vertex
+  // cost. Keeps the closest/densest foliage (lowest indices via the counter
+  // stride) for the least-visible thinning. 0 = off (default, full foliage).
+  if (cvars::gpu_foliage_decimate_pct > 0 && draw_is_alpha_test) {
+    uint32_t pct = std::min<uint32_t>(uint32_t(cvars::gpu_foliage_decimate_pct),
+                                      100u);
+    // Skip pct out of every 100 foliage draws, evenly spread by the per-frame
+    // counter (reset at swap).
+    if ((foliage_draw_counter_++ % 100u) < pct) {
+      return true;
+    }
   }
 
   const ui::vulkan::VulkanDevice::Properties& device_properties =
