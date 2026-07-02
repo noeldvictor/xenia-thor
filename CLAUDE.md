@@ -153,6 +153,41 @@ for many games." So UnleashedRecomp/XenonRecomp are REFERENCE for TECHNIQUES, no
 - Refs cloned ../reference/ (XenonRecomp/XenosRecomp) - study for TECHNIQUE, apply generically. Skill:
   xbox360-d3d-hle-recomp (reframe as "generic HLE techniques in xenia", not per-game port).
 
+## 🎯 EXECUTION PLAN (user-decided 2026-07-02, all Qs answered) — build order + specs
+**DIRECTION: general-purpose xenia + generic recompilation-world techniques (NOT per-game ports). Build
+LLVM/AOT FIRST, then generic HLE. FULL QUALITY (no quality-reduced Performance preset - downscale/decimation
+are user QUALITY OPTIONS only, not the 30fps path). Validate every technique MULTI-GAME from the start.**
+
+### TRACK 1 (NOW): RPCS3-style AOT LLVM (user: "select a game -> it compiles stuff", user-selectable dir)
+- UX: **UPFRONT compile-on-select** (RPCS3 PPU-compile style) - precompile ALL guest functions to native with
+  a PROGRESS BAR before gameplay; every later launch is instant + fast.
+- Cache dir: **default app-storage (files/aot_cache) + a Settings PATH-PICKER override** (SD/USB/custom).
+- Artifact: **FULL NATIVE OBJECTS (max speed)** - cache final linked .o, re-linked per run; the non-portable
+  functions (MMIO callbacks / baked extern Function* ptrs) stay JIT via the `nocache_` prefix; weak-typeinfo
+  shim handles the -fno-rtti libLLVM boundary. FOUNDATION EXISTS: src/xenia/cpu/backend/llvm/llvm_object_cache
+  .{h,cc} (ORCv2 ObjectCache, per-fn .o, getObject skips MCAssembler, notifyObjectCompiled persists,
+  kLlvmObjectCacheVersion dir-gate, nocache_ handling). REMAINING: (1) upfront compile-ALL pass (currently
+  lazy/JIT-as-hit + cache) with progress reporting; (2) user cache-dir cvar + Settings picker + Java wiring;
+  (3) flip full-native-object relink default-on after multi-title validation. Existing LLVM backend: whole-fn
+  HIR->LLVM->ORCv2, renders BD; open bugs to fix forward = opt=2 residency crash + BD-cyan codegen
+  [[bd-llvm-postload-3d-cyan-bug]]. Payoff: CPU-bound titles (Burnout/Gears) + heat/wattage everywhere.
+
+### TRACK 2 (AFTER AOT): generic HLE-style techniques in xenia (multi-game)
+- Generic PREDICATED-TILING BIN-ONCE (the flatten done RIGHT: the 2 tile passes share ONE full-surface host
+  RT + coherent per-region resolves - a general xenia render-path feature, benefits ANY tiled game). Cuts the
+  binning-doubling. [[task 39]] has the RE + the honest complexity (separate RTs/resolves = EDRAM-addressing).
+- Generic NATIVE GEOMETRY submission (XenosRecomp model: guest vertex decl -> native Vulkan input layout,
+  replacing SSBO vfetch). Attacks BD's ~56% GEOMETRY cost that resolution can't touch = the full-foliage-30
+  piece. (gpu_hw_vertex_fetch was a partial attempt, flat - the general native-input path is the real build.)
+
+### THE BD-30 PHYSICS (rigorous, 2026-07-02) - why this plan
+BD's field is BOTH fill-bound (~44%, rigorous gpu_diag_raster_ab: full-raster 94ms vs quarter-area 53ms on
+ONE scene) AND geometry-bound (~56%). Resolution scaling cuts fill (keeps foliage, softer); native geometry
+cuts geometry (keeps foliage). Full-foliage 30 = BOTH, at full quality => the generic HLE geometry path is
+mandatory (not a lever). The "not fill-bound" and pure-geometry earlier verdicts were CROSS-RUN CONFOUNDS.
+
+## (superseded framing) D3D-HLE + AOT recompile
+
 ## (superseded framing) D3D-HLE + AOT recompile
 **The strategic ceiling = STOP emulating the Xbox 360 GPU at the PM4 command level (xenia's LLE, which
 faithfully reproduces inefficiencies like BD's predicated tiling) and instead TRANSLATE the D3D API to
