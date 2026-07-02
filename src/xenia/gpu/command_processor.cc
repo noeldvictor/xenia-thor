@@ -1380,6 +1380,43 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
   // We also skip predicated swaps, as they are never valid (probably?).
   if (packet & 1) {
     bool any_pass = (bin_select_ & bin_mask_) != 0;
+    // gpu_flatten_predicated_tiling: the guest re-submits its scene once per
+    // EDRAM tile with predication culling draws per tile - needless on the
+    // host where the whole frame fits one RT. Pass indices per frame (BD
+    // device-measured): 1 = setup (select FFFFFFFF, ~51 packets), 2 = the
+    // FIRST content tile (must render EVERYTHING - stage 2 widens its
+    // scissor), >= 3 = tile replays whose predicated draws are dropped
+    // (state writes / resolves still run). The original <=1 threshold
+    // dropped BOTH content tiles: mostly-empty 11.7ms frames + a guest D3D
+    // bookkeeping crash (PC 0x8246DD88) after ~150s.
+    if (cvars::gpu_flatten_predicated_tiling) {
+      // Only touch packets INSIDE a tile pass (select = specific tile bits).
+      // The all-ones select is the outside-tiling state - BD restores it after
+      // the tiled scene and the post-process/present chain runs under it;
+      // dropping those draws blacked the whole screen (measured: scene rendered
+      // at 82% busy but nothing reached the frontbuffer).
+      bool in_tile_pass =
+          (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+      if (in_tile_pass && flatten_bin_passes_seen_ >= 3 &&
+          (opcode == PM4_DRAW_INDX || opcode == PM4_DRAW_INDX_2)) {
+        if (any_pass) {
+          ++flatten_dropped_draws_;
+        }
+        any_pass = false;
+      } else if (in_tile_pass && flatten_bin_passes_seen_ == 2) {
+        any_pass = true;
+      }
+    }
+    // gpu_trace_bin_select: count predicated packet outcomes per bin_select so
+    // the guest's EDRAM predicated-tiling replay pattern is visible (how many
+    // predicated packets pass/skip under each tile's select value).
+    if (cvars::gpu_trace_bin_select) {
+      if (any_pass) {
+        ++bin_trace_pass_count_;
+      } else {
+        ++bin_trace_skip_count_;
+      }
+    }
     if (!any_pass || opcode == PM4_XE_SWAP) {
       reader->AdvanceRead(count * sizeof(uint32_t));
       trace_writer_.WritePacketEnd();
@@ -1477,6 +1514,28 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
     case PM4_SET_BIN_SELECT_LO: {
       uint32_t value = reader->ReadAndSwap<uint32_t>();
       bin_select_ = (bin_select_ & 0xFFFFFFFF00000000ull) | value;
+      ++flatten_bin_passes_seen_;
+      if (cvars::gpu_trace_bin_select) {
+        uint32_t win_off = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+        uint32_t sc_tl = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
+        uint32_t sc_br = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
+        // EDRAM layout at the transition - decides whether scissor widening
+        // can be layout-safe (pitch covers full width?) and where the tile's
+        // color/depth allocations sit.
+        uint32_t surf_info = (*register_file_)[XE_GPU_REG_RB_SURFACE_INFO];
+        uint32_t color_info = (*register_file_)[XE_GPU_REG_RB_COLOR_INFO];
+        uint32_t depth_info = (*register_file_)[XE_GPU_REG_RB_DEPTH_INFO];
+        uint32_t mode_cntl = (*register_file_)[XE_GPU_REG_PA_SU_SC_MODE_CNTL];
+        XELOGI(
+            "BIN_SELECT_LO -> {:016X} (mask {:016X}); prev select: passed={} "
+            "skipped={}; win_off={:08X} scissor_tl={:08X} br={:08X} "
+            "surf={:08X} color={:08X} depth={:08X} sumode={:08X}",
+            bin_select_, bin_mask_, bin_trace_pass_count_,
+            bin_trace_skip_count_, win_off, sc_tl, sc_br, surf_info,
+            color_info, depth_info, mode_cntl);
+        bin_trace_pass_count_ = 0;
+        bin_trace_skip_count_ = 0;
+      }
       result = true;
     } break;
     case PM4_SET_BIN_SELECT_HI: {
@@ -1497,6 +1556,24 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
       uint64_t val_hi = reader->ReadAndSwap<uint32_t>();
       uint64_t val_lo = reader->ReadAndSwap<uint32_t>();
       bin_select_ = (val_hi << 32) | val_lo;
+      ++flatten_bin_passes_seen_;
+      // gpu_trace_bin_select: each select change = a new predicated-tiling tile
+      // pass. Log the transition + the pass/skip counts accumulated under the
+      // PREVIOUS select value, plus the tile's window offset/scissor registers
+      // (tells stage 2 whether offset-zeroing is needed or scissor widening
+      // suffices - if tile 1 has offset 0,0 the flatten needs no offset work).
+      if (cvars::gpu_trace_bin_select) {
+        uint32_t win_off = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+        uint32_t sc_tl = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
+        uint32_t sc_br = (*register_file_)[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
+        XELOGI(
+            "BIN_SELECT -> {:016X} (mask {:016X}); prev select: passed={} "
+            "skipped={}; win_off={:08X} scissor_tl={:08X} br={:08X}",
+            bin_select_, bin_mask_, bin_trace_pass_count_,
+            bin_trace_skip_count_, win_off, sc_tl, sc_br);
+        bin_trace_pass_count_ = 0;
+        bin_trace_skip_count_ = 0;
+      }
       result = true;
     } break;
     case PM4_CONTEXT_UPDATE: {
@@ -1695,6 +1772,15 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   if (cvars::gpu_trace_swap) {
     XELOGI("XE_SWAP");
   }
+  // gpu_flatten_predicated_tiling: frame boundary - the next SET_BIN_SELECT
+  // begins a new frame's first bin pass. Log the flatten summary when tracing.
+  if (cvars::gpu_trace_bin_select &&
+      (flatten_bin_passes_seen_ || flatten_dropped_draws_)) {
+    XELOGI("BIN frame summary: bin_passes={} flatten_dropped_draws={}",
+           flatten_bin_passes_seen_, flatten_dropped_draws_);
+  }
+  flatten_bin_passes_seen_ = 0;
+  flatten_dropped_draws_ = 0;
 
   Profiler::Flip();
 

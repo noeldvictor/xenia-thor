@@ -332,6 +332,6 @@ synthesis.md + memory [[bd-edram-atomic-rop-solve]].
 - **Never fabricate** — every number from device output read THIS turn; read the screenshot before asserting
   a visual; if unmeasured say "not measured"; if confounded say "unvalidated".
 - **Targeted `git add` only — never `-A`.** Never commit ISOs/keys/dumps/screenshots/config backups. Work on
-  `master`; commit + push durable results. End commit messages: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+  `master`; commit + push durable results. End commit messages: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` (user 2026-07-01: Fable 5 attribution).
 - **Forward-only** — never `git revert`; fix forward. Skills in `.agents/skills/`; knowledge in the memory
   files (MEMORY.md index); consult Codex/Gemini for hard rearch ([[consult-hard]]).

@@ -308,6 +308,16 @@ class CommandProcessor {
 
   uint64_t bin_select_ = 0xFFFFFFFFull;
   uint64_t bin_mask_ = 0xFFFFFFFFull;
+  // gpu_trace_bin_select diagnostic: predicated-packet outcomes under the
+  // current bin select value (logged + reset on each SET_BIN_SELECT change).
+  uint32_t bin_trace_pass_count_ = 0;
+  uint32_t bin_trace_skip_count_ = 0;
+  // gpu_flatten_predicated_tiling: number of SET_BIN_SELECT(_LO) changes since
+  // the frame started (reset at swap). 0/1 = the frame's first bin pass (force-
+  // pass all predicated packets); >=2 = a tile REPLAY pass (drop predicated
+  // draws). Also counted per frame for the trace summary.
+  uint32_t flatten_bin_passes_seen_ = 0;
+  uint32_t flatten_dropped_draws_ = 0;
 
   Shader* active_vertex_shader_ = nullptr;
   Shader* active_pixel_shader_ = nullptr;

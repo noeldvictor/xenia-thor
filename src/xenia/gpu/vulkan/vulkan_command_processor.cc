@@ -8589,6 +8589,21 @@ void VulkanCommandProcessor::UpdateDynamicState(
   scissor_rect.offset.y = int32_t(scissor.offset[1]);
   scissor_rect.extent.width = scissor.extent[0];
   scissor_rect.extent.height = scissor.extent[1];
+  // gpu_flatten_predicated_tiling stage 2: during the frame's FIRST bin pass
+  // (the one the flatten force-passes all predicated draws into), the guest's
+  // scissor covers only tile 1's rect - widen it so the single surviving pass
+  // rasterizes the whole surface. Vulkan clips the scissor to the framebuffer,
+  // so a huge extent is safe. Only while a tiled sequence is active (a
+  // SET_BIN_SELECT was seen this frame); passes before/after tiling keep the
+  // guest scissor.
+  if (cvars::gpu_flatten_predicated_tiling &&
+      cvars::gpu_flatten_predicated_tiling_widen &&
+      flatten_bin_passes_seen_ == 2) {
+    scissor_rect.offset.x = 0;
+    scissor_rect.offset.y = 0;
+    scissor_rect.extent.width = 16384;
+    scissor_rect.extent.height = 16384;
+  }
   SetScissor(scissor_rect);
 
   if (render_target_cache_->GetPath() ==

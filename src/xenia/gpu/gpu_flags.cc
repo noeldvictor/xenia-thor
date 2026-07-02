@@ -183,6 +183,44 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_flatten_predicated_tiling, false,
+    "EXPERIMENTAL STAGE 1 (Thor, guest predicated-tiling flatten): titles like "
+    "Blue Dragon render their frame in multiple EDRAM TILE passes, re-submitting "
+    "the whole scene once per tile with PM4 predication (bin select/mask) "
+    "culling draws per tile - mandatory on the 360's 10MB EDRAM, PURE WASTE on "
+    "the host where the full frame fits one render target. This flag makes the "
+    "frame's FIRST bin pass execute ALL predicated packets (force-pass) and "
+    "DROPS predicated DRAW packets on subsequent bin passes (the replays), "
+    "keeping state writes and resolves. STAGE 1 has NO scissor/window widening "
+    "yet, so only tile 1's region renders fully (partial screen EXPECTED) - it "
+    "measures the replay-drop savings and validates the mechanism; stage 2 adds "
+    "the widening for full coverage. Default off.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_flatten_predicated_tiling_widen, false,
+    "STAGE 2 of gpu_flatten_predicated_tiling: during the frame's first bin "
+    "pass (which the flatten force-passes all predicated draws into), widen "
+    "the scissor to the full surface so the single surviving pass rasterizes "
+    "everything (the guest's scissor covers only tile 1's rect). Requires "
+    "gpu_flatten_predicated_tiling. If the title uses a nonzero "
+    "PA_SC_WINDOW_OFFSET on tile 1 (check the gpu_trace_bin_select win_off "
+    "log), widening alone is insufficient - offset zeroing would be needed. "
+    "Default off.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_trace_bin_select, false,
+    "Diagnostic (predicated-tiling analysis): log every PM4 SET_BIN_SELECT / "
+    "SET_BIN_MASK change with its value, plus a per-frame summary of how many "
+    "predicated packets PASSED vs were SKIPPED under each bin select value. "
+    "Confirms whether a title (e.g. Blue Dragon) re-submits its scene per EDRAM "
+    "tile (guest predicated tiling) - the precondition for the tiling-flatten "
+    "lever (render tile 1 with all bins + full scissor, drop the replays, keep "
+    "resolves). Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_retro_color_dontcare, false,
     "Frame-graph load/store recompiler, increment B(a) (Thor/TBDR, BD-30): "
     "RETROACTIVE color-load elision via COVERAGE UNION. Per guest pass, track "
