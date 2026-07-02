@@ -52,6 +52,7 @@ bool resolve_ignore_window_offset = false;
 // position. Set by the CP during the flatten force-pass; consumed in
 // GetViewportInfo + GetScissor.
 bool draw_ignore_window_offset = false;
+int32_t flatten_full_scissor_br_y = 0;
 
 xenos::MsaaSamples ClampForcedMsaaSamples(xenos::MsaaSamples guest_samples) {
   if (!cvars::gpu_force_max_msaa_samples) {
@@ -605,6 +606,14 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
   auto pa_sc_screen_scissor_br = regs.Get<reg::PA_SC_SCREEN_SCISSOR_BR>();
   br_x = std::min(br_x, int32_t(pa_sc_screen_scissor_br.br_x));
   br_y = std::min(br_y, int32_t(pa_sc_screen_scissor_br.br_y));
+  // Flatten bin-once: when the bottom EDRAM tile's geometry is force-passed into
+  // the top pass (draw_ignore_window_offset), the top tile's scissor br_y (e.g.
+  // 672) would clip it - extend to the full surface height (e.g. 1280) so all
+  // tiles rasterize into the one full-surface RT. The host RT image/framebuffer
+  // already span the full EDRAM range, so only this per-draw scissor was clipping.
+  if (draw_ignore_window_offset && flatten_full_scissor_br_y > br_y) {
+    br_y = flatten_full_scissor_br_y;
+  }
   if (clamp_to_surface_pitch) {
     // Clamp the horizontal scissor to surface_pitch for safety, in case that's
     // not done by the guest for some reason (it's not when doing draws without

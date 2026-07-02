@@ -318,6 +318,10 @@ class CommandProcessor {
   // draws). Also counted per frame for the trace summary.
   uint32_t flatten_bin_passes_seen_ = 0;
   uint32_t flatten_dropped_draws_ = 0;
+  // Bin-once: max scissor br_y seen across the frame's tile passes (= full
+  // surface height). Published to draw_util::flatten_full_scissor_br_y at frame
+  // end so the next frame's force-pass extends the scissor to the full surface.
+  int32_t flatten_max_scissor_br_y_ = 0;
   // Keeps draw_util::resolve_ignore_window_offset in sync with the flatten
   // state (replay tile passes resolve at screen positions).
   void UpdateFlattenResolveOffsetSkip();

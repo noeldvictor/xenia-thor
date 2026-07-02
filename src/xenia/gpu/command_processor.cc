@@ -1780,6 +1780,16 @@ void CommandProcessor::UpdateFlattenResolveOffsetSkip() {
   // the tile's EDRAM origin (the fix for the flatten's off-screen/streak bug).
   draw_util::draw_ignore_window_offset =
       flatten_widen && in_tile_pass && flatten_bin_passes_seen_ == 2;
+  // Bin-once: accumulate the full-surface height = the max scissor br_y across
+  // this frame's tile passes (the bottom tile's 1280 vs the top tile's 672).
+  // Published at frame end (XE_SWAP) for the next frame's force-pass scissor.
+  if (flatten_widen && in_tile_pass) {
+    int32_t br_y =
+        int32_t(register_file_->Get<reg::PA_SC_WINDOW_SCISSOR_BR>().br_y);
+    if (br_y > flatten_max_scissor_br_y_) {
+      flatten_max_scissor_br_y_ = br_y;
+    }
+  }
 }
 
 bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
@@ -1799,6 +1809,13 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   }
   flatten_bin_passes_seen_ = 0;
   flatten_dropped_draws_ = 0;
+  // Bin-once: publish this frame's full-surface height for the next frame's
+  // force-pass scissor extension, then reset the accumulator. Scene structure is
+  // stable frame-to-frame so last-frame's value is correct for this frame.
+  if (flatten_max_scissor_br_y_ > 0) {
+    draw_util::flatten_full_scissor_br_y = flatten_max_scissor_br_y_;
+  }
+  flatten_max_scissor_br_y_ = 0;
   UpdateFlattenResolveOffsetSkip();
 
   Profiler::Flip();

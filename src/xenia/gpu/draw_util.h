@@ -602,6 +602,14 @@ extern bool resolve_ignore_window_offset;
 // force-pass phase so flattened tile geometry rasterizes at true screen
 // position. Set by the command processor per bin pass.
 extern bool draw_ignore_window_offset;
+// gpu_flatten_predicated_tiling bin-once: the FULL-surface scissor bottom-right Y
+// (max br_y across a frame's tile passes = the whole 720x1280 surface, not one
+// 720x672 EDRAM tile). When draw_ignore_window_offset force-passes the bottom
+// tile's geometry into the top pass, GetScissor extends br_y to this so it is not
+// clipped to the top tile's height (the flatten's remaining broken-pixel cause).
+// Published by the CP at frame end (uses last frame's value; scene is stable).
+// 0 = no extension. Same-thread as the other flatten globals.
+extern int32_t flatten_full_scissor_br_y;
 
 // Returns false if there was an error obtaining the info making it totally
 // invalid. fixed_rg[ba]16_truncated_to_minus_1_to_1 is false if 16_16[_16_16]

@@ -350,10 +350,19 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
     // it - avoids the race that crashed boot when done in DemandFunction). Same
     // model as kernel imports (extern set up early). Skip guest codegen.
     if (IsHleIntercept(address)) {
+      // Patch the guest code to an extern trampoline (sc; blr) - the kernel-
+      // import model. A bare SetupExtern leaves no machine-code, so INDIRECT
+      // dispatch (entry table) jumps to null and crashes; writing `sc; blr` here
+      // makes the frontend compile a real thunk whose `sc` emits CallExtern ->
+      // extern_handler_, so BOTH direct and indirect calls route to the handler.
+      uint8_t* mem = memory_->TranslateVirtual(address);
+      xe::store_and_swap<uint32_t>(mem + 0x0, 0x44000042);  // sc
+      xe::store_and_swap<uint32_t>(mem + 0x4, 0x4E800020);  // blr
       static_cast<GuestFunction*>(function)->SetupExtern(HleInterceptHandler,
                                                          nullptr);
+      function->set_end_address(address + 8);
       function->set_status(Symbol::Status::kDeclared);
-      XELOGI("HLE: planted host intercept handler at guest {:08X}", address);
+      XELOGI("HLE: planted extern trampoline (sc;blr) at guest {:08X}", address);
       return function;
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
@@ -369,14 +378,9 @@ bool Processor::DemandFunction(Function* function) {
   // Lock function for generation. If it's already being generated
   // by another thread this will block and return DECLARED.
   auto module = function->module();
-  // GPU D3D9-HLE: intercepted functions were converted to extern at declare time
-  // (LookupFunction) - they need no define here.
-  if (function->behavior() == Function::Behavior::kExtern &&
-      function->is_guest() &&
-      static_cast<GuestFunction*>(function)->extern_handler() ==
-          HleInterceptHandler) {
-    return true;
-  }
+  // GPU D3D9-HLE: intercepted functions were patched to `sc; blr` at declare time
+  // (LookupFunction); DefineFunction below compiles that into the extern thunk
+  // (the `sc` emits CallExtern -> HleInterceptHandler), so no special-case here.
   auto symbol_status = module->DefineFunction(function);
   if (symbol_status == Symbol::Status::kNew) {
     // Symbol is undefined, so define now.
