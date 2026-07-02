@@ -136,7 +136,24 @@ the build recipe: memory file [[llvm-jit-backend-build]].
   UMA). Re-evaluate, fix any bug, and enable it (smart_sync or double-buffer path).
 - **Validation:** qemu-a64 differential ([[a64-qemu-harness]]) 896/896 + device render/no-fault, every change.
 
-## ⭐⭐⭐ LONG-TERM ARCHITECTURE DIRECTION (user-driven 2026-07-02): D3D-HLE + AOT recompile
+## ⭐⭐⭐ LONG-TERM DIRECTION (user-decided 2026-07-02): GENERAL EMULATOR + generic HLE/AOT techniques
+**DECISION: keep xenia as a GENERAL-PURPOSE runtime emulator (runs many games) and bring in the SPEED
+TECHNIQUES from the recompilation world GENERICALLY - NOT per-game native ports.** User verbatim: "we dont
+want to port EVERY game native... we want the general purpose emulator which all the tricks to get working
+for many games." So UnleashedRecomp/XenonRecomp are REFERENCE for TECHNIQUES, not a template to copy per-game:
+- Borrow: native vertex-input submission (vs SSBO vfetch), HLE-style optimal rendering that BYPASSES the
+  guest GPU inefficiencies (predicated tiling / EDRAM round-trips) GENERICALLY in xenia's Vulkan path, AOT
+  LLVM (already have the whole-fn backend). XenosRecomp's "vertex decl -> native input layout" is the model.
+- DON'T: recompile each game to a native exe (UnleashedRecomp is a per-game PORT = explicitly rejected).
+- BD-30 within this: (a) GENERIC predicated-tiling bin-once (the flatten done RIGHT: 2 tiles share one
+  full-surface host RT + coherent resolves - benefits ANY tiled game, not a BD patch); (b) generic native
+  geometry submission (cuts the ~56% geometry cost that resolution can't touch); (c) resolution scaling as a
+  user QUALITY option (cuts the ~44% fill cost - gpu_resolution_downscale_pct, shipped). Keep every win a
+  cvar-gated, multi-game-validated XeniaOptimizations toggle.
+- Refs cloned ../reference/ (XenonRecomp/XenosRecomp) - study for TECHNIQUE, apply generically. Skill:
+  xbox360-d3d-hle-recomp (reframe as "generic HLE techniques in xenia", not per-game port).
+
+## (superseded framing) D3D-HLE + AOT recompile
 **The strategic ceiling = STOP emulating the Xbox 360 GPU at the PM4 command level (xenia's LLE, which
 faithfully reproduces inefficiencies like BD's predicated tiling) and instead TRANSLATE the D3D API to
 Vulkan directly (HLE) + AOT-recompile the PPC to native.** This is PROVEN, not theoretical:
