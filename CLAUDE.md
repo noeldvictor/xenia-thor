@@ -5,10 +5,22 @@ Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno
 **TARGET = FULL-SPEED Xbox 360 emulation. Blue Dragon → locked 30fps at 720p with FULL default foliage**
 (the 360 ran it at 30; the Thor is 10-20× more powerful + the emulation needs only ~4× the 360 ⇒ full speed
 has large margin — see the ~4× budget below).
-**⭐ CORE STRATEGY (user 2026-07-02): the emulator REACHES INTO the game at LOAD time and DRAGS OUT the
-XDK D3D9 code to optimize it — like RPCS3 identifies + recompiles SPU at boot. Signature-identify the
-static-linked D3D9 tiling/resolve/draw functions in the XEX, HLE-replace them with optimal host Vulkan.
-General (signature DB across games), not per-game porting. See the LOAD-TIME XEX D3D-HLE section below.** Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
+**⭐⭐⭐ COMMITTED ARCHITECTURE (user 2026-07-02, FINAL — this is THE plan, not a lever):**
+**The emulator, on GAME-SELECT, does UPFRONT LOAD-TIME ANALYSIS of the XEX (the RPCS3 model — RPCS3
+recompiles SPU/PPU at boot) and produces a NATIVE, HLE build of the game:**
+1. **CPU = AOT-LLVM recompile the PPC to native** (we HAVE the whole-fn LLVM backend — precompile everything
+   upfront, residency, direct calls; NO JIT/dispatch at gameplay). This is RPCS3's SPU-recompile, applied to PPC.
+2. **GPU = HLE the Xbox D3D9 → Vulkan directly.** Load-time ANALYSIS of the XEX signature-identifies the
+   static-linked XDK D3D9 functions (Draw/SetState/BeginTiling/Resolve/shader-setup); HLE-REPLACE them with
+   host Vulkan (vertex decls→native input, cbuffers→push/UBO, shaders via Xenos→SPIR-V). This BYPASSES the
+   PM4 command stream + EDRAM + predicated tiling ENTIRELY — the source of ~all the overhead. (XenonRecomp/
+   XenosRecomp/UnleashedRecomp prove the translation; we do it GENERICALLY at load via a signature DB, not a
+   per-game offline port.)
+**⛔ STOP deepening the LLE PM4/EDRAM emulation. The flatten / scissor / tiling / EDRAM-in-GMEM / bin-once /
+render-target-cache work is LEGACY STOPGAP on the OLD architecture (faithfully re-emulating the 360 GPU's
+inefficiencies). The win is not making the LLE emulation of tiling faster — it's NOT EMULATING IT AT ALL
+(HLE renders the scene once, natively, no tiles/EDRAM). Keep shipped LLE wins running; build NEW work on the
+HLE+AOT track only.** See the LOAD-TIME XEX D3D-HLE section below for the build order.** Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
 improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) ⭐ AOT LLVM = THE CORE
 DIRECTION (user 2026-06-29): the ReXGlue / XenonRecomp model — STATIC AHEAD-OF-TIME recompilation, precompile
 the whole title to native, NO JIT/dispatch at gameplay (opcode coverage is already 100%; the work now is AOT +
