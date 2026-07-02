@@ -60,6 +60,12 @@ DEFINE_string(cpu_hle_intercept_addrs, "",
               "handler (the load-time D3D9-HLE mechanism). Logs each call; the "
               "guest body is skipped. Empty disables.",
               "CPU");
+DEFINE_string(cpu_hle_binonce_addr, "",
+              "GPU D3D9-HLE BIN-ONCE: hex guest addr of BD's tile-binning walker "
+              "(82487878). Host handler forces ONE full-surface tile + all-visible "
+              "bin_select masks so the render driver replays the scene ONCE. Empty "
+              "disables.",
+              "CPU");
 
 namespace xe {
 namespace kernel {
@@ -344,6 +350,29 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
                w3);
       }
     }
+    // Walk the guest PPC stack (r1 -> back-chain -> saved LR at frame+8) to
+    // recover the FULL tiling call chain up through EndTiling/BeginTiling -
+    // BD's indirect dispatch defeats static caller-analysis, but the runtime
+    // stack has the real callers. These addrs are the clean HLE targets.
+    if (base) {
+      uint32_t sp = uint32_t(ppc_context->r[1]);
+      for (int f = 0; f < 14 && sp; ++f) {
+        uint32_t back = xe::load_and_swap<uint32_t>(base + sp);
+        if (back <= sp || back >= 0xF0000000u) break;
+        // Scan the frame [sp..back) for guest-code return addresses (0x82xxxxxx)
+        // - the LR-save offset varies (helper-based prologues), so find them by
+        // value. Log up to 3 per frame (the real caller is usually the first).
+        int hits = 0;
+        for (uint32_t a = sp; a + 4 <= back && hits < 3; a += 4) {
+          uint32_t v = xe::load_and_swap<uint32_t>(base + a);
+          if ((v & 0xFFF00000u) == 0x82000000u) {
+            XELOGI("  FRAME[{}] +{:03X}: ret={:08X}", f, a - sp, v);
+            ++hits;
+          }
+        }
+        sp = back;
+      }
+    }
   }
   ppc_context->r[3] = 0;
 }
@@ -353,6 +382,70 @@ bool IsHleIntercept(uint32_t address) {
   }
   std::call_once(g_hle_intercept_once, ParseHleInterceptAddrs);
   return g_hle_intercept_addrs.count(address) != 0;
+}
+
+uint32_t g_hle_binonce_addr = 0;
+std::once_flag g_hle_binonce_once;
+void ParseHleBinOnceAddr() {
+  if (!cvars::cpu_hle_binonce_addr.empty()) {
+    g_hle_binonce_addr =
+        uint32_t(strtoul(cvars::cpu_hle_binonce_addr.c_str(), nullptr, 16));
+  }
+}
+bool IsHleBinOnce(uint32_t address) {
+  if (cvars::cpu_hle_binonce_addr.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_binonce_once, ParseHleBinOnceAddr);
+  return g_hle_binonce_addr && address == g_hle_binonce_addr;
+}
+// GPU D3D9-HLE BIN-ONCE handler for BD's tile-binning walker (82487878). The
+// guest walker computes per-draw bin_select visibility masks across N tiles;
+// this replaces it, forcing ONE full-surface tile (count=1) + all-visible masks
+// (0x80000003 = tile-0 bits | valid) so the render driver replays the scene ONCE
+// instead of per-tile = the ~1.4x bin-once win. Mirrors the walker's stream walk
+// (r3=state table: count@+4; r4=cmd stream: segend=*(p), entries at p+4 stride
+// 0x10, each entry's first word -> mask slot at +8, segment chain to 0xC0000000).
+void HleBinOnceHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
+  Memory* mem = ctx->processor->memory();
+  uint32_t state = uint32_t(ctx->r[3]);
+  uint32_t stream = uint32_t(ctx->r[4]);
+  // Force one tile + expand tile 0's rect to the FULL surface so the single pass
+  // renders the whole scene (not just the left tile). Tile-0 rect (per the walker
+  // bbox test) = 4 uints at state+0x8(left) +0xC(top) +0x10(right) +0x14(bottom).
+  if (state) {
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(state + 4), 1u);
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(state + 0x8), 0u);
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(state + 0xC), 0u);
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(state + 0x10), 0x7FFFFFFFu);
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(state + 0x14), 0x7FFFFFFFu);
+  }
+  // Walk the command stream, marking every draw visible in tile 0. Heavily
+  // guarded (bounds + iteration cap) so a format mismatch degrades to a wrong
+  // render, not a crash.
+  uint32_t p = stream;
+  int guard = 0;
+  while (p && p != 0xC0000000u && guard < 300000) {
+    ++guard;
+    uint32_t segend = xe::load_and_swap<uint32_t>(mem->TranslateVirtual(p));
+    if (segend <= p || segend - p > 0x100000u) {
+      break;  // implausible segment
+    }
+    uint32_t e = p + 4;
+    uint32_t last = e;
+    while (e < segend && guard < 300000) {
+      ++guard;
+      uint32_t entry_ptr = xe::load_and_swap<uint32_t>(mem->TranslateVirtual(e));
+      if (entry_ptr >= 0x1000u && entry_ptr < 0x40000000u) {
+        xe::store_and_swap<uint32_t>(mem->TranslateVirtual(entry_ptr + 8),
+                                     0x80000003u);
+      }
+      last = e;
+      e += 0x10;
+    }
+    p = xe::load_and_swap<uint32_t>(mem->TranslateVirtual(last));
+  }
+  ctx->r[3] = 0;
 }
 }  // namespace
 
@@ -384,6 +477,16 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE: planted host intercept handler at guest {:08X}", address);
+      return function;
+    }
+    // GPU D3D9-HLE BIN-ONCE: replace BD's tile-binning walker with the host
+    // handler that forces one full-surface tile (SetupExtern-only, same proven
+    // dispatch path as the logger).
+    if (IsHleBinOnce(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleBinOnceHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("HLE BIN-ONCE: planted walker handler at guest {:08X}", address);
       return function;
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
