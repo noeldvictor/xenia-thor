@@ -321,11 +321,26 @@ void ParseHleInterceptAddrs() {
 // authored; for now it proves the interception seam on a real D3D9 function.
 void HleInterceptHandler(ppc::PPCContext* ppc_context,
                          kernel::KernelState* kernel_state) {
-  XELOGI(
-      "HLE intercept fired: r3={:08X} r4={:08X} r5={:08X} r6={:08X} lr={:08X}",
-      uint32_t(ppc_context->r[3]), uint32_t(ppc_context->r[4]),
-      uint32_t(ppc_context->r[5]), uint32_t(ppc_context->r[6]),
-      uint32_t(ppc_context->lr));
+  // D3D-HLE tile-binning walker (0x82487878): r3 = tile-state struct (count at
+  // +4, tile rects at +0xC, 0x10 stride). One-shot dump the LIVE tile table so
+  // the bin-once host body knows the exact rect field values to reshape BD's 2
+  // tiles (720x672) into one full-surface tile (720x1280). Read-only.
+  static int tile_dump_budget = 24;
+  uint32_t state = uint32_t(ppc_context->r[3]);
+  if (tile_dump_budget > 0 && ppc_context->virtual_membase && state) {
+    --tile_dump_budget;
+    uint8_t* base = ppc_context->virtual_membase;
+    uint32_t count = xe::load_and_swap<uint32_t>(base + state + 4);
+    uint32_t r[8];
+    for (int i = 0; i < 8; ++i) {
+      r[i] = xe::load_and_swap<uint32_t>(base + state + 0xC + i * 4);
+    }
+    XELOGI(
+        "TILE_TABLE: state={:08X} count={} rect0=[{:08X} {:08X} {:08X} {:08X}] "
+        "rect1=[{:08X} {:08X} {:08X} {:08X}] lr={:08X}",
+        state, count, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
+        uint32_t(ppc_context->lr));
+  }
   ppc_context->r[3] = 0;
 }
 bool IsHleIntercept(uint32_t address) {
@@ -350,19 +365,21 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
     // it - avoids the race that crashed boot when done in DemandFunction). Same
     // model as kernel imports (extern set up early). Skip guest codegen.
     if (IsHleIntercept(address)) {
-      // Patch the guest code to an extern trampoline (sc; blr) - the kernel-
-      // import model. A bare SetupExtern leaves no machine-code, so INDIRECT
-      // dispatch (entry table) jumps to null and crashes; writing `sc; blr` here
-      // makes the frontend compile a real thunk whose `sc` emits CallExtern ->
-      // extern_handler_, so BOTH direct and indirect calls route to the handler.
-      uint8_t* mem = memory_->TranslateVirtual(address);
-      xe::store_and_swap<uint32_t>(mem + 0x0, 0x44000042);  // sc
-      xe::store_and_swap<uint32_t>(mem + 0x4, 0x4E800020);  // blr
+      // Intercept via the kExtern DISPATCH ONLY (SetupExtern) - GuestFunction::
+      // Call sees behavior==kExtern and invokes the host handler, WITHOUT touching
+      // guest code. This is the PROVEN path (fired 3229x on BD's tile walker).
+      // DO NOT patch the guest code to `sc; blr`: that model only works for real
+      // XDK import STUBS the frontend recognizes; patched over arbitrary function
+      // code it (a) destroys the function's real bytes and (b) the guest `sc`
+      // routes to the generic syscall path, NOT this fn's extern_handler_ -> BD
+      // executes garbage and hangs (device-confirmed: sc;blr = black, no VdSwap;
+      // SetupExtern-only = renders + fires). INDIRECT dispatch (bctr) is handled
+      // in a64 ResolveFunction's kExtern-HLE branch (returns a host trampoline),
+      // not by corrupting guest code here.
       static_cast<GuestFunction*>(function)->SetupExtern(HleInterceptHandler,
                                                          nullptr);
-      function->set_end_address(address + 8);
       function->set_status(Symbol::Status::kDeclared);
-      XELOGI("HLE: planted extern trampoline (sc;blr) at guest {:08X}", address);
+      XELOGI("HLE: planted host intercept handler at guest {:08X}", address);
       return function;
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
