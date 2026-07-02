@@ -325,21 +325,25 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
   // +4, tile rects at +0xC, 0x10 stride). One-shot dump the LIVE tile table so
   // the bin-once host body knows the exact rect field values to reshape BD's 2
   // tiles (720x672) into one full-surface tile (720x1280). Read-only.
-  static int tile_dump_budget = 24;
+  static std::atomic<int> fire_count{0};
+  int n = ++fire_count;
   uint32_t state = uint32_t(ppc_context->r[3]);
-  if (tile_dump_budget > 0 && ppc_context->virtual_membase && state) {
-    --tile_dump_budget;
+  if (n <= 4) {
     uint8_t* base = ppc_context->virtual_membase;
-    uint32_t count = xe::load_and_swap<uint32_t>(base + state + 4);
-    uint32_t r[8];
-    for (int i = 0; i < 8; ++i) {
-      r[i] = xe::load_and_swap<uint32_t>(base + state + 0xC + i * 4);
+    // Full-struct dump: state-0x10 .. state+0x3C (20 words) to decode the tile
+    // table layout (count, both tile rects, headers) for the bin-once reshape.
+    XELOGI("HLE_FIRE #{}: r3={:08X} r4={:08X} lr={:08X}", n, state,
+           uint32_t(ppc_context->r[4]), uint32_t(ppc_context->lr));
+    if (base && state) {
+      for (int off = -0x10; off <= 0x3C; off += 0x10) {
+        uint32_t w0 = xe::load_and_swap<uint32_t>(base + state + off + 0);
+        uint32_t w1 = xe::load_and_swap<uint32_t>(base + state + off + 4);
+        uint32_t w2 = xe::load_and_swap<uint32_t>(base + state + off + 8);
+        uint32_t w3 = xe::load_and_swap<uint32_t>(base + state + off + 0xC);
+        XELOGI("  STRUCT[{:+03X}]: {:08X} {:08X} {:08X} {:08X}", off, w0, w1, w2,
+               w3);
+      }
     }
-    XELOGI(
-        "TILE_TABLE: state={:08X} count={} rect0=[{:08X} {:08X} {:08X} {:08X}] "
-        "rect1=[{:08X} {:08X} {:08X} {:08X}] lr={:08X}",
-        state, count, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-        uint32_t(ppc_context->lr));
   }
   ppc_context->r[3] = 0;
 }
