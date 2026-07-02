@@ -136,6 +136,33 @@ the build recipe: memory file [[llvm-jit-backend-build]].
   UMA). Re-evaluate, fix any bug, and enable it (smart_sync or double-buffer path).
 - **Validation:** qemu-a64 differential ([[a64-qemu-harness]]) 896/896 + device render/no-fault, every change.
 
+## ⭐⭐⭐ LONG-TERM ARCHITECTURE DIRECTION (user-driven 2026-07-02): D3D-HLE + AOT recompile
+**The strategic ceiling = STOP emulating the Xbox 360 GPU at the PM4 command level (xenia's LLE, which
+faithfully reproduces inefficiencies like BD's predicated tiling) and instead TRANSLATE the D3D API to
+Vulkan directly (HLE) + AOT-recompile the PPC to native.** This is PROVEN, not theoretical:
+- **hedge-dev/XenonRecomp** = Xbox360 PPC XEX -> C++ (static/AOT recompilation; x86-only today, uses x86
+  intrinsics). **hedge-dev/XenosRecomp** = Xenos shader bytecode -> HLSL -> DXIL/SPIR-V. **UnleashedRecomp**
+  (Sonic Unleashed) = the full proven port: *"implements a translation layer for the renderer rather than
+  emulating the Xbox 360 GPU"* -> vertex decls -> native input, cbuffers -> root/push. Runs at high FPS with
+  NONE of the tiling/EDRAM overhead. Inspired by N64Recomp/Zelda64Recompiled. **ReXGlue** (goal-named) = the
+  same static-recompile lineage for 360.
+- **WHY it kills BD's bottleneck:** BD's field is GPU-bound on foliage triangle-binning DOUBLED by predicated
+  tiling. HLE renders the scene ONCE, optimally on Turnip (no tiling, no EDRAM round-trip) -> the bin-once win
+  by construction. AOT is orthogonal (helps CPU-bound Burnout/Gears + heat; BD field is GPU-bound so AOT is
+  thermal-only there).
+- **THE HARD PARTS (honest):** (1) XenonRecomp is x86-only -> needs an ARM64 backend for the Thor (we already
+  have an LLVM whole-fn backend in xenia to draw from). (2) It's a per-GAME offline PORT (recompile BD ->
+  native ARM64 Android app + HLE renderer), NOT a general runtime emulator like xenia. (3) The D3D-HLE renderer
+  is real work (dxvk-scale in general; but UnleashedRecomp shows a per-title subset is tractable). (4) Xbox
+  D3D is statically linked/inlined in the XEX (no clean boundary) - the recompile approach SIDESTEPS this by
+  recompiling the game's D3D-call sites and providing host implementations, which is why it works.
+- **THE FORK (user deciding):** (A) incremental HLE inside xenia (keep the general runtime base, add targeted
+  HLE like the one-tile patch - works now, lower ceiling); (B) pivot to a XenonRecomp-style "Blue Dragon
+  Recompiled" (per-game native ARM64 port + HLE renderer - proven-super-fast ceiling, huge effort, needs the
+  ARM64 recomp backend); (C) hybrid (xenia now, build the HLE renderer incrementally, share the LLVM backend).
+- **RAG/KNOWLEDGE:** a retrieval DB over Xbox360 XDK D3D9 docs + Xenos/PM4 reference + XenonRecomp/UnleashedRecomp
+  source would accelerate BOTH the tactical RE (finding tiling/BeginTiling) and the HLE build. Proposed as a skill.
+
 ## Autonomous mode (standing user directive)
 Pick the highest-value unit yourself and execute end-to-end (implement → build-verify → device-test →
 commit → next). Don't ask which task / re-confirm direction / analysis-paralyze. A big effort is a reason
