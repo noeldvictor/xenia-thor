@@ -276,6 +276,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_trace_kick_lr, false,
+    "D3D-HLE RE: log the guest LR (return address) at each CP_RB_WPTR ring kick, "
+    "budgeted. This LR is inside the guest's D3D command-buffer submit/flush path "
+    "- the RE entry point to walk up to the render loop and the static-linked XDK "
+    "D3D9 tiling/resolve functions (BeginTiling/Resolve) we want to HLE-trampoline "
+    "to Vulkan. Static signature search failed (opcodes are helper params, not "
+    "immediates); this pins the submit path at runtime instead. Default off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_retro_color_dontcare, false,
     "Frame-graph load/store recompiler, increment B(a) (Thor/TBDR, BD-30): "
     "RETROACTIVE color-load elision via COVERAGE UNION. Per guest pass, track "

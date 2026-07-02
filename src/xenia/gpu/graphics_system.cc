@@ -290,6 +290,17 @@ void GraphicsSystem::WriteRegister(uint32_t addr, uint32_t value) {
 
   switch (r) {
     case 0x01C5:  // CP_RB_WPTR
+      if (cvars::gpu_trace_kick_lr) {
+        // D3D-HLE RE: capture the guest LR at the ring kick (guest thread) - the
+        // submit/flush path, our entry to walk up to the D3D tiling/resolve fns.
+        static int kick_lr_budget = 40;
+        cpu::ThreadState* ts = cpu::ThreadState::Get();
+        if (ts && ts->context() && kick_lr_budget > 0) {
+          --kick_lr_budget;
+          XELOGI("KICK_LR: guest_lr={:08X} wptr={:08X}",
+                 uint32_t(ts->context()->lr), value);
+        }
+      }
       command_processor_->UpdateWritePointer(value);
       break;
     case 0x1844:  // AVIVO_D1GRPH_PRIMARY_SURFACE_ADDRESS

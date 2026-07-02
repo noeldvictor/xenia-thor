@@ -39,6 +39,7 @@ DECLARE_int32(gpu_foliage_decimate_pct);
 DECLARE_bool(gpu_diag_skip_alpha_test_draws);
 DECLARE_int32(gpu_diag_skip_draws_min_indices);
 DECLARE_bool(gpu_trace_bin_select);
+DECLARE_bool(gpu_trace_kick_lr);
 DECLARE_bool(gpu_flatten_predicated_tiling);
 DECLARE_bool(gpu_flatten_predicated_tiling_widen);
 DECLARE_bool(gpu_vulkan_classify_img_sr_breaks);
