@@ -1354,7 +1354,19 @@ void XexModule::PrecompileGuestFunctions() {
           // doesn't pay the codegen cost on first encounter. Safe here only
           // because no guest thread is executing yet (see the routine header).
           processor_->ResolveFunction(addr);
-          compiled.fetch_add(1, std::memory_order_relaxed);
+          uint32_t done = compiled.fetch_add(1, std::memory_order_relaxed) + 1;
+          // RPCS3-style "compiling" progress: throttled log of done/frontier so
+          // the app can surface a compile progress bar (parse this line). Cheap
+          // (once per ~256 fns). The frontier grows as the call-graph is walked,
+          // so it's an approximate denominator that converges as it drains.
+          if ((done & 0xFF) == 0) {
+            size_t frontier;
+            {
+              std::lock_guard<std::mutex> lock(precompile_mutex_);
+              frontier = precompile_work_.size();
+            }
+            XELOGI("AOT precompile progress: {} / ~{} functions", done, frontier);
+          }
           empty_rounds = 0;
           continue;
         }
