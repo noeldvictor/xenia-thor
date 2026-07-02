@@ -2561,10 +2561,20 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
         VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;
   }
 
+  // DIAGNOSTIC (gpu_vulkan_shader_stats): request the compiled shader statistics
+  // (ir3 instruction counts) so we can measure shader-translation bloat. Gated
+  // on the cvar + device support for VK_KHR_pipeline_executable_properties.
+  const bool capture_shader_stats =
+      cvars::gpu_vulkan_shader_stats &&
+      vulkan_device->extensions().ext_KHR_pipeline_executable_properties;
+
   VkGraphicsPipelineCreateInfo pipeline_create_info;
   pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
   pipeline_create_info.pNext = nullptr;
   pipeline_create_info.flags = 0;
+  if (capture_shader_stats) {
+    pipeline_create_info.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+  }
   pipeline_create_info.stageCount = shader_stage_count;
   pipeline_create_info.pStages = shader_stages.data();
   pipeline_create_info.pVertexInputState = &vertex_input_state;
@@ -2610,6 +2620,46 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     } */
     return false;
   }
+  if (capture_shader_stats) {
+    VkPipelineInfoKHR pipe_info{VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR};
+    pipe_info.pipeline = pipeline;
+    uint32_t exec_count = 0;
+    dfn.vkGetPipelineExecutablePropertiesKHR(device, &pipe_info, &exec_count,
+                                             nullptr);
+    std::vector<VkPipelineExecutablePropertiesKHR> execs(
+        exec_count, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
+    dfn.vkGetPipelineExecutablePropertiesKHR(device, &pipe_info, &exec_count,
+                                             execs.data());
+    for (uint32_t ei = 0; ei < exec_count; ++ei) {
+      VkPipelineExecutableInfoKHR exi{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
+      exi.pipeline = pipeline;
+      exi.executableIndex = ei;
+      uint32_t stat_count = 0;
+      dfn.vkGetPipelineExecutableStatisticsKHR(device, &exi, &stat_count,
+                                               nullptr);
+      std::vector<VkPipelineExecutableStatisticKHR> stats(
+          stat_count, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR});
+      dfn.vkGetPipelineExecutableStatisticsKHR(device, &exi, &stat_count,
+                                               stats.data());
+      for (uint32_t si = 0; si < stat_count; ++si) {
+        const VkPipelineExecutableStatisticKHR& st = stats[si];
+        int64_t v = 0;
+        switch (st.format) {
+          case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
+            v = st.value.i64;
+            break;
+          case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
+            v = int64_t(st.value.u64);
+            break;
+          default:
+            break;
+        }
+        XELOGI("shader_stats: exec '{}' stage {:#x} stat '{}' = {}",
+               execs[ei].name, uint32_t(execs[ei].stages), st.name, v);
+      }
+    }
+  }
+
   creation_arguments.pipeline->second.pipeline = pipeline;
   return true;
 }

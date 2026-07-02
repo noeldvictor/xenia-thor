@@ -216,6 +216,10 @@ class VulkanDevice {
     // VkPhysicalDevicePushDescriptorPropertiesKHR::maxPushDescriptors); 0 if the
     // extension is unavailable.
     uint32_t max_push_descriptors = 0;
+    // VK_KHR_pipeline_executable_properties: DIAGNOSTIC path to query the
+    // compiled Adreno (ir3) shader instruction counts per pipeline (measures
+    // shader-translation bloat). Consumed by gpu_vulkan_shader_stats.
+    bool ext_KHR_pipeline_executable_properties = false;
   };
 
   const Extensions& extensions() const { return extensions_; }
@@ -243,6 +247,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
     // VK_KHR_fragment_shading_rate (#227, VRS)
 #include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
+    // VK_KHR_pipeline_executable_properties
+#include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 #undef XE_UI_VULKAN_FUNCTION
   };

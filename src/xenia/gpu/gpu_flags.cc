@@ -101,6 +101,13 @@ DEFINE_uint32(
     "GPU");
 
 DEFINE_bool(
+    gpu_vulkan_shader_stats, false,
+    "DIAGNOSTIC: request VK_KHR_pipeline_executable_properties statistics and "
+    "log the compiled shader instruction counts per graphics pipeline (measures "
+    "shader-translation bloat). Needs the extension.",
+    "GPU");
+
+DEFINE_bool(
     gpu_vulkan_hybrid_postprocess, false,
     "THE EDRAM SOLVE, hybrid form (the BD-30 lever): keep the overdraw-heavy "
     "MAIN scene on host render targets (fast hardware GMEM ROP + early-Z, "

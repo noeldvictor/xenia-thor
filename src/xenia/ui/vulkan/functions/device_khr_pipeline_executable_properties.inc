@@ -1,0 +1,3 @@
+// VK_KHR_pipeline_executable_properties functions used in Xenia.
+XE_UI_VULKAN_FUNCTION(vkGetPipelineExecutablePropertiesKHR)
+XE_UI_VULKAN_FUNCTION(vkGetPipelineExecutableStatisticsKHR)

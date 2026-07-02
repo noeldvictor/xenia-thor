@@ -220,6 +220,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     // #81. Push descriptors - eliminate per-draw descriptor set alloc + update +
     // bind by pushing descriptors inline into the command buffer.
     XE_UI_VULKAN_STRUCT_EXTENSION(KHR_push_descriptor)
+    // #270 VK_KHR_pipeline_executable_properties - DIAGNOSTIC: query the
+    // compiled Adreno (ir3) shader instruction counts per pipeline. Requested
+    // when supported; INERT until the gpu_vulkan_shader_stats consumer queries
+    // statistics at pipeline creation.
+    XE_UI_VULKAN_STRUCT_EXTENSION(KHR_pipeline_executable_properties)
   }
 
 #undef XE_UI_VULKAN_STRUCT_EXTENSION
@@ -343,6 +348,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceFragmentDensityMapFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT>
       features_EXT_fragment_density_map;
+  // #270 VK_KHR_pipeline_executable_properties (DIAGNOSTIC shader-stats).
+  VulkanFeatures<
+      VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR>
+      features_KHR_pipeline_executable_properties;
   // FDM properties (the HW density-map texel size) - queried so the density-image
   // consumer sizes it correctly instead of assuming a constant.
   VkPhysicalDeviceFragmentDensityMapPropertiesEXT
@@ -395,6 +405,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (device->extensions_.ext_EXT_fragment_density_map) {
       features_EXT_fragment_density_map.Link(supported_features_2,
                                              device_create_info);
+    }
+    if (device->extensions_.ext_KHR_pipeline_executable_properties) {
+      features_KHR_pipeline_executable_properties.Link(supported_features_2,
+                                                       device_create_info);
     }
     if (device->extensions_.ext_KHR_push_descriptor) {
       properties_KHR_push_descriptor.pNext = properties_2.pNext;
@@ -886,6 +900,24 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
            properties_KHR_push_descriptor.maxPushDescriptors);
   }
 
+  if (device->extensions_.ext_KHR_pipeline_executable_properties) {
+    // Enable manually (like VRS/FDM): mirroring into device->properties_ via
+    // XE_UI_VULKAN_FEATURE_2 would assert (no member there). The
+    // pipelineExecutableInfo feature must be enabled to call
+    // vkGetPipelineExecutable{Properties,Statistics}KHR (the diagnostic
+    // consumer guards on this flag).
+    features_KHR_pipeline_executable_properties.enabled.pipelineExecutableInfo =
+        features_KHR_pipeline_executable_properties.supported
+            .pipelineExecutableInfo;
+    // Keep the flag honest: available only when the feature actually enabled.
+    device->extensions_.ext_KHR_pipeline_executable_properties =
+        features_KHR_pipeline_executable_properties.supported
+            .pipelineExecutableInfo == VK_TRUE;
+    XELOGI("* VK_KHR_pipeline_executable_properties (pipelineExecutableInfo: {})",
+           device->extensions_.ext_KHR_pipeline_executable_properties ? "yes"
+                                                                      : "no");
+  }
+
 #undef XE_UI_VULKAN_LIMIT
 #undef XE_UI_VULKAN_ENUM_LIMIT
 #undef XE_UI_VULKAN_FEATURE
@@ -963,6 +995,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (device->extensions_.ext_KHR_fragment_shading_rate) {
 #include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
+  }
+  if (device->extensions_.ext_KHR_pipeline_executable_properties) {
+#include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
   }
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 
