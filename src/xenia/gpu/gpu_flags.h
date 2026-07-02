@@ -32,6 +32,7 @@ DECLARE_bool(gpu_vulkan_skip_unused_depth_store);
 DECLARE_bool(gpu_vulkan_retro_depth_none);
 DECLARE_bool(gpu_vulkan_retro_color_dontcare);
 DECLARE_uint32(gpu_vulkan_retro_color_height_tolerance);
+DECLARE_bool(gpu_diag_raster_ab);
 DECLARE_int32(gpu_resolution_downscale_pct);
 DECLARE_int32(gpu_foliage_decimate_pct);
 DECLARE_bool(gpu_diag_skip_alpha_test_draws);

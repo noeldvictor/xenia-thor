@@ -8639,12 +8639,19 @@ void VulkanCommandProcessor::UpdateDynamicState(
   }
   viewport.minDepth = viewport_info.z_min;
   viewport.maxDepth = viewport_info.z_max;
-  // gpu_resolution_downscale_pct: the host RT images/framebuffers are shrunk by
-  // this factor; scale the draw viewport to match so geometry covers the whole
-  // smaller target (fewer fragments). Composites sample the RT with normalized
-  // UVs and upscale it back.
-  if (cvars::gpu_resolution_downscale_pct > 0 &&
-      cvars::gpu_resolution_downscale_pct < 100) {
+  // gpu_resolution_downscale_pct: scale the draw viewport (fewer rasterized
+  // fragments, same geometry). gpu_diag_raster_ab: RIGOROUS fill-vs-geometry
+  // isolation - when the alternator (gpu_freeze_ab_alternate_vrs) is active,
+  // apply the viewport shrink ONLY in the phase-off blocks, so one run measures
+  // the RASTER/FILL cost on the SAME scene (viewport scale keeps vertex/geometry
+  // work identical, only fragment coverage changes). A frame-time delta => the
+  // scene is fill/raster-bound; flat => geometry/vertex-bound. Definitive.
+  bool apply_raster_scale = cvars::gpu_resolution_downscale_pct > 0 &&
+                            cvars::gpu_resolution_downscale_pct < 100;
+  if (apply_raster_scale && cvars::gpu_diag_raster_ab && gpu_ab_alt_active_) {
+    apply_raster_scale = !gpu_freeze_vrs_phase_on_;
+  }
+  if (apply_raster_scale) {
     float f = float(cvars::gpu_resolution_downscale_pct) / 100.0f;
     viewport.x *= f;
     viewport.y *= f;
@@ -8661,8 +8668,7 @@ void VulkanCommandProcessor::UpdateDynamicState(
   scissor_rect.offset.y = int32_t(scissor.offset[1]);
   scissor_rect.extent.width = scissor.extent[0];
   scissor_rect.extent.height = scissor.extent[1];
-  if (cvars::gpu_resolution_downscale_pct > 0 &&
-      cvars::gpu_resolution_downscale_pct < 100) {
+  if (apply_raster_scale) {
     uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
     scissor_rect.offset.x = scissor_rect.offset.x * int32_t(pct) / 100;
     scissor_rect.offset.y = scissor_rect.offset.y * int32_t(pct) / 100;

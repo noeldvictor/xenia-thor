@@ -140,6 +140,16 @@ DEFINE_int32(
     "per-draw overhead. 0 = off.",
     "GPU");
 
+DEFINE_bool(
+    gpu_diag_raster_ab, false,
+    "DIAGNOSTIC (rigorous fill-vs-geometry): with gpu_freeze_ab_alternate_vrs + "
+    "gpu_resolution_downscale_pct set, apply the viewport/scissor shrink ONLY in "
+    "the alternator's phase-off blocks. One run measures the RASTER/FILL cost on "
+    "the SAME scene (geometry work identical, only fragment coverage changes). "
+    "Frame-time delta => fill-bound (resolution downscale reaches target); flat "
+    "=> geometry/vertex-bound. Default off.",
+    "GPU");
+
 DEFINE_int32(
     gpu_resolution_downscale_pct, 0,
     "EXPERIMENTAL (Thor, BD-30): render into DOWNSCALED host render-target "

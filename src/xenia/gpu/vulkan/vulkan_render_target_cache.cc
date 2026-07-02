@@ -2691,8 +2691,11 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   // expensive main scene renders fewer fragments. Draws' viewport/scissor are
   // scaled by the same factor (vulkan_command_processor); composites sampling
   // the RT with normalized UVs upscale it transparently. Keep >=1.
+  // gpu_diag_raster_ab keeps the RT FULL-size (only the per-draw viewport
+  // alternates) so the fill test isn't confounded by a shrunk RT clipping the
+  // full-viewport phase.
   if (cvars::gpu_resolution_downscale_pct > 0 &&
-      cvars::gpu_resolution_downscale_pct < 100) {
+      cvars::gpu_resolution_downscale_pct < 100 && !cvars::gpu_diag_raster_ab) {
     uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
     image_create_info.extent.width =
         std::max(1u, image_create_info.extent.width * pct / 100u);
@@ -3154,9 +3157,10 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
     host_extent.height = cvars::gpu_clamp_rt_image_height;
   }
   // gpu_resolution_downscale_pct: match the framebuffer to the downscaled
-  // attachment images (created shrunk above by the same factor).
+  // attachment images (created shrunk above by the same factor). Skipped for
+  // gpu_diag_raster_ab (RT stays full; only the viewport alternates).
   if (cvars::gpu_resolution_downscale_pct > 0 &&
-      cvars::gpu_resolution_downscale_pct < 100) {
+      cvars::gpu_resolution_downscale_pct < 100 && !cvars::gpu_diag_raster_ab) {
     uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
     host_extent.width = std::max(1u, host_extent.width * pct / 100u);
     host_extent.height = std::max(1u, host_extent.height * pct / 100u);
