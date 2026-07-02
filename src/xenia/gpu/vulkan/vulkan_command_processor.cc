@@ -4933,7 +4933,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   const bool draw_is_alpha_test =
       regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0;
   if (cvars::gpu_diag_skip_alpha_test_draws && draw_is_alpha_test) {
-    return true;
+    // RIGOROUS single-run A/B: when the alternator is active (gpu_freeze_ab_
+    // alternate_vrs + reach), skip foliage ONLY in the "off" phase so one run
+    // measures foliage-on vs foliage-off on the SAME scene (the draw-outcomes
+    // log buckets gpu_frame_us by phase). Set gpu_vrs_foliage_rate=0 to isolate
+    // from VRS. Outside the alternator, skip unconditionally (static test).
+    if (!gpu_ab_alt_active_ || !gpu_freeze_vrs_phase_on_) {
+      return true;
+    }
   }
   if (cvars::gpu_diag_skip_draws_min_indices > 0 &&
       index_count >= uint32_t(cvars::gpu_diag_skip_draws_min_indices)) {
