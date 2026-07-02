@@ -327,50 +327,31 @@ void ParseHleInterceptAddrs() {
 // authored; for now it proves the interception seam on a real D3D9 function.
 void HleInterceptHandler(ppc::PPCContext* ppc_context,
                          kernel::KernelState* kernel_state) {
-  // D3D-HLE tile-binning walker (0x82487878): r3 = tile-state struct (count at
-  // +4, tile rects at +0xC, 0x10 stride). One-shot dump the LIVE tile table so
-  // the bin-once host body knows the exact rect field values to reshape BD's 2
-  // tiles (720x672) into one full-surface tile (720x1280). Read-only.
-  static std::atomic<int> fire_count{0};
-  int n = ++fire_count;
+  // ⭐ D3D-HLE BIN-ONCE (tile-binning walker 0x82487878): r3 = tile-state struct
+  // (count at +4, tile rects at +0xC, 0x10 stride, 4 words each). Device-decoded
+  // live: count=2; rect0=[0,0x2A0,0x2D0,0x260]=[_,h672,w720,yoff608] (partial
+  // tile), rect1=[0,0x500,0x2D0,0]=[_,h1280,w720,0] = the FULL surface. The host
+  // has no 10MB EDRAM limit, so collapse BD's 2 predicated tiles into ONE full-
+  // surface tile: copy rect1 -> rect0, set count=1. Now the guest bins + replays
+  // ALL draws into ONE 720x1280 pass = the bin-once by construction (bypasses the
+  // ~2x predicated-tiling cost). Then run the original binning (fall through -
+  // NOT noop; noop rendered only half at 29.6fps). Cvar-gated via the intercept.
+  uint8_t* base = ppc_context->virtual_membase;
   uint32_t state = uint32_t(ppc_context->r[3]);
-  if (n <= 4) {
-    uint8_t* base = ppc_context->virtual_membase;
-    // Full-struct dump: state-0x10 .. state+0x3C (20 words) to decode the tile
-    // table layout (count, both tile rects, headers) for the bin-once reshape.
-    XELOGI("HLE_FIRE #{}: r3={:08X} r4={:08X} lr={:08X}", n, state,
-           uint32_t(ppc_context->r[4]), uint32_t(ppc_context->lr));
-    if (base && state) {
-      for (int off = -0x10; off <= 0x3C; off += 0x10) {
-        uint32_t w0 = xe::load_and_swap<uint32_t>(base + state + off + 0);
-        uint32_t w1 = xe::load_and_swap<uint32_t>(base + state + off + 4);
-        uint32_t w2 = xe::load_and_swap<uint32_t>(base + state + off + 8);
-        uint32_t w3 = xe::load_and_swap<uint32_t>(base + state + off + 0xC);
-        XELOGI("  STRUCT[{:+03X}]: {:08X} {:08X} {:08X} {:08X}", off, w0, w1, w2,
-               w3);
+  static std::atomic<int> reshape_log{0};
+  if (base && state) {
+    uint32_t count = xe::load_and_swap<uint32_t>(base + state + 4);
+    // Sanity: only reshape a plausible tile table (2..8 tiles) so a stray r3 to
+    // uninitialized data is left alone.
+    if (count >= 2 && count <= 8) {
+      for (int i = 0; i < 4; ++i) {  // rect1 (full surface) -> rect0
+        uint32_t v = xe::load_and_swap<uint32_t>(base + state + 0x1C + i * 4);
+        xe::store_and_swap<uint32_t>(base + state + 0xC + i * 4, v);
       }
-    }
-    // Walk the guest PPC stack (r1 -> back-chain -> saved LR at frame+8) to
-    // recover the FULL tiling call chain up through EndTiling/BeginTiling -
-    // BD's indirect dispatch defeats static caller-analysis, but the runtime
-    // stack has the real callers. These addrs are the clean HLE targets.
-    if (base) {
-      uint32_t sp = uint32_t(ppc_context->r[1]);
-      for (int f = 0; f < 14 && sp; ++f) {
-        uint32_t back = xe::load_and_swap<uint32_t>(base + sp);
-        if (back <= sp || back >= 0xF0000000u) break;
-        // Scan the frame [sp..back) for guest-code return addresses (0x82xxxxxx)
-        // - the LR-save offset varies (helper-based prologues), so find them by
-        // value. Log up to 3 per frame (the real caller is usually the first).
-        int hits = 0;
-        for (uint32_t a = sp; a + 4 <= back && hits < 3; a += 4) {
-          uint32_t v = xe::load_and_swap<uint32_t>(base + a);
-          if ((v & 0xFFF00000u) == 0x82000000u) {
-            XELOGI("  FRAME[{}] +{:03X}: ret={:08X}", f, a - sp, v);
-            ++hits;
-          }
-        }
-        sp = back;
+      xe::store_and_swap<uint32_t>(base + state + 4, 1);  // count = 1 tile
+      if (reshape_log++ < 3) {
+        XELOGI("HLE BIN-ONCE: reshaped {} tiles -> 1 full-surface (state={:08X})",
+               count, state);
       }
     }
   }
