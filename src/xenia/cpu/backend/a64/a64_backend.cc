@@ -72,6 +72,15 @@ DEFINE_uint32(a64_max_stackpoints, 262144,
               "(edge d5956d7e3). Non-leaking titles only touch a tiny prefix.",
               "a64");
 
+DEFINE_uint32(
+    cpu_trace_resolve_caller, 0,
+    "D3D-HLE RE: when a guest call resolves to THIS guest address, log the "
+    "caller LR (context->lr). Captures the DYNAMIC caller at runtime, "
+    "sidestepping BD's fully indirect-dispatched D3D (static caller-walking is "
+    "dead). Point at the tiling driver 0x82487988 to pin the D3D EndTiling fn "
+    "that emits the per-tile PM4 = the HLE-trampoline target. Budgeted. 0=off.",
+    "CPU");
+
 DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
             "Records entries for guest/host stack mappings at function starts "
             "and checks for reentry at return sites. Has slight performance "
@@ -1457,6 +1466,18 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
   auto guest_context = reinterpret_cast<ppc::PPCContext*>(raw_context);
   auto thread_state = guest_context->thread_state;
   assert_not_zero(target_address);
+  // D3D-HLE RE: capture the dynamic caller of a target guest fn (runtime, past
+  // BD's indirect-dispatch static wall).
+  if (cvars::cpu_trace_resolve_caller &&
+      static_cast<uint32_t>(target_address) == cvars::cpu_trace_resolve_caller) {
+    static int resolve_caller_budget = 40;
+    if (resolve_caller_budget > 0) {
+      --resolve_caller_budget;
+      XELOGI("RESOLVE_CALLER: target={:08X} caller_lr={:08X}",
+             static_cast<uint32_t>(target_address),
+             static_cast<uint32_t>(guest_context->lr));
+    }
+  }
   auto backend =
       reinterpret_cast<A64Backend*>(thread_state->processor()->backend());
 
