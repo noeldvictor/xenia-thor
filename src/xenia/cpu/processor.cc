@@ -10,6 +10,7 @@
 #include "xenia/cpu/processor.h"
 
 #include <cstdlib>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 
@@ -289,30 +290,12 @@ Function* Processor::LookupFunction(uint32_t address) {
   return LookupFunction(code_module, address);
 }
 
-Function* Processor::LookupFunction(Module* module, uint32_t address) {
-  // Atomic create/lookup symbol in module.
-  // If we get back the NEW flag we must declare it now.
-  Function* function = nullptr;
-  auto symbol_status = module->DeclareFunction(address, &function);
-  if (symbol_status == Symbol::Status::kNew) {
-    // Symbol is undeclared, so declare now.
-    assert_true(function->is_guest());
-    if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
-      function->set_status(Symbol::Status::kFailed);
-      return nullptr;
-    }
-    function->set_status(Symbol::Status::kDeclared);
-  }
-  return function;
-}
-
 namespace {
 // GPU D3D9-HLE foundation: the set of guest addresses to replace with a host
 // handler, parsed once from cpu_hle_intercept_addrs.
 std::unordered_set<uint32_t> g_hle_intercept_addrs;
-bool g_hle_intercept_parsed = false;
+std::once_flag g_hle_intercept_once;
 void ParseHleInterceptAddrs() {
-  g_hle_intercept_parsed = true;
   const std::string& s = cvars::cpu_hle_intercept_addrs;
   size_t i = 0;
   while (i < s.size()) {
@@ -345,26 +328,54 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
       uint32_t(ppc_context->lr));
   ppc_context->r[3] = 0;
 }
+bool IsHleIntercept(uint32_t address) {
+  if (cvars::cpu_hle_intercept_addrs.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_intercept_once, ParseHleInterceptAddrs);
+  return g_hle_intercept_addrs.count(address) != 0;
+}
 }  // namespace
+
+Function* Processor::LookupFunction(Module* module, uint32_t address) {
+  // Atomic create/lookup symbol in module.
+  // If we get back the NEW flag we must declare it now.
+  Function* function = nullptr;
+  auto symbol_status = module->DeclareFunction(address, &function);
+  if (symbol_status == Symbol::Status::kNew) {
+    // Symbol is undeclared, so declare now.
+    assert_true(function->is_guest());
+    // GPU D3D9-HLE: establish the host extern handler at DECLARE time (runs once
+    // under the atomic declare, BEFORE any multi-threaded define/harvest touches
+    // it - avoids the race that crashed boot when done in DemandFunction). Same
+    // model as kernel imports (extern set up early). Skip guest codegen.
+    if (IsHleIntercept(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleInterceptHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("HLE: planted host intercept handler at guest {:08X}", address);
+      return function;
+    }
+    if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
+      function->set_status(Symbol::Status::kFailed);
+      return nullptr;
+    }
+    function->set_status(Symbol::Status::kDeclared);
+  }
+  return function;
+}
 
 bool Processor::DemandFunction(Function* function) {
   // Lock function for generation. If it's already being generated
   // by another thread this will block and return DECLARED.
   auto module = function->module();
-  // GPU D3D9-HLE foundation: replace targeted guest functions with a host extern
-  // handler instead of generating/executing guest code (the load-time HLE seam).
-  if (function->is_guest() && !cvars::cpu_hle_intercept_addrs.empty()) {
-    if (!g_hle_intercept_parsed) {
-      ParseHleInterceptAddrs();
-    }
-    if (g_hle_intercept_addrs.count(function->address())) {
-      static_cast<GuestFunction*>(function)->SetupExtern(HleInterceptHandler,
-                                                         nullptr);
-      function->set_status(Symbol::Status::kDefined);
-      XELOGI("HLE: planted host intercept handler at guest {:08X}",
-             function->address());
-      return true;
-    }
+  // GPU D3D9-HLE: intercepted functions were converted to extern at declare time
+  // (LookupFunction) - they need no define here.
+  if (function->behavior() == Function::Behavior::kExtern &&
+      function->is_guest() &&
+      static_cast<GuestFunction*>(function)->extern_handler() ==
+          HleInterceptHandler) {
+    return true;
   }
   auto symbol_status = module->DefineFunction(function);
   if (symbol_status == Symbol::Status::kNew) {
