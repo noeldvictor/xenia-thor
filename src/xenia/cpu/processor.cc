@@ -9,6 +9,10 @@
 
 #include "xenia/cpu/processor.h"
 
+#include <cstdlib>
+#include <string>
+#include <unordered_set>
+
 #include "xenia/base/assert.h"
 #include "xenia/base/atomic.h"
 #include "xenia/base/byte_order.h"
@@ -45,6 +49,16 @@ DEFINE_path(trace_function_data_path, "", "File to write trace data to.",
             "CPU");
 DEFINE_bool(break_on_start, false, "Break into the debugger on startup.",
             "CPU");
+// GPU D3D9-HLE / general HLE foundation: comma-separated hex guest addresses
+// (e.g. "82487980,823075d0") to REPLACE with a host extern handler instead of
+// executing the guest code. The reusable mechanism every HLE'd XDK D3D9 function
+// needs - proves interception (logs args r3-r5 + LR) and is the seam where the
+// host D3D9->Vulkan handlers get planted. Default empty = no interception.
+DEFINE_string(cpu_hle_intercept_addrs, "",
+              "HLE: comma-separated hex guest addresses to replace with a host "
+              "handler (the load-time D3D9-HLE mechanism). Logs each call; the "
+              "guest body is skipped. Empty disables.",
+              "CPU");
 
 namespace xe {
 namespace kernel {
@@ -292,10 +306,66 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
   return function;
 }
 
+namespace {
+// GPU D3D9-HLE foundation: the set of guest addresses to replace with a host
+// handler, parsed once from cpu_hle_intercept_addrs.
+std::unordered_set<uint32_t> g_hle_intercept_addrs;
+bool g_hle_intercept_parsed = false;
+void ParseHleInterceptAddrs() {
+  g_hle_intercept_parsed = true;
+  const std::string& s = cvars::cpu_hle_intercept_addrs;
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t comma = s.find(',', i);
+    std::string tok =
+        s.substr(i, comma == std::string::npos ? std::string::npos : comma - i);
+    // Trim spaces.
+    while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+    while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+    if (!tok.empty()) {
+      uint32_t v = uint32_t(strtoul(tok.c_str(), nullptr, 16));
+      if (v) {
+        g_hle_intercept_addrs.insert(v);
+        XELOGI("HLE: intercept address registered: {:08X}", v);
+      }
+    }
+    if (comma == std::string::npos) break;
+    i = comma + 1;
+  }
+}
+// Generic HLE intercept handler: logs the call (guest args + caller LR) and
+// returns 0. Per-address host D3D9->Vulkan handlers replace this as they are
+// authored; for now it proves the interception seam on a real D3D9 function.
+void HleInterceptHandler(ppc::PPCContext* ppc_context,
+                         kernel::KernelState* kernel_state) {
+  XELOGI(
+      "HLE intercept fired: r3={:08X} r4={:08X} r5={:08X} r6={:08X} lr={:08X}",
+      uint32_t(ppc_context->r[3]), uint32_t(ppc_context->r[4]),
+      uint32_t(ppc_context->r[5]), uint32_t(ppc_context->r[6]),
+      uint32_t(ppc_context->lr));
+  ppc_context->r[3] = 0;
+}
+}  // namespace
+
 bool Processor::DemandFunction(Function* function) {
   // Lock function for generation. If it's already being generated
   // by another thread this will block and return DECLARED.
   auto module = function->module();
+  // GPU D3D9-HLE foundation: replace targeted guest functions with a host extern
+  // handler instead of generating/executing guest code (the load-time HLE seam).
+  if (function->is_guest() && !cvars::cpu_hle_intercept_addrs.empty()) {
+    if (!g_hle_intercept_parsed) {
+      ParseHleInterceptAddrs();
+    }
+    if (g_hle_intercept_addrs.count(function->address())) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleInterceptHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDefined);
+      XELOGI("HLE: planted host intercept handler at guest {:08X}",
+             function->address());
+      return true;
+    }
+  }
   auto symbol_status = module->DefineFunction(function);
   if (symbol_status == Symbol::Status::kNew) {
     // Symbol is undefined, so define now.
