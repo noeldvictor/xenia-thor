@@ -4,7 +4,11 @@
 Make Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740) via this xenia fork.
 **TARGET = FULL-SPEED Xbox 360 emulation. Blue Dragon → locked 30fps at 720p with FULL default foliage**
 (the 360 ran it at 30; the Thor is 10-20× more powerful + the emulation needs only ~4× the 360 ⇒ full speed
-has large margin — see the ~4× budget below). Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
+has large margin — see the ~4× budget below).
+**⭐ CORE STRATEGY (user 2026-07-02): the emulator REACHES INTO the game at LOAD time and DRAGS OUT the
+XDK D3D9 code to optimize it — like RPCS3 identifies + recompiles SPU at boot. Signature-identify the
+static-linked D3D9 tiling/resolve/draw functions in the XEX, HLE-replace them with optimal host Vulkan.
+General (signature DB across games), not per-game porting. See the LOAD-TIME XEX D3D-HLE section below.** Then Burnout, Gears, Lost Odyssey, Banjo → 30-60. Ship every win as a cvar-gated, stacking `XeniaOptimizations` toggle. **Active focus (user, 2026-06-27):
 improve BD steady-state perf — smoother, LOWER WATTAGE + HEAT (not boot time) — via (1) ⭐ AOT LLVM = THE CORE
 DIRECTION (user 2026-06-29): the ReXGlue / XenonRecomp model — STATIC AHEAD-OF-TIME recompilation, precompile
 the whole title to native, NO JIT/dispatch at gameplay (opcode coverage is already 100%; the work now is AOT +
@@ -135,6 +139,30 @@ the build recipe: memory file [[llvm-jit-backend-build]].
   wants it working/enabled regardless (zero-copy guest↔GPU memory = lower bandwidth/heat on the Thor's
   UMA). Re-evaluate, fix any bug, and enable it (smart_sync or double-buffer path).
 - **Validation:** qemu-a64 differential ([[a64-qemu-harness]]) 896/896 + device render/no-fault, every change.
+
+## ⭐⭐⭐⭐ CORE DIRECTION (user 2026-07-02): LOAD-TIME XEX D3D-HLE — "reach into the game, drag shit out to optimize, like RPCS3 does with SPU"
+**THE model: at LOAD time our emulator READS the game's XEX, IDENTIFIES the statically-linked XDK D3D9 code by
+SIGNATURE (exactly how RPCS3 identifies + AOT-recompiles SPU code at boot), and HLE-REPLACES the perf-critical
+D3D9 functions (BeginTiling/EndTiling, Resolve, DrawIndexedPrimitive, state setup) with OPTIMAL host Vulkan
+implementations.** This is the resolution of the "why not D3D-HLE" question:
+- Runtime D3D-hooking is IMPOSSIBLE (360 D3D9 is static-linked/inlined in the XEX, no runtime boundary like PC's
+  d3d9.dll). BUT LOAD-TIME analysis sidesteps that — read the XEX, pattern-match the XDK D3D9 functions, install
+  HLE trampolines (xenia ALREADY does exactly this for xboxkrnl imports; extend it to signature-identified
+  static functions). GENERIC because every 360 game static-links the SAME XDK D3D9 (signatures stable per XDK
+  version) -> a signature DB works across games = NOT a per-game port (which the user rejected).
+- WHY it's the BD-30 win: HLE BeginTiling/Resolve = bypass the predicated tiling + EDRAM round-trip AT THE
+  SOURCE (render once, resolve once) = the clean bin-once by construction, intercepting the high-level INTENT
+  instead of reconstructing it from the PM4 stream (the RT-cache base/offset coalescing I was pinning is the
+  harder, lossy way to the same end). Payoff compounds: any HLE'd D3D function skips ALL its guest-CPU cost too.
+- HONEST catches: signature coverage across XDK versions (2005-2013; start with BD's), small INLINED calls
+  (SetRenderState) can't be matched (but the big tiling/resolve/draw fns aren't inlined = the ones that matter),
+  host implementations are real work (a perf-critical SUBSET suffices, per UnleashedRecomp). Build order:
+  (1) pin BD's BeginTiling/EndTiling/Resolve addrs in Ghidra (bd.gpr ALREADY imported; tile-walker ~0x826bf...
+  already RE'd), (2) HLE-trampoline them via xenia's function-HLE path, (3) host BeginTiling=noop + Resolve=one
+  full-surface resolve = bin-once, (4) generalize into a signature DB. Track 2 REFRAMED: "HLE the identified
+  D3D tiling/resolve functions at load time", not "reconstruct bin-once from PM4". ir3 measurement (built) +
+  intrinsically-huge foliage shaders (~4000 instr, ~1.5x bloat only) stand: HLE gives the STRUCTURAL ~1.4x +
+  EDRAM/CPU bypass, shaders stay the game's (VRS/quality options for those).
 
 ## ⭐⭐⭐ LONG-TERM DIRECTION (user-decided 2026-07-02): GENERAL EMULATOR + generic HLE/AOT techniques
 **DECISION: keep xenia as a GENERAL-PURPOSE runtime emulator (runs many games) and bring in the SPEED
