@@ -26,6 +26,8 @@
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/xenos.h"
 
+DECLARE_bool(gpu_binonce_full_scissor);
+
 DEFINE_bool(
     depth_transfer_not_equal_test, true,
     "When transferring data between depth render targets, use the \"not "
@@ -634,6 +636,10 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   uint32_t msaa_samples_x_log2 =
       uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);
   uint32_t pitch_pixels = rb_surface_info.surface_pitch;
+  // NOTE: a downstream pitch-widen (360->720) here to force the bin-once RT full-
+  // width DESYNCS the EDRAM/resolve = 0fps black screen (the goal's warned "harder,
+  // lossy way"). The clean bin-once must HLE FUN_82487cc8 @0x82487cc8 at the source
+  // (emit ONE full-width tile + coherent pitch/resolve), not override here.
   // surface_pitch 0 should be handled in disabling rasterization (hopefully
   // it's safe to assume that).
   assert_true(pitch_pixels || !is_rasterization_done);
