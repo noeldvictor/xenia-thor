@@ -72,6 +72,13 @@ DEFINE_string(cpu_hle_binonce_addr, "",
               "bin_select masks so the render driver replays the scene ONCE. Empty "
               "disables.",
               "CPU");
+DEFINE_string(cpu_hle_tiling_replay_addr, "",
+              "GPU D3D9-HLE: hex guest addr of BD's deferred-D3D-command tiling "
+              "REPLAY fn (82487cc8). Host reimplements its token loop, emitting PM4 "
+              "via the ring writer + forcing tile count=1 = bin-once at the source. "
+              "Empty disables. (WIP - the coherent pitch/base/resolve rewrite for "
+              "full-surface is the next increment.)",
+              "CPU");
 
 namespace xe {
 namespace kernel {
@@ -497,6 +504,149 @@ void HleBinOnceHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
   }
   ctx->r[3] = 0;
 }
+
+// --- HLE tiling REPLAY (D3D BeginTiling/EndTiling = FUN_82487cc8 @0x82487cc8) ---
+std::atomic<uint32_t> g_hle_tiling_replay_addr{0};
+std::once_flag g_hle_tiling_replay_once;
+void ParseHleTilingReplayAddr() {
+  if (!cvars::cpu_hle_tiling_replay_addr.empty()) {
+    g_hle_tiling_replay_addr = uint32_t(
+        strtoul(cvars::cpu_hle_tiling_replay_addr.c_str(), nullptr, 16));
+  }
+}
+bool IsHleTilingReplay(uint32_t address) {
+  if (cvars::cpu_hle_tiling_replay_addr.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_tiling_replay_once, ParseHleTilingReplayAddr);
+  return g_hle_tiling_replay_addr && address == g_hle_tiling_replay_addr;
+}
+// Host reimplementation of BD's deferred-D3D-command tiling REPLAY FUN_82487cc8:
+// r3=recorded command stream, r4=ctx (cmd-list context; +0x74=tile-state struct,
+// +0x78=TILE COUNT, +0x2c=tile idx, +0x28=predication flags, +0x16c=bin mask,
+// +0x170/174/178=saved stream ptrs). Replays the ~13-opcode token loop, calling
+// the guest ring writer (0x8246E100) + tiling helpers via Processor::Execute
+// (reentrant; only ~dozens of PM4 setup emits/frame - the DRAWS go via the driver/
+// walker, not here). Forces TILE COUNT=1 on the 0x80 tile-table token = bin-once at
+// the SOURCE. This HLE-REPLACES the D3D tiling function (goal build-order step 3).
+// GATED via cpu_hle_tiling_replay_addr. WIP: count=1 alone = half (pitch stays 360);
+// the coherent RB_SURFACE_INFO pitch/base/resolve rewrite is the next increment.
+void HleTilingReplayHandler(ppc::PPCContext* ctx,
+                            kernel::KernelState* /*kernel_state*/) {
+  auto* proc = ctx->processor;
+  Memory* mem = proc->memory();
+  auto* ts = ThreadState::Get();
+  uint32_t stream = uint32_t(ctx->r[3]);
+  uint32_t cx = uint32_t(ctx->r[4]);
+  if (!ts || !stream || !cx) {
+    ctx->r[3] = stream;
+    return;
+  }
+  uint32_t device =
+      xe::load_and_swap<uint32_t>(mem->TranslateVirtual(0x820005F4u));
+  uint32_t scratch = uint32_t(ctx->r[1]) - 0x400u;
+  auto rd = [&](uint32_t a) {
+    return xe::load_and_swap<uint32_t>(mem->TranslateVirtual(a));
+  };
+  auto wr = [&](uint32_t a, uint32_t v) {
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(a), v);
+  };
+  auto call = [&](uint32_t fn, uint32_t a3, uint32_t a4, uint32_t a5, size_t n) {
+    uint64_t args[3] = {a3, a4, a5};
+    proc->Execute(ts, fn, args, n);
+  };
+  int guard = 0;
+  uint32_t token = rd(stream);
+  while ((token & 0x80000000u) != 0 && ++guard < 200000) {
+    uint32_t t = token & 0xff000000u;
+    if (t == 0x80000000u) {
+      call(0x826BF770u, cx + 0x74u, stream + 4u, 0xf8u, 3);  // memcpy tile table
+      wr(cx + 0x2cu, 0);
+      wr(cx + 0x16cu, 0x7fffffffu);
+      wr(cx + 0x78u, 1u);  // ⭐ BIN-ONCE: tile count = 1
+      stream += 0x3fu * 4u;
+    } else if (t == 0x81000000u) {
+      break;
+    } else if (t == 0x82000000u) {
+      wr(scratch, token & 0xffffffu);
+      wr(scratch + 4u, rd(stream + 4u));
+      call(0x8246E100u, device, scratch, 1u, 3);  // emit PM4 word to ring
+      stream += 8u;
+    } else if (t == 0x83000000u) {
+      stream += 4u;
+    } else if (t == 0x84000000u) {
+      uint32_t u = rd(cx + 0x28u);
+      wr(cx + 0x170u, stream);
+      wr(cx + 0x28u, u | 0x40000000u);
+      if (rd(cx + 0x2cu) != 0 && (rd(cx + 0x74u) & 2u) != 0) {
+        wr(cx + 0x28u, u | 0xc0000000u);
+      }
+      call(0x82487B38u, cx, 0, 0, 1);
+      stream += 4u;
+    } else if (t == 0x85000000u) {
+      uint32_t u = rd(cx + 0x28u);
+      wr(cx + 0x28u, u & 0xbfffffffu);
+      if ((u & 0x80000000u) == 0) {
+        call(0x82487B38u, cx, 0, 0, 1);
+        stream += 4u;
+      } else {
+        stream = rd(cx + 0x174u);
+      }
+    } else if (t == 0x86000000u) {
+      wr(cx + 0x174u, stream);
+      uint32_t u28 = rd(cx + 0x28u);
+      uint32_t u4 = (u28 & 0x80000000u) ? 0u : 0x20u;
+      wr(cx + 0x28u, (u4 << 0x1au) | (u28 & 0x7fffffffu));
+      if (u4 == 0) {
+        call(0x82487B38u, cx, 0, 0, 1);
+        stream += 4u;
+      } else {
+        stream = rd(cx + 0x170u);
+      }
+    } else if (t == 0x87000000u) {
+      wr(cx + 0x178u, stream);
+      wr(cx + 0x28u, rd(cx + 0x28u) | 0x20000000u);
+      call(0x82487B38u, cx, 0, 0, 1);
+      stream += 4u;
+    } else if (t == 0x88000000u) {
+      uint32_t u = rd(cx + 0x2cu) + 1u;
+      wr(cx + 0x2cu, u);
+      wr(cx + 0x28u, rd(cx + 0x28u) & 0xdfffffffu);
+      if (rd(cx + 0x78u) <= u) {
+        call(0x82487B38u, cx, 0, 0, 1);
+        stream += 4u;
+      } else {
+        stream = rd(cx + 0x178u);
+      }
+    } else if (t == 0x89000000u) {
+      call(0x824877B8u, cx, 0, 0, 1);
+      stream += 4u;
+    } else if (t == 0x8a000000u) {
+      call(0x82487C38u, cx, 0, 0, 1);
+      call(0x8273F2D4u, 0, 0, 0, 1);
+      stream += 4u;
+    } else if (t == 0x8b000000u) {
+      if ((rd(cx + 0x16cu) & 0x80000000u) != 0) {
+        call(0x82487978u, cx + 0x74u, rd(stream + 4u), rd(stream + 8u), 3);
+      }
+      stream += 12u;
+    } else if (t == 0x8c000000u) {
+      uint32_t v = rd(stream + 4u);
+      stream += 8u;
+      if ((rd(cx + 0x16cu) & v) != 0) {
+        wr(cx + 0x50u, stream);
+        stream = cx + 0x60u;
+      }
+    } else {
+      if (token == 0xc0000000u) {
+        break;
+      }
+      stream = token + 4u;
+    }
+    token = rd(stream);
+  }
+  ctx->r[3] = stream;
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -537,6 +687,13 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE BIN-ONCE: planted walker handler at guest {:08X}", address);
+      return function;
+    }
+    if (IsHleTilingReplay(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleTilingReplayHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("HLE TILING-REPLAY: planted host replay at guest {:08X}", address);
       return function;
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {

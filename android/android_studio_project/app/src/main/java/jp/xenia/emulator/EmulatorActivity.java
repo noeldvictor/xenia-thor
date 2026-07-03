@@ -131,6 +131,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "kernel_display_resolution");
             copyStringExtra(intent, launchArguments, "cpu_hle_intercept_addrs");
             copyStringExtra(intent, launchArguments, "cpu_hle_binonce_addr");
+            copyStringExtra(intent, launchArguments, "cpu_hle_tiling_replay_addr");
             copyIntExtra(intent, launchArguments, "cpu_watch_guest_write_page");
             copyStringExtra(intent, launchArguments, "cpu");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm");
