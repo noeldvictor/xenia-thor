@@ -131,6 +131,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "kernel_display_resolution");
             copyStringExtra(intent, launchArguments, "cpu_hle_intercept_addrs");
             copyStringExtra(intent, launchArguments, "cpu_hle_binonce_addr");
+            copyIntExtra(intent, launchArguments, "cpu_watch_guest_write_page");
             copyStringExtra(intent, launchArguments, "cpu");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm");
             copyIntExtra(intent, launchArguments, "cpu_backend_llvm_opt");
@@ -256,6 +257,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "kernel_video_widescreen");
             copyIntExtra(intent, launchArguments, "gpu_resolution_downscale_pct");
             copyBooleanExtra(intent, launchArguments, "gpu_diag_raster_ab");
+            copyBooleanExtra(intent, launchArguments, "gpu_binonce_full_scissor");
             copyIntExtra(intent, launchArguments, "gpu_foliage_decimate_pct");
             copyBooleanExtra(intent, launchArguments, "gpu_diag_skip_alpha_test_draws");
             copyIntExtra(intent, launchArguments, "gpu_diag_skip_draws_min_indices");

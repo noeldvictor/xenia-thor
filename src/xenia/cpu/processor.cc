@@ -60,6 +60,12 @@ DEFINE_string(cpu_hle_intercept_addrs, "",
               "handler (the load-time D3D9-HLE mechanism). Logs each call; the "
               "guest body is skipped. Empty disables.",
               "CPU");
+DEFINE_uint32(cpu_watch_guest_write_page, 0,
+              "PAGE-WATCH (diagnostic): hex base of a guest page to host-protect "
+              "read-only; the a64 ExceptionCallback logs the guest FUNCTION that "
+              "writes it (find BD's BeginTiling that writes tile-state 0x40011330). "
+              "Requires the walker intercept to trigger the protect. 0 = off.",
+              "CPU");
 DEFINE_string(cpu_hle_binonce_addr, "",
               "GPU D3D9-HLE BIN-ONCE: hex guest addr of BD's tile-binning walker "
               "(82487878). Host handler forces ONE full-surface tile + all-visible "
@@ -338,6 +344,23 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
   // NOT noop; noop rendered only half at 29.6fps). Cvar-gated via the intercept.
   uint8_t* base = ppc_context->virtual_membase;
   uint32_t state = uint32_t(ppc_context->r[3]);
+  // PAGE-WATCH mode: if a watched page is set, protect it ONCE (read-only) so the
+  // NEXT guest write to it faults + the a64 ExceptionCallback logs the writer fn
+  // (= BeginTiling). Skip the bin-once reshape/marking so our OWN host writes to
+  // the page don't fault. The walker's r3 confirms the live tile-state address.
+  if (cvars::cpu_watch_guest_write_page && base) {
+    static std::atomic<bool> pw_protected{false};
+    bool expected = false;
+    if (pw_protected.compare_exchange_strong(expected, true)) {
+      size_t ps = xe::memory::page_size();
+      uint32_t page = cvars::cpu_watch_guest_write_page & ~uint32_t(ps - 1);
+      xe::memory::Protect(base + page, ps, xe::memory::PageAccess::kReadOnly);
+      XELOGI("PAGE_WATCH: protected {:08X} read-only (walker r3={:08X})", page,
+             state);
+    }
+    ppc_context->r[3] = 0;
+    return;
+  }
   static std::atomic<int> reshape_log{0};
   if (base && state) {
     uint32_t count = xe::load_and_swap<uint32_t>(base + state + 4);

@@ -54,6 +54,7 @@
 #include "xenia/cpu/thread_state.h"
 #include "xenia/cpu/xex_module.h"
 
+DECLARE_uint32(cpu_watch_guest_write_page);
 DECLARE_bool(a64_inline_kf_lower_irql_apc_guard);
 DECLARE_bool(a64_kf_lower_irql_apc_guard_audit);
 DECLARE_uint32(a64_kf_lower_irql_apc_guard_native_poll_interval);
@@ -3263,6 +3264,51 @@ bool A64Backend::ExceptionCallbackThunk(Exception* ex, void* data) {
 }
 
 bool A64Backend::ExceptionCallback(Exception* ex) {
+  // ⭐ PAGE-WATCH (cpu_watch_guest_write_page): catch the GUEST FUNCTION that
+  // writes a watched guest page (BD's tile state 0x40011330 -> BeginTiling), with
+  // NO per-store JIT emit so BD runs full speed and reaches the field. The page is
+  // protected read-only by the walker HLE handler; here we resolve the faulting
+  // host pc -> guest fn via the code cache, log it, un-protect, and re-execute.
+  // GATED: cvar 0 = off = zero overhead. Default-off safe.
+  uint32_t watch_page = cvars::cpu_watch_guest_write_page;
+  if (watch_page && ex->code() == Exception::Code::kAccessViolation &&
+      ex->access_violation_operation() ==
+          Exception::AccessViolationOperation::kWrite) {
+    uint64_t membase = uint64_t(processor()->memory()->virtual_membase());
+    uint64_t fa = ex->fault_address();
+    size_t ps = xe::memory::page_size();
+    uint32_t page_mask = ~uint32_t(ps - 1);
+    if (fa >= membase && fa < membase + 0x100000000ull) {
+      uint32_t guest_fa = uint32_t(fa - membase);
+      if ((guest_fa & page_mask) == (watch_page & page_mask)) {
+        static std::atomic<int> pw_log{0};
+        int n = pw_log.fetch_add(1);
+        GuestFunction* fn = code_cache()->LookupFunction(ex->pc());
+        uint32_t writer_fn = fn ? fn->address() : 0;
+        uint32_t writer_pc =
+            fn ? fn->MapMachineCodeToGuestAddress(ex->pc()) : 0;
+        if (n < 64) {
+          XELOGE(
+              "PAGE_WATCH hit #{}: wrote guest {:08X} from writer_fn={:08X} "
+              "writer_pc={:08X}",
+              n, guest_fa, writer_fn, writer_pc);
+        }
+        // Multi-catch: SKIP this store (resume past it) + keep the page protected
+        // so the NEXT write to the page also faults - this streams every writer of
+        // the page so we see who writes the RECTS at 0x40011330 (=BeginTiling), not
+        // just the first ctx write. After 64 hits, un-protect + re-execute so BD
+        // continues. Skipping a few stores corrupts the tile setup (diagnostic ok).
+        if (n < 64) {
+          ex->set_resume_pc(ex->pc() + 4);
+          return true;
+        }
+        xe::memory::Protect(reinterpret_cast<void*>(membase + (watch_page & page_mask)),
+                            ps, xe::memory::PageAccess::kReadWrite);
+        return true;
+      }
+    }
+  }
+
   if (ex->code() != Exception::Code::kIllegalInstruction) {
     return false;
   }
