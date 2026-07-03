@@ -3296,10 +3296,26 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
               "writer_pc={:08X}",
               guest_fa, writer_fn, writer_pc);
         }
-        // Un-protect + re-execute (no skip = no corruption). The walker HLE handler
-        // re-protects every fire, so the page closes again for the next write.
-        xe::memory::Protect(reinterpret_cast<void*>(membase + (watch_page & page_mask)),
-                            ps, xe::memory::PageAccess::kReadWrite);
+        // EMULATE-ON-FAULT: do the store ourselves + keep the page protected (no
+        // un-protect window = catch EVERY write). Decode size (bits 31:30) + source
+        // reg Rt (bits 4:0); the fault address is the host target. Un-protect just
+        // for the manual write, then re-protect. Skip the store (already done).
+        uint32_t insn = xe::load<uint32_t>(reinterpret_cast<void*>(ex->pc()));
+        uint32_t sz = insn >> 30;                 // 0=B 1=H 2=W 3=X
+        uint32_t rt = insn & 0x1F;
+        uint64_t val = (rt == 31) ? 0 : ex->thread_context()->x[rt];
+        void* tgt = reinterpret_cast<void*>(fa);
+        void* page_host =
+            reinterpret_cast<void*>(membase + (watch_page & page_mask));
+        xe::memory::Protect(page_host, ps, xe::memory::PageAccess::kReadWrite);
+        switch (sz) {
+          case 0: *reinterpret_cast<uint8_t*>(tgt) = uint8_t(val); break;
+          case 1: *reinterpret_cast<uint16_t*>(tgt) = uint16_t(val); break;
+          case 2: *reinterpret_cast<uint32_t*>(tgt) = uint32_t(val); break;
+          default: *reinterpret_cast<uint64_t*>(tgt) = val; break;
+        }
+        xe::memory::Protect(page_host, ps, xe::memory::PageAccess::kReadOnly);
+        ex->set_resume_pc(ex->pc() + 4);
         return true;
       }
     }
