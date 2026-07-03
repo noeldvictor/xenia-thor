@@ -368,9 +368,33 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
     for (int guard = 0; p < end && guard < 8192; ++guard) {
       uint32_t prim = xe::load_and_swap<uint32_t>(base + p);
       if (prim && prim < 0xF0000000u) {
-        xe::store_and_swap<uint32_t>(base + prim + 8, 0x80000003u);
+        // Mark ALL bins (0xFFFFFFFF) so the draw passes WHATEVER SET_BIN_SELECT
+        // value BD sets for the single tile (selects vary: 000C/80000003/FFFF..
+        // - a mismatched mask skips the draw = the missing right half).
+        xe::store_and_swap<uint32_t>(base + prim + 8, 0xFFFFFFFFu);
       }
       p += 0x10;
+    }
+  }
+  // One-shot guest-stack scan to recover the tiling call chain up toward
+  // EndTiling/BeginTiling (the clean full-surface HLE target). Prior scan used a
+  // WRONG mask (0xFFF00000 only matched 0x820xxxxx; the callers are ~0x8248xxxx =
+  // masked 0x82400000). Correct mask 0xFF000000 matches all 0x82xxxxxx guest code.
+  static std::atomic<int> chain_log{0};
+  if (base && chain_log++ < 2) {
+    uint32_t sp = uint32_t(ppc_context->r[1]);
+    for (int f = 0; f < 16 && sp; ++f) {
+      uint32_t back = xe::load_and_swap<uint32_t>(base + sp);
+      if (back <= sp || back >= 0xF0000000u) break;
+      int hits = 0;
+      for (uint32_t a = sp; a + 4 <= back && hits < 4; a += 4) {
+        uint32_t v = xe::load_and_swap<uint32_t>(base + a);
+        if ((v & 0xFF000000u) == 0x82000000u && v != 0x82000000u) {
+          XELOGI("HLE_CHAIN[{}] +{:03X}: ret={:08X}", f, a - sp, v);
+          ++hits;
+        }
+      }
+      sp = back;
     }
   }
   ppc_context->r[3] = 0;
