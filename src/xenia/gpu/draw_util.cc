@@ -362,7 +362,12 @@ void GetHostViewportInfo(const RegisterFile& regs,
   // precision, separately so it can be used in other integer calculations
   // without double rounding if needed.
   float offset_add_xy[2] = {};
-  if (pa_su_sc_mode_cntl.vtx_window_offset_enable && !draw_ignore_window_offset) {
+  if (pa_su_sc_mode_cntl.vtx_window_offset_enable && !draw_ignore_window_offset &&
+      !cvars::gpu_binonce_full_scissor) {
+    // HLE BIN-ONCE: the walker HLE forced 1 full-surface tile, but BD still sets
+    // this pass's per-tile PA_SC_WINDOW_OFFSET (which shifts the tile's geometry
+    // into its half). Skip it so every draw rasterizes at its TRUE full-surface
+    // position in the single pass (paired with gpu_binonce_full_scissor).
     auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
     offset_add_xy[0] += float(pa_sc_window_offset.window_x_offset);
     offset_add_xy[1] += float(pa_sc_window_offset.window_y_offset);
@@ -613,6 +618,21 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
   // already span the full EDRAM range, so only this per-draw scissor was clipping.
   if (draw_ignore_window_offset && flatten_full_scissor_br_y > br_y) {
     br_y = flatten_full_scissor_br_y;
+  }
+  // HLE BIN-ONCE (gpu_binonce_full_scissor): the walker HLE handler forced ONE
+  // tile with all draws visible, but the guest still set that tile's (e.g. left-
+  // half) scissor - override to the FULL surface so the single pass rasterizes
+  // the whole scene. tl=0, br=large; the screen-scissor + surface-pitch clamps
+  // below bound it to the real surface (width->pitch, height->8192).
+  if (cvars::gpu_binonce_full_scissor) {
+    // The single forced tile must cover the FULL surface. Use the REAL surface
+    // extents (not 8192 - that ballooned the RT height to 8192 and tanked fps to
+    // 8.5). BD's field surface is 720x1280 (from the tile resolve rects); tl=0,
+    // br=full so all tiles' geometry rasterizes into the one pass at normal size.
+    tl_x = 0;
+    tl_y = 0;
+    br_x = 720;
+    br_y = 1280;
   }
   if (clamp_to_surface_pitch) {
     // Clamp the horizontal scissor to surface_pitch for safety, in case that's

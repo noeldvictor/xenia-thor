@@ -355,6 +355,24 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
       }
     }
   }
+  // Replicate the walker's per-primitive binning for the single full tile: for
+  // THIS draw (r4=param_2: end-ptr at [0], primitives from +4 stride 0x10, each
+  // entry's [0] pointing at the prim whose [+8] is the tile mask), mark every
+  // primitive as touching tile 0 (uVar5=3 for 1 tile | 0x80000000 processed).
+  // This is what the guest walker does; doing it here makes ALL draws render in
+  // the ONE full-surface pass = full-scene bin-once (vs the half-render noop).
+  uint32_t draw = uint32_t(ppc_context->r[4]);
+  if (base && draw && draw < 0xF0000000u) {
+    uint32_t end = xe::load_and_swap<uint32_t>(base + draw);
+    uint32_t p = draw + 4;
+    for (int guard = 0; p < end && guard < 8192; ++guard) {
+      uint32_t prim = xe::load_and_swap<uint32_t>(base + p);
+      if (prim && prim < 0xF0000000u) {
+        xe::store_and_swap<uint32_t>(base + prim + 8, 0x80000003u);
+      }
+      p += 0x10;
+    }
+  }
   ppc_context->r[3] = 0;
 }
 bool IsHleIntercept(uint32_t address) {
