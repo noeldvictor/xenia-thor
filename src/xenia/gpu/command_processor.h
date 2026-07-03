@@ -131,6 +131,12 @@ class CommandProcessor {
 
   void UpdateWritePointer(uint32_t value);
 
+  // Accessors for the primary ring buffer state (used by the D3D-HLE ring-writer
+  // handler to inject PM4 in C++ without a reentrant guest call).
+  uint32_t primary_buffer_ptr() const { return primary_buffer_ptr_; }
+  uint32_t primary_buffer_size() const { return primary_buffer_size_; }
+  uint32_t write_ptr_index() const { return write_ptr_index_.load(); }
+
   void ExecutePacket(uint32_t ptr, uint32_t count);
 
   bool is_paused() const { return paused_; }

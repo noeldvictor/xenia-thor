@@ -37,6 +37,10 @@
 #include "xenia/cpu/thread.h"
 #include "xenia/cpu/thread_state.h"
 #include "xenia/cpu/xex_module.h"
+#include "xenia/emulator.h"
+#include "xenia/gpu/command_processor.h"
+#include "xenia/gpu/graphics_system.h"
+#include "xenia/kernel/kernel_state.h"
 
 #if 0 && DEBUG
 #define DEFAULT_DEBUG_FLAG true
@@ -78,6 +82,14 @@ DEFINE_string(cpu_hle_tiling_replay_addr, "",
               "via the ring writer + forcing tile count=1 = bin-once at the source. "
               "Empty disables. (WIP - the coherent pitch/base/resolve rewrite for "
               "full-surface is the next increment.)",
+              "CPU");
+DEFINE_string(cpu_hle_ring_writer_addr, "",
+              "GPU D3D9-HLE: hex guest addr of BD's XDK D3D9 ring writer (8246E100). "
+              "HLE-replaces it with a pure-C++ ring write (no reentrant guest call): "
+              "injects the {C0013F00, pkt1, pkt0} PM4 words straight into xenia's "
+              "primary ring buffer + kicks the CP. The replay + tiling helpers run "
+              "NATIVELY and call this at the leaf. This is the coherent hook for the "
+              "RB_SURFACE_INFO pitch rewrite (bin-once). Empty disables.",
               "CPU");
 
 namespace xe {
@@ -657,6 +669,78 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
   }
   ctx->r[3] = stream;
 }
+
+// --- HLE ring writer (XDK D3D9 = FUN_8246E100 @0x8246E100) ---
+std::atomic<uint32_t> g_hle_ring_writer_addr{0};
+std::once_flag g_hle_ring_writer_once;
+void ParseHleRingWriterAddr() {
+  if (!cvars::cpu_hle_ring_writer_addr.empty()) {
+    g_hle_ring_writer_addr = uint32_t(
+        strtoul(cvars::cpu_hle_ring_writer_addr.c_str(), nullptr, 16));
+  }
+}
+bool IsHleRingWriter(uint32_t address) {
+  if (cvars::cpu_hle_ring_writer_addr.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_ring_writer_once, ParseHleRingWriterAddr);
+  return g_hle_ring_writer_addr && address == g_hle_ring_writer_addr;
+}
+// Pure-C++ HLE of BD's XDK D3D9 ring writer FUN_8246E100(device, pkt[], count):
+// each guest packet = 2 words {pkt0@+0, pkt1@+4}; the native fn writes 3 words
+// {0xC0013F00 (PM4 TYPE3 hdr, 2 data), pkt1, pkt0} into the ring per packet, then
+// kicks CP_RB_WPTR. We replicate that DIRECTLY on xenia's primary ring buffer (no
+// reentrant guest call = no CP deadlock), skipping the null-guarded optional trace
+// callbacks + the ring-space reserve. The replay + tiling helpers run NATIVELY and
+// land here at the leaf. Hook point for the RB_SURFACE_INFO pitch rewrite (next).
+void HleRingWriterHandler(ppc::PPCContext* ctx,
+                          kernel::KernelState* kernel_state) {
+  Memory* mem = ctx->processor->memory();
+  uint32_t pkt_array = uint32_t(ctx->r[4]);
+  uint32_t count = uint32_t(ctx->r[5]);
+  gpu::CommandProcessor* cp = nullptr;
+  if (kernel_state && kernel_state->emulator() &&
+      kernel_state->emulator()->graphics_system()) {
+    cp = kernel_state->emulator()->graphics_system()->command_processor();
+  }
+  if (!cp || !pkt_array || !count || count > 0x4000u) {
+    ctx->r[3] = 0;
+    return;
+  }
+  uint32_t ring_base = cp->primary_buffer_ptr();
+  uint32_t ring_words = cp->primary_buffer_size() / 4u;
+  if (!ring_base || !ring_words) {
+    ctx->r[3] = 0;
+    return;
+  }
+  uint32_t widx = cp->write_ptr_index();
+  static std::atomic<int> rw_log{0};
+  if (rw_log++ < 10) {
+    uint32_t p0 =
+        xe::load_and_swap<uint32_t>(mem->TranslateVirtual(pkt_array));
+    uint32_t p1 =
+        xe::load_and_swap<uint32_t>(mem->TranslateVirtual(pkt_array + 4u));
+    XELOGI(
+        "HLE RING-WRITER: pkts={} pkt_array={:08X} ring_base={:08X} words={} "
+        "widx={} pkt0={:08X} pkt1={:08X}",
+        count, pkt_array, ring_base, ring_words, widx, p0, p1);
+  }
+  auto ringwr = [&](uint32_t w) {
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(ring_base + widx * 4u), w);
+    widx = (widx + 1u) % ring_words;
+  };
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t pkt0 =
+        xe::load_and_swap<uint32_t>(mem->TranslateVirtual(pkt_array + i * 8u));
+    uint32_t pkt1 = xe::load_and_swap<uint32_t>(
+        mem->TranslateVirtual(pkt_array + i * 8u + 4u));
+    ringwr(0xc0013f00u);
+    ringwr(pkt1);
+    ringwr(pkt0);
+  }
+  cp->UpdateWritePointer(widx);
+  ctx->r[3] = 0;
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -704,6 +788,13 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE TILING-REPLAY: planted host replay at guest {:08X}", address);
+      return function;
+    }
+    if (IsHleRingWriter(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleRingWriterHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("HLE RING-WRITER: planted host ring writer at guest {:08X}", address);
       return function;
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
