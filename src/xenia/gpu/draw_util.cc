@@ -644,14 +644,19 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
     // targets, but padded to EDRAM tiles.
     uint32_t surface_pitch = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch;
     if (cvars::gpu_binonce_full_scissor) {
+      // Log only the SUSPICIOUS half-pitch draws (surface_pitch < br_x, i.e. the
+      // guest RT is narrower than the full scissor -> those draws clip to a half
+      // RT). Also log the msaa + rt height so we see the full render-target
+      // region for the field's heavy draws (not just the boot draws).
       static int binonce_scissor_log = 0;
-      if (binonce_scissor_log++ < 6) {
+      auto rb_si = regs.Get<reg::RB_SURFACE_INFO>();
+      if (int32_t(surface_pitch) < br_x && binonce_scissor_log++ < 10) {
         auto woff = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
         XELOGI(
-            "BINONCE_SCISSOR: surface_pitch={} pre-clamp br_x={} br_y={} "
-            "win_off=({},{})",
+            "BINONCE_HALFPITCH: surface_pitch={} br_x={} br_y={} win_off=({},{}) "
+            "msaa={}",
             surface_pitch, br_x, br_y, int32_t(woff.window_x_offset),
-            int32_t(woff.window_y_offset));
+            int32_t(woff.window_y_offset), uint32_t(rb_si.msaa_samples));
       }
       // The forced full tile must not be re-clamped to the guest's half-tile
       // pitch - keep the full-surface width.
