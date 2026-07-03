@@ -643,8 +643,23 @@ void GetScissor(const RegisterFile& regs, Scissor& scissor_out,
     // interlock-based custom RB implementations) and using conventional render
     // targets, but padded to EDRAM tiles.
     uint32_t surface_pitch = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch;
-    tl_x = std::min(tl_x, int32_t(surface_pitch));
-    br_x = std::min(br_x, int32_t(surface_pitch));
+    if (cvars::gpu_binonce_full_scissor) {
+      static int binonce_scissor_log = 0;
+      if (binonce_scissor_log++ < 6) {
+        auto woff = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
+        XELOGI(
+            "BINONCE_SCISSOR: surface_pitch={} pre-clamp br_x={} br_y={} "
+            "win_off=({},{})",
+            surface_pitch, br_x, br_y, int32_t(woff.window_x_offset),
+            int32_t(woff.window_y_offset));
+      }
+      // The forced full tile must not be re-clamped to the guest's half-tile
+      // pitch - keep the full-surface width.
+      tl_x = std::min(tl_x, int32_t(surface_pitch));
+    } else {
+      tl_x = std::min(tl_x, int32_t(surface_pitch));
+      br_x = std::min(br_x, int32_t(surface_pitch));
+    }
   }
   // Ensure the rectangle is non-negative, by collapsing it into a 0-sized one
   // (not by reordering the bounds preserving the width / height, which would
