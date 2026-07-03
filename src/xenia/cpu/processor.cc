@@ -555,10 +555,15 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
     uint64_t args[3] = {a3, a4, a5};
     proc->Execute(ts, fn, args, n);
   };
+  static std::atomic<int> pertok_log{0};
   int guard = 0;
   uint32_t token = rd(stream);
   while ((token & 0x80000000u) != 0 && ++guard < 200000) {
     uint32_t t = token & 0xff000000u;
+    if (pertok_log < 60) {
+      pertok_log++;
+      XELOGI("HLE TR-STEP i={} stream={:08X} token={:08X}", guard, stream, token);
+    }
     if (t == 0x80000000u) {
       call(0x826BF770u, cx + 0x74u, stream + 4u, 0xf8u, 3);  // memcpy tile table
       wr(cx + 0x2cu, 0);
