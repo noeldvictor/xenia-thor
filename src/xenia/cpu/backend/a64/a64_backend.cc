@@ -3287,21 +3287,17 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
         uint32_t writer_fn = fn ? fn->address() : 0;
         uint32_t writer_pc =
             fn ? fn->MapMachineCodeToGuestAddress(ex->pc()) : 0;
-        if (n < 64) {
+        // Log only the RARE tile-state writes (rects/count at 0x40011330-0x48 =
+        // BeginTiling's setup), not the frequent replay writes to other offsets.
+        (void)n;
+        if (guest_fa >= 0x40011330u && guest_fa <= 0x40011348u) {
           XELOGE(
-              "PAGE_WATCH hit #{}: wrote guest {:08X} from writer_fn={:08X} "
+              "PAGE_WATCH TILESTATE: wrote guest {:08X} from writer_fn={:08X} "
               "writer_pc={:08X}",
-              n, guest_fa, writer_fn, writer_pc);
+              guest_fa, writer_fn, writer_pc);
         }
-        // Multi-catch: SKIP this store (resume past it) + keep the page protected
-        // so the NEXT write to the page also faults - this streams every writer of
-        // the page so we see who writes the RECTS at 0x40011330 (=BeginTiling), not
-        // just the first ctx write. After 64 hits, un-protect + re-execute so BD
-        // continues. Skipping a few stores corrupts the tile setup (diagnostic ok).
-        if (n < 64) {
-          ex->set_resume_pc(ex->pc() + 4);
-          return true;
-        }
+        // Un-protect + re-execute (no skip = no corruption). The walker HLE handler
+        // re-protects every fire, so the page closes again for the next write.
         xe::memory::Protect(reinterpret_cast<void*>(membase + (watch_page & page_mask)),
                             ps, xe::memory::PageAccess::kReadWrite);
         return true;

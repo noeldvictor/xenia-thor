@@ -349,14 +349,18 @@ void HleInterceptHandler(ppc::PPCContext* ppc_context,
   // (= BeginTiling). Skip the bin-once reshape/marking so our OWN host writes to
   // the page don't fault. The walker's r3 confirms the live tile-state address.
   if (cvars::cpu_watch_guest_write_page && base) {
-    static std::atomic<bool> pw_protected{false};
-    bool expected = false;
-    if (pw_protected.compare_exchange_strong(expected, true)) {
-      size_t ps = xe::memory::page_size();
-      uint32_t page = cvars::cpu_watch_guest_write_page & ~uint32_t(ps - 1);
-      xe::memory::Protect(base + page, ps, xe::memory::PageAccess::kReadOnly);
-      XELOGI("PAGE_WATCH: protected {:08X} read-only (walker r3={:08X})", page,
-             state);
+    // Re-protect EVERY fire (walker fires per-draw) so the page stays protected
+    // across frame boundaries - then BeginTiling's frame-start rect write (the
+    // ONE-TIME/rare setup, not the per-frame replay writes) faults + is caught.
+    // The a64 ExceptionCallback un-protects on each hit (no skip = no corruption);
+    // this re-protect closes the window again for the next write.
+    size_t ps = xe::memory::page_size();
+    uint32_t page = cvars::cpu_watch_guest_write_page & ~uint32_t(ps - 1);
+    xe::memory::Protect(base + page, ps, xe::memory::PageAccess::kReadOnly);
+    static std::atomic<int> pw_first{0};
+    if (pw_first.fetch_add(1) == 0) {
+      XELOGI("PAGE_WATCH: protecting {:08X} read-only per-fire (walker r3={:08X})",
+             page, state);
     }
     ppc_context->r[3] = 0;
     return;
