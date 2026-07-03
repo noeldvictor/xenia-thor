@@ -131,34 +131,54 @@ bool ParseStoreWatchHex(const char*& p, uint32_t* out_value) {
   return true;
 }
 
+// Parse the watch cvar ONCE into a cached range list - the previous per-store
+// string re-parse was so slow BD couldn't reach the field within the timed nav.
+struct StoreWatchRange {
+  uint32_t start;
+  uint32_t end;
+};
+const std::vector<StoreWatchRange>& GetStoreWatchRanges() {
+  // C++11 thread-safe static init - parsed exactly once (the cvar is set at
+  // launch and never changes), so the per-store path is just a vector scan.
+  static const std::vector<StoreWatchRange> ranges = []() {
+    std::vector<StoreWatchRange> out;
+    const char* p = cvars::arm64_guest_store_watch.c_str();
+    while (*p) {
+      uint32_t start = 0;
+      if (!ParseStoreWatchHex(p, &start)) {
+        break;
+      }
+      uint32_t end = start;
+      if (*p == '-' || *p == ':') {
+        ++p;
+        if (!ParseStoreWatchHex(p, &end)) {
+          end = start;
+        }
+      } else if (*p == '+') {
+        ++p;
+        uint32_t length = 0;
+        if (ParseStoreWatchHex(p, &length) && length != 0) {
+          end = start + length - 1;
+        }
+      }
+      out.push_back({start, end});
+      SkipStoreWatchDelimiters(p);
+    }
+    return out;
+  }();
+  return ranges;
+}
+
 bool StoreWatchMatches(uint32_t guest_address, uint32_t size) {
-  if (cvars::arm64_guest_store_watch.empty()) {
+  const auto& ranges = GetStoreWatchRanges();
+  if (ranges.empty()) {
     return false;
   }
   uint32_t store_end = guest_address + std::max<uint32_t>(size, 1) - 1;
-  const char* p = cvars::arm64_guest_store_watch.c_str();
-  while (*p) {
-    uint32_t start = 0;
-    if (!ParseStoreWatchHex(p, &start)) {
-      break;
-    }
-    uint32_t end = start;
-    if (*p == '-' || *p == ':') {
-      ++p;
-      if (!ParseStoreWatchHex(p, &end)) {
-        end = start;
-      }
-    } else if (*p == '+') {
-      ++p;
-      uint32_t length = 0;
-      if (ParseStoreWatchHex(p, &length) && length != 0) {
-        end = start + length - 1;
-      }
-    }
-    if (guest_address <= end && store_end >= start) {
+  for (const auto& r : ranges) {
+    if (guest_address <= r.end && store_end >= r.start) {
       return true;
     }
-    SkipStoreWatchDelimiters(p);
   }
   return false;
 }
