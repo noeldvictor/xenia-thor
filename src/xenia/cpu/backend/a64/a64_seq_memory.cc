@@ -182,9 +182,29 @@ void TraceGuestStoreWatch(void* raw_context, uint32_t guest_pc,
   }
   XELOGI(
       "ARM64 guest memory watch hit: fn 00000000 guest {:08X} range {:08X} "
-      "size {} op STORE thid {:08X} raw {:08X} be {:08X}",
+      "size {} op STORE thid {:08X} raw {:08X} be {:08X} lr {:08X}",
       guest_pc, guest_address, size, ctx ? ctx->thread_id : 0, raw_value,
-      swapped_value);
+      swapped_value, ctx ? uint32_t(ctx->lr) : 0);
+  // Walk the guest stack to recover the CALLER CHAIN (lr only gives the innermost
+  // fn - e.g. a calloc helper; BeginTiling is 1-2 frames up). Scan each frame for
+  // 0x82xxxxxx return addresses (mask 0xFF000000).
+  if (ctx) {
+    uint8_t* base = ctx->virtual_membase;
+    uint32_t sp = uint32_t(ctx->r[1]);
+    for (int f = 0; f < 10 && sp; ++f) {
+      uint32_t back = xe::load_and_swap<uint32_t>(base + sp);
+      if (back <= sp || back >= 0xF0000000u) break;
+      int hits = 0;
+      for (uint32_t a = sp; a + 4 <= back && hits < 3; a += 4) {
+        uint32_t v = xe::load_and_swap<uint32_t>(base + a);
+        if ((v & 0xFF000000u) == 0x82000000u && v != 0x82000000u) {
+          XELOGI("  WATCH_CHAIN[{}]: ret={:08X}", f, v);
+          ++hits;
+        }
+      }
+      sp = back;
+    }
+  }
 }
 
 void EmitGuestStoreWatch(A64Emitter& e, const hir::Instr* instr,
