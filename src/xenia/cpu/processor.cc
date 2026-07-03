@@ -645,6 +645,11 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
     }
     token = rd(stream);
   }
+  static std::atomic<int> replay_log{0};
+  if (replay_log++ < 8) {
+    XELOGI("HLE TILING-REPLAY: iters={} final_token={:08X} final_stream={:08X}",
+           guard, token, stream);
+  }
   ctx->r[3] = stream;
 }
 }  // namespace
