@@ -232,29 +232,14 @@ void EmitGuestStoreWatch(A64Emitter& e, const hir::Instr* instr,
   if (cvars::arm64_guest_store_watch.empty()) {
     return;
   }
-  const auto& ranges = GetStoreWatchRanges();
-  if (ranges.empty()) {
-    return;
-  }
-  // INLINE fast-reject so the native call fires only for near-matching addresses
-  // (a per-store native call = ~10x slowdown that stopped BD reaching the field).
-  // Copy the address to w2 first, then range-check it; TraceGuestStoreWatch
-  // re-verifies exactly, so an over-approximation (by max store size 8) is fine.
+  // NOTE: the inline range-check attempt (mov w16/cmp/b) caused a JIT fault storm
+  // (per-store label/scratch reuse). Reverted to the plain per-store native call -
+  // it's slow (can't reach BD's field via timed nav) but CORRECT, and the
+  // save-state restore path (instant field) doesn't need it fast.
   e.mov(e.w2, WReg(guest_address.getIdx()));
-  auto& skip = e.NewCachedLabel();
-  if (ranges.size() == 1) {
-    uint32_t lo = ranges[0].start >= 8u ? ranges[0].start - 8u : 0u;
-    e.mov(e.w16, lo);
-    e.cmp(e.w2, e.w16);
-    e.b(LO, skip);
-    e.mov(e.w16, ranges[0].end);
-    e.cmp(e.w2, e.w16);
-    e.b(HI, skip);
-  }
   e.mov(e.w1, static_cast<uint64_t>(instr->GuestAddressFor()));
   e.mov(e.w3, size);
   e.CallNativeSafe(reinterpret_cast<void*>(&TraceGuestStoreWatch));
-  e.L(skip);
 }
 
 }  // namespace
