@@ -225,6 +225,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "restore_state_path");
             copyStringExtra(intent, launchArguments, "save_state_path");
             copyIntExtra(intent, launchArguments, "save_state_at_guest_ms");
+            copyBooleanExtra(intent, launchArguments, "gpu_hle_surface_trace");
+            copyBooleanExtra(intent, launchArguments, "gpu_hle_surface_binonce");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");

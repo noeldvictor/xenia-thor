@@ -50,6 +50,19 @@
 #include <unordered_map>
 #endif  // XE_PLATFORM_ANDROID
 
+DEFINE_bool(gpu_hle_surface_trace, false,
+            "GPU D3D-HLE: log BD's surface/tiling/copy register writes (RB_SURFACE_"
+            "INFO / COLOR / DEPTH / MODECONTROL / COPY_CONTROL / COPY_DEST_INFO) as "
+            "they stream from the guest indirect buffers - to RE the tiling-setup "
+            "intent for the register-level bin-once rewrite.",
+            "GPU");
+DEFINE_bool(gpu_hle_surface_binonce, false,
+            "GPU D3D-HLE bin-once at the register (intent) level: rewrite BD's "
+            "tile-strip RB_SURFACE_INFO surface_pitch (~360) to the full 720 "
+            "surface. Pairs with the walker count=1 (the freed 2nd-strip EDRAM fits "
+            "the wider surface) = render once, full width. Host-side, no reentrancy.",
+            "GPU");
+
 namespace xe {
 namespace gpu {
 
@@ -915,6 +928,30 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
     return;
   }
 
+  // GPU D3D-HLE at the register (intent) level. BD's tiling "intent" (BeginTiling /
+  // Resolve) is written as RB_SURFACE_INFO + sibling surface/copy registers from
+  // inside the guest indirect buffers - there is no higher guest-function boundary
+  // (the replay only emits IB pointers). So we recognize + rewrite the intent HERE:
+  // host-side, no reentrancy, every related register visible. Gated, default-off.
+  if (cvars::gpu_hle_surface_trace &&
+      (index == 0x2000 || index == 0x2001 || index == 0x2002 || index == 0x2208 ||
+       index == 0x2081 || index == 0x2082 || index == 0x2318 || index == 0x231B)) {
+    static std::atomic<int> sfx{0};
+    if (sfx.fetch_add(1) < 120) {
+      XELOGI("HLE SURFACE reg {:04X} = {:08X}", index, value);
+    }
+  }
+  if (cvars::gpu_hle_surface_binonce &&
+      index == XE_GPU_REG_RB_SURFACE_INFO) {
+    uint32_t pitch = value & 0x3FFFu;  // surface_pitch : 14 (pixels)
+    if (pitch >= 32u && pitch <= 512u) {  // a tile STRIP, not the full surface
+      value = (value & ~0x3FFFu) | ((pitch * 2u) & 0x3FFFu);
+      static std::atomic<int> pfx{0};
+      if (pfx.fetch_add(1) < 20) {
+        XELOGI("HLE BINONCE: RB_SURFACE_INFO pitch {}->{}", pitch, pitch * 2u);
+      }
+    }
+  }
   // Volatile for the WAIT_REG_MEM loop.
   const_cast<volatile uint32_t&>(regs.values[index]) = value;
   // GetRegisterInfo is a large switch executed on EVERY register write, and the
