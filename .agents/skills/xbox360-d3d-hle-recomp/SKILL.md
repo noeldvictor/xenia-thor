@@ -89,3 +89,45 @@ LLVM whole-fn backend (src/xenia/cpu/backend/llvm) as the AOT foundation. Two pa
   to trampoline into a host impl — the real translation layer).
 - Validate: device A/B (single-run alternating for perf; screenshot for pixels); the alternator-gated
   method (gpu_freeze_ab_alternate_vrs phase) is the rigorous perf harness.
+
+## ✅ PROVEN RE→HLE RECIPE (2026-07-03) — reusable across games, this is THE fast path
+The "reach in, pin the D3D fn, HLE it" loop, validated on BD's tiling replay. Four committed tools:
+
+**1. PIN the D3D fn that writes a target struct — PAGE-WATCH (`cpu_watch_guest_write_page`, a64_backend.cc
+ExceptionCallback + processor.cc walker-protect).** The store-watch (`arm64_guest_store_watch`) FAILS on the
+field (per-store JIT emit = ~10x slowdown → timed nav desyncs). The page-watch has ZERO per-store cost: host-
+mprotect the target guest page read-only; on write-fault, **emulate-on-fault** (decode store size[31:30]+Rt
+[4:0], do the write to ex->fault_address() yourself, keep protected = no un-protect windows = catch EVERY
+write) + `code_cache->LookupFunction(ex->pc())` → the writer guest fn + `ctx->lr` (PPCContext @ host x[20]) →
+its CALLER. Runs BD full-speed → reaches the field. THIS is the tool the multi-session RE wall needed.
+
+**2. Peel helper wrappers.** Writers are often memcpy(0x826bf770)/calloc(0x8246B3B8) helpers; the real D3D fn
+is the CALLER — read `ctx->lr` in the page-watch hit. calloc/memcpy have NO static refs (deep indirect) so
+static Ghidra caller-analysis is DEAD; the runtime page-watch lr is the only way.
+
+**3. GOTCHA — xenia's DECLARED entry ≠ Ghidra prologue.** BD's tiling replay: Ghidra prologue-scan said
+0x82487cc8, but xenia harvested it as **0x82487CC0-82487F50** (grep logcat `shared-fn-harvest`). HLE the
+xenia-DECLARED entry (0x82487CC0), else `IsHleIntercept` never matches → planted=0. Also: fns reached by
+tail-call/indirect (driver 0x82487988) are NEVER LookupFunction'd → un-plantable; only harvested entries plant.
+
+**4. HLE HOST BODY — reimplement the D3D fn (`cpu_hle_tiling_replay_addr`, processor.cc HleTilingReplayHandler).**
+SetupExtern at LookupFunction plants the host handler (kExtern dispatch, no guest-code patch). For a REPLAY/
+token-loop fn, reimplement the loop in host C++, reading the recorded stream (r3) + ctx (r4) with load/store_
+and_swap (BE), and calling guest helpers (ring writer 0x8246E100, tiling helpers) REENTRANTLY via
+`Processor::Execute(ThreadState::Get(), addr, args[], n)` (args→r[3+i], returns r[3]; keep your loop state in
+C++ LOCALS since Execute clobbers ctx->r). VIABLE: only ~dozens of setup PM4 emits/frame (draws go via the
+driver/walker, not the tiling-setup fn). Device: **planted+faults=0 = the host body IS the D3D fn + runs**.
+Then apply the bin-once tweak (force tile count=1) + the COHERENT surface rewrite (RB_SURFACE_INFO pitch +
+color/depth EDRAM bases + resolve TOGETHER — piecemeal downstream override = 0fps black EDRAM desync; that's
+why HLE-at-SOURCE beats RT-cache coalescing). VdGlobalDevice ptr = *(0x820005f4).
+
+## 🏗️ LOAD-TIME XEX PIPELINE (RPCS3-model endgame — the user's "progress bar" vision)
+The right architecture = at GAME LOAD, a progress-bar pass that (a) AOT-LLVM-compiles the PPC (we HAVE the
+object cache: [[llvm-jit-backend-build]], `cpu_backend_llvm` + AOT .o cache), and (b) SIGNATURE-scans the XEX
+for the static-linked XDK D3D9 fns → installs HLE trampolines (the mechanism above), caching both keyed by
+XEX hash. RPCS3 analog: its boot progress bar AOT-recompiles PPU/SPU modules; we AOT the PPC + (the SPU→HLE
+analog) signature-identify + host-replace the D3D fns. This = build-order step 4 (a signature DB stable per
+XDK version 2005-2013, generic across games — NOT a per-game port). EDRAM is THE core inefficiency; HLE-ing
+BeginTiling/Resolve bypasses the predicated tiling + EDRAM round-trip AT THE SOURCE = render once / resolve
+once. To generalize: the page-watch recipe pins BeginTiling/Resolve/Draw per game; their SIGNATURES (byte
+patterns of the harvested fn) go in the DB; the loader matches + trampolines them without re-RE.
