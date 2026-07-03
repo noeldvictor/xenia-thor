@@ -176,6 +176,33 @@ implementations.** This is the resolution of the "why not D3D-HLE" question:
   intrinsically-huge foliage shaders (~4000 instr, ~1.5x bloat only) stand: HLE gives the STRUCTURAL ~1.4x +
   EDRAM/CPU bypass, shaders stay the game's (VRS/quality options for those).
 
+### 🚀 SESSION PROGRESS 2026-07-03 — the RE wall broke; the D3D tiling fn is HLE-REPLACED with a RUNNING host body
+Build order steps 1-2 DONE, step 3 IN PROGRESS (host body plants + runs on-device). Full detail: memory
+[[bd-d3d-hle-re-state]] + skill `xbox360-d3d-hle-recomp`. The concrete wins (all committed):
+- **PAGE-WATCH tool (`cpu_watch_guest_write_page`, default-off) — THE unblock.** Host-mprotect a guest page +
+  EMULATE-ON-FAULT (a64_backend.cc ExceptionCallback: decode store size[31:30]+Rt[4:0], do the write to
+  ex->fault_address() yourself, keep protected = catch EVERY write) + code_cache->LookupFunction(ex->pc()) +
+  ctx->lr → the guest fn + caller. NO per-store JIT bloat → BD runs FULL SPEED → reaches the field (the store-
+  watch `arm64_guest_store_watch` could NOT — ~10x slowdown desyncs the timed nav). This pinned what 20+ turns
+  of store-watch/stack-walk/save-state could not.
+- **BD's D3D tiling fn PINNED + FULLY DECODED = FUN @ 0x82487CC0** (xenia's declared entry; grep logcat
+  `shared-fn-harvest 82487CC0-82487F50`; 0x82487cc8 is 8 bytes IN = wrong for the intercept). It's the deferred-
+  D3D-command REPLAY: all 13 opcodes decoded (0x80=memcpy tile-table→0x40011330; 0x82=emit PM4 via ring writer
+  0x8246E100 incl RB_SURFACE_INFO pitch=360; 0x88=tile-loop on ctx[0x78]=count; 0x84-0x8c=predication/bin).
+- **HLE HOST BODY WRITTEN + RUNS (`cpu_hle_tiling_replay_addr=82487CC0`, default-off):** reimplements the token
+  loop in host C++, calling guest helpers (ring writer + tiling fns) REENTRANTLY via `Processor::Execute` (viable
+  = only ~dozens of setup PM4/frame; draws go via the driver/walker). DEVICE: **planted=1, faults=0** = the host
+  body IS BD's D3D tiling fn + executes without crashing (step-3 mechanism PROVEN). WIP: VdSwap=3 = first-cut
+  replay stalls BD (debugging: iters/final-token diagnostic added). Then: force count=1 + COHERENT surface
+  rewrite (pitch+base+resolve TOGETHER — piecemeal downstream = 0fps black EDRAM desync, device-proven).
+- **GOTCHAS:** downstream RT-pitch override (render_target_cache) = 0fps black (EDRAM desync) → must HLE at
+  SOURCE. Fns reached by tail-call/indirect (driver 0x82487988) NEVER LookupFunction'd = un-plantable; only
+  harvested entries plant. VdGlobalDevice ptr = *(0x820005f4). Helpers: memcpy 0x826bf770, calloc 0x8246B3B8.
+- **LOAD-TIME PIPELINE (RPCS3 model):** at game-load, AOT-LLVM the PPC (have the .o cache) + signature-scan the
+  XEX → install HLE trampolines for the D3D fns (the mechanism above), cache keyed by XEX hash. Page-watch RE's
+  each game's BeginTiling/Resolve ONCE → their byte-signatures seed a DB → loader matches + trampolines (generic,
+  not per-game). = build-order step 4.
+
 ## ⭐⭐⭐ LONG-TERM DIRECTION (user-decided 2026-07-02): GENERAL EMULATOR + generic HLE/AOT techniques
 **DECISION: keep xenia as a GENERAL-PURPOSE runtime emulator (runs many games) and bring in the SPEED
 TECHNIQUES from the recompilation world GENERICALLY - NOT per-game native ports.** User verbatim: "we dont
