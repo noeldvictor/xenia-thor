@@ -941,6 +941,16 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
       XELOGI("HLE SURFACE reg {:04X} = {:08X}", index, value);
     }
   }
+  // Dedicated RESOLVE (RB_COPY_*) trace - higher cap so the FIELD's resolves survive
+  // past the boot flood. RB_COPY_CONTROL(2318 = the resolve trigger) + DEST_BASE(2319)
+  // + DEST_PITCH(231A) + DEST_INFO(231B) = the 2-strip resolve to collapse to one 720.
+  if (cvars::gpu_hle_surface_trace &&
+      (index == 0x2318 || index == 0x2319 || index == 0x231A || index == 0x231B)) {
+    static std::atomic<int> cfx{0};
+    if (cfx.fetch_add(1) < 400) {
+      XELOGI("HLE COPY reg {:04X} = {:08X}", index, value);
+    }
+  }
   if (cvars::gpu_hle_surface_binonce &&
       index == XE_GPU_REG_RB_SURFACE_INFO) {
     uint32_t pitch = value & 0x3FFFu;  // surface_pitch : 14 (pixels)
