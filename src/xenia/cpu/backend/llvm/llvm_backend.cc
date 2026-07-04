@@ -112,6 +112,18 @@ DEFINE_bool(cpu_backend_llvm_context_residency, false,
             "Default off pending qemu-differential + device A/B validation.",
             "CPU");
 
+DEFINE_bool(
+    cpu_backend_llvm_residency_writeback, false,
+    "LLVM backend (requires cpu_backend_llvm_context_residency): the RPCS3-class "
+    "residency - STORE_CONTEXT writes ONLY the entry alloca (mem2reg -> host "
+    "register), NOT the context memory, so the ~372 per-store context writes the "
+    "write-through path leaves behind are ELIMINATED. Guest regs are flushed back "
+    "to the context ONLY at call/return barriers (write-back before each call/tail/"
+    "return; reload after each call). Mixed-type (union) offsets stay write-through "
+    "for safety. This is the #1 LLVM perf lever (guest thread is memory-bound). "
+    "Default off pending qemu-differential + device validation.",
+    "CPU");
+
 DEFINE_string(cpu_backend_llvm_skip_addrs, "",
               "Comma/space-separated hex guest addresses to FORCE onto the a64 "
               "backend (skip LLVM) WITHOUT a rebuild. Use to pin/mitigate a "

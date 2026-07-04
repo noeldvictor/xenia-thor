@@ -73,6 +73,7 @@ DECLARE_bool(cpu_backend_llvm_lower_vmaddfp);
 DECLARE_bool(cpu_backend_llvm_dump_asm);
 DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
+DECLARE_bool(cpu_backend_llvm_residency_writeback);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
@@ -277,6 +278,7 @@ class Lowerer {
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
     auto* ret_addr = b_.CreateTrunc(
         b_.CreateLoad(b_.getInt64Ty(), next_call_ret_addr_), i32);
+    if (writeback_) WriteBackCtxRegs();  // flush guest regs -> ctx for the callee
     b_.CreateCall(callee, {ctx_ptr_, target_i32, ret_addr});
     if (residency_) ReloadCtxRegs();  // callee may have changed guest state
   }
@@ -293,6 +295,7 @@ class Lowerer {
     auto callee = mod_->getOrInsertFunction("xe_llvm_call_extern", fty);
     auto* sym_ptr = b_.CreateIntToPtr(
         b_.getInt64(reinterpret_cast<uint64_t>(fn)), b_.getPtrTy());
+    if (writeback_) WriteBackCtxRegs();  // flush guest regs -> ctx for the handler
     b_.CreateCall(callee, {ctx_ptr_, sym_ptr});
     if (residency_) ReloadCtxRegs();  // handler may have changed guest state
     baked_host_pointer_ = true;  // run-specific fn ptr -> not AOT-cacheable
@@ -318,8 +321,11 @@ class Lowerer {
     // Callee ABI == this function's: void(i64 guest_return_address).
     auto* callee_ty = llvm::FunctionType::get(voidTy, {i64}, false);
     auto* my_ret = b_.CreateLoad(i64, my_ret_addr_);
-    // No flush needed: STORE_CONTEXT is write-through, so the context the
-    // tail-callee reads via x20 is already current.
+    // Write-through mode: the context is already current. Write-back mode: flush
+    // the alloca-only guest regs to the context so the tail-callee (and ultimately
+    // the original caller) reads current values via x20. musttail permits
+    // instructions BEFORE the call - only the ret must immediately follow it.
+    if (writeback_) WriteBackCtxRegs();
     auto* call = b_.CreateCall(callee_ty, host, {my_ret});
     call->setTailCallKind(llvm::CallInst::TCK_MustTail);
     b_.CreateRetVoid();
@@ -467,8 +473,11 @@ class Lowerer {
   // LOAD/STORE_CONTEXT through entry-block allocas (mem2reg -> host registers)
   // instead of ctx+offset memory, with write-back/reload at call barriers.
   bool residency_ = false;
+  bool writeback_ = false;  // alloca-only stores + flush at barriers (RPCS3-class)
   std::unordered_map<uint64_t, llvm::AllocaInst*> ctx_regs_;  // offset -> alloca
   std::unordered_map<uint64_t, llvm::Type*> ctx_reg_ty_;      // offset -> type
+  std::unordered_set<uint64_t> ctx_stored_;    // offsets written via alloca-only
+  std::unordered_set<uint64_t> ctx_poisoned_;  // mixed-type: kept write-through
 
   // Get (lazily create) the alloca mirroring guest-context offset `offset`. The
   // alloca + its init-load-from-ctx are inserted right after the entry x20/x21
@@ -497,6 +506,24 @@ class Lowerer {
       b_.CreateStore(b_.CreateLoad(ty, CtxPtr(kv.first)), kv.second);
     }
   }
+  // Flush alloca-only-managed guest regs back to the context (before a call/tail/
+  // return so the callee/caller reading via x20 sees current values). Only
+  // ctx_stored_ (clean single-type offsets); poisoned offsets stay write-through.
+  void WriteBackCtxRegs() {
+    for (uint64_t offset : ctx_stored_) {
+      auto it = ctx_regs_.find(offset);
+      if (it == ctx_regs_.end()) continue;
+      auto* ty = ctx_reg_ty_[offset];
+      b_.CreateStore(b_.CreateLoad(ty, it->second), CtxPtr(offset));
+    }
+  }
+  // A guest RETURN (host RetVoid): flush the alloca-only guest regs to the context
+  // first so the caller reads current values via x20. Use for every real return
+  // EXCEPT the musttail return (musttail forbids instructions between call + ret).
+  void EmitReturn() {
+    if (writeback_) WriteBackCtxRegs();
+    b_.CreateRetVoid();
+  }
 };
 
 // Reads a reserved AArch64 register (x20=ctx, x21=membase) set up by the
@@ -523,6 +550,7 @@ bool Lowerer::Run(HIRBuilder* builder) {
   // memory) - so the qemu differential validates the LOGIC at opt=0. GetCtxReg
   // anchors its allocas after membase_, so both x20/x21 are set first.
   residency_ = cvars::cpu_backend_llvm_context_residency;
+  writeback_ = residency_ && cvars::cpu_backend_llvm_residency_writeback;
 
   // Save the incoming guest return address (x0, per the a64 host->guest thunk:
   // "mov x0, x2 // x0 = guest return address") and init the next-call slot.
@@ -575,12 +603,25 @@ bool Lowerer::Run(HIRBuilder* builder) {
       for (Instr* i = blk->instr_head; i; i = i->next) {
         Opcode op = i->opcode->num;
         if (op == OPCODE_LOAD_CONTEXT) {
-          if (auto* ty = T(i->dest->type)) GetCtxReg(i->src1.offset, ty);
+          if (auto* ty = T(i->dest->type)) {
+            if (!GetCtxReg(i->src1.offset, ty)) {
+              ctx_poisoned_.insert(i->src1.offset);  // mixed type -> write-through
+            }
+          }
         } else if (op == OPCODE_STORE_CONTEXT && i->src2.value) {
-          if (auto* ty = T(i->src2.value->type)) GetCtxReg(i->src1.offset, ty);
+          if (auto* ty = T(i->src2.value->type)) {
+            if (GetCtxReg(i->src1.offset, ty)) {
+              ctx_stored_.insert(i->src1.offset);  // clean alloca-only candidate
+            } else {
+              ctx_poisoned_.insert(i->src1.offset);
+            }
+          }
         }
       }
     }
+    // A mixed-type (union) offset can't be cleanly alloca-only - a write-back of
+    // one type would clobber a direct-ctx store of another. Keep it write-through.
+    for (uint64_t off : ctx_poisoned_) ctx_stored_.erase(off);
   }
 
   // One llvm BB per HIR block, created up front so branches can target them.
@@ -633,7 +674,7 @@ bool Lowerer::Run(HIRBuilder* builder) {
       if (blk->next) {
         b_.CreateBr(block_map_[blk->next->ordinal]);
       } else {
-        b_.CreateRetVoid();
+        EmitReturn();
       }
     }
   }
@@ -690,12 +731,16 @@ bool Lowerer::LowerInstr(Instr* i) {
       if (!val) return false;
       if (residency_) {
         if (auto* slot = GetCtxReg(i->src1.offset, val->getType())) {
-          // WRITE-THROUGH: mirror to the alloca (mem2reg -> register for fast
-          // subsequent loads) AND the context memory, so the context is always
-          // current for callees/helpers reading via x20 - no flush-at-barrier
-          // needed (only a reload after calls, since the callee may change it).
+          // Always mirror to the alloca (mem2reg -> host register for fast loads).
           b_.CreateStore(val, slot);
-          b_.CreateStore(val, CtxPtr(i->src1.offset));
+          // WRITE-THROUGH (default mode, or a poisoned/mixed-type offset): also
+          // write the context so it's always current for callees via x20.
+          // WRITE-BACK MODE (writeback_ + clean offset): alloca-ONLY - the context
+          // store is DEFERRED to the call/return barrier (WriteBackCtxRegs), which
+          // eliminates the per-store context write (the #1 residency lever).
+          if (!writeback_ || !ctx_stored_.count(i->src1.offset)) {
+            b_.CreateStore(val, CtxPtr(i->src1.offset));
+          }
           return true;
         }
       }
@@ -843,7 +888,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       b_.CreateBr(cont);
       if (fresh_cont) {
         b_.SetInsertPoint(cont);
-        if (!i->next && !i->block->next) b_.CreateRetVoid();
+        if (!i->next && !i->block->next) EmitReturn();
       }
       // else: cont is the next block; leave the insert point on the terminated
       // trap_bb so Run()'s fall-through adds no spurious branch.
@@ -888,7 +933,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       b_.CreateBr(cont);
       if (fresh_cont) {
         b_.SetInsertPoint(cont);
-        if (!i->next && !i->block->next) b_.CreateRetVoid();
+        if (!i->next && !i->block->next) EmitReturn();
       }
       return true;
     }
@@ -1278,11 +1323,12 @@ bool Lowerer::LowerInstr(Instr* i) {
       }
       if (i->next || !i->block->next) {
         b_.SetInsertPoint(other);
-        if (!i->next) b_.CreateRetVoid();  // dangling guard block
+        if (!i->next) EmitReturn();  // dangling guard block
       }
       return true;
     }
     case OPCODE_RETURN:
+      if (writeback_) WriteBackCtxRegs();  // flush guest regs -> ctx for the caller
       b_.CreateRetVoid();
       return true;
     case OPCODE_RETURN_TRUE: {
@@ -1299,10 +1345,14 @@ bool Lowerer::LowerInstr(Instr* i) {
                                    : BlockFor(i->block->next);
       b_.CreateCondBr(Truth(cond), ret_bb, cont);
       b_.SetInsertPoint(ret_bb);
+      if (writeback_) WriteBackCtxRegs();
       b_.CreateRetVoid();
       if (fresh_cont) {
         b_.SetInsertPoint(cont);
-        if (!i->next && !i->block->next) b_.CreateRetVoid();
+        if (!i->next && !i->block->next) {
+          if (writeback_) WriteBackCtxRegs();
+          b_.CreateRetVoid();
+        }
       }
       return true;
     }
@@ -1342,7 +1392,7 @@ bool Lowerer::LowerInstr(Instr* i) {
         auto* call_bb = llvm::BasicBlock::Create(ctx_, "blr_call", fn_);
         b_.CreateCondBr(is_ret, ret_bb, call_bb);
         b_.SetInsertPoint(ret_bb);
-        b_.CreateRetVoid();
+        EmitReturn();
         b_.SetInsertPoint(call_bb);
         if (is_tail) {
           // Not a return -> a tail call; reuse the frame (musttail + ret).
@@ -1359,7 +1409,7 @@ bool Lowerer::LowerInstr(Instr* i) {
           } else if (i->block->next) {
             b_.CreateBr(BlockFor(i->block->next));
           } else {
-            b_.CreateRetVoid();
+            EmitReturn();
           }
         }
       } else if (is_tail) {
@@ -1421,7 +1471,7 @@ bool Lowerer::LowerInstr(Instr* i) {
         auto* fwd_bb = llvm::BasicBlock::Create(ctx_, "ctrue_fwd", fn_);
         b_.CreateCondBr(is_ret, ret_bb, fwd_bb);
         b_.SetInsertPoint(ret_bb);
-        b_.CreateRetVoid();
+        EmitReturn();
         b_.SetInsertPoint(fwd_bb);
         if (is_tail) {
           if (!EmitGuestTailCall(target)) return false;  // terminates fwd_bb
@@ -1440,7 +1490,7 @@ bool Lowerer::LowerInstr(Instr* i) {
       // taken/fwd block so Run() adds no spurious fall-through branch.
       if (fresh_cont) {
         b_.SetInsertPoint(cont_bb);
-        if (!i->next && !i->block->next) b_.CreateRetVoid();
+        if (!i->next && !i->block->next) EmitReturn();
       }
       return true;
     }

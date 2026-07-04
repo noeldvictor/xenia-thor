@@ -24,6 +24,7 @@
 
 DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_bool(cpu_backend_llvm_context_residency);
+DECLARE_bool(cpu_backend_llvm_residency_writeback);
 
 using namespace xe;                // xe::Memory
 using namespace xe::cpu;
@@ -101,10 +102,13 @@ static void RunDiff(const std::function<void(HIRBuilder&)>& generator,
   // O0: skip the (qemu-slow) middle-end passes; correctness needs only the
   // direct-ctx lowering. The residency win (O2) is validated on-device.
   cvars::cpu_backend_llvm_opt = 0;
-  // Validate the context-register residency lowering (allocas + write-through +
-  // reload) byte-for-byte against a64. Correct at opt=0 (allocas as memory);
-  // mem2reg only changes speed, not semantics.
+  // Validate the context-register residency lowering byte-for-byte against a64.
+  // Correct at opt=0 (allocas as memory); mem2reg only changes speed, not
+  // semantics. WRITE-BACK mode (alloca-only stores + flush at call/return
+  // barriers) is validated here too: the final ctx the test captures is set by
+  // the RETURN-barrier write-back, so a stale/missed barrier would fail the diff.
   cvars::cpu_backend_llvm_context_residency = true;
+  cvars::cpu_backend_llvm_residency_writeback = true;
   uint64_t ra[32] = {0}, rl[32] = {0};
   uint32_t va[32] = {0}, vl[32] = {0};
   Capture(Be::kA64, generator, pre_call, ra, va);
@@ -931,5 +935,17 @@ TEST_CASE("LLVM_DID_SATURATE", "[llvm]") {
 // differential comparison is impossible. The LLVM lowering for them is correct
 // by composition (CondBr — tested — around EmitGuestCall — tested) and was
 // confirmed to produce the right result (r3==0) when this was briefly a RunDiff.
+
+// Link stub for the lean ARM64 qemu cpu-tests: the load-time D3D-HLE handlers in
+// processor.cc reach into gpu::CommandProcessor to write the PM4 ring directly,
+// but this cross build does not link the gpu library. No-op definition (the
+// handlers are cvar-gated + no CommandProcessor exists in the tests). The x86_64
+// host + Android app link the real symbol (this whole file is ARM64-only).
+#include "xenia/gpu/command_processor.h"
+namespace xe {
+namespace gpu {
+void CommandProcessor::UpdateWritePointer(uint32_t value) {}
+}  // namespace gpu
+}  // namespace xe
 
 #endif  // XE_ARCH_ARM64
