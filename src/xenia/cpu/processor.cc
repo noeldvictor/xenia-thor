@@ -98,6 +98,17 @@ DEFINE_string(cpu_hle_ring_writer_addr, "",
               "NATIVELY and call this at the leaf. This is the coherent hook for the "
               "RB_SURFACE_INFO pitch rewrite (bin-once). Empty disables.",
               "CPU");
+DEFINE_string(cpu_hle_bin_once_begintiling_addr, "",
+              "GPU D3D9-HLE BIN-ONCE (the field win): hex guest addr of BD's "
+              "D3DDevice_BeginTiling (FUN_8248A188 - the count writer). The host "
+              "handler rewrites its 2 variable inputs (r5=count->1, r6=rects[0]-> "
+              "one full-surface {0,0,W,H} quad from the surface desc), then runs the "
+              "BYTE-IDENTICAL guest body via a behavior toggle (kDefault so the JIT'd "
+              "body runs, not this extern; f1/others preserved). => the field renders "
+              "in ONE full-surface pass instead of 2 predicated tiles = HALVES the "
+              "foliage vertex/binning the tiling doubles (360 tiles for its 10MB EDRAM; "
+              "Thor's emulated EDRAM has no limit). Empty disables. Default off.",
+              "CPU");
 
 namespace xe {
 namespace kernel {
@@ -540,6 +551,86 @@ bool IsHleTilingReplay(uint32_t address) {
   std::call_once(g_hle_tiling_replay_once, ParseHleTilingReplayAddr);
   return g_hle_tiling_replay_addr && address == g_hle_tiling_replay_addr;
 }
+// --- HLE BIN-ONCE via BeginTiling FUN_8248A188 (the count writer) ---
+std::atomic<uint32_t> g_hle_bin_once_begintiling_addr{0};
+std::once_flag g_hle_bin_once_begintiling_once;
+void ParseHleBinOnceBeginTiling() {
+  if (!cvars::cpu_hle_bin_once_begintiling_addr.empty()) {
+    g_hle_bin_once_begintiling_addr = uint32_t(strtoul(
+        cvars::cpu_hle_bin_once_begintiling_addr.c_str(), nullptr, 16));
+  }
+}
+bool IsHleBinOnceBeginTiling(uint32_t address) {
+  if (cvars::cpu_hle_bin_once_begintiling_addr.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_bin_once_begintiling_once, ParseHleBinOnceBeginTiling);
+  return g_hle_bin_once_begintiling_addr &&
+         address == g_hle_bin_once_begintiling_addr;
+}
+// Host BIN-ONCE for BeginTiling FUN_8248A188 (the count writer). Its only variable
+// inputs are r5=count and r6=rects-ptr (N x {x0,y0,x1,y1}). Force count=1 + rewrite
+// rects[0] to one full-surface {0,0,W,H} quad, then run the BYTE-IDENTICAL guest body
+// via a behavior toggle (kDefault so the JIT'd body runs, not this extern; the HLE
+// dispatch only fires on kNew declare, so the toggle survives Execute's re-lookup;
+// Execute overwrites only r3-r10 so f1/depthClearFloat is preserved). Result: the
+// field renders in ONE full-surface pass, not 2 predicated tiles = halve the foliage
+// vertex/binning the tiling doubles. Surface W/H from the surface descriptor at
+// device+0x2f88 (>>18=W-1, >>3 &0x7fff=H-1). Coherent by construction: BeginTiling's
+// own body rebuilds device+0x31ac/+0x3224/+0x3264 + the 0x80 token from count/rects.
+void HleBeginTilingHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
+  auto* proc = ctx->processor;
+  Memory* mem = proc->memory();
+  auto* ts = ThreadState::Get();
+  uint32_t addr = g_hle_bin_once_begintiling_addr.load();
+  if (!ts || !addr) {
+    return;
+  }
+  static thread_local bool in_bin_once = false;
+  if (in_bin_once) {
+    return;  // defensive (single render thread; the toggle already prevents re-entry)
+  }
+  uint32_t device = uint32_t(ctx->r[3]);
+  uint32_t rects = uint32_t(ctx->r[6]);
+  auto rd = [&](uint32_t a) {
+    return xe::load_and_swap<uint32_t>(mem->TranslateVirtual(a));
+  };
+  auto wr = [&](uint32_t a, uint32_t v) {
+    xe::store_and_swap<uint32_t>(mem->TranslateVirtual(a), v);
+  };
+  uint32_t surf = rd(device + 0x2f88u);
+  if (!surf) {
+    surf = rd(device + 0x2f98u);
+  }
+  uint32_t W = 1280u, H = 720u;
+  if (surf) {
+    uint32_t info = rd(surf + 0x24u);
+    W = ((info >> 18) & 0x3fffu) + 1u;
+    H = ((info >> 3) & 0x7fffu) + 1u;
+  }
+  if (rects) {
+    wr(rects + 0x0u, 0u);
+    wr(rects + 0x4u, 0u);
+    wr(rects + 0x8u, W);
+    wr(rects + 0xcu, H);
+  }
+  static std::atomic<int> fire_log{0};
+  if (fire_log.fetch_add(1) < 16) {
+    XELOGI("HLE BIN-ONCE FIRE: device={:08X} orig_count={} forced_to=1 W={} H={}",
+           device, uint32_t(ctx->r[5]), W, H);
+  }
+  Function* fn = proc->LookupFunction(addr);
+  if (!fn) {
+    return;
+  }
+  uint64_t args[7] = {ctx->r[3], ctx->r[4], 1u,       ctx->r[6],
+                      ctx->r[7], ctx->r[8], ctx->r[9]};
+  in_bin_once = true;
+  fn->set_behavior(Function::Behavior::kDefault);
+  proc->Execute(ts, addr, args, 7);
+  fn->set_behavior(Function::Behavior::kExtern);
+  in_bin_once = false;
+}
 // Host reimplementation of BD's deferred-D3D-command tiling REPLAY FUN_82487cc8:
 // r3=recorded command stream, r4=ctx (cmd-list context; +0x74=tile-state struct,
 // +0x78=TILE COUNT, +0x2c=tile idx, +0x28=predication flags, +0x16c=bin mask,
@@ -920,6 +1011,13 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE RING-WRITER: planted host ring writer at guest {:08X}", address);
+      return function;
+    }
+    if (IsHleBinOnceBeginTiling(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleBeginTilingHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("HLE BIN-ONCE: planted BeginTiling count=1 handler @ {:08X}", address);
       return function;
     }
     // LOAD-TIME SIGNATURE HLE: the scan (run once) has identified the XDK D3D9
