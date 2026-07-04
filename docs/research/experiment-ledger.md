@@ -40,6 +40,11 @@ value is unreliable (includes idle). OSD fps box = the render-rate truth for ONE
 ## GPU levers — SHIPPED (BD ~19.8fps stack)
 | `gpu_fp10_color_as_unorm10` (−8ms), `gpu_vrs_foliage_rate=4` (perf) / =2x2 (clean 17fps), `gpu_force_max_msaa_samples=2` | **WIN — shipped** (but fp10/VRS add the sparkle-corruption seen in screenshots = the field's water/effects, removable). |
 
+## Custom Turnip driver-internals (the "general GPU fix" direction)
+| Direction | Finding | Verdict |
+|---|---|---|
+| **Custom Turnip-internals patch (ir3 compiler / GMEM-tile / LRZ)** — general fix for all games | **DEAD (source-grounded agent audit, 2026-07-04, read /root/mesa Turnip+ir3).** Turnip is already NEAR-OPTIMAL: ir3 sync-scheduling is lazy+batched, tex latency hidden by warp-switch at 12-reg occupancy (the foliage VS's 10 syncs = inherent data-dependency, NOT a compiler bug); GMEM/sysmem autotune is bandwidth+overdraw-aware, render_area-clipped, with conditional tile-I/O + load/store elision (tile-I/O ~1ms, NOT the 79ms confound); LRZ keeps TEST live for alpha-test (only WRITE disabled), co-planar foliage is irreducibly non-occluding. The TBDR-mismatch is expressed THROUGH the Vulkan API (oversized areas, 42 passes, SSBO vfetch) and Turnip already translates each near-optimally. UNLIKE the KGSL fence fix (a genuine submit-path BUG the app couldn't influence), the render path has NO analogous unconditional inefficiency. | **DEAD — do not fund a driver build.** The only unused HW cap (bidirectional LRZ) is narrow+errata-prone, won't help BD. Real BD work is APP-SIDE (xenia): native geometry submission + internal-resolution scaling. |
+
 ## CPU / LLVM levers
 | Lever | Result | Verdict |
 |---|---|---|
