@@ -292,6 +292,15 @@ safety, not "asking" — they always hold.
 
 ### ⚠️ PERFORMANCE-MODE SHADING STACK FAILS 30 (measured 2026-07-02, OSD): downscale 45% + decimation 55% + VRS 4x4 + fp10 + cap2 = **8.9 FPS OSD** (heavy bloom field, gpu_busy 99%) - WORSE than the 19.8 baseline. Render is CORRECT (coherent, thinner foliage, softer) but downscale REGRESSES fps (confirms the earlier rigorous 'downscale makes BD slower' via RT-scaling overhead). => built shading levers do NOT reach 30 (cap ~20 or regress). BD-30 needs the HLE bin-once (multi-session, target 82487F58) + working levers, NOT the shading stack. Do NOT re-chase aggressive downscale for fps.
 
+## 🔬🔬 GREP THE EXPERIMENT LEDGER BEFORE RUNNING ANYTHING (anti-repetition RAG)
+**`docs/research/experiment-ledger.md` is the grep-able index of EVERY experiment ever run + its DEAD/FLAT/WIN
+verdict. BEFORE running ANY device experiment or building any lever: `grep` the ledger for the lever name +
+keywords. If it's there with DEAD/FLAT, DO NOT re-run it — build on the note instead. ADD every new result to
+the ledger the moment you get it.** This exists because we REPEATEDLY re-ran already-settled experiments
+(native-vertex-fetch=flat, EDRAM=black, draw-merge=regresses) — the large prose memory files aren't grep-
+friendly, so retrieval failed and we burned device runs re-deriving dead ends. The ledger is the fix: retrieve,
+don't re-run. (Practical RAG = a structured grep-able ledger, since this CLI env has no vector DB.)
+
 ## ⚠️ PLAN FROM FIRST PRINCIPLES — device A/Bs here LOOP on confounds
 **Derive the structural cause from CODE + the known 360/Xenon/Adreno ARCHITECTURE + the DBT/emulation
 literature FIRST. Form a falsifiable hypothesis. ONLY THEN fire the device — to CONFIRM that one
