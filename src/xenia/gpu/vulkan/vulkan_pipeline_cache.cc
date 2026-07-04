@@ -370,6 +370,17 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
     }
   }
 
+  // DEPTH-ONLY ALPHA strip (gpu_depth_only_alpha_shader): if this is a DEPTH-ONLY
+  // pass (normalized color mask == 0 - e.g. BD's foliage SHADOW map) but the draw
+  // still ALPHA-TESTS (leaf cutout), request the variant that keeps the alpha test
+  // but skips the color/lighting output (DCE'd) = same shadow, much cheaper.
+  if (cvars::gpu_depth_only_alpha_shader &&
+      regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable &&
+      draw_util::GetNormalizedColorMask(
+          regs, shader.writes_color_targets()) == 0) {
+    modification.pixel.depth_only_alpha = 1;
+  }
+
   return modification;
 }
 

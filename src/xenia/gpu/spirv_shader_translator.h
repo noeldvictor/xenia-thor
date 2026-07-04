@@ -98,6 +98,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // the same guest PS's normal host-RT translation; routed to the FSI-mode
       // translator instance in EnsureShadersTranslated. 0 = normal host-RT.
       uint32_t hybrid_fsi_composite : 1;
+      // DEPTH-ONLY ALPHA strip (gpu_depth_only_alpha_shader): for depth-only
+      // passes (no color attachment - e.g. BD's foliage SHADOW map) that still
+      // need the ALPHA TEST (leaf cutout), translate a variant that keeps the
+      // alpha-test/discard but SKIPS the color-output stores, so DCE strips the
+      // ~4000-instr lighting math that only fed the masked-away color. Same
+      // depth/shadow, no gfx loss. A distinct VARIANT so the normal color use of
+      // the same guest PS stays byte-identical (modification 0). 0 = normal.
+      uint32_t depth_only_alpha : 1;
     } pixel;
     uint64_t value = 0;
 

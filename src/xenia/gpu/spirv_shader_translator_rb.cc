@@ -1292,7 +1292,13 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
               std::move(color_rgba_shuffle_op));
         }
 
-        builder_->createStore(color, color_variable);
+        // DEPTH-ONLY ALPHA variant: skip the color-output store (depth-only pass,
+        // no color attachment). The alpha test ran earlier and read the local
+        // color's .a, so the leaf-cutout shadow stays correct; the color/lighting
+        // that only fed this store is now dead and DCE'd by the SPIR-V optimizer.
+        if (!GetSpirvShaderModification().pixel.depth_only_alpha) {
+          builder_->createStore(color, color_variable);
+        }
       }
     }
   }

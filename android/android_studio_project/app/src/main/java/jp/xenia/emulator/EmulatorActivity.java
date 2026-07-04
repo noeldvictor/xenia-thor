@@ -259,6 +259,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_trace_kick_lr");
             copyBooleanExtra(intent, launchArguments, "gpu_flatten_predicated_tiling");
             copyBooleanExtra(intent, launchArguments, "gpu_flatten_predicated_tiling_widen");
+            copyBooleanExtra(intent, launchArguments, "gpu_depth_only_alpha_shader");
             copyBooleanExtra(intent, launchArguments, "kernel_video_widescreen");
             copyIntExtra(intent, launchArguments, "gpu_resolution_downscale_pct");
             copyBooleanExtra(intent, launchArguments, "gpu_diag_raster_ab");

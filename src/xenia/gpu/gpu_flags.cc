@@ -147,6 +147,11 @@ DEFINE_int32(
     "per-draw overhead. 0 = off.",
     "GPU");
 
+DEFINE_bool(gpu_binonce_full_scissor, false,
+            "HLE BIN-ONCE: override the per-tile scissor to the full surface "
+            "(pairs with cpu_hle_binonce_addr - the forced single tile renders "
+            "the whole scene, not just its tile).",
+            "GPU");
 DEFINE_bool(
     gpu_diag_raster_ab, false,
     "DIAGNOSTIC (rigorous fill-vs-geometry): with gpu_freeze_ab_alternate_vrs + "
@@ -262,6 +267,16 @@ DEFINE_bool(
     "PA_SC_WINDOW_OFFSET on tile 1 (check the gpu_trace_bin_select win_off "
     "log), widening alone is insufficient - offset zeroing would be needed. "
     "Default off.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_depth_only_alpha_shader, false,
+    "NO-GFX-LOSS SPEED REWRITE: for DEPTH-ONLY passes that still ALPHA-TEST (BD's "
+    "foliage SHADOW map re-renders every alpha-tested leaf just to write shadow "
+    "depth), translate an alpha-test-only pixel-shader variant that keeps the "
+    "leaf-cutout discard but skips the color-output store, so the SPIR-V optimizer "
+    "DCE-strips the ~4000-instr lighting math that only fed the masked-away color. "
+    "Pixel-identical shadows, far cheaper depth pass. Default off.",
     "GPU");
 
 DEFINE_bool(
