@@ -551,7 +551,7 @@ bool IsHleTilingReplay(uint32_t address) {
 // GATED via cpu_hle_tiling_replay_addr. WIP: count=1 alone = half (pitch stays 360);
 // the coherent RB_SURFACE_INFO pitch/base/resolve rewrite is the next increment.
 void HleTilingReplayHandler(ppc::PPCContext* ctx,
-                            kernel::KernelState* /*kernel_state*/) {
+                            kernel::KernelState* kernel_state) {
   auto* proc = ctx->processor;
   Memory* mem = proc->memory();
   auto* ts = ThreadState::Get();
@@ -561,9 +561,6 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
     ctx->r[3] = stream;
     return;
   }
-  uint32_t device =
-      xe::load_and_swap<uint32_t>(mem->TranslateVirtual(0x820005F4u));
-  uint32_t scratch = uint32_t(ctx->r[1]) - 0x400u;
   auto rd = [&](uint32_t a) {
     return xe::load_and_swap<uint32_t>(mem->TranslateVirtual(a));
   };
@@ -573,6 +570,34 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
   auto call = [&](uint32_t fn, uint32_t a3, uint32_t a4, uint32_t a5, size_t n) {
     uint64_t args[3] = {a3, a4, a5};
     proc->Execute(ts, fn, args, n);
+  };
+  // Optimal-host emit: write the PM4 (IB-pointer packet {0xC0013F00, pkt1, pkt0}
+  // - opcode 0x3F INDIRECT_BUFFER) DIRECTLY to xenia's primary ring in C++ + kick,
+  // instead of the reentrant Execute(ring_writer) that DEADLOCKS the CP thread.
+  gpu::CommandProcessor* cp = nullptr;
+  if (kernel_state && kernel_state->emulator() &&
+      kernel_state->emulator()->graphics_system()) {
+    cp = kernel_state->emulator()->graphics_system()->command_processor();
+  }
+  auto ring_emit = [&](uint32_t pkt0, uint32_t pkt1) {
+    if (!cp) {
+      return;
+    }
+    uint32_t ring_base = cp->primary_buffer_ptr();
+    uint32_t ring_words = cp->primary_buffer_size() / 4u;
+    if (!ring_base || !ring_words) {
+      return;
+    }
+    uint32_t widx = cp->write_ptr_index();
+    auto rw = [&](uint32_t w) {
+      xe::store_and_swap<uint32_t>(mem->TranslateVirtual(ring_base + widx * 4u),
+                                   w);
+      widx = (widx + 1u) % ring_words;
+    };
+    rw(0xc0013f00u);
+    rw(pkt1);
+    rw(pkt0);
+    cp->UpdateWritePointer(widx);
   };
   static std::atomic<int> pertok_log{0};
   int guard = 0;
@@ -587,14 +612,14 @@ void HleTilingReplayHandler(ppc::PPCContext* ctx,
       call(0x826BF770u, cx + 0x74u, stream + 4u, 0xf8u, 3);  // memcpy tile table
       wr(cx + 0x2cu, 0);
       wr(cx + 0x16cu, 0x7fffffffu);
-      wr(cx + 0x78u, 1u);  // ⭐ BIN-ONCE: tile count = 1
+      // (faithful: keep the guest's tile count for now - prove the C++ replay
+      // renders correct before layering the count=1 bin-once, which BD's
+      // composite-pass structure makes non-trivial.)
       stream += 0x3fu * 4u;
     } else if (t == 0x81000000u) {
       break;
     } else if (t == 0x82000000u) {
-      wr(scratch, token & 0xffffffu);
-      wr(scratch + 4u, rd(stream + 4u));
-      call(0x8246E100u, device, scratch, 1u, 3);  // emit PM4 word to ring
+      ring_emit(token & 0xffffffu, rd(stream + 4u));  // C++ ring write (no hang)
       stream += 8u;
     } else if (t == 0x83000000u) {
       stream += 4u;
