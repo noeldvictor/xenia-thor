@@ -40,6 +40,28 @@ value is unreliable (includes idle). OSD fps box = the render-rate truth for ONE
 ## GPU levers — SHIPPED (BD ~19.8fps stack)
 | `gpu_fp10_color_as_unorm10` (−8ms), `gpu_vrs_foliage_rate=4` (perf) / =2x2 (clean 17fps), `gpu_force_max_msaa_samples=2` | **WIN — shipped** (but fp10/VRS add the sparkle-corruption seen in screenshots = the field's water/effects, removable). |
 
+## 🔥 THE UN-EXHAUSTED LEVER (2026-07-04) — pipeline binds / TBDR context-rolls
+**BD's field binds ~208 distinct pipelines + ~1050 descriptor binds PER FRAME** (device-measured, the
+`avg_vertices/pipeline_binds/descriptor_binds` draw-outcomes log). On the Adreno TBDR each pipeline bind is a
+CONTEXT-ROLL (state re-emit); **208 × ~250µs ≈ 52ms ≈ the ~53ms AREA-INDEPENDENT frame cost** (gpu_diag_raster_ab:
+full-raster 94ms vs quarter-area 53ms → 53ms doesn't scale with pixels). This is the immediate-mode-vs-TBDR gap:
+those binds are ~free on desktop, expensive on a tile GPU. **NOT in the exhausted list** (draw-MERGE regressed
+but that's draw COUNT, not pipeline VARIANT count; the audit gated bindless "confirm context-roll is a real GPU
+cost first" — this is that confirmation, circumstantially). push_descriptors + cache_texture_descriptors already
+default-on so descriptor binds are cheap; PIPELINE binds are the target. Pipeline key (vulkan_pipeline_cache.h:137)
+= blend + VS/PS hash+mod + render_pass_key + topology; blend is the COLLAPSIBLE driver (code already notes "(future)
+EDS3 dynamic blend emit" @:262). **FIX (BUILDING, gpu_dynamic_blend_state, general, no-gfx-loss): EDS3 dynamic
+blend** - move blend enable/equation/writemask to VK dynamic state, zero blend from the pipeline key → blend variance
+stops minting pipelines → fewer binds → fewer context-rolls. **BUILT + DEVICE-TESTED 2026-07-04 (gpu_dynamic_blend_state):
+DEAD/INERT for BD.** EDS3 extension SUPPORTED on Thor Turnip ("dynamic blend enable/equation/writemask: yes") + engaged
++ render PIXEL-PERFECT (dynamic blend reproduces static exactly, mechanism CORRECT) BUT **pipeline_binds stayed EXACTLY
+208 (unchanged), frame 7.7fps unchanged** = NOT ONE of BD's 208 pipelines differs only in blend → they are ALL distinct
+by SHADER + render_pass (necessary). So blend is NOT a variant driver for BD; the tractable collapse is void here. The
+208 binds are IRREDUCIBLE without collapsing the per-format SHADER variants = bindless vertex-fetch (LARGE) — AND it
+remains UNPROVEN the 208 binds are even BD's cost (rigorous prior = foliage geometry; geometry levers also flat). **The
+EDS3 feature is CORRECT + GENERAL (default-off, kept — may reduce binds on blend-varying titles, unvalidated) but is a
+DEAD LEVER FOR BD.** ⇒ pipeline-bind reduction is not BD's reachable win.
+
 ## Custom Turnip driver-internals (the "general GPU fix" direction)
 | Direction | Finding | Verdict |
 |---|---|---|

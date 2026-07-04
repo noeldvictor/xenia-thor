@@ -759,6 +759,65 @@ VkBlendOp VulkanPipelineCache::GetVkBlendOp(xenos::BlendOp blend_op) {
   return kMap[uint32_t(blend_op)];
 }
 
+void VulkanPipelineCache::GetCurrentColorBlendDynamicState(
+    uint32_t normalized_color_mask,
+    VulkanRenderTargetCache::RenderPassKey render_pass_key,
+    uint32_t& attachment_count_out, VkBool32* blend_enables_out,
+    VkColorBlendEquationEXT* blend_equations_out,
+    VkColorComponentFlags* write_masks_out) const {
+  const RegisterFile& regs = register_file_;
+  uint32_t color_rts_used = render_pass_key.depth_and_color_used >> 1;
+  attachment_count_out = color_rts_used ? (32 - xe::lzcnt(color_rts_used)) : 0;
+  // Default every attachment to the static zero-init (disabled blend, zero
+  // equation, mask 0) so RT-mask gaps match the value-initialized static color
+  // blend attachments (which are filled only for the present render targets).
+  for (uint32_t i = 0; i < attachment_count_out; ++i) {
+    blend_enables_out[i] = VK_FALSE;
+    blend_equations_out[i] = VkColorBlendEquationEXT{};
+    write_masks_out[i] = 0;
+  }
+  uint32_t color_rts_remaining = color_rts_used;
+  uint32_t color_rt_index;
+  while (xe::bit_scan_forward(color_rts_remaining, &color_rt_index)) {
+    color_rts_remaining &= ~(uint32_t(1) << color_rt_index);
+    // Reproduce EXACTLY the pipeline-key render-target description (incl. the
+    // constant-alpha fixup + write_mask==0 identity in
+    // WritePipelineRenderTargetDescription), then EnsurePipelineCreated's
+    // blend-attachment derivation, so the dynamic values are pixel-identical to
+    // the static path.
+    PipelineRenderTarget render_target = {};
+    WritePipelineRenderTargetDescription(
+        regs.Get<reg::RB_BLENDCONTROL>(
+            reg::RB_BLENDCONTROL::rt_register_indices[color_rt_index]),
+        (normalized_color_mask >> (color_rt_index * 4)) & 0b1111, render_target);
+    VkColorBlendEquationEXT& equation = blend_equations_out[color_rt_index];
+    if (render_target.src_color_blend_factor != PipelineBlendFactor::kOne ||
+        render_target.dst_color_blend_factor != PipelineBlendFactor::kZero ||
+        render_target.color_blend_op != xenos::BlendOp::kAdd ||
+        render_target.src_alpha_blend_factor != PipelineBlendFactor::kOne ||
+        render_target.dst_alpha_blend_factor != PipelineBlendFactor::kZero ||
+        render_target.alpha_blend_op != xenos::BlendOp::kAdd) {
+      blend_enables_out[color_rt_index] = VK_TRUE;
+      equation.srcColorBlendFactor =
+          GetVkBlendFactor(render_target.src_color_blend_factor);
+      equation.dstColorBlendFactor =
+          GetVkBlendFactor(render_target.dst_color_blend_factor);
+      equation.colorBlendOp = GetVkBlendOp(render_target.color_blend_op);
+      equation.srcAlphaBlendFactor =
+          GetVkBlendFactor(render_target.src_alpha_blend_factor);
+      equation.dstAlphaBlendFactor =
+          GetVkBlendFactor(render_target.dst_alpha_blend_factor);
+      equation.alphaBlendOp = GetVkBlendOp(render_target.alpha_blend_op);
+    }
+    // colorWriteMask is set regardless of blendEnable, exactly like the static
+    // attachment (incl. the gpu_force_no_color_write override).
+    write_masks_out[color_rt_index] =
+        cvars::gpu_force_no_color_write
+            ? 0
+            : VkColorComponentFlags(render_target.color_write_mask);
+  }
+}
+
 bool VulkanPipelineCache::GetCurrentStateDescription(
     const VulkanShader::VulkanTranslation* vertex_shader,
     const VulkanShader::VulkanTranslation* pixel_shader,
@@ -997,6 +1056,22 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
     // in the render pass object).
     uint32_t render_pass_color_rts = render_pass_key.depth_and_color_used >> 1;
     assert_true(device_properties.independentBlend);
+    // gpu_dynamic_blend_state (EDS3): when guest color blend enable/equation/
+    // write mask are promoted to dynamic state, exclude them from the pipeline
+    // key so draws differing ONLY in blend collapse onto one VkPipeline (each
+    // pipeline bind is a TBDR context-roll). The exact per-attachment values are
+    // reproduced in UpdateDynamicState (GetCurrentColorBlendDynamicState) from the
+    // same RB_BLENDCONTROL + color mask, so rendering is unchanged. Must match the
+    // dynamic-state array in EnsurePipelineCreated + the emit gate in the command
+    // processor (same cvar + sub-feature gate). Default-off keeps the real values.
+    const ui::vulkan::VulkanDevice::Extensions& device_extensions =
+        command_processor_.GetVulkanDevice()->extensions();
+    const bool dynamic_blend =
+        cvars::gpu_dynamic_blend_state &&
+        device_extensions.ext_EXT_extended_dynamic_state3 &&
+        device_extensions.eds3_dynamic_blend_enable &&
+        device_extensions.eds3_dynamic_blend_equation &&
+        device_extensions.eds3_dynamic_write_mask;
     uint32_t render_pass_color_rts_remaining = render_pass_color_rts;
     uint32_t color_rt_index;
     while (xe::bit_scan_forward(render_pass_color_rts_remaining,
@@ -1007,6 +1082,21 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
               reg::RB_BLENDCONTROL::rt_register_indices[color_rt_index]),
           (normalized_color_mask >> (color_rt_index * 4)) & 0b1111,
           description_out.render_targets[color_rt_index]);
+      if (dynamic_blend) {
+        // Zero the pure blend enable/equation/write-mask key fields to a canonical
+        // constant (0) - these are exactly what the 3 dynamic states cover. Shader
+        // / render-pass state (shader hash + modification, render_pass_key) is a
+        // separate part of the key and is left untouched.
+        PipelineRenderTarget& blend_rt =
+            description_out.render_targets[color_rt_index];
+        blend_rt.src_color_blend_factor = PipelineBlendFactor::kZero;
+        blend_rt.dst_color_blend_factor = PipelineBlendFactor::kZero;
+        blend_rt.color_blend_op = xenos::BlendOp::kAdd;
+        blend_rt.src_alpha_blend_factor = PipelineBlendFactor::kZero;
+        blend_rt.dst_alpha_blend_factor = PipelineBlendFactor::kZero;
+        blend_rt.alpha_blend_op = xenos::BlendOp::kAdd;
+        blend_rt.color_write_mask = 0;
+      }
     }
   }
 
@@ -2481,7 +2571,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 18> dynamic_states;
+  std::array<VkDynamicState, 21> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2558,6 +2648,27 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
         VK_DYNAMIC_STATE_STENCIL_WRITE_MASK;
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_STENCIL_REFERENCE;
+    // gpu_dynamic_blend_state (EDS3): color blend enable + equation + write mask
+    // promoted to dynamic state so draws differing ONLY in blend collapse onto
+    // one VkPipeline (each pipeline bind is a TBDR context-roll ~= the frame's
+    // area-independent cost). Matches the key-zeroing in GetCurrentStateDescription
+    // and the emission in VulkanCommandProcessor::UpdateDynamicState (same cvar +
+    // sub-feature gate). Only added when the pipeline has color attachments (the
+    // dynamic state sets per-attachment blend); the whole block is already inside
+    // the host-render-target (!edram_fragment_shader_interlock) path.
+    if (cvars::gpu_dynamic_blend_state &&
+        vulkan_device->extensions().ext_EXT_extended_dynamic_state3 &&
+        vulkan_device->extensions().eds3_dynamic_blend_enable &&
+        vulkan_device->extensions().eds3_dynamic_blend_equation &&
+        vulkan_device->extensions().eds3_dynamic_write_mask &&
+        (description.render_pass_key.depth_and_color_used >> 1) != 0) {
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT;
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT;
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT;
+    }
   }
   // VRS (gpu_vrs_foliage_rate, Thor novel-hardware lever): mark the fragment
   // shading rate dynamic so the per-draw consumer in VulkanCommandProcessor can

@@ -212,6 +212,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // from VRS) cutting the fragment COUNT over the 3D viewport. Requested when
       // supported; INERT until a density map is attached (gpu_fdm_foliage).
       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_fragment_density_map)
+      // VK_EXT_extended_dynamic_state3 - pipeline-bind reducer
+      // (gpu_dynamic_blend_state): move guest color BLEND enable/equation/write
+      // mask to DYNAMIC state so blend variance stops minting new pipelines
+      // (each bind is a TBDR context-roll). Requested when supported; the
+      // needed dynamic-blend sub-features are probed + gated below. INERT until
+      // the gpu_dynamic_blend_state consumer promotes blend to dynamic state.
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_extended_dynamic_state3)
     }
     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
       // #237.
@@ -348,6 +355,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceFragmentDensityMapFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT>
       features_EXT_fragment_density_map;
+  // VK_EXT_extended_dynamic_state3 - dynamic color blend (gpu_dynamic_blend_state).
+  VulkanFeatures<
+      VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT>
+      features_EXT_extended_dynamic_state3;
   // #270 VK_KHR_pipeline_executable_properties (DIAGNOSTIC shader-stats).
   VulkanFeatures<
       VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR,
@@ -405,6 +417,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (device->extensions_.ext_EXT_fragment_density_map) {
       features_EXT_fragment_density_map.Link(supported_features_2,
                                              device_create_info);
+    }
+    if (device->extensions_.ext_EXT_extended_dynamic_state3) {
+      features_EXT_extended_dynamic_state3.Link(supported_features_2,
+                                                device_create_info);
     }
     if (device->extensions_.ext_KHR_pipeline_executable_properties) {
       features_KHR_pipeline_executable_properties.Link(supported_features_2,
@@ -918,6 +934,52 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
                                                                       : "no");
   }
 
+  if (device->extensions_.ext_EXT_extended_dynamic_state3) {
+    // gpu_dynamic_blend_state (EDS3): promote guest color blend enable/equation/
+    // write mask to dynamic state so blend variance stops minting pipelines.
+    // Enable manually (like VRS/FDM) - mirroring into device->properties_ via
+    // XE_UI_VULKAN_FEATURE_2 would assert (no member there). Enable only the 3
+    // blend sub-features the consumer uses; each gates one of the 3 dynamic
+    // states (VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE / _EQUATION / _WRITE_MASK_EXT).
+    // The .supported bits were populated by the vkGetPhysicalDeviceFeatures2 above
+    // (the feature was Linked when the extension was requested).
+    if (with_gpu_emulation) {
+      features_EXT_extended_dynamic_state3.enabled
+          .extendedDynamicState3ColorBlendEnable =
+          features_EXT_extended_dynamic_state3.supported
+              .extendedDynamicState3ColorBlendEnable;
+      features_EXT_extended_dynamic_state3.enabled
+          .extendedDynamicState3ColorBlendEquation =
+          features_EXT_extended_dynamic_state3.supported
+              .extendedDynamicState3ColorBlendEquation;
+      features_EXT_extended_dynamic_state3.enabled
+          .extendedDynamicState3ColorWriteMask =
+          features_EXT_extended_dynamic_state3.supported
+              .extendedDynamicState3ColorWriteMask;
+    }
+    device->extensions_.eds3_dynamic_blend_enable =
+        features_EXT_extended_dynamic_state3.supported
+            .extendedDynamicState3ColorBlendEnable == VK_TRUE;
+    device->extensions_.eds3_dynamic_blend_equation =
+        features_EXT_extended_dynamic_state3.supported
+            .extendedDynamicState3ColorBlendEquation == VK_TRUE;
+    device->extensions_.eds3_dynamic_write_mask =
+        features_EXT_extended_dynamic_state3.supported
+            .extendedDynamicState3ColorWriteMask == VK_TRUE;
+    // Keep the extension flag honest: available only with GPU emulation AND all 3
+    // needed dynamic-blend sub-features (the consumer promotes enable+equation+
+    // write-mask together, so a partial set is unusable). The consumers guard on
+    // this flag (and the 3 sub-flags) before emitting the dynamic blend state.
+    device->extensions_.ext_EXT_extended_dynamic_state3 =
+        with_gpu_emulation && device->extensions_.eds3_dynamic_blend_enable &&
+        device->extensions_.eds3_dynamic_blend_equation &&
+        device->extensions_.eds3_dynamic_write_mask;
+    XELOGI(
+        "* VK_EXT_extended_dynamic_state3 (dynamic blend enable/equation/"
+        "writemask: {})",
+        device->extensions_.ext_EXT_extended_dynamic_state3 ? "yes" : "no");
+  }
+
 #undef XE_UI_VULKAN_LIMIT
 #undef XE_UI_VULKAN_ENUM_LIMIT
 #undef XE_UI_VULKAN_FEATURE
@@ -995,6 +1057,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (device->extensions_.ext_KHR_fragment_shading_rate) {
 #include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
+  }
+  if (device->extensions_.ext_EXT_extended_dynamic_state3) {
+#include "xenia/ui/vulkan/functions/device_ext_extended_dynamic_state3.inc"
   }
   if (device->extensions_.ext_KHR_pipeline_executable_properties) {
 #include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"

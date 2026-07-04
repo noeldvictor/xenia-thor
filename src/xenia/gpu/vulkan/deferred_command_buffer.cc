@@ -340,6 +340,29 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
                                            args.combiner_ops);
       } break;
 
+      case Command::kVkSetColorBlendEnable: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetColorBlendEnable*>(stream);
+        dfn.vkCmdSetColorBlendEnableEXT(command_buffer, args.first_attachment,
+                                        args.attachment_count,
+                                        args.color_blend_enables);
+      } break;
+
+      case Command::kVkSetColorBlendEquation: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetColorBlendEquation*>(stream);
+        dfn.vkCmdSetColorBlendEquationEXT(command_buffer, args.first_attachment,
+                                          args.attachment_count,
+                                          args.color_blend_equations);
+      } break;
+
+      case Command::kVkSetColorWriteMask: {
+        auto& args = *reinterpret_cast<const ArgsVkSetColorWriteMask*>(stream);
+        dfn.vkCmdSetColorWriteMaskEXT(command_buffer, args.first_attachment,
+                                      args.attachment_count,
+                                      args.color_write_masks);
+      } break;
+
       case Command::kVkSetStencilTestEnable: {
         auto& args =
             *reinterpret_cast<const ArgsVkSetStencilTestEnable*>(stream);

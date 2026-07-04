@@ -536,7 +536,8 @@ class VulkanCommandProcessor : public CommandProcessor {
                           bool primitive_polygonal,
                           reg::RB_DEPTHCONTROL normalized_depth_control,
                           xenos::PrimitiveType host_primitive_type,
-                          bool host_primitive_reset_enabled);
+                          bool host_primitive_reset_enabled,
+                          uint32_t normalized_color_mask);
 
   // Opaque depth pre-pass (gpu_opaque_depth_prepass), Unit 3: emit a
   // self-contained copy of the current opaque draw into prepass_command_buffer_

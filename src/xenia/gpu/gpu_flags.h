@@ -43,6 +43,7 @@ DECLARE_bool(gpu_trace_bin_select);
 DECLARE_bool(gpu_trace_kick_lr);
 DECLARE_bool(gpu_flatten_predicated_tiling);
 DECLARE_bool(gpu_flatten_predicated_tiling_widen);
+DECLARE_bool(gpu_dynamic_blend_state);
 DECLARE_bool(gpu_depth_only_alpha_shader);
 DECLARE_bool(gpu_vulkan_classify_img_sr_breaks);
 DECLARE_bool(gpu_vulkan_feedback_merge);

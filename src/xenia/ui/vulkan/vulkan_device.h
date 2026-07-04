@@ -187,6 +187,16 @@ class VulkanDevice {
     bool ext_EXT_memory_budget = false;                 // #238
     // Has optional features not implied by this being true.
     bool ext_1_3_KHR_maintenance4 = false;  // #414
+    // VK_EXT_extended_dynamic_state3: move pipeline-baked BLEND state to DYNAMIC
+    // so blend variance stops minting new pipelines. BD's field binds ~208 distinct
+    // pipelines/frame; on the Adreno TBDR each bind is a context-roll (state re-emit)
+    // ~= the ~53ms area-independent frame cost. Collapsing blend variants cuts the
+    // pipeline count -> fewer context-rolls. Needs the colorBlendEnable/Equation/
+    // WriteMask dynamic-blend feature sub-bits (probed into the flags below).
+    bool ext_EXT_extended_dynamic_state3 = false;
+    bool eds3_dynamic_blend_enable = false;    // extendedDynamicState3ColorBlendEnable
+    bool eds3_dynamic_blend_equation = false;  // ...ColorBlendEquation
+    bool eds3_dynamic_write_mask = false;      // ...ColorWriteMask
     // #81. Push descriptors - inline descriptor writes into the command buffer,
     // avoiding per-draw descriptor set allocation + vkUpdateDescriptorSets +
     // vkCmdBindDescriptorSets. Big per-draw CPU win on Adreno.
@@ -247,6 +257,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_khr_push_descriptor.inc"
     // VK_KHR_fragment_shading_rate (#227, VRS)
 #include "xenia/ui/vulkan/functions/device_khr_fragment_shading_rate.inc"
+    // VK_EXT_extended_dynamic_state3 (dynamic color blend, gpu_dynamic_blend_state)
+#include "xenia/ui/vulkan/functions/device_ext_extended_dynamic_state3.inc"
     // VK_KHR_pipeline_executable_properties
 #include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED

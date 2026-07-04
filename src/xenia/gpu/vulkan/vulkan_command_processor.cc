@@ -5644,7 +5644,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   UpdateDynamicState(viewport_info, primitive_polygonal,
                      normalized_depth_control,
                      primitive_processing_result.host_primitive_type,
-                     primitive_processing_result.host_primitive_reset_enabled);
+                     primitive_processing_result.host_primitive_reset_enabled,
+                     normalized_color_mask);
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
   if (trace_draw_state) {
@@ -8607,8 +8608,8 @@ void VulkanCommandProcessor::EmitOpaquePrepassDraw(VkBuffer index_buffer,
 void VulkanCommandProcessor::UpdateDynamicState(
     const draw_util::ViewportInfo& viewport_info, bool primitive_polygonal,
     reg::RB_DEPTHCONTROL normalized_depth_control,
-    xenos::PrimitiveType host_primitive_type,
-    bool host_primitive_reset_enabled) {
+    xenos::PrimitiveType host_primitive_type, bool host_primitive_reset_enabled,
+    uint32_t normalized_color_mask) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -9059,6 +9060,49 @@ void VulkanCommandProcessor::UpdateDynamicState(
       dynamic_stencil_back_depth_fail_op_ = back_depth_fail;
       dynamic_stencil_back_compare_op_ = back_compare;
       dynamic_stencil_op_update_needed_ = false;
+    }
+  }
+
+  // gpu_dynamic_blend_state (EDS3): emit the per-attachment color blend enable /
+  // equation / write mask promoted to dynamic state. Reproduce EXACTLY the static
+  // color blend attachment the pipeline cache would have baked
+  // (GetCurrentColorBlendDynamicState mirrors WritePipelineRenderTargetDescription
+  // + EnsurePipelineCreated's derivation), gated identically to the pipeline-key
+  // zeroing + the dynamic-state array (host-render-target path only, cvar + all 3
+  // EDS3 blend sub-features, color attachments present) so the bound pipeline that
+  // has these dynamic states is exactly the one for which we emit. The cvar
+  // short-circuits first (zero-cost on the default path). Emitted every draw (no
+  // caching) - the deferred stream records 3 tiny commands; correctness over
+  // micro-optimization, and every draw's pipeline in this path has them dynamic.
+  {
+    const auto& device_extensions = GetVulkanDevice()->extensions();
+    if (cvars::gpu_dynamic_blend_state &&
+        device_extensions.ext_EXT_extended_dynamic_state3 &&
+        device_extensions.eds3_dynamic_blend_enable &&
+        device_extensions.eds3_dynamic_blend_equation &&
+        device_extensions.eds3_dynamic_write_mask &&
+        render_target_cache_->GetPath() !=
+            RenderTargetCache::Path::kPixelShaderInterlock &&
+        !hybrid_current_draw_composite_) {
+      VulkanRenderTargetCache::RenderPassKey render_pass_key =
+          render_target_cache_->last_update_render_pass_key();
+      if ((render_pass_key.depth_and_color_used >> 1) != 0) {
+        uint32_t attachment_count = 0;
+        VkBool32 blend_enables[xenos::kMaxColorRenderTargets];
+        VkColorBlendEquationEXT blend_equations[xenos::kMaxColorRenderTargets];
+        VkColorComponentFlags write_masks[xenos::kMaxColorRenderTargets];
+        pipeline_cache_->GetCurrentColorBlendDynamicState(
+            normalized_color_mask, render_pass_key, attachment_count,
+            blend_enables, blend_equations, write_masks);
+        if (attachment_count) {
+          deferred_command_buffer_.CmdVkSetColorBlendEnable(0, attachment_count,
+                                                            blend_enables);
+          deferred_command_buffer_.CmdVkSetColorBlendEquation(
+              0, attachment_count, blend_equations);
+          deferred_command_buffer_.CmdVkSetColorWriteMask(0, attachment_count,
+                                                          write_masks);
+        }
+      }
     }
   }
 

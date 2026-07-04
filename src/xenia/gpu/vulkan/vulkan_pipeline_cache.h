@@ -89,6 +89,22 @@ class VulkanPipelineCache {
       VkPipeline& pipeline_out,
       const PipelineLayoutProvider*& pipeline_layout_out);
 
+  // gpu_dynamic_blend_state (EDS3): fill the per-attachment dynamic color blend
+  // state (enable / equation / write mask) for the current register state,
+  // reproducing EXACTLY the static VkPipelineColorBlendAttachmentState the
+  // non-dynamic pipeline bakes (WritePipelineRenderTargetDescription +
+  // EnsurePipelineCreated), so the dynamic path renders pixel-identically. The
+  // out arrays must hold at least xenos::kMaxColorRenderTargets entries;
+  // attachment_count_out = 32 - lzcnt(render-pass color RTs), and attachments not
+  // present in the render pass get the static zero-init default (disabled, mask
+  // 0). Called by the command processor when blend is promoted to dynamic state.
+  void GetCurrentColorBlendDynamicState(
+      uint32_t normalized_color_mask,
+      VulkanRenderTargetCache::RenderPassKey render_pass_key,
+      uint32_t& attachment_count_out, VkBool32* blend_enables_out,
+      VkColorBlendEquationEXT* blend_equations_out,
+      VkColorComponentFlags* write_masks_out) const;
+
  private:
   enum class PipelineGeometryShader : uint32_t {
     kNone,

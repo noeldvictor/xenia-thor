@@ -558,6 +558,41 @@ class DeferredCommandBuffer {
     args.combiner_ops[1] = combiner_op1;
   }
 
+  // VK_EXT_extended_dynamic_state3 dynamic color blend (gpu_dynamic_blend_state).
+  // attachment_count <= xenos::kMaxColorRenderTargets (4); first_attachment is 0.
+  void CmdVkSetColorBlendEnable(uint32_t first_attachment,
+                                uint32_t attachment_count,
+                                const VkBool32* color_blend_enables) {
+    auto& args = *reinterpret_cast<ArgsVkSetColorBlendEnable*>(WriteCommand(
+        Command::kVkSetColorBlendEnable, sizeof(ArgsVkSetColorBlendEnable)));
+    args.first_attachment = first_attachment;
+    args.attachment_count = attachment_count;
+    std::memcpy(args.color_blend_enables, color_blend_enables,
+                sizeof(VkBool32) * attachment_count);
+  }
+
+  void CmdVkSetColorBlendEquation(
+      uint32_t first_attachment, uint32_t attachment_count,
+      const VkColorBlendEquationEXT* color_blend_equations) {
+    auto& args = *reinterpret_cast<ArgsVkSetColorBlendEquation*>(WriteCommand(
+        Command::kVkSetColorBlendEquation, sizeof(ArgsVkSetColorBlendEquation)));
+    args.first_attachment = first_attachment;
+    args.attachment_count = attachment_count;
+    std::memcpy(args.color_blend_equations, color_blend_equations,
+                sizeof(VkColorBlendEquationEXT) * attachment_count);
+  }
+
+  void CmdVkSetColorWriteMask(uint32_t first_attachment,
+                              uint32_t attachment_count,
+                              const VkColorComponentFlags* color_write_masks) {
+    auto& args = *reinterpret_cast<ArgsVkSetColorWriteMask*>(WriteCommand(
+        Command::kVkSetColorWriteMask, sizeof(ArgsVkSetColorWriteMask)));
+    args.first_attachment = first_attachment;
+    args.attachment_count = attachment_count;
+    std::memcpy(args.color_write_masks, color_write_masks,
+                sizeof(VkColorComponentFlags) * attachment_count);
+  }
+
   void CmdVkSetStencilTestEnable(VkBool32 stencil_test_enable) {
     auto& args = *reinterpret_cast<ArgsVkSetStencilTestEnable*>(WriteCommand(
         Command::kVkSetStencilTestEnable, sizeof(ArgsVkSetStencilTestEnable)));
@@ -680,6 +715,9 @@ class DeferredCommandBuffer {
     kVkPushConstants,
     kVkPushDescriptorSetKHR,
     kVkSetBlendConstants,
+    kVkSetColorBlendEnable,
+    kVkSetColorBlendEquation,
+    kVkSetColorWriteMask,
     kVkSetCullMode,
     kVkSetDepthBias,
     kVkSetDepthCompareOp,
@@ -899,6 +937,26 @@ class DeferredCommandBuffer {
   struct ArgsVkSetFragmentShadingRate {
     VkExtent2D fragment_size;
     VkFragmentShadingRateCombinerOpKHR combiner_ops[2];
+  };
+
+  // Fixed inline arrays sized to xenos::kMaxColorRenderTargets (4) - avoids the
+  // trailing-variable-length dance; only [0, attachment_count) are meaningful.
+  struct ArgsVkSetColorBlendEnable {
+    uint32_t first_attachment;
+    uint32_t attachment_count;
+    VkBool32 color_blend_enables[4];
+  };
+
+  struct ArgsVkSetColorBlendEquation {
+    uint32_t first_attachment;
+    uint32_t attachment_count;
+    VkColorBlendEquationEXT color_blend_equations[4];
+  };
+
+  struct ArgsVkSetColorWriteMask {
+    uint32_t first_attachment;
+    uint32_t attachment_count;
+    VkColorComponentFlags color_write_masks[4];
   };
 
   struct ArgsVkSetStencilTestEnable {

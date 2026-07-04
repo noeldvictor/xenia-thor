@@ -270,6 +270,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_dynamic_blend_state, false,
+    "PIPELINE-BIND REDUCER (EDS3): move guest BLEND state (enable/equation/write-"
+    "mask) to Vulkan DYNAMIC state so blend variance stops minting new pipelines. "
+    "BD's field binds ~208 distinct pipelines/frame; on the Adreno TBDR each bind "
+    "is a context-roll (~= the ~53ms area-independent frame cost). Collapsing blend "
+    "variants cuts the pipeline count -> fewer context-rolls. GENERAL (all games), "
+    "no gfx loss. Needs VK_EXT_extended_dynamic_state3 dynamic-blend sub-features. "
+    "Default off pending build-complete + validation.",
+    "GPU");
+
+DEFINE_bool(
     gpu_depth_only_alpha_shader, false,
     "NO-GFX-LOSS SPEED REWRITE: for DEPTH-ONLY passes that still ALPHA-TEST (BD's "
     "foliage SHADOW map re-renders every alpha-tested leaf just to write shadow "
