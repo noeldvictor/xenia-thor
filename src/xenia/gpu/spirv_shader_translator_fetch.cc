@@ -886,29 +886,47 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
                     const_float_vectors_0_[used_result_component_count - 1]);
         return;
       }
-      sampler = builder_->createLoad(sampler_bindings_[sampler_index].variable,
-                                     spv::NoPrecision);
+      // BRICK 1 native bindless render path: load the image/sampler by indexing
+      // the global runtime array at the per-draw push-constant slot instead of
+      // loading a per-binding descriptor variable. Byte-identical downstream:
+      // the loaded spv::Id image/sampler feed the same OpSampledImage / sampling
+      // logic as before.
+      const bool bindless = IsNativeRenderPath();
+      sampler = bindless ? LoadBindlessSampler(sampler_index)
+                         : builder_->createLoad(
+                               sampler_bindings_[sampler_index].variable,
+                               spv::NoPrecision);
       const TextureBinding& image_2d_array_or_cube_unsigned_binding =
           texture_bindings_[image_2d_array_or_cube_unsigned_index];
-      image_2d_array_or_cube_unsigned = builder_->createLoad(
-          image_2d_array_or_cube_unsigned_binding.variable, spv::NoPrecision);
+      image_2d_array_or_cube_unsigned =
+          bindless
+              ? LoadBindlessTextureImage(image_2d_array_or_cube_unsigned_index)
+              : builder_->createLoad(
+                    image_2d_array_or_cube_unsigned_binding.variable,
+                    spv::NoPrecision);
       ia_is_input_attachment =
           image_2d_array_or_cube_unsigned_binding.is_input_attachment;
       const TextureBinding& image_2d_array_or_cube_signed_binding =
           texture_bindings_[image_2d_array_or_cube_signed_index];
-      image_2d_array_or_cube_signed = builder_->createLoad(
-          image_2d_array_or_cube_signed_binding.variable, spv::NoPrecision);
+      image_2d_array_or_cube_signed =
+          bindless
+              ? LoadBindlessTextureImage(image_2d_array_or_cube_signed_index)
+              : builder_->createLoad(
+                    image_2d_array_or_cube_signed_binding.variable,
+                    spv::NoPrecision);
       if (image_3d_unsigned_index != SIZE_MAX) {
-        const TextureBinding& image_3d_unsigned_binding =
-            texture_bindings_[image_3d_unsigned_index];
-        image_3d_unsigned = builder_->createLoad(
-            image_3d_unsigned_binding.variable, spv::NoPrecision);
+        image_3d_unsigned =
+            bindless ? LoadBindlessTextureImage(image_3d_unsigned_index)
+                     : builder_->createLoad(
+                           texture_bindings_[image_3d_unsigned_index].variable,
+                           spv::NoPrecision);
       }
       if (image_3d_signed_index != SIZE_MAX) {
-        const TextureBinding& image_3d_signed_binding =
-            texture_bindings_[image_3d_signed_index];
-        image_3d_signed = builder_->createLoad(image_3d_signed_binding.variable,
-                                               spv::NoPrecision);
+        image_3d_signed =
+            bindless ? LoadBindlessTextureImage(image_3d_signed_index)
+                     : builder_->createLoad(
+                           texture_bindings_[image_3d_signed_index].variable,
+                           spv::NoPrecision);
       }
     }
 
@@ -2538,6 +2556,17 @@ size_t SpirvShaderTranslator::FindOrAddTextureBinding(
   // (pixel_shader_modification differs) keeps existing shaders byte-identical.
   // 2D only (the composite case); both the unsigned and signed bindings of the
   // producer constant become input attachments reading attachment 0.
+  // BRICK 1 native bindless render path: this fetch constant's image lives in the
+  // global runtime image array (set kBindlessDescriptorSet, binding by dimension),
+  // indexed per-draw by a push constant - there is NO per-binding descriptor
+  // variable to declare or decorate here. The dimension recorded above is what
+  // LoadBindlessTextureImage uses to pick the array. Feedback input-attachment is
+  // a legacy-path-only feature and is disabled under the native path.
+  if (IsNativeRenderPath()) {
+    new_texture_binding.variable = spv::NoResult;
+    new_texture_binding.is_input_attachment = false;
+    return new_texture_binding_index;
+  }
   bool is_input_attachment =
       is_pixel_shader() && type_dimension == spv::Dim2D &&
       GetSpirvShaderModification().pixel.feedback_input_attachment != 0 &&
@@ -2604,6 +2633,12 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
   new_sampler_binding.min_filter = min_filter;
   new_sampler_binding.mip_filter = mip_filter;
   new_sampler_binding.aniso_filter = aniso_filter;
+  // BRICK 1 native bindless render path: no per-binding sampler variable; the
+  // fetch indexes the global runtime sampler array by a push-constant slot.
+  if (IsNativeRenderPath()) {
+    new_sampler_binding.variable = spv::NoResult;
+    return new_sampler_binding_index;
+  }
   std::ostringstream name;
   static const char kFilterSuffixes[] = {'p', 'l', 'b', 'f'};
   name << "xe_sampler" << fetch_constant << '_'
@@ -2630,6 +2665,172 @@ size_t SpirvShaderTranslator::FindOrAddSamplerBinding(
     main_interface_.push_back(new_sampler_binding.variable);
   }
   return new_sampler_binding_index;
+}
+
+spv::Id SpirvShaderTranslator::EnsureBindlessPushConstants() {
+  if (bindless_push_constants_ != spv::NoResult) {
+    return bindless_push_constants_;
+  }
+  // A push_constant block { uint vertex_texture_slots[]; uint vertex_sampler_
+  // slots[]; uint pixel_texture_slots[]; uint pixel_sampler_slots[]; }. Both the
+  // vertex and pixel stage of a pipeline declare the IDENTICAL struct (each only
+  // reads its own members) so the push ranges are compatible. Member offsets and
+  // counts come from the shared kBindlessPush* constants.
+  auto make_uint_array = [this](uint32_t count) {
+    spv::Id array_type = builder_->makeArrayType(
+        type_uint_, builder_->makeUintConstant(count), sizeof(uint32_t));
+    builder_->addDecoration(array_type, spv::DecorationArrayStride,
+                            sizeof(uint32_t));
+    return array_type;
+  };
+  std::vector<spv::Id> members;
+  members.push_back(make_uint_array(kBindlessPushVertexTextureCount));
+  members.push_back(make_uint_array(kBindlessPushVertexSamplerCount));
+  members.push_back(make_uint_array(kBindlessPushPixelTextureCount));
+  members.push_back(make_uint_array(kBindlessPushPixelSamplerCount));
+  spv::Id type_push = builder_->makeStructType(members, "XeBindlessSlots");
+  builder_->addMemberName(type_push, 0, "vertex_texture_slots");
+  builder_->addMemberDecoration(type_push, 0, spv::DecorationOffset,
+                                int(kBindlessPushVertexTextureOffset));
+  builder_->addMemberName(type_push, 1, "vertex_sampler_slots");
+  builder_->addMemberDecoration(type_push, 1, spv::DecorationOffset,
+                                int(kBindlessPushVertexSamplerOffset));
+  builder_->addMemberName(type_push, 2, "pixel_texture_slots");
+  builder_->addMemberDecoration(type_push, 2, spv::DecorationOffset,
+                                int(kBindlessPushPixelTextureOffset));
+  builder_->addMemberName(type_push, 3, "pixel_sampler_slots");
+  builder_->addMemberDecoration(type_push, 3, spv::DecorationOffset,
+                                int(kBindlessPushPixelSamplerOffset));
+  builder_->addDecoration(type_push, spv::DecorationBlock);
+  bindless_push_constants_ =
+      builder_->createVariable(spv::NoPrecision, spv::StorageClassPushConstant,
+                               type_push, "xe_bindless_slots");
+  if (features_.spirv_version >= spv::Spv_1_4) {
+    main_interface_.push_back(bindless_push_constants_);
+  }
+  return bindless_push_constants_;
+}
+
+spv::Id SpirvShaderTranslator::EnsureBindlessTextureArray(
+    xenos::FetchOpDimension dimension) {
+  spv::Id* cache;
+  spv::Dim spv_dimension;
+  bool arrayed;
+  uint32_t binding;
+  const char* name;
+  switch (dimension) {
+    case xenos::FetchOpDimension::k3DOrStacked:
+      cache = &bindless_texture_3d_;
+      spv_dimension = spv::Dim3D;
+      arrayed = false;
+      binding = kBindlessBindingTexture3D;
+      name = "xe_bindless_textures_3d";
+      break;
+    case xenos::FetchOpDimension::kCube:
+      cache = &bindless_texture_cube_;
+      spv_dimension = spv::DimCube;
+      arrayed = false;
+      binding = kBindlessBindingTextureCube;
+      name = "xe_bindless_textures_cube";
+      break;
+    default:
+      // k1D is normalized to k2D by FindOrAddTextureBinding; both use a 2D array.
+      cache = &bindless_texture_2d_array_;
+      spv_dimension = spv::Dim2D;
+      arrayed = true;
+      binding = kBindlessBindingTexture2DArray;
+      name = "xe_bindless_textures_2d";
+      break;
+  }
+  if (*cache != spv::NoResult) {
+    return *cache;
+  }
+  builder_->addCapability(spv::CapabilityRuntimeDescriptorArray);
+  spv::Id image_type =
+      builder_->makeImageType(type_float_, spv_dimension, false, arrayed, false,
+                              1, spv::ImageFormatUnknown);
+  spv::Id array_type = builder_->makeRuntimeArray(image_type);
+  *cache = builder_->createVariable(spv::NoPrecision,
+                                    spv::StorageClassUniformConstant, array_type,
+                                    name);
+  builder_->addDecoration(*cache, spv::DecorationDescriptorSet,
+                          int(kBindlessDescriptorSet));
+  builder_->addDecoration(*cache, spv::DecorationBinding, int(binding));
+  if (features_.spirv_version >= spv::Spv_1_4) {
+    main_interface_.push_back(*cache);
+  }
+  return *cache;
+}
+
+spv::Id SpirvShaderTranslator::EnsureBindlessSamplerArray() {
+  if (bindless_sampler_array_ != spv::NoResult) {
+    return bindless_sampler_array_;
+  }
+  builder_->addCapability(spv::CapabilityRuntimeDescriptorArray);
+  spv::Id array_type = builder_->makeRuntimeArray(builder_->makeSamplerType());
+  bindless_sampler_array_ = builder_->createVariable(
+      spv::NoPrecision, spv::StorageClassUniformConstant, array_type,
+      "xe_bindless_samplers");
+  builder_->addDecoration(bindless_sampler_array_, spv::DecorationDescriptorSet,
+                          int(kBindlessDescriptorSet));
+  builder_->addDecoration(bindless_sampler_array_, spv::DecorationBinding,
+                          int(kBindlessBindingSampler));
+  if (features_.spirv_version >= spv::Spv_1_4) {
+    main_interface_.push_back(bindless_sampler_array_);
+  }
+  return bindless_sampler_array_;
+}
+
+spv::Id SpirvShaderTranslator::LoadBindlessSlotIndex(bool is_sampler,
+                                                     size_t binding_index) {
+  spv::Id push = EnsureBindlessPushConstants();
+  uint32_t member;
+  uint32_t capacity;
+  if (is_vertex_shader()) {
+    member = is_sampler ? 1u : 0u;
+    capacity = is_sampler ? kBindlessPushVertexSamplerCount
+                          : kBindlessPushVertexTextureCount;
+  } else {
+    member = is_sampler ? 3u : 2u;
+    capacity = is_sampler ? kBindlessPushPixelSamplerCount
+                          : kBindlessPushPixelTextureCount;
+  }
+  // Clamp on overflow: a shader with more bindings than the per-stage push
+  // capacity would index out of the block (see the >capacity incompleteness note
+  // in the rearch doc). Clamping keeps it valid SPIR-V (samples slot [0], which
+  // is a wrong-but-not-crashing texture); such shaders do not occur in Blue
+  // Dragon's field.
+  uint32_t element =
+      binding_index < capacity ? uint32_t(binding_index) : 0u;
+  std::vector<spv::Id> indexes;
+  indexes.push_back(builder_->makeUintConstant(member));
+  indexes.push_back(builder_->makeUintConstant(element));
+  spv::Id slot_pointer =
+      builder_->createAccessChain(spv::StorageClassPushConstant, push, indexes);
+  return builder_->createLoad(slot_pointer, spv::NoPrecision);
+}
+
+spv::Id SpirvShaderTranslator::LoadBindlessTextureImage(
+    size_t texture_binding_index) {
+  const TextureBinding& binding = texture_bindings_[texture_binding_index];
+  spv::Id array_variable = EnsureBindlessTextureArray(binding.dimension);
+  spv::Id slot = LoadBindlessSlotIndex(false, texture_binding_index);
+  std::vector<spv::Id> indexes;
+  indexes.push_back(slot);
+  spv::Id image_pointer = builder_->createAccessChain(
+      spv::StorageClassUniformConstant, array_variable, indexes);
+  return builder_->createLoad(image_pointer, spv::NoPrecision);
+}
+
+spv::Id SpirvShaderTranslator::LoadBindlessSampler(
+    size_t sampler_binding_index) {
+  spv::Id array_variable = EnsureBindlessSamplerArray();
+  spv::Id slot = LoadBindlessSlotIndex(true, sampler_binding_index);
+  std::vector<spv::Id> indexes;
+  indexes.push_back(slot);
+  spv::Id sampler_pointer = builder_->createAccessChain(
+      spv::StorageClassUniformConstant, array_variable, indexes);
+  return builder_->createLoad(sampler_pointer, spv::NoPrecision);
 }
 
 void SpirvShaderTranslator::SampleTexture(

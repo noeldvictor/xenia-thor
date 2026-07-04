@@ -35,5 +35,26 @@ never a brick alone. One-brick A/B is meaningless here (the stack hides it). Sin
 correct. The compound is the only honest signal.
 
 ## Status
-- BRICK 0: shipped (default-off).
-- BRICK 1: BUILDING (2026-07-04).
+- BRICK 0: shipped (default-off), FLAT alone.
+- BRICK 1: BUILT + DEVICE-TESTED 2026-07-04 (gpu_native_render_path). Renders PIXEL-PERFECT (bindless
+  architecture correct, no crash) BUT **REGRESSED: 129→161ms / 7.7→6.2fps, and descriptor_binds UNCHANGED
+  (~1074), pipeline_binds UNCHANGED (208).** Decisive finding: **the 1064 descriptor binds are NOT texture
+  binds — they are set-0 (shared-mem) + set-1 (per-draw CONSTANTS), inherent per-draw data bindless can't
+  touch; the 208 pipeline binds are shader/render_pass variants. So the "1272 state-change tax" is NOT
+  collapsible via bindless textures** — bindless removed the small texture-bind slice + ADDED push-constant/
+  indirect overhead → net regression. Compound (BRICK0+1) REGRESSES.
+
+## 🚨 THE REARCH PREMISE IS REFUTED BY THE FRAME ANATOMY (2026-07-04)
+The driver u_trace already said BD's frame = **~90% fragment/draw EXECUTION (the intrinsic foliage rendering),
+~6ms EDRAM structure, ~1ms tile-I/O.** BRICK 1 confirms it from the other side: the binds/structure the rearch
+removes are only a few ms; there is NO 15-20× of *emulation structure* to remove — the frame is dominated by
+the actual RENDERING WORK (262k foliage verts + heavy alpha-test overdraw fill). **Structure-rearch (bindless,
+native RT, native input) CANNOT reach 30 — there is only ~7ms of structure to reclaim, and bindless even that
+regresses.** The "compounding stack of emulation taxes" model was WRONG: the taxes sum to ~2-3×, not 15-20×;
+the rest is intrinsic. The 10-20× hardware figure is PEAK on friendly workloads — BD's alpha-test overdraw
+foliage defeats the GPU's early-Z/HSR (every layer shaded), so the Adreno's EFFECTIVE advantage for THIS
+workload is ~2-4×, which the emulation's ~2-3× eats. The 360 hit 30 via developer hand-tuning for the Xenos.
+⇒ **BD-30 full-foliage NO-gfx-loss is NOT reachable** by rearch OR lever — the rendering work is intrinsic +
+near the Adreno's effective limit. Shipped 19.8 (lossy fp10/VRS) is the practical ceiling; 30 needs reduced
+foliage (quality option). BRICK 2/3 (native RT ~6ms, lean fp16 shaders ~1.5×) only chip the ~2-3× emulation
+slice, not the intrinsic bulk. Bindless kept default-off (correct; may help texture-bind-bound titles).

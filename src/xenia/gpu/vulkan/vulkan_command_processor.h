@@ -271,6 +271,19 @@ class VulkanCommandProcessor : public CommandProcessor {
       size_t texture_count_vertex, size_t sampler_count_vertex,
       bool pixel_textures_input_attachment = false);
 
+  // BRICK 1 native bindless render path (gpu_native_render_path). True when the
+  // cvar is set AND the device enabled the descriptor-indexing features + the
+  // global bindless descriptor set was created successfully. Kept in sync with
+  // SpirvShaderTranslator::Features::bindless_textures.
+  bool native_render_path_active() const { return native_render_path_active_; }
+  // Called by the texture cache when it destroys an image view / sampler so the
+  // owning global bindless slot can be freed for reuse. Post-await (the texture
+  // cache only destroys after the referencing submission completed), so no
+  // in-flight command still references the freed slot. No-ops when the native
+  // path is inactive.
+  void ReleaseBindlessImageView(VkImageView image_view);
+  void ReleaseBindlessSampler(VkSampler sampler);
+
   // BD input-attachment merge: whether the active merge consumer uses the
   // 1-attachment in-place feedback render pass (read by the pipeline cache to
   // pick the matching feedback render pass for the consumer's subpass-1 pipeline).
@@ -799,6 +812,47 @@ class VulkanCommandProcessor : public CommandProcessor {
   // current_graphics_descriptor_sets_[kDescriptorSetSharedMemoryAndEdram] and
   // clears its bound/value up-to-date bits so the next draw rebinds it.
   void UpdateSharedMemoryDescriptorSetForCurrentVersion();
+
+  // BRICK 1 native bindless render path (gpu_native_render_path). One global
+  // descriptor set (created once) with runtime arrays of sampled images (2D
+  // array / 3D / cube at bindings 0/1/2) and samplers (binding 3), bound once
+  // per command buffer; guest shaders index it by a per-draw push constant. See
+  // docs/research/native-render-path-rearch.md. All of this is inert unless the
+  // native path is active.
+  static constexpr uint32_t kBindlessImageCapacity = 8192;
+  static constexpr uint32_t kBindlessSamplerCapacity = 2048;
+  bool native_render_path_active_ = false;
+  VkDescriptorSetLayout bindless_descriptor_set_layout_ = VK_NULL_HANDLE;
+  // Empty layout occupying kDescriptorSetTexturesPixel in native mode (that set
+  // is unused - all textures go through the single bindless set at
+  // kDescriptorSetTexturesVertex).
+  VkDescriptorSetLayout bindless_empty_descriptor_set_layout_ = VK_NULL_HANDLE;
+  VkDescriptorPool bindless_descriptor_pool_ = VK_NULL_HANDLE;
+  VkDescriptorSet bindless_descriptor_set_ = VK_NULL_HANDLE;
+  // The single shared pipeline layout used for every guest draw in native mode
+  // (set 0 shared memory, set 1 constants, set 2 bindless, set 3 empty, + the
+  // bindless push-constant range). Built once, cached in pipeline_layouts_ under
+  // a fixed all-zero key.
+  const VulkanPipelineCache::PipelineLayoutProvider* native_pipeline_layout_ =
+      nullptr;
+  // Monotonic slot allocators (image-view / sampler handle -> global array
+  // index; slot 0 reserved as "unused"). Freed slots are recycled via the free
+  // lists once the owning resource is destroyed (post-await, so safe).
+  std::unordered_map<VkImageView, uint32_t> bindless_image_view_slots_;
+  std::vector<uint32_t> bindless_image_free_slots_;
+  uint32_t bindless_image_next_slot_ = 1;
+  std::unordered_map<VkSampler, uint32_t> bindless_sampler_slots_;
+  std::vector<uint32_t> bindless_sampler_free_slots_;
+  uint32_t bindless_sampler_next_slot_ = 1;
+  // Creates the bindless descriptor set layout(s), pool, and set. Returns false
+  // (leaving the native path inactive) on any failure.
+  bool InitializeBindlessDescriptors();
+  // Returns (allocating + writing the descriptor on first sight) the global slot
+  // for an image view in the given bindless binding (0=2D array, 1=3D, 2=cube),
+  // or 0 on capacity overflow / null view.
+  uint32_t UseBindlessImageSlot(VkImageView image_view, uint32_t binding);
+  // Returns (allocating + writing on first sight) the global slot for a sampler.
+  uint32_t UseBindlessSamplerSlot(VkSampler sampler);
 
   // Bytes 0x0...0x3FF - 256-entry gamma ramp table with B10G10R10X2 data (read
   // as R10G10B10X2 with swizzle).

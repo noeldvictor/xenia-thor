@@ -766,6 +766,20 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
     if (with_gpu_emulation) {
       XE_UI_VULKAN_FEATURE_2(features_1_2, samplerMirrorClampToEdge);
+      // VK_EXT_descriptor_indexing bits for the BRICK 1 bindless render path
+      // (gpu_native_render_path). Enabled when supported; inert for the legacy
+      // per-draw descriptor path (see the Properties struct comment). The
+      // command processor only builds the bindless set when the cvar is on AND
+      // these were enabled, so a device without them cleanly stays legacy.
+      XE_UI_VULKAN_FEATURE_2(features_1_2, descriptorIndexing);
+      XE_UI_VULKAN_FEATURE_2(features_1_2,
+                             shaderSampledImageArrayNonUniformIndexing);
+      XE_UI_VULKAN_FEATURE_2(features_1_2, runtimeDescriptorArray);
+      XE_UI_VULKAN_FEATURE_2(features_1_2, descriptorBindingPartiallyBound);
+      XE_UI_VULKAN_FEATURE_2(features_1_2,
+                             descriptorBindingSampledImageUpdateAfterBind);
+      XE_UI_VULKAN_FEATURE_2(features_1_2,
+                             descriptorBindingUpdateUnusedWhilePending);
     }
   } else {
     if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {

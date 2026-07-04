@@ -355,6 +355,43 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
     kDescriptorSetCount,
   };
+  // BRICK 1 native bindless render path (gpu_native_render_path). The global
+  // bindless descriptor set REUSES the mutable texture set slot
+  // kDescriptorSetTexturesVertex (bound once per command buffer, shared by the
+  // vertex and pixel stages); kDescriptorSetTexturesPixel becomes an empty
+  // layout. Bindings within the bindless set:
+  enum BindlessBinding : uint32_t {
+    kBindlessBindingTexture2DArray = 0,  // runtime array of 2D-array images
+    kBindlessBindingTexture3D = 1,       // runtime array of 3D images
+    kBindlessBindingTextureCube = 2,     // runtime array of cube images
+    kBindlessBindingSampler = 3,         // runtime array of samplers
+  };
+  static constexpr uint32_t kBindlessDescriptorSet = kDescriptorSetTexturesVertex;
+  // Per-stage push-constant capacities (uint slot index per binding). The push
+  // block is { uint vtex[]; uint vsamp[]; uint ptex[]; uint psamp[]; } and MUST
+  // fit the Vulkan minimum guaranteed maxPushConstantsSize of 128 bytes (32
+  // uints). A shader that declares more texture/sampler bindings than its
+  // stage's cap cannot be fully expressed bindless (see the translator note).
+  static constexpr uint32_t kBindlessPushVertexTextureCount = 6;
+  static constexpr uint32_t kBindlessPushVertexSamplerCount = 2;
+  static constexpr uint32_t kBindlessPushPixelTextureCount = 16;
+  static constexpr uint32_t kBindlessPushPixelSamplerCount = 8;
+  // Byte offsets of the four arrays within the push-constant block (array stride
+  // 4). Shared by the SPIR-V translator (member offsets) and the command
+  // processor (the struct it fills + pushes).
+  static constexpr uint32_t kBindlessPushVertexTextureOffset = 0;
+  static constexpr uint32_t kBindlessPushVertexSamplerOffset =
+      kBindlessPushVertexTextureOffset + kBindlessPushVertexTextureCount * 4;
+  static constexpr uint32_t kBindlessPushPixelTextureOffset =
+      kBindlessPushVertexSamplerOffset + kBindlessPushVertexSamplerCount * 4;
+  static constexpr uint32_t kBindlessPushPixelSamplerOffset =
+      kBindlessPushPixelTextureOffset + kBindlessPushPixelTextureCount * 4;
+  static constexpr uint32_t kBindlessPushConstantsSize =
+      kBindlessPushPixelSamplerOffset + kBindlessPushPixelSamplerCount * 4;
+  static_assert(kBindlessPushConstantsSize <= 128,
+                "Bindless push constants must fit the guaranteed 128-byte "
+                "maxPushConstantsSize");
+
   static_assert(
       kDescriptorSetCount <= 4,
       "The number of descriptor sets used by translated shaders must be within "
@@ -392,6 +429,15 @@ class SpirvShaderTranslator : public ShaderTranslator {
     bool fragment_shader_sample_interlock;
 
     bool demote_to_helper_invocation;
+
+    // BRICK 1 native render path (gpu_native_render_path): true when the cvar is
+    // set AND the device enabled the descriptor-indexing features the bindless
+    // path needs (runtimeDescriptorArray + descriptorBindingPartiallyBound +
+    // descriptorBindingSampledImageUpdateAfterBind). When true, guest shaders
+    // index one global bindless texture/sampler set via push constants instead
+    // of declaring per-shader sampled-image/sampler descriptor bindings. Off in
+    // the host-test Features(bool) constructor.
+    bool bindless_textures = false;
   };
 
   SpirvShaderTranslator(const Features& features,
@@ -749,6 +795,29 @@ class SpirvShaderTranslator : public ShaderTranslator {
                                  xenos::TextureFilter min_filter,
                                  xenos::TextureFilter mip_filter,
                                  xenos::AnisoFilter aniso_filter);
+
+  // BRICK 1 native bindless render path (gpu_native_render_path). When on, guest
+  // texture fetches index one global runtime-array descriptor set (set
+  // kBindlessDescriptorSet) by a per-draw push-constant slot instead of
+  // declaring a per-shader sampled-image / sampler descriptor binding.
+  bool IsNativeRenderPath() const { return features_.bindless_textures; }
+  // Lazily creates the push-constant block variable ({ vtex[], vsamp[], ptex[],
+  // psamp[] } - see kBindlessPush* in the public section) and returns it.
+  spv::Id EnsureBindlessPushConstants();
+  // Lazily creates (once per module) the global runtime image array variable for
+  // the given fetch dimension (2D-array / 3D / cube) and returns it.
+  spv::Id EnsureBindlessTextureArray(xenos::FetchOpDimension dimension);
+  // Lazily creates (once per module) the global runtime sampler array variable.
+  spv::Id EnsureBindlessSamplerArray();
+  // Loads the push-constant uint slot index for texture binding
+  // `texture_bindings_[binding_index]` (is_sampler=false) or sampler binding
+  // `sampler_bindings_[binding_index]` (is_sampler=true), picking the array for
+  // the current stage.
+  spv::Id LoadBindlessSlotIndex(bool is_sampler, size_t binding_index);
+  // Bindless equivalents of `createLoad(binding.variable)`: index the global
+  // array by the push-constant slot and load the image / sampler object.
+  spv::Id LoadBindlessTextureImage(size_t texture_binding_index);
+  spv::Id LoadBindlessSampler(size_t sampler_binding_index);
   // `texture_parameters` need to be set up except for `sampler`, which will be
   // set internally, optionally doing linear interpolation between the an
   // existing value and the new one (the result location may be the same as for
@@ -989,6 +1058,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // are, for regular fetches, two bindings (unsigned and signed).
   std::vector<TextureBinding> texture_bindings_;
   std::vector<SamplerBinding> sampler_bindings_;
+
+  // BRICK 1 native bindless render path: lazily-created per-module global
+  // resource variables (spv::NoResult until first used). Reset in Reset().
+  spv::Id bindless_texture_2d_array_ = spv::NoResult;
+  spv::Id bindless_texture_3d_ = spv::NoResult;
+  spv::Id bindless_texture_cube_ = spv::NoResult;
+  spv::Id bindless_sampler_array_ = spv::NoResult;
+  spv::Id bindless_push_constants_ = spv::NoResult;
 
   // VS as VS only - int.
   spv::Id input_vertex_index_;

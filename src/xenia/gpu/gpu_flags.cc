@@ -422,6 +422,24 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_native_render_path, false,
+    "BRICK 1 of the native render-path rearch (Thor/Turnip, gated compound with "
+    "gpu_hw_vertex_fetch): replace the PER-DRAW per-shader texture descriptor "
+    "model with ONE GLOBAL BINDLESS descriptor set (runtimeDescriptorArray + "
+    "descriptorBindingPartiallyBound + UPDATE_AFTER_BIND) bound ONCE per command "
+    "buffer. The set holds runtime arrays of sampled images (2D-array / 3D / cube "
+    "at bindings 0/1/2) and samplers (binding 3); each guest texture/sampler is "
+    "registered at a stable slot and shaders index the arrays by a per-draw "
+    "push-constant instead of allocating + writing + binding a transient "
+    "descriptor set per draw. Collapses BD's ~1064 per-draw descriptor binds/"
+    "frame toward ~0 and removes per-texture pipeline-layout variance. Requires "
+    "VK_EXT_descriptor_indexing (device-confirmed on this Turnip); falls back to "
+    "the legacy per-draw path if the features are unavailable. Changes the guest "
+    "shader interface + pipeline layout when on, so toggling invalidates cached "
+    "shaders/pipelines once (use a clean run). Default off until validated.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

@@ -124,6 +124,19 @@ class VulkanDevice {
 
     bool samplerMirrorClampToEdge = false;
 
+    // VK_EXT_descriptor_indexing (#162, promoted to 1.2). Enabled (when supported)
+    // for the BRICK 1 native bindless render path (gpu_native_render_path): one
+    // global runtime-array descriptor set indexed by push constant. Enabling these
+    // at device creation is INERT for the legacy per-draw path (they only take
+    // effect for descriptor sets/pools created with the UPDATE_AFTER_BIND /
+    // partially-bound flags, which only the bindless path uses).
+    bool descriptorIndexing = false;
+    bool shaderSampledImageArrayNonUniformIndexing = false;
+    bool runtimeDescriptorArray = false;
+    bool descriptorBindingPartiallyBound = false;
+    bool descriptorBindingSampledImageUpdateAfterBind = false;
+    bool descriptorBindingUpdateUnusedWhilePending = false;
+
     // VK_KHR_portability_subset (#164)
 
     bool constantAlphaColorBlendFactors = false;

@@ -877,6 +877,11 @@ VkSampler VulkanTextureCache::UseSampler(SamplerParameters parameters,
       return VK_NULL_HANDLE;
     }
     auto it_reuse = samplers_.find(sampler_used_first_->first);
+    // BRICK 1 native bindless render path: free the sampler's global bindless
+    // slot before destroying it (no-op when inactive; LRU eviction is post-await
+    // via the last_usage_submission check above, so no in-flight reference).
+    command_processor_.ReleaseBindlessSampler(
+        sampler_used_first_->second.sampler);
     dfn.vkDestroySampler(device, sampler_used_first_->second.sampler, nullptr);
     if (sampler_used_first_->second.used_next) {
       sampler_used_first_->second.used_next->second.used_previous =
@@ -1728,6 +1733,13 @@ VulkanTextureCache::VulkanTexture::~VulkanTexture() {
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
   for (const auto& view_pair : views_) {
+    // BRICK 1 native bindless render path: free the view's global bindless slot
+    // before the view handle is destroyed (no-op when the native path is
+    // inactive). This runs post-await (the texture cache only destroys textures
+    // after the referencing submission completed), so no in-flight command still
+    // references the freed slot.
+    vulkan_texture_cache.command_processor_.ReleaseBindlessImageView(
+        view_pair.second);
     dfn.vkDestroyImageView(device, view_pair.second, nullptr);
   }
   vmaDestroyImage(vulkan_texture_cache.vma_allocator_, image_, allocation_);

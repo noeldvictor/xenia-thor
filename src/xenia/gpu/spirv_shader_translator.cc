@@ -163,6 +163,15 @@ SpirvShaderTranslator::Features::Features(
   } else {
     spirv_version = spv::Spv_1_0;
   }
+  // BRICK 1 native bindless render path: enabled only when the cvar is set AND
+  // the device enabled the descriptor-indexing features it depends on. Keep this
+  // in exact sync with VulkanCommandProcessor's native_render_path_active_ so the
+  // translated shader interface matches the pipeline layout + bound descriptors.
+  bindless_textures =
+      cvars::gpu_native_render_path &&
+      vulkan_device->properties().runtimeDescriptorArray &&
+      vulkan_device->properties().descriptorBindingPartiallyBound &&
+      vulkan_device->properties().descriptorBindingSampledImageUpdateAfterBind;
 }
 
 uint64_t SpirvShaderTranslator::GetDefaultVertexShaderModification(
@@ -215,6 +224,13 @@ void SpirvShaderTranslator::Reset() {
   sampler_bindings_.clear();
   texture_bindings_.clear();
   hw_vertex_fetch_inputs_.clear();
+
+  // BRICK 1 native bindless render path: per-module global resource ids.
+  bindless_texture_2d_array_ = spv::NoResult;
+  bindless_texture_3d_ = spv::NoResult;
+  bindless_texture_cube_ = spv::NoResult;
+  bindless_sampler_array_ = spv::NoResult;
+  bindless_push_constants_ = spv::NoResult;
 
   main_interface_.clear();
   var_main_registers_ = spv::NoResult;
@@ -944,10 +960,13 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
     entry_point->addIdOperand(interface_id);
   }
 
-  if (!is_depth_only_fragment_shader_) {
+  if (!is_depth_only_fragment_shader_ && !IsNativeRenderPath()) {
     // Specify the binding indices for samplers when the number of textures is
     // known, as samplers are located after images in the texture descriptor
     // set.
+    // BRICK 1 native bindless path: samplers have no per-binding descriptor
+    // variable (they are indexed in one global runtime sampler array), so there
+    // is nothing to decorate here.
     size_t texture_binding_count = texture_bindings_.size();
     size_t sampler_binding_count = sampler_bindings_.size();
     for (size_t i = 0; i < sampler_binding_count; ++i) {

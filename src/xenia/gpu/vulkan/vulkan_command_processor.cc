@@ -1000,6 +1000,32 @@ bool VulkanCommandProcessor::SetupContext() {
     }
   }
 
+  // BRICK 1 native bindless render path (gpu_native_render_path). Enabled only
+  // when the cvar is set AND the device enabled the descriptor-indexing features
+  // it needs - kept in exact sync with SpirvShaderTranslator::Features::
+  // bindless_textures so the translated shader interface matches the pipeline
+  // layout + bound descriptors. On failure it stays inactive (legacy per-draw
+  // path).
+  native_render_path_active_ =
+      cvars::gpu_native_render_path &&
+      vulkan_device->properties().runtimeDescriptorArray &&
+      vulkan_device->properties().descriptorBindingPartiallyBound &&
+      vulkan_device->properties().descriptorBindingSampledImageUpdateAfterBind;
+  if (native_render_path_active_) {
+    if (InitializeBindlessDescriptors()) {
+      XELOGI(
+          "VulkanCommandProcessor: BRICK 1 native bindless render path ACTIVE "
+          "(gpu_native_render_path) - textures/samplers via one global "
+          "descriptor set, bound once per command buffer");
+    } else {
+      XELOGE(
+          "VulkanCommandProcessor: failed to initialize the bindless descriptor "
+          "set for gpu_native_render_path - falling back to the legacy per-draw "
+          "path");
+      native_render_path_active_ = false;
+    }
+  }
+
   // Swap objects.
 
   // Gamma ramp, either device-local and host-visible at once, or separate
@@ -1646,6 +1672,24 @@ void VulkanCommandProcessor::ShutdownContext() {
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
                                          constants_dynamic_descriptor_pool_);
   constants_dynamic_descriptor_set_ = VK_NULL_HANDLE;
+
+  // BRICK 1 native bindless render path: the set is freed implicitly with its
+  // pool; the pipeline layout is destroyed by the pipeline_layouts_ loop below
+  // (it is stored there under the fixed native key).
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
+                                         bindless_descriptor_pool_);
+  bindless_descriptor_set_ = VK_NULL_HANDLE;
+  native_pipeline_layout_ = nullptr;
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
+                                         device,
+                                         bindless_descriptor_set_layout_);
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorSetLayout,
+                                         device,
+                                         bindless_empty_descriptor_set_layout_);
+  bindless_image_view_slots_.clear();
+  bindless_image_free_slots_.clear();
+  bindless_sampler_slots_.clear();
+  bindless_sampler_free_slots_.clear();
 
   texture_cache_.reset();
 
@@ -4619,6 +4663,66 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
                                           size_t texture_count_vertex,
                                           size_t sampler_count_vertex,
                                           bool pixel_textures_input_attachment) {
+  // BRICK 1 native bindless render path: every guest draw shares ONE pipeline
+  // layout (set 0 shared memory, set 1 constants, set 2 the global bindless
+  // texture/sampler set, set 3 empty, + the bindless push-constant range). Built
+  // once and returned regardless of per-shader texture/sampler counts, removing
+  // per-texture pipeline-layout variance.
+  if (native_render_path_active_) {
+    if (native_pipeline_layout_) {
+      return native_pipeline_layout_;
+    }
+    const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+    const VkDevice device = vulkan_device->device();
+    VkDescriptorSetLayout
+        descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetCount];
+    descriptor_set_layouts
+        [SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram] =
+            descriptor_set_layout_shared_memory_and_edram_;
+    descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetConstants] =
+        (descriptor_set_layout_constants_dynamic_ != VK_NULL_HANDLE)
+            ? descriptor_set_layout_constants_dynamic_
+            : descriptor_set_layout_constants_;
+    descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
+        bindless_descriptor_set_layout_;
+    descriptor_set_layouts[SpirvShaderTranslator::kDescriptorSetTexturesPixel] =
+        bindless_empty_descriptor_set_layout_;
+    VkPushConstantRange push_constant_range;
+    push_constant_range.stageFlags =
+        guest_shader_vertex_stages_ | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_constant_range.offset = 0;
+    push_constant_range.size =
+        SpirvShaderTranslator::kBindlessPushConstantsSize;
+    VkPipelineLayoutCreateInfo pipeline_layout_create_info;
+    pipeline_layout_create_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_create_info.pNext = nullptr;
+    pipeline_layout_create_info.flags = 0;
+    pipeline_layout_create_info.setLayoutCount =
+        uint32_t(xe::countof(descriptor_set_layouts));
+    pipeline_layout_create_info.pSetLayouts = descriptor_set_layouts;
+    pipeline_layout_create_info.pushConstantRangeCount = 1;
+    pipeline_layout_create_info.pPushConstantRanges = &push_constant_range;
+    VkPipelineLayout pipeline_layout;
+    if (dfn.vkCreatePipelineLayout(device, &pipeline_layout_create_info, nullptr,
+                                   &pipeline_layout) != VK_SUCCESS) {
+      XELOGE("Failed to create the Vulkan bindless guest pipeline layout");
+      return nullptr;
+    }
+    PipelineLayoutKey native_key;
+    native_key.texture_count_pixel = 0;
+    native_key.sampler_count_pixel = 0;
+    native_key.texture_count_vertex = 0;
+    native_key.sampler_count_vertex = 0;
+    auto emplaced_pair = pipeline_layouts_.emplace(
+        std::piecewise_construct, std::forward_as_tuple(native_key),
+        std::forward_as_tuple(pipeline_layout, bindless_descriptor_set_layout_,
+                              bindless_empty_descriptor_set_layout_));
+    native_pipeline_layout_ = &emplaced_pair.first->second;
+    return native_pipeline_layout_;
+  }
+
   PipelineLayoutKey pipeline_layout_key;
   // BD input-attachment merge: distinguish the feedback variant (pixel textures
   // as input attachments) in the cache key. texture_count_pixel here is only
@@ -4712,6 +4816,214 @@ VulkanCommandProcessor::GetPipelineLayout(size_t texture_count_pixel,
                             descriptor_set_layout_textures_pixel));
   // unordered_map insertion doesn't invalidate element references.
   return &emplaced_pair.first->second;
+}
+
+bool VulkanCommandProcessor::InitializeBindlessDescriptors() {
+  // BRICK 1 native bindless render path. Creates one global descriptor set with
+  // runtime arrays of sampled images (2D array / 3D / cube at bindings 0/1/2)
+  // and samplers (binding 3), all PARTIALLY_BOUND + UPDATE_AFTER_BIND, plus an
+  // empty layout for the now-unused kDescriptorSetTexturesPixel slot.
+  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  const VkShaderStageFlags stage_flags =
+      guest_shader_vertex_stages_ | VK_SHADER_STAGE_FRAGMENT_BIT;
+  VkDescriptorSetLayoutBinding bindings[4] = {};
+  for (uint32_t i = 0; i < 3; ++i) {
+    bindings[i].binding = i;
+    bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bindings[i].descriptorCount = kBindlessImageCapacity;
+    bindings[i].stageFlags = stage_flags;
+    bindings[i].pImmutableSamplers = nullptr;
+  }
+  bindings[3].binding = 3;
+  bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+  bindings[3].descriptorCount = kBindlessSamplerCapacity;
+  bindings[3].stageFlags = stage_flags;
+  bindings[3].pImmutableSamplers = nullptr;
+
+  const VkDescriptorBindingFlags binding_flag =
+      VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+      VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+      VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+  VkDescriptorBindingFlags binding_flags[4] = {binding_flag, binding_flag,
+                                               binding_flag, binding_flag};
+  VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_create_info;
+  binding_flags_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+  binding_flags_create_info.pNext = nullptr;
+  binding_flags_create_info.bindingCount = 4;
+  binding_flags_create_info.pBindingFlags = binding_flags;
+
+  VkDescriptorSetLayoutCreateInfo layout_create_info;
+  layout_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layout_create_info.pNext = &binding_flags_create_info;
+  layout_create_info.flags =
+      VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+  layout_create_info.bindingCount = 4;
+  layout_create_info.pBindings = bindings;
+  if (dfn.vkCreateDescriptorSetLayout(device, &layout_create_info, nullptr,
+                                      &bindless_descriptor_set_layout_) !=
+      VK_SUCCESS) {
+    XELOGE("Failed to create the bindless descriptor set layout");
+    return false;
+  }
+
+  // Empty layout for the unused pixel-textures set slot (set 3).
+  VkDescriptorSetLayoutCreateInfo empty_layout_create_info;
+  empty_layout_create_info.sType =
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  empty_layout_create_info.pNext = nullptr;
+  empty_layout_create_info.flags = 0;
+  empty_layout_create_info.bindingCount = 0;
+  empty_layout_create_info.pBindings = nullptr;
+  if (dfn.vkCreateDescriptorSetLayout(device, &empty_layout_create_info, nullptr,
+                                      &bindless_empty_descriptor_set_layout_) !=
+      VK_SUCCESS) {
+    XELOGE("Failed to create the empty bindless pixel-textures set layout");
+    return false;
+  }
+
+  VkDescriptorPoolSize pool_sizes[2];
+  pool_sizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  pool_sizes[0].descriptorCount = kBindlessImageCapacity * 3;
+  pool_sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+  pool_sizes[1].descriptorCount = kBindlessSamplerCapacity;
+  VkDescriptorPoolCreateInfo pool_create_info;
+  pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pool_create_info.pNext = nullptr;
+  pool_create_info.flags =
+      VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+  pool_create_info.maxSets = 1;
+  pool_create_info.poolSizeCount = 2;
+  pool_create_info.pPoolSizes = pool_sizes;
+  if (dfn.vkCreateDescriptorPool(device, &pool_create_info, nullptr,
+                                 &bindless_descriptor_pool_) != VK_SUCCESS) {
+    XELOGE("Failed to create the bindless descriptor pool");
+    return false;
+  }
+
+  VkDescriptorSetAllocateInfo set_allocate_info;
+  set_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  set_allocate_info.pNext = nullptr;
+  set_allocate_info.descriptorPool = bindless_descriptor_pool_;
+  set_allocate_info.descriptorSetCount = 1;
+  set_allocate_info.pSetLayouts = &bindless_descriptor_set_layout_;
+  if (dfn.vkAllocateDescriptorSets(device, &set_allocate_info,
+                                   &bindless_descriptor_set_) != VK_SUCCESS) {
+    XELOGE("Failed to allocate the bindless descriptor set");
+    return false;
+  }
+  return true;
+}
+
+uint32_t VulkanCommandProcessor::UseBindlessImageSlot(VkImageView image_view,
+                                                      uint32_t binding) {
+  if (image_view == VK_NULL_HANDLE) {
+    return 0;
+  }
+  auto it = bindless_image_view_slots_.find(image_view);
+  if (it != bindless_image_view_slots_.end()) {
+    return it->second;
+  }
+  uint32_t slot;
+  if (!bindless_image_free_slots_.empty()) {
+    slot = bindless_image_free_slots_.back();
+    bindless_image_free_slots_.pop_back();
+  } else {
+    if (bindless_image_next_slot_ >= kBindlessImageCapacity) {
+      // Capacity exhausted (very long session of unique textures) - index 0 is
+      // undefined-but-safe under partiallyBound. Should not happen for a field.
+      return 0;
+    }
+    slot = bindless_image_next_slot_++;
+  }
+  bindless_image_view_slots_.emplace(image_view, slot);
+  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  VkDescriptorImageInfo image_info;
+  image_info.sampler = VK_NULL_HANDLE;
+  image_info.imageView = image_view;
+  image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkWriteDescriptorSet write;
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.pNext = nullptr;
+  write.dstSet = bindless_descriptor_set_;
+  write.dstBinding = binding;
+  write.dstArrayElement = slot;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  write.pImageInfo = &image_info;
+  write.pBufferInfo = nullptr;
+  write.pTexelBufferView = nullptr;
+  dfn.vkUpdateDescriptorSets(vulkan_device->device(), 1, &write, 0, nullptr);
+  return slot;
+}
+
+uint32_t VulkanCommandProcessor::UseBindlessSamplerSlot(VkSampler sampler) {
+  if (sampler == VK_NULL_HANDLE) {
+    return 0;
+  }
+  auto it = bindless_sampler_slots_.find(sampler);
+  if (it != bindless_sampler_slots_.end()) {
+    return it->second;
+  }
+  uint32_t slot;
+  if (!bindless_sampler_free_slots_.empty()) {
+    slot = bindless_sampler_free_slots_.back();
+    bindless_sampler_free_slots_.pop_back();
+  } else {
+    if (bindless_sampler_next_slot_ >= kBindlessSamplerCapacity) {
+      return 0;
+    }
+    slot = bindless_sampler_next_slot_++;
+  }
+  bindless_sampler_slots_.emplace(sampler, slot);
+  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  VkDescriptorImageInfo image_info;
+  image_info.sampler = sampler;
+  image_info.imageView = VK_NULL_HANDLE;
+  image_info.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkWriteDescriptorSet write;
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.pNext = nullptr;
+  write.dstSet = bindless_descriptor_set_;
+  write.dstBinding = SpirvShaderTranslator::kBindlessBindingSampler;
+  write.dstArrayElement = slot;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+  write.pImageInfo = &image_info;
+  write.pBufferInfo = nullptr;
+  write.pTexelBufferView = nullptr;
+  dfn.vkUpdateDescriptorSets(vulkan_device->device(), 1, &write, 0, nullptr);
+  return slot;
+}
+
+void VulkanCommandProcessor::ReleaseBindlessImageView(VkImageView image_view) {
+  if (!native_render_path_active_ || image_view == VK_NULL_HANDLE) {
+    return;
+  }
+  auto it = bindless_image_view_slots_.find(image_view);
+  if (it == bindless_image_view_slots_.end()) {
+    return;
+  }
+  bindless_image_free_slots_.push_back(it->second);
+  bindless_image_view_slots_.erase(it);
+}
+
+void VulkanCommandProcessor::ReleaseBindlessSampler(VkSampler sampler) {
+  if (!native_render_path_active_ || sampler == VK_NULL_HANDLE) {
+    return;
+  }
+  auto it = bindless_sampler_slots_.find(sampler);
+  if (it == bindless_sampler_slots_.end()) {
+    return;
+  }
+  bindless_sampler_free_slots_.push_back(it->second);
+  bindless_sampler_slots_.erase(it);
 }
 
 VulkanCommandProcessor::ScratchBufferAcquisition
@@ -9944,6 +10256,90 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     texture_count_pixel = 0;
   }
 
+  // BRICK 1 native bindless render path: instead of allocating + writing +
+  // binding a transient per-draw texture descriptor set, push this draw's
+  // texture/sampler GLOBAL SLOT indices as push constants (the one global
+  // bindless set is bound once, by the bind loop below) and skip the entire
+  // legacy texture-descriptor path. Slots come from the SAME per-draw views /
+  // samplers the legacy path would bind (GetActiveBindingOrNullImageView /
+  // current_samplers_*), so the sampled data is identical.
+  if (native_render_path_active_) {
+    struct BindlessPushConstants {
+      uint32_t vertex_texture_slots
+          [SpirvShaderTranslator::kBindlessPushVertexTextureCount];
+      uint32_t vertex_sampler_slots
+          [SpirvShaderTranslator::kBindlessPushVertexSamplerCount];
+      uint32_t pixel_texture_slots
+          [SpirvShaderTranslator::kBindlessPushPixelTextureCount];
+      uint32_t pixel_sampler_slots
+          [SpirvShaderTranslator::kBindlessPushPixelSamplerCount];
+    } bindless_push{};
+    static_assert(
+        sizeof(BindlessPushConstants) ==
+            SpirvShaderTranslator::kBindlessPushConstantsSize,
+        "Bindless push-constant struct must match the SPIR-V block size");
+    auto image_binding_for_dimension =
+        [](xenos::FetchOpDimension dimension) -> uint32_t {
+      switch (dimension) {
+        case xenos::FetchOpDimension::k3DOrStacked:
+          return SpirvShaderTranslator::kBindlessBindingTexture3D;
+        case xenos::FetchOpDimension::kCube:
+          return SpirvShaderTranslator::kBindlessBindingTextureCube;
+        default:
+          return SpirvShaderTranslator::kBindlessBindingTexture2DArray;
+      }
+    };
+    for (uint32_t i = 0;
+         i < texture_count_vertex &&
+         i < SpirvShaderTranslator::kBindlessPushVertexTextureCount;
+         ++i) {
+      const VulkanShader::TextureBinding& tb = textures_vertex[i];
+      VkImageView view = texture_cache_->GetActiveBindingOrNullImageView(
+          tb.fetch_constant, tb.dimension, bool(tb.is_signed));
+      bindless_push.vertex_texture_slots[i] =
+          UseBindlessImageSlot(view, image_binding_for_dimension(tb.dimension));
+    }
+    for (uint32_t i = 0;
+         i < sampler_count_vertex &&
+         i < SpirvShaderTranslator::kBindlessPushVertexSamplerCount;
+         ++i) {
+      bindless_push.vertex_sampler_slots[i] =
+          UseBindlessSamplerSlot(current_samplers_vertex_[i].second);
+    }
+    if (pixel_shader) {
+      for (uint32_t i = 0;
+           i < texture_count_pixel &&
+           i < SpirvShaderTranslator::kBindlessPushPixelTextureCount;
+           ++i) {
+        const VulkanShader::TextureBinding& tb = (*textures_pixel)[i];
+        VkImageView view = texture_cache_->GetActiveBindingOrNullImageView(
+            tb.fetch_constant, tb.dimension, bool(tb.is_signed));
+        bindless_push.pixel_texture_slots[i] = UseBindlessImageSlot(
+            view, image_binding_for_dimension(tb.dimension));
+      }
+      for (uint32_t i = 0;
+           i < sampler_count_pixel &&
+           i < SpirvShaderTranslator::kBindlessPushPixelSamplerCount;
+           ++i) {
+        bindless_push.pixel_sampler_slots[i] =
+            UseBindlessSamplerSlot(current_samplers_pixel_[i].second);
+      }
+    }
+    deferred_command_buffer_.CmdVkPushConstants(
+        current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
+        guest_shader_vertex_stages_ | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+        sizeof(bindless_push), &bindless_push);
+    // Point set 2 at the global bindless set (bound once by the loop below);
+    // set 3 is unused. Mark both value-up-to-date so the legacy write path is
+    // fully skipped for them.
+    current_graphics_descriptor_sets_
+        [SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
+            bindless_descriptor_set_;
+    current_graphics_descriptor_set_values_up_to_date_ |=
+        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
+        (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
+  }
+
   // EDRAM-recompiler RT-as-texture (increment 1, gpu_rt_as_texture, default-off):
   // for each pixel texture fetch that samples data a resolve wrote to shared
   // memory this frame, if the SOURCE render target is still resident and a 1:1
@@ -9956,7 +10352,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // with the cvar off (then all VK_NULL_HANDLE = no behavior change).
   rt_as_texture_views_pixel_.fill(VK_NULL_HANDLE);
   if (cvars::gpu_rt_as_texture && pixel_shader && texture_count_pixel &&
-      !feedback_merge_active_) {
+      !feedback_merge_active_ && !native_render_path_active_) {
     for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
       uint32_t fetch_constant = texture_binding.fetch_constant;
       // Only non-signed, identity-RGBA-swizzle fetches can sample the native RT
@@ -10001,7 +10397,12 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // when the signature actually changes. The signature stores exact handles
   // (not a hash), so it is precise. When caching is disabled, fall back to the
   // original unconditional rewrite.
-  if (cvars::vulkan_cache_texture_descriptors) {
+  if (native_render_path_active_) {
+    // BRICK 1: texture/sampler slots were pushed as push constants above and the
+    // global bindless set is bound once - nothing to sign, allocate, or write
+    // here, and the set-2/set-3 value bits stay up-to-date (do NOT fall into the
+    // else that clears them).
+  } else if (cvars::vulkan_cache_texture_descriptors) {
     auto build_texture_signature =
         [this](bool is_vertex, uint32_t texture_count, uint32_t sampler_count,
                const std::vector<VulkanShader::TextureBinding>* textures,
@@ -10362,13 +10763,24 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // Bind the new descriptor sets.
   uint32_t descriptor_sets_needed =
       (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetCount) - 1;
-  if (!texture_count_vertex && !sampler_count_vertex) {
-    descriptor_sets_needed &=
-        ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex);
-  }
-  if (!texture_count_pixel && !sampler_count_pixel) {
+  if (native_render_path_active_) {
+    // BRICK 1: the single global bindless set occupies set 2 (bound once per
+    // command buffer - kept out of bound-up-to-date at submission start, so the
+    // loop below binds it on the first draw and skips it thereafter); set 3 is
+    // unused.
+    descriptor_sets_needed |=
+        UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
     descriptor_sets_needed &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
+  } else {
+    if (!texture_count_vertex && !sampler_count_vertex) {
+      descriptor_sets_needed &=
+          ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex);
+    }
+    if (!texture_count_pixel && !sampler_count_pixel) {
+      descriptor_sets_needed &=
+          ~(UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel);
+    }
   }
   uint32_t descriptor_sets_remaining =
       descriptor_sets_needed &
