@@ -83,6 +83,13 @@ DEFINE_string(cpu_hle_tiling_replay_addr, "",
               "Empty disables. (WIP - the coherent pitch/base/resolve rewrite for "
               "full-surface is the next increment.)",
               "CPU");
+DEFINE_bool(cpu_d3d_hle_signatures, false,
+            "LOAD-TIME XEX D3D9-HLE (RPCS3 model): at module load, SCAN the code for "
+            "the static-linked XDK D3D9 functions by BYTE SIGNATURE (bl offsets "
+            "masked, distinctive VdGlobalDevice/token-constant loads anchored) and "
+            "AUTO-INSTALL the HLE trampolines - no hardcoded addresses. Generic "
+            "across games that share the XDK D3D9. Default off.",
+            "CPU");
 DEFINE_string(cpu_hle_ring_writer_addr, "",
               "GPU D3D9-HLE: hex guest addr of BD's XDK D3D9 ring writer (8246E100). "
               "HLE-replaces it with a pure-C++ ring write (no reentrant guest call): "
@@ -741,6 +748,71 @@ void HleRingWriterHandler(ppc::PPCContext* ctx,
   cp->UpdateWritePointer(widx);
   ctx->r[3] = 0;
 }
+
+// --- LOAD-TIME XEX D3D9 SIGNATURE-HLE (the RPCS3 model: identify the static-linked
+// XDK D3D9 functions by BYTE SIGNATURE at module load, auto-install HLE trampolines,
+// no hardcoded addresses). bl-offset bytes [4..7] masked = position-independent; the
+// anchors are the distinctive VdGlobalDevice / tile-token / state-struct loads. ---
+struct D3dHleSig {
+  const char* name;
+  int type;  // 1=tile-walker(bin-once), 2=tiling-replay(BeginTiling), 3=ring-writer
+  uint8_t bytes[48];
+};
+static const D3dHleSig kD3dHleSigs[] = {
+    {"XDK_D3D_TileWalker", 1,
+     {0x7D, 0x88, 0x02, 0xA6, 0x48, 0x23, 0x83, 0xED, 0x94, 0x21, 0xFF, 0x60,
+      0x7C, 0x6B, 0x1B, 0x78, 0x7C, 0x83, 0x23, 0x78, 0x7C, 0xB9, 0x2B, 0x78,
+      0x3B, 0x6B, 0x00, 0x08, 0x83, 0x4B, 0x00, 0x04, 0x80, 0x83, 0x00, 0x00,
+      0x39, 0x43, 0x00, 0x04, 0x7F, 0x0A, 0x20, 0x40, 0x40, 0x98, 0x00, 0xAC}},
+    {"XDK_D3D_BeginTiling", 2,
+     {0x7D, 0x88, 0x02, 0xA6, 0x48, 0x23, 0x7F, 0xB5, 0x94, 0x21, 0xFF, 0x80,
+      0x7C, 0x7F, 0x1B, 0x78, 0x3D, 0x60, 0x82, 0x00, 0x7C, 0x9E, 0x23, 0x78,
+      0x81, 0x5F, 0x00, 0x00, 0x81, 0x6B, 0x05, 0xF4, 0x83, 0x8B, 0x00, 0x00,
+      0x55, 0x4B, 0x00, 0x01, 0x41, 0x82, 0x02, 0x60, 0x3F, 0xA0, 0x86, 0x00}},
+    {"XDK_D3D_RingWriter", 3,
+     {0x7D, 0x88, 0x02, 0xA6, 0x48, 0x25, 0x1B, 0x59, 0x94, 0x21, 0xFF, 0x50,
+      0x7C, 0x7A, 0x1B, 0x78, 0x7C, 0x9E, 0x23, 0x78, 0x7C, 0xBF, 0x2B, 0x78,
+      0x89, 0x7A, 0x2A, 0x39, 0x83, 0x3A, 0x34, 0xA8, 0x83, 0x1A, 0x34, 0xA4,
+      0x55, 0x6B, 0x07, 0xBD, 0x41, 0x82, 0x00, 0x78, 0x81, 0x7A, 0x4D, 0xF4}},
+};
+std::unordered_map<uint32_t, int> g_d3d_hle_sites;
+std::once_flag g_d3d_hle_scan_once;
+void ScanD3dHleSignatures(Memory* memory) {
+  int found = 0;
+  for (const auto& sig : kD3dHleSigs) {
+    for (uint32_t a = 0x82400000u; a < 0x824C0000u; a += 4) {
+      auto* p = reinterpret_cast<const uint8_t*>(memory->TranslateVirtual(a));
+      if (!p) {
+        continue;
+      }
+      bool match = true;
+      for (int i = 0; i < 48 && match; ++i) {
+        if (i >= 4 && i < 8) {
+          continue;  // masked bl offset (position-independent)
+        }
+        if (p[i] != sig.bytes[i]) {
+          match = false;
+        }
+      }
+      if (match) {
+        g_d3d_hle_sites[a] = sig.type;
+        ++found;
+        XELOGI("D3D-HLE SIG: identified {} by signature @ {:08X}", sig.name, a);
+        break;
+      }
+    }
+  }
+  XELOGI("D3D-HLE SIG: load-time scan found {}/{} XDK D3D9 functions", found,
+         int(sizeof(kD3dHleSigs) / sizeof(kD3dHleSigs[0])));
+}
+int D3dHleTypeForAddress(Memory* memory, uint32_t address) {
+  if (!cvars::cpu_d3d_hle_signatures || !memory) {
+    return 0;
+  }
+  std::call_once(g_d3d_hle_scan_once, ScanD3dHleSignatures, memory);
+  auto it = g_d3d_hle_sites.find(address);
+  return it != g_d3d_hle_sites.end() ? it->second : 0;
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -796,6 +868,21 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE RING-WRITER: planted host ring writer at guest {:08X}", address);
       return function;
+    }
+    // LOAD-TIME SIGNATURE HLE: the scan (run once) has identified the XDK D3D9
+    // functions by byte signature; install the HLE trampoline for the matched
+    // address. Type 1 (TileWalker) = the bin-once host handler (renders); types
+    // 2/3 (BeginTiling/RingWriter) are identified + logged but their host bodies
+    // are WIP (reentrancy/composite walls), so not auto-installed yet.
+    if (int d3d_hle = D3dHleTypeForAddress(memory(), address)) {
+      if (d3d_hle == 1) {
+        static_cast<GuestFunction*>(function)->SetupExtern(HleBinOnceHandler,
+                                                           nullptr);
+        function->set_status(Symbol::Status::kDeclared);
+        XELOGI("D3D-HLE: signature-installed bin-once (XDK TileWalker) @ {:08X}",
+               address);
+        return function;
+      }
     }
     if (!frontend_->DeclareFunction(static_cast<GuestFunction*>(function))) {
       function->set_status(Symbol::Status::kFailed);
