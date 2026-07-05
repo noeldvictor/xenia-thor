@@ -15,6 +15,27 @@ BD's GPU scene complexity swings ~4×/second, so **cross-run fps / gpu_frame_us 
 frame; screenshot correctness; ir3 shader-stats; qemu byte-identical; code facts. `gpu_frame_us` absolute
 value is unreliable (includes idle). OSD fps box = the render-rate truth for ONE screenshot's scene only.
 
+## 🚨🚨 THE BREAKTHROUGH (2026-07-04, user's RE2-Remake insight) — IT'S HLE-vs-LLE, NOT FOLIAGE
+**User plays Resident Evil 2 Remake (2019 AAA, FAR heavier than BD) on the SAME Thor via GameNative — smooth.**
+GameNative = box64 (x86→ARM) + **DXVK** (D3D11→Vulkan TRANSLATION) + Turnip. So the chip + the translation
+APPROACH are proven not the limit. **The gap is that xenia EMULATES the 360 GPU (LLE): PM4 command stream +
+register file + EDRAM memory + predicated tiling + SSBO-vertex-fetch — the GPU chews emulated-360-hardware-
+shaped work. DXVK TRANSLATES the API (HLE): native vertex buffers/textures/RTs, batched state — the GPU gets
+native-shaped work.** That is THE "something huge." Not the foliage (a 2007 game's foliage is trivial for a
+chip running RE2 Remake). ⇒ **the 4 rearch bricks (native-input/bindless/native-RT/fp16) FAILED because they
+bolt onto the SIDE of the LLE emulator while the whole low-level 360-GPU machine keeps grinding underneath —
+you cannot incrementally patch an emulator into a translator.** THE FIX = the committed **D3D9-HLE: be DXVK for
+the 360** — translate BD's D3D9 draw/state/resource calls to native Vulkan, skip PM4/EDRAM/tiling emulation
+ENTIRELY. RE2-via-DXVK is the existence proof this is correct, not a fantasy. NEXT diagnostic: GPU perfcounter
+profile (ALU-busy vs memory-stall cycles) to CONFIRM the GPU is stalling on the emulation's access patterns
+(gpu_busy=99% @ 680MHz max-clock hides compute-vs-stall — never measured the internal utilization).
+
+| Interlock/EDRAM lever | Result | Verdict |
+|---|---|---|
+| ROAA + `gpu_vulkan_feedback_merge` (the FSI-substitute single-pass EDRAM) | **DEAD (2026-07-04).** same_pixel_eligible=0, total=0, frame 100ms UNCHANGED = BD's composites are NEIGHBORING-pixel bloom/blur, which interlock (ROAA AND FSI) CANNOT fuse (interlock = same-pixel only). | **DEAD for BD** |
+| `gpu_vulkan_edram_atomic` (main-render interlock via atomics, no HW FSI) | 4.7× LOSS (software interlock slow) | **DEAD** |
+| Custom Turnip FSI (a740 HAS ROAA ordering HW; Turnip doesn't expose full FSI) | Even if built: BD composites aren't same-pixel + blend-ROP isn't the bottleneck ⇒ wouldn't help. The interlock is NOT why PC is fast (raw GPU is). | **DEAD (won't help BD)** |
+
 ## GPU levers — BD field
 
 | Lever / cvar | Hypothesis | Device result | Verdict |
