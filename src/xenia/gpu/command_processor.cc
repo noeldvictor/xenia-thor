@@ -63,6 +63,8 @@ DEFINE_bool(gpu_hle_surface_binonce, false,
             "the wider surface) = render once, full width. Host-side, no reentrancy.",
             "GPU");
 
+DECLARE_uint32(cpu_watch_guest_write_page);
+
 namespace xe {
 namespace gpu {
 
@@ -1233,6 +1235,29 @@ void CommandProcessor::UpdatePrimaryReadPointer(uint32_t read_index,
 void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
   SCOPE_profile_cpu_f("gpu");
 
+  // PAGE-WATCH fallback (cpu_watch_guest_write_page): when the TileWalker HLE
+  // handler doesn't fire (title/menu, no predicated tiling), protect the watched
+  // guest page here instead so the CPU backend can log the guest IB-recorder.
+  // Indirect buffers are executed for ALL 3D draws, so this fires even at the
+  // title screen. The cvar value is the FULL guest-virtual address the CPU writes
+  // through (window bits included, e.g. 0xBF6xxxxx = 0xA0000000 physical window);
+  // we protect that virtual alias ONCE. The guest keeps re-recording into the IB
+  // ring, so the page is re-written (and re-faulted) on the next ring wrap.
+  if (cvars::cpu_watch_guest_write_page && memory_) {
+    static std::atomic<bool> pw_protected{false};
+    bool expected = false;
+    if (pw_protected.compare_exchange_strong(expected, true)) {
+      size_t ps = xe::memory::page_size();
+      uint32_t va_page = cvars::cpu_watch_guest_write_page & ~uint32_t(ps - 1);
+      uint8_t* base = memory_->virtual_membase();
+      xe::memory::Protect(base + va_page, ps, xe::memory::PageAccess::kReadOnly);
+      XELOGI(
+          "PAGE_WATCH: protected {:08X} read-only via ExecuteIndirectBuffer "
+          "(first IB ptr={:08X} count={})",
+          va_page, ptr, count);
+    }
+  }
+
   trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
   if (cvars::gpu_trace_swap) {
     uint32_t* dwords =
@@ -1445,8 +1470,19 @@ bool CommandProcessor::ExecutePacketType3(RingBuffer* reader, uint32_t packet) {
       // at 82% busy but nothing reached the frontbuffer).
       bool in_tile_pass =
           (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
-      if (in_tile_pass && flatten_bin_passes_seen_ >= 3 &&
-          (opcode == PM4_DRAW_INDX || opcode == PM4_DRAW_INDX_2)) {
+      if (cvars::gpu_flatten_predicated_tiling_widen) {
+        // MERGE mode (widen): BD PARTITIONS its scene across heterogeneous
+        // content passes (device-decoded: pass A = 8 draws @ pitch360/msaa2,
+        // pass B = 26 draws @ pitch720/msaa1, win_off -608) - NOT one scene
+        // re-submitted per identical tile. So dropping later passes LOSES
+        // content (the broken right-sliver render). Instead force-pass EVERY
+        // content bin pass at true screen position into the one widened
+        // full-surface render (offset-zeroed in UpdateFlattenResolveOffsetSkip).
+        if (in_tile_pass && flatten_bin_passes_seen_ >= 2) {
+          any_pass = true;
+        }
+      } else if (in_tile_pass && flatten_bin_passes_seen_ >= 3 &&
+                 (opcode == PM4_DRAW_INDX || opcode == PM4_DRAW_INDX_2)) {
         if (any_pass) {
           ++flatten_dropped_draws_;
         }
@@ -1821,12 +1857,13 @@ void CommandProcessor::UpdateFlattenResolveOffsetSkip() {
                        cvars::gpu_flatten_predicated_tiling_widen;
   draw_util::resolve_ignore_window_offset =
       flatten_widen && in_tile_pass && flatten_bin_passes_seen_ >= 3;
-  // During the force-pass content tile (pass 2), all draws (including the other
-  // tiles' geometry, force-passed) render into one full-surface pass - drop the
-  // per-tile window offset so they rasterize at true screen position instead of
-  // the tile's EDRAM origin (the fix for the flatten's off-screen/streak bug).
+  // MERGE mode: every content bin pass (>= 2) is force-passed into the one
+  // widened full-surface render, so ALL of them must drop the per-tile window
+  // offset (esp. pass B's -608) and rasterize at true screen position instead
+  // of their tile's EDRAM origin. (Was ==2 = only the first content pass, which
+  // lost pass B's 26 draws + mis-placed geometry = the broken render.)
   draw_util::draw_ignore_window_offset =
-      flatten_widen && in_tile_pass && flatten_bin_passes_seen_ == 2;
+      flatten_widen && in_tile_pass && flatten_bin_passes_seen_ >= 2;
   // Bin-once: accumulate the full-surface height = the max scissor br_y across
   // this frame's tile passes (the bottom tile's 1280 vs the top tile's 672).
   // Published at frame end (XE_SWAP) for the next frame's force-pass scissor.

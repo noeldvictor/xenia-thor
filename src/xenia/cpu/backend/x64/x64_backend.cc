@@ -11,11 +11,17 @@
 
 #include <stddef.h>
 
+#include <atomic>
+#include <cstring>
+#include <mutex>
+#include <set>
+
 #include "third_party/capstone/include/capstone/capstone.h"
 #include "third_party/capstone/include/capstone/x86.h"
 
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/memory.h"
 #include "xenia/cpu/backend/x64/x64_assembler.h"
 #include "xenia/cpu/backend/x64/x64_code_cache.h"
 #include "xenia/cpu/backend/x64/x64_emitter.h"
@@ -23,6 +29,8 @@
 #include "xenia/cpu/backend/x64/x64_sequences.h"
 #include "xenia/cpu/backend/x64/x64_stack_layout.h"
 #include "xenia/cpu/breakpoint.h"
+#include "xenia/cpu/mmio_handler.h"
+#include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/stack_walker.h"
 
@@ -45,6 +53,8 @@ DEFINE_int32(x64_extension_mask, -1,
              " 4096 = AVX512VBMI\n"
              "   -1 = Detect and utilize all possible processor features\n",
              "x64");
+
+DECLARE_uint32(cpu_watch_guest_write_page);
 
 namespace xe {
 namespace cpu {
@@ -202,6 +212,129 @@ uint64_t ReadCapstoneReg(HostThreadContext* context, x86_reg reg) {
       assert_unhandled_case(reg);
       return 0;
   }
+}
+
+// Map any x86 GPR (sub)register capstone id to its 64-bit parent value in the
+// host context. Sets is_high8 for the AH/BH/CH/DH byte registers (whose value
+// lives in bits 8-15). Returns false for non-GPR (e.g. XMM) or unknown regs.
+// The caller takes the low `size` bytes of the returned value, which is correct
+// for AL/AX/EAX/RAX-style low sub-registers on a little-endian host.
+static bool ReadCapstoneGpr(HostThreadContext* ctx, x86_reg reg, uint64_t* out,
+                            bool* is_high8) {
+  *is_high8 = false;
+  switch (reg) {
+    case X86_REG_AL: case X86_REG_AX: case X86_REG_EAX: case X86_REG_RAX:
+      *out = ctx->rax; return true;
+    case X86_REG_AH: *out = ctx->rax; *is_high8 = true; return true;
+    case X86_REG_CL: case X86_REG_CX: case X86_REG_ECX: case X86_REG_RCX:
+      *out = ctx->rcx; return true;
+    case X86_REG_CH: *out = ctx->rcx; *is_high8 = true; return true;
+    case X86_REG_DL: case X86_REG_DX: case X86_REG_EDX: case X86_REG_RDX:
+      *out = ctx->rdx; return true;
+    case X86_REG_DH: *out = ctx->rdx; *is_high8 = true; return true;
+    case X86_REG_BL: case X86_REG_BX: case X86_REG_EBX: case X86_REG_RBX:
+      *out = ctx->rbx; return true;
+    case X86_REG_BH: *out = ctx->rbx; *is_high8 = true; return true;
+    case X86_REG_SPL: case X86_REG_SP: case X86_REG_ESP: case X86_REG_RSP:
+      *out = ctx->rsp; return true;
+    case X86_REG_BPL: case X86_REG_BP: case X86_REG_EBP: case X86_REG_RBP:
+      *out = ctx->rbp; return true;
+    case X86_REG_SIL: case X86_REG_SI: case X86_REG_ESI: case X86_REG_RSI:
+      *out = ctx->rsi; return true;
+    case X86_REG_DIL: case X86_REG_DI: case X86_REG_EDI: case X86_REG_RDI:
+      *out = ctx->rdi; return true;
+    case X86_REG_R8B: case X86_REG_R8W: case X86_REG_R8D: case X86_REG_R8:
+      *out = ctx->r8; return true;
+    case X86_REG_R9B: case X86_REG_R9W: case X86_REG_R9D: case X86_REG_R9:
+      *out = ctx->r9; return true;
+    case X86_REG_R10B: case X86_REG_R10W: case X86_REG_R10D: case X86_REG_R10:
+      *out = ctx->r10; return true;
+    case X86_REG_R11B: case X86_REG_R11W: case X86_REG_R11D: case X86_REG_R11:
+      *out = ctx->r11; return true;
+    case X86_REG_R12B: case X86_REG_R12W: case X86_REG_R12D: case X86_REG_R12:
+      *out = ctx->r12; return true;
+    case X86_REG_R13B: case X86_REG_R13W: case X86_REG_R13D: case X86_REG_R13:
+      *out = ctx->r13; return true;
+    case X86_REG_R14B: case X86_REG_R14W: case X86_REG_R14D: case X86_REG_R14:
+      *out = ctx->r14; return true;
+    case X86_REG_R15B: case X86_REG_R15W: case X86_REG_R15D: case X86_REG_R15:
+      *out = ctx->r15; return true;
+    default:
+      return false;
+  }
+}
+
+// Page-watch (cpu_watch_guest_write_page) capstone fallback: emulate a guest
+// store that faulted on a watched page but that the fast 32-bit decoder
+// (MMIOHandler::EmulateWatchedStore) can't handle - e.g. memcpy's 8-bit tail
+// stores (mov m8,r8) or SSE (movdqu/movaps) and 64-bit GPR stores. Writes the
+// exact bytes to `fault_addr` and returns the instruction length (to advance
+// past it), or 0 if it isn't a simple "store source -> memory" form we can
+// reconstruct. memcpy copies bytes verbatim, so no byte-swap unless a MOVBE.
+static size_t EmulateWatchedStoreCapstone(csh handle, uint64_t host_pc,
+                                          HostThreadContext* ctx,
+                                          void* fault_addr) {
+  auto code_ptr = reinterpret_cast<const uint8_t*>(host_pc);
+  size_t remaining = 16;
+  uint64_t addr = host_pc;
+  cs_insn insn = {0};
+  cs_detail detail = {0};
+  insn.detail = &detail;
+  if (!cs_disasm_iter(handle, &code_ptr, &remaining, &addr, &insn)) {
+    return 0;
+  }
+  const cs_x86& x86 = detail.x86;
+  // Locate the destination memory operand and the (single) source operand.
+  int mem_i = -1;
+  int src_i = -1;
+  for (uint8_t i = 0; i < x86.op_count; ++i) {
+    if (x86.operands[i].type == X86_OP_MEM) {
+      if (mem_i < 0) mem_i = i;
+    } else if (src_i < 0) {
+      src_i = i;
+    }
+  }
+  if (mem_i < 0 || src_i < 0) {
+    return 0;  // Not a "reg/imm -> memory" store (e.g. rep movs, mem-to-mem).
+  }
+  const cs_x86_op& memop = x86.operands[mem_i];
+  const cs_x86_op& srcop = x86.operands[src_i];
+  uint32_t size = memop.size;
+  if (size == 0 || size > 16) {
+    return 0;
+  }
+  uint8_t buf[16] = {0};
+  if (srcop.type == X86_OP_IMM) {
+    int64_t imm = srcop.imm;
+    std::memcpy(buf, &imm, size <= 8 ? size : 8);
+  } else if (srcop.type == X86_OP_REG) {
+    x86_reg reg = srcop.reg;
+    if (reg >= X86_REG_XMM0 && reg <= X86_REG_XMM15) {
+      std::memcpy(buf, &ctx->xmm_registers[reg - X86_REG_XMM0],
+                  size <= 16 ? size : 16);
+    } else {
+      uint64_t v;
+      bool is_high8;
+      if (!ReadCapstoneGpr(ctx, reg, &v, &is_high8)) {
+        return 0;
+      }
+      if (is_high8) {
+        v >>= 8;  // AH/BH/CH/DH live in bits 8-15 of the parent register.
+      }
+      std::memcpy(buf, &v, size <= 8 ? size : 8);
+    }
+  } else {
+    return 0;
+  }
+  if (insn.id == X86_INS_MOVBE) {
+    for (uint32_t i = 0; i < size / 2; ++i) {
+      uint8_t t = buf[i];
+      buf[i] = buf[size - 1 - i];
+      buf[size - 1 - i] = t;
+    }
+  }
+  std::memcpy(fault_addr, buf, size);
+  return insn.size;
 }
 
 #define X86_EFLAGS_CF 0x00000001  // Carry Flag
@@ -393,6 +526,92 @@ bool X64Backend::ExceptionCallbackThunk(Exception* ex, void* data) {
 }
 
 bool X64Backend::ExceptionCallback(Exception* ex) {
+  // ⭐ PAGE-WATCH (cpu_watch_guest_write_page): identify the GUEST function that
+  // writes a watched guest page (e.g. BD's indirect-buffer / PM4 recorder region)
+  // with NO per-store JIT instrumentation, so the title runs full speed and
+  // reaches the field. The page is protected read-only elsewhere (the TileWalker
+  // HLE handler in processor.cc, or CommandProcessor::ExecuteIndirectBuffer);
+  // here we resolve the faulting host pc -> guest fn via the code cache, log the
+  // writer + its guest caller (LR, read from the PPCContext the x64 backend pins
+  // in host rsi = the context register), then EMULATE the store and keep the
+  // page protected (emulate-on-fault = no un-protect window = catch every write).
+  // GATED: cvar 0 = off = zero overhead. Default-off safe.
+  uint32_t watch_page = cvars::cpu_watch_guest_write_page;
+  if (watch_page && ex->code() == Exception::Code::kAccessViolation &&
+      ex->access_violation_operation() ==
+          Exception::AccessViolationOperation::kWrite) {
+    uint64_t membase =
+        reinterpret_cast<uint64_t>(processor()->memory()->virtual_membase());
+    uint64_t fa = ex->fault_address();
+    size_t ps = xe::memory::page_size();
+    uint32_t page_mask = ~uint32_t(ps - 1);
+    if (fa >= membase && fa < membase + 0x100000000ull) {
+      uint32_t guest_fa = uint32_t(fa - membase);
+      if ((guest_fa & page_mask) == (watch_page & page_mask)) {
+        // Serialize watched-page faults: the dedup set is not thread-safe and the
+        // un-protect/emulate/re-protect window must not interleave across threads.
+        static std::mutex s_pw_mutex;
+        static std::set<uint32_t> s_pw_seen;
+        std::lock_guard<std::mutex> pw_lock(s_pw_mutex);
+
+        // Resolve the writer guest fn (host pc -> guest fn) + its guest caller
+        // (LR from the PPCContext, which the x64 backend keeps in host rsi).
+        GuestFunction* fn = code_cache()->LookupFunction(ex->pc());
+        uint32_t writer_fn = fn ? fn->address() : 0;
+        uint32_t writer_pc = fn ? fn->MapMachineCodeToGuestAddress(ex->pc()) : 0;
+        auto* ppc = reinterpret_cast<ppc::PPCContext*>(
+            uintptr_t(ex->thread_context()->rsi));
+        uint32_t caller_lr = ppc ? uint32_t(ppc->lr) : 0;
+
+        // Dedup: one line per distinct writer_fn (the region takes thousands of
+        // writes/frame); log the first N distinct writers to avoid log spam.
+        if (s_pw_seen.size() < 64 && s_pw_seen.insert(writer_fn).second) {
+          XELOGE(
+              "PAGE_WATCH IB: wrote guest {:08X} writer_fn={:08X} "
+              "writer_pc={:08X} caller_lr={:08X}",
+              guest_fa, writer_fn, writer_pc, caller_lr);
+        }
+
+        // EMULATE-ON-FAULT: un-protect, replay the store, re-protect so the page
+        // stays watched with no window a write could slip through.
+        void* page_host =
+            reinterpret_cast<void*>(membase + (watch_page & page_mask));
+        void* tgt = reinterpret_cast<void*>(fa);
+        xe::memory::Protect(page_host, ps, xe::memory::PageAccess::kReadWrite);
+        size_t len = MMIOHandler::EmulateWatchedStore(
+            reinterpret_cast<const uint8_t*>(ex->pc()), *ex->thread_context(),
+            tgt);
+        if (!len) {
+          // Wide / uncommon store (e.g. memcpy's SSE copy) the fast 32-bit
+          // decoder rejects; fall back to a full capstone decode so the watch
+          // survives instead of self-disabling on the first memcpy.
+          len = EmulateWatchedStoreCapstone(capstone_handle_, ex->pc(),
+                                            ex->thread_context(), tgt);
+        }
+        if (len) {
+          xe::memory::Protect(page_host, ps, xe::memory::PageAccess::kReadOnly);
+          ex->set_resume_pc(ex->pc() + len);
+          return true;
+        }
+        // Truly undecodable store form. Leave the page writable and resume at the
+        // same PC so the instruction re-executes normally; the watch is disabled
+        // from here, but the writer(s) were already logged.
+        static std::atomic<int> s_giveup_log{0};
+        if (s_giveup_log.fetch_add(1) < 8) {
+          const uint8_t* ib = reinterpret_cast<const uint8_t*>(ex->pc());
+          XELOGE(
+              "PAGE_WATCH IB: undecodable store @ host_pc={:016X} guest={:08X} "
+              "writer_fn={:08X} bytes={:02X} {:02X} {:02X} {:02X} {:02X} {:02X} "
+              "{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} - page {:08X} writable",
+              ex->pc(), guest_fa, writer_fn, ib[0], ib[1], ib[2], ib[3], ib[4],
+              ib[5], ib[6], ib[7], ib[8], ib[9], ib[10], ib[11],
+              watch_page & page_mask);
+        }
+        return true;
+      }
+    }
+  }
+
   if (ex->code() != Exception::Code::kIllegalInstruction) {
     // We only care about illegal instructions. Other things will be handled by
     // other handlers (probably). If nothing else picks it up we'll be called

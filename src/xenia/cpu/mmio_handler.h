@@ -69,6 +69,19 @@ class MMIOHandler {
   bool CheckLoad(uint32_t virtual_address, uint32_t* out_value);
   bool CheckStore(uint32_t virtual_address, uint32_t value);
 
+  // Page-watch diagnostic (cpu_watch_guest_write_page): emulate the single guest
+  // store that faulted on a host-protected read-only guest page, so the page can
+  // stay protected (emulate-on-fault) and keep catching every distinct writer.
+  // Decodes the host store at `host_pc`, reads its source value from
+  // `thread_context`, and writes the exact bytes the instruction would have
+  // written to `fault_host_address`. The caller un-protects the page before
+  // calling and re-protects after. Returns the faulting instruction length (to
+  // advance the resume PC past it), or 0 if the store form isn't decodable (the
+  // caller should then stop watching so the guest can make forward progress).
+  static size_t EmulateWatchedStore(const uint8_t* host_pc,
+                                    const HostThreadContext& thread_context,
+                                    void* fault_host_address);
+
  protected:
   MMIOHandler(uint8_t* virtual_membase, uint8_t* physical_membase,
               uint8_t* membase_end, HostToGuestVirtual host_to_guest_virtual,

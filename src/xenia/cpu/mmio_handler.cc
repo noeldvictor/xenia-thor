@@ -613,5 +613,37 @@ bool MMIOHandler::ExceptionCallback(Exception* ex) {
   return true;
 }
 
+size_t MMIOHandler::EmulateWatchedStore(const uint8_t* host_pc,
+                                        const HostThreadContext& thread_context,
+                                        void* fault_host_address) {
+#if XE_ARCH_AMD64
+  DecodedLoadStore decoded{};
+  if (!TryDecodeLoadStore(host_pc, decoded) || decoded.is_load) {
+    // Not a store form the decoder recognizes (e.g. a wide SSE/AVX block copy).
+    // The caller must stop watching so the guest can make forward progress.
+    return 0;
+  }
+  uint32_t word;
+  if (decoded.is_constant) {
+    // mov m32, imm32 - the immediate is written to memory verbatim.
+    word = uint32_t(decoded.constant);
+  } else {
+    uint32_t reg = uint32_t(thread_context.int_registers[decoded.value_reg]);
+    // Reconstruct the exact bytes the faulting instruction writes to guest
+    // (big-endian) memory:
+    //   movbe (byte_swap): memory = byteswap(reg)
+    //   mov   (!byte_swap): memory = reg verbatim
+    word = decoded.byte_swap ? xe::byte_swap(reg) : reg;
+  }
+  *reinterpret_cast<uint32_t*>(fault_host_address) = word;
+  return decoded.length;
+#else
+  (void)host_pc;
+  (void)thread_context;
+  (void)fault_host_address;
+  return 0;
+#endif  // XE_ARCH_AMD64
+}
+
 }  // namespace cpu
 }  // namespace xe
