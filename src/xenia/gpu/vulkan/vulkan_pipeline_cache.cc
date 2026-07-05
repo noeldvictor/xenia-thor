@@ -365,10 +365,15 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
     // pre-discard against the full-res primed depth (handles leaf holes, unlike
     // coarse LRZ). Safe - no depth write to corrupt. Gated by the cvar + the
     // draw's depth-test-on/write-off state (set by gpu_foliage_lrz_force_depth).
-    auto rb_depthcontrol = regs.Get<reg::RB_DEPTHCONTROL>();
-    bool force_early_z = cvars::gpu_foliage_force_early_z &&
-                         rb_depthcontrol.z_enable &&
-                         !rb_depthcontrol.z_write_enable;
+    // NOTE: gpu_foliage_lrz_force_depth sets depth-WRITE OFF at the pipeline
+    // dynamic-state level (normalized_depth_control, NOT the register), for the
+    // alpha-test foliage class on the host-RT path. So gate the early-Z force on
+    // the SAME condition (cvar + alpha_test) - that's exactly the draws that will
+    // have depth-write off, where forced EarlyFragmentTests is safe + rejects.
+    bool force_early_z =
+        cvars::gpu_foliage_force_early_z &&
+        cvars::gpu_foliage_lrz_force_depth &&
+        regs.Get<reg::RB_COLORCONTROL>().alpha_test_enable != 0;
     if (force_early_z ||
         (shader.implicit_early_z_write_allowed() &&
          (!shader.writes_color_target(0) ||
