@@ -154,6 +154,7 @@ DECLARE_bool(gpu_opaque_depth_prepass);
 DECLARE_bool(gpu_lrz_spike_depth_clear);
 DECLARE_bool(gpu_foliage_lrz_force_depth);
 DECLARE_bool(gpu_foliage_lrz_feedback);
+DECLARE_bool(gpu_foliage_force_early_z);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);

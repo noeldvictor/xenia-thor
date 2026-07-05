@@ -645,11 +645,16 @@ class SpirvShaderTranslator : public ShaderTranslator {
   }
 
   bool IsExecutionModeEarlyFragmentTests() const {
+    // Trust the kEarlyHint modification: vulkan_pipeline_cache is the gatekeeper
+    // and sets it ONLY when early-Z is safe - either implicit_early_z_write_allowed
+    // (normal), OR forced with depth-WRITE OFF (gpu_foliage_force_early_z), where
+    // early-Z can't corrupt depth even with discard. Re-checking
+    // implicit_early_z_write_allowed() here would wrongly block the forced foliage
+    // reject path (discard makes it false), so it's dropped.
     return is_pixel_shader() &&
            GetSpirvShaderModification().pixel.depth_stencil_mode ==
                Modification::DepthStencilMode::kEarlyHint &&
-           !edram_fragment_shader_interlock_ &&
-           current_shader().implicit_early_z_write_allowed();
+           !edram_fragment_shader_interlock_;
   }
 
   uint32_t GetModificationInterpolatorMask() const {

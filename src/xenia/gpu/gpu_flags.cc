@@ -988,6 +988,18 @@ DEFINE_bool(
     "frozen frame. Default off.",
     "GPU");
 DEFINE_bool(
+    gpu_foliage_force_early_z, false,
+    "Overdraw attack (per-pixel, NOT coarse LRZ): force the SPIR-V "
+    "EarlyFragmentTests execution mode on discard/alpha-test pixel shaders when "
+    "depth-WRITE is OFF (z_enable && !z_write_enable) - so the per-pixel depth "
+    "test runs BEFORE the shader and occluded foliage fragments REJECT pre-discard "
+    "against the full-res primed depth (handles per-pixel leaf holes correctly, "
+    "unlike coarse LRZ which discard defeats). Safe: depth-write off = early-Z "
+    "can't corrupt depth. Pair with gpu_opaque_depth_prepass + "
+    "gpu_foliage_lrz_force_depth (primes depth, sets write-off). Host-RT path. "
+    "Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_foliage_lrz_feedback, false,
     "Discard/LRZ-defeat overdraw fix (Lever A'): make the alpha-test foliage "
     "class WRITE depth so it contributes to LRZ via the Adreno A7xx LRZ-FEEDBACK "
