@@ -23,6 +23,34 @@ INSIDE xenia (the **Cemu model**: general emulator + HLE graphics + per-game gra
 it: native-input flat, bindless regressed, cap=1/interlock/EDRAM-fusion/driver-internals dead). The fix is the
 HLE front-end, not another cvar. `check` the experiment DB first (below).
 
+## 🔥 DECISIVE REFRAME (2026-07-05 late): RE2-on-Thor proves it's EMULATION-inefficiency, NOT a hardware/foliage limit
+**User's clinching point: Resident Evil 2 Remake (VASTLY heavier than a 2007 360 game) runs 30fps on THIS Thor via
+GameNative (Box64/FEX + DXVK D3D→Vulkan).** So the Adreno 740 does 30fps of far heavier rendering — the hardware is
+NOT the wall; **xenia's LLE emulation is.** Any "BD foliage is intrinsically too heavy / 30fps is a physical limit"
+conclusion is RETRACTED.
+- **THE MEASURED WALL (per-pass GPU trace, matched heavy Shu field):** BD's field = **n=95 render passes/frame** =
+  16 geometry + **79 pure EDRAM-emulation overhead (35 xfer + 23 resolve + 18 composite)**. `gpu_pass_us`≈4ms (the
+  actual draws) but `gpu_frame_us`≈123ms — the ~119ms is deferred TBDR tile-store/render across the 95 passes +
+  barriers. DXVK renders RE2 in a HANDFUL of native passes; that's the whole gap.
+- **DECOMPOSITION (clean isolations, each moved a number):** ~4ms draws + ~12ms EDRAM transfers
+  (`skip_edram_transfers`, −12ms) + ~40ms ROP/blend (`gpu_force_no_color_write`, −40ms) + ~60ms fragment ALU/
+  depth/tile-store. `gpu_vrs_foliage_rate=4 + gpu_foliage_decimate_pct=45 + msaa1` → 46ms (~22fps) = fragment-bound,
+  but that only proves the fragment work is done INEFFICIENTLY (RE2's heavier fragment work fits 33ms).
+- **EVERYTHING incremental is DEAD w/ data (exp_ledger, do NOT re-run):** bin-once/force-1-tile (striped/confounded),
+  decoupled-native-HLE (correct render but PERF-FLAT — it swaps the front-end, keeps the 95-pass EDRAM back-end),
+  in-pass transfers, ROAA (off), downscale, MSAA, hw-vertex-fetch, AND **every early-Z/LRZ reject** (force_depth,
+  spike, feedback, spike+feedback, forced per-pixel EarlyFragmentTests `gpu_foliage_force_early_z` [built, gate-
+  fixed, committed]) — cutout-`discard` defeats coarse LRZ + LOAD_OP_LOAD kills LRZ every pass. Math: even PERFECT
+  reject caps ~10-16fps (visible foliage + transfers floor). **Reject/levers are the wrong axis.**
+- **⇒ THE ANSWER = FULL D3D9→Vulkan HLE (DXVK-for-360), whole frame at once** (user mandate, verbatim: "REIMAGINE
+  the gfx pipeline d3d9→vulkan", "convert the whole pipeline at Once", "WE MUST HAVE HLE FOR D3D9"): capture BD's
+  D3D9 draws at the RE'd seam **0x82489F40** (SubmitRectDraw, one call/draw, PRE per-tile fan-out; state in dev-ctx
+  **dev+0x2800..**) → render NATIVELY in a FEW Vulkan passes (native `VkBuffer` vertex-input NOT SSBO vfetch; Xenos→
+  SPIR-V; native `VkPipeline` ROP-blend/depth; ONE persistent full-surface host RT; no per-tile fan-out, no EDRAM
+  xfer/resolve/composite passes) → present. This BYPASSES the entire PM4/EDRAM/95-pass LLE stack = efficient like
+  DXVK. The decoupled native-HLE was PARTIAL (kept xenia's back-end) = why flat; the FULL HLE = a SEPARATE native
+  Vulkan renderer. Multi-session architectural build = THE reimagination. Detail: memory `[[gpu-d3d9-hle-architecture-pivot]]`.
+
 ## ⭐ NATIVE HLE — CURRENT BUILD STATE (2026-07-05): RE DONE + enabler committed, IMPLEMENTING on desktop
 - **SEAM (found + verified on the field via screenshot + write-watch):** universal per-draw recorder =
   **0x824895C8** (writes each draw's PM4 into the IB); high-level D3D9 draw = **0x82186BA0** (allocates that draw's
