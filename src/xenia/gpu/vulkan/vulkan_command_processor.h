@@ -335,10 +335,24 @@ class VulkanCommandProcessor : public CommandProcessor {
                  bool major_mode_explicit) override;
   bool IssueCopy() override;
 
+  // Blue Dragon native-draw HLE: mirror of the D3D12 IssueDraw-entry counter so
+  // gpu_bd_native_hle's issuedraw_delta is a REAL signal on the Vulkan/Thor
+  // backend. The base CommandProcessor returns a constant 0 here, which made
+  // EVERY synthetic emit on the Thor read as issuedraw_delta=0 even when the
+  // draw genuinely reached IssueDraw (a pure measurement gap, not the draw
+  // failing to execute). Incremented at the top of IssueDraw (entry count).
+  uint32_t BdDebugIssueDrawCount() const override { return bd_issuedraw_count_; }
+
   void InitializeTrace() override;
 
  private:
   friend class VulkanRenderTargetCache;
+
+  // Blue Dragon native-draw HLE: IssueDraw-entry counter backing
+  // BdDebugIssueDrawCount() (see the public override). Bracketed around the
+  // synthetic-PM4 emit in the base CommandProcessor to prove the native draw
+  // reaches IssueDraw on the Thor.
+  uint32_t bd_issuedraw_count_ = 0;
 
   struct SharedMemoryReadbackStats {
     uint32_t samples = 0;

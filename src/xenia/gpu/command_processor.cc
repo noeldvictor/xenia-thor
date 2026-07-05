@@ -2688,6 +2688,11 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
         }
 
         uint32_t idc_before = BdDebugIssueDrawCount();
+        // Diagnostic (gated by gpu_bd_native_hle): the read_count BEFORE the
+        // loop distinguishes the RingBuffer capacity==payload WRAP bug
+        // (read_count==0 => loop skipped => packet never executes, ok stays a
+        // loop-skip-safe 1) from a genuine reach into ExecutePacket/IssueDraw.
+        uint32_t synth_read_count_before = synth_reader.read_count();
         s_in_bd_native_emit = true;
         bool synth_ok = true;
         while (synth_reader.read_count()) {
@@ -2710,11 +2715,12 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
           XELOGI(
               "BD NATIVE-HLE: field draw via SYNTHETIC DRAW_INDX PM4 -> "
               "ExecutePacket -> IssueDraw on CP thread (prim={} idx={} pitch={} "
-              "foliage={} ok={} decouple_base={} replace={} issuedraw_delta={})",
+              "foliage={} synth_read_count={} ok={} decouple_base={} replace={} "
+              "issuedraw_delta={})",
               uint32_t(vgt_draw_initiator.prim_type),
               uint32_t(vgt_draw_initiator.num_indices), nhle_pitch,
-              nhle_is_foliage ? 1 : 0, synth_ok ? 1 : 0, decouple_base,
-              cvars::gpu_bd_native_hle_replace ? 1 : 0, idc_delta);
+              nhle_is_foliage ? 1 : 0, synth_read_count_before, synth_ok ? 1 : 0,
+              decouple_base, cvars::gpu_bd_native_hle_replace ? 1 : 0, idc_delta);
         }
       }
     }

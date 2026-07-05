@@ -2314,6 +2314,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   SCOPE_profile_cpu_f("gpu");
   ui::vulkan::VulkanPerfCountersRecordIssueSwap();
 
+  // Blue Dragon native-draw HLE: confirm the whole field foliage pass fired
+  // natively this frame via the per-frame emit counter, then reset it (mirrors
+  // D3D12CommandProcessor::IssueSwap - the base-class counter is otherwise never
+  // reset on the Vulkan/Thor backend, and gives no per-frame device signal).
+  if (bd_native_emits_this_frame_) {
+    static uint32_t s_bd_native_frame = 0;
+    XELOGI("BD NATIVE-HLE: field frame {} emitted {} native foliage draws",
+           s_bd_native_frame++, bd_native_emits_this_frame_);
+    bd_native_emits_this_frame_ = 0;
+  }
+
   // THE EDRAM SOLVE, hybrid form: the guest swap ends the frame - reset the
   // post-process phase so the next frame's main scene starts on host RTs and the
   // first composite re-bridges once. (Per-frame, not per-draw = no thrash across
@@ -5209,6 +5220,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
 
   const RegisterFile& regs = *register_file_;
+
+  // Blue Dragon native-draw HLE: count every IssueDraw ENTRY (before any early
+  // return), mirroring D3D12CommandProcessor::IssueDraw. Makes gpu_bd_native_hle
+  // issuedraw_delta a real per-backend signal on the Thor.
+  ++bd_issuedraw_count_;
 
   // Lever 2 (vulkan_merge_draws): snapshot the deferred-command cursor at the top
   // of IssueDraw. Compared just before the draw-emit block to detect whether ANY
