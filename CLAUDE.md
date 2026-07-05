@@ -23,6 +23,28 @@ INSIDE xenia (the **Cemu model**: general emulator + HLE graphics + per-game gra
 it: native-input flat, bindless regressed, cap=1/interlock/EDRAM-fusion/driver-internals dead). The fix is the
 HLE front-end, not another cvar. `check` the experiment DB first (below).
 
+## ⭐ NATIVE HLE — CURRENT BUILD STATE (2026-07-05): RE DONE + enabler committed, IMPLEMENTING on desktop
+- **SEAM (found + verified on the field via screenshot + write-watch):** universal per-draw recorder =
+  **0x824895C8** (writes each draw's PM4 into the IB); high-level D3D9 draw = **0x82186BA0** (allocates that draw's
+  vertex+index buffers, submits one draw). Chain `0x82186BA0 → 0x82489F40 → 0x824895C8`. General
+  DrawIndexedPrimitive = 0x82477D70. (The RE is DONE — this was the 3-session-stuck hunt.)
+- **ENABLER (COMMITTED, x64_emitter.cc):** desktop HLE intercepts NEVER FIRED on x64 (kExtern dispatch bug — a
+  guest `bl` bypassed SetupExtern handlers). FIXED → recorder intercept fires on desktop (0→20000+). Makes the
+  RE-on-PC / implement-on-PC loop actually work. (All earlier desktop `count=0` intercept results were FALSE
+  NEGATIVES from this bug — e.g. the "field=composite, BeginTiling never fires" read was wrong; the field DOES
+  tile via replay 0x82487fe0.)
+- **THREADING (solved):** recorder runs on the GUEST CPU thread; xenia's `IssueDraw` + `register_file_` = CP
+  WORKER thread. CANNOT call IssueDraw at the recorder. Handoff = **`CommandProcessor::CallInThread`**
+  (command_processor.cc:719; `pending_fns_` push is unlocked → per-draw path needs a lock/lock-free queue).
+- **NATIVE-DRAW PLAN (2 halves):** (A) guest capture writes a **minimal synthetic PM4** (1 clean DRAW_INDX + only
+  the changed reg/const, NO per-tile fan-out) → enqueue via CallInThread → CP thread runs it through xenia's
+  EXISTING PM4→register_file_→IssueDraw = reuse ALL decode, drop the 196KB re-emit + the 2× replay. (B)
+  **EDRAM-DECOUPLED full-surface RT = THE WALL:** render_target_cache.cc:642 welds RT width to
+  RB_SURFACE_INFO.surface_pitch (BD's 360-strips); overriding it black-screens (:643-646) — native draws need
+  their OWN full-surface host RT.
+- **DEAD (don't revisit):** force-1-tile flatten crashes BOTH platforms (tile count coupled to the per-tile
+  resolve). Full roadmap: memory/bd-d3d-hle-re-state.md (NATIVE-HLE ROADMAP) + `exp_ledger.py check native`.
+
 ## 🖥️ RE ON PC, PATCH ON THOR (user 2026-07-04) + foliage-optimization is ON THE TABLE (no gfx loss)
 **Reverse-engineer BD's rendering on DESKTOP xenia (`build/xenia.sln`, D3D12 backend — renders BD fast) — RE
 iterates in SECONDS with a real debugger vs the Thor's 150s-nav/thermal/build-install probes. Same guest CPU +
@@ -35,8 +57,8 @@ Python-broken) → `MSBuild build\xenia-app.vcxproj /p:Configuration="Release Wi
 emulation-specific.** So **"optimize HOW the foliage uses the GPU, NO gfx loss" is user-PERMITTED (2026-07-04) +
 genuinely achievable** (change the submission/technique, keep the pixels). This REFRAMES the standing "foliage is
 intrinsic" verdict: intrinsic on the ADRENO PATH, not the game — the emulation's Adreno submission IS the lever,
-RE'd fast on PC. (All 224 D3D9 methods already identified: dispatch table @0x8207E2C0; the field draws are in
-deferred IBs — the open RE = the IB recorder, page-watch it on PC. See memory/bd-d3d-hle-re-state.md.)
+RE'd fast on PC. (All 224 D3D9 methods identified; the IB recorder is now FOUND = **0x824895C8** — see the
+"NATIVE HLE — CURRENT BUILD STATE" section above. The RE is DONE; we're implementing the native draw.)
 
 ## 🔬 EXPERIMENT DB — check before running, record after (anti-repetition RAG)
 `python tools/exp_ledger.py check "<keyword>"` BEFORE any device experiment or new lever; `add` after every
