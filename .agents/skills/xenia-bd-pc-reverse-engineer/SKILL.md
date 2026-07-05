@@ -56,4 +56,10 @@ which means "optimize how the foliage uses the GPU, no gfx loss" is genuinely ac
 ## Gotchas
 - The repo is Android-focused; the Windows app path may have bit-rot — fix build breaks forward (they're our code).
 - Desktop D3D12 ≠ Thor Vulkan/Turnip: perf numbers DON'T transfer (RE the STRUCTURE on PC, MEASURE perf on Thor).
-- Keep a local BD ISO for PC (don't pull the device's over ADB every time).
+- **Get the BD ISO onto the PC** (needed to boot — the local `scratch/blue-dragon/default.xex` is just the
+  extracted exe, won't boot without disc data): `adb pull` it via **PowerShell, NOT Git Bash** — MSYS mangles
+  the device's `/storage/...` into `C:/Program Files/Git/storage/...` (No such file). PowerShell:
+  `& $adb -s c3ca0370 pull "/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr)
+  (Disc 1).iso" "<repo>\scratch\blue-dragon\bd_disc1.iso"`. 7.8GB, one-time; scratch/ is gitignored so keep it.
+- xenia.exe: `build/bin/Windows/Release/xenia.exe`. Run `xenia.exe <iso>`; log at `<xenia-dir>/xenia.log`.
+  Reuse the diag cvars via a config toml or command line; the guest debugger is in the GUI (Debug menu).
