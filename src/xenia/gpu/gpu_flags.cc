@@ -462,6 +462,24 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_fp16_shaders, false,
+    "BRICK 3 of the native render-path rearch (Thor/Adreno 740): emit the PIXEL "
+    "(fragment) shader's floating-point ALU results and general-purpose register "
+    "file with the SPIR-V RelaxedPrecision decoration, so the Mesa Turnip ir3 "
+    "backend lowers that math to native FP16 (fphp/asimdhp) - up to 2x shader-ALU "
+    "throughput and lower register pressure (better occupancy) for the overdraw-"
+    "heavy foliage fragment work. RelaxedPrecision is a decoration only (no type "
+    "changes, no Float16 capability, no interface conversions), so it is low-risk "
+    "and the interpolator inputs, sampled-image objects and color/depth attachment "
+    "formats stay fp32 (values down-convert at the register-file boundary). Scoped "
+    "to pixel shaders, which never compute vertex position, so it cannot degenerate "
+    "geometry; ADDITIONALLY skipped for pixel shaders that write oDepth so depth "
+    "stays exact (no z-fighting). May shift shading / texture-coordinate precision "
+    "on some titles - validate per game. Off = no decoration = byte-identical "
+    "SPIR-V. Default off until validated.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

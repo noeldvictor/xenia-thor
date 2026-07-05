@@ -453,7 +453,7 @@ public final class XeniaOptimizations {
                         + "Helps shader/fill-heavy scenes, not the Blue Dragon binning "
                         + "bottleneck. Use the Turnip driver for the FP16 benefit.",
                 CATEGORY_GPU, false, false,
-                new BoolCvar[]{new BoolCvar("spirv_fp16_relaxed_pixel_alu")}, null));
+                new BoolCvar[]{new BoolCvar("gpu_fp16_shaders")}, null));
 
         list.add(new Optimization(
                 "opt_fp10_color_32bpp",

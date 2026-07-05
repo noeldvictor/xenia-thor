@@ -734,6 +734,19 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // if there's no result to store (like constants only).
   void StoreResult(const InstructionResult& result, spv::Id value);
 
+  // BRICK 3 lean fp16 pixel shaders (gpu_fp16_shaders): whether the current
+  // pixel shader's floating-point ALU + register file should be emitted with
+  // the SPIR-V RelaxedPrecision decoration so a native-FP16 driver (Adreno 740
+  // / Turnip ir3) runs it at half precision (2x ALU rate + lower register
+  // pressure). True only for pixel shaders (never a vertex-position path) that
+  // do NOT write oDepth (keep depth exact). False (and cvar off) => no
+  // decoration => byte-identical SPIR-V.
+  bool ShouldRelaxPixelShaderFp16() const;
+  // Decorates a floating-point ALU / texture result id with RelaxedPrecision
+  // when ShouldRelaxPixelShaderFp16(); no-op for non-float ids, spv::NoResult,
+  // and when the fp16 path is off.
+  void RelaxPixelShaderFloatResult(spv::Id value);
+
   // For Shader Model 3 multiplication (+-0 or denormal * anything = +0),
   // replaces the value with +0 if the minimum of the two operands is 0. This
   // must be called with absolute values of operands - use GetAbsoluteOperand!

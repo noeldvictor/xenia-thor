@@ -337,7 +337,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_dump_depth_image");
             copyBooleanExtra(intent, launchArguments, "spirv_no_invariant_color_output");
             copyBooleanExtra(intent, launchArguments, "spirv_no_invariant_position_output");
-            copyBooleanExtra(intent, launchArguments, "spirv_fp16_relaxed_pixel_alu");
+            copyBooleanExtra(intent, launchArguments, "gpu_fp16_shaders");
             copyBooleanExtra(intent, launchArguments, "spirv_debug_force_fullscreen_position");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_shared_memory_no_switch");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_float_constants_ssbo");

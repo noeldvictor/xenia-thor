@@ -28,17 +28,6 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_shader.h"
 
-DEFINE_bool(
-    spirv_fp16_relaxed_pixel_alu, false,
-    "Experimental: mark pixel-shader floating-point ALU results as "
-    "RelaxedPrecision so a driver with native FP16 (e.g. Turnip on the Adreno "
-    "740) can run them at half precision, cutting shader-core and bandwidth "
-    "cost. Scoped to pixel shaders, which never write vertex position, so it "
-    "cannot degenerate geometry (the known RelaxedPrecision-on-position "
-    "hazard). May shift shading/texcoord precision on some games - validate "
-    "per title. Default off.",
-    "GPU");
-
 namespace xe {
 namespace gpu {
 
@@ -682,9 +671,16 @@ void SpirvShaderTranslator::StartTranslation() {
     var_main_loop_address_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_int4_,
         "xe_var_loop_address", const_int4_0_);
+    // BRICK 3 fp16 (gpu_fp16_shaders): the previous-scalar (ps) register holds
+    // pixel-shader scalar ALU results (rcp/rsq/exp/log/...); relax it so they
+    // stay half precision across the ps round-trip. RelaxedPrecision only when
+    // ShouldRelaxPixelShaderFp16() (pixel, non-depth); else NoPrecision =
+    // byte-identical.
     var_main_previous_scalar_ = builder_->createVariable(
-        spv::NoPrecision, spv::StorageClassFunction, type_float_,
-        "xe_var_previous_scalar", const_float_0_);
+        ShouldRelaxPixelShaderFp16() ? spv::DecorationRelaxedPrecision
+                                     : spv::NoPrecision,
+        spv::StorageClassFunction, type_float_, "xe_var_previous_scalar",
+        const_float_0_);
     var_main_vfetch_address_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassFunction, type_int_,
         "xe_var_vfetch_address", const_int_0_);
@@ -726,9 +722,17 @@ void SpirvShaderTranslator::StartTranslation() {
     if (register_count()) {
       spv::Id type_register_array = builder_->makeArrayType(
           type_float4_, builder_->makeUintConstant(register_count()), 0);
-      var_main_registers_ =
-          builder_->createVariable(spv::NoPrecision, spv::StorageClassFunction,
-                                   type_register_array, "xe_var_registers");
+      // BRICK 3 fp16 (gpu_fp16_shaders): relax the general-purpose register file
+      // so the entire register-based pixel-shader dataflow (operand loads +
+      // result stores, incl. interpolant-derived and texture-fetch values) is
+      // half precision - this is what lets the driver actually lower the ALU
+      // chain to FP16 and cut register pressure, not just the final store.
+      // Pixel + non-depth only (ShouldRelaxPixelShaderFp16); else NoPrecision =
+      // byte-identical.
+      var_main_registers_ = builder_->createVariable(
+          ShouldRelaxPixelShaderFp16() ? spv::DecorationRelaxedPrecision
+                                       : spv::NoPrecision,
+          spv::StorageClassFunction, type_register_array, "xe_var_registers");
     }
     if (memexport_used) {
       var_main_memexport_address_ = builder_->createVariable(
@@ -3088,6 +3092,29 @@ spv::Id SpirvShaderTranslator::GetAbsoluteOperand(
                                           GLSLstd450FAbs, operand_storage);
 }
 
+bool SpirvShaderTranslator::ShouldRelaxPixelShaderFp16() const {
+  // BRICK 3 (gpu_fp16_shaders): only pixel shaders (never a vertex-position
+  // path), and never a pixel shader that computes oDepth - relaxing its
+  // register file would drop the precision of the exported depth (z-fighting).
+  // Foliage/lighting fragment shaders read hardware-interpolated depth and do
+  // not write oDepth, so they still qualify.
+  return cvars::gpu_fp16_shaders && is_pixel_shader() &&
+         !current_shader().writes_depth();
+}
+
+void SpirvShaderTranslator::RelaxPixelShaderFloatResult(spv::Id value) {
+  if (value == spv::NoResult || !ShouldRelaxPixelShaderFp16()) {
+    return;
+  }
+  // Float-typed results only (scalar or vector) - leave integer
+  // addressing / predicate / packing math exact.
+  spv::Id value_type = builder_->getTypeId(value);
+  if (value_type &&
+      builder_->isFloatType(builder_->getScalarTypeId(value_type))) {
+    builder_->addDecoration(value, spv::DecorationRelaxedPrecision);
+  }
+}
+
 void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
                                         spv::Id value) {
   uint32_t used_write_mask = result.GetUsedWriteMask();
@@ -3097,19 +3124,11 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
 
   EnsureBuildPointAvailable();
 
-  // Experimental FP16 lane: relax pixel-shader floating-point ALU results so a
-  // driver with native FP16 (Adreno 740 / Turnip) can lower them to mediump.
-  // is_pixel_shader() guarantees this never reaches a vertex-position store
-  // (kPosition is a vertex-only target), so it cannot degenerate geometry.
-  // Float-typed results only, to leave integer addressing/predicate math exact.
-  if (cvars::spirv_fp16_relaxed_pixel_alu && is_pixel_shader() &&
-      value != spv::NoResult) {
-    const spv::Id value_type = builder_->getTypeId(value);
-    if (value_type &&
-        builder_->isFloatType(builder_->getScalarTypeId(value_type))) {
-      builder_->addDecoration(value, spv::DecorationRelaxedPrecision);
-    }
-  }
+  // BRICK 3 fp16 (gpu_fp16_shaders): relax every stored pixel-shader
+  // floating-point ALU / texture result so a native-FP16 driver (Adreno 740 /
+  // Turnip ir3) can lower it to half precision. No-op for vertex shaders,
+  // non-float results, and depth-writing pixel shaders (see the helper).
+  RelaxPixelShaderFloatResult(value);
 
   spv::Id target_pointer = spv::NoResult;
   switch (result.storage_target) {
