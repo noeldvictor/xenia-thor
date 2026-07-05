@@ -814,6 +814,14 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
               ? cvars::execute_unclipped_draw_vs_on_cpu_for_psi_render_backend
               : true,
           vertex_shader));
+  // HLE BIN-ONCE: the single forced tile spans the FULL surface, but EstimateMaxY
+  // only sees the top tile's scissored extent (~672) so the bottom tile's geometry
+  // has no RT. Force the full-surface height (BD field = 1280) so the whole scene
+  // fits the one pass. Clamped to the pitch's real max to avoid ballooning.
+  if (cvars::gpu_binonce_full_scissor) {
+    height_used = std::min(
+        GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples), 1280u);
+  }
 
   // Sorted by EDRAM base and then by index in the pipeline - for simplicity,
   // treat render targets placed closer to the end of the EDRAM as truncating

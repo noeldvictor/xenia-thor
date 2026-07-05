@@ -234,6 +234,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_hle_surface_binonce");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle_replace");
+            copyIntExtra(intent, launchArguments, "gpu_bd_native_hle_decouple");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_hle_present_decoupled");
+            copyIntExtra(intent, launchArguments, "gpu_bd_hle_drop_resolve");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
