@@ -98,6 +98,14 @@ DEFINE_bool(cpu_d3d_hle_diag_endtiling, false,
             "translating EndTiling -> native Vulkan. Requires cpu_d3d_hle_signatures. "
             "Default off (gated, safe).",
             "CPU");
+DEFINE_string(cpu_d3d_hle_diag_draw_addr, "",
+              "HLE stage-2: intercept the D3D9 DRAW seam (BD's dispatch-table draw "
+              "method, e.g. 822FF490 = slot 37 of the 0x8207E2C0 D3D9 vtable, the "
+              "0x2200/VGT_DRAW emitter) by hex address - log its per-frame call "
+              "pattern + args (r3=this/device, r4-r10 = draw params), run the body "
+              "unchanged. Confirms the field draw seam + captures the per-draw D3D "
+              "state for the native-Vulkan translation. Default empty (off).",
+              "CPU");
 DEFINE_string(cpu_hle_ring_writer_addr, "",
               "GPU D3D9-HLE: hex guest addr of BD's XDK D3D9 ring writer (8246E100). "
               "HLE-replaces it with a pure-C++ ring write (no reentrant guest call): "
@@ -1014,6 +1022,55 @@ void HleEndTilingDiagHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
   fn->set_behavior(Function::Behavior::kExtern);
   in_diag = false;
 }
+// HLE stage-2: intercept the D3D9 DRAW seam (0x822FF490, dispatch-table slot 37) by
+// address. Logs the per-draw args (this/device + draw params) + a total fire count,
+// runs the body unchanged. Confirms the field draw seam + captures the D3D state the
+// native-Vulkan translation reproduces.
+std::atomic<uint32_t> g_hle_diag_draw_addr{0};
+std::once_flag g_hle_diag_draw_parse;
+void HleDrawDiagHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
+  auto* proc = ctx->processor;
+  auto* ts = ThreadState::Get();
+  uint32_t addr = g_hle_diag_draw_addr.load();
+  if (!ts || !addr) {
+    return;
+  }
+  static thread_local bool in_diag = false;
+  if (in_diag) {
+    return;
+  }
+  static std::atomic<int> fire_log{0};
+  int n = fire_log.fetch_add(1);
+  if (n < 24 || (n & 0x3FF) == 0) {
+    XELOGI(
+        "D3D-HLE DRAW FIRE #{}: this={:08X} r4={:08X} r5={:08X} r6={:08X} r7={:08X} "
+        "r8={:08X} lr={:08X}",
+        n, uint32_t(ctx->r[3]), uint32_t(ctx->r[4]), uint32_t(ctx->r[5]),
+        uint32_t(ctx->r[6]), uint32_t(ctx->r[7]), uint32_t(ctx->r[8]),
+        uint32_t(ctx->lr));
+  }
+  Function* fn = proc->LookupFunction(addr);
+  if (!fn) {
+    return;
+  }
+  uint64_t args[8] = {ctx->r[3], ctx->r[4], ctx->r[5], ctx->r[6],
+                      ctx->r[7], ctx->r[8], ctx->r[9], ctx->r[10]};
+  in_diag = true;
+  fn->set_behavior(Function::Behavior::kDefault);
+  proc->Execute(ts, addr, args, 8);
+  fn->set_behavior(Function::Behavior::kExtern);
+  in_diag = false;
+}
+bool IsHleDiagDraw(uint32_t address) {
+  if (cvars::cpu_d3d_hle_diag_draw_addr.empty()) {
+    return false;
+  }
+  std::call_once(g_hle_diag_draw_parse, []() {
+    g_hle_diag_draw_addr.store(uint32_t(
+        strtoul(cvars::cpu_d3d_hle_diag_draw_addr.c_str(), nullptr, 16)));
+  });
+  return address == g_hle_diag_draw_addr.load();
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -1075,6 +1132,15 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE BIN-ONCE: planted BeginTiling count=1 handler @ {:08X}", address);
+      return function;
+    }
+    // HLE stage-2: the D3D9 DRAW seam diagnostic (cpu_d3d_hle_diag_draw_addr, e.g.
+    // 822FF490 = the field draw method). Capture its call pattern + args.
+    if (IsHleDiagDraw(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleDrawDiagHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("D3D-HLE: diag-installed DRAW seam @ {:08X}", address);
       return function;
     }
     // LOAD-TIME SIGNATURE HLE: the scan (run once) has identified the XDK D3D9
