@@ -90,6 +90,14 @@ DEFINE_bool(cpu_d3d_hle_signatures, false,
             "AUTO-INSTALL the HLE trampolines - no hardcoded addresses. Generic "
             "across games that share the XDK D3D9. Default off.",
             "CPU");
+DEFINE_bool(cpu_d3d_hle_diag_endtiling, false,
+            "HLE stage-2 diagnostic (hybrid-hle-architecture.md): intercept the "
+            "signature-identified EndTiling (the whole-scene field render+resolve) - "
+            "log its per-frame call pattern + args, then run its ORIGINAL body via "
+            "the proven behavior-toggle (render unchanged). The RE foundation for "
+            "translating EndTiling -> native Vulkan. Requires cpu_d3d_hle_signatures. "
+            "Default off (gated, safe).",
+            "CPU");
 DEFINE_string(cpu_hle_ring_writer_addr, "",
               "GPU D3D9-HLE: hex guest addr of BD's XDK D3D9 ring writer (8246E100). "
               "HLE-replaces it with a pure-C++ ring write (no reentrant guest call): "
@@ -957,6 +965,55 @@ int D3dHleTypeForAddress(Memory* memory, uint32_t address) {
   auto it = g_d3d_hle_sites.find(address);
   return it != g_d3d_hle_sites.end() ? it->second : 0;
 }
+// HLE stage-2 (hybrid-hle-architecture.md): resolve a signature-identified D3D9 fn
+// address by its type (the load-time scan filled g_d3d_hle_sites).
+uint32_t D3dHleAddrForType(int type) {
+  for (const auto& kv : g_d3d_hle_sites) {
+    if (kv.second == type) {
+      return kv.first;
+    }
+  }
+  return 0;
+}
+// Diagnostic intercept of EndTiling (type 4 = the whole-scene field render+resolve).
+// Logs the per-frame call pattern + args, then runs the ORIGINAL body via the proven
+// behavior-toggle (render UNCHANGED). The RE foundation for translating EndTiling ->
+// native Vulkan (the field HLE). Gated by cpu_d3d_hle_diag_endtiling.
+void HleEndTilingDiagHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
+  auto* proc = ctx->processor;
+  auto* ts = ThreadState::Get();
+  static uint32_t addr = 0;
+  if (!addr) {
+    addr = D3dHleAddrForType(4);
+  }
+  if (!ts || !addr) {
+    return;
+  }
+  static thread_local bool in_diag = false;
+  if (in_diag) {
+    return;  // defensive; the behavior-toggle already prevents re-entry
+  }
+  static std::atomic<int> fire_log{0};
+  int n = fire_log.fetch_add(1);
+  if (n < 24) {
+    XELOGI(
+        "D3D-HLE EndTiling FIRE #{}: device={:08X} r4={:08X} r5={:08X} r6={:08X} "
+        "r7={:08X} lr={:08X}",
+        n, uint32_t(ctx->r[3]), uint32_t(ctx->r[4]), uint32_t(ctx->r[5]),
+        uint32_t(ctx->r[6]), uint32_t(ctx->r[7]), uint32_t(ctx->lr));
+  }
+  Function* fn = proc->LookupFunction(addr);
+  if (!fn) {
+    return;
+  }
+  uint64_t args[8] = {ctx->r[3], ctx->r[4], ctx->r[5], ctx->r[6],
+                      ctx->r[7], ctx->r[8], ctx->r[9], ctx->r[10]};
+  in_diag = true;
+  fn->set_behavior(Function::Behavior::kDefault);
+  proc->Execute(ts, addr, args, 8);
+  fn->set_behavior(Function::Behavior::kExtern);
+  in_diag = false;
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -1031,6 +1088,17 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                            nullptr);
         function->set_status(Symbol::Status::kDeclared);
         XELOGI("D3D-HLE: signature-installed bin-once (XDK TileWalker) @ {:08X}",
+               address);
+        return function;
+      }
+      // HLE stage-2 (hybrid-hle-architecture.md): diagnostic intercept of EndTiling
+      // (type 4 = the field render) - captures its call pattern, runs the body
+      // unchanged. Gated; the foundation for the EndTiling->native-Vulkan translation.
+      if (cvars::cpu_d3d_hle_diag_endtiling && d3d_hle == 4) {
+        static_cast<GuestFunction*>(function)->SetupExtern(
+            HleEndTilingDiagHandler, nullptr);
+        function->set_status(Symbol::Status::kDeclared);
+        XELOGI("D3D-HLE: diag-installed EndTiling (stage-2 field intercept) @ {:08X}",
                address);
         return function;
       }

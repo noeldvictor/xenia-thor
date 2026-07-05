@@ -135,6 +135,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "cpu_hle_ring_writer_addr");
             copyStringExtra(intent, launchArguments, "cpu_hle_bin_once_begintiling_addr");
             copyBooleanExtra(intent, launchArguments, "cpu_d3d_hle_signatures");
+            copyBooleanExtra(intent, launchArguments, "cpu_d3d_hle_diag_endtiling");
             copyIntExtra(intent, launchArguments, "cpu_watch_guest_write_page");
             copyStringExtra(intent, launchArguments, "cpu");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm");
