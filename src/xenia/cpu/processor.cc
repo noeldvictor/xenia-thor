@@ -125,6 +125,38 @@ DEFINE_string(cpu_hle_bin_once_begintiling_addr, "",
               "foliage vertex/binning the tiling doubles (360 tiles for its 10MB EDRAM; "
               "Thor's emulated EDRAM has no limit). Empty disables. Default off.",
               "CPU");
+// GPU D3D9-HLE FLATTEN-AT-RECORDER (2026-07-05 RE): BD's universal per-draw
+// recorder Function_824895C8 fans a draw out PER TILE internally - for a bin
+// mask (param_3) with N tile bits set it calls the per-tile emitter once per
+// tile (surface at device+0x2f88+tile*4); the (param_3 & 0xf)==0 branch instead
+// emits ONE untiled draw (tile index -1) on the current/full surface. These
+// cvars intercept the recorder to (diag) log the per-draw bin masks + tile
+// geometry, and (flatten) collapse each field draw to the single untiled full-
+// surface pass = the flatten AT THE SOURCE (cleaner than the walker/replay level
+// which the r31-live-state replay engine 0x82487fe0 makes un-interceptable).
+DEFINE_bool(gpu_bd_replay_diag, false,
+            "BD RECORDER DIAG (Function_824895C8): log each per-draw recorder "
+            "call's GPRs (r3-r10) + dereferenced rect pointers + the device tile "
+            "fields (device+0x2f88 per-tile surfaces, +0x2f98 untiled surface, "
+            "+0x30b8 tile count, +0x30bc tile rects) so the per-tile fan-out + "
+            "where the surface splits is visible. Runs the body unchanged. "
+            "Default off.",
+            "GPU");
+DEFINE_int32(gpu_bd_flatten_replay, 0,
+             "BD FLATTEN-AT-RECORDER (Function_824895C8): 0=off; 1=diag-only "
+             "(same as gpu_bd_replay_diag); 2=collapse each draw's bin mask to "
+             "the single untiled full-surface branch ((param_3 & 0xf)->0, high "
+             "bit kept so it stays non-zero) then run the recorder body once; "
+             "3=mode 2 AND reshape the scissor/draw rects (the mask-reg-adjacent "
+             "pointer args) to the full surface. Renders the field in ONE full "
+             "pass instead of per-tile. Default 0 (off).",
+             "GPU");
+DEFINE_int32(gpu_bd_flatten_mask_reg, 5,
+             "BD FLATTEN: which guest GPR index holds the recorder's bin-mask "
+             "arg (param_3). Default 5 (=r5, ABI param_1=r3). Set from the "
+             "gpu_bd_replay_diag log if the ABI differs (e.g. 4 if param_1 is a "
+             "float in f1). Only used when gpu_bd_flatten_replay>=2.",
+             "GPU");
 
 namespace xe {
 namespace kernel {
@@ -1071,6 +1103,132 @@ bool IsHleDiagDraw(uint32_t address) {
   });
   return address == g_hle_diag_draw_addr.load();
 }
+
+// --- HLE BD RECORDER FLATTEN/DIAG (Function_824895C8 = BD's universal per-draw
+// recorder; RE'd 2026-07-05). The recorder fans a draw out PER TILE internally:
+// for bin mask param_3 with N tile bits set it calls the per-tile emitter
+// Function_82489168 once per tile (surface at device+0x2f88+tile*4); the
+// (param_3 & 0xf)==0 branch instead emits ONE untiled draw (tile index -1) on
+// the current/full surface. We intercept the recorder (clean 8-arg ABI, unlike
+// the replay engine 0x82487fe0 which runs with a live-r31 ctx and cannot be
+// re-entered via a fresh Execute), optionally reshape the bin mask, and run the
+// byte-identical body via the behavior toggle. Gated by gpu_bd_replay_diag /
+// gpu_bd_flatten_replay (default off). ---
+static constexpr uint32_t kBdRecorderAddr = 0x824895C8u;
+bool IsHleBdRecorder(uint32_t address) {
+  return (cvars::gpu_bd_replay_diag || cvars::gpu_bd_flatten_replay != 0) &&
+         address == kBdRecorderAddr;
+}
+void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
+  auto* proc = ctx->processor;
+  Memory* mem = proc->memory();
+  auto* ts = ThreadState::Get();
+  if (!ts) {
+    return;
+  }
+  static thread_local bool in_recorder = false;
+  if (in_recorder) {
+    return;  // defensive; the behavior toggle already prevents re-entry
+  }
+  auto rd = [&](uint32_t a) -> uint32_t {
+    if (a < 0x10000u || a >= 0xF0000000u) return 0;
+    return xe::load_and_swap<uint32_t>(mem->TranslateVirtual(a));
+  };
+
+  // DIAG: log GPRs + dereffed rect ptrs + device tile fields. Sampled so the log
+  // spans boot AND the field: first 32 calls (boot), every 20000th (whole run),
+  // plus up to 80 "field-mask-like" draws (a GPR holding a small tile mask
+  // 0x3/0xC/0x80000003 = the tiled field draws we care about).
+  bool diag_on =
+      cvars::gpu_bd_replay_diag || cvars::gpu_bd_flatten_replay == 1;
+  static std::atomic<int> diag_calls{0};
+  static std::atomic<int> field_logged{0};
+  int nth = diag_calls.fetch_add(1);
+  auto ismask = [](uint32_t v) {
+    uint32_t lo = v & 0x7fffffffu;
+    return lo != 0 && lo < 0x20u && (v & 0xfu) != 0;
+  };
+  bool field_draw =
+      ismask(uint32_t(ctx->r[4])) || ismask(uint32_t(ctx->r[5]));
+  bool do_log = diag_on &&
+                (nth < 32 || (nth % 20000) == 0 ||
+                 (field_draw && field_logged.fetch_add(1) < 80));
+  if (do_log) {
+    // Device = param_2 (r3 if param_1 is a float in f1, else r4) - log both so
+    // the ABI is unambiguous from the surface/tilecount that decodes plausibly.
+    for (int dr : {3, 4}) {
+      uint32_t dev = uint32_t(ctx->r[dr]);
+      XELOGI(
+          "BDREC[{}] dev?r{}={:08X} surf[0..3]={:08X},{:08X},{:08X},{:08X} "
+          "untiled={:08X} tilecount={:08X}",
+          nth, dr, dev, rd(dev + 0x2f88u), rd(dev + 0x2f8cu), rd(dev + 0x2f90u),
+          rd(dev + 0x2f94u), rd(dev + 0x2f98u), rd(dev + 0x30b8u));
+    }
+    XELOGI(
+        "BDREC[{}] r3={:08X} r4={:08X} r5={:08X} r6={:08X} r7={:08X} r8={:08X} "
+        "r9={:08X} r10={:08X}",
+        nth, uint32_t(ctx->r[3]), uint32_t(ctx->r[4]), uint32_t(ctx->r[5]),
+        uint32_t(ctx->r[6]), uint32_t(ctx->r[7]), uint32_t(ctx->r[8]),
+        uint32_t(ctx->r[9]), uint32_t(ctx->r[10]));
+    for (int rr : {5, 6, 9, 10}) {
+      uint32_t p = uint32_t(ctx->r[rr]);
+      if (p >= 0x10000u && p < 0x50000000u) {
+        XELOGI("BDREC[{}]   r{}->[{:08X},{:08X},{:08X},{:08X}]", nth, rr, rd(p),
+               rd(p + 4u), rd(p + 8u), rd(p + 0xcu));
+      }
+    }
+  }
+
+  // FLATTEN mode 2/3: collapse the bin mask to the single-untiled-draw branch.
+  int mode = cvars::gpu_bd_flatten_replay;
+  if (mode >= 2) {
+    int mr = cvars::gpu_bd_flatten_mask_reg;
+    if (mr >= 0 && mr < 32) {
+      uint32_t mask = uint32_t(ctx->r[mr]);
+      // Force (mask & 0xf)==0 so the recorder takes the (param_3 & 0xf)==0
+      // single-untiled-draw path (tile -1 = full/current surface); keep a high
+      // bit so param_3 stays non-zero (0 => the fn early-returns = drops draw).
+      uint32_t nm = mask & 0xfffffff0u;
+      if ((nm & 0x7fffffffu) == 0) nm |= 0x80000000u;
+      ctx->r[mr] = nm;
+      static std::atomic<int> fl_log{0};
+      if (fl_log.fetch_add(1) < 24) {
+        XELOGI("BD FLATTEN: recorder bin mask r{} {:08X} -> {:08X}", mr, mask,
+               nm);
+      }
+    }
+    if (mode >= 3) {
+      // Also widen the pointer-arg rects adjacent to the mask reg to a full-
+      // surface AABB (the recorder intersects scissor & draw rects, so widening
+      // removes any residual clip).
+      for (int rr : {mr + 1, mr + 4, mr + 5}) {
+        if (rr < 0 || rr >= 32) continue;
+        uint32_t p = uint32_t(ctx->r[rr]);
+        if (p >= 0x10000u && p < 0x50000000u) {
+          xe::store_and_swap<uint32_t>(mem->TranslateVirtual(p + 0u), 0u);
+          xe::store_and_swap<uint32_t>(mem->TranslateVirtual(p + 4u), 0u);
+          xe::store_and_swap<uint32_t>(mem->TranslateVirtual(p + 8u), 0x7fffu);
+          xe::store_and_swap<uint32_t>(mem->TranslateVirtual(p + 0xcu), 0x7fffu);
+        }
+      }
+    }
+  }
+
+  // Run the ORIGINAL recorder body (byte-identical) with the (possibly modified)
+  // GPRs via the behavior toggle: kDefault so the JIT'd body runs (not this
+  // extern); Execute overwrites only r3-r10 so f1 is preserved.
+  Function* fn = proc->LookupFunction(kBdRecorderAddr);
+  if (!fn) {
+    return;
+  }
+  uint64_t args[8] = {ctx->r[3], ctx->r[4], ctx->r[5], ctx->r[6],
+                      ctx->r[7], ctx->r[8], ctx->r[9], ctx->r[10]};
+  in_recorder = true;
+  fn->set_behavior(Function::Behavior::kDefault);
+  proc->Execute(ts, kBdRecorderAddr, args, 8);
+  fn->set_behavior(Function::Behavior::kExtern);
+  in_recorder = false;
+}
 }  // namespace
 
 Function* Processor::LookupFunction(Module* module, uint32_t address) {
@@ -1132,6 +1290,16 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
                                                          nullptr);
       function->set_status(Symbol::Status::kDeclared);
       XELOGI("HLE BIN-ONCE: planted BeginTiling count=1 handler @ {:08X}", address);
+      return function;
+    }
+    // GPU D3D9-HLE FLATTEN-AT-RECORDER: intercept BD's per-draw recorder
+    // Function_824895C8 (diag + single-full-surface-pass collapse). Gated by
+    // gpu_bd_replay_diag / gpu_bd_flatten_replay (default off).
+    if (IsHleBdRecorder(address)) {
+      static_cast<GuestFunction*>(function)->SetupExtern(HleBdRecorderHandler,
+                                                         nullptr);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("BD RECORDER: planted flatten/diag handler @ {:08X}", address);
       return function;
     }
     // HLE stage-2: the D3D9 DRAW seam diagnostic (cpu_d3d_hle_diag_draw_addr, e.g.

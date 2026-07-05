@@ -414,6 +414,25 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
 void X64Emitter::Call(const hir::Instr* instr, GuestFunction* function) {
   assert_not_null(function);
   auto fn = static_cast<X64Function*>(function);
+  // GPU/CPU D3D9-HLE: a guest function REPLACED by a host extern handler at
+  // declare time (GuestFunction::SetupExtern - the load-time HLE intercepts:
+  // gpu_bd_flatten_replay, cpu_hle_intercept_addrs, etc.) is kExtern with a
+  // handler and a NULL export (kernel imports SetupExtern with a non-null
+  // Export*; HLE intercepts pass nullptr). A direct guest `bl` to it must
+  // DISPATCH THE HANDLER; otherwise the x64 resolve path DemandFunction's the
+  // real guest body and the intercept is silently bypassed (the a64 backend
+  // already routes these - this brings desktop x64 to parity). The (handler &&
+  // !export) test is a strict no-op when no HLE cvar has planted an extern, and
+  // it is STABLE (unlike a machine_code test, which flips once the handler runs
+  // the body via Execute - then a later-compiled caller would resolve straight
+  // to the freshly-compiled guest body and bypass the handler). Kernel imports
+  // (export != null) keep their normal path. Tail calls (b, not bl) too.
+  if (function->behavior() == Function::Behavior::kExtern &&
+      function->extern_handler() && !function->export_data() &&
+      !(instr->flags & hir::CALL_TAIL)) {
+    CallExtern(instr, function);
+    return;
+  }
   // Resolve address to the function to call and store in rax.
   if (fn->machine_code()) {
     // TODO(benvanik): is it worth it to do this? It removes the need for
