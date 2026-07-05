@@ -128,6 +128,12 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   static DXGI_FORMAT GetDepthSRVStencilDXGIFormat(
       xenos::DepthRenderTargetFormat format);
 
+  // Blue Dragon native-draw HLE (Half B): the host color[0] render-target
+  // ID3D12Resource currently bound to the command list - the decoupled full-
+  // surface RT a native draw just rendered into - for out-of-band PNG capture.
+  // Null if no valid host color RT is bound.
+  ID3D12Resource* GetBoundColorResourceForCapture() const;
+
  protected:
   bool IsGammaFormatHostStorageSeparate() const override;
 
@@ -748,6 +754,9 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
   const RenderTarget* const*
       current_command_list_render_targets_[1 + xenos::kMaxColorRenderTargets];
   bool are_current_command_list_render_targets_valid_ = false;
+  // Blue Dragon native-draw HLE (Half B): color[0] host RT resource last bound
+  // (for GetBoundColorResourceForCapture). Not owned.
+  ID3D12Resource* last_bound_color_resource_for_capture_ = nullptr;
 
   // Temporary storage for descriptors used in PerformTransfersAndResolveClears
   // and DumpRenderTargets.

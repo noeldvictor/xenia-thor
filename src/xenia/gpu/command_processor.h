@@ -247,6 +247,16 @@ class CommandProcessor {
                          bool major_mode_explicit) = 0;
   virtual bool IssueCopy() = 0;
 
+  // Blue Dragon native-draw HLE (Half B): arm/disarm out-of-band capture of the
+  // host color render target the NEXT IssueDraw binds - used to snapshot the
+  // decoupled full-surface RT a native draw renders into (gpu_bd_native_hle +
+  // gpu_bd_native_hle_decouple). No-op unless the backend implements it (D3D12
+  // grabs the bound host RT resource and dumps it to a PNG at the next swap).
+  virtual void BdArmDecoupledCapture(bool armed) {}
+  // Debug: total backend IssueDraw invocations, to verify the synthetic native
+  // emit actually reaches the backend draw. 0 in backends not tracking it.
+  virtual uint32_t BdDebugIssueDrawCount() const { return 0; }
+
   // "Actual" is for the command processor thread, to be read by the
   // implementations.
   SwapPostEffect GetActualSwapPostEffect() const {

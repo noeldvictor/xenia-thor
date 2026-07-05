@@ -5410,9 +5410,28 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
   }
 }
 
+ID3D12Resource* D3D12RenderTargetCache::GetBoundColorResourceForCapture()
+    const {
+  // Blue Dragon native-draw HLE (Half B): the color[0] host RT resource last
+  // bound to the command list (captured in SetCommandListRenderTargets). Used
+  // to read back the decoupled full-surface RT a native draw rendered into.
+  return are_current_command_list_render_targets_valid_
+             ? last_bound_color_resource_for_capture_
+             : nullptr;
+}
+
 void D3D12RenderTargetCache::SetCommandListRenderTargets(
     RenderTarget* const* depth_and_color_render_targets) {
   assert_true(GetPath() == Path::kHostRenderTargets);
+
+  // Blue Dragon native-draw HLE (Half B): remember the color[0] host RT
+  // resource (index [1]; [0] is depth) for out-of-band capture of the decoupled
+  // full-surface RT a native draw renders into.
+  last_bound_color_resource_for_capture_ =
+      depth_and_color_render_targets[1]
+          ? static_cast<D3D12RenderTarget*>(depth_and_color_render_targets[1])
+                ->resource()
+          : nullptr;
 
   // Ensure the render targets are in the needed resource state.
   if (depth_and_color_render_targets[0]) {

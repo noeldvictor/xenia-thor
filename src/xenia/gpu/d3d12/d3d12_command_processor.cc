@@ -11,7 +11,9 @@
 #include <cstring>
 #include <sstream>
 #include <utility>
+#include <vector>
 
+#include "third_party/stb/stb_image_write.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/byte_order.h"
 #include "xenia/base/cvar.h"
@@ -1633,6 +1635,266 @@ void D3D12CommandProcessor::OnGammaRampPWLValueWritten() {
   gamma_ramp_pwl_up_to_date_ = false;
 }
 
+namespace {
+// Standard IEEE-754 half (float16) -> float32. R16G16B16A16_FLOAT host RTs (the
+// format BD's k_2_10_10_10_FLOAT_AS_16_16_16_16 foliage RT maps to) store
+// standard halves. Subnormals flushed to zero (negligible for an 8-bit dump).
+float BdHalfToFloat(uint16_t h) {
+  uint32_t sign = uint32_t(h & 0x8000u) << 16;
+  uint32_t exp = (h >> 10) & 0x1Fu;
+  uint32_t mant = h & 0x3FFu;
+  uint32_t f;
+  if (exp == 0) {
+    f = sign;
+  } else if (exp == 31) {
+    f = sign | 0x7F800000u | (mant << 13);
+  } else {
+    f = sign | ((exp + (127u - 15u)) << 23) | (mant << 13);
+  }
+  float out;
+  std::memcpy(&out, &f, sizeof(out));
+  return out;
+}
+uint8_t BdUnormByte(float v) {
+  v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+  return uint8_t(v * 255.0f + 0.5f);
+}
+}  // namespace
+
+void D3D12CommandProcessor::BdArmDecoupledCapture(bool armed) {
+  // Armed by the base CommandProcessor around the synthetic native draw (which
+  // has redirected RB_COLOR_INFO to a non-aliasing EDRAM base). The next
+  // IssueDraw grabs the resulting dedicated full-surface host color RT.
+  bd_capture_armed_ = armed;
+  if (armed) {
+    static int s_arm_dbg = 0;
+    if (s_arm_dbg < 8) {
+      ++s_arm_dbg;
+      XELOGI("BD Half B DBG: ARM(true) set bd_capture_armed_={}",
+             bd_capture_armed_ ? 1 : 0);
+    }
+  }
+}
+
+void D3D12CommandProcessor::BdMaybeCaptureDecoupledRT() {
+  if (!bd_capture_pending_ || !bd_capture_resource_) {
+    return;
+  }
+  bd_capture_pending_ = false;
+  Microsoft::WRL::ComPtr<ID3D12Resource> src = bd_capture_resource_;
+  bd_capture_resource_.Reset();
+
+  // One-shot: only dump the first few decoupled captures.
+  static uint32_t s_capture_index = 0;
+  if (s_capture_index >= 4) {
+    return;
+  }
+  uint32_t capture_index = s_capture_index++;
+
+  const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
+  ID3D12Device* device = provider.GetDevice();
+  D3D12_RESOURCE_DESC desc = src->GetDesc();
+  uint32_t width = uint32_t(desc.Width);
+  uint32_t height = uint32_t(desc.Height);
+  DXGI_FORMAT format = desc.Format;
+
+  // BD's foliage color RT is 2x MSAA; a multisampled resource can't be copied
+  // to a buffer directly, so resolve it to a single-sample temp first. The
+  // readback footprint always uses a 1x descriptor.
+  bool is_msaa = desc.SampleDesc.Count > 1;
+  // Build a CLEAN single-sample descriptor from scratch. Deriving it from the
+  // MSAA desc would carry over the 4 MB MSAA Alignment, which is invalid for a
+  // 1x texture and makes GetCopyableFootprints return copy_size 0 (-> the
+  // readback buffer create fails with E_INVALIDARG).
+  D3D12_RESOURCE_DESC desc_1x = {};
+  desc_1x.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  desc_1x.Alignment = 0;
+  desc_1x.Width = width;
+  desc_1x.Height = height;
+  desc_1x.DepthOrArraySize = 1;
+  desc_1x.MipLevels = 1;
+  desc_1x.Format = format;
+  desc_1x.SampleDesc.Count = 1;
+  desc_1x.SampleDesc.Quality = 0;
+  desc_1x.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+  desc_1x.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+  UINT64 copy_size = 0;
+  device->GetCopyableFootprints(&desc_1x, 0, 1, 0, &footprint, nullptr, nullptr,
+                                &copy_size);
+
+  D3D12_RESOURCE_DESC buffer_desc;
+  ui::d3d12::util::FillBufferResourceDesc(buffer_desc, copy_size,
+                                          D3D12_RESOURCE_FLAG_NONE);
+  Microsoft::WRL::ComPtr<ID3D12Resource> readback;
+  HRESULT rb_hr = device->CreateCommittedResource(
+      &ui::d3d12::util::kHeapPropertiesReadback, D3D12_HEAP_FLAG_NONE,
+      &buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+      IID_PPV_ARGS(&readback));
+  if (FAILED(rb_hr)) {
+    XELOGE(
+        "BD NATIVE-HLE (Half B): failed to create readback buffer "
+        "(copy_size={} w={} h={} fmt={} msaa={} hr=0x{:08X})",
+        copy_size, width, height, uint32_t(format), is_msaa ? 1 : 0,
+        uint32_t(rb_hr));
+    return;
+  }
+
+  Microsoft::WRL::ComPtr<ID3D12Resource> resolved;
+  if (is_msaa) {
+    D3D12_RESOURCE_DESC resolved_desc = desc_1x;
+    resolved_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    if (FAILED(device->CreateCommittedResource(
+            &ui::d3d12::util::kHeapPropertiesDefault, D3D12_HEAP_FLAG_NONE,
+            &resolved_desc, D3D12_RESOURCE_STATE_RESOLVE_DEST, nullptr,
+            IID_PPV_ARGS(&resolved)))) {
+      XELOGE("BD NATIVE-HLE (Half B): failed to create MSAA resolve target");
+      return;
+    }
+  }
+
+  Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list;
+  if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                            IID_PPV_ARGS(&allocator))) ||
+      FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                       allocator.Get(), nullptr,
+                                       IID_PPV_ARGS(&list)))) {
+    XELOGE("BD NATIVE-HLE (Half B): failed to create capture command list");
+    return;
+  }
+
+  // The decoupled RT was left in RENDER_TARGET state by the native draw and BD
+  // never rebinds it (its EDRAM base is not used by the guest).
+  ID3D12Resource* copy_src = src.Get();
+  D3D12_RESOURCE_BARRIER barrier = {};
+  barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+  barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  if (is_msaa) {
+    // src RENDER_TARGET -> RESOLVE_SOURCE, resolve into the 1x target, restore.
+    barrier.Transition.pResource = src.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
+    list->ResourceBarrier(1, &barrier);
+    list->ResolveSubresource(resolved.Get(), 0, src.Get(), 0, format);
+    std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+    list->ResourceBarrier(1, &barrier);
+    // resolved RESOLVE_DEST -> COPY_SOURCE.
+    barrier.Transition.pResource = resolved.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RESOLVE_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    list->ResourceBarrier(1, &barrier);
+    copy_src = resolved.Get();
+  } else {
+    barrier.Transition.pResource = src.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    list->ResourceBarrier(1, &barrier);
+  }
+
+  D3D12_TEXTURE_COPY_LOCATION dst_loc = {};
+  dst_loc.pResource = readback.Get();
+  dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+  dst_loc.PlacedFootprint = footprint;
+  D3D12_TEXTURE_COPY_LOCATION src_loc = {};
+  src_loc.pResource = copy_src;
+  src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  src_loc.SubresourceIndex = 0;
+  list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+
+  if (!is_msaa) {
+    // Restore src to RENDER_TARGET (MSAA path already restored it above).
+    barrier.Transition.pResource = src.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    list->ResourceBarrier(1, &barrier);
+  }
+  if (FAILED(list->Close())) {
+    XELOGE("BD NATIVE-HLE (Half B): failed to close capture command list");
+    return;
+  }
+
+  Microsoft::WRL::ComPtr<ID3D12Fence> fence;
+  if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+                                 IID_PPV_ARGS(&fence)))) {
+    XELOGE("BD NATIVE-HLE (Half B): failed to create capture fence");
+    return;
+  }
+  ID3D12CommandQueue* queue = provider.GetDirectQueue();
+  ID3D12CommandList* execute_lists[] = {list.Get()};
+  queue->ExecuteCommandLists(1, execute_lists);
+  queue->Signal(fence.Get(), 1);
+  fence->SetEventOnCompletion(1, nullptr);  // blocks until the copy completes
+
+  D3D12_RANGE read_range;
+  read_range.Begin = footprint.Offset;
+  read_range.End = size_t(copy_size);
+  void* mapping = nullptr;
+  if (FAILED(readback->Map(0, &read_range, &mapping))) {
+    XELOGE("BD NATIVE-HLE (Half B): failed to map readback buffer");
+    return;
+  }
+
+  std::vector<uint8_t> rgba(size_t(width) * height * 4);
+  const uint8_t* base =
+      reinterpret_cast<const uint8_t*>(mapping) + footprint.Offset;
+  uint32_t row_pitch = footprint.Footprint.RowPitch;
+  for (uint32_t y = 0; y < height; ++y) {
+    const uint8_t* srow = base + size_t(row_pitch) * y;
+    uint8_t* drow = &rgba[size_t(width) * y * 4];
+    for (uint32_t x = 0; x < width; ++x) {
+      uint8_t r = 0, g = 0, b = 0;
+      switch (format) {
+        case DXGI_FORMAT_R16G16B16A16_FLOAT: {
+          const uint16_t* p =
+              reinterpret_cast<const uint16_t*>(srow + size_t(x) * 8);
+          r = BdUnormByte(BdHalfToFloat(p[0]));
+          g = BdUnormByte(BdHalfToFloat(p[1]));
+          b = BdUnormByte(BdHalfToFloat(p[2]));
+        } break;
+        case DXGI_FORMAT_R16G16B16A16_UNORM: {
+          const uint16_t* p =
+              reinterpret_cast<const uint16_t*>(srow + size_t(x) * 8);
+          r = uint8_t(p[0] >> 8);
+          g = uint8_t(p[1] >> 8);
+          b = uint8_t(p[2] >> 8);
+        } break;
+        case DXGI_FORMAT_R10G10B10A2_UNORM: {
+          uint32_t v;
+          std::memcpy(&v, srow + size_t(x) * 4, 4);
+          r = uint8_t(((v >> 0) & 0x3FF) * 255 / 1023);
+          g = uint8_t(((v >> 10) & 0x3FF) * 255 / 1023);
+          b = uint8_t(((v >> 20) & 0x3FF) * 255 / 1023);
+        } break;
+        default: {
+          // R8G8B8A8_UNORM / _UNORM_SRGB / _TYPELESS and best-effort fallback:
+          // bytes are R,G,B,A in memory.
+          const uint8_t* p = srow + size_t(x) * 4;
+          r = p[0];
+          g = p[1];
+          b = p[2];
+        } break;
+      }
+      drow[x * 4 + 0] = r;
+      drow[x * 4 + 1] = g;
+      drow[x * 4 + 2] = b;
+      drow[x * 4 + 3] = 255;
+    }
+  }
+  readback->Unmap(0, nullptr);
+
+  std::string png_name =
+      "bd_native_hle_decoupled_" + std::to_string(capture_index) + ".png";
+  int wrote = stbi_write_png(png_name.c_str(), int(width), int(height), 4,
+                             rgba.data(), int(width) * 4);
+  XELOGI(
+      "BD NATIVE-HLE (Half B): dumped decoupled full-surface RT to {} "
+      "({}x{} fmt={} wrote={}) - one native draw rendered into a dedicated "
+      "host RT, decoupled from BD's live EDRAM tiles",
+      png_name, width, height, uint32_t(format), wrote);
+}
+
 void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
                                       uint32_t frontbuffer_width,
                                       uint32_t frontbuffer_height,
@@ -1982,6 +2244,12 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // End the frame even if did not present for any reason (the image refresher
   // was not called), to prevent leaking per-frame resources.
   EndSubmission(true);
+
+  // Blue Dragon native-draw HLE (Half B): now that the whole frame (including
+  // any decoupled native draw) is submitted, read back the decoupled RT and
+  // write it to a PNG. Safe point: all queue work is submitted, the decoupled
+  // RT is untouched since the native draw (BD never uses its EDRAM base).
+  BdMaybeCaptureDecoupledRT();
 }
 
 void D3D12CommandProcessor::OnPrimaryBufferEnd() {
@@ -2008,6 +2276,15 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
 
   ID3D12Device* device = GetD3D12Provider().GetDevice();
   const RegisterFile& regs = *register_file_;
+
+  ++bd_issuedraw_count_;
+  if (bd_capture_armed_) {
+    static int s_hlb_entry_dbg = 0;
+    if (s_hlb_entry_dbg < 8) {
+      ++s_hlb_entry_dbg;
+      XELOGI("BD Half B DBG: IssueDraw ENTER armed=1 idx_count={}", index_count);
+    }
+  }
 
   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
   if (edram_mode == xenos::EdramMode::kCopy) {
@@ -2131,6 +2408,40 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   } else {
     bound_depth_and_color_render_target_bits = 0;
   }
+
+  // Blue Dragon native-draw HLE (Half B): if a decoupled native-draw capture is
+  // armed, this draw's RB_COLOR_INFO was redirected (in the base
+  // CommandProcessor synthetic emit) to a non-aliasing EDRAM base, so the color
+  // RT just bound by render_target_cache_->Update() is a DEDICATED full-surface
+  // host texture that does NOT alias BD's live scene tiles. Remember it; it's
+  // read back and written to a PNG at the next swap (BdMaybeCaptureDecoupledRT).
+  if (bd_capture_armed_) {
+    static int s_hlb_dbg = 0;
+    if (s_hlb_dbg < 8) {
+      ++s_hlb_dbg;
+      XELOGI(
+          "BD Half B DBG: armed=1 host={} pending={} cap={} path={} pitch={}",
+          host_render_targets_used ? 1 : 0, bd_capture_pending_ ? 1 : 0,
+          render_target_cache_->GetBoundColorResourceForCapture() ? 1 : 0,
+          uint32_t(render_target_cache_->GetPath()),
+          register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch);
+    }
+  }
+  if (bd_capture_armed_ && !bd_capture_pending_ && host_render_targets_used) {
+    ID3D12Resource* cap =
+        render_target_cache_->GetBoundColorResourceForCapture();
+    if (cap) {
+      bd_capture_resource_ = cap;
+      bd_capture_pending_ = true;
+      D3D12_RESOURCE_DESC cap_desc = cap->GetDesc();
+      XELOGI(
+          "BD NATIVE-HLE (Half B): decoupled full-surface RT bound for capture "
+          "(host {}x{} fmt={}) - will dump PNG at swap",
+          uint32_t(cap_desc.Width), uint32_t(cap_desc.Height),
+          uint32_t(cap_desc.Format));
+    }
+  }
+
   void* pipeline_handle;
   ID3D12RootSignature* root_signature;
   if (!pipeline_cache_->ConfigurePipeline(

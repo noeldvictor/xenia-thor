@@ -226,10 +226,24 @@ class D3D12CommandProcessor : public CommandProcessor {
                  bool major_mode_explicit) override;
   bool IssueCopy() override;
 
+  void BdArmDecoupledCapture(bool armed) override;
+  uint32_t BdDebugIssueDrawCount() const override { return bd_issuedraw_count_; }
+
   void InitializeTrace() override;
 
  private:
   static constexpr uint32_t kQueueFrames = 3;
+
+  // Blue Dragon native-draw HLE (Half B): capture the decoupled full-surface
+  // host RT a native draw rendered into and write it to a PNG at the next swap.
+  // Armed around the synthetic native draw in the base CommandProcessor; the
+  // next IssueDraw grabs the bound host color RT resource; BdMaybeCapture
+  // DecoupledRT() does the self-contained readback + PNG at IssueSwap.
+  void BdMaybeCaptureDecoupledRT();
+  bool bd_capture_armed_ = false;
+  bool bd_capture_pending_ = false;
+  uint32_t bd_issuedraw_count_ = 0;
+  Microsoft::WRL::ComPtr<ID3D12Resource> bd_capture_resource_;
 
   enum RootParameter : UINT {
     // Keep the size of the root signature at each stage 13 dwords or less
