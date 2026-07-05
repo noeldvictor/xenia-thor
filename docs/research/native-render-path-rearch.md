@@ -35,6 +35,13 @@ never a brick alone. One-brick A/B is meaningless here (the stack hides it). Sin
 correct. The compound is the only honest signal.
 
 ## Status
+- BRICK 2: BUILT + DEVICE-TESTED 2026-07-04 (gpu_native_render_targets). **DEAD.** cap=1 renders DOUBLED
+  (two Shus/windmills - the host image is 1-sample = half the tile footprint the guest addresses at guest-MSAA,
+  so content WRAPS; the guest-footprint-ownership fix doesn't decouple host-storage-samples from EDRAM-addressing-
+  samples, the real fix) AND fps FLAT (18.6 vs shipped 19.8, ~52ms vs ~50ms) = cap=2 already captured the MSAA
+  win; cap=1 adds nothing. The "cap=1 = −42%" was a CONFOUNDED cross-run number. Kept default-off. The clean
+  storage/addressing decouple (multisample views threaded through resolve/transfer shaders) is the only fix and
+  it's large + risky, and the payoff is FLAT ⇒ not worth it. Fragment MSAA lever is closed.
 - BRICK 0: shipped (default-off), FLAT alone.
 - BRICK 1: BUILT + DEVICE-TESTED 2026-07-04 (gpu_native_render_path). Renders PIXEL-PERFECT (bindless
   architecture correct, no crash) BUT **REGRESSED: 129→161ms / 7.7→6.2fps, and descriptor_binds UNCHANGED

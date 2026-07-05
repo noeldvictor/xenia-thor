@@ -440,6 +440,28 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_native_render_targets, false,
+    "BRICK 2 of the native render-path rearch (Thor/Turnip): make a force-clamped "
+    "MSAA (gpu_force_max_msaa_samples=1) render CLEAN instead of ghosting. BD packs "
+    "a 2x main scene + 4x effect buffers at guest EDRAM bases laid out for the "
+    "UNCLAMPED footprints; the default clamp halves each render target's reserved "
+    "EDRAM tile range, so the shrunken main buffer no longer owns all the tiles the "
+    "guest resolves as 'main' and the bright effect buffer bleeds in (the documented "
+    "cap=1 ghost). When on, each render target reserves its EDRAM ownership footprint "
+    "at the GUEST (pre-clamp) sample count so the ownership map matches the guest "
+    "layout (no bleed - the author-confirmed bleed fix), AND cross-render-target "
+    "ownership transfers are suppressed (independent render targets) so the "
+    "shared-base 2x main and 1x output/effect buffers never physically inherit each "
+    "other's pixels (the over-claim that otherwise letterboxes the output). The host "
+    "images, render passes and resolves stay at the clamped sample count (the ROP "
+    "win). BD's composites read the main scene via resolve->shared-memory->texture "
+    "(not via these EDRAM ownership transfers), so RT independence does not break "
+    "them. Intended to be paired with gpu_force_max_msaa_samples=1; inert unless a "
+    "clamp is active. Changes EDRAM ownership behavior, so toggling mid-run may need "
+    "a clean frame. Default off until validated.",
+    "GPU");
+
+DEFINE_bool(
     gpu_allow_invalid_fetch_constants, false,
     "Allow texture and vertex fetch constants with invalid type - generally "
     "unsafe because the constant may contain completely invalid values, but "

@@ -50,6 +50,7 @@ DECLARE_bool(gpu_vulkan_feedback_merge);
 DECLARE_bool(gpu_hw_vertex_fetch);
 DECLARE_bool(gpu_hw_vertex_fetch_force);
 DECLARE_bool(gpu_native_render_path);
+DECLARE_bool(gpu_native_render_targets);
 
 DECLARE_bool(gpu_allow_invalid_fetch_constants);
 DECLARE_bool(clear_memory_page_state);

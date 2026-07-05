@@ -299,6 +299,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_hw_vertex_fetch");
             copyBooleanExtra(intent, launchArguments, "gpu_hw_vertex_fetch_force");
             copyBooleanExtra(intent, launchArguments, "gpu_native_render_path");
+            copyBooleanExtra(intent, launchArguments, "gpu_native_render_targets");
             copyBooleanExtra(intent, launchArguments, "gpu_edram_passes_dont_care_safe");
             copyBooleanExtra(
                     intent, launchArguments, "gpu_use_vd_scaler_output_for_swap");

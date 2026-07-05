@@ -27,6 +27,10 @@
 #include "xenia/gpu/xenos.h"
 
 DECLARE_bool(gpu_binonce_full_scissor);
+// BRICK 2 native render targets: make a force-clamped MSAA render clean (defined
+// in gpu_flags.cc). Reserves ownership footprints at the guest sample count and
+// makes render targets independent (no cross-RT ownership transfers).
+DECLARE_bool(gpu_native_render_targets);
 
 DEFINE_bool(
     depth_transfer_not_equal_test, true,
@@ -872,12 +876,25 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   // bases, so the halved range lets the bright effect buffer bleed in (the
   // "bright dupe of objects"). Reserving the range at the guest msaa here fixes
   // the bleed but then OVER-CLAIMS into the next RT's tiles (clamped to
-  // rt_max_distance below) -> displaces the output RT -> letterbox. So cap=1 is
-  // intrinsically not clean; the clean ceiling is cap=2 (foliage stays 2x). The
-  // real fix is the EDRAM-recompiler reimagine (handle packing via the frame
-  // graph), not a per-site clamp. Keep the literal (clamped) length here.
+  // rt_max_distance below) -> displaces the output RT -> letterbox. That was the
+  // per-site dead end (cap=1 "intrinsically not clean").
+  //
+  // BRICK 2 (gpu_native_render_targets): revisit the "reserve at guest msaa" fix
+  // but pair it with RENDER-TARGET INDEPENDENCE (cross-RT ownership transfers
+  // suppressed below). Reserving each RT's ownership footprint at the GUEST
+  // (pre-clamp) sample count makes the EDRAM ownership map match the guest layout
+  // so nothing bleeds; suppressing the cross-RT transfers stops the over-claim
+  // from physically displacing the shared-base 1x output RT (the letterbox
+  // vector) - the output keeps its own pixels. The host image/render pass/resolve
+  // stay at the clamped sample count (the ROP win). rb_surface_info.msaa_samples
+  // is the UNCLAMPED guest value (only the local msaa_samples was clamped above).
+  // Inert unless the cvar and a clamp are both active (then guest == clamped).
+  xenos::MsaaSamples ownership_msaa_samples =
+      cvars::gpu_native_render_targets ? rb_surface_info.msaa_samples
+                                       : msaa_samples;
   uint32_t length_used_tiles_at_32bpp =
-      ((height_used << uint32_t(msaa_samples >= xenos::MsaaSamples::k2X)) +
+      ((height_used
+        << uint32_t(ownership_msaa_samples >= xenos::MsaaSamples::k2X)) +
        (xenos::kEdramTileHeightSamples - 1)) /
       xenos::kEdramTileHeightSamples * pitch_tiles_at_32bpp;
   for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
@@ -936,11 +953,22 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   // draw with whatever contents currently are in the render target in this
   // case).
 
+  // BRICK 2 (gpu_native_render_targets): INDEPENDENT render targets. Still update
+  // ownership (so resolves + RT-as-texture find the correct owner), but do NOT
+  // record cross-RT transfer copies. With a force-clamped MSAA the shared-base 2x
+  // main scene and the 1x output/effect buffers would otherwise physically
+  // inherit each other's pixels through these transfers (the ghost/letterbox
+  // vector once their guest-shared EDRAM bases misalign after the clamp). BD's
+  // composites read the main scene via resolve->shared-memory->texture, not via
+  // these EDRAM ownership transfers, so suppressing the copies does not break the
+  // composite reads. Gated + default-off => byte-identical otherwise.
+  const bool native_rts_independent =
+      cvars::gpu_native_render_targets && !interlock_barrier_only;
   for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
     const std::pair<uint32_t, uint32_t>& rt_base_index = edram_bases_sorted[i];
     uint32_t rt_bit_index = rt_base_index.second;
     ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
-                    interlock_barrier_only
+                    (interlock_barrier_only || native_rts_independent)
                         ? nullptr
                         : &last_update_transfers_[rt_bit_index]);
   }
