@@ -23,6 +23,21 @@ INSIDE xenia (the **Cemu model**: general emulator + HLE graphics + per-game gra
 it: native-input flat, bindless regressed, cap=1/interlock/EDRAM-fusion/driver-internals dead). The fix is the
 HLE front-end, not another cvar. `check` the experiment DB first (below).
 
+## 🖥️ RE ON PC, PATCH ON THOR (user 2026-07-04) + foliage-optimization is ON THE TABLE (no gfx loss)
+**Reverse-engineer BD's rendering on DESKTOP xenia (`build/xenia.sln`, D3D12 backend — renders BD fast) — RE
+iterates in SECONDS with a real debugger vs the Thor's 150s-nav/thermal/build-install probes. Same guest CPU +
+CommandProcessor/register-file emulation; only the host GPU backend differs.** So RE the STRUCTURE (draw path,
+IB recorder, foliage submit) on PC; MEASURE + PATCH perf on the Thor (Adreno 740/Turnip). Skill:
+**xenia-bd-pc-reverse-engineer**. Build: `tools\build\bin\premake5.exe --file=premake5.lua vs2022` (xb.bat is
+Python-broken) → `MSBuild build\xenia-app.vcxproj /p:Configuration="Release Windows" /p:Platform=x64` (MSBuild at
+`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`).
+**Desktop @~60fps PROVES BD's foliage is NOT intrinsically slow — the Thor's ~15ms is TBDR-binning/tiling/
+emulation-specific.** So **"optimize HOW the foliage uses the GPU, NO gfx loss" is user-PERMITTED (2026-07-04) +
+genuinely achievable** (change the submission/technique, keep the pixels). This REFRAMES the standing "foliage is
+intrinsic" verdict: intrinsic on the ADRENO PATH, not the game — the emulation's Adreno submission IS the lever,
+RE'd fast on PC. (All 224 D3D9 methods already identified: dispatch table @0x8207E2C0; the field draws are in
+deferred IBs — the open RE = the IB recorder, page-watch it on PC. See memory/bd-d3d-hle-re-state.md.)
+
 ## 🔬 EXPERIMENT DB — check before running, record after (anti-repetition RAG)
 `python tools/exp_ledger.py check "<keyword>"` BEFORE any device experiment or new lever; `add` after every
 result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experiment-ledger**. DB:
