@@ -257,6 +257,13 @@ class CommandProcessor {
   // emit actually reaches the backend draw. 0 in backends not tracking it.
   virtual uint32_t BdDebugIssueDrawCount() const { return 0; }
 
+  // Blue Dragon native-draw HLE (step 1): number of native synthetic FIELD
+  // FOLIAGE draws emitted this frame (into the shared decoupled full-surface
+  // RT). CP-worker-thread only (draws + swap both run there). The backend logs
+  // + resets it at swap to confirm the WHOLE foliage pass (~1194 draws) fired
+  // natively.
+  uint32_t bd_native_emits_this_frame_ = 0;
+
   // "Actual" is for the command processor thread, to be read by the
   // implementations.
   SwapPostEffect GetActualSwapPostEffect() const {

@@ -8,6 +8,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <sstream>
 #include <utility>
@@ -1659,6 +1660,18 @@ uint8_t BdUnormByte(float v) {
   v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
   return uint8_t(v * 255.0f + 0.5f);
 }
+// Reinhard tonemap + approx sRGB gamma for BD's R16G16B16A16_FLOAT HDR foliage
+// RT, so the decoupled-RT PNG shows the foliage instead of clamping bright
+// values to flat white / crushing the HDR range (Brick 2 left this finishing
+// touch: the foliage is HDR float, not display-ready).
+uint8_t BdReinhardByte(float v) {
+  if (v < 0.0f) {
+    v = 0.0f;
+  }
+  v = v / (v + 1.0f);            // Reinhard tonemap into [0, 1)
+  v = std::pow(v, 1.0f / 2.2f);  // approx sRGB gamma so midtones aren't crushed
+  return BdUnormByte(v);
+}
 }  // namespace
 
 void D3D12CommandProcessor::BdArmDecoupledCapture(bool armed) {
@@ -1666,14 +1679,6 @@ void D3D12CommandProcessor::BdArmDecoupledCapture(bool armed) {
   // has redirected RB_COLOR_INFO to a non-aliasing EDRAM base). The next
   // IssueDraw grabs the resulting dedicated full-surface host color RT.
   bd_capture_armed_ = armed;
-  if (armed) {
-    static int s_arm_dbg = 0;
-    if (s_arm_dbg < 8) {
-      ++s_arm_dbg;
-      XELOGI("BD Half B DBG: ARM(true) set bd_capture_armed_={}",
-             bd_capture_armed_ ? 1 : 0);
-    }
-  }
 }
 
 void D3D12CommandProcessor::BdMaybeCaptureDecoupledRT() {
@@ -1849,9 +1854,9 @@ void D3D12CommandProcessor::BdMaybeCaptureDecoupledRT() {
         case DXGI_FORMAT_R16G16B16A16_FLOAT: {
           const uint16_t* p =
               reinterpret_cast<const uint16_t*>(srow + size_t(x) * 8);
-          r = BdUnormByte(BdHalfToFloat(p[0]));
-          g = BdUnormByte(BdHalfToFloat(p[1]));
-          b = BdUnormByte(BdHalfToFloat(p[2]));
+          r = BdReinhardByte(BdHalfToFloat(p[0]));
+          g = BdReinhardByte(BdHalfToFloat(p[1]));
+          b = BdReinhardByte(BdHalfToFloat(p[2]));
         } break;
         case DXGI_FORMAT_R16G16B16A16_UNORM: {
           const uint16_t* p =
@@ -2250,6 +2255,16 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // write it to a PNG. Safe point: all queue work is submitted, the decoupled
   // RT is untouched since the native draw (BD never uses its EDRAM base).
   BdMaybeCaptureDecoupledRT();
+
+  // Blue Dragon native-draw HLE (step 1): confirm the WHOLE field foliage pass
+  // fired natively this frame (~1194 draws) via the per-frame emit counter,
+  // then reset it for the next frame.
+  if (bd_native_emits_this_frame_) {
+    static uint32_t s_bd_native_frame = 0;
+    XELOGI("BD NATIVE-HLE: field frame {} emitted {} native foliage draws",
+           s_bd_native_frame++, bd_native_emits_this_frame_);
+    bd_native_emits_this_frame_ = 0;
+  }
 }
 
 void D3D12CommandProcessor::OnPrimaryBufferEnd() {
@@ -2415,18 +2430,6 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   // RT just bound by render_target_cache_->Update() is a DEDICATED full-surface
   // host texture that does NOT alias BD's live scene tiles. Remember it; it's
   // read back and written to a PNG at the next swap (BdMaybeCaptureDecoupledRT).
-  if (bd_capture_armed_) {
-    static int s_hlb_dbg = 0;
-    if (s_hlb_dbg < 8) {
-      ++s_hlb_dbg;
-      XELOGI(
-          "BD Half B DBG: armed=1 host={} pending={} cap={} path={} pitch={}",
-          host_render_targets_used ? 1 : 0, bd_capture_pending_ ? 1 : 0,
-          render_target_cache_->GetBoundColorResourceForCapture() ? 1 : 0,
-          uint32_t(render_target_cache_->GetPath()),
-          register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch);
-    }
-  }
   if (bd_capture_armed_ && !bd_capture_pending_ && host_render_targets_used) {
     ID3D12Resource* cap =
         render_target_cache_->GetBoundColorResourceForCapture();

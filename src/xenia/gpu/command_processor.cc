@@ -91,6 +91,16 @@ DEFINE_uint32(
     "backend then reads back and dumps to bd_native_hle_decoupled_N.png at the "
     "next swap. Requires gpu_bd_native_hle=true.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_native_hle_replace, false,
+    "Blue Dragon native-draw HLE step 3 (default off, the front-end "
+    "replacement / real win): when true, DROP BD's original LLE per-tile "
+    "foliage submission for every draw the native pass covers, so the field "
+    "foliage is drawn ONCE natively instead of twice (native emit alongside "
+    "LLE). The skipped draw's full decoded state already lives in register_file_ "
+    "from the PM4 parse, so the native draw reproduces it exactly. Requires "
+    "gpu_bd_native_hle=true.",
+    "GPU");
 
 DECLARE_uint32(cpu_watch_guest_write_page);
 
@@ -2585,115 +2595,126 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
           }
         }
       }
+      // --- Blue Dragon native-draw HLE: classify this draw BEFORE issuing it,
+      // so replace-mode (step 3) can DROP BD's per-tile LLE foliage submission
+      // for the draws the native pass covers - rendering the field ONCE
+      // natively, not twice. Foliage = the field's unique VS ucode hash at
+      // pitch 720 (from the draw-contract capture).
+      static thread_local bool s_in_bd_native_emit = false;
+      uint32_t nhle_pitch =
+          register_file_->values[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF;
+      bool nhle_is_foliage =
+          active_vertex_shader_ &&
+          active_vertex_shader_->ucode_data_hash() == 0xF5CE501A336FEE16ull;
+      // A "covered" draw = a field draw (the field surface = pitch 720) on the
+      // OUTER (non-reentrant) pass while native HLE is armed. The WHOLE field
+      // pass is covered - EVERY pitch-720 indexed draw, no per-frame budget cap
+      // and no single-shader restriction - so the entire field renders natively
+      // into one shared decoupled full-surface RT. (The 0xF5CE501A hash is the
+      // dominant foliage/environment shader = ~404 of the draws; the rest of
+      // the field pass uses sibling shaders. nhle_is_foliage is kept for the
+      // diagnostic log.)
+      bool nhle_cover = cvars::gpu_bd_native_hle && is_indexed &&
+                        !s_in_bd_native_emit && nhle_pitch == 720;
+
       // TODO(Triang3l): Don't drop the draw call completely if the vertex
       // shader has memexport.
       // TODO(Triang3l || JoelLinn): Handle this properly in the render
       // backends.
-      draw_succeeded = IssueDraw(
-          vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
-          is_indexed ? &index_buffer_info : nullptr,
-          xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode,
-                                     vgt_draw_initiator.prim_type));
-      if (!draw_succeeded) {
-        XELOGE("{}({}, {}, {}): Failed in backend", opcode_name,
-               vgt_draw_initiator.num_indices,
-               uint32_t(vgt_draw_initiator.prim_type),
-               uint32_t(vgt_draw_initiator.source_select));
+      if (nhle_cover && cvars::gpu_bd_native_hle_replace) {
+        // Front-end replacement: skip BD's original LLE foliage draw entirely;
+        // the synthetic native emit below is the SOLE submit for this draw.
+        // register_file_ already holds BD's full decoded state (the PM4 parse
+        // ran before this), so the native draw reproduces it exactly.
+        draw_succeeded = true;
+      } else {
+        draw_succeeded = IssueDraw(
+            vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
+            is_indexed ? &index_buffer_info : nullptr,
+            xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode,
+                                       vgt_draw_initiator.prim_type));
+        if (!draw_succeeded) {
+          XELOGE("{}({}, {}, {}): Failed in backend", opcode_name,
+                 vgt_draw_initiator.num_indices,
+                 uint32_t(vgt_draw_initiator.prim_type),
+                 uint32_t(vgt_draw_initiator.source_select));
+        }
       }
-      // --- Blue Dragon native-draw HLE (Half A): synthetic-PM4 submission.
+      // --- Blue Dragon native-draw HLE (Half A/B): synthetic-PM4 submission.
       // The DXVK/Cemu-model front-end feeds ONE clean synthetic PM4 stream (a
       // single DRAW_INDX built from the decoded draw contract) back through
       // xenia's EXISTING ExecutePacket -> ExecutePacketType3Draw -> IssueDraw
       // decode, on the CP worker thread where register_file_ owns the state.
-      // This proves the synthetic-stream -> native-submit pipe end to end
-      // (Brick 2 sources the contract from BD's reconstructed D3D9 device
-      // context instead of the live regs; all index/vertex/shader data the
-      // packet references already resides in guest memory). The thread-local
-      // guard stops the synthetic DRAW_INDX from recursively re-entering this
-      // block. Bounded + default off (gpu_bd_native_hle).
-      static thread_local bool s_in_bd_native_emit = false;
-      if (cvars::gpu_bd_native_hle && draw_succeeded && is_indexed &&
-          !s_in_bd_native_emit) {
-        uint32_t nhle_pitch =
-            register_file_->values[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF;
-        // Restrict to BD's FIELD FOLIAGE draws (their unique VS ucode hash, from
-        // the draw-contract capture) so the native emit + decoupled capture land
-        // on the field foliage, not intro/menu/loading pitch-720 draws (which
-        // otherwise consume the emit budget first).
-        bool nhle_is_foliage =
-            active_vertex_shader_ &&
-            active_vertex_shader_->ucode_data_hash() == 0xF5CE501A336FEE16ull;
-        if (nhle_pitch == 720 && nhle_is_foliage) {
-          static std::atomic<uint32_t> s_native_emits{0};
-          if (s_native_emits.fetch_add(1) < 8) {
-            // Minimal self-contained DRAW_INDX packet, layout per
-            // ExecutePacketType3_DRAW_INDX: [type3 hdr | viz_token |
-            // VGT_DRAW_INITIATOR | VGT_DMA_BASE | VGT_DMA_SIZE]. Stored
-            // big-endian (guest order) so ExecutePacket's ReadAndSwap decodes
-            // it exactly like a real guest packet.
-            // Buffer padded (8 dwords) larger than the 5-dword payload: RingBuffer
-            // ::set_write_offset does (offset % capacity), so a capacity EQUAL to
-            // the payload would wrap write_offset to 0 == read_offset and make the
-            // stream read as EMPTY (read_count()==0) - the packet would silently
-            // never execute. Keep capacity (32B) > write_offset (20B).
-            uint32_t pm4[8] = {};
-            pm4[0] = xe::byte_swap(MakePacketType3(PM4_DRAW_INDX, 4));
-            pm4[1] = xe::byte_swap(uint32_t(0));  // viz token = unconditional
-            pm4[2] = xe::byte_swap(
-                register_file_->values[XE_GPU_REG_VGT_DRAW_INITIATOR]);
-            pm4[3] =
-                xe::byte_swap(register_file_->values[XE_GPU_REG_VGT_DMA_BASE]);
-            pm4[4] =
-                xe::byte_swap(register_file_->values[XE_GPU_REG_VGT_DMA_SIZE]);
-            RingBuffer synth_reader(reinterpret_cast<uint8_t*>(pm4),
-                                    sizeof(pm4));
-            synth_reader.set_write_offset(5 * sizeof(uint32_t));
+      // Runs for EVERY covered foliage draw (the whole field pass) into the
+      // shared decoupled full-surface RT. The thread-local guard stops the
+      // synthetic DRAW_INDX from recursively re-entering this block. Default
+      // off (gpu_bd_native_hle).
+      if (nhle_cover && draw_succeeded) {
+        ++bd_native_emits_this_frame_;
+        // Minimal self-contained DRAW_INDX packet, layout per
+        // ExecutePacketType3_DRAW_INDX: [type3 hdr | viz_token |
+        // VGT_DRAW_INITIATOR | VGT_DMA_BASE | VGT_DMA_SIZE]. Stored big-endian
+        // (guest order) so ExecutePacket's ReadAndSwap decodes it exactly like
+        // a real guest packet. Buffer padded (8 dwords) larger than the 5-dword
+        // payload: RingBuffer::set_write_offset does (offset % capacity), so a
+        // capacity EQUAL to the payload would wrap write_offset to 0 ==
+        // read_offset and make the stream read as EMPTY (read_count()==0) - the
+        // packet would silently never execute. Keep capacity (32B) > 20B.
+        uint32_t pm4[8] = {};
+        pm4[0] = xe::byte_swap(MakePacketType3(PM4_DRAW_INDX, 4));
+        pm4[1] = xe::byte_swap(uint32_t(0));  // viz token = unconditional
+        pm4[2] = xe::byte_swap(
+            register_file_->values[XE_GPU_REG_VGT_DRAW_INITIATOR]);
+        pm4[3] = xe::byte_swap(register_file_->values[XE_GPU_REG_VGT_DMA_BASE]);
+        pm4[4] = xe::byte_swap(register_file_->values[XE_GPU_REG_VGT_DMA_SIZE]);
+        RingBuffer synth_reader(reinterpret_cast<uint8_t*>(pm4), sizeof(pm4));
+        synth_reader.set_write_offset(5 * sizeof(uint32_t));
 
-            // Half B: optionally redirect this native draw's color RT to a
-            // non-aliasing EDRAM base so it renders into its OWN dedicated
-            // full-surface host RT (the backend dumps it to a PNG at swap).
-            // Saved + restored around the emit so BD's live draws are
-            // unaffected (the RT cache rebinds BD's RTs on the next real draw).
-            uint32_t saved_color_info =
-                register_file_->values[XE_GPU_REG_RB_COLOR_INFO];
-            uint32_t decouple_base = cvars::gpu_bd_native_hle_decouple;
-            if (decouple_base) {
-              // Redirect ONLY the color base to a fresh non-aliasing EDRAM tile
-              // so the native draw lands in its own dedicated host color RT.
-              // Keep MSAA + depth as BD's (the depth write is idempotent - same
-              // geometry/z - so BD's shared depth stays correct; the backend
-              // resolves the MSAA color RT before reading it back).
-              uint32_t redirected = (saved_color_info & ~uint32_t(0xFFF)) |
-                                    (decouple_base & 0xFFF);
-              WriteRegister(XE_GPU_REG_RB_COLOR_INFO, redirected);
-              BdArmDecoupledCapture(true);
-            }
+        // Half B: optionally redirect this native draw's color RT to a
+        // non-aliasing EDRAM base so it renders into its OWN dedicated
+        // full-surface host RT, SHARED across the whole foliage pass (all
+        // covered draws use the same base, so they accumulate into one RT which
+        // the backend presents/dumps at swap). Keep MSAA + depth as BD's (the
+        // depth write is idempotent). Saved + restored around the emit so BD's
+        // live draws are unaffected.
+        uint32_t saved_color_info =
+            register_file_->values[XE_GPU_REG_RB_COLOR_INFO];
+        uint32_t decouple_base = cvars::gpu_bd_native_hle_decouple;
+        if (decouple_base) {
+          uint32_t redirected =
+              (saved_color_info & ~uint32_t(0xFFF)) | (decouple_base & 0xFFF);
+          WriteRegister(XE_GPU_REG_RB_COLOR_INFO, redirected);
+          BdArmDecoupledCapture(true);
+        }
 
-            uint32_t idc_before = BdDebugIssueDrawCount();
-            s_in_bd_native_emit = true;
-            bool synth_ok = true;
-            while (synth_reader.read_count()) {
-              if (!ExecutePacket(&synth_reader)) {
-                synth_ok = false;
-                break;
-              }
-            }
-            s_in_bd_native_emit = false;
-            uint32_t idc_delta = BdDebugIssueDrawCount() - idc_before;
-
-            if (decouple_base) {
-              BdArmDecoupledCapture(false);
-              WriteRegister(XE_GPU_REG_RB_COLOR_INFO, saved_color_info);
-            }
-            XELOGI(
-                "BD NATIVE-HLE: submitted field draw via SYNTHETIC DRAW_INDX "
-                "PM4 -> ExecutePacket -> IssueDraw on CP thread (prim={} "
-                "idx={} pitch={} ok={} decouple_base={} issuedraw_delta={}) - "
-                "synthetic-stream native pipe works",
-                uint32_t(vgt_draw_initiator.prim_type),
-                uint32_t(vgt_draw_initiator.num_indices), nhle_pitch,
-                synth_ok ? 1 : 0, decouple_base, idc_delta);
+        uint32_t idc_before = BdDebugIssueDrawCount();
+        s_in_bd_native_emit = true;
+        bool synth_ok = true;
+        while (synth_reader.read_count()) {
+          if (!ExecutePacket(&synth_reader)) {
+            synth_ok = false;
+            break;
           }
+        }
+        s_in_bd_native_emit = false;
+        uint32_t idc_delta = BdDebugIssueDrawCount() - idc_before;
+
+        if (decouple_base) {
+          BdArmDecoupledCapture(false);
+          WriteRegister(XE_GPU_REG_RB_COLOR_INFO, saved_color_info);
+        }
+        // Throttled: the per-frame native emit COUNT is logged at swap; log
+        // only the first few individual emits to confirm the pipe end to end.
+        static std::atomic<uint32_t> s_native_log{0};
+        if (s_native_log.fetch_add(1) < 4) {
+          XELOGI(
+              "BD NATIVE-HLE: field draw via SYNTHETIC DRAW_INDX PM4 -> "
+              "ExecutePacket -> IssueDraw on CP thread (prim={} idx={} pitch={} "
+              "foliage={} ok={} decouple_base={} replace={} issuedraw_delta={})",
+              uint32_t(vgt_draw_initiator.prim_type),
+              uint32_t(vgt_draw_initiator.num_indices), nhle_pitch,
+              nhle_is_foliage ? 1 : 0, synth_ok ? 1 : 0, decouple_base,
+              cvars::gpu_bd_native_hle_replace ? 1 : 0, idc_delta);
         }
       }
     }
