@@ -63,6 +63,20 @@ DEFINE_bool(gpu_hle_surface_binonce, false,
             "the wider surface) = render once, full width. Host-side, no reentrancy.",
             "GPU");
 
+// --- Blue Dragon FULL native D3D9->Vulkan HLE RENDERER (separate native path) ---
+DEFINE_bool(
+    gpu_bd_native_renderer, false,
+    "Blue Dragon FULL D3D9->Vulkan HLE renderer (the DXVK-for-360 reimagination, "
+    "default off, Vulkan only): a SEPARATE native Vulkan renderer (BdNativeRenderer) "
+    "that captures BD's D3D9 draws at seam 0x82489F40 and renders the whole frame "
+    "into ONE persistent full-surface host RT in a FEW held-open passes with native "
+    "pipelines (VkBuffer vertex-input, Xenos->SPIR-V, hardware ROP blend, depth-"
+    "prepass+early-Z) - BYPASSING xenia's PM4/EDRAM/95-pass LLE back-end (which the "
+    "partial gpu_bd_native_hle KEPT, hence perf-flat). Structure/correctness on "
+    "desktop --gpu=vulkan; super-optimize for Thor Turnip/Adreno TBDR (minimize "
+    "passes=GMEM flushes, GMEM-resident RT). See docs/research/20260705-native-"
+    "vulkan-renderer-plan.md. Brick 1 = the persistent RT + one render pass.",
+    "GPU");
 // --- Blue Dragon FULL NATIVE-DRAW HLE (the DXVK/Cemu model), Brick 1 ---
 DEFINE_bool(
     gpu_bd_native_hle, false,
@@ -100,6 +114,26 @@ DEFINE_bool(
     "LLE). The skipped draw's full decoded state already lives in register_file_ "
     "from the PM4 parse, so the native draw reproduces it exactly. Requires "
     "gpu_bd_native_hle=true.",
+    "GPU");
+DEFINE_bool(
+    gpu_bd_hle_present_decoupled, false,
+    "Blue Dragon native-draw HLE step 2 (default off, Vulkan): at the guest "
+    "swap, present the decoupled full-surface host RT the native field draws "
+    "rendered into (gpu_bd_native_hle_decouple) INSTEAD of BD's resolved guest "
+    "front buffer - so the screen shows the decoupled render directly, and BD's "
+    "per-tile base-0 resolve is no longer needed for display. Pairs with "
+    "gpu_bd_hle_drop_resolve. Requires gpu_bd_native_hle + _decouple.",
+    "GPU");
+DEFINE_uint32(
+    gpu_bd_hle_drop_resolve, 0,
+    "Blue Dragon native-draw HLE step 3 (default 0 = off, Vulkan, THE perf "
+    "lever): skip BD's emulated per-tile EDRAM->RAM resolve COPY (the ~120ms "
+    "field GPU fence) - the decoupled full-surface RT is the source of truth, so "
+    "the base-0 resolve is dead weight. 1 = drop only base-0 color-copy resolves "
+    "(BD's field); 2 = drop ALL color-copy resolves (upper-bound perf probe). "
+    "Depth resolves and clears still run. Pair with gpu_bd_hle_present_decoupled "
+    "so the screen still shows the field. Requires the decoupled path for a "
+    "correct image; on its own it measures the resolve's raw GPU cost.",
     "GPU");
 
 DECLARE_uint32(cpu_watch_guest_write_page);
@@ -2692,7 +2726,7 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
         // loop distinguishes the RingBuffer capacity==payload WRAP bug
         // (read_count==0 => loop skipped => packet never executes, ok stays a
         // loop-skip-safe 1) from a genuine reach into ExecutePacket/IssueDraw.
-        uint32_t synth_read_count_before = synth_reader.read_count();
+        uint32_t synth_read_count_before = uint32_t(synth_reader.read_count());
         s_in_bd_native_emit = true;
         bool synth_ok = true;
         while (synth_reader.read_count()) {
