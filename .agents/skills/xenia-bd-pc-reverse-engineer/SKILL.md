@@ -5,12 +5,25 @@ description: Reverse-engineer Blue Dragon's (and any 360 title's) rendering on D
 
 # RE Blue Dragon on PC, patch on the Thor
 
+**🚨 UPDATED 2026-07-05 (user, TOP PRIORITY): BUILD THE FULL D3D9→VULKAN HLE NATIVE RENDERER — dev on desktop with
+`--gpu=vulkan` (NOT D3D12), but PERF-OPTIMIZE on the Thor because TURNIP/ADRENO VULKAN ≠ DESKTOP VULKAN.**
+- **Desktop `xenia.exe --gpu=vulkan`** = the SAME backend code (VkImage/VkRenderPass/VkPipeline/SPIR-V) that ships
+  to Turnip → develop the native renderer's STRUCTURE + CORRECTNESS there (RenderDoc to verify pass count/pipelines,
+  iterate in seconds). D3D12 is throwaway for this — don't use it for the renderer build.
+- **BUT the 30fps comes from THOR-SPECIFIC super-optimization** (desktop is immediate-mode, hides all of it): the
+  Adreno 740 is TBDR — every render pass = a GMEM tile store/flush (BD's 95-pass wall). Perf = minimize passes,
+  keep the RT GMEM-RESIDENT across draws (one held pass / subpasses via dynamic_rendering_local_read/ROAA), tune
+  load/store_op + LRZ-friendly depth, NEON. Validate STRUCTURE on desktop Vulkan → PERF-TUNE + measure on the Thor.
+- **The target = a SEPARATE native Vulkan renderer** (seam 0x82489F40 → own full-surface RT, few passes, native
+  vertex-input/shaders/ROP-blend, depth-prepass+early-Z) that BYPASSES xenia's PM4/EDRAM/95-pass LLE back-end. The
+  decoupled-native-HLE was PERF-FLAT because it KEPT that back-end. Blueprint: repo
+  `docs/research/20260705-native-vulkan-renderer-plan.md`. Skill: `xenia-vulkan-adreno-renderdoc` for the capture.
+
 **WHY (user-directed 2026-07-04):** RE on the Thor is brutal — 150s navs, thermal watchdog, device flakiness,
-no debugger, ~10min build+install per probe. **Desktop xenia renders BD at playable speed** (D3D12 backend) and
-iterates in SECONDS with a real debugger. It runs the SAME guest CPU emulation + CommandProcessor/register-file
-GPU path as the Thor — only the host GPU backend differs (D3D12 vs Vulkan/Turnip). So the *guest* RE (how BD
-submits draws, the D3D9 dispatch, the IB recorder, the foliage draw structure) is IDENTICAL and far faster on PC.
-**Then build the Adreno/Turnip-specific optimization on the Thor's Vulkan path and validate there.**
+no debugger, ~10min build+install per probe. **Desktop xenia renders BD at playable speed** and iterates in
+SECONDS with a real debugger. It runs the SAME guest CPU emulation + CommandProcessor/register-file GPU path as
+the Thor. So the *guest* RE (how BD submits draws, the D3D9 dispatch, the IB recorder, the foliage draw structure)
+is IDENTICAL and far faster on PC. **Then perf-tune the Adreno/Turnip TBDR specifics on the Thor + validate there.**
 
 **Key fact this unlocks:** desktop @~60fps PROVES BD's foliage is NOT intrinsically slow — those exact 262k verts
 render fast on a desktop GPU. So the Thor's ~15ms foliage cost is **TBDR-binning / tiling / emulation-specific**,

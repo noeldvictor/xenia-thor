@@ -5,6 +5,34 @@ Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740)
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
 `GameProfiles` / `XeniaOptimizations` toggle (default-off until validated).
 
+**🎯 GOAL (user 2026-07-05, THE mandate): BD→30fps via a FULL D3D9→VULKAN HLE — the DXVK-for-360 native renderer,
+NOT levers (all dead).** RE2 (heavier) hits 30fps on this Thor via DXVK ⇒ HW is fine, xenia's 95-pass EDRAM LLE
+emulation is the wall. BUILD a separate native Vulkan renderer (seam 0x82489F40 → own full-surface RT, few
+passes, native vertex-input/shaders/ROP-blend, early-Z reject) that BYPASSES the PM4/EDRAM/tiling back-end.
+Develop STRUCTURE on desktop `--gpu=vulkan`; **SUPER-OPTIMIZE for the Thor's Turnip/Adreno TBDR** (Thor Vulkan ≠
+desktop Vulkan — minimize passes/GMEM flushes, GMEM-resident RT, Turnip extensions). Also AOT-LLVM (RexGlue-style
+PPC→native) for CPU/thermal. Blueprint: `docs/research/20260705-native-vulkan-renderer-plan.md`. Be creative,
+novel, research (arxiv/DXVK/Cemu). Convert the WHOLE pipeline at once — do NOT do one lever at a time (all dead).
+
+## 🚨🚨🚨 TOP PRIORITY (user 2026-07-05, verbatim): BUILD THE FULL D3D9→VULKAN HLE — on DESKTOP VULKAN
+**"DO FULL HLE for D3D9. use vulkan on desktop." STOP planning, STOP levers (all dead), BUILD the native
+renderer NOW.** Two hard corrections to obey:
+1. **Develop on DESKTOP with the VULKAN backend** (`xenia.exe --gpu=vulkan`), NOT D3D12 — for STRUCTURE +
+   CORRECTNESS (the HLE renderer's VkImage/VkRenderPass/VkPipeline/SPIR-V ships to Turnip, no rewrite; iterate in
+   seconds w/ RenderDoc). ⚠️ **BUT THOR/TURNIP VULKAN ≠ DESKTOP VULKAN (user 2026-07-05): the Thor STILL NEEDS
+   SUPER-OPTIMIZATION for its Vulkan.** Desktop Vulkan runs on an IMMEDIATE-MODE GPU (no tiling cost, no GMEM); the
+   Adreno 740 is TBDR — the real perf comes from Turnip/Adreno-SPECIFIC tuning that desktop CANNOT show: minimize
+   render passes (each = a GMEM tile store/flush = the whole 95-pass wall), keep the RT GMEM-RESIDENT across draws
+   (one held pass, subpasses via dynamic_rendering_local_read/ROAA), NEON/Adreno pipeline config, load/store_op
+   tuning, LRZ-friendly depth. So: STRUCTURE on desktop Vulkan, PERF-TUNE on the Thor (the TBDR/Turnip
+   optimization is where the 30fps actually comes from — desktop just proves the render is correct + few-pass).
+2. **FULL HLE, whole frame at once** — a SEPARATE native Vulkan renderer (own full-surface RT, one held-open
+   render pass, native VkBuffer vertex-input, Xenos→SPIR-V, hardware ROP blend, depth-prepass + forced early-Z),
+   capturing BD's D3D9 draws at seam **0x82489F40**, BYPASSING xenia's PM4/EDRAM/95-pass LLE back-end entirely.
+   The partial decoupled-native-HLE was PERF-FLAT because it kept that back-end. Build order + amplification math:
+   **`docs/research/20260705-native-vulkan-renderer-plan.md`**. Why it works: RE2 (heavier) hits 30fps on this
+   Thor via DXVK = the HW is fine, the 95-pass emulation is the wall. ALL levers/reject/FSI/ROAA DEAD (ledger).
+
 ## ⭐⭐⭐ THE DIRECTION (user 2026-07-04): HYBRID HLE — be DXVK/Cemu for the 360
 **BD is slow because xenia LLE-emulates the 360 GPU (PM4 command stream + register file + EDRAM + predicated
 tiling + SSBO-vertex-fetch). PROOF it's the emulation, not the chip: the user runs Resident Evil 2 Remake (far
@@ -73,14 +101,17 @@ conclusion is RETRACTED.
 - **DEAD (don't revisit):** force-1-tile flatten crashes BOTH platforms (tile count coupled to the per-tile
   resolve). Full roadmap: memory/bd-d3d-hle-re-state.md (NATIVE-HLE ROADMAP) + `exp_ledger.py check native`.
 
-## 🖥️ RE ON PC, PATCH ON THOR (user 2026-07-04) + foliage-optimization is ON THE TABLE (no gfx loss)
-**Reverse-engineer BD's rendering on DESKTOP xenia (`build/xenia.sln`, D3D12 backend — renders BD fast) — RE
-iterates in SECONDS with a real debugger vs the Thor's 150s-nav/thermal/build-install probes. Same guest CPU +
-CommandProcessor/register-file emulation; only the host GPU backend differs.** So RE the STRUCTURE (draw path,
-IB recorder, foliage submit) on PC; MEASURE + PATCH perf on the Thor (Adreno 740/Turnip). Skill:
-**xenia-bd-pc-reverse-engineer**. Build: `tools\build\bin\premake5.exe --file=premake5.lua vs2022` (xb.bat is
-Python-broken) → `MSBuild build\xenia-app.vcxproj /p:Configuration="Release Windows" /p:Platform=x64` (MSBuild at
-`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`).
+## 🖥️ DEV ON PC WITH THE **VULKAN** BACKEND, SHIP TO THOR (user 2026-07-05: "use vulkan on desktop")
+**Build + iterate the native HLE renderer on DESKTOP xenia running the VULKAN backend (`xenia.exe --gpu=vulkan`),
+NOT D3D12.** Rationale (user directive): the Thor is Vulkan/Turnip — developing on the SAME Vulkan backend means
+the HLE renderer (VkImage/VkRenderPass/VkPipeline/SPIR-V) is the SAME code that ships to the device, no rewrite;
+D3D12 would be throwaway. Desktop iterates in SECONDS (real debugger, RenderDoc capture) vs the Thor's 150s-nav/
+thermal/build-install. Same guest CPU + CommandProcessor/register-file; validate the native render on desktop
+Vulkan (RenderDoc = inspect the pass count / pipelines), then build the SAME code for Turnip + measure fps.
+Skill: **xenia-bd-pc-reverse-engineer** (+ the native-renderer build). Build: `tools\build\bin\premake5.exe
+--file=premake5.lua vs2022` → `MSBuild build\xenia-app.vcxproj /p:Configuration="Release Windows" /p:Platform=x64`
+(MSBuild at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`); run
+`build\bin\...\xenia.exe --gpu=vulkan "<Blue Dragon.iso>"`.
 **Desktop @~60fps PROVES BD's foliage is NOT intrinsically slow — the Thor's ~15ms is TBDR-binning/tiling/
 emulation-specific.** So **"optimize HOW the foliage uses the GPU, NO gfx loss" is user-PERMITTED (2026-07-04) +
 genuinely achievable** (change the submission/technique, keep the pixels). This REFRAMES the standing "foliage is

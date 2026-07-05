@@ -34,7 +34,10 @@ back-end (LLE stays the correctness fallback / other games):
    (hardware ROP). Cache pipelines by state hash (DXVK model).
 5. **Present**: blit the native RT to the swapchain (present_decoupled infra exists).
 
-## Build order (RE + implement on DESKTOP D3D12 first — iterates in seconds — then Turnip)
+## Build order (implement on DESKTOP **VULKAN** — `xenia.exe --gpu=vulkan` — SAME backend as Turnip, ships direct; then device)
+> User mandate 2026-07-05: "use vulkan on desktop". Dev on the desktop Vulkan backend (RenderDoc to inspect pass
+> count/pipelines, iterates in seconds), so the VkImage/VkRenderPass/VkPipeline/SPIR-V code is IDENTICAL to what
+> runs on the Thor's Turnip — NO rewrite. D3D12 would be throwaway. Then MSBuild the Android APK + measure fps.
 - **Brick 1**: allocate the persistent native color+depth image + one render pass; render a single captured
   triangle into it + present. Proves the native surface + present path. (No correctness of the full scene yet.)
 - **Brick 2**: pipe ALL field draws (pitch-720 + siblings) from 0x82489F40 through it with native vertex-input +
