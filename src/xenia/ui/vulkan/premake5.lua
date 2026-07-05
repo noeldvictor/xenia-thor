@@ -18,6 +18,10 @@ project("xenia-ui-vulkan")
   })
   local_platform_files()
   local_platform_files("functions")
+  -- The *_demo.cc files (vulkan_window_demo.cc) belong to the demo project below,
+  -- not the library - keep them out so xenia-app doesn't pull an unresolved
+  -- WindowDemoApp (matches xenia-ui/premake5.lua's removefiles).
+  removefiles({"*_demo.cc"})
   files({
     "../shaders/bytecode/vulkan_spirv/*.h",
   })

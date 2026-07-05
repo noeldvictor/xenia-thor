@@ -81,6 +81,10 @@ project("xenia-app")
       "xenia-cpu-backend-llvm",
     })
 
+  -- Reset the sticky arch filter: xenia_main.cc (which defines GetWindowedAppCreator)
+  -- must compile for ALL architectures, not just ARM64 (the Android target). Without
+  -- this, the x86_64/Windows app links with an unresolved GetWindowedAppCreator.
+  filter({})
   files({
     "xenia_main.cc",
   })

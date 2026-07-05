@@ -11,6 +11,9 @@ project("xenia-ui-d3d12")
     "xenia-ui",
   })
   local_platform_files()
+  -- Demo (d3d12_window_demo.cc) belongs to the demo project below, not the library
+  -- (matches xenia-ui + xenia-ui-vulkan) so xenia-app links no unresolved WindowDemoApp.
+  removefiles({"*_demo.cc"})
   files({
     "../shaders/bytecode/d3d12_5_1/*.h",
   })
