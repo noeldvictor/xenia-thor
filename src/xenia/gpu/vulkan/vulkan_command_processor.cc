@@ -48,6 +48,7 @@
 // BD's resolved guest front buffer.
 DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
+DECLARE_bool(gpu_bd_native_skip_resolves);
 
 namespace xe {
 namespace gpu {
@@ -8006,6 +8007,18 @@ bool VulkanCommandProcessor::IssueCopy() {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+
+  // Pass-collapse (BD-30): once the native renderer has rendered the field this
+  // frame, the LLE EDRAM resolves that follow (frontbuffer/composite copies) are
+  // REDUNDANT - we present the native RT, not the resolved LLE surface. Skip them
+  // (23 resolve passes = the bulk of the 79-pass EDRAM overhead). Resolves BEFORE
+  // the field (bd_native_field_rendered_ still false - textures/shadows feeding the
+  // field) are kept. Gated default-off.
+  if (cvars::gpu_bd_native_renderer && cvars::gpu_bd_native_skip_resolves &&
+      bd_native_renderer_ && bd_native_renderer_->initialized() &&
+      bd_native_field_rendered_) {
+    return true;
+  }
 
   // Lever 2 (vulkan_merge_draws): a resolve/copy depends on prior draws having
   // executed - realize any pending concatenation run first.

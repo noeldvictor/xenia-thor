@@ -77,6 +77,14 @@ DEFINE_bool(
     "passes=GMEM flushes, GMEM-resident RT). See docs/research/20260705-native-"
     "vulkan-renderer-plan.md. Brick 1 = the persistent RT + one render pass.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_native_skip_resolves, false,
+    "BD-30 pass-collapse (default off, needs gpu_bd_native_renderer): once the "
+    "native renderer has rendered the field this frame, skip the LLE EDRAM "
+    "resolves that follow (redundant - the native RT is presented, not the "
+    "resolved LLE surface). Drops the bulk of the 79-pass EDRAM overhead. Resolves "
+    "before the field (textures/shadows) are kept.",
+    "GPU");
 // --- Blue Dragon FULL NATIVE-DRAW HLE (the DXVK/Cemu model), Brick 1 ---
 DEFINE_bool(
     gpu_bd_native_hle, false,
