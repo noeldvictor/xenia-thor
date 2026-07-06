@@ -6150,11 +6150,20 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // life. Or even disregard the viewport bounds range in the fragment shader
   // interlocks case completely - apply the viewport and the scissor offset
   // directly to pixel address and to things like ps_param_gen.
-  // NOTE: window-offset manipulation is DEAD for the right-region fix (4 variants
-  // tried: per-pass, per-draw, scoped - all shift the main scene, which itself
-  // carries the offset). The right-half-black is NOT an offset problem; the tiling
-  // coordinate interaction needs RenderDoc to resolve. Native RT renders the
-  // field's clean region correctly with the offset applied.
+  // TILING FIX (LLE-reference confirmed): BD's field carries win_off=-608 that
+  // shifts the whole scene LEFT into EDRAM (native[0..672] = the scene's RIGHT
+  // half; the left half goes off-screen). Ignoring the offset per-draw for native
+  // draws puts the scene at native[0..1280] (Shu -> center, matching LLE) - and
+  // PAIRED with the full scissor-widen (in UpdateDynamicState) the WHOLE scene
+  // renders instead of being clipped to the guest [608..1280] tile scissor.
+  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
+      bd_native_renderer_->initialized() &&
+      (current_render_pass_ == bd_native_renderer_->render_pass() ||
+       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
+    draw_util::draw_ignore_window_offset = true;
+  } else {
+    draw_util::draw_ignore_window_offset = false;
+  }
   draw_util::GetHostViewportInfo(
       regs, 1, 1, false, device_properties.maxViewportDimensions[0],
       device_properties.maxViewportDimensions[1], true,
