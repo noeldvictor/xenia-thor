@@ -4125,8 +4125,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
             : (bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k2X
                    ? VK_SAMPLE_COUNT_2_BIT
                    : VK_SAMPLE_COUNT_1_BIT);
-    bool bd_fmt_ok =
-        bd_native_renderer_->EnsureColorFormat(bd_vk_format, bd_samples);
+    VkFormat bd_depth_vk = render_target_cache_->GetDepthVulkanFormat(
+        register_file_->Get<reg::RB_DEPTH_INFO>().depth_format);
+    bool bd_fmt_ok = bd_native_renderer_->EnsureColorFormat(
+        bd_vk_format, bd_depth_vk, bd_samples);
     static std::atomic<uint32_t> s_bd_gate_diag{0};
     if (s_bd_gate_diag.fetch_add(1) < 8) {
       XELOGI(

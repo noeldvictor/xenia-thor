@@ -67,30 +67,35 @@ void BdNativeRenderer::RenderFrame(DeferredCommandBuffer& command_buffer) {
   command_buffer.CmdVkEndRenderPass();
 }
 
-bool BdNativeRenderer::EnsureColorFormat(VkFormat format,
+bool BdNativeRenderer::EnsureColorFormat(VkFormat color_format,
+                                        VkFormat depth_format,
                                         VkSampleCountFlagBits samples) {
-  if (format == VK_FORMAT_UNDEFINED) {
+  if (color_format == VK_FORMAT_UNDEFINED ||
+      depth_format == VK_FORMAT_UNDEFINED) {
     return false;
   }
-  if (color_format_ == format && samples_ == samples &&
-      framebuffer_ != VK_NULL_HANDLE) {
+  if (color_format_ == color_format && depth_format_ == depth_format &&
+      samples_ == samples && framebuffer_ != VK_NULL_HANDLE) {
     return true;
   }
-  // Recreate everything for the new color format (called before a field draw, so
-  // the images aren't in use). Depth format is fixed; a full recreate is simplest
-  // + safe. Logs once per new format for RE.
+  // Recreate everything to match the field's color+depth formats + samples so the
+  // native render pass is render-pass-COMPATIBLE with the field pipelines (format/
+  // sample mismatch = silent skip/black). Called before a field draw, images not
+  // in use. Logs once per config for RE.
   Shutdown();
-  color_format_ = format;
+  color_format_ = color_format;
+  depth_format_ = depth_format;
   samples_ = samples;
   if (!CreateRenderPass() || !CreateImages() || !CreateFramebuffer()) {
     Shutdown();
     return false;
   }
-  static VkFormat s_logged = VK_FORMAT_MAX_ENUM;
-  if (s_logged != format) {
-    s_logged = format;
-    XELOGI("BdNativeRenderer: matched native RT color format to field format {}",
-           uint32_t(format));
+  static uint64_t s_logged = ~uint64_t(0);
+  uint64_t cfg = (uint64_t(color_format) << 32) | uint32_t(depth_format);
+  if (s_logged != cfg) {
+    s_logged = cfg;
+    XELOGI("BdNativeRenderer: matched native RT to field color={} depth={} samp={}",
+           uint32_t(color_format), uint32_t(depth_format), uint32_t(samples));
   }
   return true;
 }
@@ -128,7 +133,7 @@ bool BdNativeRenderer::CreateImages() {
     return false;
   }
 
-  image_create_info.format = kDepthFormat;
+  image_create_info.format = depth_format_;
   image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   if (!ui::vulkan::util::CreateDedicatedAllocationImage(
           vulkan_device, image_create_info,
@@ -152,7 +157,7 @@ bool BdNativeRenderer::CreateImages() {
   }
 
   view_create_info.image = depth_image_;
-  view_create_info.format = kDepthFormat;
+  view_create_info.format = depth_format_;
   view_create_info.subresourceRange.aspectMask =
       VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
   if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &depth_view_) !=
@@ -202,7 +207,7 @@ bool BdNativeRenderer::CreateRenderPass() {
   attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   // Depth (transient — never stored, GMEM-resident, keeps LRZ valid in-pass).
-  attachments[1].format = kDepthFormat;
+  attachments[1].format = depth_format_;
   attachments[1].samples = samples_;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;

@@ -53,7 +53,8 @@ class BdNativeRenderer {
   // field's color format) are render-pass-COMPATIBLE with the native pass (else
   // "device lost"). Call BEFORE redirecting a field draw (pass not yet begun, so
   // the images aren't in use). Returns false on failure.
-  bool EnsureColorFormat(VkFormat format, VkSampleCountFlagBits samples);
+  bool EnsureColorFormat(VkFormat color_format, VkFormat depth_format,
+                         VkSampleCountFlagBits samples);
 
   // Brick 2a: begin the ONE held-open native render pass on `command_buffer`
   // (clears color+depth), then EndRenderPass. Bricks 2b-3 record the captured
@@ -98,8 +99,8 @@ class BdNativeRenderer {
   // Color format is dynamic (matched to the field's format for pipeline compat);
   // depth is fixed.
   VkFormat color_format_ = VK_FORMAT_R8G8B8A8_UNORM;
+  VkFormat depth_format_ = VK_FORMAT_D24_UNORM_S8_UINT;
   VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
-  static constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 };
 
 }  // namespace vulkan
