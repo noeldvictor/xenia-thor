@@ -210,7 +210,9 @@ bool BdNativeRenderer::CreateRenderPass() {
   attachments[1].format = depth_format_;
   attachments[1].samples = samples_;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  // STORE depth (was DONT_CARE): the LOAD pass re-begins need the primed depth to
+  // persist so the accumulated geometry depth-tests correctly across breaks.
+  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -242,6 +244,19 @@ bool BdNativeRenderer::CreateRenderPass() {
     render_pass_ = VK_NULL_HANDLE;
     return false;
   }
+  // LOAD variant (accumulate across mid-frame re-begins): color + depth LOAD from
+  // their prior content, initialLayout == the CLEAR pass's finalLayout so the
+  // image is already in the right layout (no wipe). Same attachments -> compatible
+  // with framebuffer_ + the field pipelines.
+  attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
+                             &render_pass_load_) != VK_SUCCESS) {
+    render_pass_load_ = VK_NULL_HANDLE;
+    return false;
+  }
   return true;
 }
 
@@ -256,6 +271,10 @@ void BdNativeRenderer::Shutdown() {
   if (framebuffer_ != VK_NULL_HANDLE) {
     dfn.vkDestroyFramebuffer(device, framebuffer_, nullptr);
     framebuffer_ = VK_NULL_HANDLE;
+  }
+  if (render_pass_load_ != VK_NULL_HANDLE) {
+    dfn.vkDestroyRenderPass(device, render_pass_load_, nullptr);
+    render_pass_load_ = VK_NULL_HANDLE;
   }
   if (render_pass_ != VK_NULL_HANDLE) {
     dfn.vkDestroyRenderPass(device, render_pass_, nullptr);

@@ -73,6 +73,11 @@ class BdNativeRenderer {
   // to render the real geometry natively in ONE pass (Brick 2b, reuses xenia's
   // shaders/pipelines; requires format-compatibility with the field pipelines).
   VkFramebuffer framebuffer() const { return framebuffer_; }
+  // Two render passes (both compatible with framebuffer_): the CLEAR pass for the
+  // FIRST redirected field draw of a frame, the LOAD pass (preserves content,
+  // initial+final layout SHADER_READ) for every re-begin - so geometry ACCUMULATES
+  // across mid-frame pass breaks instead of being wiped (the black-render fix).
+  VkRenderPass render_pass_load() const { return render_pass_load_; }
   VkRenderPass render_pass() const { return render_pass_; }
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }
@@ -93,7 +98,8 @@ class BdNativeRenderer {
   VkImage depth_image_ = VK_NULL_HANDLE;
   VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
   VkImageView depth_view_ = VK_NULL_HANDLE;
-  VkRenderPass render_pass_ = VK_NULL_HANDLE;
+  VkRenderPass render_pass_ = VK_NULL_HANDLE;       // CLEAR (first draw/frame)
+  VkRenderPass render_pass_load_ = VK_NULL_HANDLE;  // LOAD (accumulate re-begins)
   VkFramebuffer framebuffer_ = VK_NULL_HANDLE;
 
   // Color format is dynamic (matched to the field's format for pipeline compat);

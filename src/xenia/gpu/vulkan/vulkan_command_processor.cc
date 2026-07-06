@@ -4145,7 +4145,12 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     s_bd_native_fb.host_extent = VkExtent2D{bd_native_renderer_->width(),
                                             bd_native_renderer_->height()};
     s_bd_native_fb.color_view = bd_native_renderer_->color_view();
-    render_pass = bd_native_renderer_->render_pass();
+    // First field draw of the frame CLEARs the native RT; all subsequent
+    // (including re-begins after non-720 draws break the pass) LOAD it so the
+    // geometry ACCUMULATES instead of being wiped (the black-render fix).
+    render_pass = bd_native_field_rendered_
+                      ? bd_native_renderer_->render_pass_load()
+                      : bd_native_renderer_->render_pass();
     framebuffer = &s_bd_native_fb;
     bd_native_field_rendered_ = true;
     ++bd_redirect_total_;
