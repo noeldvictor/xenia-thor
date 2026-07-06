@@ -50,6 +50,16 @@ DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_native_skip_resolves);
 DECLARE_int32(gpu_bd_native_tile_filter);
+DECLARE_int32(gpu_bd_renderdoc_capture_frame);
+
+#include "xenia/ui/renderdoc_api.h"
+namespace {
+const RENDERDOC_API_1_0_0* BdGetRenderDocApi() {
+  static std::unique_ptr<xe::ui::RenderDocAPI> s_api =
+      xe::ui::RenderDocAPI::CreateIfConnected();
+  return s_api ? s_api->api_1_0_0() : nullptr;
+}
+}  // namespace
 
 namespace xe {
 namespace gpu {
@@ -3361,6 +3371,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   if (cvars::gpu_bd_native_renderer && (++bd_swap_total_ % 30u) == 0u) {
     XELOGI("BD NATIVE totals: swaps={} redirects={} native_presents={}",
            bd_swap_total_, bd_redirect_total_, bd_present_native_total_);
+  }
+  if (cvars::gpu_bd_renderdoc_capture_frame != 0 &&
+      bd_swap_total_ ==
+          static_cast<uint64_t>(cvars::gpu_bd_renderdoc_capture_frame)) {
+    const RENDERDOC_API_1_0_0* rdoc = BdGetRenderDocApi();
+    if (rdoc) {
+      rdoc->TriggerCapture();
+      XELOGI("RenderDoc: triggered a frame capture at swap {}", bd_swap_total_);
+    } else {
+      XELOGI("RenderDoc: API not available (not running under renderdoccmd)");
+    }
   }
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {

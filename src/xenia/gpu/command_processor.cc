@@ -86,6 +86,11 @@ DEFINE_bool(
     "before the field (textures/shadows) are kept.",
     "GPU");
 DEFINE_int32(
+    gpu_bd_renderdoc_capture_frame, 0,
+    "If non-zero and running under RenderDoc, trigger a frame capture at this "
+    "swap number (e.g. 2000 for a field frame). 0 = off.",
+    "GPU");
+DEFINE_int32(
     gpu_bd_native_tile_filter, 0,
     "BD native renderer config-isolation diagnostic: 0=all field draws, "
     "1=only window-offset-zero draws (config-A), 2=only offset-carrying draws "
