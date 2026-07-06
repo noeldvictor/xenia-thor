@@ -50,3 +50,25 @@ back-end (LLE stays the correctness fallback / other games):
 Decoupled native-HLE = PERF-FLAT (kept xenia's 95-pass back-end — the whole point is to NOT keep it). Bin-once/
 force-1-tile, in-pass, skip-transfers, downscale, MSAA, ROAA, ALL early-Z/LRZ levers on the LLE path = DEAD.
 FSI/interlock = ABSENT on Turnip. The renderer is the ONLY remaining axis.
+
+## Brick 2b — concrete integration map (verified in code 2026-07-05, the 3 real layers)
+Rendering BD's field geometry into the native RT is NOT a redirect one-liner. Three coupled layers, each real:
+1. **Pipelines**: `VulkanPipelineCache::ConfigurePipeline` is keyed to `VulkanRenderTargetCache::RenderPassKey`
+   (vulkan_pipeline_cache.h:82-90) - it only builds pipelines for the EDRAM render passes. Two options: (a) build
+   native pipelines directly from the translated `VulkanShader` SPIR-V modules (SSBO vertex-fetch, no vertex-input)
+   against `render_pass_`; (b) make the native render pass FORMAT-COMPATIBLE with the field's RenderPassKey so the
+   cache's pipelines are reusable (Vulkan: load/store ops don't affect compat, only formats/samples - vulkan_cmd_
+   processor.cc:4199-4202). (b) is less code IF the native RT format == field color format (RB_COLOR_INFO; test
+   k_8_8_8_8=RGBA8, my native RT is RGBA8 = likely compatible).
+2. **Framebuffer**: the draw path's `current_framebuffer_` is `const VulkanRenderTargetCache::Framebuffer*` (a
+   WRAPPER, vulkan_cmd_processor.h:1889), set at :4197 next to `current_render_pass_` (VkRenderPass, raw). Redirect
+   = override both there for field draws (pitch 720 via RB_SURFACE_INFO&0x3FFF), but need a Framebuffer WRAPPER
+   around the native VkFramebuffer (or special-case the CmdVkBeginRenderPass at :4340 to use the raw handle).
+   Getter `BdNativeRenderer::framebuffer()` added.
+3. **Tiling collapse**: BD fans the field out per-tile (2 tiles top 0..672 / bottom 608..1280, window offsets).
+   Redirecting alone renders BOTH tiles into the native RT (2x, mispositioned). Must force count=1 + ignore window
+   offset + full-surface scissor (the bin-once, but into the CLEAN native RT instead of the format/scissor-fighting
+   EDRAM RT - the native RT may sidestep what broke bin-once). THIS is the actual perf win (collapses the passes).
+NEXT: (b) format-match native RT to field + redirect + bin-once-into-native-RT, on desktop --gpu=vulkan (RenderDoc:
+verify one pass + BD geometry), then Thor-measure. The native RT+pass+present is PROVEN (magenta on Turnip); this is
+the draw-into-it path.

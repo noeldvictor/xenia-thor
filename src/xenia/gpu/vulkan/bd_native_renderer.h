@@ -61,6 +61,10 @@ class BdNativeRenderer {
   // Sampled color view (SHADER_READ_ONLY after RenderFrame) - substitute as the
   // swap source to present the native RT directly.
   VkImageView color_view() const { return color_view_; }
+  // The native render pass + framebuffer - redirect BD's field draws into these
+  // to render the real geometry natively in ONE pass (Brick 2b, reuses xenia's
+  // shaders/pipelines; requires format-compatibility with the field pipelines).
+  VkFramebuffer framebuffer() const { return framebuffer_; }
   VkRenderPass render_pass() const { return render_pass_; }
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }
