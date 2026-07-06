@@ -825,6 +825,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // True if BD field draws were redirected into the native RT THIS frame (only
   // then present it; else the native RT is empty). Reset each frame at swap.
   bool bd_native_field_rendered_ = false;
+  // Persistent totals (logged periodically at swap) to DEFINITIVELY confirm the
+  // native path fires - the last log survives logcat rotation.
+  uint64_t bd_redirect_total_ = 0;
+  uint64_t bd_present_native_total_ = 0;
+  uint64_t bd_swap_total_ = 0;
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 

@@ -3349,13 +3349,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     VkImageView native_view = bd_native_renderer_->color_view();
     if (native_view != VK_NULL_HANDLE) {
       swap_texture_view = native_view;
-      static std::atomic<uint32_t> s_native_present_log{0};
-      if (s_native_present_log.fetch_add(1) < 3) {
-        XELOGI("BD NATIVE renderer: presented native RT (redirected field draws)");
-      }
+      ++bd_present_native_total_;
     }
   }
   bd_native_field_rendered_ = false;  // reset for next frame
+  // DEFINITIVE persistent instrumentation: the last log (near capture) survives
+  // logcat rotation and reveals whether the redirect + native present actually
+  // fired over the run (gpu_bd_native_renderer only).
+  if (cvars::gpu_bd_native_renderer && (++bd_swap_total_ % 30u) == 0u) {
+    XELOGI("BD NATIVE totals: swaps={} redirects={} native_presents={}",
+           bd_swap_total_, bd_redirect_total_, bd_present_native_total_);
+  }
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {
       XELOGI(
@@ -4119,6 +4123,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     render_pass = bd_native_renderer_->render_pass();
     framebuffer = &s_bd_native_fb;
     bd_native_field_rendered_ = true;
+    ++bd_redirect_total_;
     static std::atomic<uint32_t> s_bd_redirect_log{0};
     if (s_bd_redirect_log.fetch_add(1) < 3) {
       XELOGI("BD NATIVE renderer: redirected a field draw into the native pass");
