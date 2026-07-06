@@ -48,6 +48,13 @@ class BdNativeRenderer {
   bool Initialize(uint32_t width, uint32_t height);
   void Shutdown();
 
+  // Recreate the color image + view + render pass + framebuffer for `format` if
+  // it differs from the current one - so xenia's field pipelines (built for the
+  // field's color format) are render-pass-COMPATIBLE with the native pass (else
+  // "device lost"). Call BEFORE redirecting a field draw (pass not yet begun, so
+  // the images aren't in use). Returns false on failure.
+  bool EnsureColorFormat(VkFormat format);
+
   // Brick 2a: begin the ONE held-open native render pass on `command_buffer`
   // (clears color+depth), then EndRenderPass. Bricks 2b-3 record the captured
   // 0x82489F40 draws (native pipelines + vertex-input) BETWEEN begin and end.
@@ -88,7 +95,9 @@ class BdNativeRenderer {
   VkRenderPass render_pass_ = VK_NULL_HANDLE;
   VkFramebuffer framebuffer_ = VK_NULL_HANDLE;
 
-  static constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  // Color format is dynamic (matched to the field's format for pipeline compat);
+  // depth is fixed.
+  VkFormat color_format_ = VK_FORMAT_R8G8B8A8_UNORM;
   static constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 };
 

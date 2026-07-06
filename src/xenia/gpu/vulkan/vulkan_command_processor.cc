@@ -4100,9 +4100,17 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // framebuffer, so they stay in ONE held-open pass (no per-tile break, no EDRAM
   // xfer/resolve) = the pass collapse. Gated, default-off. NEXT: tiling window-
   // offset handling + bin-once so both tiles land correctly in the one RT.
+  auto bd_rb_surface_info = register_file_->Get<reg::RB_SURFACE_INFO>();
   if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
       bd_native_renderer_->initialized() &&
-      (register_file_->values[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) == 720) {
+      bd_rb_surface_info.surface_pitch == 720 &&
+      bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X &&
+      bd_native_renderer_->EnsureColorFormat(
+          render_target_cache_->GetColorVulkanFormat(
+              register_file_
+                  ->Get<reg::RB_COLOR_INFO>(
+                      reg::RB_COLOR_INFO::rt_register_indices[0])
+                  .color_format))) {
     static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
     s_bd_native_fb.framebuffer = bd_native_renderer_->framebuffer();
     s_bd_native_fb.host_extent = VkExtent2D{bd_native_renderer_->width(),

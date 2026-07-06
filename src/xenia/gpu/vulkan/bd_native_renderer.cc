@@ -67,6 +67,31 @@ void BdNativeRenderer::RenderFrame(DeferredCommandBuffer& command_buffer) {
   command_buffer.CmdVkEndRenderPass();
 }
 
+bool BdNativeRenderer::EnsureColorFormat(VkFormat format) {
+  if (format == VK_FORMAT_UNDEFINED) {
+    return false;
+  }
+  if (color_format_ == format && framebuffer_ != VK_NULL_HANDLE) {
+    return true;
+  }
+  // Recreate everything for the new color format (called before a field draw, so
+  // the images aren't in use). Depth format is fixed; a full recreate is simplest
+  // + safe. Logs once per new format for RE.
+  Shutdown();
+  color_format_ = format;
+  if (!CreateRenderPass() || !CreateImages() || !CreateFramebuffer()) {
+    Shutdown();
+    return false;
+  }
+  static VkFormat s_logged = VK_FORMAT_MAX_ENUM;
+  if (s_logged != format) {
+    s_logged = format;
+    XELOGI("BdNativeRenderer: matched native RT color format to field format {}",
+           uint32_t(format));
+  }
+  return true;
+}
+
 bool BdNativeRenderer::CreateImages() {
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
@@ -89,7 +114,7 @@ bool BdNativeRenderer::CreateImages() {
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-  image_create_info.format = kColorFormat;
+  image_create_info.format = color_format_;
   image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                             VK_IMAGE_USAGE_SAMPLED_BIT |
                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -116,7 +141,7 @@ bool BdNativeRenderer::CreateImages() {
   view_create_info.subresourceRange.layerCount = 1;
 
   view_create_info.image = color_image_;
-  view_create_info.format = kColorFormat;
+  view_create_info.format = color_format_;
   view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &color_view_) !=
       VK_SUCCESS) {
@@ -165,7 +190,7 @@ bool BdNativeRenderer::CreateRenderPass() {
   // held-open pass that replaces BD's 95-pass EDRAM structure.
   VkAttachmentDescription attachments[2] = {};
   // Color.
-  attachments[0].format = kColorFormat;
+  attachments[0].format = color_format_;
   attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
