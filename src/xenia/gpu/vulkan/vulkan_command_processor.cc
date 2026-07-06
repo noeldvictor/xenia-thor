@@ -3341,13 +3341,16 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // native RT -> pass -> present path end-to-end on Turnip, bypassing EDRAM.
   if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
       bd_native_renderer_->initialized()) {
-    bd_native_renderer_->RenderFrame(deferred_command_buffer_);
+    // The field draws were REDIRECTED into the native RT this frame (see
+    // SubmitBarriersAndEnterRenderTargetCacheRenderPass) and left it in
+    // SHADER_READ_ONLY - present it directly (do NOT RenderFrame/clear over the
+    // draws). Substitute the native color view as the swap source.
     VkImageView native_view = bd_native_renderer_->color_view();
     if (native_view != VK_NULL_HANDLE) {
       swap_texture_view = native_view;
       static std::atomic<uint32_t> s_native_present_log{0};
       if (s_native_present_log.fetch_add(1) < 3) {
-        XELOGI("BD NATIVE renderer: presented native RT view (Brick 2a magenta)");
+        XELOGI("BD NATIVE renderer: presented native RT (redirected field draws)");
       }
     }
   }
@@ -4087,6 +4090,29 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     VkRenderPass render_pass,
     const VulkanRenderTargetCache::Framebuffer* framebuffer,
     GpuPassKind pass_kind) {
+  // Blue Dragon FULL native renderer (gpu_bd_native_renderer): redirect BD's
+  // field draws (pitch 720) into the native single-pass RT so the REAL geometry
+  // renders natively - reusing xenia's translated pipelines (RGBA8 is format-
+  // compatible with BD's k_8_8_8_8 field color; load/store ops don't affect
+  // render-pass compatibility). All field draws share this render_pass +
+  // framebuffer, so they stay in ONE held-open pass (no per-tile break, no EDRAM
+  // xfer/resolve) = the pass collapse. Gated, default-off. NEXT: tiling window-
+  // offset handling + bin-once so both tiles land correctly in the one RT.
+  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
+      bd_native_renderer_->initialized() &&
+      (register_file_->values[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) == 720) {
+    static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
+    s_bd_native_fb.framebuffer = bd_native_renderer_->framebuffer();
+    s_bd_native_fb.host_extent = VkExtent2D{bd_native_renderer_->width(),
+                                            bd_native_renderer_->height()};
+    s_bd_native_fb.color_view = bd_native_renderer_->color_view();
+    render_pass = bd_native_renderer_->render_pass();
+    framebuffer = &s_bd_native_fb;
+    static std::atomic<uint32_t> s_bd_redirect_log{0};
+    if (s_bd_redirect_log.fetch_add(1) < 3) {
+      XELOGI("BD NATIVE renderer: redirected a field draw into the native pass");
+    }
+  }
   // BD input-attachment merge (redirect): this draw was detected as a same-pixel
   // composite consumer of the current (producer) pass's RT. Instead of ending the
   // producer pass + barrier + a new pass, merge them: patch the producer's
