@@ -58,6 +58,9 @@ class BdNativeRenderer {
 
   bool initialized() const { return render_pass_ != VK_NULL_HANDLE; }
   VkImage color_image() const { return color_image_; }
+  // Sampled color view (SHADER_READ_ONLY after RenderFrame) - substitute as the
+  // swap source to present the native RT directly.
+  VkImageView color_view() const { return color_view_; }
   VkRenderPass render_pass() const { return render_pass_; }
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }

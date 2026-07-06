@@ -3335,6 +3335,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
   }
+  // Blue Dragon FULL native renderer (gpu_bd_native_renderer): record the one
+  // held-open native pass into this submission (Brick 2a: clears magenta; Brick
+  // 2b records the captured draws) and present its RT directly - proving the
+  // native RT -> pass -> present path end-to-end on Turnip, bypassing EDRAM.
+  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
+      bd_native_renderer_->initialized()) {
+    bd_native_renderer_->RenderFrame(deferred_command_buffer_);
+    VkImageView native_view = bd_native_renderer_->color_view();
+    if (native_view != VK_NULL_HANDLE) {
+      swap_texture_view = native_view;
+      static std::atomic<uint32_t> s_native_present_log{0};
+      if (s_native_present_log.fetch_add(1) < 3) {
+        XELOGI("BD NATIVE renderer: presented native RT view (Brick 2a magenta)");
+      }
+    }
+  }
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {
       XELOGI(
