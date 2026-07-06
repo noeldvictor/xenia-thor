@@ -111,7 +111,13 @@ Vulkan (RenderDoc = inspect the pass count / pipelines), then build the SAME cod
 Skill: **xenia-bd-pc-reverse-engineer** (+ the native-renderer build). Build: `tools\build\bin\premake5.exe
 --file=premake5.lua vs2022` → `MSBuild build\xenia-app.vcxproj /p:Configuration="Release Windows" /p:Platform=x64`
 (MSBuild at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`); run
-`build\bin\...\xenia.exe --gpu=vulkan "<Blue Dragon.iso>"`.
+`build\bin\...\xenia.exe --gpu=vulkan "<Blue Dragon.iso>"`. **⚡ Incremental rebuilds ~1min** (edit one .cc → MSBuild
+relinks) — iterate the native renderer HERE, not in blind 13-min Thor cycles.
+**🔬 RenderDoc REPLAY (headless, WORKING): skill `xenia-renderdoc-replay`, env `tools/renderdoc/`.** When
+screenshots + register logs are ambiguous ("geometry lands where the registers don't predict"), capture the frame
+(cvar `gpu_bd_renderdoc_capture_frame=N` under `renderdoccmd`) + analyze per-draw (post-VS NDC = frustum clipping,
+RTs, viewports) via `qrenderdoc.exe --python tools/renderdoc/rd_analyze.py` — NO GUI. This is how the BD field
+buildings-black tiling bug was pinned to per-draw ndc_offset (post-VS NDC x beyond [-1,1] = off-screen-clipped).
 **Desktop @~60fps PROVES BD's foliage is NOT intrinsically slow — the Thor's ~15ms is TBDR-binning/tiling/
 emulation-specific.** So **"optimize HOW the foliage uses the GPU, NO gfx loss" is user-PERMITTED (2026-07-04) +
 genuinely achievable** (change the submission/technique, keep the pixels). This REFRAMES the standing "foliage is
