@@ -822,6 +822,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::unique_ptr<VulkanRenderTargetCache> render_target_cache_;
   // Blue Dragon FULL native D3D9->Vulkan HLE renderer (gpu_bd_native_renderer).
   std::unique_ptr<BdNativeRenderer> bd_native_renderer_;
+  // True if BD field draws were redirected into the native RT THIS frame (only
+  // then present it; else the native RT is empty). Reset each frame at swap.
+  bool bd_native_field_rendered_ = false;
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 

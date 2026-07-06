@@ -3340,11 +3340,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // 2b records the captured draws) and present its RT directly - proving the
   // native RT -> pass -> present path end-to-end on Turnip, bypassing EDRAM.
   if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized()) {
-    // The field draws were REDIRECTED into the native RT this frame (see
+      bd_native_renderer_->initialized() && bd_native_field_rendered_) {
+    // The field draws were REDIRECTED into the native RT THIS frame (see
     // SubmitBarriersAndEnterRenderTargetCacheRenderPass) and left it in
-    // SHADER_READ_ONLY - present it directly (do NOT RenderFrame/clear over the
-    // draws). Substitute the native color view as the swap source.
+    // SHADER_READ_ONLY - present it directly (do NOT clear over the draws).
+    // Only when field draws actually rendered (else the native RT is empty =
+    // black on menus/cutscenes).
     VkImageView native_view = bd_native_renderer_->color_view();
     if (native_view != VK_NULL_HANDLE) {
       swap_texture_view = native_view;
@@ -3354,6 +3355,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
   }
+  bd_native_field_rendered_ = false;  // reset for next frame
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {
       XELOGI(
@@ -4108,6 +4110,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     s_bd_native_fb.color_view = bd_native_renderer_->color_view();
     render_pass = bd_native_renderer_->render_pass();
     framebuffer = &s_bd_native_fb;
+    bd_native_field_rendered_ = true;
     static std::atomic<uint32_t> s_bd_redirect_log{0};
     if (s_bd_redirect_log.fetch_add(1) < 3) {
       XELOGI("BD NATIVE renderer: redirected a field draw into the native pass");
