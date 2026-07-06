@@ -6140,6 +6140,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // life. Or even disregard the viewport bounds range in the fragment shader
   // interlocks case completely - apply the viewport and the scissor offset
   // directly to pixel address and to things like ps_param_gen.
+  // NOTE: window-offset manipulation is DEAD for the right-region fix (4 variants
+  // tried: per-pass, per-draw, scoped - all shift the main scene, which itself
+  // carries the offset). The right-half-black is NOT an offset problem; the tiling
+  // coordinate interaction needs RenderDoc to resolve. Native RT renders the
+  // field's clean region correctly with the offset applied.
   draw_util::GetHostViewportInfo(
       regs, 1, 1, false, device_properties.maxViewportDimensions[0],
       device_properties.maxViewportDimensions[1], true,
