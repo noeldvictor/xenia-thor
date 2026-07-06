@@ -55,6 +55,8 @@ class BdNativeRenderer {
 
  private:
   bool CreateRenderPass();
+  bool CreateImages();
+  bool CreateFramebuffer();
 
   VulkanCommandProcessor& command_processor_;
   uint32_t width_ = 0;

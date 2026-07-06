@@ -24,22 +24,103 @@ bool BdNativeRenderer::Initialize(uint32_t width, uint32_t height) {
   }
   width_ = width;
   height_ = height;
-  if (!CreateRenderPass()) {
-    XELOGE("BdNativeRenderer: render pass creation failed");
+  if (!CreateRenderPass() || !CreateImages() || !CreateFramebuffer()) {
+    XELOGE("BdNativeRenderer: initialization failed ({}x{})", width_, height_);
     Shutdown();
     return false;
   }
-  // TODO(bd-native, Brick 1b): allocate color_image_/depth_image_ (VkImage +
-  // device memory via the provider's memory allocator) + views + framebuffer,
-  // sized width_ x height_, single-sample, native tiling (OPTIMAL). The render
-  // pass here is deliberately created first (standalone) so it can be validated
-  // on desktop `--gpu=vulkan` via RenderDoc before wiring the image/framebuffer.
   XELOGI(
-      "BdNativeRenderer: initialized native render pass {}x{} (color=RGBA8, "
-      "depth=D24S8, LOAD_OP_CLEAR for TBDR-LRZ validity). Bricks 2-4: images + "
-      "native pipelines + captured-draw submit + present.",
+      "BdNativeRenderer: initialized native RT {}x{} (color=RGBA8 STORE, "
+      "depth=D24S8 DONT_CARE-store/GMEM-resident, LOAD_OP_CLEAR for TBDR-LRZ "
+      "validity), one held render pass + framebuffer. Bricks 2-4: native "
+      "pipelines + captured-draw submit + present.",
       width_, height_);
   return true;
+}
+
+bool BdNativeRenderer::CreateImages() {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  // Native (non-EDRAM) device-local color + depth images, full-surface, single-
+  // sample, OPTIMAL tiling. Color is SAMPLED (blit/present) + COLOR_ATTACHMENT;
+  // depth is DEPTH_STENCIL_ATTACHMENT only (transient, never sampled/stored).
+  VkImageCreateInfo image_create_info = {};
+  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_create_info.imageType = VK_IMAGE_TYPE_2D;
+  image_create_info.extent.width = width_;
+  image_create_info.extent.height = height_;
+  image_create_info.extent.depth = 1;
+  image_create_info.mipLevels = 1;
+  image_create_info.arrayLayers = 1;
+  image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  image_create_info.format = kColorFormat;
+  image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_SAMPLED_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          vulkan_device, image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, color_image_,
+          color_memory_)) {
+    return false;
+  }
+
+  image_create_info.format = kDepthFormat;
+  image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          vulkan_device, image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, depth_image_,
+          depth_memory_)) {
+    return false;
+  }
+
+  VkImageViewCreateInfo view_create_info = {};
+  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_create_info.subresourceRange.levelCount = 1;
+  view_create_info.subresourceRange.layerCount = 1;
+
+  view_create_info.image = color_image_;
+  view_create_info.format = kColorFormat;
+  view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &color_view_) !=
+      VK_SUCCESS) {
+    return false;
+  }
+
+  view_create_info.image = depth_image_;
+  view_create_info.format = kDepthFormat;
+  view_create_info.subresourceRange.aspectMask =
+      VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &depth_view_) !=
+      VK_SUCCESS) {
+    return false;
+  }
+  return true;
+}
+
+bool BdNativeRenderer::CreateFramebuffer() {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  VkImageView attachments[2] = {color_view_, depth_view_};
+  VkFramebufferCreateInfo framebuffer_create_info = {};
+  framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  framebuffer_create_info.renderPass = render_pass_;
+  framebuffer_create_info.attachmentCount = 2;
+  framebuffer_create_info.pAttachments = attachments;
+  framebuffer_create_info.width = width_;
+  framebuffer_create_info.height = height_;
+  framebuffer_create_info.layers = 1;
+  return dfn.vkCreateFramebuffer(device, &framebuffer_create_info, nullptr,
+                                 &framebuffer_) == VK_SUCCESS;
 }
 
 bool BdNativeRenderer::CreateRenderPass() {
