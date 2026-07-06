@@ -11,6 +11,7 @@
 #include "xenia/gpu/vulkan/bd_native_renderer.h"
 
 #include "xenia/base/logging.h"
+#include "xenia/gpu/vulkan/deferred_command_buffer.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
@@ -38,17 +39,13 @@ bool BdNativeRenderer::Initialize(uint32_t width, uint32_t height) {
   return true;
 }
 
-void BdNativeRenderer::RenderFrame(VkCommandBuffer command_buffer) {
+void BdNativeRenderer::RenderFrame(DeferredCommandBuffer& command_buffer) {
   if (!initialized() || framebuffer_ == VK_NULL_HANDLE) {
     return;
   }
-  const ui::vulkan::VulkanDevice* const vulkan_device =
-      command_processor_.GetVulkanDevice();
-  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
-
   // Clear color to a distinct debug magenta (Brick 2a: proves the native RT +
-  // one-pass + present path renders end-to-end before the draws land) and depth
-  // to the reverse-Z far plane (0.0 - BD uses reverse-Z; Brick 3 depth-prepass).
+  // one-pass path records end-to-end before the draws land) and depth to the
+  // reverse-Z far plane (0.0 - BD uses reverse-Z; Brick 3 depth-prepass).
   VkClearValue clear_values[2] = {};
   clear_values[0].color = {{1.0f, 0.0f, 1.0f, 1.0f}};
   clear_values[1].depthStencil = {0.0f, 0};
@@ -62,12 +59,12 @@ void BdNativeRenderer::RenderFrame(VkCommandBuffer command_buffer) {
   begin_info.clearValueCount = 2;
   begin_info.pClearValues = clear_values;
 
-  dfn.vkCmdBeginRenderPass(command_buffer, &begin_info,
-                           VK_SUBPASS_CONTENTS_INLINE);
+  // Record into xenia's deferred stream (replayed on the CP worker thread).
+  command_buffer.CmdVkBeginRenderPass(&begin_info, VK_SUBPASS_CONTENTS_INLINE);
   // Brick 2b-3: record the captured 0x82489F40 draws here (bind native pipeline +
-  // VkBuffer vertex/index + push descriptors, vkCmdDrawIndexed), depth-prepass
-  // first for early-Z self-overdraw reject. One pass, no fan-out, no EDRAM.
-  dfn.vkCmdEndRenderPass(command_buffer);
+  // VkBuffer vertex/index, CmdVkDrawIndexed), depth-prepass first for early-Z
+  // self-overdraw reject. One pass, no fan-out, no EDRAM.
+  command_buffer.CmdVkEndRenderPass();
 }
 
 bool BdNativeRenderer::CreateImages() {

@@ -29,6 +29,7 @@ namespace gpu {
 namespace vulkan {
 
 class VulkanCommandProcessor;
+class DeferredCommandBuffer;
 
 // Brick 1: owns a persistent native full-surface color+depth RT + one render
 // pass. Bricks 2-4 add native pipelines (VkBuffer vertex-input, Xenos->SPIR-V,
@@ -51,7 +52,9 @@ class BdNativeRenderer {
   // (clears color+depth), then EndRenderPass. Bricks 2b-3 record the captured
   // 0x82489F40 draws (native pipelines + vertex-input) BETWEEN begin and end.
   // Leaves color_image_ in SHADER_READ_ONLY_OPTIMAL (finalLayout) for present.
-  void RenderFrame(VkCommandBuffer command_buffer);
+  // Uses xenia's DeferredCommandBuffer (recorded on the CP thread, replayed on
+  // the worker) - NOT a raw VkCommandBuffer - so it slots into the frame flow.
+  void RenderFrame(DeferredCommandBuffer& command_buffer);
 
   bool initialized() const { return render_pass_ != VK_NULL_HANDLE; }
   VkImage color_image() const { return color_image_; }
