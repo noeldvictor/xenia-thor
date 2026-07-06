@@ -67,11 +67,13 @@ void BdNativeRenderer::RenderFrame(DeferredCommandBuffer& command_buffer) {
   command_buffer.CmdVkEndRenderPass();
 }
 
-bool BdNativeRenderer::EnsureColorFormat(VkFormat format) {
+bool BdNativeRenderer::EnsureColorFormat(VkFormat format,
+                                        VkSampleCountFlagBits samples) {
   if (format == VK_FORMAT_UNDEFINED) {
     return false;
   }
-  if (color_format_ == format && framebuffer_ != VK_NULL_HANDLE) {
+  if (color_format_ == format && samples_ == samples &&
+      framebuffer_ != VK_NULL_HANDLE) {
     return true;
   }
   // Recreate everything for the new color format (called before a field draw, so
@@ -79,6 +81,7 @@ bool BdNativeRenderer::EnsureColorFormat(VkFormat format) {
   // + safe. Logs once per new format for RE.
   Shutdown();
   color_format_ = format;
+  samples_ = samples;
   if (!CreateRenderPass() || !CreateImages() || !CreateFramebuffer()) {
     Shutdown();
     return false;
@@ -109,7 +112,7 @@ bool BdNativeRenderer::CreateImages() {
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
-  image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_create_info.samples = samples_;
   image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -191,7 +194,7 @@ bool BdNativeRenderer::CreateRenderPass() {
   VkAttachmentDescription attachments[2] = {};
   // Color.
   attachments[0].format = color_format_;
-  attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+  attachments[0].samples = samples_;
   attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -200,7 +203,7 @@ bool BdNativeRenderer::CreateRenderPass() {
   attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   // Depth (transient — never stored, GMEM-resident, keeps LRZ valid in-pass).
   attachments[1].format = kDepthFormat;
-  attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+  attachments[1].samples = samples_;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;

@@ -4117,17 +4117,25 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
             .color_format;
     VkFormat bd_vk_format =
         render_target_cache_->GetColorVulkanFormat(bd_color_format);
-    bool bd_msaa1 = bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X;
-    bool bd_fmt_ok = bd_native_renderer_->EnsureColorFormat(bd_vk_format);
+    // Match the native RT to the field's sample count too (render-pass compat
+    // needs format AND samples) - so ANY field draw redirects, not just msaa1.
+    VkSampleCountFlagBits bd_samples =
+        bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k4X
+            ? VK_SAMPLE_COUNT_4_BIT
+            : (bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k2X
+                   ? VK_SAMPLE_COUNT_2_BIT
+                   : VK_SAMPLE_COUNT_1_BIT);
+    bool bd_fmt_ok =
+        bd_native_renderer_->EnsureColorFormat(bd_vk_format, bd_samples);
     static std::atomic<uint32_t> s_bd_gate_diag{0};
     if (s_bd_gate_diag.fetch_add(1) < 8) {
       XELOGI(
           "BD NATIVE gate@pitch720: msaa={} color_format={} vk_format={} "
-          "msaa1={} fmt_ok={}",
+          "fmt_ok={}",
           uint32_t(bd_rb_surface_info.msaa_samples), uint32_t(bd_color_format),
-          uint32_t(bd_vk_format), bd_msaa1, bd_fmt_ok);
+          uint32_t(bd_vk_format), bd_fmt_ok);
     }
-    bd_native_gate = bd_msaa1 && bd_fmt_ok;
+    bd_native_gate = bd_fmt_ok;
   }
   if (bd_native_gate) {
     static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
