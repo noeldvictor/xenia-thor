@@ -4167,10 +4167,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                       : bd_native_renderer_->render_pass();
     framebuffer = &s_bd_native_fb;
     bd_native_field_rendered_ = true;
-    // NOTE: the window offset is the CORRECT screen transform (NOT a tile shift) -
-    // ignoring it shifts the geometry wrong (Shu -> center). The clean left region
-    // already has correct screen positioning. Right-region-black is a separate
-    // issue (tile-2 not landing at 608..1280 even with the offset applied).
+    // Offset-ignore is DEAD (3 variants tried: global, scoped-by-scissor_tl - all
+    // break identically, shifting the main scene). The window-offset/tiling
+    // coordinate interaction is beyond blind resolution; the right-region placement
+    // needs RenderDoc. The native RT renders the field's clean region correctly.
     ++bd_redirect_total_;
     static std::atomic<uint32_t> s_bd_redirect_log{0};
     if (s_bd_redirect_log.fetch_add(1) < 3) {
