@@ -4132,11 +4132,22 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         bd_vk_format, bd_depth_vk, bd_samples);
     static std::atomic<uint32_t> s_bd_gate_diag{0};
     if (s_bd_gate_diag.fetch_add(1) < 8) {
+      // DIMENSIONS: scissor BR (br_x/br_y = the actual field draw extent),
+      // window offset (tile placement), surface pitch/height - to resolve whether
+      // BD's field is 720-wide portrait, 1280-wide tiled, rotated, or a crop.
+      uint32_t scissor_br =
+          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
+      uint32_t scissor_tl =
+          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
+      uint32_t win_off =
+          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
       XELOGI(
-          "BD NATIVE gate@pitch720: msaa={} color_format={} vk_format={} "
-          "fmt_ok={}",
-          uint32_t(bd_rb_surface_info.msaa_samples), uint32_t(bd_color_format),
-          uint32_t(bd_vk_format), bd_fmt_ok);
+          "BD NATIVE gate@pitch720: msaa={} vk_format={} fmt_ok={} | DIMS "
+          "pitch={} scissor_tl={:08X} scissor_br={:08X} (br_x={} br_y={}) "
+          "win_off={:08X}",
+          uint32_t(bd_rb_surface_info.msaa_samples), uint32_t(bd_vk_format),
+          bd_fmt_ok, uint32_t(bd_rb_surface_info.surface_pitch), scissor_tl,
+          scissor_br, scissor_br & 0x7FFF, (scissor_br >> 16) & 0x7FFF, win_off);
     }
     bd_native_gate = bd_fmt_ok;
   }
