@@ -8016,7 +8016,12 @@ bool VulkanCommandProcessor::IssueCopy() {
   // field) are kept. Gated default-off.
   if (cvars::gpu_bd_native_renderer && cvars::gpu_bd_native_skip_resolves &&
       bd_native_renderer_ && bd_native_renderer_->initialized() &&
-      bd_native_field_rendered_) {
+      bd_native_field_rendered_ &&
+      register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch == 720) {
+    // Only skip resolves whose SOURCE is the field frontbuffer (pitch 720) - that
+    // is the one made redundant by presenting the native RT. Keep resolves of
+    // other surfaces (shadow/texture render-targets the field SAMPLES) - skipping
+    // those blacked out the textured geometry (the thin-strip break).
     return true;
   }
 
