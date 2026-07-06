@@ -4167,6 +4167,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                       : bd_native_renderer_->render_pass();
     framebuffer = &s_bd_native_fb;
     bd_native_field_rendered_ = true;
+    // NOTE: draw_ignore_window_offset shifts the geometry WRONG (breaks the clean
+    // left tile) - the 2-tile placement needs a subtler transform, not offset-
+    // ignore. Kept OFF; the native RT renders the left tile correctly (right tile
+    // = the remaining tiling work).
     ++bd_redirect_total_;
     static std::atomic<uint32_t> s_bd_redirect_log{0};
     if (s_bd_redirect_log.fetch_add(1) < 3) {
