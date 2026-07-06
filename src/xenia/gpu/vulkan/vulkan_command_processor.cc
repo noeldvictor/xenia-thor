@@ -4105,16 +4105,31 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // xfer/resolve) = the pass collapse. Gated, default-off. NEXT: tiling window-
   // offset handling + bin-once so both tiles land correctly in the one RT.
   auto bd_rb_surface_info = register_file_->Get<reg::RB_SURFACE_INFO>();
+  bool bd_native_gate = false;
   if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
       bd_native_renderer_->initialized() &&
-      bd_rb_surface_info.surface_pitch == 720 &&
-      bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X &&
-      bd_native_renderer_->EnsureColorFormat(
-          render_target_cache_->GetColorVulkanFormat(
-              register_file_
-                  ->Get<reg::RB_COLOR_INFO>(
-                      reg::RB_COLOR_INFO::rt_register_indices[0])
-                  .color_format))) {
+      bd_rb_surface_info.surface_pitch == 720) {
+    // Diagnostic: log the actual msaa + color format for pitch-720 field draws
+    // to see WHY the redirect gate excludes them (redirects=0 was measured).
+    auto bd_color_format =
+        register_file_
+            ->Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[0])
+            .color_format;
+    VkFormat bd_vk_format =
+        render_target_cache_->GetColorVulkanFormat(bd_color_format);
+    bool bd_msaa1 = bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X;
+    bool bd_fmt_ok = bd_native_renderer_->EnsureColorFormat(bd_vk_format);
+    static std::atomic<uint32_t> s_bd_gate_diag{0};
+    if (s_bd_gate_diag.fetch_add(1) < 8) {
+      XELOGI(
+          "BD NATIVE gate@pitch720: msaa={} color_format={} vk_format={} "
+          "msaa1={} fmt_ok={}",
+          uint32_t(bd_rb_surface_info.msaa_samples), uint32_t(bd_color_format),
+          uint32_t(bd_vk_format), bd_msaa1, bd_fmt_ok);
+    }
+    bd_native_gate = bd_msaa1 && bd_fmt_ok;
+  }
+  if (bd_native_gate) {
     static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
     s_bd_native_fb.framebuffer = bd_native_renderer_->framebuffer();
     s_bd_native_fb.host_extent = VkExtent2D{bd_native_renderer_->width(),
