@@ -85,6 +85,12 @@ DEFINE_bool(
     "resolved LLE surface). Drops the bulk of the 79-pass EDRAM overhead. Resolves "
     "before the field (textures/shadows) are kept.",
     "GPU");
+DEFINE_int32(
+    gpu_bd_native_tile_filter, 0,
+    "BD native renderer config-isolation diagnostic: 0=all field draws, "
+    "1=only window-offset-zero draws (config-A), 2=only offset-carrying draws "
+    "(config-B). Screenshots isolate where each tile config renders.",
+    "GPU");
 // --- Blue Dragon FULL NATIVE-DRAW HLE (the DXVK/Cemu model), Brick 1 ---
 DEFINE_bool(
     gpu_bd_native_hle, false,

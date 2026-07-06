@@ -49,6 +49,7 @@
 DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_native_skip_resolves);
+DECLARE_int32(gpu_bd_native_tile_filter);
 
 namespace xe {
 namespace gpu {
@@ -4152,6 +4153,15 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
           scissor_br, scissor_br & 0x7FFF, (scissor_br >> 16) & 0x7FFF, win_off);
     }
     bd_native_gate = bd_fmt_ok;
+    // Config-isolation diagnostic (gpu_bd_native_tile_filter): 1 = redirect only
+    // win_off==0 draws (config-A), 2 = only win_off!=0 (config-B). Screenshots of
+    // each show WHERE each config lands in the native RT (poor-man's RenderDoc).
+    if (bd_native_gate && cvars::gpu_bd_native_tile_filter != 0) {
+      bool has_wo =
+          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0;
+      if (cvars::gpu_bd_native_tile_filter == 1 && has_wo) bd_native_gate = false;
+      if (cvars::gpu_bd_native_tile_filter == 2 && !has_wo) bd_native_gate = false;
+    }
   }
   if (bd_native_gate) {
     static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
@@ -9218,6 +9228,20 @@ void VulkanCommandProcessor::UpdateDynamicState(
     scissor_rect.offset.y = 0;
     scissor_rect.extent.width = 16384;
     scissor_rect.extent.height = 16384;
+  }
+  // BD native renderer: the field's geometry is scissored to a 672-wide EDRAM tile
+  // (the offset maps a full-width viewport into it) - the garbage strip at native
+  // x=672 is the geometry being CLIPPED there. Widen the scissor to the full-
+  // surface native RT so the whole field rasterizes across x=0..1280 (offset
+  // untouched - it's the correct screen transform).
+  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
+      bd_native_renderer_->initialized() &&
+      (current_render_pass_ == bd_native_renderer_->render_pass() ||
+       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
+    scissor_rect.offset.x = 0;
+    scissor_rect.offset.y = 0;
+    scissor_rect.extent.width = bd_native_renderer_->width();
+    scissor_rect.extent.height = bd_native_renderer_->height();
   }
   SetScissor(scissor_rect);
 
