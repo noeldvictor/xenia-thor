@@ -47,6 +47,12 @@ class BdNativeRenderer {
   bool Initialize(uint32_t width, uint32_t height);
   void Shutdown();
 
+  // Brick 2a: begin the ONE held-open native render pass on `command_buffer`
+  // (clears color+depth), then EndRenderPass. Bricks 2b-3 record the captured
+  // 0x82489F40 draws (native pipelines + vertex-input) BETWEEN begin and end.
+  // Leaves color_image_ in SHADER_READ_ONLY_OPTIMAL (finalLayout) for present.
+  void RenderFrame(VkCommandBuffer command_buffer);
+
   bool initialized() const { return render_pass_ != VK_NULL_HANDLE; }
   VkImage color_image() const { return color_image_; }
   VkRenderPass render_pass() const { return render_pass_; }

@@ -38,6 +38,38 @@ bool BdNativeRenderer::Initialize(uint32_t width, uint32_t height) {
   return true;
 }
 
+void BdNativeRenderer::RenderFrame(VkCommandBuffer command_buffer) {
+  if (!initialized() || framebuffer_ == VK_NULL_HANDLE) {
+    return;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+
+  // Clear color to a distinct debug magenta (Brick 2a: proves the native RT +
+  // one-pass + present path renders end-to-end before the draws land) and depth
+  // to the reverse-Z far plane (0.0 - BD uses reverse-Z; Brick 3 depth-prepass).
+  VkClearValue clear_values[2] = {};
+  clear_values[0].color = {{1.0f, 0.0f, 1.0f, 1.0f}};
+  clear_values[1].depthStencil = {0.0f, 0};
+
+  VkRenderPassBeginInfo begin_info = {};
+  begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  begin_info.renderPass = render_pass_;
+  begin_info.framebuffer = framebuffer_;
+  begin_info.renderArea.extent.width = width_;
+  begin_info.renderArea.extent.height = height_;
+  begin_info.clearValueCount = 2;
+  begin_info.pClearValues = clear_values;
+
+  dfn.vkCmdBeginRenderPass(command_buffer, &begin_info,
+                           VK_SUBPASS_CONTENTS_INLINE);
+  // Brick 2b-3: record the captured 0x82489F40 draws here (bind native pipeline +
+  // VkBuffer vertex/index + push descriptors, vkCmdDrawIndexed), depth-prepass
+  // first for early-Z self-overdraw reject. One pass, no fan-out, no EDRAM.
+  dfn.vkCmdEndRenderPass(command_buffer);
+}
+
 bool BdNativeRenderer::CreateImages() {
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
