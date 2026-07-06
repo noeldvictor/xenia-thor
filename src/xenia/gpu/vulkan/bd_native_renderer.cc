@@ -164,6 +164,30 @@ bool BdNativeRenderer::CreateImages() {
       VK_SUCCESS) {
     return false;
   }
+
+  // MSAA resolve target (single-sample) - the field is 2x MSAA; the render pass
+  // resolves the multisampled color into this, and THIS is what gets presented
+  // (presenting the MSAA image directly bands). Only when samples_ > 1.
+  if (samples_ != VK_SAMPLE_COUNT_1_BIT) {
+    image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_create_info.format = color_format_;
+    image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                              VK_IMAGE_USAGE_SAMPLED_BIT |
+                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+            vulkan_device, image_create_info,
+            ui::vulkan::util::MemoryPurpose::kDeviceLocal, resolve_image_,
+            resolve_memory_)) {
+      return false;
+    }
+    view_create_info.image = resolve_image_;
+    view_create_info.format = color_format_;
+    view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (dfn.vkCreateImageView(device, &view_create_info, nullptr,
+                              &resolve_view_) != VK_SUCCESS) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -172,11 +196,12 @@ bool BdNativeRenderer::CreateFramebuffer() {
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
-  VkImageView attachments[2] = {color_view_, depth_view_};
+  VkImageView attachments[3] = {color_view_, depth_view_, resolve_view_};
+  bool has_resolve = samples_ != VK_SAMPLE_COUNT_1_BIT;
   VkFramebufferCreateInfo framebuffer_create_info = {};
   framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
   framebuffer_create_info.renderPass = render_pass_;
-  framebuffer_create_info.attachmentCount = 2;
+  framebuffer_create_info.attachmentCount = has_resolve ? 3 : 2;
   framebuffer_create_info.pAttachments = attachments;
   framebuffer_create_info.width = width_;
   framebuffer_create_info.height = height_;
@@ -196,7 +221,8 @@ bool BdNativeRenderer::CreateRenderPass() {
   // pass on the LLE path), STORE_OP_STORE for color (presented), DONT_CARE for
   // depth store (transient, GMEM-resident within the pass). This is the one
   // held-open pass that replaces BD's 95-pass EDRAM structure.
-  VkAttachmentDescription attachments[2] = {};
+  const bool has_resolve = samples_ != VK_SAMPLE_COUNT_1_BIT;
+  VkAttachmentDescription attachments[3] = {};
   // Color.
   attachments[0].format = color_format_;
   attachments[0].samples = samples_;
@@ -205,7 +231,11 @@ bool BdNativeRenderer::CreateRenderPass() {
   attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  // When MSAA, the multisampled color is kept in COLOR_ATTACHMENT (stored for the
+  // LOAD re-begins + resolved each pass); the single-sample RESOLVE is presented.
+  attachments[0].finalLayout =
+      has_resolve ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                  : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   // Depth (transient — never stored, GMEM-resident, keeps LRZ valid in-pass).
   attachments[1].format = depth_format_;
   attachments[1].samples = samples_;
@@ -219,22 +249,39 @@ bool BdNativeRenderer::CreateRenderPass() {
   attachments[1].finalLayout =
       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+  // Resolve attachment (single-sample) - only when MSAA. loadOp DONT_CARE (written
+  // by the resolve), STORE + SHADER_READ final (presented).
+  if (has_resolve) {
+    attachments[2].format = color_format_;
+    attachments[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[2].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  }
+
   VkAttachmentReference color_ref = {};
   color_ref.attachment = 0;
   color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   VkAttachmentReference depth_ref = {};
   depth_ref.attachment = 1;
   depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  VkAttachmentReference resolve_ref = {};
+  resolve_ref.attachment = 2;
+  resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
   VkSubpassDescription subpass = {};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
   subpass.colorAttachmentCount = 1;
   subpass.pColorAttachments = &color_ref;
   subpass.pDepthStencilAttachment = &depth_ref;
+  subpass.pResolveAttachments = has_resolve ? &resolve_ref : nullptr;
 
   VkRenderPassCreateInfo render_pass_create_info = {};
   render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  render_pass_create_info.attachmentCount = 2;
+  render_pass_create_info.attachmentCount = has_resolve ? 3 : 2;
   render_pass_create_info.pAttachments = attachments;
   render_pass_create_info.subpassCount = 1;
   render_pass_create_info.pSubpasses = &subpass;
@@ -249,7 +296,9 @@ bool BdNativeRenderer::CreateRenderPass() {
   // image is already in the right layout (no wipe). Same attachments -> compatible
   // with framebuffer_ + the field pipelines.
   attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-  attachments[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  attachments[0].initialLayout =
+      has_resolve ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                  : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
   attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
   if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
@@ -291,6 +340,18 @@ void BdNativeRenderer::Shutdown() {
   if (color_memory_ != VK_NULL_HANDLE) {
     dfn.vkFreeMemory(device, color_memory_, nullptr);
     color_memory_ = VK_NULL_HANDLE;
+  }
+  if (resolve_view_ != VK_NULL_HANDLE) {
+    dfn.vkDestroyImageView(device, resolve_view_, nullptr);
+    resolve_view_ = VK_NULL_HANDLE;
+  }
+  if (resolve_image_ != VK_NULL_HANDLE) {
+    dfn.vkDestroyImage(device, resolve_image_, nullptr);
+    resolve_image_ = VK_NULL_HANDLE;
+  }
+  if (resolve_memory_ != VK_NULL_HANDLE) {
+    dfn.vkFreeMemory(device, resolve_memory_, nullptr);
+    resolve_memory_ = VK_NULL_HANDLE;
   }
   if (depth_view_ != VK_NULL_HANDLE) {
     dfn.vkDestroyImageView(device, depth_view_, nullptr);

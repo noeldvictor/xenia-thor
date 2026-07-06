@@ -66,9 +66,14 @@ class BdNativeRenderer {
 
   bool initialized() const { return render_pass_ != VK_NULL_HANDLE; }
   VkImage color_image() const { return color_image_; }
-  // Sampled color view (SHADER_READ_ONLY after RenderFrame) - substitute as the
-  // swap source to present the native RT directly.
-  VkImageView color_view() const { return color_view_; }
+  // Sampled color view to present. When the field is MSAA (samples_ > 1) the
+  // render pass resolves color into a SINGLE-SAMPLE resolve image - present THAT
+  // (an MSAA image sampled directly bands). Single-sample: present color directly.
+  VkImageView color_view() const {
+    return (samples_ != VK_SAMPLE_COUNT_1_BIT && resolve_view_ != VK_NULL_HANDLE)
+               ? resolve_view_
+               : color_view_;
+  }
   // The native render pass + framebuffer - redirect BD's field draws into these
   // to render the real geometry natively in ONE pass (Brick 2b, reuses xenia's
   // shaders/pipelines; requires format-compatibility with the field pipelines).
@@ -95,6 +100,11 @@ class BdNativeRenderer {
   VkImage color_image_ = VK_NULL_HANDLE;
   VkDeviceMemory color_memory_ = VK_NULL_HANDLE;
   VkImageView color_view_ = VK_NULL_HANDLE;
+  // Single-sample resolve target (only when samples_ > 1) - the MSAA color
+  // resolves into this at pass end; it is what gets presented.
+  VkImage resolve_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory resolve_memory_ = VK_NULL_HANDLE;
+  VkImageView resolve_view_ = VK_NULL_HANDLE;
   VkImage depth_image_ = VK_NULL_HANDLE;
   VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
   VkImageView depth_view_ = VK_NULL_HANDLE;

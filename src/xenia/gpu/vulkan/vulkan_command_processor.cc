@@ -739,7 +739,7 @@ bool VulkanCommandProcessor::SetupContext() {
   // wires the 0x82489F40 capture -> native pipelines -> this RT.
   if (cvars::gpu_bd_native_renderer) {
     bd_native_renderer_ = std::make_unique<BdNativeRenderer>(*this);
-    if (!bd_native_renderer_->Initialize(720, 1280)) {
+    if (!bd_native_renderer_->Initialize(1280, 720)) {
       XELOGE("BdNativeRenderer: init failed - falling back to LLE");
       bd_native_renderer_.reset();
     }
@@ -4118,8 +4118,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
             .color_format;
     VkFormat bd_vk_format =
         render_target_cache_->GetColorVulkanFormat(bd_color_format);
-    // Match the native RT to the field's sample count too (render-pass compat
-    // needs format AND samples) - so ANY field draw redirects, not just msaa1.
+    // The field is k2X (2x MSAA) - MsaaSamples enum: k1X=0, k2X=1, k4X=2. Match
+    // the native RT samples to the field (render-pass compat). Bands when presented
+    // directly are the MSAA - the render pass resolves color to a single-sample
+    // present image (bd_native_renderer_ resolve attachment).
     VkSampleCountFlagBits bd_samples =
         bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k4X
             ? VK_SAMPLE_COUNT_4_BIT
