@@ -6171,20 +6171,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // life. Or even disregard the viewport bounds range in the fragment shader
   // interlocks case completely - apply the viewport and the scissor offset
   // directly to pixel address and to things like ps_param_gen.
-  // TILING FIX (LLE-reference confirmed): BD's field carries win_off=-608 that
-  // shifts the whole scene LEFT into EDRAM (native[0..672] = the scene's RIGHT
-  // half; the left half goes off-screen). Ignoring the offset per-draw for native
-  // draws puts the scene at native[0..1280] (Shu -> center, matching LLE) - and
-  // PAIRED with the full scissor-widen (in UpdateDynamicState) the WHOLE scene
-  // renders instead of being clipped to the guest [608..1280] tile scissor.
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      (current_render_pass_ == bd_native_renderer_->render_pass() ||
-       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
-    draw_util::draw_ignore_window_offset = true;
-  } else {
-    draw_util::draw_ignore_window_offset = false;
-  }
+  // TILING FIX (RenderDoc post-VS confirmed): offset-IGNORE frustum-clips tiles
+  // off-screen (NDC beyond [-1,1]). Keep the offset APPLIED (each tile's geometry
+  // maps correctly into NDC[-1,1] -> native[0..672] EDRAM window); instead shift
+  // the VIEWPORT X per-tile in UpdateDynamicState (tile win_off=-608 -> vp x=+608)
+  // so tile-2 lands at native[608..1280] instead of overlapping tile-1 at [0..672].
+  draw_util::draw_ignore_window_offset = false;
   draw_util::GetHostViewportInfo(
       regs, 1, 1, false, device_properties.maxViewportDimensions[0],
       device_properties.maxViewportDimensions[1], true,
@@ -9227,6 +9219,11 @@ void VulkanCommandProcessor::UpdateDynamicState(
     viewport.width *= f;
     viewport.height *= f;
   }
+  // BD native tiling: a uniform viewport x-shift by -win_off did NOT separate the
+  // tiles (most field draws share win_off=-608 - the tiles differ by SCISSOR, not
+  // win_off). The correct per-tile placement is still being derived via RenderDoc
+  // post-VS (tools/renderdoc/rd_analyze.py on a fresh capture). Offset-applied,
+  // no viewport shift = the current best (coherent partial: Shu+buildings region).
   SetViewport(viewport);
 
   // Scissor.
