@@ -34,6 +34,7 @@
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/vulkan/vulkan_pipeline_cache.h"
+#include "xenia/gpu/vulkan/bd_native_renderer.h"
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/vulkan/vulkan_shared_memory.h"
@@ -41,6 +42,12 @@
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
+
+// Blue Dragon native-draw HLE step 2 (defined in command_processor.cc): present
+// the decoupled full-surface RT the native field draws rendered into, instead of
+// BD's resolved guest front buffer.
+DECLARE_bool(gpu_bd_hle_present_decoupled);
+DECLARE_bool(gpu_bd_native_renderer);
 
 namespace xe {
 namespace gpu {
@@ -722,6 +729,19 @@ bool VulkanCommandProcessor::SetupContext() {
   if (!render_target_cache_->Initialize(shared_memory_binding_count)) {
     XELOGE("Failed to initialize the render target cache");
     return false;
+  }
+
+  // Blue Dragon FULL native D3D9->Vulkan HLE renderer (gpu_bd_native_renderer):
+  // instantiate the SEPARATE native path's persistent full-surface RT + one held
+  // render pass (BdNativeRenderer), decoupled from the EDRAM render_target_cache
+  // above. Default-off; failure is non-fatal (LLE stays the fallback). Brick 2b
+  // wires the 0x82489F40 capture -> native pipelines -> this RT.
+  if (cvars::gpu_bd_native_renderer) {
+    bd_native_renderer_ = std::make_unique<BdNativeRenderer>(*this);
+    if (!bd_native_renderer_->Initialize(720, 1280)) {
+      XELOGE("BdNativeRenderer: init failed - falling back to LLE");
+      bd_native_renderer_.reset();
+    }
   }
 
   // Shared memory and EDRAM descriptor set layout.
@@ -3295,6 +3315,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     std::memcpy(&register_file_->values[kSwapFetchRegister],
                 original_swap_fetch, sizeof(original_swap_fetch));
   }
+  // Blue Dragon native-draw HLE step 2 (gpu_bd_hle_present_decoupled): present
+  // the decoupled full-surface RT the native field draws rendered into instead
+  // of BD's resolved guest front buffer (whose base-0 resolve may be dropped by
+  // gpu_bd_hle_drop_resolve). Substitute the captured RT's sampled color view as
+  // the swap gamma-pass source; the RT is transitioned to shader-read inside the
+  // guest-output submission below (before its render pass). Done before the null
+  // check so a stale/absent front buffer (dropped resolve) still presents.
+  if (cvars::gpu_bd_hle_present_decoupled &&
+      render_target_cache_->HasDecoupledCapture()) {
+    VkImageView decoupled_view =
+        render_target_cache_->GetDecoupledPresentView();
+    if (decoupled_view != VK_NULL_HANDLE) {
+      swap_texture_view = decoupled_view;
+      if (cvars::gpu_trace_swap) {
+        XELOGI(
+            "BD HLE present: swap source substituted with decoupled RT view={}",
+            reinterpret_cast<uint64_t>(decoupled_view));
+      }
+    }
+  }
   if (swap_texture_view == VK_NULL_HANDLE) {
     if (cvars::gpu_trace_swap) {
       XELOGI(
@@ -3555,6 +3595,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
 
+        // Blue Dragon native-draw HLE decoupled present: move the captured
+        // decoupled color RT from its draw usage to fragment-shader sampled read
+        // so the gamma pass can sample it. Pushed here so the barrier is flushed
+        // by the SubmitBarriers below (barriers cannot be inside a render pass).
+        if (cvars::gpu_bd_hle_present_decoupled &&
+            render_target_cache_->HasDecoupledCapture()) {
+          render_target_cache_->TransitionDecoupledRTToShaderRead();
+        }
+
         // End the current render pass before inserting barriers and starting a
         // new one, and insert the barrier.
         SubmitBarriers(true);
@@ -3703,6 +3752,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // End the frame even if did not present for any reason (the image refresher
   // was not called), to prevent leaking per-frame resources.
   EndSubmission(true);
+
+  // Blue Dragon native-draw HLE decoupled present: clear the per-frame latch so
+  // the next frame recaptures (and a frame with no native draws presents BD's
+  // own front buffer normally).
+  render_target_cache_->ClearDecoupledCapture();
 
   if (cvars::gpu_trace_vd_swap) {
     XELOGI(
@@ -5211,6 +5265,14 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type,
   return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
 }
 
+void VulkanCommandProcessor::BdArmDecoupledCapture(bool armed) {
+  // Armed by the base CommandProcessor around the synthetic native draw (which
+  // has redirected RB_COLOR_INFO to a non-aliasing EDRAM base). While armed, the
+  // next covered IssueDraw latches the dedicated full-surface color host RT it
+  // renders into so IssueSwap can present it.
+  bd_capture_armed_ = armed;
+}
+
 bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                        uint32_t index_count,
                                        IndexBufferInfo* index_buffer_info,
@@ -5943,6 +6005,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 
   bool host_render_targets_used = render_target_cache_->GetPath() ==
                                   RenderTargetCache::Path::kHostRenderTargets;
+
+  // Blue Dragon native-draw HLE decoupled present (Half B): when the base
+  // CommandProcessor armed capture for this synthetic draw (RB_COLOR_INFO
+  // redirected to the non-aliasing decouple base), have the RT cache latch the
+  // dedicated full-surface color[0] host RT it just bound - IssueSwap presents
+  // it. Mirrors D3D12's GetBoundColorResourceForCapture, but here it reaches the
+  // screen (and the RT cache owns the protected RenderTarget* type).
+  if (bd_capture_armed_ && host_render_targets_used) {
+    render_target_cache_->LatchBoundColorRTForDecoupledCapture();
+  }
 
   // Get dynamic rasterizer state.
   draw_util::ViewportInfo viewport_info;

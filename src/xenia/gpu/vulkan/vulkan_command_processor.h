@@ -50,6 +50,8 @@ namespace xe {
 namespace gpu {
 namespace vulkan {
 
+class BdNativeRenderer;
+
 class VulkanCommandProcessor : public CommandProcessor {
  public:
   // Single-descriptor layouts for use within a single frame.
@@ -343,6 +345,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // failing to execute). Incremented at the top of IssueDraw (entry count).
   uint32_t BdDebugIssueDrawCount() const override { return bd_issuedraw_count_; }
 
+  // Blue Dragon native-draw HLE (Half B / decoupled present): armed by the base
+  // CommandProcessor around the synthetic native draw whose RB_COLOR_INFO was
+  // redirected to a non-aliasing EDRAM base. While armed, the next IssueDraw
+  // remembers the dedicated full-surface color host RT it renders into, so
+  // IssueSwap can present it (mirrors D3D12CommandProcessor::BdArmDecoupled
+  // Capture, but here the RT is presented, not just read back to a PNG).
+  void BdArmDecoupledCapture(bool armed) override;
+
   void InitializeTrace() override;
 
  private:
@@ -353,6 +363,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // synthetic-PM4 emit in the base CommandProcessor to prove the native draw
   // reaches IssueDraw on the Thor.
   uint32_t bd_issuedraw_count_ = 0;
+
+  // Blue Dragon native-draw HLE decoupled present (gpu_bd_hle_present_decoupled).
+  // bd_capture_armed_ is set by BdArmDecoupledCapture around the synthetic draw;
+  // while armed, the covered IssueDraw asks the RT cache to latch the bound
+  // decoupled color host RT (the RT cache owns the RenderTarget* - it is a
+  // protected nested type the command processor cannot name). IssueSwap presents
+  // that RT and the RT cache clears the latch each frame.
+  bool bd_capture_armed_ = false;
 
   struct SharedMemoryReadbackStats {
     uint32_t samples = 0;
@@ -802,6 +820,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::unique_ptr<VulkanPrimitiveProcessor> primitive_processor_;
 
   std::unique_ptr<VulkanRenderTargetCache> render_target_cache_;
+  // Blue Dragon FULL native D3D9->Vulkan HLE renderer (gpu_bd_native_renderer).
+  std::unique_ptr<BdNativeRenderer> bd_native_renderer_;
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 
