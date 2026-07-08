@@ -164,6 +164,33 @@ public final class GameProfiles {
                         + "baseline. Correctness-verified (generation counter + per-entry "
                         + "ref, no use-after-free). Targeted: helps lock-bound BD, "
                         + "net-flat on low-contention titles so it stays per-title here.")
+                .add("kernel_native_object_fast_path", Boolean.TRUE,
+                        "The OUTER global-lock acquire on XObject::GetNativeObject - "
+                        + "taken on every steady-state KeSetEvent / KeWaitForSingleObject "
+                        + "(the biggest remaining unmitigated global-lock acquirer on the "
+                        + "sync-heavy event/wait path, the handle-cache above only removed "
+                        + "the INNER ObjectTable lock). Once an object is initialized its "
+                        + "handle is published in the guest dispatch header and never "
+                        + "changes, so the steady-state resolve needs no lock; any race "
+                        + "misses LookupObject and falls through to the locked init path, "
+                        + "so correctness is preserved (verified in code, xobject.cc:406). "
+                        + "Correctness-validated on BD's heavy field 2026-06-24 (rendered "
+                        + "865 / 212k verts pixel-correct). Composes with the handle-cache "
+                        + "above (lock-free LookupObject) -> steady-state event/wait fully "
+                        + "lock-free. Cuts CPU/heat, extending the thermal budget for the "
+                        + "GPU-bound foliage field (which runs at max clock). Per-game: "
+                        + "BD-validated, kept off globally pending multi-title validation.")
+                .add("timer_queue_sleep_idle", Boolean.TRUE,
+                        "The timer-dispatch thread busy-spins clock_gettime "
+                        + "(disruptor spin_wait_strategy) between guest timers, burning a "
+                        + "core on the fanless Thor. Sleep until the soonest armed timer's "
+                        + "due time instead (armed timers still fire on time; a timer "
+                        + "queued mid-sleep waits <=1ms). Device-validated on BD's field "
+                        + "2026-06-24: renders pixel-correct, TimerThreadMain 2.63->1.79%, "
+                        + "spin_once 1.39->0.47%. Frees a core + cuts heat -> more thermal "
+                        + "headroom for the GPU-bound field to hold max clock. Per-game: "
+                        + "BD-validated; the <=1ms new-timer pickup shift keeps it off "
+                        + "globally pending multi-title validation.")
                 .add("gpu_frame_limit_fps", Integer.valueOf(30),
                         "Blue Dragon is a 30fps-native Xbox 360 title. Cap the host "
                         + "frame limiter at 30 so light/menu scenes hold a steady 30 "
