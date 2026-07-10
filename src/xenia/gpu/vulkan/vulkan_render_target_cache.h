@@ -124,6 +124,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // The LLE color RenderTarget (for SetUsage layout tracking during the
     // seed/mirror). Non-owning; cleared with the framebuffer cache.
     RenderTarget* bd_native_color_lle_rt = nullptr;
+    // Native image's last {stage, access, layout} across frames (5.6-sol L4 hang
+    // fix): the seed must barrier the native image FROM its real prior state
+    // (the mirror's outstanding TRANSFER_READ), not TOP_OF_PIPE/UNDEFINED - else
+    // the new transfer WRITE is not ordered after the prior READ = a WAR hazard
+    // that silently wedges the GPU queue after a few frames. Init TOP/0/UNDEFINED
+    // (first use); the mirror records TRANSFER/TRANSFER_READ/TRANSFER_SRC.
+    VkPipelineStageFlags bd_native_color_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkAccessFlags bd_native_color_access = 0;
+    VkImageLayout bd_native_color_layout = VK_IMAGE_LAYOUT_UNDEFINED;
     Framebuffer() = default;
     Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
         : framebuffer(framebuffer), host_extent(host_extent) {}

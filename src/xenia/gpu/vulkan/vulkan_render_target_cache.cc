@@ -3552,11 +3552,14 @@ bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
   }
   VulkanRenderTarget& lle_rt =
       *static_cast<VulkanRenderTarget*>(fb->bd_native_color_lle_rt);
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
   VkImageSubresourceRange range = {};
   range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   range.levelCount = 1;
   range.layerCount = 1;
-  // LLE color -> TRANSFER_SRC (tracked via SetUsage so downstream sees it).
+  // LLE color -> TRANSFER_SRC (tracked via SetUsage so downstream sees it). Left
+  // in TRANSFER_SRC after the pass (5.6-sol: no fictional COLOR write-back; the
+  // next real consumer transitions from the actual last usage).
   command_processor_.PushImageMemoryBarrier(
       lle_rt.image(), range, lle_rt.current_stage_mask(),
       VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
@@ -3564,12 +3567,15 @@ bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   lle_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-  // Native color: UNDEFINED (contents discarded - fully overwritten by the copy)
-  // -> TRANSFER_DST.
+  // Native color -> TRANSFER_DST. srcStage/srcAccess = the native image's REAL
+  // prior state (the previous mirror's outstanding TRANSFER_READ, or TOP/0 on
+  // first use) so the new transfer WRITE waits for that read = the WAR fix.
+  // oldLayout=UNDEFINED still discards the (about-to-be-overwritten) contents.
   command_processor_.PushImageMemoryBarrier(
-      fb->bd_native_color_image, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+      fb->bd_native_color_image, range, fb->bd_native_color_stage,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, fb->bd_native_color_access,
+      VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   command_processor_.SubmitBarriers(true);
   VkImageCopy creg = {};
   creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -3580,26 +3586,19 @@ bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
   command_processor_.deferred_command_buffer().CmdVkCopyImage(
       lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
-  // Native -> COLOR_ATTACHMENT_OPTIMAL (the render pass's initial layout);
-  // LLE color -> COLOR_ATTACHMENT_OPTIMAL (neutral for the mirror to transition
-  // from a well-defined layout; it is not the pass attachment).
+  // Native -> COLOR_ATTACHMENT_OPTIMAL (the render pass's initial layout).
   command_processor_.PushImageMemoryBarrier(
       fb->bd_native_color_image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
       VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  command_processor_.PushImageMemoryBarrier(
-      lle_rt.image(), range, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  lle_rt.SetUsage(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   command_processor_.SubmitBarriers(true);
+  // The native image will next be written by the render pass as a color
+  // attachment; the mirror records its post-pass state.
+  mfb.bd_native_color_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  mfb.bd_native_color_access = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   return true;
 }
 
@@ -3611,18 +3610,20 @@ void VulkanRenderTargetCache::MirrorBdNativeColorProducer(
   }
   VulkanRenderTarget& lle_rt =
       *static_cast<VulkanRenderTarget*>(fb->bd_native_color_lle_rt);
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
   VkImageSubresourceRange range = {};
   range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   range.levelCount = 1;
   range.layerCount = 1;
-  // Native (ends the pass in COLOR_ATTACHMENT_OPTIMAL) -> TRANSFER_SRC.
+  // Native (ends the pass in its tracked state = COLOR_ATTACHMENT_OPTIMAL) ->
+  // TRANSFER_SRC.
   command_processor_.PushImageMemoryBarrier(
-      fb->bd_native_color_image, range,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      fb->bd_native_color_image, range, fb->bd_native_color_stage,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, fb->bd_native_color_access,
+      VK_ACCESS_TRANSFER_READ_BIT, fb->bd_native_color_layout,
       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-  // LLE color -> TRANSFER_DST.
+  // LLE color -> TRANSFER_DST (tracked). Left in TRANSFER_DST after the copy;
+  // the next real consumer transitions from there (no fictional COLOR write-back).
   command_processor_.PushImageMemoryBarrier(
       lle_rt.image(), range, lle_rt.current_stage_mask(),
       VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
@@ -3640,19 +3641,13 @@ void VulkanRenderTargetCache::MirrorBdNativeColorProducer(
   command_processor_.deferred_command_buffer().CmdVkCopyImage(
       fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
-  // LLE color -> COLOR_ATTACHMENT_OPTIMAL so downstream resolves/transfers
-  // barrier from the layout the RT cache expects.
-  command_processor_.PushImageMemoryBarrier(
-      lle_rt.image(), range, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  lle_rt.SetUsage(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   command_processor_.SubmitBarriers(true);
+  // Record the native image's outstanding TRANSFER_READ so the NEXT seed barriers
+  // its write after this read = the WAR fix. Layout is TRANSFER_SRC (the next
+  // seed discards it via UNDEFINED oldLayout, but the stage/access order the hazard).
+  mfb.bd_native_color_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  mfb.bd_native_color_access = VK_ACCESS_TRANSFER_READ_BIT;
+  mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 }
 
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
