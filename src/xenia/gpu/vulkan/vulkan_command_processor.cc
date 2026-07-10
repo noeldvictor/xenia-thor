@@ -5870,6 +5870,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
   uint64_t pixel_shader_hash =
       pixel_shader ? pixel_shader->ucode_data_hash() : 0;
+  // Color-only native HLE LEVEL 4 (mirror round-trip, 5.6-terra plan): flag when
+  // this draw is BD's final-color PRODUCER (pixel shader hash confirmed on-device
+  // = 0x9567C79307ACC6F5, the pass whose color resolves to the frontbuffer). The
+  // pass-begin swaps color attachment 0 to a private native image (seed from LLE,
+  // render with the EXACT LLE depth+render pass), and the pass-end finalizer
+  // mirrors native->LLE BEFORE the resolve — so output is byte-identical to LLE
+  // (proves native color-attachment rendering is pixel-correct before any present
+  // redirect or transfer drop). The strict RT-key gate (0b11, 1x, 1280x720) is
+  // re-checked at pass begin. trace_last_draw_ps_hash_ is updated too late (post-
+  // draw-record) so we use pixel_shader_hash here.
+  bd_color_mirror_pending_draw_ =
+      cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
+      pixel_shader_hash == UINT64_C(0x9567C79307ACC6F5);
   bool trace_draw_state =
       ShouldTraceVulkanDrawStateForShaders(vertex_shader_hash,
                                            pixel_shader_hash);

@@ -860,6 +860,16 @@ class VulkanCommandProcessor : public CommandProcessor {
   // `consumer` class this frame (no-op unless gpu_bd_native_color_lifetime_hle>0).
   void BdNoteColorConsumer(uint32_t dest_base, uint32_t consumer);
 
+  // LEVEL 4 mirror round-trip (5.6-terra plan): true after the current draw was
+  // detected as the 9567 final-color producer (set in the draw path from the pixel
+  // shader hash); consumed at pass begin to decide whether to swap color 0 to the
+  // private native mirror image + seed. Reset each draw.
+  bool bd_color_mirror_pending_draw_ = false;
+  // true between a mirror pass's begin (native color substituted + seeded) and the
+  // pass-end finalizer (native->LLE mirror) — so exactly one mirror completes per
+  // producer pass regardless of which CmdVkEndRenderPass site ends it.
+  bool bd_color_mirror_active_ = false;
+
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 
   std::unique_ptr<VulkanTextureCache> texture_cache_;
