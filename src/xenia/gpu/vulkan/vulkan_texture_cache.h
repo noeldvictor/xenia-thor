@@ -149,12 +149,27 @@ class VulkanTextureCache final : public TextureCache {
   uint64_t GetSubmissionToAwaitOnSamplerOverflow(
       uint32_t overflowed_sampler_count) const;
 
+  // Describes the guest front-buffer texture actually requested (the OVERRIDDEN
+  // fetch 0 if IssueSwap scored/forced a resolve), for the BD color-only native
+  // HLE present redirect (5.6-terra review): key the native color surface by
+  // guest_base = key.base_page << 12, and require an EXACT logical extent/format
+  // match before substituting the present source.
+  struct SwapTextureInfo {
+    bool valid = false;
+    uint32_t guest_base = 0;  // key.base_page << 12
+    uint32_t logical_width = 0;
+    uint32_t logical_height = 0;
+    xenos::TextureFormat format = xenos::TextureFormat::k_8_8_8_8;
+  };
+
   // Returns the 2D view of the front buffer texture (for fragment shader
   // reading - the barrier will be pushed in the command processor if needed),
-  // or VK_NULL_HANDLE in case of failure. May call LoadTextureData.
+  // or VK_NULL_HANDLE in case of failure. May call LoadTextureData. `info_out`
+  // (optional) is filled with the requested front-buffer descriptor.
   VkImageView RequestSwapTexture(uint32_t& width_scaled_out,
                                  uint32_t& height_scaled_out,
-                                 xenos::TextureFormat& format_out);
+                                 xenos::TextureFormat& format_out,
+                                 SwapTextureInfo* info_out = nullptr);
 
  protected:
   bool IsSignedVersionSeparateForFormat(TextureKey key) const override;

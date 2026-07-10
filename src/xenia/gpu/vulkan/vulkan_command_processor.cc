@@ -3338,8 +3338,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           swap_resolve_override.clear_like, frontbuffer_ptr);
     }
   }
+  VulkanTextureCache::SwapTextureInfo swap_info;
   VkImageView swap_texture_view = texture_cache_->RequestSwapTexture(
-      frontbuffer_width_scaled, frontbuffer_height_scaled, frontbuffer_format);
+      frontbuffer_width_scaled, frontbuffer_height_scaled, frontbuffer_format,
+      &swap_info);
   if (using_resolve_override_for_swap) {
     constexpr uint32_t kSwapFetchRegister =
         XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
@@ -3394,6 +3396,37 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     if (native_view != VK_NULL_HANDLE) {
       swap_texture_view = native_view;
       ++bd_present_native_total_;
+    }
+  }
+  // Color-only native HLE step 2 (gpu_bd_native_color_lifetime_hle >= 2): redirect
+  // the present source to the per-surface native COLOR surface for the
+  // frontbuffer's resolve-dest base, when one exists AND its content extent
+  // EXACTLY matches the requested swap extent (5.6-terra: NativeSurface dims are
+  // allocation dims that only grow, so require an exact match; fail-closed to the
+  // LLE swap texture otherwise). NO drops at this level — a pure correctness proof
+  // that present samples native when available, before any transfer/resolve is
+  // deleted. Records the Present consumer (or NonNative on fallback) so the later
+  // drop gate sees present coverage. Mutually exclusive in practice with the
+  // monolithic native present above (that needs whole_frame / bd_native_field_
+  // rendered_; this path is used without it).
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 2 && bd_native_renderer_ &&
+      swap_info.valid && swap_info.guest_base) {
+    NativeSurface* present_surface =
+        bd_native_renderer_->FindSurface(swap_info.guest_base);
+    VkImageView present_native_view =
+        present_surface
+            ? bd_native_renderer_->LookupSampledSurface(swap_info.guest_base)
+            : VK_NULL_HANDLE;
+    bool present_exact = present_surface &&
+                         present_native_view != VK_NULL_HANDLE &&
+                         present_surface->width == swap_info.logical_width &&
+                         present_surface->height == swap_info.logical_height;
+    if (present_exact) {
+      swap_texture_view = present_native_view;
+      ++bd_present_native_total_;
+      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerPresent);
+    } else if (present_surface) {
+      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerNonNative);
     }
   }
   bd_native_field_rendered_ = false;  // reset for next frame

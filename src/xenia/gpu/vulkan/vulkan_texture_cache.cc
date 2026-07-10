@@ -1018,7 +1018,7 @@ uint64_t VulkanTextureCache::GetSubmissionToAwaitOnSamplerOverflow(
 
 VkImageView VulkanTextureCache::RequestSwapTexture(
     uint32_t& width_scaled_out, uint32_t& height_scaled_out,
-    xenos::TextureFormat& format_out) {
+    xenos::TextureFormat& format_out, SwapTextureInfo* info_out) {
   const auto& regs = register_file();
   xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(0);
   TextureKey key;
@@ -1065,6 +1065,16 @@ VkImageView VulkanTextureCache::RequestSwapTexture(
   height_scaled_out =
       key.GetHeight() * (key.scaled_resolve ? draw_resolution_scale_y() : 1);
   format_out = key.format;
+  if (info_out) {
+    // The ACTUAL requested front-buffer descriptor (fetch 0 as bound now, i.e.
+    // the scored/forced resolve override if IssueSwap applied one). guest_base is
+    // the resolve-dest address the native color surface is keyed by.
+    info_out->valid = true;
+    info_out->guest_base = key.base_page << 12;
+    info_out->logical_width = key.GetWidth();
+    info_out->logical_height = key.GetHeight();
+    info_out->format = key.format;
+  }
   return texture_view;
 }
 
