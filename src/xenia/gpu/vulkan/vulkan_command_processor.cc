@@ -3416,6 +3416,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       swap_info.guest_base) {
     VkImageView l5_view = BdL5LookupAlias(swap_info.guest_base);
     const char* l5_result = l5_view != VK_NULL_HANDLE ? "native" : "no_alias";
+    uint32_t l5_alias_src = 0;
+    uint64_t l5_alias_gen = 0;
+    {
+      auto it = bd_l5_alias_by_dest_.find(swap_info.guest_base);
+      if (it != bd_l5_alias_by_dest_.end()) {
+        l5_alias_src = it->second.src_rt_key;
+        l5_alias_gen = it->second.generation;
+      }
+    }
     if (l5_view != VK_NULL_HANDLE) {
       swap_texture_view = l5_view;
       l5_present_served = true;
@@ -3425,8 +3434,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
       static std::atomic<uint32_t> s_l5_present{0};
       if (s_l5_present.fetch_add(1) < 40) {
-        XELOGI("L5 PRESENT base={:08X} epoch={} result={}", swap_info.guest_base,
-               bd_l5_frame_epoch_, l5_result);
+        XELOGI("L5 PRESENT base={:08X} epoch={} src={:08X} gen={} result={}",
+               swap_info.guest_base, bd_l5_frame_epoch_, l5_alias_src,
+               l5_alias_gen, l5_result);
       }
     }
   }
@@ -8537,10 +8547,13 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
   alias.width = width;
   alias.height = height;
   bd_l5_alias_by_dest_[dest_base] = alias;
-  static std::atomic<uint32_t> s_pub{0};
-  if (s_pub.fetch_add(1) < 40) {
-    XELOGI("L5 ALIAS dest={:08X} src={:08X} gen={} epoch={} {}x{}", dest_base,
-           alias.src_rt_key, alias.generation, alias.frame_epoch, width, height);
+  if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
+    static std::atomic<uint32_t> s_pub{0};
+    if (s_pub.fetch_add(1) < 40) {
+      XELOGI("L5 ALIAS dest={:08X} src={:08X} gen={} epoch={} {}x{}", dest_base,
+             alias.src_rt_key, alias.generation, alias.frame_epoch, width,
+             height);
+    }
   }
 }
 
