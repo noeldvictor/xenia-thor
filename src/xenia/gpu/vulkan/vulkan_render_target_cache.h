@@ -287,6 +287,24 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       uint32_t src_format, uint8_t src_msaa, bool src_is_depth,
       VkFormat expected_texture_host_format);
 
+  // Blue Dragon native-draw HLE decoupled present (gpu_bd_hle_present_decoupled).
+  // The RT cache owns the captured RenderTarget* (a protected nested type the
+  // command processor cannot name). LatchBoundColorRTForDecoupledCapture: latch
+  // color[0] of the last Update() (the dedicated full-surface RT a native field
+  // draw rendered into when RB_COLOR_INFO was redirected). Idempotent per frame.
+  void LatchBoundColorRTForDecoupledCapture();
+  bool HasDecoupledCapture() const {
+    return bd_decoupled_capture_rt_ != nullptr;
+  }
+  // GetDecoupledPresentView: the latched RT's sampled color view for substitution
+  // as the swap gamma-pass source. VK_NULL_HANDLE if nothing latched.
+  VkImageView GetDecoupledPresentView() const;
+  // TransitionDecoupledRTToShaderRead: barrier the latched RT from its draw usage
+  // to fragment-shader sampled read (mirrors the resolve dump barrier). Call
+  // inside the swap submission before SubmitBarriers.
+  void TransitionDecoupledRTToShaderRead();
+  void ClearDecoupledCapture() { bd_decoupled_capture_rt_ = nullptr; }
+
  protected:
   bool IsGammaFormatHostStorageSeparate() const override;
 
@@ -558,6 +576,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // Temporary storage for indices in operations like transfers and dumps.
     uint32_t temporary_sort_index_ = 0;
   };
+
+  // Blue Dragon native-draw HLE decoupled present: the full-surface color host RT
+  // a native field draw rendered into (RB_COLOR_INFO redirected to a non-aliasing
+  // EDRAM base). Latched during the covered IssueDraw, presented + cleared at the
+  // guest swap. Owned here because VulkanRenderTarget/RenderTarget is a protected
+  // nested type the command processor cannot name.
+  VulkanRenderTarget* bd_decoupled_capture_rt_ = nullptr;
 
   struct FramebufferKey {
     RenderPassKey render_pass_key;
@@ -1021,6 +1046,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   bool depth_unorm24_vulkan_format_supported_ = false;
   bool depth_float24_round_ = false;
+  // BD-30 native depth conversion (gpu_bd_native_depth_convert): whether the host
+  // depth format supports BLIT_SRC+DST (a native depth downsample without a shader).
+  // Set in the ctor; the depth-conversion path falls back to the EDRAM transfer when
+  // false so it can never break a device that lacks depth blit.
+  bool depth_blit_supported_ = false;
 
   bool msaa_2x_attachments_supported_ = false;
   bool msaa_2x_no_attachments_supported_ = false;

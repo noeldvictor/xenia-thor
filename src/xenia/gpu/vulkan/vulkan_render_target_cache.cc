@@ -22,6 +22,7 @@
 
 #include "third_party/glslang/SPIRV/GLSL.std.450.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -195,6 +196,18 @@ DEFINE_string(
     "  Choose what is considered the most optimal for the system (currently "
     "always FB because the FSI path is much slower now).",
     "GPU");
+
+// Blue Dragon native-draw HLE step 3 (defined in command_processor.cc): drop
+// BD's emulated per-tile base-0 EDRAM->RAM resolve copy (the ~120ms field GPU
+// fence). 1 = base-0 color copies only; 2 = all color copies (upper bound).
+DECLARE_uint32(gpu_bd_hle_drop_resolve);
+DECLARE_bool(gpu_bd_native_renderer);
+DECLARE_bool(gpu_bd_native_depth_convert);
+DECLARE_bool(gpu_bd_native_drop_depth_downscale);
+DECLARE_bool(gpu_bd_native_drop_resolves);
+DECLARE_bool(gpu_bd_native_drop_transfers);
+DECLARE_bool(gpu_bd_native_drop_all_color_xfer);
+DECLARE_bool(gpu_bd_native_drop_all_xfer);
 
 namespace xe {
 namespace gpu {
@@ -518,6 +531,23 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   depth_unorm24_vulkan_format_supported_ =
       (depth_unorm24_properties.optimalTilingFeatures &
        kUsedDepthFormatFeatures) == kUsedDepthFormatFeatures;
+
+  // BD-30 native depth conversion: does the host depth format support a native
+  // BLIT (src+dst)? On Turnip/Adreno depth blit is commonly supported and lets the
+  // mixed-resolution depth-downscale conversion be a native vkCmdBlitImage instead
+  // of the EDRAM tile-reinterpreting transfer (the ~30ms/frame between-pass GAP).
+  // Both host depth formats are checked; the conversion path also re-checks per RT.
+  constexpr VkFormatFeatureFlags kBlitSrcDst =
+      VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+  VkFormatProperties depth_d24_blit_props, depth_d32_blit_props;
+  ifn.vkGetPhysicalDeviceFormatProperties(
+      physical_device, VK_FORMAT_D24_UNORM_S8_UINT, &depth_d24_blit_props);
+  ifn.vkGetPhysicalDeviceFormatProperties(
+      physical_device, VK_FORMAT_D32_SFLOAT_S8_UINT, &depth_d32_blit_props);
+  depth_blit_supported_ =
+      ((depth_d24_blit_props.optimalTilingFeatures & kBlitSrcDst) == kBlitSrcDst) ||
+      ((depth_d32_blit_props.optimalTilingFeatures & kBlitSrcDst) == kBlitSrcDst);
+  XELOGI("BD native depth-convert: depth_blit_supported={}", depth_blit_supported_);
 
   // 2x MSAA support.
   // TODO(Triang3l): Handle sampledImageIntegerSampleCounts 4 not supported in
@@ -1473,9 +1503,59 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
   DeferredCommandBuffer& command_buffer =
       command_processor_.deferred_command_buffer();
 
+  // Blue Dragon native-draw HLE step 3 (gpu_bd_hle_drop_resolve): BD's field
+  // frame spends ~120ms in ONE GPU fence = the emulated per-tile base-0
+  // EDRAM->RAM resolve copy. When the decoupled full-surface RT is the source of
+  // truth (gpu_bd_hle_present_decoupled), that copy is dead weight - skip its GPU
+  // work (DumpRenderTargets + the per-pixel copy dispatch). Only the COLOR copy
+  // is dropped; depth resolves and clears still run. 1 = base-0 only (BD's
+  // field); 2 = ALL color copies (upper-bound perf probe). On its own (no
+  // decoupled present) it measures the resolve's raw GPU cost against baseline.
+  bool bd_drop_this_resolve = false;
+  if (cvars::gpu_bd_hle_drop_resolve && resolve_info.copy_dest_extent_length &&
+      !resolve_info.IsCopyingDepth()) {
+    if (cvars::gpu_bd_hle_drop_resolve >= 2 ||
+        resolve_info.color_edram_info.base_tiles == 0) {
+      bd_drop_this_resolve = true;
+      static uint32_t s_bd_drop_log = 0;
+      if (s_bd_drop_log < 8) {
+        ++s_bd_drop_log;
+        XELOGI(
+            "BD HLE drop-resolve: SKIPPED color resolve copy src_base_tiles={} "
+            "dest_base={:08X} coord={}x{} mode={}",
+            resolve_info.color_edram_info.base_tiles,
+            resolve_info.copy_dest_base,
+            resolve_info.coordinate_info.width_div_8
+                << xenos::kResolveAlignmentPixelsLog2,
+            resolve_info.height_div_8 << xenos::kResolveAlignmentPixelsLog2,
+            uint32_t(cvars::gpu_bd_hle_drop_resolve));
+      }
+    }
+  }
+  // REAL-HLE EDRAM deletion (gpu_bd_native_aux_rt): SURGICALLY drop a color resolve
+  // whose dest guest address is now backed by a LIVE native surface (the field
+  // samples that native image via Brick B, so the EDRAM->RAM resolve is dead weight).
+  // Unlike the blunt drop-all-base-0 above (which black-screened with NO native
+  // replacement), this fires ONLY when native content actually serves the dest =
+  // safe. This is what makes the ~110ms EDRAM work redundant.
+  if (!bd_drop_this_resolve && cvars::gpu_bd_native_drop_resolves &&
+      resolve_info.copy_dest_extent_length && !resolve_info.IsCopyingDepth() &&
+      command_processor_.BdNativeSurfaceServes(resolve_info.copy_dest_base)) {
+    bd_drop_this_resolve = true;
+    command_processor_.AddBdNativeResolveDropped();
+    static uint32_t s_bd_native_drop_log = 0;
+    if (s_bd_native_drop_log < 8) {
+      ++s_bd_native_drop_log;
+      XELOGI(
+          "BD REAL-HLE: dropped EDRAM resolve dest={:08X} (native surface serves "
+          "it) — EDRAM work deleted for this surface",
+          resolve_info.copy_dest_base);
+    }
+  }
+
   // Copying.
   bool copied = false;
-  if (resolve_info.copy_dest_extent_length) {
+  if (resolve_info.copy_dest_extent_length && !bd_drop_this_resolve) {
     // EDRAM-recompiler first brick: record the resolve->sample dependency EDGE -
     // the dest range PLUS the source RT identity - so a later texture fetch that
     // lands in this dest range can be routed to the resident source RT directly
@@ -1494,6 +1574,17 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     resolve_edge.src_format = src_edram.format;
     resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
     resolve_edge.src_is_depth = resolve_is_depth;
+    // Pack the FULL source-RT identity (same RenderTargetKey the render draw's
+    // color RT carries) so the native render-redirect can key by it — BD renders
+    // every RT at EDRAM base 0, so base alone aliases; pitch+format+msaa
+    // disambiguate. BD RTs are 32bpp, so pitch_tiles == pitch_tiles_at_32bpp.
+    RenderTargetKey src_rt_key;
+    src_rt_key.base_tiles = src_edram.base_tiles;
+    src_rt_key.pitch_tiles_at_32bpp = src_edram.pitch_tiles;
+    src_rt_key.msaa_samples = src_edram.msaa_samples;
+    src_rt_key.is_depth = resolve_is_depth ? 1 : 0;
+    src_rt_key.resource_format = src_edram.format;
+    resolve_edge.src_rt_key = src_rt_key.key;
     command_processor_.AddResolveCopyStats(resolve_edge);
     // THE EDRAM SOLVE, hybrid form: while the post-process phase is active, EDRAM is
     // buffer-authoritative (BeginHybridPostprocessPhase dumped the main scene +
@@ -2532,6 +2623,44 @@ VulkanRenderTargetCache::GetResolveSourceRenderTargetViewForSampling(
                          VK_ACCESS_SHADER_READ_BIT,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   return render_target.view_color_transfer();
+}
+
+void VulkanRenderTargetCache::LatchBoundColorRTForDecoupledCapture() {
+  // Blue Dragon native-draw HLE decoupled present: latch color[0] of the last
+  // Update (index [1]; [0] is depth). When a native draw redirected RB_COLOR_INFO
+  // to a non-aliasing EDRAM base, this is the dedicated full-surface host RT. All
+  // covered field draws share the base (same RT), so latch once per frame.
+  if (bd_decoupled_capture_rt_ || GetPath() != Path::kHostRenderTargets) {
+    return;
+  }
+  RenderTarget* color0 = last_update_accumulated_render_targets()[1];
+  if (color0) {
+    bd_decoupled_capture_rt_ = static_cast<VulkanRenderTarget*>(color0);
+  }
+}
+
+VkImageView VulkanRenderTargetCache::GetDecoupledPresentView() const {
+  if (!bd_decoupled_capture_rt_) {
+    return VK_NULL_HANDLE;
+  }
+  return bd_decoupled_capture_rt_->view_color_transfer();
+}
+
+void VulkanRenderTargetCache::TransitionDecoupledRTToShaderRead() {
+  if (!bd_decoupled_capture_rt_) {
+    return;
+  }
+  VulkanRenderTarget& rt = *bd_decoupled_capture_rt_;
+  // Mirror the resolve dump / RT-as-texture barrier (current_*_mask() as src);
+  // skip_if_equal drops it entirely if it is already shader-read.
+  command_processor_.PushImageMemoryBarrier(
+      rt.image(),
+      ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT),
+      rt.current_stage_mask(), VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      rt.current_access_mask(), VK_ACCESS_SHADER_READ_BIT, rt.current_layout(),
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  rt.SetUsage(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 VkFormat VulkanRenderTargetCache::GetColorVulkanFormat(
@@ -5703,8 +5832,383 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   // EDRAM content is NOT preserved -> may glitch. Gated, default off.
   static const std::vector<Transfer>
       kNoTransfers[1 + xenos::kMaxColorRenderTargets] = {};
-  if (cvars::gpu_skip_edram_transfers) {
+  // SURGICAL skip (gpu_bd_native_skip_transfers): once the field is in the native
+  // RT, the EDRAM re-alias transfers that follow are redundant (we present the
+  // native RT, not the LLE surface) and are the pass-break/GMEM store-reload wall.
+  // Pre-field shadow/texture transfers (bd_native_field_rendered still false) are
+  // KEPT so the field's sampled textures survive. Mirrors skip_resolves.
+  if (cvars::gpu_skip_edram_transfers ||
+      (cvars::gpu_bd_native_skip_transfers &&
+       command_processor_.bd_native_field_rendered())) {
     render_target_transfers = kNoTransfers;
+  }
+
+  // REAL-HLE SURGICAL transfer deletion (gpu_bd_native_drop_transfers): drop ONLY
+  // the transfers whose DEST RT resolves to a guest address a native surface
+  // already serves (the field samples that content natively, so preserving its
+  // EDRAM alias is dead weight). Unlike the blunt gpu_skip_edram_transfers above
+  // (which blacks the main scene it still needs), this KEEPS transfers for RTs not
+  // covered natively = safe + correct. This is the real EDRAM-deletion lever.
+  static std::vector<Transfer>
+      s_bd_xfer_filtered[1 + xenos::kMaxColorRenderTargets];
+  if (cvars::gpu_bd_native_drop_transfers && render_target_transfers &&
+      render_target_transfers != kNoTransfers) {
+    bool any_dropped = false;
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      s_bd_xfer_filtered[i] = render_target_transfers[i];  // default: keep
+      RenderTarget* dest_rt = render_targets[i];
+      if (!dest_rt || render_target_transfers[i].empty()) {
+        continue;
+      }
+      const bool is_depth = dest_rt->key().is_depth;
+      const VulkanCommandProcessor::ResolveEdge* edge =
+          command_processor_.PersistentResolveEdgeForSrc(dest_rt->key().key);
+      const bool native_served =
+          edge && edge->dest_base &&
+          command_processor_.BdNativeSurfaceServes(edge->dest_base);
+      // COLOR-ONLY aggressive drop (gpu_bd_native_drop_all_color_xfer): the
+      // wholesale gpu_skip_edram_transfers dropped color AND DEPTH transfers -> the
+      // dropped DEPTH broke the field's depth test => geometry depth-fails =>
+      // collapse to a strip (Thor) / crash (strict desktop). Dropping only the
+      // COLOR ownership transfers (the ~97ms wall; the field presents native color)
+      // while KEEPING the depth transfers should render correct AND fast. Barrier
+      // (below) preserves sync.
+      const bool drop_color_only =
+          cvars::gpu_bd_native_drop_all_color_xfer && !is_depth;
+      // DROP-ALL WITH BARRIER (gpu_bd_native_drop_all_xfer): the blunt
+      // gpu_skip_edram_transfers drops color+depth WITHOUT a barrier -> collapse.
+      // Hypothesis: the collapse is the missing depth BARRIER (sync/layout), not
+      // depth content. Drop EVERYTHING (incl. depth) but emit the barrier below for
+      // each -> if the barrier prevents the collapse, this = 30fps + correct.
+      const bool drop_all = cvars::gpu_bd_native_drop_all_xfer;
+      if (native_served || drop_color_only || drop_all) {
+        s_bd_xfer_filtered[i].clear();  // transfer dead
+        any_dropped = true;
+        // Preserve the SYNC the dropped transfer would have provided. The
+        // vulkan_validation run proved the drop is layout-VALID (no VUID) but
+        // crashes without validation = a GPU execution/memory HAZARD: the dropped
+        // transfer's barrier is what ordered this RT's prior writes before its next
+        // use. Emit a conservative full memory barrier (same layout, so no
+        // transition — the next binding handles layout) to restore that ordering.
+        auto& drt = *static_cast<VulkanRenderTarget*>(dest_rt);
+        VkImageAspectFlags aspect =
+            dest_rt->key().is_depth
+                ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+                : VK_IMAGE_ASPECT_COLOR_BIT;
+        command_processor_.PushImageMemoryBarrier(
+            drt.image(),
+            ui::vulkan::util::InitializeSubresourceRange(aspect),
+            drt.current_stage_mask(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            drt.current_access_mask(),
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            drt.current_layout(), drt.current_layout());
+      }
+    }
+    if (any_dropped) {
+      render_target_transfers = s_bd_xfer_filtered;
+    }
+  }
+
+  // BD DEPTH-XFER DIAGNOSTIC: log the src/dst RT keys of every DEPTH ownership
+  // transfer (the ~67ms tile-reinterpreting wall) so the next build knows EXACTLY
+  // which aliased depth surfaces to convert to per-surface native RTs (the
+  // resource-keyed coverage that deletes EDRAM). Gated on the native renderer,
+  // capped, one-shot — harmless.
+  if (cvars::gpu_bd_native_renderer && render_target_transfers &&
+      render_target_transfers != kNoTransfers) {
+    static std::atomic<uint32_t> s_bd_dxfer_log{0};
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      RenderTarget* drt = render_targets[i];
+      if (!drt || !drt->key().is_depth) {
+        continue;
+      }
+      for (const Transfer& t : render_target_transfers[i]) {
+        if (!t.source || t.source == drt) {
+          continue;
+        }
+        if (s_bd_dxfer_log.fetch_add(1) < 40) {
+          RenderTargetKey sk =
+              static_cast<VulkanRenderTarget*>(t.source)->key();
+          RenderTargetKey dk = drt->key();
+          XELOGI(
+              "BD DEPTH XFER: src(base={} pitchT={} msaa={} fmt={}) -> "
+              "dst(base={} pitchT={} msaa={} fmt={}) samelayout={}",
+              sk.base_tiles, sk.GetPitchTiles(), uint32_t(sk.msaa_samples),
+              uint32_t(sk.resource_format), dk.base_tiles, dk.GetPitchTiles(),
+              uint32_t(dk.msaa_samples), uint32_t(dk.resource_format),
+              (sk.base_tiles == dk.base_tiles &&
+               sk.GetPitchTiles() == dk.GetPitchTiles() &&
+               sk.msaa_samples == dk.msaa_samples));
+        }
+      }
+    }
+  }
+
+  // BD DEPTH-DOWNSCALE DROP (gpu_bd_native_drop_depth_downscale): drop ONLY the
+  // per-transfer DEPTH ownership transfers whose src/dst pitch DIFFERS (the 720->400
+  // downscale-for-post transfers), KEEP same-pitch depth transfers (MSAA conversions
+  // the depth test needs). Per-transfer (not per-dest) so the load-bearing ones stay.
+  static std::vector<Transfer>
+      s_bd_ddrop_filtered[1 + xenos::kMaxColorRenderTargets];
+  if (cvars::gpu_bd_native_drop_depth_downscale && render_target_transfers &&
+      render_target_transfers != kNoTransfers) {
+    bool any_dropped = false;
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      s_bd_ddrop_filtered[i].clear();
+      RenderTarget* drt = render_targets[i];
+      for (const Transfer& t : render_target_transfers[i]) {
+        bool drop = false;
+        if (drt && drt->key().is_depth && t.source) {
+          RenderTargetKey sk = static_cast<VulkanRenderTarget*>(t.source)->key();
+          if (sk.GetPitchTiles() != drt->key().GetPitchTiles() ||
+              sk.msaa_samples != drt->key().msaa_samples) {
+            drop = true;  // pitch-mismatch (downscale view) OR msaa-mismatch (1x<->2x
+                          // conversion) depth = a CONVERSION transfer, not identity
+          }
+        }
+        if (drop) {
+          any_dropped = true;
+        } else {
+          s_bd_ddrop_filtered[i].push_back(t);
+        }
+      }
+    }
+    if (any_dropped) {
+      render_target_transfers = s_bd_ddrop_filtered;
+    }
+  }
+
+  // BD-30 NATIVE-COPY fast-path (gpu_bd_native_copy_transfers): same-tile-layout
+  // color transfers are pure 1:1 region copies. Do them as a native image blit
+  // (no render-pass = NO TBDR tile-store = kills the ~51ms/transfer store that is
+  // the 110ms wall) instead of the per-pixel EDRAM-address emulation shader pass.
+  // Content is COPIED (preserved), not skipped -> keeps the image. Reinterpreting/
+  // MSAA/depth transfers stay on the shader path. Called between guest passes (no
+  // active render pass) so an image->image blit is valid. Gated, default off.
+  static std::vector<Transfer>
+      s_bd_copy_filtered[1 + xenos::kMaxColorRenderTargets];
+  if (cvars::gpu_bd_native_copy_transfers && render_target_transfers &&
+      guest_framebuffer) {
+    bool any_copied = false;
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      s_bd_copy_filtered[i].clear();
+      RenderTarget* dest_rt = render_targets[i];
+      if (!dest_rt) {
+        continue;
+      }
+      auto& dest_v = *static_cast<VulkanRenderTarget*>(dest_rt);
+      RenderTargetKey dk = dest_v.key();
+      for (const Transfer& t : render_target_transfers[i]) {
+        bool copyable = false;
+        // DEPTH now included (gpu_bd_native_copy_transfers): BD uses kHostRenderTargets
+        // so the depth HOST image IS the authoritative content — a same-tile-layout
+        // depth transfer is a pure 1:1 vkCmdCopyImage (NO per-pixel EDRAM-emulation
+        // SHADER pass = kills the ~97ms depth-transfer wall) that PRESERVES the depth
+        // (correct, no collapse). Depth uses CopyImage (can't blit-filter depth).
+        const bool is_depth_copy = dk.is_depth;
+        if (t.source && t.source != dest_rt &&
+            dk.msaa_samples == xenos::MsaaSamples::k1X) {
+          auto& src_v = *static_cast<VulkanRenderTarget*>(t.source);
+          RenderTargetKey sk = src_v.key();
+          copyable = sk.base_tiles == dk.base_tiles &&
+                     sk.GetPitchTiles() == dk.GetPitchTiles() &&
+                     sk.msaa_samples == dk.msaa_samples &&
+                     sk.Is64bpp() == dk.Is64bpp() &&
+                     sk.is_depth == dk.is_depth &&
+                     sk.resource_format == dk.resource_format;
+          if (copyable) {
+            const VkImageAspectFlags aspect =
+                is_depth_copy ? VK_IMAGE_ASPECT_DEPTH_BIT
+                              : VK_IMAGE_ASPECT_COLOR_BIT;
+            VkImageSubresourceRange range = {};
+            range.aspectMask = aspect;
+            range.levelCount = 1;
+            range.layerCount = 1;
+            command_processor_.PushImageMemoryBarrier(
+                src_v.image(), range, src_v.current_stage_mask(),
+                VK_PIPELINE_STAGE_TRANSFER_BIT, src_v.current_access_mask(),
+                VK_ACCESS_TRANSFER_READ_BIT, src_v.current_layout(),
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            src_v.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            command_processor_.PushImageMemoryBarrier(
+                dest_v.image(), range, dest_v.current_stage_mask(),
+                VK_PIPELINE_STAGE_TRANSFER_BIT, dest_v.current_access_mask(),
+                VK_ACCESS_TRANSFER_WRITE_BIT, dest_v.current_layout(),
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            dest_v.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            command_processor_.SubmitBarriers(true);
+            const int32_t cw = int32_t(guest_framebuffer->host_extent.width);
+            const int32_t ch = int32_t(guest_framebuffer->host_extent.height);
+            if (is_depth_copy) {
+              VkImageCopy creg = {};
+              creg.srcSubresource.aspectMask = aspect;
+              creg.srcSubresource.layerCount = 1;
+              creg.dstSubresource.aspectMask = aspect;
+              creg.dstSubresource.layerCount = 1;
+              creg.extent = {uint32_t(cw), uint32_t(ch), 1};
+              command_processor_.deferred_command_buffer().CmdVkCopyImage(
+                  src_v.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  dest_v.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+            } else {
+              VkImageBlit region = {};
+              region.srcSubresource.aspectMask = aspect;
+              region.srcSubresource.layerCount = 1;
+              region.srcOffsets[1] = {cw, ch, 1};
+              region.dstSubresource.aspectMask = aspect;
+              region.dstSubresource.layerCount = 1;
+              region.dstOffsets[1] = region.srcOffsets[1];
+              command_processor_.deferred_command_buffer().CmdVkBlitImage(
+                  src_v.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  dest_v.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
+                  VK_FILTER_NEAREST);
+            }
+            any_copied = true;
+          }
+        }
+        if (!copyable) {
+          s_bd_copy_filtered[i].push_back(t);
+        }
+      }
+    }
+    if (any_copied) {
+      render_target_transfers = s_bd_copy_filtered;
+    }
+  }
+
+  // ⭐ BD-30 NATIVE DEPTH CONVERSION (gpu_bd_native_depth_convert) — THE 30fps lever.
+  // Rigorously measured 2026-07-09: BD's field GPU frame = 42.7ms = 12.6ms in-pass +
+  // 30.1ms BETWEEN-pass, and the between-pass cost is the mixed-resolution DEPTH
+  // conversion transfers (BD depth-tests at full 720 AND downscaled ~400 views; the
+  // EDRAM emulation re-converts between them via tile-reinterpreting shader passes,
+  // ~23-40/frame). Fragment levers are all dead (they only touch the 12.6ms), and
+  // dropping the depth transfers collapses the field. This path REPLACES each pitch-
+  // mismatch depth-conversion transfer with a NATIVE vkCmdBlitImage depth downsample
+  // (src depth image -> dst depth image, scaled by the pitch ratio, NEAREST) so the
+  // EDRAM tile-reinterpreting cost is eliminated while the depth content is preserved.
+  // Same-MSAA / same-format only (the profile's MSAA clamp unifies samples, so the
+  // remaining conversions are pure pitch downscales). Falls back to the EDRAM transfer
+  // when depth blit is unsupported. ⚠️ THOR-GATED: desktop's immediate-mode cannot
+  // validate depth vs Turnip's TBDR — the blit extents (pitch-ratio) + NEAREST
+  // downsample correctness MUST be Thor-verified (a wrong extent collapses the field,
+  // as the EDRAM-drop did). Gated off, default off; needs gpu_bd_native_renderer.
+  static std::vector<Transfer>
+      s_bd_dconv_filtered[1 + xenos::kMaxColorRenderTargets];
+  // NOTE: independent of gpu_bd_native_renderer — this intercepts the EDRAM depth
+  // transfers directly, so it can be isolated on the correct baseline config.
+  if (cvars::gpu_bd_native_depth_convert && depth_blit_supported_ &&
+      render_target_transfers && render_target_transfers != kNoTransfers &&
+      guest_framebuffer) {
+    bool any_converted = false;
+    static std::atomic<uint32_t> s_bd_dconv_log{0};
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      s_bd_dconv_filtered[i].clear();
+      RenderTarget* dest_rt = render_targets[i];
+      if (!dest_rt) {
+        continue;
+      }
+      auto& dest_v = *static_cast<VulkanRenderTarget*>(dest_rt);
+      RenderTargetKey dk = dest_v.key();
+      for (const Transfer& t : render_target_transfers[i]) {
+        bool converted = false;
+        if (dk.is_depth && t.source && t.source != dest_rt) {
+          auto& src_v = *static_cast<VulkanRenderTarget*>(t.source);
+          RenderTargetKey sk = src_v.key();
+          // DIAGNOSTIC: log EVERY depth transfer this block sees, but ONLY in the
+          // FIELD (guest uptime > 135s) so the logs are RECENT (not boot logs that
+          // rotate out of the 64M logcat over a ~190s run — the rotation trap). The
+          // first run's capped-at-40 logs fired at boot + rotated => empty. This
+          // reveals whether the field even DOES pitch/msaa depth conversions (the
+          // assumed 30ms GAP) or whether the GAP is color transfers / resolves /
+          // barriers instead. vkCmdBlitImage needs single-sample, so msaa>1 or
+          // msaa-mismatch conversions need a shader resolve+downsample, not a blit.
+          if (xe::Clock::QueryGuestUptimeMillis() > 135000 &&
+              s_bd_dconv_log.fetch_add(1) < 40) {
+            XELOGI(
+                "BD DEPTH XFER SEEN: src(base={} pitchT={} msaa={} fmt={}) -> "
+                "dst(base={} pitchT={} msaa={} fmt={}) pitch_diff={} msaa_diff={}",
+                sk.base_tiles, sk.GetPitchTiles(), uint32_t(sk.msaa_samples),
+                uint32_t(sk.resource_format), dk.base_tiles, dk.GetPitchTiles(),
+                uint32_t(dk.msaa_samples), uint32_t(dk.resource_format),
+                sk.GetPitchTiles() != dk.GetPitchTiles(),
+                sk.msaa_samples != dk.msaa_samples);
+          }
+          // The tile-reinterpreting DEPTH DOWNSCALE conversion = same base/msaa/
+          // format, DIFFERENT pitch (720<->400). This is the measured ~30ms cost.
+          // BLIT path handles ONLY single-sample (vkCmdBlitImage requires samples=1);
+          // MSAA-involving conversions fall through to the EDRAM transfer until the
+          // shader resolve+downsample is built (Thor-iterated next).
+          if (sk.msaa_samples == dk.msaa_samples &&
+              sk.msaa_samples == xenos::MsaaSamples::k1X &&
+              sk.resource_format == dk.resource_format &&
+              sk.is_depth == dk.is_depth &&
+              sk.GetPitchTiles() != dk.GetPitchTiles() &&
+              sk.GetPitchTiles() != 0 && dk.GetPitchTiles() != 0) {
+            const int32_t dst_w = int32_t(guest_framebuffer->host_extent.width);
+            const int32_t dst_h = int32_t(guest_framebuffer->host_extent.height);
+            // Source width scales by the pitch ratio (dst pitch is the current pass
+            // extent). Height is unchanged in a pitch-only downscale. THOR-VERIFY.
+            const int32_t src_w = int32_t(int64_t(dst_w) * sk.GetPitchTiles() /
+                                          dk.GetPitchTiles());
+            const int32_t src_h = dst_h;
+            if (src_w > 0 && dst_w > 0 && dst_h > 0) {
+              const VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+              VkImageSubresourceRange range = {};
+              range.aspectMask = aspect;
+              range.levelCount = 1;
+              range.layerCount = 1;
+              command_processor_.PushImageMemoryBarrier(
+                  src_v.image(), range, src_v.current_stage_mask(),
+                  VK_PIPELINE_STAGE_TRANSFER_BIT, src_v.current_access_mask(),
+                  VK_ACCESS_TRANSFER_READ_BIT, src_v.current_layout(),
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+              src_v.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+              command_processor_.PushImageMemoryBarrier(
+                  dest_v.image(), range, dest_v.current_stage_mask(),
+                  VK_PIPELINE_STAGE_TRANSFER_BIT, dest_v.current_access_mask(),
+                  VK_ACCESS_TRANSFER_WRITE_BIT, dest_v.current_layout(),
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+              dest_v.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_ACCESS_TRANSFER_WRITE_BIT,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+              command_processor_.SubmitBarriers(true);
+              VkImageBlit region = {};
+              region.srcSubresource.aspectMask = aspect;
+              region.srcSubresource.layerCount = 1;
+              region.srcOffsets[1] = {src_w, src_h, 1};
+              region.dstSubresource.aspectMask = aspect;
+              region.dstSubresource.layerCount = 1;
+              region.dstOffsets[1] = {dst_w, dst_h, 1};
+              command_processor_.deferred_command_buffer().CmdVkBlitImage(
+                  src_v.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  dest_v.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
+                  VK_FILTER_NEAREST);
+              converted = true;
+              any_converted = true;
+              if (s_bd_dconv_log.fetch_add(1) < 20) {
+                XELOGI(
+                    "BD NATIVE DEPTH CONVERT: src(pitchT={} {}x{}) -> dst(pitchT={} "
+                    "{}x{}) native blit (was EDRAM transfer)",
+                    sk.GetPitchTiles(), src_w, src_h, dk.GetPitchTiles(), dst_w,
+                    dst_h);
+              }
+            }
+          }
+        }
+        if (!converted) {
+          s_bd_dconv_filtered[i].push_back(t);
+        }
+      }
+    }
+    if (any_converted) {
+      render_target_transfers = s_bd_dconv_filtered;
+    }
   }
 
   const ui::vulkan::VulkanDevice* const vulkan_device =

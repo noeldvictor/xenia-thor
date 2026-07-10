@@ -205,6 +205,24 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_object_cache");
             copyStringExtra(intent, launchArguments, "cpu_llvm_object_cache_path");
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_object_cache_skip_lowering");
+            // AOT object cache DEFAULT-ON (2026-07-08): the LLVM JIT compile is ~32%
+            // of BD CPU cold (device-profiled this session); the object cache +
+            // skip_lowering makes warm launches load the cached .o and skip the
+            // IR-build/O2/codegen entirely (device-validated: 11034 .o written cold,
+            // libLLVM 32%->~0% warm, BD renders correct). Point it at the app's
+            // private files dir; an explicit intent extra still overrides. Safe: the
+            // baked-host-pointer fns are nocache_, and the key = guest addr + a hash
+            // of the guest code bytes (title/version/SMC-safe); a miss just compiles.
+            if (!intent.hasExtra("cpu_llvm_object_cache")) {
+                final java.io.File objcache =
+                        new java.io.File(getFilesDir(), "objcache");
+                objcache.mkdirs();
+                launchArguments.putBoolean("cpu_llvm_object_cache", true);
+                launchArguments.putString(
+                        "cpu_llvm_object_cache_path", objcache.getAbsolutePath());
+                launchArguments.putBoolean(
+                        "cpu_llvm_object_cache_skip_lowering", true);
+            }
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");
             // NOTE: permit_float_constant_evaluation is deliberately NOT
@@ -235,6 +253,26 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_renderer");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_skip_resolves");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_skip_transfers");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_copy_transfers");
+            copyIntExtra(intent, launchArguments, "gpu_bd_native_rt_width");
+            copyIntExtra(intent, launchArguments, "gpu_bd_native_stretch_width");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_whole_frame");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_aux_rt");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_tex_bind");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_resolves");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_transfers");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_all_color_xfer");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_all_xfer");
+            copyDoubleExtra(intent, launchArguments, "gpu_bd_native_depth_clear");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_depth_downscale");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_convert");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_skip_foliage_shadows");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_diag_coverage");
+            copyIntExtra(intent, launchArguments, "gpu_bd_native_aux_max_width");
+            copyDoubleExtra(intent, launchArguments, "gpu_bd_native_viewport_scale_x");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_force_samples1");
+            copyBooleanExtra(intent, launchArguments, "vulkan_validation");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle_replace");
             copyIntExtra(intent, launchArguments, "gpu_bd_native_hle_decouple");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_hle_present_decoupled");
