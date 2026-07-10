@@ -10998,6 +10998,14 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                             current_draw_is_composite_consumer_
                                 ? kBdConsumerComposite
                                 : kBdConsumerPixelTexture);
+      } else if (cvars::gpu_bd_native_color_lifetime_hle > 0 &&
+                 bd_native_renderer_->FindSurface(texture_base_address)) {
+        // FAIL-CLOSED (5.6-terra review): a native surface EXISTS for this base but
+        // was NOT served to this fetch (fell back to the EDRAM upload) => a
+        // NON-NATIVE consumer. The drop gate MUST see this or it would drop a
+        // transfer whose content this fetch still needs. Recorded so the surface is
+        // marked not-drop-safe this frame.
+        BdNoteColorConsumer(texture_base_address, kBdConsumerNonNative);
       }
     }
   }
