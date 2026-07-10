@@ -3393,15 +3393,14 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   }
   // Producer constraints: transfer-format color attachments reinterpret the
   // image format (ownership-transfer passes) -> the native single-format image
-  // + copy would not match; bail to plain LLE. Also require depth (bit 0) + a
-  // single color RT (the field producer is one color + one depth).
+  // + copy would not match; bail to plain LLE. Require a SINGLE color RT; depth
+  // is OPTIONAL (the pure-LLE field producer has depth 473; the final COMPOSITE
+  // producer is color-only).
   if (render_pass_key.color_rts_use_transfer_formats) {
     return base;
   }
   uint32_t used = render_pass_key.depth_and_color_used;
-  if (!(used & (uint32_t(1) << 0))) {
-    return base;  // No depth attachment -> not the producer shape.
-  }
+  bool has_depth = (used & (uint32_t(1) << 0)) != 0;
   uint32_t color_mask = used & ~(uint32_t(1) << 0);
   uint32_t color_index;
   if (!xe::bit_scan_forward(color_mask, &color_index)) {
@@ -3419,8 +3418,10 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
     return base;
   }
 
-  const auto& depth_rt = *static_cast<const VulkanRenderTarget*>(
-      depth_and_color_render_targets[0]);
+  const VulkanRenderTarget* depth_rt =
+      has_depth ? static_cast<const VulkanRenderTarget*>(
+                      depth_and_color_render_targets[0])
+                : nullptr;
   const auto& color_rt = *static_cast<const VulkanRenderTarget*>(
       depth_and_color_render_targets[color_index]);
   VkFormat color_format = GetColorVulkanFormat(color_rt.key().GetColorFormat());
@@ -3501,18 +3502,21 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   }
 
   // Build the alternate framebuffer: same attachment ORDER as
-  // GetHostRenderTargetsFramebuffer (depth first at bit 0, then color), but the
-  // color attachment view is the native image's view.
+  // GetHostRenderTargetsFramebuffer (depth first at bit 0 if present, then the
+  // single color), but the color attachment view is the native image's view.
   VkRenderPass render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
   VkImageView attachments[2];
-  attachments[0] = depth_rt.view_depth_stencil();
-  attachments[1] = native_view;
+  uint32_t attachment_count = 0;
+  if (has_depth) {
+    attachments[attachment_count++] = depth_rt->view_depth_stencil();
+  }
+  attachments[attachment_count++] = native_view;
   VkFramebufferCreateInfo framebuffer_create_info;
   framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
   framebuffer_create_info.pNext = nullptr;
   framebuffer_create_info.flags = 0;
   framebuffer_create_info.renderPass = render_pass;
-  framebuffer_create_info.attachmentCount = 2;
+  framebuffer_create_info.attachmentCount = attachment_count;
   framebuffer_create_info.pAttachments = attachments;
   framebuffer_create_info.width = base->host_extent.width;
   framebuffer_create_info.height = base->host_extent.height;

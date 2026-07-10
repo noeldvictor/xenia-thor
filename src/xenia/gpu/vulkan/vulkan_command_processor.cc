@@ -4621,8 +4621,16 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // the plain LLE framebuffer.
   bd_color_mirror_active_ = false;
   bd_color_mirror_fb_ = nullptr;
+  // kGuest catches the pure-LLE field producer (471); kGuestComposite catches the
+  // final 1280-wide COMPOSITE producer in the gpu_bd_native_renderer config (where
+  // the field goes native + bypasses this hook). The RTC's width>=1024 gate on
+  // native-fb creation already restricts this to the main-scene/composite surface
+  // (bloom pyramid + shadow maps are excluded), so bd_native_color_framebuffer!=NULL
+  // means this IS that surface.
   if (cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
-      pass_kind == GpuPassKind::kGuest && framebuffer &&
+      (pass_kind == GpuPassKind::kGuest ||
+       pass_kind == GpuPassKind::kGuestComposite) &&
+      framebuffer &&
       framebuffer->bd_native_color_framebuffer != VK_NULL_HANDLE) {
     // No pass is open in the recorded stream here (the old pass, if any, was
     // ended above; the new one is not begun yet). current_render_pass_ was just
