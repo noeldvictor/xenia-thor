@@ -177,6 +177,23 @@ DEFINE_bool(
     "path. THOR-GATED: desktop cannot validate depth (immediate-mode differs from TBDR) — "
     "correctness must be Thor-verified. Default off; needs gpu_bd_native_renderer.",
     "GPU");
+DEFINE_int32(
+    gpu_bd_native_color_lifetime_hle, 0,
+    "BD REAL-HLE color-only native surface lifetime (Codex-designed 2026-07-10, "
+    "docs/research/20260710-color-only-native-hle-plan.txt) — THE 30fps path. The "
+    "wall (rigorously measured) = 35 standalone EDRAM COLOR ownership-transfer "
+    "passes' deferred TBDR tile-store (~25ms). This renders BD's wide/main/composite "
+    "COLOR surfaces into per-surface native color images (keyed by resolve-dest), "
+    "substituting ONLY the color attachment while keeping LLE DEPTH authoritative "
+    "(the prior full native-RT HLE black-band-collapsed on Turnip because it "
+    "disturbed depth; keeping LLE depth avoids that), redirects the consumers "
+    "(composite pixel-fetch + present), then drops the color transfers ONLY when all "
+    "consumers are proven native-redirected (ColorDropSafe). Staged levels (Codex "
+    "landing order): 1 = consumer-tracking instrumentation only (no redirects/drops, "
+    "logs BD COLOR CONSUMERS); 2 = +present redirect; 3 = +composite redirect; 4 = "
+    "+wide native color render (no drops); 5 = +drop color resolves; 6 = +drop color "
+    "transfers (the win); 7 = +MSAA. THOR-GATED, incremental. 0 = off.",
+    "GPU");
 DEFINE_double(
     gpu_bd_native_depth_clear, 0.0,
     "BD REAL-HLE native depth-buffer CLEAR value (default 0.0 = reverse-Z far). The "

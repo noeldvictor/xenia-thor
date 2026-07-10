@@ -830,6 +830,35 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t bd_redirect_total_ = 0;
   uint64_t bd_present_native_total_ = 0;
   uint64_t bd_swap_total_ = 0;
+  uint64_t bd_native_begins_total_ = 0;
+  // REAL-HLE aux: C2 render-redirects into native surfaces, and Brick-B texture
+  // fetches SERVED from a native surface (the consume side firing = the proof the
+  // field samples native content, so EDRAM transfers for it are dead).
+  uint64_t bd_native_aux_redirects_ = 0;
+  uint64_t bd_native_tex_served_ = 0;
+  // EDRAM resolves surgically dropped because a native surface serves the dest =
+  // the count of EDRAM->RAM copies DELETED by the real HLE (the payoff metric).
+  uint64_t bd_native_resolves_dropped_ = 0;
+
+  // COLOR-ONLY native HLE (gpu_bd_native_color_lifetime_hle, Codex 7-step plan):
+  // per-resolve-dest consumer tracking = the safe-drop gate substrate. Which
+  // consumer classes read each native-covered color surface THIS frame; a surface
+  // is drop-safe only when the prior stable frame saw NO non-native consumer.
+  enum BdColorConsumer : uint32_t {
+    kBdConsumerPixelTexture = 1u << 0,  // pixel-shader texture fetch (native-served)
+    kBdConsumerComposite = 1u << 1,     // composite-consumer draw (native-served)
+    kBdConsumerPresent = 1u << 2,       // frontbuffer present/gamma pass
+    kBdConsumerNonNative = 1u << 3,     // a reader that was NOT native-redirected
+  };
+  // dest_base -> OR of BdColorConsumer bits seen this frame.
+  std::unordered_map<uint32_t, uint32_t> bd_color_consumer_bits_;
+  // dest_base -> bits from the PRIOR completed frame (the stable snapshot the drop
+  // gate reads: a surface is ColorDropSafe only if its prior-frame bits had no
+  // kBdConsumerNonNative and included at least one native consumer).
+  std::unordered_map<uint32_t, uint32_t> bd_color_consumer_bits_prev_;
+  // Record that guest address `dest_base`'s native color surface had a consumer of
+  // `consumer` class this frame (no-op unless gpu_bd_native_color_lifetime_hle>0).
+  void BdNoteColorConsumer(uint32_t dest_base, uint32_t consumer);
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 
@@ -1691,6 +1720,18 @@ class VulkanCommandProcessor : public CommandProcessor {
   // PerformTransfersAndResolveClears ran with >=1 transfer; transfers = total
   // Transfer entries processed; resolve_clears = resolve-clear invocations.
  public:
+  // True once BD's field has been redirected into the native RT this frame. Used
+  // by the render target cache to surgically skip EDRAM ownership-transfers that
+  // run DURING/AFTER the field (we present the native RT, so field-surface EDRAM
+  // re-aliasing is redundant) while keeping pre-field shadow/texture transfers.
+  bool bd_native_field_rendered() const { return bd_native_field_rendered_; }
+  // REAL-HLE (EDRAM deletion): true when a live native surface holds rendered
+  // content for guest address `dest_base` (i.e. the field now SAMPLES that native
+  // image via Brick B, so the EDRAM resolve/transfer that used to carry it is
+  // dead weight and can be surgically dropped). Defined in the .cc (BdNativeRenderer
+  // is incomplete here). Returns false unless gpu_bd_native_aux_rt is active.
+  bool BdNativeSurfaceServes(uint32_t dest_base);
+  void AddBdNativeResolveDropped() { ++bd_native_resolves_dropped_; }
   void AddRenderTargetTransferStats(uint32_t transfer_count,
                                     bool resolve_clear) {
     if (transfer_count) {
@@ -1722,6 +1763,10 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t src_format;  // xenos Color/DepthRenderTargetFormat value, as uint
     uint8_t src_msaa;     // xenos::MsaaSamples
     bool src_is_depth;
+    // Packed RenderTargetKey of the source RT (base+pitch+format+msaa+depth) — the
+    // FULL identity. Needed because BD renders every RT at EDRAM base 0 (base alone
+    // aliases); this disambiguates, keying the native render-redirect unambiguously.
+    uint32_t src_rt_key = 0;
   };
   void AddResolveCopyStats(const ResolveEdge& edge) {
     ++rt_resolve_copies_;
@@ -1729,6 +1774,23 @@ class VulkanCommandProcessor : public CommandProcessor {
     if (frame_resolve_edges_.size() < 256 && edge.dest_length) {
       frame_resolve_edges_.push_back(edge);
     }
+    // REAL-HLE resolve graph (persistent across frames): record src RT identity ->
+    // dest guest address so the native render-redirect knows, BEFORE this frame's
+    // resolve, which native surface an EDRAM-bound draw should render into. BD's
+    // addresses are stable frame-to-frame, so the prior edge is authoritative.
+    // Keyed by the FULL packed RenderTargetKey (base+pitch+format+msaa) — NOT base
+    // alone, which aliases (BD renders every RT at EDRAM base 0).
+    if (edge.dest_length && edge.dest_base && edge.src_rt_key) {
+      persistent_resolve_edges_[edge.src_rt_key] = edge;
+    }
+  }
+  // The persistent (cross-frame) resolve edge for a src RT identity (packed
+  // RenderTargetKey), or nullptr if that RT has never been resolved. Used by the
+  // native render-redirect to map a bound EDRAM RT -> its resolve-dest guest
+  // address (= native surface key).
+  const ResolveEdge* PersistentResolveEdgeForSrc(uint32_t src_rt_key) const {
+    auto it = persistent_resolve_edges_.find(src_rt_key);
+    return it == persistent_resolve_edges_.end() ? nullptr : &it->second;
   }
   // The resolve edge whose dest range contains this texture-fetch base (the graph
   // edge: fetch <- source RT), or nullptr if the fetch is not RT-fed this frame.
@@ -1798,6 +1860,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // a resident render target this frame (the served subset of rt_fed_textures_).
   uint32_t rt_served_textures_ = 0;
   std::vector<ResolveEdge> frame_resolve_edges_;
+  // Persistent (never cleared per-frame) src EDRAM RT -> resolve-dest edge map for
+  // the native-HLE render-redirect (see AddResolveCopyStats / NativeSrcKey).
+  std::unordered_map<uint32_t, ResolveEdge> persistent_resolve_edges_;
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
   // render pass / framebuffer changed (RT reconfiguration).
