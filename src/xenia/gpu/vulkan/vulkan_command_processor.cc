@@ -3409,8 +3409,29 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // drop gate sees present coverage. Mutually exclusive in practice with the
   // monolithic native present above (that needs whole_frame / bd_native_field_
   // rendered_; this path is used without it).
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 2 && bd_native_renderer_ &&
-      swap_info.valid && swap_info.guest_base) {
+  // LEVEL 5 (generation bridge): present reads the native producer image aliased
+  // to this frontbuffer base for the CURRENT epoch. Fail-closed to LLE otherwise.
+  bool l5_present_served = false;
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && swap_info.valid &&
+      swap_info.guest_base) {
+    VkImageView l5_view = BdL5LookupAlias(swap_info.guest_base);
+    const char* l5_result = l5_view != VK_NULL_HANDLE ? "native" : "no_alias";
+    if (l5_view != VK_NULL_HANDLE) {
+      swap_texture_view = l5_view;
+      l5_present_served = true;
+      ++bd_present_native_total_;
+      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerPresent);
+    }
+    if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
+      static std::atomic<uint32_t> s_l5_present{0};
+      if (s_l5_present.fetch_add(1) < 40) {
+        XELOGI("L5 PRESENT base={:08X} epoch={} result={}", swap_info.guest_base,
+               bd_l5_frame_epoch_, l5_result);
+      }
+    }
+  }
+  if (!l5_present_served && cvars::gpu_bd_native_color_lifetime_hle >= 2 &&
+      bd_native_renderer_ && swap_info.valid && swap_info.guest_base) {
     NativeSurface* present_surface =
         bd_native_renderer_->FindSurface(swap_info.guest_base);
     VkImageView present_native_view =
@@ -3462,6 +3483,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     }
   }
   bd_native_field_rendered_ = false;  // reset for next frame
+  // LEVEL 5: advance the frame epoch AFTER present so this frame's producer ->
+  // resolve -> present all share one epoch; next frame's aliases must be
+  // republished (stale double-buffer entries fail the epoch check).
+  ++bd_l5_frame_epoch_;
   // REAL-HLE aux surfaces: reset per-frame render flags so each surface's first
   // draw next frame re-CLEARs it (BD re-primes its RTs every frame).
   if (cvars::gpu_bd_native_aux_rt && bd_native_renderer_) {
@@ -4984,6 +5009,19 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
   current_render_pass_ = VK_NULL_HANDLE;
   render_target_cache_->MirrorBdNativeColorProducer(fb);
   current_render_pass_ = saved_render_pass;
+  // LEVEL 5: record this finalized native producer as the latest generation, so
+  // the next fullscreen resolve can publish it as the alias for whichever
+  // frontbuffer base it writes. Mirror left the native image SHADER_READ-ready.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 &&
+      fb->bd_native_color_view != VK_NULL_HANDLE) {
+    bd_l5_last_producer_.view = fb->bd_native_color_view;
+    bd_l5_last_producer_.generation = ++bd_l5_generation_counter_;
+    bd_l5_last_producer_.frame_epoch = bd_l5_frame_epoch_;
+    bd_l5_last_producer_.width = fb->host_extent.width;
+    bd_l5_last_producer_.height = fb->host_extent.height;
+    bd_l5_last_producer_.src_rt_key =
+        fb->bd_native_color_lle_rt ? fb->bd_native_color_lle_rt->key().key : 0u;
+  }
 }
 
 void VulkanCommandProcessor::EndRenderPass() {
@@ -8477,6 +8515,45 @@ void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
   bd_color_consumer_bits_[dest_base] |= consumer;
 }
 
+void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base, uint32_t width,
+                                              uint32_t height) {
+  if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !dest_base) {
+    return;
+  }
+  // Only publish the latest native producer if it was finalized THIS epoch (its
+  // content is live) - aliases whichever frontbuffer base this resolve writes.
+  if (bd_l5_last_producer_.view == VK_NULL_HANDLE ||
+      bd_l5_last_producer_.frame_epoch != bd_l5_frame_epoch_) {
+    return;
+  }
+  BdL5Alias alias = bd_l5_last_producer_;
+  alias.width = width;
+  alias.height = height;
+  bd_l5_alias_by_dest_[dest_base] = alias;
+  static std::atomic<uint32_t> s_pub{0};
+  if (s_pub.fetch_add(1) < 40) {
+    XELOGI("L5 ALIAS dest={:08X} src={:08X} gen={} epoch={} {}x{}", dest_base,
+           alias.src_rt_key, alias.generation, alias.frame_epoch, width, height);
+  }
+}
+
+VkImageView VulkanCommandProcessor::BdL5LookupAlias(uint32_t guest_base) {
+  if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !guest_base) {
+    return VK_NULL_HANDLE;
+  }
+  auto it = bd_l5_alias_by_dest_.find(guest_base);
+  if (it == bd_l5_alias_by_dest_.end() ||
+      it->second.view == VK_NULL_HANDLE) {
+    return VK_NULL_HANDLE;
+  }
+  // Serve only aliases published in the CURRENT epoch (the double-buffered
+  // frontbuffer: last frame's other-base entry is stale).
+  if (it->second.frame_epoch != bd_l5_frame_epoch_) {
+    return VK_NULL_HANDLE;
+  }
+  return it->second.view;
+}
+
 bool VulkanCommandProcessor::IssueCopy() {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
@@ -8645,6 +8722,13 @@ bool VulkanCommandProcessor::IssueCopy() {
                trace_last_draw_ps_hash_, trace_last_draw_vs_hash_,
                copy_sequence);
       }
+    }
+    // LEVEL 5 (generation bridge): this fullscreen resolve writes a frontbuffer
+    // base (1CA1C000/1CDB4000) from the latest native producer (the composite).
+    // Publish the alias so present + samplers read the native image directly.
+    if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && dest_width >= 1280 &&
+        dest_height >= 720) {
+      BdL5PublishAlias(written_address, dest_width, dest_height);
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;
     constexpr uint32_t kMinDebugPresentHeight = 720;

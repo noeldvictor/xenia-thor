@@ -3461,7 +3461,11 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
   image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                            // LEVEL 5 (generation bridge): consumers (composite
+                            // sampler / present) bind this image directly, so it
+                            // must be sampleable.
+                            VK_IMAGE_USAGE_SAMPLED_BIT;
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -3646,12 +3650,27 @@ void VulkanRenderTargetCache::MirrorBdNativeColorProducer(
       fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
   command_processor_.SubmitBarriers(true);
-  // Record the native image's outstanding TRANSFER_READ so the NEXT seed barriers
-  // its write after this read = the WAR fix. Layout is TRANSFER_SRC (the next
-  // seed discards it via UNDEFINED oldLayout, but the stage/access order the hazard).
-  mfb.bd_native_color_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-  mfb.bd_native_color_access = VK_ACCESS_TRANSFER_READ_BIT;
-  mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5) {
+    // LEVEL 5 generation bridge: also make the native image sampleable so the
+    // composite sampler + present can read it directly (the CONSUME half). The
+    // mirror above still keeps the LLE surface correct (un-dropped fallback), so
+    // this stays correctness-neutral until transfers are actually dropped.
+    command_processor_.PushImageMemoryBarrier(
+        fb->bd_native_color_image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    command_processor_.SubmitBarriers(true);
+    mfb.bd_native_color_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    mfb.bd_native_color_access = VK_ACCESS_SHADER_READ_BIT;
+    mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  } else {
+    // Record the native image's outstanding TRANSFER_READ so the NEXT seed
+    // barriers its write after this read = the WAR fix.
+    mfb.bd_native_color_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    mfb.bd_native_color_access = VK_ACCESS_TRANSFER_READ_BIT;
+    mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  }
 }
 
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
