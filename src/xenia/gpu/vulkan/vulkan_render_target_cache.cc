@@ -3543,9 +3543,9 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   entry.bd_native_color_lle_image = color_rt.image();
   entry.bd_native_color_lle_rt =
       const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
-  XELOGGPU("BD L4: native color producer framebuffer created {}x{} fmt={}",
-           base->host_extent.width, base->host_extent.height,
-           uint32_t(color_rt.key().GetColorFormat()));
+  XELOGI("BD L4: native color producer framebuffer created {}x{} fmt={} depth={}",
+         base->host_extent.width, base->host_extent.height,
+         uint32_t(color_rt.key().GetColorFormat()), has_depth ? 1 : 0);
   return base;
 }
 
