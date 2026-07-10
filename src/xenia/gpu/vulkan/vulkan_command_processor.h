@@ -869,6 +869,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // pass-end finalizer (native->LLE mirror) — so exactly one mirror completes per
   // producer pass regardless of which CmdVkEndRenderPass site ends it.
   bool bd_color_mirror_active_ = false;
+  // The producer framebuffer to mirror (native->LLE) at pass end; set when the
+  // pass begins with the native color substituted.
+  const VulkanRenderTargetCache::Framebuffer* bd_color_mirror_fb_ = nullptr;
+  // Mirror the native producer color back to its LLE image after the pass ends,
+  // BEFORE any resolve/transfer reads it. Idempotent; no-op unless a mirror is
+  // active. Called after every CmdVkEndRenderPass site.
+  void FinalizeBdNativeColorMirrorAfterPass();
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 

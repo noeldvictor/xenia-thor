@@ -121,6 +121,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // The LLE color image this native producer mirrors to/from (for the seed +
     // mirror vkCmdCopyImage), captured at lazy-creation time.
     VkImage bd_native_color_lle_image = VK_NULL_HANDLE;
+    // The LLE color RenderTarget (for SetUsage layout tracking during the
+    // seed/mirror). Non-owning; cleared with the framebuffer cache.
+    RenderTarget* bd_native_color_lle_rt = nullptr;
     Framebuffer() = default;
     Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
         : framebuffer(framebuffer), host_extent(host_extent) {}
@@ -281,6 +284,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   const Framebuffer* GetFragmentShaderInterlockFramebuffer() const {
     return &fsi_framebuffer_;
   }
+
+  // LEVEL 4 color-only native HLE (called by the command processor around the
+  // producer render pass). Seed copies the LLE color image -> the private native
+  // color image before the pass (so loadOp=LOAD sees correct content), leaving
+  // native in COLOR_ATTACHMENT_OPTIMAL; returns false (no-op) unless fb carries a
+  // native producer. Mirror copies native -> LLE color after the pass so all
+  // downstream resolves/transfers stay correct. BOTH must be called OUTSIDE any
+  // render pass.
+  bool SeedBdNativeColorProducer(const Framebuffer* fb);
+  void MirrorBdNativeColorProducer(const Framebuffer* fb);
 
   VkFormat GetDepthVulkanFormat(xenos::DepthRenderTargetFormat format) const;
   VkFormat GetColorVulkanFormat(xenos::ColorRenderTargetFormat format) const;

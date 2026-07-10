@@ -4604,9 +4604,38 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // gpu_trace_resolve_timing: identify the small-draw oversized-RT pass that
     // just ended (current_pass_kind_ / current_framebuffer_ still the old pass).
     MaybeLogSmallGuestPass();
+    // LEVEL 4: this direct end bypasses EndRenderPass() - mirror the just-ended
+    // producer's native color -> LLE here too (before the next pass, which may
+    // resolve/transfer it). Finalize saves/nulls/restores current_render_pass_
+    // internally, so the still-old tracker value is safe.
+    FinalizeBdNativeColorMirrorAfterPass();
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
+  // LEVEL 4 color-only native HLE (gpu_bd_native_color_lifetime_hle >= 4): if
+  // this guest pass's framebuffer carries a private native color producer, SEED
+  // it (LLE color -> native) now - BEFORE BeginRenderPass is recorded, while no
+  // pass is open - substitute the color attachment to the native image, and arm
+  // the pass-end mirror. Correctness-neutral round-trip (seeds in, mirrors out;
+  // drops nothing). kGuest only (the field producer); composites/transfers keep
+  // the plain LLE framebuffer.
+  bd_color_mirror_active_ = false;
+  bd_color_mirror_fb_ = nullptr;
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
+      pass_kind == GpuPassKind::kGuest && framebuffer &&
+      framebuffer->bd_native_color_framebuffer != VK_NULL_HANDLE) {
+    // No pass is open in the recorded stream here (the old pass, if any, was
+    // ended above; the new one is not begun yet). current_render_pass_ was just
+    // re-pointed to the NEW pass for tracking, but the seed's SubmitBarriers
+    // would misread that as an open pass and emit a spurious CmdVkEndRenderPass -
+    // so null the tracker across the seed, then restore it.
+    current_render_pass_ = VK_NULL_HANDLE;
+    if (render_target_cache_->SeedBdNativeColorProducer(framebuffer)) {
+      bd_color_mirror_active_ = true;
+      bd_color_mirror_fb_ = framebuffer;
+    }
+    current_render_pass_ = render_pass;
+  }
   // Safe DONT_CARE: if the draw opening this pass provably overwrites the
   // whole render area for some attachments, begin with a load-DONT_CARE
   // variant (compatible - load/store ops don't affect render pass
@@ -4654,7 +4683,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   render_pass_begin_info.pNext = nullptr;
   render_pass_begin_info.renderPass = begin_render_pass;
-  render_pass_begin_info.framebuffer = framebuffer->framebuffer;
+  // LEVEL 4: render into the native color image (LLE depth kept) when armed.
+  render_pass_begin_info.framebuffer =
+      bd_color_mirror_active_ ? framebuffer->bd_native_color_framebuffer
+                              : framebuffer->framebuffer;
   render_pass_begin_info.renderArea.offset.x = 0;
   render_pass_begin_info.renderArea.offset.y = 0;
   // TODO(Triang3l): Actual dirty width / height in the deferred command
@@ -4923,6 +4955,29 @@ void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
   draw_outcomes_retro_color_atts_ += xe::bit_count(load_dont_care_mask);
 }
 
+void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
+  if (!bd_color_mirror_active_) {
+    return;
+  }
+  // Clear the arm FIRST: MirrorBdNativeColorProducer -> SubmitBarriers ->
+  // EndRenderPass re-enters this function; the false arm makes it a no-op (no
+  // recursion, exactly one mirror per producer pass).
+  bd_color_mirror_active_ = false;
+  const VulkanRenderTargetCache::Framebuffer* fb = bd_color_mirror_fb_;
+  bd_color_mirror_fb_ = nullptr;
+  if (!fb) {
+    return;
+  }
+  // The producer pass is already ended in the recorded stream. The mirror's
+  // barriers + vkCmdCopyImage must not be seen as inside a pass, so temporarily
+  // clear the tracker (the internal SubmitBarriers would otherwise emit a
+  // spurious CmdVkEndRenderPass), then restore it for the caller.
+  VkRenderPass saved_render_pass = current_render_pass_;
+  current_render_pass_ = VK_NULL_HANDLE;
+  render_target_cache_->MirrorBdNativeColorProducer(fb);
+  current_render_pass_ = saved_render_pass;
+}
+
 void VulkanCommandProcessor::EndRenderPass() {
   assert_true(submission_open_);
   if (current_render_pass_ == VK_NULL_HANDLE) {
@@ -4958,6 +5013,10 @@ void VulkanCommandProcessor::EndRenderPass() {
   // pass that just ended; clear it so a stale value can't be observed before the
   // next begin (which re-derives it).
   current_pass_depth_store_none_ = false;
+  // LEVEL 4: with the pass ended (current_render_pass_ now null), mirror the
+  // native producer color back to its LLE image so any resolve/transfer that
+  // reads the LLE color next sees the native render result.
+  FinalizeBdNativeColorMirrorAfterPass();
 }
 
 void VulkanCommandProcessor::RecordPassTimestamp(bool is_begin,

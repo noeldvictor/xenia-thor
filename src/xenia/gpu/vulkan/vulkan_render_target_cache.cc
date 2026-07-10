@@ -1975,9 +1975,19 @@ bool VulkanRenderTargetCache::Update(
           }
         }
         if (!framebuffer) {
-          framebuffer = GetHostRenderTargetsFramebuffer(
-              render_pass_key, pitch_tiles_at_32bpp,
-              depth_and_color_render_targets);
+          // LEVEL 4 color-only native HLE: augment the producer framebuffer with
+          // a private native color image + alternate framebuffer (idempotent,
+          // cached on the entry). Returns the plain base framebuffer for non-
+          // producer shapes, so the command processor transparently falls back.
+          if (cvars::gpu_bd_native_color_lifetime_hle >= 4) {
+            framebuffer = GetBdNativeColorProducerFramebuffer(
+                render_pass_key, pitch_tiles_at_32bpp,
+                depth_and_color_render_targets);
+          } else {
+            framebuffer = GetHostRenderTargetsFramebuffer(
+                render_pass_key, pitch_tiles_at_32bpp,
+                depth_and_color_render_targets);
+          }
           if (!framebuffer) {
             return false;
           }
@@ -3401,6 +3411,14 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
     return base;  // More than one color RT -> not the producer shape.
   }
 
+  // Scope to the MAIN-SCENE color surface (the ~1280-wide field/composite). The
+  // bloom pyramid (320/160/80) + shadow maps are small single-color RTs too, but
+  // they are not the frontbuffer producer - skip them to avoid needless native
+  // images + round-trip copies. host_extent already includes draw_resolution_scale.
+  if (base->host_extent.width < 1024u) {
+    return base;
+  }
+
   const auto& depth_rt = *static_cast<const VulkanRenderTarget*>(
       depth_and_color_render_targets[0]);
   const auto& color_rt = *static_cast<const VulkanRenderTarget*>(
@@ -3519,10 +3537,122 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   entry.bd_native_color_view = native_view;
   entry.bd_native_color_framebuffer = native_framebuffer;
   entry.bd_native_color_lle_image = color_rt.image();
+  entry.bd_native_color_lle_rt =
+      const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
   XELOGGPU("BD L4: native color producer framebuffer created {}x{} fmt={}",
            base->host_extent.width, base->host_extent.height,
            uint32_t(color_rt.key().GetColorFormat()));
   return base;
+}
+
+bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
+  if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
+      !fb->bd_native_color_lle_rt) {
+    return false;
+  }
+  VulkanRenderTarget& lle_rt =
+      *static_cast<VulkanRenderTarget*>(fb->bd_native_color_lle_rt);
+  VkImageSubresourceRange range = {};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  // LLE color -> TRANSFER_SRC (tracked via SetUsage so downstream sees it).
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, lle_rt.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
+      VK_ACCESS_TRANSFER_READ_BIT, lle_rt.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  // Native color: UNDEFINED (contents discarded - fully overwritten by the copy)
+  // -> TRANSFER_DST.
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_color_image, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  VkImageCopy creg = {};
+  creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.srcSubresource.layerCount = 1;
+  creg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.dstSubresource.layerCount = 1;
+  creg.extent = {fb->host_extent.width, fb->host_extent.height, 1};
+  command_processor_.deferred_command_buffer().CmdVkCopyImage(
+      lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+  // Native -> COLOR_ATTACHMENT_OPTIMAL (the render pass's initial layout);
+  // LLE color -> COLOR_ATTACHMENT_OPTIMAL (neutral for the mirror to transition
+  // from a well-defined layout; it is not the pass attachment).
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_color_image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  return true;
+}
+
+void VulkanRenderTargetCache::MirrorBdNativeColorProducer(
+    const Framebuffer* fb) {
+  if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
+      !fb->bd_native_color_lle_rt) {
+    return;
+  }
+  VulkanRenderTarget& lle_rt =
+      *static_cast<VulkanRenderTarget*>(fb->bd_native_color_lle_rt);
+  VkImageSubresourceRange range = {};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  // Native (ends the pass in COLOR_ATTACHMENT_OPTIMAL) -> TRANSFER_SRC.
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_color_image, range,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  // LLE color -> TRANSFER_DST.
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, lle_rt.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
+      VK_ACCESS_TRANSFER_WRITE_BIT, lle_rt.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  VkImageCopy creg = {};
+  creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.srcSubresource.layerCount = 1;
+  creg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.dstSubresource.layerCount = 1;
+  creg.extent = {fb->host_extent.width, fb->host_extent.height, 1};
+  command_processor_.deferred_command_buffer().CmdVkCopyImage(
+      fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+  // LLE color -> COLOR_ATTACHMENT_OPTIMAL so downstream resolves/transfers
+  // barrier from the layout the RT cache expects.
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
 }
 
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
