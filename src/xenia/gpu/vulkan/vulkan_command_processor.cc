@@ -8546,6 +8546,26 @@ bool VulkanCommandProcessor::IssueCopy() {
       dest_width = dest_pitch;
     }
     dest_height = uint32_t(rb_copy_dest_pitch.copy_dest_height);
+    // Color-only native HLE LEVEL 3 (gpu_bd_native_color_lifetime_hle >= 3,
+    // observe-only, no substitution): log every FULLSCREEN resolve's dest base +
+    // producer PS hash + copy_sequence, so we confirm on the CURRENT build which
+    // resolve/producer writes the double-buffered frontbuffers (1CA1C000 /
+    // 1CDB4000) and that a CONSISTENT producer PS hash alternates A/B — the
+    // premise of the generation/alias model (5.6-sol) before any native producer
+    // substitution (Level 4). Field-gated (survives logcat rotation), fullscreen
+    // only. THIS IS INSTRUMENTATION — it changes nothing.
+    if (cvars::gpu_bd_native_color_lifetime_hle >= 3 &&
+        dest_width >= 1280 && dest_height >= 720 &&
+        xe::Clock::QueryGuestUptimeMillis() > 135000) {
+      static std::atomic<uint32_t> s_bd_prod_log{0};
+      if (s_bd_prod_log.fetch_add(1) < 60) {
+        XELOGI("BD PRODUCER RESOLVE: dest={:08X} {}x{} fmt={} ps_hash={:016X} "
+               "vs_hash={:016X} copy_seq={}",
+               written_address, dest_width, dest_height, uint32_t(dest_format),
+               trace_last_draw_ps_hash_, trace_last_draw_vs_hash_,
+               copy_sequence);
+      }
+    }
     constexpr uint32_t kMinDebugPresentWidth = 1280;
     constexpr uint32_t kMinDebugPresentHeight = 720;
     constexpr uint32_t kMinDebugPresentBytes =
