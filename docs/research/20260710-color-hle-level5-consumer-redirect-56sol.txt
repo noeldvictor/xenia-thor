@@ -1,0 +1,150 @@
+| C: generation bridge | Recommended | Reuses L4 rendering and LLE depth, while adopting aux’s resource-keyed consumer lookup without aux’s framebuffer/depth implementation. |
+
+L4 already constructs the right producer framebuffer: same render pass, same LLE depth view, native color substituted at attachment 0 ([vulkan_render_target_cache.cc:3504](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3504>)). Aux instead allocates private depth ([bd_native_renderer.cc:388](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/bd_native_renderer.cc:388>)) and uses clear/load passes of its own ([bd_native_renderer.cc:417](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/bd_native_renderer.cc:417>)). Raising `aux_max_width` therefore reopens the depth-collapse risk.
+
+The L5 flow should be:
+
+`L4 native write(src_rt_key, generation N) → pass-end READY → current IssueCopy publishes dest A/B → sampler/present binds N → exact LLE operation may drop`
+
+Concrete changes:
+
+1. Add `VK_IMAGE_USAGE_SAMPLED_BIT` to the L4 color image; it currently has only attachment and transfer usage ([vulkan_render_target_cache.cc:3462](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3462>)).
+
+2. Store the full source `RenderTargetKey` on the L4 framebuffer/generation.
+
+3. At the existing pass-end finalizer, replace the no-mirror path with a color-attachment→shader-read barrier, then mark the generation ready. That finalizer already runs after all pass-end paths ([vulkan_command_processor.cc:4966](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:4966>)).
+
+4. During the actual `Resolve`, publish:
+
+   `dest_alias[actual copy_dest] = {src_rt_key, generation, view, descriptor, copy_sequence, frame_epoch}`
+
+   Do this before deciding whether to execute the LLE resolve. Currently the resolve edge is created only inside the non-dropped branch ([vulkan_render_target_cache.cc:1556](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:1556>), [vulkan_render_target_cache.cc:1573](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:1573>)).
+
+5. Have `LookupSampledSurface` query this alias registry before the old owning aux-surface map. Keep L4 image ownership in RTC for the first slice; the alias entry must be non-owning and explicitly invalidated when the framebuffer is destroyed.
+
+Do not stop the LLE seed merely because consumers redirect. The seed itself consumes the transferred LLE contents. To eliminate that transfer, the native generation must either preserve the logical resource’s prior content or the producer must be proven to overwrite the whole affected range before any read.
+
+Also require an identity-compatible resolve for the first slice: 1x, matching format, extent, swizzle/endian interpretation. L4 matches the source sample count ([vulkan_render_target_cache.cc:3437](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3437>)); an MSAA producer cannot simply be bound as the single-sample resolved texture.
+
+## 2. What consumer is actually missing?
+
+From the current seams, neither the ordinary composite sampler nor final present is inherently missing:
+
+- Ordinary pixel fetches are overridden at [vulkan_command_processor.cc:11140](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:11140>).
+- `RequestSwapTexture` runs first, but `IssueSwap` subsequently replaces its returned view at [vulkan_command_processor.cc:3412](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3412>). So candidate (b) is not a visual bypass. It does still perform a discarded LLE texture load and should eventually be split into “inspect fetch 0” and “load fallback texture.”
+
+My ranking:
+
+| Candidate | Assessment |
+|---|---|
+| (a) fetch base differs from resolve-dest key | Most likely ordinary-path miss. Lookup is exact-address only ([bd_native_renderer.cc:282](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/bd_native_renderer.cc:282>)); canonicalize through the resolve destination range. |
+| (b) `RequestSwapTexture` bypass | No for the final bound view, though it performs wasted LLE upload work before replacement. |
+| (c) bloom samples main scene | Possible actual draw, but still the same pixel-sampler path. It fails only through key/generation/format mismatch or a gated path. |
+
+There are known unredirected paths outside those choices:
+
+- `feedback_merge_active_` and `native_render_path_active_` skip the native lookup entirely ([vulkan_command_processor.cc:11140](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:11140>)).
+- Feedback merge then explicitly binds `feedback_merge_producer_view_`, not the lookup override ([vulkan_command_processor.cc:11217](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:11217>)).
+- Vertex texture fetches are never overridden ([vulkan_command_processor.cc:11208](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:11208>)).
+- The native lookup retrieves `texture_host_format_unsigned` but does not compare it to the surface format.
+
+For the first L5 run, disable feedback merge, hybrid FSI, and the native bindless path.
+
+Add one diagnostic line before all those gates:
+
+```text
+L5 READ draw_seq ps fetch raw_base canonical_dest alias_gen ready_gen
+        kind={pixel|composite|present} result={native|no_alias|range_miss|
+        stale|format|feedback|native_path|vertex}
+```
+
+Interpretation:
+
+- `raw_base != canonical_dest` but inside the resolve range: confirms (a).
+- No lookup log, but RenderDoc shows the texture sampled: a bypass path.
+- Lookup reports `native`, but consumer descriptor resource ID is the TextureCache image: descriptor-cache/write inconsistency.
+- Producer output image ID equals the consumer’s sampled image ID: consumer is closed.
+- For present, the gamma/fullscreen draw must sample the published native image ID; merely seeing an earlier LLE upload is irrelevant.
+
+The old exclusion comment should therefore be treated as historical, not proof of a currently missing standard consumer.
+
+## 3. A/B and generations
+
+Use two identities:
+
+- Storage identity: `{full src_rt_key, generation/slot}`.
+- Guest alias identity: `{dest base/range, format, pitch, extent, endian/swizzle}`.
+
+Do not key the storage itself by `1CA1C000` or `1CDB4000`. At the current resolve, alias whichever base is actually written to the completed producer generation.
+
+The existing persistent map cannot do this: it overwrites one edge per source RT and is queried before the current resolve ([vulkan_command_processor.h:1794](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.h:1794>), [vulkan_command_processor.cc:4420](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:4420>)).
+
+Minimum state:
+
+```text
+generation_id
+src_rt_key
+write_scheduled_sequence
+sample_ready_sequence
+publish_copy_sequence
+publish_frame_epoch
+content_extent
+format / samples / swizzle
+layout
+last_use_submission
+```
+
+Checks:
+
+- Sampler redirect: alias exists; referenced generation is still resident and ready; publish precedes this draw; full descriptor is compatible.
+- Present redirect: same checks, plus alias guest base exactly equals the current swap base and was published in the current BD frame epoch.
+- Starting another write into the same image invalidates older aliases unless a new slot is acquired.
+- `rendered_this_frame` remains only a clear/load policy. It must not be content validity; it is reset after present and is set before useful pixels are independently proven ([vulkan_command_processor.cc:3465](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3465>)).
+
+Also, the current “safe” gate is not actually wired to consumer proof. The header describes prior-frame consumer bits, but `BdNativeSurfaceServes` only checks aux enabled plus a non-null layout-valid view ([vulkan_command_processor.h:843](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.h:843>), [vulkan_command_processor.cc:8467](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:8467>)). Do not enable current drops immediately after bridging.
+
+Split the predicate into:
+
+- `CanSkipOwnershipImport(dest_rt, current producer)` — native already has prior content, or the pass is proven load-dead.
+- `CanSkipResolve(resolve_info, published generation)` — current destination alias is ready and consumers are covered.
+
+## 4. Minimal one-drop sequence
+
+Convert the final 1280 composite first, not field/471. It is the graph leaf: one expected external consumer, present. Field/471 fans out into bloom/composite reads and has partial accumulation, making it a worse first proof.
+
+1. Target the producer whose following current resolve destination is exactly `1CA1C000` or `1CDB4000`. Do not use only the `9567…` PS hash—the current boolean matches every draw with that hash ([vulkan_command_processor.cc:5950](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:5950>)).
+
+2. With all drops off, log the A/B resolve’s exact `src_rt_key`, sample count, source/destination format, extent and transfer vector. Reject this first slice unless it is an identity-compatible 1x resolve.
+
+3. Publish the generation while retaining seed+mirror initially. Require:
+
+   ```text
+   L5 READY src=S gen=N
+   L5 ALIAS dest=A-or-B src=S gen=N
+   L5 PRESENT base=A-or-B alias_gen=N ready_gen=N result=native
+   ```
+
+   Capture both alternating bases and baseline-correct screenshots.
+
+4. Stop mirroring for only this producer and transition it directly to shader-read. Keep all resolves/transfers temporarily. Confirm both A and B still present correctly.
+
+5. Prove the initial ownership import is dead: disable the LLE→native seed only for this composite. RenderDoc must show the union of its draws fully overwrites the output, with compatible write masks/blending. If the no-seed screenshot fails, do not drop its transfer; implement persistent native LOAD semantics first.
+
+6. Confirm consumer closure:
+
+   - Per-generation mask is exactly `Present`.
+   - No pixel, vertex, copy or non-native consumer of A/B.
+   - RenderDoc producer image ID equals the gamma/present sampled image ID.
+   - Capture with feedback merge/hybrid/native-bindless disabled.
+
+7. Drop exactly one `Transfer`, matched by destination RT key, source RT key and tile range. The current code clears the entire destination vector once “served” ([vulkan_render_target_cache.cc:6165](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:6165>), [vulkan_render_target_cache.cc:6195](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:6195>)); change this experiment to filter individual `Transfer` entries, which already expose source and tile range ([render_target_cache.h:353](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/render_target_cache.h:353>)). Keep all drop-all knobs off.
+
+8. Device success criteria:
+
+   - `candidate=1 dropped=1`, not a destination-wide clear.
+   - Correct screenshots through both A/B phases.
+   - No generation mismatch or non-native read.
+   - One fewer ownership-transfer pass in timestamps.
+   - Same route/config/thermal state, then compare the captured `fence_us` summaries.
+
+After that one leaf works, walk upstream to field/471 and the bloom chain using the same generation aliases. That is where the larger aggregate deletion comes from, but the composite-first slice validates the registry, A/B publication, present redirect, and exact transfer filter with the smallest consumer set.
