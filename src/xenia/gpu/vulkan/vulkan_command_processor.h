@@ -891,14 +891,17 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t height = 0;
     uint32_t src_rt_key = 0;
   };
-  // Most recent native producer finalized this frame (set at pass end).
-  BdL5Alias bd_l5_last_producer_;
+  // Native producers keyed by their SOURCE RT key (D3D9 resource identity), set
+  // at pass finalize. The fullscreen resolve matches its own source RT key here
+  // (5.6-sol: never "last producer" - that aliases the wrong 1280 buffer -> black).
+  std::unordered_map<uint32_t, BdL5Alias> bd_l5_producer_by_srckey_;
   // guest dest base -> published native alias (set at the fullscreen resolve).
   std::unordered_map<uint32_t, BdL5Alias> bd_l5_alias_by_dest_;
   uint64_t bd_l5_generation_counter_ = 0;
   uint32_t bd_l5_frame_epoch_ = 0;
-  // Publish bd_l5_last_producer_ under `dest_base` at a fullscreen resolve.
-  void BdL5PublishAlias(uint32_t dest_base, uint32_t width, uint32_t height);
+  // Publish the producer matching `src_rt_key` under `dest_base` at a resolve.
+  void BdL5PublishAlias(uint32_t dest_base, uint32_t src_rt_key, uint32_t width,
+                        uint32_t height);
   // Return the native view aliased to `guest_base` for the current epoch, or null.
   VkImageView BdL5LookupAlias(uint32_t guest_base);
 

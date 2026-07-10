@@ -5013,14 +5013,17 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
   // the next fullscreen resolve can publish it as the alias for whichever
   // frontbuffer base it writes. Mirror left the native image SHADER_READ-ready.
   if (cvars::gpu_bd_native_color_lifetime_hle >= 5 &&
-      fb->bd_native_color_view != VK_NULL_HANDLE) {
-    bd_l5_last_producer_.view = fb->bd_native_color_view;
-    bd_l5_last_producer_.generation = ++bd_l5_generation_counter_;
-    bd_l5_last_producer_.frame_epoch = bd_l5_frame_epoch_;
-    bd_l5_last_producer_.width = fb->host_extent.width;
-    bd_l5_last_producer_.height = fb->host_extent.height;
-    bd_l5_last_producer_.src_rt_key =
-        fb->bd_native_color_lle_rt ? fb->bd_native_color_lle_rt->key().key : 0u;
+      fb->bd_native_color_view != VK_NULL_HANDLE &&
+      fb->bd_native_color_lle_rt) {
+    uint32_t src_rt_key = fb->bd_native_color_lle_rt->key().key;
+    BdL5Alias entry;
+    entry.view = fb->bd_native_color_view;
+    entry.generation = ++bd_l5_generation_counter_;
+    entry.frame_epoch = bd_l5_frame_epoch_;
+    entry.width = fb->host_extent.width;
+    entry.height = fb->host_extent.height;
+    entry.src_rt_key = src_rt_key;
+    bd_l5_producer_by_srckey_[src_rt_key] = entry;
   }
 }
 
@@ -8515,18 +8518,22 @@ void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
   bd_color_consumer_bits_[dest_base] |= consumer;
 }
 
-void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base, uint32_t width,
+void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
+                                              uint32_t src_rt_key, uint32_t width,
                                               uint32_t height) {
-  if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !dest_base) {
+  if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !dest_base || !src_rt_key) {
     return;
   }
-  // Only publish the latest native producer if it was finalized THIS epoch (its
-  // content is live) - aliases whichever frontbuffer base this resolve writes.
-  if (bd_l5_last_producer_.view == VK_NULL_HANDLE ||
-      bd_l5_last_producer_.frame_epoch != bd_l5_frame_epoch_) {
+  // Match the producer whose SOURCE RT key equals this resolve's source (the
+  // native image that actually holds this dest's content). Only if finalized
+  // THIS epoch (content live).
+  auto it = bd_l5_producer_by_srckey_.find(src_rt_key);
+  if (it == bd_l5_producer_by_srckey_.end() ||
+      it->second.view == VK_NULL_HANDLE ||
+      it->second.frame_epoch != bd_l5_frame_epoch_) {
     return;
   }
-  BdL5Alias alias = bd_l5_last_producer_;
+  BdL5Alias alias = it->second;
   alias.width = width;
   alias.height = height;
   bd_l5_alias_by_dest_[dest_base] = alias;
@@ -8724,11 +8731,18 @@ bool VulkanCommandProcessor::IssueCopy() {
       }
     }
     // LEVEL 5 (generation bridge): this fullscreen resolve writes a frontbuffer
-    // base (1CA1C000/1CDB4000) from the latest native producer (the composite).
-    // Publish the alias so present + samplers read the native image directly.
+    // base from a color RT selected by copy_src_select. Publish the native
+    // producer whose SOURCE RT key matches that color RT, so present reads the
+    // right native image (NOT the loose "last producer" - that aliased 1DC14000).
     if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && dest_width >= 1280 &&
         dest_height >= 720) {
-      BdL5PublishAlias(written_address, dest_width, dest_height);
+      uint32_t l5_copy_src =
+          uint32_t(regs.Get<reg::RB_COPY_CONTROL>().copy_src_select);
+      if (l5_copy_src < xenos::kMaxColorRenderTargets) {
+        uint32_t l5_src_rt_key =
+            render_target_cache_->GetLastUpdateColorRenderTargetKey(l5_copy_src);
+        BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height);
+      }
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;
     constexpr uint32_t kMinDebugPresentHeight = 720;
