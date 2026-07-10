@@ -501,14 +501,16 @@ Hash" in logcat). Applied in `KernelState::LoadUserModule` before execution. Ski
   `master`. **Forward-only** (never `git revert`; fix forward). End commits:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - Skills in `.agents/skills/`; knowledge in memory files (`MEMORY.md` index).
-- **CONSULT CODEX 5.6-TERRA (MAX) FOR HARD REARCH** — for any hard architecture/rearch/root-cause problem, get a
-  second opinion from **`gpt-5.6-terra` at reasoning effort `max`** via the Codex CLI (the OpenAI/ChatGPT tool;
-  now the configured default in `~/.codex/config.toml`). Run READ-ONLY: `codex exec -m gpt-5.6-terra -c
-  model_reasoning_effort=max --sandbox read-only -` (pipe the prompt via stdin; give it the measured diagnosis +
-  the exact file:line context and ask it to cite code). It PAID OFF 2026-07-10 (caught a wrong build — the
-  float-in-pass variant — before it was written, via `skip_fmt=0`; then designed the color-only native HLE plan).
-  ⚠️ ONLY `gpt-5.6-terra` works on the ChatGPT-account login; the `-max`/`-high`/plain-`gpt-5.6` names are rejected
-  ("not supported when using Codex with a ChatGPT account"). `gemini` CLI is the fallback second opinion.
+- **CONSULT CODEX gpt-5.6-sol (MAX) FOR HARD REARCH** — for any hard architecture/rearch/root-cause problem, get a
+  second opinion from **`gpt-5.6-sol` at reasoning effort `max`** via the Codex CLI (the OpenAI/ChatGPT tool; the
+  configured default in `~/.codex/config.toml` = `model = "gpt-5.6-sol"`, `model_reasoning_effort = "max"`). Run
+  READ-ONLY: `codex exec -c model_reasoning_effort=max --sandbox read-only -` (uses the default sol; or `-m
+  gpt-5.6-sol`). Pipe the prompt via stdin; give it the measured diagnosis + exact file:line context and ask it to
+  cite code. It PAID OFF 2026-07-10 (caught a wrong build — the float-in-pass variant — before it was written, via
+  `skip_fmt=0`; designed the color-only native HLE plan; hardened the drop gate to fail-closed).
+  ⚠️ Only the PLAIN model names work on the ChatGPT-account login (`gpt-5.6-sol`, `gpt-5.6-terra`); the
+  `-max`/`-high`/bare-`gpt-5.6` suffixes are rejected ("not supported when using Codex with a ChatGPT account") —
+  set reasoning via `-c model_reasoning_effort=max`, NOT a name suffix. `gemini` CLI is the fallback.
 
 ## Autonomous mode (standing directive)
 Pick the highest-value unit yourself, execute end-to-end (implement → build-verify → device-test → commit →
