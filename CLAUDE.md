@@ -5,6 +5,68 @@ Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740)
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
 `GameProfiles` / `XeniaOptimizations` toggle (default-off until validated).
 
+## 🔥🔥🔥 THE DIRECTIVE (user 2026-07-07, FURIOUS at circling): FUSE THE PASSES — DELETE EDRAM, do NOT make it cheaper
+**"FUCK THE EDRAM SHADER, WE DONT WANT EDRAM." "fuse the fucking passes." "stop saying its a multisession rewrite
+and just fucking do it."** The circle to STOP: trying to make the EDRAM transfer cheap (copy/blit fast-path) STILL
+KEEPS EDRAM = wrong. The fix = render the WHOLE field (opaque + foliage, every draw) into the ONE held-open native
+pass (native color + native depth) so there is NO pass break and NO EDRAM at all → no transfer, no resolve.
+**PROVEN THIS SESSION (hard data, all on Thor Turnip):**
+- Native RT + resolves deleted + safe transfers deleted = field renders CORRECT, 10fps (`bd_coloronly.png`).
+- Drop ALL EDRAM transfers (any way: `skip_edram_transfers`, `drop_all_xfer` even WITH a sync barrier) = **29.7fps
+  but field COLLAPSES to a right-strip** (`bd_dropall.png`). 30fps is PROVEN reachable; correctness is the gap.
+- The collapse is NOT sync (barrier ruled out) — dropping EDRAM removes the OPAQUE (terrain/buildings), which the
+  pitch-720 native pass does NOT render; the opaque comes in via the EDRAM transfer. **So the fix = get the opaque
+  INTO the native pass (fusion), not preserve its EDRAM.**
+- **THE FUSION MECHANISM EXISTS: `gpu_bd_native_whole_frame`** (vulkan_command_processor.cc ~4220) catches ALL
+  vk97 field draws (foliage + opaque) into the native pass. **THE ONE BLOCKER: BD's field is a predicated 2-tile
+  fan-out with WINDOW OFFSETS (left win_off=0 → 0..672, right win_off!=0 → 608..1280); in the native full-surface
+  RT the tiles place wrong → STRIPE.** Offset-ignore is DEAD (3 variants). The tiling coordinate mapping is the
+  whole remaining problem — resolve it with RenderDoc (`gpu_bd_native_tile_filter` 1/2 = poor-man's per-tile view;
+  desktop `renderdoccmd` capture) then apply the correct per-tile viewport/scissor placement in the native RT.
+- Also fuse the SHADOWS: `whole_frame` disables the aux path (`!bd_native_gate`) → shadows (render-to-texture) must
+  either stay on aux (keep aux firing for non-main-fb draws) or render into their own native surfaces.
+**🎯 FRAME STRUCTURE DECODED (2026-07-07, gate-log dump under whole_frame — the real map):** BD's field frame =
+(a) MAIN FIELD `pitch=720 scissor 672×720` + foliage `pitch=720 scissor 8192` → the scene; (b) a BLOOM DOWNSCALE
+PYRAMID `pitch=320 320×180`, `pitch=640 640×360`, `pitch=160 160×90`, `pitch=80 80×45` → post-processing; (c) a
+FINAL COMPOSITE `pitch=1280 1280×720`. **whole_frame is WRONG because it dumps the bloom pyramid + composite into
+the MAIN field RT → corrupts it (black on desktop, strip on Thor).** The fusion must catch ONLY the main-scene
+(pitch-720) draws; the pyramid/composite are separate RTs (aux territory).
+**🎯 THE COLLAPSE = DEPTH-CULLING (decisive):** basic renderer (pitch-720 only, NO whole_frame, NO aux) + drop ALL
+EDRAM also collapses to the right strip (`desk_basic_drop.png`); + earlier drop-color/keep-depth = CORRECT,
+drop-depth = collapse. ⇒ the field COLOR pass depth-tests against a depth buffer that comes via EDRAM; the native
+pass's own depth is CLEAR+LOAD but does NOT contain BD's DEPTH-PREPASS result (the prepass is depth-only / not
+vk_format==97 → the color gate MISSES it → it goes to EDRAM). Drop the EDRAM depth transfer → the native color
+pass tests against a wrong/empty depth → almost all geometry culled → only the sliver where it passes survives =
+the strip. **THE FIX (concrete, not vague): redirect BD's DEPTH-PREPASS draws into the native pass's DEPTH buffer
+(extend the gate to catch the depth-only prepass, not just the vk97 color draws) so the field's depth test is
+fully native → drop the EDRAM depth transfer → no cull → full field at 30fps.** NOT window-offset (all win_off=0),
+NOT tile-placement, NOT MSAA — it's the DEPTH-PREPASS source. Next: identify the prepass draw signature (depth
+format, no color, 672×720) at the gate, redirect it to the native depth, verify the field survives EDRAM-drop.
+New cvars this session (allowlisted, gated off): gpu_bd_native_drop_all_xfer, gpu_bd_native_drop_all_color_xfer.
+Desktop build UNBLOCKED (x64-backend crash root-caused, NOT the HLE — RenderDoc injection is Defender-blocked so
+use the in-code gate/viewport LOGS as the poor-man's RenderDoc; they gave this whole frame map).
+
+## 🟢🟢🟢 TURNIP IS MANDATORY FOR THE AYN THOR (user 2026-07-06, verbatim: "TURNIP IS MANDATORY FOR AYN THOR ADRENO STUFF")
+**The Thor's DEFAULT/system Vulkan driver is the QUALCOMM PROPRIETARY Adreno driver (`vulkan.adreno.so`,
+`vendorID=0x5143`, `driverID=8` = VK_DRIVER_ID_QUALCOMM_PROPRIETARY, device="Adreno (TM) 740") — confirmed
+on-device 2026-07-06 via `GetVulkanDevice()->properties()`. This is the WRONG driver: BD/Adreno work MUST run on
+TURNIP (Mesa's open-source Adreno driver, `driverID=VK_DRIVER_ID_MESA_TURNIP`). Why it matters:**
+1. **The Qualcomm proprietary driver CRASHES on the native renderer** (null-deref inside `vulkan.adreno.so`; it
+   was misdiagnosed as a CPU/JIT crash until `/proc/PID/maps` located the host pc in the driver .so). Turnip is a
+   different driver with different behavior — the whole TBDR optimization strategy (minimize render passes, GMEM
+   residency, LRZ, load/store_op) is premised on TURNIP, and RE2-on-GameNative (the 30fps benchmark) runs on
+   Turnip (GameNative ships a custom Turnip driver).
+2. **`IsAdreno()` fork point:** `BdNativeRenderer::IsAdreno()` (via device properties) branches Adreno-strict /
+   super-optimized paths. Use it + check `driverID` to require/prefer Turnip. Desktop Vulkan (NVIDIA/AMD, lenient)
+   hides driver-strictness bugs — validate on Turnip.
+3. **To get Turnip on the Thor:** load a custom Turnip `libvulkan_freedreno.so` (as GameNative/emulators do), not
+   the system driver. Confirm at runtime via the logged `driverID` (must be MESA_TURNIP, not 8).
+4. **VULKAN VALIDATION is now bundled** (`app/src/main/jniLibs/arm64-v8a/libVkLayer_khronos_validation.so`,
+   allowlisted cvar `vulkan_validation`) — it found the on-device crash as `VUID-VkRenderPassBeginInfo-
+   clearValueCount-00902` (native CLEAR pass begun with clearValueCount=0 → driver reads null pClearValues →
+   null-deref). ALWAYS run `--vulkan_validation=true` on-device when a driver crash is suspected; strict drivers
+   crash where desktop tolerates.
+
 **🎯 GOAL (user 2026-07-05, THE mandate): BD→30fps via a FULL D3D9→VULKAN HLE — the DXVK-for-360 native renderer,
 NOT levers (all dead).** RE2 (heavier) hits 30fps on this Thor via DXVK ⇒ HW is fine, xenia's 95-pass EDRAM LLE
 emulation is the wall. BUILD a separate native Vulkan renderer (seam 0x82489F40 → own full-surface RT, few
@@ -50,6 +112,79 @@ INSIDE xenia (the **Cemu model**: general emulator + HLE graphics + per-game gra
 **⛔ STOP proposing incremental GPU levers — they are ALL DEAD** (they patch the emulator instead of replacing
 it: native-input flat, bindless regressed, cap=1/interlock/EDRAM-fusion/driver-internals dead). The fix is the
 HLE front-end, not another cvar. `check` the experiment DB first (below).
+
+## 📉 PC HLE EDRAM-REMOVAL PROGRESSION (2026-07-07, RenderDoc pass count, all CORRECT on desktop, all gated)
+**69 (no HLE) -> 61 (native renderer + drop_resolves) -> 54 (+aux native surfaces + drop native-served transfers)
+-> 46 (+drop_all_color_xfer = ALL color EDRAM transfers dropped, keep depth) — field FULLY CORRECT at each step
+(desk_hle_colordrop.png). = 23 EDRAM passes deleted on PC, verified.** Config for the 46-pass correct HLE:
+`--gpu_bd_native_renderer --gpu_bd_native_aux_rt --gpu_bd_native_aux_fmt37=false --gpu_bd_native_drop_resolves
+--gpu_bd_native_drop_transfers --gpu_bd_native_drop_all_color_xfer --gpu_bd_native_skip_resolves
+--gpu_bd_native_stretch_width=672`. Remaining ~46 = the inherent scene passes (~15) + the DEPTH-conversion passes
+(mixed-resolution 720<->400, LOAD-BEARING — dropping them collapses on Thor; needs native depth handling) + the
+format-37 opaque passes (fmt37 off on desktop; on the Thor fmt37 ON covers them). NEXT PC step to push below 46:
+native mixed-res depth (the depth transfers are the remaining big EDRAM chunk that can't just be dropped).
+
+## 🚨🚨🚨 DECISIVE (2026-07-08, on clean Thor): BD FIELD IS **CPU-BOUND**, NOT GPU-BOUND — the whole GPU/EDRAM era was the wrong processor
+**MEASURED on the clean Thor (busycheck.ps1, Turnip, field rendering): GPU busy% = 10-48% (avg ~28%) at the
+MINIMUM clock 401MHz (Adreno 740 max ~680MHz). The GPU is IDLE 60-85% of every frame + downclocked = it has
+nothing to do = the CPU can't feed it fast enough. THIS IS CPU-BOUND.** Confirmed by every GPU lever being inert
+on-device THIS session: drop ALL EDRAM ops (resolves+all color transfers) = 9.9fps (no change); force_no_color_write
+(skip ALL pixel shading) = ~15fps (small, cross-run-confounded); gpu_bd_skip_foliage_shadows (skip foliage
+shadow-casters) = no change; near-EMPTY scene (fence+1 bush) = SAME 9.9fps as the dense field. A GPU-bound title
+would show ~99% busy + boosted clock + scene-dependent fps. BD shows the opposite. => **The EDRAM/HLE/pixel/shadow
+work does NOT and CANNOT get BD to 30fps — the bottleneck is the CPU (guest-code emulation + the CP-thread GPU
+command translation, ~190 HLE redirects/frame). The path to 30fps is CPU: the LLVM-JIT backend, residency
+write-back (#1 CPU lever per memory), XMA idle-skip, global-lock lock-free, cross-block optimizer — the committed
+CPU direction. The HLE is CORRECT + shippable (renders the field right, EDRAM ops deletable) but is NOT the fps
+lever.** Temp hit 63C at min GPU clock = the HEAT is the CPU cores working = CPU is the hot busy component. ⚠️ Cross-
+run fps is scene-confounded (memory rule); the GPU-busy%/clock reading is the RELIABLE signal and it is unambiguous.
+
+## ✅✅ PC HLE DEV UNBLOCKED (2026-07-07): aux HLE now RUNS + renders CORRECT on DESKTOP (desk_aux97.png)
+**The desktop x64-backend crash that blocked PC-primary HLE dev ALL SESSION was the vk-FORMAT-37 aux surface
+handling, NOT the HLE. New cvar `gpu_bd_native_aux_fmt37` (default true; set FALSE = cover vk-97 only). With
+`--gpu_bd_native_aux_rt=true --gpu_bd_native_aux_fmt37=false --gpu_bd_native_drop_resolves=true` the aux HLE
+(resource-keyed native surfaces + Brick-B + resolves-deleted) renders BD's field FULLY CORRECT on desktop x64
+(no crash, no LLVM needed). => PC-FIRST HLE DEVELOPMENT IS NOW POSSIBLE: iterate the native-RT coverage + drops on
+desktop, verify correctness (screenshot) + pass count (RenderDoc rda9), NO Thor needed. On the Thor, keep fmt37 on
+(the opaque needs covering). NEXT PC step: with the desktop HLE now running, extend native coverage RT-by-RT +
+drop each covered RT's transfer, watching the RenderDoc pass count fall + the screenshot stay correct — pure PC.**
+
+## 🧠🧠🧠 THE FUSION-COLLAPSE DIAGNOSIS (2026-07-07, rda12 — the corrected root cause; supersedes "transfers are the wall")
+**61 passes but only 13 UNIQUE render targets = ~4.7 passes PER RT (ResourceId::465 alone = 10 passes). The
+fragmentation is the SAME RT re-begun many times because BD INTERLEAVES its RTs (draw 465, switch to shadow, back
+to 465...) and Vulkan REQUIRES ending a render pass to switch framebuffers. whole_frame did NOT collapse it
+(61->60): redirecting draws to a native RT can't hold one pass open across draws that target different RTs.
+Dropping resolves+depth-transfers barely moved it (69->61) => the transfers/resolves are a SMALL slice; the bulk is
+inherent RT-switching.**
+**WHY 30fps on desktop/DXVK but 10fps on Thor with the SAME 61 passes: on immediate-mode GPUs a pass-begin is ~free;
+on Turnip TBDR every pass-begin FLUSHES GMEM (store tile + reload). DXVK-on-Turnip (RE2's path) keeps RTs
+GMEM-RESIDENT across re-begins so switching back doesn't re-flush. xenia's EDRAM model does NOT — it tile-fragments
+the RTs (320x8192 etc.) and reloads each re-begin. THAT is the wall. So "EDRAM" IS the cause — but the precise fix
+is NOT "drop the transfers" (small); it's REPLACE the EDRAM RT model with native resource-keyed GMEM-RESIDENT RTs
+(= the goal verbatim: resource-keyed native RTs, DXVK-for-360).**
+**⚠️ HARD PC-vs-THOR SPLIT (critical for "EDRAM on PC first"): the pass COUNT is PC-measurable but is largely
+INHERENT (RT-interleaving) — there is NO big pass-count win available on PC without unsafe draw-reordering. The
+actual 30fps win is GMEM RESIDENCY of the re-begins, a TBDR concept that is INVISIBLE on desktop (immediate-mode
+doesn't flush GMEM) — so it structurally CANNOT be measured on PC. PC-first can build+verify the native RT
+STRUCTURE + correctness + dedup the EDRAM ping-pong RTs (two 1280x2048, two 320x8192); the residency PERF must be
+Thor-measured. Do NOT chase a PC pass-count drop as the goal — it's mostly inherent; the goal is native
+GMEM-resident RTs, perf-validated on Turnip.** Analyzer: tmp/rda12.py (passes per unique output resource).
+
+## 🎯🎯🎯 PC-MEASURED PASS BUDGET (2026-07-07, RenderDoc rda9/10/11 on desktop — the REMOVE-EDRAM-ON-PC metric)
+**BD's field frame = 61 render passes (with resolves + depth-downscale dropped; 69 without). Breakdown by draws/pass:
+45 = SINGLE-DRAW passes, 3 = 2-4 draws, 3 = 5-20, 9 = 21+ (the real scene), 1 clear-only. The 45 single-draw
+passes have NO input texture — they are GEOMETRY draws (1 draw each) into ~45 SEPARATE EDRAM render targets, many
+tile-strip-addressed (320x8192, 80x8192, 160x8192, 360x1824, 640x4096, 1280x2048). Each pass = a GMEM flush on
+Turnip/Adreno TBDR = the wall. DXVK renders a frame in ~10-15 passes; BD's 61 (esp. the 45 single-draw) is the
+EDRAM fragmentation.** ⇒ **"REMOVE EDRAM ON PC" IS NOW A CONCRETE, PC-VERIFIABLE METRIC: drive the RenderDoc pass
+count from 61 toward ~15, verifying correctness (desktop screenshot) + count (RenderDoc) — NO Thor needed (pass
+COUNT is the emulation structure, identical on desktop + Thor; only per-pass cost is TBDR-specific).** The fix =
+native FULL-SURFACE resource-keyed RTs that FUSE BD's ~45 fragmented EDRAM RTs into few native passes (the DXVK
+model). The 40 depth transfers are NOT the pass-count cost (dropping them was only 69->61 = -8); the cost is the
+45 single-draw fragmented-RT passes. NEXT PC build: measure whether the aux native-surface path reduces the count
+(capture aux+cpu_backend_llvm, count passes), then extend native coverage to collapse the 45 -> few. Analyzers:
+tmp/rda9.py (count), rda10.py (draws/pass buckets), rda11.py (single-draw pass in->out). Capture the drop-config
+frame via tmp/rdselfcap.ps1 -N 4600. ALL desktop, no device — matches user "EDRAM on PC FIRST before the Thor."
 
 ## 🔥 DECISIVE REFRAME (2026-07-05 late): RE2-on-Thor proves it's EMULATION-inefficiency, NOT a hardware/foliage limit
 **User's clinching point: Resident Evil 2 Remake (VASTLY heavier than a 2007 360 game) runs 30fps on THIS Thor via
@@ -113,6 +248,159 @@ Skill: **xenia-bd-pc-reverse-engineer** (+ the native-renderer build). Build: `t
 (MSBuild at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`); run
 `build\bin\...\xenia.exe --gpu=vulkan "<Blue Dragon.iso>"`. **⚡ Incremental rebuilds ~1min** (edit one .cc → MSBuild
 relinks) — iterate the native renderer HERE, not in blind 13-min Thor cycles.
+
+### 🛠️ DESKTOP BUILD GOTCHAS (2026-07-07 — cost HOURS this session; skill `xenia-desktop-build`)
+1. **🛑 Windows Defender QUARANTINES the built xenia.exe** (emulator = PUA false-positive). Link says
+   `-> xenia.exe`, then it's GONE within ~1s + zeroed PE. **Fix requires the GUI, NOT PowerShell** — `Add-MpPreference`/
+   `Set-MpPreference -DisableRealtimeMonitoring` SILENTLY FAIL when **Tamper Protection** is ON (check
+   `(Get-MpComputerStatus).IsTamperProtected`). USER must: Windows Security → Virus & threat protection → Manage
+   settings → **Tamper Protection OFF**, then **Real-time protection OFF** (or add a **Folder exclusion** for
+   `...\xenia-thor\build`). Verify `(Get-MpComputerStatus).RealTimeProtectionEnabled -eq $false` before building.
+   NOTE: an exe quarantined DURING a build stays quarantined after disabling Defender — REBUILD to get a fresh one.
+2. **🛑 The 32-bit linker WEDGES on `xenia.exe`** ("failed to do memory mapped file I/O on xenia-kernel.lib") — CPU
+   flatlines, exe stays locked for 20+ min, output corrupt. **Fix: force the 64-bit linker: add
+   `/p:PreferredToolArchitecture=x64` to the MSBuild command.** Always.
+3. **MSBuild SKIPS the relink if you manually `rm` the exe** (it tracks build state, not output existence) — it
+   prints `-> xenia.exe` without linking → no exe. To force a real link after a manual delete: **touch a source file**
+   (`echo // >> src/.../some.cc`) or `/t:Rebuild`.
+4. **Corrupt-PDB `LNK4020` treated as fatal error**: the `build\xenia-app.vcxproj` sets
+   `<TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>` — patch those to `false` (build artifact,
+   regenerated by premake) so the (harmless, debug-info-only) corruption doesn't fail the link.
+5. **Kill zombie build procs first**: `Get-Process link,MSBuild,cl,mspdbsrv | Stop-Process -Force` — accumulated
+   workers hold file locks and cause the pdb corruption + mmap wedge.
+6. **ISO path has SPACES** ("New project 8") — in PS `Start-Process -ArgumentList`, pass the ISO as its OWN quoted
+   element or the path truncates at the space ("Unable to mount STFS container"). Verify PE valid after build:
+   read bytes at e_lfanew == `PE\0\0`. BD desktop ISO: `scratch/blue-dragon/bd_disc1.iso` (reaches the field via the
+   `run_field.ps1` HID-nop nav; desktop logs to `--log_file` — reliable, no logcat rotation).
+**🔬🔬 RenderDoc UNBLOCKED + WORKING ON DESKTOP (2026-07-07 — injection was Defender-blocked, now bypassed):**
+1. **SELF-LOAD (not injection):** renderdoccmd injection fails ("Failed to launch process") under Defender. FIX:
+   xenia now LoadLibrary's renderdoc.dll itself at startup (vulkan_provider.cc, env `XENIA_RENDERDOC=<path to
+   renderdoc.dll>`, BEFORE vkCreateInstance) → RenderDoc hooks Vulkan → in-app `--gpu_bd_renderdoc_capture_frame=N`
+   TriggerCapture works with NO injection. Captures land in `%LOCALAPPDATA%\Temp\RenderDoc\*.rdc`.
+2. **CAPTURE IN THE FIELD:** N is a SWAP number; the field is ~swap 4400+ (basic renderer ~30fps, field at ~150s).
+   N too low = menu (tiny .rdc); field frame = big (~78MB). Runner: `tmp/rdselfcap.ps1 -N 4600`.
+3. **ANALYZE HEADLESS:** `qrenderdoc.exe --py <script>` (NOT `--python <script.rdc>` — a 2nd .rdc arg makes the GUI
+   open+hang). **The script AND its output path MUST be a real NO-SPACE, NON-JUNCTION path** (qrenderdoc silently
+   fails on "New project 8" spaces AND on the `C:\xt` junction). Copy the script to `~/.claude/jobs/.../tmp/` and
+   hardcode the .rdc path inside it. Working analyzer: `tmp/rda2.py` (post-VS NDC per draw). Replay is SLOW
+   (~5-8min: OpenCapture + SetFrameEvent-per-draw each re-replays). Poll the out file for "=== DONE ===".
+**🎯 FIELD NDC DATA (correct case, transfers on — `scratch/thor-debug/bd_field_ndc_correct.txt`):** the main field
+draws render into `rt=1280x720` via `viewport x=0 w=672` (NOT 8192 — the device viewport-LOG's 8192 was misleading);
+NDC[-1,1] → pixels[0,672], then stretch_width=672 → full screen. Field draws span a WIDE NDC x [-14..+6]: the ones
+with |ndc x|>1 are frustum-clipped (BD submits geometry beyond the view). So the CORRECT field = [0,672]. The
+collapse (EDRAM dropped → right strip) does NOT change NDC/viewport (geometry is identical) ⇒ it's what RENDERS
+(depth-cull/content), not placement.
+**RenderDoc facts (frame4601, correct case, `rda3/rda4.py`): the field = TWO draw groups — `vpw=1280` (full-scene,
+FIRST) then `vpw=672` ([0,672] field, SECOND) — BOTH `Ztest=True Zwrite=True Zop=LessEqual` (standard-Z) AND BOTH
+render into the SAME color=ResourceId::471 + depth=ResourceId::473. So they are ONE BD surface rendered
+scene-then-field, and it renders CORRECTLY with transfers on ⇒ sharing the surface/depth is INTENDED, NOT the bug
+(the earlier "conflation/occlusion" guess is RETRACTED). `depth_clear` 0.0→1.0 did NOT fix the collapse.**
+**⚠️ DISCIPLINE NOTE (2026-07-07): RenderDoc is unblocked + working, but I made TWO wrong root-cause claims this
+session from over-fast interpretation (both retracted): (a) "vpw1280 occludes vpw672" — NO, they share surface
+471/473 intentionally; (b) "471 is EDRAM, native only does foliage" — NO. VERIFY before asserting.**
+**🔧 DEPTH-COPY ACTION (2026-07-07, LANDED): extended `gpu_bd_native_copy_transfers` to DEPTH (added CmdVkCopyImage
+to the deferred cmd buffer; same-tile-layout depth transfer → vkCmdCopyImage instead of the per-pixel EDRAM shader).
+Thor result (`bd_depthcopy.png`): field renders CORRECT, but STILL 9.8fps, pass_begins NOT dropped (12456 vs 12928
+baseline). ⇒ the heavy ~97ms depth transfers are NOT same-tile-layout — they are TILE-REINTERPRETING (moving depth
+between BD's different EDRAM tile layouts = genuine format conversion), so a cheap 1:1 copy can't replace them.
+CONFIRMED: the depth transfers are inherent EDRAM emulation; they exist because the field is PARTIALLY native (471
+catches pitch-720) and partially EDRAM, and the transfers BRIDGE the two tile layouts. **THE ONLY elimination = make
+the WHOLE field native (every draw → a native linear RT with native depth, NO EDRAM tile layouts) so there is
+nothing to reinterpret → no depth transfers. That is full resource-keyed native coverage of ALL field surfaces
+(471 + the non-720 opaque/composite RTs), each a native linear surface — the goal's "resource-keyed native RTs,
+EDRAM deleted." Partial coverage always leaves the bridging transfers.** whole_frame failed (forced 1280 field into
+720 foliage RT + MSAA). Next real build: per-BD-surface native RTs keyed by resolve-dest covering the full field.
+**whole_frame RULED OUT for good (2026-07-07): whole_frame + force_samples1 + gpu_force_max_msaa_samples=1 (all
+pipelines 1x → match native 1x pass) = STILL BLACK on desktop. The MSAA was not the (only) blocker; whole_frame is
+fundamentally wrong because it crams MULTIPLE BD surfaces (main 471 + bloom pyramid 320/160/80 + composite) into
+ONE native RT → corruption. One-RT-for-everything is the wrong model.**
+**⚠️ THE REAL BLOCKER, stated plainly: 471/473 IS the native RT, but xenia's render_target_cache STILL models it
+with EDRAM TILE LAYOUTS (base_tiles/pitch_tiles), so the tile-reinterpreting depth transfers exist to bridge 471's
+tile layout ↔ other RTs' tile layouts. Eliminating them requires 471 (+ every field surface) to be a LINEAR
+full-surface RT with NO tile layout — but rtc.cc:642 welds RT width to surface_pitch and overriding it black-screens
+(known dead). So full EDRAM deletion = a deep rewrite of the RT cache's tile model into per-surface linear native
+RTs. This is genuinely the multi-session DXVK-style rewrite the goal names; every one-turn shortcut (drop-all,
+barrier, color-only, depth-copy, whole_frame, force_samples1, force_max_msaa, linear-RT-override) is RULED OUT with
+data. Do NOT re-try any of them.**
+**⛔ TILING-HLE PATH IS DEAD — verified in the experiment ledger (do NOT chase FUN_82487cc8 / bin-once): the
+reachable Shu-village field is IMMEDIATE-MODE, NOT deferred-tiled. BeginTiling 0x8248A188, token-interp 0x82487CC0,
+tiling-replay — ALL tested, NONE FIRE at the field (planted:1 / TRSTEP:0). The bin-once mechanism works pixel-perfect
+but never fires here. So the tile-reinterpreting transfers are NOT from the field's internal tiling — they're from
+BD ALIASING different-PITCH EDRAM surfaces (main field 1280, bloom pyramid 320/160/80, composite): each surface's
+pitch → its own EDRAM tile layout, and the ownership transfers bridge between the aliased surfaces.**
+**🎯🎯 RENDERDOC-CONFIRMED (2026-07-07, rda8.py — desktop, no device): BD samples depth as a texture in ZERO of
+1313 draws. So the depth transfers are NOT for texture-sampling — Brick-B-for-depth is RULED OUT. There are 7
+depth buffers at DIFFERENT RESOLUTIONS (473=1280x720, 461=720x1824, 501=360x1824, 402=1040x2528, 422=520x1264,
+2640=320x8192, 2657=160x4096) and BD DEPTH-TESTS against them. ⇒ BD renders the field at MIXED RESOLUTIONS and the
+40 transfers convert the shared scene depth BETWEEN those resolutions (720<->400 etc.) so geometry drawn at one res
+depth-tests coherently against geometry drawn at another. This is mixed-resolution depth-attachment usage, NOT
+sampling, NOT MSAA, NOT tiling. **⇒ THE FIX = handle BD's mixed-resolution field natively: render each resolution
+into its own native depth image AND do the cross-resolution depth conversion NATIVELY (a depth downsample/upsample
+shader between the native depth images), replacing the EDRAM conversion transfers. This is the native mixed-res
+depth pipeline — a real shader build, Thor-verified (depth doesn't validate on desktop).** The resolution
+heterogeneity is the same class of wall as the MSAA heterogeneity (BD renders parts at 720, parts at 400).**
+**🎯 REFINED (2026-07-07): the depth transfers are DEPTH DOWNSAMPLES (720->400), NOT MSAA. Applied the RT-cache
+MSAA clamp in the field gate (vulkan_command_processor.cc ~4229, draw_util::ClampForcedMsaaSamples — no-op unless
+gpu_force_max_msaa_samples set; matches the native RT sample count to EDRAM so force-1x doesn't stripe). Result:
+force_max_msaa=1 now unifies MSAA (transfers go msaa 1<->2 -> all msaa 0) BUT the 40 transfers REMAIN, now as PITCH
+conversions `base=810 pitchT=9 (720px) <-> pitchT=5 (~400px)` + `base=0 pitchT 13<->7<->16`. So BD renders depth at
+TWO RESOLUTIONS (full 720 + downscaled ~400) regardless of MSAA — the transfers DOWNSAMPLE the full depth to the
+half-res depth that POST-PROCESSING samples (DOF/soft-particles/fog). force-1x is NOT the fix (clamp fix still
+partial-stripes the sky, desk_msaa1fix.png; transfers unchanged). **⇒ THE FINAL TARGET = native depth DOWNSAMPLE:
+produce the ~400-wide depth view via a native downsample (compute/blit) of the field's native depth 473, extend
+Brick-B to serve DEPTH samples so post reads the native half-res depth, then the 720->400 EDRAM downsample
+transfers are redundant -> drop. That's the last EDRAM. NOT MSAA (ruled out), NOT drop (Thor-collapses).**
+**🔬 DEPTH-CONVERSION DROP TESTED (2026-07-07, gpu_bd_native_drop_depth_downscale — drops per-transfer depth xfers
+where src/dst pitch OR msaa differ, keeps identity): DESKTOP = field CORRECT (desk_ddrop2.png, full field). THOR =
+COLLAPSES to sky-blue + right strip (bd_ddrop.png), 26.8fps but CONFOUNDED (less rendered because culled). ⇒ the
+depth-conversion transfers are LOAD-BEARING ON THE THOR (TBDR depth needs them) even though desktop (immediate-mode)
+tolerates dropping them. **KEY LESSON: desktop correctness does NOT validate depth/EDRAM changes — the Thor's TBDR
+depth differs; depth changes MUST be Thor-verified.** So they can't be DROPPED; they must be done NATIVELY. Also
+confirmed: the 23 dominant ones are MSAA-conversions (base=810 pitchT=9 msaa 1<->2 = the field's 1x-opaque <-> 2x-
+foliage depth), the rest pitch-downscales (720->400 for post depth samples). **⇒ native-first fix = produce these
+depth VIEWS natively: a native MSAA-resolve (2x->1x) + native depth-downsample (720->400) from the field's native
+depth 473, redirect the consumer to the native view, THEN drop the EDRAM conversion transfer. That's the concrete
+build — native depth conversion shaders, not a drop.** cvars: gpu_bd_native_drop_depth_downscale (drops, breaks
+Thor — diagnostic only), depth-xfer logging (BD DEPTH XFER) in PerformTransfersAndResolveClears.**
+**🎯🎯 PC-VERIFIED DEPTH-TRANSFER TARGET (2026-07-07, `BD DEPTH XFER` log on desktop — the exact surfaces): the 40
+depth ownership transfers/frame are between BD's DIFFERENTLY-SIZED depth VIEWS at the SAME EDRAM base — dominant
+group (23) = `base=810 pitchT=9 (720-wide) ↔ pitchT=5 (400-wide)` [or at 2x: pitchT=9 msaa1↔msaa2]; also
+`base=0 pitchT=13 ↔ 7 ↔ 16`. These are MSAA + PITCH conversions of the depth = BD keeping a FULL-res depth AND
+DOWNSCALED depth views (for post-processing / depth-of-field / soft particles that SAMPLE depth at lower res). The
+transfers carry real depth content between the full + downscaled views. NOT tile-reinterpretation of one surface —
+DEPTH DOWNSCALE/RESOLVE between views. force_max_msaa=1 does NOT help (corrupts: tile desync black-stripes,
+`desk_msaa1.png`; and just converts msaa-diff → pitch-diff, still 40).** ⇒ **native-first fix = serve BD's depth
+VIEWS natively (Brick-B-for-DEPTH): when the field samples a downscaled depth view, serve it from a native
+downsample of the field's native depth (473) instead of the EDRAM transfer.** i.e. extend the resource-keyed
+native texture-binding (currently color-only) to DEPTH samples: key each depth view (base+pitch), back it with a
+native image derived from 473, redirect the depth sample → drop the transfer. THE next build = native depth-view
+coverage. This is the PC-verified, concrete target (the transfers are enumerated, not guessed).
+**🎯 THE ACTUAL FIX = the goal's literal words: RESOURCE-KEYED NATIVE RENDER TARGETS for ALL of BD's field EDRAM
+surfaces (not just the shadows the aux path covers today). Give each BD surface (main 1280 field 471/473, the bloom
+320/160/80, the composite) its OWN native RT keyed by resolve-dest — so NONE are EDRAM-aliased, so there is nothing
+to reinterpret, so the ownership transfers are redundant → drop them → EDRAM deleted.** The aux resource-keying
+mechanism (already built + proven for shadows) is the RIGHT tool; the build = EXTEND its coverage to the main-scene
++ bloom + composite surfaces (handle their formats/pitches/MSAA per-surface). NOT tiling-HLE (dead), NOT RT-cache
+width-override (black), NOT levers (all dead). THE next build = full resource-keyed native surface coverage of the
+field's EDRAM surfaces via the aux mechanism. RenderDoc (now working) verifies each surface as it's converted.
+**VERIFIED FACTS (RenderDoc frame4601):**
+- `471`(1280x720 "2D Color Attachment")+`473`(1280x720 depth) = **the NATIVE renderer RT** — its render passes are
+  `C=Clear/Load, D=Clear/Load, S=Don't Care`, the EXACT BdNativeRenderer clear/load signature. So **the native
+  renderer DOES render the main field** (scene vpw=1280 + field vpw=672) into 471/473. Both groups LessEqual+Zwrite,
+  standard-Z, into the SAME native color+depth (intended).
+- `456`(720x1824)+`461` = a SEPARATE RT (foliage/other). Swap = `355/356/357`; present = a single fullscreen draw
+  (ev6459) into swap 357.
+- Field renders CORRECT with transfers on; drops to the right strip when ALL EDRAM dropped; NDC/viewport/depth-state
+  UNCHANGED; depth_clear 0.0→1.0 no effect; drop-color/keep-depth = correct, drop-depth = collapse.
+**OPEN (NOT pinned — do NOT overclaim): 471 is a NATIVE RT with its OWN native depth 473 (Clear/Load), so why does
+dropping EDRAM collapse it?** Leading unproven hypothesis: the field draws into 471 SAMPLE EDRAM textures/depth
+(the scene/background/depth-effect from prior EDRAM passes via Brick B); the DEPTH-class sample is not fully
+native-served, so dropping the EDRAM depth transfer feeds it wrong content → the field's depth-dependent draws
+collapse. TO VERIFY NEXT: (1) what textures do the vpw=672 field draws SAMPLE (GetPipelineState bound SRVs) — are
+any EDRAM depth/scene RTs? (2) does 473 get written by an EDRAM copy/transfer, or purely by native Clear/Load?
+Only after (1)+(2) assert the fix. Captures: `bd_field_ndc_correct.txt`, `bd_field_textures_actions.txt`,
+`*15.37*frame4601.rdc` (correct), `*16.35*frame4601.rdc` (dropped). Analyzers `tmp/rda2..6.py`.
+
 **🔬 RenderDoc REPLAY (headless, WORKING): skill `xenia-renderdoc-replay`, env `tools/renderdoc/`.** When
 screenshots + register logs are ambiguous ("geometry lands where the registers don't predict"), capture the frame
 (cvar `gpu_bd_renderdoc_capture_frame=N` under `renderdoccmd`) + analyze per-draw (post-VS NDC = frustum clipping,
@@ -212,8 +500,15 @@ Hash" in logcat). Applied in `KernelState::LoadUserModule` before execution. Ski
 - **Targeted `git add` only (never `-A`).** Never commit ISOs/keys/dumps/screenshots/config backups. Work on
   `master`. **Forward-only** (never `git revert`; fix forward). End commits:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Skills in `.agents/skills/`; knowledge in memory files (`MEMORY.md` index). Consult Codex/Gemini for hard
-  rearch (`[[consult-hard]]`).
+- Skills in `.agents/skills/`; knowledge in memory files (`MEMORY.md` index).
+- **CONSULT CODEX 5.6-TERRA (MAX) FOR HARD REARCH** — for any hard architecture/rearch/root-cause problem, get a
+  second opinion from **`gpt-5.6-terra` at reasoning effort `max`** via the Codex CLI (the OpenAI/ChatGPT tool;
+  now the configured default in `~/.codex/config.toml`). Run READ-ONLY: `codex exec -m gpt-5.6-terra -c
+  model_reasoning_effort=max --sandbox read-only -` (pipe the prompt via stdin; give it the measured diagnosis +
+  the exact file:line context and ask it to cite code). It PAID OFF 2026-07-10 (caught a wrong build — the
+  float-in-pass variant — before it was written, via `skip_fmt=0`; then designed the color-only native HLE plan).
+  ⚠️ ONLY `gpt-5.6-terra` works on the ChatGPT-account login; the `-max`/`-high`/plain-`gpt-5.6` names are rejected
+  ("not supported when using Codex with a ChatGPT account"). `gemini` CLI is the fallback second opinion.
 
 ## Autonomous mode (standing directive)
 Pick the highest-value unit yourself, execute end-to-end (implement → build-verify → device-test → commit →
