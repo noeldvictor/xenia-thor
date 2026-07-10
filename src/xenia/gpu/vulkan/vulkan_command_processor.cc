@@ -3414,6 +3414,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   bool l5_present_served = false;
   if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && swap_info.valid &&
       swap_info.guest_base) {
+    // LEARN: the RT key that resolved to THIS presented frontbuffer base is the
+    // frontbuffer producer -> allow substituting only that one (narrow fix).
+    auto src_it = bd_l5_resolve_src_by_dest_.find(swap_info.guest_base);
+    if (src_it != bd_l5_resolve_src_by_dest_.end() && src_it->second) {
+      bd_l5_allowed_producer_keys_.insert(src_it->second);
+    }
     VkImageView l5_view = BdL5LookupAlias(swap_info.guest_base);
     const char* l5_result = l5_view != VK_NULL_HANDLE ? "native" : "no_alias";
     uint32_t l5_alias_src = 0;
@@ -4662,11 +4668,23 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // native-fb creation already restricts this to the main-scene/composite surface
   // (bloom pyramid + shadow maps are excluded), so bd_native_color_framebuffer!=NULL
   // means this IS that surface.
+  // NARROW-THE-SUBSTITUTION (>=5): only substitute the LEARNED frontbuffer
+  // producer (the RT key that resolves to a presented base). Substituting every
+  // wide composite blacks the accumulated HDR->LDR chain (RenderDoc-proven).
+  // At ==4 (round-trip validation) keep the broad behavior (mirror keeps LLE
+  // correct). Until a producer is learned, substitute nothing at >=5 (LLE present).
+  bool l5_allowed = true;
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5) {
+    uint32_t l5_key = (framebuffer && framebuffer->bd_native_color_lle_rt)
+                          ? framebuffer->bd_native_color_lle_rt->key().key
+                          : 0u;
+    l5_allowed = l5_key && bd_l5_allowed_producer_keys_.count(l5_key) != 0;
+  }
   if (cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
       (pass_kind == GpuPassKind::kGuest ||
        pass_kind == GpuPassKind::kGuestComposite) &&
       framebuffer &&
-      framebuffer->bd_native_color_framebuffer != VK_NULL_HANDLE) {
+      framebuffer->bd_native_color_framebuffer != VK_NULL_HANDLE && l5_allowed) {
     // No pass is open in the recorded stream here (the old pass, if any, was
     // ended above; the new one is not begun yet). current_render_pass_ was just
     // re-pointed to the NEW pass for tracking, but the seed's SubmitBarriers
@@ -8754,6 +8772,9 @@ bool VulkanCommandProcessor::IssueCopy() {
       if (l5_copy_src < xenos::kMaxColorRenderTargets) {
         uint32_t l5_src_rt_key =
             render_target_cache_->GetLastUpdateColorRenderTargetKey(l5_copy_src);
+        // OBSERVE (no substitution): remember this fullscreen resolve's dest ->
+        // source RT key, so present can learn which producer feeds the frontbuffer.
+        bd_l5_resolve_src_by_dest_[written_address] = l5_src_rt_key;
         BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height);
       }
     }

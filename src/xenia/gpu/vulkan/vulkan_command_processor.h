@@ -899,6 +899,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::unordered_map<uint32_t, BdL5Alias> bd_l5_alias_by_dest_;
   uint64_t bd_l5_generation_counter_ = 0;
   uint32_t bd_l5_frame_epoch_ = 0;
+  // NARROW-THE-SUBSTITUTION (RenderDoc-proven fix): substituting EVERY wide
+  // composite blacked the HDR->LDR chain (composites are re-begun/accumulated).
+  // Learn WHICH color RT key actually resolves to a PRESENTED frontbuffer, and
+  // substitute ONLY that producer. bd_l5_resolve_src_by_dest_ observes every
+  // fullscreen resolve's dest->source-key (no substitution needed); present adds
+  // the source for the swap base to the allowed set. Until learned, substitute
+  // nothing at >=5 (present falls back to LLE = correct).
+  std::unordered_map<uint32_t, uint32_t> bd_l5_resolve_src_by_dest_;
+  std::unordered_set<uint32_t> bd_l5_allowed_producer_keys_;
   // Publish the producer matching `src_rt_key` under `dest_base` at a resolve.
   void BdL5PublishAlias(uint32_t dest_base, uint32_t src_rt_key, uint32_t width,
                         uint32_t height);
