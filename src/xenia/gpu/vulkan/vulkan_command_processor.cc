@@ -3417,10 +3417,42 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         present_surface
             ? bd_native_renderer_->LookupSampledSurface(swap_info.guest_base)
             : VK_NULL_HANDLE;
+    // FAIL-CLOSED (5.6-sol): the aux path sets rendered_this_frame + SHADER_READ
+    // at PASS SELECTION, before content is written, and LookupSampledSurface
+    // checks only layout — so result=redirect proved allocation/layout/extent, NOT
+    // useful pixels (the first Thor run redirected to a BLACK/stale surface). AND
+    // BD's frontbuffer is DOUBLE-BUFFERED (1CA1C000 / 1CDB4000 alternate); the
+    // one-dest-per-source resolve-edge map is stale, so the CURRENT content may be
+    // in the OTHER base. Immediate stop-black: require rendered_this_frame at
+    // present time (BeginSurfaceFrame resets it AFTER present, so it means
+    // "written since the preceding swap"). If not populated this frame, LEAVE the
+    // LLE swap texture (correct image), record NonNative — native present stays
+    // dormant until a real producer generation lands (the durable fix = surface
+    // generations + current-A/B resolve alias, the next slice).
+    bool present_populated = present_surface && present_surface->rendered_this_frame;
     bool present_exact = present_surface &&
                          present_native_view != VK_NULL_HANDLE &&
+                         present_populated &&
                          present_surface->width == swap_info.logical_width &&
                          present_surface->height == swap_info.logical_height;
+    const char* present_result =
+        !present_surface        ? "no_surface"
+        : present_native_view == VK_NULL_HANDLE ? "not_rendered"
+        : !present_populated    ? "not_populated_current_frame"
+        : present_exact         ? "redirect"
+                                : "extent_mismatch";
+    if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
+      static std::atomic<uint32_t> s_bd_present_log{0};
+      if (s_bd_present_log.fetch_add(1) < 40) {
+        XELOGI("BD COLOR PRESENT: base={:08X} swap={}x{} guest_fmt={} surface={} "
+               "alloc={}x{} result={}",
+               swap_info.guest_base, swap_info.logical_width,
+               swap_info.logical_height, uint32_t(swap_info.format),
+               present_surface ? 1 : 0,
+               present_surface ? present_surface->width : 0,
+               present_surface ? present_surface->height : 0, present_result);
+      }
+    }
     if (present_exact) {
       swap_texture_view = present_native_view;
       ++bd_present_native_total_;
