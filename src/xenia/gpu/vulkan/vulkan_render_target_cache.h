@@ -105,6 +105,22 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkImage fdm_image = VK_NULL_HANDLE;
     VkDeviceMemory fdm_memory = VK_NULL_HANDLE;
     VkImageView fdm_view = VK_NULL_HANDLE;
+    // LEVEL 4 color-only native HLE (gpu_bd_native_color_lifetime_hle >= 4):
+    // a PRIVATE native color image that substitutes the LLE color attachment
+    // for BD's final-color producer pass. Lazily created (producer-scoped) by
+    // GetBdNativeColorProducerFramebuffer; bd_native_color_framebuffer clones
+    // this framebuffer with the color attachment swapped to bd_native_color_view
+    // and the EXACT same LLE depth attachment. The command processor seeds
+    // (LLE color -> native) before the pass and mirrors (native -> LLE color)
+    // after, so all downstream resolves/transfers stay correct (no drops yet).
+    // Destroyed with the framebuffer.
+    VkImage bd_native_color_image = VK_NULL_HANDLE;
+    VkDeviceMemory bd_native_color_memory = VK_NULL_HANDLE;
+    VkImageView bd_native_color_view = VK_NULL_HANDLE;
+    VkFramebuffer bd_native_color_framebuffer = VK_NULL_HANDLE;
+    // The LLE color image this native producer mirrors to/from (for the seed +
+    // mirror vkCmdCopyImage), captured at lazy-creation time.
+    VkImage bd_native_color_lle_image = VK_NULL_HANDLE;
     Framebuffer() = default;
     Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
         : framebuffer(framebuffer), host_extent(host_extent) {}
@@ -988,6 +1004,18 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   // Returns the framebuffer object, or VK_NULL_HANDLE if failed to create.
   const Framebuffer* GetHostRenderTargetsFramebuffer(
+      RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
+      const RenderTarget* const* depth_and_color_render_targets);
+
+  // LEVEL 4 color-only native HLE (gpu_bd_native_color_lifetime_hle >= 4):
+  // returns the base framebuffer for the given key augmented with a PRIVATE
+  // native color image + an alternate VkFramebuffer that clones it with the
+  // color attachment swapped to the native image and the EXACT same LLE depth
+  // attachment. Lazily created + cached on the Framebuffer entry. Only for the
+  // single-color-RT non-transfer-format producer pass; returns the plain base
+  // framebuffer (bd_native_color_framebuffer == VK_NULL_HANDLE) when it can't
+  // build the native variant, so the caller transparently falls back to LLE.
+  const Framebuffer* GetBdNativeColorProducerFramebuffer(
       RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
       const RenderTarget* const* depth_and_color_render_targets);
 

@@ -202,6 +202,7 @@ DEFINE_string(
 // fence). 1 = base-0 color copies only; 2 = all color copies (upper bound).
 DECLARE_uint32(gpu_bd_hle_drop_resolve);
 DECLARE_bool(gpu_bd_native_renderer);
+DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
@@ -1302,6 +1303,13 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
       dfn.vkDestroyImage(device, fb.fdm_image, nullptr);
       dfn.vkFreeMemory(device, fb.fdm_memory, nullptr);
     }
+    // LEVEL 4 native color producer (null unless gpu_bd_native_color_lifetime_hle>=4).
+    if (fb.bd_native_color_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.bd_native_color_framebuffer, nullptr);
+      dfn.vkDestroyImageView(device, fb.bd_native_color_view, nullptr);
+      dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
+      dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
+    }
   }
   framebuffers_.clear();
 
@@ -1380,6 +1388,13 @@ void VulkanRenderTargetCache::ClearCache() {
       dfn.vkDestroyImageView(device, fb.fdm_view, nullptr);
       dfn.vkDestroyImage(device, fb.fdm_image, nullptr);
       dfn.vkFreeMemory(device, fb.fdm_memory, nullptr);
+    }
+    // LEVEL 4 native color producer (null unless gpu_bd_native_color_lifetime_hle>=4).
+    if (fb.bd_native_color_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.bd_native_color_framebuffer, nullptr);
+      dfn.vkDestroyImageView(device, fb.bd_native_color_view, nullptr);
+      dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
+      dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
     }
   }
   framebuffers_.clear();
@@ -2850,6 +2865,14 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   if (cvars::vulkan_trace_dump_rt_image || cvars::vulkan_trace_dump_depth_image) {
     image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   }
+  // LEVEL 4 mirror round-trip prerequisite (gpu_bd_native_color_lifetime_hle >= 4,
+  // 5.6-sol step 1 + #1 risk): the seed (LLE color -> native) + mirror (native ->
+  // LLE color) vkCmdCopyImage need the LLE COLOR image to be both TRANSFER_SRC and
+  // TRANSFER_DST. Gated + color-only so the normal path + depth are untouched.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 4 && !key.is_depth) {
+    image_create_info.usage |=
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  }
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -3341,6 +3364,165 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
     FillFragmentDensityMap(fdm_image);
   }
   return &framebuffer_entry;
+}
+
+const VulkanRenderTargetCache::Framebuffer*
+VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
+    RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
+    const RenderTarget* const* depth_and_color_render_targets) {
+  // Base LLE framebuffer (created/looked up exactly as the normal path). The
+  // native variant is cached ON this entry, so we reuse its host_extent + key.
+  const Framebuffer* base = GetHostRenderTargetsFramebuffer(
+      render_pass_key, pitch_tiles_at_32bpp, depth_and_color_render_targets);
+  if (!base) {
+    return nullptr;
+  }
+  // Already built for this framebuffer -> reuse.
+  if (base->bd_native_color_framebuffer != VK_NULL_HANDLE) {
+    return base;
+  }
+  // Producer constraints: transfer-format color attachments reinterpret the
+  // image format (ownership-transfer passes) -> the native single-format image
+  // + copy would not match; bail to plain LLE. Also require depth (bit 0) + a
+  // single color RT (the field producer is one color + one depth).
+  if (render_pass_key.color_rts_use_transfer_formats) {
+    return base;
+  }
+  uint32_t used = render_pass_key.depth_and_color_used;
+  if (!(used & (uint32_t(1) << 0))) {
+    return base;  // No depth attachment -> not the producer shape.
+  }
+  uint32_t color_mask = used & ~(uint32_t(1) << 0);
+  uint32_t color_index;
+  if (!xe::bit_scan_forward(color_mask, &color_index)) {
+    return base;  // No color attachment.
+  }
+  if (color_mask & ~(uint32_t(1) << color_index)) {
+    return base;  // More than one color RT -> not the producer shape.
+  }
+
+  const auto& depth_rt = *static_cast<const VulkanRenderTarget*>(
+      depth_and_color_render_targets[0]);
+  const auto& color_rt = *static_cast<const VulkanRenderTarget*>(
+      depth_and_color_render_targets[color_index]);
+  VkFormat color_format = GetColorVulkanFormat(color_rt.key().GetColorFormat());
+  if (color_format == VK_FORMAT_UNDEFINED) {
+    return base;
+  }
+
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  // Sample count must MATCH the LLE color image exactly (the seed/mirror
+  // vkCmdCopyImage requires identical sample counts) - replicate CreateRenderTarget's
+  // 2x->4x fallback.
+  VkSampleCountFlagBits samples;
+  if (render_pass_key.msaa_samples == xenos::MsaaSamples::k2X &&
+      !msaa_2x_attachments_supported_) {
+    samples = VK_SAMPLE_COUNT_4_BIT;
+  } else {
+    samples = VkSampleCountFlagBits(uint32_t(1)
+                                    << uint32_t(render_pass_key.msaa_samples));
+  }
+
+  VkImageCreateInfo image_create_info;
+  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_create_info.pNext = nullptr;
+  image_create_info.flags = 0;
+  image_create_info.imageType = VK_IMAGE_TYPE_2D;
+  image_create_info.format = color_format;
+  image_create_info.extent.width = base->host_extent.width;
+  image_create_info.extent.height = base->host_extent.height;
+  image_create_info.extent.depth = 1;
+  image_create_info.mipLevels = 1;
+  image_create_info.arrayLayers = 1;
+  image_create_info.samples = samples;
+  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_create_info.queueFamilyIndexCount = 0;
+  image_create_info.pQueueFamilyIndices = nullptr;
+  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkImage native_image = VK_NULL_HANDLE;
+  VkDeviceMemory native_memory = VK_NULL_HANDLE;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          vulkan_device, image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, native_image,
+          native_memory)) {
+    XELOGE("BD L4: failed to create native color producer image");
+    return base;
+  }
+
+  VkImageViewCreateInfo view_create_info;
+  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_create_info.pNext = nullptr;
+  view_create_info.flags = 0;
+  view_create_info.image = native_image;
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_create_info.format = color_format;
+  view_create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  view_create_info.subresourceRange.baseMipLevel = 0;
+  view_create_info.subresourceRange.levelCount = 1;
+  view_create_info.subresourceRange.baseArrayLayer = 0;
+  view_create_info.subresourceRange.layerCount = 1;
+  VkImageView native_view = VK_NULL_HANDLE;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &native_view) !=
+      VK_SUCCESS) {
+    XELOGE("BD L4: failed to create native color producer image view");
+    dfn.vkDestroyImage(device, native_image, nullptr);
+    dfn.vkFreeMemory(device, native_memory, nullptr);
+    return base;
+  }
+
+  // Build the alternate framebuffer: same attachment ORDER as
+  // GetHostRenderTargetsFramebuffer (depth first at bit 0, then color), but the
+  // color attachment view is the native image's view.
+  VkRenderPass render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
+  VkImageView attachments[2];
+  attachments[0] = depth_rt.view_depth_stencil();
+  attachments[1] = native_view;
+  VkFramebufferCreateInfo framebuffer_create_info;
+  framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  framebuffer_create_info.pNext = nullptr;
+  framebuffer_create_info.flags = 0;
+  framebuffer_create_info.renderPass = render_pass;
+  framebuffer_create_info.attachmentCount = 2;
+  framebuffer_create_info.pAttachments = attachments;
+  framebuffer_create_info.width = base->host_extent.width;
+  framebuffer_create_info.height = base->host_extent.height;
+  framebuffer_create_info.layers = 1;
+  VkFramebuffer native_framebuffer = VK_NULL_HANDLE;
+  if (render_pass == VK_NULL_HANDLE ||
+      dfn.vkCreateFramebuffer(device, &framebuffer_create_info, nullptr,
+                              &native_framebuffer) != VK_SUCCESS) {
+    XELOGE("BD L4: failed to create native color producer framebuffer");
+    dfn.vkDestroyImageView(device, native_view, nullptr);
+    dfn.vkDestroyImage(device, native_image, nullptr);
+    dfn.vkFreeMemory(device, native_memory, nullptr);
+    return base;
+  }
+
+  // Cache on the base entry (const_cast: framebuffers_ owns a mutable entry; the
+  // getter returns const for read-only key lookups, but this augments lifetime-
+  // managed members). Safe: emplace guarantees a persistent address.
+  Framebuffer& entry = const_cast<Framebuffer&>(*base);
+  entry.bd_native_color_image = native_image;
+  entry.bd_native_color_memory = native_memory;
+  entry.bd_native_color_view = native_view;
+  entry.bd_native_color_framebuffer = native_framebuffer;
+  entry.bd_native_color_lle_image = color_rt.image();
+  XELOGGPU("BD L4: native color producer framebuffer created {}x{} fmt={}",
+           base->host_extent.width, base->host_extent.height,
+           uint32_t(color_rt.key().GetColorFormat()));
+  return base;
 }
 
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
