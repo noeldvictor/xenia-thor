@@ -2665,14 +2665,16 @@ VkRenderPass VulkanRenderTargetCache::GetBdNativeCustomResolveRenderPass(
   VkAttachmentDescription attachments[3] = {};
   attachments[0].format = GetColorVulkanFormat(producer_format);
   attachments[0].samples = samples;
-  // The field fully re-renders the logical-size producer each frame -> DONT_CARE +
-  // UNDEFINED avoids any cross-frame layout dependency (the producer is never
-  // sampled; the composite reads the A2B10 resolve output instead) and stale load.
-  attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  // INTERLEAVING (5.6-sol): BD renders the field in ~4 interleaved segments; the
+  // producer MSAA must PERSIST across A->B->A switches (LOAD+STORE) so the terminal
+  // custom-resolve reads the ACCUMULATED field, not just the last segment. The
+  // producer image is transitioned to COLOR once at creation, so initialLayout=COLOR
+  // (LOAD) is valid on first use; subsequent segments load the accumulated MSAA.
+  attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  attachments[0].initialLayout = VulkanRenderTarget::kColorDrawLayout;
   attachments[0].finalLayout = VulkanRenderTarget::kColorDrawLayout;
   attachments[1].format = resolve_format;
   attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2687,10 +2689,13 @@ VkRenderPass VulkanRenderTargetCache::GetBdNativeCustomResolveRenderPass(
   attachments[2].format =
       has_depth ? depth_format : VK_FORMAT_D24_UNORM_S8_UINT;
   attachments[2].samples = samples;
+  // Depth also persists across the interleaved segments (LOAD+STORE) so later field
+  // segments depth-test against the accumulated depth (5.6-sol). The LLE depth RT is
+  // already in kDepthDrawLayout (managed by RTC Update).
   attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-  attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
   attachments[2].initialLayout = VulkanRenderTarget::kDepthDrawLayout;
   attachments[2].finalLayout = VulkanRenderTarget::kDepthDrawLayout;
 

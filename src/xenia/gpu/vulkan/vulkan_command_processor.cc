@@ -4724,6 +4724,31 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       // it. bd_native_color_framebuffer is already the CR framebuffer.
       bd_custom_resolve_render_pass_ =
           framebuffer->bd_native_color_custom_resolve_rp;
+      // As-needed transition the producer MSAA image to COLOR so the CR pass's
+      // att0 initialLayout=COLOR + LOAD (persistent across the interleaved field
+      // segments) is valid. One-time from UNDEFINED; the render-pass finalLayout
+      // keeps it COLOR thereafter (no pass is open here -> the barrier is legal).
+      if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE) {
+        auto* mfb = const_cast<VulkanRenderTargetCache::Framebuffer*>(framebuffer);
+        if (mfb->bd_native_color_layout !=
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+          VkImageSubresourceRange range = {};
+          range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+          range.levelCount = 1;
+          range.layerCount = 1;
+          PushImageMemoryBarrier(
+              mfb->bd_native_color_image, range,
+              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+              VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+              VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                  VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+              mfb->bd_native_color_layout,
+              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+          mfb->bd_native_color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+          SubmitBarriers(true);
+        }
+      }
     } else if (render_target_cache_->SeedBdNativeColorProducer(framebuffer)) {
       bd_color_mirror_active_ = true;
       bd_color_mirror_fb_ = framebuffer;
@@ -6655,12 +6680,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (trace_draw_cpu) {
     pipe_t0 = std::chrono::steady_clock::now();
   }
+  // VK_EXT_custom_resolve: derive the CR render pass AUTHORITATIVELY from the
+  // currently-bound framebuffer (not the transient bd_custom_resolve_render_pass_
+  // member, which can desync across BD's many pass break/resume paths -> a
+  // 1-subpass pipeline in the 2-subpass pass, VUID-02684). This is always exactly
+  // the pass that was begun for these field draws.
+  VkRenderPass draw_cr_render_pass = VK_NULL_HANDLE;
+  if (bd_color_mirror_active_ && current_framebuffer_ &&
+      current_framebuffer_->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE) {
+    draw_cr_render_pass =
+        current_framebuffer_->bd_native_color_custom_resolve_rp;
+  }
   bool configure_pipeline_ok = pipeline_cache_->ConfigurePipeline(
       vertex_shader_translation, pixel_shader_translation,
       primitive_processing_result, normalized_depth_control,
       normalized_color_mask,
       render_target_cache_->last_update_render_pass_key(), pipeline,
-      pipeline_layout_provider, bd_custom_resolve_render_pass_);
+      pipeline_layout_provider, draw_cr_render_pass);
   if (trace_draw_cpu) {
     draw_cpu_pipeline_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
