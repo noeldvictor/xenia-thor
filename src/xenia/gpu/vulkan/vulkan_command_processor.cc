@@ -11299,7 +11299,13 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // redundant (droppable). Same identity-RGBA/unsigned guard as gpu_rt_as_texture
   // above - a direct RT bind skips the sign/swizzle remaps the reload path applies.
   // Content-neutral (native == the EDRAM content) until the transfer is dropped.
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && pixel_shader &&
+  // NOTE: gated >=7 (experimental) - the sampler redirect FIRES (composite reads
+  // the native field/bloom) but GARBLES: the native image is a tile-rounded RT
+  // (e.g. 720x1824) sampled as a logical-size texture with [0,1] UVs (reads the
+  // empty tail), and the shared per-framebuffer image is reused across passes
+  // before the composite samples it. Needs logical-size, per-generation native
+  // images. The =5 present-native path is correct and unaffected.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 7 && pixel_shader &&
       texture_count_pixel && !feedback_merge_active_ &&
       !native_render_path_active_ && !bd_l5_alias_by_dest_.empty()) {
     for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
