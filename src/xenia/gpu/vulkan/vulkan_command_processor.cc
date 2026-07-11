@@ -8555,7 +8555,8 @@ void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
 
 void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
                                               uint32_t src_rt_key, uint32_t width,
-                                              uint32_t height) {
+                                              uint32_t height,
+                                              VkFormat target_host_format) {
   if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !dest_base || !src_rt_key) {
     return;
   }
@@ -8576,8 +8577,14 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
   // samplers read correctly-sized frozen content. At =5/=6 present reads the
   // producer RT directly (the validated breakthrough), no copy.
   if (cvars::gpu_bd_native_color_lifetime_hle >= 7) {
+    // >=9 enables the format-converting blit slice (target_host_format valid);
+    // <9 keeps the legacy same-format copy (target = UNDEFINED) so =7/=8 behavior
+    // is unchanged and the convert path is opt-in for A/B on desktop.
+    VkFormat convert_target = (cvars::gpu_bd_native_color_lifetime_hle >= 9)
+                                  ? target_host_format
+                                  : VK_FORMAT_UNDEFINED;
     alias.resolved = render_target_cache_->PublishBdNativeResolved(
-        alias.fb, dest_base, width, height, bd_l5_frame_epoch_);
+        alias.fb, dest_base, width, height, convert_target, bd_l5_frame_epoch_);
   }
   bd_l5_alias_by_dest_[dest_base] = alias;
   if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
@@ -8824,7 +8831,21 @@ bool VulkanCommandProcessor::IssueCopy() {
         // OBSERVE (no substitution): remember this fullscreen resolve's dest ->
         // source RT key, so present can learn which producer feeds the frontbuffer.
         bd_l5_resolve_src_by_dest_[written_address] = l5_src_rt_key;
-        BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height);
+        // 5.6-sol path-A: the host VkFormat this resolve's dest is fetched as, so
+        // the copy-on-resolve snapshot can be created in it and blit-converted
+        // (HDR float16 -> A2B10) - fail-closed to UNDEFINED (no convert -> LLE)
+        // unless UNORM number + no exp_bias + no swap (the blit slice's safe set;
+        // exp_bias/swap aren't reproduced by a plain blit).
+        VkFormat l5_target_host_format = VK_FORMAT_UNDEFINED;
+        if (rb_copy_dest_info.copy_dest_number ==
+                xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction &&
+            rb_copy_dest_info.copy_dest_exp_bias == 0 &&
+            rb_copy_dest_info.copy_dest_swap == 0) {
+          l5_target_host_format =
+              texture_cache_->GetHostVkFormatForColorFormat(dest_format);
+        }
+        BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height,
+                         l5_target_host_format);
       }
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;

@@ -749,6 +749,21 @@ bool VulkanTextureCache::GetActiveTextureGuestInfo(
   return true;
 }
 
+VkFormat VulkanTextureCache::GetHostVkFormatForColorFormat(
+    xenos::TextureFormat texture_format) const {
+  // The resolve dest ColorFormat is reinterpreted as a TextureFormat (see
+  // draw_util GetResolveInfo). Map it to the same host VkFormat a sampled
+  // texture of that format uses. Direct host_formats_ index is correct for the
+  // non-YUV color formats BD resolves to (k_2_10_10_10, k_8_8_8_8, etc.); the
+  // YUV special cases in GetHostFormatPair need a width and never appear as a
+  // resolve dest here.
+  uint32_t index = uint32_t(texture_format);
+  if (index >= xe::countof(host_formats_)) {
+    return VK_FORMAT_UNDEFINED;
+  }
+  return host_formats_[index].format_unsigned.format;
+}
+
 VulkanTextureCache::SamplerParameters VulkanTextureCache::GetSamplerParameters(
     const VulkanShader::SamplerBinding& binding) const {
   const auto& regs = register_file();

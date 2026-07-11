@@ -914,8 +914,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::unordered_map<uint32_t, uint32_t> bd_l5_resolve_src_by_dest_;
   std::unordered_set<uint32_t> bd_l5_allowed_producer_keys_;
   // Publish the producer matching `src_rt_key` under `dest_base` at a resolve.
+  // `target_host_format` (5.6-sol path-A) is the fetch's host VkFormat the
+  // copy-on-resolve snapshot should convert to (VK_FORMAT_UNDEFINED = no convert).
   void BdL5PublishAlias(uint32_t dest_base, uint32_t src_rt_key, uint32_t width,
-                        uint32_t height);
+                        uint32_t height, VkFormat target_host_format);
   // Return the native view aliased to `guest_base` for the current epoch, or null.
   VkImageView BdL5LookupAlias(uint32_t guest_base);
   // True if the transfer whose dest is `dest_base` is safe to DROP: a live L5

@@ -129,6 +129,14 @@ class VulkanTextureCache final : public TextureCache {
                                  uint32_t* base_address_out,
                                  VkFormat* host_format_unsigned_out) const;
 
+  // BD color-HLE conversion (5.6-sol path-A): the host VkFormat a resolve's
+  // copy_dest ColorFormat (reinterpreted as a TextureFormat, per GetResolveInfo)
+  // maps to for sampling - the SAME format a texture fetch of that format uses.
+  // Used to create the native-resolved snapshot T in the fetch's format so the
+  // identity-format sampler gate passes. Returns VK_FORMAT_UNDEFINED if unmapped.
+  VkFormat GetHostVkFormatForColorFormat(
+      xenos::TextureFormat texture_format) const;
+
   SamplerParameters GetSamplerParameters(
       const VulkanShader::SamplerBinding& binding) const;
 

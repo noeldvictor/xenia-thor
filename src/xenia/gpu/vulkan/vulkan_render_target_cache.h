@@ -336,11 +336,18 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   };
   // Copy the producer framebuffer's native RT (valid [0,logical] rect) into the
   // logical-size snapshot for `dest_base`, leaving it SHADER_READ. Returns the
-  // snapshot (or nullptr). `epoch` stamps the publication.
+  // snapshot (or nullptr). `epoch` stamps the publication. `target_format` (5.6-
+  // sol path-A blit slice): when it is a valid, DIFFERENT format from the
+  // producer and the producer is single-sampled, the snapshot is created in
+  // `target_format` and filled via a format-converting vkCmdBlitImage (HDR
+  // float16 -> the fetch's A2B10 host format), so the identity-format sampler
+  // gate passes and the composite samples native field/bloom. VK_FORMAT_UNDEFINED
+  // (or MSAA/matching) keeps the legacy same-format copy/resolve.
   const NativeResolvedTexture* PublishBdNativeResolved(const Framebuffer* fb,
                                                        uint32_t dest_base,
                                                        uint32_t logical_width,
                                                        uint32_t logical_height,
+                                                       VkFormat target_format,
                                                        uint32_t epoch);
   // A swizzled sampled view of a published snapshot.
   VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,

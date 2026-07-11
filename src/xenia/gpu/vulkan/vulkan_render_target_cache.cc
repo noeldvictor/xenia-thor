@@ -3679,6 +3679,7 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
                                                  uint32_t dest_base,
                                                  uint32_t logical_width,
                                                  uint32_t logical_height,
+                                                 VkFormat target_format,
                                                  uint32_t epoch) {
   if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
       fb->bd_native_color_format == VK_FORMAT_UNDEFINED || !dest_base ||
@@ -3693,6 +3694,17 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       std::min(logical_width * draw_resolution_scale_x(), fb->host_extent.width);
   uint32_t h = std::min(logical_height * draw_resolution_scale_y(),
                         fb->host_extent.height);
+  // 5.6-sol path-A blit slice: convert the HDR-float16 producer into the fetch's
+  // A2B10 host format via a format-converting vkCmdBlitImage, so the identity-
+  // format sampler gate passes and the composite samples native field/bloom.
+  // Only a SINGLE-SAMPLED producer whose target differs (MSAA needs a resolve-
+  // then-blit two-step, deferred to the next increment; matching/undefined keeps
+  // the legacy same-format copy). Approximate: blit does a linear format convert
+  // (clamp to [0,1]); exp_bias/swap are NOT applied (gated to 0 by the caller).
+  bool do_convert = target_format != VK_FORMAT_UNDEFINED &&
+                    target_format != fb->bd_native_color_format &&
+                    fb->bd_native_color_samples == VK_SAMPLE_COUNT_1_BIT;
+  VkFormat t_format = do_convert ? target_format : fb->bd_native_color_format;
   NativeResolvedTexture& t = bd_native_resolved_[dest_base];
   // Create the snapshot ONCE and never destroy it mid-frame - a previous frame's
   // in-flight submission may still be sampling/presenting it, and destroying an
@@ -3705,14 +3717,14 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   // the conflicting consumer falls back to LLE. (Identity 1:1 resolves only, per
   // 5.6-sol's first slice; scaling/format-convert resolves need the Resolve hook.)
   if (t.image != VK_NULL_HANDLE &&
-      (t.format != fb->bd_native_color_format || t.width != w || t.height != h)) {
+      (t.format != t_format || t.width != w || t.height != h)) {
     return &t;
   }
   if (t.image == VK_NULL_HANDLE) {
     t = NativeResolvedTexture{};
     VkImageCreateInfo ici = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = fb->bd_native_color_format;
+    ici.format = t_format;
     ici.extent = {w, h, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
@@ -3730,7 +3742,7 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
     VkImageViewCreateInfo vci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vci.image = t.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = fb->bd_native_color_format;
+    vci.format = t_format;
     vci.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -3745,7 +3757,7 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       bd_native_resolved_.erase(dest_base);
       return nullptr;
     }
-    t.format = fb->bd_native_color_format;
+    t.format = t_format;
     t.width = w;
     t.height = h;
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -3791,7 +3803,23 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   // Flush the two pre-copy barriers here; the post-copy SHADER_READ barrier is
   // pushed + submitted after the copy as before.
   command_processor_.SubmitBarriers(true);
-  if (fb->bd_native_color_samples != VK_SAMPLE_COUNT_1_BIT) {
+  if (do_convert) {
+    // FORMAT-CONVERTING BLIT (5.6-sol path-A slice): float16 HDR producer ->
+    // A2B10 T. vkCmdBlitImage does a linear texel format convert (read float,
+    // clamp, write UNORM). Single-sampled only (guaranteed by do_convert). Same
+    // extent, NEAREST (no scaling here - T is logical-size). Approximate: exp_bias
+    // and swap are not applied (caller gates them to 0).
+    VkImageBlit breg = {};
+    breg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    breg.srcSubresource.layerCount = 1;
+    breg.srcOffsets[1] = {int32_t(w), int32_t(h), 1};
+    breg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    breg.dstSubresource.layerCount = 1;
+    breg.dstOffsets[1] = {int32_t(w), int32_t(h), 1};
+    command_processor_.deferred_command_buffer().CmdVkBlitImage(
+        fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &breg, VK_FILTER_NEAREST);
+  } else if (fb->bd_native_color_samples != VK_SAMPLE_COUNT_1_BIT) {
     // MSAA producer (e.g. 2x foliage) -> single-sample snapshot: RESOLVE, not
     // copy (vkCmdCopyImage between different sample counts is invalid = device
     // lost). The snapshot is what the composite samples (a resolved texture).
