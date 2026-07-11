@@ -879,6 +879,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // fullscreen convert draw runs into subpass 1 before the pass is ended.
   VkRenderPass bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
   uint32_t bd_custom_resolve_passes_ = 0;
+  // If a custom-resolve producer pass is open (bd_custom_resolve_render_pass_ set),
+  // advance to subpass 1 + record the fullscreen convert draw, then clear the
+  // armed handle. MUST run before EVERY guest render-pass end (both EndRenderPass
+  // and the RT-reconfig raw end) or the pass ends in subpass 0 (VUID-00910) and the
+  // stale handle corrupts the next pass (5.6-sol). Idempotent (no-op when unarmed).
+  void RecordBdCustomResolveIfActive();
   // The producer framebuffer to mirror (native->LLE) at pass end; set when the
   // pass begins with the native color substituted.
   const VulkanRenderTargetCache::Framebuffer* bd_color_mirror_fb_ = nullptr;

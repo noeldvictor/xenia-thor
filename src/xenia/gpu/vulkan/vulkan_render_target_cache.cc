@@ -2746,7 +2746,9 @@ VkRenderPass VulkanRenderTargetCache::GetBdNativeCustomResolveRenderPass(
   dependencies[2].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   dependencies[2].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
   dependencies[2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  // NOT framebuffer-local: the composite samples the resolve output with UVs
+  // (possibly scaled/filtered), not same-pixel -> a global dependency (5.6-sol).
+  dependencies[2].dependencyFlags = 0;
 
   VkRenderPassCreateInfo render_pass_create_info = {};
   render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -4060,7 +4062,9 @@ VkImageView VulkanRenderTargetCache::GetBdNativeColorSwizzledView(
   VkImageViewCreateInfo view_create_info = {};
   view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   view_create_info.image = sample_image;
-  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  // Guest 2D textures translate to OpTypeImage Arrayed=1 -> the sampled view must
+  // be a compatible ARRAY view (VUID-07752), even with a single layer (5.6-sol).
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
   view_create_info.format = fb->bd_native_color_format;
   view_create_info.components.r = component(host_swizzle, 0);
   view_create_info.components.g = component(host_swizzle, 1);
@@ -5278,6 +5282,13 @@ bool VulkanRenderTargetCache::RecordBdCustomResolveConvert(
   command_buffer.CmdVkPushConstants(layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                     sizeof(pc), &pc);
   command_buffer.CmdVkDraw(6, 1, 0, 0);
+  {
+    static std::atomic<uint32_t> s_cr{0};
+    if (s_cr.fetch_add(1) < 20) {
+      XELOGI("BD custom-resolve: convert draw {}x{} samples={} (subpass1)", w, h,
+             sample_count);
+    }
+  }
   // The resolve output (bd_native_color_resolve_image = A2B10) is now the sampled
   // image; the render pass finalLayout leaves it SHADER_READ for the composite.
   return true;

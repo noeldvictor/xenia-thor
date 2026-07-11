@@ -4645,6 +4645,11 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // gpu_vulkan_retro_depth_none: this direct end bypasses EndRenderPass() -
     // apply the hindsight depth-none patch for the ending pass here too.
     RetroPatchDepthNoneAtPassEnd();
+    // VK_EXT_custom_resolve: this raw end also bypasses EndRenderPass() - advance a
+    // custom-resolve producer pass to subpass 1 + record the convert BEFORE ending,
+    // or the pass ends in subpass 0 (VUID-00910 crash) + the stale handle corrupts
+    // the next pass (the RT-interleaving crash 5.6-sol diagnosed).
+    RecordBdCustomResolveIfActive();
     deferred_command_buffer_.CmdVkEndRenderPass();
     // End-of-pass timestamp AFTER EndRenderPass so it captures the TBDR tile
     // store/flush (the deferred binning+fragment work), not just draw recording.
@@ -5109,6 +5114,23 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
   }
 }
 
+void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
+  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE &&
+      bd_color_mirror_fb_ != nullptr) {
+    // Advance to subpass 1 + the fullscreen resolve+convert draw (MSAA float16
+    // input -> 1x A2B10 output). exp_bias/swap: BD's field resolve is exp_bias=-2
+    // (factor 2^-2=0.25), swap=1 (R/B) per the L9 DESTPARAMS census. The draw
+    // legally advances the pass to its last subpass so it can end (VUID-00910).
+    const VkExtent2D& cr_extent = bd_color_mirror_fb_->bd_native_color_extent;
+    bool ok = render_target_cache_->RecordBdCustomResolveConvert(
+        bd_color_mirror_fb_, cr_extent.width, cr_extent.height, 0.25f, 1u);
+    if (ok) {
+      ++bd_custom_resolve_passes_;
+    }
+  }
+  bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
+}
+
 void VulkanCommandProcessor::EndRenderPass() {
   assert_true(submission_open_);
   if (current_render_pass_ == VK_NULL_HANDLE) {
@@ -5132,20 +5154,7 @@ void VulkanCommandProcessor::EndRenderPass() {
                                               prepass_command_buffer_);
     prepass_active_ = false;
   }
-  // VK_EXT_custom_resolve: the field producer pass is a 2-subpass pass; advance to
-  // subpass 1 and record the fullscreen resolve+convert draw (MSAA float16 input ->
-  // 1x A2B10 output) BEFORE ending the pass. The composite then samples the A2B10
-  // resolve output; the EDRAM color transfer is dropped (BdL5DropSafe).
-  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE &&
-      bd_color_mirror_fb_ != nullptr) {
-    const VkExtent2D& cr_extent = bd_color_mirror_fb_->bd_native_color_extent;
-    // exp_bias/swap: BD's field resolve is exp_bias=-2, swap=1 (R/B) per the L9
-    // DESTPARAMS census. exp_bias_factor = 2^-2 = 0.25.
-    render_target_cache_->RecordBdCustomResolveConvert(
-        bd_color_mirror_fb_, cr_extent.width, cr_extent.height, 0.25f, 1u);
-    ++bd_custom_resolve_passes_;
-  }
-  bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
+  RecordBdCustomResolveIfActive();
   deferred_command_buffer_.CmdVkEndRenderPass();
   // End-of-pass timestamp AFTER EndRenderPass to capture the TBDR tile store.
   RecordPassTimestamp(false);
