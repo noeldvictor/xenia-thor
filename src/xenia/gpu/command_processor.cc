@@ -89,6 +89,18 @@ DEFINE_bool(
     "(legacy override) for A/B. PC-verify via screenshot (no stripe).",
     "GPU");
 DEFINE_bool(
+    gpu_bd_field_decouple, false,
+    "BD field DECOUPLING (capture-replay, 5.6-sol design 2026-07-11): BD renders the "
+    "field in ~4 segments interleaved with shadow RTs, which forces the field MSAA "
+    "producer to spill across A->B switches (negating the on-tile custom-resolve win) "
+    "and desyncs the render-pass state machine. When true, CAPTURE the field's draws "
+    "as self-contained packets into bd_field_command_buffer_ and REPLAY them "
+    "contiguously into ONE 2-subpass VK_EXT_custom_resolve pass at the publication "
+    "IssueCopy (subpass0 splice + subpass1 on-tile resolve+convert). Stage 1 = "
+    "correctness-only duplicate; Stage 2 = suppress originals + drop LLE + measure. "
+    "Turnip-only; needs gpu_bd_native_keep_scissor + customResolve. Default off.",
+    "GPU");
+DEFINE_bool(
     gpu_bd_native_skip_resolves, false,
     "BD-30 pass-collapse (default off, needs gpu_bd_native_renderer): once the "
     "native renderer has rendered the field this frame, skip the LLE EDRAM "

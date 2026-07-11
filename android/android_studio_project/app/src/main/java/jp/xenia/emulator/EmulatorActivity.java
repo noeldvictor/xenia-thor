@@ -273,6 +273,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "gpu_bd_native_color_lifetime_hle");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_field_convert");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_keep_scissor");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_field_decouple");
             copyDoubleExtra(intent, launchArguments, "gpu_bd_native_viewport_scale_x");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_force_samples1");
             copyBooleanExtra(intent, launchArguments, "vulkan_validation");

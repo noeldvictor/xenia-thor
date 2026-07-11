@@ -264,6 +264,7 @@ VulkanCommandProcessor::VulkanCommandProcessor(
                                ->vulkan_device()),
       deferred_command_buffer_(*this),
       prepass_command_buffer_(*this),
+      bd_field_command_buffer_(*this),
       transient_descriptor_allocator_uniform_buffer_(
           static_cast<const ui::vulkan::VulkanProvider*>(
               graphics_system->provider())
@@ -10008,6 +10009,63 @@ void VulkanCommandProcessor::EmitOpaquePrepassDraw(VkBuffer index_buffer,
   }
   pb.CmdVkBindIndexBuffer(index_buffer, index_offset, index_type);
   pb.CmdVkDrawIndexed(index_count, 1, 0, 0, 0);
+}
+
+void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
+    VkBuffer index_buffer, VkDeviceSize index_offset, VkIndexType index_type,
+    uint32_t index_count, uint32_t non_indexed_vertex_count) {
+  // BD field decoupling: capture a SELF-CONTAINED copy of the current field draw
+  // into bd_field_command_buffer_ for contiguous replay at the publication IssueCopy.
+  // Re-emit pipeline + all descriptor sets (+ dynamic offsets) + full dynamic state
+  // + the draw, so the packet needs no inherited leading state at replay. NOTE(v1):
+  // pipeline is the current guest pipeline; for the contiguous CR replay pass the
+  // captured pipeline must be render-pass-compatible with that pass (a follow-up
+  // wires a CR-subpass-0 pipeline for the captured variant). Extended dynamic state
+  // beyond the always-dynamic set is emitted on the host-RT path below.
+  DeferredCommandBuffer& pb = bd_field_command_buffer_;
+  if (current_guest_graphics_pipeline_ == VK_NULL_HANDLE ||
+      current_guest_graphics_pipeline_layout_ == nullptr) {
+    return;
+  }
+  pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                       current_guest_graphics_pipeline_);
+  const bool constants_present =
+      constants_dynamic_descriptor_set_ != VK_NULL_HANDLE;
+  pb.CmdVkBindDescriptorSets(
+      VK_PIPELINE_BIND_POINT_GRAPHICS,
+      current_guest_graphics_pipeline_layout_->GetPipelineLayout(), 0,
+      uint32_t(SpirvShaderTranslator::kDescriptorSetCount),
+      current_graphics_descriptor_sets_,
+      constants_present ? uint32_t(SpirvShaderTranslator::kConstantBufferCount)
+                        : 0,
+      constants_present ? current_constant_dynamic_offsets_ : nullptr);
+  pb.CmdVkSetViewport(0, 1, &dynamic_viewport_);
+  pb.CmdVkSetScissor(0, 1, &dynamic_scissor_);
+  if (render_target_cache_->GetPath() ==
+      RenderTargetCache::Path::kHostRenderTargets) {
+    pb.CmdVkSetDepthBias(dynamic_depth_bias_constant_factor_, 0.0f,
+                         dynamic_depth_bias_slope_factor_);
+    pb.CmdVkSetBlendConstants(dynamic_blend_constants_);
+    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_FRONT_BIT,
+                                  dynamic_stencil_compare_mask_front_);
+    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_BACK_BIT,
+                                  dynamic_stencil_compare_mask_back_);
+    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_FRONT_BIT,
+                                dynamic_stencil_write_mask_front_);
+    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_BACK_BIT,
+                                dynamic_stencil_write_mask_back_);
+    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_FRONT_BIT,
+                                dynamic_stencil_reference_front_);
+    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_BACK_BIT,
+                                dynamic_stencil_reference_back_);
+  }
+  if (index_buffer != VK_NULL_HANDLE) {
+    pb.CmdVkBindIndexBuffer(index_buffer, index_offset, index_type);
+    pb.CmdVkDrawIndexed(index_count, 1, 0, 0, 0);
+  } else {
+    pb.CmdVkDraw(non_indexed_vertex_count, 1, 0, 0);
+  }
+  ++bd_field_captured_draws_;
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(

@@ -590,6 +590,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   void EmitOpaquePrepassDraw(VkBuffer index_buffer, VkDeviceSize index_offset,
                              VkIndexType index_type, uint32_t index_count);
 
+  // BD field DECOUPLING: emit a SELF-CONTAINED copy of the current field draw into
+  // bd_field_command_buffer_ (re-emit pipeline + all descriptor sets + full dynamic
+  // state + the draw), for contiguous replay at the publication IssueCopy. Unlike
+  // EmitOpaquePrepassDraw this must be full-state (no EDS-off assumption) since the
+  // captured packet is replayed in a different pass with no inherited leading state.
+  void EmitBdFieldCaptureDraw(VkBuffer index_buffer, VkDeviceSize index_offset,
+                              VkIndexType index_type, uint32_t index_count,
+                              uint32_t non_indexed_vertex_count);
+
   // Lever 2 (vulkan_merge_draws): emit the accumulated draw-concatenation run as
   // one CmdVkBindIndexBuffer + one CmdVkDrawIndexed, then clear the pending run.
   // No-op when no run is pending. Must be called at every flush point before any
@@ -688,6 +697,23 @@ class VulkanCommandProcessor : public CommandProcessor {
   DeferredCommandBuffer prepass_command_buffer_;
   size_t prepass_insert_pos_ = 0;
   bool prepass_active_ = false;
+
+  // BD field DECOUPLING (capture-replay, 5.6-sol design
+  // docs/research/20260711-decouple-field-capture-replay-56sol.md): BD renders the
+  // field in ~4 segments interleaved with shadow RTs, forcing MSAA spill + pass-
+  // state desync. Instead, CAPTURE the field's draws as self-contained packets
+  // (full dynamic state, unlike the EDS-off prepass) into this side buffer, then at
+  // the publication IssueCopy REPLAY them contiguously into ONE 2-subpass custom-
+  // resolve pass (subpass0 splice + subpass1 convert). Result: contiguous field,
+  // MSAA stays on-tile, no interleaving. Stage 1 = correctness-only duplicate (keep
+  // original rendering + also replay + compare); Stage 2 = suppress originals + drop
+  // LLE + measure. Gated (gpu_bd_field_decouple, default off).
+  DeferredCommandBuffer bd_field_command_buffer_;
+  // The field batch's source RT key (color) for the current generation, and a flag
+  // that a field batch is pending replay at the next matching IssueCopy.
+  uint32_t bd_field_batch_src_key_ = 0;
+  bool bd_field_batch_pending_ = false;
+  uint32_t bd_field_captured_draws_ = 0;
 
   std::vector<VkSparseMemoryBind> sparse_memory_binds_;
   std::vector<SparseBufferBind> sparse_buffer_binds_;
