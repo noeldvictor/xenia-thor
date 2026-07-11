@@ -3753,13 +3753,19 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   range.levelCount = 1;
   range.layerCount = 1;
   Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  // CONSERVATIVE: wait for ALL prior work on the shared producer image P (it is
+  // written by the field draws + read by the mirror, and may be re-begun right
+  // after this resolve) before reading it, and make T's write broadly visible.
   command_processor_.PushImageMemoryBarrier(
-      fb->bd_native_color_image, range, mfb.bd_native_color_stage,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, mfb.bd_native_color_access,
+      fb->bd_native_color_image, range, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
       VK_ACCESS_TRANSFER_READ_BIT, mfb.bd_native_color_layout,
       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   command_processor_.PushImageMemoryBarrier(
-      t.image, range, t.stage, VK_PIPELINE_STAGE_TRANSFER_BIT, t.access,
+      t.image, range, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
       VK_ACCESS_TRANSFER_WRITE_BIT, t.layout,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   command_processor_.SubmitBarriers(true);
@@ -3789,7 +3795,7 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   }
   command_processor_.PushImageMemoryBarrier(
       t.image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
       VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   command_processor_.SubmitBarriers(true);
