@@ -3696,18 +3696,17 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   NativeResolvedTexture& t = bd_native_resolved_[dest_base];
   // Create the snapshot ONCE and never destroy it mid-frame - a previous frame's
   // in-flight submission may still be sampling/presenting it, and destroying an
-  // in-flight image is a non-deterministic device-lost. If a later resolve to the
-  // same dest has a different size/format, keep the existing image and just clamp
-  // the copy to it (BD's per-dest resolves are stable-size; the mismatch is rare).
+  // in-flight image is a non-deterministic device-lost.
+  // CONFLICT SKIP (the smear fix): if a snapshot already exists for this dest but
+  // THIS producer has a different geometry/format, DON'T copy - a second producer
+  // aliasing the same guest dest, or a SCALING resolve (e.g. a 1280-wide P
+  // resolving into a 360-wide texture) - copying the wrong region (the left 360
+  // cols of the 1280 P) is exactly the smear. Keep the existing correct snapshot;
+  // the conflicting consumer falls back to LLE. (Identity 1:1 resolves only, per
+  // 5.6-sol's first slice; scaling/format-convert resolves need the Resolve hook.)
   if (t.image != VK_NULL_HANDLE &&
-      t.format != fb->bd_native_color_format) {
-    // Format genuinely changed (very rare) - can't reuse; skip this publish
-    // rather than destroy in-flight. Present/sampler keep the prior snapshot.
+      (t.format != fb->bd_native_color_format || t.width != w || t.height != h)) {
     return &t;
-  }
-  if (t.image != VK_NULL_HANDLE) {
-    w = std::min(w, t.width);
-    h = std::min(h, t.height);
   }
   if (t.image == VK_NULL_HANDLE) {
     t = NativeResolvedTexture{};
@@ -3774,10 +3773,9 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
       VK_ACCESS_TRANSFER_WRITE_BIT, t.layout,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  command_processor_.SubmitBarriers(true);
-  if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
+  {
     static std::atomic<uint32_t> s_l7{0};
-    if (s_l7.fetch_add(1) < 80) {
+    if (s_l7.fetch_add(1) < 40) {
       XELOGI("L7 RESOLVE dest={:08X} fmt={} samples={} P={}x{} -> T={}x{}",
              dest_base, uint32_t(fb->bd_native_color_format),
              uint32_t(fb->bd_native_color_samples), fb->host_extent.width,
