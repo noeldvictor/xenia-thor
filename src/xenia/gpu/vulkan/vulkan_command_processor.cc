@@ -11320,7 +11320,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // empty tail), and the shared per-framebuffer image is reused across passes
   // before the composite samples it. Needs logical-size, per-generation native
   // images. The =5 present-native path is correct and unaffected.
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 7 && pixel_shader &&
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 8 && pixel_shader &&
       texture_count_pixel && !feedback_merge_active_ &&
       !native_render_path_active_ && !bd_l5_alias_by_dest_.empty()) {
     for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
