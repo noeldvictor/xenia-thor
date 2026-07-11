@@ -8886,7 +8886,11 @@ bool VulkanCommandProcessor::IssueCopy() {
         NativeResourceKey nrk;
         nrk.base_address = written_address;
         nrk.guest_pitch = dest_pitch;
-        nrk.logical_width = dest_width;
+        // LOGICAL size = RB_COPY_DEST_PITCH (copy_dest_pitch/height), NOT
+        // RB_SURFACE_INFO.surface_pitch (dest_width = the tile-strip EDRAM pitch,
+        // which recreates the tile-strip/logical confusion - 5.6-sol tile-fanout
+        // consult). The composite samples the resource at its LOGICAL dims.
+        nrk.logical_width = dest_pitch ? dest_pitch : dest_width;
         nrk.logical_height = dest_height;
         nrk.dimension = uint8_t(xenos::DataDimension::k2DOrStacked);
         nrk.texture_format = uint8_t(dest_format);
