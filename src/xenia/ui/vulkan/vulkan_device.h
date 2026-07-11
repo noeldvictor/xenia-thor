@@ -166,6 +166,9 @@ class VulkanDevice {
     // the FSI alternative on Turnip for the EDRAM-in-GMEM render path).
     bool rasterizationOrderColorAttachmentAccess = false;
     bool rasterizationOrderDepthAttachmentAccess = false;
+    // VK_EXT_multisampled_render_to_single_sampled (BD direct-native: on-tile
+    // MSAA->1x resolve for the field producer, avoids off-chip MSAA spill).
+    bool multisampledRenderToSingleSampled = false;
     bool rasterizationOrderStencilAttachmentAccess = false;
 
     // VK_EXT_shader_demote_to_helper_invocation (#277, promoted to 1.3)
@@ -219,6 +222,8 @@ class VulkanDevice {
     // EDRAM-in-GMEM render path that eliminates EDRAM ownership-transfer copies
     // (measured ~9ms / ~22% of the BTTF GPU frame).
     bool ext_EXT_rasterization_order_attachment_access = false;
+    // BD direct-native: on-tile MSAA->1x resolve for the field producer.
+    bool ext_EXT_multisampled_render_to_single_sampled = false;
     // #227 VK_KHR_fragment_shading_rate (VRS): coarse-shade overdraw-heavy
     // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
     // drivers. pipelineFragmentShadingRate enabled when supported.

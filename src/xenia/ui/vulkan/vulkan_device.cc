@@ -197,6 +197,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // fragment_shader_interlock). Detected here; consumed by the EDRAM ROAA
       // render-target path (gpu_vulkan_edram_roaa).
       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_rasterization_order_attachment_access)
+      // BD direct-native (2026-07-11): on-tile MSAA->1x resolve for the field
+      // producer (renders 4x internally, resolves in tile memory to the 1x native
+      // image) - avoids the off-chip MSAA materialization that made per-surface
+      // convert perf-dead (1.8-2fps). Requested when supported; consumed by the
+      // direct-native producer render pass.
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_multisampled_render_to_single_sampled)
       // #277.
       XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(
           EXT_shader_demote_to_helper_invocation, 1, 3)
@@ -337,6 +343,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_EXT>
       features_EXT_rasterization_order_attachment_access;
+  // BD direct-native: on-tile MSAA->1x resolve for the field producer.
+  VulkanFeatures<
+      VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_FEATURES_EXT>
+      features_EXT_multisampled_render_to_single_sampled;
   VulkanFeatures<
       VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT>
@@ -404,6 +415,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
     if (device->extensions_.ext_EXT_rasterization_order_attachment_access) {
       features_EXT_rasterization_order_attachment_access.Link(
+          supported_features_2, device_create_info);
+    }
+    if (device->extensions_.ext_EXT_multisampled_render_to_single_sampled) {
+      features_EXT_multisampled_render_to_single_sampled.Link(
           supported_features_2, device_create_info);
     }
     if (ext_EXT_non_seamless_cube_map) {
@@ -853,6 +868,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
                              rasterizationOrderDepthAttachmentAccess)
       XE_UI_VULKAN_FEATURE_2(features_EXT_rasterization_order_attachment_access,
                              rasterizationOrderStencilAttachmentAccess)
+    }
+  }
+
+  if (device->extensions_.ext_EXT_multisampled_render_to_single_sampled) {
+    if (with_gpu_emulation) {
+      XE_UI_VULKAN_FEATURE_2(features_EXT_multisampled_render_to_single_sampled,
+                             multisampledRenderToSingleSampled)
     }
   }
 
