@@ -3705,6 +3705,18 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
                     target_format != fb->bd_native_color_format &&
                     fb->bd_native_color_samples == VK_SAMPLE_COUNT_1_BIT;
   VkFormat t_format = do_convert ? target_format : fb->bd_native_color_format;
+  {
+    // Diagnostic (throttled): prove the blit-convert actually fires (vs silently
+    // falling back to LLE). Logs the dest, producer format, target, samples, and
+    // the do_convert decision.
+    static std::atomic<uint32_t> s_l9c{0};
+    if (s_l9c.fetch_add(1) < 40) {
+      XELOGI("L9 CONVERT? dest={:08X} prodfmt={} target={} samples={} convert={}",
+             dest_base, uint32_t(fb->bd_native_color_format),
+             uint32_t(target_format), uint32_t(fb->bd_native_color_samples),
+             do_convert ? 1 : 0);
+    }
+  }
   NativeResolvedTexture& t = bd_native_resolved_[dest_base];
   // Create the snapshot ONCE and never destroy it mid-frame - a previous frame's
   // in-flight submission may still be sampling/presenting it, and destroying an
@@ -3743,9 +3755,13 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
     vci.image = t.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = t_format;
-    vci.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    // Bake copy_dest_swap's R<->B exchange into the converted snapshot's view
+    // (the blit did not apply it). Non-converted (same-format copy) keeps identity.
+    vci.components.r = do_convert ? VK_COMPONENT_SWIZZLE_B
+                                  : VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    vci.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.components.b = do_convert ? VK_COMPONENT_SWIZZLE_R
+                                  : VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = 1;
@@ -3758,6 +3774,7 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       return nullptr;
     }
     t.format = t_format;
+    t.convert_rb_swap = do_convert;
     t.width = w;
     t.height = h;
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -3882,10 +3899,33 @@ VkImageView VulkanRenderTargetCache::GetBdNativeResolvedSwizzledView(
   vci.image = t->image;
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
   vci.format = t->format;
-  vci.components.r = BdSwizzleComponent(host_swizzle, 0);
-  vci.components.g = BdSwizzleComponent(host_swizzle, 1);
-  vci.components.b = BdSwizzleComponent(host_swizzle, 2);
-  vci.components.a = BdSwizzleComponent(host_swizzle, 3);
+  VkComponentSwizzle comp[4] = {BdSwizzleComponent(host_swizzle, 0),
+                                BdSwizzleComponent(host_swizzle, 1),
+                                BdSwizzleComponent(host_swizzle, 2),
+                                BdSwizzleComponent(host_swizzle, 3)};
+  if (t->convert_rb_swap) {
+    // Compose copy_dest_swap's R<->B exchange into the fetch swizzle (5.6-sol:
+    // "replace every R selected by S with B, and vice versa"). Resolve IDENTITY
+    // to the explicit channel for its position first so the swap applies.
+    static const VkComponentSwizzle kIdentityChannel[4] = {
+        VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B,
+        VK_COMPONENT_SWIZZLE_A};
+    for (uint32_t i = 0; i < 4; ++i) {
+      VkComponentSwizzle c = comp[i] == VK_COMPONENT_SWIZZLE_IDENTITY
+                                 ? kIdentityChannel[i]
+                                 : comp[i];
+      if (c == VK_COMPONENT_SWIZZLE_R) {
+        c = VK_COMPONENT_SWIZZLE_B;
+      } else if (c == VK_COMPONENT_SWIZZLE_B) {
+        c = VK_COMPONENT_SWIZZLE_R;
+      }
+      comp[i] = c;
+    }
+  }
+  vci.components.r = comp[0];
+  vci.components.g = comp[1];
+  vci.components.b = comp[2];
+  vci.components.a = comp[3];
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = 1;
   vci.subresourceRange.layerCount = 1;

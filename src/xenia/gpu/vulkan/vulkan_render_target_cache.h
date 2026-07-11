@@ -333,6 +333,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkAccessFlags access = 0;
     uint32_t publish_epoch = 0;
+    // Set when this snapshot was produced by the format-converting blit, which
+    // (unlike the EDRAM resolve) does NOT apply copy_dest_swap's R/B exchange -
+    // so the sampled views bake an R<->B swap to compensate. BD's resolves are
+    // universally swap=1.
+    bool convert_rb_swap = false;
   };
   // Copy the producer framebuffer's native RT (valid [0,logical] rect) into the
   // logical-size snapshot for `dest_base`, leaving it SHADER_READ. Returns the

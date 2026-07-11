@@ -8837,12 +8837,35 @@ bool VulkanCommandProcessor::IssueCopy() {
         // unless UNORM number + no exp_bias + no swap (the blit slice's safe set;
         // exp_bias/swap aren't reproduced by a plain blit).
         VkFormat l5_target_host_format = VK_FORMAT_UNDEFINED;
+        // Fail-closed to the subset a plain blit reproduces: UNORM number, no
+        // exp_bias (blit can't scale). swap=1 is UNIVERSAL in BD (R/B swap) and
+        // is already handled by the existing swizzled sampler VIEW (proven: the
+        // RGBA8 1ECC4000 fetch serves correctly with swap=1), so it is NOT gated
+        // here - the view compensates. Non-zero exp_bias (the MSAA field's -2) and
+        // non-UNORM still fall back to LLE.
         if (rb_copy_dest_info.copy_dest_number ==
                 xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction &&
-            rb_copy_dest_info.copy_dest_exp_bias == 0 &&
-            rb_copy_dest_info.copy_dest_swap == 0) {
+            rb_copy_dest_info.copy_dest_exp_bias == 0) {
           l5_target_host_format =
               texture_cache_->GetHostVkFormatForColorFormat(dest_format);
+        }
+        {
+          // Diagnostic (throttled): the EXACT copy_dest params the shader-based
+          // conversion must reproduce - so we know WHY the blit gate blocked (which
+          // of number/exp_bias/swap is non-trivial for BD's bloom) + the host fmt.
+          static std::atomic<uint32_t> s_l9p{0};
+          if (s_l9p.fetch_add(1) < 60) {
+            XELOGI(
+                "L9 DESTPARAMS dest={:08X} destfmt={} number={} exp_bias={} "
+                "swap={} endian={} hostfmt={}",
+                written_address, uint32_t(dest_format),
+                uint32_t(rb_copy_dest_info.copy_dest_number),
+                int32_t(rb_copy_dest_info.copy_dest_exp_bias),
+                uint32_t(rb_copy_dest_info.copy_dest_swap),
+                uint32_t(rb_copy_dest_info.copy_dest_endian),
+                uint32_t(texture_cache_->GetHostVkFormatForColorFormat(
+                    dest_format)));
+          }
         }
         BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height,
                          l5_target_host_format);
@@ -11372,6 +11395,18 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       // fallback (correct). Native field/bloom coverage needs a conversion shader.
       if (it->second.resolved->format != texture_host_format_unsigned) {
         continue;
+      }
+      {
+        // Diagnostic (throttled): the identity gate PASSED for a snapshot - prove
+        // the composite is sampling a native (possibly converted) T, and log its
+        // format so a converted A2B10 T (blit slice) is distinguishable from an
+        // identity RGBA8 composite.
+        static std::atomic<uint32_t> s_l9s{0};
+        if (s_l9s.fetch_add(1) < 40) {
+          XELOGI("L9 SAMPLER SERVED base={:08X} tfmt={} fetchfmt={}",
+                 texture_base_address, uint32_t(it->second.resolved->format),
+                 uint32_t(texture_host_format_unsigned));
+        }
       }
       // Bind the LOGICAL-size copy-on-resolve snapshot THROUGH a view with the
       // guest swizzle applied - correct extent (logical, not tile-rounded) AND
