@@ -8601,7 +8601,10 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
   // the producer's valid rect into a persistent LOGICAL-size image so present +
   // samplers read correctly-sized frozen content. At =5/=6 present reads the
   // producer RT directly (the validated breakthrough), no copy.
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 7) {
+  // DIRECT-NATIVE (keep_scissor): NO copy-on-resolve (perf-dead on Turnip) - the
+  // composite samples the logical-size producer directly. Skip the snapshot.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 7 &&
+      !cvars::gpu_bd_native_keep_scissor) {
     // >=9 enables the format-converting blit slice (target_host_format valid);
     // <9 keeps the legacy same-format copy (target = UNDEFINED) so =7/=8 behavior
     // is unchanged and the convert path is opt-in for A/B on desktop.
@@ -11449,39 +11452,42 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       }
       auto it = bd_l5_alias_by_dest_.find(texture_base_address);
       if (it == bd_l5_alias_by_dest_.end() ||
-          it->second.frame_epoch != bd_l5_frame_epoch_ ||
-          !it->second.resolved ||
-          it->second.resolved->image == VK_NULL_HANDLE) {
+          it->second.frame_epoch != bd_l5_frame_epoch_) {
         continue;
       }
-      // IDENTITY-FORMAT GATE (5.6-sol): only redirect when the snapshot's format
-      // BITWISE-MATCHES what this fetch expects. BD's HDR field/bloom producers
-      // are R16G16B16A16_SFLOAT but the composite fetches them as k_2_10_10_10 -
-      // the EDRAM resolve does a format CONVERSION my raw copy can't reproduce, so
-      // serving the snapshot corrupts (smear/cyan). Reject the mismatch -> LLE
-      // fallback (correct). Native field/bloom coverage needs a conversion shader.
-      if (it->second.resolved->format != texture_host_format_unsigned) {
+      // DIRECT-NATIVE (keep_scissor): sample the LOGICAL-size producer DIRECTLY -
+      // no copy-on-resolve snapshot (perf-dead on Turnip). The producer is now
+      // logical-size (piece 1) so [0,1] UVs are correct. Legacy path samples the
+      // copy-on-resolve snapshot.
+      const bool direct = cvars::gpu_bd_native_keep_scissor;
+      if (!direct && (!it->second.resolved ||
+                      it->second.resolved->image == VK_NULL_HANDLE)) {
+        continue;
+      }
+      // IDENTITY-FORMAT GATE (5.6-sol): only redirect when the native image's
+      // format BITWISE-MATCHES the fetch. Same-format resources pass; BD's HDR
+      // field (float16 producer) vs A2B10 fetch MISMATCHES -> LLE fallback (the
+      // field's fps win needs an on-tile format-converting resolve = custom_resolve).
+      VkFormat native_fmt = direct ? it->second.fb->bd_native_color_format
+                                   : it->second.resolved->format;
+      if (native_fmt != texture_host_format_unsigned) {
         continue;
       }
       {
-        // Diagnostic (throttled): the identity gate PASSED for a snapshot - prove
-        // the composite is sampling a native (possibly converted) T, and log its
-        // format so a converted A2B10 T (blit slice) is distinguishable from an
-        // identity RGBA8 composite.
         static std::atomic<uint32_t> s_l9s{0};
         if (s_l9s.fetch_add(1) < 40) {
-          XELOGI("L9 SAMPLER SERVED base={:08X} tfmt={} fetchfmt={}",
-                 texture_base_address, uint32_t(it->second.resolved->format),
-                 uint32_t(texture_host_format_unsigned));
+          XELOGI("L9 SAMPLER SERVED base={:08X} tfmt={} fetchfmt={} direct={}",
+                 texture_base_address, uint32_t(native_fmt),
+                 uint32_t(texture_host_format_unsigned), direct ? 1 : 0);
         }
       }
-      // Bind the LOGICAL-size copy-on-resolve snapshot THROUGH a view with the
-      // guest swizzle applied - correct extent (logical, not tile-rounded) AND
-      // frozen content (the reused producer RT can't corrupt it).
       uint32_t host_swz =
           texture_cache_->GetActiveTextureHostSwizzle(fetch_constant);
-      VkImageView l5_view = render_target_cache_->GetBdNativeResolvedSwizzledView(
-          it->second.resolved, host_swz);
+      VkImageView l5_view =
+          direct ? render_target_cache_->GetBdNativeColorSwizzledView(
+                       it->second.fb, host_swz)
+                 : render_target_cache_->GetBdNativeResolvedSwizzledView(
+                       it->second.resolved, host_swz);
       if (l5_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = l5_view;
         ++rt_served_textures_;
