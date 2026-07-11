@@ -9,9 +9,14 @@
 
 #include "xenia/ui/vulkan/vulkan_provider.h"
 
+#include <cstdlib>
 #include <vector>
 
 #include "xenia/base/cvar.h"
+#include "xenia/base/platform.h"
+#if XE_PLATFORM_WIN32
+#include "xenia/base/platform_win.h"
+#endif
 #include "xenia/base/logging.h"
 #include "xenia/ui/vulkan/vulkan_immediate_drawer.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
@@ -35,6 +40,17 @@ namespace vulkan {
 std::unique_ptr<VulkanProvider> VulkanProvider::Create(
     const bool with_gpu_emulation, const bool with_presentation) {
   std::unique_ptr<VulkanProvider> provider(new VulkanProvider());
+
+#if XE_PLATFORM_WIN32
+  // RenderDoc SELF-LOAD (env XENIA_RENDERDOC=<path to renderdoc.dll>): renderdoccmd
+  // injection is Defender-blocked in some environments; load renderdoc.dll BEFORE
+  // vkCreateInstance so RenderDoc hooks Vulkan + the in-app TriggerCapture (cvar
+  // gpu_bd_renderdoc_capture_frame) works without injection.
+  if (const char* rd_path = std::getenv("XENIA_RENDERDOC")) {
+    HMODULE rd = LoadLibraryA(rd_path);
+    XELOGI("RenderDoc self-load ('{}'): {}", rd_path, rd ? "OK" : "FAILED");
+  }
+#endif
 
   provider->vulkan_instance_ =
       VulkanInstance::Create(with_presentation, cvars::vulkan_validation);

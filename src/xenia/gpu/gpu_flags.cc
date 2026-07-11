@@ -134,6 +134,18 @@ DEFINE_int32(
     "GPU");
 
 DEFINE_bool(
+    gpu_bd_skip_foliage_shadows, false,
+    "SHIPPABLE Performance lever (Thor, BD-30, user 2026-07-08 'never decimate "
+    "foliage, make shadows cheaper'): skip the DEPTH-ONLY alpha-test draws = the "
+    "FOLIAGE SHADOW-CASTERS (leaves rendered into a shadow/depth map, color mask 0). "
+    "The tiny leaves' cast shadows are imperceptible, but re-processing every leaf's "
+    "vertices into the shadow map is a big chunk of the ~2/3 GEOMETRY cost "
+    "(device-proven: force_no_color_write=15fps floor => pixels only ~1/3). Keeps the "
+    "VISIBLE (color-writing) foliage 100% intact = high quality, cheaper shadows, NOT "
+    "decimation. 0 = off.",
+    "GPU");
+
+DEFINE_bool(
     gpu_diag_skip_alpha_test_draws, false,
     "BOTTLENECK DIAGNOSTIC (default-off, breaks pixels): skip alpha-test "
     "(foliage) draws. Large frame-time drop => the field's cost is that "
@@ -1219,6 +1231,29 @@ DEFINE_bool(
     "cuts tile traffic but does NOT preserve aliased EDRAM content, so it may "
     "cause rendering glitches. Resolve-clears are still performed. Diagnostic / "
     "performance-mode experiment; measure via gpu_frame_us + read the frame.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_bd_native_copy_transfers, false,
+    "BD-30 native-copy transfer fast-path: same-tile-layout single-sample color "
+    "EDRAM ownership-transfers are pure 1:1 region copies - do them as a native "
+    "vkCmdBlitImage (no render pass = NO TBDR tile-store) instead of the per-pixel "
+    "address-emulation shader pass whose deferred tile-store is the ~110ms wall. "
+    "Content is COPIED (preserved), not skipped, so the image stays correct. "
+    "MSAA/depth/reinterpreting transfers keep the shader path. Gated, default off.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_bd_native_skip_transfers, false,
+    "BD-30 SURGICAL transfer skip (paired with the native renderer): skip EDRAM "
+    "ownership-transfers only ONCE the field has been redirected into the native "
+    "RT this frame (bd_native_field_rendered) - those transfers re-alias the "
+    "field's EDRAM which is REDUNDANT (we present the native RT, not the LLE "
+    "surface), and they are the pass-breaks / GMEM store-reload that dominate the "
+    "frame. Pre-field shadow/texture transfers (which the field samples) are "
+    "KEPT. Mirrors gpu_bd_native_skip_resolves. If this blacks the field, the "
+    "during-field transfers feed it (=> need full-HLE native RT-texture passes). "
+    "Gated, default off.",
     "GPU");
 
 DEFINE_bool(

@@ -49,6 +49,7 @@
 #include "xenia/cpu/breakpoint.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_frontend.h"
+#include "xenia/cpu/module.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/stack_walker.h"
 #include "xenia/cpu/thread_state.h"
@@ -3291,10 +3292,15 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
         // BeginTiling's setup), not the frequent replay writes to other offsets.
         (void)n;
         if (guest_fa >= 0x40011330u && guest_fa <= 0x40011348u) {
+          // writer_fn=memcpy(0x826BF770); its guest LR (from the PPCContext at
+          // host x[20]) = the CALLER = BeginTiling.
+          auto* ppc = reinterpret_cast<ppc::PPCContext*>(
+              uintptr_t(ex->thread_context()->x[20]));
+          uint32_t guest_lr = ppc ? uint32_t(ppc->lr) : 0;
           XELOGE(
               "PAGE_WATCH TILESTATE: wrote guest {:08X} from writer_fn={:08X} "
-              "writer_pc={:08X}",
-              guest_fa, writer_fn, writer_pc);
+              "writer_pc={:08X} caller_lr={:08X}",
+              guest_fa, writer_fn, writer_pc, guest_lr);
         }
         // EMULATE-ON-FAULT: do the store ourselves + keep the page protected (no
         // un-protect window = catch EVERY write). Decode size (bits 31:30) + source
@@ -3318,6 +3324,49 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
         ex->set_resume_pc(ex->pc() + 4);
         return true;
       }
+    }
+  }
+
+  // BD a64-crash diagnostic: log the GUEST function of an unhandled access
+  // violation (the fault-storm crash the HLE triggers) so it can be identified
+  // and its a64 codegen fixed. Only the first few (the storm re-faults).
+  if (ex->code() == Exception::Code::kAccessViolation) {
+    static std::atomic<int> av_log{0};
+    if (av_log.fetch_add(1) < 5) {
+      GuestFunction* fn = code_cache()->LookupFunction(ex->pc());
+      uint32_t guest_fn = fn ? fn->address() : 0;
+      uint32_t guest_pc = fn ? fn->MapMachineCodeToGuestAddress(ex->pc()) : 0;
+      // a64 cache MISSED -> the crashing fn is LLVM-compiled (host code in ORCv2
+      // memory, not the a64 cache). Scan all guest functions' host machine_code
+      // ranges to NAME the intermittent-JIT-crash function so it can be a64-routed
+      // (cpu_backend_llvm_skip_addrs). This is the root-blocker crash-mapper.
+      if (!guest_fn) {
+        uintptr_t hpc = uintptr_t(ex->pc());
+        for (auto* mod : processor()->GetModules()) {
+          mod->ForEachFunction([&](Function* f) {
+            if (guest_fn || !f->is_guest()) {
+              return;
+            }
+            auto* gf = static_cast<GuestFunction*>(f);
+            uint8_t* mc = gf->machine_code();
+            if (mc && hpc >= uintptr_t(mc) &&
+                hpc < uintptr_t(mc) + gf->machine_code_length()) {
+              guest_fn = gf->address();
+              guest_pc = gf->MapMachineCodeToGuestAddress(hpc);
+            }
+          });
+          if (guest_fn) {
+            break;
+          }
+        }
+      }
+      auto* hc = ex->thread_context();
+      XELOGE(
+          "A64 CRASH DIAG: unhandled AV guest_fn={:08X} guest_pc={:08X} "
+          "host_pc={:016X} fault_addr={:016X} x21_membase={:016X} "
+          "x25={:016X} lr={:016X}",
+          guest_fn, guest_pc, ex->pc(), ex->fault_address(), hc->x[21],
+          hc->x[25], hc->x[30]);
     }
   }
 

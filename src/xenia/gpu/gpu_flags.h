@@ -37,6 +37,7 @@ DECLARE_bool(gpu_diag_raster_ab);
 DECLARE_bool(gpu_binonce_full_scissor);
 DECLARE_int32(gpu_resolution_downscale_pct);
 DECLARE_int32(gpu_foliage_decimate_pct);
+DECLARE_bool(gpu_bd_skip_foliage_shadows);
 DECLARE_bool(gpu_diag_skip_alpha_test_draws);
 DECLARE_int32(gpu_diag_skip_draws_min_indices);
 DECLARE_bool(gpu_trace_bin_select);
@@ -169,6 +170,8 @@ DECLARE_bool(gpu_edram_passes_dont_care);
 // vulkan_render_target_cache.cc; used there and in vulkan_command_processor.cc.
 DECLARE_bool(gpu_rt_as_texture);
 DECLARE_bool(gpu_skip_edram_transfers);
+DECLARE_bool(gpu_bd_native_skip_transfers);
+DECLARE_bool(gpu_bd_native_copy_transfers);
 DECLARE_bool(gpu_skip_bloom);
 DECLARE_uint32(gpu_freeze_at_guest_ms);
 DECLARE_int32(gpu_skip_draws_below_verts);

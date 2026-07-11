@@ -125,6 +125,14 @@ DEFINE_string(cpu_hle_bin_once_begintiling_addr, "",
               "foliage vertex/binning the tiling doubles (360 tiles for its 10MB EDRAM; "
               "Thor's emulated EDRAM has no limit). Empty disables. Default off.",
               "CPU");
+DEFINE_uint32(cpu_hle_bin_once_full_width, 0,
+              "GPU D3D9-HLE BIN-ONCE full-surface width override. The BeginTiling "
+              "surface descriptor gives the PARTIAL tile width (BD's rect0=672); the "
+              "resolve target (rect1) is the FULL 1280-wide field. Set to the full "
+              "display width (e.g. 1280) so the bin-once quad tiles the whole field "
+              "and ALL draws render full-width (not clipped to the left tile). 0=off "
+              "(use surface desc). Pairs with gpu_bd_native_renderer.",
+              "CPU");
 // GPU D3D9-HLE FLATTEN-AT-RECORDER (2026-07-05 RE): BD's universal per-draw
 // recorder Function_824895C8 fans a draw out PER TILE internally - for a bin
 // mask (param_3) with N tile bits set it calls the per-tile emitter once per
@@ -148,8 +156,10 @@ DEFINE_int32(gpu_bd_flatten_replay, 0,
              "the single untiled full-surface branch ((param_3 & 0xf)->0, high "
              "bit kept so it stays non-zero) then run the recorder body once; "
              "3=mode 2 AND reshape the scissor/draw rects (the mask-reg-adjacent "
-             "pointer args) to the full surface. Renders the field in ONE full "
-             "pass instead of per-tile. Default 0 (off).",
+             "pointer args) to the full surface; 5=CAPTURE (native-draw HLE "
+             "foundation): run the body, then log the exact per-draw PM4 the "
+             "recorder wrote into the guest command buffer (device+0x28 delta) + "
+             "count total vs tiled recorder calls. Default 0 (off).",
              "GPU");
 DEFINE_int32(gpu_bd_flatten_mask_reg, 5,
              "BD FLATTEN: which guest GPR index holds the recorder's bin-mask "
@@ -655,6 +665,13 @@ void HleBeginTilingHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
     uint32_t info = rd(surf + 0x24u);
     W = ((info >> 18) & 0x3fffu) + 1u;
     H = ((info >> 3) & 0x7fffu) + 1u;
+  }
+  // The surface desc gives the PARTIAL tile (rect0, W=672); the RE found the FULL
+  // surface (rect1) = the resolve target 1280x720. Bin-once must tile the FULL
+  // surface so ALL draws render across the whole field (not clipped to the left
+  // tile). Force W to the full display width when it reads as the half-tile.
+  if (cvars::cpu_hle_bin_once_full_width && W < cvars::cpu_hle_bin_once_full_width) {
+    W = uint32_t(cvars::cpu_hle_bin_once_full_width);
   }
   if (rects) {
     wr(rects + 0x0u, 0u);
@@ -1214,6 +1231,18 @@ void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
     }
   }
 
+  // CAPTURE mode 5 (native-draw HLE foundation): the recorder writes each draw's
+  // PM4 (SET-reg state + DRAW-INDX) into the guest command/indirect buffer whose
+  // write pointer is device+0x28. Snapshot device+0x28 BEFORE the body, run the
+  // body, then read it back AFTER: the [before, after) guest words ARE this
+  // draw's self-contained, re-submittable PM4 - exactly what a native single-
+  // pass re-injection needs (and what the per-tile replay double-submits). Also
+  // counts total vs tiled (device+0x30b8 in 2..8) recorder calls = the true
+  // field-draw volume through this seam.
+  uint32_t cap_dev = uint32_t(ctx->r[3]);
+  uint32_t cap_tc = (mode == 5) ? rd(cap_dev + 0x30b8u) : 0;
+  uint32_t ib_before = (mode == 5) ? rd(cap_dev + 0x28u) : 0;
+
   // Run the ORIGINAL recorder body (byte-identical) with the (possibly modified)
   // GPRs via the behavior toggle: kDefault so the JIT'd body runs (not this
   // extern); Execute overwrites only r3-r10 so f1 is preserved.
@@ -1228,6 +1257,32 @@ void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
   proc->Execute(ts, kBdRecorderAddr, args, 8);
   fn->set_behavior(Function::Behavior::kExtern);
   in_recorder = false;
+
+  if (mode == 5) {
+    static std::atomic<int64_t> cap_total{0};
+    static std::atomic<int64_t> cap_tiled{0};
+    static std::atomic<int> cap_log{0};
+    bool tiled = (cap_tc >= 2u && cap_tc <= 8u);
+    int64_t total = cap_total.fetch_add(1) + 1;
+    if (tiled) cap_tiled.fetch_add(1);
+    if ((total % 50000) == 0) {
+      XELOGI("BDCAP totals: recorder_calls={} tiled(tc2-8)={} (last tc={:08X})",
+             total, cap_tiled.load(), cap_tc);
+    }
+    uint32_t ib_after = rd(cap_dev + 0x28u);
+    if (tiled && ib_after > ib_before && (ib_after - ib_before) <= 0x400u &&
+        cap_log.fetch_add(1) < 12) {
+      uint32_t n = (ib_after - ib_before) / 4u;
+      XELOGI(
+          "BDCAP draw tc={:08X} ib=[{:08X},{:08X}) words={} PM4: {:08X} {:08X} "
+          "{:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+          cap_tc, ib_before, ib_after, n, rd(ib_before), rd(ib_before + 4u),
+          rd(ib_before + 8u), rd(ib_before + 0xcu), rd(ib_before + 0x10u),
+          rd(ib_before + 0x14u), rd(ib_before + 0x18u), rd(ib_before + 0x1cu),
+          rd(ib_before + 0x20u), rd(ib_before + 0x24u), rd(ib_before + 0x28u),
+          rd(ib_before + 0x2cu));
+    }
+  }
 }
 }  // namespace
 

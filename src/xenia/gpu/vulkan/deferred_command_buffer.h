@@ -329,6 +329,87 @@ class DeferredCommandBuffer {
                 regions, sizeof(VkBufferImageCopy) * region_count);
   }
 
+  VkImageBlit* CmdBlitImageEmplace(VkImage src_image,
+                                   VkImageLayout src_image_layout,
+                                   VkImage dst_image,
+                                   VkImageLayout dst_image_layout,
+                                   uint32_t region_count, VkFilter filter) {
+    const size_t header_size =
+        xe::align(sizeof(ArgsVkBlitImage), alignof(VkImageBlit));
+    uint8_t* args_ptr = reinterpret_cast<uint8_t*>(WriteCommand(
+        Command::kVkBlitImage,
+        header_size + sizeof(VkImageBlit) * region_count));
+    auto& args = *reinterpret_cast<ArgsVkBlitImage*>(args_ptr);
+    args.src_image = src_image;
+    args.src_image_layout = src_image_layout;
+    args.dst_image = dst_image;
+    args.dst_image_layout = dst_image_layout;
+    args.region_count = region_count;
+    args.filter = filter;
+    return reinterpret_cast<VkImageBlit*>(args_ptr + header_size);
+  }
+  void CmdVkBlitImage(VkImage src_image, VkImageLayout src_image_layout,
+                      VkImage dst_image, VkImageLayout dst_image_layout,
+                      uint32_t region_count, const VkImageBlit* regions,
+                      VkFilter filter) {
+    std::memcpy(
+        CmdBlitImageEmplace(src_image, src_image_layout, dst_image,
+                            dst_image_layout, region_count, filter),
+        regions, sizeof(VkImageBlit) * region_count);
+  }
+
+  VkImageCopy* CmdCopyImageEmplace(VkImage src_image,
+                                   VkImageLayout src_image_layout,
+                                   VkImage dst_image,
+                                   VkImageLayout dst_image_layout,
+                                   uint32_t region_count) {
+    const size_t header_size =
+        xe::align(sizeof(ArgsVkCopyImage), alignof(VkImageCopy));
+    uint8_t* args_ptr = reinterpret_cast<uint8_t*>(WriteCommand(
+        Command::kVkCopyImage,
+        header_size + sizeof(VkImageCopy) * region_count));
+    auto& args = *reinterpret_cast<ArgsVkCopyImage*>(args_ptr);
+    args.src_image = src_image;
+    args.src_image_layout = src_image_layout;
+    args.dst_image = dst_image;
+    args.dst_image_layout = dst_image_layout;
+    args.region_count = region_count;
+    return reinterpret_cast<VkImageCopy*>(args_ptr + header_size);
+  }
+  void CmdVkCopyImage(VkImage src_image, VkImageLayout src_image_layout,
+                      VkImage dst_image, VkImageLayout dst_image_layout,
+                      uint32_t region_count, const VkImageCopy* regions) {
+    std::memcpy(CmdCopyImageEmplace(src_image, src_image_layout, dst_image,
+                                    dst_image_layout, region_count),
+                regions, sizeof(VkImageCopy) * region_count);
+  }
+
+  VkImageResolve* CmdResolveImageEmplace(VkImage src_image,
+                                         VkImageLayout src_image_layout,
+                                         VkImage dst_image,
+                                         VkImageLayout dst_image_layout,
+                                         uint32_t region_count) {
+    const size_t header_size =
+        xe::align(sizeof(ArgsVkResolveImage), alignof(VkImageResolve));
+    uint8_t* args_ptr = reinterpret_cast<uint8_t*>(WriteCommand(
+        Command::kVkResolveImage,
+        header_size + sizeof(VkImageResolve) * region_count));
+    auto& args = *reinterpret_cast<ArgsVkResolveImage*>(args_ptr);
+    args.src_image = src_image;
+    args.src_image_layout = src_image_layout;
+    args.dst_image = dst_image;
+    args.dst_image_layout = dst_image_layout;
+    args.region_count = region_count;
+    return reinterpret_cast<VkImageResolve*>(args_ptr + header_size);
+  }
+  void CmdVkResolveImage(VkImage src_image, VkImageLayout src_image_layout,
+                         VkImage dst_image, VkImageLayout dst_image_layout,
+                         uint32_t region_count, const VkImageResolve* regions) {
+    std::memcpy(CmdResolveImageEmplace(src_image, src_image_layout, dst_image,
+                                       dst_image_layout, region_count),
+                regions, sizeof(VkImageResolve) * region_count);
+  }
+
   void CmdVkDispatch(uint32_t group_count_x, uint32_t group_count_y,
                      uint32_t group_count_z) {
     ++record_stats_.dispatches;
@@ -704,6 +785,9 @@ class DeferredCommandBuffer {
     kVkCopyBuffer,
     kVkCopyBufferToImage,
     kVkCopyImageToBuffer,
+    kVkBlitImage,
+    kVkCopyImage,
+    kVkResolveImage,
     kVkDispatch,
     kVkDraw,
     kVkDrawIndexed,
@@ -830,6 +914,36 @@ class DeferredCommandBuffer {
     uint32_t region_count;
     // Followed by aligned VkBufferImageCopy[].
     static_assert(alignof(VkBufferImageCopy) <= alignof(uintmax_t));
+  };
+
+  struct ArgsVkBlitImage {
+    VkImage src_image;
+    VkImageLayout src_image_layout;
+    VkImage dst_image;
+    VkImageLayout dst_image_layout;
+    uint32_t region_count;
+    VkFilter filter;
+    // Followed by aligned VkImageBlit[].
+    static_assert(alignof(VkImageBlit) <= alignof(uintmax_t));
+  };
+
+  struct ArgsVkResolveImage {
+    VkImage src_image;
+    VkImageLayout src_image_layout;
+    VkImage dst_image;
+    VkImageLayout dst_image_layout;
+    uint32_t region_count;
+    // Followed by aligned VkImageResolve[].
+    static_assert(alignof(VkImageResolve) <= alignof(uintmax_t));
+  };
+  struct ArgsVkCopyImage {
+    VkImage src_image;
+    VkImageLayout src_image_layout;
+    VkImage dst_image;
+    VkImageLayout dst_image_layout;
+    uint32_t region_count;
+    // Followed by aligned VkImageCopy[].
+    static_assert(alignof(VkImageCopy) <= alignof(uintmax_t));
   };
 
   struct ArgsVkDispatch {

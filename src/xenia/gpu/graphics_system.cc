@@ -26,6 +26,8 @@
 #include "xenia/base/profiling.h"
 #include "xenia/base/threading.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/function.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/cpu/thread_state.h"
 #include "xenia/gpu/command_processor.h"
 #include "xenia/gpu/gpu_flags.h"
@@ -299,6 +301,28 @@ void GraphicsSystem::WriteRegister(uint32_t addr, uint32_t value) {
           --kick_lr_budget;
           XELOGI("KICK_LR: guest_lr={:08X} wptr={:08X}",
                  uint32_t(ts->context()->lr), value);
+          // D3D-HLE RE: the LR is inside the submit fn; scan the guest stack for
+          // code-range return addresses = the CALLER CHAIN up to the tiling-
+          // structure builder (EndTiling = the bin-once HLE target). Non-
+          // destructive (passive read), so the field still renders.
+          uint32_t sp = uint32_t(ts->context()->r[1]);
+          for (uint32_t off = 0; sp && off < 0x140; off += 4) {
+            uint32_t w = xe::load_and_swap<uint32_t>(
+                memory_->TranslateVirtual(sp + off));
+            if (w >= 0x82000000u && w < 0x82800000u) {
+              // Resolve to the FUNCTION ENTRY (the HLE intercept target) - the
+              // stack value is a return addr mid-function; FindFunctionsWithAddress
+              // finds the CONTAINING fn (QueryFunction is exact-entry-keyed, misses).
+              uint32_t entry = 0;
+              if (processor_) {
+                auto fns = processor_->FindFunctionsWithAddress(w);
+                if (!fns.empty()) {
+                  entry = fns[0]->address();
+                }
+              }
+              XELOGI("  KICK_STACK[+{:X}]={:08X} fn_entry={:08X}", off, w, entry);
+            }
+          }
         }
       }
       command_processor_->UpdateWritePointer(value);

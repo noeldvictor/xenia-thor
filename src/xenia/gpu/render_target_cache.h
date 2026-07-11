@@ -205,6 +205,19 @@ class RenderTargetCache {
   uint32_t GetLastUpdateBoundRenderTargets(
       uint32_t* depth_and_color_formats_out = nullptr) const;
 
+  // The packed RenderTargetKey of the current draw's color render target
+  // `color_index` (0-based), or 0 if none is bound. This is the SAME full identity
+  // (base+pitch+format+msaa) the resolve path records, letting the native-HLE
+  // render-redirect key a bound RT to its resolve-dest surface unambiguously —
+  // EDRAM base alone aliases (BD renders every RT at base 0).
+  uint32_t GetLastUpdateColorRenderTargetKey(uint32_t color_index) const {
+    if (color_index >= xenos::kMaxColorRenderTargets) {
+      return 0;
+    }
+    const RenderTarget* rt = last_update_used_render_targets_[1 + color_index];
+    return rt ? rt->key().key : 0;
+  }
+
  protected:
   RenderTargetCache(const RegisterFile& register_file, const Memory& memory,
                     TraceWriter* trace_writer, uint32_t draw_resolution_scale_x,

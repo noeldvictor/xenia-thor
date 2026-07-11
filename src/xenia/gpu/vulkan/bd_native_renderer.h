@@ -21,6 +21,7 @@
 #define XENIA_GPU_VULKAN_BD_NATIVE_RENDERER_H_
 
 #include <cstdint>
+#include <unordered_map>
 
 #include "xenia/ui/vulkan/vulkan_provider.h"
 
@@ -30,6 +31,36 @@ namespace vulkan {
 
 class VulkanCommandProcessor;
 class DeferredCommandBuffer;
+
+// THE real-HLE unit (EDRAM deletion): a single native render-to-texture surface
+// — its OWN persistent color(+depth) VkImage, keyed by the guest RESOLVE-
+// DESTINATION address (the stable D3D9 resource identity: the main-memory
+// texture the 360 surface resolves to and is LATER SAMPLED as). Because each
+// logical surface owns one image that is BOTH rendered into AND sampled, there
+// are NO EDRAM ownership transfers (the 35-pass / ~110ms wall). This replaces
+// xenia's EDRAM-base RenderTargetKey addressing with DXVK/Cemu-style
+// resource-identity addressing. Single-sample first (shadow/reflection RTs);
+// MSAA aux resolve is a follow-up.
+struct NativeSurface {
+  uint32_t key = 0;  // resolve-dest guest address = resource identity
+  uint32_t width = 0;
+  uint32_t height = 0;
+  VkFormat color_format = VK_FORMAT_UNDEFINED;
+  VkFormat depth_format = VK_FORMAT_UNDEFINED;
+  VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+  VkImage color_image = VK_NULL_HANDLE;
+  VkDeviceMemory color_memory = VK_NULL_HANDLE;
+  VkImageView color_view = VK_NULL_HANDLE;  // SAMPLED + COLOR_ATTACHMENT
+  VkImage depth_image = VK_NULL_HANDLE;
+  VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+  VkImageView depth_view = VK_NULL_HANDLE;
+  VkRenderPass render_pass_clear = VK_NULL_HANDLE;  // first draw into this surface
+  VkRenderPass render_pass_load = VK_NULL_HANDLE;   // accumulate re-begins
+  VkFramebuffer framebuffer = VK_NULL_HANDLE;
+  // Tracks the color image's current layout so binds/attaches barrier correctly.
+  VkImageLayout color_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  bool rendered_this_frame = false;  // false => next attach uses the CLEAR pass
+};
 
 // Brick 1: owns a persistent native full-surface color+depth RT + one render
 // pass. Bricks 2-4 add native pipelines (VkBuffer vertex-input, Xenos->SPIR-V,
@@ -45,7 +76,10 @@ class BdNativeRenderer {
   // Allocate the persistent color+depth image + render pass + framebuffer, sized
   // to BD's full field surface (default 720x1280; the real dims come from the
   // captured surface state). Returns false on failure (caller falls back to LLE).
-  bool Initialize(uint32_t width, uint32_t height);
+  // stretch_src_width: when >0, the field renders into the left stretch_src_width
+  // px and is blitted STRETCHED to the full width on present (fill the screen);
+  // 0 = present the rendered region as-is.
+  bool Initialize(uint32_t width, uint32_t height, uint32_t stretch_src_width = 0);
   void Shutdown();
 
   // Recreate the color image + view + render pass + framebuffer for `format` if
@@ -74,6 +108,34 @@ class BdNativeRenderer {
                ? resolve_view_
                : color_view_;
   }
+  // The view to PRESENT: the stretched present image when stretch is active + ready,
+  // else the rendered image directly (color_view()).
+  VkImageView present_output_view() const {
+    if (stretch_src_width_ > 0 && present_view_ != VK_NULL_HANDLE &&
+        present_image_ready_) {
+      return present_view_;
+    }
+    return color_view();
+  }
+  // The single-sample image holding the rendered field (resolve when MSAA, else
+  // color) - the SOURCE for the stretch blit.
+  VkImage rendered_image() const {
+    return (samples_ != VK_SAMPLE_COUNT_1_BIT && resolve_image_ != VK_NULL_HANDLE)
+               ? resolve_image_
+               : color_image_;
+  }
+  // BD field-fill STRETCH: the bin-once renders the whole field into the left
+  // src_width px of the native RT (the field's guest surface is narrower than the
+  // 1280 display - BD upscales it in the resolve). Blit that region to the full
+  // present_image_ width so the field fills the screen, then present present_image_.
+  // No-op (returns false) if the present image isn't allocated (stretch disabled).
+  bool StretchToPresent(DeferredCommandBuffer& command_buffer, uint32_t src_width,
+                        uint32_t src_height);
+  // ADRENO: the render pass has no in-pass resolve (for pipeline compat), so resolve
+  // the MSAA color -> single-sample resolve_image_ SEPARATELY before present. No-op
+  // on desktop (in-pass resolve) or single-sample. Call before present/StretchToPresent.
+  bool ResolveMsaa(DeferredCommandBuffer& command_buffer);
+  bool has_present_image() const { return present_image_ != VK_NULL_HANDLE; }
   // The native render pass + framebuffer - redirect BD's field draws into these
   // to render the real geometry natively in ONE pass (Brick 2b, reuses xenia's
   // shaders/pipelines; requires format-compatibility with the field pipelines).
@@ -86,11 +148,45 @@ class BdNativeRenderer {
   VkRenderPass render_pass() const { return render_pass_; }
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }
+  // THE desktop-vs-Thor fork: true on Qualcomm Adreno / Mesa Turnip (the driver
+  // that crashes on the loose render-pass compat desktop tolerates). Branch
+  // Adreno-strict / super-optimized paths on this.
+  bool IsAdreno() const;
+
+  // ---- Native-surface registry (the real HLE / EDRAM-deletion substrate) ----
+  // Get-or-create the persistent native surface for resource `key` (the guest
+  // resolve-destination address), sized/typed to the surface. Reused across
+  // frames; recreated in place if the format/size/samples change. Returns nullptr
+  // on failure (caller falls back to the EDRAM path). MSAA (samples>1) is not yet
+  // supported for aux surfaces and returns nullptr.
+  NativeSurface* AcquireSurface(uint32_t key, uint32_t width, uint32_t height,
+                                VkFormat color_format, VkFormat depth_format,
+                                VkSampleCountFlagBits samples);
+  // Look up a native surface by key (nullptr if none). Const view for binding.
+  NativeSurface* FindSurface(uint32_t key);
+  // The sampled color view of the native surface whose key == guest_address, or
+  // VK_NULL_HANDLE if none exists — the texture-fetch redirect uses this to bind
+  // the natively-rendered image instead of the EDRAM-resolved upload. Only
+  // returns a view once the surface has actually been rendered this run (else the
+  // image is undefined/garbage and must fall back to EDRAM).
+  VkImageView LookupSampledSurface(uint32_t guest_address);
+  // Number of live native surfaces (diagnostics).
+  size_t surface_count() const { return surfaces_.size(); }
+  // Clear per-frame render flags on all surfaces (call at frame start): the next
+  // draw into each surface re-CLEARs it, matching BD re-priming its RTs per frame.
+  void BeginSurfaceFrame();
 
  private:
   bool CreateRenderPass();
   bool CreateImages();
   bool CreateFramebuffer();
+  // Allocate images/views/passes/framebuffer into `surface` per its fields.
+  bool CreateSurfaceResources(NativeSurface& surface);
+  void DestroySurfaceResources(NativeSurface& surface);
+
+  // key(resolve-dest guest address) -> persistent native surface. Node stability
+  // (unordered_map) so returned NativeSurface* stay valid across inserts.
+  std::unordered_map<uint32_t, NativeSurface> surfaces_;
 
   VulkanCommandProcessor& command_processor_;
   uint32_t width_ = 0;
@@ -105,6 +201,15 @@ class BdNativeRenderer {
   VkImage resolve_image_ = VK_NULL_HANDLE;
   VkDeviceMemory resolve_memory_ = VK_NULL_HANDLE;
   VkImageView resolve_view_ = VK_NULL_HANDLE;
+  // Full-display present target (only when stretch is enabled): the rendered
+  // field (in the left src_width px) is blitted STRETCHED into this at the full
+  // display width, and THIS is presented. Kept SHADER_READ between frames.
+  VkImage present_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory present_memory_ = VK_NULL_HANDLE;
+  VkImageView present_view_ = VK_NULL_HANDLE;
+  uint32_t present_width_ = 0;
+  uint32_t stretch_src_width_ = 0;  // >0 = stretch [0..this] -> full width
+  bool present_image_ready_ = false;  // has valid SHADER_READ content to present
   VkImage depth_image_ = VK_NULL_HANDLE;
   VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
   VkImageView depth_view_ = VK_NULL_HANDLE;
