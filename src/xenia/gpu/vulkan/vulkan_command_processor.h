@@ -1807,6 +1807,13 @@ class VulkanCommandProcessor : public CommandProcessor {
       ++rt_resolve_clears_;
     }
   }
+  // 5.6-sol drop-reliability: rt_transfers_ counts transfers REQUESTED (before the
+  // L5/native filtering clears the dead ones). The number that actually costs
+  // tile-store is EXECUTED = requested - dropped. Count the dropped entries where
+  // the filter clears them so the trace reports the real executed count.
+  void AddRenderTargetTransfersDropped(uint32_t dropped_count) {
+    rt_transfers_dropped_ += dropped_count;
+  }
   // RT-as-texture rearch detector (increment 1): each guest EDRAM->shared-memory
   // resolve COPY and its dest byte length. The GPU trace pinned ~13% of BD's GPU to
   // these ResolveCopy compute dispatches + their RAM round-trip; this sizes how much
@@ -1916,6 +1923,7 @@ class VulkanCommandProcessor : public CommandProcessor {
  private:
   uint32_t rt_transfer_calls_ = 0;
   uint32_t rt_transfers_ = 0;
+  uint32_t rt_transfers_dropped_ = 0;
   uint32_t rt_resolve_clears_ = 0;
   // RT-as-texture rearch detector (increment 1), reset at swap.
   uint32_t rt_resolve_copies_ = 0;

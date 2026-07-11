@@ -2738,7 +2738,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "GPU draw outcomes/frame: rendered={} skipped_no_vs={} "
         "skipped_no_rast={} copy={} total_vertices={} max_vertices={} "
         "avg_vertices={} pipeline_binds={} descriptor_binds={} "
-        "rt_transfer_calls={} rt_transfers={} rt_resolve_clears={} "
+        "rt_transfer_calls={} rt_transfers={} rt_xfers_dropped={} "
+        "rt_xfers_executed={} rt_resolve_clears={} "
         "pass_break_barrier={} pass_break_rt_change={} "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "inpass[x={} skip_fmt={} skip_oth={}] "
@@ -2789,7 +2790,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
             ? (draw_outcomes_total_vertices_ / draw_outcomes_rendered_)
             : 0,
         draw_outcomes_pipeline_binds_, draw_outcomes_descriptor_binds_,
-        rt_transfer_calls_, rt_transfers_, rt_resolve_clears_,
+        rt_transfer_calls_, rt_transfers_, rt_transfers_dropped_,
+        (rt_transfers_ >= rt_transfers_dropped_
+             ? rt_transfers_ - rt_transfers_dropped_
+             : 0),
+        rt_resolve_clears_,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
         rt_transfer_same_format_, rt_transfer_diff_format_,
         rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
@@ -3102,6 +3107,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     }
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
+    rt_transfers_dropped_ = 0;
     rt_resolve_clears_ = 0;
     rt_resolve_copies_ = 0;
     rt_resolve_copy_bytes_ = 0;

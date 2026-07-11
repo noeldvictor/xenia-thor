@@ -6603,6 +6603,10 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       // each -> if the barrier prevents the collapse, this = 30fps + correct.
       const bool drop_all = cvars::gpu_bd_native_drop_all_xfer;
       if (native_served || drop_color_only || drop_all || l5_served) {
+        // Count the entries actually removed so the trace can report EXECUTED
+        // transfers (requested - dropped) - the real tile-store cost (5.6-sol).
+        command_processor_.AddRenderTargetTransfersDropped(
+            uint32_t(s_bd_xfer_filtered[i].size()));
         s_bd_xfer_filtered[i].clear();  // transfer dead
         any_dropped = true;
         // Preserve the SYNC the dropped transfer would have provided. The
