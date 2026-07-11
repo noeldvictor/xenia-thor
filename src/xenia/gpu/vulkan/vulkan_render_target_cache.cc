@@ -4095,6 +4095,171 @@ VkShaderModule VulkanRenderTargetCache::GetBdNativeConvertShader(
   return shader_module;
 }
 
+bool VulkanRenderTargetCache::GetBdNativeConvertPipeline(
+    VkFormat dest_format, uint32_t source_sample_count,
+    VkPipeline& pipeline_out, VkRenderPass& render_pass_out,
+    VkPipelineLayout& layout_out) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  // Pipeline layout (once): set 0 = one sampled image, + the convert push range.
+  if (bd_convert_pipeline_layout_ == VK_NULL_HANDLE) {
+    VkPushConstantRange push_range = {};
+    push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(BdConvertPushConstants);
+    VkPipelineLayoutCreateInfo plci = {
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &descriptor_set_layout_sampled_image_;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &push_range;
+    if (dfn.vkCreatePipelineLayout(device, &plci, nullptr,
+                                   &bd_convert_pipeline_layout_) != VK_SUCCESS) {
+      return false;
+    }
+  }
+  layout_out = bd_convert_pipeline_layout_;
+
+  // Render pass (per dest format): one color attachment, leaves T SHADER_READ.
+  auto rp_it = bd_convert_render_passes_.find(uint32_t(dest_format));
+  VkRenderPass render_pass;
+  if (rp_it != bd_convert_render_passes_.end()) {
+    render_pass = rp_it->second;
+  } else {
+    VkAttachmentDescription attachment = {};
+    attachment.format = dest_format;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference color_ref = {};
+    color_ref.attachment = 0;
+    color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_ref;
+    VkRenderPassCreateInfo rpci = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &attachment;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &subpass;
+    if (dfn.vkCreateRenderPass(device, &rpci, nullptr, &render_pass) !=
+        VK_SUCCESS) {
+      return false;
+    }
+    bd_convert_render_passes_.emplace(uint32_t(dest_format), render_pass);
+  }
+  render_pass_out = render_pass;
+
+  // Pipeline (per dest format + source sample count).
+  uint64_t pipe_key = (uint64_t(dest_format) << 8) | source_sample_count;
+  auto pipe_it = bd_convert_pipelines_.find(pipe_key);
+  if (pipe_it != bd_convert_pipelines_.end()) {
+    pipeline_out = pipe_it->second;
+    return pipeline_out != VK_NULL_HANDLE;
+  }
+  VkShaderModule fs = GetBdNativeConvertShader(source_sample_count);
+  if (fs == VK_NULL_HANDLE ||
+      transfer_passthrough_vertex_shader_ == VK_NULL_HANDLE) {
+    bd_convert_pipelines_.emplace(pipe_key, VK_NULL_HANDLE);
+    return false;
+  }
+
+  VkPipelineShaderStageCreateInfo stages[2] = {};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = transfer_passthrough_vertex_shader_;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fs;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription vertex_binding = {};
+  vertex_binding.binding = 0;
+  vertex_binding.stride = sizeof(float) * 2;
+  vertex_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription vertex_attribute = {};
+  vertex_attribute.location = 0;
+  vertex_attribute.binding = 0;
+  vertex_attribute.format = VK_FORMAT_R32G32_SFLOAT;
+  vertex_attribute.offset = 0;
+  VkPipelineVertexInputStateCreateInfo vertex_input = {
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertex_input.vertexBindingDescriptionCount = 1;
+  vertex_input.pVertexBindingDescriptions = &vertex_binding;
+  vertex_input.vertexAttributeDescriptionCount = 1;
+  vertex_input.pVertexAttributeDescriptions = &vertex_attribute;
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state = {
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterization = {
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterization.cullMode = VK_CULL_MODE_NONE;
+  rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterization.lineWidth = 1.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisample = {
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState blend_attachment = {};
+  blend_attachment.blendEnable = VK_FALSE;
+  blend_attachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo color_blend = {
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blend.attachmentCount = 1;
+  color_blend.pAttachments = &blend_attachment;
+
+  VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                      VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state = {
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pci = {
+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pci.stageCount = 2;
+  pci.pStages = stages;
+  pci.pVertexInputState = &vertex_input;
+  pci.pInputAssemblyState = &input_assembly;
+  pci.pViewportState = &viewport_state;
+  pci.pRasterizationState = &rasterization;
+  pci.pMultisampleState = &multisample;
+  pci.pColorBlendState = &color_blend;
+  pci.pDynamicState = &dynamic_state;
+  pci.layout = bd_convert_pipeline_layout_;
+  pci.renderPass = render_pass;
+  pci.subpass = 0;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &pipeline) != VK_SUCCESS) {
+    bd_convert_pipelines_.emplace(pipe_key, VK_NULL_HANDLE);
+    return false;
+  }
+  bd_convert_pipelines_.emplace(pipe_key, pipeline);
+  pipeline_out = pipeline;
+  return true;
+}
+
 bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
   if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
       !fb->bd_native_color_lle_rt) {

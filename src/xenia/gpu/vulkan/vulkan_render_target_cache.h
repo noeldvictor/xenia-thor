@@ -369,6 +369,17 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     uint32_t pad;
   };
   std::unordered_map<uint32_t, VkShaderModule> bd_convert_shaders_;
+  // Lazily build (+ cache) the convert graphics pipeline for a dest color format
+  // + source sample count. Returns false on failure. Fills the render pass +
+  // layout (reused for the framebuffer + descriptor/push binds at dispatch).
+  bool GetBdNativeConvertPipeline(VkFormat dest_format,
+                                  uint32_t source_sample_count,
+                                  VkPipeline& pipeline_out,
+                                  VkRenderPass& render_pass_out,
+                                  VkPipelineLayout& layout_out);
+  VkPipelineLayout bd_convert_pipeline_layout_ = VK_NULL_HANDLE;
+  std::unordered_map<uint32_t, VkRenderPass> bd_convert_render_passes_;
+  std::unordered_map<uint64_t, VkPipeline> bd_convert_pipelines_;
   // A swizzled sampled view of a published snapshot.
   VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,
                                               uint32_t host_swizzle);
