@@ -3582,6 +3582,7 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   entry.bd_native_color_lle_rt =
       const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
   entry.bd_native_color_format = color_format;
+  entry.bd_native_color_samples = samples;
   XELOGI("BD L4: native color producer framebuffer created {}x{} fmt={} depth={}",
          base->host_extent.width, base->host_extent.height,
          uint32_t(color_rt.key().GetColorFormat()), has_depth ? 1 : 0);
@@ -3762,15 +3763,30 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       VK_ACCESS_TRANSFER_WRITE_BIT, t.layout,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   command_processor_.SubmitBarriers(true);
-  VkImageCopy creg = {};
-  creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  creg.srcSubresource.layerCount = 1;
-  creg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  creg.dstSubresource.layerCount = 1;
-  creg.extent = {w, h, 1};
-  command_processor_.deferred_command_buffer().CmdVkCopyImage(
-      fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.image,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+  if (fb->bd_native_color_samples != VK_SAMPLE_COUNT_1_BIT) {
+    // MSAA producer (e.g. 2x foliage) -> single-sample snapshot: RESOLVE, not
+    // copy (vkCmdCopyImage between different sample counts is invalid = device
+    // lost). The snapshot is what the composite samples (a resolved texture).
+    VkImageResolve rreg = {};
+    rreg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    rreg.srcSubresource.layerCount = 1;
+    rreg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    rreg.dstSubresource.layerCount = 1;
+    rreg.extent = {w, h, 1};
+    command_processor_.deferred_command_buffer().CmdVkResolveImage(
+        fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rreg);
+  } else {
+    VkImageCopy creg = {};
+    creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    creg.srcSubresource.layerCount = 1;
+    creg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    creg.dstSubresource.layerCount = 1;
+    creg.extent = {w, h, 1};
+    command_processor_.deferred_command_buffer().CmdVkCopyImage(
+        fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+  }
   command_processor_.PushImageMemoryBarrier(
       t.image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,

@@ -129,6 +129,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // swizzles, so a direct identity bind gives wrong channels - each distinct
     // host_swizzle gets its own view). Owned here, destroyed with the framebuffer.
     VkFormat bd_native_color_format = VK_FORMAT_UNDEFINED;
+    VkSampleCountFlagBits bd_native_color_samples = VK_SAMPLE_COUNT_1_BIT;
     std::unordered_map<uint32_t, VkImageView> bd_native_color_swizzled_views_;
     // Native image's last {stage, access, layout} across frames (5.6-sol L4 hang
     // fix): the seed must barrier the native image FROM its real prior state
