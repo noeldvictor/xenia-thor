@@ -48,6 +48,7 @@
 // BD's resolved guest front buffer.
 DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
+DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_skip_resolves);
 DECLARE_int32(gpu_bd_native_tile_filter);
@@ -10002,8 +10003,15 @@ void VulkanCommandProcessor::UpdateDynamicState(
   // x=672 is the geometry being CLIPPED there. Widen the scissor to the full-
   // surface native RT so the whole field rasterizes across x=0..1280 (offset
   // untouched - it's the correct screen transform).
+  // 5.6-sol tile-fanout fix: this override to the FULL native extent DESTROYS
+  // GetScissor's already-correct per-group scissor (it applies PA_SC_WINDOW_OFFSET
+  // -> left group [0,672], right group [608,1280]), letting BOTH field groups leak
+  // full-width and OVERLAP -> stripe. gpu_bd_native_keep_scissor=true KEEPS the
+  // per-group scissor (the fix - render each group into only its region of the
+  // logical RT). Default false = the legacy (striping) override, for A/B.
   if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
       bd_native_renderer_->initialized() &&
+      !cvars::gpu_bd_native_keep_scissor &&
       (current_render_pass_ == bd_native_renderer_->render_pass() ||
        current_render_pass_ == bd_native_renderer_->render_pass_load())) {
     scissor_rect.offset.x = 0;

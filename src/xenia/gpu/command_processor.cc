@@ -78,6 +78,17 @@ DEFINE_bool(
     "vulkan-renderer-plan.md. Brick 1 = the persistent RT + one render pass.",
     "GPU");
 DEFINE_bool(
+    gpu_bd_native_keep_scissor, false,
+    "BD tile-fanout fix (5.6-sol 2026-07-11): when true, KEEP GetScissor's already-"
+    "correct per-group scissor (it applies PA_SC_WINDOW_OFFSET: left field group -> "
+    "[0,672], right -> [608,1280]) in the native renderer path instead of OVERRIDING "
+    "it to the full native extent. The override was the failed 'widen the scissor, "
+    "ignore the offset' approach that STRIPED (both groups leak full-width + overlap). "
+    "Keeping the per-group scissor renders each group into only its region -> no "
+    "stripe (if both groups are caught). Needs gpu_bd_native_renderer. Default off "
+    "(legacy override) for A/B. PC-verify via screenshot (no stripe).",
+    "GPU");
+DEFINE_bool(
     gpu_bd_native_skip_resolves, false,
     "BD-30 pass-collapse (default off, needs gpu_bd_native_renderer): once the "
     "native renderer has rendered the field this frame, skip the LLE EDRAM "
