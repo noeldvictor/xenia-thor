@@ -205,6 +205,7 @@ DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_field_convert);
 DECLARE_bool(gpu_bd_native_keep_scissor);
+DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
@@ -3724,8 +3725,12 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   // field renders float16 into subpass 0 and a shader custom-resolve subpass reads
   // it as an input attachment and writes 1x A2B10 - on-tile, no off-chip MSAA spill.
   // The producer image then also needs INPUT_ATTACHMENT usage.
+  // The 2-subpass CR producer is needed by BOTH the interleaved direct-native path
+  // (keep_scissor) AND the decoupled capture-replay path (field_decouple, which
+  // replays captured field draws into it contiguously - the field renders to LLE
+  // normally in-order there, so keep_scissor is off).
   const bool use_custom_resolve =
-      cvars::gpu_bd_native_keep_scissor &&
+      (cvars::gpu_bd_native_keep_scissor || cvars::gpu_bd_field_decouple) &&
       samples != VK_SAMPLE_COUNT_1_BIT &&
       vulkan_device->extensions().ext_EXT_custom_resolve &&
       vulkan_device->properties().customResolve;
@@ -3738,7 +3743,7 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   // Falls back to host_extent when no logical dims are learned yet (first frame).
   uint32_t prod_width = base->host_extent.width;
   uint32_t prod_height = base->host_extent.height;
-  if (cvars::gpu_bd_native_keep_scissor) {
+  if (cvars::gpu_bd_native_keep_scissor || cvars::gpu_bd_field_decouple) {
     VulkanCommandProcessor::NativeBindingPlan plan =
         command_processor_.SelectNativeBinding(color_rt.key().key);
     if (plan.use_native && plan.key.logical_width && plan.key.logical_height) {

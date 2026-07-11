@@ -49,6 +49,7 @@
 DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_native_keep_scissor);
+DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_skip_resolves);
 DECLARE_int32(gpu_bd_native_tile_filter);
@@ -4699,7 +4700,12 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
                           : 0u;
     l5_allowed = l5_key && bd_l5_allowed_producer_keys_.count(l5_key) != 0;
   }
+  // BD field DECOUPLING: skip the in-order producer substitution entirely - the
+  // field renders NORMALLY to LLE (correct, no interleaved CR/seed-mirror), and the
+  // captured field draws are replayed into the producer contiguously at IssueCopy.
+  // The producer still exists on the framebuffer entry (for the replay target).
   if (cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
+      !cvars::gpu_bd_field_decouple &&
       (pass_kind == GpuPassKind::kGuest ||
        pass_kind == GpuPassKind::kGuestComposite) &&
       framebuffer &&
@@ -5153,6 +5159,79 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
     entry.src_rt_key = src_rt_key;
     bd_l5_producer_by_srckey_[src_rt_key] = entry;
   }
+}
+
+void VulkanCommandProcessor::ReplayBdFieldBatch() {
+  const VulkanRenderTargetCache::Framebuffer* fb = bd_field_producer_fb_;
+  bool ok = cvars::gpu_bd_field_decouple && bd_field_batch_pending_ &&
+            fb != nullptr && bd_field_captured_draws_ != 0 &&
+            fb->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE &&
+            fb->bd_native_color_framebuffer != VK_NULL_HANDLE &&
+            fb->bd_native_color_extent.width != 0;
+  if (ok) {
+    // Contiguous replay: begin the CR producer pass ONCE, splice the captured field
+    // draws (subpass 0), on-tile custom-resolve convert (subpass 1), end. The field
+    // MSAA never leaves GMEM (one contiguous pass, no interleave spill).
+    if (current_render_pass_ != VK_NULL_HANDLE) {
+      EndRenderPass();
+    }
+    auto* mfb = const_cast<VulkanRenderTargetCache::Framebuffer*>(fb);
+    if (mfb->bd_native_color_layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+      VkImageSubresourceRange range = {};
+      range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      range.levelCount = 1;
+      range.layerCount = 1;
+      PushImageMemoryBarrier(
+          mfb->bd_native_color_image, range, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+          VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+              VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+          mfb->bd_native_color_layout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+      mfb->bd_native_color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      SubmitBarriers(true);
+    }
+    VkRenderPassBeginInfo rpbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rpbi.renderPass = fb->bd_native_color_custom_resolve_rp;
+    rpbi.framebuffer = fb->bd_native_color_framebuffer;
+    rpbi.renderArea.offset = {0, 0};
+    rpbi.renderArea.extent = fb->bd_native_color_extent;
+    rpbi.clearValueCount = 0;
+    rpbi.pClearValues = nullptr;
+    deferred_command_buffer_.CmdVkBeginRenderPass(&rpbi,
+                                                  VK_SUBPASS_CONTENTS_INLINE);
+    current_render_pass_ = fb->bd_native_color_custom_resolve_rp;
+    current_framebuffer_ = fb;
+    bd_custom_resolve_render_pass_ = fb->bd_native_color_custom_resolve_rp;
+    bd_cr_bound_pass_ = fb->bd_native_color_custom_resolve_rp;
+    bd_color_mirror_fb_ = fb;
+    // Splice the captured self-contained field draws (append at the stream end).
+    deferred_command_buffer_.InsertStreamFrom(
+        deferred_command_buffer_.command_stream_size_elements(),
+        bd_field_command_buffer_);
+    // NextSubpass + the fullscreen convert (subpass 1) + end. Clears bd_cr_bound_pass_.
+    RecordBdCustomResolveIfActive();
+    deferred_command_buffer_.CmdVkEndRenderPass();
+    current_render_pass_ = VK_NULL_HANDLE;
+    current_framebuffer_ = nullptr;
+    // The spliced draws changed bound state - force the next guest draw to re-emit.
+    current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_external_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_guest_graphics_pipeline_layout_ = nullptr;
+    current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    dynamic_viewport_update_needed_ = true;
+    dynamic_scissor_update_needed_ = true;
+    static std::atomic<uint32_t> s_replay{0};
+    if (s_replay.fetch_add(1) < 20) {
+      XELOGI("BD field decouple: replayed {} captured field draws contiguously",
+             bd_field_captured_draws_);
+    }
+  }
+  // Reset the batch (even on the no-op path, to drop a stale partial capture).
+  bd_field_command_buffer_.Reset();
+  bd_field_batch_pending_ = false;
+  bd_field_captured_draws_ = 0;
+  bd_field_producer_fb_ = nullptr;
 }
 
 void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
@@ -8271,6 +8350,34 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               primitive_processing_result.host_draw_vertex_count);
         }
       }
+      // BD field DECOUPLING (gpu_bd_field_decouple): CAPTURE this field draw as a
+      // self-contained packet with a CR-subpass-0 pipeline (render-pass-compatible
+      // with the 2-subpass replay pass) into bd_field_command_buffer_, for
+      // contiguous replay at the publication IssueCopy. A field draw = its
+      // framebuffer carries a custom-resolve producer. The field also renders
+      // in-order (Stage 1 duplicate; Stage 2 suppresses the in-order draw). The
+      // CR pipeline is a distinct cache entry (bd_custom_resolve description bit);
+      // the field shader's descriptors/layout are shared with the in-order pipeline.
+      if (cvars::gpu_bd_field_decouple && current_framebuffer_ &&
+          current_framebuffer_->bd_native_color_custom_resolve_rp !=
+              VK_NULL_HANDLE) {
+        VkPipeline cr_pipe = VK_NULL_HANDLE;
+        const VulkanPipelineCache::PipelineLayoutProvider* cr_layout = nullptr;
+        if (pipeline_cache_->ConfigurePipeline(
+                vertex_shader_translation, pixel_shader_translation,
+                primitive_processing_result, normalized_depth_control,
+                normalized_color_mask,
+                render_target_cache_->last_update_render_pass_key(), cr_pipe,
+                cr_layout,
+                current_framebuffer_->bd_native_color_custom_resolve_rp)) {
+          EmitBdFieldCaptureDraw(
+              cr_pipe, cr_layout->GetPipelineLayout(), index_buffer.first,
+              index_buffer.second, index_type,
+              primitive_processing_result.host_draw_vertex_count, 0);
+          bd_field_batch_pending_ = true;
+          bd_field_producer_fb_ = current_framebuffer_;
+        }
+      }
     }
   }
 
@@ -8795,6 +8902,15 @@ bool VulkanCommandProcessor::IssueCopy() {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+
+  // BD field DECOUPLING: the field's captured draws are published here (the
+  // publication edge, before the composite reads the field). Replay them
+  // contiguously into the CR producer + on-tile resolve, then the normal copy runs.
+  // v1 replays at the first IssueCopy after the field batch; copy_src_select
+  // matching is a follow-up.
+  if (cvars::gpu_bd_field_decouple && bd_field_batch_pending_) {
+    ReplayBdFieldBatch();
+  }
 
   // Pass-collapse (BD-30): once the native renderer has rendered the field this
   // frame, the LLE EDRAM resolves that follow (frontbuffer/composite copies) are
@@ -10012,28 +10128,26 @@ void VulkanCommandProcessor::EmitOpaquePrepassDraw(VkBuffer index_buffer,
 }
 
 void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
+    VkPipeline cr_pipeline, VkPipelineLayout cr_pipeline_layout,
     VkBuffer index_buffer, VkDeviceSize index_offset, VkIndexType index_type,
     uint32_t index_count, uint32_t non_indexed_vertex_count) {
   // BD field decoupling: capture a SELF-CONTAINED copy of the current field draw
   // into bd_field_command_buffer_ for contiguous replay at the publication IssueCopy.
   // Re-emit pipeline + all descriptor sets (+ dynamic offsets) + full dynamic state
-  // + the draw, so the packet needs no inherited leading state at replay. NOTE(v1):
-  // pipeline is the current guest pipeline; for the contiguous CR replay pass the
-  // captured pipeline must be render-pass-compatible with that pass (a follow-up
-  // wires a CR-subpass-0 pipeline for the captured variant). Extended dynamic state
-  // beyond the always-dynamic set is emitted on the host-RT path below.
+  // + the draw, so the packet needs no inherited leading state at replay. The
+  // pipeline is the CR-subpass-0 variant (render-pass-compatible with the 2-subpass
+  // replay pass), NOT the in-order 1-subpass pipeline; the descriptors/layout are
+  // shared (same field shader). Extended dynamic state beyond the always-dynamic set
+  // is emitted on the host-RT path below.
   DeferredCommandBuffer& pb = bd_field_command_buffer_;
-  if (current_guest_graphics_pipeline_ == VK_NULL_HANDLE ||
-      current_guest_graphics_pipeline_layout_ == nullptr) {
+  if (cr_pipeline == VK_NULL_HANDLE || cr_pipeline_layout == VK_NULL_HANDLE) {
     return;
   }
-  pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                       current_guest_graphics_pipeline_);
+  pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline);
   const bool constants_present =
       constants_dynamic_descriptor_set_ != VK_NULL_HANDLE;
   pb.CmdVkBindDescriptorSets(
-      VK_PIPELINE_BIND_POINT_GRAPHICS,
-      current_guest_graphics_pipeline_layout_->GetPipelineLayout(), 0,
+      VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout, 0,
       uint32_t(SpirvShaderTranslator::kDescriptorSetCount),
       current_graphics_descriptor_sets_,
       constants_present ? uint32_t(SpirvShaderTranslator::kConstantBufferCount)

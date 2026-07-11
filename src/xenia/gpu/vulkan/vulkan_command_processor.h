@@ -595,7 +595,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // state + the draw), for contiguous replay at the publication IssueCopy. Unlike
   // EmitOpaquePrepassDraw this must be full-state (no EDS-off assumption) since the
   // captured packet is replayed in a different pass with no inherited leading state.
-  void EmitBdFieldCaptureDraw(VkBuffer index_buffer, VkDeviceSize index_offset,
+  void EmitBdFieldCaptureDraw(VkPipeline cr_pipeline,
+                              VkPipelineLayout cr_pipeline_layout,
+                              VkBuffer index_buffer, VkDeviceSize index_offset,
                               VkIndexType index_type, uint32_t index_count,
                               uint32_t non_indexed_vertex_count);
 
@@ -714,6 +716,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t bd_field_batch_src_key_ = 0;
   bool bd_field_batch_pending_ = false;
   uint32_t bd_field_captured_draws_ = 0;
+  // The field's CR producer framebuffer (replay target) captured alongside the
+  // draws (holds the CR render pass, the CR framebuffer, the logical extent).
+  const VulkanRenderTargetCache::Framebuffer* bd_field_producer_fb_ = nullptr;
+  // Replay the captured field batch contiguously: begin the CR producer pass ONCE,
+  // splice the captured self-contained field draws (subpass 0), run the on-tile
+  // custom-resolve convert (subpass 1), end. Resets the batch. No-op if empty.
+  void ReplayBdFieldBatch();
 
   std::vector<VkSparseMemoryBind> sparse_memory_binds_;
   std::vector<SparseBufferBind> sparse_buffer_binds_;
