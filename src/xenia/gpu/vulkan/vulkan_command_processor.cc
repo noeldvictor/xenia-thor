@@ -6691,6 +6691,21 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // CR pass (bd_cr_bound_pass_, set at the real BeginRenderPass + surviving early-
   // return resumes). Using any begin-time-derived signal desyncs across BD's pass
   // break/resume paths -> a 1-subpass pipeline in the 2-subpass pass (VUID-02684).
+  // DIAGNOSTIC (pinpoint the 02684 desync): a field draw whose bound framebuffer is
+  // a CR producer but bd_cr_bound_pass_ is NULL -> it would get a 1-subpass pipeline
+  // in the 2-subpass CR pass. Log the state so the exact path is identified.
+  if (current_framebuffer_ &&
+      current_framebuffer_->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE) {
+    static std::atomic<uint32_t> s_dg{0};
+    if (bd_cr_bound_pass_ == VK_NULL_HANDLE && s_dg.fetch_add(1) < 30) {
+      XELOGI(
+          "BD CR DESYNC: fb has CR rp but bd_cr_bound_pass_=NULL "
+          "(mirror_active={} cr_member={} cur_rp={})",
+          bd_color_mirror_active_ ? 1 : 0,
+          bd_custom_resolve_render_pass_ != VK_NULL_HANDLE ? 1 : 0,
+          current_render_pass_ != VK_NULL_HANDLE ? 1 : 0);
+    }
+  }
   bool configure_pipeline_ok = pipeline_cache_->ConfigurePipeline(
       vertex_shader_translation, pixel_shader_translation,
       primitive_processing_result, normalized_depth_control,
