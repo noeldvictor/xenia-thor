@@ -4673,8 +4673,14 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // wide composite blacks the accumulated HDR->LDR chain (RenderDoc-proven).
   // At ==4 (round-trip validation) keep the broad behavior (mirror keeps LLE
   // correct). Until a producer is learned, substitute nothing at >=5 (LLE present).
+  // The narrowing existed to tame the native_renderer config's own framing bug.
+  // On PURE-LLE (native_renderer off) the field renders correct, so substitute
+  // BROADLY (field 471 + composite both get native producers + published aliases)
+  // to enable upstream coverage (redirect the composite's field sampler -> drop
+  // the field->composite transfer). Narrow ONLY when native_renderer is on.
   bool l5_allowed = true;
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 5) {
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 &&
+      cvars::gpu_bd_native_renderer) {
     uint32_t l5_key = (framebuffer && framebuffer->bd_native_color_lle_rt)
                           ? framebuffer->bd_native_color_lle_rt->key().key
                           : 0u;
@@ -11254,6 +11260,40 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (rt_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = rt_view;
         ++rt_served_textures_;
+      }
+    }
+  }
+
+  // LEVEL 5 native-color SAMPLER redirect (gpu_bd_native_color_lifetime_hle>=5):
+  // when a pixel fetch samples a guest address an L5 native producer alias covers
+  // (e.g. the composite sampling the natively-rendered field), bind that native
+  // image directly so the EDRAM ownership-transfer that carried it becomes
+  // redundant (droppable). Same identity-RGBA/unsigned guard as gpu_rt_as_texture
+  // above - a direct RT bind skips the sign/swizzle remaps the reload path applies.
+  // Content-neutral (native == the EDRAM content) until the transfer is dropped.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && pixel_shader &&
+      texture_count_pixel && !feedback_merge_active_ &&
+      !native_render_path_active_ && !bd_l5_alias_by_dest_.empty()) {
+    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
+      uint32_t fetch_constant = texture_binding.fetch_constant;
+      if (texture_binding.is_signed ||
+          texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
+              xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
+        continue;
+      }
+      uint32_t texture_base_address = 0;
+      VkFormat texture_host_format_unsigned = VK_FORMAT_UNDEFINED;
+      if (!texture_cache_->GetActiveTextureGuestInfo(
+              fetch_constant, &texture_base_address,
+              &texture_host_format_unsigned)) {
+        continue;
+      }
+      VkImageView l5_view = BdL5LookupAlias(texture_base_address);
+      if (l5_view != VK_NULL_HANDLE) {
+        rt_as_texture_views_pixel_[fetch_constant] = l5_view;
+        ++rt_served_textures_;
+        ++bd_native_tex_served_;
+        BdNoteColorConsumer(texture_base_address, kBdConsumerPixelTexture);
       }
     }
   }
