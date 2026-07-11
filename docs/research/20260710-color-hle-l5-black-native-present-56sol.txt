@@ -1,0 +1,140 @@
+
+The `consult-hard` second-opinion workflow could not run because this session is read-only and that skill requires creating a prompt file under `scratch/consult/`; the conclusions above come from the current code and normative Vulkan synchronization rules.
+tokens used
+308,293
+Bottom line: the current code does not support the “present samples while next frame reseeds” diagnosis. Don’t add ping-pong images as the first fix. A post-mirror barrier cannot retroactively black the completed native→LLE copy. The highest-value suspects are producer-selection correctness and an incomplete native-view/alias contract.
+
+## 1. The post-mirror transition is not the LLE-black cause
+
+The recorded order is unambiguous:
+
+1. Native→LLE copy is recorded at [vulkan_render_target_cache.cc:3649](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3649>).
+2. Only afterward is native transitioned from `TRANSFER_SRC` to `SHADER_READ_ONLY` at [vulkan_render_target_cache.cc:3658](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3658>).
+3. That barrier’s `TRANSFER_READ` source scope correctly waits for the mirror’s source read.
+
+Nothing in that barrier touches the LLE image. `VK_IMAGE_USAGE_SAMPLED_BIT` also declares permitted use; it does not execute an operation or zero pixels.
+
+The next seed is not racing the previous gamma sample either. Its barrier uses the tracked `FRAGMENT_SHADER/SHADER_READ` state as the source and `TRANSFER/TRANSFER_WRITE` as the destination at [vulkan_render_target_cache.cc:3582](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3582>). A read→write WAR hazard needs only an execution dependency, and barriers apply to earlier operations submitted to the same queue, including earlier submissions. [Khronos’ synchronization examples](https://github.khronos.org/Vulkan-Site/guide/latest/synchronization_examples.html) explicitly show fragment-sample→write as a WAR dependency, while the [Vulkan synchronization specification](https://docs.vulkan.org/spec/latest/chapters/synchronization.html) says pipeline barriers scope operations submitted earlier/later on the same queue.
+
+`oldLayout=UNDEFINED` is legal and discards the old contents; the following seed copy overwrites the entire native extent using the same `host_extent` used to create it ([creation](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3455>), [copy extent](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3593>)). See the [`VkImageMemoryBarrier` rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageMemoryBarrier.html).
+
+I would nevertheless change the reuse transition to use the actual tracked layout:
+
+```cpp
+oldLayout = fb->bd_native_color_layout;  // SHADER_READ_ONLY_OPTIMAL
+newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+srcStage = fb->bd_native_color_stage;    // FRAGMENT_SHADER
+srcAccess = 0;                           // WAR: execution dependency is enough
+dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+dstAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+```
+
+That is cleaner for validation and capture tools, but it is not a plausible explanation for an already-recorded LLE mirror turning black.
+
+Therefore, if RenderDoc shows the actual LLE image zero immediately after the mirror-copy event, one of these is true:
+
+- native was already zero before the copy;
+- the wrong native/LLE resource or event was inspected;
+- the intended producer pass was not the pass actually substituted;
+- the copy did not execute as assumed.
+
+## 2. The native image is not retained by WSI presentation
+
+`IssueSwap` merely replaces `swap_texture_view` with the native view at [vulkan_command_processor.cc:3434](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3434>). That view is then bound as a sampled image for Xenia’s gamma pass at [vulkan_command_processor.cc:3905](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3905>) and consumed by its draw at [vulkan_command_processor.cc:3942](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3942>).
+
+The gamma output goes into a separate presenter-owned image. Xenia submits that work before returning the output to the presenter at [vulkan_command_processor.cc:3957](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:3957>), ultimately using the graphics/compute queue at [vulkan_command_processor.cc:9503](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:9503>).
+
+So:
+
+- Frame N gamma sample precedes frame N+1 seed in queue order.
+- The seed barrier orders its transfer write after that fragment read.
+- WSI later reads the separate guest-output image, not the native producer image.
+
+A single native image cannot be “half-written while WSI samples it” in this implementation.
+
+## The concrete code defects I would investigate first
+
+### Producer selection is not actually using the producer classifier
+
+`bd_color_mirror_pending_draw_` is assigned from the `9567…` shader at [vulkan_command_processor.cc:6019](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:6019>), but it is never consumed.
+
+Instead, L5 permits substitution solely from the learned packed RT key at [vulkan_command_processor.cc:4677](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:4677>). Also, the pass function may return early when the framebuffer/render pass is already open at [vulkan_command_processor.cc:4628](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:4628>).
+
+`00008000` probably isolates base 0, pitch 1280, 1×, format-0 in this trace, but it is still a physical RT identity, not a unique logical draw/pass. The exact second-`9567` gate should be consumed at draw time, and the pass must be split at that draw if necessary.
+
+### The native-present alias contract is incomplete
+
+`BdL5Alias` stores a view, generation, extent and source key, but no Vulkan format, sample count, allocation extent, component swizzle, resolve transformation, image handle, or last-use submission ([vulkan_command_processor.h:886](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.h:886>)). Lookup checks only non-null view and current epoch at [vulkan_command_processor.cc:8578](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:8578>).
+
+Two concrete holes:
+
+- The native view uses identity component swizzles at [vulkan_render_target_cache.cc:3487](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3487>), while the ordinary swap view applies the guest fetch and host-format swizzles at [vulkan_texture_cache.cc:1035](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_texture_cache.cc:1035>).
+- The native image uses RTC `host_extent`, potentially tile-allocation height, while publication overwrites the alias metadata with logical resolve dimensions at [vulkan_command_processor.cc:8564](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.cc:8564>). An image view does not crop an image. If native is 1280×768/2048 while swap is 1280×720, normalized gamma-pass UVs are wrong unless explicitly scaled.
+
+Those issues can black or distort native present, though they cannot explain a genuinely black LLE image after mirror.
+
+## 3. Correct lifetime design
+
+For the current final-present leaf, one image is sufficient:
+
+1. First/reuse seed:
+
+   - LLE actual state → `TRANSFER_SRC`.
+   - Native actual state → `TRANSFER_DST`.
+   - Copy LLE→native.
+   - `TRANSFER_WRITE` → color attachment read/write.
+
+2. Render producer.
+
+3. Validation phase:
+
+   - Native color write → `TRANSFER_SRC`.
+   - LLE actual state → `TRANSFER_DST`.
+   - Copy native→LLE.
+   - Native `TRANSFER_READ` → fragment shader read.
+
+4. Gamma pass samples native.
+
+Once correctness is proven and the producer fully overwrites or has persistent native LOAD semantics:
+
+- remove the seed;
+- remove the mirror;
+- transition color attachment write directly to shader read;
+- publish the generation at the logical resolve;
+- skip only that exact LLE resolve/transfer;
+- present through an exact sampled view with correct format, swizzle and UV extent.
+
+For the durable generalized HLE, use a submission-retired per-generation pool, not two frame-parity images. Xenia permits three frames in flight at [vulkan_command_processor.h:663](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_command_processor.h:663>), and a resource may have multiple generations inside one frame. Each slot should carry:
+
+```text
+image + attachment/sampled views
+allocation_extent + logical_extent
+format + samples + resolve/fetch swizzle
+layout + last stage/access
+generation + frame epoch
+last_use_submission
+alias-live state
+```
+
+A/B frontbuffer addresses are logical aliases, not storage-slot indices. Recycle a slot only after its alias is dead and its last-use submission has completed, or grow the pool. This prevents semantic generation overwrite; it is not needed to repair the proposed same-queue WAR race.
+
+## 4. If current desktop L4 is also black
+
+Then L5 presentation and its shader-read transition are exonerated. The failure lies in the shared L4 substitution/seed/render/mirror path, producer selection, or a build/platform difference.
+
+Also note that current L4 is not identical to the previously proven device build:
+
+- `SAMPLED_BIT` is now unconditionally present for both L4 and L5 at [vulkan_render_target_cache.cc:3462](<C:/Users/leanerdesigner/Documents/New project 8/xenia-thor/src/xenia/gpu/vulkan/vulkan_render_target_cache.cc:3462>).
+- L4 broadly substitutes eligible wide passes, while L5 applies the learned-key gate.
+
+The decisive diagnostic matrix is:
+
+| Probe | Interpretation |
+|---|---|
+| L5 exact selection, L4 post-state, present LLE | Black means selection/substitution/seed/mirror |
+| Add native→shader-read transition, still present LLE | Black now means barrier/layout-state path |
+| Then enable native present | Only this becoming black means alias/view/gamma contract |
+
+At each stage, inspect four exact RenderDoc events/resources: native immediately before mirror, LLE immediately after mirror, native immediately before gamma draw, and the gamma draw’s bound descriptor resource ID. That will locate the first zero without inference.
+
+The `consult-hard` second-opinion workflow could not run because this session is read-only and that skill requires creating a prompt file under `scratch/consult/`; the conclusions above come from the current code and normative Vulkan synchronization rules.
