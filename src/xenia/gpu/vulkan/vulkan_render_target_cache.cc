@@ -3675,12 +3675,10 @@ static VkComponentSwizzle BdSwizzleComponent(uint32_t swz, uint32_t i) {
 }
 
 const VulkanRenderTargetCache::NativeResolvedTexture*
-VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
-                                                 uint32_t dest_base,
-                                                 uint32_t logical_width,
-                                                 uint32_t logical_height,
-                                                 VkFormat target_format,
-                                                 uint32_t epoch) {
+VulkanRenderTargetCache::PublishBdNativeResolved(
+    const Framebuffer* fb, uint32_t dest_base, uint32_t logical_width,
+    uint32_t logical_height, VkFormat target_format, float exp_bias_factor,
+    uint32_t swap, uint32_t epoch) {
   if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
       fb->bd_native_color_format == VK_FORMAT_UNDEFINED || !dest_base ||
       !logical_width || !logical_height) {
@@ -3701,10 +3699,23 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   // then-blit two-step, deferred to the next increment; matching/undefined keeps
   // the legacy same-format copy). Approximate: blit does a linear format convert
   // (clamp to [0,1]); exp_bias/swap are NOT applied (gated to 0 by the caller).
-  bool do_convert = target_format != VK_FORMAT_UNDEFINED &&
-                    target_format != fb->bd_native_color_format &&
-                    fb->bd_native_color_samples == VK_SAMPLE_COUNT_1_BIT;
+  bool convert_wanted = target_format != VK_FORMAT_UNDEFINED &&
+                        target_format != fb->bd_native_color_format;
+  bool source_1x = fb->bd_native_color_samples == VK_SAMPLE_COUNT_1_BIT;
+  bool exp_bias_is_identity = exp_bias_factor == 1.0f;
+  // 1x + no exp_bias -> a format-converting vkCmdBlitImage (the bloom slice); the
+  // blit can't scale (exp_bias) and doesn't swap (swap baked into the view).
+  bool do_convert_blit = convert_wanted && source_1x && exp_bias_is_identity;
+  // MSAA or a non-identity exp_bias (the field, exp_bias=-2) -> the fragment
+  // convert pass (average + exp_bias + swap, all in the shader).
+  bool do_convert_shader =
+      convert_wanted && !do_convert_blit && (!source_1x || !exp_bias_is_identity);
+  bool do_convert = do_convert_blit || do_convert_shader;
   VkFormat t_format = do_convert ? target_format : fb->bd_native_color_format;
+  uint32_t source_sample_count =
+      uint32_t(fb->bd_native_color_samples) == 0
+          ? 1
+          : uint32_t(fb->bd_native_color_samples);
   {
     // Diagnostic (throttled): prove the blit-convert actually fires (vs silently
     // falling back to LLE). Logs the dest, producer format, target, samples, and
@@ -3742,8 +3753,11 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage =
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // The shader convert path renders into T (COLOR_ATTACHMENT); the blit/copy
+    // path writes it via TRANSFER_DST. Always SAMPLED (the composite reads it).
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT |
+                (do_convert_shader ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                                   : VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (!ui::vulkan::util::CreateDedicatedAllocationImage(
             vulkan_device, ici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
@@ -3755,13 +3769,15 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
     vci.image = t.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = t_format;
-    // Bake copy_dest_swap's R<->B exchange into the converted snapshot's view
-    // (the blit did not apply it). Non-converted (same-format copy) keeps identity.
-    vci.components.r = do_convert ? VK_COMPONENT_SWIZZLE_B
-                                  : VK_COMPONENT_SWIZZLE_IDENTITY;
+    // Bake copy_dest_swap's R<->B exchange into the view ONLY for the BLIT path
+    // (the blit did not apply swap). The SHADER path bakes swap itself, so its
+    // view (used both as the render attachment AND sampled) stays identity. The
+    // same-format copy path also keeps identity.
+    vci.components.r = do_convert_blit ? VK_COMPONENT_SWIZZLE_B
+                                       : VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    vci.components.b = do_convert ? VK_COMPONENT_SWIZZLE_R
-                                  : VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.components.b = do_convert_blit ? VK_COMPONENT_SWIZZLE_R
+                                       : VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = 1;
@@ -3774,12 +3790,23 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       return nullptr;
     }
     t.format = t_format;
-    t.convert_rb_swap = do_convert;
+    t.convert_rb_swap = do_convert_blit;  // shader path bakes swap itself
     t.width = w;
     t.height = h;
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
     t.stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     t.access = 0;
+  }
+  // SHADER convert path (MSAA / exp_bias): render the convert pass into T,
+  // sampling the producer, applying average + exp_bias + swap. Skips the
+  // transfer-copy path below. On failure, the snapshot keeps its prior content
+  // (or is unfilled on first creation - fail-closed via the sampler epoch check).
+  if (do_convert_shader) {
+    if (ConvertBdNativeMsaaToResolved(fb, t, w, h, exp_bias_factor, swap,
+                                      source_sample_count)) {
+      t.publish_epoch = epoch;
+    }
+    return &t;
   }
   // Copy the producer's valid [0,logical] rect into the frozen snapshot.
   VkImageSubresourceRange range = {};
@@ -4027,7 +4054,7 @@ VkShaderModule VulkanRenderTargetCache::GetBdNativeConvertShader(
   spv::Id color;
   if (source_msaa) {
     color = spv::NoResult;
-    for (uint32_t s = 0; s < 4; ++s) {
+    for (uint32_t s = 0; s < source_sample_count; ++s) {
       tp.sample = builder.makeIntConstant(int32_t(s));
       spv::Id sample_color = builder.createTextureCall(
           spv::NoPrecision, type_float4, false, true, false, false, false, tp,
@@ -4037,9 +4064,10 @@ VkShaderModule VulkanRenderTargetCache::GetBdNativeConvertShader(
                   : builder.createBinOp(spv::OpFAdd, type_float4, color,
                                         sample_color);
     }
-    spv::Id quarter = builder.makeFloatConstant(0.25f);
+    spv::Id inv_count =
+        builder.makeFloatConstant(1.0f / float(source_sample_count));
     color = builder.createBinOp(
-        spv::OpVectorTimesScalar, type_float4, color, quarter);
+        spv::OpVectorTimesScalar, type_float4, color, inv_count);
   } else {
     tp.sample = spv::NoResult;
     color = builder.createTextureCall(spv::NoPrecision, type_float4, false, true,
@@ -4145,11 +4173,22 @@ bool VulkanRenderTargetCache::GetBdNativeConvertPipeline(
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_ref;
+    // Dependency so the color write is visible to the later composite's sample
+    // (the render pass finalLayout transition alone doesn't order the memory).
+    VkSubpassDependency dependency = {};
+    dependency.srcSubpass = 0;
+    dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     VkRenderPassCreateInfo rpci = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rpci.attachmentCount = 1;
     rpci.pAttachments = &attachment;
     rpci.subpassCount = 1;
     rpci.pSubpasses = &subpass;
+    rpci.dependencyCount = 1;
+    rpci.pDependencies = &dependency;
     if (dfn.vkCreateRenderPass(device, &rpci, nullptr, &render_pass) !=
         VK_SUCCESS) {
       return false;
@@ -4257,6 +4296,138 @@ bool VulkanRenderTargetCache::GetBdNativeConvertPipeline(
   }
   bd_convert_pipelines_.emplace(pipe_key, pipeline);
   pipeline_out = pipeline;
+  return true;
+}
+
+bool VulkanRenderTargetCache::ConvertBdNativeMsaaToResolved(
+    const Framebuffer* fb, NativeResolvedTexture& t, uint32_t w, uint32_t h,
+    float exp_bias_factor, uint32_t swap, uint32_t sample_count) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  VkRenderPass render_pass = VK_NULL_HANDLE;
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  if (!GetBdNativeConvertPipeline(t.format, sample_count, pipeline, render_pass,
+                                  layout)) {
+    return false;
+  }
+
+  // Descriptor pool (once).
+  if (bd_convert_descriptor_pool_ == VK_NULL_HANDLE) {
+    VkDescriptorPoolSize pool_size = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 64};
+    VkDescriptorPoolCreateInfo dpci = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    dpci.maxSets = 64;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &pool_size;
+    if (dfn.vkCreateDescriptorPool(device, &dpci, nullptr,
+                                   &bd_convert_descriptor_pool_) != VK_SUCCESS) {
+      return false;
+    }
+  }
+  // Descriptor set (create-once per T), binding the producer's MSAA sampled view.
+  if (t.convert_descriptor_set == VK_NULL_HANDLE) {
+    VkDescriptorSetAllocateInfo dsai = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    dsai.descriptorPool = bd_convert_descriptor_pool_;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &descriptor_set_layout_sampled_image_;
+    if (dfn.vkAllocateDescriptorSets(device, &dsai,
+                                     &t.convert_descriptor_set) != VK_SUCCESS) {
+      t.convert_descriptor_set = VK_NULL_HANDLE;
+      return false;
+    }
+    VkDescriptorImageInfo image_info = {};
+    image_info.sampler = VK_NULL_HANDLE;
+    image_info.imageView = fb->bd_native_color_view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = t.convert_descriptor_set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image_info;
+    dfn.vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+  }
+  // Framebuffer (create-once) wrapping T as the A2B10 color attachment.
+  if (t.convert_framebuffer == VK_NULL_HANDLE) {
+    VkFramebufferCreateInfo fbci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fbci.renderPass = render_pass;
+    fbci.attachmentCount = 1;
+    fbci.pAttachments = &t.identity_view;
+    fbci.width = w;
+    fbci.height = h;
+    fbci.layers = 1;
+    if (dfn.vkCreateFramebuffer(device, &fbci, nullptr,
+                                &t.convert_framebuffer) != VK_SUCCESS) {
+      t.convert_framebuffer = VK_NULL_HANDLE;
+      return false;
+    }
+  }
+
+  // Fullscreen quad (two triangles covering NDC [-1,1]).
+  uint64_t submission = command_processor_.GetCurrentSubmission();
+  VkBuffer vertex_buffer = VK_NULL_HANDLE;
+  VkDeviceSize vertex_offset = 0;
+  float* verts = reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
+      submission, sizeof(float) * 2 * 6, sizeof(float), vertex_buffer,
+      vertex_offset));
+  if (!verts) {
+    return false;
+  }
+  const float quad[12] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f,  -1.0f,
+                          1.0f,  -1.0f, -1.0f, 1.0f, 1.0f,  1.0f};
+  std::memcpy(verts, quad, sizeof(quad));
+
+  // Transition the producer P -> SHADER_READ so the convert FS can sample it.
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  VkImageSubresourceRange range = {};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_color_image, range, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+      VK_ACCESS_SHADER_READ_BIT, mfb.bd_native_color_layout,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+
+  // The convert draw.
+  VkRenderPassBeginInfo rpbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  rpbi.renderPass = render_pass;
+  rpbi.framebuffer = t.convert_framebuffer;
+  rpbi.renderArea.offset = {0, 0};
+  rpbi.renderArea.extent = {w, h};
+  rpbi.clearValueCount = 0;
+  command_buffer.CmdVkBeginRenderPass(&rpbi, VK_SUBPASS_CONTENTS_INLINE);
+  VkViewport viewport = {0.0f, 0.0f, float(w), float(h), 0.0f, 1.0f};
+  command_buffer.CmdVkSetViewport(0, 1, &viewport);
+  VkRect2D scissor = {{0, 0}, {w, h}};
+  command_buffer.CmdVkSetScissor(0, 1, &scissor);
+  command_buffer.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+  command_buffer.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+                                         0, 1, &t.convert_descriptor_set, 0,
+                                         nullptr);
+  command_buffer.CmdVkBindVertexBuffers(0, 1, &vertex_buffer, &vertex_offset);
+  BdConvertPushConstants pc = {exp_bias_factor, swap, sample_count, 0};
+  command_buffer.CmdVkPushConstants(layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                    sizeof(pc), &pc);
+  command_buffer.CmdVkDraw(6, 1, 0, 0);
+  command_buffer.CmdVkEndRenderPass();
+
+  // The render pass finalLayout left T in SHADER_READ; P was sampled.
+  t.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  t.stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  t.access = VK_ACCESS_SHADER_READ_BIT;
+  mfb.bd_native_color_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  mfb.bd_native_color_access = VK_ACCESS_SHADER_READ_BIT;
+  mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   return true;
 }
 

@@ -916,8 +916,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Publish the producer matching `src_rt_key` under `dest_base` at a resolve.
   // `target_host_format` (5.6-sol path-A) is the fetch's host VkFormat the
   // copy-on-resolve snapshot should convert to (VK_FORMAT_UNDEFINED = no convert).
+  // `exp_bias_factor` = 2^copy_dest_exp_bias, `swap` = copy_dest_swap (for the
+  // shader convert path).
   void BdL5PublishAlias(uint32_t dest_base, uint32_t src_rt_key, uint32_t width,
-                        uint32_t height, VkFormat target_host_format);
+                        uint32_t height, VkFormat target_host_format,
+                        float exp_bias_factor, uint32_t swap);
   // Return the native view aliased to `guest_base` for the current epoch, or null.
   VkImageView BdL5LookupAlias(uint32_t guest_base);
   // True if the transfer whose dest is `dest_base` is safe to DROP: a live L5

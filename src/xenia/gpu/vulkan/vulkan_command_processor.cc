@@ -8562,7 +8562,9 @@ void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
 void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
                                               uint32_t src_rt_key, uint32_t width,
                                               uint32_t height,
-                                              VkFormat target_host_format) {
+                                              VkFormat target_host_format,
+                                              float exp_bias_factor,
+                                              uint32_t swap) {
   if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !dest_base || !src_rt_key) {
     return;
   }
@@ -8590,7 +8592,8 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
                                   ? target_host_format
                                   : VK_FORMAT_UNDEFINED;
     alias.resolved = render_target_cache_->PublishBdNativeResolved(
-        alias.fb, dest_base, width, height, convert_target, bd_l5_frame_epoch_);
+        alias.fb, dest_base, width, height, convert_target, exp_bias_factor,
+        swap, bd_l5_frame_epoch_);
   }
   bd_l5_alias_by_dest_[dest_base] = alias;
   if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
@@ -8843,17 +8846,19 @@ bool VulkanCommandProcessor::IssueCopy() {
         // unless UNORM number + no exp_bias + no swap (the blit slice's safe set;
         // exp_bias/swap aren't reproduced by a plain blit).
         VkFormat l5_target_host_format = VK_FORMAT_UNDEFINED;
-        // Fail-closed to the subset a plain blit reproduces: UNORM number, no
-        // exp_bias (blit can't scale). swap=1 is UNIVERSAL in BD (R/B swap) and
-        // is already handled by the existing swizzled sampler VIEW (proven: the
-        // RGBA8 1ECC4000 fetch serves correctly with swap=1), so it is NOT gated
-        // here - the view compensates. Non-zero exp_bias (the MSAA field's -2) and
-        // non-UNORM still fall back to LLE.
+        // Fail-closed to UNORM number (the packing the convert reproduces). The
+        // 1x + exp_bias==0 case goes through the blit; MSAA / exp_bias!=0 (the
+        // field's -2) go through the fragment convert SHADER, which applies
+        // exp_bias + swap. So exp_bias is no longer gated here - pass it through.
+        float l5_exp_bias_factor = 1.0f;
+        uint32_t l5_swap = 0;
         if (rb_copy_dest_info.copy_dest_number ==
-                xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction &&
-            rb_copy_dest_info.copy_dest_exp_bias == 0) {
+            xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction) {
           l5_target_host_format =
               texture_cache_->GetHostVkFormatForColorFormat(dest_format);
+          l5_exp_bias_factor = std::ldexp(
+              1.0f, int32_t(rb_copy_dest_info.copy_dest_exp_bias));
+          l5_swap = uint32_t(rb_copy_dest_info.copy_dest_swap);
         }
         {
           // Diagnostic (throttled): the EXACT copy_dest params the shader-based
@@ -8874,7 +8879,7 @@ bool VulkanCommandProcessor::IssueCopy() {
           }
         }
         BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height,
-                         l5_target_host_format);
+                         l5_target_host_format, l5_exp_bias_factor, l5_swap);
       }
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;

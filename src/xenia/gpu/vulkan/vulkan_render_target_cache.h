@@ -336,8 +336,14 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // Set when this snapshot was produced by the format-converting blit, which
     // (unlike the EDRAM resolve) does NOT apply copy_dest_swap's R/B exchange -
     // so the sampled views bake an R<->B swap to compensate. BD's resolves are
-    // universally swap=1.
+    // universally swap=1. NOT set for the SHADER convert path (the shader bakes
+    // swap itself, so the views stay identity).
     bool convert_rb_swap = false;
+    // MSAA SHADER convert path (create-once): the framebuffer wrapping T as the
+    // A2B10 color attachment, and the descriptor set binding the producer's
+    // sampled MSAA view. Reused every publish (producer view + T are stable).
+    VkFramebuffer convert_framebuffer = VK_NULL_HANDLE;
+    VkDescriptorSet convert_descriptor_set = VK_NULL_HANDLE;
   };
   // Copy the producer framebuffer's native RT (valid [0,logical] rect) into the
   // logical-size snapshot for `dest_base`, leaving it SHADER_READ. Returns the
@@ -348,12 +354,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // float16 -> the fetch's A2B10 host format), so the identity-format sampler
   // gate passes and the composite samples native field/bloom. VK_FORMAT_UNDEFINED
   // (or MSAA/matching) keeps the legacy same-format copy/resolve.
-  const NativeResolvedTexture* PublishBdNativeResolved(const Framebuffer* fb,
-                                                       uint32_t dest_base,
-                                                       uint32_t logical_width,
-                                                       uint32_t logical_height,
-                                                       VkFormat target_format,
-                                                       uint32_t epoch);
+  const NativeResolvedTexture* PublishBdNativeResolved(
+      const Framebuffer* fb, uint32_t dest_base, uint32_t logical_width,
+      uint32_t logical_height, VkFormat target_format, float exp_bias_factor,
+      uint32_t swap, uint32_t epoch);
   // BD field converter (5.6-sol option B): a fullscreen fragment shader that
   // samples the MSAA/1x float16 producer, averages the selected samples, scales
   // by 2^exp_bias, applies the R/B swap, and writes an A2B10 color attachment
@@ -380,6 +384,14 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkPipelineLayout bd_convert_pipeline_layout_ = VK_NULL_HANDLE;
   std::unordered_map<uint32_t, VkRenderPass> bd_convert_render_passes_;
   std::unordered_map<uint64_t, VkPipeline> bd_convert_pipelines_;
+  VkDescriptorPool bd_convert_descriptor_pool_ = VK_NULL_HANDLE;
+  // Execute the MSAA->A2B10 conversion draw: render a fullscreen quad into T
+  // (COLOR_ATTACHMENT) sampling the producer's MSAA view, applying average +
+  // exp_bias + swap in the shader. Returns false on failure (caller falls back).
+  bool ConvertBdNativeMsaaToResolved(const Framebuffer* fb,
+                                     NativeResolvedTexture& t, uint32_t w,
+                                     uint32_t h, float exp_bias_factor,
+                                     uint32_t swap, uint32_t sample_count);
   // A swizzled sampled view of a published snapshot.
   VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,
                                               uint32_t host_swizzle);
