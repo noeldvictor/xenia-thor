@@ -3782,6 +3782,15 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
              fb->host_extent.height, w, h);
     }
   }
+  // ORDERING FIX (5.6-sol path-A review): PushImageMemoryBarrier only QUEUES;
+  // SubmitBarriers is what records the vkCmdPipelineBarrier into the deferred
+  // command buffer. The pre-copy transitions (P->TRANSFER_SRC, T->TRANSFER_DST)
+  // MUST be recorded BEFORE the copy/resolve reads P and writes T - otherwise the
+  // single SubmitBarriers below emitted them AFTER the copy, so the copy ran
+  // against the wrong layouts (tolerated on desktop, undefined on strict Turnip).
+  // Flush the two pre-copy barriers here; the post-copy SHADER_READ barrier is
+  // pushed + submitted after the copy as before.
+  command_processor_.SubmitBarriers(true);
   if (fb->bd_native_color_samples != VK_SAMPLE_COUNT_1_BIT) {
     // MSAA producer (e.g. 2x foliage) -> single-sample snapshot: RESOLVE, not
     // copy (vkCmdCopyImage between different sample counts is invalid = device
