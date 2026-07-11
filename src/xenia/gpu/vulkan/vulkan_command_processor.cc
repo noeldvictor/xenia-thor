@@ -8571,10 +8571,14 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
   BdL5Alias alias = it->second;
   alias.width = width;
   alias.height = height;
-  // LEVEL 7 copy-on-resolve: snapshot the producer's valid rect into a persistent
-  // LOGICAL-size image so present + samplers read correctly-sized frozen content.
-  alias.resolved = render_target_cache_->PublishBdNativeResolved(
-      alias.fb, dest_base, width, height, bd_l5_frame_epoch_);
+  // LEVEL 7 copy-on-resolve (gated >=7, WIP - device-lost under debug): snapshot
+  // the producer's valid rect into a persistent LOGICAL-size image so present +
+  // samplers read correctly-sized frozen content. At =5/=6 present reads the
+  // producer RT directly (the validated breakthrough), no copy.
+  if (cvars::gpu_bd_native_color_lifetime_hle >= 7) {
+    alias.resolved = render_target_cache_->PublishBdNativeResolved(
+        alias.fb, dest_base, width, height, bd_l5_frame_epoch_);
+  }
   bd_l5_alias_by_dest_[dest_base] = alias;
   if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
     static std::atomic<uint32_t> s_pub{0};
