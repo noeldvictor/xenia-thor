@@ -11343,6 +11343,15 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           it->second.resolved->image == VK_NULL_HANDLE) {
         continue;
       }
+      // IDENTITY-FORMAT GATE (5.6-sol): only redirect when the snapshot's format
+      // BITWISE-MATCHES what this fetch expects. BD's HDR field/bloom producers
+      // are R16G16B16A16_SFLOAT but the composite fetches them as k_2_10_10_10 -
+      // the EDRAM resolve does a format CONVERSION my raw copy can't reproduce, so
+      // serving the snapshot corrupts (smear/cyan). Reject the mismatch -> LLE
+      // fallback (correct). Native field/bloom coverage needs a conversion shader.
+      if (it->second.resolved->format != texture_host_format_unsigned) {
+        continue;
+      }
       // Bind the LOGICAL-size copy-on-resolve snapshot THROUGH a view with the
       // guest swizzle applied - correct extent (logical, not tile-rounded) AND
       // frozen content (the reused producer RT can't corrupt it).
