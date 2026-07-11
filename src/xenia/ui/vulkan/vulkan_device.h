@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "xenia/ui/vulkan/vulkan_instance.h"
+// After vulkan_instance.h (which pulls in the Vulkan core types the shim needs).
+#include "xenia/ui/vulkan/vulkan_custom_resolve_ext.h"
 
 namespace xe {
 namespace ui {
@@ -170,6 +172,10 @@ class VulkanDevice {
     // MSAA->1x resolve for the field producer, avoids off-chip MSAA spill).
     bool multisampledRenderToSingleSampled = false;
     bool rasterizationOrderStencilAttachmentAccess = false;
+    // VK_EXT_custom_resolve (#628, Turnip-only): shader-resolve subpass that
+    // resolves MSAA float16 AND converts to A2B10 on-tile (deletes BD's EDRAM
+    // color transfers). See vulkan_custom_resolve_ext.h.
+    bool customResolve = false;
 
     // VK_EXT_shader_demote_to_helper_invocation (#277, promoted to 1.3)
 
@@ -224,6 +230,9 @@ class VulkanDevice {
     bool ext_EXT_rasterization_order_attachment_access = false;
     // BD direct-native: on-tile MSAA->1x resolve for the field producer.
     bool ext_EXT_multisampled_render_to_single_sampled = false;
+    // VK_EXT_custom_resolve (#628, Turnip-only): on-tile MSAA-resolve +
+    // format-convert subpass for BD's field (float16 -> A2B10).
+    bool ext_EXT_custom_resolve = false;
     // #227 VK_KHR_fragment_shading_rate (VRS): coarse-shade overdraw-heavy
     // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
     // drivers. pipelineFragmentShadingRate enabled when supported.

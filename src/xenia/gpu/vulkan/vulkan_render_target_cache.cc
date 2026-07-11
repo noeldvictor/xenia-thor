@@ -3779,9 +3779,15 @@ VkImageView VulkanRenderTargetCache::GetBdNativeColorSwizzledView(
         return VK_COMPONENT_SWIZZLE_IDENTITY;
     }
   };
+  // DIRECT-NATIVE MSAA: the composite samples the 1x RESOLVE image (a normal
+  // sampler can't fetch an MSAA image), not the multisampled producer. The
+  // resolve carries identical content (pResolveAttachments) in the same format.
+  VkImage sample_image = fb->bd_native_color_resolve_image != VK_NULL_HANDLE
+                             ? fb->bd_native_color_resolve_image
+                             : fb->bd_native_color_image;
   VkImageViewCreateInfo view_create_info = {};
   view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  view_create_info.image = fb->bd_native_color_image;
+  view_create_info.image = sample_image;
   view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
   view_create_info.format = fb->bd_native_color_format;
   view_create_info.components.r = component(host_swizzle, 0);

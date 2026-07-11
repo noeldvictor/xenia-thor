@@ -203,6 +203,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // convert perf-dead (1.8-2fps). Requested when supported; consumed by the
       // direct-native producer render pass.
       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_multisampled_render_to_single_sampled)
+      // #628 VK_EXT_custom_resolve (Turnip-only): the on-tile MSAA-resolve +
+      // float16->A2B10 format-convert subpass that deletes BD's ~35 EDRAM color
+      // ownership-transfer passes (the measured 30ms tile-store wall). Requested
+      // when supported; consumed by the direct-native field custom-resolve pass.
+      // Absent on desktop -> the field falls back to the LLE transfer path.
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_custom_resolve)
       // #277.
       XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(
           EXT_shader_demote_to_helper_invocation, 1, 3)
@@ -348,6 +354,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_FEATURES_EXT>
       features_EXT_multisampled_render_to_single_sampled;
+  // VK_EXT_custom_resolve (#628, Turnip-only): on-tile MSAA-resolve+format-
+  // convert subpass for BD's field (float16 -> A2B10). Shim decls in
+  // vulkan_custom_resolve_ext.h.
+  VulkanFeatures<VkPhysicalDeviceCustomResolveFeaturesEXT,
+                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_RESOLVE_FEATURES_EXT>
+      features_EXT_custom_resolve;
   VulkanFeatures<
       VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT>
@@ -420,6 +432,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (device->extensions_.ext_EXT_multisampled_render_to_single_sampled) {
       features_EXT_multisampled_render_to_single_sampled.Link(
           supported_features_2, device_create_info);
+    }
+    if (device->extensions_.ext_EXT_custom_resolve) {
+      features_EXT_custom_resolve.Link(supported_features_2, device_create_info);
     }
     if (ext_EXT_non_seamless_cube_map) {
       features_EXT_non_seamless_cube_map.Link(supported_features_2,
@@ -875,6 +890,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (with_gpu_emulation) {
       XE_UI_VULKAN_FEATURE_2(features_EXT_multisampled_render_to_single_sampled,
                              multisampledRenderToSingleSampled)
+    }
+  }
+
+  if (device->extensions_.ext_EXT_custom_resolve) {
+    if (with_gpu_emulation) {
+      XE_UI_VULKAN_FEATURE_2(features_EXT_custom_resolve, customResolve)
     }
   }
 
