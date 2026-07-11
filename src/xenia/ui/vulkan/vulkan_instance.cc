@@ -502,6 +502,18 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
   instance_create_info.enabledExtensionCount =
       uint32_t(enabled_extensions.size());
   instance_create_info.ppEnabledExtensionNames = enabled_extensions.data();
+  // Enable SYNCHRONIZATION VALIDATION (catches submit-time WAR/RAW/WAW image/
+  // buffer hazards that ordinary validation misses) when the validation layer is
+  // on - needed to pin the BD copy-on-resolve device-lost race.
+  VkValidationFeatureEnableEXT sync_validation_enable =
+      VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+  VkValidationFeaturesEXT validation_features = {};
+  validation_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+  if (try_enable_validation && layer_khronos_validation) {
+    validation_features.enabledValidationFeatureCount = 1;
+    validation_features.pEnabledValidationFeatures = &sync_validation_enable;
+    instance_create_info.pNext = &validation_features;
+  }
   VkResult instance_create_result = ifn.vkCreateInstance(
       &instance_create_info, nullptr, &vulkan_instance->instance_);
 

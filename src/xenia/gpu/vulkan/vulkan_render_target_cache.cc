@@ -3769,6 +3769,15 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
       VK_ACCESS_TRANSFER_WRITE_BIT, t.layout,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   command_processor_.SubmitBarriers(true);
+  if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
+    static std::atomic<uint32_t> s_l7{0};
+    if (s_l7.fetch_add(1) < 80) {
+      XELOGI("L7 RESOLVE dest={:08X} fmt={} samples={} P={}x{} -> T={}x{}",
+             dest_base, uint32_t(fb->bd_native_color_format),
+             uint32_t(fb->bd_native_color_samples), fb->host_extent.width,
+             fb->host_extent.height, w, h);
+    }
+  }
   if (fb->bd_native_color_samples != VK_SAMPLE_COUNT_1_BIT) {
     // MSAA producer (e.g. 2x foliage) -> single-sample snapshot: RESOLVE, not
     // copy (vkCmdCopyImage between different sample counts is invalid = device
