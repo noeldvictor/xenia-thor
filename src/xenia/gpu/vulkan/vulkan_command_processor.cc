@@ -8880,6 +8880,18 @@ bool VulkanCommandProcessor::IssueCopy() {
         }
         BdL5PublishAlias(written_address, l5_src_rt_key, dest_width, dest_height,
                          l5_target_host_format, l5_exp_bias_factor, l5_swap);
+        // GMEM-residency foundation (brick 3): record this resolve into the native
+        // RESOURCE graph, keyed by resource identity (not the base-aliased EDRAM
+        // key). Read-only recording; the early-RTC-selection brick consults it.
+        NativeResourceKey nrk;
+        nrk.base_address = written_address;
+        nrk.guest_pitch = dest_pitch;
+        nrk.logical_width = dest_width;
+        nrk.logical_height = dest_height;
+        nrk.dimension = uint8_t(xenos::DataDimension::k2DOrStacked);
+        nrk.texture_format = uint8_t(dest_format);
+        nrk.endian = uint8_t(rb_copy_dest_info.copy_dest_endian);
+        RecordNativeResourceVersion(nrk, 0, 0, dest_width, dest_height);
       }
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;

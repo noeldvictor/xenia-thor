@@ -2028,6 +2028,53 @@ class VulkanCommandProcessor : public CommandProcessor {
   // is retained for back-compat callers.
   std::unordered_map<uint32_t, std::vector<ResolveEdge>>
       persistent_resolve_edge_versions_;
+  // GMEM-residency foundation (brick 3): the native RESOURCE graph - every resolve
+  // recorded as a versioned NativeResourceVersion keyed by guest base address
+  // (many versions per base: reuse + the bloom pyramid). Populated at resolve
+  // time from RESOURCE identity (not EDRAM tile identity). Read-only recording;
+  // the early-RTC-selection brick will consult it to pick the native producer.
+  std::unordered_map<uint32_t, std::vector<NativeResourceVersion>>
+      native_resource_versions_;
+
+ public:
+  // Record a resolve's native resource version (foundation graph population).
+  // Bumps the generation of a matching key in place, or appends a new one.
+  void RecordNativeResourceVersion(const NativeResourceKey& key, uint32_t rect_x,
+                                   uint32_t rect_y, uint32_t rect_w,
+                                   uint32_t rect_h) {
+    if (!key.base_address) {
+      return;
+    }
+    auto& versions = native_resource_versions_[key.base_address];
+    for (NativeResourceVersion& v : versions) {
+      if (v.key == key) {
+        ++v.generation;
+        v.dest_rect_x = rect_x;
+        v.dest_rect_y = rect_y;
+        v.dest_rect_w = rect_w;
+        v.dest_rect_h = rect_h;
+        return;
+      }
+    }
+    if (versions.size() < 16) {
+      NativeResourceVersion v;
+      v.key = key;
+      v.generation = 1;
+      v.dest_rect_x = rect_x;
+      v.dest_rect_y = rect_y;
+      v.dest_rect_w = rect_w;
+      v.dest_rect_h = rect_h;
+      versions.push_back(v);
+    }
+  }
+  // All native resource versions recorded at a guest base (or nullptr).
+  const std::vector<NativeResourceVersion>* NativeResourceVersionsForBase(
+      uint32_t base_address) const {
+    auto it = native_resource_versions_.find(base_address);
+    return it == native_resource_versions_.end() ? nullptr : &it->second;
+  }
+
+ private:
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
   // render pass / framebuffer changed (RT reconfiguration).
