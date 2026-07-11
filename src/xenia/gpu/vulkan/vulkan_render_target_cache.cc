@@ -204,6 +204,7 @@ DECLARE_uint32(gpu_bd_hle_drop_resolve);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_field_convert);
+DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
@@ -3481,14 +3482,32 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
                                     << uint32_t(render_pass_key.msaa_samples));
   }
 
+  // DIRECT-NATIVE path (gpu_bd_native_keep_scissor, 5.6-sol): create the producer
+  // at LOGICAL dims (from the resource graph via SelectNativeBinding) instead of
+  // the tile-rounded host_extent, so the composite's [0,1] UVs sample correct
+  // content directly (no copy-on-resolve, which is perf-dead on Turnip). The field
+  // renders into [0,logical] via its per-group scissors (kept, not overridden).
+  // Falls back to host_extent when no logical dims are learned yet (first frame).
+  uint32_t prod_width = base->host_extent.width;
+  uint32_t prod_height = base->host_extent.height;
+  if (cvars::gpu_bd_native_keep_scissor) {
+    VulkanCommandProcessor::NativeBindingPlan plan =
+        command_processor_.SelectNativeBinding(color_rt.key().key);
+    if (plan.use_native && plan.key.logical_width && plan.key.logical_height) {
+      prod_width = std::min(plan.key.logical_width * draw_resolution_scale_x(),
+                            base->host_extent.width);
+      prod_height = std::min(plan.key.logical_height * draw_resolution_scale_y(),
+                             base->host_extent.height);
+    }
+  }
   VkImageCreateInfo image_create_info;
   image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   image_create_info.pNext = nullptr;
   image_create_info.flags = 0;
   image_create_info.imageType = VK_IMAGE_TYPE_2D;
   image_create_info.format = color_format;
-  image_create_info.extent.width = base->host_extent.width;
-  image_create_info.extent.height = base->host_extent.height;
+  image_create_info.extent.width = prod_width;
+  image_create_info.extent.height = prod_height;
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
@@ -3557,8 +3576,11 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   framebuffer_create_info.renderPass = render_pass;
   framebuffer_create_info.attachmentCount = attachment_count;
   framebuffer_create_info.pAttachments = attachments;
-  framebuffer_create_info.width = base->host_extent.width;
-  framebuffer_create_info.height = base->host_extent.height;
+  // DIRECT-NATIVE: logical-size framebuffer (matches the logical-size producer
+  // image). The depth attachment may be larger (Vulkan permits attachment >
+  // framebuffer); the native color is exactly prod_width/height.
+  framebuffer_create_info.width = prod_width;
+  framebuffer_create_info.height = prod_height;
   framebuffer_create_info.layers = 1;
   VkFramebuffer native_framebuffer = VK_NULL_HANDLE;
   if (render_pass == VK_NULL_HANDLE ||
