@@ -869,6 +869,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // pass-end finalizer (native->LLE mirror) — so exactly one mirror completes per
   // producer pass regardless of which CmdVkEndRenderPass site ends it.
   bool bd_color_mirror_active_ = false;
+  // DIRECT-NATIVE (gpu_bd_native_keep_scissor): the field is rendering straight
+  // into the logical-size native producer this pass - skip the native->LLE mirror
+  // (LLE is not authoritative on this path).
+  bool bd_native_direct_active_ = false;
   // The producer framebuffer to mirror (native->LLE) at pass end; set when the
   // pass begins with the native color substituted.
   const VulkanRenderTargetCache::Framebuffer* bd_color_mirror_fb_ = nullptr;

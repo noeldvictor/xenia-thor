@@ -4704,7 +4704,16 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // would misread that as an open pass and emit a spurious CmdVkEndRenderPass -
     // so null the tracker across the seed, then restore it.
     current_render_pass_ = VK_NULL_HANDLE;
-    if (render_target_cache_->SeedBdNativeColorProducer(framebuffer)) {
+    // DIRECT-NATIVE (gpu_bd_native_keep_scissor): render the field STRAIGHT into
+    // the logical-size native producer - NO LLE->native seed (the field fully
+    // covers [0,logical] via its per-group scissors) and NO native->LLE mirror
+    // (LLE not authoritative here). Just swap the framebuffer to native. The
+    // legacy path seeds from + mirrors back to LLE (keeps LLE authoritative).
+    if (cvars::gpu_bd_native_keep_scissor) {
+      bd_color_mirror_active_ = true;
+      bd_native_direct_active_ = true;
+      bd_color_mirror_fb_ = framebuffer;
+    } else if (render_target_cache_->SeedBdNativeColorProducer(framebuffer)) {
       bd_color_mirror_active_ = true;
       bd_color_mirror_fb_ = framebuffer;
     }
@@ -5037,19 +5046,26 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
   // EndRenderPass re-enters this function; the false arm makes it a no-op (no
   // recursion, exactly one mirror per producer pass).
   bd_color_mirror_active_ = false;
+  bool was_direct = bd_native_direct_active_;
+  bd_native_direct_active_ = false;
   const VulkanRenderTargetCache::Framebuffer* fb = bd_color_mirror_fb_;
   bd_color_mirror_fb_ = nullptr;
   if (!fb) {
     return;
   }
-  // The producer pass is already ended in the recorded stream. The mirror's
-  // barriers + vkCmdCopyImage must not be seen as inside a pass, so temporarily
-  // clear the tracker (the internal SubmitBarriers would otherwise emit a
-  // spurious CmdVkEndRenderPass), then restore it for the caller.
-  VkRenderPass saved_render_pass = current_render_pass_;
-  current_render_pass_ = VK_NULL_HANDLE;
-  render_target_cache_->MirrorBdNativeColorProducer(fb);
-  current_render_pass_ = saved_render_pass;
+  // DIRECT-NATIVE: the field rendered straight into the native producer - do NOT
+  // mirror it back to the LLE RT (LLE is not authoritative; the copy would also
+  // mismatch the logical-vs-tile-rounded dims). Still record the generation below.
+  if (!was_direct) {
+    // The producer pass is already ended in the recorded stream. The mirror's
+    // barriers + vkCmdCopyImage must not be seen as inside a pass, so temporarily
+    // clear the tracker (the internal SubmitBarriers would otherwise emit a
+    // spurious CmdVkEndRenderPass), then restore it for the caller.
+    VkRenderPass saved_render_pass = current_render_pass_;
+    current_render_pass_ = VK_NULL_HANDLE;
+    render_target_cache_->MirrorBdNativeColorProducer(fb);
+    current_render_pass_ = saved_render_pass;
+  }
   // LEVEL 5: record this finalized native producer as the latest generation, so
   // the next fullscreen resolve can publish it as the alias for whichever
   // frontbuffer base it writes. Mirror left the native image SHADER_READ-ready.
