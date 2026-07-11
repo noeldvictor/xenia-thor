@@ -124,6 +124,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // The LLE color RenderTarget (for SetUsage layout tracking during the
     // seed/mirror). Non-owning; cleared with the framebuffer cache.
     RenderTarget* bd_native_color_lle_rt = nullptr;
+    // LEVEL 5 SAMPLER redirect: the native image's VkFormat + per-guest-swizzle
+    // sampled views (the composite samples the field/bloom with non-RGBA
+    // swizzles, so a direct identity bind gives wrong channels - each distinct
+    // host_swizzle gets its own view). Owned here, destroyed with the framebuffer.
+    VkFormat bd_native_color_format = VK_FORMAT_UNDEFINED;
+    std::unordered_map<uint32_t, VkImageView> bd_native_color_swizzled_views_;
     // Native image's last {stage, access, layout} across frames (5.6-sol L4 hang
     // fix): the seed must barrier the native image FROM its real prior state
     // (the mirror's outstanding TRANSFER_READ), not TOP_OF_PIPE/UNDEFINED - else
@@ -303,6 +309,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // render pass.
   bool SeedBdNativeColorProducer(const Framebuffer* fb);
   void MirrorBdNativeColorProducer(const Framebuffer* fb);
+  // LEVEL 5: a sampled view of fb's native color image with the guest texture
+  // swizzle applied (created/cached per host_swizzle). Lets the composite sample
+  // the native field/bloom with the correct channel order. Null if fb has no
+  // native image. The RTC owns the view (destroyed with the framebuffer).
+  VkImageView GetBdNativeColorSwizzledView(const Framebuffer* fb,
+                                           uint32_t host_swizzle);
 
   VkFormat GetDepthVulkanFormat(xenos::DepthRenderTargetFormat format) const;
   VkFormat GetColorVulkanFormat(xenos::ColorRenderTargetFormat format) const;

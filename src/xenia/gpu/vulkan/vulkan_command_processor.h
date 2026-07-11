@@ -885,6 +885,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   // resolve publishes whichever base it actually writes for the current generation.
   struct BdL5Alias {
     VkImageView view = VK_NULL_HANDLE;
+    // The producer framebuffer (for swizzled sampled views of its native image).
+    const VulkanRenderTargetCache::Framebuffer* fb = nullptr;
     uint64_t generation = 0;
     uint32_t frame_epoch = 0;
     uint32_t width = 0;

@@ -1307,6 +1307,9 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     if (fb.bd_native_color_image != VK_NULL_HANDLE) {
       dfn.vkDestroyFramebuffer(device, fb.bd_native_color_framebuffer, nullptr);
       dfn.vkDestroyImageView(device, fb.bd_native_color_view, nullptr);
+      for (const auto& sv : fb.bd_native_color_swizzled_views_) {
+        dfn.vkDestroyImageView(device, sv.second, nullptr);
+      }
       dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
       dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
     }
@@ -1393,6 +1396,9 @@ void VulkanRenderTargetCache::ClearCache() {
     if (fb.bd_native_color_image != VK_NULL_HANDLE) {
       dfn.vkDestroyFramebuffer(device, fb.bd_native_color_framebuffer, nullptr);
       dfn.vkDestroyImageView(device, fb.bd_native_color_view, nullptr);
+      for (const auto& sv : fb.bd_native_color_swizzled_views_) {
+        dfn.vkDestroyImageView(device, sv.second, nullptr);
+      }
       dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
       dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
     }
@@ -3549,10 +3555,72 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   entry.bd_native_color_lle_image = color_rt.image();
   entry.bd_native_color_lle_rt =
       const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
+  entry.bd_native_color_format = color_format;
   XELOGI("BD L4: native color producer framebuffer created {}x{} fmt={} depth={}",
          base->host_extent.width, base->host_extent.height,
          uint32_t(color_rt.key().GetColorFormat()), has_depth ? 1 : 0);
   return base;
+}
+
+VkImageView VulkanRenderTargetCache::GetBdNativeColorSwizzledView(
+    const Framebuffer* fb, uint32_t host_swizzle) {
+  if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
+      fb->bd_native_color_format == VK_FORMAT_UNDEFINED) {
+    return VK_NULL_HANDLE;
+  }
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  auto it = mfb.bd_native_color_swizzled_views_.find(host_swizzle);
+  if (it != mfb.bd_native_color_swizzled_views_.end()) {
+    return it->second;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  // Map the packed guest texture swizzle to per-channel VkComponentSwizzle (same
+  // logic as VulkanTexture::GetComponentSwizzle).
+  auto component = [](uint32_t swz, uint32_t i) -> VkComponentSwizzle {
+    xenos::XE_GPU_TEXTURE_SWIZZLE c =
+        xenos::XE_GPU_TEXTURE_SWIZZLE((swz >> (3 * i)) & 0b111);
+    if (c == xenos::XE_GPU_TEXTURE_SWIZZLE(i)) {
+      return VK_COMPONENT_SWIZZLE_IDENTITY;
+    }
+    switch (c) {
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_R:
+        return VK_COMPONENT_SWIZZLE_R;
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_G:
+        return VK_COMPONENT_SWIZZLE_G;
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_B:
+        return VK_COMPONENT_SWIZZLE_B;
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_A:
+        return VK_COMPONENT_SWIZZLE_A;
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_0:
+        return VK_COMPONENT_SWIZZLE_ZERO;
+      case xenos::XE_GPU_TEXTURE_SWIZZLE_1:
+        return VK_COMPONENT_SWIZZLE_ONE;
+      default:
+        return VK_COMPONENT_SWIZZLE_IDENTITY;
+    }
+  };
+  VkImageViewCreateInfo view_create_info = {};
+  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_create_info.image = fb->bd_native_color_image;
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_create_info.format = fb->bd_native_color_format;
+  view_create_info.components.r = component(host_swizzle, 0);
+  view_create_info.components.g = component(host_swizzle, 1);
+  view_create_info.components.b = component(host_swizzle, 2);
+  view_create_info.components.a = component(host_swizzle, 3);
+  view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  view_create_info.subresourceRange.levelCount = 1;
+  view_create_info.subresourceRange.layerCount = 1;
+  VkImageView view = VK_NULL_HANDLE;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &view) !=
+      VK_SUCCESS) {
+    return VK_NULL_HANDLE;
+  }
+  mfb.bd_native_color_swizzled_views_.emplace(host_swizzle, view);
+  return view;
 }
 
 bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {

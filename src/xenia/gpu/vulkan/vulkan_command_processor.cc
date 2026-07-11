@@ -5052,6 +5052,7 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
     uint32_t src_rt_key = fb->bd_native_color_lle_rt->key().key;
     BdL5Alias entry;
     entry.view = fb->bd_native_color_view;
+    entry.fb = fb;
     entry.generation = ++bd_l5_generation_counter_;
     entry.frame_epoch = bd_l5_frame_epoch_;
     entry.width = fb->host_extent.width;
@@ -11303,9 +11304,8 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       !native_render_path_active_ && !bd_l5_alias_by_dest_.empty()) {
     for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
       uint32_t fetch_constant = texture_binding.fetch_constant;
-      if (texture_binding.is_signed ||
-          texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
-              xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
+      // The native image is unsigned; signed fetches need the signed reload path.
+      if (texture_binding.is_signed) {
         continue;
       }
       uint32_t texture_base_address = 0;
@@ -11315,7 +11315,21 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
               &texture_host_format_unsigned)) {
         continue;
       }
-      VkImageView l5_view = BdL5LookupAlias(texture_base_address);
+      auto it = bd_l5_alias_by_dest_.find(texture_base_address);
+      if (it == bd_l5_alias_by_dest_.end() ||
+          it->second.frame_epoch != bd_l5_frame_epoch_ || !it->second.fb) {
+        continue;
+      }
+      // Bind the native image THROUGH a view with the guest swizzle applied (the
+      // composite samples the field/bloom with non-RGBA swizzles) - a direct
+      // identity bind would give wrong channels.
+      uint32_t host_swz =
+          texture_cache_->GetActiveTextureHostSwizzle(fetch_constant);
+      VkImageView l5_view =
+          host_swz == uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA)
+              ? it->second.view
+              : render_target_cache_->GetBdNativeColorSwizzledView(it->second.fb,
+                                                                   host_swz);
       if (l5_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = l5_view;
         ++rt_served_textures_;
