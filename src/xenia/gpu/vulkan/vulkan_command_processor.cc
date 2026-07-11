@@ -8794,8 +8794,12 @@ bool VulkanCommandProcessor::IssueCopy() {
     // base from a color RT selected by copy_src_select. Publish the native
     // producer whose SOURCE RT key matches that color RT, so present reads the
     // right native image (NOT the loose "last producer" - that aliased 1DC14000).
-    if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && dest_width >= 1280 &&
-        dest_height >= 720) {
+    // Publish for the whole color chain (field/bloom/composite), not just the
+    // 1280 frontbuffer - the composite samples the field/bloom by their resolve
+    // dest, so those aliases must exist for the sampler redirect. BdL5PublishAlias
+    // no-ops unless a covered producer matches this resolve's source key.
+    if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && dest_width >= 64 &&
+        dest_height >= 64) {
       uint32_t l5_copy_src =
           uint32_t(regs.Get<reg::RB_COPY_CONTROL>().copy_src_select);
       if (l5_copy_src < xenos::kMaxColorRenderTargets) {
