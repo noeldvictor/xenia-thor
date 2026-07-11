@@ -1356,6 +1356,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   feedback_render_passes_.clear();
+  for (const auto& render_pass_pair : bd_custom_resolve_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  bd_custom_resolve_render_passes_.clear();
   for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
     if (fb.framebuffer != VK_NULL_HANDLE) {
       dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
@@ -1462,6 +1468,12 @@ void VulkanRenderTargetCache::ClearCache() {
     }
   }
   feedback_render_passes_.clear();
+  for (const auto& render_pass_pair : bd_custom_resolve_render_passes_) {
+    if (render_pass_pair.second != VK_NULL_HANDLE) {
+      dfn.vkDestroyRenderPass(device, render_pass_pair.second, nullptr);
+    }
+  }
+  bd_custom_resolve_render_passes_.clear();
   for (const FeedbackFramebuffer& fb : feedback_framebuffers_) {
     if (fb.framebuffer != VK_NULL_HANDLE) {
       dfn.vkDestroyFramebuffer(device, fb.framebuffer, nullptr);
@@ -2614,6 +2626,141 @@ VkRenderPass VulkanRenderTargetCache::GetFeedbackRenderPass(
     return VK_NULL_HANDLE;
   }
   feedback_render_passes_.emplace(key, render_pass);
+  return render_pass;
+}
+
+VkRenderPass VulkanRenderTargetCache::GetBdNativeCustomResolveRenderPass(
+    xenos::ColorRenderTargetFormat producer_format, VkFormat resolve_format,
+    xenos::MsaaSamples msaa_samples, VkFormat depth_format) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  if (!vulkan_device->extensions().ext_EXT_custom_resolve ||
+      !vulkan_device->properties().customResolve) {
+    return VK_NULL_HANDLE;
+  }
+  const bool has_depth = depth_format != VK_FORMAT_UNDEFINED;
+  uint32_t key = (uint32_t(producer_format) & 0xF) |
+                 ((uint32_t(resolve_format) & 0xFF) << 4) |
+                 ((uint32_t(msaa_samples) & 0x3) << 12) |
+                 (has_depth ? (uint32_t(1) << 14) : 0);
+  auto it = bd_custom_resolve_render_passes_.find(key);
+  if (it != bd_custom_resolve_render_passes_.end()) {
+    return it->second;
+  }
+
+  VkSampleCountFlagBits samples =
+      VkSampleCountFlagBits(uint32_t(1) << uint32_t(msaa_samples));
+
+  // Attachment 0: MSAA producer color (subpass 0 color, subpass 1 input). Its
+  // MSAA content need not be stored - only the resolved 1x is kept (DONT_CARE).
+  // Attachment 1: 1x A2B10 resolve output (subpass 1 color). LOAD DONT_CARE,
+  // STORE, finalLayout SHADER_READ so the composite samples it.
+  // Attachment 2 (optional): MSAA depth (subpass 0 depth-stencil).
+  VkAttachmentDescription attachments[3] = {};
+  attachments[0].format = GetColorVulkanFormat(producer_format);
+  attachments[0].samples = samples;
+  attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[0].initialLayout = VulkanRenderTarget::kColorDrawLayout;
+  attachments[0].finalLayout = VulkanRenderTarget::kColorDrawLayout;
+  attachments[1].format = resolve_format;
+  attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+  attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  attachments[1].finalLayout = VulkanRenderTarget::kColorDrawLayout;
+  attachments[2].format =
+      has_depth ? depth_format : VK_FORMAT_D24_UNORM_S8_UINT;
+  attachments[2].samples = samples;
+  attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[2].initialLayout = VulkanRenderTarget::kDepthDrawLayout;
+  attachments[2].finalLayout = VulkanRenderTarget::kDepthDrawLayout;
+
+  VkAttachmentReference producer_color_ref;
+  producer_color_ref.attachment = 0;
+  producer_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
+  VkAttachmentReference producer_depth_ref;
+  producer_depth_ref.attachment = 2;
+  producer_depth_ref.layout = VulkanRenderTarget::kDepthDrawLayout;
+  VkAttachmentReference resolve_input_ref;
+  resolve_input_ref.attachment = 0;
+  resolve_input_ref.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkAttachmentReference resolve_color_ref;
+  resolve_color_ref.attachment = 1;
+  resolve_color_ref.layout = VulkanRenderTarget::kColorDrawLayout;
+
+  VkSubpassDescription subpasses[2] = {};
+  // Subpass 0: BD's field producer (guest draws), MSAA color + optional depth.
+  subpasses[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpasses[0].colorAttachmentCount = 1;
+  subpasses[0].pColorAttachments = &producer_color_ref;
+  subpasses[0].pDepthStencilAttachment = has_depth ? &producer_depth_ref : nullptr;
+  // Subpass 1: the shader custom resolve. flags CUSTOM_RESOLVE_BIT; reads the MSAA
+  // producer as an input attachment; writes the 1x A2B10 resolve output.
+  subpasses[1].flags = VK_SUBPASS_DESCRIPTION_CUSTOM_RESOLVE_BIT_EXT;
+  subpasses[1].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpasses[1].inputAttachmentCount = 1;
+  subpasses[1].pInputAttachments = &resolve_input_ref;
+  subpasses[1].colorAttachmentCount = 1;
+  subpasses[1].pColorAttachments = &resolve_color_ref;
+
+  // 0->1 carries the producer's MSAA color write to the custom-resolve subpass's
+  // input-attachment read. MUST be framebuffer-local (BY_REGION) or Turnip
+  // disables GMEM rendering (5.6-sol).
+  VkSubpassDependency dependencies[3];
+  dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass = 0;
+  dependencies[0].srcStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[0].dstStageMask = VulkanRenderTarget::kColorDrawStageMask;
+  dependencies[0].srcAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[0].dstAccessMask = VulkanRenderTarget::kColorDrawAccessMask;
+  dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  dependencies[1].srcSubpass = 0;
+  dependencies[1].dstSubpass = 1;
+  dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+  dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  dependencies[2].srcSubpass = 1;
+  dependencies[2].dstSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[2].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[2].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+  VkRenderPassCreateInfo render_pass_create_info = {};
+  render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  render_pass_create_info.attachmentCount = has_depth ? 3 : 2;
+  render_pass_create_info.pAttachments = attachments;
+  render_pass_create_info.subpassCount = 2;
+  render_pass_create_info.pSubpasses = subpasses;
+  render_pass_create_info.dependencyCount = 3;
+  render_pass_create_info.pDependencies = dependencies;
+
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  VkRenderPass render_pass;
+  if (dfn.vkCreateRenderPass(device, &render_pass_create_info, nullptr,
+                             &render_pass) != VK_SUCCESS) {
+    XELOGE("BD custom-resolve: failed to create the 2-subpass render pass");
+    bd_custom_resolve_render_passes_.emplace(key, VK_NULL_HANDLE);
+    return VK_NULL_HANDLE;
+  }
+  XELOGI(
+      "BD custom-resolve: created 2-subpass render pass (producer fmt={} resolve "
+      "fmt={} msaa={} depth={})",
+      uint32_t(producer_format), uint32_t(resolve_format),
+      uint32_t(msaa_samples), has_depth ? 1 : 0);
+  bd_custom_resolve_render_passes_.emplace(key, render_pass);
   return render_pass;
 }
 
@@ -4280,6 +4427,163 @@ VkShaderModule VulkanRenderTargetCache::GetBdNativeConvertShader(
       vulkan_device, reinterpret_cast<const uint32_t*>(shader_code.data()),
       sizeof(uint32_t) * shader_code.size());
   bd_convert_shaders_.emplace(source_sample_count, shader_module);
+  return shader_module;
+}
+
+VkShaderModule VulkanRenderTargetCache::GetBdNativeCustomResolveShader(
+    uint32_t source_sample_count) {
+  auto it = bd_custom_resolve_shaders_.find(source_sample_count);
+  if (it != bd_custom_resolve_shaders_.end()) {
+    return it->second;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  bool source_msaa = source_sample_count > 1;
+
+  SpirvBuilder builder(spv::Spv_1_0,
+                       (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
+                       nullptr);
+  builder.addCapability(spv::CapabilityShader);
+  // Reading an MSAA input attachment requires the InputAttachment capability.
+  builder.addCapability(spv::CapabilityInputAttachment);
+  builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+  builder.setSource(spv::SourceLanguageUnknown, 0);
+
+  spv::Id type_void = builder.makeVoidType();
+  spv::Id type_bool = builder.makeBoolType();
+  spv::Id type_int = builder.makeIntType(32);
+  spv::Id type_int2 = builder.makeVectorType(type_int, 2);
+  spv::Id type_uint = builder.makeUintType(32);
+  spv::Id type_float = builder.makeFloatType(32);
+  spv::Id type_float4 = builder.makeVectorType(type_float, 4);
+
+  // Input attachment (set 0, binding 0, input_attachment_index 0). Dim=SubpassData,
+  // MS iff the producer is multisampled - read per sample with subpassLoad.
+  spv::Id type_image = builder.makeImageType(
+      type_float, spv::DimSubpassData, false, false, source_msaa, 2,
+      spv::ImageFormatUnknown);
+  spv::Id source_image = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassUniformConstant, type_image,
+      "xe_bd_custom_resolve_source");
+  builder.addDecoration(source_image, spv::DecorationDescriptorSet, 0);
+  builder.addDecoration(source_image, spv::DecorationBinding, 0);
+  builder.addDecoration(source_image, spv::DecorationInputAttachmentIndex, 0);
+
+  // Push constants: { float exp_bias_factor; uint swap; uint sample_count; }.
+  std::vector<spv::Id> pc_members;
+  pc_members.push_back(type_float);
+  pc_members.push_back(type_uint);
+  pc_members.push_back(type_uint);
+  spv::Id type_pc =
+      builder.makeStructType(pc_members, "xe_bd_custom_resolve_pc");
+  builder.addMemberDecoration(type_pc, 0, spv::DecorationOffset, 0);
+  builder.addMemberDecoration(type_pc, 1, spv::DecorationOffset, 4);
+  builder.addMemberDecoration(type_pc, 2, spv::DecorationOffset, 8);
+  builder.addDecoration(type_pc, spv::DecorationBlock);
+  spv::Id push_constants = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassPushConstant, type_pc,
+      "xe_bd_custom_resolve_push_constants");
+
+  // Output color (location 0) - the ROP packs float4 -> the A2B10 attachment.
+  spv::Id output_color = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassOutput, type_float4, "xe_frag_color");
+  builder.addDecoration(output_color, spv::DecorationLocation, 0);
+
+  std::vector<spv::Id> main_interface;
+  main_interface.push_back(source_image);
+  main_interface.push_back(output_color);
+
+  std::vector<spv::Id> main_param_types;
+  std::vector<std::vector<spv::Decoration>> main_precisions;
+  spv::Block* main_entry;
+  spv::Function* main_function =
+      builder.makeFunctionEntry(spv::NoPrecision, type_void, "main",
+                                main_param_types, main_precisions, &main_entry);
+
+  // subpassLoad uses the fragment's own location; the SPIR-V coordinate is the
+  // canonical constant ivec2(0, 0).
+  spv::Id const_i0 = builder.makeIntConstant(0);
+  std::vector<spv::Id> coord_components;
+  coord_components.push_back(const_i0);
+  coord_components.push_back(const_i0);
+  spv::Id subpass_coord =
+      builder.makeCompositeConstant(type_int2, coord_components);
+
+  spv::Id image_value = builder.createLoad(source_image, spv::NoPrecision);
+
+  // Read + average the samples (Xenos k0123 resolve = average all; matches the
+  // EDRAM copy for BD's field). 1x = a single subpassLoad.
+  spv::Id color = spv::NoResult;
+  for (uint32_t s = 0; s < source_sample_count; ++s) {
+    std::unique_ptr<spv::Instruction> read_op =
+        std::make_unique<spv::Instruction>(builder.getUniqueId(), type_float4,
+                                           spv::OpImageRead);
+    read_op->addIdOperand(image_value);
+    read_op->addIdOperand(subpass_coord);
+    if (source_msaa) {
+      // ImageOperands = Sample, followed by the sample index id.
+      read_op->addImmediateOperand(spv::ImageOperandsSampleMask);
+      read_op->addIdOperand(builder.makeIntConstant(int32_t(s)));
+    }
+    spv::Id sample_color = read_op->getResultId();
+    builder.getBuildPoint()->addInstruction(std::move(read_op));
+    color = color == spv::NoResult
+                ? sample_color
+                : builder.createBinOp(spv::OpFAdd, type_float4, color,
+                                      sample_color);
+  }
+  if (source_sample_count > 1) {
+    spv::Id inv_count =
+        builder.makeFloatConstant(1.0f / float(source_sample_count));
+    color = builder.createBinOp(spv::OpVectorTimesScalar, type_float4, color,
+                                inv_count);
+  }
+
+  // color *= exp_bias_factor (push constant member 0).
+  std::vector<spv::Id> pc_index0;
+  pc_index0.push_back(builder.makeIntConstant(0));
+  spv::Id exp_bias = builder.createLoad(
+      builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
+                                pc_index0),
+      spv::NoPrecision);
+  color = builder.createBinOp(spv::OpVectorTimesScalar, type_float4, color,
+                              exp_bias);
+
+  // if (swap != 0) color = color.bgra;
+  std::vector<spv::Id> pc_index1;
+  pc_index1.push_back(builder.makeIntConstant(1));
+  spv::Id swap = builder.createLoad(
+      builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
+                                pc_index1),
+      spv::NoPrecision);
+  spv::Id swap_bool = builder.createBinOp(spv::OpINotEqual, type_bool, swap,
+                                          builder.makeUintConstant(0));
+  std::vector<unsigned int> bgra;
+  bgra.push_back(2);
+  bgra.push_back(1);
+  bgra.push_back(0);
+  bgra.push_back(3);
+  spv::Id color_bgra =
+      builder.createRvalueSwizzle(spv::NoPrecision, type_float4, color, bgra);
+  color = builder.createTriOp(spv::OpSelect, type_float4, swap_bool, color_bgra,
+                              color);
+
+  builder.createStore(color, output_color);
+
+  builder.leaveFunction();
+  builder.addExecutionMode(main_function, spv::ExecutionModeOriginUpperLeft);
+  spv::Instruction* entry_point = builder.addEntryPoint(
+      spv::ExecutionModelFragment, main_function, "main");
+  for (spv::Id interface_id : main_interface) {
+    entry_point->addIdOperand(interface_id);
+  }
+
+  std::vector<unsigned int> shader_code;
+  builder.dump(shader_code);
+  VkShaderModule shader_module = ui::vulkan::util::CreateShaderModule(
+      vulkan_device, reinterpret_cast<const uint32_t*>(shader_code.data()),
+      sizeof(uint32_t) * shader_code.size());
+  bd_custom_resolve_shaders_.emplace(source_sample_count, shader_module);
   return shader_module;
 }
 

@@ -290,6 +290,18 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                                        VkExtent2D extent,
                                        VkRenderPass feedback_render_pass,
                                        bool in_place = false);
+  // BD field custom-resolve (VK_EXT_custom_resolve, Turnip-only): a 2-subpass
+  // render pass. Subpass 0 = BD's field producer (MSAA `producer_format` color
+  // att0 + optional MSAA depth att2). Subpass 1 = the shader custom-resolve
+  // (flags CUSTOM_RESOLVE_BIT_EXT; reads att0 as an MSAA input attachment, writes
+  // the 1x `resolve_format` A2B10 output att1). On Turnip the MSAA att0 stays
+  // GMEM-resident and the A2B10 att1 is written direct to sysmem = the on-tile
+  // MSAA-resolve + float16->A2B10 convert that deletes BD's EDRAM color transfers.
+  // VK_NULL_HANDLE if !customResolve. Producer pipelines MUST be created against
+  // this pass at subpass 0 (full render-pass compat requires matching subpasses).
+  VkRenderPass GetBdNativeCustomResolveRenderPass(
+      xenos::ColorRenderTargetFormat producer_format, VkFormat resolve_format,
+      xenos::MsaaSamples msaa_samples, VkFormat depth_format);
   // Returns the load-DONT_CARE variant of the last Update()'s render pass for
   // beginning it, or `original` unchanged when not applicable (mask empty
   // after clamping to the bound attachments, not the host-render-targets path,
@@ -384,6 +396,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     uint32_t pad;
   };
   std::unordered_map<uint32_t, VkShaderModule> bd_convert_shaders_;
+  // CUSTOM-RESOLVE variant (VK_EXT_custom_resolve subpass 1): identical math to
+  // GetBdNativeConvertShader but reads the MSAA producer as a Vulkan INPUT
+  // ATTACHMENT (DimSubpassData, subpassLoad per sample) instead of a sampled
+  // image, so the MSAA source stays GMEM-resident (no off-chip spill). Reuses
+  // BdConvertPushConstants. Cached per source sample count.
+  VkShaderModule GetBdNativeCustomResolveShader(uint32_t source_sample_count);
+  std::unordered_map<uint32_t, VkShaderModule> bd_custom_resolve_shaders_;
   // Lazily build (+ cache) the convert graphics pipeline for a dest color format
   // + source sample count. Returns false on failure. Fills the render pass +
   // layout (reused for the framebuffer + descriptor/push binds at dispatch).
@@ -1218,6 +1237,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // (producer color format) | (consumer color format << 4) | (msaa << 8).
   // VK_NULL_HANDLE if creation failed. Dormant until Inc3 routes a merge.
   std::unordered_map<uint32_t, VkRenderPass> feedback_render_passes_;
+  // BD field custom-resolve (VK_EXT_custom_resolve): 2-subpass render passes keyed
+  // by (producer fmt) | (resolve VkFormat low bits << 4) | (msaa << 12) |
+  // (has_depth << 14). VK_NULL_HANDLE if unsupported/failed.
+  std::unordered_map<uint32_t, VkRenderPass> bd_custom_resolve_render_passes_;
   // BD input-attachment merge: transient 2-RT framebuffers keyed by the
   // (producer, consumer) color-view pair. Destroyed in ClearCache.
   struct FeedbackFramebuffer {
