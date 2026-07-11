@@ -1829,6 +1829,57 @@ class VulkanCommandProcessor : public CommandProcessor {
   // landing in the dest range can be routed to the resident source RT directly
   // (RT-as-texture) or have its resolve deferred (lazy). Promotes the increment-1
   // detector from "counts the round-trip" to "knows the graph edge".
+  // GMEM-residency foundation Stage-0 data model (5.6-sol design 2026-07-11,
+  // docs/research/20260711-gmem-residency-pass-fusion-30fps-56sol.txt). These
+  // describe a BD render surface by RESOURCE identity (not the base-aliased EDRAM
+  // RenderTargetKey), so native RTs don't alias -> no ownership transfers. The
+  // native binding decision keyed by these must PRECEDE RenderTargetCache::Update.
+  // Defined now as the shared vocabulary for the incremental foundation build;
+  // wired by the resource-graph + early-RTC-selection bricks that follow.
+  struct NativeResourceKey {
+    uint32_t base_address = 0;      // guest resolve-dest (texture origin)
+    uint32_t guest_pitch = 0;       // RB_COPY_DEST_PITCH (BD's tile-strip pitch)
+    uint32_t logical_width = 0;     // the LOGICAL surface size (not tile-rounded)
+    uint32_t logical_height = 0;
+    uint16_t depth_or_layers = 1;
+    uint16_t mip = 0;
+    uint16_t layer = 0;
+    uint8_t dimension = 0;          // xenos::DataDimension
+    uint8_t texture_format = 0;     // xenos::TextureFormat (the FETCH format)
+    uint8_t endian = 0;             // xenos::Endian
+    bool is_signed = false;
+    bool tiled = false;
+    bool scaled_resolve = false;
+    bool operator==(const NativeResourceKey& o) const {
+      return base_address == o.base_address && guest_pitch == o.guest_pitch &&
+             logical_width == o.logical_width &&
+             logical_height == o.logical_height &&
+             depth_or_layers == o.depth_or_layers && mip == o.mip &&
+             layer == o.layer && dimension == o.dimension &&
+             texture_format == o.texture_format && endian == o.endian &&
+             is_signed == o.is_signed && tiled == o.tiled &&
+             scaled_resolve == o.scaled_resolve;
+    }
+  };
+  // A specific WRITE (generation) to a native resource, with the exact resolve
+  // rectangle it covered. resolve_dest ALONE is insufficient (addresses reused,
+  // many-to-many, rectangles differ) - the full key + generation disambiguate.
+  struct NativeResourceVersion {
+    NativeResourceKey key;
+    uint32_t generation = 0;
+    uint32_t dest_rect_x = 0, dest_rect_y = 0;
+    uint32_t dest_rect_w = 0, dest_rect_h = 0;
+  };
+  // Maps BD's EDRAM tile-strip raster into the full logical native image (guest
+  // pitch + window offset are retained ONLY for coordinate mapping; the native
+  // image is full-surface, not tile-strip).
+  struct NativeRasterBinding {
+    uint32_t edram_src_rt_key = 0;  // packed RenderTargetKey (fallback/raster map)
+    int32_t window_offset_x = 0, window_offset_y = 0;
+    uint32_t resolve_src_x = 0, resolve_src_y = 0;
+    uint32_t dest_offset_x = 0, dest_offset_y = 0;
+  };
+
   struct ResolveEdge {
     uint32_t dest_start;  // copy_dest_extent_start (matched vs a fetch base)
     uint32_t dest_length;
