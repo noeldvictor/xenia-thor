@@ -3694,16 +3694,22 @@ VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
   uint32_t h = std::min(logical_height * draw_resolution_scale_y(),
                         fb->host_extent.height);
   NativeResolvedTexture& t = bd_native_resolved_[dest_base];
-  if (t.image == VK_NULL_HANDLE || t.width != w || t.height != h ||
+  // Create the snapshot ONCE and never destroy it mid-frame - a previous frame's
+  // in-flight submission may still be sampling/presenting it, and destroying an
+  // in-flight image is a non-deterministic device-lost. If a later resolve to the
+  // same dest has a different size/format, keep the existing image and just clamp
+  // the copy to it (BD's per-dest resolves are stable-size; the mismatch is rare).
+  if (t.image != VK_NULL_HANDLE &&
       t.format != fb->bd_native_color_format) {
-    if (t.image != VK_NULL_HANDLE) {
-      for (auto& sv : t.swizzled_views) {
-        dfn.vkDestroyImageView(device, sv.second, nullptr);
-      }
-      dfn.vkDestroyImageView(device, t.identity_view, nullptr);
-      dfn.vkDestroyImage(device, t.image, nullptr);
-      dfn.vkFreeMemory(device, t.memory, nullptr);
-    }
+    // Format genuinely changed (very rare) - can't reuse; skip this publish
+    // rather than destroy in-flight. Present/sampler keep the prior snapshot.
+    return &t;
+  }
+  if (t.image != VK_NULL_HANDLE) {
+    w = std::min(w, t.width);
+    h = std::min(h, t.height);
+  }
+  if (t.image == VK_NULL_HANDLE) {
     t = NativeResolvedTexture{};
     VkImageCreateInfo ici = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ici.imageType = VK_IMAGE_TYPE_2D;
