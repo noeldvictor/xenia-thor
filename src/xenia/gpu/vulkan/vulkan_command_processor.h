@@ -878,6 +878,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // field pipelines are created against it (subpass 0), and a vkCmdNextSubpass +
   // fullscreen convert draw runs into subpass 1 before the pass is ended.
   VkRenderPass bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
+  // The ACTUALLY-BOUND custom-resolve render pass (set at the real CmdVkBeginRenderPass,
+  // cleared at the real end). Unlike bd_custom_resolve_render_pass_ (derived at the
+  // begin override, which is skipped on early-return resumes) this survives resumes
+  // = the single source of truth for "the bound pass is a 2-subpass CR pass" that the
+  // field draws' ConfigurePipeline must agree with (else VUID-02684).
+  VkRenderPass bd_cr_bound_pass_ = VK_NULL_HANDLE;
   uint32_t bd_custom_resolve_passes_ = 0;
   // If a custom-resolve producer pass is open (bd_custom_resolve_render_pass_ set),
   // advance to subpass 1 + record the fullscreen convert draw, then clear the

@@ -4950,6 +4950,12 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
+  // Track the ACTUALLY-bound CR pass (this real begin just recorded begin_render_pass).
+  // Survives early-return resumes (which skip this begin) = the single source of truth
+  // the field draws' pipelines must match.
+  bd_cr_bound_pass_ = (begin_render_pass == bd_custom_resolve_render_pass_)
+                          ? bd_custom_resolve_render_pass_
+                          : VK_NULL_HANDLE;
   // Opaque depth pre-pass: mark the splice point right AFTER BeginRenderPass so
   // the captured opaque depth-only draws land before the color stream. Unit 3
   // fills prepass_command_buffer_; until then this is inert (empty splice).
@@ -5149,8 +5155,8 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
 }
 
 void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
-  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE &&
-      bd_color_mirror_fb_ != nullptr) {
+  // Gate on the ACTUALLY-bound CR pass (survives resumes), not the begin-time member.
+  if (bd_cr_bound_pass_ != VK_NULL_HANDLE && bd_color_mirror_fb_ != nullptr) {
     // Advance to subpass 1 + the fullscreen resolve+convert draw (MSAA float16
     // input -> 1x A2B10 output). exp_bias/swap: BD's field resolve is exp_bias=-2
     // (factor 2^-2=0.25), swap=1 (R/B) per the L9 DESTPARAMS census. The draw
@@ -5173,6 +5179,7 @@ void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
     dynamic_scissor_update_needed_ = true;
   }
   bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
+  bd_cr_bound_pass_ = VK_NULL_HANDLE;
 }
 
 void VulkanCommandProcessor::EndRenderPass() {
@@ -6680,23 +6687,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (trace_draw_cpu) {
     pipe_t0 = std::chrono::steady_clock::now();
   }
-  // VK_EXT_custom_resolve: derive the CR render pass AUTHORITATIVELY from the
-  // currently-bound framebuffer (not the transient bd_custom_resolve_render_pass_
-  // member, which can desync across BD's many pass break/resume paths -> a
-  // 1-subpass pipeline in the 2-subpass pass, VUID-02684). This is always exactly
-  // the pass that was begun for these field draws.
-  VkRenderPass draw_cr_render_pass = VK_NULL_HANDLE;
-  if (bd_color_mirror_active_ && current_framebuffer_ &&
-      current_framebuffer_->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE) {
-    draw_cr_render_pass =
-        current_framebuffer_->bd_native_color_custom_resolve_rp;
-  }
+  // VK_EXT_custom_resolve: the field draws' pipeline MUST target the ACTUALLY-bound
+  // CR pass (bd_cr_bound_pass_, set at the real BeginRenderPass + surviving early-
+  // return resumes). Using any begin-time-derived signal desyncs across BD's pass
+  // break/resume paths -> a 1-subpass pipeline in the 2-subpass pass (VUID-02684).
   bool configure_pipeline_ok = pipeline_cache_->ConfigurePipeline(
       vertex_shader_translation, pixel_shader_translation,
       primitive_processing_result, normalized_depth_control,
       normalized_color_mask,
       render_target_cache_->last_update_render_pass_key(), pipeline,
-      pipeline_layout_provider, draw_cr_render_pass);
+      pipeline_layout_provider, bd_cr_bound_pass_);
   if (trace_draw_cpu) {
     draw_cpu_pipeline_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
