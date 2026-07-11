@@ -8892,6 +8892,22 @@ bool VulkanCommandProcessor::IssueCopy() {
         nrk.texture_format = uint8_t(dest_format);
         nrk.endian = uint8_t(rb_copy_dest_info.copy_dest_endian);
         RecordNativeResourceVersion(nrk, 0, 0, dest_width, dest_height);
+        // Exercise the native-binding selection (brick 4) end-to-end: graph
+        // populate -> select -> plan. Log-only (the early-RTC-selection brick
+        // will act on the plan); confirms the chain + surfaces BD's pattern.
+        if (cvars::gpu_bd_native_color_lifetime_hle >= 3 &&
+            xe::Clock::QueryGuestUptimeMillis() > 135000) {
+          NativeBindingPlan plan = SelectNativeBinding(l5_src_rt_key);
+          static std::atomic<uint32_t> s_nbp{0};
+          if (s_nbp.fetch_add(1) < 30) {
+            XELOGI(
+                "NBP select src={:08X} -> use_native={} dest={:08X} gen={} "
+                "{}x{} fmt={}",
+                l5_src_rt_key, plan.use_native ? 1 : 0, plan.dest_base,
+                plan.generation, plan.key.logical_width, plan.key.logical_height,
+                uint32_t(plan.key.texture_format));
+          }
+        }
       }
     }
     constexpr uint32_t kMinDebugPresentWidth = 1280;

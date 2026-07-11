@@ -2074,6 +2074,47 @@ class VulkanCommandProcessor : public CommandProcessor {
     return it == native_resource_versions_.end() ? nullptr : &it->second;
   }
 
+  // GMEM-residency foundation (brick 4): the native-binding DECISION for a color
+  // RT the current draw targets. The early-RTC-selection integration will call
+  // this BEFORE RenderTargetCache::Update to decide whether to render into a
+  // resource-keyed native RT (skipping EDRAM ownership) vs the EDRAM fallback.
+  struct NativeBindingPlan {
+    bool use_native = false;      // native RT resolved for this producer
+    uint32_t dest_base = 0;       // the resolve-dest this RT feeds (resource id)
+    uint32_t generation = 0;      // which write is live
+    NativeResourceKey key;        // the resolved resource identity
+  };
+  // Decide the native binding for a producer color RT (packed RenderTargetKey).
+  // Pure READ over the versioned resolve edges (brick 1) + resource graph (brick
+  // 3): find the RT's resolve dest, then the newest native resource version there.
+  // Returns use_native=false when the RT has no learned resolve dest / native
+  // resource (→ EDRAM fallback). Learned from the PRIOR frame's graph (BD's graph
+  // is stable frame-to-frame; caller must fall back on signature divergence).
+  NativeBindingPlan SelectNativeBinding(uint32_t src_rt_key) const {
+    NativeBindingPlan plan;
+    const ResolveEdge* edge = PersistentResolveEdgeForSrc(src_rt_key);
+    if (!edge || !edge->dest_base) {
+      return plan;
+    }
+    const std::vector<NativeResourceVersion>* versions =
+        NativeResourceVersionsForBase(edge->dest_base);
+    if (!versions || versions->empty()) {
+      return plan;
+    }
+    // Newest generation at this dest.
+    const NativeResourceVersion* newest = &(*versions)[0];
+    for (const NativeResourceVersion& v : *versions) {
+      if (v.generation > newest->generation) {
+        newest = &v;
+      }
+    }
+    plan.use_native = true;
+    plan.dest_base = edge->dest_base;
+    plan.generation = newest->generation;
+    plan.key = newest->key;
+    return plan;
+  }
+
  private:
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
