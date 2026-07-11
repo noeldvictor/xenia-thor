@@ -4774,9 +4774,18 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     }
   }
   // VK_EXT_custom_resolve: begin the 2-subpass custom-resolve render pass (not the
-  // normal single-subpass one). The field renders into subpass 0; the convert runs
-  // in subpass 1 at EndRenderPass. Overrides any dc_safe/depth_none variant (those
-  // are single-subpass variants of the normal pass, incompatible with the CR pass).
+  // normal single-subpass one) - but ONLY when the framebuffer we're actually
+  // binding is the CR framebuffer, so the render pass + framebuffer attachment
+  // counts always agree (the "2 vs 3 attachments" mismatch = a desync between the
+  // armed handle and the bound framebuffer). Derive both from the framebuffer here
+  // (authoritative), so bd_custom_resolve_render_pass_ used by ConfigurePipeline
+  // for this pass's field draws is exactly the pass we begin. Overrides any
+  // dc_safe/depth_none single-subpass variant (incompatible with the 2-subpass CR).
+  bd_custom_resolve_render_pass_ =
+      (bd_color_mirror_active_ &&
+       framebuffer->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE)
+          ? framebuffer->bd_native_color_custom_resolve_rp
+          : VK_NULL_HANDLE;
   if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE) {
     begin_render_pass = bd_custom_resolve_render_pass_;
   }
@@ -5127,6 +5136,16 @@ void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
     if (ok) {
       ++bd_custom_resolve_passes_;
     }
+    // The convert draw bound its own pipeline + descriptor set (set 0, a different
+    // layout) into the stream - xenia's host-state tracker doesn't know, so the
+    // next guest draw would skip rebinding + use stale/incompatible descriptors
+    // (VUID-08600). Invalidate the tracker so the next draw re-emits ALL binds.
+    current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_external_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_guest_graphics_pipeline_layout_ = nullptr;
+    current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    dynamic_viewport_update_needed_ = true;
+    dynamic_scissor_update_needed_ = true;
   }
   bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
 }
