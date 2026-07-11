@@ -1314,6 +1314,12 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
       }
       dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
       dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
+      // DIRECT-NATIVE on-tile resolve target (null unless keep_scissor + MSAA).
+      if (fb.bd_native_color_resolve_image != VK_NULL_HANDLE) {
+        dfn.vkDestroyImageView(device, fb.bd_native_color_resolve_view, nullptr);
+        dfn.vkDestroyImage(device, fb.bd_native_color_resolve_image, nullptr);
+        dfn.vkFreeMemory(device, fb.bd_native_color_resolve_memory, nullptr);
+      }
     }
   }
   framebuffers_.clear();
@@ -1416,6 +1422,12 @@ void VulkanRenderTargetCache::ClearCache() {
       }
       dfn.vkDestroyImage(device, fb.bd_native_color_image, nullptr);
       dfn.vkFreeMemory(device, fb.bd_native_color_memory, nullptr);
+      // DIRECT-NATIVE on-tile resolve target (null unless keep_scissor + MSAA).
+      if (fb.bd_native_color_resolve_image != VK_NULL_HANDLE) {
+        dfn.vkDestroyImageView(device, fb.bd_native_color_resolve_view, nullptr);
+        dfn.vkDestroyImage(device, fb.bd_native_color_resolve_image, nullptr);
+        dfn.vkFreeMemory(device, fb.bd_native_color_resolve_memory, nullptr);
+      }
     }
   }
   framebuffers_.clear();
@@ -2149,7 +2161,8 @@ void VulkanRenderTargetCache::BeginHybridPostprocessPhase() {
 }
 
 VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
-    RenderPassKey key, uint32_t load_dont_care_mask, bool depth_store_op_none) {
+    RenderPassKey key, uint32_t load_dont_care_mask, bool depth_store_op_none,
+    bool bd_color_resolve) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
   // Only attachments that are actually bound can be marked.
@@ -2157,9 +2170,16 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   // Depth-store-NONE only applies when a depth/stencil attachment is bound.
   depth_store_op_none =
       depth_store_op_none && (key.depth_and_color_used & 0b1) != 0;
-  // Variant key layout: [.. key ..][depth_store_op_none:1][load_dont_care:5].
-  bool is_variant = load_dont_care_mask != 0 || depth_store_op_none;
-  uint64_t load_dont_care_key = (uint64_t(key.key) << 6) |
+  // BD direct-native color resolve: only meaningful with MSAA + a color RT (the
+  // MSAA color resolves ON-TILE to a trailing 1x attachment; depth unchanged).
+  bd_color_resolve = bd_color_resolve &&
+                     key.msaa_samples != xenos::MsaaSamples::k1X &&
+                     (key.depth_and_color_used >> 1) != 0;
+  // Variant key: [.. key ..][color_resolve:1][depth_store_op_none:1][load:5].
+  bool is_variant =
+      load_dont_care_mask != 0 || depth_store_op_none || bd_color_resolve;
+  uint64_t load_dont_care_key = (uint64_t(key.key) << 7) |
+                                (uint64_t(bd_color_resolve) << 6) |
                                 (uint64_t(depth_store_op_none) << 5) |
                                 uint64_t(load_dont_care_mask);
   if (is_variant) {
@@ -2191,8 +2211,11 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
       return VK_NULL_HANDLE;
   }
 
-  // +1 trailing slot for an optional FDM (fragment density map) attachment.
-  VkAttachmentDescription attachments[1 + xenos::kMaxColorRenderTargets + 1];
+  // +kMaxColorRenderTargets trailing slots for optional BD color-resolve targets,
+  // +1 for an optional FDM (fragment density map) attachment.
+  VkAttachmentDescription
+      attachments[1 + xenos::kMaxColorRenderTargets +
+                  xenos::kMaxColorRenderTargets + 1];
   if (key.depth_and_color_used & 0b1) {
     VkAttachmentDescription& attachment = attachments[0];
     attachment.flags = 0;
@@ -2266,13 +2289,36 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
                          (load_dont_care_mask & attachment_bit))
                             ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
                             : VK_ATTACHMENT_LOAD_OP_LOAD;
-    attachment.storeOp = cvars::gpu_edram_passes_dont_care
+    // BD color-resolve: the MSAA color need not be stored (only the resolved 1x
+    // is kept) - DONT_CARE lets the tiler skip the MSAA store.
+    attachment.storeOp = (cvars::gpu_edram_passes_dont_care || bd_color_resolve)
                              ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                              : VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VulkanRenderTarget::kColorDrawLayout;
     attachment.finalLayout = VulkanRenderTarget::kColorDrawLayout;
+  }
+
+  // BD direct-native color resolve: build the pResolveAttachments array (one entry
+  // per color slot, UNUSED except the used colors which resolve to a trailing 1x
+  // attachment). The trailing resolve attachment(s) are appended below, keyed by a
+  // running index after the depth+color attachments. One resolve image per used
+  // color; the framebuffer supplies them at these trailing indices.
+  VkAttachmentReference bd_resolve_refs[xenos::kMaxColorRenderTargets];
+  uint32_t bd_resolve_first_index = xe::bit_count(key.depth_and_color_used);
+  uint32_t bd_resolve_count = 0;
+  if (bd_color_resolve) {
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      if (color_attachments[i].attachment == VK_ATTACHMENT_UNUSED) {
+        bd_resolve_refs[i].attachment = VK_ATTACHMENT_UNUSED;
+        bd_resolve_refs[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
+      } else {
+        bd_resolve_refs[i].attachment = bd_resolve_first_index + bd_resolve_count;
+        bd_resolve_refs[i].layout = VulkanRenderTarget::kColorDrawLayout;
+        ++bd_resolve_count;
+      }
+    }
   }
 
   VkAttachmentReference depth_stencil_attachment;
@@ -2288,7 +2334,7 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   subpass.colorAttachmentCount =
       32 - xe::lzcnt(uint32_t(key.depth_and_color_used >> 1));
   subpass.pColorAttachments = color_attachments;
-  subpass.pResolveAttachments = nullptr;
+  subpass.pResolveAttachments = bd_color_resolve ? bd_resolve_refs : nullptr;
   subpass.pDepthStencilAttachment =
       (key.depth_and_color_used & 0b1) ? &depth_stencil_attachment : nullptr;
   subpass.preserveAttachmentCount = 0;
@@ -2347,6 +2393,33 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
       key.depth_and_color_used ? uint32_t(xe::countof(subpass_dependencies))
                                : 0;
   render_pass_create_info.pDependencies = subpass_dependencies;
+
+  // BD color-resolve: append the trailing 1x resolve attachment(s) at
+  // bd_resolve_first_index onward (before the FDM append, which follows). The
+  // framebuffer supplies matching 1x image views at these same indices. Format
+  // MUST equal the source color attachment's format (Vulkan resolve rule).
+  if (bd_color_resolve) {
+    uint32_t ri = 0;
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      if (color_attachments[i].attachment == VK_ATTACHMENT_UNUSED) {
+        continue;
+      }
+      VkAttachmentDescription& ra = attachments[bd_resolve_first_index + ri];
+      ra.flags = 0;
+      ra.format = key.color_rts_use_transfer_formats
+                      ? GetColorOwnershipTransferVulkanFormat(color_formats[i])
+                      : GetColorVulkanFormat(color_formats[i]);
+      ra.samples = VK_SAMPLE_COUNT_1_BIT;
+      ra.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      ra.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      ra.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      ra.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+      ra.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      ra.finalLayout = VulkanRenderTarget::kColorDrawLayout;
+      ++ri;
+    }
+    render_pass_create_info.attachmentCount += bd_resolve_count;
+  }
 
   // FDM: append the fragment density map attachment + chain its create-info, only
   // on guest-geometry passes (key.use_fdm). The attachment is referenced solely
@@ -3559,16 +3632,62 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
     return base;
   }
 
+  // DIRECT-NATIVE on-tile resolve: when the producer is MSAA and we render
+  // directly into logical-size RTs (keep_scissor), allocate a 1x resolve image
+  // the render pass resolves the color INTO (pResolveAttachments). The composite
+  // samples this 1x instead of the dropped EDRAM transfer. The resolve happens at
+  // tile-store time on TBDR = no extra pass, no GMEM spill.
+  bool build_resolve =
+      cvars::gpu_bd_native_keep_scissor && samples != VK_SAMPLE_COUNT_1_BIT;
+  VkImage native_resolve_image = VK_NULL_HANDLE;
+  VkDeviceMemory native_resolve_memory = VK_NULL_HANDLE;
+  VkImageView native_resolve_view = VK_NULL_HANDLE;
+  if (build_resolve) {
+    VkImageCreateInfo resolve_create_info = image_create_info;
+    resolve_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    resolve_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+            vulkan_device, resolve_create_info,
+            ui::vulkan::util::MemoryPurpose::kDeviceLocal, native_resolve_image,
+            native_resolve_memory)) {
+      XELOGE("BD resolve: failed to create 1x resolve image (falling back)");
+      build_resolve = false;
+    } else {
+      VkImageViewCreateInfo resolve_view_info = view_create_info;
+      resolve_view_info.image = native_resolve_image;
+      if (dfn.vkCreateImageView(device, &resolve_view_info, nullptr,
+                                &native_resolve_view) != VK_SUCCESS) {
+        XELOGE("BD resolve: failed to create resolve view (falling back)");
+        dfn.vkDestroyImage(device, native_resolve_image, nullptr);
+        dfn.vkFreeMemory(device, native_resolve_memory, nullptr);
+        native_resolve_image = VK_NULL_HANDLE;
+        native_resolve_memory = VK_NULL_HANDLE;
+        build_resolve = false;
+      }
+    }
+  }
+
   // Build the alternate framebuffer: same attachment ORDER as
   // GetHostRenderTargetsFramebuffer (depth first at bit 0 if present, then the
   // single color), but the color attachment view is the native image's view.
-  VkRenderPass render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
-  VkImageView attachments[2];
+  // With build_resolve, the render pass carries a trailing 1x resolve attachment
+  // (matching GetHostRenderTargetsRenderPass's bd_color_resolve layout).
+  VkRenderPass render_pass =
+      GetHostRenderTargetsRenderPass(render_pass_key, 0, false, build_resolve);
+  VkImageView attachments[3];
   uint32_t attachment_count = 0;
   if (has_depth) {
     attachments[attachment_count++] = depth_rt->view_depth_stencil();
   }
   attachments[attachment_count++] = native_view;
+  if (build_resolve) {
+    // Trailing resolve attachment index (bit_count(depth_and_color_used)),
+    // matching bd_resolve_first_index in the render pass.
+    attachments[attachment_count++] = native_resolve_view;
+  }
   VkFramebufferCreateInfo framebuffer_create_info;
   framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
   framebuffer_create_info.pNext = nullptr;
@@ -3587,6 +3706,11 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
       dfn.vkCreateFramebuffer(device, &framebuffer_create_info, nullptr,
                               &native_framebuffer) != VK_SUCCESS) {
     XELOGE("BD L4: failed to create native color producer framebuffer");
+    if (native_resolve_view != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, native_resolve_view, nullptr);
+      dfn.vkDestroyImage(device, native_resolve_image, nullptr);
+      dfn.vkFreeMemory(device, native_resolve_memory, nullptr);
+    }
     dfn.vkDestroyImageView(device, native_view, nullptr);
     dfn.vkDestroyImage(device, native_image, nullptr);
     dfn.vkFreeMemory(device, native_memory, nullptr);
@@ -3606,6 +3730,9 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
       const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
   entry.bd_native_color_format = color_format;
   entry.bd_native_color_samples = samples;
+  entry.bd_native_color_resolve_image = native_resolve_image;
+  entry.bd_native_color_resolve_memory = native_resolve_memory;
+  entry.bd_native_color_resolve_view = native_resolve_view;
   XELOGI("BD L4: native color producer framebuffer created {}x{} fmt={} depth={}",
          base->host_extent.width, base->host_extent.height,
          uint32_t(color_rt.key().GetColorFormat()), has_depth ? 1 : 0);

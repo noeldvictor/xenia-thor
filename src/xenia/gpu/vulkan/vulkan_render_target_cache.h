@@ -131,6 +131,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkFormat bd_native_color_format = VK_FORMAT_UNDEFINED;
     VkSampleCountFlagBits bd_native_color_samples = VK_SAMPLE_COUNT_1_BIT;
     std::unordered_map<uint32_t, VkImageView> bd_native_color_swizzled_views_;
+    // DIRECT-NATIVE on-tile color resolve (gpu_bd_native_keep_scissor + MSAA):
+    // a 1x single-sampled image the render pass resolves the MSAA color INTO via
+    // pResolveAttachments (TBDR does this at tile-store time = no extra pass, no
+    // GMEM spill - unlike the perf-dead separate-pass convert). The composite
+    // then samples the resolved 1x here (after a cheap float16->A2B10 convert)
+    // instead of the dropped EDRAM transfer. Only allocated when the producer is
+    // MSAA; VK_NULL_HANDLE otherwise (the render pass has no resolve attachment).
+    VkImage bd_native_color_resolve_image = VK_NULL_HANDLE;
+    VkDeviceMemory bd_native_color_resolve_memory = VK_NULL_HANDLE;
+    VkImageView bd_native_color_resolve_view = VK_NULL_HANDLE;
     // Native image's last {stage, access, layout} across frames (5.6-sol L4 hang
     // fix): the seed must barrier the native image FROM its real prior state
     // (the mirror's outstanding TRANSFER_READ), not TOP_OF_PIPE/UNDEFINED - else
@@ -257,7 +267,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // ops, so it stays compatible with the same pipelines and framebuffers.
   VkRenderPass GetHostRenderTargetsRenderPass(RenderPassKey key,
                                               uint32_t load_dont_care_mask = 0,
-                                              bool depth_store_op_none = false);
+                                              bool depth_store_op_none = false,
+                                              bool bd_color_resolve = false);
   // BD input-attachment merge (Inc2): a 2-subpass feedback render pass - subpass
   // 0 renders the producer color RT, subpass 1 reads it as an INPUT attachment
   // and renders the consumer color RT (a 0->1 BY_REGION dependency carries the
