@@ -8571,6 +8571,10 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
   BdL5Alias alias = it->second;
   alias.width = width;
   alias.height = height;
+  // LEVEL 7 copy-on-resolve: snapshot the producer's valid rect into a persistent
+  // LOGICAL-size image so present + samplers read correctly-sized frozen content.
+  alias.resolved = render_target_cache_->PublishBdNativeResolved(
+      alias.fb, dest_base, width, height, bd_l5_frame_epoch_);
   bd_l5_alias_by_dest_[dest_base] = alias;
   if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
     static std::atomic<uint32_t> s_pub{0};
@@ -8595,6 +8599,12 @@ VkImageView VulkanCommandProcessor::BdL5LookupAlias(uint32_t guest_base) {
   // frontbuffer: last frame's other-base entry is stale).
   if (it->second.frame_epoch != bd_l5_frame_epoch_) {
     return VK_NULL_HANDLE;
+  }
+  // Prefer the logical-size copy-on-resolve snapshot (present's gamma pass reads
+  // it at the correct size); fall back to the producer RT view.
+  if (it->second.resolved &&
+      it->second.resolved->image != VK_NULL_HANDLE) {
+    return it->second.resolved->identity_view;
   }
   return it->second.view;
 }
@@ -11323,19 +11333,18 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       }
       auto it = bd_l5_alias_by_dest_.find(texture_base_address);
       if (it == bd_l5_alias_by_dest_.end() ||
-          it->second.frame_epoch != bd_l5_frame_epoch_ || !it->second.fb) {
+          it->second.frame_epoch != bd_l5_frame_epoch_ ||
+          !it->second.resolved ||
+          it->second.resolved->image == VK_NULL_HANDLE) {
         continue;
       }
-      // Bind the native image THROUGH a view with the guest swizzle applied (the
-      // composite samples the field/bloom with non-RGBA swizzles) - a direct
-      // identity bind would give wrong channels.
+      // Bind the LOGICAL-size copy-on-resolve snapshot THROUGH a view with the
+      // guest swizzle applied - correct extent (logical, not tile-rounded) AND
+      // frozen content (the reused producer RT can't corrupt it).
       uint32_t host_swz =
           texture_cache_->GetActiveTextureHostSwizzle(fetch_constant);
-      VkImageView l5_view =
-          host_swz == uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA)
-              ? it->second.view
-              : render_target_cache_->GetBdNativeColorSwizzledView(it->second.fb,
-                                                                   host_swz);
+      VkImageView l5_view = render_target_cache_->GetBdNativeResolvedSwizzledView(
+          it->second.resolved, host_swz);
       if (l5_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = l5_view;
         ++rt_served_textures_;

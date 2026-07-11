@@ -887,6 +887,9 @@ class VulkanCommandProcessor : public CommandProcessor {
     VkImageView view = VK_NULL_HANDLE;
     // The producer framebuffer (for swizzled sampled views of its native image).
     const VulkanRenderTargetCache::Framebuffer* fb = nullptr;
+    // LEVEL 7: the logical-size copy-on-resolve snapshot (present + sampler read
+    // THIS, not the tile-rounded reused producer RT).
+    const VulkanRenderTargetCache::NativeResolvedTexture* resolved = nullptr;
     uint64_t generation = 0;
     uint32_t frame_epoch = 0;
     uint32_t width = 0;
