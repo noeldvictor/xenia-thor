@@ -2648,8 +2648,14 @@ VkRenderPass VulkanRenderTargetCache::GetBdNativeCustomResolveRenderPass(
     return it->second;
   }
 
-  VkSampleCountFlagBits samples =
-      VkSampleCountFlagBits(uint32_t(1) << uint32_t(msaa_samples));
+  // MUST match the producer image's sample count exactly (same 2x->4x fallback as
+  // CreateRenderTarget / the producer framebuffer), or the framebuffer is invalid.
+  VkSampleCountFlagBits samples;
+  if (msaa_samples == xenos::MsaaSamples::k2X && !msaa_2x_attachments_supported_) {
+    samples = VK_SAMPLE_COUNT_4_BIT;
+  } else {
+    samples = VkSampleCountFlagBits(uint32_t(1) << uint32_t(msaa_samples));
+  }
 
   // Attachment 0: MSAA producer color (subpass 0 color, subpass 1 input). Its
   // MSAA content need not be stored - only the resolved 1x is kept (DONT_CARE).
