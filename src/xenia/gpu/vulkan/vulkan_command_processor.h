@@ -1842,6 +1842,12 @@ class VulkanCommandProcessor : public CommandProcessor {
     // FULL identity. Needed because BD renders every RT at EDRAM base 0 (base alone
     // aliases); this disambiguates, keying the native render-redirect unambiguously.
     uint32_t src_rt_key = 0;
+    // GMEM-residency foundation (5.6-sol 2026-07-11): monotonic version of this
+    // src->dest edge. One src RT can resolve to MULTIPLE dests across a frame
+    // (bloom pyramid, ping-pong); the versioned many-to-many edge set records
+    // which write is live, so the native-resource selection can pick the exact
+    // producer generation. 0 until versioning is wired.
+    uint32_t generation = 0;
   };
   void AddResolveCopyStats(const ResolveEdge& edge) {
     ++rt_resolve_copies_;
@@ -1857,15 +1863,42 @@ class VulkanCommandProcessor : public CommandProcessor {
     // alone, which aliases (BD renders every RT at EDRAM base 0).
     if (edge.dest_length && edge.dest_base && edge.src_rt_key) {
       persistent_resolve_edges_[edge.src_rt_key] = edge;
+      // Versioned many-to-many edge set (GMEM-residency foundation): a src RT can
+      // resolve to several dests. Update the matching dest in place (bumping its
+      // generation) or append a new one. Bounded so a runaway can't grow it.
+      auto& versions = persistent_resolve_edge_versions_[edge.src_rt_key];
+      ResolveEdge versioned = edge;
+      bool found = false;
+      for (ResolveEdge& e : versions) {
+        if (e.dest_base == edge.dest_base) {
+          versioned.generation = e.generation + 1;
+          e = versioned;
+          found = true;
+          break;
+        }
+      }
+      if (!found && versions.size() < 16) {
+        versioned.generation = 1;
+        versions.push_back(versioned);
+      }
     }
   }
   // The persistent (cross-frame) resolve edge for a src RT identity (packed
   // RenderTargetKey), or nullptr if that RT has never been resolved. Used by the
   // native render-redirect to map a bound EDRAM RT -> its resolve-dest guest
-  // address (= native surface key).
+  // address (= native surface key). Returns the MOST-RECENT single edge (back-
+  // compat); use PersistentResolveEdgesForSrc for the full many-to-many set.
   const ResolveEdge* PersistentResolveEdgeForSrc(uint32_t src_rt_key) const {
     auto it = persistent_resolve_edges_.find(src_rt_key);
     return it == persistent_resolve_edges_.end() ? nullptr : &it->second;
+  }
+  // The full versioned set of resolve dests for a src RT identity (the GMEM-
+  // residency foundation's many-to-many edge), or nullptr if never resolved.
+  const std::vector<ResolveEdge>* PersistentResolveEdgesForSrc(
+      uint32_t src_rt_key) const {
+    auto it = persistent_resolve_edge_versions_.find(src_rt_key);
+    return it == persistent_resolve_edge_versions_.end() ? nullptr
+                                                         : &it->second;
   }
   // The resolve edge whose dest range contains this texture-fetch base (the graph
   // edge: fetch <- source RT), or nullptr if the fetch is not RT-fed this frame.
@@ -1939,6 +1972,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Persistent (never cleared per-frame) src EDRAM RT -> resolve-dest edge map for
   // the native-HLE render-redirect (see AddResolveCopyStats / NativeSrcKey).
   std::unordered_map<uint32_t, ResolveEdge> persistent_resolve_edges_;
+  // GMEM-residency foundation: versioned many-to-many src->dest resolve edges
+  // (one src RT -> several dests, each with a generation). The single map above
+  // is retained for back-compat callers.
+  std::unordered_map<uint32_t, std::vector<ResolveEdge>>
+      persistent_resolve_edge_versions_;
   // Per-frame attribution of render-pass breaks at the per-draw enter point:
   // _barrier = ended to flush a pending barrier; _rt_change = ended because the
   // render pass / framebuffer changed (RT reconfiguration).
