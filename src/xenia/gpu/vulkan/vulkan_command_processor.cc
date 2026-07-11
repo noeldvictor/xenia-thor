@@ -4799,7 +4799,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // a 1-draw pass over a 720x1824 RT cost 51ms). Clamp renderArea to the guest
   // scissor's max extent so only the active region is tiled. Gated for safe A/B;
   // validate render correctness (a too-small renderArea would clip later draws).
-  if (cvars::gpu_clamp_renderarea_to_scissor) {
+  if (cvars::gpu_clamp_renderarea_to_scissor &&
+      bd_custom_resolve_render_pass_ == VK_NULL_HANDLE) {
     draw_util::Scissor scissor;
     draw_util::GetScissor(*register_file_, scissor);
     uint32_t max_x = scissor.offset[0] + scissor.extent[0];
@@ -4822,7 +4823,13 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // (0.0, BD uses reverse-Z). The optional resolve attachment (index 2, desktop) is
   // LOAD_OP_DONT_CARE so it needs no clear value.
   VkClearValue bd_native_clear_values[2];
-  if (bd_native_clear_pass) {
+  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE) {
+    // The custom-resolve pass uses DONT_CARE/LOAD loadOps only (no CLEAR) and a
+    // different attachment order [producer(0), A2B10(1), depth(2)] - never supply
+    // the normal 2-clear-value layout here.
+    render_pass_begin_info.clearValueCount = 0;
+    render_pass_begin_info.pClearValues = nullptr;
+  } else if (bd_native_clear_pass) {
     bd_native_clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     bd_native_clear_values[1].depthStencil = {0.0f, 0};
     render_pass_begin_info.clearValueCount = 2;
