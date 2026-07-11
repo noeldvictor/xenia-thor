@@ -316,6 +316,35 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkImageView GetBdNativeColorSwizzledView(const Framebuffer* fb,
                                            uint32_t host_swizzle);
 
+  // LEVEL 7 COPY-ON-RESOLVE (5.6-sol): a persistent LOGICAL-size snapshot texture
+  // per resolve-dest resource. At a resolve, copy the producer RT's valid rect
+  // into this logical-size image and FREEZE it, so the composite samples a
+  // correctly-sized, stable texture (not the tile-rounded, reused producer RT).
+  struct NativeResolvedTexture {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView identity_view = VK_NULL_HANDLE;
+    std::unordered_map<uint32_t, VkImageView> swizzled_views;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkAccessFlags access = 0;
+    uint32_t publish_epoch = 0;
+  };
+  // Copy the producer framebuffer's native RT (valid [0,logical] rect) into the
+  // logical-size snapshot for `dest_base`, leaving it SHADER_READ. Returns the
+  // snapshot (or nullptr). `epoch` stamps the publication.
+  const NativeResolvedTexture* PublishBdNativeResolved(const Framebuffer* fb,
+                                                       uint32_t dest_base,
+                                                       uint32_t logical_width,
+                                                       uint32_t logical_height,
+                                                       uint32_t epoch);
+  // A swizzled sampled view of a published snapshot.
+  VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,
+                                              uint32_t host_swizzle);
+
   VkFormat GetDepthVulkanFormat(xenos::DepthRenderTargetFormat format) const;
   VkFormat GetColorVulkanFormat(xenos::ColorRenderTargetFormat format) const;
   VkFormat GetColorOwnershipTransferVulkanFormat(
@@ -1138,6 +1167,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher>
       framebuffers_;
+
+  // LEVEL 7: logical-size resolve snapshots keyed by resolve-dest guest base.
+  std::unordered_map<uint32_t, NativeResolvedTexture> bd_native_resolved_;
 
   // Set 0 - EDRAM storage buffer, set 1 - source depth sampled image (and
   // unused stencil from the transfer descriptor set), HostDepthStoreConstants

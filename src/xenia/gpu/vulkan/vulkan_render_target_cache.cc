@@ -1315,6 +1315,19 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
     }
   }
   framebuffers_.clear();
+  for (auto& rt : bd_native_resolved_) {
+    for (auto& sv : rt.second.swizzled_views) {
+      dfn.vkDestroyImageView(device, sv.second, nullptr);
+    }
+    if (rt.second.identity_view != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, rt.second.identity_view, nullptr);
+    }
+    if (rt.second.image != VK_NULL_HANDLE) {
+      dfn.vkDestroyImage(device, rt.second.image, nullptr);
+      dfn.vkFreeMemory(device, rt.second.memory, nullptr);
+    }
+  }
+  bd_native_resolved_.clear();
 
   last_update_render_pass_ = VK_NULL_HANDLE;
   for (const auto& render_pass_pair : render_passes_) {
@@ -1404,6 +1417,19 @@ void VulkanRenderTargetCache::ClearCache() {
     }
   }
   framebuffers_.clear();
+  for (auto& rt : bd_native_resolved_) {
+    for (auto& sv : rt.second.swizzled_views) {
+      dfn.vkDestroyImageView(device, sv.second, nullptr);
+    }
+    if (rt.second.identity_view != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, rt.second.identity_view, nullptr);
+    }
+    if (rt.second.image != VK_NULL_HANDLE) {
+      dfn.vkDestroyImage(device, rt.second.image, nullptr);
+      dfn.vkFreeMemory(device, rt.second.memory, nullptr);
+    }
+  }
+  bd_native_resolved_.clear();
 
   last_update_render_pass_ = VK_NULL_HANDLE;
   for (const auto& render_pass_pair : render_passes_) {
@@ -3620,6 +3646,182 @@ VkImageView VulkanRenderTargetCache::GetBdNativeColorSwizzledView(
     return VK_NULL_HANDLE;
   }
   mfb.bd_native_color_swizzled_views_.emplace(host_swizzle, view);
+  return view;
+}
+
+static VkComponentSwizzle BdSwizzleComponent(uint32_t swz, uint32_t i) {
+  xenos::XE_GPU_TEXTURE_SWIZZLE c =
+      xenos::XE_GPU_TEXTURE_SWIZZLE((swz >> (3 * i)) & 0b111);
+  if (c == xenos::XE_GPU_TEXTURE_SWIZZLE(i)) {
+    return VK_COMPONENT_SWIZZLE_IDENTITY;
+  }
+  switch (c) {
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_R:
+      return VK_COMPONENT_SWIZZLE_R;
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_G:
+      return VK_COMPONENT_SWIZZLE_G;
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_B:
+      return VK_COMPONENT_SWIZZLE_B;
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_A:
+      return VK_COMPONENT_SWIZZLE_A;
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_0:
+      return VK_COMPONENT_SWIZZLE_ZERO;
+    case xenos::XE_GPU_TEXTURE_SWIZZLE_1:
+      return VK_COMPONENT_SWIZZLE_ONE;
+    default:
+      return VK_COMPONENT_SWIZZLE_IDENTITY;
+  }
+}
+
+const VulkanRenderTargetCache::NativeResolvedTexture*
+VulkanRenderTargetCache::PublishBdNativeResolved(const Framebuffer* fb,
+                                                 uint32_t dest_base,
+                                                 uint32_t logical_width,
+                                                 uint32_t logical_height,
+                                                 uint32_t epoch) {
+  if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
+      fb->bd_native_color_format == VK_FORMAT_UNDEFINED || !dest_base ||
+      !logical_width || !logical_height) {
+    return nullptr;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  uint32_t w =
+      std::min(logical_width * draw_resolution_scale_x(), fb->host_extent.width);
+  uint32_t h = std::min(logical_height * draw_resolution_scale_y(),
+                        fb->host_extent.height);
+  NativeResolvedTexture& t = bd_native_resolved_[dest_base];
+  if (t.image == VK_NULL_HANDLE || t.width != w || t.height != h ||
+      t.format != fb->bd_native_color_format) {
+    if (t.image != VK_NULL_HANDLE) {
+      for (auto& sv : t.swizzled_views) {
+        dfn.vkDestroyImageView(device, sv.second, nullptr);
+      }
+      dfn.vkDestroyImageView(device, t.identity_view, nullptr);
+      dfn.vkDestroyImage(device, t.image, nullptr);
+      dfn.vkFreeMemory(device, t.memory, nullptr);
+    }
+    t = NativeResolvedTexture{};
+    VkImageCreateInfo ici = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fb->bd_native_color_format;
+    ici.extent = {w, h, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage =
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+            vulkan_device, ici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+            t.image, t.memory)) {
+      bd_native_resolved_.erase(dest_base);
+      return nullptr;
+    }
+    VkImageViewCreateInfo vci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vci.image = t.image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fb->bd_native_color_format;
+    vci.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    if (dfn.vkCreateImageView(device, &vci, nullptr, &t.identity_view) !=
+        VK_SUCCESS) {
+      dfn.vkDestroyImage(device, t.image, nullptr);
+      dfn.vkFreeMemory(device, t.memory, nullptr);
+      bd_native_resolved_.erase(dest_base);
+      return nullptr;
+    }
+    t.format = fb->bd_native_color_format;
+    t.width = w;
+    t.height = h;
+    t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    t.stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    t.access = 0;
+  }
+  // Copy the producer's valid [0,logical] rect into the frozen snapshot.
+  VkImageSubresourceRange range = {};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_color_image, range, mfb.bd_native_color_stage,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, mfb.bd_native_color_access,
+      VK_ACCESS_TRANSFER_READ_BIT, mfb.bd_native_color_layout,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  command_processor_.PushImageMemoryBarrier(
+      t.image, range, t.stage, VK_PIPELINE_STAGE_TRANSFER_BIT, t.access,
+      VK_ACCESS_TRANSFER_WRITE_BIT, t.layout,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  VkImageCopy creg = {};
+  creg.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.srcSubresource.layerCount = 1;
+  creg.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  creg.dstSubresource.layerCount = 1;
+  creg.extent = {w, h, 1};
+  command_processor_.deferred_command_buffer().CmdVkCopyImage(
+      fb->bd_native_color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.image,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &creg);
+  command_processor_.PushImageMemoryBarrier(
+      t.image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  t.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  t.stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  t.access = VK_ACCESS_SHADER_READ_BIT;
+  t.publish_epoch = epoch;
+  // The producer native was just read (TRANSFER_SRC) - update its tracking so
+  // the next seed/mirror barriers from the real state.
+  mfb.bd_native_color_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  mfb.bd_native_color_access = VK_ACCESS_TRANSFER_READ_BIT;
+  mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  return &t;
+}
+
+VkImageView VulkanRenderTargetCache::GetBdNativeResolvedSwizzledView(
+    const NativeResolvedTexture* t, uint32_t host_swizzle) {
+  if (!t || t->image == VK_NULL_HANDLE) {
+    return VK_NULL_HANDLE;
+  }
+  if (host_swizzle == uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA)) {
+    return t->identity_view;
+  }
+  NativeResolvedTexture& mt = const_cast<NativeResolvedTexture&>(*t);
+  auto it = mt.swizzled_views.find(host_swizzle);
+  if (it != mt.swizzled_views.end()) {
+    return it->second;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  VkImageViewCreateInfo vci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  vci.image = t->image;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  vci.format = t->format;
+  vci.components.r = BdSwizzleComponent(host_swizzle, 0);
+  vci.components.g = BdSwizzleComponent(host_swizzle, 1);
+  vci.components.b = BdSwizzleComponent(host_swizzle, 2);
+  vci.components.a = BdSwizzleComponent(host_swizzle, 3);
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = 1;
+  vci.subresourceRange.layerCount = 1;
+  VkImageView view = VK_NULL_HANDLE;
+  if (dfn.vkCreateImageView(device, &vci, nullptr, &view) != VK_SUCCESS) {
+    return VK_NULL_HANDLE;
+  }
+  mt.swizzled_views.emplace(host_swizzle, view);
   return view;
 }
 
