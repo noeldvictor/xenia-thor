@@ -8617,10 +8617,11 @@ bool VulkanCommandProcessor::BdL5DropSafe(uint32_t dest_base) {
   if (cvars::gpu_bd_native_color_lifetime_hle < 6 || !dest_base) {
     return false;
   }
-  // A live native alias must cover this dest (present/sampler reads native).
-  if (BdL5LookupAlias(dest_base) == VK_NULL_HANDLE) {
-    return false;
-  }
+  // NOTE: do NOT require the CURRENT-epoch snapshot here - transfers run in
+  // PerformTransfersAndResolveClears BEFORE this frame's resolve publishes the
+  // snapshot, so it's always null at drop time. The PREV-frame consumer bits
+  // below prove the dest was native-covered + consumed last frame, and coverage
+  // is stable frame-to-frame, so the drop is safe.
   // Every consumer of this dest LAST frame must have been native (present /
   // pixel-texture / composite), with NO NonNative reader - else dropping the
   // EDRAM transfer starves a consumer that still reads the LLE surface.
