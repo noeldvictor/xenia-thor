@@ -308,3 +308,58 @@ composite samples, base=1DC14000-class, fetchfmt=64). Falsify before generalizin
   VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT (add to the producer image usage).
 - Pipeline subpass-index keying: the field producer pipelines must be created for subpass 0
   of this 2-subpass pass (VkGraphicsPipelineCreateInfo::subpass=0), the convert for subpass=1.
+
+================================================================================
+# INTEGRATION STATUS (build session 2026-07-11, commit 15df03fb3)
+================================================================================
+DONE + committed + compiles clean:
+- GetBdNativeCustomResolveRenderPass (rtc.cc, after GetFeedbackRenderPass): 2-subpass
+  pass. att0 MSAA producer color (subpass0 color / subpass1 input, storeOp DONT_CARE);
+  att1 1x A2B10 (subpass1 color, STORE, finalLayout SHADER_READ); att2 MSAA depth
+  (subpass0). flags subpass1 = VK_SUBPASS_DESCRIPTION_CUSTOM_RESOLVE_BIT_EXT. Dep 0->1
+  COLOR_OUTPUT/WRITE -> FRAGMENT/INPUT_READ BY_REGION. Cached bd_custom_resolve_render_passes_.
+- GetBdNativeCustomResolveShader (rtc.cc, after GetBdNativeConvertShader): reads att0 as
+  DimSubpassData MS input attachment (per-sample OpImageRead + Sample operand via
+  addImmediateOperand(spv::ImageOperandsSampleMask)), averages (k0123), x exp_bias, R/B
+  swap, writes A2B10. Reuses BdConvertPushConstants. Cached bd_custom_resolve_shaders_.
+
+REMAINING to activate (the integration - each modeled on an existing analog):
+1. Convert PIPELINE for subpass 1 (model on GetBdNativeConvertPipeline rtc.cc:4590+):
+   - Pipeline layout: set0 = ONE INPUT_ATTACHMENT descriptor (NOT sampled_image - need a
+     new descriptor_set_layout_input_attachment_) + BdConvertPushConstants range.
+   - render pass = GetBdNativeCustomResolveRenderPass(...), subpass = 1 (pci.subpass = 1).
+   - CHAIN VkCustomResolveCreateInfoEXT into pci.pNext (fragment-output stage):
+     {sType=1000628002, customResolve=VK_TRUE, colorAttachmentCount=1,
+      pColorAttachmentFormats=&A2B10, depth/stencil=UNDEFINED}.
+   - stages: transfer_passthrough_vertex_shader_ + GetBdNativeCustomResolveShader.
+     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT (subpass1 output is 1x).
+   - NOTE: legacy render pass + subpass flag drives the custom resolve; vkCmdBeginCustomResolveEXT
+     is DYNAMIC-rendering only -> NOT needed here (verify on-device w/ validation).
+2. Producer FRAMEBUFFER (GetBdNativeColorProducerFramebuffer, add a custom-resolve branch
+   gated on customResolve+keep_scissor+MSAA): attachments [producer MSAA view(0), A2B10 1x
+   view(1), depth view(2)] against GetBdNativeCustomResolveRenderPass. Producer IMAGE needs
+   +VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT. The A2B10 image = bd_native_color_resolve_image but
+   FORMAT must be A2B10 (the fetch fmt 64) not the producer float16 - allocate it as A2B10 +
+   COLOR_ATTACHMENT+INPUT? no: COLOR_ATTACHMENT+SAMPLED (composite samples it). Store the CR
+   render pass + fb on the Framebuffer entry.
+3. ConfigurePipeline THREADING (the producer subpass-0 pipelines): pipeline compat requires
+   the field guest pipelines be created against the 2-subpass pass at subpass 0 (a 1-subpass
+   pipeline is INCOMPATIBLE with a 2-subpass pass). Add a bool custom_resolve param to
+   VulkanPipelineCache::ConfigurePipeline (vulkan_command_processor.cc:6592 passes it), set from
+   a new command-processor member bd_custom_resolve_active_ (true while the CR producer pass is
+   bound). In ConfigurePipeline: when custom_resolve, render_pass =
+   GetBdNativeCustomResolveRenderPass(render_pass_key...) and pci.subpass stays 0. Mirror the
+   feedback_merge branch (pipeline_cache.cc:558, 2732).
+4. DRAW FLOW (vulkan_command_processor, where the direct-native producer pass is begun/ended):
+   begin the CR render pass with the CR framebuffer + 3 clears; set bd_custom_resolve_active_;
+   field guest draws record into subpass 0; BEFORE EndRenderPass, vkCmdNextSubpass ->
+   bind the convert pipeline -> bind the input-attachment descriptor (att0 producer view, layout
+   SHADER_READ) + push {exp_bias, swap, sample_count} -> bind fullscreen-triangle VB -> draw(3)
+   -> EndRenderPass. clear bd_custom_resolve_active_.
+5. CONSUMER: composite already samples the A2B10 resolve image (GetBdNativeColorSwizzledView
+   prefers bd_native_color_resolve_image; identity-format gate passes A2B10==64). Piece D drop
+   (lifetime_hle>=6 BdL5DropSafe) already active.
+6. GATE: customResolve device feature (validated enabled) + gpu_bd_native_keep_scissor + MSAA
+   producer. Fall back to the plain direct-native/LLE path otherwise.
+VALIDATE: --vulkan_validation on Thor (catch VUIDs); screenshot == LLE; gpu trace: producer stays
+GMEM, no 64bpp/float16 store, one A2B10 write, between-pass gap falls; then fps.
