@@ -194,6 +194,17 @@ DEFINE_int32(
     "+wide native color render (no drops); 5 = +drop color resolves; 6 = +drop color "
     "transfers (the win); 7 = +MSAA. THOR-GATED, incremental. 0 = off.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_native_field_convert, true,
+    "BD color-HLE: when true (default), the MSAA field producer is converted via "
+    "the fragment shader path (do_convert_shader) - PROVEN perf-DEAD on Turnip "
+    "(1.8fps: the separate-pass MSAA-texture sample spills the 4x image out of "
+    "tile memory + adds a GMEM-flush pass). Set FALSE to isolate the BLOOM-only "
+    "deletion (1x blit-convert, no MSAA spill): the MSAA field falls back to LLE, "
+    "only the cheap 1x bloom/HDR producers convert + their transfers drop. "
+    "Diagnostic A/B to measure whether the bloom deletion alone (cheap blits) is "
+    "net-positive vs the field convert's catastrophe. Only affects lifetime_hle>=9.",
+    "GPU");
 DEFINE_double(
     gpu_bd_native_depth_clear, 0.0,
     "BD REAL-HLE native depth-buffer CLEAR value (default 0.0 = reverse-Z far). The "

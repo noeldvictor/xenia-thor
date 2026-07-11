@@ -203,6 +203,7 @@ DEFINE_string(
 DECLARE_uint32(gpu_bd_hle_drop_resolve);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
+DECLARE_bool(gpu_bd_native_field_convert);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
@@ -3707,9 +3708,13 @@ VulkanRenderTargetCache::PublishBdNativeResolved(
   // blit can't scale (exp_bias) and doesn't swap (swap baked into the view).
   bool do_convert_blit = convert_wanted && source_1x && exp_bias_is_identity;
   // MSAA or a non-identity exp_bias (the field, exp_bias=-2) -> the fragment
-  // convert pass (average + exp_bias + swap, all in the shader).
+  // convert pass (average + exp_bias + swap, all in the shader). Gated: this path
+  // is PROVEN perf-dead on Turnip (1.8fps - MSAA spill + added pass); set
+  // gpu_bd_native_field_convert=false to isolate the bloom-only deletion.
   bool do_convert_shader =
-      convert_wanted && !do_convert_blit && (!source_1x || !exp_bias_is_identity);
+      convert_wanted && !do_convert_blit &&
+      (!source_1x || !exp_bias_is_identity) &&
+      cvars::gpu_bd_native_field_convert;
   bool do_convert = do_convert_blit || do_convert_shader;
   VkFormat t_format = do_convert ? target_format : fb->bd_native_color_format;
   uint32_t source_sample_count =
