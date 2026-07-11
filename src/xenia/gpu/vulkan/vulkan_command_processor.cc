@@ -8314,7 +8314,36 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             bc_bloom.color_destblend == xenos::BlendFactor::kOne &&
             bc_bloom.color_srcblend != xenos::BlendFactor::kZero;
       }
-      if (!skip_bloom_draw) {
+      // BD field DECOUPLING (gpu_bd_field_decouple): CAPTURE the field draw
+      // (self-contained, CR-subpass-0 pipeline render-pass-compatible with the
+      // 2-subpass replay pass) into bd_field_command_buffer_ for CONTIGUOUS replay
+      // at the publication IssueCopy, and SUPPRESS the in-order draw so the field
+      // renders ONLY via the replay = one contiguous pass, no interleave spill/
+      // desync (Stage 2). A field draw = its framebuffer carries a CR producer.
+      // Suppress ONLY when the capture succeeds (else render in-order as a fallback).
+      bool bd_field_suppress = false;
+      if (cvars::gpu_bd_field_decouple && current_framebuffer_ &&
+          current_framebuffer_->bd_native_color_custom_resolve_rp !=
+              VK_NULL_HANDLE) {
+        VkPipeline cr_pipe = VK_NULL_HANDLE;
+        const VulkanPipelineCache::PipelineLayoutProvider* cr_layout = nullptr;
+        if (pipeline_cache_->ConfigurePipeline(
+                vertex_shader_translation, pixel_shader_translation,
+                primitive_processing_result, normalized_depth_control,
+                normalized_color_mask,
+                render_target_cache_->last_update_render_pass_key(), cr_pipe,
+                cr_layout,
+                current_framebuffer_->bd_native_color_custom_resolve_rp)) {
+          EmitBdFieldCaptureDraw(
+              cr_pipe, cr_layout->GetPipelineLayout(), index_buffer.first,
+              index_buffer.second, index_type,
+              primitive_processing_result.host_draw_vertex_count, 0);
+          bd_field_batch_pending_ = true;
+          bd_field_producer_fb_ = current_framebuffer_;
+          bd_field_suppress = true;
+        }
+      }
+      if (!skip_bloom_draw && !bd_field_suppress) {
         deferred_command_buffer_.CmdVkDrawIndexed(
             collapse_this_draw
                 ? std::min<uint32_t>(
@@ -8348,34 +8377,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           EmitOpaquePrepassDraw(
               index_buffer.first, index_buffer.second, index_type,
               primitive_processing_result.host_draw_vertex_count);
-        }
-      }
-      // BD field DECOUPLING (gpu_bd_field_decouple): CAPTURE this field draw as a
-      // self-contained packet with a CR-subpass-0 pipeline (render-pass-compatible
-      // with the 2-subpass replay pass) into bd_field_command_buffer_, for
-      // contiguous replay at the publication IssueCopy. A field draw = its
-      // framebuffer carries a custom-resolve producer. The field also renders
-      // in-order (Stage 1 duplicate; Stage 2 suppresses the in-order draw). The
-      // CR pipeline is a distinct cache entry (bd_custom_resolve description bit);
-      // the field shader's descriptors/layout are shared with the in-order pipeline.
-      if (cvars::gpu_bd_field_decouple && current_framebuffer_ &&
-          current_framebuffer_->bd_native_color_custom_resolve_rp !=
-              VK_NULL_HANDLE) {
-        VkPipeline cr_pipe = VK_NULL_HANDLE;
-        const VulkanPipelineCache::PipelineLayoutProvider* cr_layout = nullptr;
-        if (pipeline_cache_->ConfigurePipeline(
-                vertex_shader_translation, pixel_shader_translation,
-                primitive_processing_result, normalized_depth_control,
-                normalized_color_mask,
-                render_target_cache_->last_update_render_pass_key(), cr_pipe,
-                cr_layout,
-                current_framebuffer_->bd_native_color_custom_resolve_rp)) {
-          EmitBdFieldCaptureDraw(
-              cr_pipe, cr_layout->GetPipelineLayout(), index_buffer.first,
-              index_buffer.second, index_type,
-              primitive_processing_result.host_draw_vertex_count, 0);
-          bd_field_batch_pending_ = true;
-          bd_field_producer_fb_ = current_framebuffer_;
         }
       }
     }
@@ -10155,24 +10156,25 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
       constants_present ? current_constant_dynamic_offsets_ : nullptr);
   pb.CmdVkSetViewport(0, 1, &dynamic_viewport_);
   pb.CmdVkSetScissor(0, 1, &dynamic_scissor_);
-  if (render_target_cache_->GetPath() ==
-      RenderTargetCache::Path::kHostRenderTargets) {
-    pb.CmdVkSetDepthBias(dynamic_depth_bias_constant_factor_, 0.0f,
-                         dynamic_depth_bias_slope_factor_);
-    pb.CmdVkSetBlendConstants(dynamic_blend_constants_);
-    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_FRONT_BIT,
-                                  dynamic_stencil_compare_mask_front_);
-    pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_BACK_BIT,
-                                  dynamic_stencil_compare_mask_back_);
-    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_FRONT_BIT,
-                                dynamic_stencil_write_mask_front_);
-    pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_BACK_BIT,
-                                dynamic_stencil_write_mask_back_);
-    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_FRONT_BIT,
-                                dynamic_stencil_reference_front_);
-    pb.CmdVkSetStencilReference(VK_STENCIL_FACE_BACK_BIT,
-                                dynamic_stencil_reference_back_);
-  }
+  // Emit the depth-bias / blend / stencil dynamic state UNCONDITIONALLY (5.6-sol:
+  // the captured packet must be full-state; the replay pass has no inherited leading
+  // state, and these are dynamic on BD's host-RT field pipelines - VUID-07834/37/38/
+  // 39). Setting them when the pipeline uses static values is a harmless no-op.
+  pb.CmdVkSetDepthBias(dynamic_depth_bias_constant_factor_, 0.0f,
+                       dynamic_depth_bias_slope_factor_);
+  pb.CmdVkSetBlendConstants(dynamic_blend_constants_);
+  pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_FRONT_BIT,
+                                dynamic_stencil_compare_mask_front_);
+  pb.CmdVkSetStencilCompareMask(VK_STENCIL_FACE_BACK_BIT,
+                                dynamic_stencil_compare_mask_back_);
+  pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_FRONT_BIT,
+                              dynamic_stencil_write_mask_front_);
+  pb.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_BACK_BIT,
+                              dynamic_stencil_write_mask_back_);
+  pb.CmdVkSetStencilReference(VK_STENCIL_FACE_FRONT_BIT,
+                              dynamic_stencil_reference_front_);
+  pb.CmdVkSetStencilReference(VK_STENCIL_FACE_BACK_BIT,
+                              dynamic_stencil_reference_back_);
   if (index_buffer != VK_NULL_HANDLE) {
     pb.CmdVkBindIndexBuffer(index_buffer, index_offset, index_type);
     pb.CmdVkDrawIndexed(index_count, 1, 0, 0, 0);
@@ -11748,7 +11750,10 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       // no copy-on-resolve snapshot (perf-dead on Turnip). The producer is now
       // logical-size (piece 1) so [0,1] UVs are correct. Legacy path samples the
       // copy-on-resolve snapshot.
-      const bool direct = cvars::gpu_bd_native_keep_scissor;
+      // Decoupling also samples the CR producer's A2B10 output directly (the field
+      // is produced contiguously by the replay; the composite reads it here).
+      const bool direct =
+          cvars::gpu_bd_native_keep_scissor || cvars::gpu_bd_field_decouple;
       if (!direct && (!it->second.resolved ||
                       it->second.resolved->image == VK_NULL_HANDLE)) {
         continue;
