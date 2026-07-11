@@ -8598,6 +8598,29 @@ VkImageView VulkanCommandProcessor::BdL5LookupAlias(uint32_t guest_base) {
   return it->second.view;
 }
 
+bool VulkanCommandProcessor::BdL5DropSafe(uint32_t dest_base) {
+  if (cvars::gpu_bd_native_color_lifetime_hle < 6 || !dest_base) {
+    return false;
+  }
+  // A live native alias must cover this dest (present/sampler reads native).
+  if (BdL5LookupAlias(dest_base) == VK_NULL_HANDLE) {
+    return false;
+  }
+  // Every consumer of this dest LAST frame must have been native (present /
+  // pixel-texture / composite), with NO NonNative reader - else dropping the
+  // EDRAM transfer starves a consumer that still reads the LLE surface.
+  auto it = bd_color_consumer_bits_prev_.find(dest_base);
+  if (it == bd_color_consumer_bits_prev_.end()) {
+    return false;
+  }
+  uint32_t bits = it->second;
+  if (bits & kBdConsumerNonNative) {
+    return false;
+  }
+  return (bits & (kBdConsumerPresent | kBdConsumerPixelTexture |
+                  kBdConsumerComposite)) != 0;
+}
+
 bool VulkanCommandProcessor::IssueCopy() {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");

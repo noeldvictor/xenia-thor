@@ -3410,11 +3410,13 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
     return base;  // More than one color RT -> not the producer shape.
   }
 
-  // Scope to the MAIN-SCENE color surface (the ~1280-wide field/composite). The
-  // bloom pyramid (320/160/80) + shadow maps are small single-color RTs too, but
-  // they are not the frontbuffer producer - skip them to avoid needless native
-  // images + round-trip copies. host_extent already includes draw_resolution_scale.
-  if (base->host_extent.width < 1024u) {
+  // Cover the WHOLE color chain the EDRAM transfers alias: composite (1280),
+  // field (pitch ~672-720) AND bloom pyramid (320/160/80). Each gets its OWN
+  // native image (no EDRAM aliasing), so once consumers are redirected the
+  // ownership transfers between them are redundant (droppable). >=64 covers
+  // field+bloom; depth-only shadow passes have no color bit so they still bail
+  // above (single-color required). Below 64 = tiny/degenerate, skip.
+  if (base->host_extent.width < 64u) {
     return base;
   }
 
@@ -6181,8 +6183,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   // covered natively = safe + correct. This is the real EDRAM-deletion lever.
   static std::vector<Transfer>
       s_bd_xfer_filtered[1 + xenos::kMaxColorRenderTargets];
-  if (cvars::gpu_bd_native_drop_transfers && render_target_transfers &&
-      render_target_transfers != kNoTransfers) {
+  if ((cvars::gpu_bd_native_drop_transfers ||
+       cvars::gpu_bd_native_color_lifetime_hle >= 6) &&
+      render_target_transfers && render_target_transfers != kNoTransfers) {
     bool any_dropped = false;
     for (uint32_t i = 0; i < render_target_count; ++i) {
       s_bd_xfer_filtered[i] = render_target_transfers[i];  // default: keep
@@ -6196,6 +6199,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       const bool native_served =
           edge && edge->dest_base &&
           command_processor_.BdNativeSurfaceServes(edge->dest_base);
+      // LEVEL 6: drop the transfer if an L5 native producer alias covers its
+      // dest AND every consumer of that dest read native last frame (present /
+      // pixel-texture, no NonNative) - the EDRAM copy is then dead weight.
+      const bool l5_served =
+          cvars::gpu_bd_native_color_lifetime_hle >= 6 && !is_depth && edge &&
+          edge->dest_base && command_processor_.BdL5DropSafe(edge->dest_base);
       // COLOR-ONLY aggressive drop (gpu_bd_native_drop_all_color_xfer): the
       // wholesale gpu_skip_edram_transfers dropped color AND DEPTH transfers -> the
       // dropped DEPTH broke the field's depth test => geometry depth-fails =>
@@ -6211,7 +6220,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       // depth content. Drop EVERYTHING (incl. depth) but emit the barrier below for
       // each -> if the barrier prevents the collapse, this = 30fps + correct.
       const bool drop_all = cvars::gpu_bd_native_drop_all_xfer;
-      if (native_served || drop_color_only || drop_all) {
+      if (native_served || drop_color_only || drop_all || l5_served) {
         s_bd_xfer_filtered[i].clear();  // transfer dead
         any_dropped = true;
         // Preserve the SYNC the dropped transfer would have provided. The

@@ -913,6 +913,10 @@ class VulkanCommandProcessor : public CommandProcessor {
                         uint32_t height);
   // Return the native view aliased to `guest_base` for the current epoch, or null.
   VkImageView BdL5LookupAlias(uint32_t guest_base);
+  // True if the transfer whose dest is `dest_base` is safe to DROP: a live L5
+  // alias covers it (consumers read native) AND every consumer last frame was
+  // native (present / pixel-texture), with no NonNative reader.
+  bool BdL5DropSafe(uint32_t dest_base);
 
   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
 
