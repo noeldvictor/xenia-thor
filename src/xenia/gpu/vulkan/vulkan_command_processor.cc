@@ -5175,22 +5175,8 @@ void VulkanCommandProcessor::ReplayBdFieldBatch() {
     if (current_render_pass_ != VK_NULL_HANDLE) {
       EndRenderPass();
     }
-    auto* mfb = const_cast<VulkanRenderTargetCache::Framebuffer*>(fb);
-    if (mfb->bd_native_color_layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
-      VkImageSubresourceRange range = {};
-      range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      range.levelCount = 1;
-      range.layerCount = 1;
-      PushImageMemoryBarrier(
-          mfb->bd_native_color_image, range, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-          VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
-          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-              VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
-          mfb->bd_native_color_layout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      mfb->bd_native_color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-      SubmitBarriers(true);
-    }
+    // att0 (producer MSAA) initialLayout is UNDEFINED (DONT_CARE, single pass) - the
+    // render pass handles the transition; no explicit pre-barrier needed.
     VkRenderPassBeginInfo rpbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rpbi.renderPass = fb->bd_native_color_custom_resolve_rp;
     rpbi.framebuffer = fb->bd_native_color_framebuffer;
