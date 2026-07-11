@@ -454,7 +454,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
     uint32_t normalized_color_mask,
     VulkanRenderTargetCache::RenderPassKey render_pass_key,
     VkPipeline& pipeline_out,
-    const PipelineLayoutProvider*& pipeline_layout_out) {
+    const PipelineLayoutProvider*& pipeline_layout_out,
+    VkRenderPass bd_custom_resolve_render_pass) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -471,6 +472,10 @@ bool VulkanPipelineCache::ConfigurePipeline(
           description)) {
     return false;
   }
+  // BD custom-resolve: distinct cache entry (the CR pipeline is render-pass-
+  // incompatible with the normal single-subpass field pipeline of the same state).
+  description.bd_custom_resolve =
+      bd_custom_resolve_render_pass != VK_NULL_HANDLE ? 1 : 0;
   if (last_pipeline_ && last_pipeline_->first == description) {
     pipeline_out = last_pipeline_->second.pipeline;
     pipeline_layout_out = last_pipeline_->second.pipeline_layout;
@@ -555,8 +560,13 @@ bool VulkanPipelineCache::ConfigurePipeline(
   // merge redirect resolves in-place, so a getter would cache the wrong variant
   // on the first frame. The distinct-RT (2-attachment) pipeline path is not wired
   // (no title exercises it yet; the merge is gated default-off + BD-only).
+  // BD custom-resolve: the field producer's pipeline must target the 2-subpass
+  // custom-resolve render pass at subpass 0 (pci.subpass stays 0 since this is not
+  // a feedback_merge/consumer draw). Overrides the normal single-subpass pass.
   VkRenderPass render_pass =
-      feedback_merge
+      bd_custom_resolve_render_pass != VK_NULL_HANDLE
+          ? bd_custom_resolve_render_pass
+      : feedback_merge
           ? render_target_cache_.GetFeedbackRenderPass(
                 render_pass_key.color_0_view_format,
                 render_pass_key.color_0_view_format,

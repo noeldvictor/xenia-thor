@@ -4713,6 +4713,12 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       bd_color_mirror_active_ = true;
       bd_native_direct_active_ = true;
       bd_color_mirror_fb_ = framebuffer;
+      // VK_EXT_custom_resolve: this producer has a 2-subpass custom-resolve
+      // framebuffer -> begin THAT render pass (field into subpass 0), record the
+      // convert into subpass 1 at pass end, and create the field pipelines against
+      // it. bd_native_color_framebuffer is already the CR framebuffer.
+      bd_custom_resolve_render_pass_ =
+          framebuffer->bd_native_color_custom_resolve_rp;
     } else if (render_target_cache_->SeedBdNativeColorProducer(framebuffer)) {
       bd_color_mirror_active_ = true;
       bd_color_mirror_fb_ = framebuffer;
@@ -4762,6 +4768,13 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       }
     }
   }
+  // VK_EXT_custom_resolve: begin the 2-subpass custom-resolve render pass (not the
+  // normal single-subpass one). The field renders into subpass 0; the convert runs
+  // in subpass 1 at EndRenderPass. Overrides any dc_safe/depth_none variant (those
+  // are single-subpass variants of the normal pass, incompatible with the CR pass).
+  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE) {
+    begin_render_pass = bd_custom_resolve_render_pass_;
+  }
   VkRenderPassBeginInfo render_pass_begin_info;
   render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   render_pass_begin_info.pNext = nullptr;
@@ -4774,7 +4787,11 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.renderArea.offset.y = 0;
   // TODO(Triang3l): Actual dirty width / height in the deferred command
   // buffer.
-  render_pass_begin_info.renderArea.extent = framebuffer->host_extent;
+  render_pass_begin_info.renderArea.extent =
+      (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE &&
+       framebuffer->bd_native_color_extent.width)
+          ? framebuffer->bd_native_color_extent
+          : framebuffer->host_extent;
   // BD-30 lever: the EDRAM RT cache allocates host RTs at the EDRAM-tile-rounded
   // height (1280x720 guest -> 1280x2048 host, some up to x8192), and renderArea =
   // full host_extent makes the Adreno TBDR load/store/bin the oversized off-screen
@@ -5108,6 +5125,20 @@ void VulkanCommandProcessor::EndRenderPass() {
                                               prepass_command_buffer_);
     prepass_active_ = false;
   }
+  // VK_EXT_custom_resolve: the field producer pass is a 2-subpass pass; advance to
+  // subpass 1 and record the fullscreen resolve+convert draw (MSAA float16 input ->
+  // 1x A2B10 output) BEFORE ending the pass. The composite then samples the A2B10
+  // resolve output; the EDRAM color transfer is dropped (BdL5DropSafe).
+  if (bd_custom_resolve_render_pass_ != VK_NULL_HANDLE &&
+      bd_color_mirror_fb_ != nullptr) {
+    const VkExtent2D& cr_extent = bd_color_mirror_fb_->bd_native_color_extent;
+    // exp_bias/swap: BD's field resolve is exp_bias=-2, swap=1 (R/B) per the L9
+    // DESTPARAMS census. exp_bias_factor = 2^-2 = 0.25.
+    render_target_cache_->RecordBdCustomResolveConvert(
+        bd_color_mirror_fb_, cr_extent.width, cr_extent.height, 0.25f, 1u);
+    ++bd_custom_resolve_passes_;
+  }
+  bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
   deferred_command_buffer_.CmdVkEndRenderPass();
   // End-of-pass timestamp AFTER EndRenderPass to capture the TBDR tile store.
   RecordPassTimestamp(false);
@@ -6594,7 +6625,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       primitive_processing_result, normalized_depth_control,
       normalized_color_mask,
       render_target_cache_->last_update_render_pass_key(), pipeline,
-      pipeline_layout_provider);
+      pipeline_layout_provider, bd_custom_resolve_render_pass_);
   if (trace_draw_cpu) {
     draw_cpu_pipeline_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(

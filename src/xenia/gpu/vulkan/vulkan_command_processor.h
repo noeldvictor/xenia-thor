@@ -873,6 +873,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   // into the logical-size native producer this pass - skip the native->LLE mirror
   // (LLE is not authoritative on this path).
   bool bd_native_direct_active_ = false;
+  // VK_EXT_custom_resolve: the 2-subpass custom-resolve render pass in use for the
+  // current direct-native producer pass (VK_NULL_HANDLE otherwise). While set, the
+  // field pipelines are created against it (subpass 0), and a vkCmdNextSubpass +
+  // fullscreen convert draw runs into subpass 1 before the pass is ended.
+  VkRenderPass bd_custom_resolve_render_pass_ = VK_NULL_HANDLE;
+  uint32_t bd_custom_resolve_passes_ = 0;
   // The producer framebuffer to mirror (native->LLE) at pass end; set when the
   // pass begins with the native color substituted.
   const VulkanRenderTargetCache::Framebuffer* bd_color_mirror_fb_ = nullptr;

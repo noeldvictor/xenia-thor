@@ -3702,6 +3702,16 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
                                     << uint32_t(render_pass_key.msaa_samples));
   }
 
+  // VK_EXT_custom_resolve (Turnip): when the producer is MSAA + direct-native, the
+  // field renders float16 into subpass 0 and a shader custom-resolve subpass reads
+  // it as an input attachment and writes 1x A2B10 - on-tile, no off-chip MSAA spill.
+  // The producer image then also needs INPUT_ATTACHMENT usage.
+  const bool use_custom_resolve =
+      cvars::gpu_bd_native_keep_scissor &&
+      samples != VK_SAMPLE_COUNT_1_BIT &&
+      vulkan_device->extensions().ext_EXT_custom_resolve &&
+      vulkan_device->properties().customResolve;
+
   // DIRECT-NATIVE path (gpu_bd_native_keep_scissor, 5.6-sol): create the producer
   // at LOGICAL dims (from the resource graph via SelectNativeBinding) instead of
   // the tile-rounded host_extent, so the composite's [0,1] UVs sample correct
@@ -3739,7 +3749,12 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
                             // LEVEL 5 (generation bridge): consumers (composite
                             // sampler / present) bind this image directly, so it
                             // must be sampleable.
-                            VK_IMAGE_USAGE_SAMPLED_BIT;
+                            VK_IMAGE_USAGE_SAMPLED_BIT |
+                            // custom-resolve reads the MSAA producer as an input
+                            // attachment in subpass 1.
+                            (use_custom_resolve
+                                 ? VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT
+                                 : 0);
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -3777,6 +3792,105 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
     dfn.vkDestroyImage(device, native_image, nullptr);
     dfn.vkFreeMemory(device, native_memory, nullptr);
     return base;
+  }
+
+  // VK_EXT_custom_resolve path (Turnip): build the 2-subpass producer framebuffer.
+  // att0 = the MSAA float16 producer (subpass0 color / subpass1 input); att1 = a
+  // 1x A2B10 output (subpass1 custom-resolve color, sampled by the composite);
+  // att2 = the MSAA depth. Only for BD's 2_10_10_10(_FLOAT) field.
+  xenos::ColorRenderTargetFormat guest_cf = color_rt.key().GetColorFormat();
+  bool cr_fmt_ok =
+      guest_cf == xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT ||
+      guest_cf ==
+          xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16 ||
+      guest_cf == xenos::ColorRenderTargetFormat::k_2_10_10_10 ||
+      guest_cf ==
+          xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10;
+  if (use_custom_resolve && cr_fmt_ok) {
+    const VkFormat kResolveFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    const VkFormat depth_vk_format =
+        has_depth ? GetDepthVulkanFormat(depth_rt->key().GetDepthFormat())
+                  : VK_FORMAT_UNDEFINED;
+    VkRenderPass cr_render_pass = GetBdNativeCustomResolveRenderPass(
+        guest_cf, kResolveFormat, render_pass_key.msaa_samples, depth_vk_format);
+    // 1x A2B10 resolve output: subpass-1 color + sampled by the composite.
+    VkImage cr_resolve_image = VK_NULL_HANDLE;
+    VkDeviceMemory cr_resolve_memory = VK_NULL_HANDLE;
+    VkImageView cr_resolve_view = VK_NULL_HANDLE;
+    if (cr_render_pass != VK_NULL_HANDLE) {
+      VkImageCreateInfo ci = image_create_info;
+      ci.format = kResolveFormat;
+      ci.samples = VK_SAMPLE_COUNT_1_BIT;
+      ci.usage =
+          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+      if (ui::vulkan::util::CreateDedicatedAllocationImage(
+              vulkan_device, ci, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+              cr_resolve_image, cr_resolve_memory)) {
+        VkImageViewCreateInfo vi = view_create_info;
+        vi.image = cr_resolve_image;
+        vi.format = kResolveFormat;
+        if (dfn.vkCreateImageView(device, &vi, nullptr, &cr_resolve_view) !=
+            VK_SUCCESS) {
+          dfn.vkDestroyImage(device, cr_resolve_image, nullptr);
+          dfn.vkFreeMemory(device, cr_resolve_memory, nullptr);
+          cr_resolve_image = VK_NULL_HANDLE;
+        }
+      }
+    }
+    if (cr_render_pass != VK_NULL_HANDLE && cr_resolve_view != VK_NULL_HANDLE) {
+      // Attachment order MUST match GetBdNativeCustomResolveRenderPass:
+      // [producer color(0), A2B10 resolve(1), depth(2)].
+      VkImageView cr_attachments[3];
+      uint32_t cr_count = 0;
+      cr_attachments[cr_count++] = native_view;
+      cr_attachments[cr_count++] = cr_resolve_view;
+      if (has_depth) {
+        cr_attachments[cr_count++] = depth_rt->view_depth_stencil();
+      }
+      VkFramebufferCreateInfo fci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+      fci.renderPass = cr_render_pass;
+      fci.attachmentCount = cr_count;
+      fci.pAttachments = cr_attachments;
+      fci.width = prod_width;
+      fci.height = prod_height;
+      fci.layers = 1;
+      VkFramebuffer cr_framebuffer = VK_NULL_HANDLE;
+      if (dfn.vkCreateFramebuffer(device, &fci, nullptr, &cr_framebuffer) ==
+          VK_SUCCESS) {
+        Framebuffer& entry = const_cast<Framebuffer&>(*base);
+        entry.bd_native_color_image = native_image;
+        entry.bd_native_color_memory = native_memory;
+        entry.bd_native_color_view = native_view;
+        entry.bd_native_color_framebuffer = cr_framebuffer;
+        entry.bd_native_color_lle_image = color_rt.image();
+        entry.bd_native_color_lle_rt = const_cast<RenderTarget*>(
+            depth_and_color_render_targets[color_index]);
+        // The composite samples the A2B10 resolve output -> the sampled format is
+        // A2B10 (matches fetch fmt 64), NOT the float16 producer.
+        entry.bd_native_color_format = kResolveFormat;
+        entry.bd_native_color_samples = samples;
+        entry.bd_native_color_resolve_image = cr_resolve_image;
+        entry.bd_native_color_resolve_memory = cr_resolve_memory;
+        entry.bd_native_color_resolve_view = cr_resolve_view;
+        entry.bd_native_color_custom_resolve_rp = cr_render_pass;
+        entry.bd_native_color_custom_resolve_samples = uint32_t(samples);
+        entry.bd_native_color_extent = {prod_width, prod_height};
+        XELOGI(
+            "BD custom-resolve: producer framebuffer {}x{} (guest fmt={} msaa={} "
+            "depth={}) -> A2B10 on-tile resolve",
+            prod_width, prod_height, uint32_t(guest_cf),
+            uint32_t(samples), has_depth ? 1 : 0);
+        return base;
+      }
+      dfn.vkDestroyFramebuffer(device, cr_framebuffer, nullptr);
+    }
+    // Fell through (creation failed) -> clean up + drop to the non-CR path below.
+    if (cr_resolve_view != VK_NULL_HANDLE) {
+      dfn.vkDestroyImageView(device, cr_resolve_view, nullptr);
+      dfn.vkDestroyImage(device, cr_resolve_image, nullptr);
+      dfn.vkFreeMemory(device, cr_resolve_memory, nullptr);
+    }
+    XELOGW("BD custom-resolve: producer FB setup failed; using non-CR path");
   }
 
   // DIRECT-NATIVE on-tile resolve: when the producer is MSAA and we render
@@ -4763,6 +4877,171 @@ bool VulkanRenderTargetCache::GetBdNativeConvertPipeline(
   return true;
 }
 
+bool VulkanRenderTargetCache::GetBdNativeCustomResolvePipeline(
+    VkRenderPass custom_resolve_render_pass, VkFormat resolve_format,
+    uint32_t source_sample_count, VkPipeline& pipeline_out,
+    VkPipelineLayout& layout_out) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  if (custom_resolve_render_pass == VK_NULL_HANDLE) {
+    return false;
+  }
+
+  // Descriptor set layout (once): set 0 binding 0 = one INPUT_ATTACHMENT.
+  if (bd_custom_resolve_ia_set_layout_ == VK_NULL_HANDLE) {
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dslci = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dslci.bindingCount = 1;
+    dslci.pBindings = &binding;
+    if (dfn.vkCreateDescriptorSetLayout(device, &dslci, nullptr,
+                                        &bd_custom_resolve_ia_set_layout_) !=
+        VK_SUCCESS) {
+      return false;
+    }
+  }
+  // Pipeline layout (once): the input-attachment set + the convert push range.
+  if (bd_custom_resolve_pipeline_layout_ == VK_NULL_HANDLE) {
+    VkPushConstantRange push_range = {};
+    push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(BdConvertPushConstants);
+    VkPipelineLayoutCreateInfo plci = {
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &bd_custom_resolve_ia_set_layout_;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &push_range;
+    if (dfn.vkCreatePipelineLayout(device, &plci, nullptr,
+                                   &bd_custom_resolve_pipeline_layout_) !=
+        VK_SUCCESS) {
+      return false;
+    }
+  }
+  layout_out = bd_custom_resolve_pipeline_layout_;
+
+  uint64_t pipe_key = (uint64_t(reinterpret_cast<uintptr_t>(
+                          custom_resolve_render_pass))) ^
+                      (uint64_t(source_sample_count) << 1);
+  auto pipe_it = bd_custom_resolve_pipelines_.find(pipe_key);
+  if (pipe_it != bd_custom_resolve_pipelines_.end()) {
+    pipeline_out = pipe_it->second;
+    return pipeline_out != VK_NULL_HANDLE;
+  }
+  VkShaderModule fs = GetBdNativeCustomResolveShader(source_sample_count);
+  if (fs == VK_NULL_HANDLE ||
+      transfer_passthrough_vertex_shader_ == VK_NULL_HANDLE) {
+    bd_custom_resolve_pipelines_.emplace(pipe_key, VK_NULL_HANDLE);
+    return false;
+  }
+
+  VkPipelineShaderStageCreateInfo stages[2] = {};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = transfer_passthrough_vertex_shader_;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fs;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription vertex_binding = {};
+  vertex_binding.binding = 0;
+  vertex_binding.stride = sizeof(float) * 2;
+  vertex_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription vertex_attribute = {};
+  vertex_attribute.location = 0;
+  vertex_attribute.binding = 0;
+  vertex_attribute.format = VK_FORMAT_R32G32_SFLOAT;
+  vertex_attribute.offset = 0;
+  VkPipelineVertexInputStateCreateInfo vertex_input = {
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertex_input.vertexBindingDescriptionCount = 1;
+  vertex_input.pVertexBindingDescriptions = &vertex_binding;
+  vertex_input.vertexAttributeDescriptionCount = 1;
+  vertex_input.pVertexAttributeDescriptions = &vertex_attribute;
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state = {
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterization = {
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterization.cullMode = VK_CULL_MODE_NONE;
+  rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterization.lineWidth = 1.0f;
+
+  // Subpass 1's color output is the 1x resolve attachment.
+  VkPipelineMultisampleStateCreateInfo multisample = {
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState blend_attachment = {};
+  blend_attachment.blendEnable = VK_FALSE;
+  blend_attachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo color_blend = {
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blend.attachmentCount = 1;
+  color_blend.pAttachments = &blend_attachment;
+
+  VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                      VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state = {
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates = dynamic_states;
+
+  // Chain VkCustomResolveCreateInfoEXT (fragment-output stage) - marks this
+  // pipeline as a custom-resolve pipeline writing the given resolve format.
+  VkCustomResolveCreateInfoEXT custom_resolve_info = {};
+  custom_resolve_info.sType = VK_STRUCTURE_TYPE_CUSTOM_RESOLVE_CREATE_INFO_EXT;
+  custom_resolve_info.customResolve = VK_TRUE;
+  custom_resolve_info.colorAttachmentCount = 1;
+  custom_resolve_info.pColorAttachmentFormats = &resolve_format;
+  custom_resolve_info.depthAttachmentFormat = VK_FORMAT_UNDEFINED;
+  custom_resolve_info.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
+
+  VkGraphicsPipelineCreateInfo pci = {
+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pci.pNext = &custom_resolve_info;
+  pci.stageCount = 2;
+  pci.pStages = stages;
+  pci.pVertexInputState = &vertex_input;
+  pci.pInputAssemblyState = &input_assembly;
+  pci.pViewportState = &viewport_state;
+  pci.pRasterizationState = &rasterization;
+  pci.pMultisampleState = &multisample;
+  pci.pColorBlendState = &color_blend;
+  pci.pDynamicState = &dynamic_state;
+  pci.layout = bd_custom_resolve_pipeline_layout_;
+  pci.renderPass = custom_resolve_render_pass;
+  pci.subpass = 1;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &pipeline) != VK_SUCCESS) {
+    XELOGE("BD custom-resolve: failed to create the subpass-1 convert pipeline");
+    bd_custom_resolve_pipelines_.emplace(pipe_key, VK_NULL_HANDLE);
+    return false;
+  }
+  bd_custom_resolve_pipelines_.emplace(pipe_key, pipeline);
+  pipeline_out = pipeline;
+  return true;
+}
+
 bool VulkanRenderTargetCache::ConvertBdNativeMsaaToResolved(
     const Framebuffer* fb, NativeResolvedTexture& t, uint32_t w, uint32_t h,
     float exp_bias_factor, uint32_t swap, uint32_t sample_count) {
@@ -4892,6 +5171,104 @@ bool VulkanRenderTargetCache::ConvertBdNativeMsaaToResolved(
   mfb.bd_native_color_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   mfb.bd_native_color_access = VK_ACCESS_SHADER_READ_BIT;
   mfb.bd_native_color_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  return true;
+}
+
+bool VulkanRenderTargetCache::RecordBdCustomResolveConvert(
+    const Framebuffer* fb, uint32_t w, uint32_t h, float exp_bias_factor,
+    uint32_t swap) {
+  if (!fb || fb->bd_native_color_custom_resolve_rp == VK_NULL_HANDLE ||
+      fb->bd_native_color_view == VK_NULL_HANDLE) {
+    return false;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+
+  uint32_t sample_count = fb->bd_native_color_custom_resolve_samples;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  if (!GetBdNativeCustomResolvePipeline(
+          fb->bd_native_color_custom_resolve_rp,
+          VK_FORMAT_A2B10G10R10_UNORM_PACK32, sample_count, pipeline, layout)) {
+    return false;
+  }
+
+  // Descriptor pool (once) + input-attachment descriptor set (once per fb).
+  if (bd_custom_resolve_descriptor_pool_ == VK_NULL_HANDLE) {
+    VkDescriptorPoolSize pool_size = {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 64};
+    VkDescriptorPoolCreateInfo dpci = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    dpci.maxSets = 64;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &pool_size;
+    if (dfn.vkCreateDescriptorPool(device, &dpci, nullptr,
+                                   &bd_custom_resolve_descriptor_pool_) !=
+        VK_SUCCESS) {
+      return false;
+    }
+  }
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  if (mfb.bd_native_color_cr_descriptor_set == VK_NULL_HANDLE) {
+    VkDescriptorSetAllocateInfo dsai = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    dsai.descriptorPool = bd_custom_resolve_descriptor_pool_;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &bd_custom_resolve_ia_set_layout_;
+    if (dfn.vkAllocateDescriptorSets(
+            device, &dsai, &mfb.bd_native_color_cr_descriptor_set) !=
+        VK_SUCCESS) {
+      mfb.bd_native_color_cr_descriptor_set = VK_NULL_HANDLE;
+      return false;
+    }
+    VkDescriptorImageInfo image_info = {};
+    image_info.sampler = VK_NULL_HANDLE;
+    image_info.imageView = fb->bd_native_color_view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = mfb.bd_native_color_cr_descriptor_set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    write.pImageInfo = &image_info;
+    dfn.vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+  }
+
+  // Fullscreen quad (NDC [-1,1], 2 triangles).
+  uint64_t submission = command_processor_.GetCurrentSubmission();
+  VkBuffer vertex_buffer = VK_NULL_HANDLE;
+  VkDeviceSize vertex_offset = 0;
+  float* verts = reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
+      submission, sizeof(float) * 2 * 6, sizeof(float), vertex_buffer,
+      vertex_offset));
+  if (!verts) {
+    return false;
+  }
+  const float quad[12] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f,
+                          1.0f,  -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
+  std::memcpy(verts, quad, sizeof(quad));
+
+  // The pass is already open in subpass 0 (the field draws). Advance to the
+  // custom-resolve subpass 1 and draw the fullscreen convert.
+  command_buffer.CmdVkNextSubpass(VK_SUBPASS_CONTENTS_INLINE);
+  VkViewport viewport = {0.0f, 0.0f, float(w), float(h), 0.0f, 1.0f};
+  command_buffer.CmdVkSetViewport(0, 1, &viewport);
+  VkRect2D scissor = {{0, 0}, {w, h}};
+  command_buffer.CmdVkSetScissor(0, 1, &scissor);
+  command_buffer.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+  command_buffer.CmdVkBindDescriptorSets(
+      VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+      &mfb.bd_native_color_cr_descriptor_set, 0, nullptr);
+  command_buffer.CmdVkBindVertexBuffers(0, 1, &vertex_buffer, &vertex_offset);
+  BdConvertPushConstants pc = {exp_bias_factor, swap, sample_count, 0};
+  command_buffer.CmdVkPushConstants(layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                    sizeof(pc), &pc);
+  command_buffer.CmdVkDraw(6, 1, 0, 0);
+  // The resolve output (bd_native_color_resolve_image = A2B10) is now the sampled
+  // image; the render pass finalLayout leaves it SHADER_READ for the composite.
   return true;
 }
 

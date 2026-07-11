@@ -141,6 +141,20 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkImage bd_native_color_resolve_image = VK_NULL_HANDLE;
     VkDeviceMemory bd_native_color_resolve_memory = VK_NULL_HANDLE;
     VkImageView bd_native_color_resolve_view = VK_NULL_HANDLE;
+    // VK_EXT_custom_resolve: when non-null, this producer framebuffer is the
+    // 2-subpass custom-resolve variant (att0 MSAA float16 producer, att1 A2B10
+    // resolve output, att2 depth). The command processor begins THIS render pass,
+    // records the field into subpass 0, then vkCmdNextSubpass + the convert draw
+    // into subpass 1. bd_native_color_resolve_image is then A2B10 (sampled by the
+    // composite); bd_native_color_format is A2B10; bd_native_color_image is float16.
+    VkRenderPass bd_native_color_custom_resolve_rp = VK_NULL_HANDLE;
+    uint32_t bd_native_color_custom_resolve_samples = 1;
+    // The logical producer extent (prod_width/height) - the CR framebuffer is this
+    // size, so the CR pass's renderArea must use it (not the larger host_extent).
+    VkExtent2D bd_native_color_extent = {0, 0};
+    // Create-once input-attachment descriptor set (binds bd_native_color_view as
+    // the subpass-1 input) for the custom-resolve convert draw.
+    VkDescriptorSet bd_native_color_cr_descriptor_set = VK_NULL_HANDLE;
     // Native image's last {stage, access, layout} across frames (5.6-sol L4 hang
     // fix): the seed must barrier the native image FROM its real prior state
     // (the mirror's outstanding TRANSFER_READ), not TOP_OF_PIPE/UNDEFINED - else
@@ -422,6 +436,26 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                                      NativeResolvedTexture& t, uint32_t w,
                                      uint32_t h, float exp_bias_factor,
                                      uint32_t swap, uint32_t sample_count);
+  // Lazily build (+ cache) the CUSTOM-RESOLVE graphics pipeline for subpass 1 of
+  // `custom_resolve_render_pass`: fullscreen triangle + GetBdNativeCustomResolve-
+  // Shader, reading the MSAA producer as an input attachment (set 0 binding 0) and
+  // writing the 1x A2B10 output. Chains VkCustomResolveCreateInfoEXT. Keyed by
+  // (render pass, sample count). Returns false on failure. Turnip-only.
+  bool GetBdNativeCustomResolvePipeline(VkRenderPass custom_resolve_render_pass,
+                                        VkFormat resolve_format,
+                                        uint32_t source_sample_count,
+                                        VkPipeline& pipeline_out,
+                                        VkPipelineLayout& layout_out);
+  VkDescriptorSetLayout bd_custom_resolve_ia_set_layout_ = VK_NULL_HANDLE;
+  VkPipelineLayout bd_custom_resolve_pipeline_layout_ = VK_NULL_HANDLE;
+  std::unordered_map<uint64_t, VkPipeline> bd_custom_resolve_pipelines_;
+  VkDescriptorPool bd_custom_resolve_descriptor_pool_ = VK_NULL_HANDLE;
+  // Record the custom-resolve convert into subpass 1 of the ALREADY-OPEN producer
+  // render pass (vkCmdNextSubpass -> fullscreen convert draw). Called by the
+  // command processor at EndRenderPass, before CmdVkEndRenderPass, when the pass is
+  // a custom-resolve producer pass. Returns false on failure (the pass still ends).
+  bool RecordBdCustomResolveConvert(const Framebuffer* fb, uint32_t w, uint32_t h,
+                                    float exp_bias_factor, uint32_t swap);
   // A swizzled sampled view of a published snapshot.
   VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,
                                               uint32_t host_swizzle);

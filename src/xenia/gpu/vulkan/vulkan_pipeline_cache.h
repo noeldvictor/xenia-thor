@@ -87,7 +87,11 @@ class VulkanPipelineCache {
       uint32_t normalized_color_mask,
       VulkanRenderTargetCache::RenderPassKey render_pass_key,
       VkPipeline& pipeline_out,
-      const PipelineLayoutProvider*& pipeline_layout_out);
+      const PipelineLayoutProvider*& pipeline_layout_out,
+      // BD custom-resolve: when non-null, create this producer's pipeline against
+      // the 2-subpass custom-resolve render pass at subpass 0 (a 1-subpass pipeline
+      // is INCOMPATIBLE with the 2-subpass pass the field is actually drawn in).
+      VkRenderPass bd_custom_resolve_render_pass = VK_NULL_HANDLE);
 
   // gpu_dynamic_blend_state (EDS3): fill the per-attachment dynamic color blend
   // state (enable / equation / write mask) for the current register state,
@@ -191,6 +195,11 @@ class VulkanPipelineCache {
     xenos::StencilOp stencil_back_pass_op : 3;           // 3
     xenos::StencilOp stencil_back_depth_fail_op : 3;     // 6
     xenos::CompareFunction stencil_back_compare_op : 3;  // 9
+    // BD custom-resolve: this pipeline targets the 2-subpass custom-resolve render
+    // pass (subpass 0), NOT the normal single-subpass pass. Keeps the field's CR
+    // and non-CR pipelines as distinct cache entries (they are render-pass-
+    // INCOMPATIBLE, so must never alias).
+    uint32_t bd_custom_resolve : 1;  // 10
 
     // Filled only for the attachments present in the render pass object.
     PipelineRenderTarget render_targets[xenos::kMaxColorRenderTargets];
