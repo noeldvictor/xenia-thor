@@ -354,6 +354,21 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                                                        uint32_t logical_height,
                                                        VkFormat target_format,
                                                        uint32_t epoch);
+  // BD field converter (5.6-sol option B): a fullscreen fragment shader that
+  // samples the MSAA/1x float16 producer, averages the selected samples, scales
+  // by 2^exp_bias, applies the R/B swap, and writes an A2B10 color attachment
+  // (ROP packs). Built via SpirvBuilder (no Vulkan SDK in this env -> no .ps.xesl).
+  // `source_msaa_samples` = the producer's VkSampleCountFlagBits. Cached per
+  // sample count. Returns VK_NULL_HANDLE on failure.
+  VkShaderModule GetBdNativeConvertShader(uint32_t source_sample_count);
+  // Push constants for the convert shader.
+  struct BdConvertPushConstants {
+    float exp_bias_factor;  // 2^copy_dest_exp_bias
+    uint32_t swap;          // copy_dest_swap (R<->B)
+    uint32_t sample_count;  // source sample count (1 or 4)
+    uint32_t pad;
+  };
+  std::unordered_map<uint32_t, VkShaderModule> bd_convert_shaders_;
   // A swizzled sampled view of a published snapshot.
   VkImageView GetBdNativeResolvedSwizzledView(const NativeResolvedTexture* t,
                                               uint32_t host_swizzle);

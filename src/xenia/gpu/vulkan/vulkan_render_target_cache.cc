@@ -3937,6 +3937,164 @@ VkImageView VulkanRenderTargetCache::GetBdNativeResolvedSwizzledView(
   return view;
 }
 
+VkShaderModule VulkanRenderTargetCache::GetBdNativeConvertShader(
+    uint32_t source_sample_count) {
+  auto it = bd_convert_shaders_.find(source_sample_count);
+  if (it != bd_convert_shaders_.end()) {
+    return it->second;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  bool source_msaa = source_sample_count > 1;
+
+  SpirvBuilder builder(spv::Spv_1_0,
+                       (SpirvShaderTranslator::kSpirvMagicToolId << 16) | 1,
+                       nullptr);
+  builder.addCapability(spv::CapabilityShader);
+  builder.setMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+  builder.setSource(spv::SourceLanguageUnknown, 0);
+
+  spv::Id type_void = builder.makeVoidType();
+  spv::Id type_bool = builder.makeBoolType();
+  spv::Id type_int = builder.makeIntType(32);
+  spv::Id type_int2 = builder.makeVectorType(type_int, 2);
+  spv::Id type_uint = builder.makeUintType(32);
+  spv::Id type_float = builder.makeFloatType(32);
+  spv::Id type_float2 = builder.makeVectorType(type_float, 2);
+  spv::Id type_float4 = builder.makeVectorType(type_float, 4);
+
+  // Sampled float image (set 0, binding 0). MS or 2D depending on the source.
+  spv::Id type_image = builder.makeImageType(
+      type_float, spv::Dim2D, false, false, source_msaa, 1,
+      spv::ImageFormatUnknown);
+  spv::Id source_image = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassUniformConstant, type_image,
+      "xe_bd_convert_source");
+  builder.addDecoration(source_image, spv::DecorationDescriptorSet, 0);
+  builder.addDecoration(source_image, spv::DecorationBinding, 0);
+
+  // Push constants: { float exp_bias_factor; uint swap; uint sample_count; }.
+  std::vector<spv::Id> pc_members;
+  pc_members.push_back(type_float);
+  pc_members.push_back(type_uint);
+  pc_members.push_back(type_uint);
+  spv::Id type_pc = builder.makeStructType(pc_members, "xe_bd_convert_pc");
+  builder.addMemberDecoration(type_pc, 0, spv::DecorationOffset, 0);
+  builder.addMemberDecoration(type_pc, 1, spv::DecorationOffset, 4);
+  builder.addMemberDecoration(type_pc, 2, spv::DecorationOffset, 8);
+  builder.addDecoration(type_pc, spv::DecorationBlock);
+  spv::Id push_constants =
+      builder.createVariable(spv::NoPrecision, spv::StorageClassPushConstant,
+                             type_pc, "xe_bd_convert_push_constants");
+
+  // gl_FragCoord input.
+  spv::Id input_fragment_coord = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassInput, type_float4, "gl_FragCoord");
+  builder.addDecoration(input_fragment_coord, spv::DecorationBuiltIn,
+                        spv::BuiltInFragCoord);
+
+  // Output color (location 0).
+  spv::Id output_color = builder.createVariable(
+      spv::NoPrecision, spv::StorageClassOutput, type_float4, "xe_frag_color");
+  builder.addDecoration(output_color, spv::DecorationLocation, 0);
+
+  std::vector<spv::Id> main_interface;
+  main_interface.push_back(input_fragment_coord);
+  main_interface.push_back(output_color);
+
+  std::vector<spv::Id> main_param_types;
+  std::vector<std::vector<spv::Decoration>> main_precisions;
+  spv::Block* main_entry;
+  spv::Function* main_function =
+      builder.makeFunctionEntry(spv::NoPrecision, type_void, "main",
+                                main_param_types, main_precisions, &main_entry);
+
+  // ivec2 p = ivec2(gl_FragCoord.xy);
+  std::vector<unsigned int> xy_swizzle;
+  xy_swizzle.push_back(0);
+  xy_swizzle.push_back(1);
+  spv::Id frag_xy = builder.createRvalueSwizzle(
+      spv::NoPrecision, type_float2,
+      builder.createLoad(input_fragment_coord, spv::NoPrecision), xy_swizzle);
+  spv::Id coord_int = builder.createUnaryOp(spv::OpConvertFToS, type_int2,
+                                            frag_xy);
+
+  // Fetch + average the selected samples.
+  spv::Id image_value = builder.createLoad(source_image, spv::NoPrecision);
+  spv::Builder::TextureParameters tp = {};
+  tp.sampler = image_value;
+  tp.coords = coord_int;
+  spv::Id color;
+  if (source_msaa) {
+    color = spv::NoResult;
+    for (uint32_t s = 0; s < 4; ++s) {
+      tp.sample = builder.makeIntConstant(int32_t(s));
+      spv::Id sample_color = builder.createTextureCall(
+          spv::NoPrecision, type_float4, false, true, false, false, false, tp,
+          spv::ImageOperandsMaskNone);
+      color = color == spv::NoResult
+                  ? sample_color
+                  : builder.createBinOp(spv::OpFAdd, type_float4, color,
+                                        sample_color);
+    }
+    spv::Id quarter = builder.makeFloatConstant(0.25f);
+    color = builder.createBinOp(
+        spv::OpVectorTimesScalar, type_float4, color, quarter);
+  } else {
+    tp.sample = spv::NoResult;
+    color = builder.createTextureCall(spv::NoPrecision, type_float4, false, true,
+                                      false, false, false, tp,
+                                      spv::ImageOperandsMaskNone);
+  }
+
+  // color *= exp_bias_factor (push constant member 0).
+  std::vector<spv::Id> pc_index0;
+  pc_index0.push_back(builder.makeIntConstant(0));
+  spv::Id exp_bias = builder.createLoad(
+      builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
+                                pc_index0),
+      spv::NoPrecision);
+  color = builder.createBinOp(spv::OpVectorTimesScalar, type_float4, color,
+                              exp_bias);
+
+  // if (swap != 0) color = color.bgra;
+  std::vector<spv::Id> pc_index1;
+  pc_index1.push_back(builder.makeIntConstant(1));
+  spv::Id swap = builder.createLoad(
+      builder.createAccessChain(spv::StorageClassPushConstant, push_constants,
+                                pc_index1),
+      spv::NoPrecision);
+  spv::Id swap_bool = builder.createBinOp(spv::OpINotEqual, type_bool, swap,
+                                          builder.makeUintConstant(0));
+  std::vector<unsigned int> bgra;
+  bgra.push_back(2);
+  bgra.push_back(1);
+  bgra.push_back(0);
+  bgra.push_back(3);
+  spv::Id color_bgra =
+      builder.createRvalueSwizzle(spv::NoPrecision, type_float4, color, bgra);
+  color = builder.createTriOp(spv::OpSelect, type_float4, swap_bool, color_bgra,
+                              color);
+
+  builder.createStore(color, output_color);
+
+  builder.leaveFunction();
+  builder.addExecutionMode(main_function, spv::ExecutionModeOriginUpperLeft);
+  spv::Instruction* entry_point = builder.addEntryPoint(
+      spv::ExecutionModelFragment, main_function, "main");
+  for (spv::Id interface_id : main_interface) {
+    entry_point->addIdOperand(interface_id);
+  }
+
+  std::vector<unsigned int> shader_code;
+  builder.dump(shader_code);
+  VkShaderModule shader_module = ui::vulkan::util::CreateShaderModule(
+      vulkan_device, reinterpret_cast<const uint32_t*>(shader_code.data()),
+      sizeof(uint32_t) * shader_code.size());
+  bd_convert_shaders_.emplace(source_sample_count, shader_module);
+  return shader_module;
+}
+
 bool VulkanRenderTargetCache::SeedBdNativeColorProducer(const Framebuffer* fb) {
   if (!fb || fb->bd_native_color_image == VK_NULL_HANDLE ||
       !fb->bd_native_color_lle_rt) {
