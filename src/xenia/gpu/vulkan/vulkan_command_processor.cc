@@ -4599,10 +4599,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
        cvars::gpu_bd_framegraph_depth_shadow) &&
       (pass_kind == GpuPassKind::kGuest ||
        pass_kind == GpuPassKind::kGuestComposite)) {
-    // The retained transfer must be the first draw of a newly-begun, ordinary
-    // LOAD consumer pass. Variant/merge/native paths are deliberately rejected;
-    // Prepare eagerly replays the payload through the standalone legacy pass if
-    // this call is the matching destination but those semantics aren't proven.
+    // Rung 2 relocates the retained standalone legacy transfer immediately
+    // before a newly-begun ordinary consumer pass. Variant/merge/native paths
+    // are deliberately rejected.
     bool can_begin_ordinary_guest_pass =
         pass_kind == GpuPassKind::kGuest && !bd_native_gate &&
         !feedback_merge_active_ && !cvars::gpu_lrz_spike_depth_clear &&
@@ -4692,6 +4691,16 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       ++rt_feedback_merges_;
       return;
     }
+  }
+  if (bd_framegraph_depth_prepared) {
+    // Relocation must be invoked with no render pass open. Leave the consumer
+    // barriers pending: the legacy path submits them together with its own
+    // source/destination transitions before beginning its standalone pass.
+    EndRenderPass();
+    assert_true(current_render_pass_ == VK_NULL_HANDLE);
+    render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
+        render_target_cache_->last_update_render_pass_key(), render_pass,
+        framebuffer);
   }
   // Instrumentation: attribute per-draw render-pass breaks. A break here is
   // caused either by SubmitBarriers ending the pass for a pending barrier, or by
@@ -5029,13 +5038,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   ++bd_total_pass_begins_;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
-  if (bd_framegraph_depth_prepared) {
-    // Must remain immediately after BeginRenderPass: no guest pipeline, state,
-    // clear, or geometry command may precede the retained transfer draw.
-    render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
-        render_target_cache_->last_update_render_pass_key(), begin_render_pass,
-        framebuffer);
-  }
   // Track the ACTUALLY-bound CR pass (this real begin just recorded begin_render_pass).
   // Survives early-return resumes (which skip this begin) = the single source of truth
   // the field draws' pipelines must match.
