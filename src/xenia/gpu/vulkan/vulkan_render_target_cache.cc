@@ -208,6 +208,7 @@ DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_depth_handoff);
+DECLARE_bool(gpu_bd_framegraph_depth);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
@@ -1494,6 +1495,9 @@ void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
 }
 
 void VulkanRenderTargetCache::EndSubmission() {
+  if (!bd_framegraph_deferred_depth_transfers_.empty()) {
+    FallbackBdFramegraphDepthTransfer("submission ended before consumer");
+  }
   if (transfer_vertex_buffer_pool_) {
     transfer_vertex_buffer_pool_->FlushWrites();
   }
@@ -7896,6 +7900,253 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
   return transfer_pipelines_.emplace(key, pipelines).first->second.data();
 }
 
+bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
+    VulkanRenderTarget& dest, const Transfer& transfer) {
+  if (!cvars::gpu_bd_framegraph_depth || bd_framegraph_flushing_legacy_ ||
+      !transfer.source || transfer.source == &dest ||
+      transfer.host_depth_source) {
+    return false;
+  }
+  auto& source = *static_cast<VulkanRenderTarget*>(transfer.source);
+  RenderTargetKey source_key = source.key();
+  RenderTargetKey dest_key = dest.key();
+  // Milestone 1 deliberately recognizes only the recurring BD field edge.
+  if (!source_key.is_depth || !dest_key.is_depth ||
+      source_key.base_tiles != 810 || dest_key.base_tiles != 810 ||
+      source_key.GetPitchTiles() != 9 || dest_key.GetPitchTiles() != 9 ||
+      source_key.msaa_samples != xenos::MsaaSamples::k2X ||
+      dest_key.msaa_samples != xenos::MsaaSamples::k4X ||
+      !command_processor_.GetVulkanDevice()
+           ->extensions()
+           .ext_EXT_shader_stencil_export) {
+    return false;
+  }
+  if (!bd_framegraph_deferred_depth_transfers_.empty()) {
+    FallbackBdFramegraphDepthTransfer("replacement before consumer");
+  }
+  BdFramegraphDeferredDepthTransfer entry(
+      &source, &dest, source_key, dest_key,
+      source.bd_native_depth_generation(), dest.bd_native_depth_generation(),
+      transfer);
+  entry.shader_key.dest_msaa_samples = dest_key.msaa_samples;
+  entry.shader_key.dest_color_rt_index = 0;
+  entry.shader_key.dest_resource_format = dest_key.resource_format;
+  entry.shader_key.source_msaa_samples = source_key.msaa_samples;
+  entry.shader_key.host_depth_source_msaa_samples =
+      xenos::MsaaSamples::k1X;
+  entry.shader_key.source_resource_format = source_key.resource_format;
+  entry.shader_key.mode = TransferMode::kDepthToDepth;
+  bd_framegraph_deferred_depth_transfers_.push_back(entry);
+  return true;
+}
+
+void VulkanRenderTargetCache::FallbackBdFramegraphDepthTransfer(
+    const char* reason) {
+  if (bd_framegraph_deferred_depth_transfers_.empty()) {
+    return;
+  }
+  BdFramegraphDeferredDepthTransfer entry =
+      bd_framegraph_deferred_depth_transfers_.front();
+  bd_framegraph_deferred_depth_transfers_.clear();
+  XELOGI("BD FRAMEGRAPH: fallback reason={}", reason);
+  RenderTarget* render_targets[1] = {entry.dest};
+  std::vector<Transfer> transfers[1];
+  transfers[0].push_back(entry.transfer);
+  bd_framegraph_flushing_legacy_ = true;
+  PerformTransfersAndResolveClears(1, render_targets, transfers);
+  bd_framegraph_flushing_legacy_ = false;
+}
+
+bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
+    const Framebuffer* framebuffer, bool can_begin_new_pass) {
+  if (!cvars::gpu_bd_framegraph_depth ||
+      bd_framegraph_deferred_depth_transfers_.empty()) {
+    return false;
+  }
+  BdFramegraphDeferredDepthTransfer& entry =
+      bd_framegraph_deferred_depth_transfers_.front();
+  const RenderTarget* const* attachments =
+      reinterpret_cast<const RenderTarget* const*>(
+          last_update_framebuffer_attachments_);
+  const RenderTarget* depth = attachments[0];
+  for (uint32_t i = 1; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+    if (attachments[i] == entry.dest) {
+      FallbackBdFramegraphDepthTransfer("destination bound as non-depth");
+      return false;
+    }
+  }
+  if (depth == entry.source) {
+    VulkanRenderTarget* source = entry.source;
+    FallbackBdFramegraphDepthTransfer("source generation change");
+    source->MarkBdNativeDepthAuthoritative();
+    return false;
+  }
+  const bool dest_view_seen =
+      framebuffer && framebuffer->depth_view == entry.dest->view_depth_stencil();
+  if (dest_view_seen != (depth == entry.dest)) {
+    FallbackBdFramegraphDepthTransfer("ambiguous consumer identity");
+    return false;
+  }
+  if (depth != entry.dest) {
+    return false;
+  }
+  if (!can_begin_new_pass || framebuffer != last_update_framebuffer_ ||
+      !dest_view_seen) {
+    FallbackBdFramegraphDepthTransfer("unsupported consumer pass entry");
+    return false;
+  }
+  if (entry.source->key().key != entry.source_key.key ||
+      entry.dest->key().key != entry.dest_key.key ||
+      entry.source->bd_native_depth_generation() != entry.source_generation) {
+    FallbackBdFramegraphDepthTransfer("source identity or generation change");
+    return false;
+  }
+  if (entry.dest->bd_native_depth_generation() != entry.dest_generation) {
+    FallbackBdFramegraphDepthTransfer("intervening destination write");
+    return false;
+  }
+
+  Transfer::Rectangle rectangles[Transfer::kMaxRectanglesWithCutout];
+  uint32_t rectangle_count = entry.transfer.GetRectangles(
+      entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+      entry.dest_key.msaa_samples, false, rectangles, nullptr);
+  if (!rectangle_count) {
+    FallbackBdFramegraphDepthTransfer("empty transfer rectangle");
+    return false;
+  }
+  uint32_t vertex_count = rectangle_count * 6;
+  VkBuffer vertex_buffer;
+  VkDeviceSize vertex_buffer_offset;
+  float* vertices = reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
+      command_processor_.GetCurrentSubmission(), sizeof(float) * 2 * vertex_count,
+      sizeof(float), vertex_buffer, vertex_buffer_offset));
+  if (!vertices) {
+    FallbackBdFramegraphDepthTransfer("transfer vertex allocation failed");
+    return false;
+  }
+  VkExtent2D extent = framebuffer->host_extent;
+  float viewport_width = float(std::min(
+      xe::next_pow2(extent.width), command_processor_.GetVulkanDevice()
+                                        ->properties()
+                                        .maxViewportDimensions[0]));
+  float viewport_height = float(std::min(
+      xe::next_pow2(extent.height), command_processor_.GetVulkanDevice()
+                                         ->properties()
+                                         .maxViewportDimensions[1]));
+  const float pixels_to_ndc_x = 2.0f / viewport_width;
+  const float pixels_to_ndc_y = 2.0f / viewport_height;
+  for (uint32_t i = 0; i < rectangle_count; ++i) {
+    const Transfer::Rectangle& rectangle = rectangles[i];
+    uint32_t x1 = (rectangle.x_pixels + rectangle.width_pixels) *
+                  draw_resolution_scale_x();
+    uint32_t y1 = (rectangle.y_pixels + rectangle.height_pixels) *
+                  draw_resolution_scale_y();
+    if (x1 > extent.width || y1 > extent.height) {
+      FallbackBdFramegraphDepthTransfer("transfer exceeds consumer render area");
+      return false;
+    }
+    float x0_ndc = -1.0f + rectangle.x_pixels * draw_resolution_scale_x() *
+                               pixels_to_ndc_x;
+    float y0_ndc = -1.0f + rectangle.y_pixels * draw_resolution_scale_y() *
+                               pixels_to_ndc_y;
+    float x1_ndc = -1.0f + x1 * pixels_to_ndc_x;
+    float y1_ndc = -1.0f + y1 * pixels_to_ndc_y;
+    const float quad[] = {x0_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y0_ndc,
+                          x1_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y1_ndc};
+    std::memcpy(vertices, quad, sizeof(quad));
+    vertices += xe::countof(quad);
+  }
+
+  entry.consumer_render_pass_key = last_update_render_pass_key_;
+  const VkPipeline* pipelines = GetTransferPipelines(
+      TransferPipelineKey(entry.consumer_render_pass_key, entry.shader_key));
+  if (!pipelines) {
+    FallbackBdFramegraphDepthTransfer("consumer transfer pipeline unavailable");
+    return false;
+  }
+  entry.pipeline_count = command_processor_.GetVulkanDevice()
+                                 ->properties()
+                                 .sampleRateShading
+                             ? 1
+                             : (1u << uint32_t(entry.dest_key.msaa_samples));
+  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
+    entry.pipelines[i] = pipelines[i];
+  }
+  entry.vertex_buffer = vertex_buffer;
+  entry.vertex_buffer_offset = vertex_buffer_offset;
+  entry.vertex_count = vertex_count;
+  entry.consumer_extent = extent;
+  constexpr VkPipelineStageFlags kSourceStage =
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  constexpr VkAccessFlags kSourceAccess = VK_ACCESS_SHADER_READ_BIT;
+  constexpr VkImageLayout kSourceLayout =
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  command_processor_.PushImageMemoryBarrier(
+      entry.source->image(),
+      ui::vulkan::util::InitializeSubresourceRange(
+          VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT),
+      entry.source->current_stage_mask(), kSourceStage,
+      entry.source->current_access_mask(), kSourceAccess,
+      entry.source->current_layout(), kSourceLayout);
+  entry.source->SetUsage(kSourceStage, kSourceAccess, kSourceLayout);
+  entry.prepared = true;
+  return true;
+}
+
+void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer() {
+  if (bd_framegraph_deferred_depth_transfers_.empty() ||
+      !bd_framegraph_deferred_depth_transfers_.front().prepared) {
+    return;
+  }
+  BdFramegraphDeferredDepthTransfer entry =
+      bd_framegraph_deferred_depth_transfers_.front();
+  bd_framegraph_deferred_depth_transfers_.clear();
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+  VkViewport viewport = {0.0f,
+                         0.0f,
+                         float(std::min(
+                             xe::next_pow2(entry.consumer_extent.width),
+                             command_processor_.GetVulkanDevice()
+                                 ->properties()
+                                 .maxViewportDimensions[0])),
+                         float(std::min(
+                             xe::next_pow2(entry.consumer_extent.height),
+                             command_processor_.GetVulkanDevice()
+                                 ->properties()
+                                 .maxViewportDimensions[1])),
+                         0.0f,
+                         1.0f};
+  command_processor_.SetViewport(viewport);
+  VkRect2D scissor = {{0, 0}, entry.consumer_extent};
+  command_processor_.SetScissor(scissor);
+  command_buffer.CmdVkBindVertexBuffers(0, 1, &entry.vertex_buffer,
+                                        &entry.vertex_buffer_offset);
+  VkPipelineLayout pipeline_layout =
+      transfer_pipeline_layouts_[size_t(TransferPipelineLayoutIndex::kDepth)];
+  VkDescriptorSet source_set = entry.source->GetDescriptorSetTransferSource();
+  command_buffer.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         pipeline_layout, 0, 1, &source_set, 0,
+                                         nullptr);
+  TransferAddressConstant address;
+  address.dest_pitch = entry.dest_key.GetPitchTiles();
+  address.source_pitch = entry.source_key.GetPitchTiles();
+  address.source_to_dest = int32_t(entry.dest_key.base_tiles) -
+                           int32_t(entry.source_key.base_tiles);
+  command_buffer.CmdVkPushConstants(pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0, sizeof(address), &address);
+  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
+    command_processor_.BindExternalGraphicsPipeline(entry.pipelines[i]);
+    command_buffer.CmdVkDraw(entry.vertex_count, 1, 0, 0);
+  }
+  uint32_t generation = entry.dest->MarkBdNativeDepthAuthoritative();
+  XELOGI(
+      "BD FRAMEGRAPH: deferred depth edge dest{base={} pitch={} msaa={}} "
+      "executed at consumer pass gen={}",
+      entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+      uint32_t(entry.dest_key.msaa_samples), generation);
+}
+
 void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     uint32_t render_target_count, RenderTarget* const* render_targets,
     const std::vector<Transfer>* render_target_transfers,
@@ -8340,6 +8591,31 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         resolve_clear_rectangle->height_pixels * draw_resolution_scale_y();
     resolve_clear_rect.baseArrayLayer = 0;
     resolve_clear_rect.layerCount = 1;
+  }
+
+  // Minimal non-adjacent framegraph edge: remove only the selected transfer
+  // from this call after its complete payload has been retained. Everything
+  // else continues through the legacy path unchanged.
+  std::vector<Transfer>
+      bd_framegraph_filtered[1 + xenos::kMaxColorRenderTargets];
+  if (cvars::gpu_bd_framegraph_depth && !bd_framegraph_flushing_legacy_ &&
+      render_target_transfers && !resolve_clear_needed) {
+    bool any_deferred = false;
+    for (uint32_t i = 0; i < render_target_count; ++i) {
+      bd_framegraph_filtered[i].clear();
+      RenderTarget* dest_rt = render_targets[i];
+      for (const Transfer& transfer : render_target_transfers[i]) {
+        if (dest_rt && TryDeferBdFramegraphDepthTransfer(
+                           *static_cast<VulkanRenderTarget*>(dest_rt), transfer)) {
+          any_deferred = true;
+        } else {
+          bd_framegraph_filtered[i].push_back(transfer);
+        }
+      }
+    }
+    if (any_deferred) {
+      render_target_transfers = bd_framegraph_filtered;
+    }
   }
 
   // In-pass EDRAM transfers (gpu_vulkan_inpass_edram_transfers): decide which

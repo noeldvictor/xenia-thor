@@ -221,6 +221,15 @@ DEFINE_bool(
     "path unless that exact destination image is proven bound as the consumer's "
     "depth attachment. Mixed-MSAA and every other edge are unchanged.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_framegraph_depth, false,
+    "BD minimal framegraph depth milestone (default off): defer one exact "
+    "base-810 pitch-9 2x-to-4x depth ownership transfer until its non-adjacent "
+    "resource-keyed destination is bound as a guest depth attachment, then run "
+    "the existing transfer shader as the first draw of that consumer pass. Any "
+    "identity, generation, load-semantics, or source-lifetime ambiguity falls "
+    "back eagerly to the legacy standalone transfer pass.",
+    "GPU");
 DEFINE_int32(
     gpu_bd_native_color_lifetime_hle, 0,
     "BD REAL-HLE color-only native surface lifetime (Codex-designed 2026-07-10, "

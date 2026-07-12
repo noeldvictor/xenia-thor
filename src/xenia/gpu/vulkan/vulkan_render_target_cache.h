@@ -247,6 +247,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     return last_update_framebuffer_;
   }
 
+  bool PrepareBdFramegraphDepthConsumer(const Framebuffer* framebuffer,
+                                        bool can_begin_new_pass);
+  void ExecutePreparedBdFramegraphDepthConsumer();
+  void FallbackBdFramegraphDepthTransfer(const char* reason);
+
   // Using R16G16[B16A16]_SNORM, which are -1...1, not the needed -32...32.
   // Persistent data doesn't depend on this, so can be overriden by per-game
   // configuration.
@@ -1076,6 +1081,41 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     }
   };
 
+  struct BdFramegraphDeferredDepthTransfer {
+    BdFramegraphDeferredDepthTransfer(VulkanRenderTarget* source,
+                                      VulkanRenderTarget* dest,
+                                      RenderTargetKey source_key,
+                                      RenderTargetKey dest_key,
+                                      uint32_t source_generation,
+                                      uint32_t dest_generation,
+                                      const Transfer& transfer)
+        : source(source),
+          dest(dest),
+          source_key(source_key),
+          dest_key(dest_key),
+          source_generation(source_generation),
+          dest_generation(dest_generation),
+          transfer(transfer) {}
+    VulkanRenderTarget* source = nullptr;
+    VulkanRenderTarget* dest = nullptr;
+    RenderTargetKey source_key;
+    RenderTargetKey dest_key;
+    uint32_t source_generation = 0;
+    uint32_t dest_generation = 0;
+    Transfer transfer;
+    TransferShaderKey shader_key;
+    RenderPassKey consumer_render_pass_key;
+    VkExtent2D consumer_extent{};
+    VkBuffer vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceSize vertex_buffer_offset = 0;
+    uint32_t vertex_count = 0;
+    std::array<VkPipeline, 4> pipelines{};
+    uint32_t pipeline_count = 0;
+    bool prepared = false;
+  };
+  bool TryDeferBdFramegraphDepthTransfer(VulkanRenderTarget& dest,
+                                         const Transfer& transfer);
+
   union DumpPipelineKey {
     uint32_t key;
     struct {
@@ -1353,6 +1393,9 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   // Temporary storage for PerformTransfersAndResolveClears.
   std::vector<TransferInvocation> current_transfer_invocations_;
+  std::vector<BdFramegraphDeferredDepthTransfer>
+      bd_framegraph_deferred_depth_transfers_;
+  bool bd_framegraph_flushing_legacy_ = false;
 
   // Temporary storage for DumpRenderTargets.
   std::vector<ResolveCopyDumpRectangle> dump_rectangles_;

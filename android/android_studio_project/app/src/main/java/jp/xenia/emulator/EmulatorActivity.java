@@ -269,6 +269,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_depth_downscale");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_convert");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_handoff");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_framegraph_depth");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_skip_foliage_shadows");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_diag_coverage");
             copyIntExtra(intent, launchArguments, "gpu_bd_native_aux_max_width");
