@@ -5163,11 +5163,79 @@ void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
 
 void VulkanCommandProcessor::ReplayBdFieldBatch() {
   const VulkanRenderTargetCache::Framebuffer* fb = bd_field_producer_fb_;
+  // Stage 0: replay into the PLAIN direct-native producer when there is no
+  // custom-resolve pass (desktop / non-Turnip). The plain path renders the field
+  // contiguously into the native color image (one pass, no interleave), then
+  // mirrors native->LLE so the rest of the frame (composite/resolves/present)
+  // stays LLE-correct - the walking-skeleton structural collapse without the
+  // float16->A2B10 on-tile convert (that is Stage 4). The CR path (Turnip) keeps
+  // the on-tile convert subpass.
+  const bool have_cr =
+      fb != nullptr && fb->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE;
+  const bool have_plain =
+      fb != nullptr && !have_cr &&
+      fb->bd_native_color_plain_rp != VK_NULL_HANDLE;
   bool ok = cvars::gpu_bd_field_decouple && bd_field_batch_pending_ &&
             fb != nullptr && bd_field_captured_draws_ != 0 &&
-            fb->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE &&
+            (have_cr || have_plain) &&
             fb->bd_native_color_framebuffer != VK_NULL_HANDLE &&
             fb->bd_native_color_extent.width != 0;
+  if (ok && have_plain) {
+    // PLAIN direct-native producer publication sequence (5.6-sol): (1) end the LLE
+    // pass, (2) SEED LLE->native (so pixels the field does not cover keep prior
+    // content, matching the pixel-perfect in-order control), (3) begin the single-
+    // subpass native pass, (4) splice the captured field draws, (5) ARM the mirror,
+    // (6) call the REAL EndRenderPass() whose finalizer mirrors native->LLE. A RAW
+    // CmdVkEndRenderPass would SKIP the mirror (EndRenderPass early-returns on a null
+    // pass, and the next pass-begin resets the arm) -> the following IssueCopy reads
+    // the LLE image still holding the SUPPRESSED (empty) field = the faint/washed
+    // result. Mirror MUST fire here, before IssueCopy.
+    if (current_render_pass_ != VK_NULL_HANDLE) {
+      EndRenderPass();
+    }
+    render_target_cache_->SeedBdNativeColorProducer(fb);
+    VkRenderPassBeginInfo rpbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rpbi.renderPass = fb->bd_native_color_plain_rp;
+    rpbi.framebuffer = fb->bd_native_color_framebuffer;
+    rpbi.renderArea.offset = {0, 0};
+    rpbi.renderArea.extent = fb->bd_native_color_extent;
+    rpbi.clearValueCount = 0;
+    rpbi.pClearValues = nullptr;
+    deferred_command_buffer_.CmdVkBeginRenderPass(&rpbi,
+                                                  VK_SUBPASS_CONTENTS_INLINE);
+    current_render_pass_ = fb->bd_native_color_plain_rp;
+    current_framebuffer_ = fb;
+    deferred_command_buffer_.InsertStreamFrom(
+        deferred_command_buffer_.command_stream_size_elements(),
+        bd_field_command_buffer_);
+    // Arm the native->LLE mirror; the REAL EndRenderPass() finalizer fires it now.
+    // was_direct=false so the finalizer performs the content copy (not the direct
+    // no-mirror path).
+    bd_color_mirror_fb_ = fb;
+    bd_color_mirror_active_ = true;
+    bd_native_direct_active_ = false;
+    EndRenderPass();
+    // The spliced draws changed bound state - force the next guest draw to re-emit.
+    current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_external_graphics_pipeline_ = VK_NULL_HANDLE;
+    current_guest_graphics_pipeline_layout_ = nullptr;
+    current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    dynamic_viewport_update_needed_ = true;
+    dynamic_scissor_update_needed_ = true;
+    static std::atomic<uint32_t> s_replay_plain{0};
+    if (s_replay_plain.fetch_add(1) < 20) {
+      XELOGI(
+          "BD field decouple (PLAIN): replayed {} captured field draws "
+          "contiguously into native producer {}x{}",
+          bd_field_captured_draws_, fb->bd_native_color_extent.width,
+          fb->bd_native_color_extent.height);
+    }
+    bd_field_command_buffer_.Reset();
+    bd_field_batch_pending_ = false;
+    bd_field_captured_draws_ = 0;
+    bd_field_producer_fb_ = nullptr;
+    return;
+  }
   if (ok) {
     // Contiguous replay: begin the CR producer pass ONCE, splice the captured field
     // draws (subpass 0), on-tile custom-resolve convert (subpass 1), end. The field
@@ -8308,9 +8376,28 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // desync (Stage 2). A field draw = its framebuffer carries a CR producer.
       // Suppress ONLY when the capture succeeds (else render in-order as a fallback).
       bool bd_field_suppress = false;
-      if (cvars::gpu_bd_field_decouple && current_framebuffer_ &&
-          current_framebuffer_->bd_native_color_custom_resolve_rp !=
-              VK_NULL_HANDLE) {
+      // Stage 0: the field is captured for contiguous replay into the native
+      // producer. On Turnip the producer is the 2-subpass custom-resolve pass;
+      // on desktop (no custom_resolve ext) it is the PLAIN single-subpass pass
+      // (bd_native_color_plain_rp) - the walking-skeleton path that renders the
+      // field contiguously + mirrors native->LLE (no on-tile format convert).
+      VkRenderPass bd_field_target_rp =
+          current_framebuffer_
+              ? (current_framebuffer_->bd_native_color_custom_resolve_rp !=
+                         VK_NULL_HANDLE
+                     ? current_framebuffer_->bd_native_color_custom_resolve_rp
+                     : current_framebuffer_->bd_native_color_plain_rp)
+              : VK_NULL_HANDLE;
+      // Stage 0: capture ONLY the main-scene field (surface_pitch == 720). The
+      // bloom pyramid (pitch 320/160/80) + composite (pitch 1280) are separate
+      // surfaces with their own producers; decoupling them corrupts the post chain
+      // (CLAUDE.md fusion note). They stay LLE.
+      const bool bd_field_is_main_scene =
+          register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch == 720;
+      if (cvars::gpu_bd_field_decouple && bd_field_is_main_scene &&
+          current_framebuffer_ &&
+          current_framebuffer_->bd_native_color_framebuffer != VK_NULL_HANDLE &&
+          bd_field_target_rp != VK_NULL_HANDLE) {
         VkPipeline cr_pipe = VK_NULL_HANDLE;
         const VulkanPipelineCache::PipelineLayoutProvider* cr_layout = nullptr;
         if (pipeline_cache_->ConfigurePipeline(
@@ -8318,8 +8405,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                 primitive_processing_result, normalized_depth_control,
                 normalized_color_mask,
                 render_target_cache_->last_update_render_pass_key(), cr_pipe,
-                cr_layout,
-                current_framebuffer_->bd_native_color_custom_resolve_rp)) {
+                cr_layout, bd_field_target_rp)) {
           EmitBdFieldCaptureDraw(
               cr_pipe, cr_layout->GetPipelineLayout(), index_buffer.first,
               index_buffer.second, index_type,

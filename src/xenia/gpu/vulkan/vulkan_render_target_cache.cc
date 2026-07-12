@@ -4009,11 +4009,17 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   entry.bd_native_color_memory = native_memory;
   entry.bd_native_color_view = native_view;
   entry.bd_native_color_framebuffer = native_framebuffer;
+  // Stage 0: the plain single-subpass render pass this native framebuffer is
+  // compatible with (the decouple replay begins THIS when there is no CR pass).
+  entry.bd_native_color_plain_rp = render_pass;
   entry.bd_native_color_lle_image = color_rt.image();
   entry.bd_native_color_lle_rt =
       const_cast<RenderTarget*>(depth_and_color_render_targets[color_index]);
   entry.bd_native_color_format = color_format;
   entry.bd_native_color_samples = samples;
+  // Logical producer extent (the plain replay's renderArea uses it, matching the
+  // logical-size framebuffer built above).
+  entry.bd_native_color_extent = {prod_width, prod_height};
   entry.bd_native_color_resolve_image = native_resolve_image;
   entry.bd_native_color_resolve_memory = native_resolve_memory;
   entry.bd_native_color_resolve_view = native_resolve_view;

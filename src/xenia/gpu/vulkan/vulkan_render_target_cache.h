@@ -149,6 +149,14 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // composite); bd_native_color_format is A2B10; bd_native_color_image is float16.
     VkRenderPass bd_native_color_custom_resolve_rp = VK_NULL_HANDLE;
     uint32_t bd_native_color_custom_resolve_samples = 1;
+    // PLAIN direct-native producer render pass (Stage 0 walking skeleton): the
+    // single-subpass GetHostRenderTargetsRenderPass this producer's
+    // bd_native_color_framebuffer is compatible with when NOT using custom-resolve
+    // (i.e. on desktop, where the custom_resolve ext is absent). The decoupled
+    // field capture/replay uses THIS to render the field contiguously into the
+    // native image, then mirrors native->LLE (no on-tile format convert). Non-null
+    // only on the non-CR producer branch.
+    VkRenderPass bd_native_color_plain_rp = VK_NULL_HANDLE;
     // The logical producer extent (prod_width/height) - the CR framebuffer is this
     // size, so the CR pass's renderArea must use it (not the larger host_extent).
     VkExtent2D bd_native_color_extent = {0, 0};
