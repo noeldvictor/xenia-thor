@@ -60,6 +60,10 @@ struct NativeSurface {
   // Tracks the color image's current layout so binds/attaches barrier correctly.
   VkImageLayout color_layout = VK_IMAGE_LAYOUT_UNDEFINED;
   bool rendered_this_frame = false;  // false => next attach uses the CLEAR pass
+  // Set only for the default-off frontbuffer-sized redirect. Unlike the smaller
+  // aux surfaces, these require current-frame production + stable consumer proof
+  // before their EDRAM publication copy may be deleted.
+  bool is_main_scene = false;
 };
 
 // Brick 1: owns a persistent native full-surface color+depth RT + one render

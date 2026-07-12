@@ -211,6 +211,16 @@ DEFINE_bool(
     "path. THOR-GATED: desktop cannot validate depth (immediate-mode differs from TBDR) — "
     "correctness must be Thor-verified. Default off; needs gpu_bd_native_renderer.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_native_depth_handoff, false,
+    "BD native depth handoff falsifier (default off): for only the base-0, "
+    "single-sample pitch-16 to pitch-13 depth ownership edge, run the existing "
+    "Xenos depth-transfer shader from the resource-keyed source host depth image "
+    "into the resource-keyed destination host depth image as the first draw of "
+    "the destination consumer pass. The edge stays on the legacy EDRAM transfer "
+    "path unless that exact destination image is proven bound as the consumer's "
+    "depth attachment. Mixed-MSAA and every other edge are unchanged.",
+    "GPU");
 DEFINE_int32(
     gpu_bd_native_color_lifetime_hle, 0,
     "BD REAL-HLE color-only native surface lifetime (Codex-designed 2026-07-10, "

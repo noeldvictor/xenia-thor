@@ -207,6 +207,7 @@ DECLARE_bool(gpu_bd_native_field_convert);
 DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_bool(gpu_bd_native_depth_convert);
+DECLARE_bool(gpu_bd_native_depth_handoff);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
@@ -1648,6 +1649,8 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     resolve_edge.src_format = src_edram.format;
     resolve_edge.src_msaa = uint8_t(src_edram.msaa_samples);
     resolve_edge.src_is_depth = resolve_is_depth;
+    resolve_edge.dest_texture_format =
+        uint8_t(resolve_info.copy_dest_info.copy_dest_format);
     // Pack the FULL source-RT identity (same RenderTargetKey the render draw's
     // color RT carries) so the native render-redirect can key by it — BD renders
     // every RT at EDRAM base 0, so base alone aliases; pitch+format+msaa
@@ -3530,6 +3533,7 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   // merge can assemble a 2-RT framebuffer from the producer + consumer
   // framebuffers' color attachments.
   VkImageView main_color_view = VK_NULL_HANDLE;
+  VkImageView depth_view = VK_NULL_HANDLE;
   while (xe::bit_scan_forward(depth_and_color_rts_remaining, &rt_index)) {
     depth_and_color_rts_remaining &= ~(uint32_t(1) << rt_index);
     const auto& vulkan_rt = *static_cast<const VulkanRenderTarget*>(
@@ -3544,6 +3548,7 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
       }
     } else {
       attachment = vulkan_rt.view_depth_stencil();
+      depth_view = attachment;
     }
     attachments[attachment_count++] = attachment;
   }
@@ -3637,6 +3642,7 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
                    std::forward_as_tuple(framebuffer, host_extent))
           .first->second;
   framebuffer_entry.color_view = main_color_view;
+  framebuffer_entry.depth_view = depth_view;
   framebuffer_entry.fdm_image = fdm_image;
   framebuffer_entry.fdm_memory = fdm_memory;
   framebuffer_entry.fdm_view = fdm_view;
@@ -8354,13 +8360,15 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   // - Every transfer rectangle must fit in the guest framebuffer render area
   //   (the dedicated transfer pass had the destination own extent instead).
   bool dest_in_guest_pass[1 + xenos::kMaxColorRenderTargets] = {};
+  bool dest_native_depth_handoff[1 + xenos::kMaxColorRenderTargets] = {};
   bool any_dest_in_guest_pass = false;
   {
     uint32_t inpass_dest_count = 0;
     uint32_t inpass_skip_format = 0;
     uint32_t inpass_skip_other = 0;
     const int32_t inpass_level = cvars::gpu_vulkan_inpass_edram_transfers;
-    if (inpass_level > 0 && guest_render_pass_key &&
+    if ((inpass_level > 0 || cvars::gpu_bd_native_depth_handoff) &&
+        guest_render_pass_key &&
         guest_render_pass != VK_NULL_HANDLE && guest_framebuffer &&
         render_target_transfers && !resolve_clear_needed &&
         render_target_count <= 1 + xenos::kMaxColorRenderTargets) {
@@ -8376,9 +8384,40 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         }
         RenderTargetKey dest_rt_key =
             static_cast<VulkanRenderTarget*>(dest_rt)->key();
+        // The native handoff falsifier reuses the already resource-keyed host
+        // depth RTs. Fail closed unless this is exactly base0 pitch16 1x ->
+        // pitch13 1x and the destination view is the following consumer pass's
+        // fixed-function depth attachment. A host-depth copy sourced from the
+        // destination would still require the EDRAM precision scratch path, so
+        // it deliberately remains legacy too.
+        bool native_depth_handoff = false;
+        if (cvars::gpu_bd_native_depth_handoff && i == 0 &&
+            dest_rt_key.is_depth && dest_rt_key.base_tiles == 0 &&
+            dest_rt_key.GetPitchTiles() == 13 &&
+            dest_rt_key.msaa_samples == xenos::MsaaSamples::k1X &&
+            guest_framebuffer->depth_view ==
+                static_cast<VulkanRenderTarget*>(dest_rt)->
+                    view_depth_stencil()) {
+          native_depth_handoff = true;
+          for (const Transfer& transfer : dest_transfers) {
+            if (!transfer.source || transfer.source == dest_rt ||
+                transfer.host_depth_source == dest_rt) {
+              native_depth_handoff = false;
+              break;
+            }
+            RenderTargetKey source_rt_key =
+                static_cast<VulkanRenderTarget*>(transfer.source)->key();
+            if (!source_rt_key.is_depth || source_rt_key.base_tiles != 0 ||
+                source_rt_key.GetPitchTiles() != 16 ||
+                source_rt_key.msaa_samples != xenos::MsaaSamples::k1X) {
+              native_depth_handoff = false;
+              break;
+            }
+          }
+        }
         bool eligible;
         if (dest_rt_key.is_depth) {
-          eligible = inpass_level >= 2 &&
+          eligible = (inpass_level >= 2 || native_depth_handoff) &&
                      vulkan_device->extensions().ext_EXT_shader_stencil_export;
         } else {
           bool is_integer = false;
@@ -8455,6 +8494,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         }
         if (eligible) {
           dest_in_guest_pass[i] = true;
+          dest_native_depth_handoff[i] = native_depth_handoff;
           any_dest_in_guest_pass = true;
           ++inpass_dest_count;
         }
@@ -9404,6 +9444,17 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
             command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
           }
         }
+      }
+    }
+
+    if (dest_native_depth_handoff[i] && !current_transfers.empty()) {
+      uint32_t generation = dest_vulkan_rt.MarkBdNativeDepthAuthoritative();
+      static std::atomic<uint32_t> s_bd_native_depth_handoff_log{0};
+      if (s_bd_native_depth_handoff_log.fetch_add(1) < 20) {
+        XELOGI(
+            "BD NATIVE DEPTH HANDOFF: base0 pitchT16 1x -> pitchT13 1x "
+            "generation={} consumer_depth_view_proven=1",
+            generation);
       }
     }
 

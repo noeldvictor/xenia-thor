@@ -98,6 +98,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     // BD input-attachment merge: the first color RT view (for assembling a
     // 2-RT feedback framebuffer from the producer + consumer framebuffers).
     VkImageView color_view = VK_NULL_HANDLE;
+    // Exact depth attachment view, used by the fail-closed BD native depth
+    // handoff gate to prove the following fixed-function depth consumer binds
+    // the resource-keyed destination image.
+    VkImageView depth_view = VK_NULL_HANDLE;
     // FDM (gpu_fdm_foliage): the per-framebuffer uniform fragment density map
     // (R16G16_SFLOAT, Turnip requires a float format) + its dedicated allocation
     // + view, all null when FDM is off. Cleared once to the uniform density at
@@ -701,6 +705,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
     VkImageView view_depth_color() const { return view_depth_color_; }
     VkImageView view_depth_stencil() const { return view_depth_stencil_; }
+    uint32_t MarkBdNativeDepthAuthoritative() {
+      bd_native_depth_authoritative_ = true;
+      return ++bd_native_depth_generation_;
+    }
+    bool bd_native_depth_authoritative() const {
+      return bd_native_depth_authoritative_;
+    }
+    uint32_t bd_native_depth_generation() const {
+      return bd_native_depth_generation_;
+    }
     VkImageView view_color_transfer_separate() const {
       return view_color_transfer_separate_;
     }
@@ -774,6 +788,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkPipelineStageFlags current_stage_mask_ = 0;
     VkAccessFlags current_access_mask_ = 0;
     VkImageLayout current_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    // Versioned authority for the default-off BD depth-handoff falsifier. The
+    // VulkanRenderTarget is resource-keyed by RenderTargetKey, so base-0
+    // pitch-16 and pitch-13 depth resources cannot alias this state.
+    bool bd_native_depth_authoritative_ = false;
+    uint32_t bd_native_depth_generation_ = 0;
 
     // Temporary storage for indices in operations like transfers and dumps.
     uint32_t temporary_sort_index_ = 0;

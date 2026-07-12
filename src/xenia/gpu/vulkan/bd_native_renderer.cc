@@ -289,6 +289,11 @@ VkImageView BdNativeRenderer::LookupSampledSurface(uint32_t guest_address) {
   if (it->second.color_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
     return VK_NULL_HANDLE;
   }
+  // Frontbuffer-sized surfaces are authoritative only for the frame that wrote
+  // them. Smaller aux surfaces retain the legacy cross-frame lookup behavior.
+  if (it->second.is_main_scene && !it->second.rendered_this_frame) {
+    return VK_NULL_HANDLE;
+  }
   return it->second.color_view;
 }
 

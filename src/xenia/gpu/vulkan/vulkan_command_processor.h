@@ -1962,6 +1962,10 @@ class VulkanCommandProcessor : public CommandProcessor {
     uint32_t src_format;  // xenos Color/DepthRenderTargetFormat value, as uint
     uint8_t src_msaa;     // xenos::MsaaSamples
     bool src_is_depth;
+    // Guest texture format written by the resolve. The main-scene native redirect
+    // uses this to admit only identity-format producer->consumer chains; the
+    // float16->A2B10 field edge remains fail-closed for custom resolve later.
+    uint8_t dest_texture_format = 0;
     // Packed RenderTargetKey of the source RT (base+pitch+format+msaa+depth) — the
     // FULL identity. Needed because BD renders every RT at EDRAM base 0 (base alone
     // aliases); this disambiguates, keying the native render-redirect unambiguously.
