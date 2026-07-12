@@ -3540,7 +3540,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // DEFINITIVE persistent instrumentation: the last log (near capture) survives
   // logcat rotation and reveals whether the redirect + native present actually
   // fired over the run (gpu_bd_native_renderer only).
-  if (cvars::gpu_bd_native_renderer && (++bd_swap_total_ % 30u) == 0u) {
+  // Stage 0 pass-collapse gate: log total guest pass-begins/frame under decouple
+  // (or native_renderer) so the collapse (should DROP vs the LLE baseline) is
+  // visible on desktop without RenderDoc. Increment the swap counter here for
+  // EITHER mode (the native block no longer increments).
+  if (cvars::gpu_bd_field_decouple || cvars::gpu_bd_native_renderer ||
+      cvars::gpu_bd_native_color_lifetime_hle >= 4) {
+    if ((++bd_swap_total_ % 30u) == 0u) {
+      XELOGI("BD PASS-COLLAPSE: swaps={} total_pass_begins={} (begins/frame={})",
+             bd_swap_total_, bd_total_pass_begins_,
+             bd_total_pass_begins_ / bd_swap_total_);
+    }
+  }
+  if (cvars::gpu_bd_native_renderer && (bd_swap_total_ % 30u) == 0u) {
     XELOGI("BD NATIVE totals: swaps={} redirects={} native_presents={} "
            "pass_begins={} aux_redirects={} tex_served={} resolves_dropped={} "
            "surfaces={} (begins/frame={} redirects/frame={})",
@@ -4955,6 +4967,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
            bd_native_renderer_->render_pass_load())) {
     ++bd_native_begins_total_;
   }
+  // Stage 0 structural gate: count ALL guest render-pass begins/frame so the
+  // decouple pass-collapse (should DROP) is measurable on desktop regardless of
+  // gpu_bd_native_renderer.
+  ++bd_total_pass_begins_;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
   // Track the ACTUALLY-bound CR pass (this real begin just recorded begin_render_pass).

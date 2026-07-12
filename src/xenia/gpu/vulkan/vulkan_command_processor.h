@@ -866,6 +866,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t bd_present_native_total_ = 0;
   uint64_t bd_swap_total_ = 0;
   uint64_t bd_native_begins_total_ = 0;
+  // Stage 0: total guest render-pass begins (all paths) for the pass-collapse gate.
+  uint64_t bd_total_pass_begins_ = 0;
   // REAL-HLE aux: C2 render-redirects into native surfaces, and Brick-B texture
   // fetches SERVED from a native surface (the consume side firing = the proof the
   // field samples native content, so EDRAM transfers for it are dead).
