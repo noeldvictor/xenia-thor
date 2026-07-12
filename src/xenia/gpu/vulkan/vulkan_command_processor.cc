@@ -60,6 +60,7 @@ DECLARE_bool(gpu_bd_native_aux_fmt37);
 DECLARE_bool(gpu_bd_native_diag_coverage);
 DECLARE_bool(gpu_bd_native_tex_bind);
 DECLARE_uint32(gpu_bd_native_aux_max_width);
+DECLARE_bool(gpu_bd_native_mainscene_redirect);
 DECLARE_bool(gpu_bd_native_force_samples1);
 DECLARE_uint32(gpu_bd_native_stretch_width);
 DECLARE_double(gpu_bd_native_viewport_scale_x);
@@ -3455,7 +3456,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
   }
-  if (!l5_present_served && cvars::gpu_bd_native_color_lifetime_hle >= 2 &&
+  if (!l5_present_served &&
+      (cvars::gpu_bd_native_color_lifetime_hle >= 2 ||
+       cvars::gpu_bd_native_mainscene_redirect) &&
       bd_native_renderer_ && swap_info.valid && swap_info.guest_base) {
     NativeSurface* present_surface =
         bd_native_renderer_->FindSurface(swap_info.guest_base);
@@ -3463,6 +3466,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         present_surface
             ? bd_native_renderer_->LookupSampledSurface(swap_info.guest_base)
             : VK_NULL_HANDLE;
+    VkFormat present_host_format =
+        texture_cache_->GetHostVkFormatForColorFormat(swap_info.format);
     // FAIL-CLOSED (5.6-sol): the aux path sets rendered_this_frame + SHADER_READ
     // at PASS SELECTION, before content is written, and LookupSampledSurface
     // checks only layout — so result=redirect proved allocation/layout/extent, NOT
@@ -3476,16 +3481,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     // dormant until a real producer generation lands (the durable fix = surface
     // generations + current-A/B resolve alias, the next slice).
     bool present_populated = present_surface && present_surface->rendered_this_frame;
+    bool present_format_exact =
+        present_surface && present_surface->color_format == present_host_format;
     bool present_exact = present_surface &&
                          present_native_view != VK_NULL_HANDLE &&
                          present_populated &&
                          present_surface->width == swap_info.logical_width &&
+                         present_format_exact &&
                          present_surface->height == swap_info.logical_height;
     const char* present_result =
         !present_surface        ? "no_surface"
         : present_native_view == VK_NULL_HANDLE ? "not_rendered"
         : !present_populated    ? "not_populated_current_frame"
         : present_exact         ? "redirect"
+        : !present_format_exact ? "format_mismatch"
                                 : "extent_mismatch";
     if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
       static std::atomic<uint32_t> s_bd_present_log{0};
@@ -3522,7 +3531,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // reads next frame, then clear for the new frame. Log in the field (uptime>135s,
   // survives logcat rotation) so we can see which consumer classes read each
   // native-covered color surface and whether any is non-native (=> not drop-safe).
-  if (cvars::gpu_bd_native_color_lifetime_hle > 0) {
+  if (cvars::gpu_bd_native_color_lifetime_hle > 0 ||
+      cvars::gpu_bd_native_mainscene_redirect) {
     bd_color_consumer_bits_prev_ = bd_color_consumer_bits_;
     if (xe::Clock::QueryGuestUptimeMillis() > 135000 &&
         (bd_swap_total_ % 30u) == 0u) {
@@ -4496,9 +4506,21 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // black-screens the frame (A/B-proven). This keeps the presented scene on the
     // intact EDRAM path while the small RTs go native — the largest safe subset
     // until the consume side covers ALL readers. gpu_bd_native_aux_max_width tunes it.
+    // The explicit main-scene switch admits only a narrow PC-verifiable class:
+    // frontbuffer-sized, 1x, identity-format producer->resolve resources. The
+    // float16->A2B10 field publication remains on EDRAM until custom resolve can
+    // produce the consumer format without an additional publication pass.
+    // Existing aux_max_width behavior is unchanged when the switch is off.
     uint32_t aux_max_w = cvars::gpu_bd_native_aux_max_width;
-    bool aux_dims_ok = aux_w >= 16 && aux_w <= aux_max_w && aux_h >= 16 &&
-                       aux_h <= 2048 && aux_br_x <= 2048;
+    bool aux_legacy_dims_ok = aux_w >= 16 && aux_w <= aux_max_w &&
+                              aux_h >= 16 && aux_h <= 2048 &&
+                              aux_br_x <= 2048;
+    bool aux_mainscene_shape =
+        cvars::gpu_bd_native_mainscene_redirect && aux_w >= 1024 &&
+        aux_w <= 2048 && aux_h >= 512 && aux_h <= 2048 &&
+        aux_br_x >= 1024 && aux_br_x <= 2048 &&
+        bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X;
+    bool aux_dims_ok = aux_legacy_dims_ok || aux_mainscene_shape;
     // DIAG (gpu_bd_native_diag_coverage): identify the >2048px-wide RTs that
     // black-screen when aux-covered — log their dims + whether they have a
     // resolve-edge (aux_edge). No edge => the composite/present reads them by a
@@ -4524,15 +4546,24 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       // re-enabling it (gpu_bd_native_aux_rt gated) tests whether the opaque now
       // covers → its transfer drops → the fps win. Other formats still excluded.
       uint32_t aux_fmt = uint32_t(aux_color);
+      VkFormat aux_resolve_dest_format =
+          texture_cache_->GetHostVkFormatForColorFormat(
+              xenos::TextureFormat(aux_edge->dest_texture_format));
+      bool aux_mainscene_identity =
+          aux_mainscene_shape && aux_color == aux_resolve_dest_format;
+      bool aux_format_ok =
+          aux_mainscene_shape
+              ? aux_mainscene_identity
+              : (aux_fmt == 97u ||
+                 (aux_fmt == 37u && cvars::gpu_bd_native_aux_fmt37));
       NativeSurface* s =
-          (aux_w && aux_h &&
-           (aux_fmt == 97u ||
-            (aux_fmt == 37u && cvars::gpu_bd_native_aux_fmt37)))
+          (aux_w && aux_h && aux_format_ok)
               ? bd_native_renderer_->AcquireSurface(
                     aux_edge->dest_base, aux_w, aux_h, aux_color, aux_depth,
                     VK_SAMPLE_COUNT_1_BIT)
               : nullptr;
       if (s && s->framebuffer != VK_NULL_HANDLE) {
+        s->is_main_scene = aux_mainscene_shape;
         static VulkanRenderTargetCache::Framebuffer s_bd_aux_fb;
         s_bd_aux_fb.framebuffer = s->framebuffer;
         s_bd_aux_fb.host_extent = VkExtent2D{s->width, s->height};
@@ -4552,9 +4583,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         if (s_bd_aux_log.fetch_add(1) < 8) {
           XELOGI(
               "BD AUX native surface: rt_key={:08X} base={:04X} -> dest={:08X} "
-              "{}x{} fmt={} redirected (clear={}) live={}",
+              "{}x{} fmt={} redirected (clear={} main={}) live={}",
               aux_rt_key, uint32_t(bd_ci.color_base), aux_edge->dest_base, aux_w,
               aux_h, uint32_t(aux_color), bd_native_clear_pass,
+              s->is_main_scene ? 1 : 0,
               bd_native_renderer_->surface_count());
         }
       }
@@ -8899,13 +8931,47 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 }
 
 bool VulkanCommandProcessor::BdNativeSurfaceServes(uint32_t dest_base) {
-  return cvars::gpu_bd_native_aux_rt && bd_native_renderer_ &&
-         bd_native_renderer_->LookupSampledSurface(dest_base) != VK_NULL_HANDLE;
+  if (!cvars::gpu_bd_native_aux_rt || !bd_native_renderer_) {
+    return false;
+  }
+  NativeSurface* surface = bd_native_renderer_->FindSurface(dest_base);
+  if (!surface ||
+      bd_native_renderer_->LookupSampledSurface(dest_base) == VK_NULL_HANDLE) {
+    return false;
+  }
+  if (!surface->is_main_scene) {
+    return true;
+  }
+  // Main-scene resolves/transfers are deleted only after two independent facts:
+  // this frame actually produced the resource-keyed image, and the prior
+  // completed frame observed at least one native consumer with no fallback. The
+  // one-frame warmup is necessary because resolve publication precedes present.
+  if (!cvars::gpu_bd_native_mainscene_redirect ||
+      !surface->rendered_this_frame) {
+    return false;
+  }
+  auto current_it = bd_color_consumer_bits_.find(dest_base);
+  if (current_it != bd_color_consumer_bits_.end() &&
+      (current_it->second & kBdConsumerNonNative)) {
+    return false;
+  }
+  auto previous_it = bd_color_consumer_bits_prev_.find(dest_base);
+  if (previous_it == bd_color_consumer_bits_prev_.end()) {
+    return false;
+  }
+  uint32_t previous_bits = previous_it->second;
+  if (previous_bits & kBdConsumerNonNative) {
+    return false;
+  }
+  return (previous_bits & (kBdConsumerPixelTexture | kBdConsumerComposite |
+                           kBdConsumerPresent)) != 0;
 }
 
 void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
                                                  uint32_t consumer) {
-  if (cvars::gpu_bd_native_color_lifetime_hle <= 0 || !dest_base) {
+  if ((cvars::gpu_bd_native_color_lifetime_hle <= 0 &&
+       !cvars::gpu_bd_native_mainscene_redirect) ||
+      !dest_base) {
     return;
   }
   bd_color_consumer_bits_[dest_base] |= consumer;
@@ -11963,8 +12029,15 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
               &texture_host_format_unsigned)) {
         continue;
       }
+      NativeSurface* native_surface =
+          bd_native_renderer_->FindSurface(texture_base_address);
+      bool native_format_exact =
+          !native_surface || !native_surface->is_main_scene ||
+          native_surface->color_format == texture_host_format_unsigned;
       VkImageView native_view =
-          bd_native_renderer_->LookupSampledSurface(texture_base_address);
+          native_format_exact
+              ? bd_native_renderer_->LookupSampledSurface(texture_base_address)
+              : VK_NULL_HANDLE;
       if (native_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = native_view;
         ++rt_served_textures_;
@@ -11976,8 +12049,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                             current_draw_is_composite_consumer_
                                 ? kBdConsumerComposite
                                 : kBdConsumerPixelTexture);
-      } else if (cvars::gpu_bd_native_color_lifetime_hle > 0 &&
-                 bd_native_renderer_->FindSurface(texture_base_address)) {
+      } else if ((cvars::gpu_bd_native_color_lifetime_hle > 0 ||
+                  cvars::gpu_bd_native_mainscene_redirect) &&
+                 native_surface) {
         // FAIL-CLOSED (5.6-terra review): a native surface EXISTS for this base but
         // was NOT served to this fetch (fell back to the EDRAM upload) => a
         // NON-NATIVE consumer. The drop gate MUST see this or it would drop a

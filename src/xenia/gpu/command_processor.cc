@@ -166,6 +166,17 @@ DEFINE_uint32(
     "consume side covers all readers.",
     "GPU");
 DEFINE_bool(
+    gpu_bd_native_mainscene_redirect, false,
+    "BD REAL-HLE main-scene native redirect (default off, needs "
+    "gpu_bd_native_renderer + gpu_bd_native_aux_rt): extend resource-keyed native "
+    "surface production, Brick-B/composite sampling, and present to 1x, "
+    "identity-format frontbuffer-sized color RTs. With the existing native "
+    "drop-resolves/drop-transfers switches, their EDRAM publication chain is "
+    "deleted only after the current frame produced the native image and the prior "
+    "completed frame proved every observed consumer native (no NonNative bit). "
+    "Format-converting/MSAA and all depth chains stay on EDRAM. ",
+    "GPU");
+DEFINE_bool(
     gpu_bd_native_drop_transfers, false,
     "BD REAL-HLE surgical EDRAM-transfer deletion (default off, needs "
     "gpu_bd_native_aux_rt): drop ONLY the EDRAM ownership transfers whose dest RT "
