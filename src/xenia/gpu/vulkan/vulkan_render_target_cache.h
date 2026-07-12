@@ -249,9 +249,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
   bool PrepareBdFramegraphDepthConsumer(const Framebuffer* framebuffer,
                                         bool can_begin_new_pass);
-  void ExecutePreparedBdFramegraphDepthConsumer(
+  bool ExecutePreparedBdFramegraphDepthConsumer(
       RenderPassKey consumer_render_pass_key,
       VkRenderPass consumer_render_pass, const Framebuffer* framebuffer);
+  void RecordPreparedBdFramegraphDepthConsumer();
   void FallbackBdFramegraphDepthTransfer(const char* reason);
   void EndFrameBdFramegraphDepthShadow();
 
@@ -1109,6 +1110,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     TransferShaderKey shader_key;
     RenderPassKey consumer_render_pass_key;
     bool prepared = false;
+    bool fusion_ready = false;
+    VkPipeline pipelines[4] = {};
+    uint32_t pipeline_count = 0;
+    VkDescriptorSet source_descriptor_set = VK_NULL_HANDLE;
+    VkBuffer vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceSize vertex_buffer_offset = 0;
+    uint32_t vertex_count = 0;
+    VkViewport viewport = {};
+    VkRect2D scissor = {};
+    TransferAddressConstant address_constant;
   };
   bool TryDeferBdFramegraphDepthTransfer(VulkanRenderTarget& dest,
                                          const Transfer& transfer,

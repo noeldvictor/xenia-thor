@@ -4595,13 +4595,13 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     }
   }
   bool bd_framegraph_depth_prepared = false;
+  bool bd_framegraph_depth_fusion_ready = false;
   if ((cvars::gpu_bd_framegraph_depth ||
        cvars::gpu_bd_framegraph_depth_shadow) &&
       (pass_kind == GpuPassKind::kGuest ||
        pass_kind == GpuPassKind::kGuestComposite)) {
-    // Rung 2 relocates the retained standalone legacy transfer immediately
-    // before a newly-begun ordinary consumer pass. Variant/merge/native paths
-    // are deliberately rejected.
+    // Rung 3 fuses into a newly-begun ordinary consumer pass. Variant, merge,
+    // native and non-LOAD paths fail closed to rung-2 relocation.
     bool can_begin_ordinary_guest_pass =
         pass_kind == GpuPassKind::kGuest && !bd_native_gate &&
         !feedback_merge_active_ && !cvars::gpu_lrz_spike_depth_clear &&
@@ -4698,9 +4698,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // source/destination transitions before beginning its standalone pass.
     EndRenderPass();
     assert_true(current_render_pass_ == VK_NULL_HANDLE);
-    render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
-        render_target_cache_->last_update_render_pass_key(), render_pass,
-        framebuffer);
+    bd_framegraph_depth_fusion_ready =
+        render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
+            render_target_cache_->last_update_render_pass_key(), render_pass,
+            framebuffer);
   }
   // Instrumentation: attribute per-draw render-pass breaks. A break here is
   // caused either by SubmitBarriers ending the pass for a pending barrier, or by
@@ -5038,6 +5039,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   ++bd_total_pass_begins_;
   deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
                                                 VK_SUBPASS_CONTENTS_INLINE);
+  if (bd_framegraph_depth_fusion_ready) {
+    render_target_cache_->RecordPreparedBdFramegraphDepthConsumer();
+  }
   // Track the ACTUALLY-bound CR pass (this real begin just recorded begin_render_pass).
   // Survives early-return resumes (which skip this begin) = the single source of truth
   // the field draws' pipelines must match.

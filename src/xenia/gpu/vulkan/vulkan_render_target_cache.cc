@@ -225,12 +225,10 @@ namespace {
 std::atomic<int32_t> vulkan_resolve_trace_count{0};
 std::atomic<int32_t> vulkan_edram_checksum_trace_count{0};
 std::atomic<int32_t> vulkan_dump_state_trace_count{0};
-std::atomic<uint64_t> bd_framegraph_rung2_scheduled{0};
-std::atomic<uint64_t> bd_framegraph_rung2_matched{0};
-std::atomic<uint64_t> bd_framegraph_rung2_relocated{0};
-std::atomic<uint64_t> bd_framegraph_rung2_fallback{0};
-uint32_t bd_framegraph_rung2_swaps = 0;
-bool bd_framegraph_rung2_relocating = false;
+std::atomic<uint64_t> bd_framegraph_rung3_scheduled{0};
+std::atomic<uint64_t> bd_framegraph_rung3_fused{0};
+std::atomic<uint64_t> bd_framegraph_rung3_relocated_fallback{0};
+uint32_t bd_framegraph_rung3_swaps = 0;
 
 bool ShouldTraceVulkanResolve() {
   if (!cvars::vulkan_trace_resolve) {
@@ -2397,7 +2395,7 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
     dependency_stage_mask |= VulkanRenderTarget::kColorDrawStageMask;
     dependency_access_mask |= VulkanRenderTarget::kColorDrawAccessMask;
   }
-  VkSubpassDependency subpass_dependencies[2];
+  VkSubpassDependency subpass_dependencies[3];
   subpass_dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
   subpass_dependencies[0].dstSubpass = 0;
   subpass_dependencies[0].srcStageMask = dependency_stage_mask;
@@ -2412,6 +2410,23 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   subpass_dependencies[1].srcAccessMask = dependency_access_mask;
   subpass_dependencies[1].dstAccessMask = dependency_access_mask;
   subpass_dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  // Rung 3 records a depth transfer as the first draw of the consumer subpass.
+  // This framebuffer-local self-dependency permits its in-pass barrier from
+  // depth/stencil writes to the following guest depth tests.
+  subpass_dependencies[2].srcSubpass = 0;
+  subpass_dependencies[2].dstSubpass = 0;
+  subpass_dependencies[2].srcStageMask =
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  subpass_dependencies[2].dstStageMask =
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  subpass_dependencies[2].srcAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  subpass_dependencies[2].dstAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  subpass_dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
   if (cvars::gpu_vulkan_weak_external_subpass_deps) {
     // DIAGNOSTIC (knowingly unsafe in theory): turn both EXTERNAL dependencies
     // into no-ops so the driver may overlap this pass's binning with prior
@@ -2437,8 +2452,9 @@ VkRenderPass VulkanRenderTargetCache::GetHostRenderTargetsRenderPass(
   render_pass_create_info.subpassCount = 1;
   render_pass_create_info.pSubpasses = &subpass;
   render_pass_create_info.dependencyCount =
-      key.depth_and_color_used ? uint32_t(xe::countof(subpass_dependencies))
-                               : 0;
+      (key.depth_and_color_used & 0b1)
+          ? uint32_t(xe::countof(subpass_dependencies))
+          : (key.depth_and_color_used ? 2u : 0u);
   render_pass_create_info.pDependencies = subpass_dependencies;
 
   // BD color-resolve: append the trailing 1x resolve attachment(s) at
@@ -8018,7 +8034,7 @@ bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
   entry.shader_key.source_resource_format = source_key.resource_format;
   entry.shader_key.mode = TransferMode::kDepthToDepth;
   bd_framegraph_deferred_depth_transfers_.push_back(entry);
-  bd_framegraph_rung2_scheduled.fetch_add(1, std::memory_order_relaxed);
+  bd_framegraph_rung3_scheduled.fetch_add(1, std::memory_order_relaxed);
   return true;
 }
 
@@ -8044,27 +8060,16 @@ void VulkanRenderTargetCache::FallbackBdFramegraphDepthTransfer(
   BdFramegraphDeferredDepthTransfer entry =
       bd_framegraph_deferred_depth_transfers_.front();
   bd_framegraph_deferred_depth_transfers_.clear();
-  if (!bd_framegraph_rung2_relocating) {
-    bd_framegraph_rung2_fallback.fetch_add(1, std::memory_order_relaxed);
-    XELOGI("BD FRAMEGRAPH: rung2-fallback reason={}", reason);
-  }
+  bd_framegraph_rung3_relocated_fallback.fetch_add(
+      1, std::memory_order_relaxed);
+  XELOGI("BD FRAMEGRAPH: rung3-fallback reason={}", reason);
   RenderTarget* render_targets[1] = {entry.dest};
   std::vector<Transfer> transfers[1];
   transfers[0].push_back(entry.transfer);
   bd_framegraph_flushing_legacy_ = true;
   PerformTransfersAndResolveClears(1, render_targets, transfers);
   bd_framegraph_flushing_legacy_ = false;
-  if (bd_framegraph_rung2_relocating) {
-    bd_framegraph_rung2_relocated.fetch_add(1, std::memory_order_relaxed);
-    XELOGI(
-        "BD FRAMEGRAPH: rung2 relocated dest{{base={} pitchT={} msaa={} "
-        "format={}}} source_gen={} dest_gen={}",
-        entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
-        uint32_t(entry.dest_key.msaa_samples), entry.dest_key.resource_format,
-        entry.source_generation, entry.dest_generation);
-  }
 }
-
 bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
     const Framebuffer* framebuffer, bool can_begin_new_pass) {
   if (cvars::gpu_bd_framegraph_depth_shadow) {
@@ -8169,26 +8174,25 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
   }
 
   // Rung 2 only confirms the consumer identity here. Do not pre-transition the
-  // source or mutate cached usage: the relocated legacy path must perform every
-  // barrier, layout transition and cached-state update itself, in original order.
+  // Source transition and cached-state mutation wait until the command
+  // processor has closed the previous render pass.
   entry.consumer_render_pass_key = last_update_render_pass_key_;
   entry.prepared = true;
-  bd_framegraph_rung2_matched.fetch_add(1, std::memory_order_relaxed);
   return true;
 }
 
 void VulkanRenderTargetCache::EndFrameBdFramegraphDepthShadow() {
   if (cvars::gpu_bd_framegraph_depth &&
       !cvars::gpu_bd_framegraph_depth_shadow &&
-      ++bd_framegraph_rung2_swaps == 30) {
+      ++bd_framegraph_rung3_swaps == 30) {
     XELOGI(
-        "BD FRAMEGRAPH: rung2 30-swap summary scheduled={} matched={} "
-        "relocated={} fallback={}",
-        bd_framegraph_rung2_scheduled.exchange(0, std::memory_order_relaxed),
-        bd_framegraph_rung2_matched.exchange(0, std::memory_order_relaxed),
-        bd_framegraph_rung2_relocated.exchange(0, std::memory_order_relaxed),
-        bd_framegraph_rung2_fallback.exchange(0, std::memory_order_relaxed));
-    bd_framegraph_rung2_swaps = 0;
+        "BD FRAMEGRAPH: rung3 30-swap summary scheduled={} fused={} "
+        "relocated-fallback={}",
+        bd_framegraph_rung3_scheduled.exchange(0, std::memory_order_relaxed),
+        bd_framegraph_rung3_fused.exchange(0, std::memory_order_relaxed),
+        bd_framegraph_rung3_relocated_fallback.exchange(
+            0, std::memory_order_relaxed));
+    bd_framegraph_rung3_swaps = 0;
   }
   if (!cvars::gpu_bd_framegraph_depth_shadow) {
     bd_framegraph_shadow_depth_transfers_.clear();
@@ -8226,64 +8230,176 @@ void VulkanRenderTargetCache::EndFrameBdFramegraphDepthShadow() {
   }
 }
 
-void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
+bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
     RenderPassKey consumer_render_pass_key, VkRenderPass consumer_render_pass,
     const Framebuffer* framebuffer) {
   if (bd_framegraph_deferred_depth_transfers_.empty() ||
       !bd_framegraph_deferred_depth_transfers_.front().prepared) {
-    return;
+    return false;
   }
-  BdFramegraphDeferredDepthTransfer& retained_entry =
+  BdFramegraphDeferredDepthTransfer& entry =
       bd_framegraph_deferred_depth_transfers_.front();
-
-  // Called before the consumer begin, while the command processor has no open
-  // render pass. Revalidate the match before replaying the retained payload.
   if (!framebuffer || framebuffer != last_update_framebuffer_ ||
       consumer_render_pass == VK_NULL_HANDLE ||
       consumer_render_pass != last_update_render_pass_ ||
       consumer_render_pass_key != last_update_render_pass_key_ ||
-      consumer_render_pass_key != retained_entry.consumer_render_pass_key) {
-    FallbackBdFramegraphDepthTransfer(
-        "consumer render pass changed after prepare");
-    return;
+      consumer_render_pass_key != entry.consumer_render_pass_key) {
+    FallbackBdFramegraphDepthTransfer("consumer render pass changed after prepare");
+    return false;
   }
-  if (!retained_entry.source || !retained_entry.dest ||
-      retained_entry.source->key().key != retained_entry.source_key.key ||
-      retained_entry.dest->key().key != retained_entry.dest_key.key ||
-      retained_entry.source->bd_native_depth_generation() !=
-          retained_entry.source_generation ||
-      retained_entry.dest->bd_native_depth_generation() !=
-          retained_entry.dest_generation ||
-      framebuffer->depth_view != retained_entry.dest->view_depth_stencil()) {
+  if (!entry.source || !entry.dest ||
+      entry.source->key().key != entry.source_key.key ||
+      entry.dest->key().key != entry.dest_key.key ||
+      entry.source->bd_native_depth_generation() != entry.source_generation ||
+      entry.dest->bd_native_depth_generation() != entry.dest_generation ||
+      framebuffer->depth_view != entry.dest->view_depth_stencil()) {
+    FallbackBdFramegraphDepthTransfer("render target identity or generation changed");
+    return false;
+  }
+  // Ordinary consumer passes LOAD. CLEAR/DONT_CARE variants cannot consume the
+  // fused result; all such cases retain the proven rung-2 relocation.
+  if (!(consumer_render_pass_key.depth_and_color_used & 0b1) ||
+      cvars::gpu_edram_passes_dont_care) {
+    FallbackBdFramegraphDepthTransfer("consumer depth loadOp is not LOAD");
+    return false;
+  }
+  const VkPipeline* pipelines = GetTransferPipelines(
+      TransferPipelineKey(consumer_render_pass_key, entry.shader_key));
+  if (!pipelines) {
     FallbackBdFramegraphDepthTransfer(
-        "render target identity or generation changed");
-    return;
+        "consumer render-pass transfer pipeline unavailable");
+    return false;
+  }
+  entry.source_descriptor_set = entry.source->GetDescriptorSetTransferSource();
+  if (entry.source_descriptor_set == VK_NULL_HANDLE) {
+    FallbackBdFramegraphDepthTransfer("source descriptor unavailable");
+    return false;
   }
 
-  // Reuse the fallback's exact one-destination legacy invocation. The command
-  // processor closes the standalone pass immediately after this returns.
-  VulkanRenderTarget* dest = retained_entry.dest;
-  bd_framegraph_rung2_relocating = true;
-  FallbackBdFramegraphDepthTransfer("matched consumer");
-  bd_framegraph_rung2_relocating = false;
+  Transfer::Rectangle rectangles[Transfer::kMaxRectanglesWithCutout];
+  uint32_t rectangle_count = entry.transfer.GetRectangles(
+      entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+      entry.dest_key.msaa_samples, entry.dest_key.Is64bpp(), rectangles, nullptr);
+  if (!rectangle_count) {
+    FallbackBdFramegraphDepthTransfer("empty transfer rectangle");
+    return false;
+  }
+  entry.vertex_count = 6 * rectangle_count;
+  float* vertex_write = reinterpret_cast<float*>(
+      transfer_vertex_buffer_pool_->Request(
+          command_processor_.GetCurrentSubmission(),
+          sizeof(float) * 2 * entry.vertex_count, sizeof(float),
+          entry.vertex_buffer, entry.vertex_buffer_offset));
+  if (!vertex_write) {
+    FallbackBdFramegraphDepthTransfer("transfer vertex allocation failed");
+    return false;
+  }
+  const ui::vulkan::VulkanDevice* vulkan_device =
+      command_processor_.GetVulkanDevice();
+  entry.viewport = {0.0f, 0.0f,
+                    float(std::min(xe::next_pow2(framebuffer->host_extent.width),
+                                   vulkan_device->properties().maxViewportDimensions[0])),
+                    float(std::min(xe::next_pow2(framebuffer->host_extent.height),
+                                   vulkan_device->properties().maxViewportDimensions[1])),
+                    0.0f, 1.0f};
+  entry.scissor.offset = {0, 0};
+  entry.scissor.extent = framebuffer->host_extent;
+  const float pixels_to_ndc_x = 2.0f / entry.viewport.width;
+  const float pixels_to_ndc_y = 2.0f / entry.viewport.height;
+  for (uint32_t i = 0; i < rectangle_count; ++i) {
+    const Transfer::Rectangle& rectangle = rectangles[i];
+    const float x0 = -1.0f + rectangle.x_pixels * pixels_to_ndc_x;
+    const float y0 = -1.0f + rectangle.y_pixels * pixels_to_ndc_y;
+    const float x1 = x0 + rectangle.width_pixels * pixels_to_ndc_x;
+    const float y1 = y0 + rectangle.height_pixels * pixels_to_ndc_y;
+    const float vertices[12] = {x0, y0, x0, y1, x1, y0,
+                                x1, y0, x0, y1, x1, y1};
+    std::memcpy(vertex_write, vertices, sizeof(vertices));
+    vertex_write += xe::countof(vertices);
+  }
+  entry.pipeline_count = vulkan_device->properties().sampleRateShading
+                             ? 1
+                             : uint32_t(1) << uint32_t(entry.dest_key.msaa_samples);
+  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
+    if (pipelines[i] == VK_NULL_HANDLE) {
+      FallbackBdFramegraphDepthTransfer("transfer sample pipeline unavailable");
+      return false;
+    }
+    entry.pipelines[i] = pipelines[i];
+  }
+  entry.address_constant.dest_pitch = entry.dest_key.GetPitchTiles();
+  entry.address_constant.source_pitch = entry.source_key.GetPitchTiles();
+  entry.address_constant.source_to_dest =
+      int32_t(entry.dest_key.base_tiles) - int32_t(entry.source_key.base_tiles);
 
-  // UpdateRenderTargets prepared the consumer attachment state before this
-  // relocated transfer was replayed. Force a same-layout write dependency now;
-  // it remains pending until the command processor ends the transfer pass, so
-  // the order is transfer write -> barrier -> consumer attachment access.
-  VkPipelineStageFlags consumer_stage_mask;
-  VkAccessFlags consumer_access_mask;
-  VkImageLayout consumer_layout;
-  dest->GetDrawUsage(&consumer_stage_mask, &consumer_access_mask,
-                     &consumer_layout);
+  // Source-side legacy preparation only, while no render pass is open.
+  constexpr VkPipelineStageFlags kSourceStage =
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  constexpr VkAccessFlags kSourceAccess = VK_ACCESS_SHADER_READ_BIT;
+  constexpr VkImageLayout kSourceLayout =
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   command_processor_.PushImageMemoryBarrier(
-      dest->image(),
+      entry.source->image(),
       ui::vulkan::util::InitializeSubresourceRange(
           VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT),
-      dest->current_stage_mask(), consumer_stage_mask,
-      dest->current_access_mask(), consumer_access_mask, dest->current_layout(),
-      consumer_layout, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false);
-  dest->SetUsage(consumer_stage_mask, consumer_access_mask, consumer_layout);
+      entry.source->current_stage_mask(), kSourceStage,
+      entry.source->current_access_mask(), kSourceAccess,
+      entry.source->current_layout(), kSourceLayout);
+  entry.source->SetUsage(kSourceStage, kSourceAccess, kSourceLayout);
+  entry.fusion_ready = true;
+  return true;
+}
+
+void VulkanRenderTargetCache::RecordPreparedBdFramegraphDepthConsumer() {
+  if (bd_framegraph_deferred_depth_transfers_.empty() ||
+      !bd_framegraph_deferred_depth_transfers_.front().fusion_ready) {
+    return;
+  }
+  BdFramegraphDeferredDepthTransfer& entry =
+      bd_framegraph_deferred_depth_transfers_.front();
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+  command_processor_.SetViewport(entry.viewport);
+  command_processor_.SetScissor(entry.scissor);
+  command_buffer.CmdVkBindVertexBuffers(0, 1, &entry.vertex_buffer,
+                                       &entry.vertex_buffer_offset);
+  VkPipelineLayout pipeline_layout =
+      transfer_pipeline_layouts_[size_t(TransferPipelineLayoutIndex::kDepth)];
+  command_buffer.CmdVkBindDescriptorSets(
+      VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
+      &entry.source_descriptor_set, 0, nullptr);
+  command_buffer.CmdVkPushConstants(
+      pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+      sizeof(entry.address_constant), &entry.address_constant);
+  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
+    command_processor_.BindExternalGraphicsPipeline(entry.pipelines[i]);
+    command_buffer.CmdVkDraw(entry.vertex_count, 1, 0, 0);
+  }
+
+  // Matched by the render pass's BY_REGION self-dependency. This makes the
+  // transfer depth/stencil writes visible to all following depth-test draws.
+  VkMemoryBarrier depth_memory_barrier = {};
+  depth_memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  depth_memory_barrier.srcAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  depth_memory_barrier.dstAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  command_buffer.CmdVkPipelineBarrier(
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      VK_DEPENDENCY_BY_REGION_BIT, 1, &depth_memory_barrier, 0, nullptr, 0,
+      nullptr);
+  XELOGI(
+      "BD FRAMEGRAPH: rung3 fused dest{{base={} pitchT={} msaa={} format={}}} "
+      "source_gen={} dest_gen={}",
+      entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+      uint32_t(entry.dest_key.msaa_samples), entry.dest_key.resource_format,
+      entry.source_generation, entry.dest_generation);
+  bd_framegraph_rung3_fused.fetch_add(1, std::memory_order_relaxed);
+  bd_framegraph_deferred_depth_transfers_.clear();
 }
 
 void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
