@@ -7246,6 +7246,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                              used_texture_mask, normalized_depth_control,
                              normalized_color_mask);
 
+  // Stage 0 push-descriptor capture: decide BEFORE UpdateBindings whether this draw
+  // is a decoupled field draw to be captured (last_update_framebuffer is set by the
+  // RT Update above; pass-enter has not run yet, but the fb it will use == this).
+  // When capturing AND push descriptors are active, FORCE a texture rebuild so
+  // UpdateBindings re-derives the pushed descriptors this draw (the captured packet
+  // must be self-contained - it cannot inherit a push from an earlier non-captured
+  // draw) and records the image-info offsets EmitBdFieldCaptureDraw re-emits from.
+  {
+    const VulkanRenderTargetCache::Framebuffer* lufb =
+        render_target_cache_->last_update_framebuffer();
+    bd_field_capturing_this_draw_ =
+        cvars::gpu_bd_field_decouple && lufb &&
+        lufb->bd_native_color_framebuffer != VK_NULL_HANDLE &&
+        (lufb->bd_native_color_custom_resolve_rp != VK_NULL_HANDLE ||
+         lufb->bd_native_color_plain_rp != VK_NULL_HANDLE) &&
+        register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch == 720;
+    if (bd_field_capturing_this_draw_ && push_descriptors_active_) {
+      current_graphics_descriptor_set_values_up_to_date_ &=
+          ~((UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex) |
+            (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
+    }
+  }
+  bd_cap_have_vpush_ = false;
+  bd_cap_have_ppush_ = false;
   // Update uniform buffers and descriptor sets after binding the pipeline with
   // the new layout.
   std::chrono::steady_clock::time_point bind_t0;
@@ -8404,14 +8428,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                      ? current_framebuffer_->bd_native_color_custom_resolve_rp
                      : current_framebuffer_->bd_native_color_plain_rp)
               : VK_NULL_HANDLE;
-      // Stage 0: capture ONLY the main-scene field (surface_pitch == 720). The
-      // bloom pyramid (pitch 320/160/80) + composite (pitch 1280) are separate
-      // surfaces with their own producers; decoupling them corrupts the post chain
-      // (CLAUDE.md fusion note). They stay LLE.
-      const bool bd_field_is_main_scene =
-          register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch == 720;
-      if (cvars::gpu_bd_field_decouple && bd_field_is_main_scene &&
-          current_framebuffer_ &&
+      // Stage 0: capture ONLY the main-scene field (bd_field_capturing_this_draw_,
+      // computed pre-UpdateBindings = decouple && pitch==720 && producer available;
+      // the bloom pyramid + composite stay LLE). Using the same flag the push-
+      // descriptor capture keyed on keeps the two consistent.
+      if (bd_field_capturing_this_draw_ && current_framebuffer_ &&
           current_framebuffer_->bd_native_color_framebuffer != VK_NULL_HANDLE &&
           bd_field_target_rp != VK_NULL_HANDLE) {
         VkPipeline cr_pipe = VK_NULL_HANDLE;
@@ -10235,13 +10256,52 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
   pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline);
   const bool constants_present =
       constants_dynamic_descriptor_set_ != VK_NULL_HANDLE;
+  // When push descriptors are active the texture sets (2,3) are NOT ordinary bound
+  // sets (their slots in current_graphics_descriptor_sets_ are stale) - bind only
+  // the immutable sets (0=shared memory, 1=constants) and re-emit the pushed texture
+  // descriptors below. Otherwise bind all sets (the transient-set path).
+  uint32_t bound_set_count =
+      push_descriptors_active_
+          ? uint32_t(SpirvShaderTranslator::kDescriptorSetMutableLayoutsStart)
+          : uint32_t(SpirvShaderTranslator::kDescriptorSetCount);
   pb.CmdVkBindDescriptorSets(
-      VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout, 0,
-      uint32_t(SpirvShaderTranslator::kDescriptorSetCount),
+      VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout, 0, bound_set_count,
       current_graphics_descriptor_sets_,
       constants_present ? uint32_t(SpirvShaderTranslator::kConstantBufferCount)
                         : 0,
       constants_present ? current_constant_dynamic_offsets_ : nullptr);
+  // Re-emit this draw's pushed texture descriptors into the captured packet (the
+  // image infos live in descriptor_write_image_info_, valid through this draw; the
+  // push deep-copies them). Makes the packet self-contained with push descriptors
+  // ON (no global vulkan_push_descriptors=false CPU cost).
+  if (push_descriptors_active_ && bd_cap_push_layout_ != VK_NULL_HANDLE) {
+    if (bd_cap_have_vpush_) {
+      std::array<VkWriteDescriptorSet, 2> pw;
+      uint32_t n = WritePushTextureBindings(
+          bd_cap_vtex_cnt_, bd_cap_vsmp_cnt_,
+          descriptor_write_image_info_.data() + bd_cap_vtex_off_,
+          descriptor_write_image_info_.data() + bd_cap_vsmp_off_, pw.data(),
+          false);
+      if (n) {
+        pb.CmdVkPushDescriptorSetKHR(
+            VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout,
+            SpirvShaderTranslator::kDescriptorSetTexturesVertex, n, pw.data());
+      }
+    }
+    if (bd_cap_have_ppush_) {
+      std::array<VkWriteDescriptorSet, 2> pw;
+      uint32_t n = WritePushTextureBindings(
+          bd_cap_ptex_cnt_, bd_cap_psmp_cnt_,
+          descriptor_write_image_info_.data() + bd_cap_ptex_off_,
+          descriptor_write_image_info_.data() + bd_cap_psmp_off_, pw.data(),
+          bd_cap_ppush_input_attach_);
+      if (n) {
+        pb.CmdVkPushDescriptorSetKHR(
+            VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout,
+            SpirvShaderTranslator::kDescriptorSetTexturesPixel, n, pw.data());
+      }
+    }
+  }
   pb.CmdVkSetViewport(0, 1, &dynamic_viewport_);
   pb.CmdVkSetScissor(0, 1, &dynamic_scissor_);
   // Emit the depth-bias / blend / stencil dynamic state UNCONDITIONALLY (5.6-sol:
@@ -12221,6 +12281,17 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
           SpirvShaderTranslator::kDescriptorSetTexturesVertex, push_write_count,
           push_writes.data());
+      // Stage 0: remember this draw's vertex push so EmitBdFieldCaptureDraw can
+      // re-emit it into the field batch (self-contained packet, push descriptors on).
+      if (bd_field_capturing_this_draw_) {
+        bd_cap_vtex_off_ = vertex_texture_image_info_offset;
+        bd_cap_vsmp_off_ = vertex_sampler_image_info_offset;
+        bd_cap_vtex_cnt_ = texture_count_vertex;
+        bd_cap_vsmp_cnt_ = sampler_count_vertex;
+        bd_cap_push_layout_ =
+            current_guest_graphics_pipeline_layout_->GetPipelineLayout();
+        bd_cap_have_vpush_ = true;
+      }
       current_graphics_descriptor_set_values_up_to_date_ |=
           UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
       current_graphics_descriptor_sets_bound_up_to_date_ |=
@@ -12264,6 +12335,17 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
           SpirvShaderTranslator::kDescriptorSetTexturesPixel, push_write_count,
           push_writes.data());
+      // Stage 0: remember this draw's pixel push for the field batch re-emit.
+      if (bd_field_capturing_this_draw_) {
+        bd_cap_ptex_off_ = pixel_texture_image_info_offset;
+        bd_cap_psmp_off_ = pixel_sampler_image_info_offset;
+        bd_cap_ptex_cnt_ = texture_count_pixel;
+        bd_cap_psmp_cnt_ = sampler_count_pixel;
+        bd_cap_ppush_input_attach_ = feedback_merge_active_;
+        bd_cap_push_layout_ =
+            current_guest_graphics_pipeline_layout_->GetPipelineLayout();
+        bd_cap_have_ppush_ = true;
+      }
       current_graphics_descriptor_set_values_up_to_date_ |=
           UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
       current_graphics_descriptor_sets_bound_up_to_date_ |=

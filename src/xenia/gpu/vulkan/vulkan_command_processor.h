@@ -868,6 +868,20 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint64_t bd_native_begins_total_ = 0;
   // Stage 0: total guest render-pass begins (all paths) for the pass-collapse gate.
   uint64_t bd_total_pass_begins_ = 0;
+  // Stage 0 push-descriptor capture: this draw is a decoupled field draw being
+  // captured (computed before UpdateBindings so the pushed texture descriptors can
+  // be re-emitted into the field batch = the packet is self-contained WITHOUT
+  // disabling push descriptors globally).
+  bool bd_field_capturing_this_draw_ = false;
+  // Saved offsets into descriptor_write_image_info_ (valid through the draw) + counts
+  // for re-emitting the vertex/pixel pushed textures in EmitBdFieldCaptureDraw.
+  size_t bd_cap_vtex_off_ = 0, bd_cap_vsmp_off_ = 0;
+  size_t bd_cap_ptex_off_ = 0, bd_cap_psmp_off_ = 0;
+  uint32_t bd_cap_vtex_cnt_ = 0, bd_cap_vsmp_cnt_ = 0;
+  uint32_t bd_cap_ptex_cnt_ = 0, bd_cap_psmp_cnt_ = 0;
+  bool bd_cap_have_vpush_ = false, bd_cap_have_ppush_ = false;
+  bool bd_cap_ppush_input_attach_ = false;
+  VkPipelineLayout bd_cap_push_layout_ = VK_NULL_HANDLE;
   // REAL-HLE aux: C2 render-redirects into native surfaces, and Brick-B texture
   // fetches SERVED from a native surface (the consume side firing = the proof the
   // field samples native content, so EDRAM transfers for it are dead).

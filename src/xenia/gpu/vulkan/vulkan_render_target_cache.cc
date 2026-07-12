@@ -3725,12 +3725,15 @@ VulkanRenderTargetCache::GetBdNativeColorProducerFramebuffer(
   // field renders float16 into subpass 0 and a shader custom-resolve subpass reads
   // it as an input attachment and writes 1x A2B10 - on-tile, no off-chip MSAA spill.
   // The producer image then also needs INPUT_ATTACHMENT usage.
-  // The 2-subpass CR producer is needed by BOTH the interleaved direct-native path
-  // (keep_scissor) AND the decoupled capture-replay path (field_decouple, which
-  // replays captured field draws into it contiguously - the field renders to LLE
-  // normally in-order there, so keep_scissor is off).
+  // The 2-subpass CR producer is used ONLY by the interleaved direct-native path
+  // (keep_scissor). The DECOUPLE path deliberately uses the PLAIN producer on all
+  // platforms (incl. Turnip where the ext exists): the CR on-tile convert measured
+  // net-NEGATIVE (it ADDS a convert subpass + forces MSAA materialization on TBDR),
+  // whereas the plain path renders the field contiguously + mirrors native->LLE and
+  // just COLLAPSES the pass count (98->72 begins/frame on the field) with no added
+  // conversion. So field_decouple must NOT select custom-resolve.
   const bool use_custom_resolve =
-      (cvars::gpu_bd_native_keep_scissor || cvars::gpu_bd_field_decouple) &&
+      cvars::gpu_bd_native_keep_scissor &&
       samples != VK_SAMPLE_COUNT_1_BIT &&
       vulkan_device->extensions().ext_EXT_custom_resolve &&
       vulkan_device->properties().customResolve;
