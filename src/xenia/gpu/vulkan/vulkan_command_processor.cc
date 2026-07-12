@@ -49,6 +49,7 @@
 DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_framegraph_depth);
+DECLARE_bool(gpu_bd_framegraph_depth_shadow);
 DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
@@ -4594,7 +4595,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     }
   }
   bool bd_framegraph_depth_prepared = false;
-  if (cvars::gpu_bd_framegraph_depth &&
+  if ((cvars::gpu_bd_framegraph_depth ||
+       cvars::gpu_bd_framegraph_depth_shadow) &&
       (pass_kind == GpuPassKind::kGuest ||
        pass_kind == GpuPassKind::kGuestComposite)) {
     // The retained transfer must be the first draw of a newly-begun, ordinary
@@ -9949,6 +9951,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 
   if (is_closing_frame) {
     primitive_processor_->EndFrame();
+    render_target_cache_->EndFrameBdFramegraphDepthShadow();
   }
 
   if (submission_open_) {

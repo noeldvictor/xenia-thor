@@ -209,6 +209,7 @@ DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_depth_handoff);
 DECLARE_bool(gpu_bd_framegraph_depth);
+DECLARE_bool(gpu_bd_framegraph_depth_shadow);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
@@ -1410,6 +1411,21 @@ void VulkanRenderTargetCache::ClearCache() {
   if (!bd_framegraph_deferred_depth_transfers_.empty()) {
     FallbackBdFramegraphDepthTransfer("cache clear before consumer");
   }
+  // Shadow entries retain identity pointers only for observation. Expire them
+  // before the cache destroys those render targets so a later pass-enter can
+  // never inspect a stale pointer.
+  for (const BdFramegraphShadowDepthTransfer& entry :
+       bd_framegraph_shadow_depth_transfers_) {
+    if (!entry.matched) {
+      ++bd_framegraph_shadow_unmatched_;
+      XELOGI(
+          "BD SHADOW: expiry unmatched frame={} scheduled_frame={} entry={} "
+          "first_use_nonconsumer={} reason=cache-clear",
+          command_processor_.GetCurrentFrame(), entry.schedule_frame, entry.id,
+          entry.first_dest_use_seen ? 1 : 0);
+    }
+  }
+  bd_framegraph_shadow_depth_transfers_.clear();
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -7906,8 +7922,11 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(
 }
 
 bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
-    VulkanRenderTarget& dest, const Transfer& transfer) {
-  if (!cvars::gpu_bd_framegraph_depth || bd_framegraph_flushing_legacy_ ||
+    VulkanRenderTarget& dest, const Transfer& transfer,
+    const RenderPassKey* schedule_pass_key) {
+  if ((!cvars::gpu_bd_framegraph_depth &&
+       !cvars::gpu_bd_framegraph_depth_shadow) ||
+      bd_framegraph_flushing_legacy_ ||
       !transfer.source || transfer.source == &dest ||
       transfer.host_depth_source) {
     return false;
@@ -7915,6 +7934,23 @@ bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
   auto& source = *static_cast<VulkanRenderTarget*>(transfer.source);
   RenderTargetKey source_key = source.key();
   RenderTargetKey dest_key = dest.key();
+
+  // In shadow mode this observer sees every ownership-transfer source and
+  // destination before the legacy path records it. Treat reuse of a watched
+  // destination by another transfer as its first non-consumer use.
+  if (cvars::gpu_bd_framegraph_depth_shadow) {
+    for (BdFramegraphShadowDepthTransfer& shadow_entry :
+         bd_framegraph_shadow_depth_transfers_) {
+      if (!shadow_entry.matched && !shadow_entry.first_dest_use_seen &&
+          (shadow_entry.dest == &source || shadow_entry.dest == &dest)) {
+        LogBdFramegraphShadowFirstNonconsumer(
+            shadow_entry,
+            shadow_entry.dest == &source ? "transfer-source"
+                                         : "transfer-destination",
+            schedule_pass_key ? *schedule_pass_key : RenderPassKey());
+      }
+    }
+  }
   // Milestone 1 deliberately recognizes only the recurring BD field edge.
   if (!source_key.is_depth || !dest_key.is_depth ||
       source_key.base_tiles != 810 || dest_key.base_tiles != 810 ||
@@ -7924,6 +7960,42 @@ bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
       !command_processor_.GetVulkanDevice()
            ->extensions()
            .ext_EXT_shader_stencil_export) {
+    return false;
+  }
+
+  // Rung 1: retain identity and lifetime metadata only. Returning false is the
+  // load-bearing guarantee that the caller keeps this transfer in the original
+  // legacy standalone transfer list. Shadow mode wins if both cvars are set.
+  if (cvars::gpu_bd_framegraph_depth_shadow) {
+    BdFramegraphShadowDepthTransfer shadow_entry;
+    shadow_entry.id = bd_framegraph_shadow_next_id_++;
+    shadow_entry.source = &source;
+    shadow_entry.dest = &dest;
+    shadow_entry.source_key = source_key;
+    shadow_entry.dest_key = dest_key;
+    shadow_entry.source_generation = source.bd_native_depth_generation();
+    shadow_entry.dest_generation = dest.bd_native_depth_generation();
+    shadow_entry.dest_view = dest.view_depth_stencil();
+    shadow_entry.schedule_frame = command_processor_.GetCurrentFrame();
+    shadow_entry.schedule_submission =
+        command_processor_.GetCurrentSubmission();
+    if (schedule_pass_key) {
+      shadow_entry.schedule_pass_key = *schedule_pass_key;
+    }
+    shadow_entry.schedule_pass_serial = bd_framegraph_shadow_pass_serial_;
+    XELOGI(
+        "BD SHADOW: schedule frame={} submission={} passkey={:08X} entry={} "
+        "destkey{{base={} pitchT={} msaa={} format={}}} gen={} "
+        "srckey{{base={} pitchT={} msaa={} format={}}} gen={}",
+        shadow_entry.schedule_frame, shadow_entry.schedule_submission,
+        shadow_entry.schedule_pass_key.key, shadow_entry.id,
+        dest_key.base_tiles, dest_key.GetPitchTiles(),
+        uint32_t(dest_key.msaa_samples), dest_key.resource_format,
+        shadow_entry.dest_generation, source_key.base_tiles,
+        source_key.GetPitchTiles(), uint32_t(source_key.msaa_samples),
+        source_key.resource_format, shadow_entry.source_generation);
+    bd_framegraph_shadow_depth_transfers_.push_back(shadow_entry);
+    ++bd_framegraph_shadow_scheduled_;
     return false;
   }
   if (!bd_framegraph_deferred_depth_transfers_.empty()) {
@@ -7945,6 +8017,20 @@ bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
   return true;
 }
 
+void VulkanRenderTargetCache::LogBdFramegraphShadowFirstNonconsumer(
+    BdFramegraphShadowDepthTransfer& entry, const char* use,
+    RenderPassKey pass_key) {
+  entry.first_dest_use_seen = true;
+  ++bd_framegraph_shadow_first_nonconsumer_;
+  XELOGI(
+      "BD SHADOW: first-dest-use-nonconsumer frame={} passkey={:08X} "
+      "entry={} use={} destkey{{base={} pitchT={} msaa={} format={}}} gen={}",
+      command_processor_.GetCurrentFrame(), pass_key.key, entry.id, use,
+      entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+      uint32_t(entry.dest_key.msaa_samples), entry.dest_key.resource_format,
+      entry.dest_generation);
+}
+
 void VulkanRenderTargetCache::FallbackBdFramegraphDepthTransfer(
     const char* reason) {
   if (bd_framegraph_deferred_depth_transfers_.empty()) {
@@ -7964,6 +8050,60 @@ void VulkanRenderTargetCache::FallbackBdFramegraphDepthTransfer(
 
 bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
     const Framebuffer* framebuffer, bool can_begin_new_pass) {
+  if (cvars::gpu_bd_framegraph_depth_shadow) {
+    ++bd_framegraph_shadow_pass_serial_;
+    const RenderTarget* const* attachments =
+        reinterpret_cast<const RenderTarget* const*>(
+            last_update_framebuffer_attachments_);
+    const RenderTarget* depth = attachments[0];
+    const RenderPassKey pass_key = last_update_render_pass_key_;
+    for (BdFramegraphShadowDepthTransfer& entry :
+         bd_framegraph_shadow_depth_transfers_) {
+      if (entry.matched || entry.first_dest_use_seen) {
+        continue;
+      }
+      const bool identity_matches = entry.dest && depth == entry.dest;
+      const bool key_matches =
+          identity_matches && entry.dest->key().key == entry.dest_key.key;
+      const bool generation_matches =
+          key_matches && entry.dest->bd_native_depth_generation() ==
+                             entry.dest_generation;
+      const bool view_matches =
+          generation_matches && framebuffer &&
+          framebuffer->depth_view == entry.dest_view &&
+          entry.dest_view == entry.dest->view_depth_stencil();
+      if (view_matches) {
+        entry.matched = true;
+        entry.first_dest_use_seen = true;
+        ++bd_framegraph_shadow_matched_;
+        XELOGI(
+            "BD SHADOW: consumer-match frame={} passkey={:08X} entry={} "
+            "passes_since_sched={} destkey{{base={} pitchT={} msaa={} "
+            "format={}}} gen={}",
+            command_processor_.GetCurrentFrame(), pass_key.key, entry.id,
+            bd_framegraph_shadow_pass_serial_ - entry.schedule_pass_serial,
+            entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+            uint32_t(entry.dest_key.msaa_samples),
+            entry.dest_key.resource_format, entry.dest_generation);
+        continue;
+      }
+      bool bound_as_color = false;
+      for (uint32_t i = 1; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+        bound_as_color |= attachments[i] == entry.dest;
+      }
+      if (bound_as_color) {
+        LogBdFramegraphShadowFirstNonconsumer(entry, "color-attachment",
+                                              pass_key);
+      } else if (identity_matches &&
+                 (!key_matches || !generation_matches ||
+                  (framebuffer && framebuffer->depth_view != entry.dest_view))) {
+        LogBdFramegraphShadowFirstNonconsumer(
+            entry, "depth-identity-generation-view-mismatch", pass_key);
+      }
+    }
+    // Pure observer: never prepare the deferred/in-pass execution path.
+    return false;
+  }
   if (!cvars::gpu_bd_framegraph_depth ||
       bd_framegraph_deferred_depth_transfers_.empty()) {
     return false;
@@ -8056,6 +8196,43 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
   entry.source->SetUsage(kSourceStage, kSourceAccess, kSourceLayout);
   entry.prepared = true;
   return true;
+}
+
+void VulkanRenderTargetCache::EndFrameBdFramegraphDepthShadow() {
+  if (!cvars::gpu_bd_framegraph_depth_shadow) {
+    bd_framegraph_shadow_depth_transfers_.clear();
+    return;
+  }
+  const uint64_t frame = command_processor_.GetCurrentFrame();
+  for (const BdFramegraphShadowDepthTransfer& entry :
+       bd_framegraph_shadow_depth_transfers_) {
+    if (!entry.matched) {
+      ++bd_framegraph_shadow_unmatched_;
+      XELOGI(
+          "BD SHADOW: expiry unmatched frame={} scheduled_frame={} entry={} "
+          "first_use_nonconsumer={} destkey{{base={} pitchT={} msaa={} "
+          "format={}}} gen={}",
+          frame, entry.schedule_frame, entry.id,
+          entry.first_dest_use_seen ? 1 : 0, entry.dest_key.base_tiles,
+          entry.dest_key.GetPitchTiles(),
+          uint32_t(entry.dest_key.msaa_samples),
+          entry.dest_key.resource_format, entry.dest_generation);
+    }
+  }
+  bd_framegraph_shadow_depth_transfers_.clear();
+  if (++bd_framegraph_shadow_swaps_ == 30) {
+    XELOGI(
+        "BD SHADOW: 30-swap summary scheduled={} matched={} unmatched={} "
+        "first-use-nonconsumer={}",
+        bd_framegraph_shadow_scheduled_, bd_framegraph_shadow_matched_,
+        bd_framegraph_shadow_unmatched_,
+        bd_framegraph_shadow_first_nonconsumer_);
+    bd_framegraph_shadow_swaps_ = 0;
+    bd_framegraph_shadow_scheduled_ = 0;
+    bd_framegraph_shadow_matched_ = 0;
+    bd_framegraph_shadow_unmatched_ = 0;
+    bd_framegraph_shadow_first_nonconsumer_ = 0;
+  }
 }
 
 void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
@@ -8679,7 +8856,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
   // else continues through the legacy path unchanged.
   std::vector<Transfer>
       bd_framegraph_filtered[1 + xenos::kMaxColorRenderTargets];
-  if (cvars::gpu_bd_framegraph_depth && !bd_framegraph_flushing_legacy_ &&
+  if ((cvars::gpu_bd_framegraph_depth ||
+       cvars::gpu_bd_framegraph_depth_shadow) &&
+      !bd_framegraph_flushing_legacy_ &&
       render_target_transfers && !resolve_clear_needed) {
     bool any_deferred = false;
     for (uint32_t i = 0; i < render_target_count; ++i) {
@@ -8687,7 +8866,8 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       RenderTarget* dest_rt = render_targets[i];
       for (const Transfer& transfer : render_target_transfers[i]) {
         if (dest_rt && TryDeferBdFramegraphDepthTransfer(
-                           *static_cast<VulkanRenderTarget*>(dest_rt), transfer)) {
+                           *static_cast<VulkanRenderTarget*>(dest_rt), transfer,
+                           guest_render_pass_key)) {
           any_deferred = true;
         } else {
           bd_framegraph_filtered[i].push_back(transfer);

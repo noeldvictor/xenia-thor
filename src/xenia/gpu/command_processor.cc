@@ -230,6 +230,15 @@ DEFINE_bool(
     "identity, generation, load-semantics, or source-lifetime ambiguity falls "
     "back eagerly to the legacy standalone transfer pass.",
     "GPU");
+DEFINE_bool(
+    gpu_bd_framegraph_depth_shadow, false,
+    "BD minimal framegraph depth shadow diagnostic (default off): recognize "
+    "and trace the exact base-810 pitch-9 2x-to-4x depth ownership edge and "
+    "its first destination consumer without deferring or skipping the legacy "
+    "standalone transfer. This is instrumentation only and never records an "
+    "in-pass transfer draw. When enabled it overrides gpu_bd_framegraph_depth "
+    "for the recognized edge so rendering remains on the legacy path.",
+    "GPU");
 DEFINE_int32(
     gpu_bd_native_color_lifetime_hle, 0,
     "BD REAL-HLE color-only native surface lifetime (Codex-designed 2026-07-10, "

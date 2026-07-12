@@ -253,6 +253,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       RenderPassKey consumer_render_pass_key,
       VkRenderPass consumer_render_pass, const Framebuffer* framebuffer);
   void FallbackBdFramegraphDepthTransfer(const char* reason);
+  void EndFrameBdFramegraphDepthShadow();
 
   // Using R16G16[B16A16]_SNORM, which are -1...1, not the needed -32...32.
   // Persistent data doesn't depend on this, so can be overriden by per-game
@@ -1110,7 +1111,28 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     bool prepared = false;
   };
   bool TryDeferBdFramegraphDepthTransfer(VulkanRenderTarget& dest,
-                                         const Transfer& transfer);
+                                         const Transfer& transfer,
+                                         const RenderPassKey* schedule_pass_key);
+
+  struct BdFramegraphShadowDepthTransfer {
+    uint64_t id = 0;
+    VulkanRenderTarget* source = nullptr;
+    VulkanRenderTarget* dest = nullptr;
+    RenderTargetKey source_key;
+    RenderTargetKey dest_key;
+    uint32_t source_generation = 0;
+    uint32_t dest_generation = 0;
+    VkImageView dest_view = VK_NULL_HANDLE;
+    uint64_t schedule_frame = 0;
+    uint64_t schedule_submission = 0;
+    RenderPassKey schedule_pass_key;
+    uint64_t schedule_pass_serial = 0;
+    bool matched = false;
+    bool first_dest_use_seen = false;
+  };
+  void LogBdFramegraphShadowFirstNonconsumer(
+      BdFramegraphShadowDepthTransfer& entry, const char* use,
+      RenderPassKey pass_key);
 
   union DumpPipelineKey {
     uint32_t key;
@@ -1392,6 +1414,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   std::vector<BdFramegraphDeferredDepthTransfer>
       bd_framegraph_deferred_depth_transfers_;
   bool bd_framegraph_flushing_legacy_ = false;
+  std::vector<BdFramegraphShadowDepthTransfer>
+      bd_framegraph_shadow_depth_transfers_;
+  uint64_t bd_framegraph_shadow_next_id_ = 1;
+  uint64_t bd_framegraph_shadow_pass_serial_ = 0;
+  uint32_t bd_framegraph_shadow_swaps_ = 0;
+  uint64_t bd_framegraph_shadow_scheduled_ = 0;
+  uint64_t bd_framegraph_shadow_matched_ = 0;
+  uint64_t bd_framegraph_shadow_unmatched_ = 0;
+  uint64_t bd_framegraph_shadow_first_nonconsumer_ = 0;
 
   // Temporary storage for DumpRenderTargets.
   std::vector<ResolveCopyDumpRectangle> dump_rectangles_;
