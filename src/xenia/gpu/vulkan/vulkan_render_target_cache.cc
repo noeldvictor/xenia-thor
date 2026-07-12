@@ -1405,6 +1405,11 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
 }
 
 void VulkanRenderTargetCache::ClearCache() {
+  // Never destroy render targets retained by a deferred framegraph edge. Replay
+  // while the source/destination and their descriptor sets are still live.
+  if (!bd_framegraph_deferred_depth_transfers_.empty()) {
+    FallbackBdFramegraphDepthTransfer("cache clear before consumer");
+  }
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -8014,27 +8019,7 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
     FallbackBdFramegraphDepthTransfer("empty transfer rectangle");
     return false;
   }
-  uint32_t vertex_count = rectangle_count * 6;
-  VkBuffer vertex_buffer;
-  VkDeviceSize vertex_buffer_offset;
-  float* vertices = reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
-      command_processor_.GetCurrentSubmission(), sizeof(float) * 2 * vertex_count,
-      sizeof(float), vertex_buffer, vertex_buffer_offset));
-  if (!vertices) {
-    FallbackBdFramegraphDepthTransfer("transfer vertex allocation failed");
-    return false;
-  }
   VkExtent2D extent = framebuffer->host_extent;
-  float viewport_width = float(std::min(
-      xe::next_pow2(extent.width), command_processor_.GetVulkanDevice()
-                                        ->properties()
-                                        .maxViewportDimensions[0]));
-  float viewport_height = float(std::min(
-      xe::next_pow2(extent.height), command_processor_.GetVulkanDevice()
-                                         ->properties()
-                                         .maxViewportDimensions[1]));
-  const float pixels_to_ndc_x = 2.0f / viewport_width;
-  const float pixels_to_ndc_y = 2.0f / viewport_height;
   for (uint32_t i = 0; i < rectangle_count; ++i) {
     const Transfer::Rectangle& rectangle = rectangles[i];
     uint32_t x1 = (rectangle.x_pixels + rectangle.width_pixels) *
@@ -8045,37 +8030,17 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
       FallbackBdFramegraphDepthTransfer("transfer exceeds consumer render area");
       return false;
     }
-    float x0_ndc = -1.0f + rectangle.x_pixels * draw_resolution_scale_x() *
-                               pixels_to_ndc_x;
-    float y0_ndc = -1.0f + rectangle.y_pixels * draw_resolution_scale_y() *
-                               pixels_to_ndc_y;
-    float x1_ndc = -1.0f + x1 * pixels_to_ndc_x;
-    float y1_ndc = -1.0f + y1 * pixels_to_ndc_y;
-    const float quad[] = {x0_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y0_ndc,
-                          x1_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y1_ndc};
-    std::memcpy(vertices, quad, sizeof(quad));
-    vertices += xe::countof(quad);
   }
 
   entry.consumer_render_pass_key = last_update_render_pass_key_;
-  const VkPipeline* pipelines = GetTransferPipelines(
-      TransferPipelineKey(entry.consumer_render_pass_key, entry.shader_key));
-  if (!pipelines) {
+  // Pre-create the compatible pipeline before entering the consumer pass. The
+  // pipeline handle is deliberately not retained across the deferred edge -
+  // Execute obtains it again for the exact pass key that was actually begun.
+  if (!GetTransferPipelines(TransferPipelineKey(
+          entry.consumer_render_pass_key, entry.shader_key))) {
     FallbackBdFramegraphDepthTransfer("consumer transfer pipeline unavailable");
     return false;
   }
-  entry.pipeline_count = command_processor_.GetVulkanDevice()
-                                 ->properties()
-                                 .sampleRateShading
-                             ? 1
-                             : (1u << uint32_t(entry.dest_key.msaa_samples));
-  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
-    entry.pipelines[i] = pipelines[i];
-  }
-  entry.vertex_buffer = vertex_buffer;
-  entry.vertex_buffer_offset = vertex_buffer_offset;
-  entry.vertex_count = vertex_count;
-  entry.consumer_extent = extent;
   constexpr VkPipelineStageFlags kSourceStage =
       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   constexpr VkAccessFlags kSourceAccess = VK_ACCESS_SHADER_READ_BIT;
@@ -8093,38 +8058,149 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
   return true;
 }
 
-void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer() {
+void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
+    RenderPassKey consumer_render_pass_key, VkRenderPass consumer_render_pass,
+    const Framebuffer* framebuffer) {
   if (bd_framegraph_deferred_depth_transfers_.empty() ||
       !bd_framegraph_deferred_depth_transfers_.front().prepared) {
     return;
   }
-  BdFramegraphDeferredDepthTransfer entry =
+  BdFramegraphDeferredDepthTransfer& retained_entry =
       bd_framegraph_deferred_depth_transfers_.front();
+
+  auto execute_fallback = [&](const char* reason) {
+    XELOGI("BD FRAMEGRAPH: execute-fallback reason={}", reason);
+    FallbackBdFramegraphDepthTransfer(reason);
+    // Execute is called immediately after the consumer begin. The legacy path
+    // ends that empty pass and leaves its standalone transfer pass open, so
+    // restore the consumer pass before the caller records guest state.
+    command_processor_.SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+        consumer_render_pass, framebuffer,
+        VulkanCommandProcessor::GpuPassKind::kGuest);
+  };
+
+  // The key must describe the exact ordinary guest pass that was just begun.
+  // GetTransferPipelines uses this key to retrieve/create the render pass the
+  // pipeline is compiled against, so accepting a stale/different key here
+  // would recreate the original invalid cross-render-pass bind.
+  if (!framebuffer || framebuffer != last_update_framebuffer_ ||
+      consumer_render_pass == VK_NULL_HANDLE ||
+      consumer_render_pass != last_update_render_pass_ ||
+      consumer_render_pass_key != last_update_render_pass_key_ ||
+      consumer_render_pass_key != retained_entry.consumer_render_pass_key) {
+    execute_fallback("consumer render pass changed after prepare");
+    return;
+  }
+  if (!(consumer_render_pass_key.depth_and_color_used & 0b1) ||
+      consumer_render_pass_key.msaa_samples !=
+          retained_entry.dest_key.msaa_samples ||
+      consumer_render_pass_key.depth_format !=
+          retained_entry.dest_key.GetDepthFormat()) {
+    execute_fallback("consumer depth attachment incompatible");
+    return;
+  }
+
+  // Prepare and Execute are adjacent on the GPU thread, and cache clearing now
+  // flushes pending edges before destroying render targets. Still validate the
+  // resource keys and write generations again at the consume point.
+  if (!retained_entry.source || !retained_entry.dest ||
+      retained_entry.source->key().key != retained_entry.source_key.key ||
+      retained_entry.dest->key().key != retained_entry.dest_key.key ||
+      retained_entry.source->bd_native_depth_generation() !=
+          retained_entry.source_generation ||
+      retained_entry.dest->bd_native_depth_generation() !=
+          retained_entry.dest_generation ||
+      framebuffer->depth_view != retained_entry.dest->view_depth_stencil()) {
+    execute_fallback("render target identity or generation changed");
+    return;
+  }
+
+  // Re-derive all resources that may be transient. This is the same pipeline
+  // cache getter as the normal transfer path, but keyed by the consumer pass.
+  const VkPipeline* pipelines = GetTransferPipelines(TransferPipelineKey(
+      consumer_render_pass_key, retained_entry.shader_key));
+  if (!pipelines) {
+    execute_fallback("consumer transfer pipeline unavailable at execute");
+    return;
+  }
+  VkDescriptorSet source_set =
+      retained_entry.source->GetDescriptorSetTransferSource();
+  if (source_set == VK_NULL_HANDLE || !transfer_vertex_buffer_pool_) {
+    execute_fallback("consumer transfer resource unavailable");
+    return;
+  }
+
+  Transfer::Rectangle rectangles[Transfer::kMaxRectanglesWithCutout];
+  uint32_t rectangle_count = retained_entry.transfer.GetRectangles(
+      retained_entry.dest_key.base_tiles,
+      retained_entry.dest_key.GetPitchTiles(),
+      retained_entry.dest_key.msaa_samples, false, rectangles, nullptr);
+  if (!rectangle_count) {
+    execute_fallback("empty transfer rectangle at execute");
+    return;
+  }
+  uint32_t vertex_count = rectangle_count * 6;
+  VkBuffer vertex_buffer = VK_NULL_HANDLE;
+  VkDeviceSize vertex_buffer_offset = 0;
+  float* vertices = reinterpret_cast<float*>(transfer_vertex_buffer_pool_->Request(
+      command_processor_.GetCurrentSubmission(),
+      sizeof(float) * 2 * vertex_count, sizeof(float), vertex_buffer,
+      vertex_buffer_offset));
+  if (!vertices || vertex_buffer == VK_NULL_HANDLE) {
+    execute_fallback("transfer vertex allocation failed at execute");
+    return;
+  }
+
+  const VkExtent2D consumer_extent = framebuffer->host_extent;
+  float viewport_width = float(std::min(
+      xe::next_pow2(consumer_extent.width), command_processor_.GetVulkanDevice()
+                                                ->properties()
+                                                .maxViewportDimensions[0]));
+  float viewport_height = float(std::min(
+      xe::next_pow2(consumer_extent.height), command_processor_.GetVulkanDevice()
+                                                 ->properties()
+                                                 .maxViewportDimensions[1]));
+  const float pixels_to_ndc_x = 2.0f / viewport_width;
+  const float pixels_to_ndc_y = 2.0f / viewport_height;
+  for (uint32_t i = 0; i < rectangle_count; ++i) {
+    const Transfer::Rectangle& rectangle = rectangles[i];
+    uint32_t x1 = (rectangle.x_pixels + rectangle.width_pixels) *
+                  draw_resolution_scale_x();
+    uint32_t y1 = (rectangle.y_pixels + rectangle.height_pixels) *
+                  draw_resolution_scale_y();
+    if (x1 > consumer_extent.width || y1 > consumer_extent.height) {
+      execute_fallback("transfer exceeds consumer render area at execute");
+      return;
+    }
+    float x0_ndc = -1.0f + rectangle.x_pixels * draw_resolution_scale_x() *
+                               pixels_to_ndc_x;
+    float y0_ndc = -1.0f + rectangle.y_pixels * draw_resolution_scale_y() *
+                               pixels_to_ndc_y;
+    float x1_ndc = -1.0f + x1 * pixels_to_ndc_x;
+    float y1_ndc = -1.0f + y1 * pixels_to_ndc_y;
+    const float quad[] = {x0_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y0_ndc,
+                          x1_ndc, y0_ndc, x0_ndc, y1_ndc, x1_ndc, y1_ndc};
+    std::memcpy(vertices, quad, sizeof(quad));
+    vertices += xe::countof(quad);
+  }
+
+  BdFramegraphDeferredDepthTransfer entry = retained_entry;
   bd_framegraph_deferred_depth_transfers_.clear();
   DeferredCommandBuffer& command_buffer =
       command_processor_.deferred_command_buffer();
   VkViewport viewport = {0.0f,
                          0.0f,
-                         float(std::min(
-                             xe::next_pow2(entry.consumer_extent.width),
-                             command_processor_.GetVulkanDevice()
-                                 ->properties()
-                                 .maxViewportDimensions[0])),
-                         float(std::min(
-                             xe::next_pow2(entry.consumer_extent.height),
-                             command_processor_.GetVulkanDevice()
-                                 ->properties()
-                                 .maxViewportDimensions[1])),
+                         viewport_width,
+                         viewport_height,
                          0.0f,
                          1.0f};
   command_processor_.SetViewport(viewport);
-  VkRect2D scissor = {{0, 0}, entry.consumer_extent};
+  VkRect2D scissor = {{0, 0}, consumer_extent};
   command_processor_.SetScissor(scissor);
-  command_buffer.CmdVkBindVertexBuffers(0, 1, &entry.vertex_buffer,
-                                        &entry.vertex_buffer_offset);
+  command_buffer.CmdVkBindVertexBuffers(0, 1, &vertex_buffer,
+                                        &vertex_buffer_offset);
   VkPipelineLayout pipeline_layout =
       transfer_pipeline_layouts_[size_t(TransferPipelineLayoutIndex::kDepth)];
-  VkDescriptorSet source_set = entry.source->GetDescriptorSetTransferSource();
   command_buffer.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          pipeline_layout, 0, 1, &source_set, 0,
                                          nullptr);
@@ -8135,9 +8211,14 @@ void VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer() {
                            int32_t(entry.source_key.base_tiles);
   command_buffer.CmdVkPushConstants(pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
                                     0, sizeof(address), &address);
-  for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
-    command_processor_.BindExternalGraphicsPipeline(entry.pipelines[i]);
-    command_buffer.CmdVkDraw(entry.vertex_count, 1, 0, 0);
+  uint32_t pipeline_count = command_processor_.GetVulkanDevice()
+                                    ->properties()
+                                    .sampleRateShading
+                                ? 1
+                                : (1u << uint32_t(entry.dest_key.msaa_samples));
+  for (uint32_t i = 0; i < pipeline_count; ++i) {
+    command_processor_.BindExternalGraphicsPipeline(pipelines[i]);
+    command_buffer.CmdVkDraw(vertex_count, 1, 0, 0);
   }
   uint32_t generation = entry.dest->MarkBdNativeDepthAuthoritative();
   XELOGI(

@@ -5030,7 +5030,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   if (bd_framegraph_depth_prepared) {
     // Must remain immediately after BeginRenderPass: no guest pipeline, state,
     // clear, or geometry command may precede the retained transfer draw.
-    render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer();
+    render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
+        render_target_cache_->last_update_render_pass_key(), begin_render_pass,
+        framebuffer);
   }
   // Track the ACTUALLY-bound CR pass (this real begin just recorded begin_render_pass).
   // Survives early-return resumes (which skip this begin) = the single source of truth
