@@ -225,6 +225,10 @@ class Emulator {
   X_STATUS CompleteLaunch(const std::filesystem::path& path,
                           const std::string_view module_path);
 
+  // Loads Aurora-style .xex trainers matching the launched title from
+  // <storage>/trainers (gated by the trainer_enable cvar).
+  void LoadTrainersForTitle();
+
   std::filesystem::path command_line_;
   std::filesystem::path storage_root_;
   std::filesystem::path content_root_;

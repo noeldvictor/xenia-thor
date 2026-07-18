@@ -462,6 +462,50 @@ object_ref<UserModule> KernelState::LoadUserModule(
   return module;
 }
 
+object_ref<UserModule> KernelState::LoadTrainerModule(
+    const std::filesystem::path& host_path, bool run_entry) {
+  auto module = object_ref<UserModule>(new UserModule(this));
+  X_STATUS status = module->LoadFromHostFile(host_path);
+  if (XFAILED(status)) {
+    XELOGE("Trainer: failed to load {} (status {:08X})",
+           xe::path_to_utf8(host_path), status);
+    object_table()->ReleaseHandle(module->handle());
+    return nullptr;
+  }
+
+  {
+    auto global_lock = global_critical_region_.Acquire();
+    user_modules_.push_back(module);
+  }
+
+  // Dump() computes the build hash and prints the per-import-library coverage
+  // report (implemented vs '!!' unimplemented) — that report IS the trainer's
+  // compatibility signal, so we always emit it whether or not we run the entry.
+  module->Dump();
+
+  if (run_entry) {
+    if (!module->entry_point()) {
+      XELOGW("Trainer: {} has no entry point; loaded but not run",
+             xe::path_to_utf8(host_path.filename()));
+    } else {
+      XELOGI("Trainer: running entry point {:08X} on a new guest thread",
+             module->entry_point());
+      // Not suspended, guest thread, not the main thread. The trainer's entry
+      // typically installs its hooks and spawns its own polling thread.
+      auto thread = object_ref<XThread>(new XThread(
+          kernel_state(), module->stack_size(), 0, module->entry_point(), 0, 0,
+          true, false));
+      thread->set_name("Trainer XThread");
+      X_STATUS result = thread->Create();
+      if (XFAILED(result)) {
+        XELOGE("Trainer: could not create trainer thread: {:08X}", result);
+      }
+    }
+  }
+
+  return module;
+}
+
 void KernelState::UnloadUserModule(const object_ref<UserModule>& module,
                                    bool call_entry) {
   auto global_lock = global_critical_region_.Acquire();

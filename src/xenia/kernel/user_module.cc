@@ -9,11 +9,14 @@
 
 #include "xenia/kernel/user_module.h"
 
+#include <cstdio>
 #include <vector>
 
 #include "xenia/base/byte_order.h"
 #include "xenia/base/byte_stream.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/string.h"
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/elf_module.h"
 #include "xenia/cpu/processor.h"
@@ -131,6 +134,45 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
   }
 
   return LoadXexContinue();
+}
+
+X_STATUS UserModule::LoadFromHostFile(
+    const std::filesystem::path& host_path) {
+  // Trainers live on the host filesystem (<storage>/trainers), not the guest
+  // VFS, so we read the raw bytes and feed them to LoadFromMemory directly
+  // rather than going through LoadFromFile's ResolvePath.
+  FILE* file = xe::filesystem::OpenFile(host_path, "rb");
+  if (!file) {
+    XELOGE("UserModule::LoadFromHostFile: cannot open {}",
+           xe::path_to_utf8(host_path));
+    return X_STATUS_NO_SUCH_FILE;
+  }
+
+  fseek(file, 0, SEEK_END);
+  long file_length = ftell(file);
+  fseek(file, 0, SEEK_SET);
+  if (file_length <= 0) {
+    fclose(file);
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  std::vector<uint8_t> buffer(static_cast<size_t>(file_length));
+  size_t bytes_read = fread(buffer.data(), 1, buffer.size(), file);
+  fclose(file);
+  if (bytes_read != buffer.size()) {
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  path_ = xe::path_to_utf8(host_path);
+  name_ = xe::path_to_utf8(host_path.filename());
+
+  X_STATUS result = LoadFromMemory(buffer.data(), buffer.size());
+  // XEX modules return PENDING and expect a LoadXexContinue() to finish
+  // parsing sections/imports/symbols (trainers carry no xexp patch).
+  if (result == X_STATUS_PENDING) {
+    result = LoadXexContinue();
+  }
+  return result;
 }
 
 X_STATUS UserModule::LoadFromMemory(const void* addr, const size_t length) {

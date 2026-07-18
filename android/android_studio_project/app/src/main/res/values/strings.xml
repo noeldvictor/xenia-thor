@@ -41,6 +41,7 @@
     <string name="launcher_game_action_start">Start game</string>
     <string name="launcher_game_action_optimizations">Performance optimizations</string>
     <string name="launcher_game_action_patches">Game patches</string>
+    <string name="launcher_game_action_trainers">Trainers</string>
     <string name="launcher_game_action_profile">Game profile</string>
     <string name="launcher_game_profile_applied">Applied %1$s profile (best-known settings)</string>
     <string name="launcher_game_action_backup_save">Back up save data</string>

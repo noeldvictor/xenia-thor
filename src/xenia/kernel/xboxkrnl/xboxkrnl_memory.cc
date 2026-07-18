@@ -939,6 +939,25 @@ dword_result_t MmQueryAddressProtect_entry(dword_t base_address) {
 DECLARE_XBOXKRNL_EXPORT2(MmQueryAddressProtect, kMemory, kImplemented,
                          kHighFrequency);
 
+dword_result_t MmIsAddressValid_entry(dword_t address) {
+  // Returns whether the guest address is mapped and committed. Trainers (and
+  // some titles) call this defensively before dereferencing/poking a pointer;
+  // the default stub returned 0 (invalid), which made trainers skip their
+  // writes. LookupHeap maps any in-range address to its heap, so real validity
+  // is "the page is committed with non-zero protection".
+  auto heap = kernel_state()->memory()->LookupHeap(address);
+  if (!heap) {
+    return 0;
+  }
+  uint32_t protect = 0;
+  if (!heap->QueryProtect(address, &protect) || !protect) {
+    return 0;
+  }
+  return 1;
+}
+DECLARE_XBOXKRNL_EXPORT2(MmIsAddressValid, kMemory, kImplemented,
+                         kHighFrequency);
+
 void MmSetAddressProtect_entry(lpvoid_t base_address, dword_t region_size,
                                dword_t protect_bits) {
   if (!protect_bits) {

@@ -24,6 +24,10 @@ public final class XeniaOptimizations {
     public static final String CATEGORY_CPU = "CPU · recompiler";
     public static final String CATEGORY_THREADS = "CPU · thread placement";
     public static final String CATEGORY_GPU = "GPU · Vulkan";
+    public static final String CATEGORY_CHEATS = "Cheats · trainers";
+
+    /** Pref key of the trainer master toggle (also used by the trainer screen). */
+    public static final String PREF_KEY_TRAINERS = "opt_trainers";
 
     // Per-game override tri-state: a title may force an optimization ON or OFF
     // for itself, or INHERIT the global toggle. Stored as a string under a
@@ -855,6 +859,27 @@ public final class XeniaOptimizations {
                 CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("timer_queue_sleep_idle")},
                 new IntCvar[]{new IntCvar("timer_queue_idle_sleep_us", 1000)}));
+
+        list.add(new Optimization(
+                PREF_KEY_TRAINERS,
+                "Xbox 360 trainers (cheats)",
+                "Load Aurora-style .xex trainers for the launched game and run "
+                        + "them (infinite health/ammo/money + the in-game menu).",
+                "Aurora/RGH consoles run \"trainers\" - small Xbox 360 .xex programs "
+                        + "that hook the running game to apply cheats and draw an on-"
+                        + "screen menu (usually START+BACK). This loads any trainer you "
+                        + "have downloaded for the title (the per-game \"Trainers\" "
+                        + "screen) from the app's trainers/ folder, matched by title id, "
+                        + "and runs its entry so it installs its hooks. A trainer is just "
+                        + "guest code the emulator already runs - measured import "
+                        + "coverage on xenia's kernel is ~89-100%. OFF by default: it "
+                        + "runs third-party guest code and is build-specific (a trainer "
+                        + "must match the game's exact title update, or the game can "
+                        + "misbehave). Download a matching trainer first, then enable "
+                        + "this per-game.",
+                CATEGORY_CHEATS, false, false,
+                new BoolCvar[]{new BoolCvar("trainer_enable"),
+                        new BoolCvar("trainer_run_entry")}, null));
 
         ALL = Collections.unmodifiableList(list);
     }

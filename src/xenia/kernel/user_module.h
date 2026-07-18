@@ -10,6 +10,7 @@
 #ifndef XENIA_KERNEL_USER_MODULE_H_
 #define XENIA_KERNEL_USER_MODULE_H_
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -69,6 +70,9 @@ class UserModule : public XModule {
   uint32_t stack_size() const { return stack_size_; }
 
   X_STATUS LoadFromFile(const std::string_view path);
+  // Loads a module directly from a file on the HOST filesystem (not the guest
+  // VFS). Used for Aurora-style trainers that live under <storage>/trainers.
+  X_STATUS LoadFromHostFile(const std::filesystem::path& host_path);
   X_STATUS LoadFromMemory(const void* addr, const size_t length);
   X_STATUS Unload();
 

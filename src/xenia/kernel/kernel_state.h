@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
 #include <functional>
 #include <list>
 #include <memory>
@@ -137,6 +138,13 @@ class KernelState {
   void SetExecutableModule(object_ref<UserModule> module);
   object_ref<UserModule> LoadUserModule(const std::string_view name,
                                         bool call_entry = true);
+  // Loads an Aurora-style trainer XEX from the HOST filesystem into the running
+  // title's address space, logs its import coverage (UserModule::Dump), and
+  // optionally runs its entry point on a fresh guest thread so it can install
+  // its hooks. Returns nullptr on failure (e.g. base-address collision with the
+  // title, or a malformed/unsupported XEX).
+  object_ref<UserModule> LoadTrainerModule(
+      const std::filesystem::path& host_path, bool run_entry);
   void UnloadUserModule(const object_ref<UserModule>& module,
                         bool call_entry = true);
 

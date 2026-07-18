@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cinttypes>
 #include <cstdlib>
 #include <string>
@@ -75,6 +76,19 @@ DEFINE_string(
     "Executable to launch from the .iso or the package instead of default.xex "
     "or the module specified by the game. Leave blank to launch the default "
     "module.",
+    "General");
+
+DEFINE_bool(
+    trainer_enable, false,
+    "Load Aurora-style .xex trainers for the launched title. Trainers are read "
+    "from <storage>/trainers and matched by an 8-hex-digit title-id filename "
+    "prefix (e.g. 4D5307E6_infhealth.xex).",
+    "General");
+DEFINE_bool(
+    trainer_run_entry, false,
+    "Execute a loaded trainer's entry point so it installs its hooks. When "
+    "false, the trainer is only loaded and its import-coverage report is logged "
+    "(safe compatibility check without running trainer code).",
     "General");
 
 namespace xe {
@@ -1637,9 +1651,61 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     return X_STATUS_UNSUCCESSFUL;
   }
   main_thread_ = main_thread;
+
+  // Inject any Aurora-style trainers for this title now that the game module is
+  // loaded and its main thread exists (trainers hook the running title).
+  LoadTrainersForTitle();
+
   on_launch(title_id_.value(), title_name_);
 
   return X_STATUS_SUCCESS;
+}
+
+void Emulator::LoadTrainersForTitle() {
+  if (!cvars::trainer_enable) {
+    return;
+  }
+  if (!title_id_.has_value() || !title_id_.value()) {
+    return;
+  }
+
+  const std::filesystem::path trainers_dir = storage_root_ / "trainers";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(trainers_dir, ec)) {
+    XELOGI("Trainer: no trainers directory at {}",
+           xe::path_to_utf8(trainers_dir));
+    return;
+  }
+
+  // Aurora-style match: filename begins with the 8-hex title id (case-
+  // insensitive), same convention the .patch.toml patcher uses.
+  const std::string title_prefix = fmt::format("{:08X}", title_id_.value());
+
+  size_t loaded = 0;
+  for (auto& entry : std::filesystem::directory_iterator(trainers_dir, ec)) {
+    if (!entry.is_regular_file(ec)) {
+      continue;
+    }
+    std::string filename = xe::path_to_utf8(entry.path().filename());
+    if (filename.size() < 8) {
+      continue;
+    }
+    std::string filename_prefix = filename.substr(0, 8);
+    std::transform(filename_prefix.begin(), filename_prefix.end(),
+                   filename_prefix.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    if (filename_prefix != title_prefix) {
+      continue;
+    }
+
+    XELOGI("Trainer: loading {} for title {}", filename, title_prefix);
+    if (kernel_state_->LoadTrainerModule(entry.path(),
+                                         cvars::trainer_run_entry)) {
+      loaded++;
+    }
+  }
+
+  XELOGI("Trainer: loaded {} trainer(s) for title {}", loaded, title_prefix);
 }
 
 }  // namespace xe

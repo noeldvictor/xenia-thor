@@ -165,6 +165,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "user_language");
             copyBooleanExtra(intent, launchArguments, "xma_trace_context_state");
             copyBooleanExtra(intent, launchArguments, "xma_fast_silence");
+            copyBooleanExtra(intent, launchArguments, "trainer_enable");
+            copyBooleanExtra(intent, launchArguments, "trainer_run_entry");
             copyStringExtra(intent, launchArguments, "hid");
             copyStringExtra(intent, launchArguments, "dump_shaders");
             copyStringExtra(intent, launchArguments, "render_target_path_vulkan");
@@ -270,7 +272,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_convert");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_handoff");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_framegraph_depth");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_framegraph_depth_dump");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_framegraph_depth_shadow");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_patha_depth_snapshot");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_skip_foliage_shadows");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_diag_coverage");
             copyIntExtra(intent, launchArguments, "gpu_bd_native_aux_max_width");
@@ -285,6 +289,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "gpu_bd_native_hle_decouple");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_hle_present_decoupled");
             copyIntExtra(intent, launchArguments, "gpu_bd_hle_drop_resolve");
+            copyIntExtra(intent, launchArguments, "gpu_bd_full_native");
+            copyIntExtra(intent, launchArguments, "gpu_bd_flatten_replay");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_ring_idle");
             copyBooleanExtra(intent, launchArguments, "gpu_interrupt_on_swap");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_interrupts");
