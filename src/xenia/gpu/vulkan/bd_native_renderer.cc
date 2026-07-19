@@ -308,13 +308,18 @@ NativeSurface* BdNativeRenderer::AcquireSurface(uint32_t key, uint32_t width,
                                                 VkFormat color_format,
                                                 VkFormat depth_format,
                                                 VkSampleCountFlagBits samples) {
-  if (!key || !width || !height || color_format == VK_FORMAT_UNDEFINED) {
+  if (!key || !width || !height) {
     return nullptr;
   }
-  // MSAA aux surfaces need a resolve to be sampleable — not yet implemented.
-  if (samples != VK_SAMPLE_COUNT_1_BIT) {
+  // Depth-only surface = no color (color_format UNDEFINED) + a real depth
+  // format. A color surface needs a color format; a depth-only surface needs a
+  // depth format. Reject when neither is present.
+  const bool depth_only = (color_format == VK_FORMAT_UNDEFINED);
+  if (depth_only && depth_format == VK_FORMAT_UNDEFINED) {
     return nullptr;
   }
+  // MSAA (samples>1) surfaces get a single-sample resolve target in
+  // CreateSurfaceResources so they stay sampleable.
   auto it = surfaces_.find(key);
   if (it != surfaces_.end()) {
     NativeSurface& s = it->second;
@@ -363,6 +368,15 @@ NativeSurface* BdNativeRenderer::AcquireSurface(uint32_t key, uint32_t width,
   return &s;
 }
 
+NativeSurface* BdNativeRenderer::AcquireDepthOnlySurface(
+    uint32_t key, uint32_t width, uint32_t height, VkFormat depth_format,
+    VkSampleCountFlagBits samples) {
+  // Depth-only = no color format; AcquireSurface + CreateSurfaceResources treat
+  // color_format==UNDEFINED as "skip the color image / color attachment".
+  return AcquireSurface(key, width, height, VK_FORMAT_UNDEFINED, depth_format,
+                        samples);
+}
+
 bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
@@ -382,16 +396,41 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-  ici.format = s.color_format;
-  ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-              VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
-          vulkan_device, ici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
-          s.color_image, s.color_memory)) {
-    return false;
+  const bool depth_only = (s.color_format == VK_FORMAT_UNDEFINED);
+  const bool is_msaa = (s.samples != VK_SAMPLE_COUNT_1_BIT);
+  if (!depth_only) {
+    ici.format = s.color_format;
+    // MSAA color is resolved before it can be sampled (an MSAA image sampled
+    // directly bands), so it gets COLOR_ATTACHMENT + TRANSFER_SRC but NOT
+    // SAMPLED; single-sample color is sampled directly.
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                (is_msaa ? 0u : VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+            vulkan_device, ici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+            s.color_image, s.color_memory)) {
+      return false;
+    }
+    if (is_msaa) {
+      // Single-sample resolve target = the sampleable image for MSAA surfaces.
+      VkImageCreateInfo rici = ici;
+      rici.samples = VK_SAMPLE_COUNT_1_BIT;
+      rici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                   VK_IMAGE_USAGE_SAMPLED_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+              vulkan_device, rici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+              s.resolve_image, s.resolve_memory)) {
+        return false;
+      }
+    }
   }
   ici.format = s.depth_format;
-  ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  // Depth-only surfaces (prepass/shadow) are sampled by later passes, so add
+  // SAMPLED; a paired depth is attachment-only.
+  ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+              (depth_only ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u);
   if (!ui::vulkan::util::CreateDedicatedAllocationImage(
           vulkan_device, ici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
           s.depth_image, s.depth_memory)) {
@@ -403,12 +442,21 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
   vci.subresourceRange.levelCount = 1;
   vci.subresourceRange.layerCount = 1;
-  vci.image = s.color_image;
-  vci.format = s.color_format;
-  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  if (dfn.vkCreateImageView(device, &vci, nullptr, &s.color_view) !=
-      VK_SUCCESS) {
-    return false;
+  if (!depth_only) {
+    vci.image = s.color_image;
+    vci.format = s.color_format;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (dfn.vkCreateImageView(device, &vci, nullptr, &s.color_view) !=
+        VK_SUCCESS) {
+      return false;
+    }
+    if (is_msaa) {
+      vci.image = s.resolve_image;  // format/aspect unchanged (single-sample)
+      if (dfn.vkCreateImageView(device, &vci, nullptr, &s.resolve_view) !=
+          VK_SUCCESS) {
+        return false;
+      }
+    }
   }
   vci.image = s.depth_image;
   vci.format = s.depth_format;
@@ -417,6 +465,56 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   if (dfn.vkCreateImageView(device, &vci, nullptr, &s.depth_view) !=
       VK_SUCCESS) {
     return false;
+  }
+
+  if (depth_only) {
+    // Depth-only render passes (CLEAR first / LOAD accumulate) + framebuffer:
+    // one depth attachment, no color. The depth image is SAMPLED so later
+    // passes read the prepass depth directly (no EDRAM resolve).
+    VkAttachmentDescription datt = {};
+    datt.format = s.depth_format;
+    datt.samples = s.samples;
+    datt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    datt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    datt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    datt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    datt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    datt.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference dref = {
+        0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription dsub = {};
+    dsub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    dsub.colorAttachmentCount = 0;
+    dsub.pColorAttachments = nullptr;
+    dsub.pDepthStencilAttachment = &dref;
+    VkRenderPassCreateInfo drpci = {};
+    drpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    drpci.attachmentCount = 1;
+    drpci.pAttachments = &datt;
+    drpci.subpassCount = 1;
+    drpci.pSubpasses = &dsub;
+    if (dfn.vkCreateRenderPass(device, &drpci, nullptr, &s.render_pass_clear) !=
+        VK_SUCCESS) {
+      s.render_pass_clear = VK_NULL_HANDLE;
+      return false;
+    }
+    datt.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    datt.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    if (dfn.vkCreateRenderPass(device, &drpci, nullptr, &s.render_pass_load) !=
+        VK_SUCCESS) {
+      s.render_pass_load = VK_NULL_HANDLE;
+      return false;
+    }
+    VkFramebufferCreateInfo dfbci = {};
+    dfbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    dfbci.renderPass = s.render_pass_clear;
+    dfbci.attachmentCount = 1;
+    dfbci.pAttachments = &s.depth_view;
+    dfbci.width = s.width;
+    dfbci.height = s.height;
+    dfbci.layers = 1;
+    return dfn.vkCreateFramebuffer(device, &dfbci, nullptr, &s.framebuffer) ==
+           VK_SUCCESS;
   }
 
   // Two render passes (CLEAR first draw / LOAD accumulate) mirroring the primary
@@ -431,7 +529,12 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   att[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   att[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   att[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  att[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  // Single-sample color is sampled directly (SHADER_READ); MSAA color is
+  // resolved separately first, so it stays a color attachment.
+  const VkImageLayout color_final_layout =
+      is_msaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+              : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  att[0].finalLayout = color_final_layout;
   att[1].format = s.depth_format;
   att[1].samples = s.samples;
   att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -463,7 +566,7 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
     return false;
   }
   att[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-  att[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  att[0].initialLayout = color_final_layout;
   att[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
   att[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
   if (dfn.vkCreateRenderPass(device, &rpci, nullptr, &s.render_pass_load) !=
@@ -528,6 +631,18 @@ void BdNativeRenderer::DestroySurfaceResources(NativeSurface& s) {
   if (s.depth_memory != VK_NULL_HANDLE) {
     dfn.vkFreeMemory(device, s.depth_memory, nullptr);
     s.depth_memory = VK_NULL_HANDLE;
+  }
+  if (s.resolve_view != VK_NULL_HANDLE) {
+    dfn.vkDestroyImageView(device, s.resolve_view, nullptr);
+    s.resolve_view = VK_NULL_HANDLE;
+  }
+  if (s.resolve_image != VK_NULL_HANDLE) {
+    dfn.vkDestroyImage(device, s.resolve_image, nullptr);
+    s.resolve_image = VK_NULL_HANDLE;
+  }
+  if (s.resolve_memory != VK_NULL_HANDLE) {
+    dfn.vkFreeMemory(device, s.resolve_memory, nullptr);
+    s.resolve_memory = VK_NULL_HANDLE;
   }
   s.color_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }

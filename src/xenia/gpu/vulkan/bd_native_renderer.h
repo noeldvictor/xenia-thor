@@ -54,6 +54,13 @@ struct NativeSurface {
   VkImage depth_image = VK_NULL_HANDLE;
   VkDeviceMemory depth_memory = VK_NULL_HANDLE;
   VkImageView depth_view = VK_NULL_HANDLE;
+  // MSAA surfaces (samples>1): a single-sample resolve target for the color, so
+  // the surface is sampleable (an MSAA image sampled directly bands). Null for
+  // single-sample surfaces. The resolve is populated by a separate step (the
+  // render pass carries no in-pass resolve, matching the Adreno-compat path).
+  VkImage resolve_image = VK_NULL_HANDLE;
+  VkDeviceMemory resolve_memory = VK_NULL_HANDLE;
+  VkImageView resolve_view = VK_NULL_HANDLE;
   VkRenderPass render_pass_clear = VK_NULL_HANDLE;  // first draw into this surface
   VkRenderPass render_pass_load = VK_NULL_HANDLE;   // accumulate re-begins
   VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -166,6 +173,12 @@ class BdNativeRenderer {
   NativeSurface* AcquireSurface(uint32_t key, uint32_t width, uint32_t height,
                                 VkFormat color_format, VkFormat depth_format,
                                 VkSampleCountFlagBits samples);
+  // Get-or-create a DEPTH-ONLY native surface (no color image) for BD's depth
+  // prepass / shadow passes - a sampled depth image + depth-only render pass +
+  // framebuffer. Same registry/reuse rules as AcquireSurface; MSAA deferred.
+  NativeSurface* AcquireDepthOnlySurface(uint32_t key, uint32_t width,
+                                         uint32_t height, VkFormat depth_format,
+                                         VkSampleCountFlagBits samples);
   // Look up a native surface by key (nullptr if none). Const view for binding.
   NativeSurface* FindSurface(uint32_t key);
   // The sampled color view of the native surface whose key == guest_address, or
