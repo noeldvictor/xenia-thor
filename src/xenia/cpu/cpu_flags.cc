@@ -143,3 +143,18 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
+DEFINE_bool(cpu_backend_llvm_parallel_lowering, false,
+            "Run the LLVM backend's per-function IR-build + O2 optimization "
+            "OUTSIDE the global compile lock so multiple threads (the "
+            "cpu_precompile_guest_functions workers) lower and optimize "
+            "different functions concurrently; only the crash-prone codegen "
+            "(addIRModule/lookup - the historical libLLVM AsmPrinter SIGBUS "
+            "site) stays serialized. IR-build and the O2 pipeline are "
+            "thread-safe here (each uses its own LLVMContext/Module + local "
+            "PassBuilder with no shared TargetMachine), so this cannot revive "
+            "the concurrent-codegen heap corruption. Only takes effect when "
+            "cpu_llvm_object_cache is OFF (the object-cache path uses a "
+            "single-TargetMachine SimpleCompiler that must stay fully "
+            "serialized). Default-off experimental - needs on-device "
+            "concurrency validation (single-threaded qemu cannot exercise it).",
+            "CPU");

@@ -156,6 +156,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_lower_vmaddfp");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_context_residency");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_residency_writeback");
+            copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_parallel_lowering");
+            copyBooleanExtra(intent, launchArguments, "cpu_precompile_guest_functions");
+            copyIntExtra(intent, launchArguments, "cpu_precompile_threads");
+            copyIntExtra(intent, launchArguments, "cpu_precompile_budget_ms");
             copyStringExtra(intent, launchArguments, "cpu_perf_map_path");
             copyStringExtra(intent, launchArguments, "disassemble_function_filter");
             copyStringExtra(intent, launchArguments, "dump_shaders");

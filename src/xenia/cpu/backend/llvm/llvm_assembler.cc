@@ -77,6 +77,7 @@ DECLARE_bool(cpu_backend_llvm_residency_writeback);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
+DECLARE_bool(cpu_backend_llvm_parallel_lowering);
 
 namespace xe {
 namespace cpu {
@@ -2167,17 +2168,38 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     return false;
   }
   static std::timed_mutex s_llvm_compile_mutex;
-  std::unique_lock<std::timed_mutex> compile_guard(s_llvm_compile_mutex,
-                                                   std::chrono::seconds(10));
-  if (!compile_guard.owns_lock()) {
-    XELOGW(
-        "LLVMAssembler: compile lock timed out (a prior compile is stuck / "
-        "storming) - falling back to a64 for 0x{:08X}",
-        function->address());
-    return false;
-  }
-  if (xe::ExceptionHandler::GetUnhandledFaultCount() != 0) {
-    return false;  // a storm began while we waited for the lock
+  auto acquire_compile_lock =
+      [&](std::unique_lock<std::timed_mutex>& guard) -> bool {
+    guard = std::unique_lock<std::timed_mutex>(s_llvm_compile_mutex,
+                                               std::chrono::seconds(10));
+    if (!guard.owns_lock()) {
+      XELOGW(
+          "LLVMAssembler: compile lock timed out (a prior compile is stuck / "
+          "storming) - falling back to a64 for 0x{:08X}",
+          function->address());
+      return false;
+    }
+    if (xe::ExceptionHandler::GetUnhandledFaultCount() != 0) {
+      return false;  // a storm began while we waited for the lock
+    }
+    return true;
+  };
+
+  // Parallel lowering: run the thread-safe IR-build + O2 optimization OUTSIDE
+  // the compile lock so multiple precompile workers overlap; serialize ONLY the
+  // crash-prone codegen (addIRModule/lookup) below. Requires the object cache
+  // OFF - its single-TargetMachine SimpleCompiler must stay fully serialized,
+  // and its skip-lowering fast path (which also mutates the shared LLJIT) is
+  // then inactive, so the only shared region left is the codegen at the bottom.
+  const bool parallel_lowering =
+      cvars::cpu_backend_llvm_parallel_lowering && !cvars::cpu_llvm_object_cache;
+
+  std::unique_lock<std::timed_mutex> compile_guard;
+  if (!parallel_lowering) {
+    // Default: hold the lock across the WHOLE compile (original behavior).
+    if (!acquire_compile_lock(compile_guard)) {
+      return false;
+    }
   }
 
   auto ctx_owner = std::make_unique<llvm::LLVMContext>();
@@ -2394,6 +2416,16 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // CRASHES libLLVM (the intermittent re-fault storm device-pinned to libLLVM.so)
   // never reaches its LLVMmap/LLVMseq line, so the LAST "LLVMbegin" with no
   // matching "LLVMmap" pins the crashing guest function. Cheap; one line/fn.
+  // Serialize codegen only: in parallel-lowering mode the wide lock was NOT
+  // taken above, so grab it now around the crash-prone addIRModule/lookup (the
+  // historical libLLVM AsmPrinter SIGBUS site). In default mode compile_guard
+  // already holds it. This keeps concurrent codegen impossible either way.
+  std::unique_lock<std::timed_mutex> codegen_guard;
+  if (parallel_lowering) {
+    if (!acquire_compile_lock(codegen_guard)) {
+      return false;
+    }
+  }
   XELOGI("LLVMbegin guest=0x{:08X}", function->address());
   if (auto err = jit.addIRModule(
           llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
