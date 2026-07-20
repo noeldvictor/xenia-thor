@@ -143,6 +143,18 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
+DEFINE_bool(cpu_precompile_drain_frontier, false,
+            "AOT-primary coverage: run the load-window precompiler until the "
+            "statically-reachable frontier (direct call graph + pdata) is fully "
+            "DRAINED, ignoring cpu_precompile_budget_ms. Maximizes AOT coverage "
+            "so gameplay hits few runtime JIT compiles (measure with "
+            "cpu_log_aot_coverage), at the cost of load time. Also hardens the "
+            "exhaustion check: a worker no longer concludes the frontier is "
+            "drained while any other worker is still mid-compile (an in-flight "
+            "compile can declare new reachable functions). Only the "
+            "indirect-call residue then remains for the runtime JIT fallback. "
+            "Default off.",
+            "CPU");
 DEFINE_bool(cpu_backend_llvm_parallel_lowering, false,
             "Run the LLVM backend's per-function IR-build + O2 optimization "
             "OUTSIDE the global compile lock so multiple threads (the "

@@ -1317,23 +1317,31 @@ void XexModule::PrecompileGuestFunctions() {
     }
   }
 
-  // Time budget: bound the load-time impact. 0 = unbounded.
+  // Time budget: bound the load-time impact. 0 = unbounded. Drain mode ignores
+  // it entirely and runs until the reachable frontier is exhausted (max AOT
+  // coverage).
   const int budget_ms = cvars::cpu_precompile_budget_ms;
+  const bool drain_frontier = cvars::cpu_precompile_drain_frontier;
   const auto start = std::chrono::steady_clock::now();
   const auto deadline =
-      budget_ms > 0
-          ? start + std::chrono::milliseconds(budget_ms)
-          : std::chrono::steady_clock::time_point::max();
+      (drain_frontier || budget_ms <= 0)
+          ? std::chrono::steady_clock::time_point::max()
+          : start + std::chrono::milliseconds(budget_ms);
 
   XELOGI(
       "cpu_precompile_guest_functions: load-window pre-warm on {} thread(s) "
-      "from the entry point + {} pdata entries, budget {}ms (code range "
-      "{:08X}-{:08X})",
-      worker_count, guest_runtime_functions_.size(), budget_ms, lo, hi);
+      "from the entry point + {} pdata entries, budget {}ms drain_frontier={} "
+      "(code range {:08X}-{:08X})",
+      worker_count, guest_runtime_functions_.size(), budget_ms, drain_frontier,
+      lo, hi);
 
   std::atomic<uint32_t> compiled{0};
+  // In-flight compiles across workers: a worker must not conclude the frontier
+  // is drained while another worker is still mid-compile (that compile can
+  // declare new reachable functions), which would drop coverage.
+  std::atomic<uint32_t> active{0};
   for (uint32_t t = 0; t < worker_count; ++t) {
-    precompile_threads_.emplace_back([this, deadline, &compiled]() {
+    precompile_threads_.emplace_back([this, deadline, &compiled, &active]() {
       xe::threading::set_name("PrecompileJIT");
       int empty_rounds = 0;
       while (!precompile_stop_.load(std::memory_order_relaxed)) {
@@ -1353,7 +1361,11 @@ void XexModule::PrecompileGuestFunctions() {
           // Compile (define) the function now, on this idle core, so the guest
           // doesn't pay the codegen cost on first encounter. Safe here only
           // because no guest thread is executing yet (see the routine header).
+          // Bracket with the in-flight counter so a peer worker won't declare
+          // the frontier drained while this compile may still expand it.
+          active.fetch_add(1, std::memory_order_release);
           processor_->ResolveFunction(addr);
+          active.fetch_sub(1, std::memory_order_release);
           uint32_t done = compiled.fetch_add(1, std::memory_order_relaxed) + 1;
           // RPCS3-style "compiling" progress: throttled log of done/frontier so
           // the app can surface a compile progress bar (parse this line). Cheap
@@ -1381,9 +1393,16 @@ void XexModule::PrecompileGuestFunctions() {
         if (!now_have) {
           // Give any in-flight compiles on the other workers a moment to
           // declare new frontier; after a few empty rounds the reachable set is
-          // exhausted, so this worker exits (the join then completes).
-          if (++empty_rounds > 5) {
-            break;
+          // exhausted, so this worker exits (the join then completes). But only
+          // count empty rounds toward exhaustion when NO peer worker is mid-
+          // compile - an in-flight compile can still declare new frontier, so
+          // exiting now would drop that coverage.
+          if (active.load(std::memory_order_acquire) == 0) {
+            if (++empty_rounds > 5) {
+              break;
+            }
+          } else {
+            empty_rounds = 0;
           }
           xe::threading::Sleep(std::chrono::milliseconds(1));
         }
