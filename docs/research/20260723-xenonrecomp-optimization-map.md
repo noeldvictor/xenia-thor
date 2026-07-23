@@ -87,6 +87,43 @@ volatile memory ops to prevent unsafe reordering.
   game-patch/HLE injection mechanism, already paralleled by xenia's .patch.toml +
   D3D9-HLE signature trampolines.
 
+## 7. The LOWER-POWER axis specifically (research + xenia's state)
+
+Power/thermal is a PERFORMANCE lever here, not just battery: measured ~5C of
+sustained heat costs ~8-10% fps (gaming benchmarks), and the Thor's CPU cores
+are BD's hot/busy component - so every executed-instruction cut is also a
+thermal-headroom gain that lets the hot core hold its boost clock (deeper idle
+on the other cores = DVFS headroom). This is why #1-#4 (fewer instructions) ARE
+the lower-power levers. Additional power-specific findings + xenia's state:
+
+- **ARM64 WFE/YIELD in busy-waits** (spin on a plain load keeps the pipeline +
+  memory system powered; WFE drops the core to a low-power state). xenia's host
+  spin points are ALREADY power-friendly: entry_table.cc STATUS_COMPILING wait
+  Sleep()s 10us/iter (not a raw spin); the a64 backend has spin->yield tuning
+  (a64_clock_spin_yield + arm64_blue_dragon_draw_wait_fastpath_native_yield -
+  "frees the core for the command-processor thread" = active-core minimization);
+  the timer queue was de-spun (memory [[global-lock-check-lockfree]]). The
+  low-hanging host busy-wait fruit is PICKED - confirmed this round.
+- **Active-core minimization -> deeper sleep + thermal headroom**: consolidating
+  work off spare cores lets them reach deep sleep and hands the hot core DVFS
+  headroom to boost. Already partly done (the draw-wait yield frees a core for
+  the CP thread). Open lever: audit whether the AOT precompiler's load-window
+  fan-out (spare cores at boot) and the CP/worker thread affinity leave the
+  X3 (cpu7) free for the guest hot thread. Device-measured.
+- **AOT-primary = fewer runtime JIT-compile spikes = fewer power/heat spikes**
+  during gameplay (compile once at load / from the object cache, not repeatedly
+  mid-frame). The committed AOT stack (cpu_aot_maximize + cpu_llvm_object_cache)
+  is itself a lower-power lever - front-loads codegen power to boot, amortized
+  across warm launches. [[aot-coverage-measured]]
+- **Turnip 26.1.0** (2026) landed A8XX GMEM fixes + efficiency gains vs the
+  bundled 26.0 R8; a driver bump could cut GPU power. Device/driver work.
+
+Sources: DVFS/energy surveys (arxiv 1404.4629, mdpi 13/5/826), spinlock
+low-power-wait + active-set-minimization (concurrency-throttling patents,
+Malthusian Locks arxiv 1511.06035), GameNative/Turnip 2026 (heldgames,
+pocket-gaming). All corroborate: fewer executed ops + deeper core idle = the
+lower-power path, and it converts to sustained fps via thermal headroom.
+
 ## Priority for FASTER + LOWER POWER (given the constraints)
 
 1. #4 static discovery — DONE + committed (biggest landed win).
