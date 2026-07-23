@@ -143,6 +143,17 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
+DEFINE_bool(cpu_precompile_scan_pointer_tables, false,
+            "AOT coverage: scan the XEX image for function-pointer tables "
+            "(vtables / dispatch tables in the data sections - runs of >=4 "
+            "consecutive 4-byte-aligned words that all point into the code "
+            "range) and seed those targets into the precompile frontier. "
+            "Attacks the VIRTUAL/function-pointer dispatch residue that the "
+            "jump-table scan (switch tables) does not - vtable entries are real "
+            "function starts. PRECOMPILE-ONLY (never changes compilation; a "
+            "false-positive table entry is a harmless speculative compile). "
+            "Default off.",
+            "CPU");
 DEFINE_bool(cpu_precompile_scan_jump_tables, false,
             "AOT coverage: scan the XEX code for jump-table dispatches "
             "(mtctr rN; bctr, with a preceding lis/addi table base - the "

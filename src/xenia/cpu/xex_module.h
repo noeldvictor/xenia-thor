@@ -264,6 +264,11 @@ class XexModule : public xe::cpu::Module {
   // the precompile frontier. Precompile-only (never changes compilation); gated
   // by cpu_precompile_scan_jump_tables. Returns the count seeded.
   uint32_t ScanJumpTablesForPrecompile();
+  // Scan the XEX image's data sections for function-pointer tables (vtables) -
+  // runs of aligned words pointing into the code range - and seed those targets
+  // (real function starts) into the precompile frontier, attacking the virtual-
+  // dispatch residue. Precompile-only; gated by cpu_precompile_scan_pointer_tables.
+  uint32_t ScanPointerTablesForPrecompile();
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;

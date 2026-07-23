@@ -1340,6 +1340,67 @@ uint32_t XexModule::ScanJumpTablesForPrecompile() {
   return seeded;
 }
 
+uint32_t XexModule::ScanPointerTablesForPrecompile() {
+  if (!cvars::cpu_precompile_scan_pointer_tables) {
+    return 0;
+  }
+  Memory* memory = processor_->memory();
+  const uint32_t code_lo = low_address_;
+  const uint32_t code_hi = high_address_;
+  const uint32_t img_lo = base_address_;
+  const uint32_t img_hi = base_address_ + image_size();
+  if (!code_lo || code_hi <= code_lo || img_hi <= img_lo + 8) {
+    return 0;
+  }
+  auto read = [&](uint32_t a) -> uint32_t {
+    return xe::load_and_swap<uint32_t>(memory->TranslateVirtual(a));
+  };
+  auto is_code_ptr = [&](uint32_t v) -> bool {
+    return v >= code_lo && v < code_hi && (v & 3u) == 0u;
+  };
+
+  // A function-pointer table (vtable / dispatch table) = a run of >= kMinRun
+  // consecutive 4-byte-aligned words that all point into the code range. PPC
+  // instruction words are almost never aligned addresses in that range, so a
+  // long run reliably marks a table (in a data/rodata section).
+  const uint32_t kMinRun = 4;
+  const size_t kMaxTargets = 16384;  // bound pathological runs
+  std::vector<uint32_t> targets;
+  uint32_t run_start = 0;
+  uint32_t run_len = 0;
+  auto flush_run = [&](uint32_t run_end) {
+    if (run_len >= kMinRun) {
+      for (uint32_t e = run_start; e < run_end && targets.size() < kMaxTargets;
+           e += 4) {
+        targets.push_back(read(e));
+      }
+    }
+    run_len = 0;
+  };
+  for (uint32_t a = img_lo; a + 4 <= img_hi && targets.size() < kMaxTargets;
+       a += 4) {
+    if (is_code_ptr(read(a))) {
+      if (run_len == 0) {
+        run_start = a;
+      }
+      ++run_len;
+    } else {
+      flush_run(a);
+    }
+  }
+  flush_run(img_hi & ~3u);
+
+  uint32_t seeded = 0;
+  std::lock_guard<std::mutex> lock(precompile_mutex_);
+  for (const uint32_t t : targets) {
+    if (t >= code_lo && t < code_hi && precompile_queued_.insert(t).second) {
+      precompile_work_.push_back(t);
+      ++seeded;
+    }
+  }
+  return seeded;
+}
+
 void XexModule::PrecompileGuestFunctions() {
   if (!cvars::cpu_precompile_guest_functions) {
     return;
@@ -1405,6 +1466,11 @@ void XexModule::PrecompileGuestFunctions() {
   if (jump_table_seeds) {
     XELOGI("cpu_precompile: seeded {} jump-table target(s) into the frontier",
            jump_table_seeds);
+  }
+  const uint32_t pointer_table_seeds = ScanPointerTablesForPrecompile();
+  if (pointer_table_seeds) {
+    XELOGI("cpu_precompile: seeded {} pointer-table (vtable) target(s)",
+           pointer_table_seeds);
   }
 
   // Time budget: bound the load-time impact. 0 = unbounded. Drain mode ignores
