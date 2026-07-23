@@ -143,6 +143,17 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
+DEFINE_bool(cpu_precompile_scan_jump_tables, false,
+            "AOT coverage: scan the XEX code for jump-table dispatches "
+            "(mtctr rN; bctr, with a preceding lis/addi table base - the "
+            "XenonRecomp technique) and add the decoded target addresses to the "
+            "precompile frontier, so switch-case blocks reached only via bctr "
+            "(otherwise the runtime-JIT residue) become AOT-compiled. Decode is "
+            "conservative (reads table entries only while they land inside the "
+            "code range) and PRECOMPILE-ONLY - it does not change how any "
+            "function is compiled, so it cannot affect correctness; a mis-decoded "
+            "entry is just a harmless speculative compile. Default off.",
+            "CPU");
 DEFINE_bool(cpu_precompile_drain_frontier, false,
             "AOT-primary coverage: run the load-window precompiler until the "
             "statically-reachable frontier (direct call graph + pdata) is fully "

@@ -1259,6 +1259,87 @@ void XexModule::RefillPrecompileWork() {
   }
 }
 
+uint32_t XexModule::ScanJumpTablesForPrecompile() {
+  if (!cvars::cpu_precompile_scan_jump_tables) {
+    return 0;
+  }
+  Memory* memory = processor_->memory();
+  const uint32_t lo = low_address_;
+  const uint32_t hi = high_address_;
+  if (!lo || hi <= lo || (hi - lo) < 8) {
+    return 0;
+  }
+  auto read = [&](uint32_t a) -> uint32_t {
+    return xe::load_and_swap<uint32_t>(memory->TranslateVirtual(a));
+  };
+
+  std::vector<uint32_t> targets;
+  for (uint32_t addr = lo; addr + 4 <= hi; addr += 4) {
+    if (read(addr) != 0x4E800420u) {  // bctr
+      continue;
+    }
+    // Recognize a jump-TABLE dispatch (vs a single function-pointer bctr) by an
+    // indexed load (lwzx) plus a lis/addi(ori) table base in a small window
+    // before the bctr - the XenonRecomp shape. Requiring lwzx filters out
+    // single-pointer bctr (which use a plain lwz, no index).
+    const uint32_t win = 32u * 4u;
+    const uint32_t scan_lo = (addr > lo + win) ? addr - win : lo;
+    bool have_lwzx = false;
+    bool have_base = false;
+    uint32_t base = 0;
+    int32_t lis_reg = -1;
+    uint32_t lis_hi = 0;
+    for (uint32_t b = scan_lo; b < addr; b += 4) {
+      const uint32_t c = read(b);
+      if ((c & 0xFC0007FEu) == 0x7C00002Eu) {  // lwzx rD,rA,rB (indexed load)
+        have_lwzx = true;
+      }
+      if ((c & 0xFC1F0000u) == 0x3C000000u) {  // lis rX == addis rX,r0,hi
+        lis_reg = int32_t((c >> 21) & 0x1F);
+        lis_hi = c & 0xFFFFu;
+      } else if (lis_reg >= 0 && (c & 0xFC000000u) == 0x38000000u &&  // addi
+                 int32_t((c >> 21) & 0x1F) == lis_reg &&
+                 int32_t((c >> 16) & 0x1F) == lis_reg) {
+        base = (lis_hi << 16) + uint32_t(int32_t(int16_t(c & 0xFFFFu)));
+        have_base = true;
+      } else if (lis_reg >= 0 && (c & 0xFC000000u) == 0x60000000u &&  // ori
+                 int32_t((c >> 21) & 0x1F) == lis_reg &&
+                 int32_t((c >> 16) & 0x1F) == lis_reg) {
+        base = (lis_hi << 16) | (c & 0xFFFFu);
+        have_base = true;
+      }
+    }
+    if (!have_lwzx || !have_base || base < lo || base >= hi) {
+      continue;
+    }
+    // Read consecutive 4-byte big-endian target addresses while they land,
+    // aligned, inside the code range (the first out-of-range/misaligned word
+    // bounds the table - conservative).
+    const uint32_t kMaxEntries = 1024;
+    for (uint32_t i = 0; i < kMaxEntries; ++i) {
+      const uint32_t ent = base + i * 4u;
+      if (ent + 4u > hi) {
+        break;
+      }
+      const uint32_t tgt = read(ent);
+      if (tgt < lo || tgt >= hi || (tgt & 3u)) {
+        break;
+      }
+      targets.push_back(tgt);
+    }
+  }
+
+  uint32_t seeded = 0;
+  std::lock_guard<std::mutex> lock(precompile_mutex_);
+  for (const uint32_t t : targets) {
+    if (t >= lo && t < hi && precompile_queued_.insert(t).second) {
+      precompile_work_.push_back(t);
+      ++seeded;
+    }
+  }
+  return seeded;
+}
+
 void XexModule::PrecompileGuestFunctions() {
   if (!cvars::cpu_precompile_guest_functions) {
     return;
@@ -1315,6 +1396,15 @@ void XexModule::PrecompileGuestFunctions() {
         precompile_work_.push_back(addr);
       }
     }
+  }
+
+  // Seed jump-table targets (bctr switch dispatches) so the switch-case blocks
+  // reached only via bctr - otherwise the runtime-JIT residue - are AOT-
+  // compiled. Precompile-only; no-op unless cpu_precompile_scan_jump_tables.
+  const uint32_t jump_table_seeds = ScanJumpTablesForPrecompile();
+  if (jump_table_seeds) {
+    XELOGI("cpu_precompile: seeded {} jump-table target(s) into the frontier",
+           jump_table_seeds);
   }
 
   // Time budget: bound the load-time impact. 0 = unbounded. Drain mode ignores

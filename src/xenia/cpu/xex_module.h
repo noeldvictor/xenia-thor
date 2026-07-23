@@ -259,6 +259,11 @@ class XexModule : public xe::cpu::Module {
   std::unordered_set<uint32_t> precompile_queued_;
   size_t precompile_cursor_ = 0;
   void RefillPrecompileWork();
+  // Scan the code range for jump-table dispatches (mtctr rN; bctr with a
+  // preceding lis/addi table base) and seed the decoded, in-range targets into
+  // the precompile frontier. Precompile-only (never changes compilation); gated
+  // by cpu_precompile_scan_jump_tables. Returns the count seeded.
+  uint32_t ScanJumpTablesForPrecompile();
 
   // XEX_HEADER_ALTERNATE_TITLE_IDS loaded into a safe std::vector
   std::vector<uint32_t> opt_alternate_title_ids_;
