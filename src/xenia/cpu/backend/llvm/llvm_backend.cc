@@ -124,6 +124,23 @@ DEFINE_bool(
     "Default off pending qemu-differential + device validation.",
     "CPU");
 
+DEFINE_bool(
+    cpu_backend_llvm_residency_abi, false,
+    "LLVM backend (requires cpu_backend_llvm_residency_writeback): ABI-aware "
+    "cross-function residency (XenonRecomp non_volatile_as_local / Box64 CALLRET "
+    "class, the #1 lever toward big CPU speedups). After a guest call, DON'T "
+    "reload the mirrors for the PPC ABI callee-saved registers (GPR r14-r31, FPR "
+    "f14-f31, VMX v20-v31) - an ABI-compliant callee preserves them, so the "
+    "pre-call alloca values are still correct, and skipping the reload lets LLVM "
+    "keep those ~18+ guest registers RESIDENT in host callee-saved registers "
+    "ACROSS the call instead of round-tripping every one through the context at "
+    "each call boundary (the residency trap that makes the guest thread "
+    "memory-bound). Volatile regs (r0/r3-r12, LR/CTR/XER/CR) are still reloaded. "
+    "ASSUMES ABI compliance (like XenonRecomp) - a callee that clobbers a "
+    "non-volatile without restoring would desync; validate with the qemu-a64 "
+    "byte-differential + device render before enabling. Default off.",
+    "CPU");
+
 DEFINE_string(cpu_backend_llvm_skip_addrs, "",
               "Comma/space-separated hex guest addresses to FORCE onto the a64 "
               "backend (skip LLVM) WITHOUT a rebuild. Use to pin/mitigate a "

@@ -31,6 +31,7 @@
 
 #if XE_LLVM_BACKEND_ENABLED
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -74,6 +75,7 @@ DECLARE_bool(cpu_backend_llvm_dump_asm);
 DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_backend_llvm_residency_writeback);
+DECLARE_bool(cpu_backend_llvm_residency_abi);
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
@@ -475,6 +477,30 @@ class Lowerer {
   // instead of ctx+offset memory, with write-back/reload at call barriers.
   bool residency_ = false;
   bool writeback_ = false;  // alloca-only stores + flush at barriers (RPCS3-class)
+  bool abi_residency_ = false;  // skip reloading ABI callee-saved regs after calls
+
+  // Xbox 360 PPC ABI callee-saved (non-volatile) context offsets. Matched to the
+  // register SAVE/RESTORE helpers the toolchain emits (xex_module FindSaveRest):
+  //   GPR r14-r31         (__savegprlr_14),
+  //   FPR f14-f31         (__savefpr_14),
+  //   VMX v14-v31         (__savevmx_14) AND v64-v127 (__savevmx_64, VMX128).
+  // A callee that modifies any of these saves+restores it (via those helpers), so
+  // after a guest call the pre-call alloca mirrors are still correct - reloading
+  // them is redundant AND forces LLVM to spill them across the call (the residency
+  // trap). Skipping the reload keeps them in host callee-saved registers across
+  // the call = cross-function residency. NOT the standard AltiVec v20-v31: the
+  // 360's VMX128 non-volatile set is wider (v14-v31 + v64-v127).
+  static bool IsAbiNonVolatileOffset(uint64_t offset) {
+    using Ctx = xe::cpu::ppc::PPCContext;
+    constexpr uint64_t kR = offsetof(Ctx, r);   // uint64_t r[32]
+    constexpr uint64_t kF = offsetof(Ctx, f);   // double   f[32]
+    constexpr uint64_t kV = offsetof(Ctx, v);   // vec128_t v[128]
+    if (offset >= kR + 14 * 8 && offset < kR + 32 * 8) return true;    // r14-r31
+    if (offset >= kF + 14 * 8 && offset < kF + 32 * 8) return true;    // f14-f31
+    if (offset >= kV + 14 * 16 && offset < kV + 32 * 16) return true;  // v14-v31
+    if (offset >= kV + 64 * 16 && offset < kV + 128 * 16) return true;  // v64-v127
+    return false;
+  }
   std::unordered_map<uint64_t, llvm::AllocaInst*> ctx_regs_;  // offset -> alloca
   std::unordered_map<uint64_t, llvm::Type*> ctx_reg_ty_;      // offset -> type
   std::unordered_set<uint64_t> ctx_stored_;    // offsets written via alloca-only
@@ -503,6 +529,10 @@ class Lowerer {
   // changed guest state). The mirrors then match the post-call context.
   void ReloadCtxRegs() {
     for (auto& kv : ctx_regs_) {
+      // ABI-aware residency: the callee preserves non-volatile regs, so their
+      // mirrors are already correct - skip the reload to keep them resident in
+      // host callee-saved registers across the call.
+      if (abi_residency_ && IsAbiNonVolatileOffset(kv.first)) continue;
       auto* ty = ctx_reg_ty_[kv.first];
       b_.CreateStore(b_.CreateLoad(ty, CtxPtr(kv.first)), kv.second);
     }
@@ -552,6 +582,9 @@ bool Lowerer::Run(HIRBuilder* builder) {
   // anchors its allocas after membase_, so both x20/x21 are set first.
   residency_ = cvars::cpu_backend_llvm_context_residency;
   writeback_ = residency_ && cvars::cpu_backend_llvm_residency_writeback;
+  // ABI-aware cross-function residency requires write-back (the mirrors must be
+  // the authoritative copy that the callee preserves via the context).
+  abi_residency_ = writeback_ && cvars::cpu_backend_llvm_residency_abi;
 
   // Save the incoming guest return address (x0, per the a64 host->guest thunk:
   // "mov x0, x2 // x0 = guest return address") and init the next-call slot.
