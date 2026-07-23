@@ -174,6 +174,15 @@ class CommandProcessor {
   virtual void PrepareForWait();
   virtual void ReturnFromWait();
 
+  // BD Turnip crash-race candidate fix (gated, default off): force submitted GPU
+  // work to COMPLETE before an EVENT_WRITE_SHD fence becomes guest-visible, so
+  // the guest cannot poll the fence and read a GPU result the native/skip_resolves
+  // path left still in flight (see docs / memory bd-turnip-crash-race-diagnosis).
+  // Default no-op; the Vulkan backend overrides it to flush + await the current
+  // submission. HYPOTHESIS-DRIVEN - validate on device (does the crash vanish, at
+  // what fps cost) then narrow the scope to BD's field-resolve fences.
+  virtual void SyncGpuForEventWriteFence() {}
+
   uint32_t ExecutePrimaryBuffer(uint32_t start_index, uint32_t end_index);
   void UpdatePrimaryReadPointer(uint32_t read_index, const char* reason);
   virtual void OnPrimaryBufferEnd() {}

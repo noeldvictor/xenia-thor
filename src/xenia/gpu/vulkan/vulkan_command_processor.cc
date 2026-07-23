@@ -1928,6 +1928,16 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
   gamma_ramp_pwl_current_frame_ = UINT32_MAX;
 }
 
+void VulkanCommandProcessor::SyncGpuForEventWriteFence() {
+  // Runs on the CP thread (the submission owner). AwaitSubmissionCompletion ends
+  // the open submission if asked to wait on the upcoming one, then polls fences
+  // until the GPU has finished it - so the EVENT_WRITE_SHD fence the caller is
+  // about to store to guest memory cannot be observed before its GPU work
+  // completes. Gated (gpu_bd_sync_event_write_fences); serializes CPU/GPU at each
+  // event, so it is a diagnostic to be narrowed once the device confirms the fix.
+  AwaitSubmissionCompletion(GetCurrentSubmission());
+}
+
 bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
                                                        uint32_t length,
                                                        const char* label,

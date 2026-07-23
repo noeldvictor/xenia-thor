@@ -477,6 +477,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_cull_fast_replay");
             copyBooleanExtra(intent, launchArguments, "gpu_cull_fast_only");
             copyBooleanExtra(intent, launchArguments, "gpu_whole_draw_only");
+            copyBooleanExtra(intent, launchArguments, "gpu_bd_sync_event_write_fences");
             copyBooleanExtra(intent, launchArguments, "vulkan_trace_shader_constants");
             copyStringExtra(
                     intent, launchArguments, "vulkan_trace_shader_constants_shader_filter");

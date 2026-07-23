@@ -50,6 +50,20 @@
 #include <unordered_map>
 #endif  // XE_PLATFORM_ANDROID
 
+DEFINE_bool(
+    gpu_bd_sync_event_write_fences, false,
+    "BD Turnip crash-race candidate fix (gated, default off): before an "
+    "EVENT_WRITE_SHD packet stores its completion fence to guest memory, force "
+    "the submitted GPU work to COMPLETE (backend flush + await current "
+    "submission). The crash is ledger-confirmed a GPU-completion TIMING RACE - "
+    "the fence is written synchronously on the CP thread with no GPU wait, so "
+    "with the native renderer / skip_resolves the guest can poll the fence and "
+    "read a result still in flight on fast Turnip -> intermittent crash "
+    "(~180s). No-op on backends that don't override SyncGpuForEventWriteFence. "
+    "HYPOTHESIS-DRIVEN: validate on device (crash-mapper: does the racing fn "
+    "poll this fence? does the crash vanish? fps cost?), then narrow to BD's "
+    "field-resolve fences. See memory bd-turnip-crash-race-diagnosis.",
+    "GPU");
 DEFINE_bool(gpu_hle_surface_trace, false,
             "GPU D3D-HLE: log BD's surface/tiling/copy register writes (RB_SURFACE_"
             "INFO / COLOR / DEPTH / MODECONTROL / COPY_CONTROL / COPY_DEST_INFO) as "
@@ -2687,6 +2701,12 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_SHD(RingBuffer* reader,
   auto endianness = static_cast<xenos::Endian>(address & 0x3);
   address &= ~0x3;
   data_value = GpuSwap(data_value, endianness);
+  // BD Turnip crash-race candidate fix: make the fence lag actual GPU completion
+  // so the guest cannot poll it and read still-in-flight GPU data (gated; no-op
+  // unless the backend overrides SyncGpuForEventWriteFence).
+  if (cvars::gpu_bd_sync_event_write_fences) {
+    SyncGpuForEventWriteFence();
+  }
   xe::store(memory_->TranslatePhysical(address), data_value);
   trace_writer_.WriteMemoryWrite(CpuToGpu(address), 4);
   if (cvars::gpu_trace_swap) {

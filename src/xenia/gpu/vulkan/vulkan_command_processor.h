@@ -387,6 +387,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   void OnGammaRamp256EntryTableValueWritten() override;
   void OnGammaRampPWLValueWritten() override;
 
+  // BD Turnip crash-race candidate fix (gated by gpu_bd_sync_event_write_fences):
+  // flush the open submission + block until the GPU finishes it, so an
+  // EVENT_WRITE_SHD fence reflects completed GPU work.
+  void SyncGpuForEventWriteFence() override;
+
   void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                  uint32_t frontbuffer_height, uint32_t display_width,
                  uint32_t display_height) override;
