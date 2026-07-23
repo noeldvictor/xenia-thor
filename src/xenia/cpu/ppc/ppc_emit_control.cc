@@ -202,6 +202,29 @@ int InstrEmit_branch(PPCHIRBuilder& f, const char* src, uint64_t cia,
         f.CallExtern(function);
         return 0;  // inlined - no OPCODE_CALL to the thunk emitted
       }
+      // Recomp (XenonRecomp's #1 lever): inline a direct unconditional
+      // `bl __savegprlr_N` register-SAVE prolog helper (kProlog) into the
+      // caller instead of CALLing the shared helper. The save helpers are
+      // straight-line store leaves ending in blr (no branches, no mtlr), so
+      // they pass ScanInlineLeafCandidate and EmitInlineLeaf splices their
+      // exact store body inline + skips the blr. Correct-by-construction: LR
+      // (set to the return address above; the helper READS but does not rewrite
+      // it) and r1 are preserved identically to the call, so the inlined stores
+      // write the same values to the same guest-stack offsets. Eliminates the
+      // per-non-leaf-function-invocation call + separate dispatch of the hot
+      // save helper = fewer executed ops = faster + lower power on the
+      // CPU-bound path. Self-calls excluded. SAFE: eliminate a call, do not
+      // elide across a barrier (see the cross-barrier elision wall verdict).
+      if (cvars::cpu_inline_saverest && lk && !cond && function &&
+          function->behavior() == Function::Behavior::kProlog &&
+          nia_value != f.function()->address()) {
+        InlineLeafScan scan =
+            ScanInlineLeafCandidate(f.frontend()->memory(), nia_value);
+        if (scan.straightline_leaf) {
+          f.EmitInlineLeaf(nia_value, scan.inst_count);
+          return 0;  // inlined - no call to the save helper emitted
+        }
+      }
       if (cond) {
         if (!expect_true) {
           cond = f.IsFalse(cond);

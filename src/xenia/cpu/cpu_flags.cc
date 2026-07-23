@@ -112,6 +112,20 @@ DEFINE_bool(arm64_jit_inline_extern_thunk, false,
             "elide across a barrier. BD's #1 CPU cost is this CS thunk path. "
             "Default off.",
             "CPU");
+DEFINE_bool(cpu_inline_saverest, false,
+            "Recomp (XenonRecomp's #1 lever): inline a direct `bl __savegprlr_N` "
+            "(and the other register SAVE prolog helpers - kProlog behavior) "
+            "into the caller instead of CALLing the shared helper. These helpers "
+            "are straight-line store leaves ending in blr, so the existing "
+            "EmitInlineLeaf splices their exact store body inline + skips the blr "
+            "(correct-by-construction; LR/r1 preserved identically to the call). "
+            "Eliminates the per-non-leaf-function-invocation call + separate "
+            "dispatch of the hot save helper = fewer executed guest-host "
+            "instructions and memory ops = faster AND lower power (the CPU is "
+            "BD's hot/busy component; fewer ops = less heat). Code-bloat is "
+            "compile-time (amortized under AOT-primary / the object cache). "
+            "Default off (gated; enable with cpu_backend_llvm + the AOT stack).",
+            "CPU");
 DEFINE_bool(cpu_precompile_guest_functions, false,
             "Parallel JIT pre-warm: during module load (the window AFTER the "
             "module image is committed but BEFORE any guest thread starts "
