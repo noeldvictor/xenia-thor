@@ -147,6 +147,13 @@ class RenderTargetCache {
 
   virtual Path GetPath() const = 0;
 
+  // BD PERFORMANCE MODE (gpu_bd_perfmode_hdr_2x): true while Update() is
+  // processing the recognized 4x HDR effect pass (depth base810 + color base0
+  // 2:10:10:10-float), which it forces to 2x. The vulkan backend reads this to
+  // substitute native 2x color+depth and drop the orphaned 2x->4x depth
+  // transfer. Set/cleared per Update() call.
+  bool bd_perfmode_hdr_pass() const { return bd_perfmode_hdr_pass_; }
+
   // Resolution scaling on the EDRAM side is performed by multiplying the EDRAM
   // tile size by the resolution scale.
   // Note: Only integer scaling factors are provided because fractional ones,
@@ -771,6 +778,8 @@ class RenderTargetCache {
   // last_update_accumulated_render_targets_ - it's not beneficial or even
   // incorrect to keep the previously bound render targets.
   bool are_accumulated_render_targets_valid_ = false;
+  // BD PERFORMANCE MODE: set by Update() for the recognized 4x HDR effect pass.
+  bool bd_perfmode_hdr_pass_ = false;
   // After an update (for simplicity, even an unsuccessful update invalidates
   // this), contains needed ownership transfer sources for each of the current
   // render targets. They are reordered so for one source, all transfers are

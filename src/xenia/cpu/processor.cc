@@ -98,6 +98,13 @@ DEFINE_bool(cpu_d3d_hle_diag_endtiling, false,
             "translating EndTiling -> native Vulkan. Requires cpu_d3d_hle_signatures. "
             "Default off (gated, safe).",
             "CPU");
+DEFINE_bool(cpu_log_aot_coverage, false,
+            "Log AOT-coverage stats (the hybrid AOT-primary metric): the running "
+            "count of guest functions compiled BEFORE the title's main thread "
+            "launches (AOT / precompile) vs AFTER (runtime JIT-on-demand = AOT "
+            "misses). A rising miss count means the precompiler under-covers what "
+            "gameplay runs. Rate-limited. Default off.",
+            "CPU");
 DEFINE_string(cpu_d3d_hle_diag_draw_addr, "",
               "HLE stage-2: intercept the D3D9 DRAW seam (BD's dispatch-table draw "
               "method, e.g. 822FF490 = slot 37 of the 0x8207E2C0 D3D9 vtable, the "
@@ -166,6 +173,17 @@ DEFINE_int32(gpu_bd_flatten_mask_reg, 5,
              "arg (param_3). Default 5 (=r5, ABI param_1=r3). Set from the "
              "gpu_bd_replay_diag log if the ABI differs (e.g. 4 if param_1 is a "
              "float in f1). Only used when gpu_bd_flatten_replay>=2.",
+             "GPU");
+DEFINE_int32(gpu_bd_full_native, 0,
+             "BD FULL NATIVE HLE (5.6-sol master arch, Stage 1 walking skeleton, "
+             "default 0 = off): capture BD's per-draw PM4 packets at the recorder "
+             "(Function_824895C8) into an immutable ordered frame stream = the "
+             "first spine link of the full native renderer (BD draw recorder -> "
+             "immutable capture -> guest/CP handoff -> native draw -> versioned "
+             "native resource -> native composite -> present). 1 = capture-shadow "
+             "(store packets + log the per-frame field-draw census; rendering "
+             "UNCHANGED = fail-closed). Higher modes reserved for native execute. "
+             "Runs beside the LLE path; any failure keeps the whole frame on LLE.",
              "GPU");
 
 namespace xe {
@@ -1132,8 +1150,25 @@ bool IsHleDiagDraw(uint32_t address) {
 // byte-identical body via the behavior toggle. Gated by gpu_bd_replay_diag /
 // gpu_bd_flatten_replay (default off). ---
 static constexpr uint32_t kBdRecorderAddr = 0x824895C8u;
+
+// BD FULL NATIVE HLE (5.6-sol master arch, Stage 1): the immutable per-draw PM4
+// capture stream = the first spine link. The recorder (GUEST thread) appends
+// each field draw's self-contained PM4 packet (the [device+0x28 before, after)
+// words = SET-reg state + DRAW-INDX, already proven re-submittable by capture
+// mode 5). The CP thread will later drain + translate these to native Vulkan
+// (Stage 1 handoff). Mode 1 (capture-shadow) only counts the per-batch census to
+// validate capture completeness (risk #1) with rendering UNCHANGED (fail-closed).
+struct BdNativePacket {
+  uint32_t tile_count = 0;
+  std::vector<uint32_t> pm4;
+};
+static std::mutex g_bd_native_stream_mutex;
+static std::vector<BdNativePacket> g_bd_native_stream;
+static std::atomic<uint64_t> g_bd_native_captured_total{0};
+
 bool IsHleBdRecorder(uint32_t address) {
-  return (cvars::gpu_bd_replay_diag || cvars::gpu_bd_flatten_replay != 0) &&
+  return (cvars::gpu_bd_replay_diag || cvars::gpu_bd_flatten_replay != 0 ||
+          cvars::gpu_bd_full_native != 0) &&
          address == kBdRecorderAddr;
 }
 void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
@@ -1239,9 +1274,11 @@ void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
   // pass re-injection needs (and what the per-tile replay double-submits). Also
   // counts total vs tiled (device+0x30b8 in 2..8) recorder calls = the true
   // field-draw volume through this seam.
+  int fullnat = cvars::gpu_bd_full_native;
   uint32_t cap_dev = uint32_t(ctx->r[3]);
-  uint32_t cap_tc = (mode == 5) ? rd(cap_dev + 0x30b8u) : 0;
-  uint32_t ib_before = (mode == 5) ? rd(cap_dev + 0x28u) : 0;
+  bool cap_on = (mode == 5) || (fullnat != 0);
+  uint32_t cap_tc = cap_on ? rd(cap_dev + 0x30b8u) : 0;
+  uint32_t ib_before = cap_on ? rd(cap_dev + 0x28u) : 0;
 
   // Run the ORIGINAL recorder body (byte-identical) with the (possibly modified)
   // GPRs via the behavior toggle: kDefault so the JIT'd body runs (not this
@@ -1281,6 +1318,43 @@ void HleBdRecorderHandler(ppc::PPCContext* ctx, kernel::KernelState*) {
           rd(ib_before + 0x14u), rd(ib_before + 0x18u), rd(ib_before + 0x1cu),
           rd(ib_before + 0x20u), rd(ib_before + 0x24u), rd(ib_before + 0x28u),
           rd(ib_before + 0x2cu));
+    }
+  }
+
+  // BD FULL NATIVE HLE Stage 1: store each field draw's self-contained PM4
+  // packet into the immutable frame stream (the first spine link). Field draws =
+  // the tiled recorder calls (device+0x30b8 tile count in 2..8). The [before,
+  // after) words are the re-submittable PM4 (proven by capture mode 5). Rendering
+  // is UNCHANGED (the body already ran); this is a shadow capture. Mode 1 logs a
+  // periodic census to validate capture completeness (all ~1194 field draws flow
+  // through this seam) before the CP-thread handoff + native translate are wired.
+  if (fullnat != 0) {
+    // The reachable Shu-village field is IMMEDIATE-MODE (untiled single-draw
+    // branch, tile count 0/1), NOT tiled - so capture ANY recorder draw that
+    // wrote a valid self-contained PM4 packet, not just tiled (tc 2..8) ones.
+    uint32_t ib_after = rd(cap_dev + 0x28u);
+    if (ib_after > ib_before && (ib_after - ib_before) <= 0x400u) {
+      uint32_t n = (ib_after - ib_before) / 4u;
+      BdNativePacket pkt;
+      pkt.tile_count = cap_tc;
+      pkt.pm4.reserve(n);
+      for (uint32_t w = 0; w < n; ++w) {
+        pkt.pm4.push_back(rd(ib_before + w * 4u));
+      }
+      uint64_t tot = g_bd_native_captured_total.fetch_add(1) + 1;
+      std::lock_guard<std::mutex> lk(g_bd_native_stream_mutex);
+      g_bd_native_stream.push_back(std::move(pkt));
+      // Bound the shadow buffer + census-log every 512 packets (a stand-in for
+      // the real per-frame drain to the CP thread, wired next). Log the tile
+      // count so we see the tiled-vs-untiled (immediate-mode) draw mix.
+      if (g_bd_native_stream.size() >= 512) {
+        XELOGI(
+            "BD FULL NATIVE: captured batch of {} draw PM4 packets "
+            "(total {}, last words={} tc={:08X})",
+            g_bd_native_stream.size(), tot,
+            g_bd_native_stream.back().pm4.size(), cap_tc);
+        g_bd_native_stream.clear();
+      }
     }
   }
 }
@@ -1423,6 +1497,19 @@ bool Processor::DemandFunction(Function* function) {
 
     function->set_status(Symbol::Status::kDefined);
     symbol_status = function->status();
+
+    // AOT-coverage metric: a compile before the main thread launches is AOT
+    // (precompile); after, it is a runtime JIT-on-demand AOT miss.
+    if (aot_runtime_phase_.load(std::memory_order_relaxed)) {
+      uint64_t misses =
+          aot_runtime_misses_.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (cvars::cpu_log_aot_coverage && (misses & 0xFF) == 0) {
+        XELOGI("AOT coverage: precompiled(aot)={} runtime_jit_misses={}",
+               aot_compiles_.load(std::memory_order_relaxed), misses);
+      }
+    } else {
+      aot_compiles_.fetch_add(1, std::memory_order_relaxed);
+    }
   }
 
   if (symbol_status == Symbol::Status::kFailed) {
@@ -1431,6 +1518,16 @@ bool Processor::DemandFunction(Function* function) {
   }
 
   return true;
+}
+
+void Processor::EnterRuntimePhase() {
+  bool was = aot_runtime_phase_.exchange(true, std::memory_order_relaxed);
+  if (!was && cvars::cpu_log_aot_coverage) {
+    XELOGI(
+        "AOT coverage: entering runtime phase - precompiled(aot)={} functions "
+        "before launch",
+        aot_compiles_.load(std::memory_order_relaxed));
+  }
 }
 
 bool Processor::Execute(ThreadState* thread_state, uint32_t address) {

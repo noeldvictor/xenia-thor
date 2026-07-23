@@ -209,7 +209,9 @@ DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_bool(gpu_bd_native_depth_convert);
 DECLARE_bool(gpu_bd_native_depth_handoff);
 DECLARE_bool(gpu_bd_framegraph_depth);
+DECLARE_bool(gpu_bd_framegraph_depth_dump);
 DECLARE_bool(gpu_bd_framegraph_depth_shadow);
+DECLARE_bool(gpu_bd_patha_depth_snapshot);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
@@ -1329,6 +1331,13 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
         dfn.vkFreeMemory(device, fb.bd_native_color_resolve_memory, nullptr);
       }
     }
+    // PATH A STAGE 1 native depth snapshot (null unless gpu_bd_patha_depth_snapshot).
+    if (fb.bd_native_depth_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.bd_native_depth_framebuffer, nullptr);
+      dfn.vkDestroyImageView(device, fb.bd_native_depth_view, nullptr);
+      dfn.vkDestroyImage(device, fb.bd_native_depth_image, nullptr);
+      dfn.vkFreeMemory(device, fb.bd_native_depth_memory, nullptr);
+    }
   }
   framebuffers_.clear();
   for (auto& rt : bd_native_resolved_) {
@@ -1462,6 +1471,13 @@ void VulkanRenderTargetCache::ClearCache() {
         dfn.vkDestroyImage(device, fb.bd_native_color_resolve_image, nullptr);
         dfn.vkFreeMemory(device, fb.bd_native_color_resolve_memory, nullptr);
       }
+    }
+    // PATH A STAGE 1 native depth snapshot (null unless gpu_bd_patha_depth_snapshot).
+    if (fb.bd_native_depth_image != VK_NULL_HANDLE) {
+      dfn.vkDestroyFramebuffer(device, fb.bd_native_depth_framebuffer, nullptr);
+      dfn.vkDestroyImageView(device, fb.bd_native_depth_view, nullptr);
+      dfn.vkDestroyImage(device, fb.bd_native_depth_image, nullptr);
+      dfn.vkFreeMemory(device, fb.bd_native_depth_memory, nullptr);
     }
   }
   framebuffers_.clear();
@@ -2072,6 +2088,14 @@ bool VulkanRenderTargetCache::Update(
           // producer shapes, so the command processor transparently falls back.
           if (cvars::gpu_bd_native_color_lifetime_hle >= 4) {
             framebuffer = GetBdNativeColorProducerFramebuffer(
+                render_pass_key, pitch_tiles_at_32bpp,
+                depth_and_color_render_targets);
+          } else if (cvars::gpu_bd_patha_depth_snapshot) {
+            // PATH A STAGE 1: augment the framebuffer with a native 4x depth
+            // snapshot for the ONE HDR-effect depth consumer (returns the plain
+            // base framebuffer, with bd_native_depth_framebuffer set only for the
+            // target pass, so the command processor transparently falls back).
+            framebuffer = GetBdNativeDepthConsumerFramebuffer(
                 render_pass_key, pitch_tiles_at_32bpp,
                 depth_and_color_render_targets);
           } else {
@@ -5486,6 +5510,241 @@ void VulkanRenderTargetCache::MirrorBdNativeColorProducer(
   }
 }
 
+const VulkanRenderTargetCache::Framebuffer*
+VulkanRenderTargetCache::GetBdNativeDepthConsumerFramebuffer(
+    RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
+    const RenderTarget* const* depth_and_color_render_targets) {
+  const Framebuffer* base = GetHostRenderTargetsFramebuffer(
+      render_pass_key, pitch_tiles_at_32bpp, depth_and_color_render_targets);
+  if (!base) {
+    return nullptr;
+  }
+  if (base->bd_native_depth_framebuffer != VK_NULL_HANDLE) {
+    return base;  // already built for this framebuffer
+  }
+  if (render_pass_key.color_rts_use_transfer_formats) {
+    return base;
+  }
+  uint32_t used = render_pass_key.depth_and_color_used;
+  bool has_depth = (used & (uint32_t(1) << 0)) != 0;
+  uint32_t color_mask = used & ~(uint32_t(1) << 0);
+  uint32_t color_index;
+  if (!has_depth || !xe::bit_scan_forward(color_mask, &color_index)) {
+    return base;  // need depth + at least one color RT
+  }
+  if (color_mask & ~(uint32_t(1) << color_index)) {
+    return base;  // single color RT only (the effect-pass shape)
+  }
+  const VulkanRenderTarget* depth_rt = static_cast<const VulkanRenderTarget*>(
+      depth_and_color_render_targets[0]);
+  const VulkanRenderTarget* color_rt = static_cast<const VulkanRenderTarget*>(
+      depth_and_color_render_targets[color_index]);
+  RenderTargetKey dkey = depth_rt->key();
+  RenderTargetKey ckey = color_rt->key();
+  // The ONE target consumer (Path A Stage 0 census): depth base810 pitch9 4x +
+  // color base0 pitch9 2:10:10:10-float (resource_format 3) 4x.
+  if (!dkey.is_depth || dkey.base_tiles != 810 || dkey.GetPitchTiles() != 9 ||
+      dkey.msaa_samples != xenos::MsaaSamples::k4X || ckey.base_tiles != 0 ||
+      ckey.GetPitchTiles() != 9 ||
+      ckey.msaa_samples != xenos::MsaaSamples::k4X ||
+      ckey.resource_format != 3u) {
+    return base;
+  }
+
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  VkFormat depth_format = GetDepthVulkanFormat(dkey.GetDepthFormat());
+  if (depth_format == VK_FORMAT_UNDEFINED) {
+    return base;
+  }
+
+  VkImageCreateInfo image_create_info = {};
+  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_create_info.imageType = VK_IMAGE_TYPE_2D;
+  image_create_info.format = depth_format;
+  image_create_info.extent.width = base->host_extent.width;
+  image_create_info.extent.height = base->host_extent.height;
+  image_create_info.extent.depth = 1;
+  image_create_info.mipLevels = 1;
+  image_create_info.arrayLayers = 1;
+  image_create_info.samples = VK_SAMPLE_COUNT_4_BIT;  // k4X consumer
+  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkImage native_image = VK_NULL_HANDLE;
+  VkDeviceMemory native_memory = VK_NULL_HANDLE;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          vulkan_device, image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal, native_image,
+          native_memory)) {
+    return base;
+  }
+  VkImageViewCreateInfo view_create_info = {};
+  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_create_info.image = native_image;
+  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_create_info.format = depth_format;
+  view_create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  const VkImageAspectFlags depth_aspect =
+      VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+  view_create_info.subresourceRange =
+      ui::vulkan::util::InitializeSubresourceRange(depth_aspect);
+  VkImageView native_view = VK_NULL_HANDLE;
+  if (dfn.vkCreateImageView(device, &view_create_info, nullptr, &native_view) !=
+      VK_SUCCESS) {
+    dfn.vkDestroyImage(device, native_image, nullptr);
+    dfn.vkFreeMemory(device, native_memory, nullptr);
+    return base;
+  }
+  // Clone the framebuffer: att0 depth = the native snapshot, att1 color = the
+  // consumer's real LLE color (same attachment order as GetHostRenderTargets-
+  // Framebuffer: depth at bit 0, then the single color).
+  VkRenderPass render_pass = GetHostRenderTargetsRenderPass(render_pass_key);
+  VkImageView attachments[2];
+  attachments[0] = native_view;
+  attachments[1] = color_rt->view_depth_color();
+  VkFramebufferCreateInfo framebuffer_create_info = {};
+  framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  framebuffer_create_info.renderPass = render_pass;
+  framebuffer_create_info.attachmentCount = 2;
+  framebuffer_create_info.pAttachments = attachments;
+  framebuffer_create_info.width = base->host_extent.width;
+  framebuffer_create_info.height = base->host_extent.height;
+  framebuffer_create_info.layers = 1;
+  VkFramebuffer native_framebuffer = VK_NULL_HANDLE;
+  if (render_pass == VK_NULL_HANDLE ||
+      dfn.vkCreateFramebuffer(device, &framebuffer_create_info, nullptr,
+                              &native_framebuffer) != VK_SUCCESS) {
+    dfn.vkDestroyImageView(device, native_view, nullptr);
+    dfn.vkDestroyImage(device, native_image, nullptr);
+    dfn.vkFreeMemory(device, native_memory, nullptr);
+    return base;
+  }
+  Framebuffer& entry = const_cast<Framebuffer&>(*base);
+  entry.bd_native_depth_image = native_image;
+  entry.bd_native_depth_memory = native_memory;
+  entry.bd_native_depth_view = native_view;
+  entry.bd_native_depth_framebuffer = native_framebuffer;
+  entry.bd_native_depth_lle_image = depth_rt->image();
+  entry.bd_native_depth_lle_rt =
+      const_cast<RenderTarget*>(depth_and_color_render_targets[0]);
+  entry.bd_native_depth_aspect = depth_aspect;
+  XELOGI(
+      "BD PATHA DEPTH: consumer framebuffer built (depth base=810 pitchT=9 4x, "
+      "color base=0 pitchT=9 fmt=3 4x) extent={}x{}",
+      base->host_extent.width, base->host_extent.height);
+  return base;
+}
+
+bool VulkanRenderTargetCache::SeedBdNativeDepthConsumer(const Framebuffer* fb) {
+  if (!fb || fb->bd_native_depth_image == VK_NULL_HANDLE ||
+      !fb->bd_native_depth_lle_rt) {
+    return false;
+  }
+  VulkanRenderTarget& lle_rt =
+      *static_cast<VulkanRenderTarget*>(fb->bd_native_depth_lle_rt);
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  VkImageSubresourceRange range = {};
+  range.aspectMask = fb->bd_native_depth_aspect;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  // LLE depth -> TRANSFER_SRC (tracked). Left there after; the next real consumer
+  // transitions from the actual last usage.
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, lle_rt.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
+      VK_ACCESS_TRANSFER_READ_BIT, lle_rt.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  // Native depth -> TRANSFER_DST (srcStage/access = its real prior state = the
+  // previous mirror's outstanding TRANSFER_READ, or TOP/0 first use = WAR fix).
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_depth_image, range, fb->bd_native_depth_stage,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, fb->bd_native_depth_access,
+      VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  VkImageCopy dreg = {};
+  dreg.srcSubresource.aspectMask = fb->bd_native_depth_aspect;
+  dreg.srcSubresource.layerCount = 1;
+  dreg.dstSubresource.aspectMask = fb->bd_native_depth_aspect;
+  dreg.dstSubresource.layerCount = 1;
+  dreg.extent = {fb->host_extent.width, fb->host_extent.height, 1};
+  command_processor_.deferred_command_buffer().CmdVkCopyImage(
+      lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      fb->bd_native_depth_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &dreg);
+  // Native -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL (the render pass initial layout).
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_depth_image, range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  mfb.bd_native_depth_stage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  mfb.bd_native_depth_access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  mfb.bd_native_depth_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  return true;
+}
+
+void VulkanRenderTargetCache::MirrorBdNativeDepthConsumer(
+    const Framebuffer* fb) {
+  if (!fb || fb->bd_native_depth_image == VK_NULL_HANDLE ||
+      !fb->bd_native_depth_lle_rt) {
+    return;
+  }
+  VulkanRenderTarget& lle_rt =
+      *static_cast<VulkanRenderTarget*>(fb->bd_native_depth_lle_rt);
+  Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
+  VkImageSubresourceRange range = {};
+  range.aspectMask = fb->bd_native_depth_aspect;
+  range.levelCount = 1;
+  range.layerCount = 1;
+  // Native (ends the pass as depth attachment) -> TRANSFER_SRC.
+  command_processor_.PushImageMemoryBarrier(
+      fb->bd_native_depth_image, range, fb->bd_native_depth_stage,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, fb->bd_native_depth_access,
+      VK_ACCESS_TRANSFER_READ_BIT, fb->bd_native_depth_layout,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  // LLE depth -> TRANSFER_DST (tracked).
+  command_processor_.PushImageMemoryBarrier(
+      lle_rt.image(), range, lle_rt.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, lle_rt.current_access_mask(),
+      VK_ACCESS_TRANSFER_WRITE_BIT, lle_rt.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  lle_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  VkImageCopy dreg = {};
+  dreg.srcSubresource.aspectMask = fb->bd_native_depth_aspect;
+  dreg.srcSubresource.layerCount = 1;
+  dreg.dstSubresource.aspectMask = fb->bd_native_depth_aspect;
+  dreg.dstSubresource.layerCount = 1;
+  dreg.extent = {fb->host_extent.width, fb->host_extent.height, 1};
+  command_processor_.deferred_command_buffer().CmdVkCopyImage(
+      fb->bd_native_depth_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      lle_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &dreg);
+  command_processor_.SubmitBarriers(true);
+  // Record the native image's outstanding TRANSFER_READ so the NEXT seed
+  // barriers its write after this read (WAR fix).
+  mfb.bd_native_depth_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  mfb.bd_native_depth_access = VK_ACCESS_TRANSFER_READ_BIT;
+  mfb.bd_native_depth_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+}
+
 bool VulkanRenderTargetCache::CreateFragmentDensityMap(
     VkExtent2D framebuffer_extent, VkImage& image_out,
     VkDeviceMemory& memory_out, VkImageView& view_out) {
@@ -7954,6 +8213,15 @@ bool VulkanRenderTargetCache::TryDeferBdFramegraphDepthTransfer(
     return false;
   }
   auto& source = *static_cast<VulkanRenderTarget*>(transfer.source);
+  // A fused sampled-read / attachment-write pair must not be image feedback.
+  // The recognized 2X and 4X surfaces are separate allocations, but prove that
+  // from the Vulkan handles too and leave every aliasing case on rung 2.
+  if (source.image() == VK_NULL_HANDLE || dest.image() == VK_NULL_HANDLE ||
+      source.image() == dest.image() ||
+      (source.view_depth_stencil() != VK_NULL_HANDLE &&
+       source.view_depth_stencil() == dest.view_depth_stencil())) {
+    return false;
+  }
   RenderTargetKey source_key = source.key();
   RenderTargetKey dest_key = dest.key();
 
@@ -8079,8 +8347,66 @@ bool VulkanRenderTargetCache::PrepareBdFramegraphDepthConsumer(
             last_update_framebuffer_attachments_);
     const RenderTarget* depth = attachments[0];
     const RenderPassKey pass_key = last_update_render_pass_key_;
+    const bool dump = cvars::gpu_bd_framegraph_depth_dump;
     for (BdFramegraphShadowDepthTransfer& entry :
          bd_framegraph_shadow_depth_transfers_) {
+      // Access ledger (dump mode): count every access to this edge's dest/source
+      // through frame end, independent of the first-match short-circuit below, so
+      // the expiry summary reveals multiple/earlier consumers, source mutation,
+      // and generation drift (5.6-sol dump A: relocation vs late-consumer).
+      if (dump) {
+        if (entry.source && depth == entry.source) {
+          ++entry.ledger_source_depth_binds;
+          if (entry.source->bd_native_depth_generation() !=
+              entry.source_generation) {
+            ++entry.ledger_source_gen_changes;
+          }
+        }
+        if (entry.dest && depth == entry.dest) {
+          ++entry.ledger_dest_depth_binds;
+          if (!entry.ledger_first_dest_depth_serial) {
+            entry.ledger_first_dest_depth_serial =
+                bd_framegraph_shadow_pass_serial_;
+          }
+          if (entry.dest->bd_native_depth_generation() != entry.dest_generation) {
+            ++entry.ledger_dest_gen_changes;
+          }
+          const bool exact_view =
+              framebuffer && framebuffer->depth_view == entry.dest_view &&
+              entry.dest_view == entry.dest->view_depth_stencil() &&
+              entry.dest->key().key == entry.dest_key.key &&
+              entry.dest->bd_native_depth_generation() == entry.dest_generation;
+          if (exact_view && !entry.ledger_match_serial) {
+            entry.ledger_match_serial = bd_framegraph_shadow_pass_serial_;
+          }
+          // Path A Stage 0 consumer census: record the distinct color surface(s)
+          // this dest-depth consumer renders into (attachments[1] = color RT 0).
+          const RenderTarget* consumer_color = attachments[1];
+          if (consumer_color) {
+            RenderTargetKey ckey = consumer_color->key();
+            bool seen = false;
+            for (uint32_t c = 0; c < entry.ledger_consumer_color_count; ++c) {
+              if (entry.ledger_consumer_color_keys[c].key == ckey.key) {
+                seen = true;
+                break;
+              }
+            }
+            if (!seen && entry.ledger_consumer_color_count <
+                             uint32_t(std::size(entry.ledger_consumer_color_keys))) {
+              entry.ledger_consumer_color_keys[entry.ledger_consumer_color_count++] =
+                  ckey;
+            }
+          }
+        }
+        if (entry.dest) {
+          for (uint32_t i = 1; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+            if (attachments[i] == entry.dest) {
+              ++entry.ledger_dest_color_binds;
+              break;
+            }
+          }
+        }
+      }
       if (entry.matched || entry.first_dest_use_seen) {
         continue;
       }
@@ -8201,6 +8527,39 @@ void VulkanRenderTargetCache::EndFrameBdFramegraphDepthShadow() {
   const uint64_t frame = command_processor_.GetCurrentFrame();
   for (const BdFramegraphShadowDepthTransfer& entry :
        bd_framegraph_shadow_depth_transfers_) {
+    if (cvars::gpu_bd_framegraph_depth_dump) {
+      // Decisive read: dest_depth_binds>1 => multiple consumers (needs one
+      // resident depth, option d). first_dest_depth_serial<match_serial => an
+      // earlier dest-depth pass than the fused target (late-consumer/prestate).
+      // source_depth_binds>0 or *_gen_changes>0 => source mutated / versioning
+      // drift after schedule (relocation structurally invalid). All zero + one
+      // bind + match==first => relocation valid, look at pixel output instead.
+      XELOGI(
+          "BD SHADOW LEDGER: frame={} entry={} matched={} sched_serial={} "
+          "match_serial={} first_dest_depth_serial={} dest_depth_binds={} "
+          "dest_color_binds={} source_depth_binds={} dest_gen_changes={} "
+          "source_gen_changes={} dst{{base={} pitchT={} msaa={}}} "
+          "src{{base={} pitchT={} msaa={}}}",
+          frame, entry.id, entry.matched ? 1 : 0, entry.schedule_pass_serial,
+          entry.ledger_match_serial, entry.ledger_first_dest_depth_serial,
+          entry.ledger_dest_depth_binds, entry.ledger_dest_color_binds,
+          entry.ledger_source_depth_binds, entry.ledger_dest_gen_changes,
+          entry.ledger_source_gen_changes, entry.dest_key.base_tiles,
+          entry.dest_key.GetPitchTiles(), uint32_t(entry.dest_key.msaa_samples),
+          entry.source_key.base_tiles, entry.source_key.GetPitchTiles(),
+          uint32_t(entry.source_key.msaa_samples));
+      // Path A Stage 0 consumer census: identify the color surfaces the
+      // dest-depth consumers render into (which effects test this depth).
+      for (uint32_t c = 0; c < entry.ledger_consumer_color_count; ++c) {
+        const RenderTargetKey& ck = entry.ledger_consumer_color_keys[c];
+        XELOGI(
+            "BD SHADOW CONSUMER: frame={} entry={} idx={} of={} "
+            "color{{base={} pitchT={} fmt={} msaa={}}}",
+            frame, entry.id, c, entry.ledger_consumer_color_count, ck.base_tiles,
+            ck.GetPitchTiles(), ck.resource_format,
+            uint32_t(ck.msaa_samples));
+      }
+    }
     if (!entry.matched) {
       ++bd_framegraph_shadow_unmatched_;
       XELOGI(
@@ -8232,7 +8591,7 @@ void VulkanRenderTargetCache::EndFrameBdFramegraphDepthShadow() {
 
 bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
     RenderPassKey consumer_render_pass_key, VkRenderPass consumer_render_pass,
-    const Framebuffer* framebuffer) {
+    const Framebuffer* framebuffer, const VkRect2D& consumer_render_area) {
   if (bd_framegraph_deferred_depth_transfers_.empty() ||
       !bd_framegraph_deferred_depth_transfers_.front().prepared) {
     return false;
@@ -8250,6 +8609,11 @@ bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
   if (!entry.source || !entry.dest ||
       entry.source->key().key != entry.source_key.key ||
       entry.dest->key().key != entry.dest_key.key ||
+      entry.source->image() == VK_NULL_HANDLE ||
+      entry.dest->image() == VK_NULL_HANDLE ||
+      entry.source->image() == entry.dest->image() ||
+      (entry.source->view_depth_stencil() != VK_NULL_HANDLE &&
+       entry.source->view_depth_stencil() == entry.dest->view_depth_stencil()) ||
       entry.source->bd_native_depth_generation() != entry.source_generation ||
       entry.dest->bd_native_depth_generation() != entry.dest_generation ||
       framebuffer->depth_view != entry.dest->view_depth_stencil()) {
@@ -8261,6 +8625,22 @@ bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
   if (!(consumer_render_pass_key.depth_and_color_used & 0b1) ||
       cvars::gpu_edram_passes_dont_care) {
     FallbackBdFramegraphDepthTransfer("consumer depth loadOp is not LOAD");
+    return false;
+  }
+  // GetTransferPipelines below is the standalone transfer factory: the fused
+  // draw reuses the EXACT same pipeline/depth state the standalone pass would
+  // have used for this edge (4X rasterization sample count, depth test/write,
+  // and whichever compare op depth_transfer_not_equal_test selects). NOT_EQUAL
+  // is xenia's normal depth-transfer mode (default on) and is reproduced
+  // identically here, so it must NOT force rung 2 - only reject a genuinely
+  // different edge shape.
+  if (entry.source_key.msaa_samples != xenos::MsaaSamples::k2X ||
+      entry.dest_key.msaa_samples != xenos::MsaaSamples::k4X ||
+      entry.shader_key.source_msaa_samples != xenos::MsaaSamples::k2X ||
+      entry.shader_key.dest_msaa_samples != xenos::MsaaSamples::k4X ||
+      entry.shader_key.mode != TransferMode::kDepthToDepth) {
+    FallbackBdFramegraphDepthTransfer(
+        "unsupported fused transfer pipeline state");
     return false;
   }
   const VkPipeline* pipelines = GetTransferPipelines(
@@ -8283,6 +8663,36 @@ bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
   if (!rectangle_count) {
     FallbackBdFramegraphDepthTransfer("empty transfer rectangle");
     return false;
+  }
+  // RT identity alone is insufficient: a scissor-clamped consumer render area
+  // may cover only part of the destination. Every transfer destination pixel
+  // must be inside both the actual consumer render area and the framebuffer.
+  const int64_t render_area_x0 = consumer_render_area.offset.x;
+  const int64_t render_area_y0 = consumer_render_area.offset.y;
+  const int64_t render_area_x1 =
+      render_area_x0 + consumer_render_area.extent.width;
+  const int64_t render_area_y1 =
+      render_area_y0 + consumer_render_area.extent.height;
+  if (render_area_x0 < 0 || render_area_y0 < 0 ||
+      render_area_x1 > int64_t(framebuffer->host_extent.width) ||
+      render_area_y1 > int64_t(framebuffer->host_extent.height)) {
+    FallbackBdFramegraphDepthTransfer("invalid consumer render area");
+    return false;
+  }
+  for (uint32_t i = 0; i < rectangle_count; ++i) {
+    const Transfer::Rectangle& rectangle = rectangles[i];
+    const int64_t rectangle_x0 = rectangle.x_pixels;
+    const int64_t rectangle_y0 = rectangle.y_pixels;
+    const int64_t rectangle_x1 =
+        rectangle_x0 + rectangle.width_pixels;
+    const int64_t rectangle_y1 =
+        rectangle_y0 + rectangle.height_pixels;
+    if (rectangle_x0 < render_area_x0 || rectangle_y0 < render_area_y0 ||
+        rectangle_x1 > render_area_x1 || rectangle_y1 > render_area_y1) {
+      FallbackBdFramegraphDepthTransfer(
+          "consumer render area does not cover transfer destination");
+      return false;
+    }
   }
   entry.vertex_count = 6 * rectangle_count;
   float* vertex_write = reinterpret_cast<float*>(
@@ -8332,20 +8742,38 @@ bool VulkanRenderTargetCache::ExecutePreparedBdFramegraphDepthConsumer(
   entry.address_constant.source_to_dest =
       int32_t(entry.dest_key.base_tiles) - int32_t(entry.source_key.base_tiles);
 
-  // Source-side legacy preparation only, while no render pass is open.
-  constexpr VkPipelineStageFlags kSourceStage =
+  // Pass elision must retain the standalone pass's producer-write -> sampled-
+  // read dependency. Require the source to still be the depth attachment the
+  // deferred edge observed, then emit the explicit transition while no render
+  // pass is open. SubmitBarriers in the command processor records it before the
+  // consumer's vkCmdBeginRenderPass.
+  constexpr VkPipelineStageFlags kSourceWriteStages =
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  constexpr VkAccessFlags kSourceWriteAccess =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  constexpr VkImageLayout kSourceWriteLayout =
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  constexpr VkPipelineStageFlags kSourceReadStage =
       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  constexpr VkAccessFlags kSourceAccess = VK_ACCESS_SHADER_READ_BIT;
-  constexpr VkImageLayout kSourceLayout =
-      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  constexpr VkAccessFlags kSourceReadAccess = VK_ACCESS_SHADER_READ_BIT;
+  constexpr VkImageLayout kSourceReadLayout =
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  if (entry.source->current_layout() != kSourceWriteLayout ||
+      !(entry.source->current_stage_mask() & kSourceWriteStages) ||
+      !(entry.source->current_access_mask() & kSourceWriteAccess)) {
+    FallbackBdFramegraphDepthTransfer(
+        "source is not a depth-attachment write at fusion");
+    return false;
+  }
   command_processor_.PushImageMemoryBarrier(
       entry.source->image(),
       ui::vulkan::util::InitializeSubresourceRange(
           VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT),
-      entry.source->current_stage_mask(), kSourceStage,
-      entry.source->current_access_mask(), kSourceAccess,
-      entry.source->current_layout(), kSourceLayout);
-  entry.source->SetUsage(kSourceStage, kSourceAccess, kSourceLayout);
+      kSourceWriteStages, kSourceReadStage, kSourceWriteAccess,
+      kSourceReadAccess, kSourceWriteLayout, kSourceReadLayout);
+  entry.source->SetUsage(kSourceReadStage, kSourceReadAccess,
+                         kSourceReadLayout);
   entry.fusion_ready = true;
   return true;
 }
@@ -8374,6 +8802,47 @@ void VulkanRenderTargetCache::RecordPreparedBdFramegraphDepthConsumer() {
   for (uint32_t i = 0; i < entry.pipeline_count; ++i) {
     command_processor_.BindExternalGraphicsPipeline(entry.pipelines[i]);
     command_buffer.CmdVkDraw(entry.vertex_count, 1, 0, 0);
+  }
+
+  if (cvars::gpu_bd_framegraph_depth_dump) {
+    // A cheap, path-independent marker for the exact depth-transfer command.
+    // The standalone path hashes the same keys, address constant, rectangles,
+    // vertex count and sample-pipeline count, so equal markers prove equivalent
+    // transfer inputs/state without adding a tile-store-inducing readback.
+    uint64_t marker = UINT64_C(1469598103934665603);
+    auto mix_u32 = [&marker](uint32_t value) {
+      for (uint32_t byte = 0; byte < 4; ++byte) {
+        marker ^= uint8_t(value >> (byte * 8));
+        marker *= UINT64_C(1099511628211);
+      }
+    };
+    mix_u32(entry.source_key.key);
+    mix_u32(entry.dest_key.key);
+    mix_u32(entry.shader_key.key);
+    mix_u32(entry.address_constant.dest_pitch);
+    mix_u32(entry.address_constant.source_pitch);
+    mix_u32(uint32_t(entry.address_constant.source_to_dest));
+    mix_u32(entry.vertex_count);
+    mix_u32(entry.pipeline_count);
+    Transfer::Rectangle marker_rectangles[Transfer::kMaxRectanglesWithCutout];
+    uint32_t marker_rectangle_count = entry.transfer.GetRectangles(
+        entry.dest_key.base_tiles, entry.dest_key.GetPitchTiles(),
+        entry.dest_key.msaa_samples, entry.dest_key.Is64bpp(),
+        marker_rectangles, nullptr);
+    mix_u32(marker_rectangle_count);
+    for (uint32_t i = 0; i < marker_rectangle_count; ++i) {
+      mix_u32(marker_rectangles[i].x_pixels);
+      mix_u32(marker_rectangles[i].y_pixels);
+      mix_u32(marker_rectangles[i].width_pixels);
+      mix_u32(marker_rectangles[i].height_pixels);
+    }
+    XELOGI(
+        "BD FRAMEGRAPH DEPTH DUMP: path=fused marker={:016X} rects={} "
+        "vertices={} samples={} dest{{base={} pitchT={} msaa={} format={}}}",
+        marker, marker_rectangle_count, entry.vertex_count,
+        entry.pipeline_count, entry.dest_key.base_tiles,
+        entry.dest_key.GetPitchTiles(), uint32_t(entry.dest_key.msaa_samples),
+        entry.dest_key.resource_format);
   }
 
   // Matched by the render pass's BY_REGION self-dependency. This makes the
@@ -9976,6 +10445,67 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
                   VK_STENCIL_FACE_FRONT_AND_BACK, transfer_stencil_bit);
             }
             command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
+          }
+        }
+        if (cvars::gpu_bd_framegraph_depth_dump) {
+          for (auto marker_it = it_merged_first; marker_it <= it_merged_last;
+               ++marker_it) {
+            auto& marker_source =
+                *static_cast<VulkanRenderTarget*>(marker_it->transfer.source);
+            RenderTargetKey marker_source_key = marker_source.key();
+            if (!marker_source_key.is_depth || !dest_rt_key.is_depth ||
+                marker_source_key.base_tiles != 810 ||
+                dest_rt_key.base_tiles != 810 ||
+                marker_source_key.GetPitchTiles() != 9 ||
+                dest_rt_key.GetPitchTiles() != 9 ||
+                marker_source_key.msaa_samples != xenos::MsaaSamples::k2X ||
+                dest_rt_key.msaa_samples != xenos::MsaaSamples::k4X ||
+                marker_it->shader_key.mode != TransferMode::kDepthToDepth) {
+              continue;
+            }
+            Transfer::Rectangle marker_rectangles
+                [Transfer::kMaxRectanglesWithCutout];
+            uint32_t marker_rectangle_count =
+                marker_it->transfer.GetRectangles(
+                    dest_rt_key.base_tiles, dest_pitch_tiles,
+                    dest_rt_key.msaa_samples, dest_is_64bpp,
+                    marker_rectangles, resolve_clear_rectangle);
+            uint64_t marker = UINT64_C(1469598103934665603);
+            auto mix_u32 = [&marker](uint32_t value) {
+              for (uint32_t byte = 0; byte < 4; ++byte) {
+                marker ^= uint8_t(value >> (byte * 8));
+                marker *= UINT64_C(1099511628211);
+              }
+            };
+            mix_u32(marker_source_key.key);
+            mix_u32(dest_rt_key.key);
+            mix_u32(marker_it->shader_key.key);
+            mix_u32(dest_pitch_tiles);
+            mix_u32(marker_source_key.GetPitchTiles());
+            mix_u32(uint32_t(int32_t(dest_rt_key.base_tiles) -
+                             int32_t(marker_source_key.base_tiles)));
+            mix_u32(6 * marker_rectangle_count);
+            mix_u32(transfer_sample_pipeline_count);
+            mix_u32(marker_rectangle_count);
+            for (uint32_t marker_rectangle_index = 0;
+                 marker_rectangle_index < marker_rectangle_count;
+                 ++marker_rectangle_index) {
+              const Transfer::Rectangle& marker_rectangle =
+                  marker_rectangles[marker_rectangle_index];
+              mix_u32(marker_rectangle.x_pixels);
+              mix_u32(marker_rectangle.y_pixels);
+              mix_u32(marker_rectangle.width_pixels);
+              mix_u32(marker_rectangle.height_pixels);
+            }
+            XELOGI(
+                "BD FRAMEGRAPH DEPTH DUMP: path=standalone marker={:016X} "
+                "rects={} vertices={} samples={} "
+                "dest{{base={} pitchT={} msaa={} format={}}}",
+                marker, marker_rectangle_count, 6 * marker_rectangle_count,
+                transfer_sample_pipeline_count, dest_rt_key.base_tiles,
+                dest_rt_key.GetPitchTiles(),
+                uint32_t(dest_rt_key.msaa_samples),
+                dest_rt_key.resource_format);
           }
         }
       }

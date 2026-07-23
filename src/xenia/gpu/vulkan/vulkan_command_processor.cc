@@ -50,6 +50,7 @@ DECLARE_bool(gpu_bd_hle_present_decoupled);
 DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_framegraph_depth);
 DECLARE_bool(gpu_bd_framegraph_depth_shadow);
+DECLARE_bool(gpu_bd_patha_depth_snapshot);
 DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
@@ -67,6 +68,8 @@ DECLARE_bool(gpu_bd_native_force_samples1);
 DECLARE_uint32(gpu_bd_native_stretch_width);
 DECLARE_double(gpu_bd_native_viewport_scale_x);
 DECLARE_int32(gpu_bd_renderdoc_capture_frame);
+DECLARE_int32(gpu_bd_full_native);
+DECLARE_bool(gpu_bd_native_reserve_captured_surfaces);
 
 #include "xenia/ui/renderdoc_api.h"
 namespace {
@@ -2433,6 +2436,240 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         ((gpu_freeze_ab_frame_counter_++ / 16u) & 1u) != 0;
   }
 
+  if (cvars::gpu_bd_full_native >= 1) {
+    std::unordered_set<uint64_t> unique_full_signatures;
+    std::unordered_set<uint64_t> unique_logical_signatures;
+    std::unordered_map<uint64_t, uint64_t> first_full_by_logical;
+    // Distinct render-target SURFACES this frame, keyed by
+    // base_tiles+pitch+format+msaa. This is the exact set of native VkImages a
+    // resource-keyed native renderer must create (one per distinct surface) -
+    // turning the draw capture into the direct input for the "resource-keyed
+    // native RTs" HLE goal. The packed key round-trips to its fields for the
+    // per-surface dump below.
+    // Draw count PER distinct surface (not just presence) - a surface's draw
+    // count is its coverage priority: the main scene carries the most draws,
+    // the bloom pyramid a few at small pitches, the composite a single large
+    // draw. This is the actionable input for deciding which surfaces are worth
+    // native coverage first (partial coverage leaves the bridging transfers).
+    std::unordered_map<uint64_t, uint32_t> color_surface_draws;
+    std::unordered_map<uint64_t, uint32_t> depth_surface_draws;
+    // Max render height (from the screen scissor's bottom edge) per color
+    // surface - the height a native VkImage for that surface must be sized to.
+    std::unordered_map<uint64_t, uint32_t> color_surface_height;
+    std::unordered_map<uint64_t, uint32_t> depth_surface_height;
+    // Color<->depth pairing: which depth surface each color surface is drawn
+    // against (first-seen wins), so a reserved surface gets its REAL depth
+    // format instead of the D24S8 default. Depth surfaces that appear with NO
+    // color (depth-only prepass / shadow passes) don't fit AcquireSurface's
+    // color+depth model and are tracked separately.
+    std::unordered_map<uint64_t, uint64_t> color_to_depth;
+    std::unordered_set<uint64_t> depth_only_surfaces;
+    size_t color_depth_pair_conflicts = 0;
+    auto surface_key = [](uint32_t base_tiles, uint32_t pitch, uint32_t format,
+                          uint32_t msaa) -> uint64_t {
+      return (uint64_t(base_tiles) << 32) | (uint64_t(pitch & 0xFFFF) << 16) |
+             (uint64_t(format & 0xFF) << 8) | uint64_t(msaa & 0xFF);
+    };
+    unique_full_signatures.reserve(bd_native_frame_.size());
+    unique_logical_signatures.reserve(bd_native_frame_.size());
+    first_full_by_logical.reserve(bd_native_frame_.size());
+    size_t tile_replay_duplicates = 0;
+    for (const BdNativeDrawDescriptor& draw : bd_native_frame_) {
+      unique_full_signatures.insert(draw.full_signature);
+      unique_logical_signatures.insert(draw.logical_signature);
+      auto logical_insert = first_full_by_logical.emplace(
+          draw.logical_signature, draw.full_signature);
+      if (!logical_insert.second &&
+          logical_insert.first->second != draw.full_signature) {
+        ++tile_replay_duplicates;
+      }
+      reg::PA_SC_SCREEN_SCISSOR_BR scissor_br;
+      scissor_br.value = draw.screen_scissor_br;
+      const uint32_t extent_h =
+          scissor_br.br_y > 0 ? uint32_t(scissor_br.br_y) : 0u;
+      // Depth surface this draw renders against (if any).
+      uint64_t depth_key = 0;
+      const bool has_depth = draw.depth_target.bound != 0;
+      if (has_depth) {
+        depth_key = surface_key(draw.depth_target.base_tiles,
+                                draw.depth_target.pitch,
+                                draw.depth_target.format, draw.depth_target.msaa);
+        ++depth_surface_draws[depth_key];
+        uint32_t& dh = depth_surface_height[depth_key];
+        if (extent_h > dh) {
+          dh = extent_h;
+        }
+      }
+      bool has_color = false;
+      for (const BdNativeDrawDescriptor::ColorRenderTarget& color :
+           draw.color_targets) {
+        if (color.bound) {
+          has_color = true;
+          const uint64_t k = surface_key(color.base_tiles, color.pitch,
+                                         color.format, color.msaa);
+          ++color_surface_draws[k];
+          uint32_t& h = color_surface_height[k];
+          if (extent_h > h) {
+            h = extent_h;
+          }
+          // Pair color->depth (first-seen wins; count when the same color is
+          // later drawn against a different depth).
+          if (has_depth) {
+            auto pair = color_to_depth.emplace(k, depth_key);
+            if (!pair.second && pair.first->second != depth_key) {
+              ++color_depth_pair_conflicts;
+            }
+          }
+        }
+      }
+      // Depth bound with no color = a depth-only pass (prepass / shadow).
+      if (has_depth && !has_color) {
+        depth_only_surfaces.insert(depth_key);
+      }
+    }
+    XELOGI(
+        "BD FULL NATIVE CAPTURE: frame draws={} unique_full_sig={} "
+        "unique_logical_sig={} tile_replay_dups={} distinct_color_rts={} "
+        "distinct_depth_rts={}",
+        bd_native_frame_.size(), unique_full_signatures.size(),
+        unique_logical_signatures.size(), tile_replay_duplicates,
+        color_surface_draws.size(), depth_surface_draws.size());
+    // Enumerate each distinct surface = the native RTs to create (bounded, ~a
+    // dozen for BD), sorted by draw count (highest first = coverage priority).
+    // Decode the packed key back to its fields.
+    auto dump_surfaces = [](const char* tag,
+                            const std::unordered_map<uint64_t, uint32_t>& m) {
+      std::vector<std::pair<uint64_t, uint32_t>> sorted(m.begin(), m.end());
+      std::sort(sorted.begin(), sorted.end(),
+                [](const auto& a, const auto& b) { return a.second > b.second; });
+      for (const auto& [key, draws] : sorted) {
+        XELOGI("  BD native {} RT: base_tiles={} pitch={} format={} msaa={} draws={}",
+               tag, uint32_t(key >> 32), uint32_t((key >> 16) & 0xFFFF),
+               uint32_t((key >> 8) & 0xFF), uint32_t(key & 0xFF), draws);
+      }
+    };
+    dump_surfaces("color", color_surface_draws);
+    dump_surfaces("depth", depth_surface_draws);
+
+    // Structural native-RT wiring (gpu_bd_native_reserve_captured_surfaces):
+    // drive BdNativeRenderer's resource-keyed AcquireSurface from the captured
+    // distinct surfaces, building the full native RT set the EDRAM-deletion HLE
+    // needs. Single-sample only (AcquireSurface defers MSAA until it has a
+    // resolve). This ALLOCATES the surfaces (grows-never-shrinks, so stable
+    // across frames); it does NOT redirect rendering into them yet - that
+    // consumer redirect is the device-validated next step.
+    if (cvars::gpu_bd_native_reserve_captured_surfaces && bd_native_renderer_ &&
+        bd_native_renderer_->initialized()) {
+      auto samples_of = [](uint32_t msaa) -> VkSampleCountFlagBits {
+        switch (msaa) {
+          case 1:
+            return VK_SAMPLE_COUNT_2_BIT;
+          case 2:
+            return VK_SAMPLE_COUNT_4_BIT;
+          default:
+            return VK_SAMPLE_COUNT_1_BIT;
+        }
+      };
+      uint32_t reserved = 0, reserved_msaa = 0, paired = 0, failed = 0;
+      for (const auto& [packed_key, draws] : color_surface_draws) {
+        const uint32_t pitch = uint32_t((packed_key >> 16) & 0xFFFF);
+        const uint32_t format = uint32_t((packed_key >> 8) & 0xFF);
+        const uint32_t msaa = uint32_t(packed_key & 0xFF);
+        const VkSampleCountFlagBits samples = samples_of(msaa);
+        auto height_it = color_surface_height.find(packed_key);
+        const uint32_t height =
+            height_it != color_surface_height.end() ? height_it->second : 0u;
+        if (!pitch || !height) {
+          ++failed;
+          continue;
+        }
+        // Fold the 64-bit identity into a non-zero 32-bit resource key
+        // (AcquireSurface rejects key==0). Distinct surfaces stay distinct.
+        // Namespace color keys into the low half (MSB clear) so they never
+        // collide with depth-only keys (MSB set) in the shared surface registry.
+        uint32_t key =
+            (uint32_t(packed_key) ^ uint32_t(packed_key >> 32)) & 0x7FFFFFFFu;
+        if (!key) {
+          key = 1u;
+        }
+        const VkFormat color_vk = render_target_cache_->GetColorVulkanFormat(
+            xenos::ColorRenderTargetFormat(format));
+        // Pair with the real depth format this color is drawn against; fall
+        // back to AcquireSurface's D24S8 default (UNDEFINED) for an unpaired
+        // color surface (e.g. a color-only composite pass).
+        VkFormat depth_vk = VK_FORMAT_UNDEFINED;
+        auto pair_it = color_to_depth.find(packed_key);
+        if (pair_it != color_to_depth.end()) {
+          const uint32_t depth_format =
+              uint32_t((pair_it->second >> 8) & 0xFF);
+          depth_vk = render_target_cache_->GetDepthVulkanFormat(
+              xenos::DepthRenderTargetFormat(depth_format));
+          ++paired;
+        }
+        NativeSurface* surface = bd_native_renderer_->AcquireSurface(
+            key, pitch, height, color_vk, depth_vk, samples);
+        if (surface) {
+          ++reserved;
+          if (msaa != 0) {
+            ++reserved_msaa;
+          }
+        } else {
+          ++failed;
+        }
+      }
+
+      // Depth-only surfaces (prepass / shadow): reserve those NOT already
+      // covered as some color surface's paired depth (those live in the color
+      // pair's depth image). Depth-only keys are namespaced into the high half.
+      std::unordered_set<uint64_t> paired_depths;
+      paired_depths.reserve(color_to_depth.size());
+      for (const auto& [color_k, depth_k] : color_to_depth) {
+        paired_depths.insert(depth_k);
+      }
+      uint32_t d_reserved = 0, d_reserved_msaa = 0, d_skip_paired = 0,
+               d_failed = 0;
+      for (uint64_t dk : depth_only_surfaces) {
+        if (paired_depths.count(dk)) {
+          ++d_skip_paired;
+          continue;
+        }
+        const uint32_t pitch = uint32_t((dk >> 16) & 0xFFFF);
+        const uint32_t format = uint32_t((dk >> 8) & 0xFF);
+        const uint32_t msaa = uint32_t(dk & 0xFF);
+        const VkSampleCountFlagBits samples = samples_of(msaa);
+        auto dh_it = depth_surface_height.find(dk);
+        const uint32_t height =
+            dh_it != depth_surface_height.end() ? dh_it->second : 0u;
+        if (!pitch || !height) {
+          ++d_failed;
+          continue;
+        }
+        uint32_t key = (uint32_t(dk) ^ uint32_t(dk >> 32)) | 0x80000000u;
+        const VkFormat depth_vk = render_target_cache_->GetDepthVulkanFormat(
+            xenos::DepthRenderTargetFormat(format));
+        NativeSurface* s = bd_native_renderer_->AcquireDepthOnlySurface(
+            key, pitch, height, depth_vk, samples);
+        if (s) {
+          ++d_reserved;
+          if (msaa != 0) {
+            ++d_reserved_msaa;
+          }
+        } else {
+          ++d_failed;
+        }
+      }
+
+      XELOGI(
+          "BD NATIVE RESERVE: color reserved={} (msaa={} paired_depth={}) "
+          "failed={} of {}; depth_only reserved={} (msaa={}) skip_paired={} "
+          "failed={} of {}; pair_conflicts={}",
+          reserved, reserved_msaa, paired, failed, color_surface_draws.size(),
+          d_reserved, d_reserved_msaa, d_skip_paired, d_failed,
+          depth_only_surfaces.size(), color_depth_pair_conflicts);
+    }
+    bd_native_frame_.clear();
+  }
+
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     // Read back the newest GPU-timestamp pair from a frame that has completed
     // and whose slot hasn't been reused by an in-flight frame (no host stall).
@@ -4596,6 +4833,24 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   bool bd_framegraph_depth_prepared = false;
   bool bd_framegraph_depth_fusion_ready = false;
+  VkRect2D bd_framegraph_depth_consumer_render_area = {};
+  if (framebuffer) {
+    bd_framegraph_depth_consumer_render_area.extent = framebuffer->host_extent;
+    if (cvars::gpu_clamp_renderarea_to_scissor) {
+      draw_util::Scissor scissor;
+      draw_util::GetScissor(*register_file_, scissor);
+      uint32_t max_x = scissor.offset[0] + scissor.extent[0];
+      uint32_t max_y = scissor.offset[1] + scissor.extent[1];
+      if (max_x > 0 &&
+          max_x < bd_framegraph_depth_consumer_render_area.extent.width) {
+        bd_framegraph_depth_consumer_render_area.extent.width = max_x;
+      }
+      if (max_y > 0 &&
+          max_y < bd_framegraph_depth_consumer_render_area.extent.height) {
+        bd_framegraph_depth_consumer_render_area.extent.height = max_y;
+      }
+    }
+  }
   if ((cvars::gpu_bd_framegraph_depth ||
        cvars::gpu_bd_framegraph_depth_shadow) &&
       (pass_kind == GpuPassKind::kGuest ||
@@ -4609,6 +4864,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
         !cvars::gpu_vulkan_retro_depth_none &&
         !cvars::gpu_vulkan_inpass_edram_transfers &&
         dc_safe_pending_state_mask_ == 0 &&
+        framebuffer &&
+        !(cvars::gpu_bd_native_color_lifetime_hle >= 4 &&
+          framebuffer->bd_native_color_framebuffer != VK_NULL_HANDLE) &&
         !(current_render_pass_ == render_pass &&
           current_framebuffer_ == framebuffer);
     bd_framegraph_depth_prepared =
@@ -4701,7 +4959,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     bd_framegraph_depth_fusion_ready =
         render_target_cache_->ExecutePreparedBdFramegraphDepthConsumer(
             render_target_cache_->last_update_render_pass_key(), render_pass,
-            framebuffer);
+            framebuffer, bd_framegraph_depth_consumer_render_area);
   }
   // Instrumentation: attribute per-draw render-pass breaks. A break here is
   // caused either by SubmitBarriers ending the pass for a pending barrier, or by
@@ -4840,6 +5098,23 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     }
     current_render_pass_ = render_pass;
   }
+  // PATH A STAGE 1 (gpu_bd_patha_depth_snapshot): the ONE 4x HDR-effect depth
+  // consumer. Seed LLE depth -> native snapshot, then render the consumer with
+  // the native depth attachment (att0 swapped, LLE color kept). Mirror back at
+  // pass end. Same "null the pass tracker across the seed" dance as color.
+  bd_depth_mirror_active_ = false;
+  if (cvars::gpu_bd_patha_depth_snapshot &&
+      (pass_kind == GpuPassKind::kGuest ||
+       pass_kind == GpuPassKind::kGuestComposite) &&
+      framebuffer &&
+      framebuffer->bd_native_depth_framebuffer != VK_NULL_HANDLE) {
+    current_render_pass_ = VK_NULL_HANDLE;
+    if (render_target_cache_->SeedBdNativeDepthConsumer(framebuffer)) {
+      bd_depth_mirror_active_ = true;
+      bd_depth_mirror_fb_ = framebuffer;
+    }
+    current_render_pass_ = render_pass;
+  }
   // Safe DONT_CARE: if the draw opening this pass provably overwrites the
   // whole render area for some attachments, begin with a load-DONT_CARE
   // variant (compatible - load/store ops don't affect render pass
@@ -4904,9 +5179,14 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   render_pass_begin_info.pNext = nullptr;
   render_pass_begin_info.renderPass = begin_render_pass;
   // LEVEL 4: render into the native color image (LLE depth kept) when armed.
+  // PATH A STAGE 1: render into the native DEPTH image (LLE color kept) when the
+  // depth-consumer mirror is armed. Color and depth substitution are mutually
+  // exclusive per pass (a pass is either the color producer or the depth consumer).
   render_pass_begin_info.framebuffer =
-      bd_color_mirror_active_ ? framebuffer->bd_native_color_framebuffer
-                              : framebuffer->framebuffer;
+      bd_color_mirror_active_
+          ? framebuffer->bd_native_color_framebuffer
+          : (bd_depth_mirror_active_ ? framebuffer->bd_native_depth_framebuffer
+                                     : framebuffer->framebuffer);
   render_pass_begin_info.renderArea.offset.x = 0;
   render_pass_begin_info.renderArea.offset.y = 0;
   // TODO(Triang3l): Actual dirty width / height in the deferred command
@@ -5200,6 +5480,20 @@ void VulkanCommandProcessor::RetroPatchDepthNoneAtPassEnd() {
 }
 
 void VulkanCommandProcessor::FinalizeBdNativeColorMirrorAfterPass() {
+  // PATH A STAGE 1: mirror the native depth snapshot back to the LLE depth image
+  // so downstream (later passes / resolves) stays correct. Clear the arm FIRST
+  // (the mirror's SubmitBarriers can re-enter here) = exactly one mirror per pass.
+  if (bd_depth_mirror_active_) {
+    bd_depth_mirror_active_ = false;
+    const VulkanRenderTargetCache::Framebuffer* dfb = bd_depth_mirror_fb_;
+    bd_depth_mirror_fb_ = nullptr;
+    if (dfb) {
+      VkRenderPass saved_render_pass = current_render_pass_;
+      current_render_pass_ = VK_NULL_HANDLE;
+      render_target_cache_->MirrorBdNativeDepthConsumer(dfb);
+      current_render_pass_ = saved_render_pass;
+    }
+  }
   if (!bd_color_mirror_active_) {
     return;
   }
@@ -8561,6 +8855,169 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  if (cvars::gpu_bd_full_native >= 1) {
+    if (bd_native_frame_.capacity() == 0) {
+      // Blue Dragon fields are normally around 1.2k-2.3k draws, so one gated
+      // allocation covers the capture while the disabled path allocates none.
+      bd_native_frame_.reserve(4096);
+    }
+
+    BdNativeDrawDescriptor draw;
+    draw.primitive_type = uint32_t(prim_type);
+    draw.index_count = index_count;
+    draw.indexed = index_buffer_info != nullptr;
+    if (index_buffer_info) {
+      draw.index_format = uint32_t(index_buffer_info->format);
+      draw.index_endian = uint32_t(index_buffer_info->endianness);
+      draw.index_guest_address = index_buffer_info->guest_base;
+      draw.index_buffer_count = index_buffer_info->count;
+      draw.index_buffer_length = uint64_t(index_buffer_info->length);
+    }
+    // The Vulkan path currently emits one instance for every committed guest
+    // draw; repeated guest instances arrive as their own IssueDraw calls.
+    draw.instance_count = 1;
+    draw.vertex_count = primitive_processing_result.host_draw_vertex_count;
+
+    auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+    draw.msaa = uint32_t(rb_surface_info.msaa_samples);
+    draw.normalized_color_mask = normalized_color_mask;
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      BdNativeDrawDescriptor::ColorRenderTarget& color =
+          draw.color_targets[i];
+      color.bound =
+          (normalized_color_mask & (uint32_t(0b1111) << (4 * i))) != 0;
+      if (color.bound) {
+        auto color_info = regs.Get<reg::RB_COLOR_INFO>(
+            reg::RB_COLOR_INFO::rt_register_indices[i]);
+        color.base_tiles = color_info.color_base;
+        color.pitch = rb_surface_info.surface_pitch;
+        color.format = uint32_t(color_info.color_format);
+        color.msaa = draw.msaa;
+      }
+      draw.blend_controls[i] =
+          regs[reg::RB_BLENDCONTROL::rt_register_indices[i]];
+    }
+
+    auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+    BdNativeDrawDescriptor::DepthRenderTarget& depth = draw.depth_target;
+    depth.bound = normalized_depth_control.z_enable ||
+                  normalized_depth_control.stencil_enable;
+    if (depth.bound) {
+      depth.base_tiles = rb_depth_info.depth_base;
+      depth.pitch = rb_surface_info.surface_pitch;
+      depth.format = uint32_t(rb_depth_info.depth_format);
+      depth.msaa = draw.msaa;
+    }
+    depth.z_enable = normalized_depth_control.z_enable;
+    depth.z_write_enable = normalized_depth_control.z_write_enable;
+    depth.z_compare = uint32_t(normalized_depth_control.zfunc);
+    depth.stencil_enable = normalized_depth_control.stencil_enable;
+    depth.stencil_front_compare =
+        uint32_t(normalized_depth_control.stencilfunc);
+    depth.stencil_back_compare =
+        uint32_t(normalized_depth_control.stencilfunc_bf);
+    draw.normalized_depth_control = normalized_depth_control.value;
+
+    draw.vertex_shader_hash = vertex_shader_hash;
+    draw.pixel_shader_hash = pixel_shader_hash;
+    draw.color_control = regs.Get<reg::RB_COLORCONTROL>().value;
+    draw.alpha_ref = regs[XE_GPU_REG_RB_ALPHA_REF];
+    draw.raster_control = regs.Get<reg::PA_SU_SC_MODE_CNTL>().value;
+    draw.viewport_control = regs.Get<reg::PA_CL_VTE_CNTL>().value;
+    draw.viewport = {
+        regs[XE_GPU_REG_PA_CL_VPORT_XSCALE],
+        regs[XE_GPU_REG_PA_CL_VPORT_XOFFSET],
+        regs[XE_GPU_REG_PA_CL_VPORT_YSCALE],
+        regs[XE_GPU_REG_PA_CL_VPORT_YOFFSET],
+        regs[XE_GPU_REG_PA_CL_VPORT_ZSCALE],
+        regs[XE_GPU_REG_PA_CL_VPORT_ZOFFSET],
+    };
+    draw.screen_scissor_tl =
+        regs.Get<reg::PA_SC_SCREEN_SCISSOR_TL>().value;
+    draw.screen_scissor_br =
+        regs.Get<reg::PA_SC_SCREEN_SCISSOR_BR>().value;
+    draw.window_scissor_tl =
+        regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>().value;
+    draw.window_scissor_br =
+        regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>().value;
+    draw.window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>().value;
+
+    constexpr uint64_t kFnv1aOffsetBasis = UINT64_C(14695981039346656037);
+    constexpr uint64_t kFnv1aPrime = UINT64_C(1099511628211);
+    auto fnv_mix = [kFnv1aPrime](uint64_t& hash, uint64_t value,
+                                uint32_t byte_count) {
+      for (uint32_t i = 0; i < byte_count; ++i) {
+        hash ^= uint8_t(value >> (i * 8));
+        hash *= kFnv1aPrime;
+      }
+    };
+    uint64_t full_signature = kFnv1aOffsetBasis;
+    uint64_t logical_signature = kFnv1aOffsetBasis;
+    auto mix_both_u32 = [&](uint32_t value) {
+      fnv_mix(full_signature, value, sizeof(value));
+      fnv_mix(logical_signature, value, sizeof(value));
+    };
+    auto mix_both_u64 = [&](uint64_t value) {
+      fnv_mix(full_signature, value, sizeof(value));
+      fnv_mix(logical_signature, value, sizeof(value));
+    };
+    mix_both_u32(draw.primitive_type);
+    mix_both_u32(draw.index_count);
+    mix_both_u32(draw.indexed);
+    mix_both_u32(draw.index_format);
+    mix_both_u32(draw.index_endian);
+    mix_both_u32(draw.index_guest_address);
+    mix_both_u32(draw.index_buffer_count);
+    mix_both_u64(draw.index_buffer_length);
+    mix_both_u32(draw.instance_count);
+    mix_both_u32(draw.vertex_count);
+    for (const BdNativeDrawDescriptor::ColorRenderTarget& color :
+         draw.color_targets) {
+      mix_both_u32(color.bound);
+      // EDRAM base selection is tile-replay-only state.
+      fnv_mix(full_signature, color.base_tiles, sizeof(color.base_tiles));
+      mix_both_u32(color.pitch);
+      mix_both_u32(color.format);
+      mix_both_u32(color.msaa);
+    }
+    mix_both_u32(depth.bound);
+    fnv_mix(full_signature, depth.base_tiles, sizeof(depth.base_tiles));
+    mix_both_u32(depth.pitch);
+    mix_both_u32(depth.format);
+    mix_both_u32(depth.msaa);
+    mix_both_u32(depth.z_enable);
+    mix_both_u32(depth.z_write_enable);
+    mix_both_u32(depth.z_compare);
+    mix_both_u32(depth.stencil_enable);
+    mix_both_u32(depth.stencil_front_compare);
+    mix_both_u32(depth.stencil_back_compare);
+    mix_both_u32(draw.normalized_color_mask);
+    mix_both_u32(draw.normalized_depth_control);
+    mix_both_u64(draw.vertex_shader_hash);
+    mix_both_u64(draw.pixel_shader_hash);
+    for (uint32_t blend_control : draw.blend_controls) {
+      mix_both_u32(blend_control);
+    }
+    mix_both_u32(draw.color_control);
+    mix_both_u32(draw.alpha_ref);
+    mix_both_u32(draw.raster_control);
+    mix_both_u32(draw.viewport_control);
+    for (uint32_t viewport_register : draw.viewport) {
+      mix_both_u32(viewport_register);
+    }
+    mix_both_u32(draw.screen_scissor_tl);
+    mix_both_u32(draw.screen_scissor_br);
+    // Window scissor and offset select the EDRAM tile replay window.
+    fnv_mix(full_signature, draw.window_scissor_tl,
+            sizeof(draw.window_scissor_tl));
+    fnv_mix(full_signature, draw.window_scissor_br,
+            sizeof(draw.window_scissor_br));
+    fnv_mix(full_signature, draw.window_offset, sizeof(draw.window_offset));
+    mix_both_u32(draw.msaa);
+    draw.full_signature = full_signature;
+    draw.logical_signature = logical_signature;
+    bd_native_frame_.push_back(std::move(draw));
+  }
   // Depth-prepass eligibility classification (Unit 1 of the opaque depth
   // pre-pass). Opaque = writes depth, no alpha-test/discard, RT0 not blending
   // (src=One,dst=Zero,op=Add for both color and alpha) - these can be rendered

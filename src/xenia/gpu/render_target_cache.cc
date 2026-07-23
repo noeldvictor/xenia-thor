@@ -31,6 +31,7 @@ DECLARE_bool(gpu_binonce_full_scissor);
 // in gpu_flags.cc). Reserves ownership footprints at the guest sample count and
 // makes render targets independent (no cross-RT ownership transfers).
 DECLARE_bool(gpu_native_render_targets);
+DECLARE_bool(gpu_bd_perfmode_hdr_2x);
 
 DEFINE_bool(
     depth_transfer_not_equal_test, true,
@@ -637,6 +638,36 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   // trace pinned BD's cost to MSAA-2x foliage overdraw (per-sample ROP doubled); 1x
   // ~halves it. Default 0 = off; quality trade (loses MSAA edge smoothing).
   msaa_samples = draw_util::ClampForcedMsaaSamples(msaa_samples);
+  // BD PERFORMANCE MODE (gpu_bd_perfmode_hdr_2x): recognize the 4x HDR effect
+  // pass = depth base810 + a color base0 k_2_10_10_10_FLOAT, at 4x MSAA. Force it
+  // to 2x here so the render-pass key, RT keys, pitch, and pipelines all derive a
+  // consistent 2x sample count (the same "all sites agree" discipline as the
+  // gpu_force_max_msaa clamp above). The vulkan backend then substitutes native
+  // 2x color+depth for this pass (rendering OUTSIDE EDRAM, so the 2x/4x tile
+  // packing can't desync) and drops the now-orphaned 2x->4x depth transfer.
+  bd_perfmode_hdr_pass_ = false;
+  if (cvars::gpu_bd_perfmode_hdr_2x && is_rasterization_done &&
+      msaa_samples == xenos::MsaaSamples::k4X &&
+      (normalized_depth_control.z_enable ||
+       normalized_depth_control.stencil_enable) &&
+      regs.Get<reg::RB_DEPTH_INFO>().depth_base == 810) {
+    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+      if (!(normalized_color_mask & (uint32_t(0b1111) << (4 * i)))) {
+        continue;
+      }
+      auto ci = regs.Get<reg::RB_COLOR_INFO>(
+          reg::RB_COLOR_INFO::rt_register_indices[i]);
+      if (ci.color_base == 0 &&
+          ci.color_format ==
+              xenos::ColorRenderTargetFormat::k_2_10_10_10_FLOAT) {
+        bd_perfmode_hdr_pass_ = true;
+        break;
+      }
+    }
+  }
+  if (bd_perfmode_hdr_pass_) {
+    msaa_samples = xenos::MsaaSamples::k2X;
+  }
   uint32_t msaa_samples_x_log2 =
       uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);
   uint32_t pitch_pixels = rb_surface_info.surface_pitch;

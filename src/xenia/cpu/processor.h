@@ -118,6 +118,11 @@ class Processor {
   Function* LookupFunction(Module* module, uint32_t address);
   Function* ResolveFunction(uint32_t address);
 
+  // Marks the transition from load/precompile to gameplay: after this, any
+  // DemandFunction compile is a runtime JIT-on-demand AOT miss (see the
+  // aot_* counters). Called once when the title's main thread launches.
+  void EnterRuntimePhase();
+
   bool Execute(ThreadState* thread_state, uint32_t address);
   bool ExecuteRaw(ThreadState* thread_state, uint32_t address);
   uint64_t Execute(ThreadState* thread_state, uint32_t address, uint64_t args[],
@@ -280,6 +285,16 @@ class Processor {
   ExportResolver* export_resolver_ = nullptr;
 
   EntryTable entry_table_;
+
+  // AOT-coverage metric (the hybrid AOT-primary goal): DemandFunction compiles
+  // are split by phase - those before the title's main thread launches are AOT
+  // (precompile), those after are runtime JIT-on-demand = AOT MISSES. A high
+  // miss count means the precompiler didn't cover what gameplay actually runs.
+  // EnterRuntimePhase() flips the phase at launch; logging is gated by a cvar.
+  std::atomic<bool> aot_runtime_phase_{false};
+  std::atomic<uint64_t> aot_compiles_{0};
+  std::atomic<uint64_t> aot_runtime_misses_{0};
+
   xe::global_critical_region global_critical_region_;
   ExecutionState execution_state_ = ExecutionState::kPaused;
   std::vector<std::unique_ptr<Module>> modules_;

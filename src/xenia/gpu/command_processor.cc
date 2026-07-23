@@ -231,6 +231,13 @@ DEFINE_bool(
     "back eagerly to the legacy standalone transfer pass.",
     "GPU");
 DEFINE_bool(
+    gpu_bd_framegraph_depth_dump, false,
+    "BD framegraph depth diagnostic (default off): log a comparable command-"
+    "state marker for the exact base-810 pitch-9 2x-to-4x depth transfer after "
+    "the fused or standalone transfer draw is recorded. Cheap and readback-"
+    "free; use matching markers to separate transfer setup from later draws.",
+    "GPU");
+DEFINE_bool(
     gpu_bd_framegraph_depth_shadow, false,
     "BD minimal framegraph depth shadow diagnostic (default off): recognize "
     "and trace the exact base-810 pitch-9 2x-to-4x depth ownership edge and "
@@ -238,6 +245,43 @@ DEFINE_bool(
     "standalone transfer. This is instrumentation only and never records an "
     "in-pass transfer draw. When enabled it overrides gpu_bd_framegraph_depth "
     "for the recognized edge so rendering remains on the legacy path.",
+    "GPU");
+DEFINE_bool(
+    gpu_bd_patha_depth_snapshot, false,
+    "BD Path A Stage 1 (default off): redirect the ONE base-810 pitch-9 4x "
+    "HDR-effect depth consumer (color base-0 pitch-9 2:10:10:10-float 4x) to a "
+    "PRIVATE native 4x depth image. Before the consumer pass the EDRAM depth is "
+    "seeded (copied) into the native image; the consumer depth-tests the native "
+    "snapshot; after the pass it is mirrored back to EDRAM so downstream stays "
+    "correct. The legacy ownership transfer is untouched. This validates the "
+    "native-depth redirect machinery + measures the snapshot cost; any identity "
+    "or format mismatch falls back to the plain LLE framebuffer.",
+    "GPU");
+DEFINE_bool(
+    gpu_bd_perfmode_hdr_2x, false,
+    "BD PERFORMANCE MODE Build 1 (default off, 5.6-sol arch): substitute the 4x "
+    "HDR effect pass (color base-0 pitch-9 2:10:10:10-float 4x + depth base-810 "
+    "pitch-9 4x - the SOLE consumer of the 4x field depth) with a NATIVE render "
+    "at 2x: native 2x color + the native 2x field-depth snapshot, 2x pipeline "
+    "variant, resolved color redirected downstream. This orphans the ~23 "
+    "base-810 2x->4x depth ownership transfers (no 4x consumer) so they can be "
+    "dropped, reclaiming their tile-store WITHOUT the temporal-snapshot problem. "
+    "Fail-closed: any signature/state mismatch renders the original 4x guest "
+    "pass + transfers. Small visual cost (slightly rougher glow/translucency).",
+    "GPU");
+DEFINE_bool(
+    gpu_bd_native_reserve_captured_surfaces, false,
+    "BD full-native HLE substrate (default off): drive BdNativeRenderer's "
+    "resource-keyed AcquireSurface() from the live per-frame draw capture "
+    "(requires gpu_bd_full_native>=1). At frame end, for each DISTINCT "
+    "single-sample color surface seen this frame (keyed by "
+    "base_tiles+pitch+format+msaa, sized from the pitch + max screen-scissor "
+    "extent), ensure a persistent native color+depth VkImage exists - building "
+    "the full resource-keyed native RT set the EDRAM-deletion HLE needs. This "
+    "only ALLOCATES the surfaces (no render redirect yet); MSAA surfaces are "
+    "deferred (AcquireSurface needs a resolve, not yet implemented). Inert until "
+    "enabled; needs on-device validation of the full render redirect that "
+    "consumes these surfaces.",
     "GPU");
 DEFINE_int32(
     gpu_bd_native_color_lifetime_hle, 0,

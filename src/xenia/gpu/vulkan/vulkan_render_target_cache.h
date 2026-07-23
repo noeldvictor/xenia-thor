@@ -176,6 +176,26 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     VkPipelineStageFlags bd_native_color_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkAccessFlags bd_native_color_access = 0;
     VkImageLayout bd_native_color_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // PATH A STAGE 1 (gpu_bd_patha_depth_snapshot): a PRIVATE native 4x depth
+    // image that substitutes the LLE depth attachment for the ONE base810 pitch9
+    // 4x HDR-effect depth consumer. The cloned framebuffer keeps the LLE color at
+    // att1 and swaps att0 to bd_native_depth_view. Seeded (LLE depth -> native)
+    // before the consumer pass, mirrored (native -> LLE depth) after so
+    // downstream stays correct. Lazily created; destroyed with the framebuffer.
+    VkImage bd_native_depth_image = VK_NULL_HANDLE;
+    VkDeviceMemory bd_native_depth_memory = VK_NULL_HANDLE;
+    VkImageView bd_native_depth_view = VK_NULL_HANDLE;
+    VkFramebuffer bd_native_depth_framebuffer = VK_NULL_HANDLE;
+    // The LLE depth image this native snapshot mirrors to/from + its RT (layout
+    // tracking during seed/mirror). Non-owning; cleared with the framebuffer.
+    VkImage bd_native_depth_lle_image = VK_NULL_HANDLE;
+    RenderTarget* bd_native_depth_lle_rt = nullptr;
+    VkImageAspectFlags bd_native_depth_aspect = 0;
+    // Native depth image's last {stage,access,layout} across frames (WAR-hazard
+    // fix, mirrors the color path's seed/mirror ordering).
+    VkPipelineStageFlags bd_native_depth_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkAccessFlags bd_native_depth_access = 0;
+    VkImageLayout bd_native_depth_layout = VK_IMAGE_LAYOUT_UNDEFINED;
     Framebuffer() = default;
     Framebuffer(VkFramebuffer framebuffer, const VkExtent2D& host_extent)
         : framebuffer(framebuffer), host_extent(host_extent) {}
@@ -251,7 +271,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                                         bool can_begin_new_pass);
   bool ExecutePreparedBdFramegraphDepthConsumer(
       RenderPassKey consumer_render_pass_key,
-      VkRenderPass consumer_render_pass, const Framebuffer* framebuffer);
+      VkRenderPass consumer_render_pass, const Framebuffer* framebuffer,
+      const VkRect2D& consumer_render_area);
   void RecordPreparedBdFramegraphDepthConsumer();
   void FallbackBdFramegraphDepthTransfer(const char* reason);
   void EndFrameBdFramegraphDepthShadow();
@@ -368,6 +389,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // render pass.
   bool SeedBdNativeColorProducer(const Framebuffer* fb);
   void MirrorBdNativeColorProducer(const Framebuffer* fb);
+  // PATH A STAGE 1: seed LLE depth -> native snapshot before the consumer pass,
+  // and mirror native -> LLE depth after. Both must be called OUTSIDE any render
+  // pass. Return true (seed) when fb has a native depth framebuffer to use.
+  bool SeedBdNativeDepthConsumer(const Framebuffer* fb);
+  void MirrorBdNativeDepthConsumer(const Framebuffer* fb);
   // LEVEL 5: a sampled view of fb's native color image with the guest texture
   // swizzle applied (created/cached per host_swizzle). Lets the composite sample
   // the native field/bloom with the correct channel order. Null if fb has no
@@ -1140,6 +1166,22 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
     uint64_t schedule_pass_serial = 0;
     bool matched = false;
     bool first_dest_use_seen = false;
+    // Full access ledger (gpu_bd_framegraph_depth_dump): accumulated across every
+    // pass-enter from schedule to frame end so we can see whether the fused
+    // consumer is the EARLIEST/only dest-depth consumer, whether the source is
+    // mutated after schedule, and whether generations drift (5.6-sol dump A).
+    uint32_t ledger_dest_depth_binds = 0;    // dest bound as a depth attachment
+    uint32_t ledger_dest_color_binds = 0;    // dest bound as a color attachment
+    uint32_t ledger_source_depth_binds = 0;  // source bound as a depth attachment
+    uint32_t ledger_dest_gen_changes = 0;    // dest generation != scheduled at a bind
+    uint32_t ledger_source_gen_changes = 0;  // source generation != scheduled at a bind
+    uint64_t ledger_first_dest_depth_serial = 0;  // pass serial of first dest-depth bind
+    uint64_t ledger_match_serial = 0;        // pass serial of first exact view-match (fusion target)
+    // Path A Stage 0 consumer census: the distinct COLOR-RT surfaces that the
+    // dest-depth consumers render into (identifies the 4X consumers = foliage /
+    // bloom / composite / etc. by their color surface key).
+    RenderTargetKey ledger_consumer_color_keys[4];
+    uint32_t ledger_consumer_color_count = 0;
   };
   void LogBdFramegraphShadowFirstNonconsumer(
       BdFramegraphShadowDepthTransfer& entry, const char* use,
@@ -1291,6 +1333,15 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // framebuffer (bd_native_color_framebuffer == VK_NULL_HANDLE) when it can't
   // build the native variant, so the caller transparently falls back to LLE.
   const Framebuffer* GetBdNativeColorProducerFramebuffer(
+      RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
+      const RenderTarget* const* depth_and_color_render_targets);
+  // PATH A STAGE 1 (gpu_bd_patha_depth_snapshot): for the ONE base810 pitch9 4x
+  // HDR-effect depth consumer (color base0 pitch9 2:10:10:10-float 4x), clone the
+  // framebuffer with att0 (depth) swapped to a private native 4x depth image and
+  // att1 keeping the LLE color. Lazily created + cached on the entry. Returns the
+  // plain base framebuffer (bd_native_depth_framebuffer == VK_NULL_HANDLE) for any
+  // other pass shape so the caller transparently falls back to LLE.
+  const Framebuffer* GetBdNativeDepthConsumerFramebuffer(
       RenderPassKey render_pass_key, uint32_t pitch_tiles_at_32bpp,
       const RenderTarget* const* depth_and_color_render_targets);
 

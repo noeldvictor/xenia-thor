@@ -271,6 +271,11 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
   SetExecutableModule(module);
   XELOGI("KernelState: Launching module...");
 
+  // Mark the AOT/precompile -> runtime boundary: any guest function compiled
+  // from here on is a runtime JIT-on-demand AOT miss (the precompiler has
+  // already joined in LoadUserModule). Feeds the AOT-coverage metric.
+  emulator()->processor()->EnterRuntimePhase();
+
   // Create a thread to run in.
   // We start suspended so we can run the debugger prep.
   auto thread = object_ref<XThread>(
