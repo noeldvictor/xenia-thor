@@ -49,5 +49,6 @@ DECLARE_int32(cpu_precompile_budget_ms);
 DECLARE_bool(cpu_precompile_drain_frontier);
 DECLARE_bool(cpu_precompile_scan_jump_tables);
 DECLARE_bool(cpu_precompile_scan_pointer_tables);
+DECLARE_bool(cpu_aot_maximize);
 
 #endif  // XENIA_CPU_CPU_FLAGS_H_

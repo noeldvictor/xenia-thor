@@ -888,7 +888,7 @@ int XexModule::ReadPEHeaders() {
   // The same parsed table is the function-entry list the multicore precompiler
   // (cpu_precompile_guest_functions) walks, so build it for either consumer.
   if (cvars::guest_cpp_exception_dispatch ||
-      cvars::cpu_precompile_guest_functions) {
+      cvars::cpu_precompile_guest_functions || cvars::cpu_aot_maximize) {
     const auto& exc_dir =
         opthdr->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
     const uint32_t exc_va = exc_dir.VirtualAddress;
@@ -1260,7 +1260,7 @@ void XexModule::RefillPrecompileWork() {
 }
 
 uint32_t XexModule::ScanJumpTablesForPrecompile() {
-  if (!cvars::cpu_precompile_scan_jump_tables) {
+  if (!cvars::cpu_precompile_scan_jump_tables && !cvars::cpu_aot_maximize) {
     return 0;
   }
   Memory* memory = processor_->memory();
@@ -1341,7 +1341,7 @@ uint32_t XexModule::ScanJumpTablesForPrecompile() {
 }
 
 uint32_t XexModule::ScanPointerTablesForPrecompile() {
-  if (!cvars::cpu_precompile_scan_pointer_tables) {
+  if (!cvars::cpu_precompile_scan_pointer_tables && !cvars::cpu_aot_maximize) {
     return 0;
   }
   Memory* memory = processor_->memory();
@@ -1402,7 +1402,7 @@ uint32_t XexModule::ScanPointerTablesForPrecompile() {
 }
 
 void XexModule::PrecompileGuestFunctions() {
-  if (!cvars::cpu_precompile_guest_functions) {
+  if (!cvars::cpu_precompile_guest_functions && !cvars::cpu_aot_maximize) {
     return;
   }
 
@@ -1477,7 +1477,8 @@ void XexModule::PrecompileGuestFunctions() {
   // it entirely and runs until the reachable frontier is exhausted (max AOT
   // coverage).
   const int budget_ms = cvars::cpu_precompile_budget_ms;
-  const bool drain_frontier = cvars::cpu_precompile_drain_frontier;
+  const bool drain_frontier =
+      cvars::cpu_precompile_drain_frontier || cvars::cpu_aot_maximize;
   const auto start = std::chrono::steady_clock::now();
   const auto deadline =
       (drain_frontier || budget_ms <= 0)

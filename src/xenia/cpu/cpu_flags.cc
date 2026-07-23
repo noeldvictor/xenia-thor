@@ -143,6 +143,17 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
+DEFINE_bool(cpu_aot_maximize, false,
+            "AOT-primary master switch: enable the full validated max-static-"
+            "coverage precompile stack in one flag - equivalent to "
+            "cpu_precompile_guest_functions + cpu_precompile_drain_frontier + "
+            "cpu_precompile_scan_jump_tables + cpu_precompile_scan_pointer_tables. "
+            "Precompiles the drained call-graph + pdata + jump-table + vtable "
+            "targets at load so gameplay hits the fewest runtime JIT compiles "
+            "(BD desktop: ~97.5%% AOT). Pair with the object cache "
+            "(cpu_llvm_object_cache) so cold-boot codegen is amortized across "
+            "launches. Default off.",
+            "CPU");
 DEFINE_bool(cpu_precompile_scan_pointer_tables, false,
             "AOT coverage: scan the XEX image for function-pointer tables "
             "(vtables / dispatch tables in the data sections - runs of >=4 "
