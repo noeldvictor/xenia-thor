@@ -134,6 +134,71 @@ bool BdNativeRenderer::ResolveMsaa(DeferredCommandBuffer& command_buffer) {
   return true;
 }
 
+bool BdNativeRenderer::ResolveSurface(NativeSurface& s,
+                                     DeferredCommandBuffer& command_buffer) {
+  if (s.samples == VK_SAMPLE_COUNT_1_BIT || s.resolve_image == VK_NULL_HANDLE ||
+      s.color_image == VK_NULL_HANDLE) {
+    return false;  // single-sample or no resolve target = nothing to do.
+  }
+  // Resolve the surface's multisampled color -> its single-sample resolve_image
+  // (the sampleable image for MSAA surfaces), leaving resolve_image SHADER_READ.
+  // Same shape as the primary ResolveMsaa; call right after rendering into the
+  // surface, so color_image is COLOR_ATTACHMENT (the MSAA render-pass finalLayout).
+  VkImageSubresourceRange range = {};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.levelCount = 1;
+  range.layerCount = 1;
+
+  VkImageMemoryBarrier pre[2] = {};
+  pre[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  pre[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  pre[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  pre[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  pre[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  pre[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  pre[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  pre[0].image = s.color_image;
+  pre[0].subresourceRange = range;
+  pre[1] = pre[0];
+  pre[1].srcAccessMask = 0;
+  pre[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  pre[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  pre[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  pre[1].image = s.resolve_image;
+  command_buffer.CmdVkPipelineBarrier(
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+          VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, pre);
+
+  VkImageResolve r = {};
+  r.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  r.srcSubresource.layerCount = 1;
+  r.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  r.dstSubresource.layerCount = 1;
+  r.extent = {s.width, s.height, 1};
+  command_buffer.CmdVkResolveImage(
+      s.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.resolve_image,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+
+  VkImageMemoryBarrier post = {};
+  post.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  post.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  post.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  post.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  post.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  post.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  post.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  post.image = s.resolve_image;
+  post.subresourceRange = range;
+  command_buffer.CmdVkPipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                      nullptr, 0, nullptr, 1, &post);
+  // color_image is now TRANSFER_SRC; the next render into the surface re-begins
+  // its pass (which transitions from UNDEFINED/LOAD), so mark it accordingly.
+  s.color_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  return true;
+}
+
 bool BdNativeRenderer::StretchToPresent(DeferredCommandBuffer& command_buffer,
                                         uint32_t src_width,
                                         uint32_t src_height) {

@@ -179,6 +179,14 @@ class BdNativeRenderer {
   NativeSurface* AcquireDepthOnlySurface(uint32_t key, uint32_t width,
                                          uint32_t height, VkFormat depth_format,
                                          VkSampleCountFlagBits samples);
+  // Resolve one reserved MSAA surface's multisampled color into its single-
+  // sample resolve_image (leaving it SHADER_READ so the surface is sampleable),
+  // mirroring the primary ResolveMsaa. Call after rendering into the surface
+  // (its color is COLOR_ATTACHMENT). No-op for single-sample surfaces or those
+  // without a resolve target. The redirect consumer uses this before sampling
+  // an MSAA native surface.
+  bool ResolveSurface(NativeSurface& surface,
+                      DeferredCommandBuffer& command_buffer);
   // Look up a native surface by key (nullptr if none). Const view for binding.
   NativeSurface* FindSurface(uint32_t key);
   // The sampled color view of the native surface whose key == guest_address, or
