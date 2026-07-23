@@ -54,9 +54,19 @@ XenonRecomp resolves virtual/fn-ptr calls by dereferencing at `guest_addr*2`
 collision-free, ~1-2 host instructions. Tiaozhuan (TACO 2025) Full Address
 Mapping is the same idea (vs ~10 insts for hash-table DBT).
 - **xenia:** LLVM guest-call path uses an 8192-slot self-validating resolve-cache
-  (hash + validate). Lever: replace with a full direct-indexed
-  guest->host-fn table = fewer instructions per indirect call = faster+lower power
-  on the hot dispatch. Android-side (LLVM backend) + device-validated.
+  (llvm_backend.cc:236 - 64KB, `(target>>2)&8191` -> atomic<Function*>, validate
+  fn->address()==target). Hit path ~3 instructions (relaxed load + compare); the
+  64KB table stays HOT in L2.
+- **⚠️ EVALUATED + RULED OUT FOR XENIA (2026-07-23, code-grounded):** the
+  direct-index table does NOT transfer to xenia's JIT. Over BD's ~16MB code range
+  a full guest_addr->Function* table is ~32MB - it does NOT fit in cache, so every
+  indirect call risks a DRAM miss = likely SLOWER than the hot 64KB self-validating
+  cache. XenonRecomp wins with it because its AOT model dereferences the pointer
+  INLINE with no separate cache; xenia's JIT already has the hot cache. Net: a
+  probable REGRESSION - do NOT build. xenia's resolve is already the right
+  structure for a JIT. (This closes the last candidate device-free CPU lever: the
+  save/restore inlining + ABI residency are the device-free ceiling; the
+  return-trampoline is device-only [[bd... llvm_assembler.cc:262]].)
 
 ## 4. Static function discovery (the residue) — DONE in xenia
 
