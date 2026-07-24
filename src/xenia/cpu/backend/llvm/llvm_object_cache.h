@@ -32,7 +32,11 @@ namespace llvm_backend {
 // changed call ABI -> wild execution). Part of the cache subdir name, so a bump
 // just starts a fresh dir; the old one can be deleted. Used by llvm_backend.cc to
 // build the per-version cache dir.
-constexpr uint32_t kLlvmObjectCacheVersion = 1;
+// v2 (2026-07-24): the cache key gained the residency_writeback / residency_abi
+// bits. v1 keys encoded only opt + context_residency, so a v1 .o compiled under a
+// DIFFERENT writeback/abi setting could be served to a run that asked for another
+// one - see the key construction in llvm_assembler.cc.
+constexpr uint32_t kLlvmObjectCacheVersion = 2;
 
 // Creates the disk-backed ORCv2 AOT object cache rooted at `dir`, wires `builder`
 // to compile through a SimpleCompiler bound to it (so getObject() is consulted

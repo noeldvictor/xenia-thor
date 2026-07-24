@@ -272,11 +272,32 @@ class Lowerer {
     // ret_addr, re-dispatching the caller's continuation in a fresh frame while THIS
     // frame is abandoned -> the opt=2 crash. (Tail calls work precisely because x0 =
     // the CALLER's own guest ret addr, which already has a valid stub up the chain.)
-    // FIX DIRECTION: emit a per-call-site host return trampoline - a blockaddress of
-    // the post-call point, registered in the guest->host map as the x0 the callee
-    // branches back to (i.e. replicate the thunk's return path inline), NOT a bare
-    // CreateCall. Until then the helper path stays. Bisection tooling if revisited:
-    // cpu_backend_llvm_max_fns / _dump_ir (the residency playbook).
+    // ⚠️ CORRECTED 2026-07-24 (gpt-5.6-sol consult, tmp/sol_trampoline_out.txt).
+    // The "abandoned frame / needs a return trampoline" story above is NOT the root
+    // cause, and a blockaddress + guest->host-map registration is NOT the fix. The
+    // RETURN path already works: an a64 callee recognizes guest LR == its entry x0
+    // and does a HOST ret, which lands right after the host call.
+    // THE REAL ROOT CAUSE IS AN ABI MISMATCH. A raw CreateCall to an a64 guest
+    // entry violates that entry's register contract: the a64 backend expects x19 =
+    // its backend context (LLVM does not reserve x19), and a64 code clobbers
+    // x22-x28 and the full q8-q15 - whereas AAPCS only guarantees the LOW 64 bits
+    // of v8-v15 are preserved. At opt=2 LLVM allocates exactly those registers for
+    // values live across the call, so the callee silently destroys them: an
+    // immediate fault in the a64 prologue / PushStackpoint when x19 is garbage, or
+    // delayed guest-state corruption otherwise. That is the opt=2 BD crash.
+    // FIX DIRECTION (do this instead): (1) reserve x19 alongside the existing
+    // x20/x21 reservations, (2) call a64 guest entries through a small AAPCS
+    // ADAPTER thunk emitted in the a64 runtime code cache (host_to_guest_thunk is
+    // an acceptable bring-up oracle), calling raw machine code ONLY for entries
+    // known to be LLVM/AAPCS, and (3) cache the resolved entry per call site as a
+    // single atomic pointer to an immutable {guest_address, entry} record, revalidated
+    // against the target (the self-validating pattern at llvm_backend.cc:239) -
+    // never as separate atomic target/pointer fields, which can observe target A
+    // with pointer B. Keep CALL_TAIL off this path in the first patch (a retained
+    // adapter frame across a musttail edge grows unboundedly in a guest tail loop).
+    // Until then the helper path stays. Bisection tooling if revisited:
+    // cpu_backend_llvm_max_fns / _dump_ir, and _dump_asm - this bug lives in
+    // REGISTER ALLOCATION, so the IR alone cannot show it.
     auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
                                         {b_.getPtrTy(), i32, i32}, false);
     auto callee = mod_->getOrInsertFunction("xe_llvm_guest_call", fty);
@@ -2294,12 +2315,18 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     for (uint32_t off = 0, n = hi - lo; off < n; ++off) {
       code_hash = (code_hash ^ bytes[off]) * 0x100000001b3ull;
     }
-    char keybuf[64];
-    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%d",
+    // Key must cover EVERY cvar that changes lowering, or a warm hit serves code
+    // built under different semantics. writeback and abi both change the emitted
+    // code (writeback removes the per-store context writes; abi drops the
+    // post-call reloads of the ABI callee-saved regs) - they were missing here.
+    char keybuf[80];
+    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%dw%da%d",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
-                  cvars::cpu_backend_llvm_context_residency ? 1 : 0);
+                  cvars::cpu_backend_llvm_context_residency ? 1 : 0,
+                  cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
+                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0);
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
@@ -2459,14 +2486,21 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // residency produce different native code from the same guest bytes. Without
     // this suffix a residency-on run would load a stale non-resident .o (a silent
     // perf regression - correct code, but none of the residency win), and opt=0
-    // qemu .o's would leak into an opt=2 device run. "_o<opt>r<residency>".
-    char idbuf[64];
-    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%d",
+    // qemu .o's would leak into an opt=2 device run.
+    // "_o<opt>r<context_residency>w<writeback>a<abi>" - writeback and abi ALSO
+    // change the emitted code (writeback drops the per-store context writes; abi
+    // drops the post-call reloads of the ABI callee-saved regs) and were missing
+    // from this key, so a warm hit could serve a .o built under different
+    // residency semantics than the run requested. Cache version bumped to 2.
+    char idbuf[80];
+    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%dw%da%d",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
-                  cvars::cpu_backend_llvm_context_residency ? 1 : 0);
+                  cvars::cpu_backend_llvm_context_residency ? 1 : 0,
+                  cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
+                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0);
     mod->setModuleIdentifier(idbuf);
   }
 
