@@ -969,16 +969,10 @@ TEST_CASE("LLVM_DID_SATURATE", "[llvm]") {
 // by composition (CondBr — tested — around EmitGuestCall — tested) and was
 // confirmed to produce the right result (r3==0) when this was briefly a RunDiff.
 
-// Link stub for the lean ARM64 qemu cpu-tests: the load-time D3D-HLE handlers in
-// processor.cc reach into gpu::CommandProcessor to write the PM4 ring directly,
-// but this cross build does not link the gpu library. No-op definition (the
-// handlers are cvar-gated + no CommandProcessor exists in the tests). The x86_64
-// host + Android app link the real symbol (this whole file is ARM64-only).
-#include "xenia/gpu/command_processor.h"
-namespace xe {
-namespace gpu {
-void CommandProcessor::UpdateWritePointer(uint32_t value) {}
-}  // namespace gpu
-}  // namespace xe
+// NOTE: the gpu::CommandProcessor link stub the cpu-tests need (processor.cc's
+// load-time D3D-HLE handlers reference it, and no cpu-tests config links
+// xenia-gpu) lives in gpu_link_stubs_test.cc so BOTH the x86_64 host build and
+// the lean ARM64 cross build get it - it used to be here, guarded ARM64-only,
+// which left the Windows x64 host cpu-tests unlinkable (LNK2019).
 
 #endif  // XE_ARCH_ARM64
