@@ -19,6 +19,7 @@
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 DECLARE_double(gpu_bd_native_depth_clear);
+DECLARE_bool(gpu_bd_native_depth_resolve);
 
 namespace xe {
 namespace gpu {
@@ -501,6 +502,30 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
           s.depth_image, s.depth_memory)) {
     return false;
   }
+  // Single-sample DEPTH resolve target for the in-pass depth resolve. Sampled,
+  // because the point is to serve BD's converted (1x) depth views natively instead
+  // of via an EDRAM depth ownership transfer.
+  // Guard on the driver actually exposing SAMPLE_ZERO depth resolve AND on
+  // vkCreateRenderPass2 being loaded (core 1.2) - fail closed to the legacy
+  // 2-attachment pass rather than creating an unusable surface.
+  const ui::vulkan::VulkanDevice::Functions& cap_dfn = vulkan_device->functions();
+  const bool depth_resolve_supported =
+      cap_dfn.vkCreateRenderPass2 != nullptr &&
+      (vulkan_device->properties().apiVersion >=
+       VK_MAKE_API_VERSION(0, 1, 2, 0));
+  const bool want_depth_resolve =
+      is_msaa && cvars::gpu_bd_native_depth_resolve && depth_resolve_supported;
+  if (want_depth_resolve) {
+    VkImageCreateInfo drici = ici;
+    drici.samples = VK_SAMPLE_COUNT_1_BIT;
+    drici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+            vulkan_device, drici, ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+            s.depth_resolve_image, s.depth_resolve_memory)) {
+      return false;
+    }
+  }
 
   VkImageViewCreateInfo vci = {};
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -530,6 +555,13 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
   if (dfn.vkCreateImageView(device, &vci, nullptr, &s.depth_view) !=
       VK_SUCCESS) {
     return false;
+  }
+  if (s.depth_resolve_image != VK_NULL_HANDLE) {
+    vci.image = s.depth_resolve_image;  // format/aspect unchanged (single-sample)
+    if (dfn.vkCreateImageView(device, &vci, nullptr, &s.depth_resolve_view) !=
+        VK_SUCCESS) {
+      return false;
+    }
   }
 
   if (depth_only) {
@@ -613,6 +645,88 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
   VkAttachmentReference depth_ref = {
       1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+  // IN-PASS DEPTH RESOLVE (gpu_bd_native_depth_resolve). When this surface has a
+  // single-sample depth-resolve target, build the pass through vkCreateRenderPass2
+  // with a VkSubpassDescriptionDepthStencilResolve so the MSAA depth resolves as
+  // part of THIS pass's GMEM tile store - no extra render pass on the TBDR. The
+  // legacy VkSubpassDescription cannot express this, and vkCmdResolveImage is
+  // color-only. Device-confirmed on Turnip: depthModes/stencilModes = 0x21, which
+  // includes SAMPLE_ZERO; independentResolve = 0 AND independentResolveNone = 0, so
+  // depth and stencil MUST use the SAME mode - hence SAMPLE_ZERO for both.
+  if (s.depth_resolve_view != VK_NULL_HANDLE) {
+    VkAttachmentDescription2 att2[3] = {};
+    for (int i = 0; i < 2; ++i) {
+      att2[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+      att2[i].format = att[i].format;
+      att2[i].samples = att[i].samples;
+      att2[i].loadOp = att[i].loadOp;
+      att2[i].storeOp = att[i].storeOp;
+      att2[i].stencilLoadOp = att[i].stencilLoadOp;
+      att2[i].stencilStoreOp = att[i].stencilStoreOp;
+      att2[i].initialLayout = att[i].initialLayout;
+      att2[i].finalLayout = att[i].finalLayout;
+    }
+    att2[2].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+    att2[2].format = s.depth_format;
+    att2[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    // The resolve target is fully written by the resolve itself.
+    att2[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att2[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att2[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att2[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att2[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // Left as a depth attachment; the consumer redirect barriers it to
+    // SHADER_READ when it binds it (mirrors the color resolve's handling).
+    att2[2].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference2 color_ref2 = {
+        VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, nullptr, 0,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT};
+    VkAttachmentReference2 depth_ref2 = {
+        VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, nullptr, 1,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT};
+    VkAttachmentReference2 depth_resolve_ref2 = {
+        VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, nullptr, 2,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT};
+
+    VkSubpassDescriptionDepthStencilResolve dsr = {};
+    dsr.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
+    dsr.depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+    dsr.stencilResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+    dsr.pDepthStencilResolveAttachment = &depth_resolve_ref2;
+
+    VkSubpassDescription2 subpass2 = {};
+    subpass2.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
+    subpass2.pNext = &dsr;
+    subpass2.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass2.colorAttachmentCount = 1;
+    subpass2.pColorAttachments = &color_ref2;
+    subpass2.pDepthStencilAttachment = &depth_ref2;
+
+    VkRenderPassCreateInfo2 rpci2 = {};
+    rpci2.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
+    rpci2.attachmentCount = 3;
+    rpci2.pAttachments = att2;
+    rpci2.subpassCount = 1;
+    rpci2.pSubpasses = &subpass2;
+    if (dfn.vkCreateRenderPass2(device, &rpci2, nullptr,
+                                &s.render_pass_clear) != VK_SUCCESS) {
+      s.render_pass_clear = VK_NULL_HANDLE;
+      return false;
+    }
+    att2[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    att2[0].initialLayout = color_final_layout;
+    att2[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    att2[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    if (dfn.vkCreateRenderPass2(device, &rpci2, nullptr, &s.render_pass_load) !=
+        VK_SUCCESS) {
+      s.render_pass_load = VK_NULL_HANDLE;
+      return false;
+    }
+  } else {
   VkSubpassDescription subpass = {};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
   subpass.colorAttachmentCount = 1;
@@ -639,12 +753,17 @@ bool BdNativeRenderer::CreateSurfaceResources(NativeSurface& s) {
     s.render_pass_load = VK_NULL_HANDLE;
     return false;
   }
+  }  // end legacy (no depth-resolve) pass creation
 
-  VkImageView fb_attachments[2] = {s.color_view, s.depth_view};
+  // Shared framebuffer. The depth-resolve pass declares a 3rd attachment (the
+  // single-sample depth resolve target), so the framebuffer must match it.
+  const bool has_depth_resolve = (s.depth_resolve_view != VK_NULL_HANDLE);
+  VkImageView fb_attachments[3] = {s.color_view, s.depth_view,
+                                   s.depth_resolve_view};
   VkFramebufferCreateInfo fbci = {};
   fbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
   fbci.renderPass = s.render_pass_clear;
-  fbci.attachmentCount = 2;
+  fbci.attachmentCount = has_depth_resolve ? 3u : 2u;
   fbci.pAttachments = fb_attachments;
   fbci.width = s.width;
   fbci.height = s.height;
@@ -700,6 +819,18 @@ void BdNativeRenderer::DestroySurfaceResources(NativeSurface& s) {
   if (s.resolve_view != VK_NULL_HANDLE) {
     dfn.vkDestroyImageView(device, s.resolve_view, nullptr);
     s.resolve_view = VK_NULL_HANDLE;
+  }
+  if (s.depth_resolve_view != VK_NULL_HANDLE) {
+    dfn.vkDestroyImageView(device, s.depth_resolve_view, nullptr);
+    s.depth_resolve_view = VK_NULL_HANDLE;
+  }
+  if (s.depth_resolve_image != VK_NULL_HANDLE) {
+    dfn.vkDestroyImage(device, s.depth_resolve_image, nullptr);
+    s.depth_resolve_image = VK_NULL_HANDLE;
+  }
+  if (s.depth_resolve_memory != VK_NULL_HANDLE) {
+    dfn.vkFreeMemory(device, s.depth_resolve_memory, nullptr);
+    s.depth_resolve_memory = VK_NULL_HANDLE;
   }
   if (s.resolve_image != VK_NULL_HANDLE) {
     dfn.vkDestroyImage(device, s.resolve_image, nullptr);

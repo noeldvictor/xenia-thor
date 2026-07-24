@@ -164,6 +164,25 @@ DEFINE_bool(
     "--gpu=vulkan + RenderDoc (dims/format/pass-compat), then Thor-measure.",
     "GPU");
 DEFINE_bool(
+    gpu_bd_native_depth_resolve, false,
+    "BD native IN-PASS depth resolve (default off, needs gpu_bd_native_renderer). "
+    "Gives each MSAA native surface a single-sample DEPTH resolve target attached "
+    "to its own render pass via VkSubpassDescriptionDepthStencilResolve, so the "
+    "multisampled depth is resolved as part of that pass's existing GMEM tile "
+    "store - no extra render pass and no extra tile round-trip. This is the "
+    "TBDR-correct way to serve BD's MSAA depth conversions: the measured field has "
+    "45 EDRAM ownership transfers of which the color-drop HLE already deletes 30, "
+    "and the remaining 15 are the DEPTH ones (MSAA 1<->2 conversions per the "
+    "RenderDoc census). Note vkCmdResolveImage CANNOT do this - it is color-only - "
+    "and a separate shader resolve pass would re-add the very tile-store cost the "
+    "native renderer exists to delete. Requires depthStencilResolve SAMPLE_ZERO "
+    "(device-confirmed on Turnip: depthModes=0x21; independentResolve=0 so depth "
+    "and stencil use the SAME mode). Allocating + resolving the target alone is "
+    "NOT yet a win - the win comes when the converted-depth CONSUMERS are "
+    "redirected to this image and the matching EDRAM depth transfer is dropped. "
+    "Measure with tools/gpu_ab_analyze.py, watching rt_xfers_dropped rise past 30.",
+    "GPU");
+DEFINE_bool(
     gpu_bd_native_tex_bind, true,
     "BD REAL-HLE Brick B (default on, needs gpu_bd_native_aux_rt): bind native "
     "surfaces to the field's pixel-shader texture fetches. Set FALSE to isolate the "

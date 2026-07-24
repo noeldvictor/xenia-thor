@@ -61,6 +61,17 @@ struct NativeSurface {
   VkImage resolve_image = VK_NULL_HANDLE;
   VkDeviceMemory resolve_memory = VK_NULL_HANDLE;
   VkImageView resolve_view = VK_NULL_HANDLE;
+  // MSAA DEPTH resolve target (gpu_bd_native_depth_resolve). Unlike the color
+  // resolve above - which is a separate vkCmdResolveImage step - this one is an
+  // IN-PASS resolve ATTACHMENT (VkSubpassDescriptionDepthStencilResolve), so the
+  // multisampled depth is resolved to single-sample as part of the pass's existing
+  // GMEM tile store: no extra render pass, no extra tile round-trip. That
+  // distinction is the whole point on a TBDR - a separate depth-resolve pass would
+  // re-add the very tile-store cost the native renderer exists to delete.
+  // vkCmdResolveImage cannot serve this at all (it is color-only).
+  VkImage depth_resolve_image = VK_NULL_HANDLE;
+  VkDeviceMemory depth_resolve_memory = VK_NULL_HANDLE;
+  VkImageView depth_resolve_view = VK_NULL_HANDLE;
   VkRenderPass render_pass_clear = VK_NULL_HANDLE;  // first draw into this surface
   VkRenderPass render_pass_load = VK_NULL_HANDLE;   // accumulate re-begins
   VkFramebuffer framebuffer = VK_NULL_HANDLE;
