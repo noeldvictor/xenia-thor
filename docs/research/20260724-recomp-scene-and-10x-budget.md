@@ -230,6 +230,54 @@ pre-existing right cyan strip.
 Deleting those via the in-pass depth resolve attachment (device-confirmed available,
 section 4b) is the next lever, and it is the same ~3x that separates 108ms from 33ms.
 
+## 4e. XeO3 / Fission (Microsoft's own 360 emulator) + XWine1 — user pointer, 2026-07-24
+
+**XeO3** (codename **Fission**, ships as `emu.exe`) is *Microsoft's* Xbox 360
+emulator — the tech behind Xbox One / Series backward compatibility, recently
+ported to PC and datamined out of the new Xbox PC BC package. It emulates the Xenon
+PPC CPU, the 360 hypervisor, and Xenos **on top of Direct3D**. **XWine1** is an Xbox
+One→Windows translation layer whose **SlimEra** component was combined with the XeO3
+PC port to launch dumped 360/OG-Xbox titles (Plants vs. Zombies, Steins;Gate) with
+"varying degrees of success". Not a public release; needs MS's own BC files.
+
+**What it CONFIRMS for us (this is the valuable part):**
+1. **Per-title execution profiles + game-specific patches are how a 360 emulator
+   ships at scale.** Fission supports 632 360 titles, each with its own patches,
+   configuration and "execution profiles"; missing profiles are a known failure
+   cause. That is *exactly* our `GameProfiles` + `.patch.toml` + per-game HLE toggle
+   (the Cemu model) — independent validation from the vendor implementation.
+2. **Shaders are PRE-COMPILED per title**, shipped as DX11 Durango-format shader
+   DLLs inside the BC package, with a `BackgroundShaderCompiler.exe` runtime
+   recompiler as the fallback for titles lacking them. Same lesson as
+   UnleashedRecomp's compile-at-asset-load: **bake pipelines ahead of time**. Our
+   analogue is a per-title AOT shader/pipeline precompile (we have
+   `vulkan_persistent_pipeline_cache`; front-loading it is the lever).
+3. **MS's CPU side is a JIT** (with an interpreter option), not full static
+   recompilation. Useful counterweight to the ReXGlue/AOT framing: a JIT is
+   evidently *sufficient* if the GPU side is right — consistent with our own
+   measurement that BD's field is GPU-bound, not CPU-bound.
+4. It translates Xenos **to Direct3D** rather than shipping a 95-pass EDRAM
+   emulation — a third independent vote (with DXVK and UnleashedRecomp) for the
+   native-translation architecture.
+
+**What it does NOT give us:** no public detail on EDRAM / tiling / resolve
+handling — the wiki explicitly says the XeO3 shader format is not understood and its
+DX11 Durango shaders cannot currently be created or rendered. So there is nothing to
+lift for our actual wall.
+
+**⚠️ Weak as a RUNTIME path for the Thor, and I would not chase it:** XeO3 is a
+proprietary x86/Windows binary. Running it on the Thor means Box64/FEX + Wine +
+DXVK/vkd3d — i.e. **nested emulation**: XeO3 JITs PPC→x86, then Box64 JITs
+x86→ARM64. Double translation of the hottest path is a strong prior for poor
+performance, quite apart from needing Microsoft's own BC files. RE2 runs well under
+GameNative because it is *native x86 code*, not an emulator. Treat XeO3 as
+**architectural evidence**, not as a shortcut.
+
+Sources: [Xbox One Research wiki — XeO3](https://xboxoneresearch.github.io/wiki/games/xeo3-x360-classic-xbox-emulator/) ·
+[Emulation General — Fission](https://emulation.gametechwiki.com/index.php/Fission) ·
+[VideoCardz — MS PC emulator runs dumped 360 games](https://videocardz.com/newz/microsofts-new-xbox-pc-emulator-already-runs-dumped-xbox-360-games) ·
+[XWine1 announcement](https://x.com/XWineOne/status/2080172284422029742)
+
 ## 5. What this changes about our plan
 
 1. **The full native BD HLE stays the call** — now with an existence proof that
