@@ -434,7 +434,11 @@ temp < 50-55°C. Force-stop `jp.xenia.emulator.github.debug` past ~70°C. Device
 **DO NOT reboot the device; never blame it for a result.**
 
 ## CPU = AOT-LLVM (the committed CPU direction)
-Whole-fn HIR→LLVM→ORCv2 recompiler, **default-on** (`cpu_backend_llvm`, `cpu_backend_llvm_opt`=2), renders BD,
+Whole-fn HIR→LLVM→ORCv2 recompiler. ⚠️ **`cpu_backend_llvm` is DEFAULT **OFF*** (llvm_backend.cc:55 AND the
+device's `files/xenia.config.toml`) — this file previously said "default-on", which is WRONG and cost a device
+A/B on 2026-07-24: a lever stack containing the LLVM-ONLY residency cvars was measured WITHOUT ever enabling
+the LLVM backend, so all three were silent no-ops. **Any LLVM-lever experiment MUST pass `--ez cpu_backend_llvm
+true` explicitly.** (`cpu_backend_llvm_opt` does default to 2.) Renders BD,
 100% emittable-opcode coverage, hybrid a64 fallback. Model = RPCS3/ReXGlue: precompile all fns, residency,
 direct calls, NO JIT/dispatch at gameplay. Levers: **residency** (`cpu_backend_llvm_residency_writeback` = WIN,
 qemu byte-identical, smoother+cooler), inline-cache direct calls (~13%), NEON for VMX. Payoff: CPU-bound titles
