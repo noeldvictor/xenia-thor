@@ -363,6 +363,27 @@ VkImageView BdNativeRenderer::LookupSampledSurface(uint32_t guest_address) {
   return it->second.color_view;
 }
 
+VkImage BdNativeRenderer::LookupDepthResolveImage(uint32_t guest_address) {
+  auto it = surfaces_.find(guest_address);
+  if (it == surfaces_.end()) {
+    return VK_NULL_HANDLE;
+  }
+  NativeSurface& s = it->second;
+  if (s.depth_resolve_image == VK_NULL_HANDLE) {
+    return VK_NULL_HANDLE;  // single-sample, or the depth resolve is disabled.
+  }
+  // The resolve target is written by the render pass's depth-resolve attachment,
+  // so it only holds valid content once this surface has actually rendered THIS
+  // FRAME. Unlike the color lookup (where older aux content is still usable), a
+  // stale depth generation is exactly the temporal-snapshot hazard that makes
+  // wrong depth collapse BD's field, so this is deliberately strict: current
+  // frame only, for every surface class.
+  if (!s.rendered_this_frame) {
+    return VK_NULL_HANDLE;
+  }
+  return s.depth_resolve_image;
+}
+
 void BdNativeRenderer::BeginSurfaceFrame() {
   for (auto& kv : surfaces_) {
     kv.second.rendered_this_frame = false;

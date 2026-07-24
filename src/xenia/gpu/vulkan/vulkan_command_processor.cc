@@ -59,6 +59,7 @@ DECLARE_int32(gpu_bd_native_tile_filter);
 DECLARE_uint32(gpu_bd_native_rt_width);
 DECLARE_bool(gpu_bd_native_whole_frame);
 DECLARE_bool(gpu_bd_native_aux_rt);
+DECLARE_bool(gpu_bd_native_depth_resolve);
 DECLARE_bool(gpu_bd_native_aux_fmt37);
 DECLARE_bool(gpu_bd_native_diag_coverage);
 DECLARE_bool(gpu_bd_native_tex_bind);
@@ -9432,6 +9433,25 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   return true;
+}
+
+VkImage VulkanCommandProcessor::BdNativeDepthResolveImage(uint32_t dest_base) {
+  // Consumer-redirect half of the depth work. Mirrors BdNativeSurfaceServes, but
+  // for the single-sample DEPTH RESOLVE image produced in-pass by
+  // VkSubpassDescriptionDepthStencilResolve (gpu_bd_native_depth_resolve).
+  // WHY it matters: the device census (n=8192) says 66.7% of BD's surviving depth
+  // ownership transfers are PURE MSAA sample-count conversions, and a SAMPLE_ZERO
+  // resolve produces exactly that content natively - so a consumer served from
+  // this image no longer depends on the EDRAM destination, which is the
+  // precondition for dropping the transfer that produced it.
+  // Fail-closed: VK_NULL_HANDLE whenever the feature is off, the renderer is
+  // absent, or the surface has not rendered THIS frame (LookupDepthResolveImage
+  // enforces the current-frame rule - a stale depth generation is the
+  // temporal-snapshot hazard that collapses BD's field on Turnip).
+  if (!cvars::gpu_bd_native_depth_resolve || !bd_native_renderer_) {
+    return VK_NULL_HANDLE;
+  }
+  return bd_native_renderer_->LookupDepthResolveImage(dest_base);
 }
 
 bool VulkanCommandProcessor::BdNativeSurfaceServes(uint32_t dest_base) {

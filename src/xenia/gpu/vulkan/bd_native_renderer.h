@@ -206,6 +206,17 @@ class BdNativeRenderer {
   // returns a view once the surface has actually been rendered this run (else the
   // image is undefined/garbage and must fall back to EDRAM).
   VkImageView LookupSampledSurface(uint32_t guest_address);
+  // The single-sample DEPTH RESOLVE image of the native surface whose key ==
+  // guest_address, or VK_NULL_HANDLE if that surface has no depth resolve (not
+  // MSAA, or gpu_bd_native_depth_resolve off) or has not rendered yet. This is the
+  // consumer-redirect half of the depth work: BD's depth ownership transfers are
+  // 66.7% pure MSAA sample-count conversions (device census, n=8192), and a
+  // SAMPLE_ZERO in-pass resolve produces exactly that content natively - so a
+  // consumer that would have read the EDRAM-converted depth can read this image
+  // instead, which is what makes the corresponding EDRAM transfer droppable.
+  // Same "rendered this run" guard as LookupSampledSurface: before the surface has
+  // been rendered the resolve target is undefined and MUST fall back to EDRAM.
+  VkImage LookupDepthResolveImage(uint32_t guest_address);
   // Number of live native surfaces (diagnostics).
   size_t surface_count() const { return surfaces_.size(); }
   // Clear per-frame render flags on all surfaces (call at frame start): the next

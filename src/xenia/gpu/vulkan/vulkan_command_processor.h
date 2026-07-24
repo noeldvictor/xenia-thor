@@ -1950,6 +1950,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // dead weight and can be surgically dropped). Defined in the .cc (BdNativeRenderer
   // is incomplete here). Returns false unless gpu_bd_native_aux_rt is active.
   bool BdNativeSurfaceServes(uint32_t dest_base);
+  // The in-pass DEPTH RESOLVE image (single-sample) for guest address `dest_base`,
+  // or VK_NULL_HANDLE. Defined in the .cc (BdNativeRenderer is incomplete here).
+  // The consumer-redirect half of the depth-transfer deletion; see the .cc comment.
+  VkImage BdNativeDepthResolveImage(uint32_t dest_base);
   void AddBdNativeResolveDropped() { ++bd_native_resolves_dropped_; }
   void AddRenderTargetTransferStats(uint32_t transfer_count,
                                     bool resolve_clear) {
