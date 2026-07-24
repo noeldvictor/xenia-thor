@@ -99,7 +99,32 @@ Two prior attempts used a bare `CreateCall` (no return stub) and crashed BD at
 opt=2; the trampoline is the correct form. This is the #1 remaining CPU lever and
 it is what unlocks full cross-function residency.
 
-## 5. What this changes about our plan
+## 4b. HOW to build the depth resolve on a TBDR (the Thor-specific correction)
+
+UnleashedRecomp resolves depth with *pipelines* (shader passes) because its
+abstraction targets D3D12 too. **Copying that shape verbatim would be wrong for the
+Thor**: a separate resolve pass is another render pass = another GMEM tile
+store/reload = exactly the cost the native renderer exists to delete.
+
+Two facts from this repo:
+- `BdNativeRenderer::ResolveSurface` (bd_native_renderer.cc:137) resolves with
+  `vkCmdResolveImage`, and that call is **COLOR-ONLY** in Vulkan - it cannot be
+  pointed at a depth image. So the depth variant is NOT a small edit to it.
+- **`VK_KHR_depth_stencil_resolve` appears NOWHERE in the codebase** (no hit in
+  src/xenia/gpu/vulkan or src/xenia/ui/vulkan). It is **core in Vulkan 1.2** and
+  the Thor reports **Vulkan 1.3**, so the API is available unconditionally; only
+  the supported *modes* need querying via
+  `VkPhysicalDeviceDepthStencilResolveProperties` (`supportedDepthResolveModes`,
+  `independentResolve`/`independentResolveNone`). SAMPLE_ZERO is the mode our
+  1<->2 MSAA depth conversions want (pick one sample), with MIN/MAX as
+  conservative-Z alternatives.
+
+**⇒ Recommended build: attach the depth resolve to the native pass itself via
+`VkSubpassDescriptionDepthStencilResolve` (a resolve ATTACHMENT), not a separate
+resolve pass.** On a TBDR the resolve then happens as part of the pass's existing
+tile store - zero extra passes, zero extra GMEM round-trips - which is precisely
+the property that makes it a deletion of BD's 23 MSAA depth transfers rather than a
+relocation of them. Verify the mode support on-device first (one query, no run).
 
 1. **The full native BD HLE stays the call** — now with an existence proof that
    the architecture ships and with their resolve model to copy.

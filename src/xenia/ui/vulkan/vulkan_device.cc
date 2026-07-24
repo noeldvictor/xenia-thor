@@ -339,6 +339,16 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   VkPhysicalDeviceFloatControlsProperties
       properties_1_2_KHR_shader_float_controls = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
+  // Depth/stencil MSAA resolve (core in Vulkan 1.2). This is the TBDR-correct way
+  // to serve BD's MSAA depth conversions: attach a depth RESOLVE ATTACHMENT to the
+  // native pass (VkSubpassDescriptionDepthStencilResolve) so the resolve happens
+  // as part of the pass's existing GMEM tile store - no extra render pass, no
+  // extra tile round-trip. vkCmdResolveImage cannot do this (it is color-only), so
+  // knowing the supported MODES is a prerequisite for the native-depth build.
+  // Logged below; query only, nothing is enabled by it.
+  VkPhysicalDeviceDepthStencilResolveProperties
+      properties_1_2_depth_stencil_resolve = {
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
   VulkanFeatures<
       VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT>
@@ -420,6 +430,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (ext_1_2_KHR_shader_float_controls) {
       properties_1_2_KHR_shader_float_controls.pNext = properties_2.pNext;
       properties_2.pNext = &properties_1_2_KHR_shader_float_controls;
+    }
+    if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+      properties_1_2_depth_stencil_resolve.pNext = properties_2.pNext;
+      properties_2.pNext = &properties_1_2_depth_stencil_resolve;
     }
     if (ext_EXT_fragment_shader_interlock) {
       features_EXT_fragment_shader_interlock.Link(supported_features_2,
@@ -732,6 +746,19 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
            properties_1_2_KHR_driver_properties.conformanceVersion.minor,
            properties_1_2_KHR_driver_properties.conformanceVersion.subminor,
            properties_1_2_KHR_driver_properties.conformanceVersion.patch);
+  }
+
+  if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+    // Prerequisite for the TBDR-correct native depth resolve (see the struct decl
+    // above). Bit 0x1 = SAMPLE_ZERO, 0x2 = AVERAGE, 0x4 = MIN, 0x8 = MAX; the
+    // 1<->2 MSAA depth conversions BD's EDRAM transfers perform want SAMPLE_ZERO.
+    XELOGI(
+        "* depthStencilResolve: depthModes=0x{:X} stencilModes=0x{:X} "
+        "independentResolveNone={} independentResolve={}",
+        properties_1_2_depth_stencil_resolve.supportedDepthResolveModes,
+        properties_1_2_depth_stencil_resolve.supportedStencilResolveModes,
+        properties_1_2_depth_stencil_resolve.independentResolveNone ? 1 : 0,
+        properties_1_2_depth_stencil_resolve.independentResolve ? 1 : 0);
   }
 
   XE_UI_VULKAN_LIMIT(maxImageDimension2D)
