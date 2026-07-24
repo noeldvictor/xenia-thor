@@ -5562,7 +5562,13 @@ VulkanRenderTargetCache::GetBdNativeDepthConsumerFramebuffer(
   // dims/format/samples + depth-resolve readiness from LogSurfaceKeys.
   // Deliberately evidence-first: a wrong depth redirect renders CORRECT on desktop
   // and COLLAPSES the field on Turnip, so the mapping must not be guessed.
-  if (cvars::gpu_bd_depth_xfer_census) {
+  // FIELD-GATED (guest uptime > 135s), matching the census. First run without this
+  // gate burned its whole rate-limited dump budget during LOADING and reported
+  // "count=0" native surfaces - true at that instant, but useless: the native
+  // surfaces do not exist yet that early. The correspondence is only meaningful
+  // once both sides are live, i.e. in the field.
+  if (cvars::gpu_bd_depth_xfer_census &&
+      xe::Clock::QueryGuestUptimeMillis() > 135000) {
     XELOGI(
         "BD DEPTH CONSUMER MATCH: depth(base={} pitchT={} msaa={}) "
         "color(base={} pitchT={} msaa={} fmt={}) host_extent={}x{}",
