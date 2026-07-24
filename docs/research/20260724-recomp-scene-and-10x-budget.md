@@ -119,6 +119,26 @@ Two facts from this repo:
   1<->2 MSAA depth conversions want (pick one sample), with MIN/MAX as
   conservative-Z alternatives.
 
+### ✅ ANSWERED ON DEVICE (Thor, 2026-07-24) — the capability is there
+
+The query committed this session reports, on the Thor's **MesaTurnip** driver:
+
+```
+* driverID: MesaTurnip / driverName: turnip Mesa driver
+* depthStencilResolve: depthModes=0x21 stencilModes=0x21
+                       independentResolveNone=0 independentResolve=0
+```
+
+- `0x21` includes **`VK_RESOLVE_MODE_SAMPLE_ZERO_BIT` (0x1)** for BOTH depth and
+  stencil. SAMPLE_ZERO (take sample 0) is exactly what BD's MSAA 1<->2 depth
+  conversion needs. **So the TBDR depth-resolve path is AVAILABLE.**
+- ⚠️ **Constraint to design around:** `independentResolve = 0` AND
+  `independentResolveNone = 0` mean depth and stencil must use the **same** resolve
+  mode - you cannot resolve depth while leaving stencil at NONE. Satisfiable here
+  because both masks are identical (0x21), so set SAMPLE_ZERO for both.
+- (Bit 0x20 is also set in both masks; SAMPLE_ZERO is the one this build needs, so
+  the extra bit is not decoded here rather than guessed at.)
+
 **⇒ Recommended build: attach the depth resolve to the native pass itself via
 `VkSubpassDescriptionDepthStencilResolve` (a resolve ATTACHMENT), not a separate
 resolve pass.** On a TBDR the resolve then happens as part of the pass's existing
