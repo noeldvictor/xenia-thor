@@ -30,6 +30,7 @@
 #endif
 
 #if XE_LLVM_BACKEND_ENABLED
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -528,13 +529,38 @@ class Lowerer {
   // Reload all mirrored regs from the context (after a call: the callee may have
   // changed guest state). The mirrors then match the post-call context.
   void ReloadCtxRegs() {
+    // Compile-time instrumentation: tally how many ctx-reload instructions the
+    // ABI-aware residency ELIMINATES vs. the total it would otherwise emit at
+    // call sites, so a run through the LLVM backend (device / qemu) quantifies
+    // the lever's static code reduction precisely instead of estimating it.
+    static std::atomic<uint64_t> s_skipped{0};
+    static std::atomic<uint64_t> s_total{0};
+    uint64_t local_skip = 0, local_tot = 0;
     for (auto& kv : ctx_regs_) {
+      ++local_tot;
       // ABI-aware residency: the callee preserves non-volatile regs, so their
       // mirrors are already correct - skip the reload to keep them resident in
       // host callee-saved registers across the call.
-      if (abi_residency_ && IsAbiNonVolatileOffset(kv.first)) continue;
+      if (abi_residency_ && IsAbiNonVolatileOffset(kv.first)) {
+        ++local_skip;
+        continue;
+      }
       auto* ty = ctx_reg_ty_[kv.first];
       b_.CreateStore(b_.CreateLoad(ty, CtxPtr(kv.first)), kv.second);
+    }
+    if (abi_residency_ && local_tot) {
+      uint64_t sk = s_skipped.fetch_add(local_skip, std::memory_order_relaxed) +
+                    local_skip;
+      uint64_t tt =
+          s_total.fetch_add(local_tot, std::memory_order_relaxed) + local_tot;
+      // Log on each ~8192-reload-site boundary so the cumulative reduction is
+      // visible without per-call-site spam.
+      if ((tt & 0x1FFF) < local_tot) {
+        XELOGI(
+            "residency_abi: eliminated {} / {} ctx-reload instructions at call "
+            "sites ({:.1f}% of guest-reg reloads removed)",
+            sk, tt, tt ? (100.0 * double(sk) / double(tt)) : 0.0);
+      }
     }
   }
   // Flush alloca-only-managed guest regs back to the context (before a call/tail/
