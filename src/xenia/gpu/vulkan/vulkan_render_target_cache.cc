@@ -5562,13 +5562,14 @@ VulkanRenderTargetCache::GetBdNativeDepthConsumerFramebuffer(
   // dims/format/samples + depth-resolve readiness from LogSurfaceKeys.
   // Deliberately evidence-first: a wrong depth redirect renders CORRECT on desktop
   // and COLLAPSES the field on Turnip, so the mapping must not be guessed.
-  // FIELD-GATED (guest uptime > 135s), matching the census. First run without this
-  // gate burned its whole rate-limited dump budget during LOADING and reported
-  // "count=0" native surfaces - true at that instant, but useless: the native
-  // surfaces do not exist yet that early. The correspondence is only meaningful
-  // once both sides are live, i.e. in the field.
-  if (cvars::gpu_bd_depth_xfer_census &&
-      xe::Clock::QueryGuestUptimeMillis() > 135000) {
+  // NOT field-gated, deliberately. This site is reached only ONCE per framebuffer:
+  // the early return above ("already built for this framebuffer") short-circuits
+  // every later call, and that one construction happens during LOADING. Gating it
+  // on field uptime therefore removed its only opportunity and printed nothing -
+  // so the consumer identity is logged here at construction, while the live
+  // native-surface correspondence is dumped from SeedBdNativeDepthConsumer, which
+  // runs per USE in the field (see there).
+  if (cvars::gpu_bd_depth_xfer_census) {
     XELOGI(
         "BD DEPTH CONSUMER MATCH: depth(base={} pitchT={} msaa={}) "
         "color(base={} pitchT={} msaa={} fmt={}) host_extent={}x{}",
@@ -5677,6 +5678,18 @@ bool VulkanRenderTargetCache::SeedBdNativeDepthConsumer(const Framebuffer* fb) {
   if (!fb || fb->bd_native_depth_image == VK_NULL_HANDLE ||
       !fb->bd_native_depth_lle_rt) {
     return false;
+  }
+  // KEY-CORRESPONDENCE DUMP at the per-USE site. GetBdNativeDepthConsumerFramebuffer
+  // builds this framebuffer ONCE (its early return short-circuits every later call)
+  // and that happens during LOADING, when no native surfaces exist yet - so dumping
+  // there reported "count=0", which was true and useless. THIS function runs every
+  // time the consumer is actually served, i.e. in the field with both key spaces
+  // live, so the native surfaces' guest-address keys can finally be matched against
+  // this consumer's EDRAM identity (logged at construction as "BD DEPTH CONSUMER
+  // MATCH": depth base=810 pitchT=9 msaa=k4X + color base=0 pitchT=9 fmt=3,
+  // host_extent 360x768). Rate-limited inside LogSurfaceKeys.
+  if (cvars::gpu_bd_depth_xfer_census) {
+    command_processor_.LogBdNativeSurfaceKeys("depth-seed");
   }
   VulkanRenderTarget& lle_rt =
       *static_cast<VulkanRenderTarget*>(fb->bd_native_depth_lle_rt);
