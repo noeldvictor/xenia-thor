@@ -126,6 +126,53 @@ tile store - zero extra passes, zero extra GMEM round-trips - which is precisely
 the property that makes it a deletion of BD's 23 MSAA depth transfers rather than a
 relocation of them. Verify the mode support on-device first (one query, no run).
 
+## 4c. A MEASURED constraint on the CPU lane's reach (Thor, 2026-07-24)
+
+First on-device run of the LLVM backend this session (`--ez cpu_backend_llvm true`):
+- **It works and does not regress:** L0 = **8.1 fps** field vs the a64 baseline
+  **7.8 fps**, ALIVE@190s, 0 faults. Cross-run, so read that as "no regression",
+  NOT as a win.
+- ⚠️ **The rest of that ladder is CONFOUNDED and must not be quoted.** L1
+  (+context_residency+writeback) read 9.9 fps, but its screenshot is the "Character
+  Design / Akira Toriyama" credits camera while L0's is a different, more open
+  shot - different scenes. BD's intro advances at a rate that depends on emulation
+  speed, so a fixed wall-clock sample lands on a different FRAME in each run. The
+  `LLVMmap` spread (222 / 5685 / 450 / 354) confirms the runs executed very
+  different amounts of code. There is no measured residency win.
+- ⚠️ **The follow-up "scene-matched" benchmark was ALSO invalid** - twice over, and
+  both bugs are worth remembering. Timing a fixed frame range (swap 200->800) of
+  the no-input intro DOES match content correctly, but (a) that range lands on the
+  near-blank **"press START" title screen** (no work to speed up), and (b) the
+  validated base stack contains `vulkan_present_refresh_capped`, which forces FIFO
+  locked to the display refresh (vulkan_presenter.cc:67, default TRUE on Android) -
+  so all four variants (20.3 / 20.8 / 20.9 / 20.8 s) were sitting **on a ~30fps
+  cap**. Comparisons at the cap are meaningless.
+  **Corollary that matters: BD's field runs ~8fps, far BELOW that cap, so field
+  numbers are never cap-limited - only scene-confounded.** The correct instrument
+  is a fixed-frame window resident IN THE FIELD.
+- **Net: the residency lane is still UNMEASURED on a meaningful workload.** But see
+  the prior below - for BD specifically it is also unlikely to be the lever, since
+  the field is GPU-bound (119ms of 123ms is EDRAM tile-store, measured earlier).
+- **Lowering coverage is high:** `LLVMbegin` == `LLVMmap` == 1865 in-run — every
+  attempted lowering succeeded.
+- **But there is a systematic hole:** 30+ UNIQUE functions logged
+  `LLVMfallback ... -> a64`, and **every one is the same opcode class,
+  `mul_add`/`mul_sub`** (vector vmaddfp/vnmsubfp). That is the deliberate
+  `cpu_backend_llvm_lower_vmaddfp=false` workaround for the device
+  codegen/regalloc interaction bug (memory: bd-llvm-postload-3d-cyan-bug).
+- ⚠️ Checked, not assumed: BD's known vertex-transform 0x82282490 did **not**
+  appear in this run's fallback list, so no claim is made that the hottest
+  geometry routine is among them.
+
+**Implication:** every guest function using vector MUL_ADD/MUL_SUB is excluded from
+the LLVM backend and therefore from residency, cross-function residency, and the AOT
+object cache — the entire committed CPU direction. Float-heavy math is exactly the
+code that direction is meant to win on. **So fixing the vmaddfp lowering is not a
+correctness side-quest; it is a COVERAGE lever that widens the CPU lane**, and it
+should be priced against the return-trampoline when picking the next CPU build.
+
+## 5. What this changes about our plan
+
 1. **The full native BD HLE stays the call** — now with an existence proof that
    the architecture ships and with their resolve model to copy.
 2. **The depth lane is NOT closed the way we wrote it.** Our "depth deletion is
