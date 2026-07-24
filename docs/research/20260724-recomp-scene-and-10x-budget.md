@@ -191,6 +191,45 @@ code that direction is meant to win on. **So fixing the vmaddfp lowering is not 
 correctness side-quest; it is a COVERAGE lever that widens the CPU lane**, and it
 should be priced against the return-trampoline when picking the next CPU build.
 
+## 4d. MEASURED GPU WIN: the color-drop HLE is 1.20x, confirmed (Thor, 2026-07-24)
+
+Ran the committed color-drop HLE against pure LLE on the field with per-frame
+tracing, and compared with **matched-draw-bucket `gpu_frame_us`** (2310 vs 2521
+rendering frames). Tools: `scratch/thor-debug/bd_gpu_hle_ab.ps1` +
+`tools/gpu_ab_analyze.py`.
+
+| | A: pure LLE | B: color-drop HLE |
+|---|---|---|
+| matched-bucket weighted | **75421 us** | **62662 us** |
+| heavy field buckets (~1100-1250 draws) | ~129 ms | ~108 ms |
+| `rt_xfers_dropped` per frame | 0 | **30 of 45** |
+| `gpu_pass_us` (in-pass) | 2034 us | 17365 us |
+
+**B/A = 0.831 => 16.9% faster => 1.204x**, independently reproducing the recorded
+-17%. Render is correct (screenshot: village + Shu) apart from the known
+pre-existing right cyan strip.
+
+- **Mechanism confirmed in the same trace:** 30 EDRAM ownership transfers deleted
+  per frame. On a TBDR each is a render pass = a GMEM tile store, so this is both
+  the speed win and the energy win (less memory traffic). `gpu_pass_us` RISING
+  2034->17365us is the predicted signature of work FUSING into fewer, larger native
+  passes rather than disappearing.
+- 🛑 **Why the method matters:** the NAIVE whole-run medians were A=65682us vs
+  B=104966us, which would have reported the HLE as **60% SLOWER**. That is pure
+  scene-mix artifact - the two runs sampled different scenes. Only the matched
+  buckets are valid, and they show a consistent ~0.84 ratio across *every* heavy
+  bucket. This is the same confound class that invalidated this session's CPU
+  ladder; `tools/gpu_ab_analyze.py` exists so it stops recurring.
+- **Power:** B rendered 9% more frames (2521 vs 2310) in the same 190s window at a
+  comparable end temperature (68.1C vs 67.0C) => better energy per frame. Absolute
+  watts are not measurable while USB-attached (charging pollutes `current_now`), so
+  no wattage figure is claimed.
+
+**Where this leaves the target:** the heavy field is still ~108ms (~9fps) against a
+33333us (30fps) budget, and **15 of 45 transfers still execute - the DEPTH ones**.
+Deleting those via the in-pass depth resolve attachment (device-confirmed available,
+section 4b) is the next lever, and it is the same ~3x that separates 108ms from 33ms.
+
 ## 5. What this changes about our plan
 
 1. **The full native BD HLE stays the call** — now with an existence proof that
