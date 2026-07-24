@@ -276,6 +276,9 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_1_1_khr_bind_memory2.inc"
     // VK_KHR_draw_indirect_count (#170, promoted to 1.2)
 #include "xenia/ui/vulkan/functions/device_1_2_khr_draw_indirect_count.inc"
+    // VK_KHR_create_renderpass2 (#110, promoted to 1.2) - required to attach a
+    // DEPTH resolve to a subpass (VkSubpassDescriptionDepthStencilResolve).
+#include "xenia/ui/vulkan/functions/device_1_2_khr_create_renderpass2.inc"
     // VK_KHR_maintenance4 (#414, promoted to 1.3)
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
     // VK_EXT_extended_dynamic_state (#268, promoted to 1.3)

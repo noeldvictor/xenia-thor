@@ -1107,6 +1107,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
 #include "xenia/ui/vulkan/functions/device_1_2_khr_draw_indirect_count.inc"
+#include "xenia/ui/vulkan/functions/device_1_2_khr_create_renderpass2.inc"
   }
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
 #include "xenia/ui/vulkan/functions/device_1_3_khr_maintenance4.inc"
