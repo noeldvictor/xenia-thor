@@ -9435,6 +9435,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   return true;
 }
 
+void VulkanCommandProcessor::LogBdNativeSurfaceKeys(const char* context) {
+  if (bd_native_renderer_) {
+    bd_native_renderer_->LogSurfaceKeys(context);
+  }
+}
+
 VkImage VulkanCommandProcessor::BdNativeDepthResolveImage(uint32_t dest_base) {
   // Consumer-redirect half of the depth work. Mirrors BdNativeSurfaceServes, but
   // for the single-sample DEPTH RESOLVE image produced in-pass by

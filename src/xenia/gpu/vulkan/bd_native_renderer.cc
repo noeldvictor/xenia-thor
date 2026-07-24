@@ -363,6 +363,28 @@ VkImageView BdNativeRenderer::LookupSampledSurface(uint32_t guest_address) {
   return it->second.color_view;
 }
 
+void BdNativeRenderer::LogSurfaceKeys(const char* context) {
+  // Rate-limited: this fires from a per-pass site, and BD runs ~2000 passes/frame.
+  static std::atomic<uint32_t> s_dumps{0};
+  if (s_dumps.fetch_add(1, std::memory_order_relaxed) >= 8) {
+    return;
+  }
+  XELOGI("BD NATIVE SURFACE KEYS [{}]: count={}", context, surfaces_.size());
+  for (const auto& kv : surfaces_) {
+    const NativeSurface& s = kv.second;
+    XELOGI(
+        "  key(guest_addr)=0x{:08X} {}x{} color_fmt={} depth_fmt={} samples={} "
+        "main_scene={} rendered_this_frame={} has_depth_resolve={} "
+        "depth_resolve_ready={}",
+        kv.first, s.width, s.height, uint32_t(s.color_format),
+        uint32_t(s.depth_format), uint32_t(s.samples), s.is_main_scene ? 1 : 0,
+        s.rendered_this_frame ? 1 : 0,
+        s.depth_resolve_image != VK_NULL_HANDLE ? 1 : 0,
+        (s.depth_resolve_image != VK_NULL_HANDLE && s.rendered_this_frame) ? 1
+                                                                          : 0);
+  }
+}
+
 VkImage BdNativeRenderer::LookupDepthResolveImage(uint32_t guest_address) {
   auto it = surfaces_.find(guest_address);
   if (it == surfaces_.end()) {

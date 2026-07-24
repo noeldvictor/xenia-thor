@@ -219,6 +219,16 @@ class BdNativeRenderer {
   VkImage LookupDepthResolveImage(uint32_t guest_address);
   // Number of live native surfaces (diagnostics).
   size_t surface_count() const { return surfaces_.size(); }
+  // Diagnostic: dump every live native surface's key (= resolve-dest guest
+  // address) with its dims/format/samples and whether it currently has a
+  // depth-resolve image with valid current-frame content. Exists to establish the
+  // KEY CORRESPONDENCE that blocks the depth-consumer redirect: consumers are
+  // identified by EDRAM keys (base_tiles/pitch/msaa) while native surfaces are
+  // keyed by guest address, and nothing today maps between them. Logging both
+  // sides at the same moment lets the mapping be derived from evidence instead of
+  // guessed - a wrong depth redirect renders correct on desktop and COLLAPSES the
+  // field on Turnip, so this must not be assumed.
+  void LogSurfaceKeys(const char* context);
   // Clear per-frame render flags on all surfaces (call at frame start): the next
   // draw into each surface re-CLEARs it, matching BD re-priming its RTs per frame.
   void BeginSurfaceFrame();

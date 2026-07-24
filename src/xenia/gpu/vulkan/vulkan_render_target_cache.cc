@@ -5552,6 +5552,27 @@ VulkanRenderTargetCache::GetBdNativeDepthConsumerFramebuffer(
     return base;
   }
 
+  // KEY-CORRESPONDENCE DIAGNOSTIC (gpu_bd_depth_xfer_census). We have reached the
+  // ONE Path-A consumer, identified purely by EDRAM keys. The native surfaces that
+  // could serve its depth are keyed by RESOLVE-DEST GUEST ADDRESS, and no mapping
+  // between the two key spaces exists today - which is exactly what blocks seeding
+  // this consumer from the in-pass depth resolve. Logging BOTH sides at the same
+  // instant is how that mapping gets derived from evidence: this consumer's EDRAM
+  // depth/color keys here, and every live native surface's guest-address key +
+  // dims/format/samples + depth-resolve readiness from LogSurfaceKeys.
+  // Deliberately evidence-first: a wrong depth redirect renders CORRECT on desktop
+  // and COLLAPSES the field on Turnip, so the mapping must not be guessed.
+  if (cvars::gpu_bd_depth_xfer_census) {
+    XELOGI(
+        "BD DEPTH CONSUMER MATCH: depth(base={} pitchT={} msaa={}) "
+        "color(base={} pitchT={} msaa={} fmt={}) host_extent={}x{}",
+        dkey.base_tiles, dkey.GetPitchTiles(), uint32_t(dkey.msaa_samples),
+        ckey.base_tiles, ckey.GetPitchTiles(), uint32_t(ckey.msaa_samples),
+        uint32_t(ckey.resource_format), base->host_extent.width,
+        base->host_extent.height);
+    command_processor_.LogBdNativeSurfaceKeys("depth-consumer");
+  }
+
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();

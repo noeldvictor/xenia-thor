@@ -1954,6 +1954,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   // or VK_NULL_HANDLE. Defined in the .cc (BdNativeRenderer is incomplete here).
   // The consumer-redirect half of the depth-transfer deletion; see the .cc comment.
   VkImage BdNativeDepthResolveImage(uint32_t dest_base);
+  // Diagnostic bridge: dump every live native surface's guest-address key + dims
+  // (BdNativeRenderer is incomplete in this header). Used to establish the
+  // EDRAM-key <-> guest-address correspondence the depth-consumer redirect needs.
+  void LogBdNativeSurfaceKeys(const char* context);
   void AddBdNativeResolveDropped() { ++bd_native_resolves_dropped_; }
   void AddRenderTargetTransferStats(uint32_t transfer_count,
                                     bool resolve_clear) {
