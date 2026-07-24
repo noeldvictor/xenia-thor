@@ -164,6 +164,20 @@ DEFINE_bool(
     "--gpu=vulkan + RenderDoc (dims/format/pass-compat), then Thor-measure.",
     "GPU");
 DEFINE_bool(
+    gpu_bd_depth_xfer_census, false,
+    "BD diagnostic (default off): aggregate census of the DEPTH ownership "
+    "transfers in the field, classified by whether source and destination differ "
+    "in MSAA sample count, in pitch, in both, or in neither. Answers the one "
+    "question that gates the depth-transfer deletion: an MSAA-only difference is "
+    "exactly what a SAMPLE_ZERO in-pass depth-resolve attachment "
+    "(gpu_bd_native_depth_resolve) produces, while a PITCH difference is a "
+    "resolution downscale needing a different mechanism - so msaa_only+both is the "
+    "share of the ~15 still-executing transfers that the resolve can actually "
+    "serve. Counts every transfer (unlike the capped 40-line BD DEPTH XFER SEEN "
+    "log, which samples and rotates out of logcat) and reports on a 4096 "
+    "boundary. Field-gated (guest uptime > 135s) so it reflects gameplay.",
+    "GPU");
+DEFINE_bool(
     gpu_bd_native_depth_resolve, false,
     "BD native IN-PASS depth resolve (default off, needs gpu_bd_native_renderer). "
     "Gives each MSAA native surface a single-sample DEPTH resolve target attached "

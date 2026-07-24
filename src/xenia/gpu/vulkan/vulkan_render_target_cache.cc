@@ -212,6 +212,7 @@ DECLARE_bool(gpu_bd_framegraph_depth);
 DECLARE_bool(gpu_bd_framegraph_depth_dump);
 DECLARE_bool(gpu_bd_framegraph_depth_shadow);
 DECLARE_bool(gpu_bd_patha_depth_snapshot);
+DECLARE_bool(gpu_bd_depth_xfer_census);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
 DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
@@ -8894,6 +8895,62 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     command_processor_.AddRenderTargetTransferStats(
         transfer_count, render_target_resolve_clear_values != nullptr &&
                             resolve_clear_rectangle != nullptr);
+
+    // DEPTH-TRANSFER CENSUS (gpu_bd_depth_xfer_census). Placed HERE, at the one
+    // site EVERY transfer passes through, deliberately: the first attempt put it
+    // inside the gpu_bd_native_depth_convert block and produced ZERO output
+    // because that cvar was off - a silent no-op, not a zero result.
+    // The question it answers: the confirmed 1.204x color-drop HLE still EXECUTES
+    // 15 of 45 transfers/frame (device-measured) and they are the DEPTH ones. An
+    // MSAA-only src/dst difference is exactly what a SAMPLE_ZERO in-pass depth
+    // resolve attachment produces (so it is deletable that way); a PITCH
+    // difference is a resolution downscale needing a different mechanism. The
+    // msaa_only+both share is therefore the fraction of the remaining depth
+    // transfers gpu_bd_native_depth_resolve can actually serve - which decides
+    // whether the consumer redirect is worth building, BEFORE building it.
+    if (cvars::gpu_bd_depth_xfer_census && render_target_transfers &&
+        xe::Clock::QueryGuestUptimeMillis() > 135000) {
+      static std::atomic<uint64_t> s_tot{0}, s_msaa_only{0}, s_pitch_only{0},
+          s_both{0}, s_neither{0}, s_nonsrc{0};
+      for (uint32_t i = 0; i < render_target_count; ++i) {
+        RenderTarget* dest_rt = render_targets[i];
+        if (!dest_rt || !dest_rt->key().is_depth) {
+          continue;  // depth destinations only
+        }
+        for (const Transfer& t : render_target_transfers[i]) {
+          if (!t.source || t.source == dest_rt) {
+            s_nonsrc.fetch_add(1, std::memory_order_relaxed);
+            continue;
+          }
+          const RenderTargetKey sk = t.source->key();
+          const RenderTargetKey dk = dest_rt->key();
+          const bool pd = sk.GetPitchTiles() != dk.GetPitchTiles();
+          const bool md = sk.msaa_samples != dk.msaa_samples;
+          if (md && !pd) {
+            s_msaa_only.fetch_add(1, std::memory_order_relaxed);
+          } else if (pd && !md) {
+            s_pitch_only.fetch_add(1, std::memory_order_relaxed);
+          } else if (pd && md) {
+            s_both.fetch_add(1, std::memory_order_relaxed);
+          } else {
+            s_neither.fetch_add(1, std::memory_order_relaxed);
+          }
+          const uint64_t tot = s_tot.fetch_add(1, std::memory_order_relaxed) + 1;
+          if ((tot % 2048u) == 0u) {
+            const uint64_t mo = s_msaa_only.load(std::memory_order_relaxed);
+            const uint64_t po = s_pitch_only.load(std::memory_order_relaxed);
+            const uint64_t bo = s_both.load(std::memory_order_relaxed);
+            XELOGI(
+                "BD DEPTH XFER CENSUS: total={} msaa_only={} pitch_only={} "
+                "both={} neither={} same_src={} | resolve-servable "
+                "(msaa_only+both) = {}%",
+                tot, mo, po, bo, s_neither.load(std::memory_order_relaxed),
+                s_nonsrc.load(std::memory_order_relaxed),
+                tot ? ((mo + bo) * 100 / tot) : 0);
+          }
+        }
+      }
+    }
   }
 
   // Accuracy-for-speed (Thor/Adreno): skip the EDRAM ownership-transfer GPU
@@ -9219,6 +9276,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
                 sk.GetPitchTiles() != dk.GetPitchTiles(),
                 sk.msaa_samples != dk.msaa_samples);
           }
+          // (The depth-transfer census lives at the AddRenderTargetTransferStats
+          // site instead - this block is gated by gpu_bd_native_depth_convert, so
+          // a census here silently reports nothing when that cvar is off.)
           // The tile-reinterpreting DEPTH DOWNSCALE conversion = same base/msaa/
           // format, DIFFERENT pitch (720<->400). This is the measured ~30ms cost.
           // BLIT path handles ONLY single-sample (vkCmdBlitImage requires samples=1);
