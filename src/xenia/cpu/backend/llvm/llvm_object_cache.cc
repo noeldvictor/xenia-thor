@@ -42,6 +42,10 @@
 extern "C" {
 [[gnu::weak]] const void* _ZTIN4llvm11ObjectCacheE = nullptr;
 [[gnu::weak]] const void* _ZTIN4llvm3orc14SimpleCompilerE = nullptr;
+// llvm_assembler.cc's llvm::Error usage instantiates ErrorInfo<..,ErrorInfoBase>
+// whose typeinfo references the base's; libLLVM (-fno-rtti) omits it. Never
+// dereferenced (llvm::Error dispatches via its own classID, not C++ typeid).
+[[gnu::weak]] const void* _ZTIN4llvm13ErrorInfoBaseE = nullptr;
 }
 #else
 // GCC (the qemu/linux cpu-tests build) emits a std::type_info reference for these
@@ -55,6 +59,8 @@ asm(".pushsection .data.rel.ro,\"aw\"\n"
     "_ZTIN4llvm11ObjectCacheE: .quad 0\n"
     ".weak _ZTIN4llvm3orc14SimpleCompilerE\n"
     "_ZTIN4llvm3orc14SimpleCompilerE: .quad 0\n"
+    ".weak _ZTIN4llvm13ErrorInfoBaseE\n"
+    "_ZTIN4llvm13ErrorInfoBaseE: .quad 0\n"
     ".popsection");
 #endif
 

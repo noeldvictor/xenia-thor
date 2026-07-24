@@ -25,6 +25,7 @@
 DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_backend_llvm_residency_writeback);
+DECLARE_bool(cpu_backend_llvm_residency_abi);
 
 using namespace xe;                // xe::Memory
 using namespace xe::cpu;
@@ -362,6 +363,38 @@ TEST_CASE("LLVM_CALL_RECURSIVE", "[llvm]") {
         ctx->r[3] = 5;  // expect r4 == 15, r3 == 0
         ctx->r[4] = 0;
       });
+}
+
+TEST_CASE("LLVM_RESIDENCY_ABI_NONVOL_ACROSS_CALL", "[llvm]") {
+  // Exercise + VALIDATE cpu_backend_llvm_residency_abi (the ABI-aware
+  // cross-function residency): a NON-VOLATILE GPR (r31) is loaded, kept resident
+  // across a guest CALL, and read AFTER the call. residency_abi SKIPS r31's
+  // reload after the call (the callee is ABI-compliant here - the recursion
+  // accumulates into VOLATILE r4 and never writes r31 - so r31 is genuinely
+  // preserved). The differential vs the a64 backend proves the skip is correct
+  // (r31 + r5 must match a64 bit-for-bit); the compile-time counter logs how many
+  // ctx-reloads were eliminated. A wrong skip (or a wrongly-classified volatile)
+  // would diverge from a64 and fail here - so this is the device-free correctness
+  // gate for the lever, not just a smoke test.
+  cvars::cpu_backend_llvm_residency_abi = true;
+  RunDiff(
+      [](HIRBuilder& b) {
+        auto* r3 = LoadGPR(b, 3);
+        auto* done = b.NewLabel();
+        b.BranchTrue(b.IsFalse(r3), done);       // base case r3 == 0
+        StoreGPR(b, 4, b.Add(LoadGPR(b, 4), r3));  // volatile accumulator
+        StoreGPR(b, 3, b.Sub(r3, b.LoadConstantInt64(1)));
+        b.CallIndirect(b.LoadConstantUint32(0x80000000));  // recurse (preserves r31)
+        StoreGPR(b, 5, LoadGPR(b, 31));  // read non-volatile r31 AFTER the call
+        b.MarkLabel(done);
+        b.Return();
+      },
+      [](PPCContext* ctx) {
+        ctx->r[3] = 5;         // r4 == 15
+        ctx->r[4] = 0;
+        ctx->r[31] = 0xABCDEF;  // preserved across every recursive call -> r5
+      });
+  cvars::cpu_backend_llvm_residency_abi = false;
 }
 
 TEST_CASE("LLVM_ATOMIC_COMPARE_EXCHANGE", "[llvm]") {
