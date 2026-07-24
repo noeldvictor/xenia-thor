@@ -12,6 +12,7 @@
 
 #include <cstring>
 
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/gpu/vulkan/deferred_command_buffer.h"
@@ -364,6 +365,16 @@ VkImageView BdNativeRenderer::LookupSampledSurface(uint32_t guest_address) {
 }
 
 void BdNativeRenderer::LogSurfaceKeys(const char* context) {
+  // FIELD-GATED **BEFORE** the rate limit - this ordering is the whole point.
+  // Twice now the 8-dump budget was consumed entirely during LOADING (all dumps
+  // stamped ~15s after launch, while the field census lines are ~3 minutes in), so
+  // the output described the loading screen's surfaces and said nothing about the
+  // field. Counting only in-field dumps is what makes the snapshot meaningful:
+  // at load time the live surfaces are BD's single-sample bloom pyramid, whereas
+  // the consumer we are trying to serve needs a 4X MSAA depth.
+  if (xe::Clock::QueryGuestUptimeMillis() <= 135000) {
+    return;
+  }
   // Rate-limited: this fires from a per-pass site, and BD runs ~2000 passes/frame.
   static std::atomic<uint32_t> s_dumps{0};
   if (s_dumps.fetch_add(1, std::memory_order_relaxed) >= 8) {
