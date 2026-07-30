@@ -18,6 +18,7 @@
 #include "xenia/base/string.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_module.h"
@@ -58,6 +59,8 @@ KernelState::KernelState(Emulator* emulator)
   }
   content_manager_ = std::make_unique<xam::ContentManager>(this, content_root);
 
+  guest_scheduler_ = std::make_unique<GuestScheduler>(this);
+
   assert_null(shared_kernel_state_);
   shared_kernel_state_ = this;
 
@@ -75,6 +78,10 @@ KernelState::~KernelState() {
     dispatch_cond_.notify_all();
     dispatch_thread_->Wait(0, 0, 0, nullptr);
   }
+
+  // Reclaiming leftover fibers releases handles, so run this while the object
+  // table is still alive.
+  guest_scheduler_->Shutdown();
 
   executable_module_.reset();
   user_modules_.clear();

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <deque>
+#include <mutex>
 #include <string>
 
 #include "xenia/base/threading.h"
@@ -30,6 +32,24 @@ namespace kernel {
 constexpr fourcc_t kXObjSignature = make_fourcc('X', 'E', 'N', '\0');
 
 class KernelState;
+class XThread;
+
+// FIFO of cooperative fiber waiters, shared by the permit-gated types so a
+// parked waiter is not starved by a running acquirer that never parks.
+// (Guest scheduler stage 1, ported from xenia-edge.)
+class CooperativeWaiterFifo {
+ public:
+  void Add(XThread* thread);
+  // Unregisters |thread|, returning true if a waiter remains to be woken.
+  bool Remove(XThread* thread);
+  // True when |thread| is first in line (or no one is queued).
+  bool MayAcquire(XThread* thread);
+  bool HasWaiters();
+
+ private:
+  std::mutex lock_;
+  std::deque<XThread*> waiters_;
+};
 
 template <typename T>
 class object_ref;
@@ -197,6 +217,33 @@ class XObject {
   static object_ref<T> GetNativeObject(KernelState* kernel_state,
                                        void* native_ptr, int32_t as_type = -1);
 
+ public:
+  // Fair FIFO wakeup for cooperative fiber waiters on fungible-permit
+  // objects. Begin/End register the waiter and MayAcquire gates the poll to
+  // the queue front. Call the Enter/Leave wrappers below rather than these
+  // directly. (Guest scheduler stage 1, ported from xenia-edge.)
+  virtual void CooperativeWaitBegin(XThread* thread) {}
+  virtual void CooperativeWaitEnd(XThread* thread) {}
+  virtual bool CooperativeMayAcquire(XThread* thread) { return true; }
+
+  // Bumped by every state change that could satisfy a cooperative waiter, so
+  // the scheduler can skip re-polling a parked waiter until it moves.
+  uint32_t cooperative_signal_epoch() const {
+    return cooperative_signal_epoch_.load();
+  }
+  // Bumps the epoch, then wakes the dispatch threads. Call after the host
+  // primitive is signaled, never before.
+  void WakeCooperativeWaiters();
+
+  // Registers |thread| as a cooperative waiter on this object and records the
+  // registration on the thread, so a terminate that never unwinds the parked
+  // stack can still release it.
+  void EnterCooperativeWait(XThread* thread);
+  void LeaveCooperativeWait(XThread* thread);
+  // Releases whatever registration |thread| still holds, if any. Called when
+  // a thread is torn down without returning through its wait.
+  static void AbandonCooperativeWait(XThread* thread);
+
  protected:
   bool SaveObject(ByteStream* stream);
   bool RestoreObject(ByteStream* stream);
@@ -223,6 +270,8 @@ class XObject {
   static uint32_t TimeoutTicksToMs(int64_t timeout_ticks);
 
   KernelState* kernel_state_;
+
+  std::atomic<uint32_t> cooperative_signal_epoch_{0};
 
   // Host objects are persisted through resets/etc.
   bool host_object_ = false;

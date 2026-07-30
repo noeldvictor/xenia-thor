@@ -429,7 +429,18 @@ typedef struct PPCContext_s {
   // Optional host-side pointers used by guarded A64 kernel fastpaths.
   volatile uint32_t* a64_apc_pending_count;
   volatile int32_t* a64_apc_disable_count;
-  uint64_t a64_fastpath_reserved[6];
+  uint64_t a64_fastpath_reserved[5];
+
+  // Nonzero asks the running fiber to yield at its next JIT safepoint (guest
+  // scheduler stage 2; stage 1 raises it but nothing tests it yet -
+  // cooperative-only). Other host threads write it as a single byte store,
+  // raced reads are benign. Not std::atomic because this struct lives in raw
+  // memory no constructor runs over. Carved (with its pad) out of one
+  // a64_fastpath_reserved slot so sizeof(PPCContext) and every existing
+  // member offset are unchanged - this tree's emitters (x64/a64/LLVM) are
+  // offset-sensitive.
+  uint8_t preempt_requested;
+  uint8_t preempt_reserved_pad_[7];
 
   static std::string GetRegisterName(PPCRegister reg);
   std::string GetStringFromValue(PPCRegister reg) const;

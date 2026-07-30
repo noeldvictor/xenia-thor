@@ -27,6 +27,12 @@ void* Backend::AllocThreadData() { return nullptr; }
 
 void Backend::FreeThreadData(void* thread_data) {}
 
+// Registered by the cooperative guest scheduler when it starts, null
+// otherwise. A JIT safepoint (stage 2, not yet emitted by any backend in this
+// tree) calls it with the PPCContext once the scheduler has raised the
+// context's preempt_requested flag.
+void (*preempt_yield_handler)(void* raw_context) = nullptr;
+
 }  // namespace backend
 }  // namespace cpu
 }  // namespace xe

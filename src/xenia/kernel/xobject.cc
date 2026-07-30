@@ -9,6 +9,8 @@
 
 #include "xenia/kernel/xobject.h"
 
+#include <optional>
+
 #include <vector>
 
 #include "xenia/base/byte_stream.h"
@@ -25,6 +27,7 @@
 #include "xenia/kernel/xnotifylistener.h"
 #include "xenia/kernel/xsemaphore.h"
 #include "xenia/kernel/xsymboliclink.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/xthread.h"
 
 DEFINE_bool(
@@ -209,12 +212,149 @@ uint32_t XObject::TimeoutTicksToMs(int64_t timeout_ticks) {
   }
 }
 
+namespace {
+// Drives the cooperative poll-yield loop for a fiber-backed waiter
+// (guest scheduler stage 1, ported from xenia-edge with this tree's simpler
+// wait bookkeeping). Repeatedly runs |poll| (a zero-timeout acquire returning
+// the terminal X_STATUS on success / abandon / failure, or std::nullopt while
+// not yet signaled), yielding to the scheduler between attempts via
+// BlockCurrentThread, until it resolves, an alertable user APC is pending, or
+// |deadline_ms| (absolute host uptime, 0 = infinite) elapses. Polling the
+// host primitive preserves its exact acquire semantics, only the blocking is
+// made cooperative. |wait_object| is the single object waited on, null for a
+// multi-wait.
+template <typename PollFn>
+X_STATUS CooperativeWaitLoop(GuestScheduler* scheduler, XObject* wait_object,
+                             bool alertable, uint64_t deadline_ms,
+                             PollFn&& poll) {
+  while (true) {
+    // Alertable waits return on a queued user APC (the cooperative equivalent
+    // of a host alertable-wait wake), then the caller delivers APCs.
+    if (alertable && XThread::GetCurrentThread()->HasPendingUserApc()) {
+      return X_STATUS_USER_APC;
+    }
+    // Sampled before polling, so a signal landing after a failed poll changes
+    // the epoch and the re-poll is not skipped.
+    uint32_t wait_epoch =
+        wait_object ? wait_object->cooperative_signal_epoch() : 0;
+    std::optional<X_STATUS> resolved = poll();
+    if (resolved) {
+      return *resolved;
+    }
+    if (deadline_ms != 0 && Clock::QueryHostUptimeMillis() >= deadline_ms) {
+      return X_STATUS_TIMEOUT;
+    }
+    scheduler->BlockCurrentThread(deadline_ms, wait_epoch, alertable);
+  }
+}
+}  // namespace
+
+void CooperativeWaiterFifo::Add(XThread* thread) {
+  std::lock_guard<std::mutex> lock(lock_);
+  for (auto* w : waiters_) {
+    if (w == thread) {
+      return;  // already queued
+    }
+  }
+  waiters_.push_back(thread);
+}
+
+bool CooperativeWaiterFifo::Remove(XThread* thread) {
+  std::lock_guard<std::mutex> lock(lock_);
+  for (auto it = waiters_.begin(); it != waiters_.end(); ++it) {
+    if (*it == thread) {
+      waiters_.erase(it);
+      break;
+    }
+  }
+  return !waiters_.empty();
+}
+
+bool CooperativeWaiterFifo::MayAcquire(XThread* thread) {
+  std::lock_guard<std::mutex> lock(lock_);
+  return waiters_.empty() || waiters_.front() == thread;
+}
+
+bool CooperativeWaiterFifo::HasWaiters() {
+  std::lock_guard<std::mutex> lock(lock_);
+  return !waiters_.empty();
+}
+
+void XObject::WakeCooperativeWaiters() {
+  cooperative_signal_epoch_.fetch_add(1);
+  kernel_state()->guest_scheduler()->WakeAll();
+}
+
+void XObject::EnterCooperativeWait(XThread* thread) {
+  if (!thread) {
+    return;
+  }
+  CooperativeWaitBegin(thread);
+  thread->set_cooperative_wait_object(this);
+}
+
+void XObject::LeaveCooperativeWait(XThread* thread) {
+  if (!thread) {
+    return;
+  }
+  thread->set_cooperative_wait_object(nullptr);
+  CooperativeWaitEnd(thread);
+}
+
+void XObject::AbandonCooperativeWait(XThread* thread) {
+  if (!thread) {
+    return;
+  }
+  if (XObject* object = thread->cooperative_wait_object()) {
+    object->LeaveCooperativeWait(thread);
+  }
+}
+
 X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
                        uint32_t alertable, uint64_t* opt_timeout) {
   auto wait_handle = GetWaitHandle();
   if (!wait_handle) {
     // Object doesn't support waiting.
     return X_STATUS_SUCCESS;
+  }
+
+  if (GuestScheduler::enabled() && XThread::GetCurrentFiberThread()) {
+    // Cooperative path: poll the host primitive (preserving its exact
+    // semantics) and yield the fiber between polls instead of blocking the
+    // dispatch host thread.
+    auto* scheduler = kernel_state()->guest_scheduler();
+    auto* self = XThread::GetCurrentThread();
+    uint64_t deadline_ms = opt_timeout ? Clock::QueryHostUptimeMillis() +
+                                             Clock::ScaleGuestDurationMillis(
+                                                 TimeoutTicksToMs(*opt_timeout))
+                                       : 0;
+    EnterCooperativeWait(self);  // FIFO fairness for semaphores
+    X_STATUS status = CooperativeWaitLoop(
+        scheduler, this, alertable != 0, deadline_ms,
+        [&]() -> std::optional<X_STATUS> {
+          // Only the front-of-queue fiber may take a permit (no-op for
+          // events).
+          if (!CooperativeMayAcquire(self)) {
+            return std::nullopt;
+          }
+          auto poll = xe::threading::Wait(wait_handle, alertable ? true : false,
+                                          std::chrono::milliseconds(0));
+          switch (poll) {
+            case xe::threading::WaitResult::kSuccess:
+              WaitCallback();
+              return X_STATUS_SUCCESS;
+            case xe::threading::WaitResult::kUserCallback:
+              return X_STATUS_USER_APC;
+            case xe::threading::WaitResult::kTimeout:
+              return std::nullopt;  // not signaled yet
+            default:
+            case xe::threading::WaitResult::kAbandoned:
+            case xe::threading::WaitResult::kFailed:
+              return X_STATUS_ABANDONED_WAIT_0;
+          }
+        });
+    LeaveCooperativeWait(self);
+    return status;
   }
 
   auto timeout_ms =
@@ -277,6 +417,59 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
   for (size_t i = 0; i < count; ++i) {
     wait_handles[i] = objects[i]->GetWaitHandle();
     assert_not_null(wait_handles[i]);
+  }
+
+  if (GuestScheduler::enabled() && count > 0 &&
+      XThread::GetCurrentFiberThread()) {
+    // Cooperative path: poll (WaitAny/WaitAll at zero timeout, preserving the
+    // host primitives' atomic acquire) and yield between polls. WaitMultiple
+    // is static, so reach the scheduler through an object.
+    auto* scheduler = objects[0]->kernel_state()->guest_scheduler();
+    uint64_t deadline_ms = opt_timeout ? Clock::QueryHostUptimeMillis() +
+                                             Clock::ScaleGuestDurationMillis(
+                                                 TimeoutTicksToMs(*opt_timeout))
+                                       : 0;
+    return CooperativeWaitLoop(
+        scheduler, nullptr, alertable != 0, deadline_ms,
+        [&]() -> std::optional<X_STATUS> {
+          if (wait_type) {
+            auto r = xe::threading::WaitAny(wait_handles.data(), count,
+                                            alertable ? true : false,
+                                            std::chrono::milliseconds(0));
+            switch (r.first) {
+              case xe::threading::WaitResult::kSuccess:
+                objects[r.second]->WaitCallback();
+                return X_STATUS(r.second);
+              case xe::threading::WaitResult::kUserCallback:
+                return X_STATUS_USER_APC;
+              case xe::threading::WaitResult::kTimeout:
+                return std::nullopt;
+              case xe::threading::WaitResult::kAbandoned:
+                return X_STATUS(X_STATUS_ABANDONED_WAIT_0 + r.second);
+              default:
+              case xe::threading::WaitResult::kFailed:
+                return X_STATUS_UNSUCCESSFUL;
+            }
+          }
+          auto r = xe::threading::WaitAll(wait_handles.data(), count,
+                                          alertable ? true : false,
+                                          std::chrono::milliseconds(0));
+          switch (r) {
+            case xe::threading::WaitResult::kSuccess:
+              for (uint32_t i = 0; i < count; i++) {
+                objects[i]->WaitCallback();
+              }
+              return X_STATUS_SUCCESS;
+            case xe::threading::WaitResult::kUserCallback:
+              return X_STATUS_USER_APC;
+            case xe::threading::WaitResult::kTimeout:
+              return std::nullopt;
+            default:
+            case xe::threading::WaitResult::kAbandoned:
+            case xe::threading::WaitResult::kFailed:
+              return X_STATUS_UNSUCCESSFUL;
+          }
+        });
   }
 
   auto timeout_ms =

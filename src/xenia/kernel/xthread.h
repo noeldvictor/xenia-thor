@@ -173,6 +173,78 @@ class XThread : public XObject, public cpu::Thread {
   static uint32_t GetCurrentThreadHandle();
   static uint32_t GetCurrentThreadId();
 
+  // Returns the currently-running thread iff it is a scheduler-managed fiber
+  // (guest code on the dispatch host thread), otherwise nullptr. Use this to
+  // decide whether a blocking call yields cooperatively or blocks the host
+  // thread.
+  static XThread* GetCurrentFiberThread();
+  // Rebinds the per-host-thread TLS (XThread / cpu::Thread / ThreadState) so
+  // |thread| becomes the current guest thread on the calling host thread. Used
+  // on each fiber switch by the guest scheduler. Pass nullptr to clear.
+  static void SetCurrentThread(XThread* thread);
+
+  // True for threads that run a host C++ routine (XHostThread) rather than
+  // guest PPC code. These always use a real host thread, never a cooperative
+  // fiber, since they run host loops/blocking and other code dereferences
+  // their thread().
+  virtual bool is_host_thread() const { return false; }
+
+  // True if this thread has a user-mode APC queued (or pending). Used by the
+  // cooperative scheduler's alertable waits to return USER_APC, the same way
+  // a host alertable wait wakes on a queued APC.
+  bool HasPendingUserApc();
+
+  // The fiber this guest thread runs on when the cooperative scheduler is
+  // active (null under the host-thread model). Created in the fiber path of
+  // Create().
+  xe::threading::Fiber* fiber() const { return fiber_.get(); }
+
+  // Drops the self reference from Create and any surviving handle. The delete
+  // point for a fiber thread, so the caller must ensure it is not executing.
+  void ReclaimExited();
+
+  // The object this thread is registered on as a cooperative waiter, owned by
+  // XObject::Enter/LeaveCooperativeWait. Atomic because the waiting fiber
+  // clears it just as a terminating thread may be reading it, and either
+  // order is fine since a redundant release is a no-op.
+  XObject* cooperative_wait_object() const {
+    return cooperative_wait_object_.load(std::memory_order_acquire);
+  }
+  void set_cooperative_wait_object(XObject* object) {
+    cooperative_wait_object_.store(object, std::memory_order_release);
+  }
+
+  // Intrusive scheduler links, owned exclusively by GuestScheduler and only
+  // touched under its lock. Embedding them here keeps the queue operations
+  // allocation-free. A thread is in at most one of the ready or blocked
+  // lists.
+  struct SchedulerLinks {
+    XThread* ready_next = nullptr;  // link for the ready OR blocked list
+    int cpu = -1;                   // CPU owning the list we are on
+    int queued_prio = 0;     // priority level of the ready list we are on
+    bool queued = false;     // in the ready list
+    bool blocked = false;    // parked in the blocked (waiting) list
+    bool suspended = false;  // parked with a nonzero suspend count
+    bool running = false;    // executing on a dispatch thread
+    bool preempted = false;  // slice cut short by a higher-priority thread
+    bool has_run = false;    // diagnostic: dispatched at least once
+    // Set once the fiber has exited (master-tree stand-in for Edge's guest
+    // KTHREAD thread_state=TERMINATED), guarding zombie revival in MarkReady.
+    bool exited = false;
+    // Set by an external Terminate, exits the fiber at its next
+    // ExitIfTerminated check.
+    std::atomic<bool> terminate_pending{false};
+    // Absolute raw-tick end of the granted timeslice, 0 = grant fresh at
+    // dispatch. Preemption preserves it so the quantum end still arrives.
+    uint64_t quantum_deadline_tick = 0;
+    // Re-poll gating, written by BlockCurrentThread, read by RereadyBlocked.
+    bool wait_gated = false;        // skip re-polls until something below fires
+    bool wait_alertable = false;    // also re-poll on a pending user APC
+    uint32_t wait_epoch = 0;        // object epoch sampled before the last poll
+    uint64_t wait_deadline_ms = 0;  // absolute host uptime, 0 = none
+  };
+  SchedulerLinks& scheduler_links() { return scheduler_links_; }
+
   static uint32_t GetLastError();
   static void SetLastError(uint32_t error_code);
 
@@ -259,7 +331,28 @@ class XThread : public XObject, public cpu::Thread {
   void DeliverAPCs();
   void RundownAPCs();
 
-  xe::threading::WaitHandle* GetWaitHandle() override { return thread_.get(); }
+  xe::threading::WaitHandle* GetWaitHandle() override {
+    // Under the cooperative scheduler there is no host thread, so a
+    // fiber-backed thread exposes an event signaled on exit for other threads
+    // to wait on.
+    if (thread_) {
+      return thread_.get();
+    }
+    return fiber_exit_event_.get();
+  }
+
+  // When the cooperative scheduler is active, the guest thread runs on this
+  // fiber instead of its own host thread (cpu::Thread::thread_).
+  std::unique_ptr<xe::threading::Fiber> fiber_;
+  SchedulerLinks scheduler_links_;
+  // Set by the first ReclaimExited so both terminal paths reclaim once.
+  std::atomic<bool> self_reference_dropped_{false};
+  // Owned by XObject::Enter/LeaveCooperativeWait.
+  std::atomic<XObject*> cooperative_wait_object_{nullptr};
+  // Signaled when a fiber-backed thread exits, so waits on the thread object
+  // resolve (the host thread handle that normally serves this role is
+  // absent).
+  std::unique_ptr<xe::threading::Event> fiber_exit_event_;
 
   CreationParams creation_params_ = {0};
 
@@ -292,6 +385,10 @@ class XHostThread : public XThread {
  public:
   XHostThread(KernelState* kernel_state, uint32_t stack_size,
               uint32_t creation_flags, std::function<int()> host_fn);
+
+  // Host threads always run on a real host thread, never a cooperative
+  // fiber - they run host loops/blocking code.
+  bool is_host_thread() const override { return true; }
 
   virtual void Execute();
 

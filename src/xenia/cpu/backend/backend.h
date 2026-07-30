@@ -149,6 +149,13 @@ class GuestTrampolineGroup
   std::mutex mutex_;
 };
 
+// Registered by the cooperative guest scheduler when it starts, null
+// otherwise. A JIT safepoint calls it with the PPCContext once the scheduler
+// has raised the context's preempt_requested flag. (Stage-1 substrate: no
+// backend in this tree emits safepoints yet, so this stays uninvoked and the
+// scheduler runs cooperative-only.)
+extern void (*preempt_yield_handler)(void* raw_context);
+
 }  // namespace backend
 }  // namespace cpu
 }  // namespace xe

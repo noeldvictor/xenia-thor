@@ -25,6 +25,7 @@
 #include "xenia/cpu/ppc/ppc_decode_data.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xevent.h"
@@ -134,6 +135,47 @@ XThread* XThread::GetCurrentThread() {
     assert_always("Attempting to use kernel stuff from a non-kernel thread");
   }
   return thread;
+}
+
+XThread* XThread::GetCurrentFiberThread() {
+  XThread* thread = current_xthread_tls_;
+  return (thread && thread->fiber_) ? thread : nullptr;
+}
+
+void XThread::SetCurrentThread(XThread* thread) {
+  current_xthread_tls_ = thread;
+  current_thread_ = thread;
+  if (thread) {
+    // Attribute logging to this guest thread and bind its PPC context. Under
+    // the cooperative scheduler many guest fibers share a host thread, so
+    // this must be re-set on every switch, not once at host-thread start.
+    xe::threading::set_current_thread_id(thread->handle());
+    cpu::ThreadState::Bind(thread->thread_state());
+  } else {
+    // Back on the idle fiber, attribute logging to the host thread again.
+    xe::threading::set_current_thread_id(UINT_MAX);
+  }
+}
+
+bool XThread::HasPendingUserApc() {
+  // Master-tree adaptation: Edge reads the guest KTHREAD APC bookkeeping;
+  // here queued-but-undelivered user APCs are tracked by apc_pending_count_
+  // (NoteApcQueued / NoteApcDequeued around apc_list_).
+  return apc_pending_count_.load(std::memory_order_acquire) != 0;
+}
+
+void XThread::ReclaimExited() {
+  // Scheduler reclaim and external Terminate both reach here for the same
+  // thread, and releasing twice would free it one reference early.
+  if (self_reference_dropped_.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  // The guest may already have dropped its handle while the thread ran.
+  if (!handles().empty()) {
+    ReleaseHandle();
+  }
+  // Balances the self Retain in Create, so this is the delete point.
+  Release();
 }
 
 uint32_t XThread::GetCurrentThreadHandle() {
@@ -392,6 +434,46 @@ X_STATUS XThread::Create() {
   // Always retain when starting - the thread owns itself until exited.
   RetainHandle();
 
+  if (GuestScheduler::enabled() && !is_host_thread()) {
+    // Cooperative fiber path: the guest thread runs on a fiber the scheduler
+    // multiplexes onto its dispatch host thread instead of its own host OS
+    // thread. The scheduler binds our TLS (SetCurrentThread) before switching
+    // to this fiber, so the entry doesn't repeat it. Host-routine threads
+    // (XHostThread) stay real host threads, since they run host loops and
+    // blocking calls and their thread() is used elsewhere.
+    fiber_exit_event_ = xe::threading::Event::CreateManualResetEvent(false);
+    xe::threading::Fiber::CreationParameters fiber_params;
+    fiber_params.stack_size = 16_MiB;
+    fiber_ = xe::threading::Fiber::Create(fiber_params, [this]() {
+      // Terminated before the first dispatch.
+      kernel_state()->guest_scheduler()->ExitIfTerminated();
+      running_ = true;
+      // Never returns: Execute() ends in Exit(), which hands us to the
+      // scheduler and yields to the dispatcher forever.
+      Execute();
+    });
+    if (!fiber_) {
+      XELOGE("CreateThread failed (fiber)");
+      return X_STATUS_NO_MEMORY;
+    }
+    // Held until the scheduler reclaims the exited fiber, so a guest handle
+    // release cannot free the stack out from under a running thread.
+    Retain();
+    if (thread_name_.empty()) {
+      set_name(fmt::format("XThread{:04X}", thread_id_));
+    }
+    // Assign the logical processor and set up the current CPU in KPCR and
+    // KTHREAD, then notify the processor - same as the host-thread path
+    // below.
+    SetActiveCpu(cpu_index);
+    emulator()->processor()->OnThreadCreated(handle(), thread_state_, this);
+    kernel_state()->guest_scheduler()->EnsureStarted();
+    if ((creation_params_.creation_flags & X_CREATE_SUSPENDED) == 0) {
+      kernel_state()->guest_scheduler()->MarkReady(this);
+    }
+    return X_STATUS_SUCCESS;
+  }
+
   xe::threading::Thread::CreationParameters params;
   params.stack_size = 16_MiB;  // Allocate a big host stack.
   params.create_suspended = true;
@@ -469,6 +551,17 @@ X_STATUS XThread::Exit(int exit_code) {
   // Notify processor of our exit.
   emulator()->processor()->OnThreadExit(thread_id_);
 
+  if (fiber_) {
+    // On a fiber, Thread::Exit() would kill the shared dispatch thread. Wake
+    // our waiters, hand ourselves to the scheduler, and yield forever. The
+    // dispatcher drops our last handle once it is back on the idle fiber.
+    running_ = false;
+    fiber_exit_event_->Set();
+    auto* scheduler = kernel_state()->guest_scheduler();
+    scheduler->NotifyThreadExited(this);
+    scheduler->YieldToScheduler();  // never returns
+  }
+
   // NOTE: unless PlatformExit fails, expect it to never return!
   current_xthread_tls_ = nullptr;
   current_thread_ = nullptr;
@@ -495,10 +588,32 @@ X_STATUS XThread::Terminate(int exit_code) {
 
   running_ = false;
   if (XThread::IsInThread(this)) {
+    if (fiber_) {
+      // Self-terminate on our fiber, same as Exit(), yielding forever so the
+      // dispatcher reclaims our handle from the idle fiber.
+      fiber_exit_event_->Set();
+      auto* scheduler = kernel_state()->guest_scheduler();
+      scheduler->NotifyThreadExited(this);
+      scheduler->YieldToScheduler();  // never returns
+    }
     ReleaseHandle();
     xe::threading::Thread::Exit(exit_code);
-  } else {
+  } else if (thread_) {
     thread_->Terminate(exit_code);
+    ReleaseHandle();
+  } else if (fiber_) {
+    // Fiber-backed guest thread terminated from another host thread. Signal
+    // the exit event first so waits on the thread object resolve.
+    fiber_exit_event_->Set();
+    // It may be parked mid-wait, where nothing else will unwind its
+    // registration and a dead entry gates every other waiter on that object.
+    XObject::AbandonCooperativeWait(this);
+    if (kernel_state()->guest_scheduler()->TerminateThread(this)) {
+      // Nothing will ever run on its stack again, so free it here.
+      ReclaimExited();
+    }
+    ReleaseHandle();
+  } else {
     ReleaseHandle();
   }
 
@@ -933,6 +1048,25 @@ uint32_t XThread::suspend_count() {
 }
 
 X_STATUS XThread::Resume(uint32_t* out_suspend_count) {
+  if (fiber_) {
+    // No host thread to resume, so drop the guest suspend count and unpark on
+    // a real suspended-to-runnable transition.
+    auto* count = reinterpret_cast<std::atomic_uint8_t*>(
+        &guest_object<X_KTHREAD>()->suspend_count);
+    uint8_t previous = count->load();
+    while (previous > 0 &&
+           !count->compare_exchange_weak(previous,
+                                         static_cast<uint8_t>(previous - 1))) {
+    }
+    if (out_suspend_count) {
+      *out_suspend_count = previous;
+    }
+    if (previous == 1) {
+      kernel_state()->guest_scheduler()->ResumeThread(this);
+    }
+    return X_STATUS_SUCCESS;
+  }
+
   --guest_object<X_KTHREAD>()->suspend_count;
 
   if (thread_->Resume(out_suspend_count)) {
@@ -943,6 +1077,21 @@ X_STATUS XThread::Resume(uint32_t* out_suspend_count) {
 }
 
 X_STATUS XThread::Suspend(uint32_t* out_suspend_count) {
+  if (fiber_) {
+    // Bump the guest suspend count and let the dispatcher act on it, at our
+    // next pick-up for a self-suspend or the target's next yield otherwise.
+    uint8_t previous = reinterpret_cast<std::atomic_uint8_t*>(
+                           &guest_object<X_KTHREAD>()->suspend_count)
+                           ->fetch_add(1);
+    if (out_suspend_count) {
+      *out_suspend_count = previous;
+    }
+    if (this == XThread::GetCurrentFiberThread()) {
+      kernel_state()->guest_scheduler()->YieldCurrentThread(false);
+    }
+    return X_STATUS_SUCCESS;
+  }
+
   auto global_lock = global_critical_region_.Acquire();
 
   ++guest_object<X_KTHREAD>()->suspend_count;
@@ -975,6 +1124,26 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
     timeout_ms = 0;
   }
   timeout_ms = Clock::ScaleGuestDurationMillis(timeout_ms);
+
+  if (fiber_) {
+    // Cooperative path: yield/park the fiber instead of sleeping the dispatch
+    // host thread. A zero timeout is a plain yield, otherwise park until the
+    // deadline, returning early on a user APC when alertable.
+    auto* scheduler = kernel_state()->guest_scheduler();
+    if (timeout_ms == 0) {
+      scheduler->YieldCurrentThread(false);
+      return X_STATUS_SUCCESS;
+    }
+    uint64_t deadline = Clock::QueryHostUptimeMillis() + timeout_ms;
+    while (Clock::QueryHostUptimeMillis() < deadline) {
+      if (alertable && HasPendingUserApc()) {
+        return X_STATUS_USER_APC;
+      }
+      scheduler->BlockCurrentThread();
+    }
+    return X_STATUS_SUCCESS;
+  }
+
   if (alertable) {
     auto result =
         xe::threading::AlertableSleep(std::chrono::milliseconds(timeout_ms));

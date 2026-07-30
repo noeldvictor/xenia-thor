@@ -80,6 +80,23 @@ class Fence {
   // signal is consumed) so signal_state_ stays consistent. Sound only for the
   // single-waiter case (e.g. the debugger step / save-state path); do not mix a
   // WaitFor and a Wait waiter on the same Fence.
+  // Non-blocking probe: returns true (consuming the signal when no other
+  // waiter is registered) if the fence is currently signaled, otherwise false
+  // without registering a waiter. Single-waiter discipline like WaitFor. The
+  // guest scheduler's cooperative WaitOnFence polls this between fiber
+  // yields.
+  bool TryWait() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!(signal_state_ & SIGMASK_)) {
+      return false;
+    }
+    if ((signal_state_ & ~SIGMASK_) == 0) {
+      // No registered waiters - fully consume the signal.
+      signal_state_ = 0;
+    }
+    return true;
+  }
+
   bool WaitFor(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     assert_true((signal_state_ & ~SIGMASK_) < (SIGMASK_ - 1) &&

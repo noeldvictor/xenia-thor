@@ -43,6 +43,8 @@ class Processor;
 namespace xe {
 namespace kernel {
 
+class GuestScheduler;
+
 constexpr fourcc_t kKernelSaveSignature = make_fourcc("KRNL");
 
 class Dispatcher;
@@ -103,6 +105,8 @@ class KernelState {
   uint32_t title_id() const;
   util::XdbfGameData title_xdbf() const;
   util::XdbfGameData module_xdbf(object_ref<UserModule> exec_module) const;
+
+  GuestScheduler* guest_scheduler() const { return guest_scheduler_.get(); }
 
   xam::AppManager* app_manager() const { return app_manager_.get(); }
   xam::ContentManager* content_manager() const {
@@ -218,6 +222,7 @@ class KernelState {
   std::unique_ptr<xam::AppManager> app_manager_;
   std::unique_ptr<xam::ContentManager> content_manager_;
   std::unique_ptr<xam::UserProfile> user_profile_;
+  std::unique_ptr<GuestScheduler> guest_scheduler_;
 
   xe::global_critical_region global_critical_region_;
 
