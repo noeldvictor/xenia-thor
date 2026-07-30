@@ -472,6 +472,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "rt_cache_ownership_claim_memo");
             copyBooleanExtra(intent, launchArguments, "vulkan_direct_host_resolve");
             copyBooleanExtra(intent, launchArguments, "vulkan_cache_sampler_parameters");
+            copyBooleanExtra(intent, launchArguments, "gpu_dynamic_polygon_mode");
+            copyBooleanExtra(intent, launchArguments, "gpu_dynamic_depth_clamp");
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws_rewrite");
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws_rewrite_strips");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_weak_external_subpass_deps");

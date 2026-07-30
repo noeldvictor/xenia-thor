@@ -3,3 +3,5 @@
 XE_UI_VULKAN_FUNCTION(vkCmdSetColorBlendEnableEXT)
 XE_UI_VULKAN_FUNCTION(vkCmdSetColorBlendEquationEXT)
 XE_UI_VULKAN_FUNCTION(vkCmdSetColorWriteMaskEXT)
+XE_UI_VULKAN_FUNCTION(vkCmdSetPolygonModeEXT)
+XE_UI_VULKAN_FUNCTION(vkCmdSetDepthClampEnableEXT)

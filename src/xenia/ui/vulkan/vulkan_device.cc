@@ -1040,7 +1040,23 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
           .extendedDynamicState3ColorWriteMask =
           features_EXT_extended_dynamic_state3.supported
               .extendedDynamicState3ColorWriteMask;
+      // EDS3 completion: polygon mode + depth clamp enable (each gates its own
+      // dynamic state; independent of the 3-blend-sub-feature bundle).
+      features_EXT_extended_dynamic_state3.enabled
+          .extendedDynamicState3PolygonMode =
+          features_EXT_extended_dynamic_state3.supported
+              .extendedDynamicState3PolygonMode;
+      features_EXT_extended_dynamic_state3.enabled
+          .extendedDynamicState3DepthClampEnable =
+          features_EXT_extended_dynamic_state3.supported
+              .extendedDynamicState3DepthClampEnable;
     }
+    device->extensions_.eds3_dynamic_polygon_mode =
+        features_EXT_extended_dynamic_state3.supported
+            .extendedDynamicState3PolygonMode == VK_TRUE;
+    device->extensions_.eds3_dynamic_depth_clamp =
+        features_EXT_extended_dynamic_state3.supported
+            .extendedDynamicState3DepthClampEnable == VK_TRUE;
     device->extensions_.eds3_dynamic_blend_enable =
         features_EXT_extended_dynamic_state3.supported
             .extendedDynamicState3ColorBlendEnable == VK_TRUE;

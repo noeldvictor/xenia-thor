@@ -109,6 +109,25 @@ class VulkanPipelineCache {
       VkColorBlendEquationEXT* blend_equations_out,
       VkColorComponentFlags* write_masks_out) const;
 
+  // EDS3 completion (gpu_dynamic_polygon_mode / gpu_dynamic_depth_clamp): the
+  // true per-draw values GetCurrentStateDescription derived (and then
+  // canonicalized out of the pipeline key when the promotion is active), for
+  // the command processor's dynamic-state emission. Valid after the
+  // ConfigurePipeline of the same draw.
+  VkPolygonMode last_dynamic_polygon_mode_vk() const {
+    switch (last_dynamic_polygon_mode_) {
+      case PipelinePolygonMode::kLine:
+        return VK_POLYGON_MODE_LINE;
+      case PipelinePolygonMode::kPoint:
+        return VK_POLYGON_MODE_POINT;
+      default:
+        return VK_POLYGON_MODE_FILL;
+    }
+  }
+  bool last_dynamic_depth_clamp_enable() const {
+    return last_dynamic_depth_clamp_enable_;
+  }
+
  private:
   enum class PipelineGeometryShader : uint32_t {
     kNone,
@@ -133,6 +152,13 @@ class VulkanPipelineCache {
     kLine,
     kPoint,
   };
+
+  // Backing for last_dynamic_polygon_mode_vk / last_dynamic_depth_clamp_enable
+  // (EDS3 completion) - written by every GetCurrentStateDescription (a const
+  // method - these are pure derived-value stashes, hence mutable).
+  mutable PipelinePolygonMode last_dynamic_polygon_mode_ =
+      PipelinePolygonMode::kFill;
+  mutable bool last_dynamic_depth_clamp_enable_ = false;
 
   enum class PipelineBlendFactor : uint32_t {
     kZero,

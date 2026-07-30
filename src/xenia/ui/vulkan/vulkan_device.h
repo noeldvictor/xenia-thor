@@ -219,6 +219,10 @@ class VulkanDevice {
     bool eds3_dynamic_blend_enable = false;    // extendedDynamicState3ColorBlendEnable
     bool eds3_dynamic_blend_equation = false;  // ...ColorBlendEquation
     bool eds3_dynamic_write_mask = false;      // ...ColorWriteMask
+    // EDS3 completion (gpu_dynamic_polygon_mode / gpu_dynamic_depth_clamp):
+    // the last two pipeline-baked raster states that still mint permutations.
+    bool eds3_dynamic_polygon_mode = false;  // ...PolygonMode
+    bool eds3_dynamic_depth_clamp = false;   // ...DepthClampEnable
     // #81. Push descriptors - inline descriptor writes into the command buffer,
     // avoiding per-draw descriptor set allocation + vkUpdateDescriptorSets +
     // vkCmdBindDescriptorSets. Big per-draw CPU win on Adreno.

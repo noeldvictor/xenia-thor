@@ -608,6 +608,18 @@ class DeferredCommandBuffer {
     args.front_face = front_face;
   }
 
+  void CmdVkSetPolygonModeEXT(VkPolygonMode polygon_mode) {
+    auto& args = *reinterpret_cast<ArgsVkSetPolygonMode*>(
+        WriteCommand(Command::kVkSetPolygonMode, sizeof(ArgsVkSetPolygonMode)));
+    args.polygon_mode = polygon_mode;
+  }
+
+  void CmdVkSetDepthClampEnableEXT(VkBool32 depth_clamp_enable) {
+    auto& args = *reinterpret_cast<ArgsVkSetDepthClampEnable*>(WriteCommand(
+        Command::kVkSetDepthClampEnable, sizeof(ArgsVkSetDepthClampEnable)));
+    args.depth_clamp_enable = depth_clamp_enable;
+  }
+
   void CmdVkSetDepthTestEnable(VkBool32 depth_test_enable) {
     auto& args = *reinterpret_cast<ArgsVkSetDepthTestEnable*>(WriteCommand(
         Command::kVkSetDepthTestEnable, sizeof(ArgsVkSetDepthTestEnable)));
@@ -803,6 +815,8 @@ class DeferredCommandBuffer {
     kVkSetColorBlendEquation,
     kVkSetColorWriteMask,
     kVkSetCullMode,
+    kVkSetPolygonMode,
+    kVkSetDepthClampEnable,
     kVkSetDepthBias,
     kVkSetDepthCompareOp,
     kVkSetDepthTestEnable,
@@ -1034,6 +1048,14 @@ class DeferredCommandBuffer {
 
   struct ArgsVkSetFrontFace {
     VkFrontFace front_face;
+  };
+
+  struct ArgsVkSetPolygonMode {
+    VkPolygonMode polygon_mode;
+  };
+
+  struct ArgsVkSetDepthClampEnable {
+    VkBool32 depth_clamp_enable;
   };
 
   struct ArgsVkSetDepthTestEnable {

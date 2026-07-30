@@ -934,6 +934,21 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   description_out.depth_clamp_enable =
       device_properties.depthClamp &&
       regs.Get<reg::PA_CL_CLIP_CNTL>().clip_disable;
+  // gpu_dynamic_depth_clamp (EDS3 completion): stash the true value for
+  // UpdateDynamicState's emission, then zero the key field so depth-clamp
+  // variance stops minting pipelines. Mirrors the gpu_dynamic_blend_state
+  // pattern; must match EnsurePipelineCreated's dynamic-state array and the
+  // command processor's emit gate.
+  last_dynamic_depth_clamp_enable_ = description_out.depth_clamp_enable != 0;
+  {
+    const ui::vulkan::VulkanDevice::Extensions& eds3_device_extensions =
+        command_processor_.GetVulkanDevice()->extensions();
+    if (cvars::gpu_dynamic_depth_clamp &&
+        eds3_device_extensions.ext_EXT_extended_dynamic_state3 &&
+        eds3_device_extensions.eds3_dynamic_depth_clamp) {
+      description_out.depth_clamp_enable = 0;
+    }
+  }
 
   // TODO(Triang3l): Tessellation.
   bool primitive_polygonal = draw_util::IsPrimitivePolygonal(regs);
@@ -985,6 +1000,20 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
     description_out.front_face_clockwise = pa_su_sc_mode_cntl.face != 0;
   } else {
     description_out.polygon_mode = PipelinePolygonMode::kFill;
+  }
+  // gpu_dynamic_polygon_mode (EDS3 completion): stash the true derived value
+  // (already capped by fillModeNonSolid/pointPolygons above) for
+  // UpdateDynamicState's emission, then canonicalize the key field so polygon
+  // mode variance stops minting pipelines. Mirrors gpu_dynamic_blend_state.
+  last_dynamic_polygon_mode_ = description_out.polygon_mode;
+  {
+    const ui::vulkan::VulkanDevice::Extensions& eds3_device_extensions =
+        command_processor_.GetVulkanDevice()->extensions();
+    if (cvars::gpu_dynamic_polygon_mode &&
+        eds3_device_extensions.ext_EXT_extended_dynamic_state3 &&
+        eds3_device_extensions.eds3_dynamic_polygon_mode) {
+      description_out.polygon_mode = PipelinePolygonMode::kFill;
+    }
   }
   // EDS (Lever 1b): when cull mode + front face are promoted to dynamic state,
   // exclude them from the pipeline key so draws differing ONLY in cull/front
@@ -2596,7 +2625,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     color_blend_state.pAttachments = color_blend_attachments;
   }
 
-  std::array<VkDynamicState, 21> dynamic_states;
+  std::array<VkDynamicState, 23> dynamic_states;
   VkPipelineDynamicStateCreateInfo dynamic_state;
   dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamic_state.pNext = nullptr;
@@ -2693,6 +2722,22 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
           VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT;
       dynamic_states[dynamic_state.dynamicStateCount++] =
           VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT;
+    }
+    // EDS3 completion (gpu_dynamic_polygon_mode / gpu_dynamic_depth_clamp):
+    // matches the key canonicalization in GetCurrentStateDescription and the
+    // emission in VulkanCommandProcessor::UpdateDynamicState (same cvar +
+    // sub-feature gates).
+    if (cvars::gpu_dynamic_polygon_mode &&
+        vulkan_device->extensions().ext_EXT_extended_dynamic_state3 &&
+        vulkan_device->extensions().eds3_dynamic_polygon_mode) {
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
+    }
+    if (cvars::gpu_dynamic_depth_clamp &&
+        vulkan_device->extensions().ext_EXT_extended_dynamic_state3 &&
+        vulkan_device->extensions().eds3_dynamic_depth_clamp) {
+      dynamic_states[dynamic_state.dynamicStateCount++] =
+          VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
     }
   }
   // VRS (gpu_vrs_foliage_rate, Thor novel-hardware lever): mark the fragment

@@ -343,6 +343,18 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdSetCullMode(command_buffer, args.cull_mode);
       } break;
 
+      case Command::kVkSetPolygonMode: {
+        auto& args = *reinterpret_cast<const ArgsVkSetPolygonMode*>(stream);
+        dfn.vkCmdSetPolygonModeEXT(command_buffer, args.polygon_mode);
+      } break;
+
+      case Command::kVkSetDepthClampEnable: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkSetDepthClampEnable*>(stream);
+        dfn.vkCmdSetDepthClampEnableEXT(command_buffer,
+                                        args.depth_clamp_enable);
+      } break;
+
       case Command::kVkSetFrontFace: {
         auto& args = *reinterpret_cast<const ArgsVkSetFrontFace*>(stream);
         dfn.vkCmdSetFrontFace(command_buffer, args.front_face);

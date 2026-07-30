@@ -1279,6 +1279,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // promoted to dynamic state. The per-command-buffer reset forces the first
   // emission regardless of these initial values.
   VkCullModeFlags dynamic_cull_mode_ = VK_CULL_MODE_NONE;
+  // EDS3 completion (gpu_dynamic_polygon_mode / gpu_dynamic_depth_clamp).
+  bool dynamic_polygon_mode_update_needed_ = false;
+  bool dynamic_depth_clamp_enable_update_needed_ = false;
+  VkPolygonMode dynamic_polygon_mode_ = VK_POLYGON_MODE_FILL;
+  VkBool32 dynamic_depth_clamp_enable_ = VK_FALSE;
   VkFrontFace dynamic_front_face_ = VK_FRONT_FACE_COUNTER_CLOCKWISE;
   // EDS primitive topology (Lever 1, vulkan_dynamic_state_topology) - only
   // triangle list/strip are promoted.

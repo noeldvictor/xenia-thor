@@ -181,6 +181,8 @@ DECLARE_bool(vulkan_dynamic_state_depth);
 DECLARE_bool(vulkan_dynamic_state_stencil);
 DECLARE_bool(vulkan_dynamic_state_topology);
 DECLARE_bool(vulkan_depth_unorm24);
+DECLARE_bool(gpu_dynamic_polygon_mode);
+DECLARE_bool(gpu_dynamic_depth_clamp);
 DECLARE_bool(vulkan_cache_sampler_parameters);
 DECLARE_bool(vulkan_direct_host_resolve);
 DECLARE_bool(vulkan_fast_register_ranges);

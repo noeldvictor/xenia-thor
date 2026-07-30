@@ -6726,6 +6726,8 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
   dynamic_depth_compare_op_update_needed_ = true;
   dynamic_stencil_test_enable_update_needed_ = true;
   dynamic_stencil_op_update_needed_ = true;
+  dynamic_polygon_mode_update_needed_ = true;
+  dynamic_depth_clamp_enable_update_needed_ = true;
   if (current_external_graphics_pipeline_ == pipeline) {
     return;
   }
@@ -10640,6 +10642,8 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_depth_compare_op_update_needed_ = true;
     dynamic_stencil_test_enable_update_needed_ = true;
     dynamic_stencil_op_update_needed_ = true;
+    dynamic_polygon_mode_update_needed_ = true;
+    dynamic_depth_clamp_enable_update_needed_ = true;
     current_render_pass_ = VK_NULL_HANDLE;
     current_framebuffer_ = nullptr;
     current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
@@ -11678,6 +11682,42 @@ void VulkanCommandProcessor::UpdateDynamicState(
       deferred_command_buffer_.CmdVkSetFrontFace(front_face);
       dynamic_front_face_ = front_face;
       dynamic_front_face_update_needed_ = false;
+    }
+  }
+
+  // EDS3 completion (gpu_dynamic_polygon_mode / gpu_dynamic_depth_clamp):
+  // emit the values GetCurrentStateDescription derived (and capped by device
+  // limits) in this draw's ConfigurePipeline and stashed in the pipeline
+  // cache; the pipeline's key fields were canonicalized there, so this
+  // emission is what actually applies them. Gates MUST match the key
+  // canonicalization + the dynamic-state array in EnsurePipelineCreated.
+  {
+    const auto& eds3_extensions = GetVulkanDevice()->extensions();
+    if (cvars::gpu_dynamic_polygon_mode &&
+        eds3_extensions.ext_EXT_extended_dynamic_state3 &&
+        eds3_extensions.eds3_dynamic_polygon_mode) {
+      VkPolygonMode polygon_mode =
+          pipeline_cache_->last_dynamic_polygon_mode_vk();
+      if (dynamic_polygon_mode_update_needed_ ||
+          polygon_mode != dynamic_polygon_mode_) {
+        deferred_command_buffer_.CmdVkSetPolygonModeEXT(polygon_mode);
+        dynamic_polygon_mode_ = polygon_mode;
+        dynamic_polygon_mode_update_needed_ = false;
+      }
+    }
+    if (cvars::gpu_dynamic_depth_clamp &&
+        eds3_extensions.ext_EXT_extended_dynamic_state3 &&
+        eds3_extensions.eds3_dynamic_depth_clamp) {
+      VkBool32 depth_clamp_enable =
+          pipeline_cache_->last_dynamic_depth_clamp_enable() ? VK_TRUE
+                                                             : VK_FALSE;
+      if (dynamic_depth_clamp_enable_update_needed_ ||
+          depth_clamp_enable != dynamic_depth_clamp_enable_) {
+        deferred_command_buffer_.CmdVkSetDepthClampEnableEXT(
+            depth_clamp_enable);
+        dynamic_depth_clamp_enable_ = depth_clamp_enable;
+        dynamic_depth_clamp_enable_update_needed_ = false;
+      }
     }
   }
 

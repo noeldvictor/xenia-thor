@@ -1361,6 +1361,24 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_dynamic_polygon_mode, false,
+    "EDS3 completion (XenDroid d74e770d8 gap): promote the polygon mode "
+    "(fill/line/point from PA_SU_SC_MODE_CNTL) to dynamic state so draws "
+    "differing only in polygon mode collapse onto one VkPipeline. Same "
+    "pattern as gpu_dynamic_blend_state; needs "
+    "extendedDynamicState3PolygonMode. Default off until device-validated.",
+    "GPU");
+
+DEFINE_bool(
+    gpu_dynamic_depth_clamp, false,
+    "EDS3 completion (XenDroid d74e770d8 gap): promote depth clamp enable "
+    "(PA_CL_CLIP_CNTL clip_disable) to dynamic state so draws differing only "
+    "in depth clamp collapse onto one VkPipeline. Same pattern as "
+    "gpu_dynamic_blend_state; needs extendedDynamicState3DepthClampEnable. "
+    "Default off until device-validated.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_cache_sampler_parameters, false,
     "Reuse sampler parameters and VkSampler handles across draws, re-deriving "
     "them only for fetch constants written since the previous draw (or on "
