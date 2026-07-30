@@ -1932,9 +1932,12 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
     if (!constant_value_unchanged) {
       current_constant_buffers_up_to_date_ &=
           ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
+      uint32_t fetch_slot = (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
+      uint32_t fetch_slot_bit_clear = ~(uint32_t(1) << fetch_slot);
+      current_samplers_fetch_up_to_date_vertex_ &= fetch_slot_bit_clear;
+      current_samplers_fetch_up_to_date_pixel_ &= fetch_slot_bit_clear;
       if (texture_cache_) {
-        texture_cache_->TextureFetchConstantWritten(
-            (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6);
+        texture_cache_->TextureFetchConstantWritten(fetch_slot);
       }
     }
   }
@@ -2113,13 +2116,16 @@ void VulkanCommandProcessor::WriteFetchFromMem(uint32_t start_index,
   if (!cvars::vulkan_skip_redundant_fetch_constant_writes) {
     current_constant_buffers_up_to_date_ &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
-    if (texture_cache_) {
-      uint32_t first_slot =
-          (start_index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
-      uint32_t last_slot = (start_index + num_registers - 1 -
-                            XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) /
-                           6;
-      for (uint32_t slot = first_slot; slot <= last_slot; ++slot) {
+    uint32_t first_slot =
+        (start_index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
+    uint32_t last_slot = (start_index + num_registers - 1 -
+                          XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) /
+                         6;
+    for (uint32_t slot = first_slot; slot <= last_slot; ++slot) {
+      uint32_t slot_bit_clear = ~(UINT32_C(1) << slot);
+      current_samplers_fetch_up_to_date_vertex_ &= slot_bit_clear;
+      current_samplers_fetch_up_to_date_pixel_ &= slot_bit_clear;
+      if (texture_cache_) {
         texture_cache_->TextureFetchConstantWritten(slot);
       }
     }
@@ -2147,6 +2153,9 @@ void VulkanCommandProcessor::WriteFetchFromMem(uint32_t start_index,
     }
     if (slot_changed) {
       any_changed = true;
+      uint32_t slot_bit_clear = ~(UINT32_C(1) << slot);
+      current_samplers_fetch_up_to_date_vertex_ &= slot_bit_clear;
+      current_samplers_fetch_up_to_date_pixel_ &= slot_bit_clear;
       if (texture_cache_) {
         texture_cache_->TextureFetchConstantWritten(slot);
       }
@@ -7124,20 +7133,81 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // TODO(Triang3l): Sampler caching and reuse for adjacent draws within one
     // submission.
     uint32_t samplers_overflowed_count = 0;
+    // Sampler-parameter cache (vulkan_cache_sampler_parameters): when the same
+    // shader's binding list is unchanged, re-derive parameters only for fetch
+    // constants written since the previous draw, and skip the per-binding
+    // UseSampler LRU touch when still within the same submission. Handles are
+    // invalidated wholesale when any sampler is destroyed (the destroy
+    // generation).
+    const bool sampler_cache_handles_valid =
+        cvars::vulkan_cache_sampler_parameters &&
+        current_samplers_destroy_generation_ ==
+            texture_cache_->sampler_destroy_generation();
+    bool sampler_stage_validated[2] = {false, false};
     for (uint32_t j = 0; j < 2; ++j) {
       std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>&
           shader_samplers =
               j ? current_samplers_pixel_ : current_samplers_vertex_;
-      if (!i) {
-        shader_samplers.clear();
-      }
+      const VulkanShader*& cached_samplers_shader =
+          j ? current_samplers_shader_pixel_ : current_samplers_shader_vertex_;
       const VulkanShader* shader = j ? pixel_shader : vertex_shader;
       if (!shader) {
+        // Downstream consumers (texture set signature, descriptor writes)
+        // iterate the whole vector - it must match this draw's (empty) binding
+        // list.
+        shader_samplers.clear();
+        cached_samplers_shader = nullptr;
         continue;
       }
       const std::vector<VulkanShader::SamplerBinding>& shader_sampler_bindings =
           shader->GetSamplerBindingsAfterTranslation();
+      if (!i && sampler_cache_handles_valid &&
+          cached_samplers_shader == shader &&
+          shader_samplers.size() == shader_sampler_bindings.size()) {
+        // Cache hit for this stage.
+        const uint32_t fetch_up_to_date =
+            j ? current_samplers_fetch_up_to_date_pixel_
+              : current_samplers_fetch_up_to_date_vertex_;
+        const bool submission_changed =
+            (j ? current_samplers_submission_pixel_
+               : current_samplers_submission_vertex_) != GetCurrentSubmission();
+        for (size_t k = 0; k < shader_sampler_bindings.size(); ++k) {
+          std::pair<VulkanTextureCache::SamplerParameters, VkSampler>&
+              shader_sampler_pair = shader_samplers[k];
+          bool need_use_sampler =
+              submission_changed || shader_sampler_pair.second == VK_NULL_HANDLE;
+          if (!(fetch_up_to_date &
+                (uint32_t(1) << shader_sampler_bindings[k].fetch_constant))) {
+            VulkanTextureCache::SamplerParameters parameters =
+                texture_cache_->GetSamplerParameters(
+                    shader_sampler_bindings[k]);
+            if (parameters != shader_sampler_pair.first) {
+              shader_sampler_pair.first = parameters;
+              shader_sampler_pair.second = VK_NULL_HANDLE;
+              need_use_sampler = true;
+            }
+          }
+          if (need_use_sampler) {
+            bool sampler_overflowed;
+            VkSampler shader_sampler = texture_cache_->UseSampler(
+                shader_sampler_pair.first, sampler_overflowed);
+            shader_sampler_pair.second = shader_sampler;
+            if (shader_sampler == VK_NULL_HANDLE) {
+              if (!sampler_overflowed) {
+                return false;
+              }
+              ++samplers_overflowed_count;
+            }
+          }
+        }
+        sampler_stage_validated[j] = true;
+        continue;
+      }
+      // Full pass: cache disabled or missed, or the i == 1 overflow retry
+      // (where the parameters derived at i == 0 are kept, but every sampler
+      // must be revalidated with UseSampler in the possibly new submission).
       if (!i) {
+        shader_samplers.clear();
         shader_samplers.reserve(shader_sampler_bindings.size());
         for (const VulkanShader::SamplerBinding& shader_sampler_binding :
              shader_sampler_bindings) {
@@ -7146,6 +7216,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               VK_NULL_HANDLE);
         }
       }
+      // Record the binding-list identity before the UseSampler loop so a
+      // mid-loop failure return can't leave the vector holding this shader's
+      // parameters while the cached key still names the previous shader
+      // (the stamps below are only committed on full success, so the next
+      // draw re-derives dirty slots and UseSamplers null handles as needed).
+      cached_samplers_shader = shader;
       for (std::pair<VulkanTextureCache::SamplerParameters, VkSampler>&
                shader_sampler_pair : shader_samplers) {
         // UseSampler calls are needed even on the second iteration in case the
@@ -7169,8 +7245,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           ++samplers_overflowed_count;
         }
       }
+      sampler_stage_validated[j] = true;
     }
     if (!samplers_overflowed_count) {
+      // The sampler pass completed with every needed UseSampler call made in
+      // the current submission - commit the cache stamps. Only stages actually
+      // validated this draw get their dirty masks cleared; a skipped stage's
+      // cached parameters may still reference fetch slots that were written
+      // and not re-derived.
+      if (cvars::vulkan_cache_sampler_parameters) {
+        const uint64_t submission_now = GetCurrentSubmission();
+        if (sampler_stage_validated[0]) {
+          current_samplers_fetch_up_to_date_vertex_ = ~uint32_t(0);
+          current_samplers_submission_vertex_ = submission_now;
+        }
+        if (sampler_stage_validated[1]) {
+          current_samplers_fetch_up_to_date_pixel_ = ~uint32_t(0);
+          current_samplers_submission_pixel_ = submission_now;
+        }
+        current_samplers_destroy_generation_ =
+            texture_cache_->sampler_destroy_generation();
+      }
       break;
     }
     assert_zero(i);
@@ -10574,6 +10669,12 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
 
   if (is_opening_frame) {
     frame_open_ = true;
+
+    // Conservatively re-derive all cached sampler parameters in the new frame
+    // (cheap - one derivation pass per stage; the handles still go through
+    // their per-submission UseSampler revalidation independently).
+    current_samplers_fetch_up_to_date_vertex_ = 0;
+    current_samplers_fetch_up_to_date_pixel_ = 0;
 
     // Reset bindings that depend on transient data.
     std::memset(current_float_constant_map_vertex_, 0,

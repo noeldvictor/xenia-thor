@@ -1361,6 +1361,16 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_cache_sampler_parameters, false,
+    "Reuse sampler parameters and VkSampler handles across draws, re-deriving "
+    "them only for fetch constants written since the previous draw (or on "
+    "shader sampler-layout change, new submission, or sampler destruction). "
+    "Disable to derive and look up every sampler on every draw "
+    "(pre-optimization behavior). Ported from XenDroid (ships on there); "
+    "default off until device-validated.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_direct_host_resolve, false,
     "Resolve eligible (non-format-converting and packable format-converting) "
     "host render targets directly to guest memory with compute shaders "

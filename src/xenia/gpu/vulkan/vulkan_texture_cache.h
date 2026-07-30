@@ -150,6 +150,13 @@ class VulkanTextureCache final : public TextureCache {
   // - VK_NULL_HANDLE and has_overflown_out = false in case of a general failure
   //   to create a sampler.
   VkSampler UseSampler(SamplerParameters parameters, bool& has_overflown_out);
+  // Bumped whenever any VkSampler is destroyed (eviction or shutdown), so
+  // caches holding VkSampler handles (the command processor's
+  // vulkan_cache_sampler_parameters cache) can detect handle reuse after
+  // destruction.
+  uint64_t sampler_destroy_generation() const {
+    return sampler_destroy_generation_;
+  }
   // Returns the submission index to await (may be the current submission in
   // case of an overflow within a single submission - in this case, it must be
   // ended, and a new one must be started) in case of sampler count overflow, so
@@ -410,6 +417,7 @@ class VulkanTextureCache final : public TextureCache {
       samplers_;
   std::pair<const SamplerParameters, Sampler>* sampler_used_first_ = nullptr;
   std::pair<const SamplerParameters, Sampler>* sampler_used_last_ = nullptr;
+  uint64_t sampler_destroy_generation_ = 0;
 };
 
 }  // namespace vulkan

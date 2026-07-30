@@ -1331,6 +1331,23 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
       current_samplers_pixel_;
 
+  // Sampler-parameter cache (vulkan_cache_sampler_parameters, ported from
+  // XenDroid): reuse the current_samplers_* parameter derivations and
+  // VkSampler handles across draws, re-deriving only fetch constants written
+  // since the previous draw. The shader pointer keys the binding-list
+  // identity, the fetch masks track dirty slots (cleared in WriteRegister /
+  // WriteFetchFromMem, set to all-ones when a stage validates), the
+  // submission stamps force UseSampler LRU revalidation across submissions,
+  // and the destroy generation invalidates handles on any sampler
+  // destruction.
+  const VulkanShader* current_samplers_shader_vertex_ = nullptr;
+  const VulkanShader* current_samplers_shader_pixel_ = nullptr;
+  uint32_t current_samplers_fetch_up_to_date_vertex_ = 0;
+  uint32_t current_samplers_fetch_up_to_date_pixel_ = 0;
+  uint64_t current_samplers_submission_vertex_ = 0;
+  uint64_t current_samplers_submission_pixel_ = 0;
+  uint64_t current_samplers_destroy_generation_ = ~uint64_t(0);
+
   // Texture/sampler descriptor reuse (vulkan_cache_texture_descriptors): a
   // signature of the image views and samplers bound for the vertex/pixel
   // texture descriptor sets on the last draw that wrote them. If the next draw

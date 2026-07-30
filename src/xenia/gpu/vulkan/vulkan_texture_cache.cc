@@ -434,6 +434,7 @@ VulkanTextureCache::~VulkanTextureCache() {
        samplers_) {
     dfn.vkDestroySampler(device, sampler_pair.second.sampler, nullptr);
   }
+  ++sampler_destroy_generation_;
   samplers_.clear();
   COUNT_profile_set("gpu/texture_cache/vulkan/samplers", 0);
   sampler_used_last_ = nullptr;
@@ -898,6 +899,7 @@ VkSampler VulkanTextureCache::UseSampler(SamplerParameters parameters,
     command_processor_.ReleaseBindlessSampler(
         sampler_used_first_->second.sampler);
     dfn.vkDestroySampler(device, sampler_used_first_->second.sampler, nullptr);
+    ++sampler_destroy_generation_;
     if (sampler_used_first_->second.used_next) {
       sampler_used_first_->second.used_next->second.used_previous =
           sampler_used_first_->second.used_previous;
