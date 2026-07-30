@@ -16,6 +16,7 @@
 #include "xenia/cpu/compiler/passes/context_promotion_pass.h"
 #include "xenia/cpu/compiler/passes/control_flow_analysis_pass.h"
 #include "xenia/cpu/compiler/passes/control_flow_simplification_pass.h"
+#include "xenia/cpu/compiler/passes/preempt_check_injection_pass.h"
 #include "xenia/cpu/compiler/passes/data_flow_analysis_pass.h"
 #include "xenia/cpu/compiler/passes/dead_code_elimination_pass.h"
 #include "xenia/cpu/compiler/passes/finalization_pass.h"

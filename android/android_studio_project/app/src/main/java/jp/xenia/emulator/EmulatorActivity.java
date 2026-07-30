@@ -475,6 +475,11 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_dynamic_polygon_mode");
             copyBooleanExtra(intent, launchArguments, "gpu_dynamic_depth_clamp");
             copyStringExtra(intent, launchArguments, "user_gamertag");
+            copyStringExtra(intent, launchArguments, "disc_playlist");
+            copyBooleanExtra(intent, launchArguments, "guest_scheduler");
+            copyIntExtra(intent, launchArguments, "guest_scheduler_cpus");
+            copyIntExtra(intent, launchArguments, "guest_scheduler_quantum_us");
+            copyBooleanExtra(intent, launchArguments, "guest_scheduler_jit_safepoints");
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws_rewrite");
             copyBooleanExtra(intent, launchArguments, "vulkan_merge_draws_rewrite_strips");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_weak_external_subpass_deps");

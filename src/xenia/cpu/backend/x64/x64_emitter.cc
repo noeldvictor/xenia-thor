@@ -342,6 +342,43 @@ void X64Emitter::DebugBreak() {
   db(0xCC);
 }
 
+void X64Emitter::EmitPreemptCheck() {
+  // Guest scheduler stage 2 (ported from xenia-edge, adapted to this tree's
+  // emitter: no out-of-line tail helper, so the cold path is inline behind a
+  // not-taken branch). Only safe at a block head, where the per-block
+  // register allocator leaves no guest value live, so the unannounced
+  // guest->host call cannot lose a register.
+  //
+  // Tests the preempt flag other threads raise. The cold path clears it, a
+  // deferred yield re-sets it.
+  Xbyak::Label skip;
+  Xbyak::Label restore;
+  cmp(byte[GetContextReg() + offsetof(ppc::PPCContext, preempt_requested)], 0);
+  jz(skip, T_NEAR);
+  mov(byte[GetContextReg() + offsetof(ppc::PPCContext, preempt_requested)], 0);
+  // Saved into the frame rather than pushed, since the unwind info registered
+  // for this function describes a fixed rsp.
+  mov(qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 0], rax);
+  mov(qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 8], rcx);
+  mov(qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 16], rdx);
+  // Null until the scheduler starts, and a stale flag can reach here after it
+  // shuts down, so check before calling.
+  mov(rax,
+      reinterpret_cast<uint64_t>(&xe::cpu::backend::preempt_yield_handler));
+  mov(rcx, qword[rax]);
+  test(rcx, rcx);
+  jz(restore);
+  // This tree's guest_to_host_thunk convention: rcx = target fn, rdx = arg0.
+  mov(rdx, GetContextReg());
+  mov(rax, reinterpret_cast<uint64_t>(backend()->guest_to_host_thunk()));
+  call(rax);
+  L(restore);
+  mov(rax, qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 0]);
+  mov(rcx, qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 8]);
+  mov(rdx, qword[rsp + StackLayout::GUEST_PREEMPT_SAVE + 16]);
+  L(skip);
+}
+
 uint64_t TrapDebugPrint(void* raw_context, uint64_t address) {
   auto thread_state = *reinterpret_cast<ThreadState**>(raw_context);
   uint32_t str_ptr = uint32_t(thread_state->context()->r[3]);

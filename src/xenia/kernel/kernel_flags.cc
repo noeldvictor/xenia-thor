@@ -49,6 +49,14 @@ DEFINE_uint32(
     "parallelism), 3 is one per physical core (SMT pairs share a thread), 1 is "
     "all guest threads cooperative on a single thread. Requires a restart.",
     "Kernel");
+DEFINE_bool(
+    guest_scheduler_jit_safepoints, false,
+    "Stage 2 of the cooperative guest scheduler: inject preemption "
+    "safepoints into compiled guest code so a fiber that never waits still "
+    "yields at its quantum end. Lowered by all three backends (x64, a64, and "
+    "the LLVM AOT backend via the xe_llvm_preempt_yield runtime helper). "
+    "Off = cooperative-only scheduling.",
+    "Kernel");
 DEFINE_uint32(
     guest_scheduler_quantum_us, 1000,
     "Cooperative-scheduler timeslice in microseconds. A guest fiber running "

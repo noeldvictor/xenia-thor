@@ -62,6 +62,21 @@ class Instr {
 
   const OpcodeInfo* GetOpcodeInfo() const { return opcode; }
   Opcode GetOpcodeNum() const { return opcode->num; }
+
+  // True for annotation-only instructions (comments, barriers, source
+  // offsets) that emit no code; the preempt-check injection pass skips them
+  // when picking a block's first real instruction.
+  bool IsFake() const {
+    switch (opcode->num) {
+      case OPCODE_NOP:
+      case OPCODE_COMMENT:
+      case OPCODE_CONTEXT_BARRIER:
+      case OPCODE_SOURCE_OFFSET:
+        return true;
+      default:
+        return false;
+    }
+  }
   uint32_t GuestAddressFor() const;
 };
 

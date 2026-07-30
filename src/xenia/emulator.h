@@ -184,6 +184,11 @@ class Emulator {
   // using heuristics.
   X_STATUS LaunchPath(const std::filesystem::path& path);
 
+  // Resolves the host path of |disc_number| (1-based) from the disc_playlist
+  // cvar (the launcher's parsed .m3u). Empty when unknown. Used by
+  // XamSwapDisc for runtime multi-disc swapping.
+  std::filesystem::path GetDiscPathForNumber(uint32_t disc_number);
+
   // Launches a game from a .xex file by mounting the containing folder as if it
   // was an extracted STFS container.
   X_STATUS LaunchXexFile(const std::filesystem::path& path);

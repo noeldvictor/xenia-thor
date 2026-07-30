@@ -895,6 +895,12 @@ void HIRBuilder::Nop() {
   i->src1.value = i->src2.value = i->src3.value = NULL;
 }
 
+Instr* HIRBuilder::CheckPreempt() {
+  Instr* i = AppendInstr(OPCODE_CHECK_PREEMPT_info, 0);
+  i->src1.value = i->src2.value = i->src3.value = NULL;
+  return i;
+}
+
 void HIRBuilder::SourceOffset(uint32_t offset) {
   Instr* i = AppendInstr(OPCODE_SOURCE_OFFSET_info, 0);
   i->src1.offset = offset;

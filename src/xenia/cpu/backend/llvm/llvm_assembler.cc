@@ -975,6 +975,37 @@ bool Lowerer::LowerInstr(Instr* i) {
       // trap_bb so Run()'s fall-through adds no spurious branch.
       return true;
     }
+    case OPCODE_CHECK_PREEMPT: {
+      // Cooperative-scheduler safepoint (guest scheduler stage 2): inline
+      // flag test on PPCContext.preempt_requested, cold-call the runtime
+      // helper (which clears the flag and yields via the registered handler)
+      // only when raised. Same continuation shape as TRAP_TRUE.
+      auto* flag_ptr =
+          CtxPtr(offsetof(xe::cpu::ppc::PPCContext, preempt_requested));
+      auto* flag = b_.CreateLoad(b_.getInt8Ty(), flag_ptr);
+      auto* raised = b_.CreateICmpNE(flag, b_.getInt8(0));
+      bool fresh_cont = (i->next != nullptr) || (i->block->next == nullptr);
+      llvm::BasicBlock* cont = fresh_cont
+                                   ? llvm::BasicBlock::Create(ctx_, "c", fn_)
+                                   : BlockFor(i->block->next);
+      auto* yield_bb = llvm::BasicBlock::Create(ctx_, "preempt", fn_);
+      b_.CreateCondBr(raised, yield_bb, cont);
+      b_.SetInsertPoint(yield_bb);
+      {
+        auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_),
+                                            {b_.getPtrTy()}, false);
+        auto callee = mod_->getOrInsertFunction("xe_llvm_preempt_yield", fty);
+        b_.CreateCall(callee, {ctx_ptr_});
+      }
+      b_.CreateBr(cont);
+      if (fresh_cont) {
+        b_.SetInsertPoint(cont);
+        if (!i->next && !i->block->next) EmitReturn();
+      }
+      // else: leave the insert point on the terminated yield_bb so Run()'s
+      // fall-through adds no spurious branch.
+      return true;
+    }
     case OPCODE_DELAY_EXECUTION:
       // Guest delay/spin hint (a64 emits `yield`). No architectural effect.
       return true;

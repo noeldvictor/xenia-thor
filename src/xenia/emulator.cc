@@ -38,6 +38,7 @@
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/hid/input_driver.h"
 #include "xenia/hid/input_system.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/gameinfo_utils.h"
@@ -45,6 +46,7 @@
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/memory.h"
 #include "xenia/patcher/patcher.h"
 #include "xenia/ui/imgui_dialog.h"
@@ -77,6 +79,14 @@ DEFINE_string(
     "or the module specified by the game. Leave blank to launch the default "
     "module.",
     "General");
+
+DEFINE_string(
+    disc_playlist, "",
+    "Semicolon-separated host paths of a multi-disc title's disc images, in "
+    "disc order (disc 1 first). Populated by the Android launcher from the "
+    ".m3u the title was launched with; XamSwapDisc resolves the requested "
+    "disc from it at runtime (no interactive picker needed).",
+    "Storage");
 
 DEFINE_bool(
     trainer_enable, false,
@@ -960,6 +970,28 @@ X_STATUS Emulator::TerminateTitle() {
   return X_STATUS_SUCCESS;
 }
 
+std::filesystem::path Emulator::GetDiscPathForNumber(uint32_t disc_number) {
+  if (cvars::disc_playlist.empty() || disc_number < 1) {
+    return {};
+  }
+  uint32_t index = 1;
+  size_t start = 0;
+  const std::string& playlist = cvars::disc_playlist;
+  while (start <= playlist.size()) {
+    size_t end = playlist.find(';', start);
+    if (end == std::string::npos) {
+      end = playlist.size();
+    }
+    if (index == disc_number) {
+      std::string entry = playlist.substr(start, end - start);
+      return entry.empty() ? std::filesystem::path{} : xe::to_path(entry);
+    }
+    ++index;
+    start = end + 1;
+  }
+  return {};
+}
+
 X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
   // Launch based on file type.
   // This is a silly guess based on file extension.
@@ -1264,6 +1296,31 @@ void Emulator::LaunchNextTitle() {
   CompleteLaunch("", next_title);
 }
 
+// VEH-resume target for a crashed fiber. We can't yield from inside the
+// vectored exception handler, so we tell the OS to resume here, then the
+// fiber detaches from the scheduler and yields forever. Other fibers keep
+// running, only the crashed one is parked. (Guest scheduler, from
+// xenia-edge; master adaptation: host-side links.exited instead of the guest
+// KTHREAD state field.)
+[[noreturn]] static void HaltCrashedFiberThunk() {
+  auto* self = kernel::XThread::GetCurrentFiberThread();
+  if (self) {
+    self->scheduler_links().exited = true;
+    // The crash may have landed inside a wait poll, which never unwinds, and
+    // a dead entry gates every other cooperative waiter on that object.
+    kernel::XObject::AbandonCooperativeWait(self);
+    auto* scheduler = self->kernel_state()->guest_scheduler();
+    scheduler->ForgetThread(self);
+    while (true) {
+      scheduler->YieldToScheduler();  // never returns
+    }
+  }
+  // Defend against a missing TLS or scheduler, should never happen.
+  while (true) {
+    xe::threading::Sleep(std::chrono::seconds(1));
+  }
+}
+
 bool Emulator::ExceptionCallbackThunk(Exception* ex, void* data) {
   return reinterpret_cast<Emulator*>(data)->ExceptionCallback(ex);
 }
@@ -1275,7 +1332,23 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   auto code_end = code_base + code_cache->total_size();
 
   if (!(ex->pc() >= code_base && ex->pc() < code_end)) {
-    // Didn't occur in guest code. Let it pass.
+    // Didn't occur in guest code. In host-thread mode let the OS default
+    // handler deal with it. In fiber mode the faulting thread is the shared
+    // dispatch loop, so if a fiber is current halt just that fiber to keep
+    // the dispatcher and the other fibers alive.
+    if (auto* fiber_self = kernel::XThread::GetCurrentFiberThread()) {
+      uint32_t guest_lr =
+          fiber_self->thread_state()
+              ? uint32_t(fiber_self->thread_state()->context()->lr)
+              : 0;
+      XELOGE(
+          "Host-side crash on fiber thread (handle 0x{:08X}, guest tid "
+          "0x{:08X}) at host PC 0x{:016X} (guest lr 0x{:08X}). Halting fiber "
+          "to keep the dispatcher alive.",
+          fiber_self->handle(), fiber_self->thread_id(), ex->pc(), guest_lr);
+      ex->set_resume_pc(reinterpret_cast<uint64_t>(&HaltCrashedFiberThunk));
+      return true;
+    }
     return false;
   }
 
@@ -1406,6 +1479,14 @@ bool Emulator::ExceptionCallback(Exception* ex) {
           "Xenia has now paused itself.\n"
           "A crash dump has been written into the log.");
     });
+  }
+
+  // Halt the crashed thread without unwinding the rest of the emulator. Host
+  // mode suspends self. Fiber mode diverts the resume PC to a halt thunk,
+  // since calling Suspend here would yield from inside the exception handler.
+  if (current_thread->fiber()) {
+    ex->set_resume_pc(reinterpret_cast<uint64_t>(&HaltCrashedFiberThunk));
+    return true;
   }
 
   // Now suspend ourself (we should be a guest thread).

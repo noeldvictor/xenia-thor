@@ -229,6 +229,13 @@ public final class XeniaAndroidSettings {
         launchArguments.putString("cpu", CPU_ARM64);
         launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_ANY));
         launchArguments.putString("hid", preferences.getString(KEY_HID_DRIVER, HID_ANDROID));
+        // Multi-disc: when launching from an .m3u (or a disc whose folder
+        // holds one), pass the full disc list so XamSwapDisc can resolve
+        // runtime disc changes without a picker.
+        final String discPlaylist = buildDiscPlaylist(resolvedTarget);
+        if (!discPlaylist.isEmpty()) {
+            launchArguments.putString("disc_playlist", discPlaylist);
+        }
         final String gamertag = preferences.getString("user_gamertag", "");
         if (gamertag != null && !gamertag.trim().isEmpty()) {
             launchArguments.putString("user_gamertag", gamertag.trim());
@@ -306,6 +313,63 @@ public final class XeniaAndroidSettings {
         // EARLIER via the play button than in tests. Match the proven-good test
         // config so the app reaches as far as the captures do.
         launchArguments.putBoolean("mount_cache", true);
+    }
+
+
+    /**
+     * Builds the semicolon-separated disc list for a multi-disc launch. If
+     * |resolvedTarget| is an .m3u file its entries (one path per line,
+     * relative to the .m3u's folder) are used; otherwise, if the target's
+     * parent folder contains exactly one .m3u, that one is parsed. The first
+     * entry should be disc 1. Returns "" for single-disc launches.
+     */
+    public static String buildDiscPlaylist(final String resolvedTarget) {
+        if (resolvedTarget == null || resolvedTarget.isEmpty()) {
+            return "";
+        }
+        try {
+            java.io.File m3u = null;
+            final java.io.File target = new java.io.File(resolvedTarget);
+            if (resolvedTarget.toLowerCase(java.util.Locale.US).endsWith(".m3u")) {
+                m3u = target;
+            } else {
+                final java.io.File parent = target.getParentFile();
+                if (parent != null) {
+                    final java.io.File[] candidates = parent.listFiles(
+                            (dir, name) -> name.toLowerCase(java.util.Locale.US)
+                                    .endsWith(".m3u"));
+                    if (candidates != null && candidates.length == 1) {
+                        m3u = candidates[0];
+                    }
+                }
+            }
+            if (m3u == null || !m3u.isFile()) {
+                return "";
+            }
+            final StringBuilder playlist = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.FileReader(m3u))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) {
+                        continue;
+                    }
+                    java.io.File entry = new java.io.File(line);
+                    if (!entry.isAbsolute()) {
+                        entry = new java.io.File(m3u.getParentFile(), line);
+                    }
+                    if (playlist.length() > 0) {
+                        playlist.append(';');
+                    }
+                    playlist.append(entry.getAbsolutePath());
+                }
+            }
+            return playlist.length() > 0 && playlist.indexOf(";") > 0
+                    ? playlist.toString() : "";
+        } catch (final Exception e) {
+            return "";
+        }
     }
 
     public static String resolveLaunchTarget(final Context context, final Uri target) {

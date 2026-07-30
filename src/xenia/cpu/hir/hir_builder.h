@@ -84,6 +84,8 @@ class HIRBuilder {
   }
 
   void Nop();
+  // Cooperative-scheduler preemption safepoint (lowered by the backends).
+  Instr* CheckPreempt();
 
   void SourceOffset(uint32_t offset);
 

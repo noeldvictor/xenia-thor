@@ -122,6 +122,11 @@ class StackLayout {
    *
    */
   static const size_t GUEST_STACK_SIZE = 104;
+  // Three qwords inside the 48-byte scratch region (rsp+32). The preempt
+  // safepoint's cold path saves rax/rcx/rdx here around the yield call; the
+  // region is otherwise only used transiently within a single sequence, and
+  // callee register-arg homes stop at rsp+31, so these survive the call.
+  static const size_t GUEST_PREEMPT_SAVE = 32;
   static const size_t GUEST_CTX_HOME = 80;
   static const size_t GUEST_RET_ADDR = 88;
   static const size_t GUEST_CALL_RET_ADDR = 96;

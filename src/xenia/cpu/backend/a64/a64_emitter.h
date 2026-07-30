@@ -115,6 +115,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void MarkSourceOffset(const hir::Instr* i);
 
   void DebugBreak();
+  // Emits a cooperative-scheduler preemption safepoint: yields the fiber once
+  // the context's preempt_requested flag is raised. Only valid at a block
+  // head.
+  void EmitPreemptCheck();
   void Trap(uint16_t trap_type = 0);
   void UnimplementedInstr(const hir::Instr* i);
 

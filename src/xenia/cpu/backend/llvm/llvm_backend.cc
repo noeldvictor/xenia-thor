@@ -375,6 +375,19 @@ extern "C" void xe_llvm_call_extern(void* ctx, void* sym_ptr) {
 // type 20/26 = debug print (r3 -> string), 0/22 = forced-trap log, 25/other =
 // no-op. Rarely taken (a guest assertion). Lets functions with trap/trap_true
 // LLVM-compile instead of falling the whole function back to a64.
+// Cooperative-scheduler safepoint cold path (guest scheduler stage 2): the
+// inline IR only tests PPCContext.preempt_requested; this clears it and
+// yields through the registered handler. Null until the scheduler starts,
+// and a stale flag can arrive after it stops, hence the check.
+extern "C" void xe_llvm_preempt_yield(void* raw_context) {
+  auto* context = reinterpret_cast<xe::cpu::ppc::PPCContext*>(raw_context);
+  context->preempt_requested = 0;
+  auto handler = xe::cpu::backend::preempt_yield_handler;
+  if (handler) {
+    handler(raw_context);
+  }
+}
+
 extern "C" void xe_llvm_trap(uint32_t trap_type) {
   auto* ts = xe::cpu::ThreadState::Get();
   auto* c = ts ? ts->context() : nullptr;
@@ -855,6 +868,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
                          llvm::JITSymbolFlags::Callable)}})));
     // PPC vector-math runtime helpers (estimate tables / libm), called per-lane
     // from the lowered RSQRT / LOG2 / POW2.
+    auto pyname = jit_->jit->mangleAndIntern("xe_llvm_preempt_yield");
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {pyname, llvm::orc::ExecutorSymbolDef(
+                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_preempt_yield),
+                     llvm::JITSymbolFlags::Exported |
+                         llvm::JITSymbolFlags::Callable)}})));
     auto define_helper = [&](const char* nm, void* fp) {
       auto n = jit_->jit->mangleAndIntern(nm);
       llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{

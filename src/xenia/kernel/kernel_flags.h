@@ -20,6 +20,7 @@ DECLARE_int32(xboxkrnl_file_io_status_log_budget);
 
 DECLARE_bool(guest_scheduler);
 DECLARE_uint32(guest_scheduler_cpus);
+DECLARE_bool(guest_scheduler_jit_safepoints);
 DECLARE_uint32(guest_scheduler_quantum_us);
 
 #endif  // XENIA_KERNEL_KERNEL_FLAGS_H_

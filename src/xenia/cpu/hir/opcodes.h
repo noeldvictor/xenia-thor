@@ -291,6 +291,9 @@ enum Opcode {
   OPCODE_DELAY_EXECUTION,
   OPCODE_RESERVED_LOAD,
   OPCODE_RESERVED_STORE,
+  // Cooperative-scheduler preemption safepoint (guest scheduler stage 2).
+  OPCODE_CHECK_PREEMPT,
+
   __OPCODE_MAX_VALUE,  // Keep at end.
 };
 

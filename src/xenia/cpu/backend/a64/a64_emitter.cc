@@ -4109,6 +4109,40 @@ void A64Emitter::MarkSourceOffset(const hir::Instr* i) {
   }
 }
 
+void A64Emitter::EmitPreemptCheck() {
+  // Guest scheduler stage 2 (ported from xenia-edge). Only safe at a block
+  // head, where the per-block register allocator leaves no guest value live,
+  // so the unannounced guest->host call cannot lose a register.
+  //
+  // Tests the preempt flag other threads raise. The cold path clears it, a
+  // deferred yield re-sets it.
+  Xbyak_aarch64::Label& after = NewCachedLabel();
+  // ldrb/strb unsigned-offset encoding caps at 4095.
+  static_assert(offsetof(ppc::PPCContext, preempt_requested) < 4096,
+                "preempt_requested must stay in ldrb unsigned-offset range");
+  const uint32_t flag_offset =
+      static_cast<uint32_t>(offsetof(ppc::PPCContext, preempt_requested));
+  Xbyak_aarch64::Label& do_yield =
+      AddToTail([&after, flag_offset](A64Emitter& e, Xbyak_aarch64::Label&) {
+        e.strb(e.wzr, ptr(e.x20, static_cast<int32_t>(flag_offset)));
+        // Null until the scheduler starts, and a stale flag can reach here
+        // after it shuts down, so check before calling.
+        e.mov(e.x0, reinterpret_cast<uint64_t>(
+                        &xe::cpu::backend::preempt_yield_handler));
+        e.ldr(e.x0, ptr(e.x0));
+        e.cbz(e.x0, after);
+        // GuestToHostThunk: x0 = target, x1 = arg0.
+        e.mov(e.x1, e.GetContextReg());
+        e.mov(e.x9,
+              reinterpret_cast<uint64_t>(e.backend()->guest_to_host_thunk()));
+        e.blr(e.x9);
+        e.b(after);
+      });
+  ldrb(w8, ptr(x20, static_cast<int32_t>(flag_offset)));
+  cbnz(w8, do_yield);
+  L(after);
+}
+
 void A64Emitter::DebugBreak() {
   if (!cvars::break_on_debugbreak) {
     return;

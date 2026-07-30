@@ -739,3 +739,9 @@ DEFINE_OPCODE(
     "reserved_store",
     OPCODE_SIG_V_V_V,
     OPCODE_FLAG_MEMORY)
+
+DEFINE_OPCODE(
+    OPCODE_CHECK_PREEMPT,
+    "check_preempt",
+    OPCODE_SIG_X,
+    OPCODE_FLAG_VOLATILE)
