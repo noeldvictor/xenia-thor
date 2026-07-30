@@ -250,7 +250,7 @@ Skill: **xenia-bd-pc-reverse-engineer** (+ the native-renderer build). Build: `t
 relinks) — iterate the native renderer HERE, not in blind 13-min Thor cycles.
 
 ### 🛠️ DESKTOP BUILD GOTCHAS (2026-07-07 — cost HOURS this session; skill `xenia-desktop-build`)
-1. **🛑 Windows Defender QUARANTINES the built xenia.exe** (emulator = PUA false-positive). Link says
+1. **✅ STALE AS OF 2026-07-30: Defender no longer quarantines xenia.exe** (Tamper Protection is OFF; a fresh Release link survived, PE-valid, and ran 12s with --guest_scheduler smoke-clean). The historical gotcha, kept for if it regresses: **🛑 Windows Defender QUARANTINES the built xenia.exe** (emulator = PUA false-positive). Link says
    `-> xenia.exe`, then it's GONE within ~1s + zeroed PE. **Fix requires the GUI, NOT PowerShell** — `Add-MpPreference`/
    `Set-MpPreference -DisableRealtimeMonitoring` SILENTLY FAIL when **Tamper Protection** is ON (check
    `(Get-MpComputerStatus).IsTamperProtected`). USER must: Windows Security → Virus & threat protection → Manage

@@ -1152,6 +1152,40 @@ TEST_CASE("Test Thread QueueUserCallback", "[thread]") {
   // callbacks.
 }
 
+
+TEST_CASE("Fiber cooperative switch", "[fiber]") {
+  // Adopt the test thread so fibers can switch back to it.
+  auto main_fiber = Fiber::CreateFromThread();
+  REQUIRE(main_fiber != nullptr);
+  REQUIRE(Fiber::GetCurrentFiber() == main_fiber.get());
+
+  std::vector<int> order;
+  std::unique_ptr<Fiber> worker;
+
+  // Cooperative ping-pong: main -> worker -> main -> worker -> main.
+  worker = Fiber::Create({}, [&]() {
+    REQUIRE(Fiber::GetCurrentFiber() == worker.get());
+    order.push_back(1);
+    main_fiber->SwitchTo();  // back to main (first time)
+    order.push_back(3);
+    main_fiber->SwitchTo();  // back to main (second time)
+    order.push_back(5);
+    main_fiber->SwitchTo();  // final return; does not come back
+    FAIL("resumed a finished fiber");
+  });
+
+  order.push_back(0);
+  worker->SwitchTo();
+  REQUIRE(Fiber::GetCurrentFiber() == main_fiber.get());
+  order.push_back(2);
+  worker->SwitchTo();
+  order.push_back(4);
+  worker->SwitchTo();
+  order.push_back(6);
+
+  REQUIRE(order == std::vector<int>{0, 1, 2, 3, 4, 5, 6});
+}
+
 }  // namespace test
 }  // namespace base
 }  // namespace xe
