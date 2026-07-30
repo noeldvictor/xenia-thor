@@ -48,6 +48,14 @@ X_STATUS XMutant::ReleaseMutant(uint32_t priority_increment, bool abandon,
   // TODO(benvanik): abandoning.
   assert_false(abandon);
   if (mutant_->Release()) {
+    // Guest scheduler stage 1: wake parked cooperative waiters. KNOWN
+    // LIMITATION: the host mutant tracks ownership per HOST thread, so two
+    // fibers sharing one dispatch thread see each other's ownership as their
+    // own (recursive acquire succeeds where it must block). Edge fixes this
+    // by rebuilding XMutant on a free-signal semaphore with XThread-level
+    // ownership - that redesign is the scheduler's next increment; until
+    // then guest_scheduler stays experimental/off.
+    WakeCooperativeWaiters();
     return X_STATUS_SUCCESS;
   } else {
     return X_STATUS_MUTANT_NOT_OWNED;

@@ -59,13 +59,31 @@ void XEvent::InitializeNative(void* native_ptr, X_DISPATCH_HEADER* header) {
 
 int32_t XEvent::Set(uint32_t priority_increment, bool wait) {
   event_->Set();
+  WakeCooperativeWaiters();
   return 1;
 }
 
 int32_t XEvent::Pulse(uint32_t priority_increment, bool wait) {
+  // A parked cooperative waiter re-polls only after a host pulse has already
+  // reset the event, so every pulse would be lost. Deliver as a set the first
+  // waiter consumes, which for an auto-reset event with a waiter is exactly
+  // pulse semantics. (Guest scheduler stage 1, from xenia-edge.)
+  if (!manual_reset_ && waiters_.HasWaiters()) {
+    return Set(priority_increment, wait);
+  }
+  if (manual_reset_ && waiters_.HasWaiters()) {
+    // Satisfy-all-then-reset is not emulated cooperatively, those waiters
+    // miss this pulse.
+    XELOGW("XEvent::Pulse: manual-reset pulse with parked fiber waiters");
+  }
   event_->Pulse();
+  WakeCooperativeWaiters();
   return 1;
 }
+
+void XEvent::CooperativeWaitBegin(XThread* thread) { waiters_.Add(thread); }
+
+void XEvent::CooperativeWaitEnd(XThread* thread) { waiters_.Remove(thread); }
 
 int32_t XEvent::Reset() {
   event_->Reset();

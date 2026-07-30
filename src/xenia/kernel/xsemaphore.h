@@ -40,6 +40,13 @@ class XSemaphore : public XObject {
   static object_ref<XSemaphore> Restore(KernelState* kernel_state,
                                         ByteStream* stream);
 
+  // Guest scheduler stage 1: FIFO-fair cooperative waiters - only the
+  // front-of-queue fiber may poll a permit off the host semaphore, so a
+  // parked waiter is not starved by later arrivals.
+  void CooperativeWaitBegin(XThread* thread) override;
+  void CooperativeWaitEnd(XThread* thread) override;
+  bool CooperativeMayAcquire(XThread* thread) override;
+
  protected:
   xe::threading::WaitHandle* GetWaitHandle() override {
     return semaphore_.get();
@@ -48,6 +55,7 @@ class XSemaphore : public XObject {
  private:
   std::unique_ptr<xe::threading::Semaphore> semaphore_;
   uint32_t maximum_count_ = 0;
+  CooperativeWaiterFifo waiters_;
 };
 
 }  // namespace kernel

@@ -42,8 +42,25 @@ bool XSemaphore::InitializeNative(void* native_ptr, X_DISPATCH_HEADER* header) {
 
 int32_t XSemaphore::ReleaseSemaphore(int32_t release_count) {
   int32_t previous_count = 0;
-  semaphore_->Release(release_count, &previous_count);
+  if (semaphore_->Release(release_count, &previous_count)) {
+    WakeCooperativeWaiters();
+  }
   return previous_count;
+}
+
+void XSemaphore::CooperativeWaitBegin(XThread* thread) {
+  waiters_.Add(thread);
+}
+
+void XSemaphore::CooperativeWaitEnd(XThread* thread) {
+  // Poke the new front so it re-polls now.
+  if (waiters_.Remove(thread)) {
+    WakeCooperativeWaiters();
+  }
+}
+
+bool XSemaphore::CooperativeMayAcquire(XThread* thread) {
+  return waiters_.MayAcquire(thread);
 }
 
 bool XSemaphore::Save(ByteStream* stream) {
