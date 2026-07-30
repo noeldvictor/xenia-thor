@@ -68,12 +68,12 @@ static void PreemptCurrentFiber(void* /*raw_context*/) {
 static double CalibrateTicksPerUs() {
   uint64_t qpc_freq = Clock::host_tick_frequency_platform();
   uint64_t qpc0 = Clock::host_tick_count_platform();
-  uint64_t tsc0 = Clock::host_tick_count_raw();
+  uint64_t tsc0 = Clock::host_tick_count_platform();
   uint64_t qpc_end = qpc0 + qpc_freq / 2000;  // ~0.5 ms
   while (Clock::host_tick_count_platform() < qpc_end) {
   }
   uint64_t qpc1 = Clock::host_tick_count_platform();
-  uint64_t tsc1 = Clock::host_tick_count_raw();
+  uint64_t tsc1 = Clock::host_tick_count_platform();
   double secs = qpc1 > qpc0 ? double(qpc1 - qpc0) / double(qpc_freq) : 0.0;
   double per_us = secs > 0.0 ? double(tsc1 - tsc0) / (secs * 1e6) : 0.0;
   // Spans an x86 TSC at 1-6 GHz and an ARM64 generic timer at 1-100 MHz.
@@ -594,7 +594,7 @@ void GuestScheduler::SwitchTo(XThread* next) {
     // thread resumes with its remainder, so its quantum end still arrives.
     if (!links.quantum_deadline_tick) {
       links.quantum_deadline_tick =
-          Clock::host_tick_count_raw() + quantum_ticks_;
+          Clock::host_tick_count_platform() + quantum_ticks_;
     }
     cpus_[t_current_cpu].quantum_deadline_tick = links.quantum_deadline_tick;
   }
@@ -1136,7 +1136,7 @@ void GuestScheduler::WatchdogLoop() {
     if (shutting_down_.load()) {
       break;
     }
-    uint64_t now = Clock::host_tick_count_raw();
+    uint64_t now = Clock::host_tick_count_platform();
     std::lock_guard<std::mutex> lock(lock_);
     for (int i = 0; i < host_cpu_count_; ++i) {
       XThread* running = cpus_[i].current_thread;

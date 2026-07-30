@@ -416,7 +416,7 @@ class XHostThread : public XThread {
   // fiber - they run host loops/blocking code.
   bool is_host_thread() const override { return true; }
 
-  virtual void Execute();
+  void Execute() override;
 
  private:
   std::function<int()> host_fn_;

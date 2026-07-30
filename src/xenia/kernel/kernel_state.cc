@@ -553,6 +553,14 @@ void KernelState::UnloadUserModule(const object_ref<UserModule>& module,
 
 void KernelState::TerminateTitle() {
   XELOGD("KernelState::TerminateTitle");
+  // Stop the cooperative dispatch threads before force-terminating guest
+  // threads - their fibers run on the dispatchers, so terminating one while
+  // it is executing would free the fiber stack out from under it. Done
+  // before taking the global lock: a still-running fiber may need the lock
+  // to reach its next yield point. No-op if the scheduler never started.
+  if (guest_scheduler_) {
+    guest_scheduler_->Shutdown();
+  }
   auto global_lock = global_critical_region_.Acquire();
 
   // Call terminate routines.
