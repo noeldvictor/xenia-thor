@@ -766,6 +766,7 @@ public class LauncherActivity extends Activity {
             labels.add(getString(R.string.launcher_game_action_optimizations));
             labels.add(getString(R.string.launcher_game_action_patches));
             labels.add(getString(R.string.launcher_game_action_trainers));
+            labels.add("Content (DLC / updates)");
             labels.add(getString(R.string.launcher_game_action_backup_save));
             labels.add(getString(R.string.launcher_game_action_reset_save));
         }
@@ -782,8 +783,10 @@ public class LauncherActivity extends Activity {
                     } else if (which == 3) {
                         openGameTrainers(titleId, title);
                     } else if (which == 4) {
-                        backupSaveData(titleId, title);
+                        openGameContent(titleId, title);
                     } else if (which == 5) {
+                        backupSaveData(titleId, title);
+                    } else if (which == 6) {
                         confirmResetSaveData(titleId, title);
                     }
                 })
@@ -802,6 +805,13 @@ public class LauncherActivity extends Activity {
         final Intent intent = new Intent(this, GamePatchManagerActivity.class);
         intent.putExtra(GamePatchManagerActivity.EXTRA_TITLE_ID, titleId);
         intent.putExtra(GamePatchManagerActivity.EXTRA_TITLE_NAME, title);
+        startActivity(intent);
+    }
+
+    private void openGameContent(final String titleId, final String title) {
+        final Intent intent = new Intent(this, ContentManagerActivity.class);
+        intent.putExtra(ContentManagerActivity.EXTRA_TITLE_ID, titleId);
+        intent.putExtra(ContentManagerActivity.EXTRA_TITLE_NAME, title);
         startActivity(intent);
     }
 

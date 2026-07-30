@@ -83,6 +83,7 @@ public class SettingsActivity extends Activity {
                 {getString(R.string.settings_input_none), XeniaAndroidSettings.HID_NOP},
         });
         addControllerMappingButton(root);
+        addGamertagField(root);
 
         addToggles(root);
         addOptimizations(root);
@@ -198,6 +199,42 @@ public class SettingsActivity extends Activity {
         button.setOnClickListener(view ->
                 startActivity(new Intent(this, ControllerMappingActivity.class)));
         root.addView(button, matchWrapWithTopMargin(8));
+    }
+
+    // Profile gamertag (XenDroid-parity): stored in prefs, passed to the
+    // emulator as the user_gamertag cvar so titles show/save under this name.
+    private void addGamertagField(final LinearLayout root) {
+        final android.widget.TextView label = new android.widget.TextView(this);
+        label.setTextSize(16);
+        label.setText("Profile gamertag");
+        label.setPadding(0, dp(16), 0, dp(4));
+        root.addView(label);
+
+        final android.widget.EditText field = new android.widget.EditText(this);
+        field.setSingleLine(true);
+        field.setHint("User");
+        field.setFilters(new android.text.InputFilter[] {
+                new android.text.InputFilter.LengthFilter(15)});
+        field.setText(XeniaAndroidSettings.getPreferences(this)
+                .getString("user_gamertag", ""));
+        field.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(final CharSequence s, final int a,
+                                          final int b, final int c) {}
+
+            @Override
+            public void onTextChanged(final CharSequence s, final int a,
+                                      final int b, final int c) {}
+
+            @Override
+            public void afterTextChanged(final android.text.Editable editable) {
+                XeniaAndroidSettings.getPreferences(SettingsActivity.this)
+                        .edit()
+                        .putString("user_gamertag", editable.toString().trim())
+                        .apply();
+            }
+        });
+        root.addView(field);
     }
 
     private void addToggles(final LinearLayout root) {

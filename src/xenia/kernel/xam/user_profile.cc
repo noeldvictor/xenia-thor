@@ -9,11 +9,20 @@
 
 #include "xenia/kernel/xam/user_profile.h"
 
+#include "xenia/base/cvar.h"
+
 #include <sstream>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+
+DEFINE_string(
+    user_gamertag, "",
+    "Gamertag for the signed-in profile (max 15 characters). Empty keeps the "
+    "default. Set from the Android launcher's settings; some titles show or "
+    "save under this name.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -25,6 +34,9 @@ UserProfile::UserProfile() {
   // "You do not have permissions to perform this operation."
   xuid_ = 0xB13EBABEBABEBABE;
   name_ = "User";
+  if (!cvars::user_gamertag.empty()) {
+    name_ = cvars::user_gamertag.substr(0, 15);
+  }
 
   // https://cs.rin.ru/forum/viewtopic.php?f=38&t=60668&hilit=gfwl+live&start=195
   // https://github.com/arkem/py360/blob/master/py360/constants.py

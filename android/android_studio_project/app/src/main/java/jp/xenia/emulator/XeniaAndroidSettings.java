@@ -229,6 +229,10 @@ public final class XeniaAndroidSettings {
         launchArguments.putString("cpu", CPU_ARM64);
         launchArguments.putString("apu", preferences.getString(KEY_APU_DRIVER, APU_ANY));
         launchArguments.putString("hid", preferences.getString(KEY_HID_DRIVER, HID_ANDROID));
+        final String gamertag = preferences.getString("user_gamertag", "");
+        if (gamertag != null && !gamertag.trim().isEmpty()) {
+            launchArguments.putString("user_gamertag", gamertag.trim());
+        }
         launchArguments.putBoolean("discord", false);
         if (preferences.getBoolean(KEY_MUTE_AUDIO, false)) {
             launchArguments.putBoolean("mute", true);
