@@ -10,8 +10,11 @@
 #ifndef XENIA_KERNEL_XTHREAD_H_
 #define XENIA_KERNEL_XTHREAD_H_
 
+#include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "xenia/base/mutex.h"
 #include "xenia/base/threading.h"
@@ -323,6 +326,27 @@ class XThread : public XObject, public cpu::Thread {
     pending_mutant_acquires_.push_back(mutant);
   }
 
+  // Host-side list of mutants this thread currently owns (cooperative
+  // scheduler mode only) - the master-tree stand-in for Edge's guest
+  // KTHREAD.mutants_list, consumed by XMutant::AbandonAllOwnedByThread at
+  // thread exit. Insert/Remove run on the owning thread; the sweep may run
+  // from another (terminating) host thread, hence the mutex.
+  void AddOwnedMutant(XMutant* mutant) {
+    std::lock_guard<std::mutex> lock(owned_mutants_mutex_);
+    owned_mutants_.push_back(mutant);
+  }
+  void RemoveOwnedMutant(XMutant* mutant) {
+    std::lock_guard<std::mutex> lock(owned_mutants_mutex_);
+    auto it = std::find(owned_mutants_.begin(), owned_mutants_.end(), mutant);
+    if (it != owned_mutants_.end()) {
+      owned_mutants_.erase(it);
+    }
+  }
+  std::vector<XMutant*> TakeOwnedMutants() {
+    std::lock_guard<std::mutex> lock(owned_mutants_mutex_);
+    return std::move(owned_mutants_);
+  }
+
  protected:
   bool AllocateStack(uint32_t size);
   void FreeStack();
@@ -357,6 +381,8 @@ class XThread : public XObject, public cpu::Thread {
   CreationParams creation_params_ = {0};
 
   std::vector<object_ref<XMutant>> pending_mutant_acquires_;
+  std::mutex owned_mutants_mutex_;
+  std::vector<XMutant*> owned_mutants_;
 
   uint32_t thread_id_ = 0;
   uint32_t scratch_address_ = 0;

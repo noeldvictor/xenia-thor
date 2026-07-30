@@ -222,6 +222,12 @@ class XObject {
   // objects. Begin/End register the waiter and MayAcquire gates the poll to
   // the queue front. Call the Enter/Leave wrappers below rather than these
   // directly. (Guest scheduler stage 1, ported from xenia-edge.)
+  // True when the calling guest thread already satisfies this object without
+  // consuming it, meaning a mutant it already owns (cooperative mode).
+  virtual bool IsReenteredByCurrentThread() { return false; }
+  // Status for a successful acquire, letting a mutant report abandonment.
+  virtual X_STATUS AcquireStatus() { return X_STATUS_SUCCESS; }
+
   virtual void CooperativeWaitBegin(XThread* thread) {}
   virtual void CooperativeWaitEnd(XThread* thread) {}
   virtual bool CooperativeMayAcquire(XThread* thread) { return true; }
@@ -251,6 +257,12 @@ class XObject {
   // Called on successful wait.
   virtual void WaitCallback() {}
   virtual xe::threading::WaitHandle* GetWaitHandle() { return nullptr; }
+
+  // Handle to wait on for this object on behalf of the calling guest thread.
+  // An already-owned mutant resolves to an always-signaled stand-in, so a
+  // recursive acquire succeeds without consuming the primitive. |slot| is the
+  // index in the caller's wait array, which cannot name one handle twice.
+  xe::threading::WaitHandle* GetWaitHandleForCurrentThread(size_t slot);
 
   // Creates the kernel object for guest code to use. Typically not needed.
   uint8_t* CreateNative(uint32_t size);

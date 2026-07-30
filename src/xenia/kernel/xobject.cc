@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/xobject.h"
 
+#include <array>
 #include <optional>
 
 #include <vector>
@@ -310,9 +311,30 @@ void XObject::AbandonCooperativeWait(XThread* thread) {
   }
 }
 
+// Stand-in for an object the caller already satisfies, one per wait-array
+// slot since a host wait rejects the same handle listed twice.
+static xe::threading::WaitHandle* AlwaysSignaledHandle(size_t slot) {
+  static const auto pool = []() {
+    std::array<std::unique_ptr<xe::threading::Event>, 64> events;
+    for (auto& event : events) {
+      event = xe::threading::Event::CreateManualResetEvent(true);
+    }
+    return events;
+  }();
+  assert_true(slot < pool.size());
+  return pool[slot < pool.size() ? slot : 0].get();
+}
+
+xe::threading::WaitHandle* XObject::GetWaitHandleForCurrentThread(size_t slot) {
+  if (IsReenteredByCurrentThread()) {
+    return AlwaysSignaledHandle(slot);
+  }
+  return GetWaitHandle();
+}
+
 X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
                        uint32_t alertable, uint64_t* opt_timeout) {
-  auto wait_handle = GetWaitHandle();
+  auto wait_handle = GetWaitHandleForCurrentThread(0);
   if (!wait_handle) {
     // Object doesn't support waiting.
     return X_STATUS_SUCCESS;
@@ -342,7 +364,7 @@ X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
           switch (poll) {
             case xe::threading::WaitResult::kSuccess:
               WaitCallback();
-              return X_STATUS_SUCCESS;
+              return AcquireStatus();
             case xe::threading::WaitResult::kUserCallback:
               return X_STATUS_USER_APC;
             case xe::threading::WaitResult::kTimeout:
@@ -414,10 +436,13 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
                                uint32_t processor_mode, uint32_t alertable,
                                uint64_t* opt_timeout) {
   std::vector<xe::threading::WaitHandle*> wait_handles(count);
-  for (size_t i = 0; i < count; ++i) {
-    wait_handles[i] = objects[i]->GetWaitHandle();
-    assert_not_null(wait_handles[i]);
-  }
+  auto resolve_handles = [&]() {
+    for (size_t i = 0; i < count; ++i) {
+      wait_handles[i] = objects[i]->GetWaitHandleForCurrentThread(i);
+      assert_not_null(wait_handles[i]);
+    }
+  };
+  resolve_handles();
 
   if (GuestScheduler::enabled() && count > 0 &&
       XThread::GetCurrentFiberThread()) {
@@ -432,14 +457,19 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
     return CooperativeWaitLoop(
         scheduler, nullptr, alertable != 0, deadline_ms,
         [&]() -> std::optional<X_STATUS> {
+          resolve_handles();
           if (wait_type) {
             auto r = xe::threading::WaitAny(wait_handles.data(), count,
                                             alertable ? true : false,
                                             std::chrono::milliseconds(0));
             switch (r.first) {
-              case xe::threading::WaitResult::kSuccess:
+              case xe::threading::WaitResult::kSuccess: {
                 objects[r.second]->WaitCallback();
-                return X_STATUS(r.second);
+                X_STATUS status = objects[r.second]->AcquireStatus();
+                return status == X_STATUS_SUCCESS
+                           ? X_STATUS(r.second)
+                           : X_STATUS(X_STATUS_ABANDONED_WAIT_0 + r.second);
+              }
               case xe::threading::WaitResult::kUserCallback:
                 return X_STATUS_USER_APC;
               case xe::threading::WaitResult::kTimeout:

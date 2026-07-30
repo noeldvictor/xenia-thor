@@ -556,6 +556,7 @@ X_STATUS XThread::Exit(int exit_code) {
     // our waiters, hand ourselves to the scheduler, and yield forever. The
     // dispatcher drops our last handle once it is back on the idle fiber.
     running_ = false;
+    XMutant::AbandonAllOwnedByThread(kernel_state(), this);
     fiber_exit_event_->Set();
     auto* scheduler = kernel_state()->guest_scheduler();
     scheduler->NotifyThreadExited(this);
@@ -591,6 +592,7 @@ X_STATUS XThread::Terminate(int exit_code) {
     if (fiber_) {
       // Self-terminate on our fiber, same as Exit(), yielding forever so the
       // dispatcher reclaims our handle from the idle fiber.
+      XMutant::AbandonAllOwnedByThread(kernel_state(), this);
       fiber_exit_event_->Set();
       auto* scheduler = kernel_state()->guest_scheduler();
       scheduler->NotifyThreadExited(this);
@@ -604,6 +606,7 @@ X_STATUS XThread::Terminate(int exit_code) {
   } else if (fiber_) {
     // Fiber-backed guest thread terminated from another host thread. Signal
     // the exit event first so waits on the thread object resolve.
+    XMutant::AbandonAllOwnedByThread(kernel_state(), this);
     fiber_exit_event_->Set();
     // It may be parked mid-wait, where nothing else will unwind its
     // registration and a dead entry gates every other waiter on that object.
