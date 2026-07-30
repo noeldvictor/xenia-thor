@@ -1361,6 +1361,18 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_direct_host_resolve, false,
+    "Resolve eligible (non-format-converting and packable format-converting) "
+    "host render targets directly to guest memory with compute shaders "
+    "instead of first dumping the host render target back through EDRAM. "
+    "Avoids a render-pass break and a DRAM round-trip on the resolve path "
+    "(the ~23-resolve-pass class on BD). Ineligible cases (gamma, unsupported "
+    "formats, multi-sample selects, resolution scaling) fall back to the "
+    "EDRAM dump path. Ported from XenDroid 96c0afe94; default off until "
+    "device-validated (XenDroid ships it on).",
+    "GPU");
+
+DEFINE_bool(
     vulkan_depth_unorm24, true,
     "Use the native D24_UNORM_S8_UINT format for guest 24-bit depth when the "
     "driver supports it (Turnip does; the Adreno proprietary driver does "
