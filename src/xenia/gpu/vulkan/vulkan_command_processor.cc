@@ -71,6 +71,10 @@ DECLARE_double(gpu_bd_native_viewport_scale_x);
 DECLARE_int32(gpu_bd_renderdoc_capture_frame);
 DECLARE_int32(gpu_bd_full_native);
 DECLARE_bool(gpu_bd_native_reserve_captured_surfaces);
+// Per-register HLE hooks in the base CommandProcessor::WriteRegister; the
+// register-write fast path must fall back to per-register while they observe.
+DECLARE_bool(gpu_hle_surface_trace);
+DECLARE_bool(gpu_hle_surface_binonce);
 
 #include "xenia/ui/renderdoc_api.h"
 namespace {
@@ -1868,6 +1872,20 @@ void VulkanCommandProcessor::ShutdownContext() {
 }
 
 void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+  // Fetch (0x4800-0x48BF) and bool/loop (0x4900-0x4927) constants: the
+  // derived state (texture bindings, fetch/bool-loop UBO contents) is a pure
+  // function of the register value, and games commonly re-emit identical
+  // constants every draw - a same-value write doesn't need to dirty anything.
+  // The previous value must be read before the base class stores the new one.
+  // The two ranges are checked as one span; the gap registers in between
+  // don't consume the flag.
+  bool constant_value_unchanged = false;
+  if (index >= XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 &&
+      index <= XE_GPU_REG_SHADER_CONSTANT_LOOP_31 &&
+      cvars::vulkan_skip_redundant_fetch_constant_writes) {
+    constant_value_unchanged = register_file_->values[index] == value;
+  }
+
   CommandProcessor::WriteRegister(index, value);
 
   if (index >= XE_GPU_REG_SHADER_CONSTANT_000_X &&
@@ -1892,16 +1910,264 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
     }
   } else if (index >= XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031 &&
              index <= XE_GPU_REG_SHADER_CONSTANT_LOOP_31) {
-    current_constant_buffers_up_to_date_ &=
-        ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferBoolLoop);
+    if (!constant_value_unchanged) {
+      current_constant_buffers_up_to_date_ &=
+          ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferBoolLoop);
+    }
   } else if (index >= XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 &&
              index <= XE_GPU_REG_SHADER_CONSTANT_FETCH_31_5) {
+    if (!constant_value_unchanged) {
+      current_constant_buffers_up_to_date_ &=
+          ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
+      if (texture_cache_) {
+        texture_cache_->TextureFetchConstantWritten(
+            (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6);
+      }
+    }
+  }
+}
+
+void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index,
+                                                   uint32_t* base,
+                                                   uint32_t num_registers) {
+  if (!cvars::vulkan_fast_register_ranges || cvars::gpu_hle_surface_trace ||
+      cvars::gpu_hle_surface_binonce) {
+    // Per-register HLE hooks observe registers (e.g. RB_* at 0x2000-0x231B)
+    // that the bulk path would store without side effects - keep them on the
+    // per-register path.
+    CommandProcessor::WriteRegistersFromMem(start_index, base, num_registers);
+    return;
+  }
+  // Clamp to the register file (the per-register path warns and drops
+  // out-of-bounds indices; reaching here with one means a corrupt packet
+  // either way - Type0 base indices are 15-bit and can exceed the file).
+  if (start_index + num_registers > RegisterFile::kRegisterCount) {
+    XELOGW(
+        "WriteRegistersFromMem: out-of-bounds register range [{:04X}, {:04X}) "
+        "clamped",
+        start_index, start_index + num_registers);
+    if (start_index >= RegisterFile::kRegisterCount) {
+      return;
+    }
+    num_registers = uint32_t(RegisterFile::kRegisterCount) - start_index;
+  }
+  uint32_t current_index = start_index;
+  uint32_t end = start_index + num_registers;
+  // Split the range into segments by side-effect family; everything outside
+  // the special families is a pure store done as one bulk byte-swapped copy.
+  auto do_range = [&](uint32_t range_end, auto&& callback) -> bool {
+    if (current_index < range_end) {
+      uint32_t count = std::min(range_end, end) - current_index;
+      callback(current_index, base, count);
+      current_index += count;
+      base += count;
+    }
+    return current_index >= end;
+  };
+  auto regular = [this](uint32_t index, uint32_t* src, uint32_t count) {
+    xe::copy_and_swap_32_unaligned(&register_file_->values[index], src, count);
+  };
+  if (do_range(XE_GPU_REG_SCRATCH_REG0, regular)) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_DC_LUT_30_COLOR + 1,
+               [this](uint32_t index, uint32_t* src, uint32_t count) {
+                 WritePossiblySpecialRegistersFromMem(index, src, count);
+               })) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_SHADER_CONSTANT_000_X, regular)) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0,
+               [this](uint32_t index, uint32_t* src, uint32_t count) {
+                 WriteShaderConstantsFromMem(index, src, count);
+               })) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_SHADER_CONSTANT_FETCH_31_5 + 1,
+               [this](uint32_t index, uint32_t* src, uint32_t count) {
+                 WriteFetchFromMem(index, src, count);
+               })) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031, regular)) {
+    return;
+  }
+  if (do_range(XE_GPU_REG_SHADER_CONSTANT_LOOP_31 + 1,
+               [this](uint32_t index, uint32_t* src, uint32_t count) {
+                 WriteBoolLoopFromMem(index, src, count);
+               })) {
+    return;
+  }
+  do_range(RegisterFile::kRegisterCount, regular);
+}
+
+void VulkanCommandProcessor::WriteRegisterRangeFromRing(xe::RingBuffer* ring,
+                                                        uint32_t base,
+                                                        uint32_t num_registers) {
+  if (!cvars::vulkan_fast_register_ranges || cvars::gpu_hle_surface_trace ||
+      cvars::gpu_hle_surface_binonce) {
+    CommandProcessor::WriteRegisterRangeFromRing(ring, base, num_registers);
+    return;
+  }
+  RingBuffer::ReadRange range =
+      ring->BeginRead(num_registers * sizeof(uint32_t));
+  if (!range.second) {
+    WriteRegistersFromMem(
+        base, reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(range.first)),
+        num_registers);
+    ring->EndRead(range);
+  } else {
+    WriteRegisterRangeFromRing_WraparoundCase(ring, base, num_registers);
+  }
+}
+
+XE_NOINLINE
+void VulkanCommandProcessor::WriteRegisterRangeFromRing_WraparoundCase(
+    xe::RingBuffer* ring, uint32_t base, uint32_t num_registers) {
+  RingBuffer::ReadRange range =
+      ring->BeginRead(num_registers * sizeof(uint32_t));
+  // Callers (ExecutePacketType0/3) guarantee the ring holds the whole range.
+  assert_true(size_t(range.first_length) + size_t(range.second_length) ==
+              num_registers * sizeof(uint32_t));
+  uint32_t first_registers = uint32_t(range.first_length / sizeof(uint32_t));
+  WriteRegistersFromMem(
+      base, reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(range.first)),
+      first_registers);
+  WriteRegistersFromMem(
+      base + first_registers,
+      reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(range.second)),
+      uint32_t(range.second_length / sizeof(uint32_t)));
+  ring->EndRead(range);
+}
+
+void VulkanCommandProcessor::WritePossiblySpecialRegistersFromMem(
+    uint32_t start_index, uint32_t* base, uint32_t num_registers) {
+  // The scratch/COHER/DC_LUT span has base-class side effects - route every
+  // register through the virtual WriteRegister so all of them (and the
+  // constant tracking above) are preserved. This span is rarely covered by
+  // bulk ranges, so the per-register cost here is negligible.
+  uint32_t end = start_index + num_registers;
+  for (uint32_t index = start_index; index < end; ++index, ++base) {
+    WriteRegister(index, xe::load_and_swap<uint32_t>(base));
+  }
+}
+
+void VulkanCommandProcessor::WriteShaderConstantsFromMem(
+    uint32_t start_index, uint32_t* base, uint32_t num_registers) {
+  if (frame_open_) {
+    // One usage-map scan for the whole range instead of a map test per
+    // register (the float constant maps are indexed by vec4 constant).
+    constexpr uint32_t kFloatVertexBit =
+        UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFloatVertex;
+    constexpr uint32_t kFloatPixelBit =
+        UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFloatPixel;
+    uint32_t map_index = (start_index - XE_GPU_REG_SHADER_CONSTANT_000_X) >> 2;
+    uint32_t end_map_index =
+        (start_index + num_registers + 3 - XE_GPU_REG_SHADER_CONSTANT_000_X) >>
+        2;
+    if (current_constant_buffers_up_to_date_ & kFloatVertexBit) {
+      uint32_t vertex_end = std::min(end_map_index, UINT32_C(256));
+      for (uint32_t i = map_index; i < vertex_end; ++i) {
+        if (current_float_constant_map_vertex_[i >> 6] &
+            (UINT64_C(1) << (i & 63))) {
+          current_constant_buffers_up_to_date_ &= ~kFloatVertexBit;
+          break;
+        }
+      }
+    }
+    if (end_map_index > 256 &&
+        (current_constant_buffers_up_to_date_ & kFloatPixelBit)) {
+      for (uint32_t i = std::max(map_index, UINT32_C(256)); i < end_map_index;
+           ++i) {
+        uint32_t pixel_index = i - 256;
+        if (current_float_constant_map_pixel_[pixel_index >> 6] &
+            (UINT64_C(1) << (pixel_index & 63))) {
+          current_constant_buffers_up_to_date_ &= ~kFloatPixelBit;
+          break;
+        }
+      }
+    }
+  }
+  xe::copy_and_swap_32_unaligned(&register_file_->values[start_index], base,
+                                 num_registers);
+}
+
+void VulkanCommandProcessor::WriteFetchFromMem(uint32_t start_index,
+                                               uint32_t* base,
+                                               uint32_t num_registers) {
+  if (!cvars::vulkan_skip_redundant_fetch_constant_writes) {
     current_constant_buffers_up_to_date_ &=
         ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
     if (texture_cache_) {
-      texture_cache_->TextureFetchConstantWritten(
-          (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6);
+      uint32_t first_slot =
+          (start_index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
+      uint32_t last_slot = (start_index + num_registers - 1 -
+                            XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) /
+                           6;
+      for (uint32_t slot = first_slot; slot <= last_slot; ++slot) {
+        texture_cache_->TextureFetchConstantWritten(slot);
+      }
     }
+    xe::copy_and_swap_32_unaligned(&register_file_->values[start_index], base,
+                                   num_registers);
+    return;
+  }
+  // Per-fetch-slot value compare, same semantics as the per-register path:
+  // the identical fetch constants games re-emit every draw must not dirty
+  // texture bindings or the fetch constant buffer.
+  bool any_changed = false;
+  uint32_t index = start_index;
+  uint32_t* src = base;
+  uint32_t remaining = num_registers;
+  while (remaining) {
+    uint32_t slot = (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
+    uint32_t slot_end_index =
+        XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + (slot + 1) * 6;
+    uint32_t count = std::min(remaining, slot_end_index - index);
+    bool slot_changed = false;
+    for (uint32_t i = 0; i < count; ++i) {
+      uint32_t value = xe::load_and_swap<uint32_t>(src + i);
+      slot_changed |= register_file_->values[index + i] != value;
+      register_file_->values[index + i] = value;
+    }
+    if (slot_changed) {
+      any_changed = true;
+      if (texture_cache_) {
+        texture_cache_->TextureFetchConstantWritten(slot);
+      }
+    }
+    index += count;
+    src += count;
+    remaining -= count;
+  }
+  if (any_changed) {
+    current_constant_buffers_up_to_date_ &=
+        ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
+  }
+}
+
+void VulkanCommandProcessor::WriteBoolLoopFromMem(uint32_t start_index,
+                                                  uint32_t* base,
+                                                  uint32_t num_registers) {
+  bool changed;
+  if (cvars::vulkan_skip_redundant_fetch_constant_writes) {
+    // Same value-compare semantics as the per-register path.
+    changed = false;
+    for (uint32_t i = 0; i < num_registers; ++i) {
+      uint32_t value = xe::load_and_swap<uint32_t>(base + i);
+      changed |= register_file_->values[start_index + i] != value;
+      register_file_->values[start_index + i] = value;
+    }
+  } else {
+    changed = true;
+    xe::copy_and_swap_32_unaligned(&register_file_->values[start_index], base,
+                                   num_registers);
+  }
+  if (changed) {
+    current_constant_buffers_up_to_date_ &=
+        ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferBoolLoop);
   }
 }
 
@@ -9432,6 +9698,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                       memexport_range.size_bytes);
   }
 
+  // Optionally split the frame into multiple submissions (every
+  // vulkan_mid_frame_submission_draws real draws) so the GPU starts rendering
+  // while the rest of the frame's command stream is still being built, instead
+  // of receiving the whole frame at swap time and idling until then. Counted
+  // here, at the tail of IssueDraw, so only genuine rasterizing draws are
+  // counted (kCopy/empty/no-VS paths return earlier). EndSubmission(false)
+  // closes the render pass and submits without closing the frame; the next
+  // IssueDraw's BeginSubmission(true) reopens the submission, and EndSubmission
+  // resets draws_since_submission_ to 0.
+  ++draws_since_submission_;
+  if (cvars::vulkan_mid_frame_submission_draws > 0 &&
+      draws_since_submission_ >=
+          uint32_t(cvars::vulkan_mid_frame_submission_draws) &&
+      submission_open_ && !scratch_buffer_used_) {
+    EndSubmission(false);
+  }
+
   return true;
 }
 
@@ -10621,6 +10904,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
     command_buffers_writable_.pop_back();
 
     submission_open_ = false;
+    draws_since_submission_ = 0;
   }
 
   if (is_closing_frame) {

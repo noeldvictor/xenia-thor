@@ -1361,6 +1361,47 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    vulkan_depth_unorm24, true,
+    "Use the native D24_UNORM_S8_UINT format for guest 24-bit depth when the "
+    "driver supports it (Turnip does; the Adreno proprietary driver does "
+    "not). Disable to force the float32 depth emulation path for debugging. "
+    "Read live so it can be overridden per-game. Ported from XenDroid.",
+    "GPU");
+
+DEFINE_bool(
+    vulkan_fast_register_ranges, false,
+    "Process PM4 register range writes (Type0 runs, SET_CONSTANT/"
+    "SET_CONSTANT2/LOAD_ALU_CONSTANT/SET_SHADER_CONSTANTS) with bulk "
+    "byte-swapped copies and range-level constant dirty tracking (port of "
+    "the XenDroid/D3D12-style register-write fast path) instead of a virtual "
+    "per-register call. Targets the measured CP-thread translation cost "
+    "(BD ~10k draws/frame is CPU-bound). Auto-falls back to the per-register "
+    "path while gpu_hle_surface_trace/binonce are enabled (those hook "
+    "individual RB_* register writes). Default off until device-validated; "
+    "XenDroid ships it on.",
+    "GPU");
+
+DEFINE_bool(
+    vulkan_skip_redundant_fetch_constant_writes, false,
+    "Skip dirtying texture bindings and the fetch/bool-loop constant buffers "
+    "on register writes whose value is identical to the current one (games "
+    "commonly re-emit unchanged constants every draw). Ported from XenDroid. "
+    "Default off until device-validated.",
+    "GPU");
+
+DEFINE_int32(
+    vulkan_mid_frame_submission_draws, 0,
+    "If greater than 0, end and submit the current command buffer after this "
+    "many draws instead of only at the swap, so the GPU overlaps the frame's "
+    "rendering with the building of the rest of its command stream (attacks "
+    "the measured GPU-idle-while-CPU-translates gap). 0 keeps one submission "
+    "per frame. Splitting closes the current render pass, so values that are "
+    "too small hurt tiled GPUs; try roughly half the title's per-frame draw "
+    "count (XenDroid ships 1300 on Adreno). Ported from XenDroid commit "
+    "7876bf126/d099aa3c2.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_merge_draws, false,
     "Thor/Adreno binning re-arch (Lever 2): zero-copy DRAW CONCATENATION - merge "
     "consecutive same-state kGuestDMA indexed draws that index a contiguous byte "

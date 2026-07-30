@@ -384,6 +384,35 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   void WriteRegister(uint32_t index, uint32_t value) override;
 
+  // Register-write fast path (vulkan_fast_register_ranges, ported from
+  // XenDroid): bulk byte-swapped stores + range-level dirty tracking for PM4
+  // register ranges instead of a virtual per-register call. Falls back to the
+  // base per-register path when disabled or when per-register HLE hooks
+  // (gpu_hle_surface_trace/binonce) are active.
+  void WriteRegistersFromMem(uint32_t start_index, uint32_t* base,
+                             uint32_t num_registers) override;
+  void WriteRegisterRangeFromRing(xe::RingBuffer* ring, uint32_t base,
+                                  uint32_t num_registers) override;
+
+ private:
+  XE_NOINLINE void WriteRegisterRangeFromRing_WraparoundCase(
+      xe::RingBuffer* ring, uint32_t base, uint32_t num_registers);
+  // Segment helpers for WriteRegistersFromMem. The "possibly special" span
+  // ([SCRATCH_REG0, DC_LUT_30_COLOR]) routes through the virtual WriteRegister
+  // so every base-class side effect (scratch writeback, COHER dirty, gamma
+  // ramp) is preserved; the constant spans do range-level dirty tracking.
+  void WritePossiblySpecialRegistersFromMem(uint32_t start_index,
+                                            uint32_t* base,
+                                            uint32_t num_registers);
+  void WriteShaderConstantsFromMem(uint32_t start_index, uint32_t* base,
+                                   uint32_t num_registers);
+  void WriteFetchFromMem(uint32_t start_index, uint32_t* base,
+                         uint32_t num_registers);
+  void WriteBoolLoopFromMem(uint32_t start_index, uint32_t* base,
+                            uint32_t num_registers);
+
+ protected:
+
   void OnGammaRamp256EntryTableValueWritten() override;
   void OnGammaRampPWLValueWritten() override;
 
@@ -737,6 +766,9 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   ui::vulkan::VulkanGPUCompletionTimeline completion_timeline_;
   bool submission_open_ = false;
+  // Rasterizing draws recorded into the currently open submission; drives the
+  // optional vulkan_mid_frame_submission_draws split (see IssueDraw tail).
+  uint32_t draws_since_submission_ = 0;
   // In case vkQueueSubmit fails after something like a successful
   // vkQueueBindSparse, to wait correctly on the next attempt.
   std::vector<VkSemaphore> current_submission_wait_semaphores_;

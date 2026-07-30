@@ -1551,6 +1551,57 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
   }
 }
 
+void CommandProcessor::WriteRegistersFromMem(uint32_t start_index,
+                                             uint32_t* base,
+                                             uint32_t num_registers) {
+  for (uint32_t i = 0; i < num_registers; ++i) {
+    uint32_t data = xe::load_and_swap<uint32_t>(base + i);
+    WriteRegister(start_index + i, data);
+  }
+}
+
+void CommandProcessor::WriteRegisterRangeFromRing(xe::RingBuffer* ring,
+                                                  uint32_t base,
+                                                  uint32_t num_registers) {
+  if (cvars::gpu_bulk_pm4_type0) {
+    // Hot path for draw-heavy guests (e.g. Blue Dragon, ~10k draws/frame): the
+    // contiguous register run dominates. Byte-swap the whole dword run at once
+    // with the NEON-vectorized copy_and_swap (vqtbl, 4 dwords/iter on ARM64)
+    // instead of paying the per-dword ReadAndSwap overhead. WriteRegister still
+    // runs per register so all per-register side effects are preserved (scratch
+    // writeback, COHER dirty, and the Vulkan override's constant/texture
+    // invalidation).
+    uint32_t swapped[256];
+    uint32_t remaining = num_registers;
+    uint32_t reg = base;
+    while (remaining) {
+      uint32_t chunk = std::min<uint32_t>(remaining, 256);
+      size_t chunk_bytes = chunk * sizeof(uint32_t);
+      if (ring->read_offset() + chunk_bytes <= ring->capacity()) {
+        // No ring wrap: read the contiguous dword block directly and bulk-swap.
+        xe::copy_and_swap_32_unaligned(
+            swapped, reinterpret_cast<const void*>(ring->read_ptr()), chunk);
+        ring->AdvanceRead(chunk_bytes);
+      } else {
+        // Block straddles the ring tail; fall back to per-dword read for it.
+        for (uint32_t m = 0; m < chunk; ++m) {
+          swapped[m] = ring->ReadAndSwap<uint32_t>();
+        }
+      }
+      for (uint32_t m = 0; m < chunk; ++m) {
+        WriteRegister(reg + m, swapped[m]);
+      }
+      reg += chunk;
+      remaining -= chunk;
+    }
+    return;
+  }
+  for (uint32_t i = 0; i < num_registers; ++i) {
+    uint32_t data = ring->ReadAndSwap<uint32_t>();
+    WriteRegister(base + i, data);
+  }
+}
+
 void CommandProcessor::MakeCoherent() {
   SCOPE_profile_cpu_f("gpu");
 
@@ -1784,42 +1835,16 @@ bool CommandProcessor::ExecutePacketType0(RingBuffer* reader, uint32_t packet) {
 
   uint32_t base_index = (packet & 0x7FFF);
   uint32_t write_one_reg = (packet >> 15) & 0x1;
-  if (cvars::gpu_bulk_pm4_type0 && !write_one_reg) {
-    // Hot path for draw-heavy guests (e.g. Blue Dragon, ~10k draws/frame): the
-    // contiguous register run dominates. Byte-swap the whole dword run at once
-    // with the NEON-vectorized copy_and_swap (vqtbl, 4 dwords/iter on ARM64)
-    // instead of paying the per-dword ReadAndSwap overhead. WriteRegister still
-    // runs per register so all per-register side effects are preserved (scratch
-    // writeback, COHER dirty, and the Vulkan override's constant/texture
-    // invalidation).
-    uint32_t swapped[256];
-    uint32_t remaining = count;
-    uint32_t reg = base_index;
-    while (remaining) {
-      uint32_t chunk = std::min<uint32_t>(remaining, 256);
-      size_t chunk_bytes = chunk * sizeof(uint32_t);
-      if (reader->read_offset() + chunk_bytes <= reader->capacity()) {
-        // No ring wrap: read the contiguous dword block directly and bulk-swap.
-        xe::copy_and_swap_32_unaligned(
-            swapped, reinterpret_cast<const void*>(reader->read_ptr()), chunk);
-        reader->AdvanceRead(chunk_bytes);
-      } else {
-        // Block straddles the ring tail; fall back to per-dword read for it.
-        for (uint32_t m = 0; m < chunk; ++m) {
-          swapped[m] = reader->ReadAndSwap<uint32_t>();
-        }
-      }
-      for (uint32_t m = 0; m < chunk; ++m) {
-        WriteRegister(reg + m, swapped[m]);
-      }
-      reg += chunk;
-      remaining -= chunk;
-    }
+  if (!write_one_reg) {
+    // Sequential run: route through the range-write virtual so backends can
+    // substitute their fast path (bulk stores + range-level dirty tracking);
+    // the base default preserves per-register WriteRegister side effects
+    // (and the gpu_bulk_pm4_type0 bulk-swap lever).
+    WriteRegisterRangeFromRing(reader, base_index, count);
   } else {
     for (uint32_t m = 0; m < count; m++) {
       uint32_t reg_data = reader->ReadAndSwap<uint32_t>();
-      uint32_t target_index = write_one_reg ? base_index : base_index + m;
-      WriteRegister(target_index, reg_data);
+      WriteRegister(base_index, reg_data);
     }
   }
 
@@ -3185,10 +3210,7 @@ bool CommandProcessor::ExecutePacketType3_SET_CONSTANT(RingBuffer* reader,
       reader->AdvanceRead((count - 1) * sizeof(uint32_t));
       return true;
   }
-  for (uint32_t n = 0; n < count - 1; n++, index++) {
-    uint32_t data = reader->ReadAndSwap<uint32_t>();
-    WriteRegister(index, data);
-  }
+  WriteRegisterRangeFromRing(reader, index, count - 1);
   return true;
 }
 
@@ -3197,10 +3219,7 @@ bool CommandProcessor::ExecutePacketType3_SET_CONSTANT2(RingBuffer* reader,
                                                         uint32_t count) {
   uint32_t offset_type = reader->ReadAndSwap<uint32_t>();
   uint32_t index = offset_type & 0xFFFF;
-  for (uint32_t n = 0; n < count - 1; n++, index++) {
-    uint32_t data = reader->ReadAndSwap<uint32_t>();
-    WriteRegister(index, data);
-  }
+  WriteRegisterRangeFromRing(reader, index, count - 1);
   return true;
 }
 
@@ -3236,11 +3255,11 @@ bool CommandProcessor::ExecutePacketType3_LOAD_ALU_CONSTANT(RingBuffer* reader,
       return true;
   }
   trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
-  for (uint32_t n = 0; n < size_dwords; n++, index++) {
-    uint32_t data = xe::load_and_swap<uint32_t>(
-        memory_->TranslatePhysical(address + n * 4));
-    WriteRegister(index, data);
-  }
+  // Physical memory is a contiguous host mapping, so the whole range can be
+  // handed to the (possibly backend-accelerated) mem range write at once.
+  WriteRegistersFromMem(
+      index, reinterpret_cast<uint32_t*>(memory_->TranslatePhysical(address)),
+      size_dwords);
   return true;
 }
 
@@ -3248,10 +3267,7 @@ bool CommandProcessor::ExecutePacketType3_SET_SHADER_CONSTANTS(
     RingBuffer* reader, uint32_t packet, uint32_t count) {
   uint32_t offset_type = reader->ReadAndSwap<uint32_t>();
   uint32_t index = offset_type & 0xFFFF;
-  for (uint32_t n = 0; n < count - 1; n++, index++) {
-    uint32_t data = reader->ReadAndSwap<uint32_t>();
-    WriteRegister(index, data);
-  }
+  WriteRegisterRangeFromRing(reader, index, count - 1);
   return true;
 }
 

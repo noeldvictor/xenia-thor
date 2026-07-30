@@ -757,6 +757,22 @@ class RenderTargetCache {
   // changes to this throughout a frame are pretty rare.
   std::map<uint32_t, OwnershipRange> ownership_ranges_;
 
+  // Monotonic version of ownership_ranges_, bumped on every actual mutation
+  // of the map (claims, splits, interlock barriers, destruction). Lets
+  // Update() skip ChangeOwnership walks that would provably be no-ops: once
+  // `dest` has claimed [base, base + length), re-claiming any sub-extent with
+  // an unchanged map walks the ranges and changes nothing.
+  uint64_t ownership_ranges_version_ = 0;
+  // Per-render-target-slot memo of the last claim made by Update()'s
+  // ownership loop (0 is depth, color starting from 1). Valid only while
+  // version matches ownership_ranges_version_.
+  struct OwnershipClaimMemo {
+    RenderTargetKey dest;
+    uint32_t length_tiles = 0;
+    uint64_t version = ~uint64_t(0);
+  };
+  OwnershipClaimMemo ownership_claim_memos_[1 + xenos::kMaxColorRenderTargets];
+
   // Render targets actually used by the draw call with the last successful
   // update. 0 is depth, color starting from 1, nullptr if not bound.
   // Only valid for non-pixel-shader-interlock paths.

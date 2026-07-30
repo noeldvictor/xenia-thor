@@ -26,6 +26,8 @@
 #include "xenia/ui/vulkan/single_layout_descriptor_set_pool.h"
 #include "xenia/ui/vulkan/vulkan_upload_buffer_pool.h"
 
+DECLARE_bool(vulkan_depth_unorm24);
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
@@ -292,7 +294,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   }
 
   bool depth_unorm24_vulkan_format_supported() const {
-    return depth_unorm24_vulkan_format_supported_;
+    // The device-support half is cached at Initialize; the cvar is read live
+    // so vulkan_depth_unorm24 can be overridden per-game (the per-game config
+    // loads before any guest depth render target is created). false forces
+    // the float32 depth-emulation path.
+    return depth_unorm24_vulkan_format_supported_ &&
+           cvars::vulkan_depth_unorm24;
   }
   bool depth_float24_round() const { return depth_float24_round_; }
 

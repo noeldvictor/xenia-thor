@@ -161,6 +161,16 @@ class CommandProcessor {
 
   virtual void WriteRegister(uint32_t index, uint32_t value);
 
+  // Range register writes (PM4 Type0 runs, SET_CONSTANT/SET_CONSTANT2/
+  // LOAD_ALU_CONSTANT/SET_SHADER_CONSTANTS). Defaults preserve the exact
+  // per-register WriteRegister behavior (all side effects); backends may
+  // override with bulk byte-swapped stores + range-level dirty tracking
+  // (the XenDroid/D3D12-style register-write fast path).
+  virtual void WriteRegistersFromMem(uint32_t start_index, uint32_t* base,
+                                     uint32_t num_registers);
+  virtual void WriteRegisterRangeFromRing(xe::RingBuffer* ring, uint32_t base,
+                                          uint32_t num_registers);
+
   const reg::DC_LUT_30_COLOR* gamma_ramp_256_entry_table() const {
     return gamma_ramp_256_entry_table_;
   }

@@ -34,6 +34,16 @@ DECLARE_bool(gpu_native_render_targets);
 DECLARE_bool(gpu_bd_perfmode_hdr_2x);
 
 DEFINE_bool(
+    rt_cache_ownership_claim_memo, false,
+    "Skip EDRAM ownership-map walks for render target claims that provably "
+    "change nothing (the same render target re-claiming an extent it already "
+    "fully owns, with no ownership mutation since). Cuts per-draw CP-thread "
+    "cost in RT-stable scenes. Ported from XenDroid (ships on there); "
+    "default off until device-validated. Disable for debugging render "
+    "target transfer issues.",
+    "GPU");
+
+DEFINE_bool(
     depth_transfer_not_equal_test, true,
     "When transferring data between depth render targets, use the \"not "
     "equal\" test to avoid writing rewriting depth via shader depth output if "
@@ -540,6 +550,7 @@ void RenderTargetCache::InitializeCommon() {
 }
 
 void RenderTargetCache::DestroyAllRenderTargets(bool shutting_down) {
+  ++ownership_ranges_version_;
   ownership_ranges_.clear();
   if (!shutting_down) {
     ownership_ranges_.emplace(
@@ -564,6 +575,7 @@ void RenderTargetCache::ClearOwnershipForEdramBufferAuthoritative() {
   // owns any EDRAM. Keeps the render targets alive (unlike DestroyAllRenderTargets)
   // - only the ownership map is reset, matching the buffer-authoritative state the
   // full kPixelShaderInterlock path runs in.
+  ++ownership_ranges_version_;
   ownership_ranges_.clear();
   ownership_ranges_.emplace(
       std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
@@ -1006,10 +1018,35 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   for (uint32_t i = 0; i < edram_bases_sorted_count; ++i) {
     const std::pair<uint32_t, uint32_t>& rt_base_index = edram_bases_sorted[i];
     uint32_t rt_bit_index = rt_base_index.second;
-    ChangeOwnership(rt_keys[rt_bit_index], 0, rt_lengths_tiles[i],
-                    (interlock_barrier_only || native_rts_independent)
-                        ? nullptr
-                        : &last_update_transfers_[rt_bit_index]);
+    RenderTargetKey rt_key = rt_keys[rt_bit_index];
+    uint32_t rt_length_tiles = rt_lengths_tiles[i];
+    if (cvars::rt_cache_ownership_claim_memo) {
+      OwnershipClaimMemo& memo = ownership_claim_memos_[rt_bit_index];
+      if (memo.version == ownership_ranges_version_ && memo.dest == rt_key &&
+          rt_length_tiles <= memo.length_tiles) {
+        // This render target already owns [base, base + memo.length_tiles)
+        // and the ownership map hasn't changed since - the walk would change
+        // nothing and append no transfers (the slot's last_update_transfers_
+        // was cleared above, matching the no-op outcome).
+        continue;
+      }
+      ChangeOwnership(rt_key, 0, rt_length_tiles,
+                      (interlock_barrier_only || native_rts_independent)
+                          ? nullptr
+                          : &last_update_transfers_[rt_bit_index]);
+      // Record with the post-claim version: if the claim itself mutated the
+      // map, ownership now reflects this claim at the bumped version, while
+      // any later mutation (including another slot's claim) bumps again and
+      // naturally invalidates this memo.
+      memo.dest = rt_key;
+      memo.length_tiles = rt_length_tiles;
+      memo.version = ownership_ranges_version_;
+    } else {
+      ChangeOwnership(rt_key, 0, rt_length_tiles,
+                      (interlock_barrier_only || native_rts_independent)
+                          ? nullptr
+                          : &last_update_transfers_[rt_bit_index]);
+    }
   }
 
   if (interlock_barrier_only) {
@@ -1580,6 +1617,7 @@ RenderTargetCache::PrepareFullEdram1280xRenderTargetForSnapshotRestoration(
   }
   // Change ownership, but don't transfer the contents - they will be replaced
   // anyway.
+  ++ownership_ranges_version_;
   ownership_ranges_.clear();
   ownership_ranges_.emplace(
       std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
@@ -1591,6 +1629,7 @@ RenderTargetCache::PrepareFullEdram1280xRenderTargetForSnapshotRestoration(
 void RenderTargetCache::PixelShaderInterlockFullEdramBarrierPlaced() {
   assert_true(GetPath() == Path::kPixelShaderInterlock);
   // Clear ownership - any overlap of data written before the barrier is safe.
+  ++ownership_ranges_version_;
   OwnershipRange empty_range(xenos::kEdramTileCount, RenderTargetKey(),
                              RenderTargetKey(), RenderTargetKey());
   if (ownership_ranges_.size() == 1) {
@@ -1725,6 +1764,10 @@ void RenderTargetCache::ChangeOwnership(
   bool host_depth_encoding_different =
       dest.is_depth && GetPath() == Path::kHostRenderTargets &&
       IsHostDepthEncodingDifferent(dest.GetDepthFormat());
+  // Tracks whether ownership_ranges_ was actually modified, for the claim
+  // memo versioning - a walk where every range is already owned by `dest`
+  // must not invalidate other slots' memos.
+  bool ownership_mutated = false;
   auto change_ownership_in_extent = [&](uint32_t extent_start,
                                         uint32_t extent_end) {
     // The map contains consecutive ranges, merged if the adjacent ones are the
@@ -1738,6 +1781,7 @@ void RenderTargetCache::ChangeOwnership(
       if (it_pre->second.end_tiles > extent_start &&
           !it_pre->second.IsOwnedBy(dest, host_depth_encoding_different)) {
         // Different render target overlapping the range - split the head.
+        ownership_mutated = true;
         ownership_ranges_.emplace(extent_start, it_pre->second);
         it_pre->second.end_tiles = extent_start;
         // Let the next loop do the transfer and needed merging and splitting
@@ -1758,6 +1802,7 @@ void RenderTargetCache::ChangeOwnership(
       }
       // Take over the current range. Handle the tail - may be outside the range
       // (split in this case) or within it.
+      ownership_mutated = true;
       if (it->second.end_tiles > extent_end) {
         // Split the tail.
         ownership_ranges_.emplace(extent_end, it->second);
@@ -1864,6 +1909,9 @@ void RenderTargetCache::ChangeOwnership(
     // The ownership change extent goes to the next EDRAM addressing period.
     change_ownership_in_extent(
         0, std::min(end_tiles & (xenos::kEdramTileCount - 1), start_tiles));
+  }
+  if (ownership_mutated) {
+    ++ownership_ranges_version_;
   }
 }
 
