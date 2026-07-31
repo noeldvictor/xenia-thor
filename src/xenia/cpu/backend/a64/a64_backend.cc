@@ -1513,6 +1513,20 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
   str(w13, ptr(x19, static_cast<uint32_t>(offsetof(A64BackendContext,
                                                    current_stackpoint_depth))));
 
+  if (retaddr_match) {
+    // Repair the resumed frame's saved-depth slot. Unlike canary x64 (which
+    // detects desync via stack misalignment), the a64 detection compares the
+    // frame's prolog-saved depth at [sp+GUEST_SAVED_STACKPOINT_DEPTH] against
+    // the live depth - after this resync the slot still holds the stale
+    // pre-longjmp value, so every later post-call check in this frame would
+    // re-enter this helper (correct but O(walk) per call). The restored
+    // frame's correct saved depth is exactly entry_index+1 = the depth just
+    // computed, and GUEST_SAVED_STACKPOINT_DEPTH is a fixed header offset
+    // valid in every guest frame.
+    str(w13, ptr(sp, static_cast<uint32_t>(
+                         StackLayout::GUEST_SAVED_STACKPOINT_DEPTH)));
+  }
+
   // Jump back to the caller.
   br(x8);
 
