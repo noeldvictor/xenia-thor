@@ -189,25 +189,24 @@ public final class XeniaOptimizations {
 
         list.add(new Optimization(
                 "opt_aot_precompile",
-                "Full AOT precompile + compiled-code cache (RPCS3-style)",
-                "Compiles the whole game up front on first launch (progress "
-                        + "shown on screen), caches the result, and boots fast "
-                        + "with near-zero JIT stutter afterwards.",
+                "Full AOT precompile before game start (RPCS3-style)",
+                "Compiles the whole game before it starts - a full-screen "
+                        + "compile progress screen shows, then the game launches "
+                        + "with near-zero JIT stutter.",
                 "Like RPCS3's module compilation: at load, worker threads walk "
                         + "the game's call graph and compile every reachable "
                         + "function ahead of time (entry point + exception table + "
                         + "jump/vtable targets - Blue Dragon measured ~97.5% AOT "
                         + "coverage), so gameplay hits almost no just-in-time "
-                        + "compiles. The compiled machine code is cached on disk "
-                        + "per game, so the long compile happens ONCE - later "
-                        + "launches load the cache and boot fast. FIRST launch of "
-                        + "each game takes noticeably longer (a compile progress "
-                        + "readout is shown). Requires the LLVM recompiler "
-                        + "optimization to be on for the cache to apply.",
-                CATEGORY_CPU, false, true,
+                        + "compiles and no mid-game compile stutter. Runs on the "
+                        + "stable ARM64 recompiler (fast - adds seconds to launch, "
+                        + "shown on the compile screen); when a game profile also "
+                        + "enables the LLVM recompiler (Blue Dragon), the same "
+                        + "pass precompiles through LLVM instead, which also "
+                        + "eliminates the crash-prone mid-gameplay LLVM compiles.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{
-                        new BoolCvar("cpu_aot_maximize"),
-                        new BoolCvar("cpu_llvm_object_cache")}, null));
+                        new BoolCvar("cpu_aot_maximize")}, null));
 
         list.add(new Optimization(
                 "opt_flat_membase",

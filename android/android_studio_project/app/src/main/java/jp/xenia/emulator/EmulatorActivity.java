@@ -19,7 +19,11 @@ import android.widget.TextView;
 
 import org.jetbrains.annotations.Nullable;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class EmulatorActivity extends WindowedAppActivity {
     private static final String TAG = "XeniaInput";
@@ -877,6 +881,165 @@ public class EmulatorActivity extends WindowedAppActivity {
         setupFpsOverlay(launchArguments);
         setupInGameMenu();
         registerDebugGamepadReceiver();
+        startAotCompileWatcher();
+    }
+
+    // ---- AOT precompile progress overlay (RPCS3-style) -------------------
+    // The native precompiler logs three markers ("load-window pre-warm on",
+    // "AOT precompile progress: N / ~M functions", "pre-warmed N function(s)
+    // in Xms"). This watcher tails our own process logcat for them and drives
+    // a full-screen "Compiling" overlay - no JNI plumbing needed, and it only
+    // ever appears when precompile actually runs.
+
+    private android.widget.LinearLayout mAotOverlay;
+    private TextView mAotProgressText;
+    private android.widget.ProgressBar mAotProgressBar;
+    private Thread mAotWatcherThread;
+    private volatile boolean mAotWatcherStop;
+
+    private void startAotCompileWatcher() {
+        mAotWatcherStop = false;
+        mAotWatcherThread = new Thread(() -> {
+            final Pattern progress = Pattern.compile(
+                    "AOT precompile progress: (\\d+) / ~(\\d+) functions");
+            final Pattern done = Pattern.compile(
+                    "pre-warmed (\\d+) function\\(s\\) in (\\d+)ms");
+            Process proc = null;
+            try {
+                proc = Runtime.getRuntime().exec(new String[]{
+                        "logcat", "--pid=" + android.os.Process.myPid(),
+                        "-T", "1", "-s", "xenia:*"});
+                final BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(proc.getInputStream()));
+                String line;
+                while (!mAotWatcherStop && (line = reader.readLine()) != null) {
+                    if (line.contains("load-window pre-warm on")) {
+                        runOnUiThread(this::showAotOverlay);
+                        continue;
+                    }
+                    final Matcher m = progress.matcher(line);
+                    if (m.find()) {
+                        final int doneCount = Integer.parseInt(m.group(1));
+                        final int total = Integer.parseInt(m.group(2));
+                        runOnUiThread(() -> updateAotOverlay(doneCount, total));
+                        continue;
+                    }
+                    final Matcher d = done.matcher(line);
+                    if (d.find()) {
+                        final int total = Integer.parseInt(d.group(1));
+                        final long ms = Long.parseLong(d.group(2));
+                        runOnUiThread(() -> hideAotOverlay(total, ms));
+                        break;
+                    }
+                }
+            } catch (final Exception ignored) {
+                // Log tailing is best-effort; the game runs fine without the
+                // overlay.
+            } finally {
+                if (proc != null) {
+                    proc.destroy();
+                }
+            }
+        }, "AotCompileWatcher");
+        mAotWatcherThread.setDaemon(true);
+        mAotWatcherThread.start();
+    }
+
+    private void showAotOverlay() {
+        if (mAotOverlay != null || isFinishing()) {
+            return;
+        }
+        final android.widget.LinearLayout overlay = new android.widget.LinearLayout(this);
+        overlay.setOrientation(android.widget.LinearLayout.VERTICAL);
+        overlay.setGravity(android.view.Gravity.CENTER);
+        overlay.setBackgroundColor(0xF0101418);
+        overlay.setClickable(true);
+
+        final TextView title = new TextView(this);
+        title.setText("Compiling game code…");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(22);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setGravity(android.view.Gravity.CENTER);
+        overlay.addView(title);
+
+        mAotProgressBar = new android.widget.ProgressBar(this, null,
+                android.R.attr.progressBarStyleHorizontal);
+        mAotProgressBar.setIndeterminate(false);
+        mAotProgressBar.setMax(100);
+        final android.widget.LinearLayout.LayoutParams barParams =
+                new android.widget.LinearLayout.LayoutParams(
+                        dpToPx(320), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        barParams.topMargin = dpToPx(18);
+        barParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        overlay.addView(mAotProgressBar, barParams);
+
+        mAotProgressText = new TextView(this);
+        mAotProgressText.setText("Starting…");
+        mAotProgressText.setTextColor(0xFFB9C2CC);
+        mAotProgressText.setTextSize(14);
+        mAotProgressText.setGravity(android.view.Gravity.CENTER);
+        final android.widget.LinearLayout.LayoutParams textParams =
+                new android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        textParams.topMargin = dpToPx(10);
+        overlay.addView(mAotProgressText, textParams);
+
+        final TextView note = new TextView(this);
+        note.setText("Compiling the whole game ahead of time so gameplay "
+                + "doesn't stutter. This runs once per launch and the game "
+                + "starts automatically when it finishes.");
+        note.setTextColor(0xFF7C8894);
+        note.setTextSize(12);
+        note.setGravity(android.view.Gravity.CENTER);
+        final android.widget.LinearLayout.LayoutParams noteParams =
+                new android.widget.LinearLayout.LayoutParams(
+                        dpToPx(340), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        noteParams.topMargin = dpToPx(16);
+        noteParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        overlay.addView(note, noteParams);
+
+        addContentView(overlay, new android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        mAotOverlay = overlay;
+    }
+
+    private void updateAotOverlay(final int done, final int total) {
+        if (mAotOverlay == null) {
+            showAotOverlay();
+        }
+        if (mAotProgressText != null) {
+            mAotProgressText.setText(String.format(Locale.US,
+                    "%,d / ~%,d functions", done, total));
+        }
+        if (mAotProgressBar != null && total > 0) {
+            mAotProgressBar.setProgress(
+                    Math.min(100, (int) (done * 100L / total)));
+        }
+    }
+
+    private void hideAotOverlay(final int total, final long ms) {
+        if (mAotOverlay != null) {
+            if (mAotProgressText != null) {
+                mAotProgressText.setText(String.format(Locale.US,
+                        "Compiled %,d functions in %.1fs", total, ms / 1000.0));
+            }
+            final android.widget.LinearLayout overlay = mAotOverlay;
+            mAotOverlay = null;
+            overlay.postDelayed(() -> {
+                final android.view.ViewGroup parent =
+                        (android.view.ViewGroup) overlay.getParent();
+                if (parent != null) {
+                    parent.removeView(overlay);
+                }
+            }, 900);
+        }
+    }
+
+    private int dpToPx(final int dp) {
+        return (int) (dp * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     @Override
@@ -899,6 +1062,11 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     @Override
     protected void onDestroy() {
+        mAotWatcherStop = true;
+        if (mAotWatcherThread != null) {
+            mAotWatcherThread.interrupt();
+            mAotWatcherThread = null;
+        }
         unregisterDebugGamepadReceiver();
         super.onDestroy();
     }
