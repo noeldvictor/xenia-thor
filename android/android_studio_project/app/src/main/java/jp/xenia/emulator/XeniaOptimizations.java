@@ -157,6 +157,32 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("gpu_uma_direct_shared_memory")}, null));
 
         list.add(new Optimization(
+                "opt_xendroid_parity",
+                "XenDroid-parity GPU fast paths",
+                "The GPU command-processor fast paths XenDroid ships enabled: "
+                        + "mid-frame submission, bulk register writes, redundant-write "
+                        + "skipping, ownership memoization, sampler reuse.",
+                "Ported from XenDroid/xenia-edge (the fork that runs Burnout/Lost "
+                        + "Odyssey well on this same device), where all of these ship "
+                        + "ON by default. Mid-frame submission kicks the GPU every "
+                        + "~1300 draws so it renders while the CP thread keeps "
+                        + "translating (attacks the measured GPU-idle-while-CPU-builds "
+                        + "gap); the register fast path batches PM4 register range "
+                        + "writes; redundant fetch-constant writes are skipped; EDRAM "
+                        + "ownership claims are memoized; sampler parameters and "
+                        + "handles are reused across draws. Enabled globally for "
+                        + "XenDroid parity (2026-07-31, user-directed); per-game "
+                        + "override available if a title misbehaves.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{
+                        new BoolCvar("vulkan_fast_register_ranges"),
+                        new BoolCvar("vulkan_skip_redundant_fetch_constant_writes"),
+                        new BoolCvar("rt_cache_ownership_claim_memo"),
+                        new BoolCvar("vulkan_cache_sampler_parameters")},
+                new IntCvar[]{
+                        new IntCvar("vulkan_mid_frame_submission_draws", 1300)}));
+
+        list.add(new Optimization(
                 "opt_flat_membase",
                 "Flat guest memory addressing",
                 "Folds every guest load/store into one indexed CPU instruction.",
