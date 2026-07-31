@@ -33,7 +33,10 @@
 namespace xe {
 namespace kernel {
 
-constexpr uint32_t kDeferredOverlappedDelayMillis = 100;
+// 25ms matches xenia-edge/canary. The dispatch worker is strictly serial and
+// sleeps inside each queued op, so this is also the overlapped throughput cap
+// (40/s); 100ms starved boot sequences that issue dozens of content ops.
+constexpr uint32_t kDeferredOverlappedDelayMillis = 25;
 
 // This is a global object initialized with the XboxkrnlModule.
 // It references the current kernel state object that all kernel methods should
@@ -854,6 +857,17 @@ void KernelState::CompleteOverlappedDeferredEx(
   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
   XOverlappedSetResult(ptr, X_ERROR_IO_PENDING);
   XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
+  // Titles reuse one X_OVERLAPPED + event across sequential ops. Reset the
+  // event when arming, or the guest's wait returns instantly on the previous
+  // op's still-signaled event and reads a result that is still IO_PENDING -
+  // its state machine can't classify that and parks (matches xenia-edge).
+  X_HANDLE event_handle = XOverlappedGetEvent(ptr);
+  if (event_handle) {
+    auto ev = object_table()->LookupObject<XObject>(event_handle);
+    if (ev && ev->type() == XObject::Type::Event) {
+      ev.get<XEvent>()->Reset();
+    }
+  }
   auto global_lock = global_critical_region_.Acquire();
   dispatch_queue_.push_back([this, completion_callback, overlapped_ptr,
                              pre_callback, post_callback]() {

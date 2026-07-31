@@ -74,10 +74,20 @@ public final class TrainerManagerActivity extends Activity {
         root.addView(header("Downloaded trainers"), matchWrapWithTopMargin(18));
         final TextView blurb = new TextView(this);
         blurb.setText("Trainers are small Xbox 360 programs that hook the running game "
-                + "to apply cheats (infinite health/ammo/money) and show an in-game "
-                + "menu, usually opened with START+BACK. They are build-specific — a "
-                + "trainer must match this game's title update, or the game may "
-                + "misbehave. Enable the toggle above once you've downloaded one.");
+                + "to apply cheats (infinite health/ammo/money).\n\n"
+                + "How to use:\n"
+                + "1. Download a trainer for this game below.\n"
+                + "2. Turn on “Enable trainers for this game” above.\n"
+                + "3. Launch the game normally. The trainer loads with it and shows "
+                + "a notification once armed.\n"
+                + "4. Select cheats IN-GAME with the trainer’s own controller "
+                + "combo — most open their cheat menu with START+BACK pressed "
+                + "together (some use BACK+D-Pad instead). Each trainer’s combo "
+                + "and cheat list are on its page in the repository (“Browse” "
+                + "below). There is no cheat list in this app — the menu is the "
+                + "trainer’s, drawn inside the game.\n\n"
+                + "Trainers are build-specific — one must match this game’s "
+                + "title update, or the game may misbehave.");
         blurb.setTextColor(getColor(R.color.xenia_text_secondary));
         blurb.setTextSize(12);
         root.addView(blurb, matchWrapWithTopMargin(2));

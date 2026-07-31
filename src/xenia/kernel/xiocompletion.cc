@@ -9,6 +9,10 @@
 
 #include "xenia/kernel/xiocompletion.h"
 
+#include "xenia/kernel/guest_scheduler.h"
+#include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/xthread.h"
+
 namespace xe {
 namespace kernel {
 
@@ -21,15 +25,49 @@ XIOCompletion::XIOCompletion(KernelState* kernel_state)
 XIOCompletion::~XIOCompletion() = default;
 
 void XIOCompletion::QueueNotification(IONotification& notification) {
-  std::unique_lock<std::mutex> lock(notification_lock_);
-
-  notifications_.push(notification);
-  notification_semaphore_->Release(1, nullptr);
+  {
+    std::unique_lock<std::mutex> lock(notification_lock_);
+    notifications_.push(notification);
+    notification_semaphore_->Release(1, nullptr);
+  }
+  // A fiber parked in WaitForNotification's poll loop only repolls at the
+  // scheduler backstop; wake it now so completions deliver promptly.
+  if (GuestScheduler::enabled()) {
+    auto* scheduler = kernel_state()->guest_scheduler();
+    if (scheduler) {
+      scheduler->WakeAll();
+    }
+  }
 }
 
 bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
                                         IONotification* notify) {
   auto ms = std::chrono::milliseconds(TimeoutTicksToMs(wait_ticks));
+  if (XThread::GetCurrentFiberThread()) {
+    // Fiber-backed guest thread (guest scheduler): a raw blocking wait here
+    // would park the whole dispatch host thread and freeze every fiber
+    // multiplexed onto it. Poll + cooperative yield instead (same pattern as
+    // the XMA waits).
+    uint64_t remaining_ms = uint64_t(ms.count());
+    for (;;) {
+      auto res = threading::Wait(notification_semaphore_.get(), false,
+                                 std::chrono::milliseconds(0));
+      if (res == threading::WaitResult::kSuccess) {
+        std::unique_lock<std::mutex> lock(notification_lock_);
+        assert_false(notifications_.empty());
+        std::memcpy(notify, &notifications_.front(), sizeof(IONotification));
+        notifications_.pop();
+        return true;
+      }
+      if (!remaining_ms) {
+        return false;
+      }
+      GuestScheduler::SpinYield(std::chrono::milliseconds(1));
+      if (remaining_ms != UINT64_MAX) {
+        --remaining_ms;
+      }
+    }
+  }
   auto res = threading::Wait(notification_semaphore_.get(), false, ms);
   if (res == threading::WaitResult::kSuccess) {
     std::unique_lock<std::mutex> lock(notification_lock_);

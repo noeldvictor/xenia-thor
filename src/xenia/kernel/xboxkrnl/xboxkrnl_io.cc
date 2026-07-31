@@ -261,8 +261,12 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
 
   vfs::Entry* root_entry = nullptr;
 
-  // Compute path, possibly attrs relative.
-  auto target_path = util::TranslateAnsiString(kernel_memory(), object_name);
+  // Compute path, possibly attrs relative. Path-normalizing (whitespace-
+  // trimmed) translate like the existence probe below: titles pass
+  // X_ANSI_STRINGs whose length includes trailing padding, and the raw
+  // string_view made the probe succeed but the open miss (Lost Odyssey's
+  // loader parks forever on exactly that probe-hit/open-miss sequence).
+  auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
   if (!IsValidPath(target_path, false)) {
@@ -904,7 +908,7 @@ dword_result_t NtQueryDirectoryFile_entry(
   uint32_t info = 0;
 
   auto file = kernel_state()->object_table()->LookupObject<XFile>(file_handle);
-  auto name = util::TranslateAnsiString(kernel_memory(), file_name);
+  auto name = util::TranslateAnsiPath(kernel_memory(), file_name);
 
   // Enforce that the path is ASCII.
   if (!IsValidPath(name, true)) {
@@ -978,7 +982,7 @@ dword_result_t NtOpenSymbolicLinkObject_entry(
   auto object_name =
       kernel_memory()->TranslateVirtual<X_ANSI_STRING*>(object_attrs->name_ptr);
 
-  auto target_path = util::TranslateAnsiString(kernel_memory(), object_name);
+  auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
   if (!IsValidPath(target_path, false)) {

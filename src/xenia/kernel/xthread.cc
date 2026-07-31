@@ -835,7 +835,11 @@ void XThread::NoteApcDequeued() {
 void XThread::UnlockApc(bool queue_delivery) {
   bool needs_apc = apc_list_.HasPending();
   global_critical_region_.mutex().unlock();
-  if (needs_apc && queue_delivery) {
+  if (needs_apc && queue_delivery && thread_) {
+    // thread_ is null for fiber-backed guest threads (guest scheduler): they
+    // have no dedicated host thread to interrupt. Their APCs are instead
+    // delivered when the scheduler wakes them from an alertable wait
+    // (HasPendingUserApc check in RunReadyFibers) - matching guest semantics.
     thread_->QueueUserCallback([this]() { DeliverAPCs(); });
   }
 }
