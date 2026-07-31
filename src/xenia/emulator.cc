@@ -1407,7 +1407,14 @@ bool Emulator::ExceptionCallback(Exception* ex) {
           context->r[3], context->r[4], context->r[5], context->r[8],
           context->r[13], context->r[31]);
     }
-    std::abort();
+    // Halt only the crashed thread instead of aborting the whole process
+    // (Edge behavior: one guest thread dies, the game usually keeps going).
+    if (current_thread->fiber()) {
+      ex->set_resume_pc(reinterpret_cast<uint64_t>(&HaltCrashedFiberThunk));
+      return true;
+    }
+    current_thread->Suspend(nullptr);
+    return false;
   }
 
   auto context = current_thread->thread_state()->context();

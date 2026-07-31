@@ -64,6 +64,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
 
+DECLARE_bool(cpu_llvm_no_runtime_compiles);
 DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_string(cpu_backend_llvm_range_lo);
 DECLARE_string(cpu_backend_llvm_range_hi);
@@ -2583,6 +2584,16 @@ bool LLVMAssembler::Assemble(GuestFunction* function, hir::HIRBuilder* builder,
                              uint32_t debug_info_flags,
                              std::unique_ptr<FunctionDebugInfo> debug_info) {
 #if XE_LLVM_BACKEND_ENABLED
+  // SAFETY GATE (default on): after the title's main thread launches, never
+  // run libLLVM again - a runtime-discovered function compiles on the stable
+  // a64 fallback. Confines the known intermittent libLLVM codegen crash to
+  // the load window (behind the compile screen), where a failure is a launch
+  // retry instead of a mid-race process death.
+  if (cvars::cpu_llvm_no_runtime_compiles &&
+      backend_->processor()->is_aot_runtime_phase()) {
+    return fallback_->Assemble(function, builder, debug_info_flags,
+                               std::move(debug_info));
+  }
   // Range gate (bisection): only LLVM-compile functions in [range_lo, range_hi);
   // the rest use a64. Used to localize which function's LLVM codegen corrupts
   // state. Empty (default) bounds = no restriction = compile everything.

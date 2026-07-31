@@ -5,6 +5,19 @@ Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740)
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
 `GameProfiles` / `XeniaOptimizations` toggle (default-off until validated).
 
+## ⚙️⚙️⚙️ STANDING DIRECTIVE (user 2026-07-31): AOT + LLVM IS THE DEFAULT — every game, from the GUI, no flags
+**The standard configuration for ALL games launched from the app GUI: full AOT precompile BEFORE the game starts
+(RPCS3-style full-screen compile progress in EmulatorActivity, driven by the native precompiler's log lines) +
+the LLVM whole-function recompiler as the standard CPU backend.** Made safe 2026-07-31: `cpu_llvm_no_runtime_
+compiles` (default TRUE, llvm_assembler.cc Assemble gate on `Processor::is_aot_runtime_phase()`) confines libLLVM
+to the load window — any function first discovered during gameplay compiles on the a64 fallback, so the known
+intermittent libLLVM codegen crash (killed Burnout mid-race, 2026-07-31) structurally cannot fire in gameplay.
+GUI wiring: `opt_aot_precompile` (cpu_aot_maximize) + `opt_llvm_backend` (cpu_backend_llvm) + `opt_xendroid_parity`
+(the 5 XenDroid-shipping GPU levers) are ALL defaultEnabled=true in XeniaOptimizations; GameProfiles adds
+per-title fixes on top. a64 compile speed is real (~15k fns/1.2s device-measured, Burnout) — LLVM is the slow/
+quality compile, a64 the fast/stable one; both AOT at load. VRS removed from Burnout (visible quality loss).
+Game profiles ship IN the APK — updating them = rebuild + reinstall.
+
 ## 🧭🧭🧭 STANDING DIRECTIVE (user 2026-07-31): XENDROID/XENIA-EDGE IS THE COMPAT REFERENCE — USE IT TO FIX OUR SHIT
 **XenDroid (github.com/rfandango/XenDroid, Kotlin shell + vendored xenia-edge, Canary lineage) runs games on the
 SAME AYN Thor that our fork breaks (Lost Odyssey boots there, stalls here; user: "xendroid works so well but our

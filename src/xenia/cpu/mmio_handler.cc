@@ -455,10 +455,24 @@ bool MMIOHandler::ExceptionCallback(Exception* ex) {
     }
   }
   if (!range) {
-    // Recheck if the pages are still protected (race condition - another thread
-    // clears the watch we just hit).
     // Do this under the lock so we don't introduce another race condition.
     auto lock = global_critical_region_.Acquire();
+#if XE_PLATFORM_LINUX || XE_PLATFORM_ANDROID || XE_PLATFORM_MAC
+    // POSIX exception handling runs inside a signal handler and our POSIX
+    // QueryProtect is a stub that never writes access_out - the upstream race
+    // recheck below would read an UNINITIALIZED value and nondeterministically
+    // swallow real faults or reject handled ones (Edge skips it here too).
+    // The cleared-watch race is handled inside TriggerCallbacks instead
+    // (returns true when no watch remains so the instruction retries).
+    if (access_violation_callback_) {
+      return access_violation_callback_(std::move(lock),
+                                        access_violation_callback_context_,
+                                        fault_host_address, is_write);
+    }
+    return false;
+#else
+    // Recheck if the pages are still protected (race condition - another thread
+    // clears the watch we just hit).
     memory::PageAccess cur_access;
     size_t page_length = memory::page_size();
     memory::QueryProtect(fault_host_address, page_length, cur_access);
@@ -475,6 +489,7 @@ bool MMIOHandler::ExceptionCallback(Exception* ex) {
                                         fault_host_address, is_write);
     }
     return false;
+#endif
   }
 
   auto rip = ex->pc();

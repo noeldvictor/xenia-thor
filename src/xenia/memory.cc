@@ -1833,6 +1833,20 @@ bool PhysicalHeap::TriggerCallbacks(
   // TODO(Triang3l): Support read watches.
   assert_true(is_write);
   if (!is_write) {
+    // No read watches: if the guest page is accessible, this is a race with
+    // another thread that already resolved the fault - return true so the
+    // faulting instruction retries. Only propagate genuinely inaccessible
+    // pages. Checked via the page table (signal-safe). Ported from
+    // xenia-edge; the previous unconditional false killed the process on any
+    // read fault over a physical alias.
+    uint32_t rel = virtual_address - heap_base_;
+    if (virtual_address >= heap_base_ && rel < heap_size_) {
+      uint32_t guest_page_number = rel / page_size_;
+      if (guest_page_number < page_table_.size()) {
+        return ToPageAccess(page_table_[guest_page_number].current_protect) !=
+               xe::memory::PageAccess::kNoAccess;
+      }
+    }
     return false;
   }
 
@@ -1878,7 +1892,14 @@ bool PhysicalHeap::TriggerCallbacks(
     }
   }
   if (!any_watched) {
-    return false;
+    // No watches on this page - another thread already cleared them (race
+    // between the fault firing and acquiring the global lock: the winner
+    // unprotected the page and consumed the watch). Return true so the
+    // faulting instruction retries; the access now succeeds. Ported from
+    // xenia-edge - returning false here killed Burnout Revenge on the Thor
+    // ('Kernel Dispatch' racing the CP thread on a shared-memory page:
+    // unhandled AV -> abort).
+    return true;
   }
 
   // Trigger callbacks.

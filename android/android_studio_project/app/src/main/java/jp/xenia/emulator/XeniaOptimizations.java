@@ -132,14 +132,14 @@ public final class XeniaOptimizations {
                         + "LLVM can't lower fall back to the ARM64 JIT, so it never breaks a "
                         + "title. Device-validated: Blue Dragon boots and renders gameplay "
                         + "with the full LLVM backend (3793 functions, 683 frames, 0 faults). "
-                        + "DEFAULT OFF globally (2026-07-31): a known intermittent libLLVM "
-                        + "codegen crash can kill a title when new code is compiled "
-                        + "mid-gameplay (device-observed: Burnout Revenge segfaulted "
-                        + "entering a race mid-LLVM-compile; XenDroid is stable on the "
-                        + "same title with a per-block JIT). Blue Dragon keeps it on via "
-                        + "its game profile, where it is validated. Turn on per-game "
-                        + "only after a clean test of that title.",
-                CATEGORY_CPU, false, true,
+                        + "DEFAULT ON + CRASH-PROOFED (2026-07-31): LLVM now compiles ONLY "
+                        + "during the load window (the AOT compile screen) - any function "
+                        + "first seen during gameplay uses the stable ARM64 JIT instead, so "
+                        + "the known intermittent libLLVM mid-gameplay compile crash (which "
+                        + "hit Burnout Revenge) structurally cannot happen. AOT+LLVM is the "
+                        + "standard configuration; disable per-game only if a title "
+                        + "misbehaves.",
+                CATEGORY_CPU, true, true,
                 new BoolCvar[]{new BoolCvar("cpu_backend_llvm")}, null));
 
         list.add(new Optimization(

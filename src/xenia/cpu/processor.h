@@ -123,6 +123,13 @@ class Processor {
   // aot_* counters). Called once when the title's main thread launches.
   void EnterRuntimePhase();
 
+  // True once the title's main thread has launched (gameplay). Backends use
+  // this to refuse risky compile paths after launch (cpu_llvm_no_runtime_
+  // compiles routes post-launch compiles to the a64 fallback).
+  bool is_aot_runtime_phase() const {
+    return aot_runtime_phase_.load(std::memory_order_relaxed);
+  }
+
   bool Execute(ThreadState* thread_state, uint32_t address);
   bool ExecuteRaw(ThreadState* thread_state, uint32_t address);
   uint64_t Execute(ThreadState* thread_state, uint32_t address, uint64_t args[],

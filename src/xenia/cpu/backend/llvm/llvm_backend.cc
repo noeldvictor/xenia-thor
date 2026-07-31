@@ -184,6 +184,16 @@ DEFINE_string(cpu_backend_llvm_trace_addr, "",
               "deterministic input to pin a miscompiled fn's exact value bug.",
               "CPU");
 
+DEFINE_bool(cpu_llvm_no_runtime_compiles, true,
+            "LLVM compiles ONLY during the load window (the AOT precompile "
+            "pass, before the title's main thread launches). Any function "
+            "first discovered DURING gameplay is compiled by the stable a64 "
+            "fallback instead of libLLVM - the known intermittent libLLVM "
+            "codegen crash (AsmPrinter) can therefore never kill a running "
+            "game (device-observed on Burnout Revenge 2026-07-31). With the "
+            "AOT precompiler's ~97%+ coverage the perf cost of a64-compiled "
+            "runtime misses is negligible. Set false to restore always-LLVM.",
+            "CPU");
 DEFINE_bool(cpu_llvm_object_cache, false,
             "AOT object cache: persist each LLVM-compiled guest function's "
             "machine code (.o) to disk and reuse it on the next launch / on "
