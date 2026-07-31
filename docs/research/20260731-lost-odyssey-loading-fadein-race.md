@@ -144,3 +144,17 @@ progresses past the spinner. If yes: the fix direction is loader THROUGHPUT
 the user-facing fix may already be partly landed (25ms). All the fade/Show
 analysis above remains valid decode but was chasing a state that is normal
 during this phase on both emulators.
+
+## CONFIRMED (20-min run): LO BOOTS on our fork — it was slowness, not a wedge
+
+lo_ours_min10.png shows the "LOST ODYSSEY / Press START" title screen at
+minute ~10 of a hands-off desktop run of our fixed build (master@5a7211870 +
+f2ea321a6 kernel fixes). The May-2026 "infinite loading" verdict and today's
+whole wedge hunt were an artifact of killing runs at 5-8 minutes. Remaining
+issues: (1) the process exited between min 10 and 15 while idling at the
+title (no log was enabled; needs a logged repro — possibly the attract movie
+after the title); (2) 10 minutes to title is still terrible UX vs XenDroid —
+throughput work: find what dominates state 17 (serialized deferred-overlapped
+ops? file IO? one-time content install?). Second-boot speed test in flight
+(lo_2nd_min*.png): if a relaunch reaches title fast, the cost is a one-time
+install to cache, and the device story is "first boot is very long".
