@@ -14,8 +14,23 @@
 #include "xenia/base/cvar.h"
 #include "xenia/cpu/hir/hir_builder.h"
 
-DECLARE_bool(guest_scheduler);
-DECLARE_bool(guest_scheduler_jit_safepoints);
+// Defined here (the lowest layer that reads them) so standalone CPU tools
+// (ppc-tests) link without the kernel library; the kernel DECLAREs them via
+// kernel_flags.h.
+DEFINE_bool(
+    guest_scheduler, false,
+    "Run guest threads as cooperative fibers driven by an in-kernel scheduler "
+    "instead of mapping each to its own host OS thread. Experimental; off by "
+    "default. Requires a restart to take effect.",
+    "Kernel");
+DEFINE_bool(
+    guest_scheduler_jit_safepoints, false,
+    "Stage 2 of the cooperative guest scheduler: inject preemption "
+    "safepoints into compiled guest code so a fiber that never waits still "
+    "yields at its quantum end. Lowered by all three backends (x64, a64, and "
+    "the LLVM AOT backend via the xe_llvm_preempt_yield runtime helper). "
+    "Off = cooperative-only scheduling.",
+    "Kernel");
 
 namespace xe {
 namespace cpu {

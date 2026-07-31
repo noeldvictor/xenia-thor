@@ -35,12 +35,6 @@ DEFINE_int32(xboxkrnl_file_io_status_log_budget, 256,
              "Maximum non-success file I/O status log lines to emit; negative "
              "means unlimited, zero suppresses them.",
              "Kernel");
-DEFINE_bool(
-    guest_scheduler, false,
-    "Run guest threads as cooperative fibers driven by an in-kernel scheduler "
-    "instead of mapping each to its own host OS thread. Experimental; off by "
-    "default. Requires a restart to take effect.",
-    "Kernel");
 DEFINE_uint32(
     guest_scheduler_cpus, 6,
     "Number of host dispatch threads the cooperative scheduler spreads the "
@@ -48,14 +42,6 @@ DEFINE_uint32(
     "(full "
     "parallelism), 3 is one per physical core (SMT pairs share a thread), 1 is "
     "all guest threads cooperative on a single thread. Requires a restart.",
-    "Kernel");
-DEFINE_bool(
-    guest_scheduler_jit_safepoints, false,
-    "Stage 2 of the cooperative guest scheduler: inject preemption "
-    "safepoints into compiled guest code so a fiber that never waits still "
-    "yields at its quantum end. Lowered by all three backends (x64, a64, and "
-    "the LLVM AOT backend via the xe_llvm_preempt_yield runtime helper). "
-    "Off = cooperative-only scheduling.",
     "Kernel");
 DEFINE_uint32(
     guest_scheduler_quantum_us, 1000,

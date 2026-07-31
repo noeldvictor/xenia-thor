@@ -36,6 +36,31 @@ DEFINE_path(test_bin_path, "src/xenia/cpu/ppc/testing/bin/",
 DEFINE_transient_string(test_name, "", "Test suite name.", "General");
 
 namespace xe {
+
+// Link stub: cpu/processor.cc's BD tiling-HLE experiment calls
+// gpu::CommandProcessor::UpdateWritePointer, but this standalone tool links
+// no GPU library and never runs that path (no graphics system exists here).
+// Defining the symbol locally keeps the tool linking without dragging in the
+// whole GPU dependency chain.
+namespace gpu {
+class CommandProcessor;
+}  // namespace gpu
+}  // namespace xe
+namespace xe {
+namespace gpu {
+void __cdecl CommandProcessorUpdateWritePointerStubNever();
+}  // namespace gpu
+}  // namespace xe
+#include "xenia/gpu/command_processor.h"
+namespace xe {
+namespace gpu {
+void CommandProcessor::UpdateWritePointer(uint32_t) {
+  // Unreachable in the PPC testing tool.
+}
+}  // namespace gpu
+}  // namespace xe
+
+namespace xe {
 namespace cpu {
 namespace test {
 
@@ -194,6 +219,10 @@ class TestRunner {
   }
 
   bool Setup(TestSuite& suite) {
+    // Destroy the previous run's thread state before its processor: the
+    // ThreadState destructor calls back into processor_->backend().
+    thread_state_.reset();
+
     // Reset memory.
     memory_->Reset();
 
