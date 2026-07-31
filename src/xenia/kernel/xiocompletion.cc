@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/xiocompletion.h"
 
+#include "xenia/base/clock.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xthread.h"
@@ -48,7 +49,11 @@ bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
     // would park the whole dispatch host thread and freeze every fiber
     // multiplexed onto it. Poll + cooperative yield instead (same pattern as
     // the XMA waits).
-    uint64_t remaining_ms = uint64_t(ms.count());
+    // Wall-clock deadline: SpinYield on a fiber parks until the next scheduler
+    // wake, NOT for 1ms - counting iterations would expire an N-ms timeout
+    // after N wakes (a few real ms during IO storms; code-review finding F5).
+    const uint64_t deadline_ms =
+        Clock::QueryHostUptimeMillis() + uint64_t(ms.count());
     for (;;) {
       auto res = threading::Wait(notification_semaphore_.get(), false,
                                  std::chrono::milliseconds(0));
@@ -59,13 +64,10 @@ bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
         notifications_.pop();
         return true;
       }
-      if (!remaining_ms) {
+      if (Clock::QueryHostUptimeMillis() >= deadline_ms) {
         return false;
       }
       GuestScheduler::SpinYield(std::chrono::milliseconds(1));
-      if (remaining_ms != UINT64_MAX) {
-        --remaining_ms;
-      }
     }
   }
   auto res = threading::Wait(notification_semaphore_.get(), false, ms);

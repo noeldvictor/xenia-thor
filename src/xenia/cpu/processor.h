@@ -130,6 +130,14 @@ class Processor {
     return aot_runtime_phase_.load(std::memory_order_relaxed);
   }
 
+  // Called at the start of a new title launch: reopens the AOT load window
+  // (and coverage counters) so the next precompile pass may use LLVM again.
+  void ResetAotPhaseForNewTitle() {
+    aot_runtime_phase_.store(false, std::memory_order_relaxed);
+    aot_compiles_.store(0, std::memory_order_relaxed);
+    aot_runtime_misses_.store(0, std::memory_order_relaxed);
+  }
+
   bool Execute(ThreadState* thread_state, uint32_t address);
   bool ExecuteRaw(ThreadState* thread_state, uint32_t address);
   uint64_t Execute(ThreadState* thread_state, uint32_t address, uint64_t args[],

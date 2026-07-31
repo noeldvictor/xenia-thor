@@ -1109,8 +1109,12 @@ void Emulator::Pause() {
                             : nullptr;
   pause_acknowledged_all_ = true;
   for (auto thread : threads) {
-    // Don't pause ourself or host threads.
-    if (thread == current_thread || !thread->can_debugger_suspend()) {
+    // Don't pause ourself or host threads. Fiber-backed guest threads (guest
+    // scheduler) have no dedicated host thread to suspend - thread() is null
+    // (code-review finding F3: dereferencing it here killed the process
+    // inside the crash-halt path before the halt thunk could run).
+    if (thread == current_thread || !thread->can_debugger_suspend() ||
+        !thread->thread()) {
       continue;
     }
 
@@ -1657,6 +1661,11 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   auto xam = kernel_state()->GetKernelModule<kernel::xam::XamModule>("xam.xex");
 
   XELOGI("Launching module {}", module_path);
+  // New title = new AOT load window. Without this reset, a relaunch/disc-swap
+  // in the same process kept aot_runtime_phase_=true from the previous title,
+  // and cpu_llvm_no_runtime_compiles then routed the ENTIRE next precompile
+  // pass to a64 - silently disabling LLVM (code-review finding F6).
+  processor_->ResetAotPhaseForNewTitle();
   auto module = kernel_state_->LoadUserModule(module_path);
   if (!module) {
     XELOGE("Failed to load user module {}", xe::path_to_utf8(path));
