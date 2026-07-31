@@ -79,3 +79,68 @@ cadence) lets the reset lose the race, and fix THAT (or port Edge's behavior).
   global refs in seconds on the 15MB dump.
 - Wait/event trace cvars (budget 2M, after_ms 0) + begin-without-end analyzer
   pin parked threads and give their lr/ctr/r1 for the stack walk.
+
+## Addendum (same day, live-write captures)
+
+- **SetFadeImmediate identified**: 0x82375DB0 (wrapper) -> 0x82375E18 (body:
+  byte0=1, byte1=1, byte2=0, color from r4, **+0x20 = f1 value**, +0x28=mode,
+  +0x24=0). The observed {01 01, held=0.0} triplets = SetFadeImmediate(black).
+- **Guilty transition site (our run, main thread)**: 0x8234C69C calls
+  SetFadeImmediate(black) right after 0x82811D88 = SetLoadingScreenActive(1)
+  (sets obj3->C0, zeroes A8/B0, clears 2eef/2f08). This is the legitimate
+  "enter loading" snap-to-black. 17 total SetFadeImmediate callers.
+- Show()'s fade-in skip therefore trips BY CONSTRUCTION after the snap
+  (state=5); the working flow must un-black via a later reset/restart/snap
+  that our run never reaches. cdb-under-canary write tracing captured the SAME
+  4 snap-black writes then died (guarded-page AV firehose makes the debugger
+  too invasive for canary).
+- Current experiment: non-invasive 1.5s sampling (attach/read/detach) of
+  fade bytes + held + obj3 ptr + 0x832631D4 on a clean canary boot
+  (lo_sample.ps1) to see what state transition un-blacks the fade in the
+  WORKING boot and what loading fields look like at that moment.
+- cdb recipe for guest-context reads on our build (PDB present):
+  `?? ((xe::cpu::ppc::PPCContext*)@rsi)->lr` inside a `ba w1` command (JIT
+  ctx=rsi, membase=rdi). Guest stack dump: `r? $t0 = ...->r[1]` then
+  `db 1`00000000+@$t0`.
+
+## REFRAME (canary sampling result — the fade was a red herring for root cause)
+
+Non-invasive sampling of a WORKING canary boot (lo_canary_samples2.txt) shows
+the fade object sits at {byte0=1, byte1=1, held=0.0} the ENTIRE boot and
+0x832631D4 stays **2** — canary NEVER enters the loading-screen state at all
+(Show() never runs; the whole gate chain above is never exercised). Our fork
+enters it (1d4=3) and wedges. So the true divergence is one level up, in the
+TITLE FLOW state machine:
+
+- Transition 2->3 (enter loading state) at 0x82320C8C..0x82320CAC requires
+  `bl 0x82829710` == 2.
+- 0x82829710: obj = *(0x832644EC); returns 0 if null; else returns 2 iff
+  obj->+0x14 == 0xE (14), else 1.
+- => our run's title-flow object reaches state 14 WITHOUT INPUT (no controller
+  connected in the desktop repro); canary with the same no-input setup stays
+  in the attract flow (girl scene) and never hits 14.
+
+Open question now: WHICH transition drives obj->+0x14 to 14 in our fork —
+phantom input (XInputGetState/GetKeystroke differences), an auto-advance on a
+failed/instantly-finished subsystem (intro movie?), or a timer. In-flight:
+sampling ours (lo_sample3.ps1 -> lo_ours_flow.txt) for the flow-state
+timeline; next = ba w4 on flowptr+0x14 with PPCContext lr capture to get the
+transition writer, then compare that path's kernel inputs vs canary.
+
+## REFRAME 2 (decisive): both emulators follow the SAME state timeline
+
+Sampling canary with the identical probe set (lo_canary_flow.txt vs
+lo_ours_flow.txt): BOTH go flow-state 6 (~60s) -> 0x10 -> 0x11 (17) and sit
+there with 1d4=2 and the fade held black. Canary is NOT taking a different
+path — it just eventually LEAVES state 17 (the girl/attract scene screenshot
+was taken 10+ minutes after canary's launch). The "infinite" loading is
+therefore very plausibly EXTREME SLOWNESS of state 17's streaming load, not a
+wedge: LO's loader issues large numbers of serialized deferred-overlapped ops
+(we ran at 100ms each until f2ea321a6 cut it to canary's 25ms), plus whatever
+else throttles our loader throughput. In-flight: 20-minute run of our fixed
+build with 5-minute screenshots (lo_ours_min{5,10,15,20}.png) to see if it
+progresses past the spinner. If yes: the fix direction is loader THROUGHPUT
+(overlapped dispatch concurrency, XamContent op costs, file IO latency), and
+the user-facing fix may already be partly landed (25ms). All the fade/Show
+analysis above remains valid decode but was chasing a state that is normal
+during this phase on both emulators.
