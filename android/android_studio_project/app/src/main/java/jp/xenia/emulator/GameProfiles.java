@@ -237,11 +237,10 @@ public final class GameProfiles {
                         + "it isn't descheduled under contention - Burnout's Main thread "
                         + "busy-waits on the GPU ring read-pointer, so a continuously-fed "
                         + "CP shortens that bubble. Part of the validated 46.2fps stack.")
-                .add("gpu_vrs_foliage_rate", Integer.valueOf(2),
-                        "Adreno hardware VRS 2x2 coarse-shades Burnout's overdraw-heavy "
-                        + "blended draws. Device-validated -46% earlier; part of the "
-                        + "46.2fps full-stack measurement. Keeps all geometry (fragment-"
-                        + "shading coarsen only, not polygon reduction).")
+                // gpu_vrs_foliage_rate=2 REMOVED 2026-07-31 (user: "looked bad
+                // compared to XenDroid") - VRS 2x2 visibly coarsens shading and
+                // XenDroid ships full quality. Perf cost of removal absorbed by
+                // the XenDroid-parity levers below.
                 // XenDroid-parity levers (2026-07-31): the set XenDroid ships
                 // ENABLED that we ported default-off. User-directed: enable for
                 // Burnout at XenDroid's shipping values; our own device A/B is
