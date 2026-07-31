@@ -876,6 +876,12 @@ void GuestScheduler::NotifyThreadExited(XThread* thread) {
   }
   XELOGI("GuestScheduler: exited tid={:08X} '{}'", thread->thread_id(),
          thread->thread_name());
+  // Mark exited BEFORE parking: a Suspend racing this exit followed by a
+  // Resume would otherwise MarkReady the dead fiber, which resumes past its
+  // final yield and executes threading::Thread::Exit on the SHARED dispatch
+  // thread - killing every fiber on this CPU (code-review finding A5). The
+  // MarkReady zombie guard tests this flag.
+  thread->scheduler_links().exited = true;
   // This CPU's dispatch loop reclaims it, since we can't drop the last handle
   // while running on its fiber.
   cpus_[t_current_cpu].exited_thread = thread;

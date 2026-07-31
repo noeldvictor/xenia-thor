@@ -58,3 +58,26 @@ landed same day; BACKLOG items are verified-real but deferred.
 
 ## Scheduler + GPU reviewer findings: see their reports in the session task
 outputs (arrived after this doc; append when triaged).
+
+## Round 2 (scheduler + GPU reviewers) - triaged
+FIXED same day (2nd commit): GPU descriptor-signature ABA (signatures now
+invalidated per submission - the one live-config defect); scheduler A1
+(Execute null system_id log - fiber couldn't dispatch ONE thread), A2
+(QueryPriority/SetPriority null guards), A4 (external Terminate double
+handle release), A5 (links.exited now set in NotifyThreadExited - zombie
+revival killed the dispatch thread), C1 (Windows fibers committed 16MiB
+each - now 64KiB commit/full reserve). E1/E2 (xiocompletion wall-clock)
+were already fixed in round 1.
+BACKLOG (scheduler): A3 user APCs never delivered on cooperative path
+(alertable waits spin USER_APC forever - must call DeliverAPCs on the
+fiber); A6 terminate-time mutant abandonment races the still-running
+victim; A7 fiber_exit_event_ set before the victim actually stops; B1
+preempt flag clear races; B2 safepoint handler never yields (preemption
+inert; raised flag = permanent cold path); B4 blocking-call offload dead
+(disc IO freezes co-resident fibers); C2 POSIX fibers don't switch
+MXCSR/FPCR (guest FP mode leaks into host/other fibers); D1 WaitMultiple
+bypasses FIFO fairness + 64-slot alias; D2 host-thread mutant permit leak.
+BACKLOG (GPU): direct-host-resolve partial-failure double-path + unaudited
+depth/stencil variant (keep cvar off until depth A/B); BD framegraph vs
+mid-frame-split interaction; fast-register-path special-span fragility
+(assert/comment pairing). Levers 2/3/4 verified clean line-by-line.

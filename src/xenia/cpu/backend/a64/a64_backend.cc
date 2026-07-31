@@ -89,6 +89,18 @@ DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
             "impact, but fixes crashes in games that use setjmp/longjmp.",
             "a64");
 
+DEFINE_bool(
+    a64_stack_sync_retaddr_match, false,
+    "Longjmp stack-sync: port of xenia-edge's (canary x64) second search pass "
+    "that disambiguates stackpoint frames sharing the same guest r1 by ALSO "
+    "matching the recorded guest return address (plus the canary's "
+    "skip-adjust for <=1-entry discrepancies). The current a64 helper stops "
+    "at the first guest_stack>=r1 match, which picks the wrong frame when "
+    "leaf/reentered frames share r1 - the suspected root of the stackpoint "
+    "depth leak (edge d5956d7e3). Default-off until device-validated on a "
+    "longjmp-heavy title (Infinite Undiscovery).",
+    "a64");
+
 DEFINE_uint32(
     arm64_compiled_call_trace_interval, 0,
     "Thor ARM64 bring-up: log every Nth A64 guest function entry after "
@@ -1364,6 +1376,7 @@ ResolveFunctionThunk A64HelperEmitter::EmitResolveFunctionThunk() {
 // On entry (set by the tail-emitted sync check in the guest function):
 //   x8  = return address (where to jump after fixup)
 //   x9  = caller's stack size (to subtract from restored SP)
+//   w17 = caller's guest return address (retaddr disambiguation key)
 //   x19 = A64BackendContext*
 //   x20 = PPCContext*
 void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
@@ -1380,6 +1393,8 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
   code_offsets.prolog_stack_alloc = getSize();
   code_offsets.body = getSize();
 
+  const bool retaddr_match = cvars::a64_stack_sync_retaddr_match;
+
   // x19 = backend context pointer (already set up by HostToGuestThunk)
 
   // x10 = stackpoints array pointer
@@ -1394,16 +1409,24 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
 
   // Search backward through stackpoints for the first entry where
   // guest_stack_ >= current r1 (guest stack was unwound past that frame).
-  // ecx = loop index, starting at depth - 1
+  // w13 = loop index, starting at depth - 1
   sub(w13, w11, 1);
+  // w11 is now free; reuse it as the skipped-entry counter (canary r12d).
+  mov(w11, 0);
 
   auto& loop = NewCachedLabel();
   auto& found = NewCachedLabel();
-  auto& underflow = NewCachedLabel();
+  auto& commit = NewCachedLabel();
+  auto& no_adjust = NewCachedLabel();
 
   L(loop);
-  // Bounds check
-  tbnz(w13, 31, underflow);  // if index went negative, bail
+  // Bounds check: index went negative = no matching frame is recorded.
+  // Previously brk(0xF001) - a guaranteed SIGTRAP on guest-reachable state
+  // (e.g. after overflow recovery dropped old entries, or a longjmp above all
+  // recorded frames). Degrade to the no-sync behavior instead: resume without
+  // adjusting the host stack, which is exactly the (supported) behavior of
+  // running with a64_enable_host_guest_stack_synchronization=false.
+  tbnz(w13, 31, no_adjust);
 
   // x14 = &stackpoints[w13] = x10 + w13 * sizeof(A64BackendStackpoint)
   mov(w14, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
@@ -1419,11 +1442,63 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
   b(GE, found);
 
   // Not found yet, go to previous entry.
+  add(w11, w11, 1);
   sub(w13, w13, 1);
   b(loop);
 
   L(found);
-  // x14 points to the matching stackpoint entry.
+  if (retaddr_match) {
+    // Canary (xenia-edge x64) second pass, ported: multiple frames can share
+    // the same guest r1 (leaf frames that allocate no guest stack, reentered
+    // longjmp targets). The first guest_stack_>=r1 hit walking down from the
+    // top may be a stale leaked entry of a DIFFERENT frame instance -
+    // restoring its host SP corrupts the stack and leaks depth. Disambiguate
+    // within the equal-guest_stack_ run by matching the recorded guest return
+    // address against the checking function's (w17).
+    auto& search = NewCachedLabel();
+    auto& no_match_bump = NewCachedLabel();
+    auto& matched = NewCachedLabel();
+
+    // Canary: <=1 skipped entries -> no adjustment at all.
+    cmp(w11, 1);
+    b(LE, no_adjust);
+
+    // w15 = the group key (guest_stack_ of the first match).
+    L(search);
+    mov(w14, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
+    umull(x14, w13, w14);
+    add(x14, x10, x14);
+    ldr(w16, ptr(x14, static_cast<uint32_t>(
+                          offsetof(A64BackendStackpoint, guest_stack_))));
+    cmp(w16, w15);
+    b(NE, no_match_bump);  // walked past the equal-r1 group
+    ldr(w16, ptr(x14, static_cast<uint32_t>(offsetof(
+                          A64BackendStackpoint, guest_return_address_))));
+    cmp(w16, w17);
+    b(EQ, matched);
+    sub(w13, w13, 1);
+    tbnz(w13, 31, no_adjust);  // guard (canary reads OOB here; we bail)
+    b(search);
+
+    L(no_match_bump);
+    // No retaddr match in the group: use the entry just above it
+    // (canary we_good_but_increment).
+    add(w13, w13, 1);
+    b(commit);
+
+    L(matched);
+    // Matched our frame's return address: restore to the entry BELOW it
+    // (canary we_good - "we're popping this return address").
+    sub(w13, w13, 1);
+    tbnz(w13, 31, no_adjust);
+    // fallthrough to commit
+  }
+
+  L(commit);
+  // x14 = &stackpoints[w13] (recompute - w13 may have been adjusted).
+  mov(w14, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
+  umull(x14, w13, w14);
+  add(x14, x10, x14);
   // Restore host SP from stackpoints[index].host_stack_
   ldr(x16, ptr(x14, static_cast<uint32_t>(
                         offsetof(A64BackendStackpoint, host_stack_))));
@@ -1441,9 +1516,9 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
   // Jump back to the caller.
   br(x8);
 
-  L(underflow);
-  // Should be impossible — stackpoint array underflowed.
-  brk(0xF001);  // assertion failure
+  L(no_adjust);
+  // Resume without touching SP or depth.
+  br(x8);
 
   code_offsets.epilog = getSize();
   code_offsets.tail = getSize();

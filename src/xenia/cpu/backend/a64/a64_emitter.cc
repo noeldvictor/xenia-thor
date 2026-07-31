@@ -2569,6 +2569,25 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   // Try to emit.
   EmitFunctionInfo func_info = {};
   if (!Emit(builder, func_info)) {
+    // Failed mid-emission (e.g. an unlowerable opcode). Reset ALL codegen
+    // state the same way Emplace() would have - otherwise the next function
+    // compiled on this emitter sees this function's stale state: label_map_
+    // is keyed by HIR label id, so id collisions would resolve the NEXT
+    // function's branches against THIS function's (discarded) code offsets,
+    // and the unreset code buffer breaks the code_offsets.prolog == 0
+    // invariant. Silent branch miscompiles in release.
+    reset();
+    tail_code_.clear();
+    current_a64_function_ = nullptr;
+    epilog_label_ = nullptr;
+    for (auto* cached_label : label_cache_) {
+      delete cached_label;
+    }
+    label_cache_.clear();
+    for (auto& pair : label_map_) {
+      delete pair.second;
+    }
+    label_map_.clear();
     return false;
   }
 
@@ -6299,24 +6318,77 @@ Label& A64Emitter::GetLabel(uint32_t label_id) {
 }
 
 void A64Emitter::HandleStackpointOverflowError(ppc::PPCContext* context) {
-  if (debugging::IsDebuggerAttached()) {
-    debugging::Break();
+  // The stackpoint array is full. Historically this was a FatalError (process
+  // abort - the "Overflowed stackpoints!" SIGABRT on longjmp-heavy titles,
+  // e.g. Infinite Undiscovery). The depth grows because the longjmp sync can
+  // leak entries; killing the process over a diagnostic array is never the
+  // right trade. Recover instead: drop the OLDEST half of the entries (stale /
+  // leaked frames) and keep the newest half - the live call chain - so the
+  // longjmp sync keeps working for every frame that can realistically unwind.
+  // Older live frames whose entries were dropped degrade to the same behavior
+  // as running with stack synchronization disabled (a supported mode).
+  auto* bctx = reinterpret_cast<A64BackendContext*>(
+      reinterpret_cast<uint8_t*>(context) - sizeof(A64BackendContext));
+  const uint32_t max = cvars::a64_max_stackpoints;
+  uint32_t depth = bctx->current_stackpoint_depth;
+  if (!bctx->stackpoints || max < 2 || depth < max) {
+    // Spurious call (recovered concurrently or misconfigured) - nothing to do.
+    return;
   }
-  xe::FatalError(
-      "Overflowed stackpoints! Please report this error for this title to "
-      "Xenia developers.");
+  if (depth > max) {
+    // Corrupt/overshot depth: entries past max were never written; clamp so
+    // the compaction below only reads inside the allocation.
+    depth = max;
+  }
+  const uint32_t keep = max / 2;
+  std::memmove(bctx->stackpoints, bctx->stackpoints + (depth - keep),
+               keep * sizeof(A64BackendStackpoint));
+  bctx->current_stackpoint_depth = keep;
+  static std::atomic<int> overflow_warn_budget{8};
+  if (overflow_warn_budget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+    XELOGW(
+        "A64 stackpoints overflowed (max={}): dropped the oldest {} entries "
+        "and continuing. This title leaks stackpoint depth (longjmp sync); "
+        "consider raising a64_max_stackpoints.",
+        max, depth - keep);
+  }
 }
 
 void A64Emitter::PushStackpoint() {
-  if (!cvars::a64_enable_host_guest_stack_synchronization) {
+  if (!cvars::a64_enable_host_guest_stack_synchronization ||
+      !cvars::a64_max_stackpoints) {
+    // Note: with a zero cap the stackpoints array is never allocated, so the
+    // stores below would write through a null pointer - gating on the cap is
+    // load-bearing, not just an optimization.
     return;
   }
-  // x8 = stackpoints array, w9 = current depth
-  ldr(x8, ptr(x19,
-              static_cast<uint32_t>(offsetof(A64BackendContext, stackpoints))));
+  // w9 = current depth. Bounds-check BEFORE storing so a full array can never
+  // be written past, even transiently; the recovery handler compacts the
+  // array and we then store at the (reloaded) recovered depth.
   ldr(w9, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));
+  mov(w10, static_cast<uint32_t>(cvars::a64_max_stackpoints));
+  cmp(w9, w10);
+  auto& resume = NewCachedLabel();
+  auto& overflow_label = AddToTail([&resume](A64Emitter& e, Label& lbl) {
+    e.CallNativeSafe(
+        reinterpret_cast<void*>(A64Emitter::HandleStackpointOverflowError));
+    // The handler compacted the array; reload the recovered depth and rejoin
+    // the push. (Previously the handler never returned - FatalError - and
+    // this tail fell through into unrelated tail code if it ever did.)
+    e.ldr(e.w9, ptr(e.x19, static_cast<uint32_t>(offsetof(
+                               A64BackendContext, current_stackpoint_depth))));
+    // CallNativeSafe clobbered x0 (guest return address, consumed later in
+    // the prolog); the prolog stored it to the frame before pushing.
+    e.ldr(e.x0, ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
+    e.b(resume);
+  });
+  b(GE, overflow_label);
+  L(resume);
 
+  // x8 = stackpoints array
+  ldr(x8, ptr(x19,
+              static_cast<uint32_t>(offsetof(A64BackendContext, stackpoints))));
   // Compute offset into array: x10 = w9 * sizeof(A64BackendStackpoint)
   mov(w10, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
   umull(x10, w9, w10);
@@ -6339,31 +6411,28 @@ void A64Emitter::PushStackpoint() {
   add(w9, w9, 1);
   str(w9, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));
-
-  // Check for overflow.
-  mov(w10, static_cast<uint32_t>(cvars::a64_max_stackpoints));
-  cmp(w9, w10);
-  auto& overflow_label = AddToTail([](A64Emitter& e, Label& lbl) {
-    e.CallNativeSafe(
-        reinterpret_cast<void*>(A64Emitter::HandleStackpointOverflowError));
-  });
-  b(GE, overflow_label);
 }
 
 void A64Emitter::PopStackpoint() {
-  if (!cvars::a64_enable_host_guest_stack_synchronization) {
+  if (!cvars::a64_enable_host_guest_stack_synchronization ||
+      !cvars::a64_max_stackpoints) {
     return;
   }
-  // Decrement current_stackpoint_depth.
+  // Decrement current_stackpoint_depth, saturating at zero. An unbalanced pop
+  // (possible after overflow recovery or a mis-walked longjmp sync) must not
+  // wrap to 0xFFFFFFFF - the next push would multiply that into a ~64GiB
+  // out-of-bounds store.
   ldr(w8, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));
-  sub(w8, w8, 1);
+  subs(w8, w8, 1);
+  csel(w8, wzr, w8, MI);
   str(w8, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));
 }
 
 void A64Emitter::EnsureSynchronizedGuestAndHostStack() {
-  if (!cvars::a64_enable_host_guest_stack_synchronization) {
+  if (!cvars::a64_enable_host_guest_stack_synchronization ||
+      !cvars::a64_max_stackpoints) {
     return;
   }
   // Compare current stackpoint depth against the value saved after
@@ -6379,10 +6448,15 @@ void A64Emitter::EnsureSynchronizedGuestAndHostStack() {
 
   auto& sync_label = AddToTail([&return_from_sync](A64Emitter& e, Label& lbl) {
     // Set up arguments for the sync helper:
-    //   x8 = return address (where to resume after fixup)
-    //   x9 = this function's stack size
+    //   x8  = return address (where to resume after fixup)
+    //   x9  = this function's stack size
+    //   w17 = this function's guest return address (for the canary-style
+    //         return-address disambiguation among equal-guest-r1 frames;
+    //         only read by the helper when a64_stack_sync_retaddr_match).
     e.adr(e.x8, return_from_sync);
     e.mov(e.x9, static_cast<uint64_t>(e.stack_size()));
+    e.ldr(e.w17,
+          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_RET_ADDR)));
     e.mov(e.x10, reinterpret_cast<uint64_t>(
                      e.backend()->synchronize_guest_and_host_stack_helper()));
     e.br(e.x10);

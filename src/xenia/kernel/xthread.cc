@@ -613,9 +613,11 @@ X_STATUS XThread::Terminate(int exit_code) {
     XObject::AbandonCooperativeWait(this);
     if (kernel_state()->guest_scheduler()->TerminateThread(this)) {
       // Nothing will ever run on its stack again, so free it here.
+      // ReclaimExited() releases the Create()-retained handle itself -
+      // releasing again here consumed the GUEST's still-open handle ref
+      // (premature handle recycling; code-review finding A4).
       ReclaimExited();
     }
-    ReleaseHandle();
   } else {
     ReleaseHandle();
   }
@@ -671,7 +673,8 @@ uint32_t ExecuteWithAndroidReenterLongJump(XThread* thread,
 
 void XThread::Execute() {
   XELOGKERNEL("XThread::Execute thid {} (handle={:08X}, '{}', native={:08X})",
-              thread_id_, handle(), thread_name_, thread_->system_id());
+              thread_id_, handle(), thread_name_,
+              thread_ ? thread_->system_id() : 0);
 
   // Let the kernel know we are starting.
   kernel_state()->OnThreadExecute(this);
@@ -969,7 +972,10 @@ void XThread::RundownAPCs() {
   UnlockApc(true);
 }
 
-int32_t XThread::QueryPriority() { return thread_->priority(); }
+int32_t XThread::QueryPriority() {
+  // Fiber-backed guest threads have no host thread (guest scheduler).
+  return thread_ ? thread_->priority() : priority_;
+}
 
 void XThread::SetPriority(int32_t increment) {
   priority_ = increment;
@@ -985,7 +991,7 @@ void XThread::SetPriority(int32_t increment) {
   } else {
     target_priority = xe::threading::ThreadPriority::kNormal;
   }
-  if (!cvars::ignore_thread_priorities) {
+  if (!cvars::ignore_thread_priorities && thread_) {
     thread_->set_priority(target_priority);
   }
 }

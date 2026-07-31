@@ -10651,6 +10651,14 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     current_external_compute_pipeline_ = VK_NULL_HANDLE;
     current_guest_graphics_pipeline_layout_ = nullptr;
     current_graphics_descriptor_sets_bound_up_to_date_ = 0;
+    // Mid-frame submissions advance the completed-submission index, which can
+    // evict samplers/textures MID-FRAME; the driver may then recycle a freed
+    // handle VALUE for a new object, making a stale signature numerically
+    // match and rebind a descriptor set that references the destroyed object
+    // (code-review 2026-07-31, descriptor-signature ABA). One rewrite per
+    // split is cheap insurance.
+    texture_descriptor_signature_vertex_valid_ = false;
+    texture_descriptor_signature_pixel_valid_ = false;
     // Lever 2: a pending draw-concatenation run never spans a submission. Reset
     // regardless of the cvar so a mid-run toggle cannot carry stale state. (A
     // run pending at submission end is flushed by the EndSubmission flush point

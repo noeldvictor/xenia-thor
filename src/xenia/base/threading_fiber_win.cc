@@ -36,8 +36,11 @@ class WinFiber : public Fiber {
   // switch.
   WinFiber(size_t stack_size, std::function<void()> start_routine)
       : start_routine_(std::move(start_routine)) {
+    // First parameter is the COMMIT size: passing stack_size committed the
+    // full reservation (16 MiB x N guest threads = gigabytes) up front
+    // (code-review finding C1). Commit one chunk; reserve the full size.
     fiber_handle_ = CreateFiberEx(
-        stack_size, stack_size, FIBER_FLAG_FLOAT_SWITCH, FiberEntryThunk, this);
+        64 * 1024, stack_size, FIBER_FLAG_FLOAT_SWITCH, FiberEntryThunk, this);
     assert_not_null(fiber_handle_);
   }
 
