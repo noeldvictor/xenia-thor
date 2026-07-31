@@ -132,9 +132,14 @@ public final class XeniaOptimizations {
                         + "LLVM can't lower fall back to the ARM64 JIT, so it never breaks a "
                         + "title. Device-validated: Blue Dragon boots and renders gameplay "
                         + "with the full LLVM backend (3793 functions, 683 frames, 0 faults). "
-                        + "Experimental - validated on Blue Dragon; other titles may fall "
-                        + "back more or hit untested paths.",
-                CATEGORY_CPU, true, true,
+                        + "DEFAULT OFF globally (2026-07-31): a known intermittent libLLVM "
+                        + "codegen crash can kill a title when new code is compiled "
+                        + "mid-gameplay (device-observed: Burnout Revenge segfaulted "
+                        + "entering a race mid-LLVM-compile; XenDroid is stable on the "
+                        + "same title with a per-block JIT). Blue Dragon keeps it on via "
+                        + "its game profile, where it is validated. Turn on per-game "
+                        + "only after a clean test of that title.",
+                CATEGORY_CPU, false, true,
                 new BoolCvar[]{new BoolCvar("cpu_backend_llvm")}, null));
 
         list.add(new Optimization(
@@ -181,6 +186,28 @@ public final class XeniaOptimizations {
                         new BoolCvar("vulkan_cache_sampler_parameters")},
                 new IntCvar[]{
                         new IntCvar("vulkan_mid_frame_submission_draws", 1300)}));
+
+        list.add(new Optimization(
+                "opt_aot_precompile",
+                "Full AOT precompile + compiled-code cache (RPCS3-style)",
+                "Compiles the whole game up front on first launch (progress "
+                        + "shown on screen), caches the result, and boots fast "
+                        + "with near-zero JIT stutter afterwards.",
+                "Like RPCS3's module compilation: at load, worker threads walk "
+                        + "the game's call graph and compile every reachable "
+                        + "function ahead of time (entry point + exception table + "
+                        + "jump/vtable targets - Blue Dragon measured ~97.5% AOT "
+                        + "coverage), so gameplay hits almost no just-in-time "
+                        + "compiles. The compiled machine code is cached on disk "
+                        + "per game, so the long compile happens ONCE - later "
+                        + "launches load the cache and boot fast. FIRST launch of "
+                        + "each game takes noticeably longer (a compile progress "
+                        + "readout is shown). Requires the LLVM recompiler "
+                        + "optimization to be on for the cache to apply.",
+                CATEGORY_CPU, false, true,
+                new BoolCvar[]{
+                        new BoolCvar("cpu_aot_maximize"),
+                        new BoolCvar("cpu_llvm_object_cache")}, null));
 
         list.add(new Optimization(
                 "opt_flat_membase",

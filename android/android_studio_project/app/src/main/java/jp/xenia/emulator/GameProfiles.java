@@ -63,6 +63,12 @@ public final class GameProfiles {
         // host-coherent direct-write path). So the per-title disable is removed;
         // BD inherits the global UMA toggle (default-on). [[uma-safe-but-not-bd-heavy-lever]]
         PROFILES.put("4D5307DF", new Profile("Blue Dragon")
+                .add("cpu_backend_llvm", Boolean.TRUE,
+                        "The LLVM whole-function recompiler is BD-validated (3793 "
+                        + "functions, 683 frames, 0 faults) and is part of BD's CPU "
+                        + "speed story. Global default went OFF 2026-07-31 after the "
+                        + "known intermittent libLLVM mid-gameplay compile crash hit "
+                        + "Burnout; BD keeps it via this profile.")
                 .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
                         "BD reads its pack files (item_rec.ipk etc.) async; its "
                         + "async-completion path never consumes the (already-read) "
