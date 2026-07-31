@@ -62,13 +62,12 @@ public final class GameProfiles {
         // renders BD (device-validated 2026-06-27: VdSwap=349, 0 TDR, 0 faults,
         // host-coherent direct-write path). So the per-title disable is removed;
         // BD inherits the global UMA toggle (default-on). [[uma-safe-but-not-bd-heavy-lever]]
+        // NOTE: do NOT duplicate registry-managed optimizations (XeniaOptimizations
+        // entries like cpu_backend_llvm or the XenDroid-parity levers) into
+        // profiles - GameProfiles applies AFTER the optimization layer, so a
+        // duplicate here silently defeats the user's per-game OVERRIDE_OFF
+        // escape hatch (code-review finding 2026-07-31).
         PROFILES.put("4D5307DF", new Profile("Blue Dragon")
-                .add("cpu_backend_llvm", Boolean.TRUE,
-                        "The LLVM whole-function recompiler is BD-validated (3793 "
-                        + "functions, 683 frames, 0 faults) and is part of BD's CPU "
-                        + "speed story. Global default went OFF 2026-07-31 after the "
-                        + "known intermittent libLLVM mid-gameplay compile crash hit "
-                        + "Burnout; BD keeps it via this profile.")
                 .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
                         "BD reads its pack files (item_rec.ipk etc.) async; its "
                         + "async-completion path never consumes the (already-read) "
@@ -241,25 +240,11 @@ public final class GameProfiles {
                 // compared to XenDroid") - VRS 2x2 visibly coarsens shading and
                 // XenDroid ships full quality. Perf cost of removal absorbed by
                 // the XenDroid-parity levers below.
-                // XenDroid-parity levers (2026-07-31): the set XenDroid ships
-                // ENABLED that we ported default-off. User-directed: enable for
-                // Burnout at XenDroid's shipping values; our own device A/B is
-                // still owed but XenDroid's Burnout runs visibly better with
-                // these on the same Thor.
-                .add("vulkan_mid_frame_submission_draws", Integer.valueOf(1300),
-                        "XenDroid ships 1300: submit mid-frame so the GPU starts "
-                        + "working while the CP still translates - attacks the "
-                        + "GPU-idle-while-CPU-builds gap.")
-                .add("vulkan_fast_register_ranges", Boolean.TRUE,
-                        "XenDroid default: bulk PM4 register writes on the CP "
-                        + "thread (CP-thread CPU win).")
-                .add("vulkan_skip_redundant_fetch_constant_writes", Boolean.TRUE,
-                        "XenDroid default: skip no-op fetch-constant rewrites.")
-                .add("rt_cache_ownership_claim_memo", Boolean.TRUE,
-                        "XenDroid default: memoize EDRAM ownership claims.")
-                .add("vulkan_cache_sampler_parameters", Boolean.TRUE,
-                        "XenDroid default: reuse sampler params/handles across "
-                        + "draws."));
+                // XenDroid-parity levers now come from the GLOBAL
+                // opt_xendroid_parity optimization (default ON, per-game
+                // overridable) - duplicating them here would defeat the user's
+                // per-game OVERRIDE_OFF (code-review finding 2026-07-31).
+                );
 
         // Infinite Undiscovery (535107DB): the default 65536 a64 stackpoints
         // array overflows ~37s in (Overflowed stackpoints! -> SIGABRT) from a

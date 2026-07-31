@@ -895,6 +895,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     private TextView mAotProgressText;
     private android.widget.ProgressBar mAotProgressBar;
     private Thread mAotWatcherThread;
+    private Process mAotWatcherProc;
     private volatile boolean mAotWatcherStop;
 
     private void startAotCompileWatcher() {
@@ -904,11 +905,18 @@ public class EmulatorActivity extends WindowedAppActivity {
                     "AOT precompile progress: (\\d+) / ~(\\d+) functions");
             final Pattern done = Pattern.compile(
                     "pre-warmed (\\d+) function\\(s\\) in (\\d+)ms");
-            Process proc = null;
             try {
-                proc = Runtime.getRuntime().exec(new String[]{
+                // -T 0: follow-only (a stale history line from a previous
+                // session in a reused process must not drive the overlay).
+                // Error stream merged so logcat can never block on a full
+                // stderr pipe. The Process is held in a field: onDestroy
+                // kills it, which is the ONLY way to unblock readLine().
+                final ProcessBuilder pb = new ProcessBuilder(
                         "logcat", "--pid=" + android.os.Process.myPid(),
-                        "-T", "1", "-s", "xenia:*"});
+                        "-T", "0", "-s", "xenia:*");
+                pb.redirectErrorStream(true);
+                final Process proc = pb.start();
+                mAotWatcherProc = proc;
                 final BufferedReader reader = new BufferedReader(
                         new InputStreamReader(proc.getInputStream()));
                 String line;
@@ -928,14 +936,17 @@ public class EmulatorActivity extends WindowedAppActivity {
                     if (d.find()) {
                         final int total = Integer.parseInt(d.group(1));
                         final long ms = Long.parseLong(d.group(2));
+                        // Do NOT stop watching: titles load multiple XEX
+                        // modules and each runs its own precompile pass -
+                        // hide now, re-show on the next pre-warm marker.
                         runOnUiThread(() -> hideAotOverlay(total, ms));
-                        break;
                     }
                 }
             } catch (final Exception ignored) {
                 // Log tailing is best-effort; the game runs fine without the
                 // overlay.
             } finally {
+                final Process proc = mAotWatcherProc;
                 if (proc != null) {
                     proc.destroy();
                 }
@@ -946,7 +957,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     }
 
     private void showAotOverlay() {
-        if (mAotOverlay != null || isFinishing()) {
+        if (mAotOverlay != null || isFinishing() || isDestroyed()) {
             return;
         }
         final android.widget.LinearLayout overlay = new android.widget.LinearLayout(this);
@@ -1028,6 +1039,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             }
             final android.widget.LinearLayout overlay = mAotOverlay;
             mAotOverlay = null;
+            mAotProgressBar = null;
+            mAotProgressText = null;
             overlay.postDelayed(() -> {
                 final android.view.ViewGroup parent =
                         (android.view.ViewGroup) overlay.getParent();
@@ -1063,10 +1076,13 @@ public class EmulatorActivity extends WindowedAppActivity {
     @Override
     protected void onDestroy() {
         mAotWatcherStop = true;
-        if (mAotWatcherThread != null) {
-            mAotWatcherThread.interrupt();
-            mAotWatcherThread = null;
+        if (mAotWatcherProc != null) {
+            // Killing the logcat child is the only thing that unblocks the
+            // watcher thread's readLine(); interrupt() cannot.
+            mAotWatcherProc.destroy();
+            mAotWatcherProc = null;
         }
+        mAotWatcherThread = null;
         unregisterDebugGamepadReceiver();
         super.onDestroy();
     }
