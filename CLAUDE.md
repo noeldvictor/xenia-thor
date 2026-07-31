@@ -5,6 +5,30 @@ Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740)
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
 `GameProfiles` / `XeniaOptimizations` toggle (default-off until validated).
 
+## 🧭🧭🧭 STANDING DIRECTIVE (user 2026-07-31): XENDROID/XENIA-EDGE IS THE COMPAT REFERENCE — USE IT TO FIX OUR SHIT
+**XenDroid (github.com/rfandango/XenDroid, Kotlin shell + vendored xenia-edge, Canary lineage) runs games on the
+SAME AYN Thor that our fork breaks (Lost Odyssey boots there, stalls here; user: "xendroid works so well but our
+shit sucks/we crash games"). Our fork is upstream-MASTER-based (leaner, enabled the perf work: BD native renderer,
+LLVM AOT, custom a64) — the cost is Canary's years of kernel/XAM compat fixes that master never had. THE RULE:
+when a title misbehaves in xenia-thor but works in XenDroid, DIFF THE EDGE KERNEL AND PORT THE DIVERGENCE —
+don't debug from scratch.**
+- **Reference sources in-tree:** git remote `edge` (active branch `edge/edge`, NOT edge/master) — use
+  `git show edge/edge:src/xenia/...`; clones at `reference/XenDroid` + `reference/xenia-edge`. Compat lives in
+  `src/xenia/kernel/{xam,xboxkrnl}` + `src/xenia/vfs` (Edge's is Canary-derived and heavily diverged from ours).
+- **Proven workflow (LO session 2026-07-31):** reproduce on DESKTOP xenia.exe (pull the ISO from the device if
+  needed — `scratch/lost-odyssey/lo_disc1.iso` stays local, never commit) → in-tree wait/event tracing
+  (`--xboxkrnl_thread_wait_trace=true --xboxkrnl_thread_wait_trace_budget=2000000` +
+  `--xboxkrnl_event_trace=true`, analyzer = begin-without-end per thid) → cdb thread-stack dumps
+  (`cdb -p <pid> -c ".lines; ~*k 14; qd"`) → Explore-agent diff vs Edge → port → desktop verify → APK.
+- **Already ported from the LO audit (f2ea321a6):** trimmed-path NtCreateFile/NtOpenFile (probe-hits-open-misses
+  class), XamGetOverlappedResult honors bWait (was infinite non-alertable park), overlapped event Reset on arm +
+  25ms dispatch (was 100), fiber-thread UnlockApc null guard, scheduler-aware XIOCompletion.
+  **LO STILL STALLS after these** (main thread polls a guest flag in KeDelayExecutionThread wrapper lr 827CACFC;
+  workers idle; official canary A/B on desktop = the discriminator in progress). Earlier RE trail:
+  docs/research/20260530-*lost-odyssey* (zombie-join hypothesis, later refined).
+- **Bigger option if whack-a-mole drags: port Edge's whole kernel layer** (xam+xboxkrnl+vfs as a unit) onto our
+  tree, keeping our CPU/GPU. Evaluate after each single-title fix — the count of divergences found decides.
+
 ## 🔥🔥🔥 THE DIRECTIVE (user 2026-07-07, FURIOUS at circling): FUSE THE PASSES — DELETE EDRAM, do NOT make it cheaper
 **"FUCK THE EDRAM SHADER, WE DONT WANT EDRAM." "fuse the fucking passes." "stop saying its a multisession rewrite
 and just fucking do it."** The circle to STOP: trying to make the EDRAM transfer cheap (copy/blit fast-path) STILL
