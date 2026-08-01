@@ -57,6 +57,10 @@ enum MemoryProtectFlag : uint32_t {
   kMemoryProtectNoAccess = 0,
 };
 
+inline bool IsWritableProtect(uint32_t protect) {
+  return (protect & kMemoryProtectWrite) != 0;
+}
+
 // Equivalent to the Win32 MEMORY_BASIC_INFORMATION struct.
 struct HeapAllocationInfo {
   // A pointer to the base address of the region of pages.
@@ -263,6 +267,11 @@ class PhysicalHeap : public BaseHeap {
 
   uint32_t GetPhysicalAddress(uint32_t address) const;
 
+  // Guest page protection at a PHYSICAL address (0 if outside this heap's
+  // window). Edge kernel-port foundations.
+  uint32_t GetPageProtect(uint32_t physical_address);
+  xe::memory::PageAccess GetPageAccess(uint32_t physical_address);
+
  protected:
   VirtualHeap* parent_heap_;
 
@@ -431,6 +440,12 @@ class Memory {
   // Unregisters a physical memory invalidation callback previously added with
   // RegisterPhysicalMemoryInvalidationCallback.
   void UnregisterPhysicalMemoryInvalidationCallback(void* callback_handle);
+
+  // Union of the guest protection of a physical page across the three
+  // physical windows (vA0000000/vC0000000/vE0000000) - what the GPU may do
+  // to the page regardless of which alias the title mapped it through (Edge
+  // kernel-port foundations).
+  xe::memory::PageAccess GetPhysicalPageWindowAccess(uint32_t physical_address);
 
   // Enables physical memory access callbacks for the specified memory range,
   // snapped to system page boundaries.

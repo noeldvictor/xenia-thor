@@ -163,6 +163,24 @@ void Sleep(std::chrono::microseconds duration) {
   } while (ret == -1 && errno == EINTR);
 }
 
+void NanoSleep(int64_t ns) {
+  if (ns <= 0) {
+    return;
+  }
+  timespec rqtp = {static_cast<time_t>(ns / 1000000000LL),
+                   static_cast<long>(ns % 1000000000LL)};
+  timespec rmtp = {};
+  auto p_rqtp = &rqtp;
+  auto p_rmtp = &rmtp;
+  int ret = 0;
+  do {
+    ret = nanosleep(p_rqtp, p_rmtp);
+    std::swap(p_rqtp, p_rmtp);
+  } while (ret == -1 && errno == EINTR);
+}
+
+void NanoSleepPrecise(int64_t ns) { NanoSleep(ns); }
+
 // TODO(bwrsandman) Implement by allowing alert interrupts from IO operations
 thread_local bool alertable_state_ = false;
 SleepResult AlertableSleep(std::chrono::microseconds duration) {
@@ -307,6 +325,14 @@ class PosixCondition<Event> : public PosixConditionBase {
   void Reset() {
     auto lock = std::unique_lock<std::mutex>(mutex_);
     signal_ = false;
+  }
+
+  EventInfo Query() {
+    auto lock = std::unique_lock<std::mutex>(mutex_);
+    // NT EVENT_BASIC_INFORMATION: type 0 = NotificationEvent (manual-reset),
+    // 1 = SynchronizationEvent (auto-reset). (Real state, unlike Edge's
+    // assert stub.)
+    return EventInfo{manual_reset_ ? 0u : 1u, signal_ ? 1u : 0u};
   }
 
  private:
@@ -993,6 +1019,7 @@ class PosixEvent : public PosixConditionHandle<Event> {
   ~PosixEvent() override = default;
   void Set() override { handle_.Signal(); }
   void Reset() override { handle_.Reset(); }
+  EventInfo Query() override { return handle_.Query(); }
   void Pulse() override {
     using namespace std::chrono_literals;
     handle_.Signal();

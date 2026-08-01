@@ -13,8 +13,12 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <type_traits>
 
+#include "xenia/base/byte_order.h"
+#include "xenia/base/memory.h"
 #include "xenia/base/vec128.h"
+#include "xenia/guest_pointers.h"
 
 namespace xe {
 namespace cpu {
@@ -441,6 +445,46 @@ typedef struct PPCContext_s {
   // offset-sensitive.
   uint8_t preempt_requested;
   uint8_t preempt_reserved_pad_[7];
+
+  // Guest-address translation helpers (Edge kernel-port foundations). Same
+  // semantics as Memory::TranslateVirtual: the vE0000000 physical window is
+  // host-shifted by one 4K page when the host allocation granularity exceeds
+  // 4K (heap->host_address_offset()); no heap lookup needed for the other
+  // ranges. Methods only - the field layout above is emitter-offset-locked.
+  template <typename T = uint8_t*>
+  inline T TranslateVirtual(uint32_t guest_address) const {
+    static_assert(std::is_pointer_v<T>);
+    uint8_t* host_address = virtual_membase + guest_address;
+    if (guest_address >= 0xE0000000u &&
+        xe::memory::allocation_granularity() > 0x1000) {
+      host_address += 0x1000;
+    }
+    return reinterpret_cast<T>(host_address);
+  }
+  template <typename T>
+  inline xe::be<T>* TranslateVirtualBE(uint32_t guest_address) const {
+    static_assert(!std::is_pointer_v<T> && sizeof(T) > 1);
+    return TranslateVirtual<xe::be<T>*>(guest_address);
+  }
+  // For convenience in kernel functions: auto-narrows a GPR to uint32.
+  template <typename T = uint8_t*>
+  inline T TranslateVirtualGPR(uint64_t guest_address) const {
+    return TranslateVirtual<T>(static_cast<uint32_t>(guest_address));
+  }
+  template <typename T>
+  inline T* TranslateVirtual(TypedGuestPointer<T> guest_address) {
+    return TranslateVirtual<T*>(guest_address.m_ptr);
+  }
+  template <typename T>
+  inline uint32_t HostToGuestVirtual(T* host_ptr) const {
+    uint32_t guest_tmp = static_cast<uint32_t>(
+        reinterpret_cast<const uint8_t*>(host_ptr) - virtual_membase);
+    if (guest_tmp >= 0xE0000000u &&
+        xe::memory::allocation_granularity() > 0x1000) {
+      guest_tmp -= 0x1000;
+    }
+    return guest_tmp;
+  }
 
   static std::string GetRegisterName(PPCRegister reg);
   std::string GetStringFromValue(PPCRegister reg) const;

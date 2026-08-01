@@ -86,6 +86,38 @@ void MaybeYield() {
 
 void SyncMemory() { MemoryBarrier(); }
 
+// NtDelayExecution sleeps in 100ns increments - the closest Windows gets to
+// nanosleep (Edge kernel-port foundations; resolved dynamically, falls back
+// to Sleep()).
+typedef LONG(NTAPI* NtDelayExecutionFn)(BOOLEAN alertable,
+                                        PLARGE_INTEGER interval);
+static NtDelayExecutionFn GetNtDelayExecution() {
+  static NtDelayExecutionFn fn = []() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll ? reinterpret_cast<NtDelayExecutionFn>(
+                       GetProcAddress(ntdll, "NtDelayExecution"))
+                 : nullptr;
+  }();
+  return fn;
+}
+
+void NanoSleep(int64_t ns) {
+  NtDelayExecutionFn nt_delay = GetNtDelayExecution();
+  if (nt_delay) {
+    int64_t in_nt_increments = ns / 100LL;
+    if (in_nt_increments == 0 && ns != 0) {
+      in_nt_increments = 1;
+    }
+    LARGE_INTEGER interval;
+    interval.QuadPart = -in_nt_increments;
+    nt_delay(FALSE, &interval);
+  } else {
+    ::Sleep(static_cast<DWORD>(ns / 1000000LL));
+  }
+}
+
+void NanoSleepPrecise(int64_t ns) { NanoSleep(ns); }
+
 void Sleep(std::chrono::microseconds duration) {
   if (duration.count() < 100) {
     MaybeYield();
@@ -204,6 +236,20 @@ std::pair<WaitResult, size_t> WaitMultiple(WaitHandle* wait_handles[],
   }
 }
 
+// NtQueryEvent for Event::Query (EVENT_BASIC_INFORMATION-compatible layout).
+typedef LONG(NTAPI* NtQueryEventFn)(HANDLE handle, ULONG info_class,
+                                    PVOID info, ULONG info_length,
+                                    PULONG return_length);
+static NtQueryEventFn GetNtQueryEvent() {
+  static NtQueryEventFn fn = []() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll ? reinterpret_cast<NtQueryEventFn>(
+                       GetProcAddress(ntdll, "NtQueryEvent"))
+                 : nullptr;
+  }();
+  return fn;
+}
+
 class Win32Event : public Win32Handle<Event> {
  public:
   explicit Win32Event(HANDLE handle) : Win32Handle(handle) {}
@@ -211,6 +257,20 @@ class Win32Event : public Win32Handle<Event> {
   void Set() override { SetEvent(handle_); }
   void Reset() override { ResetEvent(handle_); }
   void Pulse() override { PulseEvent(handle_); }
+  EventInfo Query() override {
+    EventInfo result{};
+    NtQueryEventFn nt_query = GetNtQueryEvent();
+    if (nt_query) {
+      nt_query(handle_, 0 /* EventBasicInformation */, &result, sizeof(result),
+               nullptr);
+    }
+    return result;
+  }
+  void SetBoostPriority() override {
+    // NtSetEventBoostPriority is undocumented and absent under Wine; plain
+    // SetEvent is the safe equivalent (the boost is a scheduler hint only).
+    SetEvent(handle_);
+  }
 };
 
 std::unique_ptr<Event> Event::CreateManualResetEvent(bool initial_state) {

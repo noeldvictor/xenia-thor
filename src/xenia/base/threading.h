@@ -170,6 +170,12 @@ void SyncMemory();
 
 // Sleeps the current thread for at least as long as the given duration.
 void Sleep(std::chrono::microseconds duration);
+// Sleeps at least ns nanoseconds (Edge kernel-port foundations).
+void NanoSleep(int64_t ns);
+// Like NanoSleep but trades a brief busy-wait tail for sub-millisecond
+// precision. Use only where wake-up jitter would miss a frame budget; the
+// spin costs CPU.
+void NanoSleepPrecise(int64_t ns);
 template <typename Rep, typename Period>
 void Sleep(std::chrono::duration<Rep, Period> duration) {
   Sleep(std::chrono::duration_cast<std::chrono::microseconds>(duration));
@@ -328,6 +334,11 @@ inline std::pair<WaitResult, size_t> WaitAny(
 
 // Models a Win32-like event object.
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms682396(v=vs.85).aspx
+struct EventInfo {
+  uint32_t type;
+  uint32_t state;
+};
+
 class Event : public WaitHandle {
  public:
   // Creates a manual-reset event object, which requires the use of the
@@ -353,6 +364,16 @@ class Event : public WaitHandle {
   // the nonsignaled state after releasing the appropriate number of waiting
   // threads.
   virtual void Pulse() = 0;
+
+  // Snapshot of the event's type (manual/auto) and current signal state, for
+  // kernel NtQueryEvent-style introspection (Edge kernel-port foundations).
+  virtual EventInfo Query() = 0;
+#if XE_PLATFORM_WIN32 == 1
+  // SetEvent, but if there is a waiter we immediately transfer execution to it.
+  virtual void SetBoostPriority() = 0;
+#else
+  void SetBoostPriority() { Set(); }
+#endif
 };
 
 // Models a Win32-like semaphore object.

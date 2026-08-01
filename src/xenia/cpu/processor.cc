@@ -391,6 +391,17 @@ Function* Processor::ResolveFunction(uint32_t address) {
   }
 }
 
+Module* Processor::LookupModule(uint32_t address) {
+  auto global_lock = global_critical_region_.Acquire();
+  // TODO(benvanik): sort by code address (if contiguous) so can bsearch.
+  for (const auto& module : modules_) {
+    if (module->ContainsAddress(address)) {
+      return module.get();
+    }
+  }
+  return nullptr;
+}
+
 Function* Processor::LookupFunction(uint32_t address) {
   // TODO(benvanik): fast reject invalid addresses/log errors.
 
@@ -2725,6 +2736,73 @@ uint32_t Processor::CalculateNextGuestInstruction(ThreadDebugInfo* thread_info,
   } else {
     return current_pc + 4;
   }
+}
+
+// Guest atomics on big-endian guest memory (Edge kernel-port foundations).
+// Host CAS interoperates with both backends' guest reservations: a64 guest
+// lwarx/stwcx lowers to ldaxr/stlxr (hardware exclusive monitor observes any
+// store to the granule, including this CAS), x64 to lock cmpxchg. Each
+// returns the PRE-update guest-endian value. Edge implements these via
+// Backend::ReservedLoad32/ReservedStore32; the effect is identical.
+uint32_t Processor::GuestAtomicIncrement32(ppc::PPCContext* context,
+                                           uint32_t guest_address) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t expected = p->load(std::memory_order_acquire);
+  while (!p->compare_exchange_weak(
+      expected, xe::byte_swap(xe::byte_swap(expected) + 1),
+      std::memory_order_acq_rel, std::memory_order_acquire)) {
+  }
+  return xe::byte_swap(expected);
+}
+
+uint32_t Processor::GuestAtomicDecrement32(ppc::PPCContext* context,
+                                           uint32_t guest_address) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t expected = p->load(std::memory_order_acquire);
+  while (!p->compare_exchange_weak(
+      expected, xe::byte_swap(xe::byte_swap(expected) - 1),
+      std::memory_order_acq_rel, std::memory_order_acquire)) {
+  }
+  return xe::byte_swap(expected);
+}
+
+uint32_t Processor::GuestAtomicOr32(ppc::PPCContext* context,
+                                    uint32_t guest_address, uint32_t mask) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t swapped_mask = xe::byte_swap(mask);
+  uint32_t prior = p->fetch_or(swapped_mask, std::memory_order_acq_rel);
+  return xe::byte_swap(prior);
+}
+
+uint32_t Processor::GuestAtomicXor32(ppc::PPCContext* context,
+                                     uint32_t guest_address, uint32_t mask) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t swapped_mask = xe::byte_swap(mask);
+  uint32_t prior = p->fetch_xor(swapped_mask, std::memory_order_acq_rel);
+  return xe::byte_swap(prior);
+}
+
+uint32_t Processor::GuestAtomicAnd32(ppc::PPCContext* context,
+                                     uint32_t guest_address, uint32_t mask) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t swapped_mask = xe::byte_swap(mask);
+  uint32_t prior = p->fetch_and(swapped_mask, std::memory_order_acq_rel);
+  return xe::byte_swap(prior);
+}
+
+bool Processor::GuestAtomicCAS32(ppc::PPCContext* context, uint32_t old_value,
+                                 uint32_t new_value, uint32_t guest_address) {
+  auto p = reinterpret_cast<std::atomic<uint32_t>*>(
+      context->TranslateVirtual(guest_address));
+  uint32_t expected = xe::byte_swap(old_value);
+  return p->compare_exchange_strong(expected, xe::byte_swap(new_value),
+                                    std::memory_order_acq_rel,
+                                    std::memory_order_acquire);
 }
 
 }  // namespace cpu

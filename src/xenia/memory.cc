@@ -578,6 +578,24 @@ void Memory::UnregisterPhysicalMemoryInvalidationCallback(
   delete entry;
 }
 
+xe::memory::PageAccess Memory::GetPhysicalPageWindowAccess(
+    uint32_t physical_address) {
+  bool readonly = false;
+  for (PhysicalHeap* heap :
+       {&heaps_.vA0000000, &heaps_.vC0000000, &heaps_.vE0000000}) {
+    xe::memory::PageAccess access = heap->GetPageAccess(physical_address);
+    if (access != xe::memory::PageAccess::kNoAccess &&
+        access != xe::memory::PageAccess::kReadOnly) {
+      return xe::memory::PageAccess::kReadWrite;
+    }
+    if (access == xe::memory::PageAccess::kReadOnly) {
+      readonly = true;
+    }
+  }
+  return readonly ? xe::memory::PageAccess::kReadOnly
+                  : xe::memory::PageAccess::kNoAccess;
+}
+
 void Memory::EnablePhysicalMemoryAccessCallbacks(
     uint32_t physical_address, uint32_t length,
     bool enable_invalidation_notifications, bool enable_data_providers) {
@@ -2049,6 +2067,26 @@ uint32_t PhysicalHeap::GetPhysicalAddress(uint32_t address) const {
     address += 0x1000;
   }
   return address;
+}
+
+uint32_t PhysicalHeap::GetPageProtect(uint32_t physical_address) {
+  uint32_t physical_address_offset = GetPhysicalAddress(heap_base_);
+  if (physical_address < physical_address_offset) {
+    return 0;
+  }
+  uint32_t heap_relative_address = physical_address - physical_address_offset;
+  if (heap_relative_address >= heap_size_) {
+    return 0;
+  }
+  uint32_t guest_page = heap_relative_address / page_size_;
+  if (guest_page >= page_table_.size()) {
+    return 0;
+  }
+  return page_table_[guest_page].current_protect;
+}
+
+xe::memory::PageAccess PhysicalHeap::GetPageAccess(uint32_t physical_address) {
+  return ToPageAccess(GetPageProtect(physical_address));
 }
 
 }  // namespace xe

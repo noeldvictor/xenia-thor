@@ -43,6 +43,23 @@ DEFINE_bool(
     "runtime spikes and freezes when playing the game not for the first time.",
     "GPU");
 
+DEFINE_uint32(internal_display_resolution, 8,
+              "Allow games that support different resolutions to render "
+              "in a specific resolution.\n"
+              "This is not guaranteed to work with all games or improve "
+              "performance.\n"
+              "   0=640x480 ... 8=1280x720 (Default) ... 16=1920x1080\n"
+              "   17=internal_display_resolution_x/y "
+              "(Edge kernel-port foundations; full table in "
+              "graphics_system.h)",
+              "Console");
+DEFINE_uint32(internal_display_resolution_x, 1280,
+              "Custom width. See internal_display_resolution. Range 1-1920.",
+              "Video");
+DEFINE_uint32(internal_display_resolution_y, 720,
+              "Custom height. See internal_display_resolution. Range 1-1080.",
+              "Video");
+
 namespace xe {
 namespace gpu {
 
@@ -650,6 +667,16 @@ bool GraphicsSystem::Restore(ByteStream* stream) {
   interrupt_callback_data_ = stream->Read<uint32_t>();
 
   return command_processor_->Restore(stream);
+}
+
+std::pair<uint16_t, uint16_t> GraphicsSystem::GetInternalDisplayResolution() {
+  if (cvars::internal_display_resolution >=
+      internal_display_resolution_entries.size()) {
+    return {static_cast<uint16_t>(cvars::internal_display_resolution_x),
+            static_cast<uint16_t>(cvars::internal_display_resolution_y)};
+  }
+  return internal_display_resolution_entries
+      [cvars::internal_display_resolution];
 }
 
 }  // namespace gpu

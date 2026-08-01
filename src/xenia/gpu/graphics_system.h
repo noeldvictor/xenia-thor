@@ -10,9 +10,11 @@
 #ifndef XENIA_GPU_GRAPHICS_SYSTEM_H_
 #define XENIA_GPU_GRAPHICS_SYSTEM_H_
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,6 +35,27 @@ class Emulator;
 
 namespace xe {
 namespace gpu {
+
+// Indexed by the internal_display_resolution cvar (Edge kernel-port
+// foundations; consumed by xboxkrnl_video's VdQueryVideoMode path).
+constexpr std::array<std::pair<uint16_t, uint16_t>, 17>
+    internal_display_resolution_entries = {{{640, 480},
+                                            {640, 576},
+                                            {720, 480},
+                                            {720, 576},
+                                            {800, 600},
+                                            {848, 480},
+                                            {1024, 768},
+                                            {1152, 864},
+                                            {1280, 720},
+                                            {1280, 768},
+                                            {1280, 960},
+                                            {1280, 1024},
+                                            {1360, 768},
+                                            {1440, 900},
+                                            {1680, 1050},
+                                            {1920, 540},
+                                            {1920, 1080}}};
 
 class CommandProcessor;
 
@@ -86,6 +109,16 @@ class GraphicsSystem {
   bool Save(ByteStream* stream);
   bool Restore(ByteStream* stream);
 
+  // Edge kernel-port foundations (VdQueryVideoMode / aspect handling).
+  static std::pair<uint16_t, uint16_t> GetInternalDisplayResolution();
+  std::pair<uint32_t, uint32_t> GetScaledAspectRatio() const {
+    return {scaled_aspect_x_, scaled_aspect_y_};
+  }
+  void SetScaledAspectRatio(uint32_t x, uint32_t y) {
+    scaled_aspect_x_ = x;
+    scaled_aspect_y_ = y;
+  }
+
  protected:
   GraphicsSystem();
 
@@ -120,6 +153,8 @@ class GraphicsSystem {
   std::atomic<bool> swap_vblank_requested_{false};
 
   Memory* memory_ = nullptr;
+  uint32_t scaled_aspect_x_ = 16;
+  uint32_t scaled_aspect_y_ = 9;
   cpu::Processor* processor_ = nullptr;
   kernel::KernelState* kernel_state_ = nullptr;
   ui::WindowedAppContext* app_context_ = nullptr;

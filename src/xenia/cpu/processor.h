@@ -115,6 +115,28 @@ class Processor {
   std::vector<Function*> FindFunctionsWithAddress(uint32_t address);
 
   Function* LookupFunction(uint32_t address);
+  // Module containing the given guest address, or null (Edge kernel-port
+  // foundations). NOTE: Edge's RemoveModule/RemoveFunctionByAddress are NOT
+  // ported - our EntryTable lookup cache and the LLVM resolve cache assume
+  // entries are never deleted; removal needs an invalidation design first
+  // (see docs/research/20260731-edge-kernel-port-plan.md).
+  Module* LookupModule(uint32_t address);
+
+  // Guest atomics on big-endian guest memory; return/compare guest-endian
+  // values. Interoperate with guest lwarx/stwcx reservations (see the
+  // implementations for the argument). Edge kernel-port foundations.
+  uint32_t GuestAtomicIncrement32(ppc::PPCContext* context,
+                                  uint32_t guest_address);
+  uint32_t GuestAtomicDecrement32(ppc::PPCContext* context,
+                                  uint32_t guest_address);
+  uint32_t GuestAtomicOr32(ppc::PPCContext* context, uint32_t guest_address,
+                           uint32_t mask);
+  uint32_t GuestAtomicXor32(ppc::PPCContext* context, uint32_t guest_address,
+                            uint32_t mask);
+  uint32_t GuestAtomicAnd32(ppc::PPCContext* context, uint32_t guest_address,
+                            uint32_t mask);
+  bool GuestAtomicCAS32(ppc::PPCContext* context, uint32_t old_value,
+                        uint32_t new_value, uint32_t guest_address);
   Function* LookupFunction(Module* module, uint32_t address);
   Function* ResolveFunction(uint32_t address);
 
