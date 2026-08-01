@@ -26,6 +26,7 @@ namespace xe {
 bool signal_handlers_installed_ = false;
 struct sigaction original_sigill_handler_;
 struct sigaction original_sigsegv_handler_;
+struct sigaction original_sigbus_handler_;
 
 // This can be as large as needed, but isn't often needed.
 // As we will be sometimes firing many exceptions we want to avoid having to
@@ -116,6 +117,10 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
     case SIGILL:
       ex.InitializeIllegalInstruction(&thread_context);
       break;
+    // SIGBUS is an access-violation class fault too (e.g. an access past the
+    // end of the shm backing file of a guest memory view) - dispatch it like
+    // SIGSEGV so the guest fault handlers get a chance (xenia-edge parity).
+    case SIGBUS:
     case SIGSEGV: {
       Exception::AccessViolationOperation access_violation_operation;
 #if XE_ARCH_AMD64
@@ -313,6 +318,9 @@ void ExceptionHandler::Install(Handler fn, void* data) {
     if (sigaction(SIGSEGV, &signal_handler, &original_sigsegv_handler_) != 0) {
       assert_always("Failed to install new SIGSEGV handler");
     }
+    if (sigaction(SIGBUS, &signal_handler, &original_sigbus_handler_) != 0) {
+      assert_always("Failed to install new SIGBUS handler");
+    }
     signal_handlers_installed_ = true;
   }
 
@@ -352,6 +360,9 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
       }
       if (sigaction(SIGSEGV, &original_sigsegv_handler_, NULL) != 0) {
         assert_always("Failed to restore original SIGSEGV handler");
+      }
+      if (sigaction(SIGBUS, &original_sigbus_handler_, NULL) != 0) {
+        assert_always("Failed to restore original SIGBUS handler");
       }
       signal_handlers_installed_ = false;
     }
