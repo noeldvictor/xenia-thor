@@ -39,8 +39,12 @@ don't debug from scratch.**
   **LO STILL STALLS after these** (main thread polls a guest flag in KeDelayExecutionThread wrapper lr 827CACFC;
   workers idle; official canary A/B on desktop = the discriminator in progress). Earlier RE trail:
   docs/research/20260530-*lost-odyssey* (zombie-join hypothesis, later refined).
-- **Bigger option if whack-a-mole drags: port Edge's whole kernel layer** (xam+xboxkrnl+vfs as a unit) onto our
-  tree, keeping our CPU/GPU. Evaluate after each single-title fix — the count of divergences found decides.
+- **DECIDED 2026-07-31 (user: "xendroid is still more stable and reliable"): PORT EDGE'S WHOLE KERNEL LAYER**
+  (xam+xboxkrnl+vfs as a unit) onto our tree, keeping our CPU/GPU. Two titles in one day reduced to ~10
+  canary-lineage kernel divergences — whack-a-mole lost. Scoping report drives the multi-session migration;
+  our kernel-layer customizations to re-apply afterward: trainers, guest scheduler fiber hooks, XamSwapDisc/
+  disc_playlist, user_gamertag, ntreadfile_force_complete, HLE hooks, content manager. Edge stability becomes
+  the floor; our CPU/GPU perf stays on top.
 
 ## 🔥🔥🔥 THE DIRECTIVE (user 2026-07-07, FURIOUS at circling): FUSE THE PASSES — DELETE EDRAM, do NOT make it cheaper
 **"FUCK THE EDRAM SHADER, WE DONT WANT EDRAM." "fuse the fucking passes." "stop saying its a multisession rewrite
