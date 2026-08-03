@@ -1927,6 +1927,20 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 
   on_launch(title_id_.value(), title_name_);
 
+  // KernelState::LaunchModule creates the main guest thread with
+  // X_CREATE_SUSPENDED so the debugger can prepare before any guest code runs;
+  // nothing else resumes it. Without this the title loads completely and then
+  // sits there - the process is healthy, every thread idle, the guest thread
+  // parked at suspend count 1, and the screen stays black (device-observed
+  // 2026-08-03). If the debugger asked for a suspend, this only decrements the
+  // count and the debugger still controls when it actually runs.
+  uint32_t previous_suspend_count = 0;
+  X_STATUS resume_result = main_thread_->Resume(&previous_suspend_count);
+  XELOGI(
+      "Emulator: resumed main guest thread (result={:08X} "
+      "suspend_count_before={})",
+      resume_result, previous_suspend_count);
+
   return X_STATUS_SUCCESS;
 }
 

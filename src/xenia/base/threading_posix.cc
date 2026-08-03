@@ -739,7 +739,11 @@ class PosixCondition<Thread> : public PosixConditionBase {
     }
     // NOTE(kernel-port 2026-08): ++/-- on a volatile is deprecated in C++20
     // (-Wdeprecated-volatile). Explicit read-modify-write is equivalent.
-    suspend_count_ = suspend_count_ - 1;
+    // Clamped at 0: an unbalanced Resume used to wrap the unsigned count to
+    // ~4 billion, after which no amount of resuming could ever reach 0 again.
+    if (suspend_count_ > 0) {
+      suspend_count_ = suspend_count_ - 1;
+    }
     // When fully resumed, transition to running and wake the suspended thread's
     // WaitSuspended via the async-signal-safe semaphore (ported edge 6f18c9850;
     // moved here from WaitSuspended, which can no longer touch state_ safely).
@@ -1214,6 +1218,18 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
   current_thread_ = thread;
   {
     std::unique_lock<std::mutex> lock(thread->handle_.state_mutex_);
+    // suspend_count_ must be published in the SAME critical section as
+    // state_ = kSuspended. Resume() waits for the thread to have started and
+    // then acts on whatever it finds; setting the count afterwards left a
+    // window where Resume saw kSuspended with a count of 0, decremented it
+    // (underflowing), and never signalled - and this thread then set the count
+    // back to 1 and waited forever. That is a lost wakeup, and it is exactly
+    // what stranded a title's main guest thread: created suspended, resumed
+    // ~1ms later by CompleteLaunch, parked permanently, black screen with every
+    // thread idle (device-observed 2026-08-03).
+    if (create_suspended) {
+      thread->handle_.suspend_count_ = 1;
+    }
     thread->handle_.state_ =
         create_suspended ? State::kSuspended : State::kRunning;
     thread->handle_.state_signal_.notify_all();
@@ -1221,7 +1237,8 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
 
   if (create_suspended) {
     std::unique_lock<std::mutex> lock(thread->handle_.state_mutex_);
-    thread->handle_.suspend_count_ = 1;
+    // A Resume that already ran leaves the count at 0, and wait() checks the
+    // predicate before blocking, so that case falls straight through.
     thread->handle_.state_signal_.wait(
         lock, [thread] { return thread->handle_.suspend_count_ == 0; });
   }

@@ -442,6 +442,12 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
     XELOGE("Could not create launch thread: {:08X}", result);
     return nullptr;
   }
+  XELOGI(
+      "KernelState: main guest thread created (handle={:08X} entry={:08X} "
+      "host_thread={} suspend_count={})",
+      thread->handle(), module->entry_point(),
+      thread->thread() ? "yes" : "NO",
+      uint32_t(thread->guest_object<X_KTHREAD>()->suspend_count));
 
   // Waits for a debugger client, if desired.
   emulator()->processor()->PreLaunch();
