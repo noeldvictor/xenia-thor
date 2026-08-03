@@ -127,6 +127,11 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info);
 std::optional<FileInfo> GetInfo(const std::filesystem::path& path);
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path);
 
+// Sets the host file attributes for the given path (X_FILE_ATTRIBUTE_* bits).
+// Edge kernel-port: needed by vfs HostPathEntry::SetAttributes. Only the
+// read-only bit is meaningful outside Windows.
+bool SetAttributes(const std::filesystem::path& path, uint64_t attributes);
+
 #if XE_PLATFORM_ANDROID
 void AndroidInitialize();
 void AndroidShutdown();

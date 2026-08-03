@@ -111,6 +111,52 @@
 #define XEPACKEDSTRUCTANONYMOUS(value) _XEPACKEDSCOPE(struct value)
 #define XEPACKEDUNION(name, value) _XEPACKEDSCOPE(union name value)
 
+// Edge kernel-port: branch-hint if-statements used by the merged kernel.
+// (Edge only defines these in its fallback compiler branch - we define them
+// unconditionally via C++20 attributes, which MSVC and clang both honor.)
+#ifndef XE_FORCEINLINE
+#if XE_COMPILER_HAS_MSVC_EXTENSIONS == 1
+#define XE_FORCEINLINE __forceinline
+#elif XE_COMPILER_HAS_GNU_EXTENSIONS == 1
+#define XE_FORCEINLINE inline __attribute__((always_inline))
+#else
+#define XE_FORCEINLINE inline
+#endif
+#endif
+
+#ifndef XE_RESTRICT
+// __restrict is part of the type system on MSVC; clang/gcc get equivalent
+// behavior from -fstrict-aliasing, so it is a no-op there (matches Edge).
+#if XE_COMPILER_CLANG_CL == 0 && XE_COMPILER_MSVC == 1
+#define XE_RESTRICT __restrict
+#else
+#define XE_RESTRICT
+#endif
+#endif
+
+#ifndef XE_LIKELY_IF
+#define XE_LIKELY_IF(...) if (!!(__VA_ARGS__)) [[likely]]
+#endif
+#ifndef XE_UNLIKELY_IF
+#define XE_UNLIKELY_IF(...) if (!!(__VA_ARGS__)) [[unlikely]]
+#endif
+#ifndef XE_MSVC_ASSUME
+#if XE_COMPILER_HAS_MSVC_EXTENSIONS == 1
+#define XE_MSVC_ASSUME(...) __assume(__VA_ARGS__)
+#else
+#define XE_MSVC_ASSUME(...) static_cast<void>(0)
+#endif
+#endif
+#ifndef XE_NOINLINE
+#if XE_COMPILER_HAS_MSVC_EXTENSIONS == 1
+#define XE_NOINLINE __declspec(noinline)
+#elif XE_COMPILER_HAS_GNU_EXTENSIONS == 1
+#define XE_NOINLINE __attribute__((noinline))
+#else
+#define XE_NOINLINE
+#endif
+#endif
+
 namespace xe {
 
 #if XE_PLATFORM_WIN32

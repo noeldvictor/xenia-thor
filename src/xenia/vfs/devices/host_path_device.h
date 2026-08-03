@@ -45,7 +45,6 @@ class HostPathDevice : public Device {
 
  protected:
   friend class HostPathEntry;
-  std::filesystem::path host_path() const { return host_path_; }
 
  private:
   void PopulateEntry(HostPathEntry* parent_entry);

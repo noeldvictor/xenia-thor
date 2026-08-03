@@ -14,6 +14,7 @@
 #include <string>
 
 #include "xenia/base/mapped_memory.h"
+#include "xenia/base/memory.h"  // fourcc_t / make_fourcc
 #include "xenia/vfs/device.h"
 
 namespace xe {

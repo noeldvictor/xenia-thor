@@ -245,5 +245,25 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
   return result;
 }
 
+// Edge kernel-port: vfs HostPathEntry::SetAttributes needs a host-side
+// attribute setter. POSIX has no general attribute concept, so only the guest
+// read-only bit is honored (mapped onto the write permission bits).
+bool SetAttributes(const std::filesystem::path& path, uint64_t attributes) {
+  // X_FILE_ATTRIBUTE_READONLY (xenia/xbox.h) - inlined so base/ keeps no
+  // dependency on the guest header.
+  constexpr uint64_t kReadOnly = 0x00000001;
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0) {
+    return false;
+  }
+  mode_t mode = st.st_mode;
+  if (attributes & kReadOnly) {
+    mode &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
+  } else {
+    mode |= S_IWUSR;
+  }
+  return chmod(path.c_str(), mode) == 0;
+}
+
 }  // namespace filesystem
 }  // namespace xe

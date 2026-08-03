@@ -44,6 +44,12 @@ class InputSystem {
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags,
                         X_INPUT_KEYSTROKE* out_keystroke);
 
+  // Edge kernel-port: UI dialogs block guest input while open. This fork has
+  // no blocker stack; the ImGui dialogs are modal in practice, so these are
+  // no-ops (guest input continues - matching pre-port behavior).
+  void AddUIInputBlocker() {}
+  void RemoveUIInputBlocker() {}
+
  private:
   xe::ui::Window* window_ = nullptr;
 

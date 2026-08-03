@@ -113,8 +113,9 @@ bool HostPathEntry::DeleteEntryInternal(Entry* entry) {
     if (std::filesystem::exists(full_path)) {
       const auto result = std::filesystem::remove(full_path, ec);
       if (ec) {
+        // fmt (v6) cannot format std::filesystem::path directly.
         XELOGE("{}: Cannot remove file entry. File: {} Error: {}", __func__,
-               full_path, ec.message());
+               xe::path_to_utf8(full_path), ec.message());
         return false;
       }
     }

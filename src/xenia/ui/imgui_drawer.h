@@ -32,6 +32,8 @@ namespace ui {
 class ImGuiDialog;
 class Window;
 
+class ImGuiNotification;
+
 class ImGuiDrawer : public WindowInputListener, public UIDrawer {
  public:
   ImGuiDrawer(Window* window, size_t z_order);
@@ -40,6 +42,11 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   ImGuiIO& GetIO();
 
   void AddDialog(ImGuiDialog* dialog);
+  // Edge kernel-port: guest/host notifications register here and are drawn
+  // alongside dialogs (they derive from ImGuiDialog in this fork's tree).
+  void AddNotification(ImGuiNotification* notification);
+  void RemoveNotification(ImGuiNotification* notification);
+  void EnableNotifications(bool enable) { are_notifications_enabled_ = enable; }
   void RemoveDialog(ImGuiDialog* dialog);
 
   // SetPresenter may be called from the destructor.
@@ -88,6 +95,8 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
 
   // All currently-attached dialogs that get drawn.
   std::vector<ImGuiDialog*> dialogs_;
+  bool are_notifications_enabled_ = true;
+  std::vector<ImGuiNotification*> notifications_;
   // Using an index, not an iterator, because after the erasure, the adjustment
   // must be done for the vector element indices that would be in the iterator
   // range that would be invalidated.
@@ -99,6 +108,16 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   ImmediateDrawer* immediate_drawer_ = nullptr;
   // Resources specific to an immediate drawer - must be destroyed before
   // detaching the presenter.
+
+ public:
+  // Edge kernel-port: guest/host notifications ask the drawer for per-user
+  // icons. Edge loads an embedded icon atlas we did not port; return null so
+  // notifications render text-only (ImGui::Image is skipped on null).
+  ImmediateTexture* GetNotificationIcon(uint8_t user_index) { return nullptr; }
+  ImmediateTexture* GetLockedAchievementIcon() { return nullptr; }
+  ImmediateTexture* GetAchievementIcon() { return nullptr; }
+
+ private:
   std::unique_ptr<ImmediateTexture> font_texture_;
 
   // If there's an active pointer, the ImGui mouse is controlled by this touch.

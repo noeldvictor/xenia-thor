@@ -34,8 +34,9 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles() {
   std::filesystem::path data_fragment_path = host_path_;
   data_fragment_path += ".data";
   if (!std::filesystem::exists(data_fragment_path)) {
+    // fmt (v6) cannot format std::filesystem::path directly.
     XELOGE("STFS container is multi-file, but path {} does not exist.",
-           data_fragment_path);
+           xe::path_to_utf8(data_fragment_path));
     return Result::kFileMismatch;
   }
 
@@ -58,7 +59,7 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles() {
     auto path = fragment.path / fragment.name;
     auto file = xe::filesystem::OpenFile(path, "rb");
     if (!file) {
-      XELOGI("Failed to map SVOD file {}.", path);
+      XELOGI("Failed to map SVOD file {}.", xe::path_to_utf8(path));
       // CloseFiles();
       return Result::kReadError;
     }

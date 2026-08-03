@@ -40,6 +40,18 @@ class StringBuffer {
   }
 
   void AppendVarargs(const char* format, va_list args);
+
+  // Edge kernel-port: hex helpers used by the kernel call-trace formatter.
+  // (Edge has SSE2 fast paths; these are the portable equivalents - the
+  // formatter is already gated behind the log level.)
+  void AppendHexUInt64(uint64_t value) { AppendFormat("{:016X}", value); }
+  void AppendHexUInt32(uint32_t value) { AppendFormat("{:08X}", value); }
+  void AppendParenthesizedHexUInt32(uint32_t value) {
+    AppendFormat("({:08X})", value);
+  }
+  void AppendParenthesizedHexUInt64(uint64_t value) {
+    AppendFormat("({:016X})", value);
+  }
   void AppendBytes(const uint8_t* buffer, size_t length);
 
   std::string to_string();

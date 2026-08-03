@@ -96,6 +96,35 @@ void ImGuiDrawer::AddDialog(ImGuiDialog* dialog) {
   dialogs_.push_back(dialog);
 }
 
+// Edge kernel-port: notification registry. Notifications draw themselves via
+// their own Draw() from the owning subsystem; the drawer only needs to keep
+// the ImGui drawer attached while any exist, mirroring the dialog path.
+void ImGuiDrawer::AddNotification(ImGuiNotification* notification) {
+  assert_not_null(notification);
+  if (std::find(notifications_.cbegin(), notifications_.cend(), notification) !=
+      notifications_.cend()) {
+    return;
+  }
+  if (notifications_.empty() && dialogs_.empty() && !IsDrawingDialogs()) {
+    window_->AddInputListener(this, z_order_);
+    if (presenter_) {
+      presenter_->AddUIDrawerFromUIThread(this, z_order_);
+    }
+  }
+  notifications_.push_back(notification);
+}
+
+void ImGuiDrawer::RemoveNotification(ImGuiNotification* notification) {
+  assert_not_null(notification);
+  auto it =
+      std::find(notifications_.cbegin(), notifications_.cend(), notification);
+  if (it == notifications_.cend()) {
+    return;
+  }
+  notifications_.erase(it);
+  DetachIfLastDialogRemoved();
+}
+
 void ImGuiDrawer::RemoveDialog(ImGuiDialog* dialog) {
   assert_not_null(dialog);
   auto it = std::find(dialogs_.cbegin(), dialogs_.cend(), dialog);

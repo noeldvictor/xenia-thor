@@ -261,5 +261,12 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
   return result;
 }
 
+// Edge kernel-port: vfs HostPathEntry::SetAttributes needs a host-side
+// attribute setter. The guest X_FILE_ATTRIBUTE_* bits map 1:1 onto the Win32
+// FILE_ATTRIBUTE_* bits.
+bool SetAttributes(const std::filesystem::path& path, uint64_t attributes) {
+  return SetFileAttributes(path.c_str(), static_cast<DWORD>(attributes)) != 0;
+}
+
 }  // namespace filesystem
 }  // namespace xe
