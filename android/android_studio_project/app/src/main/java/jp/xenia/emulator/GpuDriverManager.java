@@ -49,10 +49,15 @@ public final class GpuDriverManager {
     /**
      * Version tag for the Turnip ICD bundled in the APK assets
      * ({@code assets/drivers/turnip.zip}). Mirrors the asset's meta.json
-     * ("Mesa Turnip driver v26.0.0 - R8", Vulkan 1.4.335). Bump this whenever
-     * the bundled {@code .so} is replaced so the one-time auto-install re-runs.
+     * ("Mesa Turnip v26.3.0-20260803-r7", Vulkan 1.4.354). Bump this whenever
+     * the bundled {@code .so} is replaced so the auto-install re-runs and
+     * upgrades devices that are still on the previous bundled driver.
+     *
+     * <p>Use {@code tools/update_turnip.py} to refresh the asset and this tag
+     * together - newer Turnip is where the Adreno performance extensions land,
+     * so we track upstream rather than pinning.
      */
-    public static final String BUNDLED_TURNIP_VERSION = "26.0.0-r8";
+    public static final String BUNDLED_TURNIP_VERSION = "26.3.0-20260803-r7";
 
     /** APK asset path of the bundled adrenotools driver zip. */
     private static final String BUNDLED_ASSET = "drivers/turnip.zip";
@@ -268,24 +273,62 @@ public final class GpuDriverManager {
      */
     public static synchronized void ensureBundledDriverInstalled(final Context context) {
         final SharedPreferences prefs = XeniaAndroidSettings.getPreferences(context);
-        if (BUNDLED_TURNIP_VERSION.equals(
-                prefs.getString(XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_VERSION, ""))) {
-            return;  // Already handled this bundled version.
+        final String handledVersion =
+                prefs.getString(XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_VERSION, "");
+        final String recordedId =
+                prefs.getString(XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_ID, "");
+        final List<GpuDriverPackage> installed = listInstalled(context);
+
+        // "Done" requires BOTH that the marker names this bundle AND that the
+        // package it refers to is really on disk. Trusting the marker alone lets
+        // the two disagree permanently: a device that recorded the version but
+        // did not install (older build, or an interrupted install) would skip
+        // forever while still running the previous driver. Observed on the Thor.
+        if (BUNDLED_TURNIP_VERSION.equals(handledVersion)
+                && !recordedId.isEmpty()
+                && new File(driversDir(context), recordedId).isDirectory()) {
+            return;
         }
-        // Respect a user-curated driver list: only seed when none is installed.
-        if (!listInstalled(context).isEmpty()) {
+
+        // The id of the driver a PREVIOUS bundle installed, if any. Everything
+        // else in the list was imported by the user and is off limits.
+        String previousBundledId = recordedId;
+        if (previousBundledId.isEmpty() && !handledVersion.isEmpty()
+                && installed.size() == 1) {
+            // Migration from builds that seeded a driver without recording its
+            // id: we know we seeded one, and there is exactly one installed, so
+            // that is ours to replace.
+            previousBundledId = installed.get(0).id;
+        }
+
+        // Only skip when the user has curated their own list AND we have never
+        // seeded one ourselves. Previously this bailed out whenever ANY driver
+        // was installed - including the one this method had installed itself -
+        // so bumping BUNDLED_TURNIP_VERSION upgraded fresh installs only and
+        // silently left every existing device on the old Turnip forever.
+        if (previousBundledId.isEmpty() && !installed.isEmpty()) {
             markBundledVersionHandled(prefs);
             return;
         }
         try (InputStream in = context.getAssets().open(BUNDLED_ASSET)) {
             final GpuDriverPackage pkg = installFromZip(context, in);
-            // Make the bundled Turnip the default/active driver out of the box,
-            // unless something is already selected (cannot happen when no custom
-            // driver is installed, but guarded for safety).
+            // Take over the selection when nothing is selected, or when the
+            // selection is the bundled driver we are replacing. A driver the
+            // user picked themselves stays selected.
             final String selected = getSelectedId(context);
-            if (selected == null || selected.isEmpty()) {
+            if (selected == null || selected.isEmpty() || selected.equals(previousBundledId)) {
                 setSelectedId(context, pkg.id);
             }
+            // Retire the superseded bundled driver so the list does not grow one
+            // stale Turnip per release. Guarded against the no-op case where the
+            // new package landed in the same directory.
+            if (!previousBundledId.isEmpty() && !previousBundledId.equals(pkg.id)) {
+                deleteRecursive(new File(driversDir(context), previousBundledId));
+                Log.i(TAG, "Removed superseded bundled Turnip: " + previousBundledId);
+            }
+            prefs.edit()
+                    .putString(XeniaAndroidSettings.KEY_BUNDLED_GPU_DRIVER_ID, pkg.id)
+                    .apply();
             markBundledVersionHandled(prefs);
             Log.i(TAG, "Bundled Turnip installed + selected: " + pkg.id);
         } catch (final Exception e) {

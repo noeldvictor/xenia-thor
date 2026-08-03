@@ -32,6 +32,12 @@ public final class XeniaAndroidSettings {
      */
     public static final String KEY_BUNDLED_GPU_DRIVER_VERSION =
             "gpu_driver_bundled_version";
+    /**
+     * Package id of the driver that was installed FROM the APK bundle, so a
+     * later bundled version can replace exactly that one and leave drivers the
+     * user imported themselves alone. Empty when none.
+     */
+    public static final String KEY_BUNDLED_GPU_DRIVER_ID = "gpu_driver_bundled_id";
     public static final String KEY_INTERNAL_RESOLUTION = "internal_resolution";
     public static final String KEY_APU_DRIVER = "apu_driver";
     public static final String KEY_HID_DRIVER = "hid_driver";

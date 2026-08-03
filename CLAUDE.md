@@ -495,12 +495,52 @@ AYN Thor, ADB `c3ca0370`. Snapdragon 8 Gen 2 (QCS8550), Android 13, ~16GB UMA. A
   (pixel-shader only).
 - **GPU:** Adreno 740v2, TBDR, Vulkan 1.3, **Turnip (Mesa)** driver. GMEM = EDRAM-emulation target. Single
   graphics+compute queue. LRZ early-Z defeated by alpha-test/discard. EDRAM resolves = per-pixel compute dispatches.
-- **Driver = custom Mesa Turnip 26.0 (R8/rc08), BUNDLED in-APK** (`assets/drivers/turnip.zip`, auto-installs via
+- **Driver = Mesa Turnip, BUNDLED in-APK** (`assets/drivers/turnip.zip`, auto-installs + auto-selects via
   GpuDriverManager). **⚠️ Do NOT swap to the Qualcomm blob (v840/837) — it LACKS ROAA / dynamic_rendering_local_read
   = a downgrade.** Mesa source at WSL `/root/mesa` (build-android works) for driver patches. PRESENT: ROAA,
   dynamic_rendering_local_read, multisampled_render_to_single_sampled, custom_resolve, load_store_op_none.
   ABSENT: fragment_shader_interlock (but ROAA covers same-pixel; interlock is DEAD for BD — its composites are
   neighboring-pixel bloom). Feature audit: `docs/research/20260620-adreno-turnip-feature-gap-audit.md`.
+
+## 🟩🟩🟩 STANDING DIRECTIVE (user 2026-08-03): ALWAYS SHIP THE LATEST TURNIP — newer = more perf extensions
+**"we need the latest turnips always they have extra apis for performance."** Turnip is where the Adreno perf
+extensions land (ROAA, dynamic_rendering_local_read, custom_resolve, load_store_op_none all arrived this way), so we
+TRACK UPSTREAM — never pin. **`python tools/update_turnip.py`** fetches the newest AdrenoTools build, validates the
+zip (meta.json + the .so it names — a bad zip would silently fall back to the Qualcomm driver on every device),
+writes `assets/drivers/turnip.zip`, and rewrites `GpuDriverManager.BUNDLED_TURNIP_VERSION`. `--check` reports
+without writing; `--tag` pins one release. Source = `The412Banner/Banners-Turnip` (rebuilds from Mesa main on EVERY
+upstream commit; take the plain non-suffixed asset = A6xx/A7xx, correct for the Thor's Adreno 740 — NOT the A8xx or
+-Test variants). Run it at the start of any GPU work.
+- **The driver ships INSIDE the APK ⇒ updating it = rebuild + reinstall.** Bumping the version alone does nothing
+  until repackaged.
+- **⚠️ These are automated bleeding-edge builds, NOT guaranteed stable.** Always device-validate after updating:
+  launch a title FROM THE IN-APP GUI and confirm the log says `driverID` = `VK_DRIVER_ID_MESA_TURNIP`. If it says
+  `driverID=8` / logs `AdrenoVK-0`, you are on the Qualcomm proprietary driver and every GPU measurement is invalid.
+  Roll back with `--tag <older>` if a build regresses.
+- **🛑 A BARE `adb shell am start` RUNS THE QUALCOMM DRIVER** — Turnip is applied by the Java launch path
+  (`GpuDriverManager.applyToLaunch`), which only runs on a GUI launch. Bit me 2026-08-03: a whole Burnout
+  bring-up session ran on AdrenoVK-0 before I noticed. **But the four driver extras ARE allowlisted in
+  EmulatorActivity, so headless Turnip launches DO work** — pass them explicitly:
+  `--es gpu_vulkan_driver turnip --es gpu_vulkan_driver_path '<files>/gpu_drivers/<id>/'` (trailing slash
+  REQUIRED) `--es gpu_vulkan_driver_lib libvulkan_freedreno.so --es gpu_vulkan_driver_hooks_path '<nativeLibraryDir>'`
+  (get it from `pm path <pkg>` → replace `/base.apk` with `/lib/arm64`; get `<id>` from
+  `run-as <pkg> ls files/gpu_drivers/`).
+  **VERIFY EVERY RUN:** the log must say `Loaded Turnip Vulkan driver ... via libadrenotools` and the physical
+  device must print as **`Turnip Adreno (TM) 740`**. Plain `Adreno (TM) 740` + `AdrenoVK-0` = the Qualcomm blob and
+  every GPU number from that run is invalid.
+- **Upgrades reach existing devices** (fixed 2026-08-03): `ensureBundledDriverInstalled` used to skip whenever ANY
+  driver was installed — including the one it had installed itself — so version bumps only ever helped FRESH
+  installs. It now tracks the bundle-installed id (`KEY_BUNDLED_GPU_DRIVER_ID`), replaces exactly that package,
+  re-selects it if it was selected, and deletes the superseded one. Drivers the user imported are never touched.
+  "Already handled" requires the marker AND the recorded package to exist on disk — a marker-only check let the two
+  disagree permanently (device recorded the new version while still running the old driver).
+- **NEW SINCE THE 26.0 AUDIT (device-enumerated on Turnip 26.3.0, 174 device extensions — availability only, NOT
+  measured):** `VK_EXT_descriptor_buffer` (cheaper descriptor updates than our push-descriptor path),
+  `VK_EXT_host_image_copy` (CPU→image upload with no staging buffer or queue submit — texture uploads),
+  `VK_EXT_graphics_pipeline_library` (pipeline-creation cost / shader stutter), `VK_KHR_maintenance5/6/7`,
+  `VK_EXT_attachment_feedback_loop_dynamic_state`. All five 26.0-era perf extensions still PRESENT (ROAA,
+  dynamic_rendering_local_read, custom_resolve, load_store_op_none, multisampled_render_to_single_sampled).
+  `fragment_shader_interlock` still ABSENT (still DEAD for BD — ROAA covers same-pixel). Re-audit on each bump.
 
 ## Build / deploy / run
 - **Path has spaces** → junction: `cmd /c mklink /J C:\xt "<repo>"`, build from `C:\xt\android\android_studio_project`
