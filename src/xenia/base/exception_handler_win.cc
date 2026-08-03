@@ -161,4 +161,8 @@ uint32_t ExceptionHandler::GetUnhandledFaultCount() {
   return 0;
 }
 
+void ExceptionHandler::InstallAlternateSignalStackForCurrentThread() {
+  // POSIX-only concept; Windows guard pages + VEH already handle this.
+}
+
 }  // namespace xe

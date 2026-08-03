@@ -122,6 +122,19 @@ struct MappedFileRange {
 static std::vector<MappedFileRange> mapped_file_ranges;
 static std::mutex g_mapped_file_ranges_mutex;
 
+static bool IsInsideMappedFileRange(void* base_address, size_t length) {
+  const auto region_begin = reinterpret_cast<uintptr_t>(base_address);
+  const uintptr_t region_end = region_begin + length;
+  std::lock_guard<std::mutex> guard(g_mapped_file_ranges_mutex);
+  for (const auto& mapped_range : mapped_file_ranges) {
+    if (region_begin >= mapped_range.region_begin &&
+        region_end <= mapped_range.region_end) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void* AllocFixed(void* base_address, size_t length,
                  AllocationType allocation_type, PageAccess access) {
   // NOTE(2026-08-03): reverted to the original MAP_FIXED behavior. The Edge
@@ -133,11 +146,19 @@ void* AllocFixed(void* base_address, size_t length,
   // so desktop never saw it.
   uint32_t prot = ToPosixProtectFlags(access);
 
-  // Committing over an existing reservation must NOT re-mmap: an anonymous
-  // MAP_FIXED there would silently de-alias the page from the shared guest
-  // views (and the GPU). A protection change is the correct commit.
-  if (base_address != nullptr &&
-      allocation_type == AllocationType::kCommit) {
+  // Committing INSIDE a shared guest view must NOT re-mmap: an anonymous
+  // MAP_FIXED there would silently de-alias the page from the other views (and
+  // the GPU). A protection change is the correct commit there.
+  //
+  // Outside those views the original anonymous mmap is required, not merely
+  // preferable: BaseHeap::AllocFixed deliberately permits a commit on a page it
+  // never reserved ("attempting commit on unreserved page" - it logs and
+  // continues). mprotect on an unmapped range fails with ENOMEM, so applying
+  // the mprotect path unconditionally turned those tolerated commits into
+  // nullptr returns, and callers that do not check went on to use unbacked
+  // memory. Device-observed at startup on 2026-08-03.
+  if (base_address != nullptr && allocation_type == AllocationType::kCommit &&
+      IsInsideMappedFileRange(base_address, length)) {
     return Protect(base_address, length, access) ? base_address : nullptr;
   }
 

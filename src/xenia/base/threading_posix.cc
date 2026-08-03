@@ -11,6 +11,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/chrono_steady_cast.h"
+#include "xenia/base/exception_handler.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading_timer_queue.h"
 
@@ -1196,6 +1197,10 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
   }
 #endif
   threading::set_name("");
+
+  // Every thread needs its own alternate signal stack, or a stack-overflow
+  // fault on this thread kills the process with no diagnostic at all.
+  ExceptionHandler::InstallAlternateSignalStackForCurrentThread();
 
   auto start_data = static_cast<ThreadStartData*>(parameter);
   assert_not_null(start_data);

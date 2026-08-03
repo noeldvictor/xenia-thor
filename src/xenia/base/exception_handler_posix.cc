@@ -9,11 +9,25 @@
 
 #include "xenia/base/exception_handler.h"
 
+#include <dlfcn.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <time.h>
 #include <ucontext.h>
+#include <unistd.h>
+#include <unwind.h>
 #include <atomic>
+#include <cstdarg>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+#include "xenia/base/platform.h"
+
+#if XE_PLATFORM_ANDROID
+#include <android/log.h>
+#endif
 
 #include "xenia/base/assert.h"
 #include "xenia/base/host_thread_context.h"
@@ -37,6 +51,88 @@ constexpr size_t kMaxHandlerCount = 8;
 // Executed in order.
 std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
 
+// /proc/self/mem, opened once at Install time. Reading the faulting instruction
+// through pread on this fd cannot itself fault, unlike dereferencing the pc
+// directly - a jump to an unmapped address (the classic JIT/HLE codegen bug)
+// used to kill the process INSIDE this handler, producing no log, no tombstone
+// and no clue at all. -1 until installed.
+int self_mem_fd_ = -1;
+
+// Reads the 4-byte instruction at |pc| without faulting. Returns false if the
+// address is unmapped, in which case *out is left untouched. Async-signal-safe
+// (pread is; dereferencing an arbitrary pointer is not).
+bool SafeReadInstruction(uint64_t pc, uint32_t* out) {
+  if (self_mem_fd_ < 0) {
+    return false;
+  }
+  uint32_t value = 0;
+  ssize_t read_bytes =
+      pread(self_mem_fd_, &value, sizeof(value), static_cast<off_t>(pc));
+  if (read_bytes != static_cast<ssize_t>(sizeof(value))) {
+    return false;
+  }
+  *out = value;
+  return true;
+}
+
+// Writes DIRECTLY to logcat/stderr, bypassing XELOG*. Xenia's logger is
+// asynchronous (a writer thread drains a ring buffer), so anything XELOGE'd
+// from a fault handler is lost when the process dies moments later - which is
+// why every one of these startup crashes presented with no diagnostic at all.
+// This lands synchronously.
+XE_NOINLINE void FaultLog(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+#if XE_PLATFORM_ANDROID
+  __android_log_vprint(ANDROID_LOG_ERROR, "xenia-fault", format, args);
+#else
+  vfprintf(stderr, format, args);
+  fputc('\n', stderr);
+  fflush(stderr);
+#endif
+  va_end(args);
+}
+
+struct BacktraceState {
+  uint64_t frames[24];
+  uint32_t count;
+};
+
+_Unwind_Reason_Code BacktraceFrame(struct _Unwind_Context* context, void* arg) {
+  auto* state = static_cast<BacktraceState*>(arg);
+  uint64_t pc = uint64_t(_Unwind_GetIP(context));
+  if (pc && state->count < xe::countof(state->frames)) {
+    state->frames[state->count++] = pc;
+    return _URC_NO_REASON;
+  }
+  return _URC_END_OF_STACK;
+}
+
+// Logs a symbolized host backtrace. Only called on the fatal path, where the
+// process is already lost - so the (not strictly async-signal-safe) logging and
+// dladdr calls are an acceptable trade for having ANY diagnostic at all.
+void LogHostBacktrace(const char* what) {
+  BacktraceState state;
+  state.count = 0;
+  _Unwind_Backtrace(&BacktraceFrame, &state);
+  FaultLog("--- host backtrace (%s), %u frames ---", what, state.count);
+  for (uint32_t i = 0; i < state.count; ++i) {
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(state.frames[i]), &info) &&
+        info.dli_fname) {
+      uint64_t module_base =
+          uint64_t(reinterpret_cast<uintptr_t>(info.dli_fbase));
+      FaultLog("  #%02u pc %016llX  %s+%llX  %s", i,
+               (unsigned long long)state.frames[i], info.dli_fname,
+               (unsigned long long)(state.frames[i] - module_base),
+               info.dli_sname ? info.dli_sname : "?");
+    } else {
+      FaultLog("  #%02u pc %016llX  <unmapped>", i,
+               (unsigned long long)state.frames[i]);
+    }
+  }
+}
+
 // Count of faults no installed handler resolved. The handler re-executes the
 // faulting instruction on an unresolved fault, so a climbing value is a re-fault
 // storm pinning a core (see exception_handler.h / GetUnhandledFaultCount).
@@ -51,6 +147,26 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                                      void* signal_context) {
   mcontext_t& mcontext =
       reinterpret_cast<ucontext_t*>(signal_context)->uc_mcontext;
+
+  // Breadcrumb for the first few faults on the fatal path: without it there is
+  // no way to tell "the handler never ran" (dead before install / bad stack)
+  // apart from "the handler ran and something inside it died".
+  {
+    static std::atomic<uint32_t> entry_count{0};
+    uint32_t entry = entry_count.fetch_add(1, std::memory_order_relaxed);
+    if (entry < 4) {
+#if XE_ARCH_ARM64
+      FaultLog("host fault entered: sig=%d addr=%016llX pc=%016llX", signal_number,
+               (unsigned long long)reinterpret_cast<uintptr_t>(
+                   signal_info->si_addr),
+               (unsigned long long)mcontext.pc);
+#else
+      FaultLog("host fault entered: sig=%d addr=%016llX", signal_number,
+               (unsigned long long)reinterpret_cast<uintptr_t>(
+                   signal_info->si_addr));
+#endif
+    }
+  }
 
   HostThreadContext thread_context;
 
@@ -149,26 +265,36 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
         // have esr_context in its API 26 sigcontext.h).
         // On AArch64 (unlike on AArch32), the program counter is the address of
         // the currently executing instruction.
+        // NOTE: read the faulting instruction through /proc/self/mem rather
+        // than dereferencing the pc. If the pc itself is what is unmapped
+        // (branch to a bad address), a direct load faults a second time while
+        // already inside the handler and the process dies with NO diagnostic.
+        uint32_t fault_instruction = 0;
+        bool instruction_readable =
+            SafeReadInstruction(uint64_t(mcontext.pc), &fault_instruction);
         bool instruction_is_store;
-        if (IsArm64LoadPrefetchStore(
-                *reinterpret_cast<const uint32_t*>(mcontext.pc),
-                instruction_is_store)) {
+        if (instruction_readable &&
+            IsArm64LoadPrefetchStore(fault_instruction, instruction_is_store)) {
           access_violation_operation =
               instruction_is_store ? Exception::AccessViolationOperation::kWrite
                                    : Exception::AccessViolationOperation::kRead;
         } else {
-          uint32_t fault_instruction =
-              *reinterpret_cast<const uint32_t*>(mcontext.pc);
-          XELOGE(
-              "ARM64 SIGSEGV could not classify access: pc={:016X} "
-              "instruction={:08X} fault={:016X} esr_present={} esr={:016X}",
-              uint64_t(mcontext.pc), fault_instruction,
-              uint64_t(reinterpret_cast<uintptr_t>(signal_info->si_addr)),
-              mcontext_esr ? 1 : 0, mcontext_esr ? mcontext_esr->esr : 0);
-          assert_always(
-              "No ESR in the exception thread context, or it's not a Data "
-              "Abort, and the faulting instruction is not a known load, "
-              "prefetch or store instruction");
+          FaultLog(
+              "ARM64 SIGSEGV could not classify access: pc=%016llX "
+              "instruction=%08X (readable=%d) fault=%016llX esr_present=%d "
+              "esr=%016llX",
+              (unsigned long long)mcontext.pc, fault_instruction,
+              instruction_readable ? 1 : 0,
+              (unsigned long long)reinterpret_cast<uintptr_t>(
+                  signal_info->si_addr),
+              mcontext_esr ? 1 : 0,
+              (unsigned long long)(mcontext_esr ? mcontext_esr->esr : 0));
+          if (!instruction_readable) {
+            // The pc is unmapped: this is a branch to a bad address, not a data
+            // access. No guest handler can resolve it, so report it here where
+            // there is still a usable stack.
+            LogHostBacktrace("unmapped pc");
+          }
           access_violation_operation =
               Exception::AccessViolationOperation::kUnknown;
         }
@@ -262,15 +388,23 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
   {
     uint32_t un = unhandled_fault_count_.fetch_add(1, std::memory_order_relaxed);
     if (un < 16) {
-      uint32_t insn = *reinterpret_cast<const uint32_t*>(mcontext.pc);
-      XELOGE(
-          "UNHANDLED host fault #{}: code={} pc={:016X} insn=0x{:08X} "
-          "fault_addr={:016X} x20_ctx={:016X} x21_membase={:016X} x30_lr={:016X}"
-          " - no handler resolved it; return will re-fault (signal storm). "
-          "Likely a JIT codegen bug (wild addr / bad instr / membase).",
-          un, static_cast<uint32_t>(ex.code()), uint64_t(mcontext.pc), insn,
-          uint64_t(ex.fault_address()), uint64_t(mcontext.regs[20]),
-          uint64_t(mcontext.regs[21]), uint64_t(mcontext.regs[30]));
+      uint32_t insn = 0;
+      SafeReadInstruction(uint64_t(mcontext.pc), &insn);
+      FaultLog(
+          "UNHANDLED host fault #%u: code=%u pc=%016llX insn=0x%08X "
+          "fault_addr=%016llX x20_ctx=%016llX x21_membase=%016llX "
+          "x30_lr=%016llX - no handler resolved it; return will re-fault "
+          "(signal storm). Likely a JIT codegen bug (wild addr / bad instr / "
+          "membase).",
+          un, static_cast<uint32_t>(ex.code()),
+          (unsigned long long)mcontext.pc, insn,
+          (unsigned long long)ex.fault_address(),
+          (unsigned long long)mcontext.regs[20],
+          (unsigned long long)mcontext.regs[21],
+          (unsigned long long)mcontext.regs[30]);
+      if (un == 0) {
+        LogHostBacktrace("first unhandled fault");
+      }
     }
     // STORM GUARD: returning re-executes the faulting instruction; a
     // deterministic unresolved fault therefore re-faults FOREVER, pinning a core
@@ -284,11 +418,11 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
     uint64_t storm_pc = uint64_t(mcontext.pc);
     if (storm_pc == unhandled_last_pc_.load(std::memory_order_relaxed)) {
       if (unhandled_repeat_count_.fetch_add(1, std::memory_order_relaxed) >= 8) {
-        XELOGE(
-            "UNHANDLED fault STORM at pc={:016X} - parking this thread to stop "
+        FaultLog(
+            "UNHANDLED fault STORM at pc=%016llX - parking this thread to stop "
             "the infinite re-fault (other threads continue; LLVM compiles fall "
             "back to a64). Root cause: a libLLVM/JIT codegen crash.",
-            storm_pc);
+            (unsigned long long)storm_pc);
         for (;;) {
           struct timespec ts;
           ts.tv_sec = 3600;
@@ -304,13 +438,53 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
 #endif  // XE_ARCH_ARM64
 }
 
+void ExceptionHandler::InstallAlternateSignalStackForCurrentThread() {
+  static thread_local bool installed = false;
+  if (installed) {
+    return;
+  }
+  installed = true;
+  // Leaked deliberately: the stack must outlive every signal this thread can
+  // take, including ones raised during thread teardown.
+  size_t stack_size = size_t(SIGSTKSZ) * 4;
+  void* stack_memory = malloc(stack_size);
+  if (!stack_memory) {
+    return;
+  }
+  stack_t signal_stack;
+  std::memset(&signal_stack, 0, sizeof(signal_stack));
+  signal_stack.ss_sp = stack_memory;
+  signal_stack.ss_size = stack_size;
+  signal_stack.ss_flags = 0;
+  sigaltstack(&signal_stack, nullptr);
+}
+
 void ExceptionHandler::Install(Handler fn, void* data) {
+  // Cover the installing (main) thread; threads created later get theirs in
+  // ThreadStartRoutine.
+  InstallAlternateSignalStackForCurrentThread();
+
   if (!signal_handlers_installed_) {
     struct sigaction signal_handler;
 
+    // Opened before the handlers so the very first fault can already read its
+    // own faulting instruction safely (see SafeReadInstruction).
+    if (self_mem_fd_ < 0) {
+      self_mem_fd_ = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+      if (self_mem_fd_ < 0) {
+        XELOGW(
+            "Could not open /proc/self/mem; faults at an unmapped pc will be "
+            "reported without the faulting instruction.");
+      }
+    }
+
     std::memset(&signal_handler, 0, sizeof(signal_handler));
     signal_handler.sa_sigaction = ExceptionHandlerCallback;
-    signal_handler.sa_flags = SA_SIGINFO;
+    // SA_ONSTACK: run the handler on the alternate stack installed by
+    // InstallAlternateSignalStack for this thread. Without it a stack-overflow
+    // SIGSEGV cannot run the handler at all (no room to push a frame) and the
+    // process dies instantly with no log and no tombstone.
+    signal_handler.sa_flags = SA_SIGINFO | SA_ONSTACK;
 
     if (sigaction(SIGILL, &signal_handler, &original_sigill_handler_) != 0) {
       assert_always("Failed to install new SIGILL handler");

@@ -235,6 +235,13 @@ class ExceptionHandler {
   // degrade gracefully (fall back to a64) instead of hanging on a lock the
   // storming thread will never release. Monotonic, lock-free.
   static uint32_t GetUnhandledFaultCount();
+
+  // Gives the CALLING thread an alternate signal stack, so a stack-overflow
+  // SIGSEGV can still run the handler (without one there is no room left to
+  // push the handler's frame and the process dies instantly, with no log and no
+  // tombstone - which is exactly how a startup crash presented as a silent
+  // relaunch loop). Idempotent per thread; a no-op on Windows.
+  static void InstallAlternateSignalStackForCurrentThread();
 };
 
 }  // namespace xe
