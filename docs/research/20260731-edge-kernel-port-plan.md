@@ -128,3 +128,64 @@ cpptoml patcher), Processor::RemoveModule/RemoveFunctionByAddress (our
 EntryTable + LLVM resolve caches assume no deletion - needs an invalidation
 design first), Emulator::RelaunchTitle/DataMigration, in-process
 title-relaunch defaults FALSE.
+
+## EXECUTION LOG (2026-08-03, later) — device bring-up of the merged kernel
+
+The merge compiled and passed every desktop oracle while being **unable to boot
+at all on the device**. Five distinct defects, found in order, each hidden
+behind the previous one. Two general lessons first:
+
+1. **Desktop oracles cannot validate this port.** Everything that broke was in
+   memory_posix / threading_posix / Android-only call paths. 1481/1481 PPC tests
+   passed against a binary that segfaulted 300ms into startup.
+2. **The merge scope (kernel + vfs) was too narrow.** Edge also changed how code
+   OUTSIDE those directories calls into the kernel. Three of the five defects
+   were missing caller-side changes in gpu/, apu/ and emulator.cc. When porting
+   a subsystem wholesale, diff the CALLERS too — `git show edge/edge:<file>` on
+   every file that touches the ported API.
+
+### The defects
+- **MAP_FIXED_NOREPLACE in MapFileView** (mine, b11dadbd8): guest views map INTO
+  the reserved region, so NOREPLACE always fails. Memory init failed → crash
+  loop. Reverted in 4d78e1055.
+- **AllocFixed commit via mprotect unconditionally** (same batch): BaseHeap
+  tolerates a commit on an unreserved page ("attempting commit on unreserved
+  page" — it logs and continues) and the original anonymous MAP_FIXED made that
+  work. mprotect on unmapped memory returns ENOMEM → nullptr to callers that
+  don't check. Now gated on IsInsideMappedFileRange.
+- **Host threads created before title load** (missing Edge call-site change):
+  XThread::Create inserts into the process's guest thread_list; the default
+  TITLE process is not initialized until SetExecutableModule, so blink_ptr == 0
+  and the insert wrote through guest address 0. Edge names GetIdleProcess() /
+  GetSystemProcess() at all four sites (command_processor, graphics_system,
+  audio_system, xma_decoder).
+- **FinishLoadingUserModule never called** (missing Edge call-site change): Edge
+  split module loading in two; CompleteLaunch only called the first half, so
+  guest_xex_header_ stayed 0 and GetOptHeader read membase+0x14. Its guard
+  null-checked the TRANSLATED pointer, and TranslateVirtual(0) is the membase —
+  never null. Check guest pointers, not translated ones.
+- **Main guest thread never started**: Edge's CompleteLaunch ends with
+  main_thread_->Resume() (missing here), AND PosixThread's create-suspended
+  handshake had a lost-wakeup race — state_ = kSuspended was published before
+  suspend_count_ = 1, so a Resume in that window decremented a zero count,
+  wrapped it to ~4 billion, and never signalled. Would strand ANY
+  create-suspended thread on POSIX.
+
+### Diagnosis infrastructure added (d087989ea) — this is what made it tractable
+Every one of these died with NO diagnostic: no handler log, no crash_log, no
+tombstone. Causes, all fixed: XELOGE from a fault handler is lost because the
+logger is asynchronous (use FaultLog → __android_log_vprint, synchronous);
+dereferencing mcontext.pc faults again inside the handler when the pc is what's
+unmapped (read via pread on /proc/self/mem); no SA_ONSTACK/sigaltstack so a
+stack-overflow fault could not run the handler at all. Plus a symbolized
+_Unwind_Backtrace on the fatal path. Symbolize with
+`llvm-addr2line -f -C -e <intermediates>/obj/local/arm64-v8a/libxenia-app.so <offset>`
+using the `libxenia-app.so+OFFSET` values the backtrace prints.
+
+### State at end of session
+Burnout Revenge: loads, creates its thread pool, main XThread runs at ~92% CPU,
+GPU temp climbs under load. **Screen still black — no frame presented yet.**
+Note this was measured via `am start`, which does NOT install Turnip (the log
+shows the Qualcomm proprietary driver, AdrenoVK-0) — CLAUDE.md requires Turnip,
+so re-test from the in-app GUI launch before drawing any conclusion about the
+black screen.
