@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/xam/xdbf/spa_info.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace xe {
@@ -507,8 +508,10 @@ const std::optional<PropertyBag> SpaInfo::GetPresenceMode(
 }
 
 const std::optional<ViewTable> SpaInfo::GetStatsView(uint32_t id) {
-  const auto itr = std::ranges::find_if(
-      stats_views_,
+  // NOTE(kernel-port 2026-08): std::find_if instead of std::ranges::find_if -
+  // the NDK's libc++ has no <ranges>.
+  const auto itr = std::find_if(
+      stats_views_.cbegin(), stats_views_.cend(),
       [id](const ViewTable& view) { return view.view_entry.id == id; });
 
   return itr != stats_views_.cend() ? std::make_optional(*itr) : std::nullopt;

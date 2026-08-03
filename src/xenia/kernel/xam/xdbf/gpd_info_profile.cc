@@ -14,8 +14,6 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
 
-#include <ranges>
-
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -24,36 +22,30 @@ const std::vector<const X_XDBF_GPD_TITLE_PLAYED*>
 GpdInfoProfile::GetTitlesInfo() const {
   std::vector<const X_XDBF_GPD_TITLE_PLAYED*> entries;
 
-  auto titles = entries_ | std::views::filter([](const auto& entry) {
-                  return !IsSyncEntry(&entry);
-                }) |
-                std::views::filter([](const auto& entry) {
-                  return IsEntryOfSection(&entry, GpdSection::kTitle);
-                });
-
-  for (const auto& title : titles) {
+  // NOTE(kernel-port 2026-08): plain loop instead of std::views::filter - the
+  // NDK's libc++ has no <ranges>.
+  for (const auto& entry : entries_) {
+    if (IsSyncEntry(&entry) || !IsEntryOfSection(&entry, GpdSection::kTitle)) {
+      continue;
+    }
     entries.push_back(
-        reinterpret_cast<const X_XDBF_GPD_TITLE_PLAYED*>(title.data.data()));
+        reinterpret_cast<const X_XDBF_GPD_TITLE_PLAYED*>(entry.data.data()));
   }
   return entries;
 };
 
 X_XDBF_GPD_TITLE_PLAYED* GpdInfoProfile::GetTitleInfo(const uint32_t title_id) {
-  auto title = entries_ | std::views::filter([](const auto& entry) {
-                 return !IsSyncEntry(&entry);
-               }) |
-               std::views::filter([](const auto& entry) {
-                 return IsEntryOfSection(&entry, GpdSection::kTitle);
-               }) |
-               std::views::filter([title_id](const auto& entry) {
-                 return static_cast<uint32_t>(entry.info.id) == title_id;
-               });
-
-  if (title.empty()) {
-    return nullptr;
+  // NOTE(kernel-port 2026-08): plain loop instead of std::views::filter - the
+  // NDK's libc++ has no <ranges>.
+  for (auto& entry : entries_) {
+    if (IsSyncEntry(&entry) || !IsEntryOfSection(&entry, GpdSection::kTitle) ||
+        static_cast<uint32_t>(entry.info.id) != title_id) {
+      continue;
+    }
+    return reinterpret_cast<X_XDBF_GPD_TITLE_PLAYED*>(entry.data.data());
   }
 
-  return reinterpret_cast<X_XDBF_GPD_TITLE_PLAYED*>(title.begin()->data.data());
+  return nullptr;
 }
 
 std::u16string GpdInfoProfile::GetTitleName(const uint32_t title_id) const {

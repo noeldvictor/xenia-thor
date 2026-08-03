@@ -181,6 +181,8 @@ object_ref<XObject> XObject::Restore(KernelState* kernel_state, Type type,
       return XThread::Restore(kernel_state, stream);
     case Type::Timer:
       break;
+    case Type::Device:
+      break;
     case Type::Undefined:
       break;
   }
@@ -895,19 +897,14 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
         assert_true(success);
         result = sem;
       } break;
-      case 3:   // ProcessObject
-      case 4:   // QueueObject
-      case 6:   // ThreadObject
-      case 7:   // GateObject
-      case 8:   // TimerNotificationObject
-      case 9:   // TimerSynchronizationObject
-      case 18:  // ApcObject
-      case 19:  // DpcObject
-      case 20:  // DeviceQueueObject
-      case 21:  // EventPairObject
-      case 22:  // InterruptObject
-      case 23:  // ProfileObject
-      case 24:  // ThreadedDpcObject
+      // NOTE(kernel-port 2026-08): the remaining guest object types have no
+      // X_DISPATCHER_FLAGS enumerator, and clang's -Wswitch rejects case
+      // labels whose value is not an enumerator of the switched-on type. They
+      // all landed on the identical `default:` body anyway, so they are listed
+      // here instead: 3 ProcessObject, 4 QueueObject, 6 ThreadObject,
+      // 7 GateObject, 8 TimerNotificationObject, 9 TimerSynchronizationObject,
+      // 18 ApcObject, 19 DpcObject, 20 DeviceQueueObject, 21 EventPairObject,
+      // 22 InterruptObject, 23 ProfileObject, 24 ThreadedDpcObject.
       default:
         // Unimplemented object type - just log and return nullptr
         XELOGW("GetNativeObject: Unimplemented object type {}",

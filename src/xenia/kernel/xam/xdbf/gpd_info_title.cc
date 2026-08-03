@@ -8,7 +8,6 @@
  */
 
 #include "xenia/kernel/xam/xdbf/gpd_info_title.h"
-#include <ranges>
 
 namespace xe {
 namespace kernel {
@@ -89,16 +88,14 @@ std::u16string GpdInfoTitle::GetAchievementUnachievedDescription(
 std::vector<uint32_t> GpdInfoTitle::GetAchievementsIds() const {
   std::vector<uint32_t> ids;
 
-  auto achievements =
-      entries_ | std::views::filter([](const auto& entry) {
-        return !IsSyncEntry(&entry);
-      }) |
-      std::views::filter([](const auto& entry) {
-        return IsEntryOfSection(&entry, GpdSection::kAchievement);
-      });
-
-  for (const auto& achievement : achievements) {
-    ids.push_back(static_cast<uint32_t>(achievement.info.id));
+  // NOTE(kernel-port 2026-08): plain loop instead of std::views::filter - the
+  // NDK's libc++ has no <ranges>.
+  for (const auto& entry : entries_) {
+    if (IsSyncEntry(&entry) ||
+        !IsEntryOfSection(&entry, GpdSection::kAchievement)) {
+      continue;
+    }
+    ids.push_back(static_cast<uint32_t>(entry.info.id));
   }
   return ids;
 }

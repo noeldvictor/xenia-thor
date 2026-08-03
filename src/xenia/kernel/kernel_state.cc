@@ -7,8 +7,6 @@
  ******************************************************************************
  */
 
-#include <ranges>
-
 #include "xenia/kernel/kernel_state.h"
 
 #include "xenia/base/byte_stream.h"
@@ -1031,12 +1029,13 @@ object_ref<XThread> KernelState::GetThreadByID(uint32_t thread_id) {
 std::vector<uint32_t> KernelState::GetAllThreadIDs() {
   auto global_lock = global_critical_region_.Acquire();
 
-  auto thread_ids_view =
-      threads_by_id_ |
-      std::views::transform([](const auto& pair) { return pair.first; });
-
-  std::vector<std::uint32_t> thread_ids(thread_ids_view.begin(),
-                                        thread_ids_view.end());
+  // NOTE(kernel-port 2026-08): plain loop instead of std::views::transform -
+  // the NDK's libc++ has no <ranges>.
+  std::vector<uint32_t> thread_ids;
+  thread_ids.reserve(threads_by_id_.size());
+  for (const auto& pair : threads_by_id_) {
+    thread_ids.push_back(pair.first);
+  }
 
   return thread_ids;
 }

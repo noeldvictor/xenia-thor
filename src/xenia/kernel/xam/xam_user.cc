@@ -7,8 +7,6 @@
  ******************************************************************************
  */
 
-#include <ranges>
-
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"

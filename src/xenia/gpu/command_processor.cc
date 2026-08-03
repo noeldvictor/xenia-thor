@@ -1424,8 +1424,12 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
       // This will block the command processor the next time it WAIT_REG_MEMs
       // and allow us to synchronize the memory.
       case XE_GPU_REG_COHER_STATUS_HOST: {
-        const_cast<volatile uint32_t&>(regs.values[index]) |=
-            UINT32_C(0x80000000);
+        // NOTE(kernel-port 2026-08): compound assignment to a volatile is
+        // deprecated in C++20 (-Wdeprecated-volatile). Split into an explicit
+        // volatile read + volatile write, which is what |= already did.
+        volatile uint32_t& coher_status =
+            const_cast<volatile uint32_t&>(regs.values[index]);
+        coher_status = coher_status | UINT32_C(0x80000000);
       } break;
 
       case XE_GPU_REG_DC_LUT_RW_INDEX: {

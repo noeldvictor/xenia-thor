@@ -120,7 +120,7 @@ inline AchievementTypeFlags constexpr GetAchievementType(const uint32_t flags) {
       flags & static_cast<uint32_t>(AchievementFlags::kTypeMask));
 }
 
-inline std::string constexpr GetAchievementTypeName(
+inline std::string GetAchievementTypeName(
     const AchievementTypeFlags type) {
   switch (type) {
     case AchievementTypeFlags::kCompletion:

@@ -9,6 +9,8 @@
 
 #include "xenia/kernel/xam/xam_ui.h"
 
+#include <thread>
+
 #include "third_party/imgui/imgui.h"
 #include "xenia/app/emulator_window.h"
 #include "xenia/base/cvar.h"
@@ -134,7 +136,10 @@ X_RESULT xeXamDispatchDialog(T* dialog,
     return result;
   };
   auto post = []() {
-    std::jthread t([] {
+    // NOTE(kernel-port 2026-08): std::thread instead of std::jthread (the NDK's
+    // libc++ lacks it). Equivalent here - the thread is detached immediately,
+    // so jthread's join-on-destroy never applied.
+    std::thread t([] {
       xe::threading::Sleep(kUIDelayMillis);
       kernel_state()->BroadcastNotification(kXNotificationSystemUI, false);
     });
@@ -201,7 +206,9 @@ X_RESULT xeXamDispatchHeadless(std::function<X_RESULT()> run_callback,
     xe::threading::Sleep(std::chrono::milliseconds(25));
   };
   auto post = []() {
-    std::jthread t([]() {
+    // NOTE(kernel-port 2026-08): std::thread instead of std::jthread (the NDK's
+    // libc++ lacks it). Equivalent here - the thread is detached immediately.
+    std::thread t([]() {
       xe::threading::Sleep(kUIDelayMillis);
       kernel_state()->BroadcastNotification(kXNotificationSystemUI, false);
     });

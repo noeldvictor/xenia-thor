@@ -532,7 +532,7 @@ class UserSetting : public UserData {
   }
 
   static bool is_setting_valid(uint32_t setting_id) {
-    const auto setting = static_cast<AttributeKey>(setting_id);
+    const AttributeKey setting = {setting_id};
 
     if (setting.id < kMaxUserSettingId) {
       return true;

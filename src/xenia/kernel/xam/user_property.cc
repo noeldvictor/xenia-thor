@@ -20,7 +20,7 @@ Property::Property(const Property& property)
 
 Property::Property(uint32_t property_id, UserDataTypes property_data)
     : UserData(get_type(property_id), property_data) {
-  property_id_ = static_cast<AttributeKey>(property_id);
+  property_id_.value = property_id;
 }
 
 Property::Property(uint32_t property_id, uint32_t value_size,

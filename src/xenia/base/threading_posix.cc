@@ -736,7 +736,9 @@ class PosixCondition<Thread> : public PosixConditionBase {
     if (out_previous_suspend_count) {
       *out_previous_suspend_count = suspend_count_;
     }
-    --suspend_count_;
+    // NOTE(kernel-port 2026-08): ++/-- on a volatile is deprecated in C++20
+    // (-Wdeprecated-volatile). Explicit read-modify-write is equivalent.
+    suspend_count_ = suspend_count_ - 1;
     // When fully resumed, transition to running and wake the suspended thread's
     // WaitSuspended via the async-signal-safe semaphore (ported edge 6f18c9850;
     // moved here from WaitSuspended, which can no longer touch state_ safely).
@@ -760,7 +762,9 @@ class PosixCondition<Thread> : public PosixConditionBase {
         *out_previous_suspend_count = suspend_count_;
       }
       state_ = State::kSuspended;
-      ++suspend_count_;
+      // NOTE(kernel-port 2026-08): ++/-- on a volatile is deprecated in C++20
+      // (-Wdeprecated-volatile). Explicit read-modify-write is equivalent.
+      suspend_count_ = suspend_count_ + 1;
     }
     if (prev_suspend_count != 0) {
       // Already suspended: the thread is parked in the SIGRTMIN handler's
