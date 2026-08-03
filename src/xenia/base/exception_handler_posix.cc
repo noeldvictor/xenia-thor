@@ -165,6 +165,12 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                (unsigned long long)reinterpret_cast<uintptr_t>(
                    signal_info->si_addr));
 #endif
+      // NOTE: adding LogHostBacktrace("fault entry") here dumps the stack of
+      // whoever faulted first, which is how the 2026-08-03 startup crashes were
+      // found when the process was dying before any other reporting could run.
+      // Not kept on by default: guest write-watch faults are routine, so the
+      // first fault of a healthy run is normally benign and the dump is just
+      // noise. Re-add it temporarily when a fault kills the process outright.
     }
   }
 
