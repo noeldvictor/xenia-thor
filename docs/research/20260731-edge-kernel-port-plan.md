@@ -84,3 +84,47 @@ Phase 4 IRQL unification LAST (only change reaching the a64 backend:
 a64_backend.cc:3207 processor_irql -> KPCR-resident IRQL via xeKfRaiseIrql).
 Oracles: 4 cpu EH tests, base+ppc suites, BD desktop boot, APK build.
 Risk is asymmetric: GPU surface ~free, CPU surface is the expensive one.
+
+## EXECUTION LOG (2026-08-03) — Phase 2 complete on desktop
+
+Branch `kernel-port`. Sequence that worked:
+1. `git checkout edge/edge -- src/xenia/kernel src/xenia/vfs`; `git rm` the 6
+   superseded files; `git apply -3 <delta.patch>` EXACTLY ONCE (it is NOT
+   idempotent - a second run duplicates insert hunks; and `--stat` on
+   `git apply` is not a dry run, it applies).
+2. 173 conflict markers / 48 files resolved by three parallel agents on
+   disjoint file groups. **All three independently found the merge's
+   conflict labels were INVERTED** (`<<<<<<< ours` held EDGE content).
+   Resolve by content, never by label.
+3. ~1100 compile errors -> 0. The big root causes, each worth hundreds:
+   - **C++17 -> C++20** (Edge headers use concepts/requires/span). This one
+     switch removed the majority of the initial error count.
+   - **XE_RESTRICT / XE_FORCEINLINE / XE_LIKELY_IF undefined in our tree**:
+     shim_utils.h (included by every kernel TU) used them, so its
+     ContextParam member decl was garbage and everything after derailed.
+     MSVC blamed unrelated headers (audio_driver.h, DXGI client.h).
+   - **ui/imgui_drawer.h forward-declared ImGui instead of including it** -
+     ~500 errors across the byte-identical xam/ui/*.cc dialogs.
+   - **xthread.h tested XE_PLATFORM_WIN32 before including platform.h**, so
+     <csetjmp> was skipped while the same #if 620 lines later was true.
+   TECHNIQUE: when MSVC blames a system/3rd-party header, compile the
+   suspect header ALONE in a minimal TU - it points at the real line
+   immediately. (cl.exe must be run via PowerShell; MSYS mangles /flags.)
+4. Oracles (all pass): base 3508 assertions, cpu 1605, **ppc 1481/1481**,
+   guest-EH subset 83. Test tools needed kernel/apu/hid/vfs/gpu/ui/imgui/
+   pugixml links added, and their pre-existing GPU link stubs removed or
+   gated to !AMD64 (now duplicate definitions).
+5. Android (NDK clang, -std=c++20 -Werror) surfaces MSVC-vs-clang gaps, not
+   merge damage: -Wdeprecated-volatile (++ and |= on volatile members),
+   std::ranges absent from NDK libc++, mixed-enum arithmetic, constexpr
+   returning std::string, -Wswitch. Fix portably (both toolchains), never
+   by disabling warnings. ALWAYS dedupe the gradle log - each error repeats
+   per TU and buries the distinct ones.
+
+Deliberate omissions (all NOTE(kernel-port) with re-enable paths): XMP host
+decode (needs FFmpeg bump + Edge audio_driver split), achievement sound
+(miniaudio not vendored), zarchive .zar discs, plugin_loader (we keep the
+cpptoml patcher), Processor::RemoveModule/RemoveFunctionByAddress (our
+EntryTable + LLVM resolve caches assume no deletion - needs an invalidation
+design first), Emulator::RelaunchTitle/DataMigration, in-process
+title-relaunch defaults FALSE.
