@@ -10,9 +10,21 @@ project("xenia-cpu-ppc-tests")
     "capstone", -- cpu-backend-x64
     "fmt",
     "mspack",
+    "pugixml",
     "xenia-core",
     "xenia-cpu",
     "xenia-base",
+    -- Edge kernel-port (2026-08): xenia-core/cpu now reference kernel
+    -- symbols (xam::UserSetting et al), so the tool links the kernel too.
+    "xenia-kernel",
+    "xenia-apu",
+    "xenia-hid",
+    "xenia-vfs",
+    "aes_128",
+    -- The merged kernel's video/UI shims reference GPU + ImGui symbols.
+    "xenia-gpu",
+    "xenia-ui",
+    "imgui",
   })
   files({
     "ppc_testing_main.cc",

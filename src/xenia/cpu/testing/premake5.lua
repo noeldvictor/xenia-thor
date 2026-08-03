@@ -19,6 +19,15 @@ test_suite("xenia-cpu-tests", project_root, ".", {
         -- TODO(benvanik): cut these dependencies?
         "xenia-kernel",
         "xenia-ui", -- needed by xenia-base
+        -- Edge kernel-port (2026-08): the merged kernel's deps.
+        "xenia-apu",
+        "xenia-hid",
+        "xenia-vfs",
+        "pugixml",
+        "aes_128",
+        "mspack",
+        "xenia-gpu",
+        "imgui",
       },
     },
     {

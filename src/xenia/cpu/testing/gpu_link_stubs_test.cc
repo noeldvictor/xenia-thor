@@ -15,6 +15,13 @@
 // Safe: the HLE handlers are cvar-gated and no CommandProcessor is ever
 // constructed in the tests. The real app links xenia-gpu and gets the real one.
 
+// NOTE(kernel-port 2026-08): on x86_64 this project now links xenia-gpu (the
+// merged Edge kernel references GPU symbols), so these stubs would be
+// duplicate definitions. They remain for the lean ARM64 cross build, which
+// still links no GPU library.
+#include "xenia/base/platform.h"
+#if !XE_ARCH_AMD64
+
 #include "xenia/gpu/command_processor.h"
 
 namespace xe {
@@ -24,3 +31,5 @@ void CommandProcessor::UpdateWritePointer(uint32_t value) {}
 
 }  // namespace gpu
 }  // namespace xe
+
+#endif  // !XE_ARCH_AMD64

@@ -35,30 +35,9 @@ DEFINE_path(test_bin_path, "src/xenia/cpu/ppc/testing/bin/",
             "Directory with binary outputs of the test files.", "Other");
 DEFINE_transient_string(test_name, "", "Test suite name.", "General");
 
-namespace xe {
-
-// Link stub: cpu/processor.cc's BD tiling-HLE experiment calls
-// gpu::CommandProcessor::UpdateWritePointer, but this standalone tool links
-// no GPU library and never runs that path (no graphics system exists here).
-// Defining the symbol locally keeps the tool linking without dragging in the
-// whole GPU dependency chain.
-namespace gpu {
-class CommandProcessor;
-}  // namespace gpu
-}  // namespace xe
-namespace xe {
-namespace gpu {
-void __cdecl CommandProcessorUpdateWritePointerStubNever();
-}  // namespace gpu
-}  // namespace xe
-#include "xenia/gpu/command_processor.h"
-namespace xe {
-namespace gpu {
-void CommandProcessor::UpdateWritePointer(uint32_t) {
-  // Unreachable in the PPC testing tool.
-}
-}  // namespace gpu
-}  // namespace xe
+// NOTE(kernel-port 2026-08): the local UpdateWritePointer link stub is gone -
+// the tool now links xenia-gpu (the merged kernel references GPU symbols), so
+// the real definition is available and a local one would be a duplicate.
 
 namespace xe {
 namespace cpu {

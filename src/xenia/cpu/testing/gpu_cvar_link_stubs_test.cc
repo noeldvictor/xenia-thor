@@ -24,6 +24,13 @@
 // this file. Proper long-term fix: give the test_suite premake target an
 // xenia-gpu dependency, or stop the kernel referencing gpu-lib cvars directly.
 
+// NOTE(kernel-port 2026-08): on x86_64 this project now links xenia-gpu (the
+// merged Edge kernel references GPU symbols), so these stubs would be
+// duplicate definitions. They remain for the lean ARM64 cross build, which
+// still links no GPU library.
+#include "xenia/base/platform.h"
+#if !XE_ARCH_AMD64
+
 #include "xenia/base/cvar.h"
 
 DEFINE_bool(gpu_trace_swap, false,
@@ -32,3 +39,5 @@ DEFINE_bool(gpu_trace_vd_swap, false,
             "(cpu-tests link stub; real definition in gpu_flags.cc)", "GPU");
 DEFINE_bool(gpu_use_vd_scaler_output_for_swap, false,
             "(cpu-tests link stub; real definition in gpu_flags.cc)", "GPU");
+
+#endif  // !XE_ARCH_AMD64
