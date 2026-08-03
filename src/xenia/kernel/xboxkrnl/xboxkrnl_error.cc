@@ -7,17 +7,12 @@
  ******************************************************************************
  */
 
-#include <algorithm>
-
-#include "xenia/base/atomic.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_error.h"
 #include "xenia/base/logging.h"
-#include "xenia/base/string.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
-#include "xenia/kernel/xboxkrnl/xboxkrnl_error.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-#include "xenia/kernel/xthread.h"
 
 namespace xe {
 namespace kernel {
@@ -30,7 +25,7 @@ struct error_lookup_table {
 };
 
 // TODO(gibbed): replace these with named error codes
-const uint32_t error_table_0x00000103[] = {
+constexpr uint32_t error_table_0x00000103[] = {
     0x000003E5,  // 0x00000103
     0,           //
     0x000000EA,  // 0x00000105
@@ -44,7 +39,7 @@ const uint32_t error_table_0x00000103[] = {
     0x00000516,  // 0x0000010D
 };
 
-const uint32_t error_table_0x40000002[] = {
+constexpr uint32_t error_table_0x40000002[] = {
     0x00000057,  // 0x40000002
     0,           //
     0,           //
@@ -59,15 +54,15 @@ const uint32_t error_table_0x40000002[] = {
     0x00000518,  // 0x4000000D
 };
 
-const uint32_t error_table_0x40020056[] = {
+constexpr uint32_t error_table_0x40020056[] = {
     0x00000720,  // 0x40020056
 };
 
-const uint32_t error_table_0x400200AF[] = {
+constexpr uint32_t error_table_0x400200AF[] = {
     0x00000779,  // 0x400200AF
 };
 
-const uint32_t error_table_0x80000001[] = {
+constexpr uint32_t error_table_0x80000001[] = {
     0x80000001,  // 0x80000001
     0x000003E6,  // 0x80000002
     0x80000003,  // 0x80000003
@@ -107,12 +102,12 @@ const uint32_t error_table_0x80000001[] = {
     0x00000962,  // 0x80000025
 };
 
-const uint32_t error_table_0x80000288[] = {
+constexpr uint32_t error_table_0x80000288[] = {
     0x0000048D,  // 0x80000288
     0x0000048E,  // 0x80000289
 };
 
-const uint32_t error_table_0x80090300[] = {
+constexpr uint32_t error_table_0x80090300[] = {
     0x000005AA,  // 0x80090300
     0x00000006,  // 0x80090301
     0x00000001,  // 0x80090302
@@ -165,7 +160,7 @@ const uint32_t error_table_0x80090300[] = {
     0x00000001,  // 0x80090331
 };
 
-const uint32_t error_table_0xC0000001[] = {
+constexpr uint32_t error_table_0xC0000001[] = {
     0x0000001F,  // 0xC0000001
     0x00000001,  // 0xC0000002
     0x00000057,  // 0xC0000003
@@ -579,7 +574,7 @@ const uint32_t error_table_0xC0000001[] = {
     0x00000712,  // 0xC000019B
 };
 
-const uint32_t error_table_0xC0000202[] = {
+constexpr uint32_t error_table_0xC0000202[] = {
     0x00000572,  // 0xC0000202
     0x0000003B,  // 0xC0000203
     0x00000717,  // 0xC0000204
@@ -815,7 +810,7 @@ const uint32_t error_table_0xC0000202[] = {
     0x00000052,  // 0xC00002EA
 };
 
-const uint32_t error_table_0xC0020001[] = {
+constexpr uint32_t error_table_0xC0020001[] = {
     0x000006A4,  // 0xC0020001
     0x000006A5,  // 0xC0020002
     0x00000006,  // 0xC0020003
@@ -917,7 +912,7 @@ const uint32_t error_table_0xC0020001[] = {
     0x0000077B,  // 0xC0020063
 };
 
-const uint32_t error_table_0xC0030001[] = {
+constexpr uint32_t error_table_0xC0030001[] = {
     0x000006EC,  // 0xC0030001
     0x000006ED,  // 0xC0030002
     0x000006EE,  // 0xC0030003
@@ -932,7 +927,7 @@ const uint32_t error_table_0xC0030001[] = {
     0x000006F7,  // 0xC003000C
 };
 
-const uint32_t error_table_0xC0030059[] = {
+constexpr uint32_t error_table_0xC0030059[] = {
     0x00000723,  // 0xC0030059
     0x00000724,  // 0xC003005A
     0x00000725,  // 0xC003005B
@@ -944,12 +939,12 @@ const uint32_t error_table_0xC0030059[] = {
     0x0000077E,  // 0xC0030061
 };
 
-const uint32_t error_table_0xC0050003[] = {
+constexpr uint32_t error_table_0xC0050003[] = {
     0x0000045D,  // 0xC0050003
     0x00000456,  // 0xC0050004
 };
 
-const uint32_t error_table_0xC0980001[] = {
+constexpr uint32_t error_table_0xC0980001[] = {
     0x00000037,  // 0xC0980001
     0x00000037,  // 0xC0980002
     0,           //
@@ -960,9 +955,8 @@ const uint32_t error_table_0xC0980001[] = {
     0x00000037,  // 0xC0980008
 };
 
-#define MAKE_ENTRY(x) \
-  { x, xe::countof(error_table_##x), error_table_##x }
-const error_lookup_table error_tables[] = {
+#define MAKE_ENTRY(x) {x, xe::countof(error_table_##x), error_table_##x}
+constexpr error_lookup_table error_tables[] = {
     MAKE_ENTRY(0x00000103), MAKE_ENTRY(0x40000002), MAKE_ENTRY(0x40020056),
     MAKE_ENTRY(0x400200AF), MAKE_ENTRY(0x80000001), MAKE_ENTRY(0x80000288),
     MAKE_ENTRY(0x80090300), MAKE_ENTRY(0xC0000001), MAKE_ENTRY(0xC0000202),
@@ -997,7 +991,7 @@ uint32_t xeRtlNtStatusToDosError(uint32_t source_status) {
       if (!result) {
         break;
       }
-      XELOGI("xeRtlNtStatusToDosError {:X} => {:X}", status, result);
+      XELOGD("xeRtlNtStatusToDosError {:X} => {:X}", status, result);
       return result;
     }
     ++error_table;

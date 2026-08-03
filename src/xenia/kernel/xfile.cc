@@ -11,12 +11,8 @@
 #include "xenia/vfs/virtual_file_system.h"
 
 #include "xenia/base/byte_stream.h"
-#include "xenia/base/logging.h"
-#include "xenia/base/math.h"
-#include "xenia/base/mutex.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
-#include "xenia/kernel/xevent.h"
-#include "xenia/memory.h"
 
 namespace xe {
 namespace kernel {
@@ -29,7 +25,7 @@ XFile::XFile(KernelState* kernel_state, vfs::File* file, bool synchronous)
   assert_not_null(async_event_);
 }
 
-XFile::XFile() : XObject(kObjectType) {
+XFile::XFile() : XObject(kObjectType), completion_port_lock_() {
   async_event_ = threading::Event::CreateAutoResetEvent(false);
   assert_not_null(async_event_);
 }
@@ -40,9 +36,26 @@ XFile::~XFile() {
   file_->Destroy();
 }
 
+uint64_t XFile::position() const { return position_.load(); }
+
+void XFile::set_position(uint64_t value) { position_.store(value); }
+
 X_STATUS XFile::QueryDirectory(X_FILE_DIRECTORY_INFORMATION* out_info,
                                size_t length, const std::string_view file_name,
                                bool restart) {
+  // The I/O worker may already hold file_lock_ for a slow read.
+  X_STATUS result = X_STATUS_SUCCESS;
+  kernel_state()->guest_scheduler()->RunBlockingHostCall([&]() {
+    result = QueryDirectoryInternal(out_info, length, file_name, restart);
+  });
+  return result;
+}
+
+X_STATUS XFile::QueryDirectoryInternal(X_FILE_DIRECTORY_INFORMATION* out_info,
+                                       size_t length,
+                                       const std::string_view file_name,
+                                       bool restart) {
+  std::lock_guard<std::mutex> lock(file_lock_);
   assert_not_null(out_info);
 
   vfs::Entry* entry = nullptr;
@@ -96,9 +109,21 @@ X_STATUS XFile::QueryDirectory(X_FILE_DIRECTORY_INFORMATION* out_info,
 X_STATUS XFile::Read(uint32_t buffer_guest_address, uint32_t buffer_length,
                      uint64_t byte_offset, uint32_t* out_bytes_read,
                      uint32_t apc_context, bool notify_completion) {
+<<<<<<< ours
+  // file_lock_ is taken inside the closure, on the I/O worker, so it is never
+  // held while the calling fiber is parked.
+  X_STATUS result = X_STATUS_SUCCESS;
+  kernel_state()->guest_scheduler()->RunBlockingHostCall([&]() {
+    std::lock_guard<std::mutex> lock(file_lock_);
+    result = ReadInternal(buffer_guest_address, buffer_length, byte_offset,
+                          out_bytes_read, apc_context, notify_completion);
+  });
+  return result;
+=======
   std::lock_guard<std::mutex> lock(file_lock_);
   return ReadInternal(buffer_guest_address, buffer_length, byte_offset,
                       out_bytes_read, apc_context, notify_completion);
+>>>>>>> theirs
 }
 
 X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
@@ -107,7 +132,7 @@ X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
                              bool notify_completion) {
   if (byte_offset == uint64_t(-1)) {
     // Read from current position.
-    byte_offset = position_;
+    byte_offset = position_.load();
   }
 
   size_t bytes_read = 0;
@@ -152,18 +177,27 @@ X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
           result = X_STATUS_ACCESS_VIOLATION;
         } else {
           result = file_->ReadSync(
-              buffer_physical_heap
-                  ? memory()->TranslatePhysical(
-                        buffer_physical_heap->GetPhysicalAddress(
-                            buffer_guest_address))
-                  : memory()->TranslateVirtual(buffer_guest_address),
-              buffer_length, size_t(byte_offset), &bytes_read);
+              std::span<uint8_t>(
+                  buffer_physical_heap
+                      ? memory()->TranslatePhysical(
+                            buffer_physical_heap->GetPhysicalAddress(
+                                buffer_guest_address))
+                      : memory()->TranslateVirtual(buffer_guest_address),
+                  buffer_length),
+              size_t(byte_offset), &bytes_read);
           if (XSUCCEEDED(result)) {
             if (buffer_physical_heap) {
               buffer_physical_heap->TriggerCallbacks(
                   xe::global_critical_region::AcquireDirect(),
                   buffer_guest_address, buffer_length, true, true);
             }
+<<<<<<< ours
+
+            if (byte_offset) {
+              position_.store(byte_offset);
+            }
+            position_.fetch_add(bytes_read);
+=======
             // Seek to the explicit offset before advancing, so a following
             // current-position read continues from the right place. Without
             // this, an explicit-offset read left position_ wrong and the next
@@ -172,6 +206,7 @@ X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
               position_ = byte_offset;
             }
             position_ += bytes_read;
+>>>>>>> theirs
           }
         }
       }
@@ -199,8 +234,24 @@ X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address,
 X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
                             uint64_t byte_offset, uint32_t* out_bytes_read,
                             uint32_t apc_context) {
+<<<<<<< ours
+  // The whole loop as one unit, so the fiber parks once.
+  X_STATUS result = X_STATUS_SUCCESS;
+  kernel_state()->guest_scheduler()->RunBlockingHostCall([&]() {
+    result = ReadScatterInternal(segments_guest_address, length, byte_offset,
+                                 out_bytes_read, apc_context);
+  });
+  return result;
+}
+
+X_STATUS XFile::ReadScatterInternal(uint32_t segments_guest_address,
+                                    uint32_t length, uint64_t byte_offset,
+                                    uint32_t* out_bytes_read,
+                                    uint32_t apc_context) {
+=======
   // Hold the lock across the whole scatter so the per-segment reads stay
   // contiguous and don't race other threads' reads on position_.
+>>>>>>> theirs
   std::lock_guard<std::mutex> lock(file_lock_);
   X_STATUS result = X_STATUS_SUCCESS;
 
@@ -224,6 +275,15 @@ X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
     }
 
     uint32_t bytes_read = 0;
+<<<<<<< ours
+    result =
+        ReadInternal(read_buffer, read_length,
+                     byte_offset ? ((byte_offset != -1 && byte_offset != -2)
+                                        ? byte_offset + read_total
+                                        : byte_offset)
+                                 : -1,
+                     &bytes_read, apc_context, false);
+=======
     // ReadInternal (not Read) because we already hold file_lock_.
     result = ReadInternal(read_buffer, read_length,
                           byte_offset ? ((byte_offset != -1 && byte_offset != -2)
@@ -231,6 +291,7 @@ X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
                                              : byte_offset)
                                       : -1,
                           &bytes_read, apc_context, false);
+>>>>>>> theirs
 
     if (result != X_STATUS_SUCCESS) {
       break;
@@ -259,18 +320,34 @@ X_STATUS XFile::ReadScatter(uint32_t segments_guest_address, uint32_t length,
 X_STATUS XFile::Write(uint32_t buffer_guest_address, uint32_t buffer_length,
                       uint64_t byte_offset, uint32_t* out_bytes_written,
                       uint32_t apc_context) {
+<<<<<<< ours
+  X_STATUS result = X_STATUS_SUCCESS;
+  kernel_state()->guest_scheduler()->RunBlockingHostCall([&]() {
+    result = WriteInternal(buffer_guest_address, buffer_length, byte_offset,
+                           out_bytes_written, apc_context);
+  });
+  return result;
+}
+
+X_STATUS XFile::WriteInternal(uint32_t buffer_guest_address,
+                              uint32_t buffer_length, uint64_t byte_offset,
+                              uint32_t* out_bytes_written,
+                              uint32_t apc_context) {
+=======
+>>>>>>> theirs
   std::lock_guard<std::mutex> lock(file_lock_);
   if (byte_offset == uint64_t(-1)) {
     // Write from current position.
-    byte_offset = position_;
+    byte_offset = position_.load();
   }
 
   size_t bytes_written = 0;
-  X_STATUS result =
-      file_->WriteSync(memory()->TranslateVirtual(buffer_guest_address),
-                       buffer_length, size_t(byte_offset), &bytes_written);
+  X_STATUS result = file_->WriteSync(
+      std::span<uint8_t>(memory()->TranslateVirtual(buffer_guest_address),
+                         buffer_length),
+      size_t(byte_offset), &bytes_written);
   if (XSUCCEEDED(result)) {
-    position_ += bytes_written;
+    position_.fetch_add(bytes_written);
   }
 
   XIOCompletion::IONotification notify;
@@ -288,7 +365,18 @@ X_STATUS XFile::Write(uint32_t buffer_guest_address, uint32_t buffer_length,
   return result;
 }
 
-X_STATUS XFile::SetLength(size_t length) { return file_->SetLength(length); }
+X_STATUS XFile::SetLength(size_t length) {
+  X_STATUS result = X_STATUS_SUCCESS;
+  kernel_state()->guest_scheduler()->RunBlockingHostCall([&]() {
+    std::lock_guard<std::mutex> lock(file_lock_);
+    result = file_->SetLength(length);
+  });
+  return result;
+}
+X_STATUS XFile::Rename(const std::filesystem::path file_path) {
+  entry()->Rename(file_path);
+  return X_STATUS_SUCCESS;
+}
 
 X_STATUS XFile::Rename(const std::filesystem::path file_path) {
   entry()->Rename(file_path);
@@ -315,8 +403,8 @@ void XFile::RemoveIOCompletionPort(uint32_t key) {
 }
 
 bool XFile::Save(ByteStream* stream) {
-  XELOGD("XFile {:08X} ({})", handle(),
-         file_->entry()->absolute_path().c_str());
+  // XELOGD("XFile {:08X} ({})", handle(),
+  //        file_->entry()->absolute_path().c_str());
 
   if (!SaveObject(stream)) {
     return false;
@@ -347,7 +435,7 @@ object_ref<XFile> XFile::Restore(KernelState* kernel_state,
   auto is_directory = stream->Read<bool>();
   auto is_synchronous = stream->Read<bool>();
 
-  XELOGD("XFile {:08X} ({})", file->handle(), abs_path);
+  // XELOGD("XFile {:08X} ({})", file->handle(), abs_path);
 
   vfs::File* vfs_file = nullptr;
   vfs::FileAction action;
@@ -355,7 +443,7 @@ object_ref<XFile> XFile::Restore(KernelState* kernel_state,
       nullptr, abs_path, vfs::FileDisposition::kOpen, access, is_directory,
       false, &vfs_file, &action);
   if (XFAILED(res)) {
-    XELOGE("Failed to open XFile: error {:08X}", res);
+    // XELOGE("Failed to open XFile: error {:08X}", res);
     return object_ref<XFile>(file);
   }
 

@@ -7,8 +7,6 @@
  ******************************************************************************
  */
 
-#include "xenia/base/logging.h"
-#include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/xbox.h"
@@ -23,8 +21,8 @@ dword_result_t XamVoiceIsActiveProcess_entry() {
 }
 DECLARE_XAM_EXPORT1(XamVoiceIsActiveProcess, kNone, kStub);
 
-dword_result_t XamVoiceCreate_entry(unknown_t unk1,  // 0
-                                    unknown_t unk2,  // 0xF
+dword_result_t XamVoiceCreate_entry(dword_t user_index,
+                                    dword_t max_attached_packets,  // 0xF
                                     lpdword_t out_voice_ptr) {
   // Null out the ptr.
   out_voice_ptr.Zero();
@@ -37,6 +35,19 @@ DECLARE_XAM_EXPORT1(XamVoiceClose, kNone, kStub);
 
 dword_result_t XamVoiceHeadsetPresent_entry(lpunknown_t voice_ptr) { return 0; }
 DECLARE_XAM_EXPORT1(XamVoiceHeadsetPresent, kNone, kStub);
+
+dword_result_t XamVoiceSubmitPacket_entry(lpdword_t unk1, dword_t unk2,
+                                          lpdword_t unk3) {
+  // also may return 0xD000009D
+  return 0x800700AA;
+}
+DECLARE_XAM_EXPORT1(XamVoiceSubmitPacket, kNone, kStub);
+
+dword_result_t XamVoiceGetMicArrayStatus_entry() {
+  // Returning 0 here tells caller mic is not connected
+  return 0;
+}
+DECLARE_XAM_EXPORT1(XamVoiceGetMicArrayStatus, kNone, kStub);
 
 }  // namespace xam
 }  // namespace kernel

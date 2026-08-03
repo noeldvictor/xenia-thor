@@ -11,14 +11,21 @@
 #include "xenia/base/debugging.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+<<<<<<< ours
+#include "xenia/emulator.h"
+=======
 #include "xenia/cpu/xex_module.h"
+>>>>>>> theirs
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_cpp_eh.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xthread.h"
-#include "xenia/xbox.h"
+#include "xenia/ui/imgui_dialog.h"
+#include "xenia/ui/imgui_drawer.h"
+#include "xenia/ui/window.h"
+#include "xenia/ui/windowed_app_context.h"
 
 DEFINE_bool(xboxkrnl_ignore_guest_debug_breakpoints, false,
             "Experimental Android bring-up: log and ignore guest "
@@ -649,11 +656,15 @@ void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {
     // Otherwise fall through to the historical stub.
   }
 
+<<<<<<< ours
+  // xe::debugging::Break();
+=======
   // Without dispatch (or on any failure above): log and return so
   // RtlRaiseException is non-fatal, matching upstream canary/edge. Otherwise ANY
   // guest throw (e.g. std::bad_alloc from a failed allocation -- Project
   // Sylpheed's heap allocator does exactly this) hard-crashes the emulator at
   // the raise site.
+>>>>>>> theirs
   XELOGE("Guest attempted to throw a C++ exception!");
 }
 
@@ -671,21 +682,56 @@ void RtlRaiseException_entry(pointer_t<X_EXCEPTION_RECORD> record) {
 
   // TODO(benvanik): unwinding.
   // This is going to suck.
+<<<<<<< ours
+  // xe::debugging::Break();
+
+  // RtlRaiseException definitely wasn't a noreturn function, we can return
+  // safe-ish
+=======
   // RtlRaiseException is not a noreturn function for unhandled codes; return
   // safe-ish instead of aborting the whole emulator (port of upstream
   // canary/edge).
   // xe::debugging::Break();
+>>>>>>> theirs
   XELOGE("Guest attempted to trigger a breakpoint!");
 }
-DECLARE_XBOXKRNL_EXPORT2(RtlRaiseException, kDebug, kStub, kImportant);
+DECLARE_XBOXKRNL_EXPORT1(RtlRaiseException, kDebug, kStub);
 
 void KeBugCheckEx_entry(dword_t code, dword_t param1, dword_t param2,
                         dword_t param3, dword_t param4) {
-  XELOGD("*** STOP: 0x{:08X} (0x{:08X}, 0x{:08X}, 0x{:08X}, 0x{:08X})", code,
-         param1, param2, param3, param4);
+  auto msg =
+      fmt::format("*** STOP: 0x{:08X} (0x{:08X}, 0x{:08X}, 0x{:08X}, 0x{:08X})",
+                  static_cast<uint32_t>(code), static_cast<uint32_t>(param1),
+                  static_cast<uint32_t>(param2), static_cast<uint32_t>(param3),
+                  static_cast<uint32_t>(param4));
+  XELOGE("{}", msg);
   fflush(stdout);
-  xe::debugging::Break();
-  assert_always();
+
+  if (xe::debugging::IsDebuggerAttached()) {
+    xe::debugging::Break();
+  }
+
+  // Show crash dialog and suspend the guest thread instead of killing the
+  // host process.
+  auto current_thread = kernel::XThread::GetCurrentThread();
+  const auto* emulator = kernel_state()->emulator();
+  auto* display_window = emulator->display_window();
+  auto* imgui_drawer = emulator->imgui_drawer();
+  if (display_window && imgui_drawer) {
+    auto dlg_msg = fmt::format(
+        "The guest kernel has crashed (KeBugCheck).\n\n{}\n\n"
+        "The faulting thread has been suspended.",
+        msg);
+    display_window->app_context().CallInUIThreadSynchronous(
+        [imgui_drawer, &dlg_msg]() {
+          xe::ui::ImGuiDialog::ShowMessageBox(imgui_drawer,
+                                              "Guest Kernel Crash", dlg_msg);
+        });
+  }
+
+  if (current_thread) {
+    current_thread->Suspend(nullptr);
+  }
 }
 DECLARE_XBOXKRNL_EXPORT2(KeBugCheckEx, kDebug, kStub, kImportant);
 

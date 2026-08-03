@@ -9,22 +9,12 @@
 
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 
-#include <vector>
-
-#include "third_party/fmt/include/fmt/format.h"
-#include "xenia/base/clock.h"
-#include "xenia/base/debugging.h"
 #include "xenia/base/logging.h"
-#include "xenia/base/math.h"
-#include "xenia/cpu/ppc/ppc_context.h"
-#include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
-#include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xboxkrnl/cert_monitor.h"
 #include "xenia/kernel/xboxkrnl/debug_monitor.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-#include "xenia/kernel/xthread.h"
 
 DEFINE_string(cl, "", "Specify additional command-line provided to guest.",
               "Kernel");
@@ -78,8 +68,7 @@ bool XboxkrnlModule::SendPIXCommand(const char* cmd) {
 }
 
 XboxkrnlModule::XboxkrnlModule(Emulator* emulator, KernelState* kernel_state)
-    : KernelModule(kernel_state, "xe:\\xboxkrnl.exe"),
-      timestamp_timer_(nullptr) {
+    : KernelModule(kernel_state, "xe:\\xboxkrnl.exe") {
   RegisterExportTable(export_resolver_);
 
   // Register all exported functions.
@@ -194,7 +183,8 @@ XboxkrnlModule::XboxkrnlModule(Emulator* emulator, KernelState* kernel_state)
     command_line += " " + cvars::cl;
   }
   uint32_t command_line_length =
-      xe::align(static_cast<uint32_t>(command_line.length()) + 1, 1024u);
+      xe::align(static_cast<uint32_t>(command_line.length()) + 1,
+                static_cast<uint32_t>(kExLoadedCommandLineSize));
   uint32_t pExLoadedCommandLine = memory_->SystemHeapAlloc(command_line_length);
   auto lpExLoadedCommandLine = memory_->TranslateVirtual(pExLoadedCommandLine);
   export_resolver_->SetVariableMapping(
@@ -206,33 +196,33 @@ XboxkrnlModule::XboxkrnlModule(Emulator* emulator, KernelState* kernel_state)
   // XboxKrnlVersion (8b)
   // Kernel version, looks like 2b.2b.2b.2b.
   // I've only seen games check >=, so we just fake something here.
-  uint32_t pXboxKrnlVersion = memory_->SystemHeapAlloc(8);
+  uint32_t pXboxKrnlVersion = memory_->SystemHeapAlloc(sizeof(KernelVersion));
   auto lpXboxKrnlVersion = memory_->TranslateVirtual(pXboxKrnlVersion);
   export_resolver_->SetVariableMapping(
       "xboxkrnl.exe", ordinals::XboxKrnlVersion, pXboxKrnlVersion);
-  xe::store_and_swap<uint16_t>(lpXboxKrnlVersion + 0, 2);
-  xe::store_and_swap<uint16_t>(lpXboxKrnlVersion + 2, 0xFFFF);
-  xe::store_and_swap<uint16_t>(lpXboxKrnlVersion + 4, 0xFFFF);
-  xe::store_and_swap<uint8_t>(lpXboxKrnlVersion + 6, 0x80);
-  xe::store_and_swap<uint8_t>(lpXboxKrnlVersion + 7, 0x00);
+  std::memcpy(lpXboxKrnlVersion, kernel_state_->GetKernelVersion(),
+              sizeof(KernelVersion));
 
-  // KeTimeStampBundle (ad)
-  // This must be updated during execution, at 1ms intevals.
-  // We setup a system timer here to do that.
-  uint32_t pKeTimeStampBundle = memory_->SystemHeapAlloc(24);
-  auto lpKeTimeStampBundle = memory_->TranslateVirtual(pKeTimeStampBundle);
-  export_resolver_->SetVariableMapping(
-      "xboxkrnl.exe", ordinals::KeTimeStampBundle, pKeTimeStampBundle);
-  xe::store_and_swap<uint64_t>(lpKeTimeStampBundle + 0, 0);
-  xe::store_and_swap<uint64_t>(lpKeTimeStampBundle + 8, 0);
-  xe::store_and_swap<uint32_t>(lpKeTimeStampBundle + 16,
-                               Clock::QueryGuestUptimeMillis());
-  xe::store_and_swap<uint32_t>(lpKeTimeStampBundle + 20, 0);
-  timestamp_timer_ = xe::threading::HighResolutionTimer::CreateRepeating(
-      std::chrono::milliseconds(1), [lpKeTimeStampBundle]() {
-        xe::store_and_swap<uint32_t>(lpKeTimeStampBundle + 16,
-                                     Clock::QueryGuestUptimeMillis());
-      });
+  export_resolver_->SetVariableMapping("xboxkrnl.exe",
+                                       ordinals::KeTimeStampBundle,
+                                       kernel_state->GetKeTimestampBundle());
+#define EXPORT_KVAR(typ)                                                       \
+  export_resolver_->SetVariableMapping("xboxkrnl.exe", ordinals::typ,          \
+                                       kernel_state->GetKernelGuestGlobals() + \
+                                           offsetof(KernelGuestGlobals, typ))
+
+  EXPORT_KVAR(ExThreadObjectType);
+  EXPORT_KVAR(ExEventObjectType);
+  EXPORT_KVAR(ExMutantObjectType);
+  EXPORT_KVAR(ExSemaphoreObjectType);
+  EXPORT_KVAR(ExTimerObjectType);
+  EXPORT_KVAR(IoCompletionObjectType);
+  EXPORT_KVAR(IoDeviceObjectType);
+  EXPORT_KVAR(IoFileObjectType);
+  EXPORT_KVAR(ObDirectoryObjectType);
+  EXPORT_KVAR(ObSymbolicLinkObjectType);
+  EXPORT_KVAR(UsbdBootEnumerationDoneEvent);
+#undef EXPORT_KVAR
 }
 
 static auto& get_xboxkrnl_exports() {

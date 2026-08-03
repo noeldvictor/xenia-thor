@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2021 Ben Vanik. All rights reserved.                             *
+ * Copyright 2025 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -10,15 +10,25 @@
 #ifndef XENIA_KERNEL_XENUMERATOR_H_
 #define XENIA_KERNEL_XENUMERATOR_H_
 
-#include <algorithm>
-#include <cstring>
 #include <vector>
 
+#include "xenia/kernel/xam/achievement_manager.h"
+#include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/user_tracker.h"
+#include "xenia/kernel/xam/xam.h"
 #include "xenia/kernel/xobject.h"
-#include "xenia/xbox.h"
 
 namespace xe {
 namespace kernel {
+
+enum X_ENUMERATION_FLAGS : uint32_t {
+  None = 0x0,
+  Back = 0x1,
+  Foreground = 0x2,
+  MatchingInstance = 0x4,
+  IncludePartialDownloads = 0x8,
+  IncludeCorruptContent = 0x10,
+};
 
 struct X_KENUMERATOR {
   be<uint32_t> app_id;
@@ -30,10 +40,22 @@ struct X_KENUMERATOR {
 };
 static_assert_size(X_KENUMERATOR, 0x18);
 
+struct X_ENUMERATE_PARAM {
+  xe::be<uint32_t> user_index;
+  xe::be<uint32_t> flags;
+  xe::be<uint32_t> private_enum_structure_ptr;
+  xe::be<uint32_t> buffer_ptr;  // XCONTENT_DATA_INTERNAL
+  xe::be<uint32_t> buffer_size;
+  xe::be<uint32_t> items_requested;
+  xe::be<uint32_t> items_returned_ptr;
+};
+static_assert_size(X_ENUMERATE_PARAM, 0x1C);
+
 struct X_KENUMERATOR_CONTENT_AGGREGATE {
   be<uint32_t> magic;
   be<uint32_t> handle;
 };
+static_assert_size(X_KENUMERATOR_CONTENT_AGGREGATE, 0x8);
 
 class XEnumerator : public XObject {
  public:
@@ -64,15 +86,17 @@ class XEnumerator : public XObject {
     return result;
   }
 
-  virtual uint32_t WriteItems(uint32_t buffer_ptr, uint8_t* buffer_data,
+  virtual uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
                               uint32_t* written_count) = 0;
 
   size_t item_size() const { return item_size_; }
   size_t items_per_enumerate() const { return items_per_enumerate_; }
+  size_t extra_size() const { return extra_size_; }
 
  private:
   size_t items_per_enumerate_;
   size_t item_size_;
+  size_t extra_size_;
 };
 
 class XStaticUntypedEnumerator : public XEnumerator {
@@ -87,7 +111,7 @@ class XStaticUntypedEnumerator : public XEnumerator {
 
   uint8_t* AppendItem();
 
-  uint32_t WriteItems(uint32_t buffer_ptr, uint8_t* buffer_data,
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
                       uint32_t* written_count) override;
 
  private:
@@ -111,6 +135,149 @@ class XStaticEnumerator : public XStaticUntypedEnumerator {
     auto ptr = AppendItem();
     item.Write(ptr);
   }
+};
+
+class XAchievementEnumerator : public XEnumerator {
+ public:
+  XAchievementEnumerator(KernelState* kernel_state, size_t items_per_enumerate,
+                         size_t enumeration_offset, uint32_t flags)
+      : XEnumerator(
+            kernel_state, items_per_enumerate,
+            sizeof(xam::X_ACHIEVEMENT_DETAILS) +
+                (!!(flags & 7) ? xam::X_ACHIEVEMENT_DETAILS::kStringBufferSize
+                               : 0)),
+        current_item_(enumeration_offset),
+        flags_(flags) {}
+
+  void AppendItem(xam::AchievementDetails item) {
+    items_.push_back(std::move(item));
+  }
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  struct StringBuffer {
+    uint8_t* data;
+    size_t remaining_bytes;
+  };
+
+  uint32_t AppendString(StringBuffer& sb, const std::u16string_view string) {
+    const size_t count = string.length() + 1;
+    const size_t size = count * sizeof(char16_t);
+    if (size > sb.remaining_bytes) {
+      assert_always();
+      return 0;
+    }
+    string_util::copy_and_swap_truncating(reinterpret_cast<char16_t*>(sb.data),
+                                          string, count);
+    sb.data += size;
+    sb.remaining_bytes -= size;
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(sb.data - size));
+  }
+
+ private:
+  uint32_t flags_;
+  std::vector<xam::AchievementDetails> items_;
+  size_t current_item_ = 0;
+};
+
+class XTitleEnumerator : public XEnumerator {
+ public:
+  struct XTITLE_PLAYED {
+    xam::X_XDBF_GPD_TITLE_PLAYED base;
+    xe::be<char16_t> title_name[64];
+  };
+
+  XTitleEnumerator(KernelState* kernel_state, size_t items_per_enumerate)
+      : XEnumerator(kernel_state, items_per_enumerate, sizeof(XTITLE_PLAYED)) {}
+
+  void AppendItem(const xam::TitleInfo& item) { items_.push_back(item); }
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  std::vector<xam::TitleInfo> items_;
+  size_t current_item_ = 0;
+};
+
+class XUserStatsEnumerator : public XEnumerator {
+ public:
+  struct XUSER_STATS_SPEC {
+    xe::be<uint32_t> ViewId;
+    xe::be<uint32_t> NumColumnIds;
+    xe::be<uint16_t> rgwColumnIds[0x40];
+  };
+
+  XUserStatsEnumerator(KernelState* kernel_state, size_t items_per_enumerate)
+      : XEnumerator(kernel_state, items_per_enumerate, 0) {}
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  std::vector<XUSER_STATS_SPEC> items_;
+  size_t current_item_ = 0;
+};
+
+class XMPCreateUserPlaylistEnumerator : public XEnumerator {
+ public:
+  XMPCreateUserPlaylistEnumerator(KernelState* kernel_state,
+                                  size_t items_per_enumerate)
+      : XEnumerator(kernel_state, items_per_enumerate,
+                    sizeof(xam::XMP_USER_PLAYLIST_INFO)) {}
+
+  size_t item_count() const { return items_.size(); }
+
+  void AppendItem(const xam::XMP_USER_PLAYLIST_INFO& item) {
+    items_.push_back(item);
+  }
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  std::vector<xam::XMP_USER_PLAYLIST_INFO> items_;
+  size_t current_item_ = 0;
+};
+
+class ProfileEnumerator : public XEnumerator {
+ public:
+  ProfileEnumerator(KernelState* kernel_state, size_t items_per_enumerate)
+      : XEnumerator(kernel_state, items_per_enumerate,
+                    sizeof(xam::X_PROFILEENUMRESULT)) {}
+
+  size_t item_count() const { return items_.size(); }
+
+  void AppendItem(const xam::X_PROFILEENUMRESULT& item) {
+    items_.push_back(item);
+  }
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  std::vector<xam::X_PROFILEENUMRESULT> items_;
+  size_t current_item_ = 0;
+};
+
+class ContentEnumerator : public XEnumerator {
+ public:
+  ContentEnumerator(KernelState* kernel_state, size_t items_per_enumerate)
+      : XEnumerator(kernel_state, items_per_enumerate,
+                    sizeof(xam::XCONTENT_DATA)) {}
+
+  size_t item_count() const { return items_.size(); }
+
+  void AppendItem(const xam::XCONTENT_DATA& item) { items_.push_back(item); }
+
+  uint32_t WriteItems(uint8_t* buffer_data, uint32_t buffer_size,
+                      uint32_t* written_count) override;
+
+ private:
+  std::vector<xam::XCONTENT_DATA> items_;
+  size_t current_item_ = 0;
 };
 
 }  // namespace kernel

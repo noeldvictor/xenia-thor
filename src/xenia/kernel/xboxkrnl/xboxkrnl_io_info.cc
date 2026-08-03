@@ -8,19 +8,12 @@
  */
 
 #include "xenia/base/logging.h"
-#include "xenia/base/memory.h"
-#include "xenia/base/mutex.h"
-#include "xenia/cpu/processor.h"
 #include "xenia/kernel/info/file.h"
 #include "xenia/kernel/info/volume.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-#include "xenia/kernel/xevent.h"
 #include "xenia/kernel/xfile.h"
-#include "xenia/kernel/xiocompletion.h"
-#include "xenia/kernel/xsymboliclink.h"
-#include "xenia/kernel/xthread.h"
 #include "xenia/vfs/device.h"
 #include "xenia/xbox.h"
 
@@ -91,7 +84,20 @@ dword_result_t NtQueryInformationFile_entry(
       out_length = sizeof(*info);
       break;
     }
+    case XFileAlignmentInformation: {
+      // Requested by XMountUtilityDrive XAM-task
+      auto info = info_ptr.as<uint32_t*>();
+      *info = 0;  // FILE_BYTE_ALIGNMENT?
+      out_length = sizeof(*info);
+      break;
+    }
     case XFileSectorInformation: {
+<<<<<<< ours
+      // SW that uses this seems to use the output as a way of uniquely
+      // identifying a file for sorting/lookup so we can just give it an
+      // arbitrary 4 byte integer most of the time
+      XELOGW("Stub XFileSectorInformation!");
+=======
       // SW that uses this uses the output as a way to uniquely identify a file
       // for sorting/lookup, so an arbitrary stable 4-byte integer suffices.
       // Banjo-Kazooie: Nuts & Bolts queries this to identify its hash-addressed
@@ -101,6 +107,7 @@ dword_result_t NtQueryInformationFile_entry(
       // font-cache paths are all fine). Match upstream xenia-canary: return a
       // stable path-hash. (Device-RE 2026-06-26: this fork-vs-canary diff was
       // the real Banjo boot blocker behind the disc-read-error.)
+>>>>>>> theirs
       auto info = info_ptr.as<uint32_t*>();
       size_t fname_hash = xe::memory::hash_combine(82589933LL, file->path());
       *info = static_cast<uint32_t>(fname_hash ^ (fname_hash >> 32));
@@ -140,13 +147,6 @@ dword_result_t NtQueryInformationFile_entry(
       out_length = sizeof(*info);
       break;
     }
-    case XFileAlignmentInformation: {
-      // Requested by XMountUtilityDrive XAM-task
-      auto info = info_ptr.as<uint32_t*>();
-      *info = 0;  // FILE_BYTE_ALIGNMENT?
-      out_length = sizeof(*info);
-      break;
-    }
     default: {
       // Unsupported, for now. Log + return INVALID_PARAMETER instead of
       // assert_always() (which aborts the emulator in release builds).
@@ -169,21 +169,24 @@ DECLARE_XBOXKRNL_EXPORT1(NtQueryInformationFile, kFileSystem, kImplemented);
 
 uint32_t GetSetFileInfoMinimumLength(uint32_t info_class) {
   switch (info_class) {
+    case XFileRenameInformation:
+      return sizeof(X_FILE_RENAME_INFORMATION);
     case XFileDispositionInformation:
       return sizeof(X_FILE_DISPOSITION_INFORMATION);
     case XFilePositionInformation:
       return sizeof(X_FILE_POSITION_INFORMATION);
     case XFileCompletionInformation:
       return sizeof(X_FILE_COMPLETION_INFORMATION);
+    case XFileAllocationInformation:
+      return sizeof(X_FILE_ALLOCATION_INFORMATION);
+    case XFileEndOfFileInformation:
+      return sizeof(X_FILE_END_OF_FILE_INFORMATION);
     // TODO(gibbed): structures to get the size of.
     case XFileModeInformation:
     case XFileIoPriorityInformation:
       return 4;
-    case XFileAllocationInformation:
-    case XFileEndOfFileInformation:
     case XFileMountPartitionInformation:
       return 8;
-    case XFileRenameInformation:
     case XFileLinkInformation:
       return 16;
     case XFileBasicInformation:
@@ -216,13 +219,57 @@ dword_result_t NtSetInformationFile_entry(
   uint32_t out_length;
 
   switch (info_class) {
+    case XFileBasicInformation: {
+      auto info = info_ptr.as<X_FILE_BASIC_INFORMATION*>();
+
+      bool basic_result = true;
+      if (info->creation_time) {
+        basic_result &= file->entry()->SetCreateTimestamp(info->creation_time);
+      }
+
+      if (info->last_access_time) {
+        basic_result &=
+            file->entry()->SetAccessTimestamp(info->last_access_time);
+      }
+
+      if (info->last_write_time) {
+        basic_result &= file->entry()->SetWriteTimestamp(info->last_write_time);
+      }
+
+      basic_result &= file->entry()->SetAttributes(info->attributes);
+      if (!basic_result) {
+        result = X_STATUS_UNSUCCESSFUL;
+      }
+
+      out_length = sizeof(*info);
+      break;
+    }
+    case XFileRenameInformation: {
+      auto info = info_ptr.as<X_FILE_RENAME_INFORMATION*>();
+      // Compute path, possibly attrs relative.
+      std::filesystem::path target_path =
+          util::TranslateAnsiPath(kernel_memory(), &info->ansi_string);
+
+      // Place IsValidPath in path from where it can be accessed everywhere
+      if (!IsValidPath(target_path.string(), false)) {
+        return X_STATUS_OBJECT_NAME_INVALID;
+      }
+
+      if (!target_path.has_filename()) {
+        return X_STATUS_INVALID_PARAMETER;
+      }
+
+      file->Rename(target_path);
+      out_length = sizeof(*info);
+      break;
+    }
     case XFileDispositionInformation: {
-      // Used to set deletion flag. Which we don't support. Probably?
       auto info = info_ptr.as<X_FILE_DISPOSITION_INFORMATION*>();
       bool delete_on_close = info->delete_file ? true : false;
+      file->entry()->SetForDeletion(static_cast<bool>(info->delete_file));
       out_length = 0;
-      XELOGW("NtSetInformationFile ignoring delete on close: {}",
-             delete_on_close);
+      XELOGW("NtSetInformationFile set deleting flag for {} on close to: {}",
+             file->name(), delete_on_close);
       break;
     }
     case XFilePositionInformation: {
@@ -232,8 +279,12 @@ dword_result_t NtSetInformationFile_entry(
       break;
     }
     case XFileAllocationInformation: {
-      XELOGW("NtSetInformationFile ignoring alloc");
-      out_length = 8;
+      auto info = info_ptr.as<X_FILE_ALLOCATION_INFORMATION*>();
+      result = file->SetLength(info->allocation_size);
+      out_length = sizeof(*info);
+
+      // Update the files vfs::Entry information
+      file->entry()->update();
       break;
     }
     case XFileEndOfFileInformation: {
@@ -321,12 +372,13 @@ uint32_t GetQueryVolumeInfoMinimumLength(uint32_t info_class) {
       return sizeof(X_FILE_FS_VOLUME_INFORMATION);
     case XFileFsSizeInformation:
       return sizeof(X_FILE_FS_SIZE_INFORMATION);
+    case XFileFsDeviceInformation:
+      return sizeof(X_FILE_FS_DEVICE_INFORMATION);
     case XFileFsAttributeInformation:
       return sizeof(X_FILE_FS_ATTRIBUTE_INFORMATION);
     // TODO(gibbed): structures to get the size of.
-    case XFileFsDeviceInformation:
-      return 8;
     default:
+      XELOGW("Unimplemented Info Class: 0x{:08x}", info_class);
       return 0;
   }
 }
@@ -393,6 +445,19 @@ dword_result_t NtQueryVolumeInformationFile_entry(
       break;
     }
     case XFileFsDeviceInformation: {
+<<<<<<< ours
+      auto info = info_ptr.as<X_FILE_FS_DEVICE_INFORMATION*>();
+      auto file_device = file->device();
+      XELOGW("Stub XFileFsDeviceInformation!");
+      info->device_type =
+          FILE_DEVICE_UNKNOWN;  // 415608D8 checks for FILE_DEVICE_EHSTOR;
+      info->characteristics = 0;
+      out_length = sizeof(X_FILE_FS_DEVICE_INFORMATION);
+      break;
+    }
+    default: {
+      assert_always();
+=======
       auto info = info_ptr.as<uint32_t*>();
       info[0] = 0;
       info[1] = 0;
@@ -401,6 +466,7 @@ dword_result_t NtQueryVolumeInformationFile_entry(
     }
     default: {
       status = X_STATUS_INVALID_INFO_CLASS;
+>>>>>>> theirs
       out_length = 0;
       break;
     }

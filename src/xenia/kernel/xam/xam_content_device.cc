@@ -15,6 +15,7 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/kernel/xenumerator.h"
+#include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/xbox.h"
 
 namespace xe {
@@ -32,13 +33,13 @@ namespace xam {
 // will not be recognized properly.
 #define ONE_GB (1024ull * 1024ull * 1024ull)
 
-static const DummyDeviceInfo dummy_hdd_device_info_ = {
+static constexpr DummyDeviceInfo dummy_hdd_device_info_ = {
     DummyDeviceId::HDD, DeviceType::HDD,
     20ull * ONE_GB,  // 20GB
-    3ull * ONE_GB,   // 3GB, so it looks a little used.
+    10ull * ONE_GB,  // 10GB.
     u"Dummy HDD",
 };
-static const DummyDeviceInfo dummy_odd_device_info_ = {
+static constexpr DummyDeviceInfo dummy_odd_device_info_ = {
     DummyDeviceId::ODD, DeviceType::ODD,
     7ull * ONE_GB,  // 7GB (rough maximum)
     0ull * ONE_GB,  // read-only FS, so no free space
@@ -59,8 +60,22 @@ const DummyDeviceInfo* GetDummyDeviceInfo(uint32_t device_id) {
   return it == end ? nullptr : *it;
 }
 
+std::vector<const DummyDeviceInfo*> ListStorageDevices(bool include_readonly) {
+  // FIXME: Should probably check content flags here instead.
+  std::vector<const DummyDeviceInfo*> devices;
+
+  for (const auto& device_info : dummy_device_infos_) {
+    if (!include_readonly && device_info->device_type == DeviceType::ODD) {
+      continue;
+    }
+    devices.emplace_back(device_info);
+  }
+
+  return devices;
+}
+
 dword_result_t XamContentGetDeviceName_entry(dword_t device_id,
-                                             lpu16string_t name_buffer,
+                                             dword_t name_buffer_ptr,
                                              dword_t name_capacity) {
   auto device_info = GetDummyDeviceInfo(device_id);
   if (device_info == nullptr) {
@@ -70,6 +85,10 @@ dword_result_t XamContentGetDeviceName_entry(dword_t device_id,
   if (name_capacity < name.size() + 1) {
     return X_ERROR_INSUFFICIENT_BUFFER;
   }
+
+  char16_t* name_buffer =
+      kernel_memory()->TranslateVirtual<char16_t*>(name_buffer_ptr);
+
   xe::string_util::copy_and_swap_truncating(name_buffer, name, name_capacity);
   return X_ERROR_SUCCESS;
 }
@@ -119,8 +138,14 @@ dword_result_t XamContentGetDeviceData_entry(
   device_data.Zero();
   device_data->device_id = static_cast<uint32_t>(device_info->device_id);
   device_data->device_type = static_cast<uint32_t>(device_info->device_type);
-  device_data->total_bytes = device_info->total_bytes;
-  device_data->free_bytes = device_info->free_bytes;
+  device_data->total_bytes =
+      device_info->device_type == DeviceType::HDD
+          ? kernel_state()->content_manager()->GetContentTotalSpace()
+          : device_info->total_bytes;
+  device_data->free_bytes =
+      device_info->device_type == DeviceType::HDD
+          ? kernel_state()->content_manager()->GetContentFreeSpace()
+          : device_info->free_bytes;
   xe::string_util::copy_and_swap_truncating(
       device_data->name_chars, device_info->name,
       xe::countof(device_data->name_chars));
@@ -141,12 +166,17 @@ dword_result_t XamContentCreateDeviceEnumerator_entry(dword_t content_type,
 
   auto e = make_object<XStaticEnumerator<X_CONTENT_DEVICE_DATA>>(kernel_state(),
                                                                  max_count);
-  auto result = e->Initialize(0xFE, 0xFE, 0x2000A, 0x20009, 0);
+  auto result = e->Initialize(XUserIndexNone, 0xFE, 0x2000A, 0x20009, 0);
   if (XFAILED(result)) {
     return result;
   }
 
   for (const auto& device_info : dummy_device_infos_) {
+    if (device_info->device_type == DeviceType::ODD &&
+        (content_flags & vfs::XContentFlag::kExcludeReadOnlyDevices)) {
+      continue;
+    }
+
     // Copy our dummy device into the enumerator
     auto device_data = e->AppendItem();
     assert_not_null(device_data);
@@ -154,8 +184,14 @@ dword_result_t XamContentCreateDeviceEnumerator_entry(dword_t content_type,
       device_data->device_id = static_cast<uint32_t>(device_info->device_id);
       device_data->device_type =
           static_cast<uint32_t>(device_info->device_type);
-      device_data->total_bytes = device_info->total_bytes;
-      device_data->free_bytes = device_info->free_bytes;
+      device_data->total_bytes =
+          device_info->device_type == DeviceType::HDD
+              ? kernel_state()->content_manager()->GetContentTotalSpace()
+              : device_info->total_bytes;
+      device_data->free_bytes =
+          device_info->device_type == DeviceType::HDD
+              ? kernel_state()->content_manager()->GetContentFreeSpace()
+              : device_info->free_bytes;
       xe::string_util::copy_and_swap_truncating(
           device_data->name_chars, device_info->name,
           xe::countof(device_data->name_chars));

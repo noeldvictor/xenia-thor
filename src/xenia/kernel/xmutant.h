@@ -39,7 +39,7 @@ class XMutant : public XObject {
   ~XMutant() override;
 
   void Initialize(bool initial_owner);
-  void InitializeNative(void* native_ptr, X_DISPATCH_HEADER* header);
+  void InitializeNative(void* native_ptr, const X_DISPATCH_HEADER* header);
 
   X_STATUS ReleaseMutant(uint32_t priority_increment, bool abandon, bool wait);
 
@@ -47,6 +47,16 @@ class XMutant : public XObject {
   static object_ref<XMutant> Restore(KernelState* kernel_state,
                                      ByteStream* stream);
 
+<<<<<<< ours
+  // Mark every mutant in |thread|'s mutants_list abandoned and unlink it.
+  // Called from XThread::Exit/Terminate.
+  static void AbandonAllOwnedByThread(KernelState* kernel_state,
+                                      XThread* thread);
+
+ protected:
+  xe::threading::WaitHandle* GetWaitHandle() override {
+    return free_signal_.get();
+=======
   // Marks every mutant owned by |thread| abandoned and frees it. Called from
   // XThread::Exit/Terminate when the cooperative scheduler is active (a
   // fiber-backed thread has no host-thread exit to abandon primitives for
@@ -66,12 +76,25 @@ class XMutant : public XObject {
     return free_signal_
                ? static_cast<xe::threading::WaitHandle*>(free_signal_.get())
                : static_cast<xe::threading::WaitHandle*>(mutant_.get());
+>>>>>>> theirs
   }
   void WaitCallback() override;
+  bool IsReenteredByCurrentThread() override;
+  X_STATUS AcquireStatus() override;
+
+  void CooperativeWaitBegin(XThread* thread) override;
+  void CooperativeWaitEnd(XThread* thread) override;
+  bool CooperativeMayAcquire(XThread* thread) override;
 
  private:
   XMutant();
 
+<<<<<<< ours
+  // Signaled while unowned. A count rather than a host mutant, whose owner is
+  // the host thread, which many guest threads share and can migrate between.
+  std::unique_ptr<xe::threading::Semaphore> free_signal_;
+  // The only source of truth for ownership.
+=======
   // Legacy mode.
   std::unique_ptr<xe::threading::Mutant> mutant_;
 
@@ -81,16 +104,23 @@ class XMutant : public XObject {
   std::unique_ptr<xe::threading::Semaphore> free_signal_;
   // The only source of truth for ownership (both modes track it; legacy mode
   // only informationally, as before).
+>>>>>>> theirs
   std::atomic<XThread*> owning_thread_{nullptr};
   // Recursive acquires never touch free_signal_, so count them here. Only the
   // current owner mutates it, so no synchronization.
   uint32_t recursion_count_ = 0;
+<<<<<<< ours
+  // Parked fibers waiting to acquire, in order. Without this a running fiber
+  // that re-acquires in a loop starves a parked waiter forever, where NT hands
+  // a released mutant to the waiter.
+=======
   // Set when the owner exited without releasing; the next acquirer sees
   // X_STATUS_ABANDONED_WAIT_0 (host-side stand-in for KMUTANT.abandoned).
   std::atomic<bool> abandoned_{false};
   // Parked fibers waiting to acquire, in order. Without this a running fiber
   // that re-acquires in a loop starves a parked waiter forever, where NT
   // hands a released mutant to the waiter.
+>>>>>>> theirs
   CooperativeWaiterFifo waiters_;
 };
 

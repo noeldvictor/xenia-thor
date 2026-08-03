@@ -9,8 +9,6 @@
 
 #include "xenia/vfs/devices/disc_image_entry.h"
 
-#include <algorithm>
-
 #include "xenia/base/math.h"
 #include "xenia/vfs/devices/disc_image_file.h"
 
@@ -51,5 +49,6 @@ std::unique_ptr<MappedMemory> DiscImageEntry::OpenMapped(
   return mmap_->Slice(real_offset, real_length);
 }
 
+bool DiscImageEntry::DeleteEntryInternal(Entry* entry) { return false; }
 }  // namespace vfs
 }  // namespace xe

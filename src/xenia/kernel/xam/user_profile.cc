@@ -9,13 +9,17 @@
 
 #include "xenia/kernel/xam/user_profile.h"
 
+<<<<<<< ours
+=======
 #include "xenia/base/cvar.h"
 
 #include <sstream>
 
+>>>>>>> theirs
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xam/xdbf/gpd_info.h"
 
 DEFINE_string(
     user_gamertag, "",
@@ -28,10 +32,27 @@ namespace xe {
 namespace kernel {
 namespace xam {
 
-UserProfile::UserProfile() {
+UserProfile::UserProfile(const uint64_t xuid,
+                         const X_XAMACCOUNTINFO* account_info)
+    : xuid_(xuid), account_info_(*account_info), profile_images_() {
   // 58410A1F checks the user XUID against a mask of 0x00C0000000000000 (3<<54),
   // if non-zero, it prevents the user from playing the game.
   // "You do not have permissions to perform this operation."
+<<<<<<< ours
+  LoadProfileGpds();
+
+  // Load default gamer tiles
+  LoadProfileIcon(XTileType::kGamerTile);
+  LoadProfileIcon(XTileType::kGamerTileSmall);
+
+  // Also load personal gamer tiles (custom profile pictures)
+  // Note: These use the same filenames as regular tiles, so if a personal
+  // tile exists, it will overwrite the default tile file. We load both types
+  // to maintain compatibility - the personal tile will be preferred when
+  // present.
+  LoadProfileIcon(XTileType::kPersonalGamerTile);
+  LoadProfileIcon(XTileType::kPersonalGamerTileSmall);
+=======
   xuid_ = 0xB13EBABEBABEBABE;
   name_ = "User";
   if (!cvars::user_gamertag.empty()) {
@@ -102,88 +123,178 @@ UserProfile::UserProfile() {
   AddSetting(std::make_unique<BinarySetting>(0x63E83FFE));
   // XPROFILE_TITLE_SPECIFIC3
   AddSetting(std::make_unique<BinarySetting>(0x63E83FFD));
+>>>>>>> theirs
 }
 
-void UserProfile::AddSetting(std::unique_ptr<Setting> setting) {
-  Setting* previous_setting = setting.get();
-  std::swap(settings_[setting->setting_id], previous_setting);
-
-  if (setting->is_set && setting->is_title_specific()) {
-    SaveSetting(setting.get());
-  }
-
-  if (previous_setting) {
-    // replace: swap out the old setting from the owning list
-    for (auto vec_it = setting_list_.begin(); vec_it != setting_list_.end();
-         ++vec_it) {
-      if (vec_it->get() == previous_setting) {
-        vec_it->swap(setting);
-        break;
-      }
-    }
-  } else {
-    // new setting: add to the owning list
-    setting_list_.push_back(std::move(setting));
-  }
+GpdInfo* UserProfile::GetGpd(const uint32_t title_id) {
+  return const_cast<GpdInfo*>(
+      const_cast<const UserProfile*>(this)->GetGpd(title_id));
 }
 
-UserProfile::Setting* UserProfile::GetSetting(uint32_t setting_id) {
-  const auto& it = settings_.find(setting_id);
-  if (it == settings_.end()) {
+const GpdInfo* UserProfile::GetGpd(const uint32_t title_id) const {
+  if (title_id == kDashboardID) {
+    return &dashboard_gpd_;
+  }
+
+  if (!games_gpd_.count(title_id)) {
     return nullptr;
   }
-  UserProfile::Setting* setting = it->second;
-  if (setting->is_title_specific()) {
-    // If what we have loaded in memory isn't for the title that is running
-    // right now, then load it from disk.
-    if (kernel_state()->title_id() != setting->loaded_title_id) {
-      LoadSetting(setting);
-    }
-  }
-  return setting;
+
+  return &games_gpd_.at(title_id);
 }
 
-void UserProfile::LoadSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "rb");
-    if (file) {
-      fseek(file, 0, SEEK_END);
-      uint32_t input_file_size = static_cast<uint32_t>(ftell(file));
-      fseek(file, 0, SEEK_SET);
+void UserProfile::LoadProfileGpds() {
+  // First load dashboard GPD because it stores all opened games
+  dashboard_gpd_ = LoadGpd(kDashboardID);
+  if (!dashboard_gpd_.IsValid()) {
+    dashboard_gpd_ = GpdInfoProfile();
+  }
 
-      std::vector<uint8_t> serialized_data(input_file_size);
-      fread(serialized_data.data(), 1, serialized_data.size(), file);
-      fclose(file);
-      setting->Deserialize(serialized_data);
-      setting->loaded_title_id = kernel_state()->title_id();
+  const auto gpds_to_load = dashboard_gpd_.GetTitlesInfo();
+
+  for (const auto& gpd : gpds_to_load) {
+    const auto gpd_data = LoadGpd(gpd->title_id);
+    if (gpd_data.empty()) {
+      continue;
     }
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to load unsupported profile setting from disk");
+
+    // Use insert_or_assign to replace existing GPDs when reloading
+    games_gpd_.insert_or_assign(gpd->title_id,
+                                GpdInfoTitle(gpd->title_id, gpd_data));
   }
 }
 
-void UserProfile::SaveSetting(UserProfile::Setting* setting) {
-  if (setting->is_title_specific()) {
-    auto serialized_setting = setting->Serialize();
-    auto content_dir =
-        kernel_state()->content_manager()->ResolveGameUserContentPath();
-    std::filesystem::create_directories(content_dir);
-    auto setting_id = fmt::format("{:08X}", setting->setting_id);
-    auto file_path = content_dir / setting_id;
-    auto file = xe::filesystem::OpenFile(file_path, "wb");
-    fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
-    fclose(file);
-  } else {
-    // Unsupported for now.  Other settings aren't per-game and need to be
-    // stored some other way.
-    XELOGW("Attempting to save unsupported profile setting to disk");
+void UserProfile::LoadProfileIcon(XTileType tile_type) {
+  if (!kTileFileNames.count(tile_type)) {
+    return;
   }
+
+  const std::string path =
+      fmt::format("User_{:016X}:\\{}", xuid_, kTileFileNames.at(tile_type));
+
+  vfs::File* file = nullptr;
+  vfs::FileAction action;
+
+  const X_STATUS result = kernel_state()->file_system()->OpenFile(
+      nullptr, path, vfs::FileDisposition::kOpen, vfs::FileAccess::kGenericRead,
+      false, true, &file, &action);
+
+  if (result != X_STATUS_SUCCESS) {
+    return;
+  }
+
+  std::vector<uint8_t> data(file->entry()->size());
+  size_t written_bytes = 0;
+  file->ReadSync(std::span<uint8_t>(data.data(), file->entry()->size()), 0,
+                 &written_bytes);
+  file->Destroy();
+
+  profile_images_.insert_or_assign(tile_type, data);
+}
+
+void UserProfile::WriteProfileIcon(XTileType tile_type,
+                                   std::span<const uint8_t> icon_data) {
+  const std::string path =
+      fmt::format("User_{:016X}:\\{}", xuid_, kTileFileNames.at(tile_type));
+
+  vfs::File* file = nullptr;
+  vfs::FileAction action;
+
+  const X_STATUS result = kernel_state()->file_system()->OpenFile(
+      nullptr, path, vfs::FileDisposition::kOverwriteIf,
+      vfs::FileAccess::kGenericWrite | vfs::FileAccess::kFileWriteData, false,
+      true, &file, &action);
+
+  if (result != X_STATUS_SUCCESS) {
+    return;
+  }
+
+  // Set the file length first to ensure we can write
+  X_STATUS set_length_result = file->SetLength(icon_data.size());
+  if (set_length_result != X_STATUS_SUCCESS &&
+      set_length_result != X_STATUS_NOT_IMPLEMENTED) {
+    XELOGW("WriteProfileIcon: SetLength failed with status {:08X}",
+           set_length_result);
+  }
+
+  size_t written_bytes = 0;
+
+  X_STATUS write_result =
+      file->WriteSync({icon_data.data(), icon_data.size()}, 0, &written_bytes);
+  if (write_result != X_STATUS_SUCCESS) {
+    XELOGW("WriteProfileIcon: WriteSync failed with status {:08X}",
+           write_result);
+  } else {
+    XELOGI("WriteProfileIcon: Successfully wrote {} bytes to {}", written_bytes,
+           path);
+  }
+
+  file->Destroy();
+
+  profile_images_.insert_or_assign(
+      tile_type, std::vector<uint8_t>(icon_data.begin(), icon_data.end()));
+}
+
+std::vector<uint8_t> UserProfile::LoadGpd(const uint32_t title_id) {
+  auto entry = kernel_state()->file_system()->ResolvePath(
+      fmt::format("User_{:016X}:\\{:08X}.gpd", xuid_, title_id));
+
+  if (!entry) {
+    XELOGW("User {} (XUID: {:016X}) doesn't have profile GPD!", name(), xuid());
+    return {};
+  }
+
+  vfs::File* file;
+  auto result = entry->Open(vfs::FileAccess::kFileReadData, &file);
+  if (result != X_STATUS_SUCCESS) {
+    XELOGW("User {} (XUID: {:016X}) cannot open profile GPD!", name(), xuid());
+    return {};
+  }
+
+  std::vector<uint8_t> data(entry->size());
+
+  size_t read_size = 0;
+  result = file->ReadSync(std::span<uint8_t>(data.data(), entry->size()), 0,
+                          &read_size);
+  if (result != X_STATUS_SUCCESS || read_size != entry->size()) {
+    XELOGW(
+        "User {} (XUID: {:016X}) cannot read profile GPD! Status: {:08X} read: "
+        "{}/{} bytes",
+        name(), xuid(), result, read_size, entry->size());
+    return {};
+  }
+
+  file->Destroy();
+  return data;
+}
+
+bool UserProfile::WriteGpd(const uint32_t title_id) {
+  const GpdInfo* gpd = GetGpd(title_id);
+  if (!gpd) {
+    return false;
+  }
+
+  std::vector<uint8_t> data = gpd->Serialize();
+
+  vfs::File* file = nullptr;
+  vfs::FileAction action;
+
+  const std::string mounted_path =
+      fmt::format("User_{:016X}:\\{:08X}.gpd", xuid_, title_id);
+
+  const X_STATUS result = kernel_state()->file_system()->OpenFile(
+      nullptr, mounted_path, vfs::FileDisposition::kOverwriteIf,
+      vfs::FileAccess::kGenericWrite, false, true, &file, &action);
+
+  if (result != X_STATUS_SUCCESS) {
+    return false;
+  }
+
+  size_t written_bytes = 0;
+  file->WriteSync(std::span<uint8_t>(data.data(), data.size()), 0,
+                  &written_bytes);
+  file->Destroy();
+  return true;
 }
 
 }  // namespace xam

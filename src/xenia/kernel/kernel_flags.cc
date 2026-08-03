@@ -13,6 +13,15 @@ DEFINE_bool(headless, false,
             "Don't display any UI, using defaults for prompts as needed.",
             "UI");
 DEFINE_bool(log_high_frequency_kernel_calls, false,
+<<<<<<< ours
+            "Log kernel calls with the kHighFrequency tag.", "Logging");
+DEFINE_bool(
+    guest_scheduler, false,
+    "Run guest threads as cooperative fibers driven by an in-kernel scheduler "
+    "instead of mapping each to its own host OS thread. Experimental; off by "
+    "default. Requires a restart to take effect.",
+    "Kernel");
+=======
             "Log kernel calls with the kHighFrequency tag.", "Kernel");
 DEFINE_bool(kernel_call_log_skip_discarded, true,
             "Skip formatting a kernel-call trace line when the active log level "
@@ -35,6 +44,7 @@ DEFINE_int32(xboxkrnl_file_io_status_log_budget, 256,
              "Maximum non-success file I/O status log lines to emit; negative "
              "means unlimited, zero suppresses them.",
              "Kernel");
+>>>>>>> theirs
 DEFINE_uint32(
     guest_scheduler_cpus, 6,
     "Number of host dispatch threads the cooperative scheduler spreads the "

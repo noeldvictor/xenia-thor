@@ -10,8 +10,6 @@
 #include "xenia/kernel/kernel_module.h"
 
 #include "xenia/base/logging.h"
-#include "xenia/base/mutex.h"
-#include "xenia/cpu/processor.h"
 #include "xenia/cpu/raw_module.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/xthread.h"
@@ -21,16 +19,13 @@ namespace kernel {
 
 KernelModule::KernelModule(KernelState* kernel_state,
                            const std::string_view path)
-    : XModule(kernel_state, ModuleType::kKernelModule) {
+    : XModule(kernel_state, ModuleType::kKernelModule, true) {
   emulator_ = kernel_state->emulator();
   memory_ = emulator_->memory();
   export_resolver_ = kernel_state->emulator()->export_resolver();
 
   path_ = path;
   name_ = utf8::find_base_name_from_guest_path(path);
-
-  // Persist this object through reloads.
-  host_object_ = true;
 
   // HACK: Allocates memory where xboxkrnl.exe would be!
   // TODO: Need to free this memory when necessary.
@@ -94,7 +89,7 @@ uint32_t KernelModule::GetProcAddressByOrdinal(uint16_t ordinal) {
     // Export (or its parent library) not found.
     return 0;
   }
-  if (export_entry->type == cpu::Export::Type::kVariable) {
+  if (export_entry->get_type() == cpu::Export::Type::kVariable) {
     if (export_entry->variable_ptr) {
       return export_entry->variable_ptr;
     } else {
@@ -105,8 +100,7 @@ uint32_t KernelModule::GetProcAddressByOrdinal(uint16_t ordinal) {
       return 0;
     }
   } else {
-    if (export_entry->function_data.trampoline ||
-        export_entry->function_data.shim) {
+    if (export_entry->function_data.trampoline) {
       auto global_lock = global_critical_region_.Acquire();
 
       // See if the function has been generated already.
@@ -119,9 +113,6 @@ uint32_t KernelModule::GetProcAddressByOrdinal(uint16_t ordinal) {
       if (export_entry->function_data.trampoline) {
         handler = (cpu::GuestFunction::ExternHandler)
                       export_entry->function_data.trampoline;
-      } else {
-        handler =
-            (cpu::GuestFunction::ExternHandler)export_entry->function_data.shim;
       }
 
       uint32_t guest_addr =

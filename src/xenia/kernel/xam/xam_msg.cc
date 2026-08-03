@@ -25,7 +25,8 @@ dword_result_t XMsgInProcessCall_entry(dword_t app, dword_t message,
   auto result = kernel_state()->app_manager()->DispatchMessageSync(app, message,
                                                                    arg1, arg2);
   if (result == X_ERROR_NOT_FOUND) {
-    XELOGE("XMsgInProcessCall: app {:08X} undefined", app);
+    XELOGE("XMsgInProcessCall: app {:08X} undefined",
+           static_cast<uint32_t>(app));
   }
   return result;
 }
@@ -37,7 +38,8 @@ dword_result_t XMsgSystemProcessCall_entry(dword_t app, dword_t message,
   auto result = kernel_state()->app_manager()->DispatchMessageAsync(
       app, message, buffer, buffer_length);
   if (result == X_ERROR_NOT_FOUND) {
-    XELOGE("XMsgSystemProcessCall: app {:08X} undefined", app);
+    XELOGE("XMsgSystemProcessCall: app {:08X} undefined",
+           static_cast<uint32_t>(app));
   }
   return result;
 }
@@ -113,6 +115,26 @@ DECLARE_XAM_EXPORT2(XMsgCompleteIORequest, kNone, kImplemented, kSketchy);
 dword_result_t XamGetOverlappedResult_entry(
     pointer_t<XAM_OVERLAPPED> overlapped_ptr, lpdword_t length_ptr,
     dword_t wait) {
+<<<<<<< ours
+  uint32_t result = X_STATUS_SUCCESS;
+
+  if (overlapped_ptr->result != X_ERROR_IO_PENDING) {
+    result = overlapped_ptr->result;
+  } else if (wait && overlapped_ptr->event) {
+    auto ev = kernel_state()->object_table()->LookupObject<XEvent>(
+        overlapped_ptr->event);
+    result = ev->Wait(3, 1, 0, nullptr);
+  } else {
+    result = X_STATUS_TIMEOUT;
+  }
+
+  if (result == X_STATUS_TIMEOUT) {
+    return X_ERROR_IO_INCOMPLETE;
+  }
+
+  if (XFAILED(result)) {
+    return XThread::GetLastError();
+=======
   // The third argument is bWait. A non-waiting poll on a pending op must
   // return ERROR_IO_INCOMPLETE, NOT block: titles poll this once per frame
   // from their loading state machine, and an infinite non-alertable wait here
@@ -136,10 +158,13 @@ dword_result_t XamGetOverlappedResult_entry(
         result = xboxkrnl::xeRtlNtStatusToDosError(result);
       }
     }
+>>>>>>> theirs
   }
-  if (XSUCCEEDED(result) && length_ptr) {
+
+  if (length_ptr) {
     *length_ptr = overlapped_ptr->length;
   }
+
   return result;
 }
 DECLARE_XAM_EXPORT2(XamGetOverlappedResult, kNone, kImplemented, kSketchy);

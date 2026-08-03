@@ -12,14 +12,16 @@
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 
 namespace xe {
 namespace kernel {
 
-XModule::XModule(KernelState* kernel_state, ModuleType module_type)
-    : XObject(kernel_state, kObjectType),
+XModule::XModule(KernelState* kernel_state, ModuleType module_type,
+                 bool host_object)
+    : XObject(kernel_state, kObjectType, host_object),
       module_type_(module_type),
       processor_module_(nullptr),
       hmodule_ptr_(0) {
@@ -48,7 +50,10 @@ bool XModule::Matches(const std::string_view name) const {
 
 void XModule::OnLoad() { kernel_state_->RegisterModule(this); }
 
-void XModule::OnUnload() { kernel_state_->UnregisterModule(this); }
+void XModule::OnUnload() {
+  kernel_state_->processor()->RemoveModule(this->name());
+  kernel_state_->UnregisterModule(this);
+}
 
 X_STATUS XModule::GetSection(const std::string_view name,
                              uint32_t* out_section_data,

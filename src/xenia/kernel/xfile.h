@@ -10,11 +10,11 @@
 #ifndef XENIA_KERNEL_XFILE_H_
 #define XENIA_KERNEL_XFILE_H_
 
+#include <atomic>
+#include <mutex>
 #include <string>
 
-#include "xenia/kernel/xevent.h"
 #include "xenia/kernel/xiocompletion.h"
-#include "xenia/kernel/xobject.h"
 #include "xenia/vfs/device.h"
 #include "xenia/vfs/entry.h"
 #include "xenia/vfs/file.h"
@@ -73,6 +73,62 @@ class X_FILE_DIRECTORY_INFORMATION {
   }
 };
 
+static bool IsValidPath(const std::string_view s, bool is_pattern) {
+  // TODO(gibbed): validate path components individually
+  bool got_asterisk = false;
+  for (const auto& c : s) {
+    if (c <= 31 || c >= 127) {
+      return false;
+    }
+    if (got_asterisk) {
+      // * must be followed by a . (*.)
+      //
+      // 4D530819 has a bug in its game code where it attempts to
+      // FindFirstFile() with filters of "Game:\\*_X3.rkv", "Game:\\m*_X3.rkv",
+      // and "Game:\\w*_X3.rkv" and will infinite loop if the path filter is
+      // allowed.
+      if (c != '.') {
+        return false;
+      }
+      got_asterisk = false;
+    }
+    switch (c) {
+      case '"':
+      // case '*':
+      case '+':
+      case ',':
+      // case ':':
+      // case ';':
+      case '<':
+      // case '=':
+      case '>':
+      // case '?':
+      case '|': {
+        return false;
+      }
+      case '*': {
+        // Pattern-specific (for NtQueryDirectoryFile)
+        if (!is_pattern) {
+          return false;
+        }
+        got_asterisk = true;
+        break;
+      }
+      case '?': {
+        // Pattern-specific (for NtQueryDirectoryFile)
+        if (!is_pattern) {
+          return false;
+        }
+        break;
+      }
+      default: {
+        break;
+      }
+    }
+  }
+  return true;
+}
+
 class XFile : public XObject {
  public:
   static const XObject::Type kObjectType = XObject::Type::File;
@@ -88,8 +144,8 @@ class XFile : public XObject {
   const std::string& path() const { return file_->entry()->path(); }
   const std::string& name() const { return file_->entry()->name(); }
 
-  uint64_t position() const { return position_; }
-  void set_position(uint64_t value) { position_ = value; }
+  uint64_t position() const;
+  void set_position(uint64_t value);
 
   X_STATUS QueryDirectory(X_FILE_DIRECTORY_INFORMATION* out_info, size_t length,
                           const std::string_view file_name, bool restart);
@@ -110,6 +166,7 @@ class XFile : public XObject {
                  uint32_t apc_context);
 
   X_STATUS SetLength(size_t length);
+  X_STATUS Rename(const std::filesystem::path file_path);
 
   // Renames/moves the backing entry to the given guest path (FileRename info).
   X_STATUS Rename(const std::filesystem::path file_path);
@@ -133,14 +190,33 @@ class XFile : public XObject {
  private:
   XFile();
 
+<<<<<<< ours
+  // Bodies run on the I/O worker via RunBlockingHostCall. All take file_lock_
+  // themselves except ReadInternal, which runs under one its caller holds.
+  X_STATUS ReadInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
+                        uint64_t byte_offset, uint32_t* out_bytes_read,
+                        uint32_t apc_context, bool notify_completion);
+  X_STATUS QueryDirectoryInternal(X_FILE_DIRECTORY_INFORMATION* out_info,
+                                  size_t length,
+                                  const std::string_view file_name,
+                                  bool restart);
+  X_STATUS ReadScatterInternal(uint32_t segments_guest_address, uint32_t length,
+                               uint64_t byte_offset, uint32_t* out_bytes_read,
+                               uint32_t apc_context);
+  X_STATUS WriteInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
+                         uint64_t byte_offset, uint32_t* out_bytes_written,
+                         uint32_t apc_context);
+=======
   // Unlocked read body. Callers MUST hold file_lock_ (Read/ReadScatter do).
   X_STATUS ReadInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
                         uint64_t byte_offset, uint32_t* out_bytes_read,
                         uint32_t apc_context, bool notify_completion);
+>>>>>>> theirs
 
   vfs::File* file_ = nullptr;
   std::unique_ptr<threading::Event> async_event_ = nullptr;
 
+  mutable std::mutex file_lock_;
   std::mutex completion_port_lock_;
   std::vector<std::pair<uint32_t, object_ref<XIOCompletion>>> completion_ports_;
 
@@ -152,7 +228,9 @@ class XFile : public XObject {
 
   // TODO(benvanik): create flags, open state, etc.
 
-  uint64_t position_ = 0;
+  // Atomic rather than under file_lock_, so querying the position while a read
+  // is offloaded does not stall the calling fiber's dispatch thread.
+  std::atomic<uint64_t> position_ = 0;
 
   xe::filesystem::WildcardEngine find_engine_;
   size_t find_index_ = 0;

@@ -31,6 +31,9 @@ void XIOCompletion::QueueNotification(IONotification& notification) {
     notifications_.push(notification);
     notification_semaphore_->Release(1, nullptr);
   }
+<<<<<<< ours
+  kernel_state()->guest_scheduler()->WakeAll();
+=======
   // A fiber parked in WaitForNotification's poll loop only repolls at the
   // scheduler backstop; wake it now so completions deliver promptly.
   if (GuestScheduler::enabled()) {
@@ -39,11 +42,14 @@ void XIOCompletion::QueueNotification(IONotification& notification) {
       scheduler->WakeAll();
     }
   }
+>>>>>>> theirs
 }
 
 bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
                                         IONotification* notify) {
   auto ms = std::chrono::milliseconds(TimeoutTicksToMs(wait_ticks));
+<<<<<<< ours
+=======
   if (XThread::GetCurrentFiberThread()) {
     // Fiber-backed guest thread (guest scheduler): a raw blocking wait here
     // would park the whole dispatch host thread and freeze every fiber
@@ -77,11 +83,38 @@ bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
 
     std::memcpy(notify, &notifications_.front(), sizeof(IONotification));
     notifications_.pop();
+>>>>>>> theirs
 
-    return true;
+  if (GuestScheduler::enabled() && XThread::GetCurrentFiberThread()) {
+    // Acquire at zero timeout and yield between polls, rather than blocking
+    // the dispatch host thread.
+    auto* scheduler = kernel_state()->guest_scheduler();
+    uint64_t deadline_ms = Clock::QueryHostUptimeMillis() + ms.count();
+    while (true) {
+      auto poll = threading::Wait(notification_semaphore_.get(), false,
+                                  std::chrono::milliseconds(0));
+      if (poll == threading::WaitResult::kSuccess) {
+        break;
+      }
+      if (Clock::QueryHostUptimeMillis() >= deadline_ms) {
+        return false;
+      }
+      scheduler->BlockCurrentThread();
+    }
+  } else {
+    auto res = threading::Wait(notification_semaphore_.get(), false, ms);
+    if (res != threading::WaitResult::kSuccess) {
+      return false;
+    }
   }
 
-  return false;
+  std::unique_lock<std::mutex> lock(notification_lock_);
+  assert_false(notifications_.empty());
+
+  std::memcpy(notify, &notifications_.front(), sizeof(IONotification));
+  notifications_.pop();
+
+  return true;
 }
 
 }  // namespace kernel

@@ -7,16 +7,29 @@
  ******************************************************************************
  */
 
-#include "xenia/base/logging.h"
-#include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/smc.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
-#include "xenia/xbox.h"
+
+DECLARE_int32(avpack);
 
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+<<<<<<< ours
+constexpr std::array<std::string_view, 9> FirmwareReentryMessage = {
+    "hard poweroff",
+    "hard reset (video error)",
+    "hard reset (used for dumpwritedump/frozen processor)",
+    "hard reset",
+    "power off (hard)",
+    "power off (nice)",
+    "Shut off (Lost Settings)",
+    "Shut off (Frozen Console)",
+    "Shut off",
+};
+=======
 dword_result_t HalGetCurrentAVPack_entry() {
   // Returns the current AV pack (display connector) code. Was unimplemented, so
   // it returned 0 - and games that validate the AV pack "explode" unless the
@@ -27,20 +40,38 @@ dword_result_t HalGetCurrentAVPack_entry() {
   return 6;
 }
 DECLARE_XBOXKRNL_EXPORT1(HalGetCurrentAVPack, kNone, kImplemented);
+>>>>>>> theirs
 
 void HalReturnToFirmware_entry(dword_t routine) {
-  // void
-  // IN FIRMWARE_REENTRY  Routine
-
-  // Routine must be 1 'HalRebootRoutine'
-  assert_true(routine == 1);
-
-  // TODO(benvank): diediedie much more gracefully
-  // Not sure how to blast back up the stack in LLVM without exceptions, though.
-  XELOGE("Game requested shutdown via HalReturnToFirmware");
-  exit(0);
+  const std::string exitMessage = fmt::format(
+      "Game requested a {} via HalReturnToFirmware",
+      static_cast<size_t>(routine) < FirmwareReentryMessage.size()
+          ? FirmwareReentryMessage[routine]
+          : fmt::format("Reboot (Routine Code: {})", routine.value()));
+  XELOGE(exitMessage);
+  kernel_state()->ExitToDashboard();
 }
 DECLARE_XBOXKRNL_EXPORT2(HalReturnToFirmware, kNone, kStub, kImportant);
+
+dword_result_t HalGetCurrentAVPack_entry() { return cvars::avpack; }
+DECLARE_XBOXKRNL_EXPORT1(HalGetCurrentAVPack, kNone, kImplemented);
+
+void HalSendSMCMessage_entry(pointer_t<X_SMC_DATA> smc_message,
+                             pointer_t<X_SMC_DATA> smc_response) {
+  if (!smc_message) {
+    return;
+  }
+
+  kernel_state()->smc()->CallCommand(smc_message, smc_response);
+}
+DECLARE_XBOXKRNL_EXPORT3(HalSendSMCMessage, kNone, kStub, kImportant,
+                         kHighFrequency);
+
+void HalOpenCloseODDTray_entry(dword_t open_close) {
+  kernel_state()->smc()->SetTrayState(open_close ? X_DVD_TRAY_STATE::CLOSED
+                                                 : X_DVD_TRAY_STATE::OPEN);
+}
+DECLARE_XBOXKRNL_EXPORT1(HalOpenCloseODDTray, kNone, kStub);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

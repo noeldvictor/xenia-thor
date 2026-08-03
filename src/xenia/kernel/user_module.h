@@ -33,6 +33,8 @@ class XThread;
 namespace xe {
 namespace kernel {
 
+constexpr fourcc_t kEXESignature = make_fourcc('M', 'Z', 0, 0);
+
 class UserModule : public XModule {
  public:
   UserModule(KernelState* kernel_state);
@@ -40,6 +42,7 @@ class UserModule : public XModule {
 
   const std::string& path() const override { return path_; }
   const std::string& name() const override { return name_; }
+  std::optional<uint64_t> hash() const { return hash_; }
 
   enum ModuleFormat {
     kModuleFormatUndefined = 0,
@@ -60,20 +63,42 @@ class UserModule : public XModule {
   uint32_t guest_xex_header() const { return guest_xex_header_; }
   // The title ID in the xex header or 0 if this is not a xex.
   uint32_t title_id() const;
+<<<<<<< ours
+  std::string bounding_filename() const;
+  uint32_t disc_number() const;
+  bool is_multi_disc_title() const;
+
+=======
   // XXH3 hash of the module's code section, used to match game patches to a
   // specific title build. Valid after CalculateHash() (called in Dump()).
   std::optional<uint64_t> hash() const { return hash_; }
+>>>>>>> theirs
   bool is_executable() const { return processor_module_->is_executable(); }
   bool is_dll_module() const { return is_dll_module_; }
+  bool is_attached() const {
+    // Special case for skipping real XAM initialization as it will fail.
+    if (bounding_filename() == "xam" || name_ == "xam" ||
+        name_ == "$flash_xam") {
+      return true;
+    }
+    return is_attached_;
+  }
 
   uint32_t entry_point() const { return entry_point_; }
   uint32_t stack_size() const { return stack_size_; }
+  uint32_t workspace_size() const { return workspace_size_; }
+
+  uint32_t mod_checksum() const { return mod_checksum_; }
+  uint32_t time_date_stamp() const { return time_date_stamp_; }
 
   X_STATUS LoadFromFile(const std::string_view path);
   // Loads a module directly from a file on the HOST filesystem (not the guest
   // VFS). Used for Aurora-style trainers that live under <storage>/trainers.
   X_STATUS LoadFromHostFile(const std::filesystem::path& host_path);
   X_STATUS LoadFromMemory(const void* addr, const size_t length);
+  X_STATUS LoadFromMemoryNamed(const std::string_view name, const void* addr,
+                               const size_t length);
+  X_STATUS LoadContinue();
   X_STATUS Unload();
 
   uint32_t GetProcAddressByOrdinal(uint16_t ordinal) override;
@@ -103,12 +128,21 @@ class UserModule : public XModule {
                                         ByteStream* stream,
                                         const std::string_view path);
 
+  // TODO(Gliniak): This shouldn't be required. It is used for initial DLL
+  // initialization. Which should happen on main thread before main execution
+  // which isn't really possible right now.
+  bool is_attached_ = false;
+
  private:
+<<<<<<< ours
+=======
   X_STATUS LoadXexContinue();
+>>>>>>> theirs
   void CalculateHash();
 
   std::string name_;
   std::string path_;
+  std::optional<uint64_t> hash_ = std::nullopt;
 
   uint32_t guest_xex_header_ = 0;
   ModuleFormat module_format_ = kModuleFormatUndefined;
@@ -116,7 +150,14 @@ class UserModule : public XModule {
   bool is_dll_module_ = false;
   uint32_t entry_point_ = 0;
   uint32_t stack_size_ = 0;
+<<<<<<< ours
+  uint32_t workspace_size_ = 384 * 1024;
+
+  uint32_t mod_checksum_ = 0;
+  uint32_t time_date_stamp_ = 0;
+=======
   std::optional<uint64_t> hash_ = std::nullopt;
+>>>>>>> theirs
 };
 
 }  // namespace kernel

@@ -12,9 +12,9 @@
 
 #include <cstring>
 #include <string>
+#include <tuple>
 #include <type_traits>
 
-#include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/byte_order.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
@@ -29,24 +29,6 @@ namespace kernel {
 
 using PPCContext = xe::cpu::ppc::PPCContext;
 
-#define SHIM_CALL void
-#define SHIM_SET_MAPPING(library_name, export_name, shim_data) \
-  export_resolver->SetFunctionMapping(                         \
-      library_name, ordinals::export_name,                     \
-      (xe::cpu::xe_kernel_export_shim_fn)export_name##_entry);
-
-#define SHIM_MEM_ADDR(a) \
-  ((a) ? ppc_context->kernel_state->memory()->TranslateVirtual(a) : nullptr)
-
-#define SHIM_MEM_8(a) xe::load_and_swap<uint8_t>(SHIM_MEM_ADDR(a))
-#define SHIM_MEM_16(a) xe::load_and_swap<uint16_t>(SHIM_MEM_ADDR(a))
-#define SHIM_MEM_32(a) xe::load_and_swap<uint32_t>(SHIM_MEM_ADDR(a))
-#define SHIM_MEM_64(a) xe::load_and_swap<uint64_t>(SHIM_MEM_ADDR(a))
-#define SHIM_SET_MEM_8(a, v) xe::store_and_swap<uint8_t>(SHIM_MEM_ADDR(a), v)
-#define SHIM_SET_MEM_16(a, v) xe::store_and_swap<uint16_t>(SHIM_MEM_ADDR(a), v)
-#define SHIM_SET_MEM_32(a, v) xe::store_and_swap<uint32_t>(SHIM_MEM_ADDR(a), v)
-#define SHIM_SET_MEM_64(a, v) xe::store_and_swap<uint64_t>(SHIM_MEM_ADDR(a), v)
-
 namespace util {
 inline uint32_t get_arg_stack_ptr(PPCContext* ppc_context, uint8_t index) {
   return ((uint32_t)ppc_context->r[1]) + 0x54 + index * 8;
@@ -56,32 +38,36 @@ inline uint8_t get_arg_8(PPCContext* ppc_context, uint8_t index) {
   if (index <= 7) {
     return (uint8_t)ppc_context->r[3 + index];
   }
-  uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
-  return SHIM_MEM_8(stack_address);
+  const uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
+  return xe::load_and_swap<uint8_t>(
+      ppc_context->TranslateVirtual(stack_address));
 }
 
 inline uint16_t get_arg_16(PPCContext* ppc_context, uint8_t index) {
   if (index <= 7) {
     return (uint16_t)ppc_context->r[3 + index];
   }
-  uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
-  return SHIM_MEM_16(stack_address);
+  const uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
+  return xe::load_and_swap<uint16_t>(
+      ppc_context->TranslateVirtual(stack_address));
 }
 
 inline uint32_t get_arg_32(PPCContext* ppc_context, uint8_t index) {
   if (index <= 7) {
     return (uint32_t)ppc_context->r[3 + index];
   }
-  uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
-  return SHIM_MEM_32(stack_address);
+  const uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
+  return xe::load_and_swap<uint32_t>(
+      ppc_context->TranslateVirtual(stack_address));
 }
 
 inline uint64_t get_arg_64(PPCContext* ppc_context, uint8_t index) {
   if (index <= 7) {
     return ppc_context->r[3 + index];
   }
-  uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
-  return SHIM_MEM_64(stack_address);
+  const uint32_t stack_address = get_arg_stack_ptr(ppc_context, index - 8);
+  return xe::load_and_swap<uint64_t>(
+      ppc_context->TranslateVirtual(stack_address));
 }
 
 inline std::string_view TranslateAnsiString(const Memory* memory,
@@ -94,6 +80,12 @@ inline std::string_view TranslateAnsiString(const Memory* memory,
       ansi_string->length);
 }
 
+<<<<<<< ours
+inline std::string TranslateAnsiPath(const Memory* memory,
+                                     const X_ANSI_STRING* ansi_string) {
+  return string_util::trim(
+      std::string(TranslateAnsiString(memory, ansi_string)));
+=======
 // Like TranslateAnsiString but returns an owned, whitespace-trimmed std::string
 // for path resolution (matches upstream Canary's TranslateAnsiPath). Games
 // sometimes pass path X_ANSI_STRINGs whose length includes trailing padding /
@@ -110,6 +102,7 @@ inline std::string TranslateAnsiPath(const Memory* memory,
   }
   const size_t end = path.find_last_not_of(whitespace);
   return path.substr(start, end - start + 1);
+>>>>>>> theirs
 }
 
 inline std::string_view TranslateAnsiStringAddress(const Memory* memory,
@@ -135,21 +128,14 @@ inline std::u16string TranslateUnicodeString(
           unicode_string->pointer);
   std::u16string translated_string;
   translated_string.reserve(length);
-  for (uint16_t i = 0; i < length; ++i) {
+  for (uint16_t i = 0; i < length / sizeof(uint16_t); ++i) {
     translated_string += char16_t(uint16_t(guest_string[i]));
   }
   return translated_string;
 }
 }  // namespace util
 
-#define SHIM_GET_ARG_8(n) util::get_arg_8(ppc_context, n)
-#define SHIM_GET_ARG_16(n) util::get_arg_16(ppc_context, n)
-#define SHIM_GET_ARG_32(n) util::get_arg_32(ppc_context, n)
-#define SHIM_GET_ARG_64(n) util::get_arg_64(ppc_context, n)
 #define SHIM_SET_RETURN_32(v) ppc_context->r[3] = (uint64_t)((int32_t)v)
-
-#define SHIM_STRUCT(type, address) \
-  reinterpret_cast<type*>(SHIM_MEM_ADDR(address))
 
 namespace shim {
 
@@ -176,9 +162,8 @@ class Param {
     } else {
       uint32_t stack_ptr =
           uint32_t(init.ppc_context->r[1]) + 0x54 + (ordinal_ - 8) * 8;
-      *out_value = xe::load_and_swap<V>(
-          init.ppc_context->kernel_state->memory()->TranslateVirtual(
-              stack_ptr));
+      *out_value =
+          xe::load_and_swap<V>(init.ppc_context->TranslateVirtual(stack_ptr));
     }
   }
 
@@ -210,13 +195,39 @@ class ParamBase : public Param {
   T value_;
 };
 
+class ContextParam : public Param {
+ public:
+  ContextParam() : Param(), ctx_(nullptr) {}
+  ContextParam(PPCContext* value) : Param(), ctx_(value) {}
+  ContextParam(Init& init) : Param(init), ctx_(init.ppc_context) {}
+
+  operator PPCContext*() const { return ctx_; }
+  PPCContext* value() const { return ctx_; }
+
+  PPCContext* operator->() const { return ctx_; }
+
+  template <typename T>
+  inline T TranslateVirtual(uint32_t guest_addr) const {
+    return ctx_->TranslateVirtual<T>(guest_addr);
+  }
+
+  template <typename T>
+  inline T TranslateGPR(uint32_t which_gpr) const {
+    return ctx_->TranslateVirtualGPR<T>(ctx_->r[which_gpr]);
+  }
+
+  X_KPCR* GetPCR() const { return TranslateGPR<X_KPCR*>(13); }
+
+  XThread* CurrentXThread() const;
+
+ protected:
+  PPCContext* XE_RESTRICT ctx_;
+};
+
 class PointerParam : public ParamBase<uint32_t> {
  public:
   PointerParam(Init& init) : ParamBase(init) {
-    host_ptr_ =
-        value_
-            ? init.ppc_context->kernel_state->memory()->TranslateVirtual(value_)
-            : nullptr;
+    host_ptr_ = value_ ? init.ppc_context->TranslateVirtual(value_) : nullptr;
   }
   PointerParam(void* host_ptr) : ParamBase(), host_ptr_(host_ptr) {}
   PointerParam& operator=(void*& other) {
@@ -254,8 +265,7 @@ template <typename T>
 class PrimitivePointerParam : public ParamBase<uint32_t> {
  public:
   PrimitivePointerParam(Init& init) : ParamBase(init) {
-    host_ptr_ = value_ ? init.ppc_context->kernel_state->memory()
-                             ->TranslateVirtual<xe::be<T>*>(value_)
+    host_ptr_ = value_ ? init.ppc_context->TranslateVirtual<xe::be<T>*>(value_)
                        : nullptr;
   }
   PrimitivePointerParam(T* host_ptr) : ParamBase() {
@@ -287,10 +297,7 @@ class StringPointerParam : public ParamBase<uint32_t> {
  public:
   StringPointerParam(Init& init) : ParamBase(init) {
     host_ptr_ =
-        value_
-            ? init.ppc_context->kernel_state->memory()->TranslateVirtual<CHAR*>(
-                  value_)
-            : nullptr;
+        value_ ? init.ppc_context->TranslateVirtual<CHAR*>(value_) : nullptr;
   }
   StringPointerParam(CHAR* host_ptr) : ParamBase(), host_ptr_(host_ptr) {}
   StringPointerParam& operator=(const CHAR*& other) {
@@ -314,9 +321,7 @@ class TypedPointerParam : public ParamBase<uint32_t> {
  public:
   TypedPointerParam(Init& init) : ParamBase(init) {
     host_ptr_ =
-        value_ ? init.ppc_context->kernel_state->memory()->TranslateVirtual<T*>(
-                     value_)
-               : nullptr;
+        value_ ? init.ppc_context->TranslateVirtual<T*>(value_) : nullptr;
   }
   TypedPointerParam(T* host_ptr) : ParamBase(), host_ptr_(host_ptr) {}
   TypedPointerParam& operator=(const T*& other) {
@@ -386,8 +391,10 @@ using pointer_t = const shim::TypedPointerParam<T>&;
 
 using int_result_t = shim::ResultBase<int32_t>;
 using dword_result_t = shim::ResultBase<uint32_t>;
+using qword_result_t = shim::ResultBase<uint64_t>;
 using pointer_result_t = shim::ResultBase<uint32_t>;
 using X_HRESULT_result_t = shim::ResultBase<X_HRESULT>;
+using ppc_context_t = shim::ContextParam;
 
 // Exported from kernel_state.cc.
 KernelState* kernel_state();
@@ -402,10 +409,10 @@ inline void AppendParam(StringBuffer* string_buffer, word_t param) {
   string_buffer->AppendFormat("{:04X}", uint16_t(param));
 }
 inline void AppendParam(StringBuffer* string_buffer, dword_t param) {
-  string_buffer->AppendFormat("{:08X}", uint32_t(param));
+  string_buffer->AppendHexUInt32(uint32_t(param));
 }
 inline void AppendParam(StringBuffer* string_buffer, qword_t param) {
-  string_buffer->AppendFormat("{:016X}", uint64_t(param));
+  string_buffer->AppendHexUInt64(uint64_t(param));
 }
 inline void AppendParam(StringBuffer* string_buffer, float_t param) {
   string_buffer->AppendFormat("{:G}", static_cast<float>(param));
@@ -414,47 +421,50 @@ inline void AppendParam(StringBuffer* string_buffer, double_t param) {
   string_buffer->AppendFormat("{:G}", static_cast<double>(param));
 }
 inline void AppendParam(StringBuffer* string_buffer, lpvoid_t param) {
-  string_buffer->AppendFormat("{:08X}", uint32_t(param));
+  string_buffer->AppendHexUInt32(uint32_t(param));
 }
 inline void AppendParam(StringBuffer* string_buffer, lpdword_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
-    string_buffer->AppendFormat("({:08X})", param.value());
+    string_buffer->AppendParenthesizedHexUInt32(param.value());
   }
 }
 inline void AppendParam(StringBuffer* string_buffer, lpqword_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
-    string_buffer->AppendFormat("({:016X})", param.value());
+    string_buffer->AppendParenthesizedHexUInt64(param.value());
   }
 }
 inline void AppendParam(StringBuffer* string_buffer, lpfloat_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
     string_buffer->AppendFormat("({:G})", param.value());
   }
 }
 inline void AppendParam(StringBuffer* string_buffer, lpdouble_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
     string_buffer->AppendFormat("({:G})", param.value());
   }
 }
+inline void AppendParam(StringBuffer* string_buffer, ppc_context_t param) {
+  string_buffer->Append("ContextArg");
+}
 inline void AppendParam(StringBuffer* string_buffer, lpstring_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
     string_buffer->AppendFormat("({})", param.value());
   }
 }
 inline void AppendParam(StringBuffer* string_buffer, lpu16string_t param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
   if (param) {
     string_buffer->AppendFormat("({})", xe::to_utf8(param.value()));
   }
 }
 inline void AppendParam(StringBuffer* string_buffer,
                         pointer_t<X_OBJECT_ATTRIBUTES> record) {
-  string_buffer->AppendFormat("{:08X}", record.guest_address());
+  string_buffer->AppendHexUInt32(record.guest_address());
   if (record) {
     auto name_string =
         kernel_memory()->TranslateVirtual<X_ANSI_STRING*>(record->name_ptr);
@@ -480,7 +490,7 @@ inline void AppendParam(StringBuffer* string_buffer,
 }
 template <typename T>
 void AppendParam(StringBuffer* string_buffer, pointer_t<T> param) {
-  string_buffer->AppendFormat("{:08X}", param.guest_address());
+  string_buffer->AppendHexUInt32(param.guest_address());
 }
 
 enum class KernelModuleId {
@@ -490,15 +500,16 @@ enum class KernelModuleId {
 };
 
 template <size_t I = 0, typename... Ps>
-typename std::enable_if<I == sizeof...(Ps)>::type AppendKernelCallParams(
-    StringBuffer& string_buffer, xe::cpu::Export* export_entry,
-    const std::tuple<Ps...>&) {}
+  requires(I == sizeof...(Ps))
+void AppendKernelCallParams(StringBuffer& string_buffer,
+                            xe::cpu::Export* export_entry,
+                            const std::tuple<Ps...>&) {}
 
 template <size_t I = 0, typename... Ps>
-    typename std::enable_if <
-    I<sizeof...(Ps)>::type AppendKernelCallParams(
-        StringBuffer& string_buffer, xe::cpu::Export* export_entry,
-        const std::tuple<Ps...>& params) {
+  requires(I < sizeof...(Ps))
+void AppendKernelCallParams(StringBuffer& string_buffer,
+                            xe::cpu::Export* export_entry,
+                            const std::tuple<Ps...>& params) {
   if (I) {
     string_buffer.Append(", ");
   }
@@ -510,6 +521,10 @@ template <size_t I = 0, typename... Ps>
 StringBuffer* thread_local_string_buffer();
 
 template <typename Tuple>
+<<<<<<< ours
+XE_NOALIAS void PrintKernelCall(cpu::Export* export_entry,
+                                const Tuple& params) {
+=======
 void PrintKernelCall(cpu::Export* export_entry, const Tuple& params) {
   const xe::LogLevel level =
       (export_entry->tags & xe::cpu::ExportTag::kImportant)
@@ -524,67 +539,108 @@ void PrintKernelCall(cpu::Export* export_entry, const Tuple& params) {
   if (cvars::kernel_call_log_skip_discarded && !xe::logging::ShouldLog(level)) {
     return;
   }
+>>>>>>> theirs
   auto& string_buffer = *thread_local_string_buffer();
   string_buffer.Reset();
   string_buffer.Append(export_entry->name);
   string_buffer.Append('(');
   AppendKernelCallParams(string_buffer, export_entry, params);
   string_buffer.Append(')');
+<<<<<<< ours
+  if (export_entry->tags & xe::cpu::ExportTag::kImportant) {
+    xe::logging::AppendLogLine(xe::LogLevel::Info, 'i',
+                               string_buffer.to_string_view(), LogSrc::Kernel);
+  } else {
+    xe::logging::AppendLogLine(xe::LogLevel::Debug, 'd',
+                               string_buffer.to_string_view(), LogSrc::Kernel);
+  }
+=======
   xe::logging::AppendLogLine(level, level == xe::LogLevel::Info ? 'i' : 'd',
                              string_buffer.to_string_view());
+>>>>>>> theirs
 }
+/*
+        todo: need faster string formatting/concatenation (all arguments are
+   always turned into strings except if kHighFrequency)
 
+*/
 template <typename F, typename Tuple, std::size_t... I>
-auto KernelTrampoline(F&& f, Tuple&& t, std::index_sequence<I...>) {
+XE_FORCEINLINE static auto KernelTrampoline(F&& f, Tuple&& t,
+                                            std::index_sequence<I...>) {
   return std::forward<F>(f)(std::get<I>(std::forward<Tuple>(t))...);
 }
 
 template <KernelModuleId MODULE, uint16_t ORDINAL, typename R, typename... Ps>
-xe::cpu::Export* RegisterExport(R (*fn)(Ps&...), const char* name,
-                                xe::cpu::ExportTag::type tags) {
-  static_assert(
-      std::is_void<R>::value || std::is_base_of<shim::Result, R>::value,
-      "R must be void or derive from shim::Result");
-  static_assert((std::is_base_of_v<shim::Param, Ps> && ...),
-                "Ps must derive from shim::Param");
-  static const auto export_entry = new cpu::Export(
-      ORDINAL, xe::cpu::Export::Type::kFunction, name,
-      tags | xe::cpu::ExportTag::kImplemented | xe::cpu::ExportTag::kLog);
-  static R (*FN)(Ps & ...) = fn;
-  struct X {
-    static void Trampoline(PPCContext* ppc_context) {
-      ++export_entry->function_data.call_count;
-      Param::Init init = {
-          ppc_context,
-          0,
-      };
-      // Using braces initializer instead of make_tuple because braces
-      // enforce execution order across compilers.
-      // The make_tuple order is undefined per the C++ standard and
-      // cause inconsitencies between msvc and clang.
-      std::tuple<Ps...> params = {Ps(init)...};
-      if (export_entry->tags & xe::cpu::ExportTag::kLog &&
-          (!(export_entry->tags & xe::cpu::ExportTag::kHighFrequency) ||
-           cvars::log_high_frequency_kernel_calls)) {
-        PrintKernelCall(export_entry, params);
-      }
-      if constexpr (std::is_void<R>::value) {
-        KernelTrampoline(FN, std::forward<std::tuple<Ps...>>(params),
-                         std::make_index_sequence<sizeof...(Ps)>());
-      } else {
-        auto result =
-            KernelTrampoline(FN, std::forward<std::tuple<Ps...>>(params),
-                             std::make_index_sequence<sizeof...(Ps)>());
-        result.Store(ppc_context);
-        if (export_entry->tags &
-            (xe::cpu::ExportTag::kLog | xe::cpu::ExportTag::kLogResult)) {
-          // TODO(benvanik): log result.
+struct ExportRegistrerHelper {
+  template <R (*fn)(Ps&...), xe::cpu::ExportTag::type tags>
+  static xe::cpu::Export* RegisterExport(const char* name) {
+    static_assert(
+        std::is_void<R>::value || std::is_base_of<shim::Result, R>::value,
+        "R must be void or derive from shim::Result");
+    static_assert((std::is_base_of_v<shim::Param, Ps> && ...),
+                  "Ps must derive from shim::Param");
+    constexpr auto TAGS =
+        tags | xe::cpu::ExportTag::kImplemented | xe::cpu::ExportTag::kLog;
+
+    static const auto export_entry =
+        new cpu::Export(ORDINAL, xe::cpu::Export::Type::kFunction, name, TAGS);
+    struct X {
+      static void Trampoline(PPCContext* ppc_context) {
+        Param::Init init = {
+            ppc_context,
+            0,
+        };
+        // Using braces initializer instead of make_tuple because braces
+        // enforce execution order across compilers.
+        // The make_tuple order is undefined per the C++ standard and
+        // cause inconsitencies between msvc and clang.
+        std::tuple<Ps...> params = {Ps(init)...};
+        if (TAGS & xe::cpu::ExportTag::kLog &&
+            (!(TAGS & xe::cpu::ExportTag::kHighFrequency) ||
+             cvars::log_high_frequency_kernel_calls)) {
+          PrintKernelCall(export_entry, params);
+        }
+        if constexpr (std::is_void<R>::value) {
+          KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+                           std::make_index_sequence<sizeof...(Ps)>());
+        } else {
+          auto result =
+              KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+                               std::make_index_sequence<sizeof...(Ps)>());
+          result.Store(ppc_context);
+          if (TAGS &
+              (xe::cpu::ExportTag::kLog | xe::cpu::ExportTag::kLogResult)) {
+            // TODO(benvanik): log result.
+          }
         }
       }
-    }
-  };
-  export_entry->function_data.trampoline = &X::Trampoline;
-  return export_entry;
+    };
+    struct Y {
+      static void Trampoline(PPCContext* ppc_context) {
+        Param::Init init = {
+            ppc_context,
+            0,
+        };
+        std::tuple<Ps...> params = {Ps(init)...};
+        if constexpr (std::is_void<R>::value) {
+          KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+                           std::make_index_sequence<sizeof...(Ps)>());
+        } else {
+          auto result =
+              KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),
+                               std::make_index_sequence<sizeof...(Ps)>());
+          result.Store(ppc_context);
+        }
+      }
+    };
+    export_entry->function_data.trampoline = &X::Trampoline;
+    return export_entry;
+  }
+};
+template <KernelModuleId MODULE, uint16_t ORDINAL, typename R, typename... Ps>
+auto GetRegister(R (*fngetter)(Ps&...)) {
+  return static_cast<ExportRegistrerHelper<MODULE, ORDINAL, R, Ps...>*>(
+      nullptr);
 }
 
 }  // namespace shim
@@ -592,13 +648,17 @@ xe::cpu::Export* RegisterExport(R (*fn)(Ps&...), const char* name,
 using xe::cpu::ExportTag;
 
 #define DECLARE_EXPORT(module_name, name, category, tags)                  \
+  using _register_##module_name##_##name =                                 \
+      std::remove_cv_t<std::remove_reference_t<                            \
+          decltype(*xe::kernel::shim::GetRegister<                         \
+                   xe::kernel::shim::KernelModuleId::module_name,          \
+                   ordinals::name>(&name##_entry))>>;                      \
   const auto EXPORT_##module_name##_##name = RegisterExport_##module_name( \
-      xe::kernel::shim::RegisterExport<                                    \
-          xe::kernel::shim::KernelModuleId::module_name, ordinals::name>(  \
-          &name##_entry, #name,                                            \
-          tags | (static_cast<xe::cpu::ExportTag::type>(                   \
-                      xe::cpu::ExportCategory::category)                   \
-                  << xe::cpu::ExportTag::CategoryShift)));
+      _register_##module_name##_##name ::RegisterExport<                   \
+          &name##_entry, tags | (static_cast<xe::cpu::ExportTag::type>(    \
+                                     xe::cpu::ExportCategory::category)    \
+                                 << xe::cpu::ExportTag::CategoryShift)>(   \
+          #name));
 
 #define DECLARE_EMPTY_REGISTER_EXPORTS(module_name, group_name) \
   void xe::kernel::module_name::Register##group_name##Exports(  \
@@ -620,6 +680,9 @@ using xe::cpu::ExportTag;
   DECLARE_EXPORT(xbdm, name, category, tags)
 #define DECLARE_XBDM_EXPORT1(name, category, tag) \
   DECLARE_EXPORT(xbdm, name, category, xe::cpu::ExportTag::tag)
+#define DECLARE_XBDM_EXPORT2(name, category, tag1, tag2) \
+  DECLARE_EXPORT(xbdm, name, category,                   \
+                 xe::cpu::ExportTag::tag1 | xe::cpu::ExportTag::tag2)
 
 #define DECLARE_XBDM_EMPTY_REGISTER_EXPORTS(group_name) \
   DECLARE_EMPTY_REGISTER_EXPORTS(xbdm, group_name)

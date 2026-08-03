@@ -12,9 +12,6 @@
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
-#include "xenia/base/memory.h"
-#include "xenia/base/mutex.h"
-#include "xenia/cpu/processor.h"
 #include "xenia/kernel/info/file.h"
 #include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
@@ -162,16 +159,18 @@ bool ShouldLogFileIoStatus(X_STATUS status) {
 
 struct CreateOptions {
   // https://processhacker.sourceforge.io/doc/ntioapi_8h.html
-  static const uint32_t FILE_DIRECTORY_FILE = 0x00000001;
+  static constexpr uint32_t FILE_DIRECTORY_FILE = 0x00000001;
   // Optimization - files access will be sequential, not random.
-  static const uint32_t FILE_SEQUENTIAL_ONLY = 0x00000004;
-  static const uint32_t FILE_SYNCHRONOUS_IO_ALERT = 0x00000010;
-  static const uint32_t FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020;
-  static const uint32_t FILE_NON_DIRECTORY_FILE = 0x00000040;
+  static constexpr uint32_t FILE_SEQUENTIAL_ONLY = 0x00000004;
+  static constexpr uint32_t FILE_SYNCHRONOUS_IO_ALERT = 0x00000010;
+  static constexpr uint32_t FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020;
+  static constexpr uint32_t FILE_NON_DIRECTORY_FILE = 0x00000040;
   // Optimization - file access will be random, not sequential.
-  static const uint32_t FILE_RANDOM_ACCESS = 0x00000800;
+  static constexpr uint32_t FILE_RANDOM_ACCESS = 0x00000800;
 };
 
+<<<<<<< ours
+=======
 static bool IsValidPath(const std::string_view s, bool is_pattern) {
   // TODO(gibbed): validate path components individually
   bool got_asterisk = false;
@@ -238,6 +237,7 @@ static bool ShouldTraceBlueDragonReadPath(const std::string_view path) {
   return path.find("!necessity") != std::string_view::npos;
 }
 
+>>>>>>> theirs
 dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
                                   pointer_t<X_OBJECT_ATTRIBUTES> object_attrs,
                                   pointer_t<X_IO_STATUS_BLOCK> io_status_block,
@@ -261,11 +261,15 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
 
   vfs::Entry* root_entry = nullptr;
 
+<<<<<<< ours
+  // Compute path, possibly attrs relative.
+=======
   // Compute path, possibly attrs relative. Path-normalizing (whitespace-
   // trimmed) translate like the existence probe below: titles pass
   // X_ANSI_STRINGs whose length includes trailing padding, and the raw
   // string_view made the probe succeed but the open miss (Lost Odyssey's
   // loader parks forever on exactly that probe-hit/open-miss sequence).
+>>>>>>> theirs
   auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
@@ -444,13 +448,16 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
       // though were are completing immediately.
       // Low bit probably means do not queue to IO ports.
       if ((uint32_t)apc_routine_ptr & ~1) {
-        if (apc_context) {
+        if (apc_context && result == X_STATUS_SUCCESS) {
           auto thread = XThread::GetCurrentThread();
           thread->EnqueueApc(static_cast<uint32_t>(apc_routine_ptr) & ~1u,
                              apc_context, io_status_block, 0);
         }
       }
 
+<<<<<<< ours
+      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
+=======
       // Async reads complete immediately here, but report PENDING so the guest
       // takes its async-completion path. EOF must NOT be masked as PENDING
       // (upstream parity): an async read that hits end-of-file should surface
@@ -459,12 +466,22 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
       // async-\Bundle-read case where the guest never consumes the completion.
       if (!cvars::xboxkrnl_ntreadfile_force_complete &&
           !file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
+>>>>>>> theirs
         result = X_STATUS_PENDING;
       }
 
       // Mark that we should signal the event now. We do this after
       // we have written the info out.
       signal_event = true;
+
+      if (XSUCCEEDED(result)) {
+        if (auto patch = kernel_state()->xmp_volume_patch()) {
+          auto host_buf =
+              kernel_memory()->TranslateVirtual(buffer.guest_address());
+          patch->OnFileRead(file->entry()->name(), host_buf, buffer_length,
+                            buffer.guest_address());
+        }
+      }
     } else {
       // TODO(benvanik): async.
 
@@ -689,6 +706,15 @@ dword_result_t NtWriteFile_entry(dword_t file_handle, dword_t event_handle,
       // Mark that we should signal the event now. We do this after
       // we have written the info out.
       signal_event = true;
+
+      if (XSUCCEEDED(result)) {
+        if (auto patch = kernel_state()->xmp_volume_patch()) {
+          auto host_buf =
+              kernel_memory()->TranslateVirtual(buffer.guest_address());
+          patch->OnFileWrite(file->entry()->name(), host_buf, buffer_length,
+                             buffer.guest_address());
+        }
+      }
     } else {
       // X_STATUS_PENDING if not returning immediately.
       result = X_STATUS_PENDING;
@@ -786,6 +812,16 @@ dword_result_t NtRemoveIoCompletion_entry(
 DECLARE_XBOXKRNL_EXPORT2(NtRemoveIoCompletion, kFileSystem, kImplemented,
                          kHighFrequency);
 
+dword_result_t NtCancelIoFile_entry(dword_t handle) {
+  auto file = kernel_state()->object_table()->LookupObject<XFile>(handle);
+  if (!file) {
+    return X_STATUS_INVALID_HANDLE;
+  }
+
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(NtCancelIoFile, kFileSystem, kStub);
+
 dword_result_t NtQueryFullAttributesFile_entry(
     pointer_t<X_OBJECT_ATTRIBUTES> obj_attribs,
     pointer_t<X_FILE_NETWORK_OPEN_INFORMATION> file_info) {
@@ -802,10 +838,13 @@ dword_result_t NtQueryFullAttributesFile_entry(
     assert_always();
   }
 
+<<<<<<< ours
+=======
   // Use the path-normalizing translate (whitespace-trimmed) like upstream, so a
   // padded/whitespace-suffixed query path still resolves. The fork previously
   // used the raw string_view here, which made Banjo: Nuts & Bolts'
   // 'GAME:\loctext\englishus\' query miss -> dirty-disc error.
+>>>>>>> theirs
   auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
@@ -1040,19 +1079,16 @@ dword_result_t FscSetCacheElementCount_entry(dword_t unk_0, dword_t unk_1) {
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(FscSetCacheElementCount, kFileSystem, kStub);
-
+// todo: this should fill in the io status block and queue the apc
 dword_result_t NtDeviceIoControlFile_entry(
     dword_t handle, dword_t event_handle, dword_t apc_routine,
-    dword_t apc_context, dword_t io_status_block, dword_t io_control_code,
-    lpvoid_t input_buffer, dword_t input_buffer_len, lpvoid_t output_buffer,
-    dword_t output_buffer_len) {
+    dword_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
+    dword_t io_control_code, lpvoid_t input_buffer, dword_t input_buffer_len,
+    lpvoid_t output_buffer, dword_t output_buffer_len) {
   // Called by XMountUtilityDrive cache-mounting code
   // (checks if the returned values look valid, values below seem to pass the
   // checks)
-  const uint32_t cache_size = 0xFF000;
-
-  const uint32_t X_IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x70000;
-  const uint32_t X_IOCTL_DISK_GET_PARTITION_INFO = 0x74004;
+  constexpr uint32_t cache_size = 0xFF000;
 
   if (io_control_code == X_IOCTL_DISK_GET_DRIVE_GEOMETRY) {
     if (output_buffer_len < 0x8) {
@@ -1078,6 +1114,24 @@ dword_result_t NtDeviceIoControlFile_entry(
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(NtDeviceIoControlFile, kFileSystem, kStub);
+<<<<<<< ours
+// device_extension_size = additional bytes of data (aligned up to 8 byte
+// granularity) that will be allocated at the tail of the resulting device
+// object. although it is allocated at the tail, it is accessed through a
+// pointer at offset 0x18 so in theory a guest could be unaware that its a
+// single allocation device_name is optional, extra_device_object_attributes
+// gets assigned to the attributes field of the OBJECT_ATTRIBUTES used for
+// ObCreateObject
+
+// todo: need device guest object struct + host object for device
+dword_result_t IoCreateDevice_entry(dword_t driver_object,
+                                    dword_t device_extension_size,
+                                    pointer_t<X_ANSI_STRING> device_name,
+                                    dword_t device_type,
+                                    dword_t extra_device_object_attributes,
+                                    lpdword_t device_object,
+                                    const ppc_context_t& ctx) {
+=======
 
 dword_result_t IoDismountVolume_entry(dword_t device_object) {
   XELOGD("IoDismountVolume research stub: device={:08X}",
@@ -1104,26 +1158,76 @@ DECLARE_XBOXKRNL_EXPORT2(IoDismountVolumeByName, kFileSystem, kStub, kSketchy);
 dword_result_t IoCreateDevice_entry(dword_t device_struct, dword_t r4,
                                     dword_t r5, dword_t r6, dword_t r7,
                                     lpdword_t out_struct) {
+>>>>>>> theirs
   // Called from XMountUtilityDrive XAM-task code
   // That code tries writing things to a pointer at out_struct+0x18
   // We'll alloc some scratch space for it so it doesn't cause any exceptions
 
   // 0x24 is guessed size from accesses to out_struct - likely incorrect
-  auto out_guest = kernel_memory()->SystemHeapAlloc(0x24);
+  auto current_kernel = ctx->kernel_state;
 
-  auto out = kernel_memory()->TranslateVirtual<uint8_t*>(out_guest);
-  memset(out, 0, 0x24);
+  uint32_t required_size = 80 + xe::align<uint32_t>(device_extension_size, 8);
 
-  // XMountUtilityDrive writes some kind of header here
-  // 0x1000 bytes should be enough to store it
-  auto out_guest2 = kernel_memory()->SystemHeapAlloc(0x1000);
-  xe::store_and_swap(out + 0x18, out_guest2);
+  auto kernel_mem = current_kernel->memory();
 
-  *out_struct = out_guest;
+  auto out_guest = kernel_mem->SystemHeapAlloc(required_size);
+
+  auto out = kernel_mem->TranslateVirtual<uint8_t*>(out_guest);
+
+  memset(out, 0, required_size);
+
+  xe::store<unsigned char>(out, 3);  // maybe device object's Ob type?
+
+  // this stores the total object size, without alignment!
+
+  xe::store_and_swap<uint16_t>(out + 2, device_extension_size + 80);
+
+  // from 17559
+  if (device_type == 7 || device_type == 58 || device_type == 62 ||
+      device_type == 45 || device_type == 2 || device_type == 60 ||
+      device_type == 61 || device_type == 36 || device_type == 64 ||
+      device_type == 65 || device_type == 66 || device_type == 67 ||
+      device_type == 68 || device_type == 69 || device_type == 70 ||
+      device_type == 72 || device_type == 73) {
+    xe::store_and_swap<uint32_t>(out + 0xC, 0);
+  } else {
+    // pointer to itself?
+    xe::store_and_swap<uint32_t>(out + 0xC, out_guest);
+  }
+  xe::store<uint8_t>(out + 0x1C, static_cast<uint8_t>(device_type));
+
+  uint32_t flags_field_value = 16;
+  if (device_name) {
+    flags_field_value |= 8;
+  }
+  xe::store<unsigned char>(out + 0x1e, 1);
+  xe::store_and_swap<uint32_t>(out + 0x14, flags_field_value);
+  if (device_extension_size != 0) {
+    // pointer to device specific data
+    //  XMountUtilityDrive writes some kind of header here
+    xe::store_and_swap<uint32_t>(out + 0x18, out_guest + 80);
+  }
+
+  xe::store_and_swap<uint32_t>(out + 8, driver_object);
+
+  *device_object = out_guest;
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(IoCreateDevice, kFileSystem, kStub);
 
+<<<<<<< ours
+// supposed to invoke a callback on the driver object! its some sort of
+// destructor function intended to be called for all devices created from the
+// driver
+void IoDeleteDevice_entry(dword_t device_ptr, const ppc_context_t& ctx) {
+  if (device_ptr) {
+    auto kernel_mem = ctx->kernel_state->memory();
+    kernel_mem->SystemHeapFree(device_ptr);
+  }
+}
+
+DECLARE_XBOXKRNL_EXPORT1(IoDeleteDevice, kFileSystem, kStub);
+=======
 dword_result_t StfsCreateDevice_entry(dword_t r3, dword_t r4, dword_t r5,
                                       dword_t r6, dword_t r7, dword_t r8,
                                       dword_t r9, dword_t r10) {
@@ -1147,6 +1251,7 @@ dword_result_t StfsControlDevice_entry(dword_t r3, dword_t r4, dword_t r5,
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT2(StfsControlDevice, kFileSystem, kStub, kSketchy);
+>>>>>>> theirs
 
 }  // namespace xboxkrnl
 }  // namespace kernel

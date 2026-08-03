@@ -93,6 +93,15 @@ class Entry {
   uint64_t create_timestamp() const { return create_timestamp_; }
   uint64_t access_timestamp() const { return access_timestamp_; }
   uint64_t write_timestamp() const { return write_timestamp_; }
+  bool delete_on_close() const { return delete_on_close_; }
+
+  virtual bool SetAttributes(uint64_t attributes) { return false; }
+  virtual bool SetCreateTimestamp(uint64_t timestamp) { return false; }
+  virtual bool SetAccessTimestamp(uint64_t timestamp) { return false; }
+  virtual bool SetWriteTimestamp(uint64_t timestamp) { return false; }
+  void SetForDeletion(bool delete_on_close) {
+    delete_on_close_ = delete_on_close;
+  }
 
   bool is_read_only() const;
 
@@ -112,6 +121,7 @@ class Entry {
   void Touch();
   void Rename(const std::filesystem::path file_path);
 
+  void Rename(const std::filesystem::path file_path);
   // If successful, out_file points to a new file. When finished, call
   // file->Destroy()
   virtual X_STATUS Open(uint32_t desired_access, File** out_file) = 0;
@@ -131,10 +141,14 @@ class Entry {
       const std::string_view name, uint32_t attributes) {
     return nullptr;
   }
+<<<<<<< ours
+  virtual bool DeleteEntryInternal(Entry* entry) = 0;
+=======
   virtual bool DeleteEntryInternal(Entry* entry) { return false; }
   // Move/rename this entry to the given guest path. Default is a no-op (used by
   // read-only devices - ISO/STFS - where rename is unsupported). Writable
   // host-backed devices override to perform the actual move.
+>>>>>>> theirs
   virtual void RenameEntryInternal(
       const std::vector<std::string_view>& path_parts) {}
 
@@ -150,6 +164,7 @@ class Entry {
   uint64_t create_timestamp_;
   uint64_t access_timestamp_;
   uint64_t write_timestamp_;
+  bool delete_on_close_;
   std::vector<std::unique_ptr<Entry>> children_;
 };
 

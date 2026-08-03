@@ -9,9 +9,6 @@
 
 #include "xenia/kernel/util/object_table.h"
 
-#include <algorithm>
-#include <cstring>
-
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
@@ -76,36 +73,55 @@ ObjectTable::~ObjectTable() { Reset(); }
 void ObjectTable::Reset() {
   auto global_lock = global_critical_region_.Acquire();
 
-  // Release all objects.
+  // Release all objects, clearing their handles first so destructors
+  // don't assert on non-empty handles_.
   for (uint32_t n = 0; n < table_capacity_; n++) {
     ObjectTableEntry& entry = table_[n];
     if (entry.object) {
+      entry.object->handles().clear();
+      entry.handle_ref_count = 0;
+      entry.object->Release();
+    }
+  }
+  for (uint32_t n = 0; n < host_table_capacity_; n++) {
+    ObjectTableEntry& entry = host_table_[n];
+    if (entry.object) {
+      entry.object->handles().clear();
+      entry.handle_ref_count = 0;
       entry.object->Release();
     }
   }
 
   table_capacity_ = 0;
+  host_table_capacity_ = 0;
   last_free_entry_ = 0;
+  last_free_host_entry_ = 0;
   free(table_);
   table_ = nullptr;
+<<<<<<< ours
+  free(host_table_);
+  host_table_ = nullptr;
+=======
 
   // Structural change: invalidate stale per-thread handle caches.
   BumpObjectGeneration();
+>>>>>>> theirs
 }
 
-X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot) {
+X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot, bool host) {
   // Find a free slot.
-  uint32_t slot = last_free_entry_;
+  uint32_t slot = host ? last_free_host_entry_ : last_free_entry_;
+  uint32_t capacity = host ? host_table_capacity_ : table_capacity_;
   uint32_t scan_count = 0;
-  while (scan_count < table_capacity_) {
-    ObjectTableEntry& entry = table_[slot];
+  while (scan_count < capacity) {
+    ObjectTableEntry& entry = host ? host_table_[slot] : table_[slot];
     if (!entry.object) {
       *out_slot = slot;
       return X_STATUS_SUCCESS;
     }
     scan_count++;
-    slot = (slot + 1) % table_capacity_;
-    if (slot == 0) {
+    slot = (slot + 1) % capacity;
+    if (slot == 0 && host) {
       // Never allow 0 handles.
       scan_count++;
       slot++;
@@ -113,23 +129,24 @@ X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot) {
   }
 
   // Table out of slots, expand.
-  uint32_t new_table_capacity = std::max(16 * 1024u, table_capacity_ * 2);
-  if (!Resize(new_table_capacity)) {
+  uint32_t new_table_capacity = std::max(16 * 1024u, capacity * 2);
+  if (!Resize(new_table_capacity, host)) {
     return X_STATUS_NO_MEMORY;
   }
 
-  // Never allow 0 handles.
-  slot = ++last_free_entry_;
+  // Never allow 0 handles on host.
+  slot = host ? ++last_free_host_entry_ : last_free_entry_++;
   *out_slot = slot;
 
   return X_STATUS_SUCCESS;
 }
 
-bool ObjectTable::Resize(uint32_t new_capacity) {
+bool ObjectTable::Resize(uint32_t new_capacity, bool host) {
+  uint32_t capacity = host ? host_table_capacity_ : table_capacity_;
   uint32_t new_size = new_capacity * sizeof(ObjectTableEntry);
-  uint32_t old_size = table_capacity_ * sizeof(ObjectTableEntry);
-  auto new_table =
-      reinterpret_cast<ObjectTableEntry*>(realloc(table_, new_size));
+  uint32_t old_size = capacity * sizeof(ObjectTableEntry);
+  auto new_table = reinterpret_cast<ObjectTableEntry*>(
+      realloc(host ? host_table_ : table_, new_size));
   if (!new_table) {
     return false;
   }
@@ -140,9 +157,15 @@ bool ObjectTable::Resize(uint32_t new_capacity) {
                 new_size - old_size);
   }
 
-  last_free_entry_ = table_capacity_;
-  table_capacity_ = new_capacity;
-  table_ = new_table;
+  if (host) {
+    last_free_host_entry_ = capacity;
+    host_table_capacity_ = new_capacity;
+    host_table_ = new_table;
+  } else {
+    last_free_entry_ = capacity;
+    table_capacity_ = new_capacity;
+    table_ = new_table;
+  }
 
   return true;
 }
@@ -156,21 +179,32 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
 
     // Find a free slot.
     uint32_t slot = 0;
-    result = FindFreeSlot(&slot);
+    bool host_object = object->is_host_object();
+    result = FindFreeSlot(&slot, host_object);
 
     // Stash.
     if (XSUCCEEDED(result)) {
-      ObjectTableEntry& entry = table_[slot];
+      ObjectTableEntry& entry = host_object ? host_table_[slot] : table_[slot];
       entry.object = object;
       // Structural change: invalidate stale per-thread handle caches.
       BumpObjectGeneration();
       entry.handle_ref_count = 1;
-      handle = XObject::kHandleBase + (slot << 2);
+      handle = slot << 2;
+      if (!host_object) {
+        if (object->type() != XObject::Type::Socket) {
+          handle += XObject::kHandleBase;
+        }
+      } else {
+        handle += XObject::kHandleHostBase;
+      }
       object->handles().push_back(handle);
 
       // Retain so long as the object is in the table.
       object->Retain();
 
+<<<<<<< ours
+      XELOGD("Added handle:{:08X} for {}", handle, typeid(*object).name());
+=======
       // Hot path: fires on EVERY handle add (e.g. ~135/s of async-I/O event
       // churn during UE3 / Gears 3 asset loads). At the default Info level this
       // cost a typeid() RTTI + {fmt} format + logcat write *inside the global
@@ -181,6 +215,7 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
       if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
         XELOGD("Added handle:{:08X} for {}", handle, typeid(*object).name());
       }
+>>>>>>> theirs
     }
   }
 
@@ -211,7 +246,7 @@ X_STATUS ObjectTable::DuplicateHandle(X_HANDLE handle, X_HANDLE* out_handle) {
 X_STATUS ObjectTable::RetainHandle(X_HANDLE handle) {
   auto global_lock = global_critical_region_.Acquire();
 
-  ObjectTableEntry* entry = LookupTable(handle);
+  ObjectTableEntry* entry = LookupTableInLock(handle);
   if (!entry) {
     return X_STATUS_INVALID_HANDLE;
   }
@@ -236,8 +271,17 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
     }
   }
 
+<<<<<<< ours
+  return ReleaseHandleInLock(handle);
+}
+X_STATUS ObjectTable::ReleaseHandleInLock(X_HANDLE handle) {
+  ObjectTableEntry* entry = LookupTableInLock(handle);
+  if (!entry) {
+    return X_STATUS_INVALID_HANDLE;
+=======
   if (object_to_release) {
     object_to_release->Release();
+>>>>>>> theirs
   }
 
   if (XFAILED(result)) {
@@ -248,7 +292,6 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
   // (but not a failure code)
   return X_STATUS_SUCCESS;
 }
-
 X_STATUS ObjectTable::RemoveHandle(X_HANDLE handle) {
   XObject* object_to_release = nullptr;
   X_STATUS result = X_STATUS_SUCCESS;
@@ -271,8 +314,13 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
   if (!handle) {
     return X_STATUS_INVALID_HANDLE;
   }
+  auto global_lock = global_critical_region_.Acquire();
 
+<<<<<<< ours
+  ObjectTableEntry* entry = LookupTableInLock(handle);
+=======
   ObjectTableEntry* entry = LookupTableLocked(handle);
+>>>>>>> theirs
   if (!entry) {
     return X_STATUS_INVALID_HANDLE;
   }
@@ -292,11 +340,15 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
       object->handles().erase(handle_entry);
     }
 
+<<<<<<< ours
+    XELOGD("Removed handle:{:08X} for {}", handle, typeid(*object).name());
+=======
     // Hot path (see AddHandle): gate to Debug so the typeid() + format + logcat
     // write don't run on every handle removal under the global lock.
     if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
       XELOGD("Removed handle:{:08X} for {}", handle, typeid(*object).name());
     }
+>>>>>>> theirs
 
     // Remove object name from mapping to prevent naming collision.
     if (!object->name().empty()) {
@@ -318,6 +370,14 @@ std::vector<object_ref<XObject>> ObjectTable::GetAllObjects() {
   auto lock = global_critical_region_.Acquire();
   std::vector<object_ref<XObject>> results;
 
+  for (uint32_t slot = 0; slot < host_table_capacity_; slot++) {
+    auto& entry = host_table_[slot];
+    if (entry.object && std::find(results.begin(), results.end(),
+                                  entry.object) == results.end()) {
+      entry.object->Retain();
+      results.push_back(object_ref<XObject>(entry.object));
+    }
+  }
   for (uint32_t slot = 0; slot < table_capacity_; slot++) {
     auto& entry = table_[slot];
     if (entry.object && std::find(results.begin(), results.end(),
@@ -334,9 +394,9 @@ void ObjectTable::PurgeAllObjects() {
   auto lock = global_critical_region_.Acquire();
   for (uint32_t slot = 0; slot < table_capacity_; slot++) {
     auto& entry = table_[slot];
-    if (entry.object && !entry.object->is_host_object()) {
+    if (entry.object) {
       entry.handle_ref_count = 0;
-      entry.object->Release();
+      entry.object->ReleaseHandle();
 
       entry.object = nullptr;
     }
@@ -347,19 +407,36 @@ void ObjectTable::PurgeAllObjects() {
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTable(X_HANDLE handle) {
   auto global_lock = global_critical_region_.Acquire();
+<<<<<<< ours
+  return LookupTableInLock(handle);
+}
+
+ObjectTable::ObjectTableEntry* ObjectTable::LookupTableInLock(X_HANDLE handle) {
+=======
   return LookupTableLocked(handle);
 }
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(
     X_HANDLE handle) {
+>>>>>>> theirs
   handle = TranslateHandle(handle);
   if (!handle) {
     return nullptr;
   }
 
+<<<<<<< ours
+  const bool is_host_object = XObject::is_handle_host_object(handle);
+  uint32_t slot = GetHandleSlot(handle, is_host_object);
+  if (is_host_object) {
+    if (slot <= host_table_capacity_) {
+      return &host_table_[slot];
+    }
+  } else if (slot <= table_capacity_) {
+=======
   // Lower 2 bits are ignored.
   uint32_t slot = GetHandleSlot(handle);
   if (slot <= table_capacity_) {
+>>>>>>> theirs
     return &table_[slot];
   }
 
@@ -368,8 +445,9 @@ ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(
 
 // Generic lookup
 template <>
-object_ref<XObject> ObjectTable::LookupObject<XObject>(X_HANDLE handle) {
-  auto object = ObjectTable::LookupObject(handle, false);
+object_ref<XObject> ObjectTable::LookupObject<XObject>(X_HANDLE handle,
+                                                       bool already_locked) {
+  auto object = ObjectTable::LookupObject(handle, already_locked);
   auto result = object_ref<XObject>(reinterpret_cast<XObject*>(object));
   return result;
 }
@@ -404,11 +482,18 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
     xe::global_critical_region::NoteOwner("ObjectTable::LookupObject");
   }
 
-  // Lower 2 bits are ignored.
-  uint32_t slot = GetHandleSlot(handle);
+  const bool is_host_object = XObject::is_handle_host_object(handle);
+  uint32_t slot = GetHandleSlot(handle, is_host_object);
 
   // Verify slot.
-  if (slot < table_capacity_) {
+  if (is_host_object) {
+    if (slot < host_table_capacity_) {
+      ObjectTableEntry& entry = host_table_[slot];
+      if (entry.object) {
+        object = entry.object;
+      }
+    }
+  } else if (slot < table_capacity_) {
     ObjectTableEntry& entry = table_[slot];
     if (entry.object) {
       object = entry.object;
@@ -453,6 +538,15 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
 void ObjectTable::GetObjectsByType(XObject::Type type,
                                    std::vector<object_ref<XObject>>* results) {
   auto global_lock = global_critical_region_.Acquire();
+  for (uint32_t slot = 0; slot < host_table_capacity_; ++slot) {
+    auto& entry = host_table_[slot];
+    if (entry.object) {
+      if (entry.object->type() == type) {
+        entry.object->Retain();
+        results->push_back(object_ref<XObject>(entry.object));
+      }
+    }
+  }
   for (uint32_t slot = 0; slot < table_capacity_; ++slot) {
     auto& entry = table_[slot];
     if (entry.object) {
@@ -465,15 +559,14 @@ void ObjectTable::GetObjectsByType(XObject::Type type,
 }
 
 X_HANDLE ObjectTable::TranslateHandle(X_HANDLE handle) {
-  if (handle == 0xFFFFFFFF) {
-    // CurrentProcess
-    // assert_always();
+  // chrispy: reordered these by likelihood, most likely case is that handle is
+  // not a special handle
+  XE_LIKELY_IF(handle < 0xFFFFFFFE) { return handle; }
+  else if (handle == 0xFFFFFFFF) {
     return 0;
-  } else if (handle == 0xFFFFFFFE) {
-    // CurrentThread
+  }
+  else {
     return XThread::GetCurrentThreadHandle();
-  } else {
-    return handle;
   }
 }
 
@@ -518,6 +611,12 @@ X_STATUS ObjectTable::GetObjectByName(const std::string_view name,
 }
 
 bool ObjectTable::Save(ByteStream* stream) {
+  stream->Write<uint32_t>(host_table_capacity_);
+  for (uint32_t i = 0; i < host_table_capacity_; i++) {
+    auto& entry = host_table_[i];
+    stream->Write<int32_t>(entry.handle_ref_count);
+  }
+
   stream->Write<uint32_t>(table_capacity_);
   for (uint32_t i = 0; i < table_capacity_; i++) {
     auto& entry = table_[i];
@@ -528,7 +627,14 @@ bool ObjectTable::Save(ByteStream* stream) {
 }
 
 bool ObjectTable::Restore(ByteStream* stream) {
-  Resize(stream->Read<uint32_t>());
+  Resize(stream->Read<uint32_t>(), true);
+  for (uint32_t i = 0; i < host_table_capacity_; i++) {
+    auto& entry = host_table_[i];
+    // entry.object = nullptr;
+    entry.handle_ref_count = stream->Read<int32_t>();
+  }
+
+  Resize(stream->Read<uint32_t>(), false);
   for (uint32_t i = 0; i < table_capacity_; i++) {
     auto& entry = table_[i];
     // entry.object = nullptr;
@@ -539,11 +645,13 @@ bool ObjectTable::Restore(ByteStream* stream) {
 }
 
 X_STATUS ObjectTable::RestoreHandle(X_HANDLE handle, XObject* object) {
-  uint32_t slot = GetHandleSlot(handle);
-  assert_true(table_capacity_ >= slot);
+  const bool is_host_object = XObject::is_handle_host_object(handle);
+  uint32_t slot = GetHandleSlot(handle, is_host_object);
+  uint32_t capacity = is_host_object ? host_table_capacity_ : table_capacity_;
+  assert_true(capacity >= slot);
 
-  if (table_capacity_ >= slot) {
-    auto& entry = table_[slot];
+  if (capacity >= slot) {
+    auto& entry = is_host_object ? host_table_[slot] : table_[slot];
     entry.object = object;
     object->Retain();
     // Structural change: invalidate stale per-thread handle caches.

@@ -12,16 +12,11 @@
 
 #include "xenia/base/threading.h"
 #include "xenia/kernel/xobject.h"
+#include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
 namespace xe {
 namespace kernel {
-
-struct X_KSEMAPHORE {
-  X_DISPATCH_HEADER header;
-  xe::be<uint32_t> limit;
-};
-static_assert_size(X_KSEMAPHORE, 0x14);
 
 class XSemaphore : public XObject {
  public:
@@ -32,9 +27,10 @@ class XSemaphore : public XObject {
 
   [[nodiscard]] bool Initialize(int32_t initial_count, int32_t maximum_count);
   [[nodiscard]] bool InitializeNative(void* native_ptr,
-                                      X_DISPATCH_HEADER* header);
+                                      const X_DISPATCH_HEADER* header);
 
-  int32_t ReleaseSemaphore(int32_t release_count);
+  [[nodiscard]] bool ReleaseSemaphore(int32_t release_count,
+                                      int32_t* out_previous_count);
 
   bool Save(ByteStream* stream) override;
   static object_ref<XSemaphore> Restore(KernelState* kernel_state,
@@ -51,9 +47,16 @@ class XSemaphore : public XObject {
   xe::threading::WaitHandle* GetWaitHandle() override {
     return semaphore_.get();
   }
+  void WaitCallback() override;
+
+  void CooperativeWaitBegin(XThread* thread) override;
+  void CooperativeWaitEnd(XThread* thread) override;
+  bool CooperativeMayAcquire(XThread* thread) override;
 
  private:
   std::unique_ptr<xe::threading::Semaphore> semaphore_;
+  // Fibers waiting cooperatively, in order, for fair permit handout.
+  CooperativeWaiterFifo waiters_;
   uint32_t maximum_count_ = 0;
   CooperativeWaiterFifo waiters_;
 };

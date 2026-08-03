@@ -22,7 +22,8 @@ class HostPathEntry;
 class HostPathDevice : public Device {
  public:
   HostPathDevice(const std::string_view mount_path,
-                 const std::filesystem::path& host_path, bool read_only);
+                 const std::filesystem::path& host_path, bool read_only,
+                 bool collapse_content_packages = false);
   ~HostPathDevice() override;
 
   bool Initialize() override;
@@ -35,12 +36,16 @@ class HostPathDevice : public Device {
 
   const std::string& name() const override { return name_; }
   uint32_t attributes() const override { return 0; }
-  uint32_t component_name_max_length() const override { return 40; }
+  uint32_t component_name_max_length() const override { return 255; }
 
   uint32_t total_allocation_units() const override { return 128 * 1024; }
   uint32_t available_allocation_units() const override { return 128 * 1024; }
   uint32_t sectors_per_allocation_unit() const override { return 1; }
   uint32_t bytes_per_sector() const override { return 0x200; }
+
+ protected:
+  friend class HostPathEntry;
+  std::filesystem::path host_path() const { return host_path_; }
 
  private:
   void PopulateEntry(HostPathEntry* parent_entry);
@@ -49,6 +54,7 @@ class HostPathDevice : public Device {
   std::filesystem::path host_path_;
   std::unique_ptr<Entry> root_entry_;
   bool read_only_;
+  bool collapse_content_packages_;
 };
 
 }  // namespace vfs

@@ -2,7 +2,7 @@
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
  ******************************************************************************
- * Copyright 2021 Ben Vanik. All rights reserved.                             *
+ * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
  */
@@ -12,10 +12,14 @@
 
 #include <time.h>
 
+<<<<<<< ours
+=======
 #include "xenia/xbox.h"
+>>>>>>> theirs
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/util/xex2_info.h"
+#include "xenia/xbox.h"
 
 namespace xe {
 namespace vfs {
@@ -68,6 +72,35 @@ enum class XContentPackageType : uint32_t {
 enum class XContentVolumeType : uint32_t {
   kStfs = 0,
   kSvod = 1,
+};
+
+enum XContentFlag : uint32_t {
+  // Creation flags
+  kCreateNew = 1,
+  kCreateAlways = 2,
+  kOpenExisting = 3,
+  kOpenAlways = 4,
+  kTruncateExisting = 5,
+
+  // Attirbutes
+  kNoProfileTransfer = 0x10,
+  kNoDeviceTransfer = 0x20,
+  kStronglySigned = 0x40,
+  kAllowProfileTransfer = 0x80,
+  kMoveOnly = 0x800,
+
+  // Device selector?
+  kManageStorage = 0x100,
+  kForceUI = 0x200,
+
+  // Enumeration
+  kExcludeCommon = 0x1000,
+
+  // Other
+  kEnumerateAllProfiles = 0x10000000,
+
+  // Device enumerator?
+  kExcludeReadOnlyDevices = 0x80000000,
 };
 
 /* STFS structures */
@@ -279,12 +312,12 @@ static_assert_size(XContentAttributes, 1);
 
 #pragma pack(push, 1)
 struct XContentMetadata {
-  static const uint32_t kThumbLengthV1 = 0x4000;
-  static const uint32_t kThumbLengthV2 = 0x3D00;
+  static constexpr uint32_t kThumbLengthV1 = 0x4000;
+  static constexpr uint32_t kThumbLengthV2 = 0x3D00;
 
-  static const uint32_t kNumLanguagesV1 = 9;
+  static constexpr uint32_t kNumLanguagesV1 = 9;
   // metadata_version 2 adds 3 languages inside thumbnail/title_thumbnail space
-  static const uint32_t kNumLanguagesV2 = 12;
+  static constexpr uint32_t kNumLanguagesV2 = 12;
 
   be<XContentType> content_type;
   be<uint32_t> metadata_version;
@@ -399,25 +432,16 @@ struct XContentMetadata {
   }
 
   bool set_display_name(XLanguage language, const std::u16string_view value) {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, store in english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
+    uint32_t lang_id = language_slot(language);
 
     char16_t* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
+    if (lang_id < kNumLanguagesV1) {
       str = display_name_raw.chars[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
+    } else if (lang_id < kNumLanguagesV2 && metadata_version >= 2) {
       str = display_name_ex_raw.chars[lang_id - kNumLanguagesV1];
     }
 
     if (!str) {
-      // Invalid language ID?
-      assert_always();
       return false;
     }
 
@@ -427,25 +451,16 @@ struct XContentMetadata {
   }
 
   bool set_description(XLanguage language, const std::u16string_view value) {
-    uint32_t lang_id = uint32_t(language) - 1;
-
-    if (lang_id >= kNumLanguagesV2) {
-      assert_always();
-      // no room for this lang, store in english slot..
-      lang_id = uint32_t(XLanguage::kEnglish) - 1;
-    }
+    uint32_t lang_id = language_slot(language);
 
     char16_t* str = 0;
-    if (lang_id >= 0 && lang_id < kNumLanguagesV1) {
+    if (lang_id < kNumLanguagesV1) {
       str = description_raw.chars[lang_id];
-    } else if (lang_id >= kNumLanguagesV1 && lang_id < kNumLanguagesV2 &&
-               metadata_version >= 2) {
+    } else if (lang_id < kNumLanguagesV2 && metadata_version >= 2) {
       str = description_ex_raw.chars[lang_id - kNumLanguagesV1];
     }
 
     if (!str) {
-      // Invalid language ID?
-      assert_always();
       return false;
     }
 
@@ -466,10 +481,12 @@ struct XContentMetadata {
 };
 static_assert_size(XContentMetadata, 0x93D6);
 
+static constexpr uint8_t license_count = 0x10;
+
 struct XContentHeader {
   be<XContentPackageType> magic;
   uint8_t signature[0x228];
-  XContentLicense licenses[0x10];
+  XContentLicense licenses[license_count];
   uint8_t content_id[0x14];
   be<uint32_t> header_size;
 
@@ -482,13 +499,21 @@ struct XContentHeader {
 static_assert_size(XContentHeader, 0x344);
 #pragma pack(pop)
 
-struct StfsHeader {
-  XContentHeader header;
-  XContentMetadata metadata;
+struct XContentContainerHeader {
+  XContentHeader content_header;
+  XContentMetadata content_metadata;
   // TODO: title/system updates contain more data after XContentMetadata, seems
   // to affect header.header_size
+
+  bool is_package_readonly() const {
+    if (content_metadata.volume_type == vfs::XContentVolumeType::kSvod) {
+      return true;
+    }
+
+    return content_metadata.volume_descriptor.stfs.flags.bits.read_only_format;
+  }
 };
-static_assert_size(StfsHeader, 0x971A);
+static_assert_size(XContentContainerHeader, 0x971A);
 
 }  // namespace vfs
 }  // namespace xe

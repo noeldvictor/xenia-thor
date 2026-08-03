@@ -16,8 +16,6 @@
 #include "xenia/emulator.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
-#include "xenia/gpu/texture_info.h"
-#include "xenia/gpu/xenos.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -25,6 +23,20 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
+
+DEFINE_int32(
+    video_standard, 1,
+    "Enables switching between different video signals.\n   1=NTSC\n   "
+    "2=NTSC-J\n   3=PAL\n",
+    "Console");
+
+// Defined in gpu_flags.cc
+DECLARE_bool(use_50Hz_mode);
+DEFINE_bool(interlaced, false, "Toggles interlaced mode.", "Video");
+
+// TODO: This is stored in XConfig somewhere, probably in video flags.
+DEFINE_bool(widescreen, true, "Toggles between 16:9 and 4:3 aspect ratio.",
+            "Console");
 
 // BT.709 on modern monitors and TVs looks the closest to the Xbox 360 connected
 // to an HDTV.
@@ -62,6 +74,63 @@ DEFINE_bool(
     "640x480) will pick their lighter, fully-supported mode when false. "
     "Combine with kernel_display_resolution=480p.",
     "Kernel");
+
+inline const static uint32_t GetVideoStandard() {
+  if (cvars::video_standard < 1 || cvars::video_standard > 3) {
+    return 1;
+  }
+
+  return cvars::video_standard;
+}
+
+inline const static float GetVideoRefreshRate() {
+  return cvars::use_50Hz_mode ? 50.0f : 60.0f;
+}
+
+inline const static std::pair<uint16_t, uint16_t> GetDisplayAspectRatio() {
+  if (cvars::widescreen) {
+    return {16, 9};
+  }
+
+  return {4, 3};
+}
+
+static std::pair<uint32_t, uint32_t> CalculateScaledAspectRatio(uint32_t fb_x,
+                                                                uint32_t fb_y) {
+  // Calculate the game's final aspect ratio as it would appear on a physical
+  // TV.
+  auto dar = GetDisplayAspectRatio();
+  uint32_t display_x = dar.first;
+  uint32_t display_y = dar.second;
+
+  auto res = xe::gpu::GraphicsSystem::GetInternalDisplayResolution();
+  uint32_t res_x = res.first;
+  uint32_t res_y = res.second;
+
+  uint32_t x_factor = std::gcd(fb_x, res_x);
+  res_x /= x_factor;
+  fb_x /= x_factor;
+  uint32_t y_factor = std::gcd(fb_y, res_y);
+  res_y /= y_factor;
+  fb_y /= y_factor;
+
+  display_x = display_x * res_x - display_x * (res_x - fb_x);
+  display_y *= res_x;
+
+  display_y = display_y * res_y - display_y * (res_y - fb_y);
+  display_x *= res_y;
+
+  uint32_t aspect_factor = std::gcd(display_x, display_y);
+  display_x /= aspect_factor;
+  display_y /= aspect_factor;
+
+  XELOGI(
+      "Hardware scaler: width ratio {}:{}, height ratio {}:{}, final aspect "
+      "ratio {}:{}",
+      fb_x, res_x, fb_y, res_y, display_x, display_y);
+
+  return {display_x, display_y};
+}
 
 namespace xe {
 namespace kernel {
@@ -177,7 +246,7 @@ static_assert_size(X_DISPLAY_INFO, 0x58);
 void VdGetCurrentDisplayInformation_entry(
     pointer_t<X_DISPLAY_INFO> display_info) {
   X_VIDEO_MODE mode;
-  VdQueryVideoMode(&mode);
+  VdQueryVideoMode(&mode, false);
 
   display_info.Zero();
   display_info->front_buffer_width = (uint16_t)mode.display_width;
@@ -197,13 +266,33 @@ void VdGetCurrentDisplayInformation_entry(
   display_info->display_width = (uint16_t)mode.display_width;
   display_info->display_height = (uint16_t)mode.display_height;
   display_info->display_refresh_rate = mode.refresh_rate;
+  display_info->display_interlaced = mode.is_interlaced;
   display_info->actual_display_width = (uint16_t)mode.display_width;
 }
 DECLARE_XBOXKRNL_EXPORT1(VdGetCurrentDisplayInformation, kVideo, kStub);
 
-void VdQueryVideoMode(X_VIDEO_MODE* video_mode) {
+void VdQueryVideoMode(X_VIDEO_MODE* video_mode,
+                      [[maybe_unused]] bool is_internal_resolution) {
   // TODO(benvanik): get info from actual display.
   std::memset(video_mode, 0, sizeof(X_VIDEO_MODE));
+<<<<<<< ours
+
+  auto display_res = gpu::GraphicsSystem::GetInternalDisplayResolution();
+
+  video_mode->display_width = display_res.first;
+  video_mode->display_height = display_res.second;
+  video_mode->is_interlaced = cvars::interlaced;
+  video_mode->is_widescreen = cvars::widescreen;
+  video_mode->is_hi_def = video_mode->display_width >= 0x500;
+  video_mode->refresh_rate = GetVideoRefreshRate();
+  video_mode->video_standard = GetVideoStandard();
+  video_mode->pixel_rate = 0x8A;
+  video_mode->widescreen_flag = cvars::widescreen ? 0x01 : 0x03;
+}
+
+void VdQueryRealVideoMode_entry(pointer_t<X_VIDEO_MODE> video_mode) {
+  VdQueryVideoMode(video_mode, true);
+=======
   const std::string& resolution = cvars::kernel_display_resolution;
   if (resolution == "480p") {
     video_mode->display_width = 720;
@@ -227,20 +316,22 @@ void VdQueryVideoMode(X_VIDEO_MODE* video_mode) {
   video_mode->video_standard = 1;  // NTSC
   video_mode->unknown_0x8a = 0x4A;
   video_mode->unknown_0x01 = 0x01;
+>>>>>>> theirs
 }
+DECLARE_XBOXKRNL_EXPORT1(VdQueryRealVideoMode, kVideo, kStub);
 
 void VdQueryVideoMode_entry(pointer_t<X_VIDEO_MODE> video_mode) {
-  VdQueryVideoMode(video_mode);
+  VdQueryVideoMode(video_mode, false);
 }
 DECLARE_XBOXKRNL_EXPORT1(VdQueryVideoMode, kVideo, kStub);
 
 dword_result_t VdQueryVideoFlags_entry() {
   X_VIDEO_MODE mode;
-  VdQueryVideoMode(&mode);
+  VdQueryVideoMode(&mode, false);
 
   uint32_t flags = 0;
   flags |= mode.is_widescreen ? 1 : 0;
-  flags |= mode.display_width >= 1024 ? 2 : 0;
+  flags |= mode.display_width >= 1280 ? 2 : 0;
   flags |= mode.display_width >= 1920 ? 4 : 0;
 
   return flags;
@@ -266,7 +357,7 @@ dword_result_t VdSetDisplayMode_entry(dword_t flags) {
 }
 DECLARE_XBOXKRNL_EXPORT1(VdSetDisplayMode, kVideo, kStub);
 
-dword_result_t VdSetDisplayModeOverride_entry(unknown_t unk0, unknown_t unk1,
+dword_result_t VdSetDisplayModeOverride_entry(dword_t width, dword_t height,
                                               double_t refresh_rate,
                                               unknown_t unk3, unknown_t unk4) {
   // refresh_rate = 0, 50, 59.9, etc.
@@ -435,6 +526,14 @@ dword_result_t VdInitializeScalerCommandBuffer_entry(
   for (size_t i = 0; i < dest_count; ++i) {
     dest[i] = 0x80000000;
   }
+
+  uint32_t fb_x = (scaled_output_wh >> 16) & 0xFFFF;
+  uint32_t fb_y = scaled_output_wh & 0xFFFF;
+  auto aspect = CalculateScaledAspectRatio(fb_x, fb_y);
+
+  auto graphics_system = kernel_state()->emulator()->graphics_system();
+  graphics_system->SetScaledAspectRatio(aspect.first, aspect.second);
+
   return (uint32_t)dest_count;
 }
 DECLARE_XBOXKRNL_EXPORT2(VdInitializeScalerCommandBuffer, kVideo, kImplemented,
@@ -538,9 +637,13 @@ void VdSwap_entry(
     return;
   }
   gpu_fetch.base_address = frontbuffer_physical_address >> 12;
+<<<<<<< ours
+  XE_MAYBE_UNUSED
+=======
   uint32_t buffer_physical_address =
       kernel_memory()->GetPhysicalAddress(buffer_ptr.guest_address());
 
+>>>>>>> theirs
   auto texture_format = gpu::xenos::TextureFormat(texture_format_ptr.value());
   auto color_space = *color_space_ptr;
   assert_true(texture_format == gpu::xenos::TextureFormat::k_8_8_8_8 ||
@@ -651,7 +754,19 @@ void VdSwap_entry(
            vd_swap_trace_caller, buffer_physical_address);
   }
 }
-DECLARE_XBOXKRNL_EXPORT2(VdSwap, kVideo, kImplemented, kImportant);
+DECLARE_XBOXKRNL_EXPORT3(VdSwap, kVideo, kImplemented, kHighFrequency,
+                         kImportant);
+
+dword_result_t PsCamDeviceRequest_entry(dword_t request_type,
+                                        lpvoid_t param_ptr) {
+  // Quietly return X_E_FAIL to keep from log spamming due to
+  // lack of proper implemenation. There might be a way to signal
+  // to the game not to do this, maybe in XamXStudioRequest return
+  // value?
+  // Seen in Forza Horizon 2
+  return X_E_FAIL;
+}
+DECLARE_XBOXKRNL_EXPORT1(PsCamDeviceRequest, kVideo, kStub);
 
 void RegisterVideoExports(xe::cpu::ExportResolver* export_resolver,
                           KernelState* kernel_state) {

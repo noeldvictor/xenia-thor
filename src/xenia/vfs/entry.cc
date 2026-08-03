@@ -26,7 +26,8 @@ Entry::Entry(Device* device, Entry* parent, const std::string_view path)
       allocation_size_(0),
       create_timestamp_(0),
       access_timestamp_(0),
-      write_timestamp_(0) {
+      write_timestamp_(0),
+      delete_on_close_(false) {
   assert_not_null(device);
   absolute_path_ = xe::utf8::join_guest_paths(device->mount_path(), path);
   name_ = xe::utf8::find_name_from_guest_path(path);
@@ -135,6 +136,22 @@ void Entry::Touch() {
 }
 
 void Entry::Rename(const std::filesystem::path file_path) {
+<<<<<<< ours
+  // Store the string to ensure string_views from split_path remain valid
+  const std::string path_str = xe::path_to_utf8(file_path);
+  std::vector<std::string_view> path_parts = xe::utf8::split_path(path_str);
+
+  // Remove the root (e.g., "cache:")
+  path_parts.erase(path_parts.begin());
+
+  RenameEntryInternal(path_parts);
+
+  const std::string guest_path = xe::utf8::join_guest_paths(path_parts);
+  absolute_path_ =
+      xe::utf8::join_guest_paths(device_->mount_path(), guest_path);
+  path_ = guest_path;
+  name_ = xe::path_to_utf8(file_path.filename());
+=======
   // Store the string to ensure string_views from split_path remain valid.
   const std::string path_str = xe::path_to_utf8(file_path);
   // Guest-aware split (handles both '\' and '/' separators; std::filesystem on
@@ -157,6 +174,7 @@ void Entry::Rename(const std::filesystem::path file_path) {
       xe::utf8::join_guest_paths(device_->mount_path(), guest_path);
   path_ = guest_path;
   name_ = std::string(path_parts.back());
+>>>>>>> theirs
 }
 
 }  // namespace vfs

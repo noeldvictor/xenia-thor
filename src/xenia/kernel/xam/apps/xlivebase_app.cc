@@ -10,7 +10,15 @@
 #include "xenia/kernel/xam/apps/xlivebase_app.h"
 
 #include "xenia/base/logging.h"
-#include "xenia/base/threading.h"
+
+#include <asio.hpp>
+
+struct XONLINE_SERVICE_INFO {
+  xe::be<uint32_t> id;
+  in_addr ip;
+  xe::be<uint16_t> port;
+  xe::be<uint16_t> reserved;
+};
 
 namespace xe {
 namespace kernel {
@@ -28,26 +36,49 @@ X_HRESULT XLiveBaseApp::DispatchMessageSync(uint32_t message,
   // NOTE: buffer_length may be zero or valid.
   auto buffer = memory_->TranslateVirtual(buffer_ptr);
   switch (message) {
+    case 0x0005008C: {
+      // Called on startup of blades dashboard v1888 to v2858
+      XELOGD("XLiveBaseUnk5008C, unimplemented");
+      return X_E_FAIL;
+    }
+    case 0x00050094: {
+      // Called on startup of blades dashboard v4532 to v4552
+      XELOGD("XLiveBaseUnk50094, unimplemented");
+      return X_E_FAIL;
+    }
+    case 0x00058003: {
+      /* Notes:
+         - Called on startup of dashboard (netplay build)
+         - used by other internet funtions to check if online (e.g.
+         XamGetLiveHiveValueA)
+         - Return is Saved elsewhere and used here
+      */
+      XELOGD("XLiveBaseLogonGetHR, implemented in netplay");
+      return 0x001510F1;  // X_ONLINE_S_LOGON_DISCONNECTED
+    }
     case 0x00058004: {
-      // Called on startup, seems to just return a bool in the buffer.
+      /* Notes:
+         - Called on startup, seems to just return a bool in the buffer.
+         - It is Saved elsewhere and used here
+      */
       assert_true(!buffer_length || buffer_length == 4);
       XELOGD("XLiveBaseGetLogonId({:08X})", buffer_ptr);
-      xe::store_and_swap<uint32_t>(buffer + 0, 1);  // ?
+      xe::store_and_swap<uint32_t>(buffer, 1);  // ?
       return X_E_SUCCESS;
     }
     case 0x00058006: {
+      // Buffer only set when online
       assert_true(!buffer_length || buffer_length == 4);
       XELOGD("XLiveBaseGetNatType({:08X})", buffer_ptr);
-      xe::store_and_swap<uint32_t>(buffer + 0, 1);  // XONLINE_NAT_OPEN
-      return X_E_SUCCESS;
+      return 0x80151802;  // X_ONLINE_E_LOGON_NOT_LOGGED_ON
     }
     case 0x00058007: {
       // Occurs if title calls XOnlineGetServiceInfo, expects dwServiceId
       // and pServiceInfo. pServiceInfo should contain pointer to
       // XONLINE_SERVICE_INFO structure.
-      XELOGD("CXLiveLogon::GetServiceInfo({:08X}, {:08X})", buffer_ptr,
+      XELOGD("XLiveBaseOnlineGetServiceInfo({:08X}, {:08X})", buffer_ptr,
              buffer_length);
-      return 0x80151802;  // ERROR_CONNECTION_INVALID
+      return 0x80151802;  // X_ONLINE_E_LOGON_NOT_LOGGED_ON
     }
     case 0x00058020: {
       // 0x00058004 is called right before this.
@@ -65,11 +96,37 @@ X_HRESULT XLiveBaseApp::DispatchMessageSync(uint32_t message,
           buffer_ptr, buffer_length);
       return X_E_FAIL;
     }
+    case 0x00058037: {
+      XELOGD("XPresenceInitialize({:08X}, {:08X})", buffer_ptr, buffer_length);
+      return X_E_SUCCESS;
+    }
     case 0x00058046: {
       // Required to be successful for 4D530910 to detect signed-in profile
       // Doesn't seem to set anything in the given buffer, probably only takes
       // input
       XELOGD("XLiveBaseUnk58046({:08X}, {:08X}) unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_SUCCESS;
+    }
+    case 0x00058017: {
+      XELOGD("UserFindUsers({:08X}, {:08X})", buffer_ptr, buffer_length);
+      return X_E_SUCCESS;
+    }
+    case 0x00058035: {
+      // Fixes Xbox Live error for 513107D9
+      // Required for 534507D4
+      XELOGD("XLiveBaseUnk58035({:08X}, {:08X}) unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_SUCCESS;
+    }
+    case 0x00050036: {
+      XELOGD("XOnlineQuerySearch({:08X}, {:08X}) unimplemented", buffer_ptr,
+             buffer_length);
+      return X_E_SUCCESS;
+    }
+    case 0x00050009: {
+      // Fixes Xbox Live error for 513107D9
+      XELOGD("XLiveBaseUnk50009({:08X}, {:08X}) unimplemented", buffer_ptr,
              buffer_length);
       return X_E_SUCCESS;
     }

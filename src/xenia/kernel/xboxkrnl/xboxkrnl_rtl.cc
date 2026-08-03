@@ -7,28 +7,27 @@
  ******************************************************************************
  */
 
+#include <cwctype>
+
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
 
-#include <algorithm>
-#include <string>
-
 #include "xenia/base/atomic.h"
-#include "xenia/base/chrono.h"
-#include "xenia/base/logging.h"
-#include "xenia/base/string.h"
-#include "xenia/base/threading.h"
+#include "xenia/base/pe_image.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
-#include "xenia/kernel/xevent.h"
 #include "xenia/kernel/xthread.h"
 
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
-
+struct X_STRING {
+  unsigned short length;
+  unsigned short pad;
+  uint32_t ptr;
+};
 // https://msdn.microsoft.com/en-us/library/ff561778
 dword_result_t RtlCompareMemory_entry(lpvoid_t source1, lpvoid_t source2,
                                       dword_t length) {
@@ -53,21 +52,20 @@ DECLARE_XBOXKRNL_EXPORT1(RtlCompareMemory, kMemory, kImplemented);
 // https://msdn.microsoft.com/en-us/library/ff552123
 dword_result_t RtlCompareMemoryUlong_entry(lpvoid_t source, dword_t length,
                                            dword_t pattern) {
-  // Return 0 if source/length not aligned
-  if (source.guest_address() % 4 || length % 4) {
-    return 0;
-  }
+  uint32_t num_compared_bytes = 0;
 
-  uint32_t n = 0;
-  for (uint32_t i = 0; i < (length / 4); i++) {
-    // FIXME: This assumes as_array returns xe::be
-    uint32_t val = source.as_array<uint32_t>()[i];
-    if (val == pattern) {
-      n++;
+  uint32_t swapped_pattern = xe::byte_swap(pattern.value());
+
+  char* host_source = (char*)source.host_address();
+
+  for (uint32_t aligned_length = length & 0xFFFFFFFCU; aligned_length;
+       num_compared_bytes += 4) {
+    if (*(uint32_t*)(host_source + num_compared_bytes) != swapped_pattern) {
+      break;
     }
+    aligned_length = aligned_length - 4;
   }
-
-  return n;
+  return num_compared_bytes;
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlCompareMemoryUlong, kMemory, kImplemented);
 
@@ -85,26 +83,105 @@ void RtlFillMemoryUlong_entry(lpvoid_t destination, dword_t length,
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlFillMemoryUlong, kMemory, kImplemented);
 
-dword_result_t RtlUpperChar_entry(dword_t in) {
-  char c = in & 0xFF;
-  if (c >= 'a' && c <= 'z') {
-    return c ^ 0x20;
-  }
+static constexpr const unsigned char rtl_lower_table[256] = {
+    0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xA,  0xB,
+    0xC,  0xD,  0xE,  0xF,  0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+    0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+    0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73,
+    0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B,
+    0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+    0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83,
+    0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B,
+    0x9C, 0x9D, 0x9E, 0x9F, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+    0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,
+    0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+    0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB,
+    0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xD7,
+    0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xDF, 0xE0, 0xE1, 0xE2, 0xE3,
+    0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF,
+    0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB,
+    0xFC, 0xFD, 0xFE, 0xFF};
 
-  return c;
+static constexpr const unsigned char rtl_upper_table[256] = {
+    0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xA,  0xB,
+    0xC,  0xD,  0xE,  0xF,  0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+    0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53,
+    0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+    0x60, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B,
+    0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+    0x58, 0x59, 0x5A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83,
+    0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B,
+    0x9C, 0x9D, 0x9E, 0x9F, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+    0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,
+    0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+    0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB,
+    0xCC, 0xCD, 0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7,
+    0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xC0, 0xC1, 0xC2, 0xC3,
+    0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
+    0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xF7, 0xD8, 0xD9, 0xDA, 0xDB,
+    0xDC, 0xDD, 0xDE, 0x3F};
+
+dword_result_t RtlUpperChar_entry(dword_t in) {
+  return rtl_upper_table[in & 0xff];
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlUpperChar, kNone, kImplemented);
 
 dword_result_t RtlLowerChar_entry(dword_t in) {
-  char c = in & 0xFF;
-  if (c >= 'A' && c <= 'Z') {
-    return c ^ 0x20;
-  }
-
-  return c;
+  return rtl_lower_table[in & 0xff];
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlLowerChar, kNone, kImplemented);
 
+<<<<<<< ours
+static int RtlCompareStringN_impl(uint8_t* string_1, unsigned int string_1_len,
+                                  uint8_t* string_2, unsigned int string_2_len,
+                                  int case_insensitive) {
+  if (string_1_len == 0xFFFFFFFF) {
+    uint8_t* string1_strlen_iter = string_1;
+    while (*string1_strlen_iter++);
+    string_1_len =
+        static_cast<unsigned int>(string1_strlen_iter - string_1 - 1);
+  }
+  if (string_2_len == 0xFFFFFFFF) {
+    uint8_t* string2_strlen_iter = string_2;
+    while (*string2_strlen_iter++);
+    string_2_len =
+        static_cast<unsigned int>(string2_strlen_iter - string_2 - 1);
+  }
+  uint8_t* string1_end = &string_1[std::min(string_2_len, string_1_len)];
+  if (case_insensitive) {
+    while (string_1 < string1_end) {
+      unsigned c1 = *string_1++;
+      unsigned c2 = *string_2++;
+      if (c1 != c2) {
+        unsigned cu1 = rtl_upper_table[c1];
+        unsigned cu2 = rtl_upper_table[c2];
+        if (cu1 != cu2) {
+          return cu1 - cu2;
+        }
+      }
+    }
+  } else {
+    while (string_1 < string1_end) {
+      unsigned c1 = *string_1++;
+      unsigned c2 = *string_2++;
+      if (c1 != c2) {
+        return c1 - c2;
+      }
+    }
+  }
+  // why? not sure, but its the original logic
+  return string_1_len - string_2_len;
+=======
 // Compares two raw byte buffers with explicit lengths, matching the Xbox
 // kernel's RtlCompareString semantics: the signed difference of the first
 // non-matching byte (upper-cased when case-insensitive), or the length
@@ -151,14 +228,32 @@ dword_result_t RtlCompareString_entry(pointer_t<X_ANSI_STRING> string_1,
       kernel_memory()->TranslateVirtual<const uint8_t*>(string_2->pointer);
   return RtlCompareStringN_impl(buf_1, string_1->length, buf_2,
                                 string_2->length, case_insensitive);
+>>>>>>> theirs
 }
-DECLARE_XBOXKRNL_EXPORT1(RtlCompareString, kNone, kImplemented);
-
 dword_result_t RtlCompareStringN_entry(lpstring_t string_1,
                                        dword_t string_1_len,
                                        lpstring_t string_2,
                                        dword_t string_2_len,
                                        dword_t case_insensitive) {
+<<<<<<< ours
+  return RtlCompareStringN_impl(
+      reinterpret_cast<uint8_t*>(string_1.host_address()), string_1_len,
+      reinterpret_cast<uint8_t*>(string_2.host_address()), string_2_len,
+      case_insensitive);
+}
+
+DECLARE_XBOXKRNL_EXPORT1(RtlCompareStringN, kNone, kImplemented);
+
+dword_result_t RtlCompareString_entry(lpvoid_t string_1, lpvoid_t string_2,
+                                      dword_t case_insensitive) {
+  X_STRING* xs1 = string_1.as<X_STRING*>();
+  X_STRING* xs2 = string_2.as<X_STRING*>();
+
+  unsigned length_1 = xe::load_and_swap<uint16_t>(&xs1->length);
+  unsigned length_2 = xe::load_and_swap<uint16_t>(&xs2->length);
+
+  uint32_t ptr_1 = xe::load_and_swap<uint32_t>(&xs1->ptr);
+=======
   // The N variant takes raw counted buffers (not PSTRING structs). The old
   // impl measured strlen into len1/len2 but then min'd the *original* lengths,
   // leaving the 0xFFFF... sentinel path dead, and used the wrong 0xFFFF (16-bit)
@@ -170,7 +265,17 @@ dword_result_t RtlCompareStringN_entry(lpstring_t string_1,
       string_2_len, case_insensitive);
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlCompareStringN, kNone, kImplemented);
+>>>>>>> theirs
 
+  uint32_t ptr_2 = xe::load_and_swap<uint32_t>(&xs2->ptr);
+
+  auto kmem = kernel_memory();
+
+  return RtlCompareStringN_impl(
+      kmem->TranslateVirtual<uint8_t*>(ptr_1), length_1,
+      kmem->TranslateVirtual<uint8_t*>(ptr_2), length_2, case_insensitive);
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlCompareString, kNone, kImplemented);
 // https://msdn.microsoft.com/en-us/library/ff561918
 void RtlInitAnsiString_entry(pointer_t<X_ANSI_STRING> destination,
                              lpstring_t source) {
@@ -185,6 +290,12 @@ void RtlInitAnsiString_entry(pointer_t<X_ANSI_STRING> destination,
   destination->pointer = source.guest_address();
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlInitAnsiString, kNone, kImplemented);
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlupcaseunicodechar
+dword_result_t RtlUpcaseUnicodeChar_entry(dword_t SourceCharacter) {
+  return static_cast<uint32_t>(std::towupper(
+      static_cast<wint_t>(static_cast<uint32_t>(SourceCharacter))));
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlUpcaseUnicodeChar, kNone, kImplemented);
 
 // https://msdn.microsoft.com/en-us/library/ff561899
 void RtlFreeAnsiString_entry(pointer_t<X_ANSI_STRING> string) {
@@ -197,8 +308,8 @@ void RtlFreeAnsiString_entry(pointer_t<X_ANSI_STRING> string) {
 DECLARE_XBOXKRNL_EXPORT1(RtlFreeAnsiString, kNone, kImplemented);
 
 // https://msdn.microsoft.com/en-us/library/ff561934
-void RtlInitUnicodeString_entry(pointer_t<X_UNICODE_STRING> destination,
-                                lpu16string_t source) {
+pointer_result_t RtlInitUnicodeString_entry(
+    pointer_t<X_UNICODE_STRING> destination, lpu16string_t source) {
   if (source) {
     destination->length = (uint16_t)source.value().size() * 2;
     destination->maximum_length = (uint16_t)(source.value().size() + 1) * 2;
@@ -206,6 +317,7 @@ void RtlInitUnicodeString_entry(pointer_t<X_UNICODE_STRING> destination,
   } else {
     destination->reset();
   }
+  return destination.guest_address();
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlInitUnicodeString, kNone, kImplemented);
 
@@ -345,15 +457,20 @@ dword_result_t RtlUnicodeToMultiByteN_entry(pointer_t<uint8_t> destination_ptr,
 DECLARE_XBOXKRNL_EXPORT3(RtlUnicodeToMultiByteN, kNone, kImplemented,
                          kHighFrequency, kSketchy);
 
+dword_result_t RtlDowncaseUnicodeChar_entry(word_t unicode_char) {
+  return std::towlower(unicode_char);
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlDowncaseUnicodeChar, kNone, kImplemented);
+
 // https://undocumented.ntinternals.net/UserMode/Undocumented%20Functions/Executable%20Images/RtlImageNtHeader.html
-pointer_result_t RtlImageNtHeader_entry(lpvoid_t module) {
+static XIMAGE_NT_HEADERS32* ImageNtHeader(uint8_t* module) {
   if (!module) {
     return 0;
   }
 
   // Little-endian! no swapping!
 
-  auto dos_header = module.as<const uint8_t*>();
+  auto dos_header = module;
   auto dos_magic = *reinterpret_cast<const uint16_t*>(&dos_header[0x00]);
   if (dos_magic != 0x5A4D) {  // 'MZ'
     return 0;
@@ -365,14 +482,93 @@ pointer_result_t RtlImageNtHeader_entry(lpvoid_t module) {
   if (nt_magic != 0x4550) {  // 'PE'
     return 0;
   }
-  return kernel_memory()->HostToGuestVirtual(nt_header);
+  return reinterpret_cast<XIMAGE_NT_HEADERS32*>(nt_header);
+}
+
+pointer_result_t RtlImageNtHeader_entry(lpvoid_t module) {
+  auto result = ImageNtHeader(module.as<uint8_t*>());
+  if (!result) {
+    return 0;
+  }
+
+  return kernel_memory()->HostToGuestVirtual(result);
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlImageNtHeader, kNone, kImplemented);
+// https://learn.microsoft.com/en-us/windows/win32/api/dbghelp/nf-dbghelp-imagedirectoryentrytodata
+dword_result_t RtlImageDirectoryEntryToData_entry(dword_t Base,
+                                                  dword_t MappedAsImage_,
+                                                  word_t DirectoryEntry,
+                                                  dword_t Size,
+                                                  const ppc_context_t& ctx) {
+  bool MappedAsImage = static_cast<unsigned char>(MappedAsImage_);
+  uint32_t aligned_base = Base;
+  if ((Base & 1) != 0) {
+    aligned_base = Base & 0xFFFFFFFE;
+    MappedAsImage = false;
+  }
+  XIMAGE_NT_HEADERS32* nt_header =
+      ImageNtHeader(ctx->TranslateVirtual<uint8_t*>(aligned_base));
+
+  if (!nt_header) {
+    return 0;
+  }
+  if (nt_header->OptionalHeader.Magic != XIMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+    return 0;
+  }
+  if (DirectoryEntry >= nt_header->OptionalHeader.NumberOfRvaAndSizes) {
+    return 0;
+  }
+  uint32_t Address =
+      nt_header->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress;
+  if (!Address) {
+    return 0;
+  }
+  xe::store_and_swap<uint32_t>(
+      ctx->TranslateVirtual(Size),
+      nt_header->OptionalHeader.DataDirectory[DirectoryEntry].Size);
+  if (MappedAsImage || Address < nt_header->OptionalHeader.SizeOfHeaders) {
+    return aligned_base + Address;
+  }
+
+  uint32_t n_sections = nt_header->FileHeader.NumberOfSections;
+  XIMAGE_SECTION_HEADER* v8 = reinterpret_cast<XIMAGE_SECTION_HEADER*>(
+      reinterpret_cast<char*>(&nt_header->OptionalHeader) +
+      nt_header->FileHeader.SizeOfOptionalHeader);
+  if (!n_sections) {
+    return 0;
+  }
+
+  uint32_t i = 0;
+  while (true) {
+    uint32_t section_virtual_address = v8->VirtualAddress;
+    uint32_t sizeof_section = v8->SizeOfRawData;
+    if (Address >= section_virtual_address &&
+        Address < sizeof_section + section_virtual_address) {
+      break;
+    }
+    ++i;
+    ++v8;
+    if (i >= n_sections) {
+      return 0;
+    }
+  }
+
+  if (v8) {
+    return aligned_base + Address - v8->VirtualAddress;
+  }
+  return 0;
+}
+
+DECLARE_XBOXKRNL_EXPORT1(RtlImageDirectoryEntryToData, kNone, kImplemented);
 
 pointer_result_t RtlImageXexHeaderField_entry(pointer_t<xex2_header> xex_header,
                                               dword_t field_dword) {
   uint32_t field_value = 0;
   uint32_t field = field_dword;  // VS acts weird going from dword_t -> enum
+
+  if (!xex_header) {
+    return field_value;
+  }
 
   UserModule::GetOptHeader(kernel_memory(), xex_header, xex2_header_keys(field),
                            &field_value);
@@ -411,7 +607,7 @@ static_assert_size(X_RTL_CRITICAL_SECTION, 28);
 
 void xeRtlInitializeCriticalSection(X_RTL_CRITICAL_SECTION* cs,
                                     uint32_t cs_ptr) {
-  cs->header.type = 1;      // EventSynchronizationObject (auto reset)
+  cs->header.type = X_DISPATCHER_FLAGS::DISPATCHER_AUTO_RESET_EVENT;
   cs->header.absolute = 0;  // spin count div 256
   cs->header.signal_state = 0;
   cs->lock_count = -1;
@@ -434,7 +630,7 @@ X_STATUS xeRtlInitializeCriticalSectionAndSpinCount(X_RTL_CRITICAL_SECTION* cs,
     spin_count_div_256 = 255;
   }
 
-  cs->header.type = 1;  // EventSynchronizationObject (auto reset)
+  cs->header.type = X_DISPATCHER_FLAGS::DISPATCHER_AUTO_RESET_EVENT;
   cs->header.absolute = spin_count_div_256;
   cs->header.signal_state = 0;
   cs->lock_count = -1;
@@ -449,10 +645,23 @@ dword_result_t RtlInitializeCriticalSectionAndSpinCount_entry(
   return xeRtlInitializeCriticalSectionAndSpinCount(cs, cs.guest_address(),
                                                     spin_count);
 }
-DECLARE_XBOXKRNL_EXPORT1(RtlInitializeCriticalSectionAndSpinCount, kNone,
-                         kImplemented);
+DECLARE_XBOXKRNL_EXPORT2(RtlInitializeCriticalSectionAndSpinCount, kNone,
+                         kImplemented, kHighFrequency);
+
+static void CriticalSectionPrefetchW(const void* vp) {
+#if XE_ARCH_AMD64 == 1
+  if (amd64::GetFeatureFlags() & amd64::kX64EmitPrefetchW) {
+    swcache::PrefetchW(vp);
+  }
+#endif
+}
 
 void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
+  if (!cs.guest_address()) {
+    XELOGE("Null critical section in RtlEnterCriticalSection!");
+    return;
+  }
+  CriticalSectionPrefetchW(&cs->lock_count);
   uint32_t cur_thread = XThread::GetCurrentThread()->guest_object();
   uint32_t spin_count = cs->header.absolute * 256;
 
@@ -488,6 +697,11 @@ DECLARE_XBOXKRNL_EXPORT2(RtlEnterCriticalSection, kNone, kImplemented,
 
 dword_result_t RtlTryEnterCriticalSection_entry(
     pointer_t<X_RTL_CRITICAL_SECTION> cs) {
+  if (!cs.guest_address()) {
+    XELOGE("Null critical section in RtlTryEnterCriticalSection!");
+    return 1;  // pretend we got the critical section.
+  }
+  CriticalSectionPrefetchW(&cs->lock_count);
   uint32_t thread = XThread::GetCurrentThread()->guest_object();
 
   if (xe::atomic_cas(-1, 0, &cs->lock_count)) {
@@ -509,7 +723,21 @@ DECLARE_XBOXKRNL_EXPORT2(RtlTryEnterCriticalSection, kNone, kImplemented,
                          kHighFrequency);
 
 void RtlLeaveCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
-  assert_true(cs->owning_thread == XThread::GetCurrentThread()->guest_object());
+  if (!cs.guest_address()) {
+    XELOGE("Null critical section in RtlLeaveCriticalSection!");
+    return;
+  }
+  // Retail RtlLeaveCriticalSection does not check ownership, it just
+  // decrements. A non-owner leave is a caller error but titles rely on it, so
+  // log not assert.
+  uint32_t leaving_thread = XThread::GetCurrentThread()->guest_object();
+  if (cs->owning_thread != leaving_thread) {
+    XELOGD(
+        "RtlLeaveCriticalSection {:08X} left by non-owner (owner {:08X}, "
+        "caller "
+        "{:08X})",
+        cs.guest_address(), uint32_t(cs->owning_thread), leaving_thread);
+  }
 
   // Drop recursion count - if it isn't zero we still have the lock.
   assert_true(cs->recursion_count > 0);
@@ -661,6 +889,46 @@ dword_result_t RtlComputeCrc32_entry(dword_t seed, lpvoid_t buffer,
   return ~hash;
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlComputeCrc32, kNone, kImplemented);
+
+static void RtlRip_entry(const ppc_context_t& ctx) {
+  uint32_t arg1 = static_cast<uint32_t>(ctx->r[3]);
+  uint32_t arg2 = static_cast<uint32_t>(ctx->r[4]);
+  const char* msg_str1 = "";
+
+  const char* msg_str2 = "";
+
+  if (arg1) {
+    msg_str1 = ctx->TranslateVirtual<const char*>(arg1);
+  }
+
+  if (arg2) {
+    msg_str2 = ctx->TranslateVirtual<const char*>(arg2);
+  }
+
+  XELOGE("RtlRip called, arg1 = {}, arg2 = {}\n", msg_str1, msg_str2);
+
+  // we should break here... not sure what to do exactly
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlRip, kNone, kImportant);
+
+void RtlGetStackLimits_entry(lpdword_t out_end, lpdword_t out_base,
+                             const ppc_context_t& ctx) {
+  auto kpcr = ctx->TranslateVirtualGPR<X_KPCR*>(ctx->r[13]);
+
+  uint32_t stack_base;
+  uint32_t stack_end;
+
+  if (kpcr->use_alternative_stack) {
+    stack_base = kpcr->alt_stack_base_ptr;
+    stack_end = kpcr->alt_stack_end_ptr;
+  } else {
+    stack_base = kpcr->stack_base_ptr;
+    stack_end = kpcr->stack_end_ptr;
+  }
+  *out_base = stack_base;
+  *out_end = stack_end;
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlGetStackLimits, kNone, kImplemented);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

@@ -89,12 +89,12 @@ std::unique_ptr<Entry> HostPathEntry::CreateEntryInternal(
     }
     fclose(file);
   }
-  xe::filesystem::FileInfo file_info;
-  if (!xe::filesystem::GetInfo(full_path, &file_info)) {
+  auto file_info = xe::filesystem::GetInfo(full_path);
+  if (!file_info) {
     return nullptr;
   }
   return std::unique_ptr<Entry>(
-      HostPathEntry::Create(device_, this, full_path, file_info));
+      HostPathEntry::Create(device_, this, full_path, file_info.value()));
 }
 
 bool HostPathEntry::DeleteEntryInternal(Entry* entry) {
@@ -105,14 +105,40 @@ bool HostPathEntry::DeleteEntryInternal(Entry* entry) {
     auto removed = std::filesystem::remove_all(full_path, ec);
     return removed >= 1 && removed != static_cast<std::uintmax_t>(-1);
   } else {
-    // Delete file.
-    return !std::filesystem::is_directory(full_path) &&
-           std::filesystem::remove(full_path, ec);
+    // Skip directories, they we're handled above.
+    if (std::filesystem::is_directory(full_path)) {
+      return false;
+    }
+
+    if (std::filesystem::exists(full_path)) {
+      const auto result = std::filesystem::remove(full_path, ec);
+      if (ec) {
+        XELOGE("{}: Cannot remove file entry. File: {} Error: {}", __func__,
+               full_path, ec.message());
+        return false;
+      }
+    }
+    return true;
   }
 }
 
 void HostPathEntry::RenameEntryInternal(
     const std::vector<std::string_view>& path_parts) {
+<<<<<<< ours
+  const std::string relative_path = xe::utf8::join_paths(path_parts);
+  const std::string new_host_path_ = xe::utf8::join_paths(
+      xe::path_to_utf8(static_cast<HostPathDevice*>(device_)->host_path()),
+      relative_path);
+
+  std::error_code ec;
+  std::filesystem::rename(host_path_, new_host_path_, ec);
+  if (ec) {
+    XELOGE("RenameEntryInternal: Failed to rename '{}' to '{}': {}",
+           xe::path_to_utf8(host_path_), new_host_path_, ec.message());
+    return;
+  }
+  host_path_ = new_host_path_;
+=======
   // path_parts is the guest path under the mount (root already stripped).
   const std::string relative_path = xe::utf8::join_paths(path_parts);
   const std::string new_host_path = xe::utf8::join_paths(
@@ -126,18 +152,64 @@ void HostPathEntry::RenameEntryInternal(
     return;
   }
   host_path_ = xe::to_path(new_host_path);
+>>>>>>> theirs
 }
 
 void HostPathEntry::update() {
-  xe::filesystem::FileInfo file_info;
-  if (!xe::filesystem::GetInfo(host_path_, &file_info)) {
+  if (reported_size_fixed_) {
     return;
   }
-  if (file_info.type == xe::filesystem::FileInfo::Type::kFile) {
-    size_ = file_info.total_size;
-    allocation_size_ =
-        xe::round_up(file_info.total_size, device()->bytes_per_sector());
+  auto file_info = xe::filesystem::GetInfo(host_path_);
+  if (!file_info) {
+    return;
   }
+  if (file_info->type == xe::filesystem::FileInfo::Type::kFile) {
+    size_ = file_info->total_size;
+    allocation_size_ =
+        xe::round_up(file_info->total_size, device()->bytes_per_sector());
+  }
+}
+
+bool HostPathEntry::SetAttributes(uint64_t attributes) {
+  if (device_->is_read_only()) {
+    return false;
+  }
+  return xe::filesystem::SetAttributes(host_path_, attributes);
+}
+
+bool HostPathEntry::SetCreateTimestamp(uint64_t timestamp) {
+  if (device_->is_read_only()) {
+    XELOGW(
+        "{} - Tried to change read-only creation timestamp for file: {} to: {}",
+        __FUNCTION__, name_, timestamp);
+    return false;
+  }
+  XELOGI("{} - Tried to change creation timestamp for file: {} to: {}",
+         __FUNCTION__, name_, timestamp);
+  return true;
+}
+
+bool HostPathEntry::SetAccessTimestamp(uint64_t timestamp) {
+  if (device_->is_read_only()) {
+    XELOGW(
+        "{} - Tried to change read-only access timestamp for file: {} to: {}",
+        __FUNCTION__, name_, timestamp);
+    return false;
+  }
+  XELOGI("{} - Tried to change access timestamp for file: {} to: {}",
+         __FUNCTION__, name_, timestamp);
+  return true;
+}
+
+bool HostPathEntry::SetWriteTimestamp(uint64_t timestamp) {
+  if (device_->is_read_only()) {
+    XELOGW("{} - Tried to change read-only write timestamp for file: {} to: {}",
+           __FUNCTION__, name_, timestamp);
+    return false;
+  }
+  XELOGI("{} - Tried to change write timestamp for file: {} to: {}",
+         __FUNCTION__, name_, timestamp);
+  return true;
 }
 
 }  // namespace vfs

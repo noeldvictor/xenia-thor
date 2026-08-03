@@ -30,7 +30,7 @@ class HostPathEntry : public Entry {
                                const std::filesystem::path& full_path,
                                xe::filesystem::FileInfo file_info);
 
-  const std::filesystem::path& host_path() { return host_path_; }
+  const std::filesystem::path& host_path() const { return host_path_; }
 
   X_STATUS Open(uint32_t desired_access, File** out_file) override;
 
@@ -39,6 +39,11 @@ class HostPathEntry : public Entry {
                                            size_t offset,
                                            size_t length) override;
   void update() override;
+
+  bool SetAttributes(uint64_t attributes) override;
+  bool SetCreateTimestamp(uint64_t timestamp) override;
+  bool SetAccessTimestamp(uint64_t timestamp) override;
+  bool SetWriteTimestamp(uint64_t timestamp) override;
 
  private:
   friend class HostPathDevice;
@@ -50,6 +55,10 @@ class HostPathEntry : public Entry {
       const std::vector<std::string_view>& path_parts) override;
 
   std::filesystem::path host_path_;
+  // When set, size_ is a synthesized value (e.g. an STFS container size for a
+  // collapsed content package) and update() must not overwrite it with the
+  // backing file's real size.
+  bool reported_size_fixed_ = false;
 };
 
 }  // namespace vfs
