@@ -106,3 +106,7 @@ node_modules/.bin/
 docs/evidence/
 /third_party/llvm-android/
 /android/android_studio_project/app/src/main/jniLibs/arm64-v8a/libLLVM.so
+
+# Prebuilt libLLVM for the qemu a64 differential harness (140MB+, staged
+# locally by scratch/thor-debug/p0b_build_glibc.sh - never commit).
+third_party/llvm-linux-arm64/
