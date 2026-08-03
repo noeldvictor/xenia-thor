@@ -47,7 +47,8 @@ class Fence {
 
   void Signal() {
     std::unique_lock<std::mutex> lock(mutex_);
-    signal_state_ |= SIGMASK_;
+    // (C++20: no compound assignment on a volatile; mutex_ serializes this.)
+    signal_state_ = state_t_(signal_state_ | SIGMASK_);
     cond_.notify_all();
   }
 
@@ -58,7 +59,9 @@ class Fence {
                 "Too many threads?");
 
     // keep local copy to minimize loads
-    auto signal_state = ++signal_state_;
+    // (C++20: no ++ on a volatile; mutex_ already serializes this.)
+    state_t_ signal_state = state_t_(signal_state_ + 1);
+    signal_state_ = signal_state;
     for (; !(signal_state & SIGMASK_); signal_state = signal_state_) {
       cond_.wait(lock);
     }
@@ -102,7 +105,9 @@ class Fence {
     assert_true((signal_state_ & ~SIGMASK_) < (SIGMASK_ - 1) &&
                 "Too many threads?");
 
-    auto signal_state = ++signal_state_;
+    // (C++20: no ++ on a volatile; mutex_ already serializes this.)
+    state_t_ signal_state = state_t_(signal_state_ + 1);
+    signal_state_ = signal_state;
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     for (; !(signal_state & SIGMASK_); signal_state = signal_state_) {
       if (cond_.wait_until(lock, deadline) == std::cv_status::timeout) {

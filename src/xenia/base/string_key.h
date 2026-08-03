@@ -11,6 +11,7 @@
 #define XENIA_BASE_STRING_KEY_H_
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <variant>
 
@@ -74,15 +75,15 @@ struct string_key_insensitive : internal::string_key_base {
   }
 
   bool operator==(const string_key_insensitive& other) const {
-    return other.view().size() == view().size() &&
-           std::ranges::equal(
-               other.view(), view(), {},
-               [](char ch) {
-                 return std::tolower(static_cast<unsigned char>(ch));
-               },
-               [](char ch) {
-                 return std::tolower(static_cast<unsigned char>(ch));
-               });
+    // NOTE(kernel-port 2026-08): std::ranges::equal with projections is not
+    // available in the NDK's libc++ - use the equivalent std::equal form.
+    const auto a = other.view();
+    const auto b = view();
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(static_cast<unsigned char>(x)) ==
+                    std::tolower(static_cast<unsigned char>(y));
+           });
   }
 
   size_t hash() const { return utf8::hash_fnv1a(view()); }

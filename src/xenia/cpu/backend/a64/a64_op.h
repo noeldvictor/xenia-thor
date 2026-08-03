@@ -34,13 +34,13 @@ enum KeyType {
   KEY_TYPE_L = OPCODE_SIG_TYPE_L,
   KEY_TYPE_O = OPCODE_SIG_TYPE_O,
   KEY_TYPE_S = OPCODE_SIG_TYPE_S,
-  KEY_TYPE_V_I8 = OPCODE_SIG_TYPE_V + INT8_TYPE,
-  KEY_TYPE_V_I16 = OPCODE_SIG_TYPE_V + INT16_TYPE,
-  KEY_TYPE_V_I32 = OPCODE_SIG_TYPE_V + INT32_TYPE,
-  KEY_TYPE_V_I64 = OPCODE_SIG_TYPE_V + INT64_TYPE,
-  KEY_TYPE_V_F32 = OPCODE_SIG_TYPE_V + FLOAT32_TYPE,
-  KEY_TYPE_V_F64 = OPCODE_SIG_TYPE_V + FLOAT64_TYPE,
-  KEY_TYPE_V_V128 = OPCODE_SIG_TYPE_V + VEC128_TYPE,
+  KEY_TYPE_V_I8 = int(OPCODE_SIG_TYPE_V) + int(INT8_TYPE),
+  KEY_TYPE_V_I16 = int(OPCODE_SIG_TYPE_V) + int(INT16_TYPE),
+  KEY_TYPE_V_I32 = int(OPCODE_SIG_TYPE_V) + int(INT32_TYPE),
+  KEY_TYPE_V_I64 = int(OPCODE_SIG_TYPE_V) + int(INT64_TYPE),
+  KEY_TYPE_V_F32 = int(OPCODE_SIG_TYPE_V) + int(FLOAT32_TYPE),
+  KEY_TYPE_V_F64 = int(OPCODE_SIG_TYPE_V) + int(FLOAT64_TYPE),
+  KEY_TYPE_V_V128 = int(OPCODE_SIG_TYPE_V) + int(VEC128_TYPE),
 };
 
 using InstrKeyValue = uint32_t;
@@ -88,7 +88,7 @@ union InstrKey {
       out_src3type += src3v->type;
     }
     opcode = info->num;
-    dest = out_desttype ? OPCODE_SIG_TYPE_V + destv->type : 0;
+    dest = out_desttype ? int(OPCODE_SIG_TYPE_V) + int(destv->type) : 0;
     src1 = out_src1type;
     src2 = out_src2type;
     src3 = out_src3type;
