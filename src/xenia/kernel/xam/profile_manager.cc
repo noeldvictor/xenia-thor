@@ -30,6 +30,17 @@ DEFINE_string(logged_profile_slot_2_xuid, "",
               "XUID of the profile to load on boot in slot 2", "Profiles");
 DEFINE_string(logged_profile_slot_3_xuid, "",
               "XUID of the profile to load on boot in slot 3", "Profiles");
+DEFINE_bool(profile_autocreate_default, true,
+            "When no profile exists, create one on startup and sign it into "
+            "slot 0. Titles that gate on a signed-in user cannot get past "
+            "their sign-in check otherwise, and there is no profile-creation "
+            "step in the handheld launch flow. Set false to boot with no "
+            "profile signed in.",
+            "Profiles");
+
+// Our fork's gamertag override (defined in user_profile.cc); reused as the
+// name for the auto-created profile so both agree.
+DECLARE_string(user_gamertag);
 
 namespace xe {
 namespace kernel {
@@ -131,6 +142,26 @@ ProfileManager::ProfileManager(KernelState* kernel_state,
     Login(xe::string_util::from_string<uint64_t>(
               cvars::logged_profile_slot_3_xuid, true),
           3);
+  }
+
+  // The Edge kernel reports a user as signed in only when a real profile
+  // exists (XamState::IsUserSignedIn), where our previous kernel always
+  // claimed one. On a handheld there is no profile-creation UI in the launch
+  // flow, so a fresh install has zero profiles and titles that gate on a
+  // signed-in user never get past their sign-in check. Create one on first run
+  // and sign it into slot 0 so the device behaves like a console that has
+  // already been set up. No-op once a profile exists, and any real profile the
+  // user creates later is unaffected.
+  if (accounts_.empty() && cvars::profile_autocreate_default) {
+    const std::string gamertag =
+        cvars::user_gamertag.empty() ? "Xenia" : cvars::user_gamertag;
+    XELOGI(
+        "ProfileManager: no profiles found - creating '{}' and signing it into "
+        "slot 0.",
+        gamertag);
+    if (!CreateProfile(gamertag, true, true)) {
+      XELOGE("ProfileManager: failed to create the default profile.");
+    }
   }
 }
 
