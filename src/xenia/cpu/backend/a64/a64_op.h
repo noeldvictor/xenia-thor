@@ -177,8 +177,30 @@ struct ValueOp : Op<ValueOp<T, KEY_TYPE, REG_TYPE, CONST_TYPE>, KEY_TYPE> {
     }
     return false;
   }
-  bool operator==(const T& b) const { return IsEqual(b); }
-  bool operator!=(const T& b) const { return !IsEqual(b); }
+  // C++20 synthesizes a REVERSED candidate for ==. With only the
+  // Xbyak::Reg overload available for cross-type compares, forward and
+  // reversed each win one argument -> hard ambiguity. Providing EXACT
+  // matches for both same-type and cross-type ValueOp compares makes the
+  // two directions tie on conversions, so the standard tiebreaker (prefer
+  // the non-rewritten candidate) resolves it. Semantics unchanged.
+  bool operator==(const ValueOp& b) const {
+    return IsEqual(static_cast<const T&>(b));
+  }
+  bool operator!=(const ValueOp& b) const {
+    return !IsEqual(static_cast<const T&>(b));
+  }
+  template <typename U, KeyType K2, typename R2, typename C2>
+  bool operator==(const ValueOp<U, K2, R2, C2>& b) const {
+    // Only register identity is meaningful across different operand widths.
+    if (is_constant || b.is_constant) {
+      return false;
+    }
+    return reg_.getIdx() == b.reg().getIdx();
+  }
+  template <typename U, KeyType K2, typename R2, typename C2>
+  bool operator!=(const ValueOp<U, K2, R2, C2>& b) const {
+    return !(*this == b);
+  }
 
   void Load(const Instr::Op& op) {
     value = op.value;
