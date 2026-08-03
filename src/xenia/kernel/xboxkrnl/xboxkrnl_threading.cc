@@ -7,14 +7,8 @@
  ******************************************************************************
  */
 
-<<<<<<< ours
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
-#include "xenia/base/atomic.h"
-#include "xenia/base/clock.h"
-#include "xenia/base/math.h"
-#include "xenia/base/platform.h"
-#include "xenia/base/profiling.h"
-=======
+
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -28,8 +22,10 @@
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/math.h"
 #include "xenia/base/mutex.h"
->>>>>>> theirs
+#include "xenia/base/platform.h"
+#include "xenia/base/profiling.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -769,18 +765,13 @@ void KeSetCurrentStackPointers_entry(lpvoid_t stack_ptr,
 
   // If a fiber is set, and the thread matches, reenter to avoid issues with
   // host stack overflowing.
-<<<<<<< ours
-  if (thread->fiber_ptr &&
-      current_thread->guest_object() == thread.guest_address()) {
-    context->processor->backend()->PrepareForReentry(context.value());
-=======
   bool will_reenter = thread->fiber_ptr &&
                       current_thread->guest_object() == thread.guest_address();
   LogReenterAudit(current_thread, thread, stack_ptr, stack_alloc_base,
                   stack_base, stack_limit, will_reenter);
   context->r[1] = stack_ptr.guest_address();
   if (will_reenter) {
->>>>>>> theirs
+    context->processor->backend()->PrepareForReentry(context.value());
     current_thread->Reenter(static_cast<uint32_t>(context->lr));
   }
 }
@@ -893,7 +884,6 @@ uint32_t KeDelayExecutionThread(uint32_t processor_mode, uint32_t alertable,
                                 uint64_t* interval_ptr,
                                 cpu::ppc::PPCContext* ctx) {
   XThread* thread = XThread::GetCurrentThread();
-<<<<<<< ours
 
   xeProcessKernelApcs(ctx);
   if (alertable) {
@@ -902,15 +892,12 @@ uint32_t KeDelayExecutionThread(uint32_t processor_mode, uint32_t alertable,
       return stat;
     }
   }
-  X_STATUS result = thread->Delay(processor_mode, alertable, *interval_ptr);
-=======
   uint64_t interval = interval_ptr ? static_cast<uint64_t>(*interval_ptr) : 0u;
   LogThreadWaitTrace("KeDelayExecutionThread", "begin", thread, nullptr, 0, 0,
                      processor_mode, alertable, interval, 0);
   X_STATUS result = thread->Delay(processor_mode, alertable, interval);
   LogThreadWaitTrace("KeDelayExecutionThread", "end", thread, nullptr, 0, 0,
                      processor_mode, alertable, interval, result);
->>>>>>> theirs
 
   if (result == X_STATUS_USER_APC) {
     xeProcessUserApcs(ctx);
@@ -1475,18 +1462,14 @@ uint32_t xeKeWaitForSingleObject(void* object_ptr, uint32_t wait_reason,
                      alertable, timeout_ptr ? *timeout_ptr : 0u, 0);
   X_STATUS result =
       object->Wait(wait_reason, processor_mode, alertable, timeout_ptr);
-<<<<<<< ours
+  LogThreadWaitTrace("KeWaitForSingleObject", "end", thread, object.get(),
+                     object ? object->guest_object() : 0, 1, wait_reason,
+                     alertable, timeout_ptr ? *timeout_ptr : 0u, result);
   if (alertable) {
     if (result == X_STATUS_USER_APC) {
       xeProcessUserApcs(nullptr);
     }
   }
-=======
-  LogThreadWaitTrace("KeWaitForSingleObject", "end", thread, object.get(),
-                     object ? object->guest_object() : 0, 1, wait_reason,
-                     alertable, timeout_ptr ? *timeout_ptr : 0u, result);
-
->>>>>>> theirs
   return result;
 }
 
@@ -1518,17 +1501,14 @@ uint32_t NtWaitForSingleObjectEx(uint32_t object_handle, uint32_t wait_mode,
                        timeout, 0);
     result =
         object->Wait(3, wait_mode, alertable, timeout_ptr ? &timeout : nullptr);
-<<<<<<< ours
+    LogThreadWaitTrace("NtWaitForSingleObjectEx", "end", thread, object.get(),
+                       object_handle, 1, wait_mode, alertable, timeout,
+                       result);
     if (alertable) {
       if (result == X_STATUS_USER_APC) {
         xeProcessUserApcs(nullptr);
       }
     }
-=======
-    LogThreadWaitTrace("NtWaitForSingleObjectEx", "end", thread, object.get(),
-                       object_handle, 1, wait_mode, alertable, timeout,
-                       result);
->>>>>>> theirs
   } else {
     result = X_STATUS_INVALID_HANDLE;
     LogThreadWaitTrace("NtWaitForSingleObjectEx", "invalid", thread, nullptr,
@@ -1578,29 +1558,21 @@ dword_result_t KeWaitForMultipleObjects_entry(
     }
   }
   uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
-<<<<<<< ours
+  XThread* thread = XThread::GetCurrentThread();
+  XObject* first_object = count ? objects[0].get() : nullptr;
+  uint32_t first_ref = count ? static_cast<uint32_t>(objects_ptr[0]) : 0;
+  LogThreadWaitTrace("KeWaitForMultipleObjects", "begin", thread, first_object,
+                     first_ref, count, wait_type, alertable, timeout, 0);
   X_STATUS result = XObject::WaitMultiple(
       uint32_t(count), reinterpret_cast<XObject**>(&objects[0]), wait_type,
       wait_reason, processor_mode, alertable, timeout_ptr ? &timeout : nullptr);
+  LogThreadWaitTrace("KeWaitForMultipleObjects", "end", thread, first_object,
+                     first_ref, count, wait_type, alertable, timeout, result);
   if (alertable) {
     if (result == X_STATUS_USER_APC) {
       xeProcessUserApcs(nullptr);
     }
   }
-=======
-  XThread* thread = XThread::GetCurrentThread();
-  XObject* first_object = objects.empty() ? nullptr : objects.front().get();
-  uint32_t first_ref = count ? static_cast<uint32_t>(objects_ptr[0]) : 0;
-  LogThreadWaitTrace("KeWaitForMultipleObjects", "begin", thread, first_object,
-                     first_ref, count, wait_type, alertable, timeout, 0);
-  X_STATUS result =
-      XObject::WaitMultiple(uint32_t(objects.size()),
-                            reinterpret_cast<XObject**>(objects.data()),
-                            wait_type, wait_reason, processor_mode, alertable,
-                            timeout_ptr ? &timeout : nullptr);
-  LogThreadWaitTrace("KeWaitForMultipleObjects", "end", thread, first_object,
-                     first_ref, count, wait_type, alertable, timeout, result);
->>>>>>> theirs
   return result;
 }
 DECLARE_XBOXKRNL_EXPORT3(KeWaitForMultipleObjects, kThreading, kImplemented,
@@ -1640,29 +1612,23 @@ uint32_t xeNtWaitForMultipleObjectsEx(uint32_t count, xe::be<uint32_t>* handles,
     }
   }
 
-<<<<<<< ours
-  auto result =
-      XObject::WaitMultiple(count, reinterpret_cast<XObject**>(&objects[0]),
-                            wait_type, 6, wait_mode, alertable, timeout_ptr);
-  if (alertable) {
-    if (result == X_STATUS_USER_APC) {
-      xeProcessUserApcs(nullptr);
-    }
-  }
-=======
   XThread* thread = XThread::GetCurrentThread();
-  XObject* first_object = objects.empty() ? nullptr : objects.front().get();
+  XObject* first_object = count ? objects[0].get() : nullptr;
   uint32_t first_ref = count ? static_cast<uint32_t>(handles[0]) : 0;
   LogThreadWaitTrace("NtWaitForMultipleObjectsEx", "begin", thread,
                      first_object, first_ref, count, wait_type, alertable,
                      timeout_ptr ? *timeout_ptr : 0u, 0);
   X_STATUS result =
-      XObject::WaitMultiple(count, reinterpret_cast<XObject**>(objects.data()),
+      XObject::WaitMultiple(count, reinterpret_cast<XObject**>(&objects[0]),
                             wait_type, 6, wait_mode, alertable, timeout_ptr);
   LogThreadWaitTrace("NtWaitForMultipleObjectsEx", "end", thread, first_object,
                      first_ref, count, wait_type, alertable,
                      timeout_ptr ? *timeout_ptr : 0u, result);
->>>>>>> theirs
+  if (alertable) {
+    if (result == X_STATUS_USER_APC) {
+      xeProcessUserApcs(nullptr);
+    }
+  }
   return result;
 }
 
@@ -1695,29 +1661,20 @@ dword_result_t NtSignalAndWaitForSingleObjectEx_entry(dword_t signal_handle,
   auto signal_object = kernel_state()->object_table()->LookupObject<XObject>(
       signal_handle, true);
   auto wait_object =
-<<<<<<< ours
       kernel_state()->object_table()->LookupObject<XObject>(wait_handle, true);
   global_critical_region::mutex().unlock();
-  if (signal_object && wait_object) {
-    uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
-    result = XObject::SignalAndWait(signal_object.get(), wait_object.get(), 3,
-                                    wait_mode, alertable,
-                                    timeout_ptr ? &timeout : nullptr);
-=======
-      kernel_state()->object_table()->LookupObject<XObject>(wait_handle);
   XThread* thread = XThread::GetCurrentThread();
   if (signal_object && wait_object) {
     uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
     LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "begin", thread,
                        wait_object.get(), wait_handle, 1, 0, alertable,
                        timeout, 0);
-    result =
-        XObject::SignalAndWait(signal_object.get(), wait_object.get(), 3, 1,
-                               alertable, timeout_ptr ? &timeout : nullptr);
+    result = XObject::SignalAndWait(signal_object.get(), wait_object.get(), 3,
+                                    wait_mode, alertable,
+                                    timeout_ptr ? &timeout : nullptr);
     LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "end", thread,
                        wait_object.get(), wait_handle, 1, 0, alertable,
                        timeout, result);
->>>>>>> theirs
   } else {
     result = X_STATUS_INVALID_HANDLE;
     LogThreadWaitTrace("NtSignalAndWaitForSingleObjectEx", "invalid", thread,
@@ -2206,13 +2163,7 @@ uint32_t xeKeInsertQueueApc(XAPC* apc, uint32_t arg1, uint32_t arg2,
       }
     }
 
-<<<<<<< ours
     apc->enqueued = 1;
-=======
-  uint32_t list_entry_ptr = apc.guest_address() + 8;
-  apc_list->Insert(list_entry_ptr);
-  thread->NoteApcQueued();
->>>>>>> theirs
 
     /*
         todo: this is incomplete, a ton of other logic happens here, i believe
@@ -2242,15 +2193,7 @@ dword_result_t KeRemoveQueueApc_entry(pointer_t<XAPC> apc,
   auto target_thread = context->TranslateVirtual<X_KTHREAD*>(apc->thread_ptr);
   auto old_irql = xeKeKfAcquireSpinLock(context, &target_thread->apc_lock);
 
-<<<<<<< ours
   if (apc->enqueued) {
-=======
-  auto apc_list = thread->apc_list();
-  uint32_t list_entry_ptr = apc.guest_address() + 8;
-  if (apc_list->IsQueued(list_entry_ptr)) {
-    apc_list->Remove(list_entry_ptr);
-    thread->NoteApcDequeued();
->>>>>>> theirs
     result = true;
     apc->enqueued = 0;
     util::XeRemoveEntryList(&apc->list_entry, context);

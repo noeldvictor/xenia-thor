@@ -18,9 +18,19 @@ namespace apu {
 
 class AudioDriver {
  public:
+  // Frame geometry (Edge kernel-port: the XMP media player mixes host-side
+  // float frames of this size).
+  static constexpr uint32_t kFrameFrequencyDefault = 48000;
+  static constexpr uint32_t kFrameChannelsDefault = 6;
+  static constexpr uint32_t kChannelSamplesDefault = 256;
+  static constexpr uint32_t kFrameSamplesMax =
+      kFrameChannelsDefault * kChannelSamplesDefault;
+  static constexpr uint32_t kFrameSizeMax = sizeof(float) * kFrameSamplesMax;
+
   explicit AudioDriver(Memory* memory);
   virtual ~AudioDriver();
 
+  // Guest-buffer submission (the XMA/XAudio path this fork uses).
   virtual void SubmitFrame(uint32_t samples_ptr) = 0;
 
  protected:

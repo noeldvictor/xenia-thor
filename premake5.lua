@@ -34,7 +34,9 @@ defines({
   "UNICODE",
 })
 
-cppdialect("C++17")
+-- C++20: xenia-edge's kernel layer (ported 2026-08) uses concepts/requires
+-- clauses, designated initializers and std::span in its public headers.
+cppdialect("C++20")
 exceptionhandling("On")
 rtti("On")
 symbols("On")
@@ -322,6 +324,7 @@ workspace("xenia")
   include("third_party/snappy.lua")
   include("third_party/xbyak_aarch64.lua")
   include("third_party/xxhash.lua")
+  include("third_party/pugixml.lua")
 
   if os.istarget("android") then
     -- libadrenotools (rootless Turnip custom-driver loading) — Android-ARM64-only;

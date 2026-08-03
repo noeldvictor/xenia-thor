@@ -7,10 +7,8 @@
  ******************************************************************************
  */
 
-<<<<<<< ours
 #include "xenia/kernel/xboxkrnl/xboxkrnl_memory.h"
-#include "xenia/base/logging.h"
-=======
+
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -24,7 +22,6 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/gpu_flags.h"
->>>>>>> theirs
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -32,12 +29,11 @@
 #include "xenia/xbox.h"
 
 DEFINE_bool(
-<<<<<<< ours
     ignore_offset_for_ranged_allocations, false,
     "Allows to ignore 4k offset for physical allocations with provided range. "
     "Certain titles check if result matches provided lower range.",
     "Memory");
-=======
+DEFINE_bool(
     xboxkrnl_tolerate_debug_memory, true,
     "Research bring-up: log nonzero DebugMemory flags in Nt*VirtualMemory "
     "calls and handle them as normal guest memory instead of asserting.",
@@ -62,7 +58,6 @@ DEFINE_uint32(
     "Thor Android compatibility: maximum physical suballocation ownership "
     "audit rows to emit.",
     "Kernel");
->>>>>>> theirs
 
 namespace xe {
 namespace kernel {
@@ -562,19 +557,9 @@ dword_result_t NtAllocateVirtualMemory_entry(lpdword_t base_addr_ptr,
   assert_not_null(region_size_ptr);
 
   // Set to TRUE when allocation is from devkit memory area.
-<<<<<<< ours
-  // We don't support separate devkit memory, so just ignore this flag.
-  if (debug_memory) {
-    XELOGW(
-        "Game is attempting to allocate devkit debug memory (base: {:08X}, "
-        "size: {:08X}). Ignoring debug flag and using normal allocation.",
-        base_addr_ptr ? base_addr_ptr.value() : 0,
-        region_size_ptr ? region_size_ptr.value() : 0);
-=======
   if (!CheckDebugMemoryArgument("NtAllocateVirtualMemory",
                                 debug_memory.value())) {
     return X_STATUS_INVALID_PARAMETER;
->>>>>>> theirs
   }
 
   // This allocates memory from the kernel heap, which is initialized on startup
@@ -798,19 +783,9 @@ dword_result_t NtFreeVirtualMemory_entry(lpdword_t base_addr_ptr,
   // _In_     ULONG FreeType
   // _In_     BOOLEAN DebugMemory
 
-<<<<<<< ours
-  // Set to TRUE when freeing external devkit memory. We don't support a
-  // separate devkit region, so just ignore the flag (matches the Alloc path).
-  if (debug_memory) {
-    XELOGW(
-        "NtFreeVirtualMemory: devkit debug flag set (base: {:08X}, "
-        "size: {:08X}). Ignoring.",
-        base_addr_value, region_size_value);
-=======
   // Set to TRUE when freeing external devkit memory.
   if (!CheckDebugMemoryArgument("NtFreeVirtualMemory", debug_memory.value())) {
     return X_STATUS_INVALID_PARAMETER;
->>>>>>> theirs
   }
 
   if (!base_addr_value) {
@@ -1032,16 +1007,12 @@ uint32_t xeMmAllocatePhysicalMemoryEx(uint32_t flags, uint32_t region_size,
            base_address, adjusted_size);
     return 0;
   }
-<<<<<<< ours
   XELOGD("MmAllocatePhysicalMemoryEx = {:08X} Size: {:08X}", base_address,
          adjusted_size);
-=======
-  XELOGD("MmAllocatePhysicalMemoryEx = {:08X}", base_address);
   LogPhysicalMemoryAllocateAudit(
       flags, region_size, protect_bits, min_addr_range, max_addr_range,
       alignment, page_size, adjusted_size, adjusted_alignment, heap_min_addr,
       heap_max_addr, heap, base_address);
->>>>>>> theirs
 
   return base_address;
 }
@@ -1319,7 +1290,6 @@ dword_result_t ExAllocatePool_entry(dword_t size,
 }
 DECLARE_XBOXKRNL_EXPORT1(ExAllocatePool, kMemory, kImplemented);
 
-<<<<<<< ours
 void xeFreePool(PPCContext* context, uint32_t base_address) {
   auto memory = context->kernel_state->memory();
   // if 4kb aligned, there is no pool header!
@@ -1332,18 +1302,6 @@ void xeFreePool(PPCContext* context, uint32_t base_address) {
 
 void ExFreePool_entry(lpvoid_t base_address, const ppc_context_t& context) {
   xeFreePool(context, base_address.guest_address());
-=======
-// ExAllocatePoolWithTag(NumberOfBytes, Tag): NonPagedPool alloc with a tag. Was
-// declared in the export table (ordinal 0xA) but unimplemented — some titles
-// (e.g. Back to the Future) import it; without it they fault early.
-dword_result_t ExAllocatePoolWithTag_entry(dword_t size, dword_t tag) {
-  return ExAllocatePoolTypeWithTag_entry(size, tag, 0);
-}
-DECLARE_XBOXKRNL_EXPORT1(ExAllocatePoolWithTag, kMemory, kImplemented);
-
-void ExFreePool_entry(lpvoid_t base_address) {
-  kernel_state()->memory()->SystemHeapFree(base_address);
->>>>>>> theirs
 }
 DECLARE_XBOXKRNL_EXPORT1(ExFreePool, kMemory, kImplemented);
 
@@ -1417,20 +1375,9 @@ dword_result_t MmDeleteKernelStack_entry(lpvoid_t stack_base,
 }
 DECLARE_XBOXKRNL_EXPORT1(MmDeleteKernelStack, kMemory, kImplemented);
 
-dword_result_t MmIsAddressValid_entry(dword_t address,
-                                      const ppc_context_t& ctx) {
-  auto kernel = ctx->kernel_state;
-  auto memory = kernel->memory();
-  auto heap = memory->LookupHeap(address);
-  if (!heap) {
-    return 0;
-  }
-
-  return heap->QueryRangeAccess(address, address) !=
-         memory::PageAccess::kNoAccess;
-}
-
-DECLARE_XBOXKRNL_EXPORT1(MmIsAddressValid, kMemory, kImplemented);
+// NOTE(kernel-port): Edge's MmIsAddressValid (QueryRangeAccess-based) was
+// dropped here in favor of our committed-semantics version above
+// (QueryProtect-based); trainers depend on "committed with non-zero protect".
 
 }  // namespace xboxkrnl
 }  // namespace kernel

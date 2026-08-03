@@ -1168,7 +1168,6 @@ dword_result_t XeKeysHmacShaUsingKey_entry(lpvoid_t obscured_key,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacShaUsingKey, kNone, kImplemented);
 
-<<<<<<< ours
 dword_result_t XeKeysGetConsoleType_entry(lpdword_t type_out) {
   *type_out = Retail;
   return 0;
@@ -1226,18 +1225,6 @@ dword_result_t XeKeysConsolePrivateKeySign_entry(
   return true;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysConsolePrivateKeySign, kNone, kSketchy);
-=======
-dword_result_t XeKeysConsolePrivateKeySign_entry(
-    dword_t r3, dword_t r4, dword_t r5, dword_t r6, dword_t r7, dword_t r8,
-    dword_t r9, dword_t r10) {
-  XELOGD(
-      "XeKeysConsolePrivateKeySign research stub: r3={:08X} r4={:08X} "
-      "r5={:08X} r6={:08X} r7={:08X} r8={:08X} r9={:08X} r10={:08X}",
-      uint32_t(r3), uint32_t(r4), uint32_t(r5), uint32_t(r6), uint32_t(r7),
-      uint32_t(r8), uint32_t(r9), uint32_t(r10));
-  return X_STATUS_SUCCESS;
-}
-DECLARE_XBOXKRNL_EXPORT2(XeKeysConsolePrivateKeySign, kNone, kStub, kSketchy);
 
 dword_result_t XeKeysConsoleSignatureVerification_entry(
     dword_t r3, dword_t r4, dword_t r5, dword_t r6, dword_t r7, dword_t r8,
@@ -1263,7 +1250,6 @@ dword_result_t XeKeysVerifyRSASignature_entry(
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT2(XeKeysVerifyRSASignature, kNone, kStub, kSketchy);
->>>>>>> theirs
 
 }  // namespace xboxkrnl
 }  // namespace kernel

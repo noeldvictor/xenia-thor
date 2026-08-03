@@ -25,18 +25,6 @@ namespace xam {
 uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, lpvoid_t buffer_ptr,
                         uint32_t buffer_size, uint32_t* items_returned,
                         uint32_t overlapped_ptr) {
-<<<<<<< ours
-=======
-  // Some titles (e.g. Back to the Future: The Game, just past the title screen)
-  // call XamEnumerate with non-zero flags. xeXamEnumerate ignores flags
-  // entirely, so log and proceed rather than assert_true()-aborting (that
-  // crashed BTTF in the Main thread ~50s in). Behavior is unchanged for
-  // flags == 0; allowing non-zero just lets the enumeration run.
-  if (flags != 0) {
-    XELOGW("XamEnumerate: ignoring unhandled flags {:08X}", flags);
-  }
-
->>>>>>> theirs
   auto e = kernel_state()->object_table()->LookupObject<XEnumerator>(handle);
   if (!e) {
     return X_ERROR_INVALID_HANDLE;

@@ -275,24 +275,11 @@ void VdQueryVideoMode(X_VIDEO_MODE* video_mode,
                       [[maybe_unused]] bool is_internal_resolution) {
   // TODO(benvanik): get info from actual display.
   std::memset(video_mode, 0, sizeof(X_VIDEO_MODE));
-<<<<<<< ours
 
-  auto display_res = gpu::GraphicsSystem::GetInternalDisplayResolution();
-
-  video_mode->display_width = display_res.first;
-  video_mode->display_height = display_res.second;
-  video_mode->is_interlaced = cvars::interlaced;
-  video_mode->is_widescreen = cvars::widescreen;
-  video_mode->is_hi_def = video_mode->display_width >= 0x500;
-  video_mode->refresh_rate = GetVideoRefreshRate();
-  video_mode->video_standard = GetVideoStandard();
-  video_mode->pixel_rate = 0x8A;
-  video_mode->widescreen_flag = cvars::widescreen ? 0x01 : 0x03;
-}
-
-void VdQueryRealVideoMode_entry(pointer_t<X_VIDEO_MODE> video_mode) {
-  VdQueryVideoMode(video_mode, true);
-=======
+  // Edge shape: report the gpu-surface internal display resolution. Thor keep:
+  // kernel_display_resolution can force the guest-visible mode (per-game
+  // profiles; e.g. Blue Dragon combines 480p with kernel_video_widescreen=false
+  // to select its lighter single-tile 640x480 render mode).
   const std::string& resolution = cvars::kernel_display_resolution;
   if (resolution == "480p") {
     video_mode->display_width = 720;
@@ -301,22 +288,28 @@ void VdQueryRealVideoMode_entry(pointer_t<X_VIDEO_MODE> video_mode) {
     video_mode->display_width = 1920;
     video_mode->display_height = 1080;
   } else {
-    video_mode->display_width = 1280;
-    video_mode->display_height = 720;
+    auto display_res = gpu::GraphicsSystem::GetInternalDisplayResolution();
+    video_mode->display_width = display_res.first;
+    video_mode->display_height = display_res.second;
   }
-  video_mode->is_interlaced = 0;
-  // kernel_video_widescreen: hardcoding widescreen=1 forces titles that pick
-  // their internal render mode from this bit (e.g. Blue Dragon: widescreen ->
-  // 1280x720 two-tile predicated tiling, else 640x480 single-tile) to always
-  // choose the heavy mode regardless of kernel_display_resolution. Reporting
-  // 4:3 lets such titles select their own lighter, fully-supported mode.
-  video_mode->is_widescreen = cvars::kernel_video_widescreen ? 1 : 0;
-  video_mode->is_hi_def = video_mode->display_height >= 720 ? 1 : 0;
-  video_mode->refresh_rate = 60.0f;
-  video_mode->video_standard = 1;  // NTSC
-  video_mode->unknown_0x8a = 0x4A;
-  video_mode->unknown_0x01 = 0x01;
->>>>>>> theirs
+  video_mode->is_interlaced = cvars::interlaced;
+  // kernel_video_widescreen (thor keep): hardcoding widescreen=1 forces titles
+  // that pick their internal render mode from this bit (e.g. Blue Dragon:
+  // widescreen -> 1280x720 two-tile predicated tiling, else 640x480
+  // single-tile) to always choose the heavy mode. Reporting 4:3 lets such
+  // titles select their own lighter, fully-supported mode. Gates Edge's
+  // widescreen cvar rather than replacing it.
+  const bool widescreen = cvars::widescreen && cvars::kernel_video_widescreen;
+  video_mode->is_widescreen = widescreen ? 1 : 0;
+  video_mode->is_hi_def = video_mode->display_width >= 0x500;
+  video_mode->refresh_rate = GetVideoRefreshRate();
+  video_mode->video_standard = GetVideoStandard();
+  video_mode->pixel_rate = 0x8A;
+  video_mode->widescreen_flag = widescreen ? 0x01 : 0x03;
+}
+
+void VdQueryRealVideoMode_entry(pointer_t<X_VIDEO_MODE> video_mode) {
+  VdQueryVideoMode(video_mode, true);
 }
 DECLARE_XBOXKRNL_EXPORT1(VdQueryRealVideoMode, kVideo, kStub);
 
@@ -637,13 +630,10 @@ void VdSwap_entry(
     return;
   }
   gpu_fetch.base_address = frontbuffer_physical_address >> 12;
-<<<<<<< ours
-  XE_MAYBE_UNUSED
-=======
   uint32_t buffer_physical_address =
       kernel_memory()->GetPhysicalAddress(buffer_ptr.guest_address());
 
->>>>>>> theirs
+  XE_MAYBE_UNUSED
   auto texture_format = gpu::xenos::TextureFormat(texture_format_ptr.value());
   auto color_space = *color_space_ptr;
   assert_true(texture_format == gpu::xenos::TextureFormat::k_8_8_8_8 ||

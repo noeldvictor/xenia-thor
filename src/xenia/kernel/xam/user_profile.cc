@@ -9,13 +9,9 @@
 
 #include "xenia/kernel/xam/user_profile.h"
 
-<<<<<<< ours
-=======
 #include "xenia/base/cvar.h"
+#include "xenia/base/string_util.h"
 
-#include <sstream>
-
->>>>>>> theirs
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -38,7 +34,16 @@ UserProfile::UserProfile(const uint64_t xuid,
   // 58410A1F checks the user XUID against a mask of 0x00C0000000000000 (3<<54),
   // if non-zero, it prevents the user from playing the game.
   // "You do not have permissions to perform this operation."
-<<<<<<< ours
+  // THOR: user_gamertag cvar overrides the account gamertag. Edge's
+  // profile_manager normally owns the account data; this is kept as a
+  // non-interactive fallback set from the Android launcher's settings.
+  if (!cvars::user_gamertag.empty()) {
+    const std::u16string gamertag_u16 =
+        xe::to_utf16(cvars::user_gamertag.substr(0, 15));
+    string_util::copy_and_swap_truncating(account_info_.gamertag, gamertag_u16,
+                                          sizeof(account_info_.gamertag));
+  }
+
   LoadProfileGpds();
 
   // Load default gamer tiles
@@ -52,78 +57,6 @@ UserProfile::UserProfile(const uint64_t xuid,
   // present.
   LoadProfileIcon(XTileType::kPersonalGamerTile);
   LoadProfileIcon(XTileType::kPersonalGamerTileSmall);
-=======
-  xuid_ = 0xB13EBABEBABEBABE;
-  name_ = "User";
-  if (!cvars::user_gamertag.empty()) {
-    name_ = cvars::user_gamertag.substr(0, 15);
-  }
-
-  // https://cs.rin.ru/forum/viewtopic.php?f=38&t=60668&hilit=gfwl+live&start=195
-  // https://github.com/arkem/py360/blob/master/py360/constants.py
-  // XPROFILE_GAMER_YAXIS_INVERSION
-  AddSetting(std::make_unique<Int32Setting>(0x10040002, 0));
-  // XPROFILE_OPTION_CONTROLLER_VIBRATION
-  AddSetting(std::make_unique<Int32Setting>(0x10040003, 3));
-  // XPROFILE_GAMERCARD_ZONE
-  AddSetting(std::make_unique<Int32Setting>(0x10040004, 0));
-  // XPROFILE_GAMERCARD_REGION
-  AddSetting(std::make_unique<Int32Setting>(0x10040005, 0));
-  // XPROFILE_GAMERCARD_CRED
-  AddSetting(std::make_unique<Int32Setting>(0x10040006, 0xFA));
-  // XPROFILE_GAMERCARD_REP
-  AddSetting(std::make_unique<FloatSetting>(0x5004000B, 0.0f));
-  // XPROFILE_OPTION_VOICE_MUTED
-  AddSetting(std::make_unique<Int32Setting>(0x1004000C, 0));
-  // XPROFILE_OPTION_VOICE_THRU_SPEAKERS
-  AddSetting(std::make_unique<Int32Setting>(0x1004000D, 0));
-  // XPROFILE_OPTION_VOICE_VOLUME
-  AddSetting(std::make_unique<Int32Setting>(0x1004000E, 0x64));
-  // XPROFILE_GAMERCARD_MOTTO
-  AddSetting(std::make_unique<UnicodeSetting>(0x402C0011, u""));
-  // XPROFILE_GAMERCARD_TITLES_PLAYED
-  AddSetting(std::make_unique<Int32Setting>(0x10040012, 1));
-  // XPROFILE_GAMERCARD_ACHIEVEMENTS_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040013, 0));
-  // XPROFILE_GAMER_DIFFICULTY
-  AddSetting(std::make_unique<Int32Setting>(0x10040015, 0));
-  // XPROFILE_GAMER_CONTROL_SENSITIVITY
-  AddSetting(std::make_unique<Int32Setting>(0x10040018, 0));
-  // Preferred color 1
-  AddSetting(std::make_unique<Int32Setting>(0x1004001D, 0xFFFF0000u));
-  // Preferred color 2
-  AddSetting(std::make_unique<Int32Setting>(0x1004001E, 0xFF00FF00u));
-  // XPROFILE_GAMER_ACTION_AUTO_AIM
-  AddSetting(std::make_unique<Int32Setting>(0x10040022, 1));
-  // XPROFILE_GAMER_ACTION_AUTO_CENTER
-  AddSetting(std::make_unique<Int32Setting>(0x10040023, 0));
-  // XPROFILE_GAMER_ACTION_MOVEMENT_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040024, 0));
-  // XPROFILE_GAMER_RACE_TRANSMISSION
-  AddSetting(std::make_unique<Int32Setting>(0x10040026, 0));
-  // XPROFILE_GAMER_RACE_CAMERA_LOCATION
-  AddSetting(std::make_unique<Int32Setting>(0x10040027, 0));
-  // XPROFILE_GAMER_RACE_BRAKE_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040028, 0));
-  // XPROFILE_GAMER_RACE_ACCELERATOR_CONTROL
-  AddSetting(std::make_unique<Int32Setting>(0x10040029, 0));
-  // XPROFILE_GAMERCARD_TITLE_CRED_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040038, 0));
-  // XPROFILE_GAMERCARD_TITLE_ACHIEVEMENTS_EARNED
-  AddSetting(std::make_unique<Int32Setting>(0x10040039, 0));
-
-  // If we set this, games will try to get it.
-  // XPROFILE_GAMERCARD_PICTURE_KEY
-  AddSetting(
-      std::make_unique<UnicodeSetting>(0x4064000F, u"gamercard_picture_key"));
-
-  // XPROFILE_TITLE_SPECIFIC1
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFF));
-  // XPROFILE_TITLE_SPECIFIC2
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFE));
-  // XPROFILE_TITLE_SPECIFIC3
-  AddSetting(std::make_unique<BinarySetting>(0x63E83FFD));
->>>>>>> theirs
 }
 
 GpdInfo* UserProfile::GetGpd(const uint32_t title_id) {

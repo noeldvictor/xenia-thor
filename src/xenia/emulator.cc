@@ -54,6 +54,7 @@
 #include "xenia/ui/window.h"
 #include "xenia/ui/windowed_app_context.h"
 #include "xenia/vfs/devices/disc_image_device.h"
+#include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/vfs/devices/null_device.h"
 #include "xenia/vfs/devices/stfs_container_device.h"
@@ -941,6 +942,10 @@ X_STATUS Emulator::Setup(
     if (result) {
       return result;
     }
+    // XMP media playback (Edge kernel-port: xam's xmp_app drives this).
+    audio_media_player_ = std::make_unique<apu::AudioMediaPlayer>(
+        audio_system_.get(), kernel_state_.get());
+    audio_media_player_->Setup();
   }
 
 #define LOAD_KERNEL_MODULE(t) \
@@ -967,6 +972,65 @@ X_STATUS Emulator::TerminateTitle() {
   title_name_ = "";
   title_version_ = "";
   on_terminate();
+  return X_STATUS_SUCCESS;
+}
+
+// Edge kernel-port surface. Our front-end (Android launcher / desktop CLI)
+// has no synchronous in-guest file picker, so there is nothing to prompt
+// with: XamSwapDisc resolves discs from the disc_playlist cvar via
+// GetDiscPathForNumber and only falls back here. Returning empty makes that
+// fallback a clean "no disc available".
+const std::filesystem::path Emulator::GetNewDiscPath(
+    std::string window_message) {
+  XELOGW(
+      "GetNewDiscPath: no interactive disc picker in this build ({}); set the "
+      "disc_playlist cvar for multi-disc titles",
+      window_message.empty() ? "swap requested" : window_message);
+  return {};
+}
+
+// Mounts a host path (disc image / STFS / folder) at a guest mount point and
+// re-points the game:/d: symlinks at it - the disc-swap remount path.
+X_STATUS Emulator::MountPath(const std::filesystem::path& path,
+                             const std::string_view mount_path) {
+  // Device selection by content, like Edge's CreateVfsDevice but using only
+  // the device types this tree has (no ZAR - zarchive is not vendored).
+  std::unique_ptr<vfs::Device> device;
+  if (std::filesystem::is_directory(path)) {
+    device = std::make_unique<vfs::HostPathDevice>(mount_path, path, true);
+  } else {
+    uint8_t magic[4] = {};
+    auto file = xe::filesystem::OpenFile(path, "rb");
+    if (file) {
+      fread(magic, 1, sizeof(magic), file);
+      fclose(file);
+    }
+    if (!std::memcmp(magic, "LIVE", 4) || !std::memcmp(magic, "PIRS", 4) ||
+        !std::memcmp(magic, "CON ", 4)) {
+      device =
+          vfs::XContentContainerDevice::CreateContentDevice(mount_path, path);
+    } else if (!std::memcmp(magic, "XEX2", 4) ||
+               !std::memcmp(magic, "XEX1", 4)) {
+      device = std::make_unique<vfs::HostPathDevice>(
+          mount_path, path.parent_path(), true);
+    } else {
+      device = std::make_unique<vfs::DiscImageDevice>(mount_path, path);
+    }
+  }
+  if (!device || !device->Initialize()) {
+    XELOGE("MountPath: unsupported or corrupted image at {}",
+           xe::path_to_utf8(path));
+    return X_STATUS_NO_SUCH_FILE;
+  }
+  if (!file_system_->RegisterDevice(std::move(device))) {
+    XELOGE("MountPath: unable to register device at {}", mount_path);
+    return X_STATUS_NO_SUCH_FILE;
+  }
+
+  file_system_->UnregisterSymbolicLink("game:");
+  file_system_->UnregisterSymbolicLink("d:");
+  file_system_->RegisterSymbolicLink("game:", mount_path);
+  file_system_->RegisterSymbolicLink("d:", mount_path);
   return X_STATUS_SUCCESS;
 }
 

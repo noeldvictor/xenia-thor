@@ -169,67 +169,9 @@ struct CreateOptions {
   static constexpr uint32_t FILE_RANDOM_ACCESS = 0x00000800;
 };
 
-<<<<<<< ours
-=======
-static bool IsValidPath(const std::string_view s, bool is_pattern) {
-  // TODO(gibbed): validate path components individually
-  bool got_asterisk = false;
-  for (const auto& c : s) {
-    if (c <= 31 || c >= 127) {
-      return false;
-    }
-    if (got_asterisk) {
-      // * must be followed by a . (*.)
-      //
-      // 4D530819 has a bug in its game code where it attempts to
-      // FindFirstFile() with filters of "Game:\\*_X3.rkv", "Game:\\m*_X3.rkv",
-      // and "Game:\\w*_X3.rkv" and will infinite loop if the path filter is
-      // allowed.
-      if (c != '.') {
-        return false;
-      }
-      got_asterisk = false;
-    }
-    switch (c) {
-      case '"':
-      // case '*':
-      case '+':
-      case ',':
-      // case ':':
-      case ';':
-      case '<':
-      case '=':
-      case '>':
-      // case '?':
-      case '|': {
-        return false;
-      }
-      case '*': {
-        // Pattern-specific (for NtQueryDirectoryFile)
-        if (!is_pattern) {
-          return false;
-        }
-        got_asterisk = true;
-        break;
-      }
-      case '?': {
-        // Pattern-specific (for NtQueryDirectoryFile)
-        if (!is_pattern) {
-          return false;
-        }
-        break;
-      }
-      default: {
-        break;
-      }
-    }
-  }
-  return true;
-}
-
 static bool ShouldTraceBlueDragonFilePath(const std::string_view path) {
-  return path.find("\\pack") != std::string_view::npos ||
-         path.find("\\!necessity") != std::string_view::npos ||
+  return path.find("\pack") != std::string_view::npos ||
+         path.find("\!necessity") != std::string_view::npos ||
          path.find("!necessity") != std::string_view::npos;
 }
 
@@ -237,7 +179,7 @@ static bool ShouldTraceBlueDragonReadPath(const std::string_view path) {
   return path.find("!necessity") != std::string_view::npos;
 }
 
->>>>>>> theirs
+
 dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
                                   pointer_t<X_OBJECT_ATTRIBUTES> object_attrs,
                                   pointer_t<X_IO_STATUS_BLOCK> io_status_block,
@@ -261,15 +203,11 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
 
   vfs::Entry* root_entry = nullptr;
 
-<<<<<<< ours
-  // Compute path, possibly attrs relative.
-=======
   // Compute path, possibly attrs relative. Path-normalizing (whitespace-
   // trimmed) translate like the existence probe below: titles pass
   // X_ANSI_STRINGs whose length includes trailing padding, and the raw
   // string_view made the probe succeed but the open miss (Lost Odyssey's
   // loader parks forever on exactly that probe-hit/open-miss sequence).
->>>>>>> theirs
   auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
@@ -455,9 +393,6 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
         }
       }
 
-<<<<<<< ours
-      if (!file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
-=======
       // Async reads complete immediately here, but report PENDING so the guest
       // takes its async-completion path. EOF must NOT be masked as PENDING
       // (upstream parity): an async read that hits end-of-file should surface
@@ -466,7 +401,6 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
       // async-\Bundle-read case where the guest never consumes the completion.
       if (!cvars::xboxkrnl_ntreadfile_force_complete &&
           !file->is_synchronous() && result != X_STATUS_END_OF_FILE) {
->>>>>>> theirs
         result = X_STATUS_PENDING;
       }
 
@@ -838,13 +772,10 @@ dword_result_t NtQueryFullAttributesFile_entry(
     assert_always();
   }
 
-<<<<<<< ours
-=======
   // Use the path-normalizing translate (whitespace-trimmed) like upstream, so a
   // padded/whitespace-suffixed query path still resolves. The fork previously
   // used the raw string_view here, which made Banjo: Nuts & Bolts'
   // 'GAME:\loctext\englishus\' query miss -> dirty-disc error.
->>>>>>> theirs
   auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
 
   // Enforce that the path is ASCII.
@@ -1114,24 +1045,6 @@ dword_result_t NtDeviceIoControlFile_entry(
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(NtDeviceIoControlFile, kFileSystem, kStub);
-<<<<<<< ours
-// device_extension_size = additional bytes of data (aligned up to 8 byte
-// granularity) that will be allocated at the tail of the resulting device
-// object. although it is allocated at the tail, it is accessed through a
-// pointer at offset 0x18 so in theory a guest could be unaware that its a
-// single allocation device_name is optional, extra_device_object_attributes
-// gets assigned to the attributes field of the OBJECT_ATTRIBUTES used for
-// ObCreateObject
-
-// todo: need device guest object struct + host object for device
-dword_result_t IoCreateDevice_entry(dword_t driver_object,
-                                    dword_t device_extension_size,
-                                    pointer_t<X_ANSI_STRING> device_name,
-                                    dword_t device_type,
-                                    dword_t extra_device_object_attributes,
-                                    lpdword_t device_object,
-                                    const ppc_context_t& ctx) {
-=======
 
 dword_result_t IoDismountVolume_entry(dword_t device_object) {
   XELOGD("IoDismountVolume research stub: device={:08X}",
@@ -1155,10 +1068,22 @@ dword_result_t IoDismountVolumeByName_entry(pointer_t<X_ANSI_STRING> name) {
 }
 DECLARE_XBOXKRNL_EXPORT2(IoDismountVolumeByName, kFileSystem, kStub, kSketchy);
 
-dword_result_t IoCreateDevice_entry(dword_t device_struct, dword_t r4,
-                                    dword_t r5, dword_t r6, dword_t r7,
-                                    lpdword_t out_struct) {
->>>>>>> theirs
+// device_extension_size = additional bytes of data (aligned up to 8 byte
+// granularity) that will be allocated at the tail of the resulting device
+// object. although it is allocated at the tail, it is accessed through a
+// pointer at offset 0x18 so in theory a guest could be unaware that its a
+// single allocation device_name is optional, extra_device_object_attributes
+// gets assigned to the attributes field of the OBJECT_ATTRIBUTES used for
+// ObCreateObject
+
+// todo: need device guest object struct + host object for device
+dword_result_t IoCreateDevice_entry(dword_t driver_object,
+                                    dword_t device_extension_size,
+                                    pointer_t<X_ANSI_STRING> device_name,
+                                    dword_t device_type,
+                                    dword_t extra_device_object_attributes,
+                                    lpdword_t device_object,
+                                    const ppc_context_t& ctx) {
   // Called from XMountUtilityDrive XAM-task code
   // That code tries writing things to a pointer at out_struct+0x18
   // We'll alloc some scratch space for it so it doesn't cause any exceptions
@@ -1215,7 +1140,6 @@ dword_result_t IoCreateDevice_entry(dword_t device_struct, dword_t r4,
 }
 DECLARE_XBOXKRNL_EXPORT1(IoCreateDevice, kFileSystem, kStub);
 
-<<<<<<< ours
 // supposed to invoke a callback on the driver object! its some sort of
 // destructor function intended to be called for all devices created from the
 // driver
@@ -1227,7 +1151,7 @@ void IoDeleteDevice_entry(dword_t device_ptr, const ppc_context_t& ctx) {
 }
 
 DECLARE_XBOXKRNL_EXPORT1(IoDeleteDevice, kFileSystem, kStub);
-=======
+
 dword_result_t StfsCreateDevice_entry(dword_t r3, dword_t r4, dword_t r5,
                                       dword_t r6, dword_t r7, dword_t r8,
                                       dword_t r9, dword_t r10) {
@@ -1251,7 +1175,6 @@ dword_result_t StfsControlDevice_entry(dword_t r3, dword_t r4, dword_t r5,
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT2(StfsControlDevice, kFileSystem, kStub, kSketchy);
->>>>>>> theirs
 
 }  // namespace xboxkrnl
 }  // namespace kernel

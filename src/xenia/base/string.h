@@ -16,6 +16,9 @@
 
 namespace xe {
 
+// Windows-1252 -> UTF-8 (Xbox 360 disc metadata charset).
+std::string win1252_to_utf8(const std::string_view source);
+
 int xe_strcasecmp(const char* string1, const char* string2);
 int xe_strncasecmp(const char* string1, const char* string2, size_t count);
 char* xe_strdup(const char* source);

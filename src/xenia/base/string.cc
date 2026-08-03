@@ -12,12 +12,15 @@
 #include <string.h>
 #include <algorithm>
 #include <locale>
+#include <vector>
 
 #include "xenia/base/platform.h"
 
-#if !XE_PLATFORM_WIN32
+#if XE_PLATFORM_WIN32
+#include "xenia/base/platform_win.h"  // MultiByteToWideChar for win1252_to_utf8
+#else
 #include <strings.h>
-#endif  // !XE_PLATFORM_WIN32
+#endif  // XE_PLATFORM_WIN32
 
 #define UTF_CPP_CPLUSPLUS 201703L
 #include "third_party/utfcpp/source/utf8.h"
@@ -56,6 +59,42 @@ std::string to_utf8(const std::u16string_view source) {
 
 std::u16string to_utf16(const std::string_view source) {
   return utfcpp::utf8to16(source);
+}
+
+// Windows-1252 (Xbox 360 disc metadata charset) -> UTF-8. Ported from
+// xenia-edge for the merged vfs disc-image device.
+std::string win1252_to_utf8(const std::string_view source) {
+#if XE_PLATFORM_WIN32
+  std::string input_str(source);
+  int srclen = static_cast<int>(input_str.size());
+  if (!srclen) {
+    return "";
+  }
+  int wlen = MultiByteToWideChar(1252, 0, input_str.c_str(), srclen, NULL, 0);
+  if (!wlen) {
+    return "";
+  }
+  std::vector<WCHAR> wbuf(wlen);
+  if (!MultiByteToWideChar(1252, 0, input_str.c_str(), srclen, wbuf.data(),
+                           wlen)) {
+    return "";
+  }
+  int len =
+      WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), wlen, NULL, 0, "_", NULL);
+  if (!len) {
+    return "";
+  }
+  std::vector<CHAR> buf(len);
+  if (!WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), wlen, buf.data(), len, "_",
+                           NULL)) {
+    return "";
+  }
+  return std::string(buf.begin(), buf.end());
+#else
+  // TODO: Use iconv on POSIX. ASCII-range text (the common case) passes
+  // through unchanged.
+  return std::string(source);
+#endif
 }
 
 }  // namespace xe

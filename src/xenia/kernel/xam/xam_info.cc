@@ -331,7 +331,6 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
       host_path = host_path / launch_path;
       launch_path = "";
     }
-<<<<<<< ours
 
     XELOGI("XamLoaderLaunchTitle: normalized host_path={}, launch_path={}",
            xe::path_to_utf8(host_path), launch_path);
@@ -386,20 +385,6 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
 
     XELOGI("XamLoaderLaunchTitle: terminating to launch new title");
     kernel_state()->TerminateTitle();  // Does not return.
-=======
-  } else {
-    // raw_name_ptr == NULL is the guest's "exit to the dashboard" request.
-    // There is no dashboard to launch on Thor, so terminate the title cleanly
-    // (return to the emulator's game list) instead of asserting - assert_always
-    // here was a hard SIGABRT crash on the debug build. Games legitimately hit
-    // this path to quit: e.g. Banjo-Kazooie N&B after its dirty-disc box and
-    // Telltale BTTF after its media-update flow. Clearing launch_path makes this
-    // behave exactly like XamLoaderTerminateTitle (no relaunch).
-    XELOGI(
-        "XamLoaderLaunchTitle(NULL): guest requested exit to dashboard; "
-        "terminating title (no dashboard to launch).");
-    loader_data.launch_path = "";
->>>>>>> theirs
   }
 
   XELOGI("XamLoaderLaunchTitle: game requested exit to dashboard");
@@ -410,45 +395,12 @@ DECLARE_XAM_EXPORT1(XamLoaderLaunchTitle, kNone, kSketchy);
 void XamLoaderTerminateTitle_entry() { kernel_state()->ExitToDashboard(); }
 DECLARE_XAM_EXPORT1(XamLoaderTerminateTitle, kNone, kSketchy);
 
-<<<<<<< ours
 uint32_t XamAllocImpl(uint32_t flags, uint32_t size,
                       xe::be<uint32_t>* out_ptr) {
   if (flags & 0x00100000) {  // HEAP_ZERO_memory used unless this flag
     // do nothing!
     // maybe we ought to fill it with nonzero garbage, but otherwise this is a
     // flag we can safely ignore
-=======
-dword_result_t XamLoaderGetDvdTrayState_entry() {
-  // Research stub: report a closed tray so multidisc-capable titles don't
-  // stall in early boot waiting for dashboard media state.
-  return 0;
-}
-DECLARE_XAM_EXPORT2(XamLoaderGetDvdTrayState, kNone, kStub, kSketchy);
-
-dword_result_t XamSwapDisc_entry(dword_t r3, dword_t r4, dword_t r5,
-                                 dword_t r6, dword_t r7, dword_t r8,
-                                 dword_t r9, dword_t r10) {
-  XELOGD(
-      "XamSwapDisc research stub: r3={:08X} r4={:08X} r5={:08X} r6={:08X} "
-      "r7={:08X} r8={:08X} r9={:08X} r10={:08X}",
-      uint32_t(r3), uint32_t(r4), uint32_t(r5), uint32_t(r6), uint32_t(r7),
-      uint32_t(r8), uint32_t(r9), uint32_t(r10));
-  return X_ERROR_SUCCESS;
-}
-DECLARE_XAM_EXPORT2(XamSwapDisc, kNone, kStub, kSketchy);
-
-dword_result_t XamAlloc_entry(dword_t unk, dword_t size, lpdword_t out_ptr) {
-  // unk is unused below (only size/out_ptr matter), so a nonzero unk is harmless;
-  // it previously aborted the emulator (observed crashing Gears 3 intermittently).
-  // Log once and continue instead of asserting.
-  if (unk != 0) {
-    static bool xam_alloc_unk_logged = false;
-    if (!xam_alloc_unk_logged) {
-      xam_alloc_unk_logged = true;
-      XELOGW("XamAlloc: nonzero unk={:08X} (ignored; allocating size only)",
-             uint32_t(unk));
-    }
->>>>>>> theirs
   }
 
   // Allocate from the heap. Not sure why XAM does this specially, perhaps

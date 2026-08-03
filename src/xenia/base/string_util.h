@@ -14,7 +14,9 @@
 #include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <regex>
 #include <string>
+#include <variant>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
@@ -109,6 +111,56 @@ inline size_t copy_and_swap_maybe_truncating(char16_t* dest,
   size_t chars_copied = std::min(source.size(), dest_buffer_count);
   xe::copy_and_swap(dest, source.data(), chars_copied);
   return chars_copied;
+}
+
+inline bool hex_string_to_array(std::vector<uint8_t>& output_array,
+                                std::string_view value) {
+  if (value.rfind("0x", 0) == 0) {
+    value.remove_prefix(2);
+  }
+
+  output_array.reserve((value.size() + 1) / 2);
+
+  size_t remaining_length = value.size();
+  while (remaining_length > 0) {
+    uint8_t chars_to_read = remaining_length > 1 ? 2 : 1;
+    const char* substring_pointer =
+        value.data() + value.size() - remaining_length;
+
+    uint8_t string_value = 0;
+    std::from_chars_result result = std::from_chars(
+        substring_pointer, substring_pointer + chars_to_read, string_value, 16);
+
+    if (result.ec != std::errc() ||
+        result.ptr != substring_pointer + chars_to_read) {
+      output_array.clear();
+      return false;
+    }
+
+    output_array.push_back(string_value);
+    remaining_length -= chars_to_read;
+  }
+  return true;
+}
+
+inline std::string BoolToString(bool value) { return value ? "true" : "false"; }
+
+inline std::string ltrim(const std::string& value) {
+  return std::regex_replace(value, std::regex("^\\s+"), std::string(""));
+}
+
+inline std::string rtrim(const std::string& value) {
+  return std::regex_replace(value, std::regex("\\s+$"), std::string(""));
+}
+
+inline std::string trim(const std::string& value) {
+  return ltrim(rtrim(value));
+}
+
+inline std::string remove_eol(const std::string& value) {
+  std::string result = value;
+  result.erase(std::remove(result.begin(), result.end(), '\n'), result.cend());
+  return result;
 }
 
 inline std::string to_hex_string(uint32_t value) {
@@ -219,18 +271,10 @@ inline T fpfs(const std::string_view value, bool force_hex) {
     }
     std::memcpy(&result, &pun, sizeof(PUN));
   } else {
-#if XE_COMPILER_CLANG || XE_COMPILER_GNUC
+    // Use strtod for all compilers - std::from_chars for floating-point
+    // has issues on some MSVC versions
     auto temp = std::string(range);
-    result = std::strtod(temp.c_str(), nullptr);
-#else
-    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(),
-                                      result, std::chars_format::general);
-    // TODO(gibbed): do something more with errors?
-    if (error != std::errc()) {
-      assert_always();
-      return T();
-    }
-#endif
+    result = static_cast<T>(std::strtod(temp.c_str(), nullptr));
     if (is_negative) {
       result = -result;
     }
@@ -375,6 +419,30 @@ inline vec128_t from_string<vec128_t>(const std::string_view value,
     }
   }
   return v;
+}
+
+inline size_t size_in_bytes(std::variant<std::string, std::u16string> string,
+                            bool include_terminator = true) {
+  if (std::holds_alternative<std::string>(string)) {
+    return std::get<std::string>(string).size() + include_terminator;
+  } else if (std::holds_alternative<std::u16string>(string)) {
+    return (std::get<std::u16string>(string).size() + include_terminator) *
+           sizeof(char16_t);
+  } else {
+    assert_always();
+  }
+  return 0;
+}
+
+inline std::u16string read_u16string_and_swap(const char16_t* string_ptr) {
+  std::u16string input_str = std::u16string(string_ptr);
+
+  std::u16string output_str = {};
+  output_str.resize(input_str.size() + 1);
+  copy_and_swap_truncating(output_str.data(), input_str,
+                           size_in_bytes(input_str, false));
+  output_str.pop_back();  // Remove nullptr added by copy_and_swap.
+  return output_str;
 }
 
 }  // namespace string_util

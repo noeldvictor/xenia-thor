@@ -80,20 +80,14 @@ inline std::string_view TranslateAnsiString(const Memory* memory,
       ansi_string->length);
 }
 
-<<<<<<< ours
-inline std::string TranslateAnsiPath(const Memory* memory,
-                                     const X_ANSI_STRING* ansi_string) {
-  return string_util::trim(
-      std::string(TranslateAnsiString(memory, ansi_string)));
-=======
 // Like TranslateAnsiString but returns an owned, whitespace-trimmed std::string
-// for path resolution (matches upstream Canary's TranslateAnsiPath). Games
-// sometimes pass path X_ANSI_STRINGs whose length includes trailing padding /
-// whitespace; the raw string_view then fails to resolve in the VFS. Observed on
-// Banjo: Nuts & Bolts querying 'GAME:\\loctext\\englishus\\' ->
-// NtQueryFullAttributesFile NO_SUCH_FILE -> dirty-disc error.
+// for path resolution. Games sometimes pass path X_ANSI_STRINGs whose length
+// includes trailing padding/whitespace; the raw string_view then fails to
+// resolve in the VFS (observed on Banjo: Nuts & Bolts -> dirty-disc error).
 inline std::string TranslateAnsiPath(const Memory* memory,
                                      const X_ANSI_STRING* ansi_string) {
+  // Note: Edge uses string_util::trim() here; our base/string_util.h does not
+  // have trim(), so trim inline (identical semantics).
   std::string path(TranslateAnsiString(memory, ansi_string));
   const char* const whitespace = " \t\r\n\f\v";
   const size_t start = path.find_first_not_of(whitespace);
@@ -102,7 +96,6 @@ inline std::string TranslateAnsiPath(const Memory* memory,
   }
   const size_t end = path.find_last_not_of(whitespace);
   return path.substr(start, end - start + 1);
->>>>>>> theirs
 }
 
 inline std::string_view TranslateAnsiStringAddress(const Memory* memory,
@@ -521,11 +514,8 @@ void AppendKernelCallParams(StringBuffer& string_buffer,
 StringBuffer* thread_local_string_buffer();
 
 template <typename Tuple>
-<<<<<<< ours
 XE_NOALIAS void PrintKernelCall(cpu::Export* export_entry,
                                 const Tuple& params) {
-=======
-void PrintKernelCall(cpu::Export* export_entry, const Tuple& params) {
   const xe::LogLevel level =
       (export_entry->tags & xe::cpu::ExportTag::kImportant)
           ? xe::LogLevel::Info
@@ -539,25 +529,14 @@ void PrintKernelCall(cpu::Export* export_entry, const Tuple& params) {
   if (cvars::kernel_call_log_skip_discarded && !xe::logging::ShouldLog(level)) {
     return;
   }
->>>>>>> theirs
   auto& string_buffer = *thread_local_string_buffer();
   string_buffer.Reset();
   string_buffer.Append(export_entry->name);
   string_buffer.Append('(');
   AppendKernelCallParams(string_buffer, export_entry, params);
   string_buffer.Append(')');
-<<<<<<< ours
-  if (export_entry->tags & xe::cpu::ExportTag::kImportant) {
-    xe::logging::AppendLogLine(xe::LogLevel::Info, 'i',
-                               string_buffer.to_string_view(), LogSrc::Kernel);
-  } else {
-    xe::logging::AppendLogLine(xe::LogLevel::Debug, 'd',
-                               string_buffer.to_string_view(), LogSrc::Kernel);
-  }
-=======
   xe::logging::AppendLogLine(level, level == xe::LogLevel::Info ? 'i' : 'd',
                              string_buffer.to_string_view());
->>>>>>> theirs
 }
 /*
         todo: need faster string formatting/concatenation (all arguments are

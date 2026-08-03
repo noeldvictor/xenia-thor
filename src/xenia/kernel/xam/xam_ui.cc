@@ -7,21 +7,19 @@
  ******************************************************************************
  */
 
-<<<<<<< ours
 #include "xenia/kernel/xam/xam_ui.h"
-#include "xenia/app/emulator_window.h"
-#include "xenia/base/png_utils.h"
-#include "xenia/base/system.h"
-#include "xenia/hid/input_system.h"
-#include "xenia/kernel/guest_scheduler.h"
-=======
+
 #include "third_party/imgui/imgui.h"
+#include "xenia/app/emulator_window.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/png_utils.h"
 #include "xenia/base/string_util.h"
+#include "xenia/base/system.h"
 #include "xenia/emulator.h"
+#include "xenia/hid/input_system.h"
+#include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_flags.h"
->>>>>>> theirs
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_content_device.h"
@@ -29,8 +27,13 @@
 #include "xenia/ui/file_picker.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
-<<<<<<< ours
 #include "xenia/ui/imgui_guest_notification.h"
+#include "xenia/ui/window.h"
+#include "xenia/ui/windowed_app_context.h"
+#if XE_PLATFORM_ANDROID
+#include "xenia/ui/windowed_app_context_android.h"
+#endif  // XE_PLATFORM_ANDROID
+#include "xenia/xbox.h"
 
 #include "xenia/kernel/xam/ui/create_profile_ui.h"
 #include "xenia/kernel/xam/ui/game_achievements_ui.h"
@@ -46,14 +49,6 @@ DEFINE_bool(storage_selection_dialog, false,
 DECLARE_int32(license_mask);
 
 constexpr std::chrono::milliseconds kUIDelayMillis(200);
-=======
-#include "xenia/ui/window.h"
-#include "xenia/ui/windowed_app_context.h"
-#if XE_PLATFORM_ANDROID
-#include "xenia/ui/windowed_app_context_android.h"
-#endif  // XE_PLATFORM_ANDROID
-#include "xenia/xbox.h"
->>>>>>> theirs
 
 #if XE_PLATFORM_ANDROID
 DEFINE_bool(android_xam_keyboard_ime, true,
@@ -523,7 +518,6 @@ dword_result_t XamShowMessageBoxUI_entry(
 }
 DECLARE_XAM_EXPORT1(XamShowMessageBoxUI, kUI, kImplemented);
 
-<<<<<<< ours
 dword_result_t XamShowMessageBoxUIEx_entry(
     dword_t user_index, lpu16string_t title_ptr, lpu16string_t text_ptr,
     dword_t button_count, lpdword_t button_ptrs, dword_t active_button,
@@ -535,51 +529,6 @@ dword_result_t XamShowMessageBoxUIEx_entry(
                              overlapped);
 }
 DECLARE_XAM_EXPORT1(XamShowMessageBoxUIEx, kUI, kImplemented);
-=======
-// The "extended" message box. It was UNIMPLEMENTED (export 0x2DC was registered
-// but had no entry), so its OVERLAPPED never completed and any guest that puts up
-// a system message box during boot HANGS FOREVER waiting on the result. Lost
-// Odyssey does exactly this on its first load (a profile/storage prompt after
-// XamUserGetSigninState) and gets stuck on a black "Loading" screen. The Ex
-// variant is the base call plus one unused dword and a MESSAGEBOX_RESULT result
-// (whose first dword is the chosen button index, matching the base's lpdword_t
-// result) - so route it straight to the base entry so the overlapped completes.
-dword_result_t XamShowMessageBoxUIEx_entry(
-    dword_t user_index, lpu16string_t title_ptr, lpu16string_t text_ptr,
-    dword_t button_count, lpdword_t button_ptrs, dword_t active_button,
-    dword_t flags, dword_t unknown_unused, lpdword_t result_ptr,
-    pointer_t<XAM_OVERLAPPED> overlapped) {
-  return XamShowMessageBoxUI_entry(user_index, title_ptr, text_ptr, button_count,
-                                   button_ptrs, active_button, flags, result_ptr,
-                                   overlapped);
-}
-DECLARE_XAM_EXPORT1(XamShowMessageBoxUIEx, kUI, kImplemented);
-
-class KeyboardInputDialog : public XamDialog {
- public:
-  KeyboardInputDialog(xe::ui::ImGuiDrawer* imgui_drawer, std::string title,
-                      std::string description, std::string default_text,
-                      size_t max_length)
-      : XamDialog(imgui_drawer),
-        title_(title),
-        description_(description),
-        default_text_(default_text),
-        max_length_(max_length),
-        text_buffer_() {
-    if (!title_.size()) {
-      if (!description_.size()) {
-        title_ = "Keyboard Input";
-      } else {
-        title_ = description_;
-        description_ = "";
-      }
-    }
-    text_ = default_text;
-    text_buffer_.resize(max_length);
-    xe::string_util::copy_truncating(text_buffer_.data(), default_text_,
-                                     text_buffer_.size());
-  }
->>>>>>> theirs
 
 dword_result_t XNotifyQueueUI_entry(dword_t exnq, dword_t dwUserIndex,
                                     qword_t qwAreas,
@@ -679,51 +628,14 @@ dword_result_t XamShowKeyboardUI_entry(
         extended_error = X_ERROR_SUCCESS;
         length = 0;
         return X_ERROR_SUCCESS;
-<<<<<<< ours
-      }
-    };
-
-    if (kernel_state()->xam_state()->IsUIActive()) {
-      return X_ERROR_ACCESS_DENIED;
-    }
-
-    kernel_state()->xam_state()->is_xam_dialog_present_.store(true);
-
-    const Emulator* emulator = kernel_state()->emulator();
-    xe::ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
-    xe::hid::InputSystem* input_system = emulator->input_system();
-
-    std::string title_str = title ? xe::to_utf8(title.value()) : "";
-    std::string desc_str = description ? xe::to_utf8(description.value()) : "";
-    std::string def_text_str =
-        default_text ? xe::to_utf8(default_text.value()) : "";
-
-    // If no default text provided, use the user's gamertag
-    if (def_text_str.empty()) {
-      auto profile_manager = kernel_state()->xam_state()->profile_manager();
-      if (profile_manager) {
-        // Try the specified user_index first, fall back to slot 0
-        auto profile =
-            profile_manager->GetProfile(static_cast<uint8_t>(user_index));
-        if (!profile) {
-          profile = profile_manager->GetProfile(static_cast<uint8_t>(0));
-        }
-        if (profile) {
-          def_text_str = profile->name();
-        }
-      }
-    }
-
-    result = xeXamDispatchDialogEx<KeyboardInputDialog>(
-        new KeyboardInputDialog(imgui_drawer, input_system, title_str, desc_str,
-                                def_text_str, buffer_length),
-        close, overlapped);
-=======
       };
       result = xeXamDispatchHeadlessEx(run, overlapped);
     } else
 #endif  // XE_PLATFORM_ANDROID
     {
+      // THOR: on Android this branch is the ImGui compatibility keyboard,
+      // taken only when android_xam_keyboard_ime is off; the dialog body is
+      // Edge's (gamepad-aware KeyboardInputDialog + gamertag default text).
 #if XE_PLATFORM_ANDROID
       XELOGI(
           "XamShowKeyboardUI: using ImGui compatibility keyboard; title=\"{}\" "
@@ -748,17 +660,44 @@ dword_result_t XamShowKeyboardUI_entry(
           return X_ERROR_SUCCESS;
         }
       };
+
+      if (kernel_state()->xam_state()->IsUIActive()) {
+        return X_ERROR_ACCESS_DENIED;
+      }
+
+      kernel_state()->xam_state()->is_xam_dialog_present_.store(true);
+
       const Emulator* emulator = kernel_state()->emulator();
-      ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
+      xe::ui::ImGuiDrawer* imgui_drawer = emulator->imgui_drawer();
+      xe::hid::InputSystem* input_system = emulator->input_system();
+
+      std::string title_str = title ? xe::to_utf8(title.value()) : "";
+      std::string desc_str =
+          description ? xe::to_utf8(description.value()) : "";
+      std::string def_text_str =
+          default_text ? xe::to_utf8(default_text.value()) : "";
+
+      // If no default text provided, use the user's gamertag
+      if (def_text_str.empty()) {
+        auto profile_manager = kernel_state()->xam_state()->profile_manager();
+        if (profile_manager) {
+          // Try the specified user_index first, fall back to slot 0
+          auto profile =
+              profile_manager->GetProfile(static_cast<uint8_t>(user_index));
+          if (!profile) {
+            profile = profile_manager->GetProfile(static_cast<uint8_t>(0));
+          }
+          if (profile) {
+            def_text_str = profile->name();
+          }
+        }
+      }
+
       result = xeXamDispatchDialogEx<KeyboardInputDialog>(
-          new KeyboardInputDialog(
-              imgui_drawer, title ? xe::to_utf8(title.value()) : "",
-              description ? xe::to_utf8(description.value()) : "",
-              default_text ? xe::to_utf8(default_text.value()) : "",
-              buffer_length),
+          new KeyboardInputDialog(imgui_drawer, input_system, title_str,
+                                  desc_str, def_text_str, buffer_length),
           close, overlapped);
     }
->>>>>>> theirs
   }
   return result;
 }

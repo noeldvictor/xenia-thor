@@ -12,10 +12,6 @@
 
 #include <time.h>
 
-<<<<<<< ours
-=======
-#include "xenia/xbox.h"
->>>>>>> theirs
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
 #include "xenia/kernel/util/xex2_info.h"

@@ -43,12 +43,6 @@ class XEvent : public XObject {
   static object_ref<XEvent> Restore(KernelState* kernel_state,
                                     ByteStream* stream);
 
-  // Guest scheduler stage 1: parked-fiber registration so Pulse can deliver
-  // to a cooperative waiter (which only re-polls after a host pulse would
-  // already have reset the event).
-  void CooperativeWaitBegin(XThread* thread) override;
-  void CooperativeWaitEnd(XThread* thread) override;
-
  protected:
   xe::threading::WaitHandle* GetWaitHandle() override { return event_.get(); }
   void WaitCallback() override;
@@ -59,10 +53,7 @@ class XEvent : public XObject {
  private:
   bool manual_reset_ = false;
   std::unique_ptr<xe::threading::Event> event_;
-<<<<<<< ours
   // Parked cooperative waiters, so Pulse knows one will consume a set.
-=======
->>>>>>> theirs
   CooperativeWaiterFifo waiters_;
 };
 

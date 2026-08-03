@@ -89,14 +89,6 @@ struct X_FILE_DISPOSITION_INFORMATION {
 };
 static_assert_size(X_FILE_DISPOSITION_INFORMATION, 1);
 
-// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
-struct X_FILE_RENAME_INFORMATION {
-  be<uint32_t> replace_existing;
-  be<uint32_t> root_dir_handle;
-  X_ANSI_STRING ansi_string;
-};
-static_assert_size(X_FILE_RENAME_INFORMATION, 16);
-
 // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_position_information
 struct X_FILE_POSITION_INFORMATION {
   be<uint64_t> current_byte_offset;

@@ -31,9 +31,6 @@ void XIOCompletion::QueueNotification(IONotification& notification) {
     notifications_.push(notification);
     notification_semaphore_->Release(1, nullptr);
   }
-<<<<<<< ours
-  kernel_state()->guest_scheduler()->WakeAll();
-=======
   // A fiber parked in WaitForNotification's poll loop only repolls at the
   // scheduler backstop; wake it now so completions deliver promptly.
   if (GuestScheduler::enabled()) {
@@ -42,49 +39,11 @@ void XIOCompletion::QueueNotification(IONotification& notification) {
       scheduler->WakeAll();
     }
   }
->>>>>>> theirs
 }
 
 bool XIOCompletion::WaitForNotification(uint64_t wait_ticks,
                                         IONotification* notify) {
   auto ms = std::chrono::milliseconds(TimeoutTicksToMs(wait_ticks));
-<<<<<<< ours
-=======
-  if (XThread::GetCurrentFiberThread()) {
-    // Fiber-backed guest thread (guest scheduler): a raw blocking wait here
-    // would park the whole dispatch host thread and freeze every fiber
-    // multiplexed onto it. Poll + cooperative yield instead (same pattern as
-    // the XMA waits).
-    // Wall-clock deadline: SpinYield on a fiber parks until the next scheduler
-    // wake, NOT for 1ms - counting iterations would expire an N-ms timeout
-    // after N wakes (a few real ms during IO storms; code-review finding F5).
-    const uint64_t deadline_ms =
-        Clock::QueryHostUptimeMillis() + uint64_t(ms.count());
-    for (;;) {
-      auto res = threading::Wait(notification_semaphore_.get(), false,
-                                 std::chrono::milliseconds(0));
-      if (res == threading::WaitResult::kSuccess) {
-        std::unique_lock<std::mutex> lock(notification_lock_);
-        assert_false(notifications_.empty());
-        std::memcpy(notify, &notifications_.front(), sizeof(IONotification));
-        notifications_.pop();
-        return true;
-      }
-      if (Clock::QueryHostUptimeMillis() >= deadline_ms) {
-        return false;
-      }
-      GuestScheduler::SpinYield(std::chrono::milliseconds(1));
-    }
-  }
-  auto res = threading::Wait(notification_semaphore_.get(), false, ms);
-  if (res == threading::WaitResult::kSuccess) {
-    std::unique_lock<std::mutex> lock(notification_lock_);
-    assert_false(notifications_.empty());
-
-    std::memcpy(notify, &notifications_.front(), sizeof(IONotification));
-    notifications_.pop();
->>>>>>> theirs
-
   if (GuestScheduler::enabled() && XThread::GetCurrentFiberThread()) {
     // Acquire at zero timeout and yield between polls, rather than blocking
     // the dispatch host thread.

@@ -141,7 +141,6 @@ dword_result_t RtlLowerChar_entry(dword_t in) {
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlLowerChar, kNone, kImplemented);
 
-<<<<<<< ours
 static int RtlCompareStringN_impl(uint8_t* string_1, unsigned int string_1_len,
                                   uint8_t* string_2, unsigned int string_2_len,
                                   int case_insensitive) {
@@ -181,61 +180,12 @@ static int RtlCompareStringN_impl(uint8_t* string_1, unsigned int string_1_len,
   }
   // why? not sure, but its the original logic
   return string_1_len - string_2_len;
-=======
-// Compares two raw byte buffers with explicit lengths, matching the Xbox
-// kernel's RtlCompareString semantics: the signed difference of the first
-// non-matching byte (upper-cased when case-insensitive), or the length
-// difference if one buffer is a prefix of the other. A length of 0xFFFFFFFF
-// means "NUL-terminated, measure with strlen". Case-insensitivity uses ASCII
-// upper-casing, consistent with this file's RtlUpperChar/RtlLowerChar.
-static int RtlCompareStringN_impl(const uint8_t* string_1, uint32_t string_1_len,
-                                  const uint8_t* string_2, uint32_t string_2_len,
-                                  uint32_t case_insensitive) {
-  if (string_1_len == 0xFFFFFFFFu) {
-    string_1_len =
-        uint32_t(std::strlen(reinterpret_cast<const char*>(string_1)));
-  }
-  if (string_2_len == 0xFFFFFFFFu) {
-    string_2_len =
-        uint32_t(std::strlen(reinterpret_cast<const char*>(string_2)));
-  }
-  uint32_t len = std::min(string_1_len, string_2_len);
-  for (uint32_t i = 0; i < len; i++) {
-    uint8_t c1 = string_1[i];
-    uint8_t c2 = string_2[i];
-    if (c1 != c2) {
-      if (case_insensitive) {
-        if (c1 >= 'a' && c1 <= 'z') c1 -= 0x20;
-        if (c2 >= 'a' && c2 <= 'z') c2 -= 0x20;
-      }
-      if (c1 != c2) {
-        return int(c1) - int(c2);
-      }
-    }
-  }
-  return int(string_1_len) - int(string_2_len);
-}
-
-dword_result_t RtlCompareString_entry(pointer_t<X_ANSI_STRING> string_1,
-                                      pointer_t<X_ANSI_STRING> string_2,
-                                      dword_t case_insensitive) {
-  // RtlCompareString takes counted PSTRING (X_ANSI_STRING) structs, not char
-  // pointers - the previous strcmp on the struct header was wrong (it compared
-  // the {length, max_length, ptr} bytes instead of the strings).
-  auto buf_1 =
-      kernel_memory()->TranslateVirtual<const uint8_t*>(string_1->pointer);
-  auto buf_2 =
-      kernel_memory()->TranslateVirtual<const uint8_t*>(string_2->pointer);
-  return RtlCompareStringN_impl(buf_1, string_1->length, buf_2,
-                                string_2->length, case_insensitive);
->>>>>>> theirs
 }
 dword_result_t RtlCompareStringN_entry(lpstring_t string_1,
                                        dword_t string_1_len,
                                        lpstring_t string_2,
                                        dword_t string_2_len,
                                        dword_t case_insensitive) {
-<<<<<<< ours
   return RtlCompareStringN_impl(
       reinterpret_cast<uint8_t*>(string_1.host_address()), string_1_len,
       reinterpret_cast<uint8_t*>(string_2.host_address()), string_2_len,
@@ -253,19 +203,6 @@ dword_result_t RtlCompareString_entry(lpvoid_t string_1, lpvoid_t string_2,
   unsigned length_2 = xe::load_and_swap<uint16_t>(&xs2->length);
 
   uint32_t ptr_1 = xe::load_and_swap<uint32_t>(&xs1->ptr);
-=======
-  // The N variant takes raw counted buffers (not PSTRING structs). The old
-  // impl measured strlen into len1/len2 but then min'd the *original* lengths,
-  // leaving the 0xFFFF... sentinel path dead, and used the wrong 0xFFFF (16-bit)
-  // sentinel for a 32-bit length.
-  return RtlCompareStringN_impl(
-      reinterpret_cast<const uint8_t*>(static_cast<const char*>(string_1)),
-      string_1_len,
-      reinterpret_cast<const uint8_t*>(static_cast<const char*>(string_2)),
-      string_2_len, case_insensitive);
-}
-DECLARE_XBOXKRNL_EXPORT1(RtlCompareStringN, kNone, kImplemented);
->>>>>>> theirs
 
   uint32_t ptr_2 = xe::load_and_swap<uint32_t>(&xs2->ptr);
 

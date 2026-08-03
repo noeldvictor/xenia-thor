@@ -56,7 +56,6 @@ bool XSemaphore::InitializeNative(void* native_ptr,
 bool XSemaphore::ReleaseSemaphore(int32_t release_count,
                                   int32_t* out_previous_count) {
   int32_t previous_count = 0;
-<<<<<<< ours
   bool success = semaphore_->Release(release_count, &previous_count);
   if (out_previous_count) {
     *out_previous_count = previous_count;
@@ -88,27 +87,6 @@ void XSemaphore::WaitCallback() {
                            ->TranslateVirtual<X_KSEMAPHORE*>(guest_object())
                            ->header.signal_state;
   signal_state = signal_state - 1;
-=======
-  if (semaphore_->Release(release_count, &previous_count)) {
-    WakeCooperativeWaiters();
-  }
-  return previous_count;
->>>>>>> theirs
-}
-
-void XSemaphore::CooperativeWaitBegin(XThread* thread) {
-  waiters_.Add(thread);
-}
-
-void XSemaphore::CooperativeWaitEnd(XThread* thread) {
-  // Poke the new front so it re-polls now.
-  if (waiters_.Remove(thread)) {
-    WakeCooperativeWaiters();
-  }
-}
-
-bool XSemaphore::CooperativeMayAcquire(XThread* thread) {
-  return waiters_.MayAcquire(thread);
 }
 
 bool XSemaphore::Save(ByteStream* stream) {

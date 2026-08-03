@@ -7,21 +7,14 @@
  ******************************************************************************
  */
 
-<<<<<<< ours
 #include <atomic>
 #include <thread>
 
-#include "xenia/base/logging.h"
-#include "xenia/base/math.h"
-#include "xenia/base/string_util.h"
-#include "xenia/base/threading.h"
-=======
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/string_util.h"
-#include "xenia/cpu/xex_module.h"
->>>>>>> theirs
+#include "xenia/base/threading.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/smc.h"
@@ -30,7 +23,6 @@
 #include "xenia/kernel/xam/xam_content_device.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xam_private.h"
-<<<<<<< ours
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xenumerator.h"
@@ -39,16 +31,10 @@
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/vfs/devices/xcontent_container_device.h"
-=======
-#include "xenia/kernel/user_module.h"
-#include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
-#include "xenia/kernel/xenumerator.h"
-#include "xenia/vfs/devices/disc_image_device.h"
-#include "xenia/vfs/devices/stfs_container_device.h"
->>>>>>> theirs
 #include "xenia/xbox.h"
 
 DECLARE_bool(in_process_title_relaunch);
+DECLARE_string(disc_playlist);
 
 DEFINE_int32(
     license_mask, 0,
@@ -710,35 +696,27 @@ typedef struct {
 } X_SWAPDISC_ERROR_MESSAGE;
 static_assert_size(X_SWAPDISC_ERROR_MESSAGE, 12);
 
-<<<<<<< ours
-=======
-// Runtime disc swap (ported from xenia-edge, master/Android adaptation): the
-// new disc path comes from the disc_playlist cvar (the launcher passes the
-// parsed .m3u), NOT an interactive file-picker loop - on the Thor there is no
-// synchronous native picker, and the playlist answers deterministically.
->>>>>>> theirs
+// Runtime disc swap (xenia-edge structure + THOR Android adaptation): when
+// the disc_playlist cvar is set (the launcher passes the parsed .m3u), the
+// new disc path is resolved non-interactively via GetDiscPathForNumber; the
+// interactive GetNewDiscPath UI loop is the fallback.
 dword_result_t XamSwapDisc_entry(
     dword_t disc_number, pointer_t<X_KEVENT> completion_handle,
     pointer_t<X_SWAPDISC_ERROR_MESSAGE> error_message) {
   xex2_opt_execution_info* info = nullptr;
   kernel_state()->GetExecutableModule()->GetOptHeader(XEX_HEADER_EXECUTION_INFO,
                                                       &info);
-<<<<<<< ours
-
-  // Validate the requested disc number
-=======
   if (!info) {
     return X_ERROR_FUNCTION_FAILED;
   }
 
->>>>>>> theirs
+  // Validate the requested disc number
   if (disc_number < 1 || disc_number > info->disc_count) {
     XELOGE("XamSwapDisc: Invalid disc number {} (valid range: 1-{})",
            uint32_t(disc_number), uint8_t(info->disc_count));
     return X_ERROR_INVALID_PARAMETER;
   }
 
-<<<<<<< ours
   auto completion_event = [completion_handle]() -> void {
     auto kevent = xboxkrnl::xeKeSetEvent(completion_handle, 1, 0);
 
@@ -748,10 +726,6 @@ dword_result_t XamSwapDisc_entry(
     if (object) {
       object->Retain();
     }
-=======
-  auto completion_event = [completion_handle]() {
-    xboxkrnl::xeKeSetEvent(completion_handle, 1, 0);
->>>>>>> theirs
   };
 
   if (info->disc_number == disc_number) {
@@ -759,7 +733,6 @@ dword_result_t XamSwapDisc_entry(
     return X_ERROR_SUCCESS;
   }
 
-<<<<<<< ours
   auto filesystem = kernel_state()->file_system();
   // Mount to Cdrom0 so the game: symlink points to the new disc
   auto mount_path = "\\Device\\Cdrom0";
@@ -774,13 +747,29 @@ dword_result_t XamSwapDisc_entry(
 
   std::string error_dialog_message;
 
+  // THOR: when the disc_playlist cvar is set (the Android launcher passes the
+  // parsed .m3u; there is no synchronous native picker on the Thor), resolve
+  // the requested disc non-interactively via GetDiscPathForNumber first. Only
+  // if the playlist has no answer (or its disc fails validation below) fall
+  // back to Edge's interactive GetNewDiscPath UI loop.
+  bool try_playlist = !cvars::disc_playlist.empty();
+
   // Loop until user provides the correct disc
   while (true) {
-    const std::filesystem::path new_disc_path =
-        kernel_state()->emulator()->GetNewDiscPath(
-            xe::to_utf8(text_message) + "\n\n" + error_dialog_message);
-    XELOGI("XamSwapDisc: GetNewDiscPath returned path {}.",
-           new_disc_path.string().c_str());
+    std::filesystem::path new_disc_path;
+    if (try_playlist) {
+      try_playlist = false;  // One shot; any failure falls back to the UI.
+      new_disc_path = kernel_state()->emulator()->GetDiscPathForNumber(
+          uint32_t(disc_number));
+      XELOGI("XamSwapDisc: disc_playlist resolved disc {} to {}.",
+             uint32_t(disc_number), new_disc_path.string().c_str());
+    }
+    if (new_disc_path.empty()) {
+      new_disc_path = kernel_state()->emulator()->GetNewDiscPath(
+          xe::to_utf8(text_message) + "\n\n" + error_dialog_message);
+      XELOGI("XamSwapDisc: GetNewDiscPath returned path {}.",
+             new_disc_path.string().c_str());
+    }
 
     // Clear the error message for next iteration
     error_dialog_message.clear();
@@ -912,6 +901,10 @@ dword_result_t XamSwapDisc_entry(
       break;
     }
   }
+
+  // THOR: keep the guest-visible disc number current so repeat queries (and
+  // the early-out above) see the swapped disc.
+  info->disc_number = uint8_t(uint32_t(disc_number));
 
   completion_event();
   return X_ERROR_SUCCESS;
@@ -1073,58 +1066,7 @@ dword_result_t XamContentGetDeviceVolumePath_entry(dword_t device_id,
   return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(XamContentGetDeviceVolumePath, kContent, kStub);
-=======
-  const std::filesystem::path new_disc_path =
-      kernel_state()->emulator()->GetDiscPathForNumber(uint32_t(disc_number));
-  if (new_disc_path.empty()) {
-    XELOGE(
-        "XamSwapDisc: no playlist entry for disc {} (launch the title from an "
-        ".m3u listing every disc, or set --disc_playlist)",
-        uint32_t(disc_number));
-    return X_ERROR_FUNCTION_FAILED;
-  }
-  XELOGI("XamSwapDisc: swapping to disc {} at {}", uint32_t(disc_number),
-         xe::path_to_utf8(new_disc_path));
 
-  auto* filesystem = kernel_state()->file_system();
-  const std::string mount_path = "\\Device\\Cdrom0";
-  if (filesystem->ResolvePath(mount_path) != nullptr) {
-    filesystem->UnregisterDevice(mount_path);
-  }
-
-  auto extension = xe::utf8::lower_ascii(
-      xe::path_to_utf8(new_disc_path.extension()));
-  std::unique_ptr<vfs::Device> device;
-  if (extension == ".iso") {
-    device = std::make_unique<vfs::DiscImageDevice>(mount_path, new_disc_path);
-  } else {
-    device =
-        std::make_unique<vfs::StfsContainerDevice>(mount_path, new_disc_path);
-  }
-  if (!device->Initialize()) {
-    XELOGE("XamSwapDisc: failed to mount disc at {}",
-           xe::path_to_utf8(new_disc_path));
-    return X_ERROR_FUNCTION_FAILED;
-  }
-  if (!filesystem->RegisterDevice(std::move(device))) {
-    XELOGE("XamSwapDisc: failed to register the swapped disc device");
-    return X_ERROR_FUNCTION_FAILED;
-  }
-  // Re-point the game symlinks at the fresh device.
-  filesystem->UnregisterSymbolicLink("game:");
-  filesystem->UnregisterSymbolicLink("d:");
-  filesystem->RegisterSymbolicLink("game:", mount_path);
-  filesystem->RegisterSymbolicLink("d:", mount_path);
-
-  // Guest-visible disc number so repeat queries see the new disc.
-  info->disc_number = uint8_t(uint32_t(disc_number));
-
-  completion_event();
-  return X_ERROR_SUCCESS;
-}
-DECLARE_XAM_EXPORT1(XamSwapDisc, kContent, kImplemented);
-
->>>>>>> theirs
 }  // namespace xam
 }  // namespace kernel
 }  // namespace xe

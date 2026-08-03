@@ -11,11 +11,8 @@
 #include "xenia/base/debugging.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
-<<<<<<< ours
-#include "xenia/emulator.h"
-=======
 #include "xenia/cpu/xex_module.h"
->>>>>>> theirs
+#include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -656,15 +653,12 @@ void HandleCppException(pointer_t<X_EXCEPTION_RECORD> record) {
     // Otherwise fall through to the historical stub.
   }
 
-<<<<<<< ours
-  // xe::debugging::Break();
-=======
   // Without dispatch (or on any failure above): log and return so
   // RtlRaiseException is non-fatal, matching upstream canary/edge. Otherwise ANY
   // guest throw (e.g. std::bad_alloc from a failed allocation -- Project
   // Sylpheed's heap allocator does exactly this) hard-crashes the emulator at
   // the raise site.
->>>>>>> theirs
+  // xe::debugging::Break();
   XELOGE("Guest attempted to throw a C++ exception!");
 }
 
@@ -682,17 +676,10 @@ void RtlRaiseException_entry(pointer_t<X_EXCEPTION_RECORD> record) {
 
   // TODO(benvanik): unwinding.
   // This is going to suck.
-<<<<<<< ours
-  // xe::debugging::Break();
-
-  // RtlRaiseException definitely wasn't a noreturn function, we can return
-  // safe-ish
-=======
   // RtlRaiseException is not a noreturn function for unhandled codes; return
   // safe-ish instead of aborting the whole emulator (port of upstream
   // canary/edge).
   // xe::debugging::Break();
->>>>>>> theirs
   XELOGE("Guest attempted to trigger a breakpoint!");
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlRaiseException, kDebug, kStub);

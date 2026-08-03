@@ -9,12 +9,9 @@
 
 #include "xenia/kernel/xam/content_manager.h"
 
-<<<<<<< ours
-=======
 #include <string>
 #include <system_error>
 
->>>>>>> theirs
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
@@ -264,19 +261,27 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(
       }
 
       XCONTENT_AGGREGATE_DATA content_data;
-      if (XSUCCEEDED(ReadContentHeaderFile(xe::path_to_utf8(file_info.name),
-                                           xuid, title_id, content_type,
-                                           content_data))) {
-        result.emplace_back(std::move(content_data));
-      } else {
+      if (!XSUCCEEDED(ReadContentHeaderFile(xe::path_to_utf8(file_info.name),
+                                            xuid, title_id, content_type,
+                                            content_data))) {
         content_data.device_id = device_id;
         content_data.content_type = content_type;
         content_data.set_display_name(xe::path_to_utf16(file_info.name));
         content_data.set_file_name(xe::path_to_utf8(file_info.name));
         content_data.title_id = title_id;
         content_data.xuid = xuid;
-        result.emplace_back(std::move(content_data));
       }
+      // THOR: skip saved-game packages that were left behind incomplete
+      // (e.g. an interrupted content install) so titles don't enumerate
+      // corrupt saves.
+      const auto package_path = file_info.path / file_info.name;
+      if (!IsContentOpen(content_data) && IsSavedGameContent(content_data) &&
+          IsIncompleteSavedGamePackagePath(package_path)) {
+        XELOGI("Skipping incomplete saved-game content package: {}",
+               xe::path_to_utf8(package_path));
+        continue;
+      }
+      result.emplace_back(std::move(content_data));
     }
   }
   return result;
@@ -311,16 +316,7 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContentODD(
     content_data.set_display_name(xe::path_to_utf16(child->name()));
     content_data.set_file_name(xe::path_to_utf8(child->name()));
     content_data.title_id = title_id;
-<<<<<<< ours
     content_data.xuid = xuid;
-=======
-    if (!IsContentOpen(content_data) && IsSavedGameContent(content_data) &&
-        IsIncompleteSavedGamePackagePath(file_info.path)) {
-      XELOGI("Skipping incomplete saved-game content package: {}",
-             xe::path_to_utf8(file_info.path));
-      continue;
-    }
->>>>>>> theirs
     result.emplace_back(std::move(content_data));
   }
 
@@ -342,25 +338,21 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
   return package;
 }
 
-<<<<<<< ours
 bool ContentManager::ContentExists(const uint64_t xuid,
                                    const XCONTENT_AGGREGATE_DATA& data) {
   auto path = ResolvePackagePath(xuid, data);
-  return std::filesystem::exists(path);
-=======
-bool ContentManager::ContentExists(const XCONTENT_AGGREGATE_DATA& data) {
-  auto path = ResolvePackagePath(data);
   if (!std::filesystem::exists(path)) {
     return false;
   }
   if (IsContentOpen(data)) {
     return true;
   }
+  // THOR: an incomplete saved-game package on disk does not count as
+  // existing content.
   if (IsSavedGameContent(data) && IsIncompleteSavedGamePackagePath(path)) {
     return false;
   }
   return true;
->>>>>>> theirs
 }
 
 X_RESULT ContentManager::WriteContentHeaderFile(const uint64_t xuid,

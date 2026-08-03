@@ -7,23 +7,35 @@
  ******************************************************************************
  */
 
-#ifndef XENIA_VFS_ISO_METADATA_H_
-#define XENIA_VFS_ISO_METADATA_H_
+#ifndef XENIA_APU_XMP_STATE_H_
+#define XENIA_APU_XMP_STATE_H_
 
 #include <cstdint>
-#include <filesystem>
-#include <optional>
-
-#include "xenia/vfs/xex_metadata.h"
 
 namespace xe {
-namespace vfs {
+namespace apu {
 
-std::optional<XexMetadata> ExtractIsoMetadata(
-    const std::filesystem::path& path);
-std::optional<XexMetadata> ExtractIsoMetadata(const uint8_t* data, size_t size);
+// Wire ABI values from the Xbox 360 XMP API. Values must not be changed.
+enum class XmpClient : uint32_t {
+  kDash = 0,
+  kHud = 1,
+  kGame = 2,
+  kRemote = 3,
+  kMusicPlayer = 4,
+  kMsal = 5,
+  kMce = 6,
+};
 
-}  // namespace vfs
+// Wire ABI values from the Xbox 360 XMP API. Values must not be changed.
+enum class PlaybackController : uint32_t {
+  kGame = 0,
+  kUser = 1,
+  kDash = 2,
+  kMce = 3,
+  kRestore = 4,
+};
+
+}  // namespace apu
 }  // namespace xe
 
-#endif  // XENIA_VFS_ISO_METADATA_H_
+#endif  // XENIA_APU_XMP_STATE_H_

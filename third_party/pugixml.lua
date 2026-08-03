@@ -1,0 +1,16 @@
+group("third_party")
+project("pugixml")
+  uuid("89a1d3e6-9f9a-4a9e-8f2a-3c5b1d2e4f6a")
+  kind("StaticLib")
+  language("C++")
+  defines({
+    "_LIB",
+  })
+  includedirs({
+    "pugixml/src",
+  })
+  files({
+    "pugixml/src/pugiconfig.hpp",
+    "pugixml/src/pugixml.cpp",
+    "pugixml/src/pugixml.hpp",
+  })

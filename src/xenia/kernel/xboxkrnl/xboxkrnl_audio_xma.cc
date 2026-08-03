@@ -381,12 +381,7 @@ dword_result_t XMADisableContext_entry(lpvoid_t context_ptr, dword_t wait) {
   auto* decoder = kernel_state()->emulator()->audio_system()->xma_decoder();
   if (wait && XThread::GetCurrentFiberThread()) {
     // Retry the non-blocking form, since taking the decoder lock would stall
-<<<<<<< ours
     // every guest thread sharing this dispatch thread.
-=======
-    // every guest thread sharing this dispatch thread. (Guest scheduler
-    // stage 1, from xenia-edge.)
->>>>>>> theirs
     while (!decoder->BlockOnContext(context_ptr, true)) {
       GuestScheduler::SpinYield(std::chrono::milliseconds(1));
     }
@@ -404,13 +399,10 @@ dword_result_t XMABlockWhileInUse_entry(lpvoid_t context_ptr) {
     if (!context.input_buffer_0_valid && !context.input_buffer_1_valid) {
       break;
     }
-<<<<<<< ours
     if (!context.work_buffer_ptr) {
       break;
     }
-=======
     // On a fiber this yields the dispatch thread instead of sleeping it.
->>>>>>> theirs
     GuestScheduler::SpinYield(std::chrono::milliseconds(1));
   } while (true);
   return 0;

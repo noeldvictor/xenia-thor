@@ -14,10 +14,7 @@
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
-<<<<<<< ours
 #include "xenia/hid/input_system.h"
-=======
->>>>>>> theirs
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -30,7 +27,7 @@
 #include "xenia/kernel/xnotifylistener.h"
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
-<<<<<<< ours
+#include "xenia/patcher/patcher.h"
 #include "xenia/ui/imgui_host_notification.h"
 
 #include "third_party/crypto/TinySHA1.hpp"
@@ -44,21 +41,14 @@ DEFINE_uint32(kernel_build_version, 1888, "Define current kernel version",
               "Kernel");
 
 DECLARE_string(cl);
-=======
-#include "xenia/patcher/patcher.h"
->>>>>>> theirs
 
 namespace xe {
 namespace kernel {
 
-<<<<<<< ours
-constexpr std::chrono::milliseconds kDeferredOverlappedDelayMillis(25);
-=======
 // 25ms matches xenia-edge/canary. The dispatch worker is strictly serial and
 // sleeps inside each queued op, so this is also the overlapped throughput cap
 // (40/s); 100ms starved boot sequences that issue dozens of content ops.
-constexpr uint32_t kDeferredOverlappedDelayMillis = 25;
->>>>>>> theirs
+constexpr std::chrono::milliseconds kDeferredOverlappedDelayMillis(25);
 
 // This is a global object initialized with the XboxkrnlModule.
 // It references the current kernel state object that all kernel methods should
@@ -82,24 +72,8 @@ KernelState::KernelState(Emulator* emulator)
   smc_ = std::make_unique<SystemManagementController>();
   xconfig_ = std::make_unique<XConfig>();
 
-<<<<<<< ours
   InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
-=======
-  app_manager_ = std::make_unique<xam::AppManager>();
-  user_profile_ = std::make_unique<xam::UserProfile>();
-
-  auto content_root = emulator_->content_root();
-  if (!content_root.empty()) {
-    content_root = std::filesystem::absolute(content_root);
-  }
-  content_manager_ = std::make_unique<xam::ContentManager>(this, content_root);
-
-  guest_scheduler_ = std::make_unique<GuestScheduler>(this);
-
-  assert_null(shared_kernel_state_);
-  shared_kernel_state_ = this;
->>>>>>> theirs
 
   auto hc_loc_heap = memory_->LookupHeap(strange_hardcoded_page_);
   bool fixed_alloc_worked = hc_loc_heap->AllocFixed(
@@ -114,10 +88,6 @@ KernelState::~KernelState() {
   SetExecutableModule(nullptr);
 
   ShutdownDispatchThread();
-
-  // Reclaiming leftover fibers releases handles, so run this while the object
-  // table is still alive.
-  guest_scheduler_->Shutdown();
 
   // Reclaiming leftover fibers releases handles, so run this while the object
   // table is still alive.
@@ -697,19 +667,17 @@ X_RESULT KernelState::FinishLoadingUserModule(
     return result;
   }
   module->Dump();
-  emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(),
-                                             module->hash());
-  emulator_->on_patch_apply();
-  if (module->xex_module()) {
-    module->xex_module()->Precompile();
-  }
-
   // Apply any matching game patches now that the module is loaded and its build
   // hash has been computed (Dump() -> CalculateHash()). Non-matching titles
   // apply nothing, so this is safe to run for every loaded module.
   if (emulator_->patcher() != nullptr) {
     emulator_->patcher()->ApplyPatchesForTitle(memory_, module->title_id(),
                                                module->hash());
+  }
+  // NOTE(kernel-port): Edge fires emulator_->on_patch_apply() here (UI patch
+  // list refresh); our Emulator does not expose that delegate yet.
+  if (module->xex_module()) {
+    module->xex_module()->Precompile();
   }
 
   if (module->is_dll_module() && module->entry_point() && call_entry) {
@@ -954,44 +922,29 @@ void KernelState::UnloadUserModule(const object_ref<UserModule>& module,
   object_table()->ReleaseHandleInLock(module->handle());
 }
 
-<<<<<<< ours
 void KernelState::InitXmpVolumePatch() {
   xmp_volume_patch_ = XmpVolumePatch::CreateForTitle(title_id(), this);
 }
-=======
-void KernelState::TerminateTitle() {
-  XELOGD("KernelState::TerminateTitle");
-  // Stop the cooperative dispatch threads before force-terminating guest
-  // threads - their fibers run on the dispatchers, so terminating one while
-  // it is executing would free the fiber stack out from under it. Done
-  // before taking the global lock: a still-running fiber may need the lock
-  // to reach its next yield point. No-op if the scheduler never started.
-  if (guest_scheduler_) {
-    guest_scheduler_->Shutdown();
-  }
-  auto global_lock = global_critical_region_.Acquire();
->>>>>>> theirs
 
 void KernelState::TerminateTitle() {
   XELOGI("KernelState::TerminateTitle");
+  // Thor keep: stop the cooperative dispatch threads before tearing the
+  // process down - their fibers run on the dispatchers, and a fiber mid-write
+  // during exit can corrupt persisted state. No-op if the scheduler never
+  // started.
+  if (guest_scheduler_) {
+    guest_scheduler_->Shutdown();
+  }
   xe::FlushLog();
   std::quick_exit(EXIT_SUCCESS);
 }
 
 void KernelState::ExitToDashboard() {
   XELOGI("KernelState::ExitToDashboard");
-  if (auto on_exit_to_dashboard = emulator_->on_exit_to_dashboard()) {
-    if (on_exit_to_dashboard()) {
-      // Park off guest code until the in-process reset terminates us; Suspend
-      // can return on POSIX, so loop rather than fall through to
-      // TerminateTitle.
-      auto* current_thread = XThread::GetCurrentThread();
-      current_thread->Suspend(nullptr);
-      while (true) {
-        xe::threading::NanoSleep(int64_t(1'000'000'000));
-      }
-    }
-  }
+  // NOTE(kernel-port): Edge routes this through Emulator's
+  // on_exit_to_dashboard callback for an in-process title reset. Our Emulator
+  // does not expose that surface yet, so exiting to dashboard terminates the
+  // title (previous fork behavior).
   TerminateTitle();
 }
 
@@ -1216,13 +1169,6 @@ void KernelState::CompleteOverlappedDeferredEx(
   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
   XOverlappedSetResult(ptr, X_ERROR_IO_PENDING);
   XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
-<<<<<<< ours
-  X_HANDLE event_handle = XOverlappedGetEvent(ptr);
-  if (event_handle) {
-    auto ev = object_table()->LookupObject<XObject>(event_handle);
-
-    assert_not_null(ev);
-=======
   // Titles reuse one X_OVERLAPPED + event across sequential ops. Reset the
   // event when arming, or the guest's wait returns instantly on the previous
   // op's still-signaled event and reads a result that is still IO_PENDING -
@@ -1230,7 +1176,8 @@ void KernelState::CompleteOverlappedDeferredEx(
   X_HANDLE event_handle = XOverlappedGetEvent(ptr);
   if (event_handle) {
     auto ev = object_table()->LookupObject<XObject>(event_handle);
->>>>>>> theirs
+
+    assert_not_null(ev);
     if (ev && ev->type() == XObject::Type::Event) {
       ev.get<XEvent>()->Reset();
     }

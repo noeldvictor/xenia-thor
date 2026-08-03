@@ -49,10 +49,6 @@ class XSemaphore : public XObject {
   }
   void WaitCallback() override;
 
-  void CooperativeWaitBegin(XThread* thread) override;
-  void CooperativeWaitEnd(XThread* thread) override;
-  bool CooperativeMayAcquire(XThread* thread) override;
-
  private:
   std::unique_ptr<xe::threading::Semaphore> semaphore_;
   // Fibers waiting cooperatively, in order, for fair permit handout.

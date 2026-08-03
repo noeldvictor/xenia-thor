@@ -98,14 +98,11 @@ void ObjectTable::Reset() {
   last_free_host_entry_ = 0;
   free(table_);
   table_ = nullptr;
-<<<<<<< ours
   free(host_table_);
   host_table_ = nullptr;
-=======
 
   // Structural change: invalidate stale per-thread handle caches.
   BumpObjectGeneration();
->>>>>>> theirs
 }
 
 X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot, bool host) {
@@ -202,9 +199,6 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
       // Retain so long as the object is in the table.
       object->Retain();
 
-<<<<<<< ours
-      XELOGD("Added handle:{:08X} for {}", handle, typeid(*object).name());
-=======
       // Hot path: fires on EVERY handle add (e.g. ~135/s of async-I/O event
       // churn during UE3 / Gears 3 asset loads). At the default Info level this
       // cost a typeid() RTTI + {fmt} format + logcat write *inside the global
@@ -215,7 +209,6 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
       if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
         XELOGD("Added handle:{:08X} for {}", handle, typeid(*object).name());
       }
->>>>>>> theirs
     }
   }
 
@@ -262,7 +255,7 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
     auto global_lock =
         global_critical_region_.Acquire("ObjectTable::ReleaseHandle");
 
-    ObjectTableEntry* entry = LookupTableLocked(handle);
+    ObjectTableEntry* entry = LookupTableInLock(handle);
     if (!entry) {
       result = X_STATUS_INVALID_HANDLE;
     } else if (--entry->handle_ref_count == 0) {
@@ -271,21 +264,33 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
     }
   }
 
-<<<<<<< ours
-  return ReleaseHandleInLock(handle);
-}
-X_STATUS ObjectTable::ReleaseHandleInLock(X_HANDLE handle) {
-  ObjectTableEntry* entry = LookupTableInLock(handle);
-  if (!entry) {
-    return X_STATUS_INVALID_HANDLE;
-=======
+  // Release the object after dropping the global lock (thor shape: avoids
+  // running destructors under the global critical region).
   if (object_to_release) {
     object_to_release->Release();
->>>>>>> theirs
   }
 
   if (XFAILED(result)) {
     return result;
+  }
+
+  // FIXME: Return a status code telling the caller it wasn't released
+  // (but not a failure code)
+  return X_STATUS_SUCCESS;
+}
+
+// Edge API: release with the global critical region already held (used by
+// KernelState::UnloadUserModule). The object release runs under the caller's
+// lock, matching Edge's semantics (the global critical region is recursive).
+X_STATUS ObjectTable::ReleaseHandleInLock(X_HANDLE handle) {
+  ObjectTableEntry* entry = LookupTableInLock(handle);
+  if (!entry) {
+    return X_STATUS_INVALID_HANDLE;
+  }
+
+  if (--entry->handle_ref_count == 0) {
+    // No more references. Remove it from the table.
+    return RemoveHandle(handle);
   }
 
   // FIXME: Return a status code telling the caller it wasn't released
@@ -316,11 +321,7 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
   }
   auto global_lock = global_critical_region_.Acquire();
 
-<<<<<<< ours
   ObjectTableEntry* entry = LookupTableInLock(handle);
-=======
-  ObjectTableEntry* entry = LookupTableLocked(handle);
->>>>>>> theirs
   if (!entry) {
     return X_STATUS_INVALID_HANDLE;
   }
@@ -340,15 +341,11 @@ X_STATUS ObjectTable::RemoveHandleLocked(X_HANDLE handle,
       object->handles().erase(handle_entry);
     }
 
-<<<<<<< ours
-    XELOGD("Removed handle:{:08X} for {}", handle, typeid(*object).name());
-=======
     // Hot path (see AddHandle): gate to Debug so the typeid() + format + logcat
     // write don't run on every handle removal under the global lock.
     if (xe::logging::ShouldLog(xe::LogLevel::Debug)) {
       XELOGD("Removed handle:{:08X} for {}", handle, typeid(*object).name());
     }
->>>>>>> theirs
 
     // Remove object name from mapping to prevent naming collision.
     if (!object->name().empty()) {
@@ -407,24 +404,15 @@ void ObjectTable::PurgeAllObjects() {
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTable(X_HANDLE handle) {
   auto global_lock = global_critical_region_.Acquire();
-<<<<<<< ours
   return LookupTableInLock(handle);
 }
 
 ObjectTable::ObjectTableEntry* ObjectTable::LookupTableInLock(X_HANDLE handle) {
-=======
-  return LookupTableLocked(handle);
-}
-
-ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(
-    X_HANDLE handle) {
->>>>>>> theirs
   handle = TranslateHandle(handle);
   if (!handle) {
     return nullptr;
   }
 
-<<<<<<< ours
   const bool is_host_object = XObject::is_handle_host_object(handle);
   uint32_t slot = GetHandleSlot(handle, is_host_object);
   if (is_host_object) {
@@ -432,15 +420,15 @@ ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(
       return &host_table_[slot];
     }
   } else if (slot <= table_capacity_) {
-=======
-  // Lower 2 bits are ignored.
-  uint32_t slot = GetHandleSlot(handle);
-  if (slot <= table_capacity_) {
->>>>>>> theirs
     return &table_[slot];
   }
 
   return nullptr;
+}
+
+// Alias for the thor-side name (both are declared in object_table.h).
+ObjectTable::ObjectTableEntry* ObjectTable::LookupTableLocked(X_HANDLE handle) {
+  return LookupTableInLock(handle);
 }
 
 // Generic lookup
@@ -467,8 +455,9 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
   const bool use_cache = cvars::kernel_object_handle_cache && !already_locked;
   if (use_cache) {
     uint32_t gen = object_generation();
-    HandleCacheEntry& ce =
-        t_handle_cache.entries[GetHandleSlot(handle) & (kHandleCacheSize - 1)];
+    HandleCacheEntry& ce = t_handle_cache.entries
+        [GetHandleSlot(handle, XObject::is_handle_host_object(handle)) &
+         (kHandleCacheSize - 1)];
     if (ce.table == this && ce.handle == handle && ce.generation == gen &&
         ce.object) {
       ce.object->Retain();
@@ -517,7 +506,7 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
           "(kernel_object_handle_cache)");
     }
     HandleCacheEntry& ce =
-        t_handle_cache.entries[GetHandleSlot(handle) & (kHandleCacheSize - 1)];
+        t_handle_cache.entries[slot & (kHandleCacheSize - 1)];
     if (ce.object) {
       ce.object->Release();
     }

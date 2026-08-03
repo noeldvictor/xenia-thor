@@ -120,8 +120,6 @@ class Entry {
   bool Delete();
   void Touch();
   void Rename(const std::filesystem::path file_path);
-
-  void Rename(const std::filesystem::path file_path);
   // If successful, out_file points to a new file. When finished, call
   // file->Destroy()
   virtual X_STATUS Open(uint32_t desired_access, File** out_file) = 0;
@@ -141,14 +139,10 @@ class Entry {
       const std::string_view name, uint32_t attributes) {
     return nullptr;
   }
-<<<<<<< ours
   virtual bool DeleteEntryInternal(Entry* entry) = 0;
-=======
-  virtual bool DeleteEntryInternal(Entry* entry) { return false; }
   // Move/rename this entry to the given guest path. Default is a no-op (used by
   // read-only devices - ISO/STFS - where rename is unsupported). Writable
   // host-backed devices override to perform the actual move.
->>>>>>> theirs
   virtual void RenameEntryInternal(
       const std::vector<std::string_view>& path_parts) {}
 

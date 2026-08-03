@@ -115,7 +115,6 @@ DECLARE_XAM_EXPORT2(XMsgCompleteIORequest, kNone, kImplemented, kSketchy);
 dword_result_t XamGetOverlappedResult_entry(
     pointer_t<XAM_OVERLAPPED> overlapped_ptr, lpdword_t length_ptr,
     dword_t wait) {
-<<<<<<< ours
   uint32_t result = X_STATUS_SUCCESS;
 
   if (overlapped_ptr->result != X_ERROR_IO_PENDING) {
@@ -134,31 +133,6 @@ dword_result_t XamGetOverlappedResult_entry(
 
   if (XFAILED(result)) {
     return XThread::GetLastError();
-=======
-  // The third argument is bWait. A non-waiting poll on a pending op must
-  // return ERROR_IO_INCOMPLETE, NOT block: titles poll this once per frame
-  // from their loading state machine, and an infinite non-alertable wait here
-  // parks the loader thread forever (it can never receive its own completion
-  // APC) - Lost Odyssey's infinite loading screen. Matches xenia-edge.
-  uint32_t result;
-  if (overlapped_ptr->result != X_ERROR_IO_PENDING) {
-    result = overlapped_ptr->result;
-  } else if (!wait || !overlapped_ptr->event) {
-    result = X_ERROR_IO_INCOMPLETE;
-  } else {
-    auto ev = kernel_state()->object_table()->LookupObject<XEvent>(
-        overlapped_ptr->event);
-    if (!ev) {
-      result = X_ERROR_IO_INCOMPLETE;
-    } else {
-      result = ev->Wait(3, 1, 0, nullptr);
-      if (XSUCCEEDED(result)) {
-        result = overlapped_ptr->result;
-      } else {
-        result = xboxkrnl::xeRtlNtStatusToDosError(result);
-      }
-    }
->>>>>>> theirs
   }
 
   if (length_ptr) {

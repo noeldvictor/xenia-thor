@@ -189,16 +189,10 @@ class KernelState {
 
   SystemManagementController* smc() const { return smc_.get(); }
 
-<<<<<<< ours
   xam::AchievementManager* achievement_manager() const {
     return xam_state()->achievement_manager();
   }
   xam::AppManager* app_manager() const { return xam_state()->app_manager(); }
-=======
-  GuestScheduler* guest_scheduler() const { return guest_scheduler_.get(); }
-
-  xam::AppManager* app_manager() const { return app_manager_.get(); }
->>>>>>> theirs
   xam::ContentManager* content_manager() const {
     return xam_state()->content_manager();
   }
@@ -247,13 +241,11 @@ class KernelState {
   void SetExecutableModule(object_ref<UserModule> module);
   object_ref<UserModule> LoadUserModule(const std::string_view name,
                                         bool call_entry = true);
-<<<<<<< ours
   object_ref<UserModule> LoadUserModuleFromMemory(const std::string_view name,
                                                   const void* addr,
                                                   const size_t length);
   X_RESULT FinishLoadingUserModule(const object_ref<UserModule> module,
                                    bool call_entry = true);
-=======
   // Loads an Aurora-style trainer XEX from the HOST filesystem into the running
   // title's address space, logs its import coverage (UserModule::Dump), and
   // optionally runs its entry point on a fresh guest thread so it can install
@@ -261,7 +253,6 @@ class KernelState {
   // title, or a malformed/unsupported XEX).
   object_ref<UserModule> LoadTrainerModule(
       const std::filesystem::path& host_path, bool run_entry);
->>>>>>> theirs
   void UnloadUserModule(const object_ref<UserModule>& module,
                         bool call_entry = true);
 
@@ -387,14 +378,7 @@ class KernelState {
   std::unique_ptr<XmpVolumePatch> xmp_volume_patch_;
   std::unique_ptr<XConfig> xconfig_;
 
-<<<<<<< ours
   KernelVersion kernel_version_;
-=======
-  std::unique_ptr<xam::AppManager> app_manager_;
-  std::unique_ptr<xam::ContentManager> content_manager_;
-  std::unique_ptr<xam::UserProfile> user_profile_;
-  std::unique_ptr<GuestScheduler> guest_scheduler_;
->>>>>>> theirs
 
   xe::global_critical_region global_critical_region_;
 

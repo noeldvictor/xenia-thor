@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -122,6 +123,8 @@ struct FileInfo {
   uint64_t write_timestamp;
 };
 bool GetInfo(const std::filesystem::path& path, FileInfo* out_info);
+// Optional-returning overload (Edge kernel-port: merged vfs uses this shape).
+std::optional<FileInfo> GetInfo(const std::filesystem::path& path);
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path);
 
 #if XE_PLATFORM_ANDROID

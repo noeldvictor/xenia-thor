@@ -10,16 +10,15 @@
 #ifndef XENIA_XBOX_H_
 #define XENIA_XBOX_H_
 
+#include <cctype>
+#include <cstdint>
+#include <map>
 #include <string>
+#include <string_view>
 
-#include "xenia/base/memory.h"
-
-// TODO(benvanik): split this header, cleanup, etc.
+#include "xenia/base/assert.h"
 // clang-format off
-
 namespace xe {
-
-#pragma pack(push, 4)
 
 typedef uint32_t X_HANDLE;
 #define X_INVALID_HANDLE_VALUE ((X_HANDLE)-1)
@@ -30,6 +29,7 @@ typedef uint32_t X_HANDLE;
 // https://msdn.microsoft.com/en-us/library/cc704588.aspx
 // Adding as needed.
 typedef uint32_t X_STATUS;
+#define X_FACILITY_NT_BIT 0x10000000
 #define XSUCCEEDED(s)     ((s & 0xC0000000) == 0)
 #define XFAILED(s)        (!XSUCCEEDED(s))
 #define X_STATUS_SUCCESS                                ((X_STATUS)0x00000000L)
@@ -39,6 +39,7 @@ typedef uint32_t X_STATUS;
 #define X_STATUS_TIMEOUT                                ((X_STATUS)0x00000102L)
 #define X_STATUS_PENDING                                ((X_STATUS)0x00000103L)
 #define X_STATUS_OBJECT_NAME_EXISTS                     ((X_STATUS)0x40000000L)
+#define X_STATUS_NO_YIELD_PERFORMED                     ((X_STATUS)0x40000024L)
 #define X_STATUS_TIMER_RESUME_IGNORED                   ((X_STATUS)0x40000025L)
 #define X_STATUS_BUFFER_OVERFLOW                        ((X_STATUS)0x80000005L)
 #define X_STATUS_NO_MORE_FILES                          ((X_STATUS)0x80000006L)
@@ -50,6 +51,7 @@ typedef uint32_t X_STATUS;
 #define X_STATUS_INVALID_HANDLE                         ((X_STATUS)0xC0000008L)
 #define X_STATUS_INVALID_PARAMETER                      ((X_STATUS)0xC000000DL)
 #define X_STATUS_NO_SUCH_FILE                           ((X_STATUS)0xC000000FL)
+#define X_STATUS_INVALID_DEVICE_REQUEST                 ((X_STATUS)0xC0000010L)
 #define X_STATUS_END_OF_FILE                            ((X_STATUS)0xC0000011L)
 #define X_STATUS_NO_MEMORY                              ((X_STATUS)0xC0000017L)
 #define X_STATUS_ALREADY_COMMITTED                      ((X_STATUS)0xC0000021L)
@@ -59,9 +61,14 @@ typedef uint32_t X_STATUS;
 #define X_STATUS_OBJECT_NAME_INVALID                    ((X_STATUS)0xC0000033L)
 #define X_STATUS_OBJECT_NAME_NOT_FOUND                  ((X_STATUS)0xC0000034L)
 #define X_STATUS_OBJECT_NAME_COLLISION                  ((X_STATUS)0xC0000035L)
+#define X_STATUS_OBJECT_PATH_NOT_FOUND                  ((X_STATUS)0xC000003AL)
 #define X_STATUS_INVALID_PAGE_PROTECTION                ((X_STATUS)0xC0000045L)
 #define X_STATUS_MUTANT_NOT_OWNED                       ((X_STATUS)0xC0000046L)
+#define X_STATUS_SEMAPHORE_LIMIT_EXCEEDED               ((X_STATUS)0xC0000047L)
+#define X_STATUS_THREAD_IS_TERMINATING                  ((X_STATUS)0xC000004BL)
 #define X_STATUS_PROCEDURE_NOT_FOUND                    ((X_STATUS)0xC000007AL)
+#define X_STATUS_INVALID_IMAGE_FORMAT                   ((X_STATUS)0xC000007BL)
+#define X_STATUS_DISK_FULL                              ((X_STATUS)0xC000007FL)
 #define X_STATUS_INSUFFICIENT_RESOURCES                 ((X_STATUS)0xC000009AL)
 #define X_STATUS_MEMORY_NOT_ALLOCATED                   ((X_STATUS)0xC00000A0L)
 #define X_STATUS_FILE_IS_A_DIRECTORY                    ((X_STATUS)0xC00000BAL)
@@ -69,6 +76,8 @@ typedef uint32_t X_STATUS;
 #define X_STATUS_INVALID_PARAMETER_1                    ((X_STATUS)0xC00000EFL)
 #define X_STATUS_INVALID_PARAMETER_2                    ((X_STATUS)0xC00000F0L)
 #define X_STATUS_INVALID_PARAMETER_3                    ((X_STATUS)0xC00000F1L)
+#define X_STATUS_NOT_A_DIRECTORY                        ((X_STATUS)0xC0000103L)
+#define X_STATUS_PROCESS_IS_TERMINATING                 ((X_STATUS)0xC000010AL)
 #define X_STATUS_DLL_NOT_FOUND                          ((X_STATUS)0xC0000135L)
 #define X_STATUS_ENTRYPOINT_NOT_FOUND                   ((X_STATUS)0xC0000139L)
 #define X_STATUS_MAPPED_ALIGNMENT                       ((X_STATUS)0xC0000220L)
@@ -88,7 +97,9 @@ typedef uint32_t X_RESULT;
 #define X_ERROR_PATH_NOT_FOUND                  X_RESULT_FROM_WIN32(0x00000003L)
 #define X_ERROR_ACCESS_DENIED                   X_RESULT_FROM_WIN32(0x00000005L)
 #define X_ERROR_INVALID_HANDLE                  X_RESULT_FROM_WIN32(0x00000006L)
+#define X_ERROR_NOT_ENOUGH_MEMORY               X_RESULT_FROM_WIN32(0x00000008L)
 #define X_ERROR_NO_MORE_FILES                   X_RESULT_FROM_WIN32(0x00000012L)
+#define X_ERROR_NOT_SUPPORTED                   X_RESULT_FROM_WIN32(0x00000032L)
 #define X_ERROR_INVALID_PARAMETER               X_RESULT_FROM_WIN32(0x00000057L)
 #define X_ERROR_INSUFFICIENT_BUFFER             X_RESULT_FROM_WIN32(0x0000007AL)
 #define X_ERROR_INVALID_NAME                    X_RESULT_FROM_WIN32(0x0000007BL)
@@ -100,6 +111,7 @@ typedef uint32_t X_RESULT;
 #define X_ERROR_DEVICE_NOT_CONNECTED            X_RESULT_FROM_WIN32(0x0000048FL)
 #define X_ERROR_NOT_FOUND                       X_RESULT_FROM_WIN32(0x00000490L)
 #define X_ERROR_CANCELLED                       X_RESULT_FROM_WIN32(0x000004C7L)
+#define X_ERROR_ABORTED                         X_RESULT_FROM_WIN32(0x000004D3L)
 #define X_ERROR_NOT_LOGGED_ON                   X_RESULT_FROM_WIN32(0x000004DDL)
 #define X_ERROR_NO_SUCH_USER                    X_RESULT_FROM_WIN32(0x00000525L)
 #define X_ERROR_FUNCTION_FAILED                 X_RESULT_FROM_WIN32(0x0000065BL)
@@ -107,6 +119,7 @@ typedef uint32_t X_RESULT;
 
 // HRESULT codes
 typedef uint32_t X_HRESULT;
+#define X_HRESULT_FROM_NT(x) (static_cast<X_HRESULT>((x) | X_FACILITY_NT_BIT))
 #define X_HRESULT_FROM_WIN32(x) ((int32_t)(x) <= 0 \
                                   ? (static_cast<X_HRESULT>(x)) \
                                   : (static_cast<X_HRESULT>(((x) & 0xFFFF) | (X_FACILITY_WIN32 << 16) | \
@@ -114,50 +127,22 @@ typedef uint32_t X_HRESULT;
 
 #define X_E_FALSE                               static_cast<X_HRESULT>(0x80000000L)
 #define X_E_SUCCESS                             X_HRESULT_FROM_WIN32(X_ERROR_SUCCESS)
+#define X_E_ACCESS_DENIED                       X_HRESULT_FROM_WIN32(X_ERROR_ACCESS_DENIED)
+#define X_E_NOT_IMPLEMENTED                     static_cast<X_HRESULT>(0x80004001L)
 #define X_E_FAIL                                static_cast<X_HRESULT>(0x80004005L)
 #define X_E_NO_MORE_FILES                       X_HRESULT_FROM_WIN32(X_ERROR_NO_MORE_FILES)
+#define X_E_NOT_SUPPORTED                       X_HRESULT_FROM_WIN32(X_ERROR_NOT_SUPPORTED)
 #define X_E_INVALIDARG                          X_HRESULT_FROM_WIN32(X_ERROR_INVALID_PARAMETER)
 #define X_E_DEVICE_NOT_CONNECTED                X_HRESULT_FROM_WIN32(X_ERROR_DEVICE_NOT_CONNECTED)
 #define X_E_NOTFOUND                            X_HRESULT_FROM_WIN32(X_ERROR_NOT_FOUND)
 #define X_E_NO_SUCH_USER                        X_HRESULT_FROM_WIN32(X_ERROR_NO_SUCH_USER)
-
-// MEM_*, used by NtAllocateVirtualMemory
-enum X_MEM : uint32_t {
-  X_MEM_COMMIT      = 0x00001000,
-  X_MEM_RESERVE     = 0x00002000,
-  X_MEM_DECOMMIT    = 0x00004000,
-  X_MEM_RELEASE     = 0x00008000,
-  X_MEM_FREE        = 0x00010000,
-  X_MEM_PRIVATE     = 0x00020000,
-  X_MEM_RESET       = 0x00080000,
-  X_MEM_TOP_DOWN    = 0x00100000,
-  X_MEM_NOZERO      = 0x00800000,
-  X_MEM_LARGE_PAGES = 0x20000000,
-  X_MEM_HEAP        = 0x40000000,
-  X_MEM_16MB_PAGES  = 0x80000000  // from Valve SDK
-};
-
-// PAGE_*, used by NtAllocateVirtualMemory
-enum X_PAGE : uint32_t {
-  X_PAGE_NOACCESS          = 0x00000001,
-  X_PAGE_READONLY          = 0x00000002,
-  X_PAGE_READWRITE         = 0x00000004,
-  X_PAGE_WRITECOPY         = 0x00000008,
-  X_PAGE_EXECUTE           = 0x00000010,
-  X_PAGE_EXECUTE_READ      = 0x00000020,
-  X_PAGE_EXECUTE_READWRITE = 0x00000040,
-  X_PAGE_EXECUTE_WRITECOPY = 0x00000080,
-  X_PAGE_GUARD             = 0x00000100,
-  X_PAGE_NOCACHE           = 0x00000200,
-  X_PAGE_WRITECOMBINE      = 0x00000400
-};
+#define X_E_FUNCTION_FAILED                     X_HRESULT_FROM_WIN32(X_ERROR_FUNCTION_FAILED)
 
 // Sockets/networking.
 #define X_INVALID_SOCKET (uint32_t)(~0)
 #define X_SOCKET_ERROR (uint32_t)(-1)
 
 // clang-format on
-
 enum X_FILE_ATTRIBUTES : uint32_t {
   X_FILE_ATTRIBUTE_NONE = 0x0000,
   X_FILE_ATTRIBUTE_READONLY = 0x0001,
@@ -172,157 +157,148 @@ enum X_FILE_ATTRIBUTES : uint32_t {
   X_FILE_ATTRIBUTE_ENCRYPTED = 0x4000,
 };
 
-// Known as XOVERLAPPED to 360 code.
-struct XAM_OVERLAPPED {
-  xe::be<uint32_t> result;              // 0x0
-  xe::be<uint32_t> length;              // 0x4
-  xe::be<uint32_t> context;             // 0x8
-  xe::be<uint32_t> event;               // 0xC
-  xe::be<uint32_t> completion_routine;  // 0x10
-  xe::be<uint32_t> completion_context;  // 0x14
-  xe::be<uint32_t> extended_error;      // 0x18
-};
+constexpr uint8_t XUserMaxUserCount = 4;
 
-inline uint32_t XOverlappedGetResult(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[0]);
-}
-inline void XOverlappedSetResult(void* ptr, uint32_t value) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  xe::store_and_swap<uint32_t>(&p[0], value);
-}
-inline uint32_t XOverlappedGetLength(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[1]);
-}
-inline void XOverlappedSetLength(void* ptr, uint32_t value) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  xe::store_and_swap<uint32_t>(&p[1], value);
-}
-inline uint32_t XOverlappedGetContext(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[2]);
-}
-inline void XOverlappedSetContext(void* ptr, uint32_t value) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  xe::store_and_swap<uint32_t>(&p[2], value);
-}
-inline X_HANDLE XOverlappedGetEvent(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[3]);
-}
-inline uint32_t XOverlappedGetCompletionRoutine(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[4]);
-}
-inline uint32_t XOverlappedGetCompletionContext(void* ptr) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  return xe::load_and_swap<uint32_t>(&p[5]);
-}
-inline void XOverlappedSetExtendedError(void* ptr, uint32_t value) {
-  auto p = reinterpret_cast<uint32_t*>(ptr);
-  xe::store_and_swap<uint32_t>(&p[6], value);
-}
+constexpr uint8_t XUserIndexLatest = 0xFD;
+constexpr uint8_t XUserIndexNone = 0xFE;
+constexpr uint8_t XUserIndexAny = 0xFF;
 
-struct X_ANSI_STRING {
-  xe::be<uint16_t> length;
-  xe::be<uint16_t> maximum_length;
-  xe::be<uint32_t> pointer;
-
-  void reset() {
-    length = 0;
-    maximum_length = 0;
-    pointer = 0;
-  }
-};
-static_assert_size(X_ANSI_STRING, 8);
-
-struct X_UNICODE_STRING {
-  xe::be<uint16_t> length;          // 0x0
-  xe::be<uint16_t> maximum_length;  // 0x2
-  xe::be<uint32_t> pointer;         // 0x4
-
-  void reset() {
-    length = 0;
-    maximum_length = 0;
-    pointer = 0;
-  }
-};
-static_assert_size(X_UNICODE_STRING, 8);
-
-// https://pastebin.com/SMypYikG
+// https://github.com/ThirteenAG/Ultimate-ASI-Loader/blob/master/source/xlive/xliveless.h
 typedef uint32_t XNotificationID;
 
-// https://github.com/CodeAsm/ffplay360/blob/master/Common/XTLOnPC.h
-struct X_VIDEO_MODE {
-  be<uint32_t> display_width;
-  be<uint32_t> display_height;
-  be<uint32_t> is_interlaced;
-  be<uint32_t> is_widescreen;
-  be<uint32_t> is_hi_def;
-  be<float> refresh_rate;
-  be<uint32_t> video_standard;
-  be<uint32_t> unknown_0x8a;
-  be<uint32_t> unknown_0x01;
-  be<uint32_t> reserved[3];
+struct X_NOTIFICATION_ID {
+  uint32_t message_id : 16;  // 0b0 sz:16
+  uint32_t version : 9;      // 0b16 sz:9
+  uint32_t area : 6;         // 0b25 sz:6
+  uint32_t Internal : 1;     // 0b31 sz:1
 };
-static_assert_size(X_VIDEO_MODE, 48);
+static_assert_size(X_NOTIFICATION_ID, 4);
 
-// https://docs.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-list_entry
-struct X_LIST_ENTRY {
-  be<uint32_t> flink_ptr;  // next entry / head
-  be<uint32_t> blink_ptr;  // previous entry / head
+enum : XNotificationID {
+  // Notification Areas
+  kXNotifySystem = 0x00000001,
+  kXNotifyLive = 0x00000002,
+  kXNotifyFriends = 0x00000004,
+  kXNotifyCustom = 0x00000008,
+  kXNotifyXmp = 0x00000020,
+  kXNotifyMsgr = 0x00000040,
+  kXNotifyParty = 0x00000080,
+  kXNotifyAll = 0x000000EF,
+
+  // Special Flags
+  kXNotificationInternal = 0x80000000,
+  kXNotificationAreaMask = 0x7e000000,
+  kXNotificationVersionMask = 0x01FF0000,
+
+  // XNotification System
+  /* System Notes:
+     - for some functions if XamIsNuiUIActive returns false then
+     XNotifyBroadcast(kXNotificationSystemNUIPause, unk data) is called
+     - XNotifyBroadcast(kXNotificationSystemNUIHardwareStatusChanged,
+     device_state)
+  */
+  kXNotificationSystemUI = 0x00000009,
+  kXNotificationSystemSignInChanged = 0x0000000A,
+  kXNotificationSystemStorageDevicesChanged = 0x0000000B,
+  kXNotificationSystemMuteListChanged = 0x00000011,
+  kXNotificationSystemInputDevicesChanged = 0x00000012,
+  kXNotificationSystemXLiveTitleUpdate = 0x00000015,
+  kXNotificationSystemXLiveSystemUpdate = 0x00000016,
+  kXNotificationSystemInputDeviceConfigChanged = 0x00010013,
+  /* Dvd Drive? Notes:
+     - after XamLoaderGetMediaInfoEx(media_type?, title_id?, unk) is used for
+     some funcs the first param is used with
+     XNotifyBroadcast(kXNotificationSystemTrayStateChanged, media_type?)
+     - after XamLoaderGetMediaInfoEx(media_type?, title_id?, unk) is used for
+     some funcs the third param is used with
+     XNotifyBroadcast(kXNotificationSystemUnknown, unk)
+  */
+  kXNotificationSystemPlayerTimerNotice = 0x00030015,
+  kXNotificationSystemAvatarChanged = 0x00040017,
+  kXNotificationSystemNUIHardwareStatusChanged = 0x00060019,
+  kXNotificationSystemNUIPause = 0x0006001A,
+  kXNotificationSystemNUIUIApproach = 0x0006001B,
+  kXNotificationSystemDeviceRemap = 0x0006001C,
+  kXNotificationSystemNUIBindingChanged = 0x0006001D,
+  kXNotificationSystemAudioLatencyChanged = 0x0008001E,
+  kXNotificationSystemNUIChatBindingChanged = 0x0008001F,
+  kXNotificationSystemInputActivityChanged = 0x00090020,
+  kXNotificationSystemProfileSettingChanged = 0x0000000E,
+  // XNotification System Internal
+  kXNotificationSystemTitleLoad = 0x80000001,
+  kXNotificationSystemTimeZone = 0x80000002,
+  kXNotificationSystemLanguage = 0x80000003,
+  kXNotificationSystemVideoFlags = 0x80000004,
+  kXNotificationSystemAudioFlags = 0x80000005,
+  kXNotificationSystemParentalControlGames = 0x80000006,
+  kXNotificationSystemParentalControlPassword = 0x80000007,
+  kXNotificationSystemParentalControlMovies = 0x80000008,
+  kXNotificationSystemDashContextChanged = 0x8000000C,
+  kXNotificationSystemTrayStateChanged = 0x8000000D,
+  kXNotificationSystemThemeChanged = 0x8000000F,
+  kXNotificationSystemSystemUpdateChanged = 0x80000010,
+  kXNotificationSystemUnknown = 0x80010014,
+  kXNotificationSystemDashboard = 0x80040016,
+
+  // XNotification Live
+  kXNotificationLiveConnectionChanged = 0x02000001,
+  kXNotificationLiveInviteAccepted = 0x02000002,
+  kXNotificationLiveLinkStateChanged = 0x02000003,
+  kXNotificationLiveContentInstalled = 0x02000007,
+  kXNotificationLiveMembershipPurchased = 0x02000008,
+  kXNotificationLiveVoicechatAway = 0x02000009,
+  kXNotificationLivePresenceChanged = 0x0200000A,
+  // XNotification Live Internal
+  kXNotificationLiveInvitedRecieved = 0x82000004,
+  kXNotificationLiveInvitedAnswerRecieved = 0x82000005,
+  kXNotificationLiveMessageListChanged = 0x82000006,
+  kXNotificationLivePointsBalanceChanged = 0x8200000B,
+  kXNotificationLivePlayerListChanged = 0x8200000C,
+  kXNotificationLiveItemPurchased = 0x8200000D,
+
+  // XNotification Friends
+  kXNotificationFriendsPresenceChanged = 0x04000001,
+  kXNotificationFriendsFriendAdded = 0x04000002,
+  kXNotificationFriendsFriendRemoved = 0x04000003,
+  // XNotification Friends Internal
+  kXNotificationFriendsFriendRequestReceived = 0x84000004,
+  kXNotificationFriendsFriendAnswerReceived = 0x84000005,
+  kXNotificationFriendsFriendRequestResult = 0x84000006,
+
+  // XNotification Custom
+  kXNotificationCustomActionPressed = 0x06000003,
+  kXNotificationCustomGamercard = 0x06010004,
+
+  // XNotification XMP
+  kXNotificationXmpStateChanged = 0x0A000001,
+  kXNotificationXmpPlaybackBehaviorChanged = 0x0A000002,
+  kXNotificationXmpPlaybackControllerChanged = 0x0A000003,
+  // XNotification XMP Internal
+  kXNotificationXmpMediaSourceConnectionChanged = 0x8A000004,
+  kXNotificationXmpTitlePlayListContentChanged = 0x8A000005,
+  kXNotificationXmpLocalMediaContentChanged = 0x8A000006,
+  kXNotificationXmpDashNowPlayingQueueModeChanged = 0x8A000007,
+  kXNotificationXmpDashInitChanged = 0x8A000009,
+  kXNotificationXmpPlaybackBehaviorChangedEx = 0x8A00000A,
+
+  // XNotification Party
+  kXNotificationPartyMembersChanged = 0x0E040002,
+
+  // XNotification Msgr
+  kXNotificationMsgrUnknown = 0x0C00000E,
 };
-static_assert_size(X_LIST_ENTRY, 8);
 
-struct X_SINGLE_LIST_ENTRY {
-  be<uint32_t> next;  // 0x0 pointer to next entry
+enum FIRMWARE_REENTRY {
+  HalHaltRoutine = 0x0,
+  HalRebootRoutine = 0x1,
+  HalKdRebootRoutine = 0x2,
+  HalFatalErrorRebootRoutine = 0x3,
+  HalResetSMCRoutine = 0x4,
+  HalPowerDownRoutine = 0x5,
+  HalRebootQuiesceRoutine = 0x6,
+  HalForceShutdownRoutine = 0x7,
+  HalPowerCycleQuiesceRoutine = 0x8,
 };
-static_assert_size(X_SINGLE_LIST_ENTRY, 4);
-
-// https://www.nirsoft.net/kernel_struct/vista/SLIST_HEADER.html
-struct X_SLIST_HEADER {
-  X_SINGLE_LIST_ENTRY next;  // 0x0
-  be<uint16_t> depth;        // 0x4
-  be<uint16_t> sequence;     // 0x6
-};
-static_assert_size(X_SLIST_HEADER, 8);
-
-// https://msdn.microsoft.com/en-us/library/windows/hardware/ff550671(v=vs.85).aspx
-struct X_IO_STATUS_BLOCK {
-  union {
-    xe::be<X_STATUS> status;
-    xe::be<uint32_t> pointer;
-  };
-  xe::be<uint32_t> information;
-};
-
-struct X_EX_TITLE_TERMINATE_REGISTRATION {
-  xe::be<uint32_t> notification_routine;  // 0x0
-  xe::be<uint32_t> priority;              // 0x4
-  X_LIST_ENTRY list_entry;                // 0x8 ??
-};
-static_assert_size(X_EX_TITLE_TERMINATE_REGISTRATION, 16);
-
-struct X_OBJECT_ATTRIBUTES {
-  xe::be<uint32_t> root_directory;  // 0x0
-  xe::be<uint32_t> name_ptr;        // 0x4 PANSI_STRING
-  xe::be<uint32_t> attributes;      // 0xC
-};
-
-// https://msdn.microsoft.com/en-us/library/windows/desktop/aa363082.aspx
-typedef struct {
-  // Renamed due to a collision with exception_code from Windows excpt.h.
-  xe::be<uint32_t> code;
-  xe::be<uint32_t> exception_flags;
-  xe::be<uint32_t> exception_record;
-  xe::be<uint32_t> exception_address;
-  xe::be<uint32_t> number_parameters;
-  xe::be<uint32_t> exception_information[15];
-} X_EXCEPTION_RECORD;
-static_assert_size(X_EXCEPTION_RECORD, 0x50);
-
-#pragma pack(pop)
 
 // Found by dumping the kSectionStringTable sections of various games:
 // and the language list at
@@ -338,24 +314,200 @@ enum class XLanguage : uint32_t {
   kKorean = 7,
   kTChinese = 8,
   kPortuguese = 9,
-  kSChinese = 10,
+  kMaxBaseLanguages = 10,
   kPolish = 11,
   kRussian = 12,
+  kSwedish = 13,
+  kTurkish = 14,
+  kNorwegian = 15,
+  kDutch = 16,
+  kSChinese = 17,
   // STFS headers can't support any more languages than these
-  kMaxLanguages = 13
+  kMaxLanguages = 18
+};
+
+// Maps an IETF / POSIX locale code (e.g. "en_US", "ja", "zh_TW", "pt-BR") to
+// the closest XLanguage slot. Falls back to English on unknown codes.
+inline XLanguage XLanguageFromLocaleCode(std::string_view code) {
+  auto lower = [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  };
+  if (code.size() < 2) {
+    return XLanguage::kEnglish;
+  }
+  char a = lower(code[0]);
+  char b = lower(code[1]);
+  if (a == 'e' && b == 'n') {
+    return XLanguage::kEnglish;
+  }
+  if (a == 'j' && b == 'a') {
+    return XLanguage::kJapanese;
+  }
+  if (a == 'd' && b == 'e') {
+    return XLanguage::kGerman;
+  }
+  if (a == 'f' && b == 'r') {
+    return XLanguage::kFrench;
+  }
+  if (a == 'e' && b == 's') {
+    return XLanguage::kSpanish;
+  }
+  if (a == 'i' && b == 't') {
+    return XLanguage::kItalian;
+  }
+  if (a == 'k' && b == 'o') {
+    return XLanguage::kKorean;
+  }
+  if (a == 'p' && b == 't') {
+    return XLanguage::kPortuguese;
+  }
+  if (a == 'p' && b == 'l') {
+    return XLanguage::kPolish;
+  }
+  if (a == 'r' && b == 'u') {
+    return XLanguage::kRussian;
+  }
+  if (a == 'z' && b == 'h') {
+    // Chinese script disambiguation: zh_TW / zh_HK / zh-Hant → Traditional;
+    // anything else (zh_CN, zh-Hans, bare "zh") → Simplified.
+    if (code.size() >= 5) {
+      std::string rest;
+      for (size_t i = 3; i < code.size() && rest.size() < 4; ++i) {
+        rest.push_back(lower(code[i]));
+      }
+      if (rest == "tw" || rest == "hk" || rest.compare(0, 4, "hant") == 0) {
+        return XLanguage::kTChinese;
+      }
+    }
+    return XLanguage::kSChinese;
+  }
+  return XLanguage::kEnglish;
+}
+
+enum class XOnlineCountry : uint32_t {
+  kUnitedArabEmirates = 1,
+  kAlbania = 2,
+  kArmenia = 3,
+  kArgentina = 4,
+  kAustria = 5,
+  kAustralia = 6,
+  kAzerbaijan = 7,
+  kBelgium = 8,
+  kBulgaria = 9,
+  kBahrain = 10,
+  kBruneiDarussalam = 11,
+  kBolivia = 12,
+  kBrazil = 13,
+  kBelarus = 14,
+  kBelize = 15,
+  kCanada = 16,
+  kSwitzerland = 18,
+  kChile = 19,
+  kChina = 20,
+  kColombia = 21,
+  kCostaRica = 22,
+  kCzechRepublic = 23,
+  kGermany = 24,
+  kDenmark = 25,
+  kDominicanRepublic = 26,
+  kAlgeria = 27,
+  kEcuador = 28,
+  kEstonia = 29,
+  kEgypt = 30,
+  kSpain = 31,
+  kFinland = 32,
+  kFaroeIslands = 33,
+  kFrance = 34,
+  kGreatBritain = 35,
+  kGeorgia = 36,
+  kGreece = 37,
+  kGuatemala = 38,
+  kHongKong = 39,
+  kHonduras = 40,
+  kCroatia = 41,
+  kHungary = 42,
+  kIndonesia = 43,
+  kIreland = 44,
+  kIsrael = 45,
+  kIndia = 46,
+  kIraq = 47,
+  kIran = 48,
+  kIceland = 49,
+  kItaly = 50,
+  kJamaica = 51,
+  kJordan = 52,
+  kJapan = 53,
+  kKenya = 54,
+  kKyrgyzstan = 55,
+  kKorea = 56,
+  kKuwait = 57,
+  kKazakhstan = 58,
+  kLebanon = 59,
+  kLiechtenstein = 60,
+  kLithuania = 61,
+  kLuxembourg = 62,
+  kLatvia = 63,
+  kLibya = 64,
+  kMorocco = 65,
+  kMonaco = 66,
+  kMacedonia = 67,
+  kMongolia = 68,
+  kMacau = 69,
+  kMaldives = 70,
+  kMexico = 71,
+  kMalaysia = 72,
+  kNicaragua = 73,
+  kNetherlands = 74,
+  kNorway = 75,
+  kNewZealand = 76,
+  kOman = 77,
+  kPanama = 78,
+  kPeru = 79,
+  kPhilippines = 80,
+  kPakistan = 81,
+  kPoland = 82,
+  kPuertoRico = 83,
+  kPortugal = 84,
+  kParaguay = 85,
+  kQatar = 86,
+  kRomania = 87,
+  kRussianFederation = 88,
+  kSaudiArabia = 89,
+  kSweden = 90,
+  kSingapore = 91,
+  kSlovenia = 92,
+  kSlovakRepublic = 93,
+  kElSalvador = 95,
+  kSyria = 96,
+  kThailand = 97,
+  kTunisia = 98,
+  kTurkey = 99,
+  kTrinidadAndTobago = 100,
+  kTaiwan = 101,
+  kUkraine = 102,
+  kUnitedStates = 103,
+  kUruguay = 104,
+  kUzbekistan = 105,
+  kVenezuela = 106,
+  kVietNam = 107,
+  kYemen = 108,
+  kSouthAfrica = 109,
+  kZimbabwe = 110
 };
 
 enum class XContentType : uint32_t {
+  kFolder = 0xffffffff,
+  kInvalid = 0x00000000,
   kSavedGame = 0x00000001,
   kMarketplaceContent = 0x00000002,
   kPublisher = 0x00000003,
-  kXbox360Title = 0x00001000,
+  kIptvDvr = 0x00001000,
   kIptvPauseBuffer = 0x00002000,
   kXNACommunity = 0x00003000,
   kInstalledGame = 0x00004000,
   kXboxTitle = 0x00005000,
   kSocialTitle = 0x00006000,
-  kGamesOnDemand = 0x00007000,
+  kXbox360Title = 0x00007000,
   kSUStoragePack = 0x00008000,
   kAvatarItem = 0x00009000,
   kProfile = 0x00010000,
@@ -382,8 +534,92 @@ enum class XContentType : uint32_t {
   kCommunityGame = 0x02000000,
 };
 
-}  // namespace xe
+inline const std::map<XContentType, std::string> XContentTypeMap = {
+    {XContentType::kFolder, "Folder"},
+    {XContentType::kSavedGame, "Saved Game"},
+    {XContentType::kMarketplaceContent, "Marketplace Content"},
+    {XContentType::kPublisher, "Publisher"},
+    {XContentType::kXbox360Title, "Xbox 360 Title"},
+    {XContentType::kIptvDvr, "IPTV DVR"},
+    {XContentType::kIptvPauseBuffer, "IPTV Pause Buffer"},
+    {XContentType::kXNACommunity, "XNA Community"},
+    {XContentType::kInstalledGame, "Installed Game"},
+    {XContentType::kXboxTitle, "Xbox Title"},
+    {XContentType::kSocialTitle, "Social Title"},
+    {XContentType::kXbox360Title, "Xbox 360 Title"},
+    {XContentType::kSUStoragePack, "SU Storage Pack"},
+    {XContentType::kAvatarItem, "Avatar Item"},
+    {XContentType::kProfile, "Profile"},
+    {XContentType::kGamerPicture, "Gamer Picture"},
+    {XContentType::kTheme, "Theme"},
+    {XContentType::kCacheFile, "Cache File"},
+    {XContentType::kStorageDownload, "Storage Download"},
+    {XContentType::kXboxSavedGame, "Xbox Saved Game"},
+    {XContentType::kXboxDownload, "Xbox Download"},
+    {XContentType::kGameDemo, "Game Demo"},
+    {XContentType::kVideo, "Video"},
+    {XContentType::kGameTitle, "Game Title"},
+    {XContentType::kInstaller, "Installer"},
+    {XContentType::kGameTrailer, "Game Trailer"},
+    {XContentType::kArcadeTitle, "Arcade Title"},
+    {XContentType::kXNA, "XNA"},
+    {XContentType::kLicenseStore, "License Store"},
+    {XContentType::kMovie, "Movie"},
+    {XContentType::kTV, "TV"},
+    {XContentType::kMusicVideo, "Music Video"},
+    {XContentType::kGameVideo, "Game Video"},
+    {XContentType::kPodcastVideo, "Podcast Video"},
+    {XContentType::kViralVideo, "Viral Video"},
+    {XContentType::kCommunityGame, "Community Game"},
+};
 
-// clang-format on
+enum class X_MARKETPLACE_OFFERING_TYPE : uint32_t {
+  Content = 0x00000002,
+  GameDemo = 0x00000020,
+  GameTrailer = 0x00000040,
+  Theme = 0x00000080,
+  Tile = 0x00000800,
+  Arcade = 0x00002000,
+  Video = 0x00004000,
+  Consumable = 0x00010000,
+};
+
+enum X_MARKETPLACE_ENTRYPOINT : uint32_t {
+  ContentList = 0,
+  ContentItem = 1,
+  MembershipList = 2,
+  MembershipItem = 3,
+  ContentList_Background = 4,
+  ContentItem_Background = 5,
+  ForcedNameChangeV1 = 6,
+  ForcedNameChangeV2 = 8,
+  ProfileNameChange = 9,
+  ActiveDownloads = 12
+};
+
+enum X_MARKETPLACE_DOWNLOAD_ITEMS_ENTRYPOINTS : uint32_t {
+  FREEITEMS = 1000,
+  PAIDITEMS,
+};
+
+enum class XDeploymentType : uint32_t {
+  kOpticalDisc = 0,
+  kInstalledToHDD = 1,  // Like extracted?
+  kDownload = 2,
+  kOther = 3,
+};
+
+// https://www.se7ensins.com/forums/threads/xtt-file-research.966597/
+struct XTTFileHeader {
+  uint32_t xttTag;
+  uint8_t signature[0x100];  // XECRYPT_SIG
+  uint32_t signedBlockSize;
+  uint32_t fileSize;
+  uint32_t compressedTablesSize;
+  uint32_t uncompressedTablesSize;
+  uint32_t xttFileVersion;
+};
+
+}  // namespace xe
 
 #endif  // XENIA_XBOX_H_

@@ -55,49 +55,25 @@ static void PreemptCurrentFiber(void* /*raw_context*/) {
     return;
   }
   auto* context = self->thread_state()->context();
-<<<<<<< ours
-  // A co-resident fiber would re-enter the recursive lock on this host thread.
-  if (xe::global_critical_region::is_held_by_current_thread()) {
-    context->preempt_requested = 1;
-    return;
-  }
-  // At DISPATCH_LEVEL and above the console masks the decrementer.
-  auto* kpcr = context->TranslateVirtualGPR<X_KPCR*>(context->r[13]);
-  if (kpcr->current_irql >= 2) {
-    context->preempt_requested = 1;
-    return;
-  }
-  // Involuntary quantum end, so no yield to a lower-priority thread.
-  self->kernel_state()->guest_scheduler()->YieldCurrentThread(true, false);
-=======
-  // Master-tree adaptation: this is the stage-2 JIT-safepoint entry, which
-  // never runs in stage 1 (no backend emits safepoints). Edge's full version
-  // yields here unless the global lock is held or IRQL >= DISPATCH_LEVEL;
-  // this tree has neither the lock probe nor a filled-in KPCR irql field, so
-  // simply re-raise the flag and defer - always safe, and revisited with
-  // stage 2.
+  // Master-tree adaptation: Edge's full version yields here unless the global
+  // lock is held (xe::global_critical_region::is_held_by_current_thread(), an
+  // Edge base API this tree lacks) or IRQL >= DISPATCH_LEVEL. Without the lock
+  // probe a yield while holding the recursive global lock would deadlock the
+  // co-resident fibers, so conservatively re-raise the flag and defer. Revisit
+  // when the lock probe is ported (kernel-port follow-up).
   context->preempt_requested = 1;
->>>>>>> theirs
 }
 
 // Raw host ticks per us for the watchdog's deadline math, 0 if unusable.
 static double CalibrateTicksPerUs() {
   uint64_t qpc_freq = Clock::host_tick_frequency_platform();
   uint64_t qpc0 = Clock::host_tick_count_platform();
-<<<<<<< ours
-  uint64_t tsc0 = Clock::host_tick_count_raw();
-=======
   uint64_t tsc0 = Clock::host_tick_count_platform();
->>>>>>> theirs
   uint64_t qpc_end = qpc0 + qpc_freq / 2000;  // ~0.5 ms
   while (Clock::host_tick_count_platform() < qpc_end) {
   }
   uint64_t qpc1 = Clock::host_tick_count_platform();
-<<<<<<< ours
-  uint64_t tsc1 = Clock::host_tick_count_raw();
-=======
   uint64_t tsc1 = Clock::host_tick_count_platform();
->>>>>>> theirs
   double secs = qpc1 > qpc0 ? double(qpc1 - qpc0) / double(qpc_freq) : 0.0;
   double per_us = secs > 0.0 ? double(tsc1 - tsc0) / (secs * 1e6) : 0.0;
   // Spans an x86 TSC at 1-6 GHz and an ARM64 generic timer at 1-100 MHz.
@@ -318,12 +294,8 @@ void GuestScheduler::MarkReady(XThread* thread) {
   assert_not_null(thread);
   // Don't re-enqueue a terminated thread, or a stray Resume could revive a
   // zombie.
-<<<<<<< ours
   if (thread->guest_object<X_KTHREAD>()->thread_state ==
       KTHREAD_STATE_TERMINATED) {
-=======
-  if (thread->scheduler_links().exited) {
->>>>>>> theirs
     return;
   }
   EnqueueReady(thread, CpuOf(thread));
@@ -623,19 +595,12 @@ void GuestScheduler::SwitchTo(XThread* next) {
     // thread resumes with its remainder, so its quantum end still arrives.
     if (!links.quantum_deadline_tick) {
       links.quantum_deadline_tick =
-<<<<<<< ours
-          Clock::host_tick_count_raw() + quantum_ticks_;
-=======
           Clock::host_tick_count_platform() + quantum_ticks_;
->>>>>>> theirs
     }
     cpus_[t_current_cpu].quantum_deadline_tick = links.quantum_deadline_tick;
   }
   XThread::SetCurrentThread(next);
-<<<<<<< ours
   next->guest_object<X_KTHREAD>()->thread_state = KTHREAD_STATE_RUNNING;
-=======
->>>>>>> theirs
   // A flag raised while this fiber was off-CPU is stale, the dispatcher
   // already served it. A raise racing this clear is restored by the watchdog.
   next->thread_state()->context()->preempt_requested = 0;
@@ -713,17 +678,10 @@ void GuestScheduler::YieldToScheduler() {
   if (!OnDispatchThread("YieldToScheduler")) {
     return;
   }
-<<<<<<< ours
-  if (!global_lock_hazard_saturated_.load(std::memory_order_relaxed) &&
-      xe::global_critical_region::is_held_by_current_thread()) {
-    ReportGlobalLockHazard();
-  }
-=======
   // (Master-tree adaptation: no global-lock held-probe exists, so the
   // switch-while-holding-the-global-lock hazard diagnostic is unavailable.
   // The cooperative yield points all sit outside the global critical region
   // in this tree's kernel paths; revisit if stage 2 adds the probe.)
->>>>>>> theirs
   cpus_[t_current_cpu].idle_fiber->SwitchTo();
 }
 
@@ -736,11 +694,7 @@ void GuestScheduler::ExitIfTerminated() {
   // The wait registration may be newer than the one Terminate abandoned.
   XObject::AbandonCooperativeWait(self);
   // A park or dispatch since the terminate may have overwritten this.
-<<<<<<< ours
   self->guest_object<X_KTHREAD>()->thread_state = KTHREAD_STATE_TERMINATED;
-=======
-  self->scheduler_links().exited = true;
->>>>>>> theirs
   NotifyThreadExited(self);
   YieldToScheduler();  // never returns
 }
@@ -756,12 +710,7 @@ bool GuestScheduler::YieldCurrentThread(bool quantum_end, bool to_lower) {
   // A slice cut short by a higher-priority thread is not a quantum end, that
   // thread re-runs at the head instead.
   if (quantum_end && !links.preempted) {
-<<<<<<< ours
     self->OnQuantumEnd();
-=======
-    // (Master-tree adaptation: Edge's OnQuantumEnd priority decay is a
-    // stage-2 refinement and is not ported; quantum end just rotates.)
->>>>>>> theirs
   }
   // Only a preemption keeps the remaining slice, anything else consumed it.
   if (!links.preempted) {
@@ -823,13 +772,11 @@ bool GuestScheduler::CurrentThreadOffloadsBlockingCalls() {
   }
   // The offloaded call can need the global critical region itself, and only
   // this fiber can release it, so holding it means running inline.
-<<<<<<< ours
-  return !xe::global_critical_region::is_held_by_current_thread();
-=======
-  // (Master-tree adaptation: no held-probe exists, so never offload - inline
-  // blocking calls are always safe, just less concurrent.)
+  // (Master-tree adaptation: Edge gates offload on
+  // !xe::global_critical_region::is_held_by_current_thread(), a base API this
+  // tree lacks. No held-probe exists, so never offload - inline blocking calls
+  // are always safe, just less concurrent.)
   return false;
->>>>>>> theirs
 }
 
 void GuestScheduler::WaitOnFence(xe::threading::Fence& fence) {
@@ -932,15 +879,9 @@ void GuestScheduler::NotifyThreadExited(XThread* thread) {
   }
   XELOGI("GuestScheduler: exited tid={:08X} '{}'", thread->thread_id(),
          thread->thread_name());
-<<<<<<< ours
-=======
-  // Mark exited BEFORE parking: a Suspend racing this exit followed by a
-  // Resume would otherwise MarkReady the dead fiber, which resumes past its
-  // final yield and executes threading::Thread::Exit on the SHARED dispatch
-  // thread - killing every fiber on this CPU (code-review finding A5). The
-  // MarkReady zombie guard tests this flag.
-  thread->scheduler_links().exited = true;
->>>>>>> theirs
+  // Exited-before-parking (code-review finding A5) holds via Edge's guest
+  // state: ExitCurrentThread sets KTHREAD thread_state=TERMINATED before
+  // calling here, and the MarkReady zombie guard tests that state.
   // This CPU's dispatch loop reclaims it, since we can't drop the last handle
   // while running on its fiber.
   cpus_[t_current_cpu].exited_thread = thread;
@@ -1006,10 +947,7 @@ void GuestScheduler::BlockCurrentThread(uint64_t deadline_ms,
     }
     cpu.has_blocked.store(true, std::memory_order_relaxed);
   }
-<<<<<<< ours
   self->guest_object<X_KTHREAD>()->thread_state = KTHREAD_STATE_WAITING;
-=======
->>>>>>> theirs
   YieldToScheduler();
   // Terminated while parked, TerminateThread re-readied us to exit here.
   if (interruptible) {
@@ -1205,11 +1143,7 @@ void GuestScheduler::WatchdogLoop() {
     if (shutting_down_.load()) {
       break;
     }
-<<<<<<< ours
-    uint64_t now = Clock::host_tick_count_raw();
-=======
     uint64_t now = Clock::host_tick_count_platform();
->>>>>>> theirs
     std::lock_guard<std::mutex> lock(lock_);
     for (int i = 0; i < host_cpu_count_; ++i) {
       XThread* running = cpus_[i].current_thread;

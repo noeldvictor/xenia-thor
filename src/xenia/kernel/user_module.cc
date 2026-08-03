@@ -9,11 +9,6 @@
 
 #include "xenia/kernel/user_module.h"
 
-<<<<<<< ours
-#include "xenia/base/byte_stream.h"
-#include "xenia/base/filesystem.h"
-#include "xenia/base/logging.h"
-=======
 #include <cstdio>
 #include <vector>
 
@@ -22,7 +17,6 @@
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string.h"
->>>>>>> theirs
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/elf_module.h"
 #include "xenia/emulator.h"
@@ -172,10 +166,10 @@ X_STATUS UserModule::LoadFromHostFile(
   name_ = xe::path_to_utf8(host_path.filename());
 
   X_STATUS result = LoadFromMemory(buffer.data(), buffer.size());
-  // XEX modules return PENDING and expect a LoadXexContinue() to finish
+  // XEX modules return PENDING and expect a LoadContinue() to finish
   // parsing sections/imports/symbols (trainers carry no xexp patch).
   if (result == X_STATUS_PENDING) {
-    result = LoadXexContinue();
+    result = LoadContinue();
   }
   return result;
 }
@@ -480,10 +474,7 @@ void UserModule::Dump() {
       kernel_state_->emulator()->export_resolver();
   auto header = xex_header();
 
-<<<<<<< ours
-=======
   // Compute the title build hash (used to match game patches) before we dump.
->>>>>>> theirs
   CalculateHash();
 
   // XEX header.
@@ -1196,13 +1187,10 @@ void UserModule::Dump() {
 }
 
 void UserModule::CalculateHash() {
-<<<<<<< ours
-=======
   if (module_format_ != kModuleFormatXex) {
     return;
   }
 
->>>>>>> theirs
   const BaseHeap* module_heap =
       kernel_state_->memory()->LookupHeap(xex_module()->base_address());
 
@@ -1242,9 +1230,6 @@ void UserModule::CalculateHash() {
   XXH3_64bits_reset(&hash_state);
   XXH3_64bits_update(&hash_state, base_code_adr, end_address - start_address);
   hash_ = XXH3_64bits_digest(&hash_state);
-<<<<<<< ours
-}
-=======
 
   // Log the code-section hash so .patch.toml files can be authored against it
   // (the game-patch system matches title_id + this hash). Cheap, once per module
@@ -1253,6 +1238,5 @@ void UserModule::CalculateHash() {
          start_address, end_address);
 }
 
->>>>>>> theirs
 }  // namespace kernel
 }  // namespace xe

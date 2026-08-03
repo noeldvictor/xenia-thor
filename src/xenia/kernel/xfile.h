@@ -166,8 +166,6 @@ class XFile : public XObject {
                  uint32_t apc_context);
 
   X_STATUS SetLength(size_t length);
-  X_STATUS Rename(const std::filesystem::path file_path);
-
   // Renames/moves the backing entry to the given guest path (FileRename info).
   X_STATUS Rename(const std::filesystem::path file_path);
 
@@ -190,7 +188,6 @@ class XFile : public XObject {
  private:
   XFile();
 
-<<<<<<< ours
   // Bodies run on the I/O worker via RunBlockingHostCall. All take file_lock_
   // themselves except ReadInternal, which runs under one its caller holds.
   X_STATUS ReadInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
@@ -206,12 +203,6 @@ class XFile : public XObject {
   X_STATUS WriteInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
                          uint64_t byte_offset, uint32_t* out_bytes_written,
                          uint32_t apc_context);
-=======
-  // Unlocked read body. Callers MUST hold file_lock_ (Read/ReadScatter do).
-  X_STATUS ReadInternal(uint32_t buffer_guest_address, uint32_t buffer_length,
-                        uint64_t byte_offset, uint32_t* out_bytes_read,
-                        uint32_t apc_context, bool notify_completion);
->>>>>>> theirs
 
   vfs::File* file_ = nullptr;
   std::unique_ptr<threading::Event> async_event_ = nullptr;
@@ -219,12 +210,6 @@ class XFile : public XObject {
   mutable std::mutex file_lock_;
   std::mutex completion_port_lock_;
   std::vector<std::pair<uint32_t, object_ref<XIOCompletion>>> completion_ports_;
-
-  // Serializes reads/writes so position_ and the underlying host file are
-  // race-free. Without it, a game that streams from disc on several threads
-  // (e.g. Banjo: Nuts & Bolts) races on the shared file position and gets
-  // corrupted data, which it reports as a dirty-disc error. Matches upstream.
-  std::mutex file_lock_;
 
   // TODO(benvanik): create flags, open state, etc.
 

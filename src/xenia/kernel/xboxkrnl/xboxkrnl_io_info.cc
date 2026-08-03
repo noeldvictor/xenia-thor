@@ -92,12 +92,6 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     case XFileSectorInformation: {
-<<<<<<< ours
-      // SW that uses this seems to use the output as a way of uniquely
-      // identifying a file for sorting/lookup so we can just give it an
-      // arbitrary 4 byte integer most of the time
-      XELOGW("Stub XFileSectorInformation!");
-=======
       // SW that uses this uses the output as a way to uniquely identify a file
       // for sorting/lookup, so an arbitrary stable 4-byte integer suffices.
       // Banjo-Kazooie: Nuts & Bolts queries this to identify its hash-addressed
@@ -107,7 +101,6 @@ dword_result_t NtQueryInformationFile_entry(
       // font-cache paths are all fine). Match upstream xenia-canary: return a
       // stable path-hash. (Device-RE 2026-06-26: this fork-vs-canary diff was
       // the real Banjo boot blocker behind the disc-read-error.)
->>>>>>> theirs
       auto info = info_ptr.as<uint32_t*>();
       size_t fname_hash = xe::memory::hash_combine(82589933LL, file->path());
       *info = static_cast<uint32_t>(fname_hash ^ (fname_hash >> 32));
@@ -445,7 +438,6 @@ dword_result_t NtQueryVolumeInformationFile_entry(
       break;
     }
     case XFileFsDeviceInformation: {
-<<<<<<< ours
       auto info = info_ptr.as<X_FILE_FS_DEVICE_INFORMATION*>();
       auto file_device = file->device();
       XELOGW("Stub XFileFsDeviceInformation!");
@@ -457,16 +449,6 @@ dword_result_t NtQueryVolumeInformationFile_entry(
     }
     default: {
       assert_always();
-=======
-      auto info = info_ptr.as<uint32_t*>();
-      info[0] = 0;
-      info[1] = 0;
-      out_length = 8;
-      break;
-    }
-    default: {
-      status = X_STATUS_INVALID_INFO_CLASS;
->>>>>>> theirs
       out_length = 0;
       break;
     }

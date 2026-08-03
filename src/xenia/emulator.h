@@ -17,9 +17,11 @@
 #include <string>
 #include <vector>
 
+#include "xenia/apu/audio_media_player.h"
 #include "xenia/base/delegate.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/util/game_info_database.h"
 #include "xenia/memory.h"
 #include "xenia/vfs/virtual_file_system.h"
 #include "xenia/xbox.h"
@@ -137,6 +139,19 @@ class Emulator {
   // Audio hardware emulation for decoding and playback.
   apu::AudioSystem* audio_system() const { return audio_system_.get(); }
 
+  // Xbox media player (XMP) emulation for WMA and MP3 playback.
+  apu::AudioMediaPlayer* audio_media_player() const {
+    return audio_media_player_.get();
+  }
+
+  // Title metadata (SPA/XDBF) for the running game; null until a title loads.
+  kernel::util::GameInfoDatabase* game_info_database() const {
+    return game_info_database_.get();
+  }
+
+  // NOTE: Edge's patcher::PluginLoader is deliberately NOT ported (we keep
+  // our own cpptoml patcher). No merged kernel call site references it.
+
   // GPU emulation for command list processing.
   gpu::GraphicsSystem* graphics_system() const {
     return graphics_system_.get();
@@ -218,6 +233,51 @@ class Emulator {
   xe::Delegate<> on_terminate;
   xe::Delegate<> on_exit;
 
+  // --- Edge kernel-port surface -------------------------------------------
+  // Callbacks the app layer installs so the core can reach the game library.
+  // Our Android front-end drives disc changes through the disc_playlist cvar
+  // (GetDiscPathForNumber above), so these stay optional/no-op by default.
+  using LaunchNewTitleCallback = std::function<void(
+      const std::string&, const std::string&, uint32_t, const std::string&)>;
+  LaunchNewTitleCallback on_launch_new_title() const {
+    return on_launch_new_title_;
+  }
+  void set_on_launch_new_title(LaunchNewTitleCallback callback) {
+    on_launch_new_title_ = std::move(callback);
+  }
+
+  // Called when XamSwapDisc successfully swaps to a new disc.
+  using DiscSwapCallback = std::function<void(uint8_t)>;
+  DiscSwapCallback on_disc_swap() const { return on_disc_swap_; }
+  void set_on_disc_swap(DiscSwapCallback callback) {
+    on_disc_swap_ = std::move(callback);
+  }
+
+  struct TitleDisc {
+    std::string label;
+    std::filesystem::path path;
+  };
+  using DiscRecorder =
+      std::function<void(uint32_t title_id, const std::string& label,
+                         const std::filesystem::path& path)>;
+  void set_disc_recorder(DiscRecorder recorder) {
+    disc_recorder_ = std::move(recorder);
+  }
+  void RecordDisc(uint32_t title_id, const std::string& label,
+                  const std::filesystem::path& path) {
+    if (disc_recorder_) {
+      disc_recorder_(title_id, label, path);
+    }
+  }
+
+  // Interactive disc picker. Headless/Android has none - returns empty, and
+  // XamSwapDisc falls back to the disc_playlist path (see xam_content.cc).
+  const std::filesystem::path GetNewDiscPath(std::string window_message = "");
+
+  // Mounts a host path at a guest mount point (used by disc swap).
+  X_STATUS MountPath(const std::filesystem::path& path,
+                     const std::string_view mount_path);
+
  private:
   static bool ExceptionCallbackThunk(Exception* ex, void* data);
   bool ExceptionCallback(Exception* ex);
@@ -249,6 +309,12 @@ class Emulator {
 
   std::unique_ptr<cpu::Processor> processor_;
   std::unique_ptr<apu::AudioSystem> audio_system_;
+  // Edge kernel-port surface (XMP media playback + app-installed callbacks).
+  std::unique_ptr<apu::AudioMediaPlayer> audio_media_player_;
+  std::unique_ptr<kernel::util::GameInfoDatabase> game_info_database_;
+  LaunchNewTitleCallback on_launch_new_title_;
+  DiscSwapCallback on_disc_swap_;
+  DiscRecorder disc_recorder_;
   std::unique_ptr<gpu::GraphicsSystem> graphics_system_;
   std::unique_ptr<hid::InputSystem> input_system_;
 

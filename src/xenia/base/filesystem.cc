@@ -24,5 +24,14 @@ bool CreateParentFolder(const std::filesystem::path& path) {
   return true;
 }
 
+
+std::optional<FileInfo> GetInfo(const std::filesystem::path& path) {
+  FileInfo info = {};
+  if (!GetInfo(path, &info)) {
+    return std::nullopt;
+  }
+  return info;
+}
+
 }  // namespace filesystem
 }  // namespace xe
