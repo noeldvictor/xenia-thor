@@ -999,11 +999,19 @@ bool CommandProcessor::Initialize() {
   }
 
   worker_running_ = true;
+  // Must name the IDLE process explicitly (xenia-edge parity). Host threads
+  // created before a title is loaded otherwise default to the TITLE process,
+  // whose X_KPROCESS is still zeroed - KernelState::InitializeProcess only runs
+  // for it in SetExecutableModule. XThread::Create then inserts into a guest
+  // list whose head has blink_ptr == 0 and writes through guest address 0.
   worker_thread_ = kernel::object_ref<kernel::XHostThread>(
-      new kernel::XHostThread(kernel_state_, 128 * 1024, 0, [this]() {
-        WorkerThreadMain();
-        return 0;
-      }));
+      new kernel::XHostThread(
+          kernel_state_, 128 * 1024, 0,
+          [this]() {
+            WorkerThreadMain();
+            return 0;
+          },
+          kernel_state_->GetIdleProcess()));
   worker_thread_->set_name("GPU Commands");
   worker_thread_->Create();
 

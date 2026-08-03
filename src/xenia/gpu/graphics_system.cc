@@ -181,33 +181,40 @@ X_STATUS GraphicsSystem::Setup(cpu::Processor* processor,
 
   // 60hz vsync timer.
   vsync_worker_running_ = true;
+  // Idle process, not the default title process - see the note in
+  // CommandProcessor::Initialize; the title process is not initialized until a
+  // title is loaded, which is after this runs.
   vsync_worker_thread_ = kernel::object_ref<kernel::XHostThread>(
-      new kernel::XHostThread(kernel_state_, 128 * 1024, 0, [this]() {
-        uint64_t vsync_duration = cvars::vsync ? 16 : 1;
-        uint64_t last_frame_time = Clock::QueryGuestTickCount();
-        while (vsync_worker_running_) {
-          uint64_t current_time = Clock::QueryGuestTickCount();
-          uint64_t elapsed = (current_time - last_frame_time) /
-                             (Clock::guest_tick_frequency() / 1000);
-          bool fire = elapsed >= vsync_duration;
-          if (!fire && cvars::vsync_on_swap &&
-              swap_vblank_requested_.load(std::memory_order_relaxed)) {
-            // Event-driven vblank: a slower-than-60fps title just issued a
-            // swap (RequestSwapVblank only arms this when the inter-swap
-            // interval exceeds the vblank period) - fire the vblank now
-            // instead of letting the guest's frame round up to the next fixed
-            // 16.7ms tick (the measured cross-game quantization, B86i/B86j).
-            fire = true;
-          }
-          if (fire) {
-            swap_vblank_requested_.store(false, std::memory_order_relaxed);
-            MarkVblank();
-            last_frame_time = current_time;
-          }
-          xe::threading::Sleep(std::chrono::milliseconds(1));
-        }
-        return 0;
-      }));
+      new kernel::XHostThread(
+          kernel_state_, 128 * 1024, 0,
+          [this]() {
+            uint64_t vsync_duration = cvars::vsync ? 16 : 1;
+            uint64_t last_frame_time = Clock::QueryGuestTickCount();
+            while (vsync_worker_running_) {
+              uint64_t current_time = Clock::QueryGuestTickCount();
+              uint64_t elapsed = (current_time - last_frame_time) /
+                                 (Clock::guest_tick_frequency() / 1000);
+              bool fire = elapsed >= vsync_duration;
+              if (!fire && cvars::vsync_on_swap &&
+                  swap_vblank_requested_.load(std::memory_order_relaxed)) {
+                // Event-driven vblank: a slower-than-60fps title just issued a
+                // swap (RequestSwapVblank only arms this when the inter-swap
+                // interval exceeds the vblank period) - fire the vblank now
+                // instead of letting the guest's frame round up to the next
+                // fixed 16.7ms tick (the measured cross-game quantization,
+                // B86i/B86j).
+                fire = true;
+              }
+              if (fire) {
+                swap_vblank_requested_.store(false, std::memory_order_relaxed);
+                MarkVblank();
+                last_frame_time = current_time;
+              }
+              xe::threading::Sleep(std::chrono::milliseconds(1));
+            }
+            return 0;
+          },
+          kernel_state_->GetIdleProcess()));
   // As we run vblank interrupts the debugger must be able to suspend us.
   vsync_worker_thread_->set_can_debugger_suspend(true);
   vsync_worker_thread_->set_name("GPU VSync");

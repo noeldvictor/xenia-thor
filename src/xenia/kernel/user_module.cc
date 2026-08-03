@@ -381,6 +381,17 @@ X_STATUS UserModule::GetOptHeader(xex2_header_keys key,
     return X_STATUS_UNSUCCESSFUL;
   }
 
+  // Check the GUEST pointer, not the translated host one: TranslateVirtual(0)
+  // returns the membase, which is never null, so a host-side null test silently
+  // passes and the caller reads guest address 0 as if it were a xex2_header.
+  if (!guest_xex_header_) {
+    XELOGE(
+        "UserModule::GetOptHeader: module '{}' has no guest XEX header - "
+        "LoadContinue never ran for it (KernelState::FinishLoadingUserModule "
+        "missing from the load path).",
+        name_);
+    return X_STATUS_UNSUCCESSFUL;
+  }
   auto header =
       memory()->TranslateVirtual<const xex2_header*>(guest_xex_header_);
   if (!header) {

@@ -1816,6 +1816,20 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     return X_STATUS_NOT_FOUND;
   }
 
+  // The Edge kernel splits module loading in two: LoadUserModule stops at
+  // X_STATUS_PENDING (headers parsed, nothing mapped) and FinishLoadingUserModule
+  // runs LoadContinue, which maps the sections AND copies the XEX header into
+  // guest memory. Without this second call guest_xex_header_ stays 0, and
+  // UserModule::GetOptHeader then translates guest address 0 into membase - a
+  // pointer that is NOT null, so its own null check passes - and reads
+  // header_count at membase+0x14. Device-observed as a startup segfault at
+  // 0x100000014 (2026-08-03).
+  X_RESULT finish_result = kernel_state_->FinishLoadingUserModule(module);
+  if (XFAILED(finish_result)) {
+    XELOGE("Failed to initialize user module {}", xe::path_to_utf8(path));
+    return finish_result;
+  }
+
   // Grab the current title ID.
   xex2_opt_execution_info* info = nullptr;
   module->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &info);

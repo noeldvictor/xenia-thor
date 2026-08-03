@@ -18,6 +18,7 @@
 #include "xenia/base/string_buffer.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/thread_state.h"
+#include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xthread.h"
 
 extern "C" {
@@ -153,11 +154,17 @@ X_STATUS XmaDecoder::Setup(kernel::KernelState* kernel_state) {
   worker_running_ = true;
   work_event_ = xe::threading::Event::CreateAutoResetEvent(false);
   assert_not_null(work_event_);
+  // Idle process (xenia-edge parity) - this thread needs no real process, but
+  // it must not default to the title process, which is not initialized until a
+  // title is loaded.
   worker_thread_ = kernel::object_ref<kernel::XHostThread>(
-      new kernel::XHostThread(kernel_state, 128 * 1024, 0, [this]() {
-        WorkerThreadMain();
-        return 0;
-      }));
+      new kernel::XHostThread(
+          kernel_state, 128 * 1024, 0,
+          [this]() {
+            WorkerThreadMain();
+            return 0;
+          },
+          kernel_state->GetIdleProcess()));
   worker_thread_->set_name("XMA Decoder");
   worker_thread_->set_can_debugger_suspend(true);
   worker_thread_->Create();

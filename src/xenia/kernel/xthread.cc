@@ -304,9 +304,26 @@ void XThread::InitializeGuestObject() {
 
   // todo: acquire dispatcher lock here?
 
-  util::XeInsertTailList(&process->thread_list, &guest_thread->process_threads,
-                         context_here);
-  process->thread_count += 1;
+  // An initialized X_KPROCESS always has a self-referential thread_list; zero
+  // means InitializeProcess never ran for it. Inserting into that list would
+  // write through guest address 0 and take down the process with a host
+  // segfault that points at native_list.h rather than at the real mistake
+  // (creating a host thread against the not-yet-initialized title process
+  // before a title is loaded - device-observed 2026-08-03). Report it instead.
+  if (!process->thread_list.blink_ptr || !process->thread_list.flink_ptr) {
+    XELOGE(
+        "XThread::Create: X_KPROCESS at {:08X} has an uninitialized "
+        "thread_list (flink={:08X} blink={:08X}) - skipping the guest thread "
+        "list insert for thread '{}'. The creator should name an already "
+        "initialized process (idle/system) instead of defaulting to the title "
+        "process.",
+        process_info_block_address, uint32_t(process->thread_list.flink_ptr),
+        uint32_t(process->thread_list.blink_ptr), thread_name_);
+  } else {
+    util::XeInsertTailList(&process->thread_list,
+                           &guest_thread->process_threads, context_here);
+    process->thread_count += 1;
+  }
   // todo: release dispatcher lock here?
   xboxkrnl::xeKeKfReleaseSpinLock(context_here, &process->thread_list_spinlock,
                                   old_irql);
