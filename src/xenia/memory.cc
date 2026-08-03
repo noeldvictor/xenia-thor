@@ -150,17 +150,10 @@ bool Memory::Initialize() {
 
   // Create main page file-backed mapping. This is all reserved but
   // uncommitted (so it shouldn't expand page file).
-  // Size: entire 4gb space + 512mb physical, PLUS allocation-granularity
-  // slack: the 0xE0000000 view maps file offset 0x100001000 for 0x20000000
-  // bytes = past 0x120000000, and a backing file even one byte short makes
-  // accesses to the view's tail raise SIGBUS (xenia-edge parity fix; the
-  // previous 0x11FFFFFFF was exactly one byte short even before the offset
-  // slack).
-  const size_t mapping_size =
-      xe::round_up(size_t(0x120000000) + system_allocation_granularity_,
-                   size_t(system_allocation_granularity_));
   mapping_ = xe::memory::CreateFileMappingHandle(
-      file_name_, mapping_size, xe::memory::PageAccess::kReadWrite, false);
+      file_name_,
+      // entire 4gb space + 512mb physical:
+      0x11FFFFFFF, xe::memory::PageAccess::kReadWrite, false);
   if (mapping_ == xe::memory::kFileMappingHandleInvalid) {
     XELOGE("Unable to reserve the 4gb guest address space.");
     assert_always();
@@ -251,15 +244,6 @@ bool Memory::Initialize() {
       0xC0000000, 0x01000000, 32,
       kMemoryAllocationReserve | kMemoryAllocationCommit,
       kMemoryProtectRead | kMemoryProtectWrite);
-
-  // The GPU (and games writing through the physical windows) may touch any
-  // page of the 512MB physical range regardless of guest heap bookkeeping -
-  // commit the whole parent physical view up front so those accesses can
-  // never land on an uncommitted host page (xenia-edge / canary parity,
-  // Gliniak's "GPU has access to whole physical memory range").
-  xe::memory::AllocFixed(heaps_.physical.TranslateRelative(0x01000000),
-                         0x1F000000, xe::memory::AllocationType::kCommit,
-                         xe::memory::PageAccess::kReadWrite);
 
   // Add handlers for MMIO.
   mmio_handler_ = cpu::MMIOHandler::Install(

@@ -124,34 +124,26 @@ static std::mutex g_mapped_file_ranges_mutex;
 
 void* AllocFixed(void* base_address, size_t length,
                  AllocationType allocation_type, PageAccess access) {
-  // mmap does not support reserve / commit, so commit on an existing base is
-  // a protection change - never a replacing anonymous mapping (xenia-edge).
+  // NOTE(2026-08-03): reverted to the original MAP_FIXED behavior. The Edge
+  // port briefly used MAP_FIXED_NOREPLACE here, which makes a fixed-address
+  // RESERVE fail when the address already lies inside the big guest file
+  // mapping - previously MAP_FIXED replaced it and succeeded. That failure
+  // returned nullptr to callers that do not check, and crash-looped the
+  // Android build at startup (device-observed). Windows uses memory_win.cc,
+  // so desktop never saw it.
   uint32_t prot = ToPosixProtectFlags(access);
-  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 
-  if (base_address != nullptr) {
-    if (allocation_type == AllocationType::kCommit) {
-      if (Protect(base_address, length, access)) {
-        return base_address;
-      }
-      return nullptr;
-    }
-#ifdef MAP_FIXED_NOREPLACE
-    flags |= MAP_FIXED_NOREPLACE;
-#endif
+  // Committing over an existing reservation must NOT re-mmap: an anonymous
+  // MAP_FIXED there would silently de-alias the page from the shared guest
+  // views (and the GPU). A protection change is the correct commit.
+  if (base_address != nullptr &&
+      allocation_type == AllocationType::kCommit) {
+    return Protect(base_address, length, access) ? base_address : nullptr;
   }
 
-  void* result = mmap(base_address, length, prot, flags, -1, 0);
-  if (result == MAP_FAILED) {
-    return nullptr;
-  }
-  // Without MAP_FIXED_NOREPLACE the address is only a hint; enforce the
-  // caller's contract by failing on mismatch instead of clobbering.
-  if (base_address != nullptr && result != base_address) {
-    munmap(result, length);
-    return nullptr;
-  }
-  return result;
+  void* result = mmap(base_address, length, prot,
+                      MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
+  return result == MAP_FAILED ? nullptr : result;
 }
 
 bool DeallocFixed(void* base_address, size_t length,
@@ -330,21 +322,16 @@ void CloseFileMappingHandle(FileMappingHandle handle,
 
 void* MapFileView(FileMappingHandle handle, void* base_address, size_t length,
                   PageAccess access, size_t file_offset) {
+  // NOTE(2026-08-03): MUST NOT use MAP_FIXED_NOREPLACE here. The guest views
+  // are mapped INTO the already-reserved 4GB+512MB region, so NOREPLACE sees
+  // the reservation as an existing mapping and fails - memory init then fails
+  // and the process segfaults at startup (device-observed crash-loop on the
+  // Thor; Windows uses memory_win.cc so desktop never saw it). base_address
+  // is a hint, exactly as upstream intends.
   uint32_t prot = ToPosixProtectFlags(access);
-  int flags = MAP_SHARED;
-  if (base_address != nullptr) {
-#ifdef MAP_FIXED_NOREPLACE
-    flags |= MAP_FIXED_NOREPLACE;
-#endif
-  }
-  // mmap64: guest view file offsets exceed 32 bits (physical windows start at
-  // file offset 0x100001000).
-  void* result = mmap64(base_address, length, prot, flags, handle, file_offset);
+  void* result =
+      mmap64(base_address, length, prot, MAP_SHARED, handle, file_offset);
   if (result == MAP_FAILED) {
-    return nullptr;
-  }
-  if (base_address != nullptr && result != base_address) {
-    munmap(result, length);
     return nullptr;
   }
 
