@@ -12,10 +12,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
+// Edge kernel-port: Edge's imgui_drawer.h exposes ImGui types by value to its
+// consumers (xam/ui dialogs), so the real header must be visible here rather
+// than only forward-declared.
+#include "third_party/imgui/imgui.h"
 #include "xenia/ui/immediate_drawer.h"
 #include "xenia/ui/presenter.h"
 #include "xenia/ui/window.h"
@@ -33,6 +39,26 @@ class ImGuiDialog;
 class Window;
 
 class ImGuiNotification;
+
+// Edge kernel-port: image blobs (PNG bytes) keyed by an image id, uploaded to
+// the immediate drawer in bulk by ImGuiDrawer::LoadIcons().
+using IconsData = std::map<uint32_t, std::span<const uint8_t>>;
+
+// Edge kernel-port: default on-screen size of profile/achievement/title icons.
+constexpr ImVec2 default_image_icon_size = ImVec2(64.f, 64.f);
+
+// NOTE(kernel-port): third_party/imgui in this tree is 1.89, which predates
+// ImGui::SeparatorText() (added in 1.89.2) and ImGuiHoveredFlags_ForTooltip
+// (added in 1.89.7). The two shims below reproduce the behavior with 1.89
+// primitives so the ported xam/ui dialogs build.
+// Re-enable path: upgrade third_party/imgui to >= 1.89.7, then replace
+// xe::ui::SeparatorText() with ImGui::SeparatorText() and
+// xe::ui::kHoveredFlagsForTooltip with ImGuiHoveredFlags_ForTooltip at the
+// call sites (currently only src/xenia/kernel/xam/ui/gamercard_ui.cc), and
+// delete these two declarations plus the definition in imgui_drawer.cc.
+void SeparatorText(const char* label);
+constexpr ImGuiHoveredFlags kHoveredFlagsForTooltip =
+    ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled;
 
 class ImGuiDrawer : public WindowInputListener, public UIDrawer {
  public:
@@ -59,6 +85,23 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   }
 
   void Draw(UIDrawContext& ui_draw_context) override;
+
+  // Edge kernel-port: decodes an in-memory image (PNG/JPG/...) and uploads it
+  // as an immediate-drawer texture. Returns null if there is no immediate
+  // drawer attached yet or the blob could not be decoded.
+  std::unique_ptr<ImmediateTexture> LoadImGuiIcon(std::span<const uint8_t> data);
+  std::map<uint32_t, std::unique_ptr<ImmediateTexture>> LoadIcons(
+      const IconsData& data);
+
+  // Edge kernel-port: larger font used for headings in the xam/ui dialogs.
+  // Falls back to the default font if the title font failed to load.
+  ImFont* GetTitleFont() {
+    ImFontAtlas* fonts = GetIO().Fonts;
+    if (fonts->Fonts.Size < 2 || !fonts->Fonts[1]->IsLoaded()) {
+      return fonts->Fonts[0];
+    }
+    return fonts->Fonts[1];
+  }
 
  protected:
   void OnKeyDown(KeyEvent& e) override;

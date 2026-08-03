@@ -14,7 +14,9 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <string>
+#include <system_error>
 #include <string_view>
 #include <vector>
 
@@ -126,6 +128,27 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info);
 // Optional-returning overload (Edge kernel-port: merged vfs uses this shape).
 std::optional<FileInfo> GetInfo(const std::filesystem::path& path);
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path);
+
+// Edge kernel-port: creates a folder (and parents) at the specified path.
+// If the folder already exists it returns success (no error).
+std::error_code CreateFolder(const std::filesystem::path& path);
+
+// Edge kernel-port: whole-file readers used by the merged profile manager.
+// Reads the entire file at the given path as a byte buffer.
+// Returns an empty vector on open/read failure or for empty files.
+std::vector<uint8_t> ReadAllBytes(const std::filesystem::path& path);
+// Reads the entire file at the given path as a text string (binary mode; the
+// caller gets any \r bytes verbatim). Returns an empty string on failure.
+std::string ReadAllText(const std::filesystem::path& path);
+
+// Edge kernel-port: generic listing/filtering helpers used by the merged
+// content manager / profile manager.
+std::vector<FileInfo> ListDirectories(const std::filesystem::path& path);
+std::vector<FileInfo> FilterByName(const std::vector<FileInfo>& files,
+                                   const std::regex pattern);
+std::vector<FileInfo> FindFileWithName(const std::filesystem::path& path,
+                                       std::string_view name,
+                                       bool recursive = false);
 
 // Sets the host file attributes for the given path (X_FILE_ATTRIBUTE_* bits).
 // Edge kernel-port: needed by vfs HostPathEntry::SetAttributes. Only the

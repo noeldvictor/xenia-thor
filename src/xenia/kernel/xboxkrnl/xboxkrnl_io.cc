@@ -170,8 +170,8 @@ struct CreateOptions {
 };
 
 static bool ShouldTraceBlueDragonFilePath(const std::string_view path) {
-  return path.find("\pack") != std::string_view::npos ||
-         path.find("\!necessity") != std::string_view::npos ||
+  return path.find("\\pack") != std::string_view::npos ||
+         path.find("\\!necessity") != std::string_view::npos ||
          path.find("!necessity") != std::string_view::npos;
 }
 

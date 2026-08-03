@@ -4729,19 +4729,26 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
 
     if (!current_transfers.empty()) {
       are_current_command_list_render_targets_valid_ = false;
+      // NOTE(kernel-port): D3D12CpuDescriptorPool::Descriptor::GetHandle()
+      // returns by value, so taking its address needs a named l-value. MSVC
+      // used to accept `&<rvalue>` as a non-conforming extension; the port's
+      // move to /std:c++20 implies /permissive-, which rejects it (C2102).
+      // Behaviour is unchanged - OMSetRenderTargets only reads the handle.
       if (dest_rt_key.is_depth) {
-        command_list.D3DOMSetRenderTargets(
-            0, nullptr, FALSE, &dest_d3d12_rt.descriptor_draw().GetHandle());
+        const D3D12_CPU_DESCRIPTOR_HANDLE dest_descriptor_handle =
+            dest_d3d12_rt.descriptor_draw().GetHandle();
+        command_list.D3DOMSetRenderTargets(0, nullptr, FALSE,
+                                           &dest_descriptor_handle);
         if (!use_stencil_reference_output_) {
           command_processor_.SetStencilReference(UINT8_MAX);
         }
       } else {
-        command_list.D3DOMSetRenderTargets(
-            1,
-            &(dest_d3d12_rt.descriptor_load_separate().IsValid()
-                  ? dest_d3d12_rt.descriptor_load_separate().GetHandle()
-                  : dest_d3d12_rt.descriptor_draw().GetHandle()),
-            FALSE, nullptr);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dest_descriptor_handle =
+            dest_d3d12_rt.descriptor_load_separate().IsValid()
+                ? dest_d3d12_rt.descriptor_load_separate().GetHandle()
+                : dest_d3d12_rt.descriptor_draw().GetHandle();
+        command_list.D3DOMSetRenderTargets(1, &dest_descriptor_handle, FALSE,
+                                           nullptr);
       }
 
       uint32_t dest_pitch_tiles = dest_rt_key.GetPitchTiles();
@@ -5367,12 +5374,14 @@ void D3D12RenderTargetCache::PerformTransfersAndResolveClears(
             dest_d3d12_rt.SetResourceState(D3D12_RESOURCE_STATE_RENDER_TARGET),
             D3D12_RESOURCE_STATE_RENDER_TARGET);
         if (clear_via_drawing) {
-          command_list.D3DOMSetRenderTargets(
-              1,
-              &(dest_d3d12_rt.descriptor_load_separate().IsValid()
-                    ? dest_d3d12_rt.descriptor_load_separate().GetHandle()
-                    : dest_d3d12_rt.descriptor_draw().GetHandle()),
-              FALSE, nullptr);
+          // NOTE(kernel-port): named l-value required under /permissive-
+          // (implied by /std:c++20); see the matching comment above.
+          const D3D12_CPU_DESCRIPTOR_HANDLE dest_descriptor_handle =
+              dest_d3d12_rt.descriptor_load_separate().IsValid()
+                  ? dest_d3d12_rt.descriptor_load_separate().GetHandle()
+                  : dest_d3d12_rt.descriptor_draw().GetHandle();
+          command_list.D3DOMSetRenderTargets(1, &dest_descriptor_handle, FALSE,
+                                             nullptr);
           are_current_command_list_render_targets_valid_ = true;
           D3D12_VIEWPORT clear_viewport;
           clear_viewport.TopLeftX = float(clear_rect.left);

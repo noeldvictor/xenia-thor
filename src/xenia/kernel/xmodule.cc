@@ -51,7 +51,15 @@ bool XModule::Matches(const std::string_view name) const {
 void XModule::OnLoad() { kernel_state_->RegisterModule(this); }
 
 void XModule::OnUnload() {
-  kernel_state_->processor()->RemoveModule(this->name());
+  // NOTE(kernel-port): Edge calls
+  // kernel_state_->processor()->RemoveModule(this->name()) here. We
+  // deliberately did not port cpu::Processor::RemoveModule - our EntryTable
+  // lookup cache and the LLVM resolve cache assume entries are never deleted,
+  // so removal needs an invalidation design first (see the note on
+  // Processor::LookupModule in src/xenia/cpu/processor.h and
+  // docs/research/20260731-edge-kernel-port-plan.md). Consequence: an unloaded
+  // module's code stays registered with the processor, which is the same
+  // behaviour this fork had before the port.
   kernel_state_->UnregisterModule(this);
 }
 

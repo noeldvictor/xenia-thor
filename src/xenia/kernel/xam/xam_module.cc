@@ -46,7 +46,11 @@ xe::cpu::Export* RegisterExport_xam(xe::cpu::Export* export_entry) {
 }
 // Build the export table used for resolution.
 #include "xenia/kernel/util/export_table_pre.inc"
-static constexpr xe::cpu::Export xam_export_table[] = {
+// NOTE(kernel-port): Edge's cpu::Export has a constexpr constructor, so it
+// declares this table `constexpr`. Ours copies the name with strncpy and so is
+// not constexpr-constructible (src/xenia/cpu is out of scope for this port);
+// this matches how xboxkrnl_module.cc / xbdm_module.cc declare their tables.
+static xe::cpu::Export xam_export_table[] = {
 #include "xenia/kernel/xam/xam_table.inc"
 };
 #include "xenia/kernel/util/export_table_post.inc"

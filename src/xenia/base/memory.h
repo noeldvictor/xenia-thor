@@ -169,6 +169,59 @@ size_t hash_combine(size_t seed, const T& v, const Ts&... vs) {
 
 }  // namespace memory
 
+// Software prefetch / cache hints.
+// NOTE(kernel-port): trimmed port of Edge's xe::swcache (base/memory.h). Only
+// the prefetch family is carried over - Edge's cache-line read/write/fence
+// helpers depend on its platform_amd64.h + xbyak feature detection, which we
+// do not vendor. These are pure performance hints with no semantic effect, so
+// unsupported targets degrade to a no-op. To re-enable the full set, port
+// Edge's swcache block plus src/xenia/base/platform_amd64.{h,cc}.
+namespace swcache {
+
+#if XE_COMPILER_HAS_GNU_EXTENSIONS == 1
+XE_FORCEINLINE static void PrefetchW(const void* addr) {
+  __builtin_prefetch(addr, 1, 0);
+}
+XE_FORCEINLINE static void PrefetchNTA(const void* addr) {
+  __builtin_prefetch(addr, 0, 0);
+}
+XE_FORCEINLINE static void PrefetchL3(const void* addr) {
+  __builtin_prefetch(addr, 0, 1);
+}
+XE_FORCEINLINE static void PrefetchL2(const void* addr) {
+  __builtin_prefetch(addr, 0, 2);
+}
+XE_FORCEINLINE static void PrefetchL1(const void* addr) {
+  __builtin_prefetch(addr, 0, 3);
+}
+#elif XE_ARCH_AMD64 == 1 && XE_COMPILER_MSVC == 1
+XE_FORCEINLINE static void PrefetchW(const void* addr) {
+  // _m_prefetchw requires 3DNow!/PREFETCHW support; _MM_HINT_T0 is the safe
+  // universally-available approximation (read-intent instead of write-intent).
+  _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0);
+}
+XE_FORCEINLINE static void PrefetchNTA(const void* addr) {
+  _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_NTA);
+}
+XE_FORCEINLINE static void PrefetchL3(const void* addr) {
+  _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T2);
+}
+XE_FORCEINLINE static void PrefetchL2(const void* addr) {
+  _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T1);
+}
+XE_FORCEINLINE static void PrefetchL1(const void* addr) {
+  _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0);
+}
+#else
+XE_FORCEINLINE static void PrefetchW(const void* addr) {}
+XE_FORCEINLINE static void PrefetchNTA(const void* addr) {}
+XE_FORCEINLINE static void PrefetchL3(const void* addr) {}
+XE_FORCEINLINE static void PrefetchL2(const void* addr) {}
+XE_FORCEINLINE static void PrefetchL1(const void* addr) {}
+#endif
+
+}  // namespace swcache
+
 // TODO(benvanik): move into xe::memory::
 
 inline void* low_address(void* address) {

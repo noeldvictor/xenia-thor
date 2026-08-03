@@ -20,6 +20,7 @@
 #include "xenia/base/memory.h"
 #include "xenia/base/mutex.h"
 #include "xenia/cpu/mmio_handler.h"
+#include "xenia/guest_pointers.h"
 
 namespace xe {
 class ByteStream;
@@ -335,6 +336,14 @@ class Memory {
     return reinterpret_cast<T>(host_address);
   }
 
+  // Edge kernel-port: typed-guest-pointer overload, mirroring
+  // PPCContext::TranslateVirtual. Lets kernel code translate X_KTHREAD::process
+  // and friends without spelling out the pointee type.
+  template <typename T>
+  inline T* TranslateVirtual(TypedGuestPointer<T> guest_address) const {
+    return TranslateVirtual<T*>(guest_address.m_ptr);
+  }
+
   // Base address of physical memory in the host address space.
   // This is often something like 0x200000000.
   inline uint8_t* physical_membase() const { return physical_membase_; }
@@ -486,6 +495,13 @@ class Memory {
 
   // Gets the physical base heap.
   VirtualHeap* GetPhysicalHeap();
+
+  // Edge kernel-port: accumulates page statistics across the given heaps, for
+  // the guest's global memory-status query. Counters are added to, not reset.
+  void GetHeapsPageStatsSummary(const BaseHeap* const* provided_heaps,
+                                size_t heaps_count, uint32_t& unreserved_pages,
+                                uint32_t& reserved_pages, uint32_t& used_pages,
+                                uint32_t& reserved_bytes);
 
   // Dumps a map of all allocated memory to the log.
   void DumpMap();

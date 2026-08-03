@@ -230,9 +230,47 @@ void AudioSystem::SubmitFrame(size_t index, uint32_t samples_ptr) {
         index < kMaximumClientCount
             ? static_cast<void*>(clients_[index].driver)
             : nullptr);
+    if (index < kMaximumClientCount) {
+      ++clients_[index].frames_dropped;
+    }
     return;
   }
+  ++clients_[index].frames_submitted;
+  ++clients_[index].frames_processed;
   (clients_[index].driver)->SubmitFrame(samples_ptr);
+}
+
+void AudioSystem::SubmitFrame(size_t index, float* samples) {
+  // Edge kernel-port: the kernel shim translates the guest sample block to a
+  // host pointer before calling us, but our AudioDriver interface consumes the
+  // guest address (the drivers do their own TranslateVirtual). Translate back
+  // so both paths converge on the guest-pointer implementation.
+  if (!samples) {
+    XELOGW("AudioSystem::SubmitFrame: null sample block for client {}", index);
+    auto global_lock = global_critical_region_.Acquire();
+    if (index < kMaximumClientCount) {
+      ++clients_[index].frames_dropped;
+    }
+    return;
+  }
+  SubmitFrame(index, memory_->HostToGuestVirtual(samples));
+}
+
+bool AudioSystem::GetClientPerformance(size_t index,
+                                       ClientPerformance* out_perf) {
+  if (index >= kMaximumClientCount || !out_perf) {
+    return false;
+  }
+
+  auto global_lock = global_critical_region_.Acquire();
+  if (!clients_[index].in_use) {
+    return false;
+  }
+
+  out_perf->frames_submitted = clients_[index].frames_submitted;
+  out_perf->frames_processed = clients_[index].frames_processed;
+  out_perf->frames_dropped = clients_[index].frames_dropped;
+  return true;
 }
 
 void AudioSystem::UnregisterClient(size_t index) {

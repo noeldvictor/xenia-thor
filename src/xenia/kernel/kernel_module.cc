@@ -89,7 +89,10 @@ uint32_t KernelModule::GetProcAddressByOrdinal(uint16_t ordinal) {
     // Export (or its parent library) not found.
     return 0;
   }
-  if (export_entry->get_type() == cpu::Export::Type::kVariable) {
+  // NOTE(kernel-port): Edge's cpu::Export derives its kind from a tag bitfield
+  // via get_type(); our cpu::Export still carries a plain `type` member and
+  // src/xenia/cpu is out of scope for this port, so read the member directly.
+  if (export_entry->type == cpu::Export::Type::kVariable) {
     if (export_entry->variable_ptr) {
       return export_entry->variable_ptr;
     } else {

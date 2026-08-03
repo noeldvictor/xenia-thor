@@ -51,6 +51,15 @@ class XmaDecoder {
   void Pause();
   void Resume();
 
+  // Edge kernel-port: wakes the decoder worker when the guest marks new input
+  // data valid (XMASetInputBuffer{0,1}Valid), instead of waiting out the
+  // worker's polling interval.
+  void SignalWork() {
+    if (work_event_) {
+      work_event_->Set();
+    }
+  }
+
  protected:
   int GetContextId(uint32_t guest_ptr);
 

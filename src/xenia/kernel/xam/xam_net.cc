@@ -7,6 +7,9 @@
  ******************************************************************************
  */
 
+#include <cstring>
+
+#include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -21,11 +24,9 @@
 
 #ifdef XE_PLATFORM_WIN32
 // NOTE: must be included last as it expects windows.h to already be included.
-#ifndef _WINSOCK_DEPRECATED_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS  // inet_addr
-#endif
-#include <winsock2.h>  // NOLINT(build/include_order)
-#else
+#include <winsock2.h>                    // NOLINT(build/include_order)
+#elif XE_PLATFORM_LINUX
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -56,14 +57,13 @@ typedef struct {
   uint8_t abOnline[20];          // Online identification
 } XNADDR;
 
-struct XNDNS {
+typedef struct {
   xe::be<int32_t> status;
   xe::be<uint32_t> cina;
   in_addr aina[8];
-};
-static_assert_size(XNDNS, 0x28);
+} XNDNS;
 
-struct XNQOSINFO {
+typedef struct {
   uint8_t flags;
   uint8_t reserved;
   xe::be<uint16_t> probes_xmit;
@@ -74,20 +74,18 @@ struct XNQOSINFO {
   xe::be<uint16_t> rtt_med_in_msecs;
   xe::be<uint32_t> up_bits_per_sec;
   xe::be<uint32_t> down_bits_per_sec;
-};
-static_assert_size(XNQOSINFO, 0x18);
+} XNQOSINFO;
 
-struct XNQOS {
+typedef struct {
   xe::be<uint32_t> count;
   xe::be<uint32_t> count_pending;
   XNQOSINFO info[1];
-};
+} XNQOS;
 
 struct Xsockaddr_t {
   xe::be<uint16_t> sa_family;
   char sa_data[14];
 };
-static_assert_size(XNQOS, 0x20);
 
 struct X_WSADATA {
   xe::be<uint16_t> version;
@@ -98,7 +96,6 @@ struct X_WSADATA {
   xe::be<uint16_t> max_udpdg;
   xe::be<uint32_t> vendor_info_ptr;
 };
-static_assert_size(X_WSADATA, 0x190);
 
 struct XWSABUF {
   xe::be<uint32_t> len;
@@ -169,15 +166,11 @@ struct XNetStartupParams {
   uint8_t cfgQosSrvMaxSimultaneousResponses;
   uint8_t cfgQosPairWaitTimeInSeconds;
 };
-static_assert_size(XNetStartupParams, 0xD);
 
 XNetStartupParams xnet_startup_params = {0};
 
 dword_result_t NetDll_XNetStartup_entry(dword_t caller,
                                         pointer_t<XNetStartupParams> params) {
-  XELOGI("NetDll_XNetStartup: caller={}, params={:08X}", caller.value(),
-         params.guest_address());
-
   if (params) {
     assert_true(params->cfgSizeOfStruct == sizeof(XNetStartupParams));
     std::memcpy(&xnet_startup_params, params, sizeof(XNetStartupParams));
@@ -197,17 +190,6 @@ dword_result_t NetDll_XNetStartup_entry(dword_t caller,
   return 0;
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetStartup, kNetworking, kImplemented);
-
-// https://github.com/jogolden/testdev/blob/master/xkelib/syssock.h#L46
-dword_result_t NetDll_XNetStartupEx_entry(dword_t caller,
-                                          pointer_t<XNetStartupParams> params,
-                                          dword_t versionReq) {
-  // versionReq
-  // MW3, Ghosts: 0x20501400
-
-  return NetDll_XNetStartup_entry(caller, params);
-}
-DECLARE_XAM_EXPORT1(NetDll_XNetStartupEx, kNetworking, kImplemented);
 
 dword_result_t NetDll_XNetCleanup_entry(dword_t caller, lpvoid_t params) {
   auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");
@@ -229,69 +211,61 @@ dword_result_t NetDll_XNetGetOpt_entry(dword_t one, dword_t option_id,
     case 1:
       if (*buffer_size < sizeof(XNetStartupParams)) {
         *buffer_size = sizeof(XNetStartupParams);
-        return uint32_t(X_WSAError::X_WSAEMSGSIZE);
+        return 0x2738;  // WSAEMSGSIZE
       }
       std::memcpy(buffer_ptr, &xnet_startup_params, sizeof(XNetStartupParams));
       return 0;
     default:
-      XELOGE("NetDll_XNetGetOpt: option {} unimplemented",
-             static_cast<uint32_t>(option_id));
-      return uint32_t(X_WSAError::X_WSAEINVAL);
+      XELOGE("NetDll_XNetGetOpt: option {} unimplemented", option_id);
+      return 0x2726;  // WSAEINVAL
   }
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetGetOpt, kNetworking, kSketchy);
 
 dword_result_t NetDll_XNetRandom_entry(dword_t caller, lpvoid_t buffer_ptr,
                                        dword_t length) {
-  uint8_t* buffer_data_ptr = buffer_ptr.as<uint8_t*>();
+  // For now, constant values.
+  // This makes replicating things easier.
+  std::memset(buffer_ptr, 0xBB, length);
 
-  if (buffer_data_ptr == nullptr || length == 0) {
-    return X_ERROR_SUCCESS;
-  }
-
-  std::random_device rnd;
-  std::mt19937_64 gen(rnd());
-  std::uniform_int_distribution<int> dist(0,
-                                          std::numeric_limits<uint8_t>::max());
-
-  std::generate(buffer_data_ptr, buffer_data_ptr + length,
-                [&]() { return static_cast<uint8_t>(dist(gen)); });
-
-  return X_ERROR_SUCCESS;
+  return 0;
 }
-DECLARE_XAM_EXPORT1(NetDll_XNetRandom, kNetworking, kImplemented);
+DECLARE_XAM_EXPORT1(NetDll_XNetRandom, kNetworking, kStub);
 
 dword_result_t NetDll_WSAStartup_entry(dword_t caller, word_t version,
                                        pointer_t<X_WSADATA> data_ptr) {
-  // TODO(benvanik): abstraction layer needed.
-  XELOGI("NetDll_WSAStartup: version={:04X}, data_ptr={:08X}", version.value(),
-         data_ptr.guest_address());
-
-  int ret = 0;
-
+// TODO(benvanik): abstraction layer needed.
 #ifdef XE_PLATFORM_WIN32
-  WSADATA wsaData = {};
+  WSADATA wsaData;
+  ZeroMemory(&wsaData, sizeof(WSADATA));
+  int ret = WSAStartup(version, &wsaData);
 
-  ret = WSAStartup(version, &wsaData);
-#endif
+  auto data_out = kernel_state()->memory()->TranslateVirtual(data_ptr);
 
   if (data_ptr) {
-    auto data_out = kernel_state()->memory()->TranslateVirtual(data_ptr);
-
-#ifdef XE_PLATFORM_WIN32
     data_ptr->version = wsaData.wVersion;
     data_ptr->version_high = wsaData.wHighVersion;
-#else
-    data_ptr->version = version.value();
-    data_ptr->version_high = 0x0202;
-#endif
+    std::memcpy(&data_ptr->description, wsaData.szDescription, 0x100);
+    std::memcpy(&data_ptr->system_status, wsaData.szSystemStatus, 0x80);
+    data_ptr->max_sockets = wsaData.iMaxSockets;
+    data_ptr->max_udpdg = wsaData.iMaxUdpDg;
 
     // Some games (5841099F) want this value round-tripped - they'll compare if
     // it changes and bugcheck if it does.
-    // vendor_info_ptr is at offset 0x18A (after max_udpdg at 0x188)
-    uint32_t vendor_ptr = xe::load_and_swap<uint32_t>(data_out + 0x18A);
-    xe::store_and_swap<uint32_t>(data_out + 0x18A, vendor_ptr);
+    uint32_t vendor_ptr = xe::load_and_swap<uint32_t>(data_out + 0x190);
+    xe::store_and_swap<uint32_t>(data_out + 0x190, vendor_ptr);
   }
+#else
+  int ret = 0;
+  if (data_ptr) {
+    // Guess these values!
+    data_ptr->version = version.value();
+    data_ptr->description[0] = '\0';
+    data_ptr->system_status[0] = '\0';
+    data_ptr->max_sockets = 100;
+    data_ptr->max_udpdg = 1024;
+  }
+#endif
 
   // DEBUG
   /*
@@ -308,22 +282,12 @@ dword_result_t NetDll_WSAStartup_entry(dword_t caller, word_t version,
 }
 DECLARE_XAM_EXPORT1(NetDll_WSAStartup, kNetworking, kImplemented);
 
-dword_result_t NetDll_WSAStartupEx_entry(dword_t caller, word_t version,
-                                         pointer_t<X_WSADATA> data_ptr,
-                                         dword_t versionReq) {
-  return NetDll_WSAStartup_entry(caller, version, data_ptr);
-}
-DECLARE_XAM_EXPORT1(NetDll_WSAStartupEx, kNetworking, kImplemented);
-
 dword_result_t NetDll_WSACleanup_entry(dword_t caller) {
   // This does nothing. Xenia needs WSA running.
   return 0;
 }
 DECLARE_XAM_EXPORT1(NetDll_WSACleanup, kNetworking, kImplemented);
 
-// Instead of using dedicated storage for WSA error like on OS.
-// Xbox shares space between normal error codes and WSA errors.
-// This under the hood returns directly value received from RtlGetLastError.
 dword_result_t NetDll_WSAGetLastError_entry() {
   return XThread::GetLastError();
 }
@@ -362,7 +326,8 @@ dword_result_t NetDll_WSASendTo_entry(
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -398,7 +363,7 @@ dword_result_t NetDll_WSAWaitForMultipleEvents_entry(dword_t num_events,
                                                      dword_t timeout,
                                                      dword_t alertable) {
   if (num_events > 64) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSA_INVALID_PARAMETER));
+    XThread::SetLastError(87);  // ERROR_INVALID_PARAMETER
     return ~0u;
   }
 
@@ -463,25 +428,25 @@ DECLARE_XAM_EXPORT1(NetDll_WSASetEvent, kNetworking, kImplemented);
 
 struct XnAddrStatus {
   // Address acquisition is not yet complete
-  static constexpr uint32_t XNET_GET_XNADDR_PENDING = 0x00000000;
+  static const uint32_t XNET_GET_XNADDR_PENDING = 0x00000000;
   // XNet is uninitialized or no debugger found
-  static constexpr uint32_t XNET_GET_XNADDR_NONE = 0x00000001;
+  static const uint32_t XNET_GET_XNADDR_NONE = 0x00000001;
   // Host has ethernet address (no IP address)
-  static constexpr uint32_t XNET_GET_XNADDR_ETHERNET = 0x00000002;
+  static const uint32_t XNET_GET_XNADDR_ETHERNET = 0x00000002;
   // Host has statically assigned IP address
-  static constexpr uint32_t XNET_GET_XNADDR_STATIC = 0x00000004;
+  static const uint32_t XNET_GET_XNADDR_STATIC = 0x00000004;
   // Host has DHCP assigned IP address
-  static constexpr uint32_t XNET_GET_XNADDR_DHCP = 0x00000008;
+  static const uint32_t XNET_GET_XNADDR_DHCP = 0x00000008;
   // Host has PPPoE assigned IP address
-  static constexpr uint32_t XNET_GET_XNADDR_PPPOE = 0x00000010;
+  static const uint32_t XNET_GET_XNADDR_PPPOE = 0x00000010;
   // Host has one or more gateways configured
-  static constexpr uint32_t XNET_GET_XNADDR_GATEWAY = 0x00000020;
+  static const uint32_t XNET_GET_XNADDR_GATEWAY = 0x00000020;
   // Host has one or more DNS servers configured
-  static constexpr uint32_t XNET_GET_XNADDR_DNS = 0x00000040;
+  static const uint32_t XNET_GET_XNADDR_DNS = 0x00000040;
   // Host is currently connected to online service
-  static constexpr uint32_t XNET_GET_XNADDR_ONLINE = 0x00000080;
+  static const uint32_t XNET_GET_XNADDR_ONLINE = 0x00000080;
   // Network configuration requires troubleshooting
-  static constexpr uint32_t XNET_GET_XNADDR_TROUBLESHOOT = 0x00008000;
+  static const uint32_t XNET_GET_XNADDR_TROUBLESHOOT = 0x00008000;
 };
 
 dword_result_t NetDll_XNetGetTitleXnAddr_entry(dword_t caller,
@@ -527,11 +492,6 @@ dword_result_t NetDll_XNetXnAddrToMachineId_entry(dword_t caller,
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetXnAddrToMachineId, kNetworking, kStub);
 
-dword_result_t XNetLogonGetTitleID_entry(dword_t caller, lpvoid_t params) {
-  return kernel_state()->title_id();
-}
-DECLARE_XAM_EXPORT1(XNetLogonGetTitleID, kNetworking, kImplemented);
-
 void NetDll_XNetInAddrToString_entry(dword_t caller, dword_t in_addr,
                                      lpstring_t string_out,
                                      dword_t string_size) {
@@ -567,11 +527,11 @@ DECLARE_XAM_EXPORT1(NetDll_XNetSetSystemLinkPort, kNetworking, kStub);
 
 // https://github.com/ILOVEPIE/Cxbx-Reloaded/blob/master/src/CxbxKrnl/EmuXOnline.h#L39
 struct XEthernetStatus {
-  static constexpr uint32_t XNET_ETHERNET_LINK_ACTIVE = 0x01;
-  static constexpr uint32_t XNET_ETHERNET_LINK_100MBPS = 0x02;
-  static constexpr uint32_t XNET_ETHERNET_LINK_10MBPS = 0x04;
-  static constexpr uint32_t XNET_ETHERNET_LINK_FULL_DUPLEX = 0x08;
-  static constexpr uint32_t XNET_ETHERNET_LINK_HALF_DUPLEX = 0x10;
+  static const uint32_t XNET_ETHERNET_LINK_ACTIVE = 0x01;
+  static const uint32_t XNET_ETHERNET_LINK_100MBPS = 0x02;
+  static const uint32_t XNET_ETHERNET_LINK_10MBPS = 0x04;
+  static const uint32_t XNET_ETHERNET_LINK_FULL_DUPLEX = 0x08;
+  static const uint32_t XNET_ETHERNET_LINK_HALF_DUPLEX = 0x10;
 };
 
 dword_result_t NetDll_XNetGetEthernetLinkStatus_entry(dword_t caller) {
@@ -665,9 +625,6 @@ DECLARE_XAM_EXPORT1(NetDll_inet_addr, kNetworking, kImplemented);
 
 dword_result_t NetDll_socket_entry(dword_t caller, dword_t af, dword_t type,
                                    dword_t protocol) {
-  XELOGI("NetDll_socket: af={}, type={}, protocol={}", af.value(), type.value(),
-         protocol.value());
-
   XSocket* socket = new XSocket(kernel_state());
   X_STATUS result = socket->Initialize(XSocket::AddressFamily((uint32_t)af),
                                        XSocket::Type((uint32_t)type),
@@ -676,9 +633,8 @@ dword_result_t NetDll_socket_entry(dword_t caller, dword_t af, dword_t type,
   if (XFAILED(result)) {
     socket->Release();
 
-    XThread::SetLastError(socket->GetLastWSAError());
-    XELOGE("NetDll_socket: failed with error {:08X}",
-           socket->GetLastWSAError());
+    uint32_t error = xboxkrnl::xeRtlNtStatusToDosError(result);
+    XThread::SetLastError(error);
     return -1;
   }
 
@@ -690,7 +646,8 @@ dword_result_t NetDll_closesocket_entry(dword_t caller, dword_t socket_handle) {
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -707,13 +664,19 @@ int_result_t NetDll_shutdown_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   auto ret = socket->Shutdown(how);
   if (ret == -1) {
-    XThread::SetLastError(socket->GetLastWSAError());
+#ifdef XE_PLATFORM_WIN32
+    uint32_t error_code = WSAGetLastError();
+    XThread::SetLastError(error_code);
+#else
+    XThread::SetLastError(0x0);
+#endif
   }
   return ret;
 }
@@ -722,57 +685,32 @@ DECLARE_XAM_EXPORT1(NetDll_shutdown, kNetworking, kImplemented);
 dword_result_t NetDll_setsockopt_entry(dword_t caller, dword_t socket_handle,
                                        dword_t level, dword_t optname,
                                        lpvoid_t optval_ptr, dword_t optlen) {
-  XELOGI("NetDll_setsockopt: socket={:08X}, level={:04X}, optname={:04X}",
-         socket_handle.value(), level.value(), optname.value());
-
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   X_STATUS status = socket->SetOption(level, optname, optval_ptr, optlen);
-  int result = XSUCCEEDED(status) ? 0 : -1;
-  XELOGI("NetDll_setsockopt: {}, returning {}",
-         XSUCCEEDED(status) ? "success" : "failed", result);
-  return result;
+  return XSUCCEEDED(status) ? 0 : -1;
 }
 DECLARE_XAM_EXPORT1(NetDll_setsockopt, kNetworking, kImplemented);
 
-dword_result_t NetDll_getsockopt_entry(dword_t caller, dword_t socket_handle,
-                                       dword_t level, dword_t optname,
-                                       lpvoid_t optval_ptr, lpdword_t optlen) {
-  auto socket =
-      kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
-  if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
-    return -1;
-  }
-
-  uint32_t native_len = *optlen;
-  X_STATUS status = socket->GetOption(level, optname, optval_ptr, &native_len);
-  return XSUCCEEDED(status) ? 0 : -1;
-}
-DECLARE_XAM_EXPORT1(NetDll_getsockopt, kNetworking, kImplemented);
-
 dword_result_t NetDll_ioctlsocket_entry(dword_t caller, dword_t socket_handle,
                                         dword_t cmd, lpvoid_t arg_ptr) {
-  XELOGI("NetDll_ioctlsocket: socket={:08X}, cmd={:08X}", socket_handle.value(),
-         cmd.value());
-
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   X_STATUS status = socket->IOControl(cmd, arg_ptr);
   if (XFAILED(status)) {
-    XThread::SetLastError(socket->GetLastWSAError());
-    XELOGE("NetDll_ioctlsocket: failed with error {:08X}",
-           socket->GetLastWSAError());
+    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
     return -1;
   }
 
@@ -784,29 +722,21 @@ DECLARE_XAM_EXPORT1(NetDll_ioctlsocket, kNetworking, kImplemented);
 dword_result_t NetDll_bind_entry(dword_t caller, dword_t socket_handle,
                                  pointer_t<XSOCKADDR_IN> name,
                                  dword_t namelen) {
-  XELOGI("NetDll_bind: socket={:08X}, namelen={}", socket_handle.value(),
-         namelen.value());
-
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   N_XSOCKADDR_IN native_name(name);
-  XELOGI(
-      "NetDll_bind: calling socket->Bind, family={}, port={:04X}, addr={:08X}",
-      native_name.sin_family, uint16_t(native_name.sin_port),
-      uint32_t(native_name.sin_addr));
   X_STATUS status = socket->Bind(&native_name, namelen);
   if (XFAILED(status)) {
-    XThread::SetLastError(socket->GetLastWSAError());
-    XELOGE("NetDll_bind: failed with error {:08X}", socket->GetLastWSAError());
+    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
     return -1;
   }
 
-  XELOGI("NetDll_bind: success, port={}", socket->bound_port());
   return 0;
 }
 DECLARE_XAM_EXPORT1(NetDll_bind, kNetworking, kImplemented);
@@ -817,14 +747,15 @@ dword_result_t NetDll_connect_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   N_XSOCKADDR native_name(name);
   X_STATUS status = socket->Connect(&native_name, namelen);
   if (XFAILED(status)) {
-    XThread::SetLastError(socket->GetLastWSAError());
+    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
     return -1;
   }
 
@@ -837,13 +768,14 @@ dword_result_t NetDll_listen_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   X_STATUS status = socket->Listen(backlog);
   if (XFAILED(status)) {
-    XThread::SetLastError(socket->GetLastWSAError());
+    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
     return -1;
   }
 
@@ -855,14 +787,16 @@ dword_result_t NetDll_accept_entry(dword_t caller, dword_t socket_handle,
                                    pointer_t<XSOCKADDR> addr_ptr,
                                    lpdword_t addrlen_ptr) {
   if (!addr_ptr) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAEFAULT));
+    // WSAEFAULT
+    XThread::SetLastError(0x271E);
     return -1;
   }
 
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -934,14 +868,11 @@ struct host_set {
   }
 };
 
-int_result_t NetDll_select_entry(dword_t caller, dword_t nfds,
+int_result_t NetDll_select_entry(int_t caller, int_t nfds,
                                  pointer_t<x_fd_set> readfds,
                                  pointer_t<x_fd_set> writefds,
                                  pointer_t<x_fd_set> exceptfds,
                                  lpvoid_t timeout_ptr) {
-  XELOGD("NetDll_select: nfds={}, timeout={:08X}", nfds.value(),
-         timeout_ptr.guest_address());
-
   host_set host_readfds = {0};
   fd_set native_readfds = {0};
   if (readfds) {
@@ -997,7 +928,8 @@ dword_result_t NetDll_recv_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -1013,7 +945,8 @@ dword_result_t NetDll_recvfrom_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -1036,11 +969,13 @@ dword_result_t NetDll_recvfrom_entry(dword_t caller, dword_t socket_handle,
   }
 
   if (ret == -1) {
-    XThread::SetLastError(socket->GetLastWSAError());
-  } else if (ret > 0) {
-    // Only log when we actually receive data
-    XELOGD("NetDll_recvfrom: socket={:08X}, received {} bytes",
-           socket_handle.value(), ret);
+// TODO: Better way of getting the error code
+#ifdef XE_PLATFORM_WIN32
+    uint32_t error_code = WSAGetLastError();
+    XThread::SetLastError(error_code);
+#else
+    XThread::SetLastError(0x0);
+#endif
   }
 
   return ret;
@@ -1053,7 +988,8 @@ dword_result_t NetDll_send_entry(dword_t caller, dword_t socket_handle,
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
@@ -1066,49 +1002,18 @@ dword_result_t NetDll_sendto_entry(dword_t caller, dword_t socket_handle,
                                    dword_t flags,
                                    pointer_t<XSOCKADDR_IN> to_ptr,
                                    dword_t to_len) {
-  XELOGD("NetDll_sendto: socket={:08X}, len={}", socket_handle.value(),
-         buf_len.value());
-
   auto socket =
       kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
   if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    // WSAENOTSOCK
+    XThread::SetLastError(0x2736);
     return -1;
   }
 
   N_XSOCKADDR_IN native_to(to_ptr);
-  int ret = socket->SendTo(buf_ptr, buf_len, flags, &native_to, to_len);
-  return ret;
+  return socket->SendTo(buf_ptr, buf_len, flags, &native_to, to_len);
 }
 DECLARE_XAM_EXPORT1(NetDll_sendto, kNetworking, kImplemented);
-
-dword_result_t NetDll_WSAEventSelect_entry(dword_t caller,
-                                           dword_t socket_handle,
-                                           dword_t event_handle,
-                                           dword_t network_events) {
-  auto socket =
-      kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
-  if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
-    return -1;
-  }
-
-  object_ref<XEvent> ev;
-  if (event_handle) {
-    ev = kernel_state()->object_table()->LookupObject<XEvent>(event_handle);
-    if (!ev) {
-      XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
-      return -1;
-    }
-  }
-
-  int ret = socket->WSAEventSelect(std::move(ev), network_events);
-  if (ret < 0) {
-    XThread::SetLastError(socket->GetLastWSAError());
-  }
-  return ret;
-}
-DECLARE_XAM_EXPORT1(NetDll_WSAEventSelect, kNetworking, kImplemented);
 
 dword_result_t NetDll___WSAFDIsSet_entry(dword_t socket_handle,
                                          pointer_t<x_fd_set> fd_set) {
@@ -1127,48 +1032,6 @@ void NetDll_WSASetLastError_entry(dword_t error_code) {
   XThread::SetLastError(error_code);
 }
 DECLARE_XAM_EXPORT1(NetDll_WSASetLastError, kNetworking, kImplemented);
-
-dword_result_t NetDll_getsockname_entry(dword_t caller, dword_t socket_handle,
-                                        lpvoid_t buf_ptr, lpdword_t len_ptr) {
-  auto socket =
-      kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
-  if (!socket) {
-    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
-    return -1;
-  }
-
-  int buffer_len = *len_ptr;
-
-  X_STATUS status = socket->GetSockName(buf_ptr, &buffer_len);
-  if (XFAILED(status)) {
-    XThread::SetLastError(socket->GetLastWSAError());
-    return -1;
-  }
-
-  *len_ptr = buffer_len;
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_getsockname, kNetworking, kImplemented);
-
-dword_result_t NetDll_XNetCreateKey_entry(dword_t caller, lpdword_t key_id,
-                                          lpdword_t exchange_key) {
-  kernel_memory()->Fill(key_id.guest_address(), 8, 0xBE);
-  kernel_memory()->Fill(exchange_key.guest_address(), 16, 0xBE);
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XNetCreateKey, kNetworking, kStub);
-
-dword_result_t NetDll_XNetRegisterKey_entry(dword_t caller, lpdword_t key_id,
-                                            lpdword_t exchange_key) {
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XNetRegisterKey, kNetworking, kStub);
-
-dword_result_t NetDll_XNetUnregisterKey_entry(dword_t caller,
-                                              lpdword_t key_id) {
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XNetUnregisterKey, kNetworking, kStub);
 
 }  // namespace xam
 }  // namespace kernel

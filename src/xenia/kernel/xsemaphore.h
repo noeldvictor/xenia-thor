@@ -54,7 +54,6 @@ class XSemaphore : public XObject {
   // Fibers waiting cooperatively, in order, for fair permit handout.
   CooperativeWaiterFifo waiters_;
   uint32_t maximum_count_ = 0;
-  CooperativeWaiterFifo waiters_;
 };
 
 }  // namespace kernel

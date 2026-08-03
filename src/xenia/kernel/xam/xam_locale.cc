@@ -20,7 +20,10 @@
 #include "xenia/xbox.h"
 
 #include "third_party/fmt/include/fmt/format.h"
-#include "third_party/fmt/include/fmt/xchar.h"
+// NOTE(kernel-port): Edge also includes fmt/xchar.h (fmt 9+). Our vendored fmt
+// is 6.2.0, which has no xchar.h but already declares is_char<char16_t> in
+// core.h, so format.h alone covers the fmt::format(u"...") calls below.
+// Re-enable path: upgrade third_party/fmt, then restore the xchar.h include.
 
 // TODO(gibbed): put these forward decls in a header somewhere.
 
@@ -508,7 +511,8 @@ void XamFormatDateString_entry(dword_t locale_format, qword_t filetime,
   if (X_FILETIME(filetime).is_valid()) {
     XFormatDateString(filetime, output_buffer.guest_address(), output_count);
   } else {
-    XFormatDateString(ctx->r[3], ctx->r[4], ctx->r[5]);
+    XFormatDateString(ctx->r[3], static_cast<uint32_t>(ctx->r[4]),
+                      static_cast<uint32_t>(ctx->r[5]));
   }
 }
 DECLARE_XAM_EXPORT1(XamFormatDateString, kNone, kImplemented);
@@ -535,7 +539,8 @@ void XamFormatTimeString_entry(dword_t user_index, qword_t filetime,
   if (X_FILETIME(filetime).is_valid()) {
     XFormatTimeString(filetime, output_buffer.guest_address(), output_count);
   } else {
-    XFormatTimeString(ctx->r[3], ctx->r[4], ctx->r[5]);
+    XFormatTimeString(ctx->r[3], static_cast<uint32_t>(ctx->r[4]),
+                      static_cast<uint32_t>(ctx->r[5]));
   }
 }
 DECLARE_XAM_EXPORT1(XamFormatTimeString, kNone, kImplemented);

@@ -35,7 +35,7 @@ void HalReturnToFirmware_entry(dword_t routine) {
       static_cast<size_t>(routine) < FirmwareReentryMessage.size()
           ? FirmwareReentryMessage[routine]
           : fmt::format("Reboot (Routine Code: {})", routine.value()));
-  XELOGE(exitMessage);
+  XELOGE("{}", exitMessage);
   kernel_state()->ExitToDashboard();
 }
 DECLARE_XBOXKRNL_EXPORT2(HalReturnToFirmware, kNone, kStub, kImportant);

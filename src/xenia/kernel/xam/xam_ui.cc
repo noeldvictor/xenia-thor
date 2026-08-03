@@ -42,6 +42,17 @@
 #include "xenia/kernel/xam/ui/signin_ui.h"
 #include "xenia/kernel/xam/ui/title_info_ui.h"
 
+// NOTE(kernel-port): two third-party version gaps are worked around in this
+// file rather than by re-vendoring:
+//  * Edge declared the message-box button lists as `cxxopts::OptionNames`,
+//    an alias added after our vendored third_party/cxxopts. They are spelled
+//    `std::vector<std::string>` here, which is what MessageBoxDialog's
+//    constructor takes anyway. Re-enable path: upgrade third_party/cxxopts
+//    and (optionally) restore the alias.
+//  * `ImGuiSelectableFlags_AllowOverlap` is the >= 1.89.7 name for what our
+//    vendored imgui 1.89 calls `ImGuiSelectableFlags_AllowItemOverlap`.
+//    Re-enable path: upgrade third_party/imgui and rename back.
+
 DEFINE_bool(storage_selection_dialog, false,
             "Show storage device selection dialog when the game requests it.",
             "UI");
@@ -754,7 +765,7 @@ dword_result_t XamShowDeviceSelectorUI_entry(
   std::string title = "Select storage device";
   std::string desc = "";
 
-  cxxopts::OptionNames buttons;
+  std::vector<std::string> buttons;
   for (auto& device_info : devices) {
     buttons.push_back(to_utf8(device_info->name));
   }
@@ -878,7 +889,7 @@ dword_result_t XamShowMarketplaceUIEx_entry(dword_t user_index, dword_t ui_type,
 
   std::string title = "Xbox Marketplace";
   std::string desc = "";
-  cxxopts::OptionNames buttons;
+  std::vector<std::string> buttons;
 
   switch (ui_type) {
     case X_MARKETPLACE_ENTRYPOINT::ContentList:
@@ -1025,7 +1036,7 @@ dword_result_t XamShowMarketplaceDownloadItemsUI_entry(
 
   std::string title = "Xbox Marketplace";
   std::string desc = "";
-  cxxopts::OptionNames buttons = {"OK"};
+  std::vector<std::string> buttons = {"OK"};
 
   switch (ui_type) {
     case X_MARKETPLACE_DOWNLOAD_ITEMS_ENTRYPOINTS::FREEITEMS:
@@ -1085,7 +1096,7 @@ bool xeDrawProfileContent(xe::ui::ImGuiDrawer* imgui_drawer,
   if (xuid && selected_xuid) {
     if (ImGui::Selectable("##Selectable", *selected_xuid == xuid,
                           ImGuiSelectableFlags_SpanAllColumns |
-                              ImGuiSelectableFlags_AllowOverlap,
+                              ImGuiSelectableFlags_AllowItemOverlap,
                           content_size)) {
       *selected_xuid = xuid;
       clicked = true;
@@ -1102,7 +1113,10 @@ bool xeDrawProfileContent(xe::ui::ImGuiDrawer* imgui_drawer,
   ImGui::BeginGroup();
   {
     if (profile_icon) {
-      ImGui::Image(reinterpret_cast<ImTextureID>(profile_icon),
+      // ImTextureID is a plain void*, so the const has to be shed explicitly;
+      // ImGui only ever hands the pointer back to the immediate drawer.
+      ImGui::Image(reinterpret_cast<ImTextureID>(
+                       const_cast<xe::ui::ImmediateTexture*>(profile_icon)),
                    xe::ui::default_image_icon_size);
     } else {
       if (user_index < XUserMaxUserCount) {

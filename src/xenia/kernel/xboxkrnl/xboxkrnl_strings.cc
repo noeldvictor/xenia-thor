@@ -645,9 +645,13 @@ dword_result_t DbgPrint_entry(lpstring_t format, const ppc_context_t& ctx) {
   std::string str = string_util::rtrim(data.str());
   XELOGI("(DbgPrint) {}", str);
 
-  if (cpu::DebugListener* listener = ctx->processor->debug_listener()) {
-    listener->OnDebugPrint(str);
-  }
+  // NOTE(kernel-port): Edge forwards the string to
+  // ctx->processor->debug_listener()->OnDebugPrint(str). Our cpu::DebugListener
+  // has no OnDebugPrint hook and src/xenia/cpu is out of scope for this port,
+  // so the guest's DbgPrint output only reaches the log above. Re-enable path:
+  // add `virtual void OnDebugPrint(const std::string_view)` to
+  // src/xenia/cpu/debug_listener.h (plus its implementors) and restore the
+  // forwarding here.
 
   return X_STATUS_SUCCESS;
 }
@@ -676,9 +680,9 @@ dword_result_t _snprintf_entry(dword_t buffer_ptr, dword_t buffer_count,
     if (buffer_count > 0) {
       buffer[0] = '\0';  // write a null, just to be safe
     }
-  } else if (count <= buffer_count) {
+  } else if (static_cast<uint32_t>(count) <= buffer_count) {
     std::memcpy(buffer, data.str().c_str(), count);
-    if (count < buffer_count) {
+    if (static_cast<uint32_t>(count) < buffer_count) {
       buffer[count] = '\0';
     }
   } else {
@@ -743,9 +747,9 @@ dword_result_t _snwprintf_entry(dword_t buffer_ptr, dword_t buffer_count,
     if (buffer_count > 0) {
       buffer[0] = '\0';  // write a null, just to be safe
     }
-  } else if (count <= buffer_count) {
+  } else if (static_cast<uint32_t>(count) <= buffer_count) {
     xe::copy_and_swap(buffer, data.wstr().c_str(), count);
-    if (count < buffer_count) {
+    if (static_cast<uint32_t>(count) < buffer_count) {
       buffer[count] = '\0';
     }
   } else {
@@ -811,10 +815,10 @@ dword_result_t _vsnprintf_entry(dword_t buffer_ptr, dword_t buffer_count,
     if (buffer_count > 0) {
       buffer[0] = '\0';  // write a null, just to be safe
     }
-  } else if (count <= buffer_count) {
+  } else if (static_cast<uint32_t>(count) <= buffer_count) {
     // Fit within the buffer.
     std::memcpy(buffer, data.str().c_str(), count);
-    if (count < buffer_count) {
+    if (static_cast<uint32_t>(count) < buffer_count) {
       buffer[count] = '\0';
     }
   } else {
@@ -852,10 +856,10 @@ dword_result_t _vsnwprintf_entry(dword_t buffer_ptr, dword_t buffer_count,
     if (buffer_count > 0) {
       buffer[0] = '\0';  // write a null, just to be safe
     }
-  } else if (count <= buffer_count) {
+  } else if (static_cast<uint32_t>(count) <= buffer_count) {
     // Fit within the buffer.
     xe::copy_and_swap(buffer, data.wstr().c_str(), count);
-    if (count < buffer_count) {
+    if (static_cast<uint32_t>(count) < buffer_count) {
       buffer[count] = '\0';
     }
   } else {

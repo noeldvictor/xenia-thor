@@ -586,11 +586,12 @@ DECLARE_XBOXKRNL_EXPORT2(RtlInitializeCriticalSectionAndSpinCount, kNone,
                          kImplemented, kHighFrequency);
 
 static void CriticalSectionPrefetchW(const void* vp) {
-#if XE_ARCH_AMD64 == 1
-  if (amd64::GetFeatureFlags() & amd64::kX64EmitPrefetchW) {
-    swcache::PrefetchW(vp);
-  }
-#endif
+  // NOTE(kernel-port): Edge gates this on amd64::GetFeatureFlags() &
+  // kX64EmitPrefetchW from its platform_amd64.{h,cc} (xbyak-based CPU feature
+  // detection), which we do not vendor. Our xe::swcache::PrefetchW already
+  // degrades to a safe always-available prefetch (or a no-op), so the runtime
+  // gate is unnecessary. Re-enable the gate by porting base/platform_amd64.*.
+  swcache::PrefetchW(vp);
 }
 
 void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {

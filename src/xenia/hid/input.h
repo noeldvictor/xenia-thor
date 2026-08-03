@@ -16,6 +16,12 @@
 namespace xe {
 namespace hid {
 
+// Standard XInput deadzone/threshold constants (ported from xenia-edge; used
+// by the XAM UI code to filter stick noise).
+constexpr int32_t X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE = 7849;
+constexpr int32_t X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE = 8689;
+constexpr uint8_t X_INPUT_GAMEPAD_TRIGGER_THRESHOLD = 30;
+
 enum X_INPUT_CAPS {
   X_INPUT_CAPS_FFB_SUPPORTED = 0x0001,
   X_INPUT_CAPS_WIRELESS = 0x0002,
@@ -26,7 +32,21 @@ enum X_INPUT_CAPS {
 
 enum X_INPUT_FLAG {
   X_INPUT_FLAG_GAMEPAD = 0x00000001,
+  X_INPUT_FLAG_KEYBOARD = 0x00000002,
+  X_INPUT_FLAG_UNKNOWN = 0x00000004,
+  X_INPUT_FLAG_UNKNOWN2 = 0x00000008,
+  X_INPUT_FLAG_MIC = 0x00000020,
+  X_INPUT_FLAG_ANYDEVICE = 0x000000FF,
+  X_INPUT_FLAG_ANY_USER = 1 << 30,
 };
+
+// NOTE(kernel-port): Edge also declares X_INPUT_DEVTYPE / X_INPUT_DEVSUBTYPE
+// enums here. They are intentionally NOT ported: this fork still builds the
+// Windows xinput driver, whose TUs include <XInput.h>, which #defines
+// XINPUT_DEVTYPE_GAMEPAD / XINPUT_DEVSUBTYPE_GAMEPAD as macros - an enum with
+// those names would fail to compile there. Nothing in the kernel needs them.
+// Re-enable path: drop the xinput driver (Edge is SDL-only) or name the
+// enumerators X_INPUT_DEVTYPE_*.
 
 enum X_INPUT_GAMEPAD_BUTTON {
   X_INPUT_GAMEPAD_DPAD_UP = 0x0001,

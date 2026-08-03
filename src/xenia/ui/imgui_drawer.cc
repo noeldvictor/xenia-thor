@@ -22,6 +22,12 @@
 #include "xenia/ui/ui_event.h"
 #include "xenia/ui/window.h"
 
+// Edge kernel-port: icon blobs handed to LoadImGuiIcon()/LoadIcons() are
+// encoded images (profile tiles and achievement icons are PNG). This is the
+// only translation unit in the tree that instantiates stb_image.
+#define STB_IMAGE_IMPLEMENTATION
+#include "third_party/stb/stb_image.h"
+
 namespace xe {
 namespace ui {
 
@@ -181,6 +187,20 @@ void ImGuiDrawer::Initialize() {
     XELOGW("Unable to load Japanese font; JP characters will be boxes");
   }
 
+  // Edge kernel-port: font index 1 is the "title" font used for headings by
+  // the xam/ui dialogs (see ImGuiDrawer::GetTitleFont). Edge ships an embedded
+  // Inter variable font and sizes this from a cvar; we reuse the bundled
+  // ProggyTiny at a larger size so no new asset is required.
+  // NOTE(kernel-port): re-enable path for the nicer typography is porting
+  // Edge's src/xenia/ui/embedded_font.h + the custom_font_path/font_size cvars
+  // and its InitializeFonts()/LoadCustomFont()/LoadWindowsFont() helpers.
+  ImFontConfig title_font_config;
+  title_font_config.OversampleH = title_font_config.OversampleV = 1;
+  title_font_config.PixelSnapH = true;
+  io.Fonts->AddFontFromMemoryCompressedBase85TTF(kProggyTinyCompressedDataBase85,
+                                                 16.0f, &title_font_config,
+                                                 font_glyph_ranges);
+
   auto& style = ImGui::GetStyle();
   style.ScrollbarRounding = 0;
   style.WindowRounding = 0;
@@ -266,6 +286,51 @@ std::optional<ImGuiKey> ImGuiDrawer::VirtualKeyToImGuiKey(VirtualKey vkey) {
   } else {
     return std::nullopt;
   }
+}
+
+std::unique_ptr<ImmediateTexture> ImGuiDrawer::LoadImGuiIcon(
+    std::span<const uint8_t> data) {
+  if (!immediate_drawer_ || data.empty()) {
+    return {};
+  }
+
+  int width, height, channels;
+  unsigned char* image_data =
+      stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &width,
+                            &height, &channels, STBI_rgb_alpha);
+  if (!image_data) {
+    return {};
+  }
+
+  auto texture = immediate_drawer_->CreateTexture(
+      width, height, ImmediateTextureFilter::kLinear, true,
+      reinterpret_cast<uint8_t*>(image_data));
+
+  stbi_image_free(image_data);
+
+  return texture;
+}
+
+std::map<uint32_t, std::unique_ptr<ImmediateTexture>> ImGuiDrawer::LoadIcons(
+    const IconsData& data) {
+  std::map<uint32_t, std::unique_ptr<ImmediateTexture>> icons;
+
+  if (!immediate_drawer_) {
+    return icons;
+  }
+
+  for (const auto& icon : data) {
+    icons[icon.first] = LoadImGuiIcon(icon.second);
+  }
+  return icons;
+}
+
+// NOTE(kernel-port): see the declaration in imgui_drawer.h - shim for
+// ImGui::SeparatorText(), which our vendored imgui 1.89 predates.
+void SeparatorText(const char* label) {
+  ImGui::Spacing();
+  ImGui::TextUnformatted(label);
+  ImGui::Separator();
 }
 
 void ImGuiDrawer::SetupFontTexture() {

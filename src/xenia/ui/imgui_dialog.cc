@@ -16,9 +16,12 @@
 namespace xe {
 namespace ui {
 
+std::atomic<uint64_t> ImGuiDialog::next_window_id_ = 0;
+
 ImGuiDialog::ImGuiDialog(ImGuiDrawer* imgui_drawer)
     : imgui_drawer_(imgui_drawer) {
   imgui_drawer_->AddDialog(this);
+  next_window_id_++;
 }
 
 ImGuiDialog::~ImGuiDialog() {
@@ -35,6 +38,11 @@ void ImGuiDialog::Then(xe::threading::Fence* fence) {
 void ImGuiDialog::Close() { has_close_pending_ = true; }
 
 ImGuiIO& ImGuiDialog::GetIO() { return imgui_drawer()->GetIO(); }
+
+bool ImGuiDialog::ShouldCloseFromGamepad() const {
+  return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight) ||  // B button
+         ImGui::IsKeyPressed(ImGuiKey_GamepadBack);         // Back button
+}
 
 void ImGuiDialog::Draw() {
   // Draw UI.

@@ -10,6 +10,7 @@
 #ifndef XENIA_UI_IMGUI_DIALOG_H_
 #define XENIA_UI_IMGUI_DIALOG_H_
 
+#include <atomic>
 #include <memory>
 
 #include "xenia/base/threading.h"
@@ -34,20 +35,32 @@ class ImGuiDialog {
 
   void Draw();
 
+  bool IsClosing() const { return has_close_pending_; }
+
  protected:
   ImGuiDialog(ImGuiDrawer* imgui_drawer);
 
   ImGuiDrawer* imgui_drawer() const { return imgui_drawer_; }
   ImGuiIO& GetIO();
 
+  // Edge kernel-port: process-unique id, used by dialogs to build a stable
+  // ImGui "###id" suffix so several instances of the same dialog don't collide.
+  uint64_t GetWindowId() const { return next_window_id_; }
+
   // Closes the dialog and returns to any waiters.
   void Close();
+
+  // Edge kernel-port: returns true if the B button or the Back button was
+  // pressed (used by dialogs to close themselves from a gamepad).
+  bool ShouldCloseFromGamepad() const;
 
   virtual void OnShow() {}
   virtual void OnClose() {}
   virtual void OnDraw(ImGuiIO& io) {}
 
  private:
+  static std::atomic<uint64_t> next_window_id_;
+
   ImGuiDrawer* imgui_drawer_ = nullptr;
   bool has_close_pending_ = false;
   std::vector<xe::threading::Fence*> waiting_fences_;

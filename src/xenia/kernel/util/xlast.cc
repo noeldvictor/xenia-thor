@@ -8,7 +8,6 @@
  */
 
 #include "xenia/kernel/util/xlast.h"
-#include "third_party/zlib-ng/zlib-ng.h"
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/string_util.h"
@@ -48,38 +47,26 @@ XLast::XLast(const uint8_t* compressed_xml_data,
   }
 
   parsed_xlast_ = std::make_unique<pugi::xml_document>();
-  xlast_decompressed_xml_.resize(decompressed_data_size);
 
-  zng_stream stream;
-  stream.zalloc = Z_NULL;
-  stream.zfree = Z_NULL;
-  stream.opaque = Z_NULL;
-  stream.avail_in = 0;
-  stream.next_in = Z_NULL;
-
-  int ret = zng_inflateInit2(
-      &stream, 16 + MAX_WBITS);  // 16 + MAX_WBITS enables gzip decoding
-  if (ret != Z_OK) {
-    XELOGE("XLast: Error during Zlib stream init");
-    return;
-  }
-
-  stream.avail_in = compressed_data_size;
-  stream.next_in =
-      reinterpret_cast<Bytef*>(const_cast<uint8_t*>(compressed_xml_data));
-  stream.avail_out = decompressed_data_size;
-  stream.next_out = reinterpret_cast<Bytef*>(xlast_decompressed_xml_.data());
-
-  ret = zng_inflate(&stream, Z_NO_FLUSH);
-  if (ret == Z_STREAM_ERROR) {
-    XELOGE("XLast: Error during XLast decompression");
-    zng_inflateEnd(&stream);
-    return;
-  }
-  zng_inflateEnd(&stream);
-
-  parse_result_ = parsed_xlast_->load_buffer(xlast_decompressed_xml_.data(),
-                                             xlast_decompressed_xml_.size());
+  // NOTE(kernel-port): Edge gzip-inflates the XLast XML here with zlib-ng
+  // (third_party/zlib-ng). We do not vendor zlib-ng - and have no gzip
+  // implementation in-tree at all - so decompression is stubbed out.
+  //
+  // Consequence: xlast_decompressed_xml_ stays empty, so HasXLast() returns
+  // false and every accessor below returns its documented empty value. Callers
+  // (game_info_database, presence_string_builder, xdbf/spa_info) already handle
+  // the no-XLast case, so this degrades gracefully to "title has no XLast XML"
+  // - achievement/presence strings sourced from XLast are simply unavailable.
+  //
+  // Re-enable path: vendor third_party/zlib-ng (+ its premake lua), add it to
+  // the kernel project links, restore `#include "third_party/zlib-ng/zlib-ng.h"`
+  // and the zng_inflateInit2/zng_inflate/zng_inflateEnd block that filled
+  // xlast_decompressed_xml_ (resize to decompressed_data_size first), then
+  // load_buffer it into parsed_xlast_ as below.
+  (void)compressed_xml_data;
+  XELOGW(
+      "XLast: XML decompression is not available in this build (zlib-ng not "
+      "vendored); treating title as having no XLast data.");
 }
 
 std::u16string XLast::GetTitleName() const {

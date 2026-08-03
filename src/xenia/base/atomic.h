@@ -55,6 +55,15 @@ inline bool atomic_cas(int64_t old_value, int64_t new_value,
              old_value) == old_value;
 }
 
+// Edge kernel-port: atomic store with release semantics (for releasing locks).
+inline void atomic_store_release(int32_t new_value, volatile int32_t* value) {
+  _InterlockedExchange(reinterpret_cast<volatile long*>(value), new_value);
+}
+inline void atomic_store_release(uint32_t new_value, volatile uint32_t* value) {
+  _InterlockedExchange(reinterpret_cast<volatile long*>(value),
+                       static_cast<long>(new_value));
+}
+
 #elif XE_PLATFORM_LINUX || XE_PLATFORM_MAC
 
 inline int32_t atomic_inc(volatile int32_t* value) {
@@ -87,6 +96,14 @@ inline bool atomic_cas(int64_t old_value, int64_t new_value,
                        volatile int64_t* value) {
   return __sync_bool_compare_and_swap(
       reinterpret_cast<volatile int64_t*>(value), old_value, new_value);
+}
+
+// Edge kernel-port: atomic store with release semantics (for releasing locks).
+inline void atomic_store_release(int32_t new_value, volatile int32_t* value) {
+  __atomic_store_n(value, new_value, __ATOMIC_RELEASE);
+}
+inline void atomic_store_release(uint32_t new_value, volatile uint32_t* value) {
+  __atomic_store_n(value, new_value, __ATOMIC_RELEASE);
 }
 
 #else

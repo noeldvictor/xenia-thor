@@ -15,6 +15,16 @@
 // The playlist/state surface the guest XMP app drives is fully functional;
 // audio playback of guest-supplied WMA/MP3 is simply silent. Re-enable by
 // porting Edge apu/audio_driver + FFmpeg bump (tracked in the port plan).
+//
+// NOTE(kernel-port): this macro was previously declared but never actually
+// applied, so the decode path still compiled and then failed to link against
+// libavformat (av_read_frame / avformat_* / avio_*). Only libavcodec and
+// libavutil have premake projects in third_party/FFmpeg - libavformat's sources
+// are vendored but it is not built, and adding that project is out of scope
+// here. The gate is now genuinely applied below. To re-enable: add a
+// third_party/FFmpeg/libavformat premake project, link it from
+// src/xenia/apu/premake5.lua and src/xenia/app/premake5.lua, then flip this
+// to 1.
 #define XE_XMP_HOST_DECODE_ENABLED 0
 #include "xenia/apu/audio_driver.h"
 #include "xenia/apu/audio_system.h"
@@ -27,8 +37,13 @@ extern "C" {
 #pragma warning(disable : 4101 4244 5033)
 #endif
 #include "third_party/FFmpeg/libavcodec/avcodec.h"
+#if XE_XMP_HOST_DECODE_ENABLED
 #include "third_party/FFmpeg/libavformat/avformat.h"
 #include "third_party/FFmpeg/libavformat/avio.h"
+#else
+// Opaque - only ever handled through pointers while decode is disabled.
+struct AVFormatContext;
+#endif
 #if XE_COMPILER_MSVC
 #pragma warning(pop)
 #endif
@@ -42,6 +57,13 @@ namespace apu {
 int32_t InitializeAndOpenAvCodec(std::span<uint8_t> song_data,
                                  AVFormatContext*& format_context,
                                  AVCodecContext*& av_context) {
+#if !XE_XMP_HOST_DECODE_ENABLED
+  // Host decode disabled (no libavformat) - report failure so Play() bails out
+  // before touching either context.
+  format_context = nullptr;
+  av_context = nullptr;
+  return -1;
+#else
   AVIOContext* io_ctx =
       avio_alloc_context(song_data.data(), (int)song_data.size(), 0, nullptr,
                          nullptr, nullptr, nullptr);
@@ -73,6 +95,7 @@ int32_t InitializeAndOpenAvCodec(std::span<uint8_t> song_data,
 
   ret = avcodec_open2(av_context, decoder, NULL);
   return ret;
+#endif  // XE_XMP_HOST_DECODE_ENABLED
 }
 
 void ConvertAudioFrame(AVFrame* frame, int channel_count,
@@ -106,6 +129,11 @@ void ConvertAudioFrame(AVFrame* frame, int channel_count,
 ProcessAudioResult ProcessAudioLoop(AudioMediaPlayer* player,
                                     AudioDriver* driver, AVFormatContext* s,
                                     AVCodecContext* avctx, int streamIndex) {
+#if !XE_XMP_HOST_DECODE_ENABLED
+  // Host decode disabled (no libavformat): nothing to demux. Unreachable in
+  // practice - Play() returns before getting here.
+  return ProcessAudioResult::Successful;
+#else
   AVPacket* packet = av_packet_alloc();
   AVFrame* frame = av_frame_alloc();
   std::vector<float> frameBuffer;
@@ -148,6 +176,7 @@ ProcessAudioResult ProcessAudioLoop(AudioMediaPlayer* player,
   av_frame_free(&frame);
   av_packet_free(&packet);
   return ProcessAudioResult::Successful;
+#endif  // XE_XMP_HOST_DECODE_ENABLED
 }
 
 AudioMediaPlayer::AudioMediaPlayer(apu::AudioSystem* audio_system,
@@ -244,15 +273,27 @@ void AudioMediaPlayer::Play() {
 
   AVFormatContext* formatContext = nullptr;
   AVCodecContext* codecContext = nullptr;
-  InitializeAndOpenAvCodec(song_buffer, formatContext, codecContext);
+  // NOTE(kernel-port): the return value was previously ignored, so a failed
+  // open fell straight into codecContext->sample_rate and null-dereferenced.
+  // With host decode compiled out this always fails, so the check is required -
+  // but it is a real fix for the enabled path too.
+  if (InitializeAndOpenAvCodec(song_buffer, formatContext, codecContext) < 0) {
+    XELOGW("XMP: unable to open song for playback (host decode {}).",
+           XE_XMP_HOST_DECODE_ENABLED ? "failed" : "disabled in this build");
+    state_ = XmpApp::State::kIdle;
+    processing_end_fence_.Signal();
+    return;
+  }
 
   if (!SetupDriver(codecContext->sample_rate,
                    codecContext->channels)) {
     XELOGE("Driver initialization failed!");
     avcodec_free_context(&codecContext);
+#if XE_XMP_HOST_DECODE_ENABLED
     av_freep(&formatContext->pb->buffer);
     avio_context_free(&formatContext->pb);
     avformat_close_input(&formatContext);
+#endif
     return;
   }
 
@@ -284,9 +325,11 @@ void AudioMediaPlayer::Play() {
 
   // Cleanup after work
   avcodec_free_context(&codecContext);
+#if XE_XMP_HOST_DECODE_ENABLED
   av_freep(&formatContext->pb->buffer);
   avio_context_free(&formatContext->pb);
   avformat_close_input(&formatContext);
+#endif
 
   processing_end_fence_.Signal();
 

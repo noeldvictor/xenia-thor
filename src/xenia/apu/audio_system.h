@@ -43,6 +43,19 @@ class AudioSystem {
                           size_t* out_index);
   void UnregisterClient(size_t index);
   void SubmitFrame(size_t index, uint32_t samples_ptr);
+  // Edge kernel-port: the kernel shim (XAudioSubmitRenderDriverFrame) hands us
+  // a host pointer to the guest sample block. Our AudioDriver interface takes
+  // the guest address (see audio_driver.h), so this overload translates back
+  // and forwards to the guest-pointer path above.
+  void SubmitFrame(size_t index, float* samples);
+
+  // Per-client frame accounting, consumed by XAudioQueryDriverPerformance.
+  struct ClientPerformance {
+    uint32_t frames_submitted = 0;
+    uint32_t frames_processed = 0;
+    uint32_t frames_dropped = 0;
+  };
+  bool GetClientPerformance(size_t index, ClientPerformance* out_perf);
 
   bool Save(ByteStream* stream);
   bool Restore(ByteStream* stream);
@@ -82,6 +95,13 @@ class AudioSystem {
     uint32_t callback_arg;
     uint32_t wrapped_callback_arg;
     bool in_use;
+    // Frame counters (Edge kernel-port). Edge stores these as std::atomic;
+    // here every read/write happens under global_critical_region_ (which the
+    // rest of this struct already requires), so plain integers are sufficient
+    // and keep the aggregate initialization used throughout this file valid.
+    uint32_t frames_submitted;
+    uint32_t frames_processed;
+    uint32_t frames_dropped;
   } clients_[kMaximumClientCount];
 
   int FindFreeClient();

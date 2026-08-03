@@ -10,6 +10,11 @@
 #include "xenia/kernel/xam/ui/title_info_ui.h"
 #include "xenia/kernel/xam/ui/game_achievements_ui.h"
 
+// NOTE(kernel-port): the "Last played" strings below format a std::tm. Our
+// vendored fmt is 6.2, where the std::tm formatter lives in fmt/chrono.h and
+// is not pulled in transitively by fmt/format.h (newer fmt reaches it via
+// fmt/xchar.h, which this tree does not have). Include it explicitly.
+#include "third_party/fmt/include/fmt/chrono.h"
 #include "xenia/app/emulator_window.h"
 #include "xenia/base/system.h"
 

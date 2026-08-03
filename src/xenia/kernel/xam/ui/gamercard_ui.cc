@@ -11,6 +11,13 @@
 #include "xenia/base/png_utils.h"
 #include "xenia/ui/file_picker.h"
 
+// NOTE(kernel-port): this file originally called ImGui::SeparatorText() and
+// passed ImGuiHoveredFlags_ForTooltip; both postdate our vendored imgui 1.89.
+// They are routed through the xe::ui::SeparatorText() /
+// xe::ui::kHoveredFlagsForTooltip shims declared in xenia/ui/imgui_drawer.h.
+// Re-enable path: upgrade third_party/imgui to >= 1.89.7 and restore the
+// direct ImGui:: spellings (see the note in imgui_drawer.h).
+
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -368,7 +375,7 @@ void GamercardUI::SelectNewIcon() {
 }
 
 void GamercardUI::DrawBaseSettings(ImGuiIO& io) {
-  ImGui::SeparatorText("Profile Settings");
+  xe::ui::SeparatorText("Profile Settings");
 
   DrawInputTextBox(
       "Gamertag:", gamercardValues_.gamertag,
@@ -387,7 +394,7 @@ void GamercardUI::DrawBaseSettings(ImGuiIO& io) {
   }
   ImGui::EndDisabled();
 
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+  if (ImGui::IsItemHovered(xe::ui::kHoveredFlagsForTooltip)) {
     if (kernel_state_->title_id()) {
       ImGui::SetTooltip("Icon change is disabled when title is running.");
     } else {
@@ -431,7 +438,7 @@ void GamercardUI::DrawBaseSettings(ImGuiIO& io) {
 }
 
 void GamercardUI::DrawOnlineSettings(ImGuiIO& io) {
-  ImGui::SeparatorText("Online Profile Settings");
+  xe::ui::SeparatorText("Online Profile Settings");
 
   if (ImGui::Checkbox("Live Enabled", &gamercardValues_.is_live_enabled)) {
     // TODO: Add checks to decide if online XUID generation is required
@@ -465,7 +472,7 @@ void GamercardUI::DrawOnlineSettings(ImGuiIO& io) {
 }
 
 void GamercardUI::DrawGpdSettings(ImGuiIO& io) {
-  ImGui::SeparatorText("Game Settings");
+  xe::ui::SeparatorText("Game Settings");
 
   DrawSettingComboBox(UserSettingId::XPROFILE_GAMER_DIFFICULTY, "Difficulty",
                       GamerDifficultyOptions,
@@ -492,7 +499,7 @@ void GamercardUI::DrawGpdSettings(ImGuiIO& io) {
                       static_cast<int>(std::size(PreferredColorOptions)),
                       rightSideTextObjectAlignment);
 
-  ImGui::SeparatorText("Action Games Settings");
+  xe::ui::SeparatorText("Action Games Settings");
 
   DrawSettingComboBox(UserSettingId::XPROFILE_GAMER_YAXIS_INVERSION,
                       "Y-axis Inversion", YAxisInversionOptions,
@@ -514,7 +521,7 @@ void GamercardUI::DrawGpdSettings(ImGuiIO& io) {
                       static_cast<int>(std::size(MovementControlOptions)),
                       rightSideTextObjectAlignment);
 
-  ImGui::SeparatorText("Racing Games Settings");
+  xe::ui::SeparatorText("Racing Games Settings");
 
   DrawSettingComboBox(UserSettingId::XPROFILE_GAMER_RACE_TRANSMISSION,
                       "Transmission", TransmissionOptions,
@@ -594,7 +601,7 @@ void GamercardUI::OnDraw(ImGuiIO& io) {
     dialog_open = false;
   }
   if (!is_valid_gamertag) {
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+    if (ImGui::IsItemHovered(xe::ui::kHoveredFlagsForTooltip)) {
       ImGui::SetTooltip("Saving disabled! Invalid gamertag provided.");
     }
   }

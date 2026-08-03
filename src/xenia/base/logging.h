@@ -69,6 +69,10 @@ class DebugPrintLogSink final : public LogSink {
 void InitializeLogging(const std::string_view app_name);
 void ShutdownLogging();
 
+// Flushes all log sinks immediately.
+// Useful before quick_exit() to ensure logs are written.
+void FlushLog();
+
 namespace logging {
 
 constexpr char kPrefixCharError = '!';

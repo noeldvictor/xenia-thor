@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <mutex>
 
+// Edge kernel-port: for xe::swcache::PrefetchW in PrepareToAcquire below.
+#include "xenia/base/memory.h"
+
 namespace xe {
 
 // The global critical region mutex singleton.
@@ -78,6 +81,11 @@ class global_critical_region {
     NoteOwner("AcquireDirect");
     return lock;
   }
+
+  // Edge kernel-port: warms the cache line holding the global mutex just before
+  // a likely acquisition. Pure performance hint - no ordering or locking
+  // effect.
+  static void PrepareToAcquire() { swcache::PrefetchW(&mutex()); }
 
   // Acquires a lock on the global critical section.
   inline std::unique_lock<std::recursive_mutex> Acquire(const char* source) {

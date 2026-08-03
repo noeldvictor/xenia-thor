@@ -11,7 +11,19 @@
 
 #include "xenia/base/logging.h"
 
-#include <asio.hpp>
+// NOTE(kernel-port): Edge includes <asio.hpp> here for its netplay stack, which
+// is also where its `in_addr` came from. We do not vendor asio (xsocket.{h,cc}
+// and xam_net.cc stay on this fork's raw-socket implementation), so pull in the
+// platform socket headers directly - the same pattern xam_net.cc uses.
+// Re-enable path: vendor third_party/asio and restore Edge's xsocket.{h,cc} +
+// xam_net.cc.
+#if XE_PLATFORM_WIN32
+// NOTE: must be included last as it expects windows.h to already be included.
+#include <winsock2.h>  // NOLINT(build/include_order)
+#elif XE_PLATFORM_LINUX
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 struct XONLINE_SERVICE_INFO {
   xe::be<uint32_t> id;

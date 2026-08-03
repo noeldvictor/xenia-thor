@@ -75,6 +75,9 @@ class Clock {
   static uint64_t QueryGuestSystemTime();
   // Queries the milliseconds since the guest began, accounting for scaling.
   static uint32_t QueryGuestUptimeMillis();
+  // Edge kernel-port: guest interrupt time - 100ns units since start, as the
+  // guest's KeTimeStampBundle.interrupt_time expects. Monotonic.
+  static uint64_t QueryGuestInterruptTime();
 
   // Sets the system time of the guest.
   static void SetGuestSystemTime(uint64_t system_time);

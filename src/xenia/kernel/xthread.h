@@ -16,6 +16,13 @@
 #include <string>
 #include <vector>
 
+// NOTE(kernel-port): platform.h must come before the XE_PLATFORM_WIN32 tests
+// below. Without it the macro is undefined here, so `#if XE_PLATFORM_WIN32`
+// evaluated to 0 and <csetjmp> was silently skipped - yet the identical `#if`
+// guarding reentry_jmp_buf_ further down was true (platform.h having arrived
+// via threading.h by then), producing "'jmp_buf': is not a member of 'std'".
+#include "xenia/base/platform.h"
+
 #include "xenia/base/mutex.h"
 #if !XE_PLATFORM_WIN32
 #include <condition_variable>

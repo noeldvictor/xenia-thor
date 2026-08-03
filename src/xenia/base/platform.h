@@ -140,6 +140,15 @@
 #ifndef XE_UNLIKELY_IF
 #define XE_UNLIKELY_IF(...) if (!!(__VA_ARGS__)) [[unlikely]]
 #endif
+// Edge kernel-port: marks a declaration that may legitimately go unused (e.g. a
+// value only consumed by assert_true(), which compiles out in release).
+#ifndef XE_MAYBE_UNUSED
+#if XE_COMPILER_HAS_GNU_EXTENSIONS == 1
+#define XE_MAYBE_UNUSED __attribute__((unused))
+#else
+#define XE_MAYBE_UNUSED
+#endif
+#endif
 #ifndef XE_MSVC_ASSUME
 #if XE_COMPILER_HAS_MSVC_EXTENSIONS == 1
 #define XE_MSVC_ASSUME(...) __assume(__VA_ARGS__)

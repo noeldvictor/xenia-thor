@@ -238,6 +238,13 @@ class Logger {
     sinks_.push_back(std::move(sink));
   }
 
+  // Edge kernel-port: used by xe::FlushLog() before quick_exit().
+  void FlushAllSinks() {
+    for (const auto& sink : sinks_) {
+      sink->Flush();
+    }
+  }
+
  private:
   static const size_t kBufferSize = 8_MiB;
   uint8_t buffer_[kBufferSize];
@@ -474,6 +481,16 @@ void ShutdownLogging() {
 
   logger->~Logger();
   memory::AlignedFree(logger);
+}
+
+void FlushLog() {
+  if (!logger_) {
+    return;
+  }
+  // Give the write thread a moment to process pending logs.
+  xe::threading::Sleep(std::chrono::milliseconds(10));
+  // Force flush all sinks.
+  logger_->FlushAllSinks();
 }
 
 bool logging::ShouldLog(LogLevel log_level) {

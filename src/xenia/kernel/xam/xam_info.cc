@@ -33,7 +33,10 @@
 #include "xenia/xbox.h"
 
 #include "third_party/fmt/include/fmt/format.h"
-#include "third_party/fmt/include/fmt/xchar.h"
+// NOTE(kernel-port): Edge also includes fmt/xchar.h (fmt 9+). Our vendored fmt
+// is 6.2.0, which has no xchar.h but already declares is_char<char16_t> in
+// core.h, so format.h alone covers the fmt::format(u"...") calls below.
+// Re-enable path: upgrade third_party/fmt, then restore the xchar.h include.
 
 DEFINE_int32(avpack, 8,
              "Video modes\n"
@@ -51,9 +54,18 @@ DEFINE_bool(staging_mode, 0,
             "Enables preview mode in dashboards to render debug information.",
             "Kernel");
 
-DEFINE_bool(in_process_title_relaunch, true,
+// NOTE(kernel-port): defaulted to FALSE (Edge ships true). Emulator::
+// RelaunchTitle is a stub in this fork - the Edge Emulator setup/teardown split
+// it needs was not ported (see the stub in src/xenia/emulator.cc). With this
+// false, title-to-title launches take the out-of-process path
+// (on_launch_new_title() + TerminateTitle()), which is what this fork did
+// before the merge. Do NOT set it true until RelaunchTitle is implemented: the
+// call sites park the calling guest thread forever expecting RelaunchTitle to
+// terminate it.
+DEFINE_bool(in_process_title_relaunch, false,
             "Handle title-to-title launches in-process via full "
-            "Shutdown/Setup cycle instead of spawning a new emulator process.",
+            "Shutdown/Setup cycle instead of spawning a new emulator process. "
+            "Not implemented in this build - see Emulator::RelaunchTitle.",
             "Kernel");
 
 namespace xe {
@@ -197,7 +209,7 @@ dword_result_t XamGetCachedTitleName_entry(dword_t title_id,
   xe::string_util::copy_and_swap_truncating(title_name_ptr, title_name,
                                             title_name.size() + 1);
 
-  *title_name_length_ptr = title_name.size() + 1;
+  *title_name_length_ptr = static_cast<uint32_t>(title_name.size() + 1);
 
   return X_ERROR_SUCCESS;
 }

@@ -754,6 +754,24 @@ dword_result_t XeCryptBnQwNeRsaPubCrypt_entry(pointer_t<uint64_t> qw_a,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwNeRsaPubCrypt, kNone, kImplemented);
 
+// Banjo-Kazooie: Nuts & Bolts (and other titles) verify their \bundle content
+// with XeKeysGetKey -> XeCryptRotSumSha -> XeCryptBnQwBeSigVerify. Before the
+// Edge kernel port this fork declared these three in the export table
+// (xboxkrnl_table.inc) but never implemented them, so the guest hit the
+// unimplemented-import path and the RSA signature verify returned 0 (false) ->
+// the cryptographic content verify FAILED -> a bogus "Disc Read Error" /
+// dirty-disc at the RARE splash, even though the disc reads byte-identically to
+// a copy that boots on upstream canary (proven by a fork-vs-canary file-IO trace
+// diff, 2026-06-26). Real signature verification needs the per-title RSA public
+// key we don't have; upstream xenia-canary stubs the verify to success and
+// titles boot. (Root-caused 2026-06-26: these missing crypto stubs were the real
+// Banjo boot blocker - it reproduces on x64 + a64, i.e. it is NOT a64-codegen,
+// NOT the disc, NOT the filesystem mount; the verify is cryptographic.)
+// NOTE(kernel-port): the Edge merge brought in canary's own implementations of
+// all three (this function, XeCryptRotSumSha and XeKeysGetKey below, the latter
+// backed by a real key vault), which supersede the thor stubs that used to live
+// here - the thor duplicates were removed to resolve the redefinitions. The
+// Banjo behaviour is unchanged: the verify still reports success.
 dword_result_t XeCryptBnQwBeSigVerify_entry(pointer_t<XECRYPT_SIG> sig,
                                             lpvoid_t hash, lpstring_t salt,
                                             pointer_t<XECRYPT_RSA> rsa) {
@@ -769,45 +787,6 @@ dword_result_t XeCryptBnDwLePkcs1Verify_entry(lpvoid_t hash, lpvoid_t sig,
   return 1;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLePkcs1Verify, kNone, kStub);
-
-// Banjo-Kazooie: Nuts & Bolts (and other titles) verify their \bundle content
-// with XeKeysGetKey -> XeCryptRotSumSha -> XeCryptBnQwBeSigVerify. The fork
-// declared these three in the export table (xboxkrnl_table.inc) but never
-// implemented them, so the guest hit the unimplemented-import path and the RSA
-// signature verify returned 0 (false) -> the cryptographic content verify FAILED
-// -> a bogus "Disc Read Error" / dirty-disc at the RARE splash, even though the
-// disc reads byte-identically to a copy that boots on upstream canary (proven by
-// a fork-vs-canary file-IO trace diff, 2026-06-26). Real signature verification
-// needs the per-title RSA public key we don't have; upstream xenia-canary stubs
-// all three to success and titles boot. Match upstream. (Root-caused 2026-06-26:
-// these missing crypto stubs were the real Banjo boot blocker - it reproduces on
-// x64 + a64, i.e. it is NOT a64-codegen, NOT the disc, NOT the filesystem mount;
-// the verify is cryptographic.)
-dword_result_t XeCryptBnQwBeSigVerify_entry(lpvoid_t sig, lpvoid_t hash,
-                                            lpvoid_t salt, lpvoid_t rsa) {
-  // hash from XeCryptRotSumSha; known salts are "XBOX360SVC", "XBOX360XTT",
-  // "TDBXBOX36O". BOOL return: report the signature as valid.
-  return 1;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwBeSigVerify, kNone, kStub);
-
-void XeCryptRotSumSha_entry(lpvoid_t inp_1, dword_t inp_1_size, lpvoid_t inp_2,
-                            dword_t inp_2_size, lpvoid_t out, dword_t out_size) {
-  // Output is consumed by XeCryptBnQwBeSigVerify (stubbed to success); no-op,
-  // matching upstream canary.
-}
-DECLARE_XBOXKRNL_EXPORT1(XeCryptRotSumSha, kNone, kStub);
-
-dword_result_t XeKeysGetKey_entry(word_t key, lpvoid_t key_buffer,
-                                  lpdword_t key_length) {
-  // No key vault on the fork; canary returns SUCCESS even when the key is
-  // absent (leaving the buffer as-is). The sig verify above is stubbed, so the
-  // key contents don't matter.
-  XELOGW("XeKeysGetKey 0x{:04X} stubbed (no key vault)",
-         static_cast<uint16_t>(key));
-  return X_STATUS_SUCCESS;
-}
-DECLARE_XBOXKRNL_EXPORT1(XeKeysGetKey, kNone, kSketchy);
 
 void XeCryptRandom_entry(lpvoid_t buf, dword_t buf_size) {
   std::memset(buf, 0xFD, buf_size);

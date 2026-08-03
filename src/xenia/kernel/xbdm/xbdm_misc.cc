@@ -86,10 +86,12 @@ dword_result_t DmSendNotificationString_entry(lpstring_t notify_string_ptr) {
 
   XELOGI("(DmSendNotificationString) {}", notify_string_ptr.value());
 
-  if (cpu::DebugListener* listener =
-          kernel_state()->processor()->debug_listener()) {
-    listener->OnDebugPrint(notify_string_ptr.value());
-  }
+  // NOTE(kernel-port): Edge forwards this to
+  // processor()->debug_listener()->OnDebugPrint(). Our cpu::DebugListener has
+  // no OnDebugPrint hook and src/xenia/cpu is out of scope for this port, so
+  // the notification only reaches the log above. Re-enable path: add
+  // `virtual void OnDebugPrint(const std::string_view)` to
+  // src/xenia/cpu/debug_listener.h (plus its implementors) and restore this.
 
   return XBDM_SUCCESSFUL;
 }

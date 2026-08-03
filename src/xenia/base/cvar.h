@@ -430,6 +430,41 @@ ICommandVar* define_cmdvar(const char* name, T* default_value,
 #define OVERRIDE_path(name, value) \
   OVERRIDE_CVar(name, std::filesystem::path, value)
 
+// Edge kernel-port: writes the value into the persisted global config. Use only
+// for deliberate global preference changes, never for per-game state.
+//
+// NOTE(kernel-port): in Edge, OVERRIDE_CVar applies at the per-title priority
+// (SetGameConfigValue) and OVERRIDE_PERSIST_CVar is the persisting one
+// (OverrideConfigValue). In this fork OVERRIDE_CVar already maps to
+// OverrideConfigValue, i.e. it has Edge's PERSIST semantics. That pre-existing
+// difference is left alone - existing thor callers depend on it - and the
+// PERSIST family is added alongside so Edge kernel code reads correctly and
+// states its intent explicitly.
+#define OVERRIDE_PERSIST_CVar(name, type, value)           \
+  dynamic_cast<cvar::ConfigVar<type>*>(&ACCESS_CVar(name)) \
+      ->OverrideConfigValue(value);
+
+#define OVERRIDE_PERSIST_bool(name, value) \
+  OVERRIDE_PERSIST_CVar(name, bool, value)
+
+#define OVERRIDE_PERSIST_int32(name, value) \
+  OVERRIDE_PERSIST_CVar(name, int32_t, value)
+
+#define OVERRIDE_PERSIST_uint32(name, value) \
+  OVERRIDE_PERSIST_CVar(name, uint32_t, value)
+
+#define OVERRIDE_PERSIST_uint64(name, value) \
+  OVERRIDE_PERSIST_CVar(name, uint64_t, value)
+
+#define OVERRIDE_PERSIST_double(name, value) \
+  OVERRIDE_PERSIST_CVar(name, double, value)
+
+#define OVERRIDE_PERSIST_string(name, value) \
+  OVERRIDE_PERSIST_CVar(name, std::string, value)
+
+#define OVERRIDE_PERSIST_path(name, value) \
+  OVERRIDE_PERSIST_CVar(name, std::filesystem::path, value)
+
 // Interface for changing the default value of a variable with auto-upgrading of
 // users' configs (to distinguish between a leftover old default and an explicit
 // override), without having to rename the variable.
@@ -500,8 +535,12 @@ class IConfigVarUpdate {
   //   2) Change this value to the same date.
   // If you're reviewing a pull request with a change here, check if 1) has been
   // done by the submitter before merging.
+  // Edge kernel-port: raised to cover the config-var default updates that came
+  // in with the Edge kernel merge (the newest being
+  // UPDATE_from_bool(ignore_thread_priorities, 2026, 4, 9, 12) in xthread.cc).
+  // Edge itself sits at 2026-07-30 12; we track the same date.
   static constexpr uint32_t kLastCommittedUpdateDate =
-      MakeConfigVarUpdateDate(2020, 12, 31, 13);
+      MakeConfigVarUpdateDate(2026, 7, 30, 12);
 
   virtual ~IConfigVarUpdate() = default;
 

@@ -314,7 +314,13 @@ bool ProfileManager::MountProfile(const uint64_t xuid, std::string mount_path) {
     XELOGE(
         "MountProfile: Unable to mount {} profile; file not found or "
         "corrupted.",
-        profile_path);
+        // NOTE(kernel-port): our vendored fmt is 6.2, which has no
+        // formatter<std::filesystem::path> (added in fmt 9 via fmt/std.h), so
+        // the path must be converted explicitly. Passing it raw made MSVC
+        // instantiate fmt's variadic arg_mapper fallback, whose static_assert
+        // then got misreported against an unrelated uint64_t log call earlier
+        // in this file.
+        xe::path_to_utf8(profile_path));
     return false;
   }
   return kernel_state_->file_system()->RegisterDevice(std::move(device));

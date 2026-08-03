@@ -42,7 +42,11 @@
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/util/gameinfo_utils.h"
-#include "xenia/kernel/util/xdbf_utils.h"
+// NOTE(kernel-port): xenia/kernel/util/xdbf_utils.h was removed by the Edge
+// merge; its role is taken by xam/xdbf (SpaInfo) + util/game_info_database.h,
+// which emulator.h already includes.
+#include "xenia/kernel/xam/xam_state.h"
+#include "xenia/kernel/xconfig.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
@@ -57,7 +61,7 @@
 #include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/vfs/devices/null_device.h"
-#include "xenia/vfs/devices/stfs_container_device.h"
+#include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/vfs/virtual_file_system.h"
 
 #if XE_ARCH_ARM64
@@ -88,6 +92,12 @@ DEFINE_string(
     ".m3u the title was launched with; XamSwapDisc resolves the requested "
     "disc from it at runtime (no interactive picker needed).",
     "Storage");
+
+// NOTE(kernel-port): Edge defines this in its emulator.cc too; the merge
+// brought in user_module.cc's DECLARE_bool(dump_xex) + use site but not the
+// definition, leaving an unresolved external at link time.
+DEFINE_bool(dump_xex, false, "Dump the main XEX to current directory on launch",
+            "Emulator");
 
 DEFINE_bool(
     trainer_enable, false,
@@ -911,8 +921,17 @@ X_STATUS Emulator::Setup(
     auto input_drivers = input_driver_factory(display_window_);
     for (size_t i = 0; i < input_drivers.size(); ++i) {
       auto& input_driver = input_drivers[i];
-      input_driver->set_is_active_callback(
-          []() -> bool { return !xe::kernel::xam::xeXamIsUIActive(); });
+      // NOTE(kernel-port): the free function xam::xeXamIsUIActive() is gone -
+      // the Edge merge moved the dialog-present flag onto xam::XamState
+      // (kernel_state()->xam_state()->IsUIActive()). Guard on kernel_state_
+      // because input drivers can poll before/after the kernel exists.
+      input_driver->set_is_active_callback([this]() -> bool {
+        auto* kernel_state = kernel_state_.get();
+        if (!kernel_state || !kernel_state->xam_state()) {
+          return true;
+        }
+        return !kernel_state->xam_state()->IsUIActive();
+      });
       input_system_->AddDriver(std::move(input_driver));
     }
   }
@@ -1073,6 +1092,53 @@ X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
   }
 }
 
+// NOTE(kernel-port): Edge implements a full in-process relaunch here -
+// ShutdownDispatchThread(), stop the GPU command processor, force-terminate
+// every guest thread, stop the guest scheduler, then Shutdown() + Setup() +
+// MountStandardDrives() + SetupSubsystems() and re-launch. That depends on
+// Emulator internals we did not port (relaunching_, MountStandardDrives(),
+// SetupSubsystems(), require_cpu_backend_, and Setup()'s Edge signature), i.e.
+// a restructuring of Emulator setup/teardown that is out of scope for the
+// kernel port.
+//
+// This is stubbed rather than deleted so the Edge call sites still build. It is
+// unreachable in practice: cvars::in_process_title_relaunch is defaulted to
+// false in xam_info.cc, so XamLoaderLaunchTitle and
+// XamContentLaunchImageFromFileInternal take the out-of-process path
+// (on_launch_new_title() + TerminateTitle()), which is what this fork did
+// before the merge. Do NOT enable that cvar until this is implemented - the
+// callers park the calling guest thread forever expecting to be terminated
+// from here.
+//
+// Re-enable path: port Edge's Emulator setup/teardown split
+// (MountStandardDrives/SetupSubsystems/relaunching_) from
+// edge/edge:src/xenia/emulator.cc, then restore Edge's body and flip the cvar
+// default back to true.
+void Emulator::RelaunchTitle(const std::string& host_path,
+                             const std::string& launch_module,
+                             uint32_t launch_flags,
+                             std::vector<uint8_t> launch_data) {
+  XELOGE(
+      "Emulator::RelaunchTitle is not implemented in this build (in-process "
+      "relaunch was not ported with the Edge kernel); ignoring request for "
+      "target={}, module={}. Enable the out-of-process path instead "
+      "(in_process_title_relaunch=false, the default).",
+      host_path, launch_module);
+}
+
+// NOTE(kernel-port): Edge migrates existing content/ data into the
+// per-profile content/<xuid>/ layout here. Our content manager was not moved to
+// the per-xuid layout as part of this port, so there is nothing to migrate and
+// this reports success. Re-enable path: port Edge's DataMigration body from
+// edge/edge:src/xenia/emulator.cc together with its content-root layout change.
+X_STATUS Emulator::DataMigration(const uint64_t xuid) {
+  XELOGW(
+      "Emulator::DataMigration({:016X}) is a no-op in this build - per-profile "
+      "content migration was not ported with the Edge kernel.",
+      xuid);
+  return X_STATUS_SUCCESS;
+}
+
 X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // We create a virtual filesystem pointing to its directory and symlink
   // that to the game filesystem.
@@ -1135,8 +1201,13 @@ X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
   auto mount_path = "\\Device\\Cdrom0";
 
   // Register the container in the virtual filesystem.
-  auto device = std::make_unique<vfs::StfsContainerDevice>(mount_path, path);
-  if (!device->Initialize()) {
+  // NOTE(kernel-port): the Edge merge replaced vfs::StfsContainerDevice with
+  // vfs::XContentContainerDevice, which is created through a factory that picks
+  // the right container variant (CON/LIVE/PIRS) from the header - same as
+  // Emulator::MountPath above.
+  auto device =
+      vfs::XContentContainerDevice::CreateContentDevice(mount_path, path);
+  if (!device || !device->Initialize()) {
     xe::FatalError(
         "Unable to mount STFS container; file not found or corrupt.");
     return X_STATUS_NO_SUCH_FILE;
@@ -1373,7 +1444,15 @@ void Emulator::LaunchNextTitle() {
 [[noreturn]] static void HaltCrashedFiberThunk() {
   auto* self = kernel::XThread::GetCurrentFiberThread();
   if (self) {
-    self->scheduler_links().exited = true;
+    // NOTE(kernel-port): was `scheduler_links().exited = true` - the
+    // master-era host-side flag. The Edge merge removed SchedulerLinks::exited
+    // and moved exit tracking onto the guest thread state: XThread::Exit sets
+    // KTHREAD terminated/thread_state=TERMINATED, and the scheduler's MarkReady
+    // zombie guard tests that (see GuestScheduler::NotifyThreadExited). Mark the
+    // crashed fiber the same way so it can never be re-readied.
+    auto kthread = self->guest_object<kernel::X_KTHREAD>();
+    kthread->terminated = 1;
+    kthread->thread_state = kernel::KTHREAD_STATE_TERMINATED;
     // The crash may have landed inside a wait poll, which never unwinds, and
     // a dead entry gates every other cooperative waiter on that object.
     kernel::XObject::AbandonCooperativeWait(self);
@@ -1767,28 +1846,42 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     }
     game_config_load_callback_loop_next_index_ = SIZE_MAX;
 
-    const kernel::util::XdbfGameData db = kernel_state_->module_xdbf(module);
-    if (db.is_valid()) {
-      XLanguage language =
-          db.GetExistingLanguage(static_cast<XLanguage>(cvars::user_language));
-      title_name_ = db.title(language);
+    // NOTE(kernel-port): ported to the Edge resource-database API. The old
+    // kernel::util::XdbfGameData / xdbf_utils.h path is gone - the merge
+    // replaced it with xam::SpaInfo (src/xenia/kernel/xam/xdbf) wrapped by
+    // kernel::util::GameInfoDatabase. This also fixes a latent crash: the merge
+    // brought in Emulator::game_info_database_ and its accessor, but nothing
+    // ever populated it, so callers such as xam_info.cc's
+    // emulator()->game_info_database()->GetTitleName() would have dereferenced
+    // null. Edge additionally logs the SPA property/context/stats tables here;
+    // that logging is not ported (it needs std::views plus more of Edge's
+    // GameInfoDatabase surface) - achievements are kept.
+    const auto db = kernel_state_->module_xdbf(module);
+
+    game_info_database_ =
+        std::make_unique<kernel::util::GameInfoDatabase>(db.get());
+    kernel_state_->xam_state()->LoadSpaInfo(db.get());
+
+    if (game_info_database_->IsValid()) {
+      const XLanguage language = static_cast<XLanguage>(
+          kernel_state_->xconfig()->ReadSetting<uint32_t>(
+              kernel::XCONFIG_USER_CATEGORY, kernel::XCONFIG_USER_LANGUAGE));
+      title_name_ = game_info_database_->GetTitleName(language);
+      XELOGI("Title name: {}", title_name_);
 
       XELOGI("-------------------- ACHIEVEMENTS --------------------");
-      const std::vector<kernel::util::XdbfAchievementTableEntry>
-          achievement_list = db.GetAchievements();
-      for (const kernel::util::XdbfAchievementTableEntry& entry :
+      const std::vector<kernel::util::GameInfoDatabase::Achievement>
+          achievement_list = game_info_database_->GetAchievements();
+      for (const kernel::util::GameInfoDatabase::Achievement& entry :
            achievement_list) {
-        std::string label = db.GetStringTableEntry(language, entry.label_id);
-        std::string desc =
-            db.GetStringTableEntry(language, entry.description_id);
-
-        XELOGI("{} - {} - {} - {}", entry.id, label, desc, entry.gamerscore);
+        XELOGI("{} - {} - {} - {}", entry.id, entry.label, entry.description,
+               entry.gamerscore);
       }
       XELOGI("----------------- END OF ACHIEVEMENTS ----------------");
 
-      auto icon_block = db.icon();
-      if (icon_block) {
-        display_window_->SetIcon(icon_block.buffer, icon_block.size);
+      const std::vector<uint8_t> icon = game_info_database_->GetIcon();
+      if (!icon.empty()) {
+        display_window_->SetIcon(icon.data(), icon.size());
       }
     }
   }

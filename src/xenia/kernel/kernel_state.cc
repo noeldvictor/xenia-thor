@@ -677,7 +677,11 @@ X_RESULT KernelState::FinishLoadingUserModule(
   // NOTE(kernel-port): Edge fires emulator_->on_patch_apply() here (UI patch
   // list refresh); our Emulator does not expose that delegate yet.
   if (module->xex_module()) {
-    module->xex_module()->Precompile();
+    // NOTE(kernel-port): Edge calls XexModule::Precompile(). This fork's
+    // equivalent is PrecompileGuestFunctions() (the multicore-JIT/AOT
+    // precompiler, gated by cpu_precompile_guest_functions), which is the
+    // customization the thor AOT+LLVM direction is built on - keep it.
+    module->xex_module()->PrecompileGuestFunctions();
   }
 
   if (module->is_dll_module() && module->entry_point() && call_entry) {
@@ -1302,7 +1306,10 @@ uint32_t KernelState::GetKeTimestampBundle() {
 XE_NOINLINE
 XE_COLD
 uint32_t KernelState::CreateKeTimestampBundle() {
-  auto crit = global_critical_region::Acquire();
+  // NOTE(kernel-port): Edge's global_critical_region::Acquire() is static; ours
+  // is an instance method (this fork's owner-tracing variant). AcquireDirect()
+  // is the equivalent static entry point.
+  auto crit = global_critical_region::AcquireDirect();
 
   // Check again under lock - should have been initialized during boot
   if (ke_timestamp_bundle_ptr_) {

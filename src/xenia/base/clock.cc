@@ -176,6 +176,20 @@ uint32_t Clock::QueryGuestUptimeMillis() {
                          std::numeric_limits<uint32_t>::max()));
 }
 
+// Edge kernel-port: guest interrupt time in 100ns units since start.
+// NOTE(kernel-port): Edge implements this per-platform as
+// Clock::QueryHostInterruptTime(), which on Windows reads InterruptTime
+// straight out of KUSER_SHARED_DATA (its clock_win.cc KUserShared() helper +
+// KUSER_SHARED_INTERRUPTTIME_OFFSET) and on POSIX falls back to the host tick
+// count. We do not carry that KUSER_SHARED_DATA plumbing, so this is derived
+// from the guest system-time offset instead - same unit (100ns), same
+// monotonic-since-start meaning, and it correctly follows guest time scaling,
+// which the raw host reading does not. Re-enable path: port Edge's
+// clock_win.cc/clock_posix.cc QueryHostInterruptTime and delegate to it.
+uint64_t Clock::QueryGuestInterruptTime() {
+  return QueryGuestSystemTimeOffset();
+}
+
 void Clock::SetGuestSystemTime(uint64_t system_time) {
   if (cvars::clock_no_scaling) {
     // Time is fixed to host time.

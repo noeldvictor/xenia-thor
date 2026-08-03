@@ -54,6 +54,11 @@ class Patcher;
 namespace xe {
 
 constexpr fourcc_t kEmulatorSaveSignature = make_fourcc("XSAV");
+// Edge kernel-port: canonical mount-point names shared by the emulator, the
+// kernel state and the content manager.
+static constexpr std::string_view kDefaultGameSymbolicLink = "GAME:";
+static constexpr std::string_view kDefaultPartitionSymbolicLink = "D:";
+static constexpr std::string_view kDefaultUpdateSymbolicLink = "UPDATE:";
 
 // The main type that runs the whole emulator.
 // This is responsible for initializing and managing all the various subsystems.
@@ -207,6 +212,20 @@ class Emulator {
   // Launches a game from a .xex file by mounting the containing folder as if it
   // was an extracted STFS container.
   X_STATUS LaunchXexFile(const std::filesystem::path& path);
+
+  // Edge kernel-port: full in-process relaunch (terminate guest threads,
+  // Shutdown(), Setup(), then launch with new params). Must be called from a
+  // non-guest thread. NOT IMPLEMENTED in this fork - see the stub in
+  // emulator.cc; cvars::in_process_title_relaunch defaults to false so callers
+  // take the out-of-process on_launch_new_title() path instead.
+  void RelaunchTitle(const std::string& host_path,
+                     const std::string& launch_module, uint32_t launch_flags,
+                     std::vector<uint8_t> launch_data);
+
+  // Edge kernel-port: migrates data from content/ to content/<xuid>/ with
+  // respect to common data. NOT IMPLEMENTED in this fork - see the stub in
+  // emulator.cc.
+  X_STATUS DataMigration(const uint64_t xuid);
 
   // Launches a game from a disc image file (.iso, etc).
   X_STATUS LaunchDiscImage(const std::filesystem::path& path);

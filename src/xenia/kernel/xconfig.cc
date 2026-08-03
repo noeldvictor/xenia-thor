@@ -72,7 +72,12 @@ DEFINE_int32(xmp_default_volume, 70,
 
 DECLARE_bool(widescreen);
 DECLARE_int32(video_standard);
-DECLARE_bool(use_50Hz_mode);
+// NOTE(kernel-port): Edge defines this cvar in src/xenia/gpu/gpu_flags.cc. The
+// merge brought in the kernel-side DECLARE + use sites (here and
+// xboxkrnl_video.cc) but not the definition, leaving an unresolved external at
+// link time. Defined here instead of in gpu/ because every consumer in this
+// tree is kernel-side and src/xenia/gpu is out of scope for this port.
+DEFINE_bool(use_50Hz_mode, false, "Enables usage of PAL-50 mode.", "Console");
 DECLARE_uint32(internal_display_resolution);
 
 namespace xe {
@@ -250,8 +255,24 @@ uint16_t BuildSetting(X_CONFIG_CATEGORY category, uint16_t setting,
 template <typename T>
 void StoreConsoleSetting(T& live, const char* name, T value) {
   live = value;
-  config::SaveGameConfigSetting(kernel_state()->emulator(), "Console", name,
-                                value);
+  // NOTE(kernel-port): Edge persists the new value to the running title's
+  // per-game override here via
+  // config::SaveGameConfigSetting(emulator, "Console", name, value). Edge's
+  // implementation is built on tomlplusplus (toml::table insert_or_assign +
+  // rewrite); our config layer uses cpptoml and has read-only support for
+  // per-game configs (config::LoadGameConfig / ReadGameConfig) with no
+  // per-game writer. We do not vendor tomlplusplus, so persistence is skipped.
+  //
+  // Consequence: a console setting the guest writes takes effect immediately
+  // for the running session (the live cvar above is updated, which is what the
+  // guest observes) but is not remembered across launches.
+  //
+  // Re-enable path: add a per-game config writer to src/xenia/config.{h,cc}
+  // alongside the existing SaveConfig() manual-write logic - i.e.
+  // SaveGameConfigSetting(Emulator*, section, cvar_name, value) overloads for
+  // bool/int32_t/uint32_t/std::string writing <title_id>.config.toml - then
+  // call it here.
+  (void)name;
 }
 
 }  // namespace

@@ -419,6 +419,38 @@ BaseHeap* Memory::LookupHeapByType(bool physical, uint32_t page_size) {
 
 VirtualHeap* Memory::GetPhysicalHeap() { return &heaps_.physical; }
 
+// Edge kernel-port: accumulates page statistics across the given heaps.
+// NOTE(kernel-port): Edge's BaseHeap caches unreserved_page_count_ and exposes
+// const accessors (total_page_count()/unreserved_page_count()/
+// reserved_page_count()). Ours computes the counts on demand via the non-const
+// GetTotalPageCount()/GetUnreservedPageCount(), which take the global critical
+// region internally - hence the const_cast. The result is identical; only the
+// cost differs (a page-table scan per call rather than a cached read). This is
+// a cold path (the guest's global memory-status query). Re-enable path: port
+// Edge's cached unreserved_page_count_ and its const accessors into BaseHeap.
+void Memory::GetHeapsPageStatsSummary(const BaseHeap* const* provided_heaps,
+                                      size_t heaps_count,
+                                      uint32_t& unreserved_pages,
+                                      uint32_t& reserved_pages,
+                                      uint32_t& used_pages,
+                                      uint32_t& reserved_bytes) {
+  for (size_t i = 0; i < heaps_count; i++) {
+    BaseHeap* heap = const_cast<BaseHeap*>(provided_heaps[i]);
+    if (!heap) {
+      continue;
+    }
+    const uint32_t heap_total_pages = heap->GetTotalPageCount();
+    const uint32_t heap_unreserved_pages = heap->GetUnreservedPageCount();
+    const uint32_t heap_reserved_pages = heap_total_pages - heap_unreserved_pages;
+
+    unreserved_pages += heap_unreserved_pages;
+    reserved_pages += heap_reserved_pages;
+    used_pages +=
+        ((heap_total_pages - heap_unreserved_pages) * heap->page_size()) / 4096;
+    reserved_bytes += heap_reserved_pages * heap->page_size();
+  }
+}
+
 uint32_t Memory::HostToGuestVirtual(const void* host_address) const {
   size_t virtual_address = reinterpret_cast<size_t>(host_address) -
                            reinterpret_cast<size_t>(virtual_membase_);
