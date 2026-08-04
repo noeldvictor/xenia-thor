@@ -837,6 +837,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "arm64_speed_profile_thread_snapshot_on_idle");
             copyStringExtra(intent, launchArguments, "arm64_guest_store_watch");
             copyIntExtra(intent, launchArguments, "arm64_guest_store_watch_budget");
+            copyBooleanExtra(intent, launchArguments, "xam_input_trace");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");
             copyIntExtra(intent, launchArguments, "gpu_vulkan_inpass_edram_transfers");

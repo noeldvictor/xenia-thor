@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/hid/input.h"
@@ -15,6 +16,12 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/xbox.h"
+
+DEFINE_bool(xam_input_trace, false,
+            "Log the guest's controller polls (first few, then every button "
+            "state change) and whether a XAM dialog is discarding them. For "
+            "diagnosing a title that renders but ignores the pad.",
+            "HID");
 
 namespace xe {
 namespace kernel {
@@ -108,6 +115,18 @@ dword_result_t XamInputGetState_entry(dword_t user_index, dword_t flags,
   }
 
   if (kernel_state()->xam_state()->IsUIActive()) {
+    // Swallows the pad entirely (zeroed state, success). If a XAM dialog is ever
+    // left present, the guest goes permanently deaf to input while still
+    // rendering - which looks exactly like a hung title screen. Say so.
+    static std::atomic<uint32_t> swallowed{0};
+    uint32_t count = swallowed.fetch_add(1, std::memory_order_relaxed);
+    if ((count % 600) == 0) {
+      XELOGW(
+          "XamInputGetState: a XAM dialog is present - input is being "
+          "discarded (poll {}). The guest will not see the controller until "
+          "the dialog is dismissed.",
+          count);
+    }
     return X_ERROR_SUCCESS;
   }
 
@@ -133,6 +152,26 @@ dword_result_t XamInputGetState_entry(dword_t user_index, dword_t flags,
   if (input_state && result == X_ERROR_SUCCESS) {
     if (auto patch = kernel_state()->xmp_volume_patch()) {
       patch->OnInputPoll(input_state->packet_number);
+    }
+  }
+
+  // Input reaching the host but not the guest is invisible otherwise - the game
+  // simply ignores the pad and looks hung on a title screen. Report the first
+  // few polls (does the guest poll at all?) and every button state change (does
+  // the press actually arrive?). Cheap: this is a kHighFrequency export, so it
+  // is capped and only fires on transitions.
+  if (cvars::xam_input_trace && input_state) {
+    static std::atomic<uint32_t> poll_count{0};
+    static std::atomic<uint16_t> last_buttons{0};
+    uint16_t buttons = input_state->gamepad.buttons;
+    uint32_t polls = poll_count.fetch_add(1, std::memory_order_relaxed);
+    uint16_t previous = last_buttons.exchange(buttons, std::memory_order_relaxed);
+    if (polls < 4 || buttons != previous) {
+      XELOGI(
+          "XamInputGetState: user={} flags={:08X} result={:08X} buttons={:04X} "
+          "poll #{}",
+          uint32_t(user_index), uint32_t(flags), uint32_t(result), buttons,
+          polls);
     }
   }
 
