@@ -522,9 +522,23 @@ bool Presenter::RefreshGuestOutput(
   {
     std::lock_guard<std::mutex> paint_mode_mutex_lock(paint_mode_mutex_);
     switch (paint_mode_) {
-      case PaintMode::kNone:
-        // Neither painting nor window paint requesting is accessible.
-        break;
+      case PaintMode::kNone: {
+        // Neither painting nor window paint requesting is accessible, so this
+        // guest frame is dropped. Rate-limited report: silently discarding
+        // every frame here is indistinguishable from a hung emulator - it
+        // presents as a black screen while the GPU happily produces frames
+        // (device-observed 2026-08-03). If this repeats, the presenter has no
+        // paintable surface.
+        static uint64_t dropped_frames = 0;
+        if ((dropped_frames++ % 600) == 0) {
+          XELOGW(
+              "Presenter: guest output ready but paint mode is kNone - frame "
+              "{} dropped, nothing will be shown. Surface connection state={}, "
+              "surface={}, window={}.",
+              dropped_frames, int(surface_paint_connection_state_),
+              surface_ ? "set" : "NULL", window_ ? "set" : "NULL");
+        }
+      } break;
       case PaintMode::kUIThreadOnRequest:
         // Only window paint requesting is accessible.
         RequestPaintOrConnectionRecoveryViaWindow(true);

@@ -468,6 +468,19 @@ absolute = unreliable (includes idle). **OSD fps box (screenshot it) = the truth
 change confirms the field was reached (no heating = idle/menu scene = discard run). **Derive the structural
 cause from code/arch FIRST; fire the device only to CONFIRM one hypothesis, never to explore.**
 
+## 🖤🖤🖤 BLACK SCREEN? **CHECK THE DISPLAY IS AWAKE FIRST** (cost most of a session, 2026-08-03)
+**`adb shell dumpsys power | grep mWakefulness` MUST say `Awake`. If the panel is asleep the Android activity is
+stopped, its SurfaceView never gets a surface, the presenter has no surface, and it silently DROPS every guest
+frame — and `screencap` returns a fully black PNG (~10.9 KB at 1920x1080). The emulator is meanwhile perfectly
+healthy: guest running, GPU hot, swaps issued.** Launching over adb does NOT wake the screen. Wake it with
+`adb shell input keyevent KEYCODE_WAKEUP` (then `input keyevent 82` to dismiss the keyguard) BEFORE any visual
+check — `tools/thor_launch.sh` does this automatically now.
+- **Screenshot size is the instant tell:** ~10.9 KB = a black panel; hundreds of KB = real content.
+- Burnout Revenge on the merged Edge kernel + Turnip 26.3.0: **title screen at 59.2-59.3 fps** (screenshotted).
+- The presenter now SAYS so instead of failing mutely: `Presenter: guest output ready but paint mode is kNone -
+  frame N dropped, nothing will be shown` (with surface/window state). Grep that first on any black screen; the
+  paint chain is also traceable via logcat tag `XeniaPaint` (surfaceCreated/surfaceChanged/postInvalidate/onDraw).
+
 ## ⚠️ Never thrash the Thor (hard safety)
 Before ANY launch read `/sys/class/kgsl/kgsl-3d0/temp` (milli-°C) + `gpu_busy_percentage`; launch only if
 temp < 50-55°C. Force-stop `jp.xenia.emulator.github.debug` past ~70°C. Device degrades under heavy firing

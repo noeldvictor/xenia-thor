@@ -95,16 +95,36 @@ public abstract class WindowedAppActivity extends Activity {
         mWindowSurfaceView.setOnTouchListener(mWindowSurfaceListener);
         final SurfaceHolder windowSurfaceHolder = mWindowSurfaceView.getHolder();
         windowSurfaceHolder.addCallback(mWindowSurfaceListener);
-        // If setting after the creation of the surface.
+        // If setting after the creation of the surface. getSurface() does NOT
+        // return null before the surface exists - it returns an INVALID Surface,
+        // and ANativeWindow_fromSurface fails on it, leaving the presenter with
+        // no surface (and a permanently black screen) if nothing re-notifies it.
+        // Only hand over a surface that is actually valid; otherwise wait for
+        // the surfaceCreated callback registered just above.
         if (mAppContext != 0) {
             final Surface windowSurface = windowSurfaceHolder.getSurface();
-            if (windowSurface != null) {
+            final boolean valid = windowSurface != null && windowSurface.isValid();
+            Log.i(PAINT_TAG, "setWindowSurfaceView: existing surface valid=" + valid);
+            if (valid) {
                 onWindowSurfaceChanged(mAppContext, windowSurface);
             }
         }
     }
 
+    // Paint-chain counters. A black screen with a healthy emulator is otherwise
+    // undiagnosable: the request (native -> postInvalidateWindowSurface), the
+    // View callback (onDraw -> onWindowSurfaceDraw) and the native paint are
+    // three separate links and nothing said which one was dead.
+    private static final String PAINT_TAG = "XeniaPaint";
+    private long mPaintRequests = 0;
+    private long mPaintDraws = 0;
+
     public void onWindowSurfaceDraw(final boolean forcePaint) {
+        if ((mPaintDraws++ % 600) == 0) {
+            Log.i(PAINT_TAG, "onWindowSurfaceDraw #" + mPaintDraws
+                    + " appContext=" + (mAppContext != 0 ? "set" : "NULL")
+                    + " force=" + forcePaint);
+        }
         if (mAppContext == 0) {
             return;
         }
@@ -114,6 +134,10 @@ public abstract class WindowedAppActivity extends Activity {
     // Used from the native WindowedAppContext. May be called from non-UI threads.
     @SuppressWarnings("UnusedDeclaration")
     protected void postInvalidateWindowSurface() {
+        if ((mPaintRequests++ % 600) == 0) {
+            Log.i(PAINT_TAG, "postInvalidateWindowSurface #" + mPaintRequests
+                    + " surfaceView=" + (mWindowSurfaceView != null ? "set" : "NULL"));
+        }
         if (mWindowSurfaceView == null) {
             return;
         }
@@ -418,23 +442,32 @@ public abstract class WindowedAppActivity extends Activity {
 
         @Override
         public void surfaceCreated(final SurfaceHolder holder) {
+            final Surface surface = holder.getSurface();
+            Log.i(PAINT_TAG, "surfaceCreated valid="
+                    + (surface != null && surface.isValid())
+                    + " appContext=" + (mAppContext != 0 ? "set" : "NULL"));
             if (mAppContext == 0) {
                 return;
             }
-            onWindowSurfaceChanged(mAppContext, holder.getSurface());
+            onWindowSurfaceChanged(mAppContext, surface);
         }
 
         @Override
         public void surfaceChanged(
                 final SurfaceHolder holder, final int format, final int width, final int height) {
+            final Surface surface = holder.getSurface();
+            Log.i(PAINT_TAG, "surfaceChanged " + width + "x" + height + " valid="
+                    + (surface != null && surface.isValid())
+                    + " appContext=" + (mAppContext != 0 ? "set" : "NULL"));
             if (mAppContext == 0) {
                 return;
             }
-            onWindowSurfaceChanged(mAppContext, holder.getSurface());
+            onWindowSurfaceChanged(mAppContext, surface);
         }
 
         @Override
         public void surfaceDestroyed(final SurfaceHolder holder) {
+            Log.i(PAINT_TAG, "surfaceDestroyed");
             if (mAppContext == 0) {
                 return;
             }

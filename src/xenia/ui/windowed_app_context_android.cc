@@ -249,6 +249,14 @@ bool AndroidWindowedAppContext::JniActivityOnWindowSurfaceMotionEvent(
 
 void AndroidWindowedAppContext::JniActivityOnWindowSurfaceChanged(
     jobject window_surface_object) {
+  // The whole ability to display anything hinges on this handoff: without a
+  // live ANativeWindow here the presenter can never build a surface, so it sits
+  // in paint mode kNone and silently drops every guest frame (black screen).
+  XELOGI(
+      "AndroidWindowedAppContext {}: window surface changed - incoming={}, "
+      "previous={}, activity_window={}",
+      static_cast<void*>(this), window_surface_object ? "set" : "NULL",
+      window_surface_ ? "set" : "NULL", activity_window_ ? "set" : "NULL");
   // Detach from the old surface.
   if (window_surface_) {
     ANativeWindow* old_window_surface = window_surface_;
@@ -263,7 +271,12 @@ void AndroidWindowedAppContext::JniActivityOnWindowSurfaceChanged(
   }
   window_surface_ =
       ANativeWindow_fromSurface(ui_thread_jni_env_, window_surface_object);
+  XELOGI("AndroidWindowedAppContext {}: ANativeWindow_fromSurface -> {}",
+         static_cast<void*>(this), static_cast<void*>(window_surface_));
   if (!window_surface_) {
+    XELOGE(
+        "AndroidWindowedAppContext: could not obtain an ANativeWindow from the "
+        "activity surface - nothing can be presented.");
     return;
   }
   if (activity_window_) {

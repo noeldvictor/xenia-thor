@@ -300,7 +300,19 @@ std::unique_ptr<Surface> AndroidWindow::CreateSurfaceImpl(
       return std::make_unique<AndroidNativeWindowSurface>(
           activity_window_surface);
     }
+    XELOGW(
+        "AndroidWindow: no ANativeWindow available yet (context {}, "
+        "activity_window {}, this {}) - the presenter will have no surface "
+        "until the activity's surface is (re)created.",
+        static_cast<const void*>(&android_app_context),
+        static_cast<const void*>(android_app_context.GetActivityWindow()),
+        static_cast<const void*>(this));
+    return nullptr;
   }
+  XELOGE(
+      "AndroidWindow: the presenter does not accept an Android native window "
+      "surface (allowed types {:08X}) - nothing can be presented.",
+      uint32_t(allowed_types));
   return nullptr;
 }
 

@@ -191,12 +191,16 @@ void EmulatorWindow::SetupGraphicsSystemPresenterPainting() {
 
   ui::Presenter* presenter = GetGraphicsSystemPresenter();
   if (!presenter) {
+    XELOGE(
+        "EmulatorWindow: no graphics-system presenter to attach - nothing will "
+        "ever be painted.");
     return;
   }
 
   ApplyDisplayConfigForCvars();
 
   window_->SetPresenter(presenter);
+  XELOGI("EmulatorWindow: presenter attached to the window.");
 
   immediate_drawer_ =
       emulator_->graphics_system()->provider()->CreateImmediateDrawer();
