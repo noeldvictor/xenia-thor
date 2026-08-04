@@ -39,6 +39,16 @@ don't debug from scratch.**
   **LO STILL STALLS after these** (main thread polls a guest flag in KeDelayExecutionThread wrapper lr 827CACFC;
   workers idle; official canary A/B on desktop = the discriminator in progress). Earlier RE trail:
   docs/research/20260530-*lost-odyssey* (zombie-join hypothesis, later refined).
+- **✅ THE EDGE KERNEL PORT IS LANDED AND DEVICE-VALIDATED (merged to master 2026-08-04, f3e780d2e).**
+  Burnout Revenge: title + attract mode at **59.3 fps**. Blue Dragon: title at **29.6 fps**. Both on Turnip
+  26.3.0, screenshotted, no faults. Bring-up took 5 defects after the merge compiled clean — see the EXECUTION LOG
+  in `docs/research/20260731-edge-kernel-port-plan.md` (the two that generalize: desktop oracles cannot validate an
+  Android memory/threading port, and a wholesale subsystem merge must also take the CALLER-side changes from Edge).
+  Still pending: Phase 4 IRQL unification, and the deliberate omissions listed in that doc.
+  **⚠️ KNOWN REGRESSION: `--es hid nop` HANGS the emulator before the title launches** (observed 2026-08-04:
+  GPU init completes, presenter attaches, then the Emulator thread futex-waits forever with the UI thread idle in
+  epoll and no guest threads created; 0 swaps, 0.0 fps). Normal launches are unaffected. This breaks the scripted
+  `hid_nop_button_sequence` navigation CLAUDE.md relies on for BD field runs - fix before using that automation.
 - **DECIDED 2026-07-31 (user: "xendroid is still more stable and reliable"): PORT EDGE'S WHOLE KERNEL LAYER**
   (xam+xboxkrnl+vfs as a unit) onto our tree, keeping our CPU/GPU. Two titles in one day reduced to ~10
   canary-lineage kernel divergences — whack-a-mole lost. Scoping report drives the multi-session migration;
