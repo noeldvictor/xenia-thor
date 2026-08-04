@@ -45,10 +45,12 @@ don't debug from scratch.**
   in `docs/research/20260731-edge-kernel-port-plan.md` (the two that generalize: desktop oracles cannot validate an
   Android memory/threading port, and a wholesale subsystem merge must also take the CALLER-side changes from Edge).
   Still pending: Phase 4 IRQL unification, and the deliberate omissions listed in that doc.
-  **⚠️ KNOWN REGRESSION: `--es hid nop` HANGS the emulator before the title launches** (observed 2026-08-04:
-  GPU init completes, presenter attaches, then the Emulator thread futex-waits forever with the UI thread idle in
-  epoll and no guest threads created; 0 swaps, 0.0 fps). Normal launches are unaffected. This breaks the scripted
-  `hid_nop_button_sequence` navigation CLAUDE.md relies on for BD field runs - fix before using that automation.
+  **⚠️ INTERMITTENT STARTUP STALL, seen ONCE (2026-08-04), cause unknown:** GPU init completed and the presenter
+  attached, then the Emulator thread futex-waited forever with the UI thread idle in epoll, no guest threads ever
+  created, 0 swaps, 0.0 fps. It did NOT reproduce - the same command line (`--es hid nop` + a button sequence) ran
+  to the title at 59.1 fps on the retry, so `hid nop` is NOT implicated despite the first read. Treat as a rare
+  race in the emulator-thread/UI-thread handoff; if it recurs, capture the Emulator thread's stack before killing
+  the app.
 - **DECIDED 2026-07-31 (user: "xendroid is still more stable and reliable"): PORT EDGE'S WHOLE KERNEL LAYER**
   (xam+xboxkrnl+vfs as a unit) onto our tree, keeping our CPU/GPU. Two titles in one day reduced to ~10
   canary-lineage kernel divergences — whack-a-mole lost. Scoping report drives the multi-session migration;
