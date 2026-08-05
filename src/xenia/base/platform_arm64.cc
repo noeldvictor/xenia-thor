@@ -90,6 +90,7 @@ void InitFeatureFlags() {
         {kA64EmitJSCVT, 1UL << 13},    // HWCAP_JSCVT
         {kA64EmitFCMA, 1UL << 14},     // HWCAP_FCMA
         {kA64EmitLRCPC, 1UL << 15},    // HWCAP_LRCPC
+        {kA64EmitSHA3, 1UL << 17},     // HWCAP_SHA3 (EOR3/BCAX)
         {kA64EmitDotProd, 1UL << 20},  // HWCAP_ASIMDDP
         {kA64EmitLSE2, 1UL << 25},     // HWCAP_USCAT (FEAT_LSE2)
         {kA64EmitLRCPC2, 1UL << 26},   // HWCAP_ILRCPC

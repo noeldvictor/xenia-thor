@@ -27,6 +27,10 @@ enum A64FeatureFlags : uint64_t {
   kA64EmitJSCVT = 1 << 6,    // FEAT_JSCVT   (FJCVTZS)
   kA64EmitFCMA = 1 << 7,     // FEAT_FCMA    (FCADD/FCMLA complex)
   kA64EmitDotProd = 1 << 8,  // FEAT_DotProd (SDOT/UDOT int8; heuristics ONLY)
+  // FEAT_SHA3 also brings the three-input BITWISE ops EOR3/BCAX (and
+  // RAX1/XAR) - useful well outside crypto: they fuse two NEON bitwise
+  // instructions into one, which is what VMX bitwise chains lower to.
+  kA64EmitSHA3 = 1 << 9,     // FEAT_SHA3    (EOR3/BCAX/RAX1/XAR)
 };
 
 XE_NOALIAS

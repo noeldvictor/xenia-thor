@@ -120,12 +120,23 @@ const std::string& GetLlvmTargetFeatures() {
     // change floating-point results.
     const std::pair<uint64_t, const char*> kMap[] = {
         {xe::arm64::kA64EmitLSE, ",+lse"},
+        {xe::arm64::kA64EmitLSE2, ",+lse2"},
         {xe::arm64::kA64EmitLRCPC, ",+rcpc"},
         {xe::arm64::kA64EmitDotProd, ",+dotprod"},
         {xe::arm64::kA64EmitFlagM, ",+flagm"},
         {xe::arm64::kA64EmitJSCVT, ",+jsconv"},
         {xe::arm64::kA64EmitFCMA, ",+complxnum"},
     };
+    // +sha3 is the NEON win, not a crypto one: FEAT_SHA3 also brings the
+    // three-input bitwise ops EOR3 and BCAX (and RAX1/XAR). LLVM fuses
+    // (a^b)^c into one EOR3 and (a ^ (b & ~c)) into one BCAX, which is exactly
+    // the shape VMX bitwise chains lower to - so this collapses two NEON
+    // instructions into one across all vector code the LLVM backend emits,
+    // with no hand-written peepholes. Pure bitwise: bit-exact by construction.
+    // Gated on the same HWCAP 'sha3' the Thor reports.
+    if (xe::arm64::GetFeatureFlags() & xe::arm64::kA64EmitSHA3) {
+      out += ",+sha3";
+    }
     for (const auto& entry : kMap) {
       if ((flags & entry.first) == entry.first) {
         out += entry.second;
