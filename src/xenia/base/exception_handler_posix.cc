@@ -490,7 +490,12 @@ void ExceptionHandler::Install(Handler fn, void* data) {
     // InstallAlternateSignalStack for this thread. Without it a stack-overflow
     // SIGSEGV cannot run the handler at all (no room to push a frame) and the
     // process dies instantly with no log and no tombstone.
-    signal_handler.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    // SA_NODEFER (xenia-edge ccd4443ff): the handler itself touches guest memory
+    // that it protects, and while the kernel has the signal blocked a NESTED
+    // fault is undeliverable - it kills the process on Linux. Re-entry is safe
+    // here: the handler only works on the context it is handed, and the global
+    // critical region is recursive.
+    signal_handler.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
 
     if (sigaction(SIGILL, &signal_handler, &original_sigill_handler_) != 0) {
       assert_always("Failed to install new SIGILL handler");

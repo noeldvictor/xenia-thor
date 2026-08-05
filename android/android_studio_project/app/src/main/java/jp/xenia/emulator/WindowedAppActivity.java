@@ -399,6 +399,13 @@ public abstract class WindowedAppActivity extends Activity {
 
     @SuppressWarnings("deprecation")
     protected final void enterImmersiveMode() {
+        // Gamepad play produces no touch events, so the display still times out
+        // and sleeps mid-game (ported from XenDroid 4b416cd83). A sleeping panel
+        // also stops the activity, which drops the render surface - so the
+        // emulator keeps running while the screen stays black, which is
+        // indistinguishable from a rendering bug. See the black-screen section
+        // in CLAUDE.md.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         final View decorView = getWindow().getDecorView();
         decorView.setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN
