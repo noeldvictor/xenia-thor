@@ -25,6 +25,9 @@
 #include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
 #include "xenia/base/thor_topology.h"
+#if XE_ARCH_ARM64
+#include "xenia/base/platform_arm64.h"
+#endif
 #include "xenia/base/threading.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
@@ -44,9 +47,14 @@ DEFINE_int32(
     "to this host CPU-core bitmask instead of letting the scheduler float them "
     "(possibly onto the little A510 cluster). On the Thor the big cores are "
     "cpu3-7 (A715/A710 + the X3 prime @3.19GHz). -1 = auto (the big-core cluster "
-    "0xF8 from ThorTopology); any positive value = an explicit host-core bitmask; "
-    "keeps the guest CPU emulation off the 2.0GHz A510 little cores - helps "
-    "CPU-bound titles (e.g. Lost Odyssey). Hint only. 0 = unchanged (default).",
+    "0xF8 from ThorTopology); -2 = STRONGEST cores only, identified at runtime "
+    "from MIDR_EL1 - the X3 prime plus the newer A715 pair, EXCLUDING the older "
+    "A710s that -1 lumps into the same 'big' cluster (device-verified on the "
+    "Thor: cpu3-4 are A715, cpu5-6 are A710, so -1 spreads guest threads across "
+    "two different core generations). Falls back to -1's mask if MIDR is "
+    "unreadable. Any positive value = an explicit host-core bitmask; keeps the "
+    "guest CPU emulation off the 2.0GHz A510 little cores - helps CPU-bound "
+    "titles (e.g. Lost Odyssey). Hint only. 0 = unchanged (default).",
     "Kernel");
 
 #if 0
@@ -1206,10 +1214,24 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
     // the guest CPU emulation off the 2.0GHz A510 little cores.
     if (cvars::thor_guest_thread_affinity_mask != 0 && thread_ &&
         is_guest_thread()) {
-      uint64_t mask =
-          (cvars::thor_guest_thread_affinity_mask < 0)
-              ? ThorTopology::BigCoreMask()
-              : uint64_t(uint32_t(cvars::thor_guest_thread_affinity_mask));
+      uint64_t mask;
+      if (cvars::thor_guest_thread_affinity_mask == -2) {
+        // Strongest cores only: prime + the newer perf tier, from MIDR_EL1.
+        // BigCoreMask() cannot express this - on the Thor it spans BOTH the
+        // A715 pair (cpu3-4) and the older A710 pair (cpu5-6).
+        mask = 0;
+#if XE_ARCH_ARM64
+        const xe::arm64::CoreClasses& classes = xe::arm64::GetCoreClasses();
+        mask = classes.prime | classes.perf;
+#endif
+        if (!mask) {
+          mask = ThorTopology::BigCoreMask();  // MIDR unreadable
+        }
+      } else if (cvars::thor_guest_thread_affinity_mask < 0) {
+        mask = ThorTopology::BigCoreMask();
+      } else {
+        mask = uint64_t(uint32_t(cvars::thor_guest_thread_affinity_mask));
+      }
       thread_->set_affinity_mask(mask);
     } else if (!cvars::ignore_thread_affinities && thread_ &&
                is_guest_thread()) {
