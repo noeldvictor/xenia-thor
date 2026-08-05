@@ -22,6 +22,16 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
+#include <vector>
+
+#include "xenia/base/thor_topology.h"
+
+#if XE_ARCH_ARM64 && (XE_PLATFORM_ANDROID || XE_PLATFORM_LINUX)
+#include <arm_neon.h>
+#include <sched.h>
+#define XE_THOR_VECTOR_PROBE 1
+#endif
 #include <utility>
 #include <vector>
 
@@ -64,6 +74,18 @@ DECLARE_uint32(a64_clock_spin_yield_stride);
 DECLARE_uint32(a64_clock_spin_yield_sleep_us);
 DECLARE_uint32(a64_clock_spin_yield_window_us);
 
+DEFINE_bool(
+    thor_probe_a510_vector_units, false,
+    "One-shot startup probe: measure NEON throughput on each little core alone, "
+    "then on each PAIR concurrently. On the Snapdragon 8 Gen 2 two of the three "
+    "Cortex-A510s SHARE a single 128-bit vector unit while the third has its "
+    "own, so the sharing pair shows roughly HALF the aggregate throughput of a "
+    "non-sharing pair. The kernel does not expose this (no cluster_id; all three "
+    "report core_siblings 0-2 with identical cpu_capacity), so it has to be "
+    "measured. Knowing which pair shares lets thor_guest_thread_affinity_mask "
+    "keep VMX-heavy guest threads off it. Diagnostic only - changes no codegen. "
+    "Costs about a second at startup, so default off.",
+    "a64");
 DEFINE_uint32(a64_max_stackpoints, 262144,
               "Max number of host->guest stack mappings we can record. Bumped "
               "from 65536 to 262144 (4x) because the longjmp stackpoint sync "
@@ -3039,6 +3061,116 @@ A64Backend::~A64Backend() {
   }
 }
 
+
+#if XE_THOR_VECTOR_PROBE
+namespace {
+
+// Saturate the core's 128-bit vector unit with INDEPENDENT NEON accumulator
+// chains, so the arithmetic ports rather than a dependency chain are the limit.
+// Returns iterations/second.
+double MeasureNeonThroughput(uint32_t cpu, int milliseconds) {
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(cpu, &set);
+  if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+    return 0.0;
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));  // let it land
+
+  uint32x4_t a0 = vdupq_n_u32(1), a1 = vdupq_n_u32(2);
+  uint32x4_t a2 = vdupq_n_u32(3), a3 = vdupq_n_u32(4);
+  const uint32x4_t k = vdupq_n_u32(0x9E3779B9u);
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+  const auto started = std::chrono::steady_clock::now();
+  uint64_t iterations = 0;
+  while (std::chrono::steady_clock::now() < deadline) {
+    for (int i = 0; i < 4096; ++i) {
+      a0 = vmlaq_u32(a0, a0, k);
+      a1 = vmlaq_u32(a1, a1, k);
+      a2 = vmlaq_u32(a2, a2, k);
+      a3 = vmlaq_u32(a3, a3, k);
+    }
+    iterations += 4096;
+  }
+  const double seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+          .count();
+  // Keep the accumulators live so none of the work is optimized away.
+  const uint32x4_t sink = veorq_u32(veorq_u32(a0, a1), veorq_u32(a2, a3));
+  if (vgetq_lane_u32(sink, 0) == 0xDEADBEEFu) {
+    XELOGD("A510 probe sink {}", vgetq_lane_u32(sink, 0));
+  }
+  return seconds > 0.0 ? double(iterations) / seconds : 0.0;
+}
+
+void ProbeLittleCoreVectorUnits() {
+  const uint64_t little = xe::ThorTopology::LittleCoreMask();
+  std::vector<uint32_t> cores;
+  for (uint32_t c = 0; c < 64; ++c) {
+    if (little & (uint64_t(1) << c)) {
+      cores.push_back(c);
+    }
+  }
+  if (cores.size() < 2) {
+    return;
+  }
+
+  XELOGI("A510 vector-unit probe: {} little cores", cores.size());
+  for (uint32_t core : cores) {
+    XELOGI("  cpu{} alone: {:.1f} Miter/s", core,
+           MeasureNeonThroughput(core, 120) / 1e6);
+  }
+
+  // Two cores at once: a pair sharing ONE vector unit lands near half the
+  // aggregate of a pair with a unit each.
+  double best = 0.0, worst = 0.0;
+  uint32_t worst_a = cores[0], worst_b = cores[1];
+  for (size_t i = 0; i < cores.size(); ++i) {
+    for (size_t j = i + 1; j < cores.size(); ++j) {
+      double ta = 0.0, tb = 0.0;
+      const uint32_t ca = cores[i], cb = cores[j];
+      std::thread t1([&ta, ca]() { ta = MeasureNeonThroughput(ca, 120); });
+      std::thread t2([&tb, cb]() { tb = MeasureNeonThroughput(cb, 120); });
+      t1.join();
+      t2.join();
+      const double total = ta + tb;
+      XELOGI("  cpu{}+cpu{} together: {:.1f} Miter/s aggregate", ca, cb,
+             total / 1e6);
+      if (best == 0.0 || total > best) {
+        best = total;
+      }
+      if (worst == 0.0 || total < worst) {
+        worst = total;
+        worst_a = ca;
+        worst_b = cb;
+      }
+    }
+  }
+  if (best > 0.0) {
+    const double ratio = worst / best;
+    XELOGI(
+        "A510 vector-unit probe: weakest pair cpu{}+cpu{} at {:.0f}% of the "
+        "best pair - {}",
+        worst_a, worst_b, ratio * 100.0,
+        ratio < 0.70
+            ? "SHARING CONFIRMED; keep VMX-heavy guest threads off that pair"
+            : "inconclusive, no pair is clearly halved");
+  }
+
+  // Do not leave the calling thread pinned to a little core.
+  cpu_set_t all;
+  CPU_ZERO(&all);
+  for (uint32_t c = 0; c < 8; ++c) {
+    CPU_SET(c, &all);
+  }
+  sched_setaffinity(0, sizeof(all), &all);
+}
+
+}  // namespace
+#endif  // XE_THOR_VECTOR_PROBE
+
 bool A64Backend::Initialize(Processor* processor) {
   if (!Backend::Initialize(processor)) {
     return false;
@@ -3052,6 +3184,12 @@ bool A64Backend::Initialize(Processor* processor) {
 
   // Expose the code cache to the base Backend class.
   Backend::code_cache_ = code_cache_.get();
+
+#if XE_THOR_VECTOR_PROBE
+  if (cvars::thor_probe_a510_vector_units && xe::ThorTopology::IsThorBuild()) {
+    ProbeLittleCoreVectorUnits();
+  }
+#endif
 
   // Guaranteed startup confirmation of the clock-spin-yield cvar state (runs
   // regardless of whether any guest scene later hits mftb/LOAD_CLOCK) - lets a
