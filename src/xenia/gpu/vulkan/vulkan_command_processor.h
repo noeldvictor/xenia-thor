@@ -2240,6 +2240,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // RT-as-texture (increment 1): pixel texture fetches actually bound straight to
   // a resident render target this frame (the served subset of rt_fed_textures_).
   uint32_t rt_served_textures_ = 0;
+  // Why the RT-as-texture bridge DECLINED an rt-fed fetch. Without these,
+  // rt_served=0 is a dead end: the candidate is found and then silently
+  // dropped at one of four guards (device-observed 2026-08-05, Burnout:
+  // rt_fed_textures=1 but rt_served=0 every frame).
+  uint32_t rt_skip_signed_swizzle_ = 0;  // signed or non-identity RGBA
+  uint32_t rt_skip_guest_info_ = 0;      // GetActiveTextureGuestInfo failed
+  uint32_t rt_skip_no_edge_ = 0;         // no resolve edge for that base
+  uint32_t rt_skip_no_view_ = 0;         // RT not resident / format mismatch
   std::vector<ResolveEdge> frame_resolve_edges_;
   // Persistent (never cleared per-frame) src EDRAM RT -> resolve-dest edge map for
   // the native-HLE render-redirect (see AddResolveCopyStats / NativeSrcKey).

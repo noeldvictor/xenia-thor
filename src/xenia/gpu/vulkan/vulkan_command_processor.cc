@@ -3646,6 +3646,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           "frame via gpu_rt_as_texture)",
           rt_resolve_copies_, rt_resolve_copy_bytes_ / 1024, rt_fed_textures_,
           rt_served_textures_);
+      XELOGI(
+          "RTtex declines: signed_or_swizzle={} guest_info={} no_resolve_edge={} "
+          "no_rt_view={} (why an rt-fed fetch was NOT served)",
+          rt_skip_signed_swizzle_, rt_skip_guest_info_, rt_skip_no_edge_,
+          rt_skip_no_view_);
     }
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
@@ -3655,6 +3660,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_copy_bytes_ = 0;
     rt_fed_textures_ = 0;
     rt_served_textures_ = 0;
+    rt_skip_signed_swizzle_ = 0;
+    rt_skip_guest_info_ = 0;
+    rt_skip_no_edge_ = 0;
+    rt_skip_no_view_ = 0;
     frame_resolve_edges_.clear();
     rt_pass_break_barrier_ = 0;
     rt_pass_break_rt_change_ = 0;
@@ -12878,6 +12887,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (texture_binding.is_signed ||
           texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
               xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
+        ++rt_skip_signed_swizzle_;
         continue;
       }
       uint32_t texture_base_address = 0;
@@ -12885,10 +12895,12 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (!texture_cache_->GetActiveTextureGuestInfo(
               fetch_constant, &texture_base_address,
               &texture_host_format_unsigned)) {
+        ++rt_skip_guest_info_;
         continue;
       }
       const ResolveEdge* resolve_edge = ResolveEdgeForBase(texture_base_address);
       if (!resolve_edge) {
+        ++rt_skip_no_edge_;
         continue;
       }
       VkImageView rt_view =
@@ -12899,6 +12911,8 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (rt_view != VK_NULL_HANDLE) {
         rt_as_texture_views_pixel_[fetch_constant] = rt_view;
         ++rt_served_textures_;
+      } else {
+        ++rt_skip_no_view_;
       }
     }
   }
