@@ -35,6 +35,23 @@ enum A64FeatureFlags : uint64_t {
 
 XE_NOALIAS
 uint64_t GetFeatureFlags();
+
+// Per-core CPU classification read from MIDR_EL1 via
+// /sys/devices/system/cpu/cpuN/regs/identification/midr_el1 (the approach RPCS3
+// uses on ARM). Our thor_topology.h masks were hardcoded from the AYN Thor's
+// known layout; this measures it instead, so a wrong assumption is caught rather
+// than silently mis-pinning threads. All masks are 0 when MIDR is unreadable -
+// callers must fall back to the ThorTopology constants.
+struct CoreClasses {
+  uint64_t prime = 0;    // biggest core(s) - Cortex-X series
+  uint64_t perf = 0;     // newer big-little "mid" - e.g. Cortex-A715
+  uint64_t legacy = 0;   // older mid of the same tier - e.g. Cortex-A710
+  uint64_t little = 0;   // efficiency cores - e.g. Cortex-A510
+  uint32_t detected = 0; // cores successfully identified
+};
+
+// Detected once, cached. Safe to call from any thread after startup.
+const CoreClasses& GetCoreClasses();
 XE_COLD
 void InitFeatureFlags();
 

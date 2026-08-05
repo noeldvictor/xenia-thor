@@ -9,6 +9,12 @@
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/platform.h"
+#include "xenia/base/logging.h"
+#include "xenia/base/platform_arm64.h"
+
+#include <cstdio>
+#include <fstream>
+#include <string>
 
 #if XE_ARCH_ARM64
 #include <cfenv>
@@ -146,5 +152,69 @@ void InitFeatureFlags() {
 #endif
   g_did_initialize_feature_flags = true;
 }
+
+const CoreClasses& GetCoreClasses() {
+  static const CoreClasses classes = []() -> CoreClasses {
+    CoreClasses out;
+#if XE_ARCH_ARM64 && defined(__linux__)
+    for (uint32_t cpu = 0; cpu < 64; ++cpu) {
+      char path[128];
+      std::snprintf(path, sizeof(path),
+                    "/sys/devices/system/cpu/cpu%u/regs/identification/midr_el1",
+                    cpu);
+      std::ifstream file(path);
+      if (!file.is_open()) {
+        continue;
+      }
+      std::string text;
+      if (!std::getline(file, text) || text.empty()) {
+        continue;
+      }
+      uint64_t midr = 0;
+      try {
+        midr = std::stoull(text, nullptr, 16);
+      } catch (...) {
+        continue;
+      }
+      // MIDR_EL1: implementer in [31:24], part number in [15:4].
+      const uint64_t implementer = (midr >> 24) & 0xFF;
+      const uint64_t part = (midr >> 4) & 0xFFF;
+      if (implementer != 0x41) {  // 0x41 = ARM Ltd; only ARM parts are classified
+        continue;
+      }
+      const uint64_t bit = uint64_t(1) << cpu;
+      switch (part) {
+        case 0xD4E:  // Cortex-X3 (the Thor's prime, cpu7)
+        case 0xD44:  // Cortex-X1
+          out.prime |= bit;
+          break;
+        case 0xD4D:  // Cortex-A715 (the Thor's cpu3-4 - the STRONGER mid pair)
+          out.perf |= bit;
+          break;
+        case 0xD47:  // Cortex-A710 (the Thor's cpu5-6)
+        case 0xD0B:  // Cortex-A76
+          out.legacy |= bit;
+          break;
+        case 0xD46:  // Cortex-A510 (the Thor's cpu0-2)
+        case 0xD03:  // Cortex-A53
+          out.little |= bit;
+          break;
+        default:
+          continue;
+      }
+      ++out.detected;
+    }
+    if (out.detected) {
+      XELOGI(
+          "ARM64 core classes from MIDR_EL1: prime=0x{:X} perf=0x{:X} "
+          "legacy=0x{:X} little=0x{:X} ({} cores identified)",
+          out.prime, out.perf, out.legacy, out.little, out.detected);
+    }
+#endif
+    return out;
+  }();
+  return classes;
+}
+
 }  // namespace arm64
 }  // namespace xe
