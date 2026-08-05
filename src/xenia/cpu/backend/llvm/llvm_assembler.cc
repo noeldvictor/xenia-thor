@@ -12,6 +12,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/platform_arm64.h"
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #include "xenia/cpu/backend/a64/a64_function.h"
 #include "xenia/cpu/backend/llvm/llvm_backend.h"
@@ -82,6 +83,62 @@ DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
 DECLARE_bool(cpu_backend_llvm_parallel_lowering);
+
+
+DEFINE_bool(
+    cpu_llvm_target_features_native, false,
+    "Tell LLVM which ARM features this CPU actually HAS, instead of only which "
+    "ones to avoid. Our target-features string is otherwise entirely negative "
+    "(reserve-x20/x21 plus the SVE disables), and with no positive features and "
+    "no target CPU, LLVM targets generic armv8-a - so it will never emit UDOT/"
+    "SDOT, EOR3/BCAX or LSE atomics even though the Thor has all of them. Only "
+    "features confirmed present via HWCAP are added, and only ones with exact "
+    "integer/atomic/bitwise semantics; FP16/BF16 are deliberately NOT enabled "
+    "(see the standing rule that they are heuristics-only, never guest FP32). "
+    "The SVE disables are always kept - executing SVE SIGILLs on this device. "
+    "Same class of miss as RPCS3's ARM feature-detection fix. Default off "
+    "pending a Thor A/B.",
+    "CPU");
+
+namespace {
+
+// Built once: the per-function target-features attribute. Always carries the
+// x20/x21 reservation (guest ctx/membase) and the SVE/SME disables - executing
+// an SVE instruction SIGILLs on the Thor (device-confirmed 2026-06-27, an
+// llvm.memset lowered to SVE). With cpu_llvm_target_features_native, appends
+// the HWCAP-detected features so LLVM can use what the CPU really has.
+const std::string& GetLlvmTargetFeatures() {
+  static const std::string features = []() -> std::string {
+    std::string out =
+        "+reserve-x20,+reserve-x21,-sve,-sve2,-sve2-bitperm,-sme,-sme2";
+    if (!cvars::cpu_llvm_target_features_native) {
+      return out;
+    }
+#if XE_ARCH_ARM64
+    const uint64_t flags = xe::arm64::GetFeatureFlags();
+    // Exact-semantics only: integer, atomic and bitwise. Nothing here can
+    // change floating-point results.
+    const std::pair<uint64_t, const char*> kMap[] = {
+        {xe::arm64::kA64EmitLSE, ",+lse"},
+        {xe::arm64::kA64EmitLRCPC, ",+rcpc"},
+        {xe::arm64::kA64EmitDotProd, ",+dotprod"},
+        {xe::arm64::kA64EmitFlagM, ",+flagm"},
+        {xe::arm64::kA64EmitJSCVT, ",+jsconv"},
+        {xe::arm64::kA64EmitFCMA, ",+complxnum"},
+    };
+    for (const auto& entry : kMap) {
+      if ((flags & entry.first) == entry.first) {
+        out += entry.second;
+      }
+    }
+    XELOGI("LLVMAssembler: target-features = {}", out);
+#endif  // XE_ARCH_ARM64
+    return out;
+  }();
+  return features;
+}
+
+}  // namespace
 
 namespace xe {
 namespace cpu {
@@ -2403,8 +2460,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // codegen on NEON/scalar (NEON = +fp-armv8/+neon, unaffected), the only SIMD
   // the device supports. This is what unblocks MEMSET (and any future op LLVM
   // would otherwise vectorize via SVE) instead of falling back to a64.
-  fn->addFnAttr("target-features",
-                "+reserve-x20,+reserve-x21,-sve,-sve2,-sve2-bitperm,-sme,-sme2");
+  fn->addFnAttr("target-features", GetLlvmTargetFeatures());
 
   Lowerer lowerer(ctx, mod.get(), fn, function->address());
   if (!lowerer.Run(builder)) {
