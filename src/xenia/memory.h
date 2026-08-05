@@ -62,6 +62,19 @@ inline bool IsWritableProtect(uint32_t protect) {
   return (protect & kMemoryProtectWrite) != 0;
 }
 
+// Guest protection bits -> host page access. Inline in the header (was a
+// memory.cc-local function) so PhysicalHeap::SystemPageGuestAccess can use it.
+inline xe::memory::PageAccess ToPageAccess(uint32_t protect) {
+  bool is_writable = IsWritableProtect(protect);
+  if ((protect & kMemoryProtectRead) && !is_writable) {
+    return xe::memory::PageAccess::kReadOnly;
+  } else if ((protect & kMemoryProtectRead) && is_writable) {
+    return xe::memory::PageAccess::kReadWrite;
+  } else {
+    return xe::memory::PageAccess::kNoAccess;
+  }
+}
+
 // Equivalent to the Win32 MEMORY_BASIC_INFORMATION struct.
 struct HeapAllocationInfo {
   // A pointer to the base address of the region of pages.
@@ -260,11 +273,15 @@ class PhysicalHeap : public BaseHeap {
   void EnableAccessCallbacks(uint32_t physical_address, uint32_t length,
                              bool enable_invalidation_notifications,
                              bool enable_data_providers);
-  // Returns true if any page in the range was watched.
+  // Returns true if any page in the range was watched. With
+  // invalidate_unwatched the callbacks are raised even when no watch is armed -
+  // for a caller that KNOWS the range is about to change (decommit, release,
+  // making writable), as opposed to one reacting to a fault.
   bool TriggerCallbacks(
       std::unique_lock<std::recursive_mutex> global_lock_locked_once,
       uint32_t virtual_address, uint32_t length, bool is_write,
-      bool unwatch_exact_range, bool unprotect = true);
+      bool unwatch_exact_range, bool unprotect = true,
+      bool invalidate_unwatched = false);
 
   uint32_t GetPhysicalAddress(uint32_t address) const;
 
@@ -272,6 +289,46 @@ class PhysicalHeap : public BaseHeap {
   // window). Edge kernel-port foundations.
   uint32_t GetPageProtect(uint32_t physical_address);
   xe::memory::PageAccess GetPageAccess(uint32_t physical_address);
+
+  // The most permissive guest access across ALL guest pages that one system
+  // page covers. Protection has system-page granularity and BaseHeap::Protect
+  // resolves a system page this same way, so anything that decides about
+  // protection has to agree with it. Reading only the FIRST guest page a system
+  // page covers silently disagrees whenever the host page is larger than the
+  // guest page (e.g. a 16 KB host page over four 4 KB guest pages), which
+  // mis-arms watches and mis-classifies faults. Ported from xenia-edge
+  // 2b4546549. Signal-safe: page-table reads only, no locks or allocation.
+  xe::memory::PageAccess SystemPageGuestAccess(
+      uint32_t system_page_number) const {
+    uint32_t offset = host_address_offset();
+    uint32_t system_base = system_page_number * system_page_size_;
+    uint32_t system_last = system_base + (system_page_size_ - 1);
+    if (system_last < offset) {
+      return xe::memory::PageAccess::kNoAccess;
+    }
+    uint32_t guest_page_first =
+        system_base > offset ? (system_base - offset) / page_size_ : 0;
+    uint32_t guest_page_count = uint32_t(page_table_.size());
+    if (guest_page_first >= guest_page_count) {
+      return xe::memory::PageAccess::kNoAccess;
+    }
+    uint32_t guest_page_last = (system_last - offset) / page_size_;
+    if (guest_page_last >= guest_page_count) {
+      guest_page_last = guest_page_count - 1;
+    }
+    xe::memory::PageAccess access = xe::memory::PageAccess::kNoAccess;
+    for (uint32_t i = guest_page_first; i <= guest_page_last; ++i) {
+      xe::memory::PageAccess page_access =
+          ToPageAccess(page_table_[i].current_protect);
+      if (page_access == xe::memory::PageAccess::kReadWrite) {
+        return xe::memory::PageAccess::kReadWrite;
+      }
+      if (page_access == xe::memory::PageAccess::kReadOnly) {
+        access = xe::memory::PageAccess::kReadOnly;
+      }
+    }
+    return access;
+  }
 
  protected:
   VirtualHeap* parent_heap_;

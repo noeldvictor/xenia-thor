@@ -702,16 +702,7 @@ bool Memory::Restore(ByteStream* stream) {
   return true;
 }
 
-xe::memory::PageAccess ToPageAccess(uint32_t protect) {
-  if ((protect & kMemoryProtectRead) && !(protect & kMemoryProtectWrite)) {
-    return xe::memory::PageAccess::kReadOnly;
-  } else if ((protect & kMemoryProtectRead) &&
-             (protect & kMemoryProtectWrite)) {
-    return xe::memory::PageAccess::kReadWrite;
-  } else {
-    return xe::memory::PageAccess::kNoAccess;
-  }
-}
+// ToPageAccess now lives inline in memory.h so PhysicalHeap can use it.
 
 uint32_t FromPageAccess(xe::memory::PageAccess protect) {
   switch (protect) {
@@ -1674,8 +1665,11 @@ bool PhysicalHeap::Decommit(uint32_t address, uint32_t size) {
     return false;
   }
 
-  // Not caring about the contents anymore.
-  TriggerCallbacks(std::move(global_lock), address, size, true, true);
+  // Not caring about the contents anymore. invalidate_unwatched: the guest is
+  // announcing the change rather than reacting to a fault, so raise callbacks
+  // even with no watch armed (xenia-edge 5ddf045a8).
+  TriggerCallbacks(std::move(global_lock), address, size, true, true, true,
+                   true);
 
   return BaseHeap::Decommit(address, size);
 }
@@ -1741,7 +1735,7 @@ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
   uint32_t region_size;
   if (QuerySize(base_address, &region_size)) {
     TriggerCallbacks(std::move(global_lock), base_address, region_size, true,
-                     true);
+                     true, true, true);
   }
 
   return BaseHeap::Release(base_address, out_region_size);
@@ -1752,9 +1746,14 @@ bool PhysicalHeap::Protect(uint32_t address, uint32_t size, uint32_t protect,
   auto global_lock = global_critical_region_.Acquire();
 
   // Only invalidate if making writable again, for simplicity - not when simply
-  // marking some range as immutable, for instance.
+  // marking some range as immutable, for instance. invalidate_unwatched: the
+  // guest is announcing a write rather than reacting to a fault, so invalidate
+  // even with no watch armed - a range that was read-only when it was last
+  // uploaded never got one, and would otherwise stay stale for as long as the
+  // guest keeps it read-only outside its own writes (xenia-edge 5ddf045a8).
   if (protect & kMemoryProtectWrite) {
-    TriggerCallbacks(std::move(global_lock), address, size, true, true, false);
+    TriggerCallbacks(std::move(global_lock), address, size, true, true, false,
+                     true);
   }
 
   if (!parent_heap_->Protect(GetPhysicalAddress(address), size, protect,
@@ -1832,10 +1831,12 @@ void PhysicalHeap::EnableAccessCallbacks(uint32_t physical_address,
     // polled for the last time without releasing the lock.
     SystemPageFlagsBlock& page_flags_block = system_page_flags_[i >> 6];
     uint64_t page_flags_bit = uint64_t(1) << (i & 63);
-    uint32_t guest_page_number =
-        xe::sat_sub(i * system_page_size_, host_address_offset()) / page_size_;
-    xe::memory::PageAccess current_page_access =
-        ToPageAccess(page_table_[guest_page_number].current_protect);
+    // Resolve at SYSTEM page granularity: this system page may cover several
+    // guest pages, and BaseHeap::Protect resolves it the same way. Using only
+    // the first guest page's protection under-reports a mixed system page and
+    // arms watches that disagree with the protection actually applied
+    // (xenia-edge 2b4546549).
+    xe::memory::PageAccess current_page_access = SystemPageGuestAccess(i);
     bool protect_system_page = false;
     // Don't do anything with inaccessible pages - don't protect, don't enable
     // callbacks - because real access violations are needed there. And don't
@@ -1879,7 +1880,7 @@ void PhysicalHeap::EnableAccessCallbacks(uint32_t physical_address,
 bool PhysicalHeap::TriggerCallbacks(
     std::unique_lock<std::recursive_mutex> global_lock_locked_once,
     uint32_t virtual_address, uint32_t length, bool is_write,
-    bool unwatch_exact_range, bool unprotect) {
+    bool unwatch_exact_range, bool unprotect, bool invalidate_unwatched) {
   // TODO(Triang3l): Support read watches.
   if (!is_write) {
     // No read watches: if the guest page is accessible, this is a race with
@@ -1890,9 +1891,12 @@ bool PhysicalHeap::TriggerCallbacks(
     // read fault over a physical alias.
     uint32_t rel = virtual_address - heap_base_;
     if (virtual_address >= heap_base_ && rel < heap_size_) {
-      uint32_t guest_page_number = rel / page_size_;
-      if (guest_page_number < page_table_.size()) {
-        return ToPageAccess(page_table_[guest_page_number].current_protect) !=
+      // Resolved at system-page granularity to match the protection actually
+      // applied (xenia-edge 2b4546549) - see SystemPageGuestAccess.
+      uint32_t system_page =
+          (rel + host_address_offset()) / system_page_size_;
+      if (system_page < system_page_count_) {
+        return SystemPageGuestAccess(system_page) !=
                xe::memory::PageAccess::kNoAccess;
       }
     }
@@ -1940,7 +1944,7 @@ bool PhysicalHeap::TriggerCallbacks(
       break;
     }
   }
-  if (!any_watched) {
+  if (!any_watched && !invalidate_unwatched) {
     // No watches on this page - usually another thread already cleared them
     // (race between the fault firing and acquiring the global lock: the
     // winner unprotected the page and consumed the watch) - retry the
@@ -1949,13 +1953,10 @@ bool PhysicalHeap::TriggerCallbacks(
     // guest-read-only/decommitted physical page into an infinite fault-retry
     // livelock under the global lock (code-review finding F1). Ported for
     // Burnout Revenge ('Kernel Dispatch' racing the CP thread).
-    uint32_t guest_page_number = heap_relative_address / page_size_;
-    if (guest_page_number < page_table_.size() &&
-        ToPageAccess(page_table_[guest_page_number].current_protect) ==
-            xe::memory::PageAccess::kReadWrite) {
-      return true;
-    }
-    return false;
+    // Resolved at system-page granularity (xenia-edge 2b4546549) so this
+    // agrees with the protection that was actually applied.
+    return SystemPageGuestAccess(system_page_first) ==
+           xe::memory::PageAccess::kReadWrite;
   }
 
   // Trigger callbacks.
