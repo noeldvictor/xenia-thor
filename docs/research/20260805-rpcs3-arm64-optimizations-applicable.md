@@ -149,3 +149,57 @@ call.
 Every one of these needs a Thor A/B under the measurement discipline in
 CLAUDE.md (single-run in-place A/B; cross-run fps is confounded), and a
 `tools/exp_ledger.py` entry either way.
+
+---
+
+## Second pass (2026-08-05): the core-level detail behind item #4
+
+Re-mined the transcript for the SoC-specific parts the first pass summarized too
+thinly. Two facts are new and neither is in Edge or XenDroid.
+
+### The mid-core optimization, in full
+
+The A715/A710 mid-cores have **three 128-bit load ports but only two 128-bit
+arithmetic ports**. For a fixed-length comparison the load side can therefore
+outrun the arithmetic side, and the fix is to find an instruction that consumes
+more inputs per unit of arithmetic. Whatcookie's search, in order: the bit-select
+family (`BSL`/`BIT`/`BIF`) — no XOR, useless here; `EOR3` — just three chained
+XORs; `BCAX` — missing what he needed; the crypto instructions — configured for
+one algorithm each, none close. What worked was the **absolute-difference-and-
+accumulate** family, which takes two sources and accumulates into the
+destination, i.e. behaves as a three-input op and feeds all three load ports.
+
+Reported results: the mid-cores gain (the stated target), and even the **A510s
+came out ~16% faster**. He believes it is novel and notes it should generalize
+across Android SoCs, since the same 3-load/2-arith imbalance runs through the
+A7xx line (he cites the Switch 2's eight A78s). In RPCS3 it is wired into two
+places that do fixed-length comparisons.
+
+**For us:** anywhere we compare or checksum a fixed-length buffer on the guest
+hot path. Note this is an *integer* reduction, so it sits inside our standing
+rule that dot-product/i8mm style units are heuristics-only and never guest FP32.
+
+### A510s: two of the three share one vector unit  ⚠️ affects OUR thread placement
+
+Two of the three Cortex-A510s **share a single 128-bit vector unit**; the third
+has its own. So SIMD-heavy guest code landing on the shared pair is far worse
+than the core count suggests — he makes the point that even at 1 host
+instruction per guest instruction, an A510 can end up slower than the real PS3
+on SIMD-heavy code.
+
+`src/xenia/base/thor_topology.h` currently treats cpu0-2 as one interchangeable
+`kLittleMask = 0x07`. Distinguishing the exclusive-vector-unit A510 would let
+`thor_guest_thread_affinity_mask` keep VMX-heavy guest threads off the shared
+pair.
+
+**Unresolved: WHICH of cpu0-2 is the exclusive one.** Probed on device
+2026-08-05 — the kernel exposes no cluster grouping (`cluster_id` /
+`cluster_cpus_list` absent) and reports all three as `core_siblings 0-2` with
+identical `cpu_capacity 280`. Determining it needs a per-core SIMD
+microbenchmark: pin a NEON loop to each of cpu0/1/2 in turn, then run two at
+once on each pair — the pair that shares the unit will show roughly half
+throughput. Do that before touching the topology masks; do not guess an index.
+
+### Context (not actionable)
+The A710s are present only so 32-bit ARM code still runs — the X3 and A715
+dropped AArch32.
