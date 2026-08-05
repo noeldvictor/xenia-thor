@@ -128,6 +128,19 @@ DEFINE_bool(a64_lse_kernel_lock_fastpaths, true,
             "the host CPU supports them. Experimental.",
             "a64");
 DEFINE_bool(
+    a64_spin_hint_isb, false,
+    "Emit ISB instead of YIELD as the spin-loop backoff hint (guest spin-wait "
+    "hint, DELAY_EXECUTION, and the inlined kernel spin-lock retry loops). On "
+    "essentially every modern ARM core YIELD retires as a no-op, so a spinning "
+    "thread never actually backs off and keeps hammering resources shared with "
+    "the core holding the lock. ISB is the closest working analogue to x86 "
+    "PAUSE - it costs slightly more power than an ideal stall because it "
+    "restarts instruction fetch, but it is a real backoff. Reported by RPCS3 "
+    "(Whatcookie) as a large win on the same Snapdragon 8 Gen 2 silicon the "
+    "Thor uses, where half of all CPU time sat in a spin helper. Hint only - "
+    "no guest-visible semantics either way. Default off pending a Thor A/B.",
+    "a64");
+DEFINE_bool(
     a64_inline_rtl_leave_final_unlock, true,
     "Inline the uncontended final RtlLeaveCriticalSection unlock in the A64 "
     "backend. Experimental.",
@@ -2601,6 +2614,14 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   return *out_code_address != nullptr;
 }
 
+void A64Emitter::EmitSpinHint() {
+  if (cvars::a64_spin_hint_isb) {
+    isb(Xbyak_aarch64::SY);
+  } else {
+    yield();
+  }
+}
+
 void A64Emitter::EmitAtomicIncrement64(std::atomic<uint64_t>* counter) {
   if (!counter) {
     return;
@@ -4634,7 +4655,7 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       mov(w11, 1);
       casal(w10, w11, ptr(x9));
       cbz(w10, done);
-      yield();
+      EmitSpinHint();
       b(retry);
     } else {
       L(retry);
@@ -4647,7 +4668,7 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
 
       L(busy);
       clrex(15);
-      yield();
+      EmitSpinHint();
       b(retry);
     }
 

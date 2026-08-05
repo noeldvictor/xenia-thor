@@ -152,6 +152,10 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   void CallNative(void* fn);
   void CallNativeSafe(void* fn);
   void SetReturnAddress(uint64_t value);
+  // Spin-loop backoff hint. YIELD or ISB depending on a64_spin_hint_isb - see
+  // that cvar for why YIELD is usually worthless on ARM. Hint only.
+  void EmitSpinHint();
+
   void EmitAtomicIncrement64(std::atomic<uint64_t>* counter);
   void EmitAtomicAdd64(std::atomic<uint64_t>* counter,
                        const Xbyak_aarch64::XReg& value_reg);

@@ -329,7 +329,7 @@ static void EmitBlueDragonDrawWaitKernelTimeUpdate(A64Emitter& e) {
 // ============================================================================
 struct DELAY_EXECUTION
     : Sequence<DELAY_EXECUTION, I<OPCODE_DELAY_EXECUTION, VoidOp>> {
-  static void Emit(A64Emitter& e, const EmitArgType& i) { e.yield(); }
+  static void Emit(A64Emitter& e, const EmitArgType& i) { e.EmitSpinHint(); }
 };
 EMITTER_OPCODE_TABLE(OPCODE_DELAY_EXECUTION, DELAY_EXECUTION);
 
@@ -349,10 +349,11 @@ EMITTER_OPCODE_TABLE(OPCODE_MEMORY_BARRIER, MEMORY_BARRIER);
 // ============================================================================
 struct YIELD : Sequence<YIELD, I<OPCODE_YIELD, VoidOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    // Guest spin-wait hint (or rN,rN,rN) -> ARM YIELD: hints the core to back
-    // the spinning thread off so a sibling thread (often the lock/condition
-    // holder) can progress sooner.
-    e.yield();
+    // Guest spin-wait hint (or rN,rN,rN): back the spinning thread off so a
+    // sibling thread (often the lock/condition holder) can progress sooner.
+    // NOTE: ARM YIELD retires as a no-op on essentially every modern core, so
+    // this only actually backs off under a64_spin_hint_isb.
+    e.EmitSpinHint();
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_YIELD, YIELD);
