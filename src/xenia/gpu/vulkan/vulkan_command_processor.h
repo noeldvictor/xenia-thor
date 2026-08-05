@@ -2244,7 +2244,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   // rt_served=0 is a dead end: the candidate is found and then silently
   // dropped at one of four guards (device-observed 2026-08-05, Burnout:
   // rt_fed_textures=1 but rt_served=0 every frame).
-  uint32_t rt_skip_signed_swizzle_ = 0;  // signed or non-identity RGBA
+  uint32_t rt_skip_signed_ = 0;          // signed fetch (needs format reinterp)
+  uint32_t rt_skip_swizzle_ = 0;         // non-identity RGBA (needs view mapping)
   uint32_t rt_skip_guest_info_ = 0;      // GetActiveTextureGuestInfo failed
   uint32_t rt_skip_no_edge_ = 0;         // no resolve edge for that base
   uint32_t rt_skip_no_view_ = 0;         // RT not resident / format mismatch

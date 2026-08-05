@@ -3647,10 +3647,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
           rt_resolve_copies_, rt_resolve_copy_bytes_ / 1024, rt_fed_textures_,
           rt_served_textures_);
       XELOGI(
-          "RTtex declines: signed_or_swizzle={} guest_info={} no_resolve_edge={} "
-          "no_rt_view={} (why an rt-fed fetch was NOT served)",
-          rt_skip_signed_swizzle_, rt_skip_guest_info_, rt_skip_no_edge_,
-          rt_skip_no_view_);
+          "RTtex declines: signed={} swizzle={} guest_info={} "
+          "no_resolve_edge={} no_rt_view={} (why an rt-fed fetch was NOT "
+          "served; signed needs format reinterp, swizzle needs a view mapping)",
+          rt_skip_signed_, rt_skip_swizzle_, rt_skip_guest_info_,
+          rt_skip_no_edge_, rt_skip_no_view_);
     }
     rt_transfer_calls_ = 0;
     rt_transfers_ = 0;
@@ -3660,7 +3661,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_resolve_copy_bytes_ = 0;
     rt_fed_textures_ = 0;
     rt_served_textures_ = 0;
-    rt_skip_signed_swizzle_ = 0;
+    rt_skip_signed_ = 0;
+    rt_skip_swizzle_ = 0;
     rt_skip_guest_info_ = 0;
     rt_skip_no_edge_ = 0;
     rt_skip_no_view_ = 0;
@@ -12884,10 +12886,17 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       // Only non-signed, identity-RGBA-swizzle fetches can sample the native RT
       // image directly; the texture reload path is what applies sign/swizzle
       // remaps, which a direct RT bind would skip.
-      if (texture_binding.is_signed ||
-          texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
-              xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
-        ++rt_skip_signed_swizzle_;
+      // Split deliberately: these need DIFFERENT fixes. A non-identity swizzle
+      // can be baked into the sampled VkImageView via VkComponentMapping; a
+      // signed fetch needs format reinterpretation, which is much harder. Which
+      // one dominates decides whether the view work is worth doing at all.
+      if (texture_binding.is_signed) {
+        ++rt_skip_signed_;
+        continue;
+      }
+      if (texture_cache_->GetActiveTextureHostSwizzle(fetch_constant) !=
+          xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA) {
+        ++rt_skip_swizzle_;
         continue;
       }
       uint32_t texture_base_address = 0;
