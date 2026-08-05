@@ -20,7 +20,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ControllerMappingActivity extends Activity {
+    /** Optional: edit THIS title's bindings instead of the global ones. */
+    public static final String EXTRA_TITLE_ID = "jp.xenia.emulator.MAP_TITLE_ID";
+    public static final String EXTRA_TITLE_NAME = "jp.xenia.emulator.MAP_TITLE_NAME";
+
     private final Map<String, TextView> mBindingRows = new HashMap<>();
+    /** Null = editing the global mapping. */
+    private String mTitleId;
+    private String mTitleName;
     private LinearLayout mBindingList;
     private ControllerPreviewView mPreviewView;
     private TextView mStatus;
@@ -33,6 +40,14 @@ public class ControllerMappingActivity extends Activity {
         super.onCreate(savedInstanceState);
         XeniaAndroidSettings.ensureInitialized(this);
 
+        // Per-game scope, when launched from a game's menu. Unset = global, which
+        // is what every existing caller does, so their behaviour is unchanged.
+        mTitleId = getIntent().getStringExtra(EXTRA_TITLE_ID);
+        if (mTitleId != null && mTitleId.isEmpty()) {
+            mTitleId = null;
+        }
+        mTitleName = getIntent().getStringExtra(EXTRA_TITLE_NAME);
+
         final LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(24), dp(16), dp(24), dp(16));
@@ -43,6 +58,12 @@ public class ControllerMappingActivity extends Activity {
         addHeader(root);
         addMainContent(root);
         addFooter(root);
+        if (mTitleId != null) {
+            // Make the scope unmistakable - editing a game's map while thinking
+            // it is the global one (or vice versa) is the obvious failure here.
+            setTitle((mTitleName != null && !mTitleName.isEmpty() ? mTitleName : mTitleId)
+                    + " - controls");
+        }
 
         setContentView(root);
         root.requestFocus();
@@ -62,8 +83,8 @@ public class ControllerMappingActivity extends Activity {
         if (mListeningActionId != null) {
             final XeniaInputMapping.ButtonAction action =
                     XeniaInputMapping.findAction(mListeningActionId);
-            XeniaInputMapping.setPhysicalKeyForAction(
-                    this, mListeningActionId, event.getKeyCode());
+            XeniaInputMapping.setPhysicalKeyForActionForTitle(
+                    this, mTitleId, mListeningActionId, event.getKeyCode());
             mListeningActionId = null;
             mStatus.setText(action != null
                     ? action.label + " mapped to " + keyName
@@ -169,9 +190,16 @@ public class ControllerMappingActivity extends Activity {
 
         final Button reset = footerButton(R.string.controller_mapping_reset);
         reset.setOnClickListener(view -> {
-            XeniaInputMapping.resetToDefaults(this);
+            if (mTitleId != null) {
+                // Per-game reset drops this title's overrides so it inherits the
+                // global mapping again - it must NOT rewrite the global one.
+                XeniaInputMapping.clearPerGameMapping(this, mTitleId);
+                mStatus.setText("Per-game overrides cleared; using the global mapping");
+            } else {
+                XeniaInputMapping.resetToDefaults(this);
+                mStatus.setText(R.string.controller_mapping_defaults_restored);
+            }
             mListeningActionId = null;
-            mStatus.setText(R.string.controller_mapping_defaults_restored);
             refreshMappings();
         });
         footer.addView(reset, wrapWithMargins(4));
@@ -216,7 +244,8 @@ public class ControllerMappingActivity extends Activity {
     }
 
     private TextView bindingRow(final XeniaInputMapping.ButtonAction action) {
-        final int keyCode = XeniaInputMapping.getPhysicalKeyCode(this, action);
+        final int keyCode =
+                XeniaInputMapping.getPhysicalKeyCodeForTitle(this, action, mTitleId);
         final boolean selected = action.id.equals(mListeningActionId);
         final TextView row = new TextView(this);
         row.setText(action.label + "   ->   " + XeniaInputMapping.keyName(keyCode));

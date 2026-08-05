@@ -771,6 +771,9 @@ public class LauncherActivity extends Activity {
             labels.add("Content (DLC / updates)");
             labels.add(getString(R.string.launcher_game_action_backup_save));
             labels.add(getString(R.string.launcher_game_action_reset_save));
+            // Appended LAST on purpose: inserting mid-list would renumber every
+            // existing `which` branch below.
+            labels.add("Controls (this game only)");
         }
         final String[] items = labels.toArray(new String[0]);
         new AlertDialog.Builder(this)
@@ -790,10 +793,23 @@ public class LauncherActivity extends Activity {
                         backupSaveData(titleId, title);
                     } else if (which == 6) {
                         confirmResetSaveData(titleId, title);
+                    } else if (which == 7) {
+                        openGameControls(titleId, title);
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    /**
+     * Per-game controller bindings. Only the buttons rebound here diverge from
+     * the global mapping; everything else still follows it.
+     */
+    private void openGameControls(final String titleId, final String title) {
+        final Intent intent = new Intent(this, ControllerMappingActivity.class);
+        intent.putExtra(ControllerMappingActivity.EXTRA_TITLE_ID, titleId);
+        intent.putExtra(ControllerMappingActivity.EXTRA_TITLE_NAME, title);
+        startActivity(intent);
     }
 
     private void openGameOptimizations(final String titleId, final String title) {
