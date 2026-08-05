@@ -35,6 +35,8 @@ public class EmulatorActivity extends WindowedAppActivity {
     private static final String EXTRA_DEBUG_GAMEPAD_ALREADY_MAPPED = "already_mapped";
     private static final String ACTION_SET_CVAR =
             BuildConfig.APPLICATION_ID + ".SET_CVAR";
+    /** Title id of the game being launched, for per-game control remapping. */
+    public static final String EXTRA_TITLE_ID = "jp.xenia.emulator.TITLE_ID";
     private static final String EXTRA_CVAR_NAME = "cvar_name";
     private static final String EXTRA_CVAR_VALUE = "cvar_value";
     private static final int DEBUG_GAMEPAD_DEVICE_ID = -1000;
@@ -874,6 +876,11 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
 
         super.onCreate(savedInstanceState);
+
+        // Scope controller bindings to this title BEFORE the surface (and so any
+        // input) exists. Null/absent = the global mapping, which is also what a
+        // title with no per-game overrides falls back to action-by-action.
+        XeniaInputMapping.setActiveTitleId(intent.getStringExtra(EXTRA_TITLE_ID));
 
         setContentView(R.layout.activity_emulator);
         final WindowSurfaceView surfaceView = findViewById(R.id.emulator_surface_view);

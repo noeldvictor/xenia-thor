@@ -7,6 +7,23 @@ import android.view.KeyEvent;
 public final class XeniaInputMapping {
     private static final String KEY_PREFIX = "controller_mapping_";
 
+    /**
+     * Title id of the game currently being played, or null for the global
+     * mapping. Per-game bindings are stored under a title-scoped key and fall
+     * back to the global one action-by-action, so a game only overrides the
+     * buttons it actually rebinds and everything else keeps the global binding.
+     * Set by EmulatorActivity from the launch intent.
+     */
+    private static volatile String sActiveTitleId = null;
+
+    public static void setActiveTitleId(final String titleId) {
+        sActiveTitleId = (titleId == null || titleId.isEmpty()) ? null : titleId;
+    }
+
+    public static String getActiveTitleId() {
+        return sActiveTitleId;
+    }
+
     public static final class ButtonAction {
         public final String id;
         public final String label;
@@ -181,10 +198,103 @@ public final class XeniaInputMapping {
 
     private static int getPhysicalKeyCode(
             final SharedPreferences preferences, final ButtonAction action) {
-        return preferences.getInt(keyForAction(action), action.defaultPhysicalKeyCode);
+        return getPhysicalKeyCode(preferences, action, sActiveTitleId);
+    }
+
+    /**
+     * Resolves one action in the given scope: the title-scoped binding when the
+     * game has set one, otherwise the global binding, otherwise the default.
+     */
+    private static int getPhysicalKeyCode(
+            final SharedPreferences preferences,
+            final ButtonAction action,
+            final String titleId) {
+        if (titleId != null) {
+            final String perGameKey = keyForAction(action, titleId);
+            if (preferences.contains(perGameKey)) {
+                return preferences.getInt(perGameKey, action.defaultPhysicalKeyCode);
+            }
+        }
+        return preferences.getInt(keyForAction(action, null), action.defaultPhysicalKeyCode);
     }
 
     private static String keyForAction(final ButtonAction action) {
-        return KEY_PREFIX + action.id;
+        return keyForAction(action, null);
+    }
+
+    private static String keyForAction(final ButtonAction action, final String titleId) {
+        if (titleId == null || titleId.isEmpty()) {
+            return KEY_PREFIX + action.id;
+        }
+        return KEY_PREFIX + titleId + "_" + action.id;
+    }
+
+    // ---- per-game bindings -------------------------------------------------
+
+    /** True if this title overrides at least one button. */
+    public static boolean hasPerGameMapping(final Context context, final String titleId) {
+        if (titleId == null || titleId.isEmpty()) {
+            return false;
+        }
+        final SharedPreferences preferences = XeniaAndroidSettings.getPreferences(context);
+        for (final ButtonAction action : BUTTON_ACTIONS) {
+            if (preferences.contains(keyForAction(action, titleId))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Physical key this action resolves to for a specific title. */
+    public static int getPhysicalKeyCodeForTitle(
+            final Context context, final ButtonAction action, final String titleId) {
+        return getPhysicalKeyCode(
+                XeniaAndroidSettings.getPreferences(context), action, titleId);
+    }
+
+    /**
+     * Binds a physical key for one title only. Any other action bound to that
+     * key IN THE SAME TITLE is swapped onto the previous key, so a per-game map
+     * can never end up with two actions on one button. The global mapping is
+     * untouched.
+     */
+    public static void setPhysicalKeyForActionForTitle(
+            final Context context,
+            final String titleId,
+            final String actionId,
+            final int physicalKeyCode) {
+        if (titleId == null || titleId.isEmpty()) {
+            setPhysicalKeyForAction(context, actionId, physicalKeyCode);
+            return;
+        }
+        final ButtonAction targetAction = findAction(actionId);
+        if (targetAction == null || !isBindableKeyCode(physicalKeyCode)) {
+            return;
+        }
+        final SharedPreferences preferences = XeniaAndroidSettings.getPreferences(context);
+        final int previousPhysicalKeyCode =
+                getPhysicalKeyCode(preferences, targetAction, titleId);
+        final SharedPreferences.Editor editor = preferences.edit();
+        for (final ButtonAction action : BUTTON_ACTIONS) {
+            if (!action.id.equals(actionId)
+                    && getPhysicalKeyCode(preferences, action, titleId) == physicalKeyCode) {
+                editor.putInt(keyForAction(action, titleId), previousPhysicalKeyCode);
+            }
+        }
+        editor.putInt(keyForAction(targetAction, titleId), physicalKeyCode);
+        editor.apply();
+    }
+
+    /** Drops this title's overrides so it falls back to the global mapping. */
+    public static void clearPerGameMapping(final Context context, final String titleId) {
+        if (titleId == null || titleId.isEmpty()) {
+            return;
+        }
+        final SharedPreferences.Editor editor =
+                XeniaAndroidSettings.getPreferences(context).edit();
+        for (final ButtonAction action : BUTTON_ACTIONS) {
+            editor.remove(keyForAction(action, titleId));
+        }
+        editor.apply();
     }
 }

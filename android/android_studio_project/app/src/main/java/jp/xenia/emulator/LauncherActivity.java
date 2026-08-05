@@ -245,6 +245,8 @@ public class LauncherActivity extends Activity {
                 uri.toString());
         emulatorIntent.putExtra(
                 WindowedAppActivity.EXTRA_CVARS, emulatorLaunchArguments);
+        // Lets the emulator resolve this title's per-game control remapping.
+        emulatorIntent.putExtra(EmulatorActivity.EXTRA_TITLE_ID, titleId);
         startActivity(emulatorIntent);
     }
 
