@@ -472,6 +472,22 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## 🎬🎬🎬 NEVER BENCHMARK A MOVIE (user, verbatim 2026-08-06: "don't benchmark movies")
+**A benchmark scene must be REAL GAMEPLAY. Attract modes, demo replays, title screens, menus and FMV are not.**
+Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code you changed) → **title screen** →
+**menus** → **attract/demo replay** → **ACTUAL GAMEPLAY** ← the only tier that counts.
+- **An attract mode is a scripted replay, not the game.** No player input processing, no full vehicle AI/physics
+  load, no HUD/UI work, no audio mix under load, and none of the thread contention that only appears when all of
+  that runs at once. Usually frame-capped too, which hides CPU headroom outright.
+- **This invalidated a whole day (2026-08-06).** Every CPU A/B that day ran on Burnout attract. Ubiquitous changes
+  survive it (they fire in any code, and are probably UNDERSTATED since gameplay is more CPU-bound); scene-dependent
+  ones are simply unmeasured — a "FLAT" verdict from attract means "flat in attract", nothing more.
+- **Am I actually in gameplay?** Temp climbing hard + uncapped fps well below the cap + guest `entry_delta`
+  materially above the attract baseline (~122-128M/5s on Burnout). If it looks like attract, it is attract.
+- **Get there repeatably BEFORE the A/B:** `--es hid nop --es hid_nop_button_sequence '<seq>'` driven into a started
+  race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
+  PREREQUISITE for a CPU measurement, not an optional extra.
+
 ## ⚠️ Measurement is the #1 trap
 BD's GPU scene complexity swings ~4×/second → **cross-run fps / gpu_frame_us is CONFOUNDED (worthless)**. Only
 trust: single-run in-place alternating A/B on a GPU-busy frame (`gpu_freeze_ab_alternate_vrs`,
