@@ -524,6 +524,14 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   `_mm_pause()` inside an AMD64 guard, so on ARM64 the "16-try brief spin budget" was an **empty loop** that elapsed in
   nanoseconds and fell straight through to the fiber reschedule it existed to avoid. Fixed via the new
   `xe::threading::SpinLoopHint()` (base/threading.h). **Grep for this shape before assuming any lever is live on ARM.**
+  **⛔ BUT THE LEVER IS FLAT — MEASURED 2026-08-05, do NOT tune guest spinlock backoff.** Instrumented run
+  (`--ez kernel_spinlock_stats true`, Burnout on verified Turnip, 90s, 34→54°C): `calls` climbed 11733→16673
+  (~198/s, steady) with **`contended=0 remote_spin=0 spin_won=0 spin_lost=0` for the entire run** — the CAS never
+  failed ONCE in 16673 acquires. The guest spinlock is completely uncontended, so the spin path never executes and
+  the empty ARM64 loop never ran. The fix stays in as a **latent-bug fix and is NOT a perf win**; no spin-budget A/B
+  is worth firing. Re-measure with `scratch/thor-debug/measure_spinlock_stats.sh` before reopening this.
+  ⚠️ Do NOT confuse this with Burnout's ring-read-pointer busy-wait — that is a DIFFERENT spin (GPU ring pointer,
+  a gameplay behaviour), not `KfAcquireSpinLock`.
   ✅ **SWEEP DONE 2026-08-05 — the spinlock was the ONLY one; do not re-run it.** Scanned every `#if XE_ARCH_AMD64`
   in `src/xenia` with no `#else`/`#elif`: 7 hits, 6 benign (x64 backend include + `cpu == "x64"` selection in
   emulator.cc; `<xmmintrin.h>` includes; `XE_CLOCK_RAW_AVAILABLE`, which is fine because ARM64 reads cntvct_el0

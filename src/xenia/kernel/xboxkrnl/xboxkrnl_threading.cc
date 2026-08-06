@@ -39,6 +39,15 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+DEFINE_bool(
+    kernel_spinlock_stats, false,
+    "Log KfAcquireSpinLock contention statistics every ~5s. Answers the "
+    "question that gates any spin-backoff tuning: is the guest spinlock "
+    "actually a hot path? If remote_spin is ~0 per second then the backoff "
+    "hint cannot matter no matter how it is tuned, and an fps A/B would be "
+    "measuring noise. All counters are gated on this cvar, so leaving it off "
+    "costs one predictable branch per acquire and no atomic traffic.",
+    "Kernel");
 DEFINE_int32(
     kernel_spinlock_remote_spin_tries, -1,
     "Backoff iterations KfAcquireSpinLock burns before rescheduling, when the "
@@ -1736,6 +1745,48 @@ static int RemoteHolderSpinTries() {
   return configured < 0 ? kRemoteHolderSpinTriesDefault : configured;
 }
 
+// Contention counters for the spin budget above. Every increment is behind
+// cvars::kernel_spinlock_stats so the default path pays one predictable branch
+// and no atomic traffic - these sit in a kHighFrequency export.
+namespace spinlock_stats {
+static std::atomic<uint64_t> calls{0};        // acquires attempted
+static std::atomic<uint64_t> contended{0};    // first CAS failed
+static std::atomic<uint64_t> remote_spin{0};  // took the remote-holder spin
+static std::atomic<uint64_t> spin_won{0};     // lock freed DURING the spin
+static std::atomic<uint64_t> spin_lost{0};    // still held, paid a reschedule
+static std::atomic<uint64_t> last_log_ms{0};
+
+XE_FORCEINLINE static void Bump(std::atomic<uint64_t>& c) {
+  if (cvars::kernel_spinlock_stats) {
+    c.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+static void MaybeLog() {
+  if (!cvars::kernel_spinlock_stats) {
+    return;
+  }
+  const uint64_t now = xe::Clock::QueryHostUptimeMillis();
+  uint64_t last = last_log_ms.load(std::memory_order_relaxed);
+  if (now - last < 5000) {
+    return;
+  }
+  // One winner logs; the others skip rather than pile up duplicate lines.
+  if (!last_log_ms.compare_exchange_strong(last, now,
+                                           std::memory_order_relaxed)) {
+    return;
+  }
+  XELOGI(
+      "KfAcquireSpinLock stats: calls={} contended={} remote_spin={} "
+      "spin_won={} spin_lost={} (spin budget={})",
+      calls.load(std::memory_order_relaxed),
+      contended.load(std::memory_order_relaxed),
+      remote_spin.load(std::memory_order_relaxed),
+      spin_won.load(std::memory_order_relaxed),
+      spin_lost.load(std::memory_order_relaxed), RemoteHolderSpinTries());
+}
+}  // namespace spinlock_stats
+
 uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
                                bool change_irql) {
   SCOPE_profile_cpu_i("guestsync", "SpinLockAcquire");
@@ -1748,9 +1799,17 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
   uint8_t our_cpu =
       ctx->TranslateVirtualGPR<X_KPCR*>(our_pcr)->prcb_data.current_cpu;
 
+  spinlock_stats::Bump(spinlock_stats::calls);
+  spinlock_stats::MaybeLog();
+  bool counted_contended = false;
+
   // Lock.
   while (
       !xe::atomic_cas(0, xe::byte_swap(our_pcr), &lock->prcb_of_owner.value)) {
+    if (!counted_contended) {
+      counted_contended = true;
+      spinlock_stats::Bump(spinlock_stats::contended);
+    }
     // Under the cooperative scheduler the holder may be a fiber queued behind
     // us on this dispatch thread, so it can only run if we yield the fiber. A
     // holder running on another dispatch thread releases in nanoseconds, so
@@ -1767,12 +1826,15 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
           scheduler->DispatchCpuOf(our_cpu)) {
         volatile uint32_t* owner_raw = &lock->prcb_of_owner.value;
         const int spin_tries = RemoteHolderSpinTries();
+        spinlock_stats::Bump(spinlock_stats::remote_spin);
         for (int i = 0; i < spin_tries && *owner_raw; ++i) {
           xe::threading::SpinLoopHint();
         }
         if (!*owner_raw) {
+          spinlock_stats::Bump(spinlock_stats::spin_won);
           continue;
         }
+        spinlock_stats::Bump(spinlock_stats::spin_lost);
         // Still held past the budget, e.g. a holder preempted mid-hold, so
         // stop burning the slice.
       }
