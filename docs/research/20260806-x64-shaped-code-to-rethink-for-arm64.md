@@ -112,6 +112,52 @@ non-wrapping path is taken versus the existing slwi/srwi/clrlwi fastpaths. If
 those already catch nearly everything, the remaining slice is small — that is a
 cheap counter, not a guess.
 
+## 2c. `UpdateCR` re-compares the same operands three times ⭐⭐⭐ very broad
+
+`ppc_hir_builder.cc:500 UpdateCR` models a PPC condition-register update as
+three INDEPENDENT HIR comparisons of the SAME operand pair:
+
+```cpp
+Value* lt = CompareSLT(lhs, rhs);   StoreContext(cr0 + 4*n + 0, lt);
+Value* gt = CompareSGT(lhs, rhs);   StoreContext(cr0 + 4*n + 1, gt);
+Value* eq = CompareEQ (lhs, rhs);   StoreContext(cr0 + 4*n + 2, eq);
+```
+
+Each lowers independently in the a64 backend to `cmp` + `cset`
+(`a64_sequences.cc`, the compare macros), so one CR update emits:
+
+    cmp, cset, str,  cmp, cset, str,  cmp, cset, str     = 3 CMPs
+
+**ARM64 needs one.** A single `CMP` sets N/Z/C/V, and `CSET` reads the flags
+without disturbing them, so the whole thing is `cmp` + 3×`cset` + 3 stores. That
+is **two redundant CMPs on every CR update** — and CR updates fire on every
+`cmpw`/`cmpwi` and on every instruction with `Rc=1`, which is a large fraction of
+compiled PPC code.
+
+CSE cannot help: the three ops have DIFFERENT opcodes (`COMPARE_SLT` /
+`COMPARE_SGT` / `COMPARE_EQ`), so they are not common subexpressions even though
+they share operands and the flags they need are identical.
+
+**⭐ Unlike `EOR3` and `rlwinm`, this does NOT need a HIR pass.** The redundant
+instruction is emitted by the *later* sequence, not the earlier one, so the
+backend can simply not emit it. Implementation is emitter-local state:
+
+- remember `(src1, src2, width)` of the last emitted `cmp`;
+- a compare sequence whose operands match, with no flag-clobbering instruction
+  since, emits **only** the `cset`;
+- invalidate the record on ANY instruction that writes NZCV, at a label/branch
+  target, and at block boundaries.
+
+The invalidation set is the whole risk and must be conservative — get it wrong
+and a stale flag silently produces a wrong comparison, which is a correctness
+bug, not a perf regression. Gate it behind a cvar and validate with the qemu-a64
+differential. `cset` and `str` do not touch flags, which is precisely why the
+`UpdateCR` sequence is safe and profitable.
+
+Note the existing CR cvars (`arm64_cr_compare_branch_across_context_barrier`,
+`arm64_cr_store_elide_for_fused_branch`) address compare/branch FUSION, not
+redundant-compare elision — this is a different and complementary win.
+
 ## 3. `mov`+`cmp` for constants — ✅ DONE 2026-08-06
 
 Was 8 sites of `mov scratch, #K; cmp rn, scratch`. Now `A64Emitter::EmitCmpImm32`

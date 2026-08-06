@@ -9,10 +9,27 @@
 
 #include "xenia/cpu/ppc/ppc_emit-private.h"
 
+#include <atomic>
+
 #include "xenia/base/assert.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
+
+DEFINE_bool(
+    ppc_rlwinm_path_census, false,
+    "Count which rlwinm lowering path each translated rlwinm takes, and log the "
+    "tally periodically. Answers whether an ARM64 UBFM lowering is worth "
+    "building before building it.\n"
+    "  shift   = slwi/srwi fastpath, already ONE instruction.\n"
+    "  mask    = SH==0 fastpath, already one AND.\n"
+    "  general = SH!=0 non-wrapping: ROR + AND + UXTW = THREE instructions, and "
+    "the one a single UBFM would collapse to 1. This is the number that decides "
+    "it.\n"
+    "  generic = wrapping mask (MB>ME): the (x||x) duplicate + 64-bit rotate + "
+    "64-bit mask constant. Must stay - PPC semantics genuinely need it.",
+    "CPU");
 
 DEFINE_bool(ppc_rlwinm_shift_fastpath, true,
             "Compile the common PPC rlwinm rotate-and-mask forms (slwi/srwi) "
@@ -1081,6 +1098,38 @@ int InstrEmit_rlwimix(PPCHIRBuilder& f, const InstrData& i) {
   return 0;
 }
 
+namespace {
+// rlwinm lowering census - see cvars::ppc_rlwinm_path_census.
+std::atomic<uint64_t> g_rlwinm_shift{0};
+std::atomic<uint64_t> g_rlwinm_mask{0};
+std::atomic<uint64_t> g_rlwinm_general{0};
+std::atomic<uint64_t> g_rlwinm_generic{0};
+
+void RlwinmCensus(std::atomic<uint64_t>& bucket) {
+  if (!cvars::ppc_rlwinm_path_census) {
+    return;
+  }
+  const uint64_t n = bucket.fetch_add(1, std::memory_order_relaxed) + 1;
+  const uint64_t total = g_rlwinm_shift.load(std::memory_order_relaxed) +
+                         g_rlwinm_mask.load(std::memory_order_relaxed) +
+                         g_rlwinm_general.load(std::memory_order_relaxed) +
+                         g_rlwinm_generic.load(std::memory_order_relaxed);
+  // Log the first one too, so "no output" means the cvar never applied rather
+  // than "the pattern is rare" - the ambiguity that cost a run on the EOR3
+  // census.
+  (void)n;
+  if (total == 1 || (total % 512) == 0) {
+    XELOGI(
+        "rlwinm census: shift={} mask={} general={} generic={} (general is the "
+        "UBFM candidate: 3 insns -> 1)",
+        g_rlwinm_shift.load(std::memory_order_relaxed),
+        g_rlwinm_mask.load(std::memory_order_relaxed),
+        g_rlwinm_general.load(std::memory_order_relaxed),
+        g_rlwinm_generic.load(std::memory_order_relaxed));
+  }
+}
+}  // namespace
+
 int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
   // n <- SH
   // r <- ROTL32((RS)[32:63], n)
@@ -1096,6 +1145,7 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
     // to a single shift instead of duplicate+rotate+mask. Contiguous, non-wrap
     // masks only; everything else falls through to the generic path below.
     if (sh != 0 && mb == 0 && me == 31 - sh) {
+      RlwinmCensus(g_rlwinm_shift);
       Value* r = f.ZeroExtend(
           f.Shl(f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE), int8_t(sh)),
           INT64_TYPE);
@@ -1125,6 +1175,7 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
     // (ZeroExtend(RS_low32 & mask32)); separate default-off cvar pending on-device
     // validation (the local PPC instruction-test harness crashes pre-existing).
     if (cvars::ppc_rlwinm_mask_fastpath && sh == 0 && mb <= me) {
+      RlwinmCensus(g_rlwinm_mask);
       uint32_t m32 = uint32_t(XEMASK(mb + 32, me + 32));
       Value* lo = f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE);
       if (m32 != 0xFFFFFFFFu) {
@@ -1147,6 +1198,7 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
     // in the high register word there, which this 32-bit form would wrongly zero
     // (adversarially-verified counterexample rlwinm rA,rS,4,28,3). Default-off.
     if (cvars::ppc_rlwinm_general_fastpath && sh != 0 && mb <= me) {
+      RlwinmCensus(g_rlwinm_general);
       Value* lo = f.Truncate(f.LoadGPR(i.M.RT), INT32_TYPE);
       lo = f.RotateLeft(lo, f.LoadConstantInt8(int8_t(sh)));
       uint32_t m32 = uint32_t(XEMASK(mb + 32, me + 32));
@@ -1161,6 +1213,7 @@ int InstrEmit_rlwinmx(PPCHIRBuilder& f, const InstrData& i) {
       return 0;
     }
   }
+  RlwinmCensus(g_rlwinm_generic);
   Value* v = f.LoadGPR(i.M.RT);
 
   // (x||x)
