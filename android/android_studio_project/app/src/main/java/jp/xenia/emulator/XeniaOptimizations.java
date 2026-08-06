@@ -143,6 +143,31 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("cpu_backend_llvm")}, null));
 
         list.add(new Optimization(
+                "opt_llvm_cpu_features",
+                "Let LLVM use this CPU's instructions",
+                "Tells LLVM which ARM features the Snapdragon actually has, instead of"
+                        + " compiling for a generic ARMv8 chip.",
+                "Without this the LLVM recompiler is handed a purely NEGATIVE target-"
+                        + "features string (register reservations plus the SVE disables), "
+                        + "so with no positive features and no target CPU it falls back to "
+                        + "generic armv8-a - and never emits UDOT/SDOT, the three-input "
+                        + "bitwise ops EOR3/BCAX, or LSE atomics, even though this SoC has "
+                        + "all of them. +sha3 in particular is a NEON win rather than a "
+                        + "crypto one: LLVM fuses (a^b)^c into a single EOR3 and "
+                        + "a ^ (b & ~c) into a single BCAX, which is exactly the shape VMX "
+                        + "bitwise chains lower to, collapsing two NEON instructions into "
+                        + "one across all vector code with no hand-written peepholes. Only "
+                        + "HWCAP-confirmed features with exact integer/atomic/bitwise "
+                        + "semantics are enabled - FP16 and BF16 are deliberately excluded "
+                        + "under the standing rule that they are heuristics-only and never "
+                        + "guest FP32 - and the SVE disables are always kept, because "
+                        + "executing SVE SIGILLs on this device. Same class of miss as "
+                        + "RPCS3's ARM feature detection, which gated FMA on the CPU name "
+                        + "containing 'cortex' and so excluded every Qualcomm core.",
+                CATEGORY_CPU, false, false,
+                new BoolCvar[]{new BoolCvar("cpu_llvm_target_features_native")}, null));
+
+        list.add(new Optimization(
                 "opt_uma_direct",
                 "UMA zero-copy guest memory",
                 "Writes guest memory straight into a host-visible GPU buffer "

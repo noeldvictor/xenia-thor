@@ -612,6 +612,59 @@ XeniaOptimizations.** Only `--ez/--ei/--es` beats it.
   measured elsewhere — **retest these in BD 3D or a race, not attract.** They are restored because they are the
   compiled defaults and individually correctness-validated, NOT because they were measured to win here.
 
+## 💥 BURNOUT MID-GAMEPLAY FAULT STORM = LLVM WRITING x20 (2026-08-06) — how to tell it from a JIT bug
+**Symptom:** frozen half-drawn frame, `0.0 FPS`, and `UNHANDLED host fault ... re-fault (signal storm)` repeating at
+one pc until the thread parks. Looks like "the renderer broke"; it is not — the emulator died mid-frame and the last
+frame stayed on screen.
+- **Decode the instruction before blaming anything.** `insn=0xA944D296` = **`LDP x22, x20, [x20, #72]`**, with
+  `x20_ctx=0` and `fault_addr=0x48` (=72). So x20 was ALREADY null; that instruction is merely where it faults.
+  `x21_membase` was still VALID, which rules out a membase/addressing bug.
+- **x20 is the RESERVED guest-context register.** LLVM is handed `+reserve-x20,+reserve-x21` so it can never use it.
+  The faulting instruction uses x20 as a BASE and WRITES it via Rt2 — a reserved register used as general-purpose.
+- **🔑 THE DISCRIMINATOR — this is how you prove it is LLVM and not the a64 JIT:** the a64 backend references x20 in
+  **exactly one shape**, `stp/ldp(x19, x20, ptr(sp, 0x00))` in the host↔guest thunk (`a64_backend.cc:1177/1234`),
+  **always with SP as base**. It never emits an `ldp` using x20 as a base. So any fault whose instruction bases on
+  x20 did NOT come from a64. Use this before suspecting a64 codegen changes.
+- **⚠️ `cpu_llvm_no_runtime_compiles=true` does NOT protect against this** (it is set, on device and by default). It
+  stops LLVM *compiling* during gameplay; this is bad code LLVM produced during the LOAD WINDOW and executed later.
+  **That is a real gap in the mitigation**, not a misconfiguration.
+- **Bisect in one flag:** relaunch with `cpu_backend_llvm=false` (a64 only). Stable ⇒ LLVM-side, confirmed.
+- **Fix directions:** verify the `target-features` attribute reaches EVERY function (it is applied per-function via
+  `fn->addFnAttr`) and that no pass drops it; and/or add a structural guard that scans LLVM-emitted code for writes
+  to x20/x21 and rejects those functions to the a64 fallback.
+- **Do not change LLVM instruction selection while triaging this** — `cpu_llvm_target_features_native` was flipped
+  default-on the same day and deliberately reverted to default-off for exactly this reason.
+
+## 🧩 THE STALE-CONFIG TRAP HAS A SECOND FORM: THE GUI NEVER SETS IT (2026-08-06)
+Beyond "the persisted config overrides the compiled default", there is a second way a validated lever stays off:
+**`XeniaOptimizations` has no entry for it, so a GUI launch never passes it at all.** Found with
+`cpu_llvm_target_features_native`, and it was costing the whole LLVM backend.
+- **`opt_llvm_backend` is `defaultEnabled=true`, so a GUI launch DOES run the LLVM recompiler** — confirmed live in
+  logcat (`LLVMbegin`/`LLVMseq`) even though the persisted config says `cpu_backend_llvm = false`, because a launch
+  extra beats the config. **But there was no toggle for the CPU features**, so LLVM compiled every function for
+  **generic armv8-a**: no UDOT/SDOT, no EOR3/BCAX, no LSE atomics, on a SoC that has all of them.
+- **`+sha3` is a NEON win, not a crypto one.** LLVM fuses `(a^b)^c` → one `EOR3` and `a ^ (b & ~c)` → one `BCAX`,
+  which is exactly what VMX bitwise chains lower to. **This reframes the EOR3 DEAD verdict:** that census counted
+  hand-written V128 XOR chains in the a64 backend HIR and found none. LLVM does the fusion automatically across all
+  vector code it emits — a different route to the same instruction, needing no HIR pass.
+- **Fixed:** default flipped to true (exact-semantics only: integer/atomic/bitwise; FP16/BF16 deliberately excluded
+  per the heuristics-only rule; SVE disables always kept because SVE SIGILLs here), plus a new `opt_llvm_cpu_features`
+  entry in XeniaOptimizations so the GUI actually sets it. **The persisted device config must ALSO be cleared** —
+  flipping the compiled default alone does nothing while `xenia.config.toml` carries the old `false`.
+- **⇒ WHEN AUDITING A LEVER, CHECK THREE PLACES, NOT ONE:** the compiled default, the persisted
+  `files/xenia.config.toml`, AND whether `XeniaOptimizations` has an entry that a GUI launch will pass.
+
+## 🐌 "XENIA ISN'T RESPONDING" DURING LAUNCH = THE AOT COMPILE, NOT A HANG (2026-08-06)
+**Diagnosed live: ~85 functions/sec, GPU 1%, 41°C — all CPU, nothing rendering yet.** Do not force-close it.
+- **The UI thread blocks >5s in `Presenter::PaintFromUIThread`** while the emulator thread compiles, so Android
+  fires an ANR and the existing AOT overlay CANNOT draw even though its logcat watcher is correct.
+- **The progress counters are not monotonic:** the native estimate GREW 6665 → 10540 mid-module, and both counters
+  RESET per XEX module (561, 794 for later ones). A raw `done/total` bar jumps backwards and reads as a hang.
+  The overlay now shows a cumulative monotonic count and a per-module bar that cannot regress.
+- **The pass ignores its own budget:** the log says `budget 1500ms` but it ran ~60s because `drain_frontier=true`
+  overrides it. **Fixing the blocking paint OR honouring the budget removes the ANR** — the real fix, still open;
+  the tradeoff is a shorter freeze now versus more stutter later, so it needs a deliberate decision.
+
 ## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
 ourselves**. The principles are what transfer; their specific patches mostly do not (see the parity track below).

@@ -96,8 +96,19 @@ DEFINE_bool(
     "integer/atomic/bitwise semantics; FP16/BF16 are deliberately NOT enabled "
     "(see the standing rule that they are heuristics-only, never guest FP32). "
     "The SVE disables are always kept - executing SVE SIGILLs on this device. "
-    "Same class of miss as RPCS3's ARM feature-detection fix. Default off "
-    "pending a Thor A/B.",
+    "HELD DEFAULT-OFF 2026-08-06: a Burnout crash that same day was traced to "
+    "LLVM-emitted code writing x20 - the RESERVED guest-context register - so "
+    "changing LLVM's instruction selection while an LLVM codegen bug is under "
+    "investigation would only confuse the bisect. Re-evaluate once the reserved-"
+    "register violation is understood. "
+    "Same class of miss as RPCS3's ARM feature-detection fix - they were "
+    "gating FMA on the CPU NAME containing 'cortex', which silently excluded "
+    "every Qualcomm core. DEFAULT ON 2026-08-06: leaving it off means every "
+    "function the LLVM backend compiles targets generic armv8-a, which is the "
+    "whole title on a GUI launch since opt_llvm_backend is defaultEnabled. The "
+    "features added are exact-semantics only, so nothing here can change a "
+    "result - it only lets LLVM pick better encodings for work it already "
+    "does.",
     "CPU");
 
 namespace {
