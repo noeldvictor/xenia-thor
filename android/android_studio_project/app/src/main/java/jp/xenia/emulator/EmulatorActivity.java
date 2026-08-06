@@ -845,6 +845,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "kernel_spinlock_remote_spin_tries");
             copyBooleanExtra(intent, launchArguments, "kernel_spinlock_stats");
             copyBooleanExtra(intent, launchArguments, "a64_stackpoint_prolog_fastpath");
+            copyBooleanExtra(intent, launchArguments, "a64_count_eor3_candidates");
             copyBooleanExtra(intent, launchArguments, "xam_input_trace");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");

@@ -28,6 +28,7 @@
 #include "xenia/cpu/hir/instr.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 
+DECLARE_bool(a64_count_eor3_candidates);
 DECLARE_bool(arm64_add_sub_imm_audit);
 DECLARE_uint32(arm64_add_sub_imm_audit_function);
 DECLARE_uint32(arm64_add_sub_imm_audit_budget);
@@ -2956,8 +2957,51 @@ struct XOR_I64 : Sequence<XOR_I64, I<OPCODE_XOR, I64Op, I64Op, I64Op>> {
     }
   }
 };
+// Counts how often a V128 XOR could have been folded into an ARMv8.2 SHA3
+// EOR3 (a^b^c in ONE arithmetic-port op at dependency depth 1, versus two ops
+// at depth 2). We detect FEAT_SHA3 already (kA64EmitSHA3) and have never had a
+// consumer for it.
+//
+// This only COUNTS - it cannot fuse here. By the time this sequence runs the
+// inner XOR has already been emitted and register-allocated, so folding would
+// remove nothing; real fusion needs a HIR pass introducing a 3-input opcode
+// before regalloc. The counter exists to answer "is that pass worth writing?"
+// before writing it, which is cheaper than building it and measuring after.
+// See docs/research/20260806-arm64-hardware-exploitation-map.md item 1.
+static std::atomic<uint64_t> g_xor_v128_emitted{0};
+static std::atomic<uint64_t> g_xor_v128_eor3_candidates{0};
+
+// True if `v` is defined by a V128 XOR whose result feeds exactly one consumer,
+// i.e. the inner XOR of a fusable a^b^c chain.
+static bool IsFusableInnerXorV128(const hir::Value* v) {
+  if (!v || !v->def || !v->def->opcode) {
+    return false;
+  }
+  if (v->def->opcode->num != OPCODE_XOR) {
+    return false;
+  }
+  // Single-use: folding is only legal if nothing else reads the intermediate.
+  return v->use_head && !v->use_head->next;
+}
+
 struct XOR_V128 : Sequence<XOR_V128, I<OPCODE_XOR, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    if (cvars::a64_count_eor3_candidates) {
+      const uint64_t total =
+          g_xor_v128_emitted.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (IsFusableInnerXorV128(i.instr->src1.value) ||
+          IsFusableInnerXorV128(i.instr->src2.value)) {
+        g_xor_v128_eor3_candidates.fetch_add(1, std::memory_order_relaxed);
+      }
+      // Log the FIRST one as well as every 256th: if the pattern turns out to
+      // be rare, "no output at all" must mean "the cvar never reached us"
+      // rather than "rare", or the measurement cannot be interpreted.
+      if (total == 1 || (total & 0xFF) == 0) {
+        XELOGI("A64 EOR3 applicability: {} of {} V128 XORs are fusable chains",
+               g_xor_v128_eor3_candidates.load(std::memory_order_relaxed),
+               total);
+      }
+    }
     int s1 = SrcVReg(e, i.src1, 0);
     int s2 = SrcVReg(e, i.src2, 1);
     e.eor(VReg(i.dest.reg().getIdx()).b16, VReg(s1).b16, VReg(s2).b16);

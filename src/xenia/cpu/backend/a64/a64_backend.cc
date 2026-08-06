@@ -106,6 +106,19 @@ DEFINE_uint32(
     "CPU");
 
 DEFINE_bool(
+    a64_count_eor3_candidates, false,
+    "Count how many V128 XORs are the outer half of a fusable a^b^c chain, i.e. "
+    "how much an ARMv8.2 SHA3 EOR3 lowering would actually get to fold. EOR3 "
+    "does a^b^c in ONE arithmetic-port op at dependency depth 1 instead of two "
+    "ops at depth 2, which is the right direction on both axes that matter on "
+    "this SoC - but only if the pattern is common. Real fusion needs a HIR pass "
+    "with a 3-input opcode before regalloc (a sequence peephole is too late: the "
+    "inner XOR is already emitted and allocated). This counter exists to decide "
+    "whether that pass is worth writing BEFORE writing it. Compile-time counts, "
+    "logged every 4096 V128 XORs.",
+    "a64");
+
+DEFINE_bool(
     a64_stackpoint_prolog_fastpath, true,
     "Emit the tightened stackpoint sequence in guest function prologs: a CMP "
     "against an encoded immediate instead of MOV+CMP, a shifted-register ADD "
@@ -3211,6 +3224,11 @@ bool A64Backend::Initialize(Processor* processor) {
   // device fire confirm the --ez override actually applied, independent of
   // scene. The LOAD_CLOCK "fired N times" log then reports if/how often it
   // triggers once a guest scene actually spins on mftb.
+  // Same reasoning as the clock-spin-yield line below: prove the --ez override
+  // actually applied, so that "no applicability lines" reads as "the pattern is
+  // rare" and not as "the cvar silently no-opped".
+  XELOGI("A64Backend: EOR3 candidate counting {}",
+         cvars::a64_count_eor3_candidates ? "ENABLED" : "disabled");
   XELOGI("A64Backend: clock-spin-yield {} (stride={}, sleep_us={}, window_us={})",
          cvars::a64_clock_spin_yield ? "ENABLED" : "disabled",
          uint32_t(cvars::a64_clock_spin_yield_stride),
