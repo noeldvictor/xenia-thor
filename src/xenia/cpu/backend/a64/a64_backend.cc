@@ -105,6 +105,21 @@ DEFINE_uint32(
     "that emits the per-tile PM4 = the HLE-trampoline target. Budgeted. 0=off.",
     "CPU");
 
+DEFINE_bool(
+    a64_stackpoint_prolog_fastpath, true,
+    "Emit the tightened stackpoint sequence in guest function prologs: a CMP "
+    "against an encoded immediate instead of MOV+CMP, a shifted-register ADD "
+    "for the array index instead of MOV+UMULL+ADD (the stackpoint struct is 16 "
+    "bytes), and reuse of the depth already live in w9 instead of re-loading it "
+    "for the frame slot. 18 emitted instructions become 14, with no added "
+    "dependency chain. Exactly equivalent semantics - longjmp recovery is "
+    "unaffected either way.\n"
+    "Exists as a cvar because this must be A/B'd WITHIN one session: the "
+    "measured run-to-run drift on this device is ~2.8%, larger than the effect, "
+    "so comparing across two builds cannot resolve it (learned the hard way on "
+    "2026-08-05). Set false for the original sequence.",
+    "a64");
+
 DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
             "Records entries for guest/host stack mappings at function starts "
             "and checks for reentry at return sites. Has slight performance "

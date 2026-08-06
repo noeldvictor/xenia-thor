@@ -48,6 +48,7 @@
 #include "xenia/cpu/processor.h"
 
 DECLARE_uint32(a64_max_stackpoints);
+DECLARE_bool(a64_stackpoint_prolog_fastpath);
 DECLARE_bool(a64_enable_host_guest_stack_synchronization);
 DECLARE_uint32(arm64_compiled_call_trace_interval);
 DECLARE_uint32(arm64_compiled_call_trace_min_count);
@@ -3877,10 +3878,21 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // for post-call detection (if depth changes, a longjmp skipped frames).
   PushStackpoint();
   if (cvars::a64_enable_host_guest_stack_synchronization) {
-    ldr(w16, ptr(x19, static_cast<uint32_t>(offsetof(
-                          A64BackendContext, current_stackpoint_depth))));
-    str(w16, ptr(sp, static_cast<uint32_t>(
-                         StackLayout::GUEST_SAVED_STACKPOINT_DEPTH)));
+    if (cvars::a64_stackpoint_prolog_fastpath && cvars::a64_max_stackpoints) {
+      // PushStackpoint just wrote this exact value and left it live in w9
+      // (including on the overflow-recovery path, which rejoins before the
+      // increment), so re-loading it from the context is redundant - and this
+      // is a per-guest-call cost at ~24M calls/sec.
+      str(w9, ptr(sp, static_cast<uint32_t>(
+                          StackLayout::GUEST_SAVED_STACKPOINT_DEPTH)));
+    } else {
+      // Zero cap: PushStackpoint emitted nothing, so w9 is undefined here and
+      // the depth must still be read from the context.
+      ldr(w16, ptr(x19, static_cast<uint32_t>(offsetof(
+                            A64BackendContext, current_stackpoint_depth))));
+      str(w16, ptr(sp, static_cast<uint32_t>(
+                           StackLayout::GUEST_SAVED_STACKPOINT_DEPTH)));
+    }
   }
   if (A64CallTraceRequested()) {
     mov(x1, static_cast<uint64_t>(current_guest_function_));
@@ -6388,8 +6400,27 @@ void A64Emitter::PushStackpoint() {
   // array and we then store at the (reloaded) recovered depth.
   ldr(w9, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));
-  mov(w10, static_cast<uint32_t>(cvars::a64_max_stackpoints));
-  cmp(w9, w10);
+  // This whole sequence is emitted into EVERY guest function prolog, and the
+  // a64 profiler measures ~24M guest entries/sec on Burnout (85% of them into a
+  // single function), so instruction count here is paid ~24 million times a
+  // second. Device-measured 2026-08-05: disabling the stackpoint machinery
+  // outright is worth +3.25% guest throughput, which is the ceiling for any
+  // tightening of this sequence. Hence the immediate/shift forms below - all
+  // exactly equivalent to the generic ones they replace.
+  const bool fastpath = cvars::a64_stackpoint_prolog_fastpath;
+  const uint32_t max_stackpoints =
+      static_cast<uint32_t>(cvars::a64_max_stackpoints);
+  if (fastpath && max_stackpoints < 4096) {
+    cmp(w9, max_stackpoints);
+  } else if (fastpath && (max_stackpoints & 0xFFF) == 0 &&
+             (max_stackpoints >> 12) < 4096) {
+    // CMP takes imm12 optionally shifted left by 12; the default 262144 is
+    // 64<<12, so the separate MOV of the constant is unnecessary.
+    cmp(w9, max_stackpoints >> 12, 12);
+  } else {
+    mov(w10, max_stackpoints);
+    cmp(w9, w10);
+  }
   auto& resume = NewCachedLabel();
   auto& overflow_label = AddToTail([&resume](A64Emitter& e, Label& lbl) {
     e.CallNativeSafe(
@@ -6410,25 +6441,43 @@ void A64Emitter::PushStackpoint() {
   // x8 = stackpoints array
   ldr(x8, ptr(x19,
               static_cast<uint32_t>(offsetof(A64BackendContext, stackpoints))));
-  // Compute offset into array: x10 = w9 * sizeof(A64BackendStackpoint)
-  mov(w10, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
-  umull(x10, w9, w10);
-  add(x8, x8, x10);
+  // Element offset. sizeof(A64BackendStackpoint) is a power of two, so a
+  // shifted-register ADD replaces the MOV+UMULL+ADD triple. ldr(w9, ..) above
+  // zero-extends into x9, so x9 is the depth.
+  static_assert(sizeof(A64BackendStackpoint) == 16,
+                "shifted-add indexing below assumes a 16-byte stackpoint; "
+                "restore the MOV+UMULL form if the struct grows");
+  if (fastpath) {
+    add(x8, x8, x9, LSL, 4);
+  } else {
+    mov(w10, static_cast<uint32_t>(sizeof(A64BackendStackpoint)));
+    umull(x10, w9, w10);
+    add(x8, x8, x10);
+  }
 
-  // Store host SP.
+  // Three independent stores, deliberately NOT packed into one STP.
+  //
+  // Packing guest_stack_ and guest_return_address_ with an ORR and writing the
+  // whole 16-byte entry as a single STP was tried on 2026-08-05 and MEASURED
+  // SLOWER: it cuts the instruction count but serialises two loads through an
+  // ORR into one store, where the plain form issues three stores that the store
+  // buffer absorbs independently. It is also backwards for this SoC - the
+  // A715/A710 mid-cores have three 128-bit load ports against two arithmetic
+  // ports (Whatcookie/RPCS3, measured on the same Snapdragon 8 Gen 2), so
+  // trading cheap memory ops for arithmetic on the critical path is the wrong
+  // direction. Keep the loads/stores; spend the savings on addressing instead.
   mov(x10, sp);
   str(x10, ptr(x8, static_cast<uint32_t>(
                        offsetof(A64BackendStackpoint, host_stack_))));
-  // Store guest r1 (32-bit).
   ldr(w10, ptr(x20, static_cast<int32_t>(offsetof(ppc::PPCContext, r[1]))));
   str(w10, ptr(x8, static_cast<uint32_t>(
                        offsetof(A64BackendStackpoint, guest_stack_))));
-  // Store guest LR (32-bit).
   ldr(w10, ptr(x20, static_cast<int32_t>(offsetof(ppc::PPCContext, lr))));
   str(w10, ptr(x8, static_cast<uint32_t>(
                        offsetof(A64BackendStackpoint, guest_return_address_))));
 
-  // Increment depth.
+  // Increment depth. w9 stays live for the caller (the prolog stores it to
+  // GUEST_SAVED_STACKPOINT_DEPTH rather than re-loading it).
   add(w9, w9, 1);
   str(w9, ptr(x19, static_cast<uint32_t>(
                        offsetof(A64BackendContext, current_stackpoint_depth))));

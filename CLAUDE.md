@@ -563,6 +563,31 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   compare+select chain collapses to one `BSL` (15 insns → 1 in their SPU FCGT case); and **re-rolling fully-unrolled
   codegen back into a loop is ~2% on BOTH arches** via code-cache pressure — directly relevant to our AOT precompile.
 
+## ✅✅ MEASURED ARM64 WIN (2026-08-05): the GUEST PROLOG is the hot path — `a64_stackpoint_prolog_fastpath` = +2.04%
+**The a64 profiler (`--ei arm64_speed_profile_interval_ms 5000`) is the tool that found this; use it before guessing
+a CPU lever.** Burnout on Turnip: **~24.4M guest function entries/sec, 85% of them into ONE function**
+(`sub_8238CD28`, ~21M calls/sec, stable across a whole run). So anything emitted per-call is paid ~24 million times
+a second — **the prolog IS the hot path**, not any individual opcode.
+- **What was there:** every guest prolog emitted an 18-instruction stackpoint bookkeeping sequence (longjmp
+  recovery). **Ceiling, measured: disabling the machinery entirely = +3.25% guest throughput.**
+- **What landed:** tightened the ADDRESSING only, keeping longjmp safety — `cmp` against an encoded immediate
+  (262144 = 64<<12) instead of MOV+CMP; shifted-register `add x8,x8,x9,lsl#4` instead of MOV+UMULL+ADD (the struct
+  is 16B, power of two); and reuse of the depth already live in `w9` instead of re-loading it for the frame slot.
+  **18 → 14 instructions. +2.04% guest throughput, 11/11 intervals, ~63% of the ceiling.** Default ON (validated).
+  `static_assert`s pin `sizeof(A64BackendStackpoint)==16` and the field offsets so a struct change fails loudly.
+- **⛔ DEAD, do not retry: packing the two u32 fields with ORR + one STP.** Fewer instructions (13) but MEASURED
+  SLOWER — it serialises two loads through an arithmetic op into one gated store, where three independent stores are
+  absorbed by the store buffer. It also runs against this SoC's shape: the A715/A710 have **3 load ports vs 2
+  arithmetic ports**, so spend loads and save arithmetic, never the reverse. **Instruction count is not the objective.**
+- **🔬 PROTOCOL, learned the hard way: run-to-run drift on this device is ~2.8% — LARGER than a typical codegen
+  effect.** Comparing two BUILDS cannot resolve ~1-2%; it produced an apparent regression that the control arm
+  exposed as drift. **Every codegen change must be A/B'd WITHIN one session behind a cvar**, both arms from equal
+  thermal starts. Metric: NOT fps (Burnout is capped at 60, which hides all CPU headroom — the same trap that
+  confounded `a64_spin_hint_isb`). Run **uncapped** (`--ei gpu_frame_limit_fps 0`) and read the profiler's
+  `entry_delta` = guest entries/5s, a direct CPU-throughput measure. Harness: `scratch/thor-debug/` A/B scripts.
+- **Remaining ~1.2%** needs the machinery gone, not cheaper: per-title disable for games that provably never
+  longjmp, or repair the longjmp sync (edge d5956d7e3) so the stackpoint array stops leaking depth.
+
 ## CPU = AOT-LLVM (the committed CPU direction)
 Whole-fn HIR→LLVM→ORCv2 recompiler. ⚠️ **`cpu_backend_llvm` is DEFAULT **OFF*** (llvm_backend.cc:55 AND the
 device's `files/xenia.config.toml`) — this file previously said "default-on", which is WRONG and cost a device
