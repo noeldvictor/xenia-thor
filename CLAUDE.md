@@ -612,6 +612,25 @@ XeniaOptimizations.** Only `--ez/--ei/--es` beats it.
   measured elsewhere — **retest these in BD 3D or a race, not attract.** They are restored because they are the
   compiled defaults and individually correctness-validated, NOT because they were measured to win here.
 
+## 🥇🥇🥇 XENDROID IS THE BAR — IT IS THE BEST STABLE ANDROID XBOX 360 EMULATOR (user, 2026-08-06)
+**"always compare hard to xendroid — it's the best stable android xbox 360 emu."** Treat it as the reference
+implementation for BOTH stability and image quality, not just compatibility. If a title looks or behaves worse here
+than in XenDroid, that is a BUG IN OUR FORK, and the first move is to diff against XenDroid — never to debug from
+scratch and never to rationalise the difference away.
+- **The comparison is legitimate and cheap:** same device, same Turnip driver, same games. `reference/XenDroid` is a
+  clone — `git fetch origin` then `git log --oneline HEAD..origin/HEAD`, and read the relevant subsystem directly.
+- **When a game looks glitchy/wrong, the order is:** (1) what did WE change most recently that XenDroid does not
+  have — our own new levers and codegen are the newest variables and the likeliest cause; (2) what does XenDroid do
+  differently in that subsystem; (3) only then debug it as a novel problem.
+- **⚠️ THE PATTERN THAT BIT US TWICE IN ONE DAY: shipping a lever that was DEFAULT-OFF "pending validation".**
+  BD's image quality was degraded by VRS 4x4 + fp10 bloom clamp + an MSAA cap (all removed 2026-08-06 on user report
+  "gfx are busted"; XenDroid ships full quality). Then `arm64_offset_memory_address_fastpath` was flipped default-on
+  the same day and reverted after Gears was reported glitchy. **"Default-off pending validation" means exactly that
+  — do not flip it because the code looks equivalent by construction.** Looking correct is not being measured
+  correct, and a wrong address fold or a coarse shading rate shows up as WRONG PIXELS, not a crash.
+- **Quality levers are NOT free perf.** VRS, fp10-as-unorm10, forced MSAA caps and resolution clamps all trade image
+  quality for fps. If XenDroid ships full quality and we do not, we are not faster — we are rendering less.
+
 ## 🧲🧲🧲 XENDROID UPSTREAM PORT TRACK (swept 2026-08-06, clone was 27 commits behind)
 **`reference/XenDroid`, `git fetch origin` then `git log --oneline HEAD..origin/HEAD`.** XenDroid vendors
 xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer, ROAA path, EDRAM work), so

@@ -34,7 +34,7 @@ DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
             "a64");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline A64 MMIO checks for memory accesses.", "a64");
-DEFINE_bool(arm64_offset_memory_address_fastpath, true,
+DEFINE_bool(arm64_offset_memory_address_fastpath, false,
             "Fold a guest LOAD_OFFSET/STORE_OFFSET displacement straight into "
             "the address add instead of copying the guest register to scratch "
             "first.\n"
@@ -45,7 +45,8 @@ DEFINE_bool(arm64_offset_memory_address_fastpath, true,
             "where `add w0, wGuest, #disp` does it in one. That is a per-access "
             "cost on lwz/stw/lbz/sth and friends, among the most common "
             "instructions in compiled PPC.\n"
-            "Default-ON: equivalent by construction, since it falls back to the "
+            "REVERTED TO DEFAULT-OFF 2026-08-06: it was default-off *pending validation* and I flipped it on the same day, then Gears of War was reported visually glitchy. This changes address computation on EVERY guest load and store, which is exactly the shape that produces wrong pixels rather than a crash, and it is the newest variable - so it goes back to off until a gameplay A/B clears it. The fold still looks equivalent by construction (it falls back to the two-step whenever it cannot fold, and the W-register add wraps and zero-extends exactly as the mov it replaces), but looking correct is not the same as being measured correct.\n"
+    "Originally: equivalent by construction, since it falls back to the "
             "old two-step whenever it cannot fold - a non-constant offset, or a "
             "platform whose allocation granularity needs the large-page +0x1000 "
             "fixup (Windows). It also picks the cheapest displacement encoding "
