@@ -73,6 +73,45 @@ The correct shape is to return the **original** registers when no flush is
 needed, and fix the few callers that assume the scratch pair (or give them a
 separate helper). Sequence-by-sequence, with the qemu-a64 differential.
 
+## 2b. `rlwinm` is 3 instructions where ARM64 has a single `UBFM` ⭐⭐⭐ deepest one
+
+**The HIR models PPC rotate-and-mask as rotate + AND because x86 has no
+rotate-and-mask instruction.** ARM64 does — `UBFM` *is* rotate-and-mask, and
+`rlwinm` is arguably the most common non-trivial PPC instruction there is.
+
+`ppc_emit_alu.cc:InstrEmit_rlwinmx` already has real work behind it: three
+fastpath cvars (`ppc_rlwinm_shift_fastpath`, `_mask_fastpath`,
+`_general_fastpath`) with genuine correctness analysis, including an
+adversarially-verified counterexample for wrapping masks
+(`rlwinm rA,rS,4,28,3`). The general non-wrapping case lowers to:
+
+    ROR (32-bit) + AND (mask) + UXTW      = 3 instructions
+
+`rlwinm rA,rS,SH,MB,ME` computes `ROTL32(rS,SH) & MASK(MB,ME)`. For a
+**non-wrapping** mask (`MB<=ME`) the selected bits are a contiguous run of the
+rotated source, which is exactly what `UBFM Wd,Wn,immr,imms` produces — the
+`UBFX`/`UBFIZ`/`LSL`/`LSR` aliases are all just `UBFM`. So the entire instruction
+is **one** ARM64 op, and `SH`/`MB`/`ME` are compile-time constants, so the
+encoding can be computed at translation time with no runtime cost.
+
+**3 → 1 on one of the hottest PPC instructions**, and unlike most items here it
+is not a micro-cleanup: it removes two arithmetic-port ops per `rlwinm`.
+
+**How to build it.** Do NOT try this as an a64 sequence peephole — same trap as
+`EOR3`: by the time the `AND` sequence runs, the `ROTATE_LEFT` is already emitted
+and register-allocated. The clean shape is a **new HIR opcode** carrying
+`(value, rotate, mask)` with constant rotate/mask, emitted directly by
+`InstrEmit_rlwinmx` (which already has `sh`/`mb`/`me` in hand):
+- **a64** lowers it to one `UBFM` when the mask is contiguous and non-wrapping;
+- **x64/LLVM** lower it exactly as today (rotate + and), so nothing regresses;
+- wrapping masks (`MB>ME`) keep falling through to the generic path, preserving
+  the documented counterexample behaviour.
+
+**Measure applicability first** (the `EOR3` lesson): count how often the general
+non-wrapping path is taken versus the existing slwi/srwi/clrlwi fastpaths. If
+those already catch nearly everything, the remaining slice is small — that is a
+cheap counter, not a guess.
+
 ## 3. `mov`+`cmp` for constants — ✅ DONE 2026-08-06
 
 Was 8 sites of `mov scratch, #K; cmp rn, scratch`. Now `A64Emitter::EmitCmpImm32`
