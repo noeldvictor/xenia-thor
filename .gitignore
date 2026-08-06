@@ -110,3 +110,38 @@ docs/evidence/
 # Prebuilt libLLVM for the qemu a64 differential harness (140MB+, staged
 # locally by scratch/thor-debug/p0b_build_glibc.sh - never commit).
 third_party/llvm-linux-arm64/
+
+# ==============================================================================
+# PUBLIC REPO SAFETY NET
+# ==============================================================================
+# This repository is public. CLAUDE.md already says never to commit game
+# content, keys, dumps or configs - these patterns enforce it, so a stray
+# `git add` cannot leak them even by accident.
+
+# Game content. Legal risk, and huge.
+*.iso
+*.xex
+*.god
+*.stfs
+/SteamLibrary/
+
+# Signing material and credentials. Never.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+/keystore/
+local.properties
+google-services.json
+
+# Emulator config, which carries local device paths and per-machine settings.
+xenia.config.toml
+*.config.backup.toml
+_xenia.config.backup.toml
+
+# Local build/scratch artifacts and captures.
+/binary_cache/
+*.pftrace
+*.rdc

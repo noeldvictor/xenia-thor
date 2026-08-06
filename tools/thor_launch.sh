@@ -8,11 +8,13 @@
 #     a surface, and the emulator silently drops every frame - screencap then
 #     returns a fully black PNG while the emulator is perfectly healthy.
 #
-# Usage: XT_ISO="/path/on/device.iso" ./launch.sh [--ez cvar true ...]
-A=/c/Users/leanerdesigner/AppData/Local/Android/Sdk/platform-tools/adb.exe
+# Usage: XT_SERIAL=<serial|ip:5555> XT_ISO="/path/on/device.iso" ./launch.sh [--ez cvar true ...]
+# Override with XT_ADB if adb is not on PATH.
+A="${XT_ADB:-adb}"
 # USB on this Thor drops out mid-session; ADB over Wi-Fi is the reliable
-# transport. `adb tcpip 5555` once, then `adb connect <ip>:5555`.
-SERIAL="${XT_SERIAL:-192.168.1.33:5555}"
+# transport. `adb tcpip 5555` once, then `adb connect <ip>:5555`, then set
+# XT_SERIAL to that ip:port (or to the USB serial from `adb devices`).
+SERIAL="${XT_SERIAL:?set XT_SERIAL to your device serial or ip:5555}"
 PKG=jp.xenia.emulator.github.debug
 ISO="${XT_ISO:-/storage/2664-21DE/Roms/xbox360/Burnout Revenge (USA).iso}"
 
