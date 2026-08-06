@@ -10,6 +10,15 @@ from the author's recent commits, produces plausible-but-wrong answers. Get the
 actual transcript - it is cheap, and it names things the commits do not (which
 device, which core, how much faster, what did NOT work).
 
+## 0. First: has it already been mined?
+
+`ls docs/research/ | grep -i <topic>` and `git log --oneline -20`. A parallel
+Claude Code session may already have mined the same link and landed half the
+items - that happened on 2026-08-05 with the RPCS3 ARM64 talk, where the
+research doc, the ISB cvar, the LLVM target features and the SHA3 detection all
+landed within hours from another session. Re-mining is cheap; re-implementing is
+not, and duplicate cvars for one lever are worse than either.
+
 ## 1. Get the transcript (auto-captions first)
 
 Auto-captions are almost always present and need no audio download and no
@@ -33,6 +42,17 @@ curl -s "https://www.youtube.com/oembed?url=<URL>&format=json"
 (`python -m yt_dlp -x --audio-format wav`) and transcribe with
 `faster-whisper` (`pip install faster-whisper`, `small.en` is enough for
 technical speech). Whisper is minutes of CPU; do not reach for it first.
+
+Verified gotchas (2026-08-05, this machine):
+- **Two yt-dlp warnings are harmless and you should not chase them:** "No
+  supported JavaScript runtime could be found" and "no impersonate target is
+  available". Captions still download fine. Only act if the download itself
+  fails.
+- **The Bash tool resets cwd between calls here.** `cd <scratch> && python ...`
+  must be one command; a bare `cd` in a previous call is gone.
+- Python 3.10 prints a yt-dlp deprecation notice. Ignore it.
+- `--write-auto-subs --write-subs` fetches BOTH `vid.en.vtt` (auto) and
+  `vid.en-orig.vtt`; they are usually byte-identical. Flatten either one.
 
 ## 2. Flatten the VTT
 

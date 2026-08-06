@@ -1697,7 +1697,21 @@ static void PrefetchForCAS(const void* value) { swcache::PrefetchW(value); }
 
 // Brief spin budget for a spinlock held on another dispatch thread, roughly
 // the cost of the fiber reschedule it avoids.
+//
+// The budget is a WALL-CLOCK target, not an iteration count, so it has to be
+// re-derived per architecture: the loop body is one backoff hint, and the two
+// architectures' hints differ by nearly an order of magnitude. x86 `PAUSE` is
+// ~140 cycles on Skylake and later; ARM64 `ISB` is ~10-30 depending on core.
+// Carrying the x86-tuned 16 straight over to ARM (which is what the
+// `#if XE_ARCH_AMD64` guard here used to do, leaving ARM with an *empty* loop
+// body) under-spins by roughly 4-8x, so the lock gives up and pays the fiber
+// reschedule it was trying to avoid. RPCS3 hit the same x86-derived-constant
+// problem on ARM (PR 18055).
+#if XE_ARCH_ARM64
+static constexpr int kRemoteHolderSpinTries = 96;
+#else
 static constexpr int kRemoteHolderSpinTries = 16;
+#endif
 
 uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
                                bool change_irql) {
@@ -1730,9 +1744,7 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
           scheduler->DispatchCpuOf(our_cpu)) {
         volatile uint32_t* owner_raw = &lock->prcb_of_owner.value;
         for (int i = 0; i < kRemoteHolderSpinTries && *owner_raw; ++i) {
-#if XE_ARCH_AMD64 == 1
-          _mm_pause();
-#endif
+          xe::threading::SpinLoopHint();
         }
         if (!*owner_raw) {
           continue;

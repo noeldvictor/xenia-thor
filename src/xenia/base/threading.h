@@ -170,6 +170,39 @@ void set_name(const std::string_view name);
 // Yields the current thread to the scheduler. Maybe.
 void MaybeYield();
 
+// Backoff hint for a bounded busy-wait, i.e. the body of a spin loop that
+// expects the contended value to change within a few dozen cycles.
+//
+// ⚠️ ARM64: do NOT use the `yield` instruction here. `yield` is architecturally
+// a *hint*, and on every shipping ARM core we care about (Cortex-X3 / A715 /
+// A710 / A510 - i.e. all eight of the Snapdragon 8 Gen 2's) it is implemented
+// as a NOP: it does not release fetch bandwidth, does not save power, and does
+// not help the other SMT-less core make progress. It is not x86's `pause`.
+//
+// `ISB` is the closest working equivalent: it flushes and restarts the
+// instruction pipeline, which throttles the spinner's issue rate instead of
+// letting it run the loop at full speed. It costs a little more power than an
+// ideal stall, because the refetch is real work.
+//
+// ⚠️ UNMEASURED BY US as a win. RPCS3 (Whatcookie, PR 18151) reports it as a
+// large win on an AYN Odin 2 - the same Snapdragon 8 Gen 2 as our AYN Thor -
+// but our own A/B of the equivalent JIT-side change (`a64_spin_hint_isb`) came
+// out CONFOUNDED with no win visible, so do not quote a number here. What is
+// NOT in question is the alternative: the ARM64 path at the call site below
+// used to be an *empty* loop body, so any hint at all is closer to the intent.
+// Analysis: docs/research/20260805-rpcs3-arm64-optimizations-applicable.md.
+XE_FORCEINLINE static void SpinLoopHint() {
+#if XE_ARCH_ARM64
+#if XE_COMPILER_MSVC
+  __isb(_ARM64_BARRIER_SY);
+#else
+  __asm__ __volatile__("isb sy" ::: "memory");
+#endif
+#elif XE_ARCH_AMD64
+  _mm_pause();
+#endif
+}
+
 // Memory barrier (request - may be ignored).
 void SyncMemory();
 
