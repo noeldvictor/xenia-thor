@@ -34,9 +34,23 @@ DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
             "a64");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline A64 MMIO checks for memory accesses.", "a64");
-DEFINE_bool(arm64_offset_memory_address_fastpath, false,
-            "Use offset-aware A64 guest memory address lowering for normal "
-            "LOAD_OFFSET/STORE_OFFSET paths.",
+DEFINE_bool(arm64_offset_memory_address_fastpath, true,
+            "Fold a guest LOAD_OFFSET/STORE_OFFSET displacement straight into "
+            "the address add instead of copying the guest register to scratch "
+            "first.\n"
+            "x86 folds base+index+disp into ONE addressing mode, so the x64 "
+            "backend never had to think about the displacement. AArch64 has no "
+            "base+index+immediate form, so it must become a register add - and "
+            "the naive lowering emits `mov w0, wGuest` then `add w0, w0, #disp` "
+            "where `add w0, wGuest, #disp` does it in one. That is a per-access "
+            "cost on lwz/stw/lbz/sth and friends, among the most common "
+            "instructions in compiled PPC.\n"
+            "Default-ON: equivalent by construction, since it falls back to the "
+            "old two-step whenever it cannot fold - a non-constant offset, or a "
+            "platform whose allocation granularity needs the large-page +0x1000 "
+            "fixup (Windows). It also picks the cheapest displacement encoding "
+            "(imm12, imm12 LSL 12, else materialise) rather than always "
+            "materialising.",
             "a64");
 DEFINE_string(arm64_guest_store_watch, "",
               "Comma-separated guest address/range watch list for A64 stores.",
@@ -487,12 +501,16 @@ struct LOAD_I32 : Sequence<LOAD_I32, I<OPCODE_LOAD, I32Op, I64Op>> {
       }
       auto& normal_access = e.NewCachedLabel();
       auto& done = e.NewCachedLabel();
-      e.mov(e.w0, 0x7FC00000u);
-      e.cmp(e.w17, e.w0);
-      e.b(LO, normal_access);
-      e.mov(e.w0, 0x7FFFFFFFu);
-      e.cmp(e.w17, e.w0);
-      e.b(HI, normal_access);
+      // MMIO window test. The x86 shape is two full-width compares, because a
+      // 32-bit immediate is free inside `cmp` there; on ARM64 each one needs
+      // its constant materialised first. But [0x7FC00000, 0x7FFFFFFF] is
+      // exactly the addresses whose top 10 bits are 0x1FF, so the whole range
+      // check is one shift against an ENCODABLE immediate.
+      //   0x7FC00000 >> 22 == 0x1FF, 0x7FFFFFFF >> 22 == 0x1FF,
+      //   0x7FBFFFFF >> 22 == 0x1FE, 0x80000000 >> 22 == 0x200.
+      e.lsr(e.w0, e.w17, 22);
+      e.cmp(e.w0, 0x1FFu);
+      e.b(NE, normal_access);
       // MMIO path
       void* mmio_fn = (void*)&MMIOAwareLoad<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
@@ -631,12 +649,16 @@ struct STORE_I32 : Sequence<STORE_I32, I<OPCODE_STORE, VoidOp, I64Op, I32Op>> {
       }
       auto& normal_access = e.NewCachedLabel();
       auto& done = e.NewCachedLabel();
-      e.mov(e.w0, 0x7FC00000u);
-      e.cmp(e.w17, e.w0);
-      e.b(LO, normal_access);
-      e.mov(e.w0, 0x7FFFFFFFu);
-      e.cmp(e.w17, e.w0);
-      e.b(HI, normal_access);
+      // MMIO window test. The x86 shape is two full-width compares, because a
+      // 32-bit immediate is free inside `cmp` there; on ARM64 each one needs
+      // its constant materialised first. But [0x7FC00000, 0x7FFFFFFF] is
+      // exactly the addresses whose top 10 bits are 0x1FF, so the whole range
+      // check is one shift against an ENCODABLE immediate.
+      //   0x7FC00000 >> 22 == 0x1FF, 0x7FFFFFFF >> 22 == 0x1FF,
+      //   0x7FBFFFFF >> 22 == 0x1FE, 0x80000000 >> 22 == 0x200.
+      e.lsr(e.w0, e.w17, 22);
+      e.cmp(e.w0, 0x1FFu);
+      e.b(NE, normal_access);
       // MMIO path: copy value to w2 before w1 in case src2 is in w1.
       void* mmio_fn = (void*)&MMIOAwareStore<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
@@ -922,12 +944,16 @@ struct LOAD_OFFSET_I32
       }
       auto& normal_access = e.NewCachedLabel();
       auto& done = e.NewCachedLabel();
-      e.mov(e.w0, 0x7FC00000u);
-      e.cmp(e.w17, e.w0);
-      e.b(LO, normal_access);
-      e.mov(e.w0, 0x7FFFFFFFu);
-      e.cmp(e.w17, e.w0);
-      e.b(HI, normal_access);
+      // MMIO window test. The x86 shape is two full-width compares, because a
+      // 32-bit immediate is free inside `cmp` there; on ARM64 each one needs
+      // its constant materialised first. But [0x7FC00000, 0x7FFFFFFF] is
+      // exactly the addresses whose top 10 bits are 0x1FF, so the whole range
+      // check is one shift against an ENCODABLE immediate.
+      //   0x7FC00000 >> 22 == 0x1FF, 0x7FFFFFFF >> 22 == 0x1FF,
+      //   0x7FBFFFFF >> 22 == 0x1FE, 0x80000000 >> 22 == 0x200.
+      e.lsr(e.w0, e.w17, 22);
+      e.cmp(e.w0, 0x1FFu);
+      e.b(NE, normal_access);
       // MMIO path
       void* mmio_fn = (void*)&MMIOAwareLoad<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
@@ -1054,12 +1080,16 @@ struct STORE_OFFSET_I32
       }
       auto& normal_access = e.NewCachedLabel();
       auto& done = e.NewCachedLabel();
-      e.mov(e.w0, 0x7FC00000u);
-      e.cmp(e.w17, e.w0);
-      e.b(LO, normal_access);
-      e.mov(e.w0, 0x7FFFFFFFu);
-      e.cmp(e.w17, e.w0);
-      e.b(HI, normal_access);
+      // MMIO window test. The x86 shape is two full-width compares, because a
+      // 32-bit immediate is free inside `cmp` there; on ARM64 each one needs
+      // its constant materialised first. But [0x7FC00000, 0x7FFFFFFF] is
+      // exactly the addresses whose top 10 bits are 0x1FF, so the whole range
+      // check is one shift against an ENCODABLE immediate.
+      //   0x7FC00000 >> 22 == 0x1FF, 0x7FFFFFFF >> 22 == 0x1FF,
+      //   0x7FBFFFFF >> 22 == 0x1FE, 0x80000000 >> 22 == 0x200.
+      e.lsr(e.w0, e.w17, 22);
+      e.cmp(e.w0, 0x1FFu);
+      e.b(NE, normal_access);
       // MMIO path: copy value to w2 before w1 in case src3 is in w1.
       void* mmio_fn = (void*)&MMIOAwareStore<uint32_t, false>;
       if (i.instr->flags & LoadStoreFlags::LOAD_STORE_BYTE_SWAP) {
