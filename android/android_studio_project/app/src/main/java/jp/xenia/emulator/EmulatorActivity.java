@@ -1024,7 +1024,9 @@ public class EmulatorActivity extends WindowedAppActivity {
         final TextView note = new TextView(this);
         note.setText("Compiling the whole game ahead of time so gameplay "
                 + "doesn't stutter. This runs once per launch and the game "
-                + "starts automatically when it finishes.");
+                + "starts automatically when it finishes." + "\n\n"
+                + "Android may show \"Xenia isn't responding\" while this "
+                + "runs — that is expected. Choose WAIT, not Close.");
         note.setTextColor(0xFF7C8894);
         note.setTextSize(12);
         note.setGravity(android.view.Gravity.CENTER);
@@ -1041,21 +1043,49 @@ public class EmulatorActivity extends WindowedAppActivity {
         mAotOverlay = overlay;
     }
 
+    // Cumulative across modules, because the native counters do NOT behave like
+    // a single monotonic job: the estimated total GROWS while a module compiles
+    // (6,665 -> 10,540 observed on Burnout) and both counters RESET when the
+    // next XEX module starts. Feeding that straight to a progress bar makes it
+    // jump backwards, which reads exactly like the hang we are trying to
+    // reassure the user is not happening.
+    private int mAotModuleIndex = 0;
+    private int mAotLastDone = -1;
+    private long mAotCumulativeDone = 0;
+
     private void updateAotOverlay(final int done, final int total) {
         if (mAotOverlay == null) {
             showAotOverlay();
         }
-        if (mAotProgressText != null) {
-            mAotProgressText.setText(String.format(Locale.US,
-                    "%,d / ~%,d functions", done, total));
+        // A drop in `done` means a new module's pass started.
+        if (done < mAotLastDone) {
+            mAotCumulativeDone += mAotLastDone;
+            mAotModuleIndex++;
         }
-        if (mAotProgressBar != null && total > 0) {
-            mAotProgressBar.setProgress(
-                    Math.min(100, (int) (done * 100L / total)));
+        mAotLastDone = done;
+        final long overall = mAotCumulativeDone + done;
+        if (mAotProgressText != null) {
+            mAotProgressText.setText(mAotModuleIndex == 0
+                    ? String.format(Locale.US, "%,d functions compiled", overall)
+                    : String.format(Locale.US, "%,d functions compiled  (module %d)",
+                            overall, mAotModuleIndex + 1));
+        }
+        if (mAotProgressBar != null) {
+            // Within-module percentage only, and never allowed to regress
+            // while the estimate is still growing.
+            if (total > 0) {
+                final int pct = Math.min(100, (int) (done * 100L / total));
+                mAotProgressBar.setProgress(Math.max(mAotProgressBar.getProgress(), pct));
+            }
         }
     }
 
     private void hideAotOverlay(final int total, final long ms) {
+        // Next module starts a fresh bar; the cumulative count keeps climbing.
+        if (mAotProgressBar != null) {
+            mAotProgressBar.setProgress(0);
+        }
+        mAotLastDone = -1;
         if (mAotOverlay != null) {
             if (mAotProgressText != null) {
                 mAotProgressText.setText(String.format(Locale.US,
