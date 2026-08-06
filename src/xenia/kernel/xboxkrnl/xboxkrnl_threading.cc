@@ -39,6 +39,19 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+DEFINE_int32(
+    kernel_spinlock_remote_spin_tries, -1,
+    "Backoff iterations KfAcquireSpinLock burns before rescheduling, when the "
+    "lock holder is on a DIFFERENT dispatch thread (a remote holder releases in "
+    "nanoseconds, so a brief spin beats paying a fiber reschedule).\n"
+    "   -1 = per-architecture default (96 on ARM64, 16 on x64)\n"
+    "    0 = do not spin at all - this is the CONTROL arm, and it reproduces "
+    "the pre-2026-08-05 ARM64 behaviour, where the loop body sat behind "
+    "'#if XE_ARCH_AMD64' and so compiled to nothing.\n"
+    "The default differs per architecture because this is a WALL-CLOCK budget, "
+    "not an iteration count: one x86 PAUSE is ~140 cycles on Skylake+, one ARM "
+    "ISB is ~10-30, so the x86-tuned 16 under-spins by ~4-8x on ARM.",
+    "Kernel");
 DEFINE_bool(
     xboxkrnl_thread_wait_trace, false,
     "Thor ARM64 bring-up: trace xboxkrnl wait/delay begin/end events.",
@@ -1708,10 +1721,20 @@ static void PrefetchForCAS(const void* value) { swcache::PrefetchW(value); }
 // reschedule it was trying to avoid. RPCS3 hit the same x86-derived-constant
 // problem on ARM (PR 18055).
 #if XE_ARCH_ARM64
-static constexpr int kRemoteHolderSpinTries = 96;
+static constexpr int kRemoteHolderSpinTriesDefault = 96;
 #else
-static constexpr int kRemoteHolderSpinTries = 16;
+static constexpr int kRemoteHolderSpinTriesDefault = 16;
 #endif
+
+// Exposed as a cvar so the spin budget is A/B-able from ONE build - the
+// measurement discipline in CLAUDE.md needs an in-place toggle, and rebuilding
+// between arms is exactly how the a64_spin_hint_isb A/B ended up confounded.
+// 0 disables the spin entirely, which reproduces the pre-fix ARM64 behaviour
+// (empty loop body) and is therefore the correct control arm.
+static int RemoteHolderSpinTries() {
+  const int32_t configured = cvars::kernel_spinlock_remote_spin_tries;
+  return configured < 0 ? kRemoteHolderSpinTriesDefault : configured;
+}
 
 uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
                                bool change_irql) {
@@ -1743,7 +1766,8 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
       if (scheduler->DispatchCpuOf(owner_kpcr->prcb_data.current_cpu) !=
           scheduler->DispatchCpuOf(our_cpu)) {
         volatile uint32_t* owner_raw = &lock->prcb_of_owner.value;
-        for (int i = 0; i < kRemoteHolderSpinTries && *owner_raw; ++i) {
+        const int spin_tries = RemoteHolderSpinTries();
+        for (int i = 0; i < spin_tries && *owner_raw; ++i) {
           xe::threading::SpinLoopHint();
         }
         if (!*owner_raw) {

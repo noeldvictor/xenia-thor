@@ -842,6 +842,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "thor_probe_a510_vector_units");
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_target_features_native");
             copyBooleanExtra(intent, launchArguments, "a64_spin_hint_isb");
+            copyIntExtra(intent, launchArguments, "kernel_spinlock_remote_spin_tries");
             copyBooleanExtra(intent, launchArguments, "xam_input_trace");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");
