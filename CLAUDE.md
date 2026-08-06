@@ -612,6 +612,39 @@ XeniaOptimizations.** Only `--ez/--ei/--es` beats it.
   measured elsewhere — **retest these in BD 3D or a race, not attract.** They are restored because they are the
   compiled defaults and individually correctness-validated, NOT because they were measured to win here.
 
+## 🧲🧲🧲 XENDROID UPSTREAM PORT TRACK (swept 2026-08-06, clone was 27 commits behind)
+**`reference/XenDroid`, `git fetch origin` then `git log --oneline HEAD..origin/HEAD`.** XenDroid vendors
+xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer, ROAA path, EDRAM work), so
+**cherry-picks do NOT apply — port by hand.**
+- **✅ TAKEN:** `4b416cd83` keep-screen-on (`FLAG_KEEP_SCREEN_ON`, 3 lines). Gamepad play emits no touch events so
+  the panel sleeps; here that stops the activity, the SurfaceView loses its surface, and the presenter silently
+  DROPS every guest frame while the emulator runs on — reads as a hang, already cost a full session.
+- **❌ REJECTED, not applicable:** `428008f0e` cached-band process pinning. XenDroid runs the emulator in a separate
+  `:emu` process and binds it to a `MainAliveService` with `BIND_IMPORTANT` so lmkd stops reaping the launcher. **We
+  already run in the main process**, so there is no cached-band launcher to protect.
+- **🚧 IN PROGRESS — THE BIG ONE: in-pass EDRAM resolves (16 of the 27 commits).** Step 1 landed and is
+  device-verified: `dynamic_rendering_local_read=true` on Turnip 26.3.0.
+  **Why it is the biggest GPU win available:** xenia's EDRAM resolve ENDS the render pass, copies, and begins a new
+  one. On a TBDR every pass begin is a GMEM store+reload — which our own pass budget already fingered (61 passes in
+  a BD field frame, **45 of them single-draw**). `local_read` reads the CURRENT attachment on-tile so the pass never
+  breaks. This is the mechanism the `[[xendroid-xenia-edge-findings]]` memory blames for XenDroid outrunning us.
+  **Port order:** `7c38a62b3` (✅ done, extension+feature) → `ef3b90b1d` (in-pass fragment resolve shaders reading the
+  source attachment on-tile; xesli/glsl split + `gen_android_spirv`) → `a0aec42ae` (~632 lines, the resolve path
+  itself + deferred_command_buffer support) → hardening: `1f24328cf` (reject resolves whose mapped rect leaves the
+  render area), `81f051616` (eligibility + local-read layout consistency), `d3b9ddef0` (keep loadOp discard bits out
+  of framebuffer/pipeline keys), `cc0753a8c` (scope input-attachment index mapping per draw), `554b1f4e8`/`5e6ec4915`/
+  `2ec7ee046` (destination matching, strip row offset from dst bpp, 2D texel origin), `c13b9be1f` (gate by proven
+  roundtrip class **and count every rejection**).
+  **⚠️ Port `c13b9be1f`'s rejection counter WITH the path, not after** — it is how they made this safe to ship
+  default-on. A resolve that silently declines is invisible; one that counts its rejections is debuggable.
+- **⭐ STANDALONE, NOT part of that chain — take it independently:** `904374971` hoist shared-memory uploads out of
+  render passes. Pages never invalidated **since the current GPU submission opened** cannot have been read by an
+  already-recorded command, so their upload can be reordered to the submission HEAD and the render pass never
+  breaks. Needs: submission-scoped `invalidated_in_submission` tracking + `OnGpuSubmissionOpened` in shared_memory,
+  a submission-head deferred command buffer, and routing eligible uploads to it (~162 lines).
+- **Also unported, lower priority:** `83cf6fa0d` (let `disable_context_promotion` also disable VEC128 promotion —
+  a debugging lever), `1c0285b47` (launch directly from a frontend intent — frontend integration).
+
 ## 💥 BURNOUT MID-GAMEPLAY FAULT STORM = LLVM WRITING x20 (2026-08-06) — how to tell it from a JIT bug
 **Symptom:** frozen half-drawn frame, `0.0 FPS`, and `UNHANDLED host fault ... re-fault (signal storm)` repeating at
 one pc until the thread parks. Looks like "the renderer broke"; it is not — the emulator died mid-frame and the last
