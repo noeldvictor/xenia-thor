@@ -106,6 +106,23 @@ DEFINE_uint32(
     "CPU");
 
 DEFINE_bool(
+    a64_vmx_fp_no_operand_copy, false,
+    "Let VMX float sequences read their operands from the ALLOCATED registers "
+    "instead of first copying both into the v0/v1 scratch pair.\n"
+    "The copies are an x86 inheritance: SSE is two-operand destructive, so the "
+    "x64 backend must stage operands. NEON is three-operand non-destructive, so "
+    "the only reason to stage is the destructive software denormal flush - and "
+    "on this SoC FPCR.FZ flushes denormal inputs in hardware "
+    "(kA64FZFlushesInputs), so that flush is skipped and the two MOVs guard "
+    "code that never runs. Saves 2 vector MOVs on every VMX float op.\n"
+    "Only applies when both operands are in allocated registers (v4-v31); a "
+    "constant operand lives in v0/v1, which the NaN fixups use as scratch. "
+    "Default OFF pending a qemu-a64 differential - this is NaN-propagation "
+    "code, where a mistake shows up as subtle float corruption rather than a "
+    "crash.",
+    "a64");
+
+DEFINE_bool(
     a64_count_eor3_candidates, false,
     "Count how many V128 XORs are the outer half of a fusable a^b^c chain, i.e. "
     "how much an ARMv8.2 SHA3 EOR3 lowering would actually get to fold. EOR3 "

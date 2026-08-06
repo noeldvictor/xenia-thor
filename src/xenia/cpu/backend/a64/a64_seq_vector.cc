@@ -452,7 +452,7 @@ struct VECTOR_MAX
       } else {
         e.fmax(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);
       }
-      FixupVmxMaxMinNan(e);
+      FixupVmxMaxMinNan(e, s1, s2);
       if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
         FlushDenormals_V128(e, 2, 0, 1);
       }

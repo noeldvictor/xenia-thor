@@ -34,6 +34,7 @@ constexpr uint32_t DCZID_EL0 = ARM64_SYSREG(0b11, 0b011, 0b0000, 0b0000, 0b111);
 #endif
 
 // R3 (flat membase): see a64_seq_memory.cc for the definition / rationale.
+DECLARE_bool(a64_vmx_fp_no_operand_copy);
 DECLARE_bool(arm64_use_flat_membase);
 
 namespace xe {
@@ -456,12 +457,17 @@ inline void AuditV128DenormalIfAny(A64Emitter& e, int vreg,
 // lanes. We replicate that: use src1|src2 only for lanes where BOTH are NaN.
 // Expects: v0=flushed src1, v1=flushed src2, v2=hardware fmax/fmin result.
 // Modifies v2 in place. Clobbers v0, v1, v3.
-inline void FixupVmxMaxMinNan(A64Emitter& e) {
-  // Compute OR fallback first (before clobbering v0/v1).
-  e.orr(VReg(3).b16, VReg(0).b16, VReg(1).b16);  // v3 = src1 | src2
+inline void FixupVmxMaxMinNan(A64Emitter& e, int s1 = 0, int s2 = 1) {
+  // s1/s2 are the source registers. They default to the v0/v1 scratch pair for
+  // callers that still stage their operands there; when the no-copy path in
+  // PrepareVmxFpSources is active they are the ALLOCATED registers instead.
+  // That is safe because the allocator only hands out v4-v31 (a64_backend.cc:
+  // "v0-v3 scratch"), so writing v0/v1/v3 below can never clobber a source.
+  // Compute OR fallback first (before clobbering the scratch).
+  e.orr(VReg(3).b16, VReg(s1).b16, VReg(s2).b16);  // v3 = src1 | src2
   // Build "at least one not NaN" mask.
-  e.fcmeq(VReg(0).s4, VReg(0).s4, VReg(0).s4);   // v0 = non-NaN mask for src1
-  e.fcmeq(VReg(1).s4, VReg(1).s4, VReg(1).s4);   // v1 = non-NaN mask for src2
+  e.fcmeq(VReg(0).s4, VReg(s1).s4, VReg(s1).s4);   // v0 = non-NaN mask for src1
+  e.fcmeq(VReg(1).s4, VReg(s2).s4, VReg(s2).s4);   // v1 = non-NaN mask for src2
   e.orr(VReg(0).b16, VReg(0).b16, VReg(1).b16);  // v0 = 1 where at least one ok
   // BSL: mask=1 → v2 (fmax result), mask=0 → v3 (src1|src2 for both-NaN)
   e.bsl(VReg(0).b16, VReg(2).b16, VReg(3).b16);
@@ -475,6 +481,28 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
                                 int& out_s1, int& out_s2) {
   int s1 = SrcVReg(e, op1, 0);
   int s2 = SrcVReg(e, op2, 1);
+  // The copies below exist ONLY to protect live registers from the DESTRUCTIVE
+  // FlushDenormals_V128 calls that follow. That is an x86 habit: SSE is
+  // two-operand destructive, so the x64 backend must stage operands. NEON is
+  // three-operand non-destructive - fadd v2, vA, vB leaves vA/vB untouched - so
+  // when no flush is needed the op can read the allocated registers directly
+  // and both MOVs are pure waste. On this SoC FPCR.FZ flushes denormal inputs
+  // in hardware (kA64FZFlushesInputs, probed at startup), so that is the
+  // COMMON case, not a corner.
+  //
+  // Only taken when both operands are already in allocated registers: a
+  // constant operand has been materialised into v0/v1 by SrcVReg, and the
+  // downstream fixups use v0/v1/v3 as scratch, which would clobber it. The
+  // allocator only hands out v4-v31, so an allocated source can never alias
+  // that scratch.
+  const bool flush_needed =
+      !e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);
+  if (cvars::a64_vmx_fp_no_operand_copy && !flush_needed && s1 >= 4 &&
+      s2 >= 4) {
+    out_s1 = s1;
+    out_s2 = s2;
+    return;
+  }
   // Copy to scratch v0/v1 so we don't modify live allocated registers.
   if (s1 != 0) e.mov(VReg(0).b16, VReg(s1).b16);
   if (s2 != 1) e.mov(VReg(1).b16, VReg(s2).b16);
@@ -493,7 +521,7 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
 // PPC rule: first NaN by operand position wins; SNaN is quieted (bit 22 set).
 // If neither input was NaN but the op generated NaN (e.g., inf-inf),
 // use the PPC default NaN (0xFFC00000).
-inline void FixupVmxNan_V128(A64Emitter& e) {
+inline void FixupVmxNan_V128(A64Emitter& e, int s1 = 0, int s2 = 1) {
   using namespace Xbyak_aarch64;
   auto& done = e.NewCachedLabel();
 
@@ -504,8 +532,8 @@ inline void FixupVmxNan_V128(A64Emitter& e) {
   e.cbnz(e.w0, done);  // all non-NaN → skip
 
   // Save s1/s2 to stack for scalar lane extraction.
-  e.str(QReg(0), ptr(e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH)));
-  e.str(QReg(1),
+  e.str(QReg(s1), ptr(e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH)));
+  e.str(QReg(s2),
         ptr(e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 16));
 
   // NaN threshold: (val<<1) > 0xFF000000 means val is NaN.
@@ -740,7 +768,7 @@ inline void EmitVmxFpBinOp_V128(A64Emitter& e, int dest_idx, const T1& src1,
     }
 
     // PPC NaN propagation fixup (fast-path skip when no NaN).
-    FixupVmxNan_V128(e);
+    FixupVmxNan_V128(e, s1, s2);
 
     // Flush output denormals. FPCR.FZ guarantees output flushing per the
     // ARM spec, so skip when FZ is known to also handle inputs (implying
