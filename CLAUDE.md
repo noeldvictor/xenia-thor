@@ -630,6 +630,23 @@ scratch and never to rationalise the difference away.
   correct, and a wrong address fold or a coarse shading rate shows up as WRONG PIXELS, not a crash.
 - **Quality levers are NOT free perf.** VRS, fp10-as-unorm10, forced MSAA caps and resolution clamps all trade image
   quality for fps. If XenDroid ships full quality and we do not, we are not faster — we are rendering less.
+- **❌ CORRECTION 2026-08-06: the Gears glitching was MIS-ATTRIBUTED to `arm64_offset_memory_address_fastpath`.**
+  The revert is live and device-confirmed (`arm64_offset_memory_address_fastpath = false` in the persisted config)
+  and **Gears is still broken** — menu entries render as horizontal white/black smears over a correct background
+  (`scratchpad/menu.png`, 23.7 fps, live user session). So that cvar was never the cause and the revert fixed
+  nothing. **This is not a regression from 2026-08-06's codegen work at all** — treat it as a standing GPU-side
+  divergence from XenDroid, which renders the same menus correctly.
+  - Ruled out by reading + live config, NOT by guessing: `a64_vmx_fp_no_operand_copy = false` (off), and
+    `cpu_backend_llvm = false` so the a64 backend is what runs. The one always-on new codegen lever is
+    `a64_three_operand_shifts = true`, and its diff is semantically identical to what it replaced
+    (`mov w0,src2; mov dest,src1; lsl dest,dest,w0` → `lsl dest,src1,src2`; the constant path stages through `w0`,
+    which the allocator never hands out — it only allocates x22-x28). No defect found by reading.
+  - **The symptom shape points GPU-side:** correct background + horizontally smeared glyphs confined to the menu
+    bars is the signature of wrong row pitch / stride when sampling or resolving a small text surface — i.e. the
+    EDRAM resolve + texture-tiling area where we diverge most from XenDroid. **Not asserted, not yet measured.**
+  - **Next step is one isolation launch, not more reading:** `baacdeaed` made today's always-on codegen isolable
+    (`--ez a64_three_operand_shifts false` etc.). If the smears survive with all of it off, it is GPU-side and the
+    in-pass resolve port is the place to look.
 
 ## 🧲🧲🧲 XENDROID UPSTREAM PORT TRACK (swept 2026-08-06, clone was 27 commits behind)
 **`reference/XenDroid`, `git fetch origin` then `git log --oneline HEAD..origin/HEAD`.** XenDroid vendors
@@ -726,6 +743,13 @@ Beyond "the persisted config overrides the compiled default", there is a second 
 - **The pass ignores its own budget:** the log says `budget 1500ms` but it ran ~60s because `drain_frontier=true`
   overrides it. **Fixing the blocking paint OR honouring the budget removes the ANR** — the real fix, still open;
   the tradeoff is a shorter freeze now versus more stutter later, so it needs a deliberate decision.
+- **🔑 DISCRIMINATOR CAPTURED 2026-08-06 — THE ASYNC-HANDLER FIX IS THE WRONG HYPOTHESIS, ABANDON IT.** The
+  watchdog posts one SYNC and one ASYNC message each tick and reports both latencies. Live Gears session printed
+  **`UI thread STALLED sync=2921ms async=2921ms`** — *identical*. Async messages BYPASS Looper sync barriers by
+  construction, so **equal starvation proves there is no barrier**: the main thread is genuinely not running, not
+  blocked behind a barrier. ⇒ `Handler.createAsync`/`postToUi`/`asyncMain` CANNOT fix this and no amount of message
+  flagging will. The overlay is starved because the UI thread is wedged in the blocking paint (above), so the
+  remaining real fixes are exactly the two named there. Do not re-attempt async message plumbing.
 
 ## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
