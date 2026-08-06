@@ -203,3 +203,51 @@ throughput. Do that before touching the topology masks; do not guess an index.
 ### Context (not actionable)
 The A710s are present only so 32-bit ARM code still runs — the X3 and A715
 dropped AArch32.
+
+---
+
+## Third pass (2026-08-05): item #2 is INVERTED in our tree — correcting pass one
+
+Pass one said of `fmax`/`fmin`: *"Check whether we carry x86-shaped NaN
+workaround code there and put the ARM path behind the same kind of guard."* It
+also pointed at `OPCODE_VECTOR_MAX` in the LLVM backend. **Both are wrong, and
+the direction of the fix is backwards.** Traced properly:
+
+- `vmaxfp`/`vminfp` lower via `f.Max()`/`f.Min()` → **`OPCODE_MAX`**, not
+  `OPCODE_VECTOR_MAX` (`ppc_emit_altivec.cc:872`). `VECTOR_MAX` is the *integer*
+  `vmaxsb/sh/sw` path — the x64 backend's `VECTOR_MAX` has no FLOAT32 case at
+  all, it `assert_unhandled_case`s.
+- **x64 `MAX_V128` is a bare `vmaxps`** (`x64_sequences.cc:507`) — one
+  instruction, **no NaN workaround whatsoever**. So there is no x86-shaped
+  workaround to `#ifdef` away. RPCS3 had one; we do not.
+- **a64 `MAX_V128` is the expensive one** (`a64_sequences.cc:4542`): an
+  `EmitWithVmxFpcr` wrapper + `PrepareVmxFpSources` (two operand copies, plus a
+  software denormal flush unless `kA64FZFlushesInputs`) + `fmax` + a
+  6-instruction `FixupVmxMaxMinNan` + a final `mov`. **The ARM path is the one
+  carrying the tax**, which is the reverse of the RPCS3 situation.
+
+So the opportunity is real but it is *ours*, not a port: on ARM64 a VMX float
+max/min costs ~12 instructions where x64 spends one. Whatcookie's underlying
+claim — ARM `fmax`/`fmin` NaN behaviour matches PowerPC — if true here, would
+delete most of that.
+
+**⚠️ DO NOT just delete it. Two things must be settled first, and neither can be
+eyeballed:**
+1. **The comment and the code disagree.** `a64_sequences.cc:4549` says *"PPC
+   vmaxfp: if either input is NaN, result = src1 (vA)"*, but
+   `FixupVmxMaxMinNan` (`a64_seq_util.h:459`) only overrides the result when
+   **both** inputs are NaN (mask = "at least one is not NaN" → keep the `fmax`
+   result). Under the stated rule, `fmax(a, NaN)` should give `a`, but ARM
+   `FMAX` propagates the NaN and the fixup does not correct it. Either the
+   comment is wrong or the sequence is. **Settle which before touching it** —
+   this may be a live correctness bug, not just a perf tax.
+2. **x64 and a64 disagree about NaN**, so "matches the other backend" is not
+   available as an oracle: x86 `MAXPS` returns *src2* when the compare is
+   unordered, and it is emitted through `EmitCommutativeBinaryXmmOp`, which may
+   reorder the operands of an operation that is **not** commutative across NaN.
+
+**There is no test pinning any of this** — `src/xenia/cpu/testing/` has no
+`vmaxfp`/`vminfp` case. Required before any change: write the differential
+(qemu-a64 per CLAUDE.md, plus a host cpu-test) covering all four NaN
+combinations × QNaN/SNaN × operand order, establish the true Xenon behaviour,
+*then* optimise. Device-free, and it is the honest prerequisite.
