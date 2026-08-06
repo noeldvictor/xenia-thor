@@ -702,6 +702,30 @@ Beyond "the persisted config overrides the compiled default", there is a second 
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
 ourselves**. The principles are what transfer; their specific patches mostly do not (see the parity track below).
 
+**0. 🧭 THE FIVE RULES (full synthesis: `docs/research/20260806-x64-shaped-code-to-rethink-for-arm64.md`).**
+The individual findings are disposable; these generated them and will generate the next ones.
+1. **Ask what the ISA the code was written for COULD NOT DO.** Nearly every finding traces to an x86 constraint, not
+   an ARM decision: 2-operand destructive ops → staging copies; shift count in `cl` → scratch staging; free large
+   immediates → no materialisation strategy; `base+index+disp` in one mode → displacement never folded; no
+   rotate-and-mask → `rlwinm` modelled as rotate+AND (ARM64's `UBFM` **is** rotate-and-mask); `MOVBE` → endianness
+   treated as free (we pay `REV`, 65 sites). **The tell is a comment explaining a workaround** — "dest may alias
+   src2" described a hazard that cannot occur on ARM64.
+2. **Optimise the dependency graph and port mix, NOT the line count.** 3 load ports vs 2 arithmetic: arithmetic is
+   scarce. Proven painfully — `ORR`+`STP` packing cut 18 insns to 13 and measured SLOWER by serialising two loads
+   through arithmetic into one gated store. Corollary: **loading a constant can beat computing it.**
+3. **Fusion belongs in HIR; elision belongs in the backend.** Two-ops-into-one (`EOR3`, `UBFM`) MUST be a HIR pass
+   before regalloc — a sequence peephole is always too late, since the inner op is already emitted and allocated.
+   Not-emitting a redundant `CMP` the previous instruction already did IS backend-able, because it belongs to the
+   later sequence. Getting this backwards wastes the whole implementation.
+4. **Measure applicability BEFORE building.** `EOR3` counter: **0 of 1** fusable — the pass would have folded
+   nothing. The `rlwinm` census, built to size `UBFM`, instead found 100% of rlwinms on the slow path (**+2.88%**).
+   A counter costs one cvar and one run; a pass costs days.
+5. **A lever can be correct, allowlisted, and still never run.** Three separate ways this bit us: stale persisted
+   config (rlwinm, -2.88%); no `XeniaOptimizations` entry so a GUI launch never passes it (LLVM built generic
+   armv8-a); and a defaults block gated on `getBundleExtra(EXTRA_CVARS) == null` while the launcher always attaches
+   one (object cache off for EVERY real launch → full recompile every time). **Verify a lever RUNS before
+   optimising it** — compiled default, persisted config, GUI registry, and which launch path sets it.
+
 **1. THE HARDWARE MODEL (Snapdragon 8 Gen 2 / Cortex-X3 + A715 + A710 + A510).**
 - **Mid-cores have 3× 128-bit LOAD ports but only 2× arithmetic ports.** The ideal mix is ~0.67 arithmetic
   instructions per load. **Loads are the abundant resource; arithmetic is the scarce one.** Whatcookie reached that

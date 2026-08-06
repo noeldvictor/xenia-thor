@@ -264,3 +264,94 @@ Everything measures under the CLAUDE.md protocol: one session, cvar-gated arms,
 equal thermal starts, uncapped, `entry_delta` as the metric — run-to-run drift
 here is ~2.8% and will otherwise swamp the result. Correctness for #1/#2 goes
 through the qemu-a64 differential, which is device-free.
+
+---
+
+# SYNTHESIS: the five rules this audit actually produced
+
+Every individual finding above is disposable. These are the rules that generated
+them, and they will generate the next ones.
+
+## Rule 1 — Ask what the ISA the code was WRITTEN for could not do
+
+Almost every finding traces to a constraint of **x86**, not to a decision anyone
+made about ARM:
+
+| the x86 constraint | what it forced | what AArch64 actually offers |
+|---|---|---|
+| two-operand destructive ops | copy src into dest first | 3-operand, non-destructive |
+| shift count must live in `cl` | stage the count in a scratch | `LSLV` takes any register |
+| large immediates are free in-instruction | never think about materialisation | `MOVZ`+`MOVK` chains, or a literal load |
+| `base+index+disp` in one addressing mode | never fold a displacement | no such form; fold it yourself |
+| no rotate-and-mask instruction | model `rlwinm` as rotate + AND | `UBFM` **is** rotate-and-mask |
+| `MOVBE` byteswaps for free | ignore endianness cost | explicit `REV`, on the scarce port |
+
+**The tell is a comment explaining a workaround.** `"Read shift amount first -
+dest may alias src2"` described a hazard that *cannot occur* on ARM64. We were
+defending against an x86 problem the ISA does not have.
+
+## Rule 2 — Optimise the dependency graph and the port mix, not the line count
+
+The A715/A710 have **3 load ports vs 2 arithmetic ports**. Arithmetic is the
+scarce resource; loads are abundant.
+
+Proven here, painfully: packing two u32s with `ORR` and storing via one `STP`
+cut a prolog from 18 instructions to 13 and **measured slower** — it serialised
+two loads through an arithmetic op into a single gated store, where three
+independent stores were absorbed by the store buffer. Fewer instructions, deeper
+dependency chain, more pressure on the scarce port.
+
+Corollary that feels wrong and is right: **loading a constant can beat computing
+it.**
+
+## Rule 3 — Fusion happens in HIR, elision happens in the backend
+
+- Want to turn *two ops into one* (`EOR3`, `UBFM`)? That is **fusion**, and it
+  must happen in a HIR pass before regalloc. A sequence peephole is always too
+  late: by the time the outer op emits, the inner one is already emitted and
+  allocated. This killed both the `EOR3` and `rlwinm` peephole ideas.
+- Want to *not emit* something the previous instruction already did (a redundant
+  `CMP`)? That is **elision**, and the backend can do it, because the redundant
+  instruction belongs to the later sequence.
+
+Getting this backwards wastes the entire implementation.
+
+## Rule 4 — Measure applicability BEFORE building the optimisation
+
+Two counters, two saved builds:
+- `EOR3` looked like the best remaining idea. Counter said **0 of 1** V128 XORs
+  were fusable chains. A HIR pass would have folded nothing.
+- The `rlwinm` census was built to size a `UBFM` lowering. It found instead that
+  **100% of rlwinms were taking the slow generic path** because the fastpaths
+  were disabled — worth **+2.88%**, and nothing to do with the question asked.
+
+A counter costs one cvar and one run. A pass costs days.
+
+## Rule 5 — A lever can be correct, allowlisted, and still never run
+
+Three independent ways a validated optimisation was silently off:
+1. **Stale persisted config** — `xenia.config.toml` overrides the compiled
+   default *permanently*. Cost: the rlwinm fastpaths, ~2.88%.
+2. **No GUI entry** — `XeniaOptimizations` had no toggle, so a GUI launch never
+   passed it. Cost: LLVM compiled everything as generic armv8-a.
+3. **Wrong launch path** — the defaults block was guarded on
+   `getBundleExtra(EXTRA_CVARS) == null`, but the launcher always attaches a
+   bundle. Cost: the AOT object cache was off for every real launch, i.e. a full
+   recompile every time.
+
+**Before optimising anything, verify it is actually running.** Check the
+compiled default, the persisted config, the GUI registry, AND which launch path
+sets it.
+
+## Scoreboard
+
+**Measured:** `rlwinm` fastpaths **+2.88%** (11/11 intervals) · stackpoint prolog
+**+2.04%** (11/11).
+**Landed, structural, unmeasured:** 3-operand shifts (12 sites, 3→1) ·
+`EmitCmpImm32` (8 sites) · guest offset addressing fold · MMIO range check (6→3).
+**Built, default-off pending qemu differential:** V128 constant pool · VMX
+operand-copy removal.
+**Ruled out with data:** `EOR3`/`BCAX` · `UDOT`/`ABD` · `ORR`+`STP` packing ·
+`lwzu` writeback · kernel spinlock backoff.
+**Documented, unbuilt:** `rlwinm`→`UBFM` (10.6% of rlwinms) · `UpdateCR`'s 3
+redundant `CMP`s (needs no HIR pass) · byteswap elision (65 `rev` sites).
