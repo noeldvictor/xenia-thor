@@ -34,6 +34,18 @@ class SharedMemory {
   virtual void ClearCache();
   virtual void SetSystemPageBlocksValidWithGpuDataWritten();
 
+  // Call when a new GPU submission starts recording - resets the per-submission
+  // invalidation tracking used to decide which uploads may be hoisted to the
+  // submission head. See SystemPageFlagsBlock::invalidated_in_submission.
+  void OnGpuSubmissionOpened();
+
+  // True if ANY page in the given ranges lost validity since the current GPU
+  // submission opened. Ranges are (first_page, last_page), inclusive. When this
+  // is false for an upload's pages, that upload may be moved to the head of the
+  // submission without breaking the current render pass.
+  bool AnyPageInvalidatedSinceSubmissionOpen(
+      const std::pair<uint32_t, uint32_t>* page_ranges, uint32_t count) const;
+
   typedef void (*GlobalWatchCallback)(
       const std::unique_lock<std::recursive_mutex>& global_lock, void* context,
       uint32_t address_first, uint32_t address_last, bool invalidated_by_gpu);
@@ -196,6 +208,18 @@ class SharedMemory {
     // Subset of valid pages - whether each page in the GPU buffer contains data
     // that was written on the GPU, thus should not be invalidated spuriously.
     uint64_t valid_and_gpu_written;
+    // Whether each page lost validity since the CURRENT GPU submission opened.
+    //
+    // XenDroid port (904374971), tracking half. A page never invalidated while
+    // the submission was recording cannot have been legitimately read by an
+    // already-recorded command, so its upload is safe to reorder to the START
+    // of the submission - letting it run before any render pass begins instead
+    // of forcing the pass to end. On a TBDR every such pass break is a GMEM
+    // store+reload, i.e. the same root cause the in-pass resolve work attacks,
+    // approached from the other side.
+    //
+    // Cleared wholesale by OnGpuSubmissionOpened.
+    uint64_t invalidated_in_submission;
   };
   // Flags for each 64 system pages, interleaved as blocks, so bit scan can be
   // used to quickly extract ranges.

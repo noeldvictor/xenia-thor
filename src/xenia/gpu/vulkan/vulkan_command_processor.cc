@@ -10624,6 +10624,14 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
   if (!submission_open_) {
     submission_open_ = true;
 
+    // Reset per-submission page-invalidation tracking (XenDroid 904374971,
+    // tracking half). Nothing is recorded in this submission yet, so no command
+    // can have read any page - every page is eligible again for having its
+    // upload hoisted to the submission head instead of breaking a render pass.
+    if (shared_memory_) {
+      shared_memory_->OnGpuSubmissionOpened();
+    }
+
     // Start a new deferred command buffer - will submit it to the real one in
     // the end of the submission (when async pipeline object creation requests
     // are fulfilled).

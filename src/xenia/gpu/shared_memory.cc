@@ -485,12 +485,55 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
     SystemPageFlagsBlock& block = system_page_flags_[i];
     block.valid &= ~invalidate_bits;
     block.valid_and_gpu_written &= ~invalidate_bits;
+    // Remember, for this submission only, that these pages lost validity - an
+    // upload covering them can no longer be safely hoisted to the submission
+    // head, because a command already recorded in this submission may have
+    // legitimately read the old contents.
+    block.invalidated_in_submission |= invalidate_bits;
   }
 
   FireWatches(page_first, page_last, false);
 
   return std::make_pair(page_first << page_size_log2_,
                         (page_last - page_first + 1) << page_size_log2_);
+}
+
+void SharedMemory::OnGpuSubmissionOpened() {
+  // A fresh submission has recorded nothing yet, so no page can have been read
+  // by one of its commands - every page starts eligible for hoisting again.
+  auto global_lock = global_critical_region_.Acquire();
+  for (SystemPageFlagsBlock& block : system_page_flags_) {
+    block.invalidated_in_submission = 0;
+  }
+}
+
+bool SharedMemory::AnyPageInvalidatedSinceSubmissionOpen(
+    const std::pair<uint32_t, uint32_t>* page_ranges, uint32_t count) const {
+  // Conservative by construction: any overlap with an invalidated page in the
+  // current submission disqualifies the whole upload. Being wrong in the other
+  // direction would mean reordering an upload past a command that read the old
+  // data, which is silent corruption rather than a crash.
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t page_first = page_ranges[i].first;
+    const uint32_t page_last = page_ranges[i].second;
+    for (uint32_t block_index = page_first >> 6, block_last = page_last >> 6;
+         block_index <= block_last; ++block_index) {
+      if (block_index >= system_page_flags_.size()) {
+        break;
+      }
+      uint64_t mask = UINT64_MAX;
+      if (block_index == (page_first >> 6)) {
+        mask &= ~((uint64_t(1) << (page_first & 63)) - 1);
+      }
+      if (block_index == block_last && (page_last & 63) != 63) {
+        mask &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
+      }
+      if (system_page_flags_[block_index].invalidated_in_submission & mask) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void SharedMemory::PrepareForTraceDownload() {
