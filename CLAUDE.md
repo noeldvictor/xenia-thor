@@ -563,6 +563,56 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   compare+select chain collapses to one `BSL` (15 insns → 1 in their SPU FCGT case); and **re-rolling fully-unrolled
   codegen back into a loop is ~2% on BOTH arches** via code-cache pressure — directly relevant to our AOT precompile.
 
+## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
+Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
+ourselves**. The principles are what transfer; their specific patches mostly do not (see the parity track below).
+
+**1. THE HARDWARE MODEL (Snapdragon 8 Gen 2 / Cortex-X3 + A715 + A710 + A510).**
+- **Mid-cores have 3× 128-bit LOAD ports but only 2× arithmetic ports.** The ideal mix is ~0.67 arithmetic
+  instructions per load. **Loads are the abundant resource; arithmetic is the scarce one.** Whatcookie reached that
+  ratio in RPCS3's comparison loop for **+38% mid-core / +21% big-core**. Corollary that bit us: **materialising a
+  constant by loading it can beat computing it** — the opposite of classic advice.
+- **NO SVE/SVE2** (Qualcomm shipped ARMv9 without it). Every SVE idea is N/A. We DO have
+  `asimddp i8mm bf16 fphp asimdhp atomics lrcpc ilrcpc sha3`.
+- **`yield` is architecturally a hint and retires as a NOP on all 8 cores.** It is NOT x86 `pause`. `ISB` is the
+  nearest real backoff — but see the measured caveat below before reaching for it.
+
+**2. INSTRUCTION COUNT IS NOT THE OBJECTIVE — WE PROVED THIS ON OUR OWN CODE (2026-08-05).** Packing two u32 fields
+with `ORR` and writing a stackpoint entry as one `STP` cut 18 emitted instructions to 13 and **measured SLOWER**: it
+serialised two loads through an arithmetic op into a single gated store, where three *independent* stores are
+absorbed by the store buffer. Fewer instructions, longer dependency chain, more arithmetic pressure on the scarce
+port = a loss. **Optimise the dependency graph and the port mix, not the line count.**
+
+**3. WHERE OUR TIME ACTUALLY GOES — PROFILE, DO NOT GUESS.** `--ei arm64_speed_profile_interval_ms 5000` is the tool;
+it reports hot GUEST functions and total `entry_delta`. Burnout: **~24.4M guest function entries/sec, 85% of them
+into ONE function.** ⇒ **per-CALL overhead dominates, not any individual opcode.** This is why the prolog win below
+exists and why opcode-level micro-optimisation kept disappointing.
+
+**4. 🔥 THE BIGGEST CPU LEVER IS THE GUEST'S OWN BUSY-WAIT (the talk's #1 finding, confirmed here).** RPCS3 found
+half of all CPU time in a four-line `busy_wait`. **We have the same shape: Burnout's main thread calls a D3D9
+GPU-completion predicate `sub_8238CD28` ~21M times/sec** (identified 2026-08-06 via
+`--es disassemble_function_filter 8238CD28`). It reads a device flag at dev+0x28C1, takes a timestamp from
+`r13`(PCR)+0x100 → +0x58, compares elapsed against 0x7D0 (2000) and returns 1 = "keep waiting"; past the timeout it
+logs and hits `tw` (trap).
+- **This is the SAME XDK helper as Blue Dragon's `0x8246B408`**, which we ALREADY replace with a hand-emitted native
+  fastpath (`EmitBlueDragonDrawWaitFastpathBody`, `arm64_blue_dragon_draw_wait_fastpath`, default ON). Only the
+  build-specific constants differ: BD flag dev+0x2A39/bit1/timeout 5000, Burnout flag dev+0x28C1/bit2/timeout 2000.
+  The PCR+0x100→+0x58 time source and the 1/0 return contract are IDENTICAL.
+- ⇒ **The fastpath is a title-PARAMETERISED mechanism currently wearing a hardcoded address** (`current_guest_function_
+  != 0x8246B408`). Generalising it to a per-title table {wait fn addr, flag offset, flag bit, timeout} is the highest-
+  value CPU work available, and it is mostly refactoring code that is already proven on-device.
+- **Do NOT confuse this with `KfAcquireSpinLock`** — that one is MEASURED completely uncontended (see below) and is
+  a dead end. The hot spin is in GUEST code, not our kernel HLE.
+
+**5. MEASUREMENT PROTOCOL (non-negotiable — two separate traps burned device time here).**
+- **Run-to-run drift on this device is ~2.8%, LARGER than a typical codegen effect.** Comparing two BUILDS cannot
+  resolve 1-2%; it once showed a clean "regression" that a control arm exposed as pure drift. **A/B WITHIN one
+  session behind a cvar**, both arms from equal thermal starts, and keep an arm whose code is identical in both
+  builds as a drift control.
+- **fps is the WRONG metric for CPU work** — Burnout is frame-capped at 60, which hides all CPU headroom (this is
+  what made the `a64_spin_hint_isb` A/B useless). Run **uncapped** (`--ei gpu_frame_limit_fps 0`) and read the
+  profiler's `entry_delta` (guest entries/5s) = a direct CPU-throughput measure.
+
 ## ✅✅ MEASURED ARM64 WIN (2026-08-05): the GUEST PROLOG is the hot path — `a64_stackpoint_prolog_fastpath` = +2.04%
 **The a64 profiler (`--ei arm64_speed_profile_interval_ms 5000`) is the tool that found this; use it before guessing
 a CPU lever.** Burnout on Turnip: **~24.4M guest function entries/sec, 85% of them into ONE function**
