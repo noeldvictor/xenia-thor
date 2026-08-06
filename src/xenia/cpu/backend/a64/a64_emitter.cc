@@ -2578,6 +2578,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   current_block_guest_address_ = 0;
   source_map_arena_.Reset();
   tail_code_.clear();
+  v128_const_pool_.clear();
   fpcr_mode_ = FPCRMode::Unknown;
 
   // Try to emit.
@@ -2592,6 +2593,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
     // invariant. Silent branch miscompiles in release.
     reset();
     tail_code_.clear();
+  v128_const_pool_.clear();
     current_a64_function_ = nullptr;
     epilog_label_ = nullptr;
     for (auto* cached_label : label_cache_) {
@@ -4110,6 +4112,27 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   }
   code_offsets.tail = getSize();
 
+  // ========================================================================
+  // 128-BIT CONSTANT POOL
+  // ========================================================================
+  // Emitted after the tail so LDR literals reach it within the +/-1MB literal
+  // range. The data is part of the function's code allocation and is copied
+  // with it, so the PC-relative distance survives code-cache relocation.
+  if (!v128_const_pool_.empty()) {
+    // LDR Qt,literal wants the payload 16-byte aligned. Pad with NOPs - this
+    // is data and never executed, but NOP keeps a stray fallthrough harmless.
+    while ((getSize() % 16) != 0) {
+      nop();
+    }
+    for (auto& entry : v128_const_pool_) {
+      L(*entry.second);
+      dd(static_cast<uint32_t>(entry.first.low & 0xFFFFFFFFull));
+      dd(static_cast<uint32_t>(entry.first.low >> 32));
+      dd(static_cast<uint32_t>(entry.first.high & 0xFFFFFFFFull));
+      dd(static_cast<uint32_t>(entry.first.high >> 32));
+    }
+  }
+
   // Fill in EmitFunctionInfo metrics.
   assert_zero(code_offsets.prolog);
   func_info.code_size.total = getSize();
@@ -4146,6 +4169,7 @@ void* A64Emitter::Emplace(const EmitFunctionInfo& func_info,
   // the codegen state for the next function.
   reset();
   tail_code_.clear();
+  v128_const_pool_.clear();
   current_a64_function_ = nullptr;
 
   // Clean up cached labels.
@@ -6339,6 +6363,19 @@ Label& A64Emitter::AddToTail(TailEmitCallback callback, uint32_t alignment) {
   tail.func = std::move(callback);
   tail_code_.push_back(std::move(tail));
   return tail_code_.back().label;
+}
+
+Label& A64Emitter::GetV128ConstLabel(const vec128_t& value) {
+  // Dedup within the function: the same constant is reloaded many times
+  // (masks, splats, permute tables), and one literal serves all of them.
+  for (auto& entry : v128_const_pool_) {
+    if (entry.first.low == value.low && entry.first.high == value.high) {
+      return *entry.second;
+    }
+  }
+  Label& label = NewCachedLabel();
+  v128_const_pool_.emplace_back(value, &label);
+  return label;
 }
 
 Label& A64Emitter::NewCachedLabel() {

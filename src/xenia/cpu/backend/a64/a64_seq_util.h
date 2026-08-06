@@ -34,6 +34,7 @@ constexpr uint32_t DCZID_EL0 = ARM64_SYSREG(0b11, 0b011, 0b0000, 0b0000, 0b111);
 #endif
 
 // R3 (flat membase): see a64_seq_memory.cc for the definition / rationale.
+DECLARE_bool(a64_v128_const_pool);
 DECLARE_bool(a64_vmx_fp_no_operand_copy);
 DECLARE_bool(arm64_use_flat_membase);
 
@@ -244,7 +245,18 @@ inline void LoadV128Const(A64Emitter& e, int vreg_idx, const vec128_t& val,
     return;
   }
 
-  // Fallback
+  // Fallback: an arbitrary 128-bit constant.
+  //
+  // The MOV/FMOV/MOV/INS chain below is up to TEN instructions - each MOV is a
+  // MOVZ plus up to three MOVK, all on the ARITHMETIC ports and each dependent
+  // on the last - because x86 can encode a 64-bit immediate inline and ARM64
+  // cannot. ARM64's answer is a PC-relative literal: ONE LDR on the LOAD ports,
+  // which are the abundant resource here (three 128-bit load ports against two
+  // arithmetic on the A715/A710 mid-cores). It also leaves the GPR scratch free.
+  if (cvars::a64_v128_const_pool) {
+    e.ldr(QReg(vreg_idx), e.GetV128ConstLabel(val));
+    return;
+  }
   e.mov(XReg(gpr_scratch_idx), val.low);
   e.fmov(DReg(vreg_idx), XReg(gpr_scratch_idx));
   e.mov(XReg(gpr_scratch_idx), val.high);

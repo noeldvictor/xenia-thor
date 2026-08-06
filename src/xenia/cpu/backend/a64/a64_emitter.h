@@ -230,6 +230,18 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
                                   uint32_t alignment = 0);
   Xbyak_aarch64::Label& NewCachedLabel();
 
+  // 128-bit constant pool. ARM64 has no way to encode a 128-bit immediate, so
+  // the fallback is MOVZ + up to three MOVK per half, then FMOV/INS into the
+  // vector register - up to 10 instructions, 8 of them on the ARITHMETIC ports
+  // and serially dependent. A PC-relative LDR Qd,literal is ONE instruction on
+  // the LOAD ports, which are the abundant resource on this SoC (three 128-bit
+  // load ports against two arithmetic on the A715/A710 mid-cores).
+  //
+  // Returns a label for `value`, deduplicating identical constants within the
+  // function. The pool is emitted after the tail code and is copied with the
+  // function, so the PC-relative distance survives the code-cache relocation.
+  Xbyak_aarch64::Label& GetV128ConstLabel(const vec128_t& value);
+
   // Get or create a xbyak_aarch64 label for a HIR label ID.
   Xbyak_aarch64::Label& GetLabel(uint32_t label_id);
 
@@ -287,6 +299,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
 
   std::vector<TailEmitter> tail_code_;
   std::vector<Xbyak_aarch64::Label*> label_cache_;
+  std::vector<std::pair<vec128_t, Xbyak_aarch64::Label*>> v128_const_pool_;
 
   // Map from HIR label IDs to xbyak_aarch64 Labels.
   std::unordered_map<uint32_t, Xbyak_aarch64::Label*> label_map_;

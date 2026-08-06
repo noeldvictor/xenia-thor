@@ -848,6 +848,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_count_eor3_candidates");
             copyBooleanExtra(intent, launchArguments, "log_import_thunks");
             copyBooleanExtra(intent, launchArguments, "ppc_rlwinm_path_census");
+            copyBooleanExtra(intent, launchArguments, "a64_v128_const_pool");
             copyBooleanExtra(intent, launchArguments, "xam_input_trace");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_file_io_trace_budget");

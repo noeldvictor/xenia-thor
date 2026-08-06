@@ -106,6 +106,22 @@ DEFINE_uint32(
     "CPU");
 
 DEFINE_bool(
+    a64_v128_const_pool, false,
+    "Materialise arbitrary 128-bit constants with a PC-relative LDR from a "
+    "per-function literal pool instead of a MOVZ/MOVK chain into a GPR followed "
+    "by FMOV/INS.\n"
+    "x86 encodes a 64-bit immediate inline, so the x64 backend never had to "
+    "think about this; ARM64 cannot, and the fallback costs up to TEN "
+    "instructions - eight of them on the ARITHMETIC ports and serially "
+    "dependent. A literal load is ONE instruction on the LOAD ports, which are "
+    "the abundant resource on this SoC, and it leaves the GPR scratch free.\n"
+    "Constants are deduplicated per function and the pool is emitted after the "
+    "tail code, so PC-relative distances survive code-cache relocation. Default "
+    "OFF pending a qemu-a64 differential: a wrong constant is silent data "
+    "corruption, not a crash.",
+    "a64");
+
+DEFINE_bool(
     a64_vmx_fp_no_operand_copy, false,
     "Let VMX float sequences read their operands from the ALLOCATED registers "
     "instead of first copying both into the v0/v1 scratch pair.\n"
