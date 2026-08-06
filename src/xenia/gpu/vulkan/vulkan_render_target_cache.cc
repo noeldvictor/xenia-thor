@@ -652,6 +652,25 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       vulkan_device->properties().rasterizationOrderColorAttachmentAccess;
   XELOGI("VulkanRenderTargetCache: edram_roaa={}", edram_roaa_);
 
+  // In-pass resolve capability (XenDroid port, step 1 of the series).
+  //
+  // On a TBDR, xenia's EDRAM resolve is structurally expensive for a reason
+  // that has nothing to do with the copy itself: it ENDS the render pass, does
+  // the copy, and begins a new one - and every pass begin on Turnip is a GMEM
+  // tile store plus reload. VK_KHR_dynamic_rendering_local_read lets a shader
+  // read the CURRENT colour attachment on-tile, so the resolve can happen
+  // INSIDE the pass and the pass never breaks.
+  //
+  // This step only detects and reports the capability; nothing consumes it yet.
+  // Logged unconditionally so a device run confirms availability before any of
+  // the resolve path is built on top of it.
+  inpass_resolve_supported_ =
+      vulkan_device->extensions().ext_1_4_KHR_dynamic_rendering_local_read;
+  XELOGI(
+      "VulkanRenderTargetCache: dynamic_rendering_local_read={} (in-pass "
+      "resolve capability; consumer not yet implemented)",
+      inpass_resolve_supported_);
+
   // THE EDRAM SOLVE, hybrid form (gpu_vulkan_hybrid_postprocess): keep the host-RT
   // path for the overdraw-heavy main scene (GMEM ROP) and reroute only the
   // 1x-coverage post-process composites through the EDRAM buffer/SSBO path. Only

@@ -167,6 +167,10 @@ class VulkanDevice {
     // VK_EXT_rasterization_order_attachment_access (#464, track #6 EDRAM ROAA -
     // the FSI alternative on Turnip for the EDRAM-in-GMEM render path).
     bool rasterizationOrderColorAttachmentAccess = false;
+    // VK_KHR_dynamic_rendering_local_read: shaders may read the CURRENT colour
+    // attachments, which is what allows an on-tile in-pass EDRAM resolve
+    // instead of ending the render pass to copy.
+    bool dynamicRenderingLocalRead = false;
     bool rasterizationOrderDepthAttachmentAccess = false;
     // VK_EXT_multisampled_render_to_single_sampled (BD direct-native: on-tile
     // MSAA->1x resolve for the field producer, avoids off-chip MSAA spill).
@@ -232,6 +236,13 @@ class VulkanDevice {
     // EDRAM-in-GMEM render path that eliminates EDRAM ownership-transfer copies
     // (measured ~9ms / ~22% of the BTTF GPU frame).
     bool ext_EXT_rasterization_order_attachment_access = false;
+    // #233 (XenDroid port): VK_KHR_dynamic_rendering_local_read - read the
+    // CURRENT colour attachments inside the render pass. This is what lets an
+    // EDRAM resolve run on-tile instead of ending the pass, copying, and
+    // beginning a new one. On a TBDR every pass break is a GMEM store+reload,
+    // so this attacks the largest structural cost in our frames. Promoted to
+    // core in Vulkan 1.4; present on Turnip.
+    bool ext_1_4_KHR_dynamic_rendering_local_read = false;
     // BD direct-native: on-tile MSAA->1x resolve for the field producer.
     bool ext_EXT_multisampled_render_to_single_sampled = false;
     // VK_EXT_custom_resolve (#628, Turnip-only): on-tile MSAA-resolve +

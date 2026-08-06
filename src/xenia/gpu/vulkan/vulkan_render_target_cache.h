@@ -664,6 +664,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // attachment-access feature are all present; only gates the few differing
   // sites (transfer / render-pass / pipeline / pixel shader). Default off.
   bool edram_roaa_ = false;
+  // VK_KHR_dynamic_rendering_local_read is available: an EDRAM resolve can
+  // read the current attachment on-tile instead of breaking the render pass.
+  // Detected in the ctor; the in-pass resolve path is built on this.
+  bool inpass_resolve_supported_ = false;
   // THE EDRAM SOLVE (gpu_vulkan_edram_atomic): the interlock BUFFER path is forced
   // on Turnip with the FSI-ordered depth+color RMW replaced by order-independent
   // atomics (atomicMin packed depth+id). Set at Initialize; drives the no-FSI atomic

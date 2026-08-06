@@ -197,6 +197,16 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       // fragment_shader_interlock). Detected here; consumed by the EDRAM ROAA
       // render-target path (gpu_vulkan_edram_roaa).
       XE_UI_VULKAN_STRUCT_EXTENSION(EXT_rasterization_order_attachment_access)
+      // #233 (XenDroid port, 2026-08-06): in-pass reads of the CURRENT colour
+      // attachments, i.e. tiler-native resolves. On a TBDR like the Adreno 740
+      // every render-pass begin costs a GMEM store+reload, so xenia's EDRAM
+      // resolves - which end the pass, copy, and start another - are the single
+      // biggest structural cost in a frame. local_read lets the resolve happen
+      // INSIDE the pass, reading the attachment on-tile, so the pass never
+      // breaks. Turnip exposes it (feature audit 2026-08-03). Detected here;
+      // consumed by the in-pass resolve path.
+      XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION(KHR_dynamic_rendering_local_read,
+                                             1, 4)
       // BD direct-native (2026-07-11): on-tile MSAA->1x resolve for the field
       // producer (renders 4x internally, resolves in tile memory to the 1x native
       // image) - avoids the off-chip MSAA materialization that made per-surface
@@ -359,6 +369,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT,
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_EXT>
       features_EXT_rasterization_order_attachment_access;
+  VulkanFeatures<
+      VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR,
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR>
+      features_1_4_KHR_dynamic_rendering_local_read;
   // BD direct-native: on-tile MSAA->1x resolve for the field producer.
   VulkanFeatures<
       VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT,
@@ -438,6 +452,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (ext_EXT_fragment_shader_interlock) {
       features_EXT_fragment_shader_interlock.Link(supported_features_2,
                                                   device_create_info);
+    }
+    if (device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read) {
+      features_1_4_KHR_dynamic_rendering_local_read.Link(supported_features_2,
+                                                        device_create_info);
     }
     if (device->extensions_.ext_EXT_rasterization_order_attachment_access) {
       features_EXT_rasterization_order_attachment_access.Link(
@@ -900,6 +918,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       XE_UI_VULKAN_FEATURE_2(features_EXT_fragment_shader_interlock,
                              fragmentShaderPixelInterlock)
     }
+  }
+
+  if (device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read &&
+      with_gpu_emulation) {
+    XE_UI_VULKAN_FEATURE_2(features_1_4_KHR_dynamic_rendering_local_read,
+                           dynamicRenderingLocalRead)
   }
 
   if (device->extensions_.ext_EXT_rasterization_order_attachment_access) {
