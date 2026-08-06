@@ -33,6 +33,17 @@
 #include "third_party/pe/pe_image.h"
 
 DEFINE_bool(
+    log_import_thunks, false,
+    "Log every resolved XEX import thunk as 'address -> name' at module load. "
+    "Kernel import thunks dispatch straight to an HLE ExternHandler, so they "
+    "never reach the PPC translator - which means disassemble_function_filter "
+    "produces NOTHING for them and the a64 profiler does not surface them "
+    "either. This is the way to identify what a 'bl <addr>' in guest code is "
+    "actually calling when that address turns out not to be guest code. Used "
+    "2026-08-06 to bind the helper Burnout's GPU-wait predicate calls.",
+    "CPU");
+
+DEFINE_bool(
     guest_cpp_exception_dispatch, false,
     "Experimental (Project Sylpheed): on a guest C++ throw (RtlRaiseException "
     "0xE06D7363) unwind the guest stack to the registered catch handler and "
@@ -1727,6 +1738,11 @@ bool XexModule::SetupLibraryImports(const std::string_view name,
       DeclareFunction(record_addr, &function);
       function->set_end_address(record_addr + 16 - 4);
       function->set_name(import_name.to_string_view());
+
+      if (cvars::log_import_thunks) {
+        XELOGI("Import thunk {:08X} -> {}", record_addr,
+               import_name.to_string_view());
+      }
 
       if (user_export_addr) {
         // Rewrite PPC code to set r11 to the target address

@@ -3072,14 +3072,17 @@ struct SHL_I8 : Sequence<SHL_I8, I<OPCODE_SHL, I8Op, I8Op, I8Op>> {
         e.lsl(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lslv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFF));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
+        e.lsl(i.dest, e.w0, i.src2);
+      } else {
+        e.lsl(i.dest, i.src1, i.src2);
       }
-      e.lsl(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3093,14 +3096,17 @@ struct SHL_I16 : Sequence<SHL_I16, I<OPCODE_SHL, I16Op, I16Op, I8Op>> {
         e.lsl(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lslv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
+        e.lsl(i.dest, e.w0, i.src2);
+      } else {
+        e.lsl(i.dest, i.src1, i.src2);
       }
-      e.lsl(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3114,15 +3120,17 @@ struct SHL_I32 : Sequence<SHL_I32, I<OPCODE_SHL, I32Op, I32Op, I8Op>> {
         e.lsl(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lslv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest,
-              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        e.lsl(i.dest, e.w0, i.src2);
+      } else {
+        e.lsl(i.dest, i.src1, i.src2);
       }
-      e.lsl(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3136,14 +3144,20 @@ struct SHL_I64 : Sequence<SHL_I64, I<OPCODE_SHL, I64Op, I64Op, I8Op>> {
         e.lsl(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x3F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.x0, XReg(i.src2.reg().getIdx()));
+      // ARM64 lslv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
+      // src2 is an I8 held in a W register, so its upper 32 bits are zero and
+      // the X view is a safe shift count (LSLV masks mod 64 either way).
+      const XReg shift_amount = XReg(i.src2.reg().getIdx());
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
+        e.lsl(i.dest, e.x0, shift_amount);
+      } else {
+        e.lsl(i.dest, i.src1, shift_amount);
       }
-      e.lsl(i.dest, i.dest, e.x0);
     }
   }
 };
@@ -3195,14 +3209,17 @@ struct SHR_I8 : Sequence<SHR_I8, I<OPCODE_SHR, I8Op, I8Op, I8Op>> {
         e.lsr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lsrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFF));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
+        e.lsr(i.dest, e.w0, i.src2);
+      } else {
+        e.lsr(i.dest, i.src1, i.src2);
       }
-      e.lsr(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3217,14 +3234,17 @@ struct SHR_I16 : Sequence<SHR_I16, I<OPCODE_SHR, I16Op, I16Op, I8Op>> {
         e.lsr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lsrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
+        e.lsr(i.dest, e.w0, i.src2);
+      } else {
+        e.lsr(i.dest, i.src1, i.src2);
       }
-      e.lsr(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3239,15 +3259,17 @@ struct SHR_I32 : Sequence<SHR_I32, I<OPCODE_SHR, I32Op, I32Op, I8Op>> {
         e.lsr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 lsrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest,
-              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        e.lsr(i.dest, e.w0, i.src2);
+      } else {
+        e.lsr(i.dest, i.src1, i.src2);
       }
-      e.lsr(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3261,14 +3283,20 @@ struct SHR_I64 : Sequence<SHR_I64, I<OPCODE_SHR, I64Op, I64Op, I8Op>> {
         e.lsr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x3F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.x0, XReg(i.src2.reg().getIdx()));
+      // ARM64 lsrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
+      // src2 is an I8 held in a W register, so its upper 32 bits are zero and
+      // the X view is a safe shift count (LSLV masks mod 64 either way).
+      const XReg shift_amount = XReg(i.src2.reg().getIdx());
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
+        e.lsr(i.dest, e.x0, shift_amount);
+      } else {
+        e.lsr(i.dest, i.src1, shift_amount);
       }
-      e.lsr(i.dest, i.dest, e.x0);
     }
   }
 };
@@ -3350,15 +3378,17 @@ struct SHA_I32 : Sequence<SHA_I32, I<OPCODE_SHA, I32Op, I32Op, I8Op>> {
         e.asr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x1F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ARM64 asrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
       if (i.src1.is_constant) {
-        e.mov(i.dest,
-              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        e.asr(i.dest, e.w0, i.src2);
+      } else {
+        e.asr(i.dest, i.src1, i.src2);
       }
-      e.asr(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3372,14 +3402,20 @@ struct SHA_I64 : Sequence<SHA_I64, I<OPCODE_SHA, I64Op, I64Op, I8Op>> {
         e.asr(i.dest, i.src1, static_cast<uint32_t>(i.src2.constant() & 0x3F));
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.x0, XReg(i.src2.reg().getIdx()));
+      // ARM64 asrv is three-operand and non-destructive: BOTH sources are read
+      // before dest is written, so the aliasing hazard the old comment worried
+      // about cannot occur and neither operand needs staging. The previous
+      // sequence staged both because x86 shifts are destructive and take their
+      // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
+      // src2 is an I8 held in a W register, so its upper 32 bits are zero and
+      // the X view is a safe shift count (LSLV masks mod 64 either way).
+      const XReg shift_amount = XReg(i.src2.reg().getIdx());
       if (i.src1.is_constant) {
-        e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
+        e.asr(i.dest, e.x0, shift_amount);
+      } else {
+        e.asr(i.dest, i.src1, shift_amount);
       }
-      e.asr(i.dest, i.dest, e.x0);
     }
   }
 };
@@ -3461,17 +3497,17 @@ struct ROTATE_LEFT_I32
         }
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.w0, i.src2);
+      // ROL(x, n) = ROR(x, -n) since ROR uses amount mod 32. The negation does
+      // genuinely need a scratch, but RORV is three-operand so src1 never needs
+      // staging into dest the way a destructive x86 rotate would require.
+      e.neg(e.w0, i.src2);
       if (i.src1.is_constant) {
         e.mov(i.dest,
               static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.ror(i.dest, i.dest, e.w0);
+      } else {
+        e.ror(i.dest, i.src1, e.w0);
       }
-      // ROL(x, n) = ROR(x, -n) since ROR uses amount mod 32
-      e.neg(e.w0, e.w0);
-      e.ror(i.dest, i.dest, e.w0);
     }
   }
 };
@@ -3495,16 +3531,16 @@ struct ROTATE_LEFT_I64
         }
       }
     } else {
-      // Read shift amount first — dest may alias src2.
-      e.mov(e.x0, XReg(i.src2.reg().getIdx()));
+      // ROL(x, n) = ROR(x, -n) since ROR uses amount mod 64. The negation does
+      // genuinely need a scratch, but RORV is three-operand so src1 never needs
+      // staging into dest the way a destructive x86 rotate would require.
+      e.neg(e.x0, XReg(i.src2.reg().getIdx()));
       if (i.src1.is_constant) {
         e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
-      } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
-        e.mov(i.dest, i.src1);
+        e.ror(i.dest, i.dest, e.x0);
+      } else {
+        e.ror(i.dest, i.src1, e.x0);
       }
-      // ROL(x, n) = ROR(x, -n) since ROR uses amount mod 64
-      e.neg(e.x0, e.x0);
-      e.ror(i.dest, i.dest, e.x0);
     }
   }
 };
