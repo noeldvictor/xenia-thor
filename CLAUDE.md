@@ -651,7 +651,31 @@ used at all 8 `mov`+`cmp` sites (kernel lock fastpaths, wait fastpath, stackpoin
 it is safe under LO/GE and not just EQ/NE — `CMP rn,#K` is `rn+~K+1` and `CMN rn,#M` is `rn+M`, the same addition
 when `M == -K`.
 
-**6. MEASUREMENT PROTOCOL (non-negotiable — two separate traps burned device time here).**
+**6. ⛔⛔⛔ BENCHMARK GAMEPLAY, NOT ATTRACT MODE / DEMOS / MENUS / FMV (user, 2026-08-06 — I got this wrong all day).**
+**Burnout's attract mode is a SCRIPTED DEMO REPLAY, not gameplay, and it is NOT a valid CPU benchmark.** Every number
+taken on 2026-08-06 came from it. What attract does NOT exercise: player input processing, the full vehicle AI and
+physics load, HUD/UI code, the audio mix under load, and the thread contention that only appears when all of that runs
+at once. It is also frame-capped, which hides CPU headroom outright. A scene that runs a *subset* of the engine
+measures a *subset* of the code you changed.
+- **The tiers, worst to best:** FMV/video playback (measures XMA decode + a blit, essentially nothing under test) →
+  title screen → menus → **attract/demo replay** → **actual gameplay** ← the only one that counts.
+- **⚠️ I diagnosed this and then ignored it.** The `a64_spin_hint_isb` ledger entry says the busy-wait is "a GAMEPLAY
+  behaviour" and that the frame-capped title screen was why that A/B was CONFOUNDED — and then every later A/B this
+  session used attract anyway. Writing the caveat down is not the same as obeying it.
+- **What this does and does not invalidate.** Changes that are UBIQUITOUS in guest code (the `rlwinm` fastpaths, the
+  stackpoint prolog, shifts, constant materialisation) are probably still directionally right, because they fire in
+  any code; expect the magnitude to be LARGER in gameplay, which is more CPU-bound. Changes that are SCENE-DEPENDENT
+  are not measured at all by attract — **the "13-lever group is FLAT" verdict is really "flat in attract"**, and
+  `ppc_vand_self_fastpath` / `ppc_vsplt_swizzle_fastpath` / `ppc_cr_logical_self_fastpath` target idioms an attract
+  replay barely runs. Re-test those in a race before believing FLAT.
+- **How to reach real gameplay repeatably:** drive the menus with `--es hid nop --es hid_nop_button_sequence '<seq>'`
+  into a started race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`** exists for
+  exactly this — a captured, replayable route is the prerequisite for a trustworthy CPU A/B, not an optional extra.
+- **Sanity check that you are actually in gameplay:** GPU temp climbing hard, uncapped fps well below the cap, and
+  guest `entry_delta` materially higher than the attract baseline (~122-128M/5s on Burnout attract). If your numbers
+  look like attract, you are in attract.
+
+**7. MEASUREMENT PROTOCOL (non-negotiable — two separate traps burned device time here).**
 - **Run-to-run drift on this device is ~2.8%, LARGER than a typical codegen effect.** Comparing two BUILDS cannot
   resolve 1-2%; it once showed a clean "regression" that a control arm exposed as pure drift. **A/B WITHIN one
   session behind a cvar**, both arms from equal thermal starts, and keep an arm whose code is identical in both
