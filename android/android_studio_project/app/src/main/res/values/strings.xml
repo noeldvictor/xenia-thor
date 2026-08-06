@@ -74,6 +74,16 @@
     <string name="emulator_menu_controller_mapping">Controller map</string>
     <string name="emulator_menu_settings">Settings</string>
     <string name="emulator_menu_exit_game">Exit game</string>
+    <string name="emulator_menu_save_state">Save state</string>
+    <string name="emulator_menu_load_state">Load state</string>
+    <string name="emulator_menu_section_state">SAVE STATES</string>
+    <string name="emulator_menu_section_game">GAME</string>
+    <string name="emulator_menu_hint_speed">Back + RB toggles 2x fast-forward</string>
+    <string name="emulator_menu_state_saved">State saved</string>
+    <string name="emulator_menu_state_loaded">State loaded</string>
+    <string name="emulator_menu_state_failed">Save state failed</string>
+    <string name="emulator_menu_state_none">No save state yet</string>
+    <string name="emulator_menu_state_loaded_hint">Saved %1$s</string>
     <string name="emulator_menu_show_fps">Show FPS</string>
     <string name="emulator_fps_initial">FPS --</string>
     <string name="emulator_menu_help_title">Controller Help</string>

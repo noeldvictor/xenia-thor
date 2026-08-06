@@ -62,6 +62,16 @@ static constexpr std::string_view kDefaultUpdateSymbolicLink = "UPDATE:";
 
 // The main type that runs the whole emulator.
 // This is responsible for initializing and managing all the various subsystems.
+// Process-wide accessor for the running Emulator.
+//
+// Needed because the Android JNI layer has no path to EmulatorApp's
+// unique_ptr, and on-demand save/load states must be reachable from the UI
+// thread. Set once when the emulator is constructed and cleared on teardown;
+// null whenever no emulator exists, so every caller must null-check.
+class Emulator;
+Emulator* GetGlobalEmulator();
+void SetGlobalEmulator(Emulator* emulator);
+
 class Emulator {
  public:
   // This is the class for the top-level callbacks. They may be called in an

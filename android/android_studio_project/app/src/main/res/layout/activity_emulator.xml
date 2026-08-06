@@ -156,15 +156,69 @@
                 android:id="@+id/emulator_menu_resume"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:layout_marginTop="26dp"
+                android:layout_marginTop="22dp"
                 android:text="@string/emulator_menu_resume"
                 android:textAllCaps="false" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:text="@string/emulator_menu_section_state"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/emulator_menu_save_state"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="5dp"
+                    android:text="@string/emulator_menu_save_state"
+                    android:textAllCaps="false" />
+
+                <Button
+                    android:id="@+id/emulator_menu_load_state"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="5dp"
+                    android:text="@string/emulator_menu_load_state"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/emulator_menu_state_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:letterSpacing="0"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:text="@string/emulator_menu_section_game"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/emulator_menu_controller_mapping"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/emulator_menu_controller_mapping"
                 android:textAllCaps="false" />
 
@@ -183,6 +237,15 @@
                 android:layout_marginTop="10dp"
                 android:text="@string/emulator_menu_exit_game"
                 android:textAllCaps="false" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:letterSpacing="0"
+                android:text="@string/emulator_menu_hint_speed"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="12sp" />
 
             <CheckBox
                 android:id="@+id/emulator_menu_show_fps"

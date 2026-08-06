@@ -117,6 +117,10 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static native double nativeGetGuestTimeScalar();
 
+    private static native boolean nativeSaveState(String path);
+
+    private static native boolean nativeLoadState(String path);
+
     private static native boolean nativeSetConfigVar(String name, String value);
 
     @Override
@@ -927,6 +931,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         showAotOverlay();
         mAotAutoHide.postDelayed(mAotAutoHideRunnable, 4000);
         startAotCompileWatcher();
+        startUiThreadWatchdog();
     }
 
     // The AOT object cache turns a ~60s cold LLVM recompile into a warm load,
@@ -978,6 +983,107 @@ public class EmulatorActivity extends WindowedAppActivity {
     private Process mAotWatcherProc;
     private volatile boolean mAotWatcherStop;
 
+    // Posts to the main thread that BYPASS the Looper sync barrier.
+    //
+    // The watchdog caught the real cause of the missing compile overlay: while
+    // "stalled", the main thread is idle in MessageQueue.nativePollOnce - not
+    // blocked in native code, not holding a lock. ViewRootImpl inserts a Looper
+    // SYNC BARRIER while it waits on a frame/surface, and a sync barrier blocks
+    // normal messages while letting asynchronous ones through. runOnUiThread()
+    // posts normal messages, so every overlay update queued behind the barrier
+    // never ran - which is why the progress bar never appeared even though the
+    // watcher and the markers were both working.
+    //
+    // Handler.createAsync marks its messages asynchronous, so they are
+    // delivered regardless of the barrier. API 28+; below that, fall back to
+    // flagging each Message by hand, which achieves the same thing.
+    private android.os.Handler mAsyncMain;
+
+    private android.os.Handler asyncMain() {
+        if (mAsyncMain == null) {
+            final android.os.Looper looper = android.os.Looper.getMainLooper();
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                mAsyncMain = android.os.Handler.createAsync(looper);
+            } else {
+                mAsyncMain = new android.os.Handler(looper);
+            }
+        }
+        return mAsyncMain;
+    }
+
+    private void postToUi(final Runnable r) {
+        final android.os.Handler h = asyncMain();
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            h.post(r);
+            return;
+        }
+        final android.os.Message m = android.os.Message.obtain(h, r);
+        m.setAsynchronous(true);
+        h.sendMessage(m);
+    }
+
+    // ---- UI-thread watchdog -------------------------------------------------
+    // Android shows "isn't responding" when the main thread does not service
+    // input for ~5s. We keep hitting that during the AOT compile, and static
+    // analysis has not pinned where main actually blocks - OnInitialize starts
+    // the emulator on its own thread and returns, so it should be free.
+    //
+    // This settles it with evidence instead of inspection: a background thread
+    // pings the main looper every second, and if a ping is not serviced within
+    // 2s it logs the MAIN THREAD'S OWN STACK. Whatever native or Java frame is
+    // holding it will be named. Cheap (one post per second) and permanently
+    // useful, so it stays in rather than being a one-off probe.
+    private Thread mUiWatchdogThread;
+    private volatile boolean mUiWatchdogStop;
+    private final java.util.concurrent.atomic.AtomicLong mUiWatchdogPongNs =
+            new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+
+    // Per-title state file, so saving in one game cannot clobber another.
+    private java.io.File getStateFile() {
+        final String titleId = getIntent() != null
+                ? getIntent().getStringExtra(EXTRA_TITLE_ID) : null;
+        final java.io.File dir = new java.io.File(getFilesDir(), "states");
+        dir.mkdirs();
+        return new java.io.File(dir,
+                (titleId != null && !titleId.isEmpty() ? titleId : "default") + ".sav");
+    }
+
+    private void startUiThreadWatchdog() {
+        mUiWatchdogStop = false;
+        final android.os.Handler main =
+                new android.os.Handler(android.os.Looper.getMainLooper());
+        final Thread mainThread = android.os.Looper.getMainLooper().getThread();
+        mUiWatchdogThread = new Thread(() -> {
+            boolean reported = false;
+            while (!mUiWatchdogStop) {
+                main.post(() -> mUiWatchdogPongNs.set(System.nanoTime()));
+                try {
+                    Thread.sleep(1000);
+                } catch (final InterruptedException e) {
+                    return;
+                }
+                final long stalledMs =
+                        (System.nanoTime() - mUiWatchdogPongNs.get()) / 1000000L;
+                if (stalledMs > 2000) {
+                    if (!reported) {
+                        reported = true;
+                        final StringBuilder sb = new StringBuilder();
+                        sb.append("UI thread STALLED ").append(stalledMs)
+                          .append("ms - main thread stack:");
+                        for (final StackTraceElement f : mainThread.getStackTrace()) {
+                            sb.append("\n    at ").append(f);
+                        }
+                        android.util.Log.w("xenia-uiwatchdog", sb.toString());
+                    }
+                } else {
+                    reported = false;
+                }
+            }
+        }, "xenia-ui-watchdog");
+        mUiWatchdogThread.setDaemon(true);
+        mUiWatchdogThread.start();
+    }
+
     // Dismisses the eagerly-shown overlay when the title turns out not to
     // precompile. Cancelled by the first real AOT marker.
     private final android.os.Handler mAotAutoHide =
@@ -1014,7 +1120,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                 while (!mAotWatcherStop && (line = reader.readLine()) != null) {
                     if (line.contains("load-window pre-warm on")) {
                         mAotSawMarker = true;
-                        runOnUiThread(this::showAotOverlay);
+                        postToUi(this::showAotOverlay);
                         continue;
                     }
                     final Matcher m = progress.matcher(line);
@@ -1022,7 +1128,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                         final int doneCount = Integer.parseInt(m.group(1));
                         final int total = Integer.parseInt(m.group(2));
                         mAotSawMarker = true;
-                        runOnUiThread(() -> updateAotOverlay(doneCount, total));
+                        postToUi(() -> updateAotOverlay(doneCount, total));
                         continue;
                     }
                     final Matcher d = done.matcher(line);
@@ -1032,7 +1138,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                         // Do NOT stop watching: titles load multiple XEX
                         // modules and each runs its own precompile pass -
                         // hide now, re-show on the next pre-warm marker.
-                        runOnUiThread(() -> hideAotOverlay(total, ms));
+                        postToUi(() -> hideAotOverlay(total, ms));
                     }
                 }
             } catch (final Exception ignored) {
@@ -1575,6 +1681,49 @@ public class EmulatorActivity extends WindowedAppActivity {
             settingsButton.setOnClickListener(view -> {
                 mRefreshFpsFromPreferencesOnResume = true;
                 startActivity(new Intent(this, SettingsActivity.class));
+            });
+        }
+
+        final TextView stateStatus = findViewById(R.id.emulator_menu_state_status);
+        final Button saveStateButton = findViewById(R.id.emulator_menu_save_state);
+        final Button loadStateButton = findViewById(R.id.emulator_menu_load_state);
+        if (stateStatus != null) {
+            stateStatus.setText(getStateFile().exists()
+                    ? getString(R.string.emulator_menu_state_loaded_hint,
+                            android.text.format.DateFormat.getTimeFormat(this)
+                                    .format(new java.util.Date(getStateFile().lastModified())))
+                    : getString(R.string.emulator_menu_state_none));
+        }
+        if (saveStateButton != null) {
+            saveStateButton.setOnClickListener(v -> {
+                // Synchronous and pauses the guest internally; on this hardware it
+                // is well under a second, and doing it off-thread would race the
+                // pause/resume the native side performs.
+                final boolean ok = nativeSaveState(getStateFile().getAbsolutePath());
+                if (stateStatus != null) {
+                    stateStatus.setText(getString(ok
+                            ? R.string.emulator_menu_state_saved
+                            : R.string.emulator_menu_state_failed));
+                }
+            });
+        }
+        if (loadStateButton != null) {
+            loadStateButton.setOnClickListener(v -> {
+                if (!getStateFile().exists()) {
+                    if (stateStatus != null) {
+                        stateStatus.setText(getString(R.string.emulator_menu_state_none));
+                    }
+                    return;
+                }
+                final boolean ok = nativeLoadState(getStateFile().getAbsolutePath());
+                if (stateStatus != null) {
+                    stateStatus.setText(getString(ok
+                            ? R.string.emulator_menu_state_loaded
+                            : R.string.emulator_menu_state_failed));
+                }
+                if (ok) {
+                    hideInGameMenu();
+                }
             });
         }
 

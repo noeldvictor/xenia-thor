@@ -7,6 +7,8 @@
  ******************************************************************************
  */
 
+#include <atomic>
+
 #include "xenia/emulator.h"
 
 #include <algorithm>
@@ -111,6 +113,23 @@ DEFINE_bool(
     "false, the trainer is only loaded and its import-coverage report is logged "
     "(safe compatibility check without running trainer code).",
     "General");
+
+namespace xe {
+
+namespace {
+// See GetGlobalEmulator in emulator.h. Plain atomic rather than a lock: it is
+// written twice per process (construct/destruct) and read from the UI thread.
+std::atomic<Emulator*> g_global_emulator{nullptr};
+}  // namespace
+
+Emulator* GetGlobalEmulator() {
+  return g_global_emulator.load(std::memory_order_acquire);
+}
+void SetGlobalEmulator(Emulator* emulator) {
+  g_global_emulator.store(emulator, std::memory_order_release);
+}
+
+}  // namespace xe
 
 namespace xe {
 

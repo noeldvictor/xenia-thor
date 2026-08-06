@@ -27,7 +27,10 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
+#include <filesystem>
+
 #include "xenia/base/clock.h"
+#include "xenia/emulator.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/main_android.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
@@ -795,6 +798,60 @@ Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestTimeScalar(
   // correct whether the scalar came from the Back+RB hotkey, a game profile or
   // the config.
   return jdouble(xe::Clock::guest_time_scalar());
+}
+
+// On-demand save states. Emulator::SaveToFile/RestoreFromFile already exist and
+// are used by the launch-time A/B hooks; these expose them to the in-game menu,
+// which is what makes them a usable feature rather than a test fixture.
+//
+// Both are synchronous and pause the guest internally. Emulator::Pause holds the
+// global lock while waiting for each guest thread to acknowledge its suspend,
+// specifically so no thread is frozen owning the global recursive_mutex - the
+// old cause of the Android SaveToFile hang - and warns if a thread does not
+// acknowledge, in which case the save is unsafe and we refuse rather than
+// writing a corrupt state.
+JNIEXPORT jboolean JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeSaveState(
+    JNIEnv* jni_env, jclass clazz, jstring path_jstring) {
+  xe::Emulator* emulator = xe::GetGlobalEmulator();
+  if (!emulator || !path_jstring) {
+    return JNI_FALSE;
+  }
+  const char* path_chars = jni_env->GetStringUTFChars(path_jstring, nullptr);
+  if (!path_chars) {
+    return JNI_FALSE;
+  }
+  bool ok = false;
+  try {
+    ok = emulator->SaveToFile(std::filesystem::path(path_chars));
+  } catch (...) {
+    ok = false;
+  }
+  jni_env->ReleaseStringUTFChars(path_jstring, path_chars);
+  XELOGI("save-state: on-demand save {}", ok ? "OK" : "FAILED");
+  return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeLoadState(
+    JNIEnv* jni_env, jclass clazz, jstring path_jstring) {
+  xe::Emulator* emulator = xe::GetGlobalEmulator();
+  if (!emulator || !path_jstring) {
+    return JNI_FALSE;
+  }
+  const char* path_chars = jni_env->GetStringUTFChars(path_jstring, nullptr);
+  if (!path_chars) {
+    return JNI_FALSE;
+  }
+  bool ok = false;
+  try {
+    ok = emulator->RestoreFromFile(std::filesystem::path(path_chars));
+  } catch (...) {
+    ok = false;
+  }
+  jni_env->ReleaseStringUTFChars(path_jstring, path_chars);
+  XELOGI("save-state: on-demand load {}", ok ? "OK" : "FAILED");
+  return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
