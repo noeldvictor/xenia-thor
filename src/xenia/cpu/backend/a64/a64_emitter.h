@@ -156,6 +156,27 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   // that cvar for why YIELD is usually worthless on ARM. Hint only.
   void EmitSpinHint();
 
+  // Compare a 32-bit register against a constant using the cheapest encoding.
+  //
+  // The naive form is MOV a scratch + CMP, which costs two ARITHMETIC-port
+  // instructions and a serial dependency between them. On this SoC the
+  // arithmetic ports are the scarce resource (the A715/A710 mid-cores have
+  // three 128-bit load ports against two arithmetic ports), so folding the
+  // constant into the compare wins on both port pressure and dependency depth.
+  // Encodings tried, in order:
+  //   imm <= 4095                  -> CMP rn, #imm
+  //   imm == x << 12, x <= 4095    -> CMP rn, #x, LSL #12
+  //   (-imm) <= 4095               -> CMN rn, #-imm   (e.g. 0xFFFFFFFF -> CMN #1)
+  //   otherwise                    -> MOV scratch, #imm; CMP rn, scratch
+  // Only the last form touches `scratch`.
+  //
+  // All four forms are FLAG-EXACT, so this is safe under any condition code,
+  // not just EQ/NE. CMP rn,#K is architecturally rn + ~K + 1 and CMN rn,#M is
+  // rn + M; when M == -K those are the same addition, so N/Z/C/V match. That
+  // matters here because callers branch on LO and GE, not only on equality.
+  void EmitCmpImm32(const Xbyak_aarch64::WReg& rn, uint32_t imm,
+                    const Xbyak_aarch64::WReg& scratch);
+
   void EmitAtomicIncrement64(std::atomic<uint64_t>* counter);
   void EmitAtomicAdd64(std::atomic<uint64_t>* counter,
                        const Xbyak_aarch64::XReg& value_reg);

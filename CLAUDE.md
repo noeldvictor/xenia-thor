@@ -604,7 +604,21 @@ logs and hits `tw` (trap).
 - **Do NOT confuse this with `KfAcquireSpinLock`** — that one is MEASURED completely uncontended (see below) and is
   a dead end. The hot spin is in GUEST code, not our kernel HLE.
 
-**5. MEASUREMENT PROTOCOL (non-negotiable — two separate traps burned device time here).**
+**5. WHAT HARDWARE WE STILL LEAVE UNUSED → `docs/research/20260806-arm64-hardware-exploitation-map.md`.** Each
+technique mapped to VERIFIED locations in our tree with a verdict, ordered by breadth-per-risk. Headlines: `EOR3`/
+`BCAX` are detected (`kA64EmitSHA3`) with **zero consumers** and need a HIR pass, NOT a sequence peephole (by the
+time `XOR_V128` emits, the inner XOR is already allocated); constant materialisation via `MOVZ`+`MOVK` chains burns
+the scarce arithmetic ports where a literal load would use an idle one; byte-swapping (`rev`, 65 sites) is our
+single biggest arithmetic-port line item. **And two that do NOT apply, recorded so they stop being re-proposed:
+`UDOT` and the `ABD`/`ABA` trick have no hot fixed-length-comparison site in our tree** (ours are GPU-side or
+load-time), unlike RPCS3's SPU block compare where that trick earned its +38%.
+**Applied so far: `A64Emitter::EmitCmpImm32`** — one place implementing "fold the constant into the compare",
+used at all 8 `mov`+`cmp` sites (kernel lock fastpaths, wait fastpath, stackpoint bound). Picks `CMP #imm`,
+`CMP #x,LSL#12`, or **`CMN`** for compare-against-negative (`0xFFFFFFFF` → `CMN #1`). All forms are FLAG-EXACT, so
+it is safe under LO/GE and not just EQ/NE — `CMP rn,#K` is `rn+~K+1` and `CMN rn,#M` is `rn+M`, the same addition
+when `M == -K`.
+
+**6. MEASUREMENT PROTOCOL (non-negotiable — two separate traps burned device time here).**
 - **Run-to-run drift on this device is ~2.8%, LARGER than a typical codegen effect.** Comparing two BUILDS cannot
   resolve 1-2%; it once showed a clean "regression" that a control arm exposed as pure drift. **A/B WITHIN one
   session behind a cvar**, both arms from equal thermal starts, and keep an arm whose code is identical in both

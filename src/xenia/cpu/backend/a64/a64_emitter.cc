@@ -2615,6 +2615,27 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   return *out_code_address != nullptr;
 }
 
+void A64Emitter::EmitCmpImm32(const Xbyak_aarch64::WReg& rn, uint32_t imm,
+                              const Xbyak_aarch64::WReg& scratch) {
+  if (imm <= 4095) {
+    cmp(rn, imm);
+    return;
+  }
+  if ((imm & 0xFFF) == 0 && (imm >> 12) <= 4095) {
+    cmp(rn, imm >> 12, 12);
+    return;
+  }
+  // Small negatives (0xFFFFFFFF, 0xFFFFFFFE, ...) are the common "compare
+  // against -1" case in the kernel lock fastpaths; CMN folds them into one op.
+  const uint32_t negated = uint32_t(0) - imm;
+  if (negated <= 4095) {
+    cmn(rn, negated);
+    return;
+  }
+  mov(scratch, imm);
+  cmp(rn, scratch);
+}
+
 void A64Emitter::EmitSpinHint() {
   if (cvars::a64_spin_hint_isb) {
     isb(Xbyak_aarch64::SY);
@@ -4810,15 +4831,13 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       mov(w13, 0xFFFFFFFFu);
       mov(w14, 0);
       casal(w13, w14, ptr(x12));
-      mov(w15, 0xFFFFFFFFu);
-      cmp(w13, w15);
+      EmitCmpImm32(w13, 0xFFFFFFFFu, w15);
       b(NE, free_lock_busy);
     } else {
       auto& retry_free_lock = NewCachedLabel();
       L(retry_free_lock);
       ldaxr(w13, ptr(x12));
-      mov(w14, 0xFFFFFFFFu);
-      cmp(w13, w14);
+      EmitCmpImm32(w13, 0xFFFFFFFFu, w14);
       b(NE, free_lock_busy);
       mov(w14, 0);
       stlxr(w15, w14, ptr(x12));
@@ -4871,15 +4890,13 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       mov(w13, 0xFFFFFFFFu);
       mov(w14, 0);
       casal(w13, w14, ptr(x12));
-      mov(w15, 0xFFFFFFFFu);
-      cmp(w13, w15);
+      EmitCmpImm32(w13, 0xFFFFFFFFu, w15);
       b(NE, check_recursive);
     } else {
       auto& retry_free_lock = NewCachedLabel();
       L(retry_free_lock);
       ldaxr(w13, ptr(x12));
-      mov(w14, 0xFFFFFFFFu);
-      cmp(w13, w14);
+      EmitCmpImm32(w13, 0xFFFFFFFFu, w14);
       b(NE, check_recursive);
       mov(w14, 0);
       stlxr(w15, w14, ptr(x12));
@@ -5191,8 +5208,8 @@ bool A64Emitter::EmitBlueDragonDrawWaitFastpathBody() {
   ldr(w10, ptr(x9, 0xC));
   rev(w10, w10);
   sub(w10, w17, w10);
-  mov(w11, cvars::arm64_blue_dragon_draw_wait_fastpath_timeout_ms);
-  cmp(w10, w11);
+  EmitCmpImm32(w10, cvars::arm64_blue_dragon_draw_wait_fastpath_timeout_ms,
+               w11);
   b(LO, return_one);
 
   L(return_zero);
@@ -5212,12 +5229,7 @@ bool A64Emitter::EmitBlueDragonDrawWaitFastpathBody() {
     str(w11, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                       A64BackendContext,
                                       blue_dragon_draw_wait_yield_counter))));
-    if (native_yield_stride <= 4095) {
-      cmp(w11, native_yield_stride);
-    } else {
-      mov(w15, native_yield_stride);
-      cmp(w11, w15);
-    }
+    EmitCmpImm32(w11, native_yield_stride, w15);
     b(LO, skip_yield);
     str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                       A64BackendContext,
@@ -5707,12 +5719,7 @@ void A64Emitter::MaybeEmitBlueDragonDrawWaitCallerProfile() {
   str(w17, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                     A64BackendContext,
                                     blue_dragon_draw_wait_caller_profile_counter))));
-  if (stride <= 4095) {
-    cmp(w17, stride);
-  } else {
-    mov(w11, stride);
-    cmp(w17, w11);
-  }
+  EmitCmpImm32(w17, stride, w11);
   b(LO, skip_sample);
   str(wzr, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
                                      A64BackendContext,
@@ -6410,13 +6417,11 @@ void A64Emitter::PushStackpoint() {
   const bool fastpath = cvars::a64_stackpoint_prolog_fastpath;
   const uint32_t max_stackpoints =
       static_cast<uint32_t>(cvars::a64_max_stackpoints);
-  if (fastpath && max_stackpoints < 4096) {
-    cmp(w9, max_stackpoints);
-  } else if (fastpath && (max_stackpoints & 0xFFF) == 0 &&
-             (max_stackpoints >> 12) < 4096) {
-    // CMP takes imm12 optionally shifted left by 12; the default 262144 is
-    // 64<<12, so the separate MOV of the constant is unnecessary.
-    cmp(w9, max_stackpoints >> 12, 12);
+  if (fastpath) {
+    // EmitCmpImm32 folds the bound into the compare where it encodes (the
+    // default 262144 is 64<<12), removing a MOV from the scarce arithmetic
+    // ports and the dependency between it and the CMP.
+    EmitCmpImm32(w9, max_stackpoints, w10);
   } else {
     mov(w10, max_stackpoints);
     cmp(w9, w10);
