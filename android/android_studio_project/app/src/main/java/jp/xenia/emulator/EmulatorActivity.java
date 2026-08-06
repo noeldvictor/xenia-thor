@@ -884,6 +884,12 @@ public class EmulatorActivity extends WindowedAppActivity {
             }
         }
 
+        // MUST run for EVERY launch, including one that already carries a cvars
+        // bundle - and BEFORE super.onCreate(), which is where the native side
+        // reads them. See ensureObjectCacheDefaults for why this is not inside
+        // the block above.
+        ensureObjectCacheDefaults(intent);
+
         super.onCreate(savedInstanceState);
 
         // Scope controller bindings to this title BEFORE the surface (and so any
@@ -905,7 +911,57 @@ public class EmulatorActivity extends WindowedAppActivity {
         setupFpsOverlay(launchArguments);
         setupInGameMenu();
         registerDebugGamepadReceiver();
+        // Draw the compile overlay IMMEDIATELY, before native init and before
+        // anything can stall the UI thread.
+        //
+        // The watcher below is correct but reactive: it only shows the overlay
+        // once a marker is tailed out of logcat, and by then the UI thread can
+        // already be blocked in the paint path during precompile - so the post
+        // never runs, nothing is drawn, and the user stares at black and then
+        // gets "isn't responding". Painting it up front means the LAST thing
+        // rendered before any stall is the compile screen, which is the whole
+        // point of having one.
+        //
+        // Auto-dismissed shortly after if no AOT marker arrives, so a title
+        // that does not precompile never shows a spurious overlay.
+        showAotOverlay();
+        mAotAutoHide.postDelayed(mAotAutoHideRunnable, 4000);
         startAotCompileWatcher();
+    }
+
+    // The AOT object cache turns a ~60s cold LLVM recompile into a warm load,
+    // and it was silently OFF for every normal launch.
+    //
+    // The defaults block in onCreate is guarded by
+    // `intent.getBundleExtra(EXTRA_CVARS) == null`, i.e. it only applies when
+    // NOTHING supplied cvars. But LauncherActivity always attaches an
+    // EXTRA_CVARS bundle when you start a game from the app, so that block -
+    // and with it the object-cache defaults - was skipped on exactly the path
+    // people actually play through. Headless `am start` runs, which carry no
+    // bundle, DID get the cache, which is why the cache directory was full
+    // while every real launch still recompiled from scratch.
+    //
+    // So this runs unconditionally and only fills in what is absent: an
+    // explicit extra (or a GameProfile) still wins.
+    private void ensureObjectCacheDefaults(final Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        Bundle cvars = intent.getBundleExtra(EXTRA_CVARS);
+        final boolean hadBundle = cvars != null;
+        if (!hadBundle) {
+            cvars = new Bundle();
+        }
+        if (cvars.containsKey("cpu_llvm_object_cache")
+                || intent.hasExtra("cpu_llvm_object_cache")) {
+            return;  // explicitly configured - leave it alone
+        }
+        final java.io.File objcache = new java.io.File(getFilesDir(), "objcache");
+        objcache.mkdirs();
+        cvars.putBoolean("cpu_llvm_object_cache", true);
+        cvars.putString("cpu_llvm_object_cache_path", objcache.getAbsolutePath());
+        cvars.putBoolean("cpu_llvm_object_cache_skip_lowering", true);
+        intent.putExtra(EXTRA_CVARS, cvars);
     }
 
     // ---- AOT precompile progress overlay (RPCS3-style) -------------------
@@ -921,6 +977,17 @@ public class EmulatorActivity extends WindowedAppActivity {
     private Thread mAotWatcherThread;
     private Process mAotWatcherProc;
     private volatile boolean mAotWatcherStop;
+
+    // Dismisses the eagerly-shown overlay when the title turns out not to
+    // precompile. Cancelled by the first real AOT marker.
+    private final android.os.Handler mAotAutoHide =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean mAotSawMarker;
+    private final Runnable mAotAutoHideRunnable = () -> {
+        if (!mAotSawMarker) {
+            removeAotOverlay();
+        }
+    };
 
     private void startAotCompileWatcher() {
         mAotWatcherStop = false;
@@ -946,6 +1013,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                 String line;
                 while (!mAotWatcherStop && (line = reader.readLine()) != null) {
                     if (line.contains("load-window pre-warm on")) {
+                        mAotSawMarker = true;
                         runOnUiThread(this::showAotOverlay);
                         continue;
                     }
@@ -953,6 +1021,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     if (m.find()) {
                         final int doneCount = Integer.parseInt(m.group(1));
                         final int total = Integer.parseInt(m.group(2));
+                        mAotSawMarker = true;
                         runOnUiThread(() -> updateAotOverlay(doneCount, total));
                         continue;
                     }
@@ -1080,7 +1149,27 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
     }
 
+    // Tear the overlay down with no completion message - used when the title
+    // turns out not to precompile at all, so the eagerly-shown overlay must
+    // vanish without claiming it compiled anything.
+    private void removeAotOverlay() {
+        final android.widget.LinearLayout overlay = mAotOverlay;
+        if (overlay == null) {
+            return;
+        }
+        mAotOverlay = null;
+        mAotProgressBar = null;
+        mAotProgressText = null;
+        mAotLastDone = -1;
+        final android.view.ViewGroup parent =
+                (android.view.ViewGroup) overlay.getParent();
+        if (parent != null) {
+            parent.removeView(overlay);
+        }
+    }
+
     private void hideAotOverlay(final int total, final long ms) {
+        mAotAutoHide.removeCallbacks(mAotAutoHideRunnable);
         // Next module starts a fresh bar; the cumulative count keeps climbing.
         if (mAotProgressBar != null) {
             mAotProgressBar.setProgress(0);
