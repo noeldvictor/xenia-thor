@@ -1049,6 +1049,8 @@ public class EmulatorActivity extends WindowedAppActivity {
     private volatile boolean mUiWatchdogStop;
     private final java.util.concurrent.atomic.AtomicLong mUiWatchdogPongNs =
             new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+    private final java.util.concurrent.atomic.AtomicLong mUiWatchdogAsyncPongNs =
+            new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
 
     // Per-title state file, so saving in one game cannot clobber another.
     private java.io.File getStateFile() {
@@ -1068,7 +1070,15 @@ public class EmulatorActivity extends WindowedAppActivity {
         mUiWatchdogThread = new Thread(() -> {
             boolean reported = false;
             while (!mUiWatchdogStop) {
+                // Ping with BOTH a sync and an async message. A Looper sync
+                // barrier blocks sync messages while letting async ones
+                // through, so comparing the two tells us which situation we are
+                // actually in: if async lands and sync does not, it is a
+                // barrier and posting async is the right fix; if NEITHER lands,
+                // the main thread is genuinely wedged and no amount of message
+                // flagging will help.
                 main.post(() -> mUiWatchdogPongNs.set(System.nanoTime()));
+                postToUi(() -> mUiWatchdogAsyncPongNs.set(System.nanoTime()));
                 try {
                     Thread.sleep(1000);
                 } catch (final InterruptedException e) {
@@ -1076,12 +1086,16 @@ public class EmulatorActivity extends WindowedAppActivity {
                 }
                 final long stalledMs =
                         (System.nanoTime() - mUiWatchdogPongNs.get()) / 1000000L;
+                final long asyncStalledMs =
+                        (System.nanoTime() - mUiWatchdogAsyncPongNs.get()) / 1000000L;
                 if (stalledMs > 2000) {
                     if (!reported) {
                         reported = true;
                         final StringBuilder sb = new StringBuilder();
-                        sb.append("UI thread STALLED ").append(stalledMs)
-                          .append("ms - main thread stack:");
+                        sb.append("UI thread STALLED sync=").append(stalledMs)
+                          .append("ms async=").append(asyncStalledMs)
+                          .append("ms (async<sync => sync barrier, both stalled => "
+                                  + "wedged) - main thread stack:");
                         for (final StackTraceElement f : mainThread.getStackTrace()) {
                             sb.append("\n    at ").append(f);
                         }
