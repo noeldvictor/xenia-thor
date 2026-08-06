@@ -901,6 +901,18 @@ public class EmulatorActivity extends WindowedAppActivity {
         // title with no per-game overrides falls back to action-by-action.
         XeniaInputMapping.setActiveTitleId(intent.getStringExtra(EXTRA_TITLE_ID));
 
+        // Keep the panel awake for the whole session.
+        //
+        // Ported from XenDroid (4b416cd83). Gamepad input produces no touch
+        // events, so Android's display timeout still fires mid-game and the
+        // screen sleeps under you. That is worse here than it sounds: a sleeping
+        // panel stops the activity, its SurfaceView loses the surface, and the
+        // presenter then silently DROPS every guest frame while the emulator
+        // keeps running - which reads as a hang and cost an entire debugging
+        // session (see the black-screen note in CLAUDE.md).
+        getWindow().addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         setContentView(R.layout.activity_emulator);
         final WindowSurfaceView surfaceView = findViewById(R.id.emulator_surface_view);
         setWindowSurfaceView(surfaceView);

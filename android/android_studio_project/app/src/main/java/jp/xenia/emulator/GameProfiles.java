@@ -77,53 +77,6 @@ public final class GameProfiles {
                         + "working sync-consume path -> it boots reliably to the 3D "
                         + "field. Device-validated 2026-06-20 (reached rendered=2250 / "
                         + "263k-vert foliage field; STATUS_PENDING polls 0).")
-                .add("gpu_vrs_foliage_rate", Integer.valueOf(4),
-                        "Adreno hardware VRS 4x4 coarse-shades BD's overdraw-heavy "
-                        + "foliage + blended transparency (foliage GEOMETRY/density "
-                        + "untouched - VRS lowers only the per-fragment shading RATE). "
-                        + "Device-validated 2026-06-29 single-run alternation: -51% GPU "
-                        + "foliage-fragment time, ~7.6->13.2 fps on the heavy field; the "
-                        + "4x4 shading is visually clean on the naturally-noisy foliage "
-                        + "(coverage/geometry intact). This is the GPU CEILING for the "
-                        + "heavy field: the residual ~79ms is EDRAM render-to-texture tile "
-                        + "I/O, which is FSI-HARDWARE-BLOCKED on the Adreno 740 (no "
-                        + "fragment_shader_interlock / rasterization_order_attachment_"
-                        + "access, device-confirmed) - not software-fixable on this GPU. "
-                        + "Lower to rate 2 for slightly cleaner shading at ~7.9fps.")
-                .add("gpu_fp10_color_as_unorm10", Boolean.TRUE,
-                        "BD's EDRAM color is 7e3 float (k_2_10_10_10_FLOAT), which the "
-                        + "host maps to RGBA16F = 64bpp - 2x the 360's 32bpp EDRAM cost "
-                        + "on every fragment. This maps it to A2B10G10R10_UNORM (32bpp): "
-                        + "device-validated 2026-07-01 via driver GPU-trace on the heavy "
-                        + "field: main-pass CPP 24->16, bins 5->3, per-segment draw time "
-                        + "-36%, frame ~103->95.5ms. Stacks with VRS (fp10+VRS2=17.0fps "
-                        + "live OSD, fp10+VRS4=19.8, from the 10.8 baseline). Bloom "
-                        + "highlights >1.0 clamp (SDR-safe; BD's pre-existing bloom-region "
-                        + "artifact changes appearance but does not worsen materially).")
-                .add("gpu_force_max_msaa_samples", Integer.valueOf(2),
-                        "BD-30 MSAA lever (2026-06-30): cap MSAA at 2x = the CLEAN ceiling "
-                        + "(~17fps, 1.9x over the 9fps baseline, no artifact). cap=1 "
-                        + "(foliage 2x->1x) is faster (~21fps) BUT the 2x->1x EDRAM tile "
-                        + "footprint HALVING lets BD's packed 4x effect buffer bleed in "
-                        + "(the bright-dupe ghost) - intrinsic to forcing 1x on a packed "
-                        + "surface, not cleanly fixable per-site (the EDRAM-recompiler "
-                        + "reimagine is the real path to clean >17fps). cap=2 keeps foliage "
-                        + "2x (no ghost) while 4x->2x + VRS + clamps still net ~1.9x. "
-                        + "Set 1 for max fps + the artifact. History (commit 9503bd831): force "
-                        + "the guest's MSAA 2x foliage render targets to 1x. The GPU "
-                        + "trace pinned BD's cost to MSAA-2x foliage overdraw - the "
-                        + "per-sample ROP (depth/blend/coverage) is DOUBLED by 2x, and "
-                        + "VRS can't touch ROP; 1x ~halves it. Clamped COHERENTLY at all "
-                        + "6 RB_SURFACE_INFO::msaa reads (draw_util::ClampForcedMsaaSamples) "
-                        + "so the EDRAM tile layout stays consistent - the earlier "
-                        + "single-site clamp desynced tile offsets and corrupted (black + "
-                        + "white box). Device-validated: renders correct, gpu_frame_us "
-                        + "110.7->64ms (-42%), OSD 9.2->15.3fps; STACKS with the VRS rate "
-                        + "above (different cost components) -> 21.6fps dense / ~29fps at "
-                        + "normal field density. Quality trade: loses MSAA anti-aliasing, "
-                        + "so thin bright highlights alias and BD's bloom over-brightens "
-                        + "them (user accepted fps-over-quality 2026-06-30). No gate - "
-                        + "applied from boot (not pacing-sensitive like VRS).")
                 .add("gpu_present_fxaa", Boolean.FALSE,
                         "Present-time FXAA + highlight-compression. OFF at cap=2 (the "
                         + "current default): cap=2 keeps foliage 2x so edges are already "
@@ -133,11 +86,6 @@ public final class GameProfiles {
                         + "re-averages the aliased bright thin geometry at ~0.5ms/720p. "
                         + "Engagement device-confirmed (kFxaa replaces the final bilinear "
                         + "blit); reuses the bilinear pipeline layout (2026-06-30).")
-                .add("gpu_vrs_enable_after_guest_ms", Integer.valueOf(130000),
-                        "Gate VRS to in-game (guest uptime > 130s) so BD's boot menus / "
-                        + "Voice Language screen render at full shading rate (crisp text), "
-                        + "and the 4x4 coarsening engages only once the heavy 3D field is "
-                        + "reached. Per-title gameplay gate.")
                 .add("gpu_clamp_rt_framebuffer_height", Integer.valueOf(768),
                         "BD's host render targets are tile-rounded to huge heights "
                         + "(4096/8192) for EDRAM aliasing, but at 720p only ~720 rows ever "
@@ -244,6 +192,21 @@ public final class GameProfiles {
                 // opt_xendroid_parity optimization (default ON, per-game
                 // overridable) - duplicating them here would defeat the user's
                 // per-game OVERRIDE_OFF (code-review finding 2026-07-31).
+                .add("cpu_backend_llvm", Boolean.FALSE,
+                        "LLVM OFF for Burnout (2026-08-06): reproducible mid-gameplay "
+                        + "fault storm from LLVM-emitted code that writes x20, the "
+                        + "RESERVED guest-context register. Fault is identical every "
+                        + "session - insn=0xA944D296 = LDP x22, x20, [x20, #72] with "
+                        + "x20_ctx=0, faulting at 0x48 - only the pc differs, i.e. a "
+                        + "different compiled function each time. The faulting thread "
+                        + "parks and every other guest thread then deadlocks (XObject::"
+                        + "Wait 60s), which is the freeze. cpu_llvm_no_runtime_compiles "
+                        + "does NOT cover this: it stops LLVM COMPILING during gameplay, "
+                        + "but this is bad code produced during the load window and "
+                        + "EXECUTED later. The a64 JIT never emits an ldp based on x20 "
+                        + "(it touches x20 only as stp/ldp(x19,x20,[sp]) in the thunk), "
+                        + "so a64 is unaffected and stable. Re-enable once the reserved-"
+                        + "register violation is fixed.")
                 );
 
         // Infinite Undiscovery (535107DB): the default 65536 a64 stackpoints
