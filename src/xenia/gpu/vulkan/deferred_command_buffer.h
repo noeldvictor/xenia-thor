@@ -527,6 +527,22 @@ class DeferredCommandBuffer {
     std::memcpy(args_ptr + sizeof(ArgsVkPushConstants), values, size);
   }
 
+  // VK_KHR_dynamic_rendering_local_read. Our Vulkan-Headers are 1.3, so this
+  // is the KHR-suffixed spelling, not upstream's unsuffixed 1.4 name.
+  void CmdVkSetRenderingInputAttachmentIndices(
+      uint32_t color_attachment_count,
+      const uint32_t* color_attachment_input_indices) {
+    auto& args = *reinterpret_cast<ArgsVkSetRenderingInputAttachmentIndices*>(
+        WriteCommand(Command::kVkSetRenderingInputAttachmentIndices,
+                     sizeof(ArgsVkSetRenderingInputAttachmentIndices)));
+    args.color_attachment_count = color_attachment_count;
+    for (uint32_t i = 0; i < 4; ++i) {
+      args.color_attachment_input_indices[i] =
+          i < color_attachment_count ? color_attachment_input_indices[i]
+                                     : VK_ATTACHMENT_UNUSED;
+    }
+  }
+
   void CmdVkSetBlendConstants(const float* blend_constants) {
     auto& args = *reinterpret_cast<ArgsVkSetBlendConstants*>(WriteCommand(
         Command::kVkSetBlendConstants, sizeof(ArgsVkSetBlendConstants)));
@@ -811,6 +827,7 @@ class DeferredCommandBuffer {
     kVkPushConstants,
     kVkPushDescriptorSetKHR,
     kVkSetBlendConstants,
+    kVkSetRenderingInputAttachmentIndices,
     kVkSetColorBlendEnable,
     kVkSetColorBlendEquation,
     kVkSetColorWriteMask,
@@ -1032,6 +1049,11 @@ class DeferredCommandBuffer {
     // pTexelBufferView are null. dstSet is ignored by vkCmdPushDescriptorSetKHR.
     static_assert(alignof(VkWriteDescriptorSet) <= alignof(uintmax_t));
     static_assert(alignof(VkDescriptorImageInfo) <= alignof(uintmax_t));
+  };
+
+  struct ArgsVkSetRenderingInputAttachmentIndices {
+    uint32_t color_attachment_count;
+    uint32_t color_attachment_input_indices[4];
   };
 
   struct ArgsVkSetBlendConstants {

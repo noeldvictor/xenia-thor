@@ -120,6 +120,7 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Single-descriptor layouts for use within a single frame.
   enum class SingleTransientDescriptorLayout {
     kStorageBufferCompute,
+    kStorageBufferFragment,
     // Uniform buffer at binding 1 in the compute shader (the direct host
     // resolve constants; binding 0 in that set is the resolve push constants
     // slot in the shader's set layout).
@@ -229,6 +230,10 @@ class VulkanCommandProcessor : public CommandProcessor {
   }
 
   bool submission_open() const { return submission_open_; }
+  // Upstream XenDroid keeps a dedicated bool here; our fork tracks the pass by
+  // handle instead, so this derives it. Matches the existing spelling of the
+  // same test in VulkanCommandProcessor (current_render_pass_ != VK_NULL_HANDLE).
+  bool in_render_pass() const { return current_render_pass_ != VK_NULL_HANDLE; }
   uint64_t GetCurrentSubmission() const {
     return completion_timeline_.GetUpcomingSubmission();
   }

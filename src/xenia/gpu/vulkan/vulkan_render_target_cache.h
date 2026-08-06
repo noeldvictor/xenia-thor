@@ -694,6 +694,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       descriptor_set_pool_sampled_image_;
   std::unique_ptr<ui::vulkan::SingleLayoutDescriptorSetPool>
       descriptor_set_pool_sampled_image_x2_;
+  std::unique_ptr<ui::vulkan::SingleLayoutDescriptorSetPool>
+      descriptor_set_pool_input_attachment_;
 
   VkDeviceMemory edram_buffer_memory_ = VK_NULL_HANDLE;
   VkBuffer edram_buffer_ = VK_NULL_HANDLE;
@@ -808,6 +810,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                  ? view_color_transfer_separate_
                  : view_depth_color_;
     }
+    void SetDescriptorSetIndexInputAttachment(size_t index) {
+      descriptor_set_index_input_attachment_ = index;
+    }
+    VkDescriptorSet GetDescriptorSetInputAttachment() const {
+      return render_target_cache_.descriptor_set_pool_input_attachment_->Get(
+          descriptor_set_index_input_attachment_);
+    }
+    bool HasDescriptorSetInputAttachment() const {
+      return descriptor_set_index_input_attachment_ != SIZE_MAX;
+    }
     VkDescriptorSet GetDescriptorSetTransferSource() const {
       ui::vulkan::SingleLayoutDescriptorSetPool& descriptor_set_pool =
           key().is_depth
@@ -855,6 +867,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
 
    private:
     VulkanRenderTargetCache& render_target_cache_;
+    size_t descriptor_set_index_input_attachment_ = SIZE_MAX;
 
     VkImage image_;
     VkDeviceMemory memory_;
@@ -1415,6 +1428,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // samples. If there was a failure to create a pipeline, returns nullptr.
   VkPipeline const* GetTransferPipelines(TransferPipelineKey key);
 
+  // In-pass fragment resolve (VK_KHR_dynamic_rendering_local_read); the color
+  // slot is the current pass's color attachment being resolved.
+  VkPipeline GetResolveInPassPipeline(RenderPassKey render_pass_key,
+                                      uint32_t color_slot, bool is_64bpp);
+
   // Do ownership transfers for render targets - each render target / vector may
   // be null / empty in case there's nothing to do for them.
   // resolve_clear_rectangle is expected to be provided by
@@ -1446,6 +1464,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       draw_util::ResolveCopyShaderIndex copy_shader);
   VkPipeline GetDirectHostDepthResolvePipeline(xenos::MsaaSamples msaa_samples,
                                                bool scaled);
+  bool TryInPassResolveCopy(
+      const draw_util::ResolveInfo& resolve_info,
+      const draw_util::ResolveCopyShaderConstants& copy_shader_constants,
+      draw_util::ResolveCopyShaderIndex copy_shader, uint32_t dump_base,
+      uint32_t dump_row_length_used, uint32_t dump_rows, uint32_t dump_pitch,
+      VulkanSharedMemory& shared_memory, VulkanTextureCache& texture_cache,
+      uint32_t& written_address_out, uint32_t& written_length_out);
   bool TryDirectHostResolveCopy(
       const draw_util::ResolveInfo& resolve_info,
       const draw_util::ResolveCopyShaderConstants& copy_shader_constants,
@@ -1526,6 +1551,16 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   std::unordered_map<TransferPipelineKey, std::array<VkPipeline, 4>,
                      TransferPipelineKey::Hasher>
       transfer_pipelines_;
+
+  // In-pass fragment resolve objects, only created in local-read mode.
+  VkDescriptorSetLayout descriptor_set_layout_input_attachment_ =
+      VK_NULL_HANDLE;
+  VkPipelineLayout resolve_inpass_pipeline_layout_ = VK_NULL_HANDLE;
+  // Bit 0: 64bpp dest, bit 1: multisampled source.
+  VkShaderModule resolve_inpass_shaders_[4] = {};
+  VkShaderModule resolve_inpass_vertex_shader_ = VK_NULL_HANDLE;
+  // Bits 0-31: RenderPassKey, 32-33: color slot, 34: 64bpp dest.
+  std::unordered_map<uint64_t, VkPipeline> resolve_inpass_pipelines_;
 
   VkPipelineLayout dump_pipeline_layout_color_ = VK_NULL_HANDLE;
   VkPipelineLayout dump_pipeline_layout_depth_ = VK_NULL_HANDLE;

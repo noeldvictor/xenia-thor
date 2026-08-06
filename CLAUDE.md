@@ -716,7 +716,25 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
      `Resolve` +10/-1 (the actual hook), `~VulkanRenderTarget` +5, `namespace shaders` +5.
      Supporting files are tiny: `deferred_command_buffer.{cc,h}` +17/+19, `vulkan_shared_memory.h` +15,
      `vulkan_command_processor.{cc,h}` +25/-7 and +2.
-  **⛔ DO THIS STEP ONLY IN A SESSION WITH THE DEVICE FREE.** It is ~632 lines of Vulkan resolve code going into
+  **✅ FOUNDATION SLICE OF `a0aec42ae` IS LANDED AND COMPILE-VERIFIED (2026-08-06, +96 lines, BUILD SUCCESSFUL).**
+  Everything except the two big `.cc` blocks: the `vulkan_render_target_cache.h` declarations (+35, matching their
+  diffstat exactly), the `deferred_command_buffer` local-read command, `VulkanSharedMemory::MarkInPassWrite`,
+  `kStorageBufferFragment` + `in_render_pass()`, and the device function-pointer plumbing. Nothing calls any of it
+  yet, so it is behaviour-neutral by construction. **Two real divergences the compiler caught — both are traps for
+  the remaining work:**
+  1. **⚠️ THE KHR-SUFFIX TRAP, CONFIRMED AGAIN (it also bit step 1).** Our `third_party/Vulkan-Headers` is **1.3,
+     `VK_HEADER_VERSION 278`**, so ONLY the suffixed spellings exist: `vkCmdSetRenderingInputAttachmentIndicesKHR`,
+     `VkRenderingInputAttachmentIndexInfoKHR`,
+     `VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR`. XenDroid is on 1.4 headers and uses the
+     UNSUFFIXED core names throughout — **every one of them must gain `KHR` when ported.** Grep the upstream hunk
+     for unsuffixed Vulkan 1.4 symbols before compiling, not after.
+  2. **We have no `in_render_pass_` bool.** XenDroid keeps one; our fork tracks the pass by handle
+     (`current_render_pass_`, vulkan_command_processor.h:2446), and our own code already spells the test as
+     `current_render_pass_ != VK_NULL_HANDLE` (vulkan_command_processor.cc:5277). `in_render_pass()` derives it.
+     Expect more of this shape in the remaining blocks — upstream state that we model differently.
+  **Also new: `functions/device_khr_dynamic_rendering_local_read.inc`** — we did not load the entry point at all
+  before, only the extension/feature bits from step 1. It is gated on `ext_1_4_KHR_dynamic_rendering_local_read`.
+  **⛔ DO THE REMAINING TWO BLOCKS ONLY IN A SESSION WITH THE DEVICE FREE.** They are ~632 lines going into
   the single file where our fork diverges most, and it is exactly the change class that already burned us twice in
   one day (VRS/fp10/MSAA quality levers, then `arm64_offset_memory_address_fastpath`) — wrong pixels, not a crash.
   A gradle build compiles it, but compiling proves nothing about a resolve path. Land it default-off, with

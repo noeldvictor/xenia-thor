@@ -1189,6 +1189,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (device->extensions_.ext_KHR_pipeline_executable_properties) {
 #include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
   }
+  if (device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read) {
+#include "xenia/ui/vulkan/functions/device_khr_dynamic_rendering_local_read.inc"
+  }
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED
 
 #undef XE_UI_VULKAN_FUNCTION
