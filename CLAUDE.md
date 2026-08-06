@@ -702,6 +702,25 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   `#include`. There is no `gen_android_spirv.py` here and we do not need one.
   **⚠️ Port `c13b9be1f`'s rejection counter WITH the path, not after** — it is how they made this safe to ship
   default-on. A resolve that silently declines is invisible; one that counts its rejections is debuggable.
+  **🗺️ PORT MAP FOR `a0aec42ae` (the consumer) — scoped 2026-08-06, do not re-derive this.**
+  Divergence measured, so nobody wastes time on `git apply` again: our `vulkan_render_target_cache.cc` is
+  **12,708 lines vs their 8,000** (~20,700 differing lines), and `vulkan_command_processor.cc` is 13,668 vs 9,193.
+  **A patch-apply is impossible.** But the port is far more tractable than that implies, for two reasons:
+  1. **All 7 anchor functions exist in our file, exactly once each** — `Initialize` (our :564),
+     `Shutdown` (:1437), `GetDirectHostDepthResolvePipeline` (:1996), `~VulkanRenderTarget` (:3926),
+     `CreateRenderTarget` (:3968), `GetTransferShader` (:6719), `Resolve` (:321). Our 4,700 extra lines are the BD
+     native renderer / EDRAM work living elsewhere in the file, NOT rewrites of these.
+  2. **466 of the 632 lines are TWO self-contained new blocks**, not scattered edits: **+284** after
+     `GetDirectHostDepthResolvePipeline` and **+182** after `GetTransferShader`. The rest is small and
+     mechanical — `Initialize` +84 (setup), `CreateRenderTarget` +37/-4, `Shutdown` +19+1 (teardown),
+     `Resolve` +10/-1 (the actual hook), `~VulkanRenderTarget` +5, `namespace shaders` +5.
+     Supporting files are tiny: `deferred_command_buffer.{cc,h}` +17/+19, `vulkan_shared_memory.h` +15,
+     `vulkan_command_processor.{cc,h}` +25/-7 and +2.
+  **⛔ DO THIS STEP ONLY IN A SESSION WITH THE DEVICE FREE.** It is ~632 lines of Vulkan resolve code going into
+  the single file where our fork diverges most, and it is exactly the change class that already burned us twice in
+  one day (VRS/fp10/MSAA quality levers, then `arm64_offset_memory_address_fastpath`) — wrong pixels, not a crash.
+  A gradle build compiles it, but compiling proves nothing about a resolve path. Land it default-off, with
+  `c13b9be1f`'s rejection counter in the same commit, and validate on-device before flipping.
 - **⭐ STANDALONE, NOT part of that chain — take it independently:** `904374971` hoist shared-memory uploads out of
   render passes. Pages never invalidated **since the current GPU submission opened** cannot have been read by an
   already-recorded command, so their upload can be reordered to the submission HEAD and the render pass never
