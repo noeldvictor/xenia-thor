@@ -113,6 +113,15 @@ class InputSystem {
   // This prevents button presses used to close UI dialogs from being seen by
   // the game immediately after the dialog closes.
   std::array<uint16_t, XUserMaxUserCount> consumed_buttons_{};
+
+  // Back + RB speed toggle. Only the per-user held-state lives here, so the
+  // toggle is edge- rather than level-triggered (guests poll every frame).
+  // The ACTIVE state is not mirrored here on purpose - Clock's guest time
+  // scalar is the single source of truth, and the OSD reads that directly, so
+  // it stays correct however the scalar was set.
+  static constexpr double kSpeedToggleScalar = 2.0;
+  void HandleSpeedToggleHotkey(uint32_t user_index, X_INPUT_STATE* out_state);
+  std::array<bool, XUserMaxUserCount> speed_toggle_combo_held_{};
 };
 
 }  // namespace hid

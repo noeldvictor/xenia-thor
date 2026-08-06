@@ -115,6 +115,8 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static native long nativeGetGuestSwapCount();
 
+    private static native double nativeGetGuestTimeScalar();
+
     private static native boolean nativeSetConfigVar(String name, String value);
 
     @Override
@@ -1628,7 +1630,15 @@ public class EmulatorActivity extends WindowedAppActivity {
         final long guestSwapCount = nativeGetGuestSwapCount();
         final long guestSwapDelta = Math.max(0, guestSwapCount - mFpsLastGuestSwapCount);
         final double fps = (guestSwapDelta * 1000000000.0) / elapsedNs;
-        mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
+        // Append the fast-forward multiplier when guest time is scaled (Back + RB).
+        // Read from the native Clock rather than tracking it here, so the badge is
+        // right regardless of what set the scalar.
+        final double timeScalar = nativeGetGuestTimeScalar();
+        if (timeScalar > 1.01) {
+            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS   %.3gx", fps, timeScalar));
+        } else {
+            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
+        }
         mFpsWindowStartNs = nowNs;
         mFpsLastGuestSwapCount = guestSwapCount;
     }

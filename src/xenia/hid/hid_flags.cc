@@ -19,6 +19,16 @@ DEFINE_string(
     "Comma-separated research buttons held by the nop HID driver. Supported: "
     "a,b,x,y,start,back,du,dd,dl,dr,lb,rb.",
     "HID");
+DEFINE_bool(
+    hotkey_speed_toggle, true,
+    "Back + RB toggles guest fast-forward between 1x and 2x speed. Scales the "
+    "GUEST CLOCK, so game logic, timers and audio all run at double rate - the "
+    "usual emulator fast-forward, not a framerate change. Edge-triggered, so "
+    "holding the combo flips once rather than every input poll. Both buttons "
+    "are swallowed while the combo is held (Back alone opens the OSD, and RB "
+    "is a live gameplay button in most titles).",
+    "HID");
+
 DEFINE_string(
     hid_nop_button_sequence, "",
     "Semicolon-separated research nop HID pulses in the form "

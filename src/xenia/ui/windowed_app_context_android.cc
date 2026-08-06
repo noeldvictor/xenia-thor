@@ -27,6 +27,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/main_android.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
@@ -785,6 +786,15 @@ JNIEXPORT jlong JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestSwapCount(
     JNIEnv* jni_env, jclass clazz) {
   return jlong(xe::ui::vulkan::VulkanPerfCountersGetIssueSwapCount());
+}
+
+JNIEXPORT jdouble JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestTimeScalar(
+    JNIEnv* jni_env, jclass clazz) {
+  // Clock is the single source of truth for guest speed, so the OSD badge is
+  // correct whether the scalar came from the Back+RB hotkey, a game profile or
+  // the config.
+  return jdouble(xe::Clock::guest_time_scalar());
 }
 
 JNIEXPORT jboolean JNICALL

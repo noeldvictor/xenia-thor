@@ -13,6 +13,7 @@
 
 #include "xenia/base/logging.h"
 #include "xenia/base/profiling.h"
+#include "xenia/base/clock.h"
 #include "xenia/hid/hid_flags.h"
 #include "xenia/hid/input_driver.h"
 
@@ -82,6 +83,11 @@ X_RESULT InputSystem::GetState(uint32_t user_index, uint32_t flags,
 
   X_RESULT result = GetStateForUI(user_index, flags, out_state);
 
+  // Speed-toggle hotkey (Back + RB): flip guest time between 1x and 2x.
+  if (result == X_ERROR_SUCCESS) {
+    HandleSpeedToggleHotkey(user_index, out_state);
+  }
+
   // Mask buttons that were held when a UI dialog closed until they're
   // released, so the close-press doesn't carry through into the game.
   if (result == X_ERROR_SUCCESS && user_index < XUserMaxUserCount &&
@@ -92,6 +98,42 @@ X_RESULT InputSystem::GetState(uint32_t user_index, uint32_t flags,
   }
 
   return result;
+}
+
+// Back + RB toggles guest fast-forward between 1x and 2x.
+//
+// EDGE-TRIGGERED: fires once when the combo becomes held and not again until
+// it is released, so holding it does not flip the speed every poll (guests
+// poll input every frame, so a level-triggered check would toggle ~60x/sec).
+//
+// Both buttons are SWALLOWED while the combo is held, for two reasons: Back
+// alone opens the OSD in this fork, and RB is a live gameplay button in most
+// titles - letting either reach the guest would fire an unwanted action every
+// time you change speed.
+void InputSystem::HandleSpeedToggleHotkey(uint32_t user_index,
+                                          X_INPUT_STATE* out_state) {
+  if (!cvars::hotkey_speed_toggle || user_index >= XUserMaxUserCount) {
+    return;
+  }
+  constexpr uint16_t kCombo =
+      X_INPUT_GAMEPAD_BACK | X_INPUT_GAMEPAD_RIGHT_SHOULDER;
+  // gamepad.buttons is a big-endian wrapper type, so read it into a plain
+  // uint16_t and assign back (same pattern as the consumed_buttons_ masking).
+  const uint16_t buttons = uint16_t(out_state->gamepad.buttons);
+  const bool held = (buttons & kCombo) == kCombo;
+  if (held && !speed_toggle_combo_held_[user_index]) {
+    const double current = xe::Clock::guest_time_scalar();
+    // Compare against the 2x target rather than 1.0 so an unrelated scalar
+    // (a title profile, a debug setting) is restored rather than clobbered.
+    const bool going_fast = current < kSpeedToggleScalar;
+    xe::Clock::set_guest_time_scalar(going_fast ? kSpeedToggleScalar : 1.0);
+    XELOGI("Speed toggle: guest time scalar {} -> {}", current,
+           going_fast ? kSpeedToggleScalar : 1.0);
+  }
+  speed_toggle_combo_held_[user_index] = held;
+  if (held) {
+    out_state->gamepad.buttons = uint16_t(buttons & ~kCombo);
+  }
 }
 
 X_RESULT InputSystem::GetStateForUI(uint32_t user_index, uint32_t flags,
