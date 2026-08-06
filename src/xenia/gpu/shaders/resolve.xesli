@@ -38,6 +38,17 @@ push_const_begin_xe(b0, space0)
     #ifndef XE_RESOLVE_RESOLUTION_SCALED
       uint xe_resolve_dest_base;
     #endif
+    #ifdef XE_RESOLVE_INPASS
+      // Host framebuffer pixel -> resolve output pixel index, valid when the
+      // EDRAM tile walk is affine over the drawn rectangle (checked on the
+      // CPU). Scalars to keep std430 offsets 20/24/28 (int2 would align to
+      // 24).
+      int xe_resolve_frag_to_pixel_offset_x;
+      int xe_resolve_frag_to_pixel_offset_y;
+      // Bits 0-7: first host sample index; bits 8-15: second host sample
+      // index; bit 16: average the two samples.
+      int xe_resolve_inpass_sample;
+    #endif
   #endif
 push_const_end_xe
 
