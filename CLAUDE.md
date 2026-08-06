@@ -654,6 +654,16 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   of framebuffer/pipeline keys), `cc0753a8c` (scope input-attachment index mapping per draw), `554b1f4e8`/`5e6ec4915`/
   `2ec7ee046` (destination matching, strip row offset from dst bpp, 2D texel origin), `c13b9be1f` (gate by proven
   roundtrip class **and count every rejection**).
+  **🔧 SHADER-LAYER RECON (2026-08-06, saves a session):** the shader sources are the SAME SIZE but NOT identical —
+  `resolve_host_color.xesli` is 1531 lines in both forks yet 3062 lines differ, because the **xesl macro calling
+  convention diverged**: XenDroid uses positional args (`const_buffer_begin_xe(name, 0, 1, b1, space0)`,
+  `byte_buffer_align4_wo_declare_xe(..., space0, 1)`) where we use named ones
+  (`set=0, binding=1`, and no trailing count). So `ef3b90b1d`'s new shader files must have every declaration
+  rewritten to our convention — the shader logic ports, the bindings do not.
+  **Toolchain is present:** `glslc.exe` ships in the NDK at
+  `~/AppData/Local/Android/Sdk/ndk/25.0.8775105/shader-tools/windows-x86_64/`, and `tools/build/gen_dhr_spirv.py`
+  already drives shaderc (glslc/spirv-opt/spirv-dis) to emit the `shaders/bytecode/vulkan_spirv/*.h` headers we
+  `#include`. There is no `gen_android_spirv.py` here and we do not need one.
   **⚠️ Port `c13b9be1f`'s rejection counter WITH the path, not after** — it is how they made this safe to ship
   default-on. A resolve that silently declines is invisible; one that counts its rejections is debuggable.
 - **⭐ STANDALONE, NOT part of that chain — take it independently:** `904374971` hoist shared-memory uploads out of
