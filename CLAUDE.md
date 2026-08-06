@@ -563,6 +563,26 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   compare+select chain collapses to one `BSL` (15 insns → 1 in their SPU FCGT case); and **re-rolling fully-unrolled
   codegen back into a loop is ~2% on BOTH arches** via code-cache pressure — directly relevant to our AOT precompile.
 
+## 🚨🚨🚨 CHECK THE PERSISTED DEVICE CONFIG BEFORE TRUSTING ANY MEASUREMENT (2026-08-06, cost 2.88%)
+**`files/xenia.config.toml` on the device OVERRIDES compiled defaults, permanently. A cvar written there when it was
+default-off STAYS off after you change the compiled default and after you set `defaultEnabled=true` in
+XeniaOptimizations.** Only `--ez/--ei/--es` beats it.
+- **Found by accident:** a census built to size an ARM64 `UBFM` lowering of `rlwinm` reported
+  `shift=0 mask=0 general=0 generic=20480` — **100% of `rlwinm` translations on the expensive generic path**
+  ((x||x) duplicate + 64-bit rotate + 64-bit mask constant). All three `ppc_rlwinm_*_fastpath` cvars were `false` in
+  the device config despite compiled default `true` AND `defaultEnabled=true` in XeniaOptimizations. They had been
+  written when the cvars were genuinely default-off "pending validation", and the persisted value won ever after.
+- **Measured cost: +2.88% guest throughput** just from turning them on (same session, same build, equal 40°C starts,
+  Burnout uncapped, 11/11 intervals favouring ON, +2.4% to +3.8%). With them on the census becomes
+  `shift=6962 mask=9811 general=2072 generic=611` — **96.9% were on the slow path for nothing.**
+- **`hir_known_bits_mask_fold` is also `false` there**, despite describing itself as DEFAULT-ON, bit-exact and
+  differential-tested. Assume there are others; audit the whole file.
+- **⇒ EVERY device measurement taken before this was on a handicapped baseline** (including all of 2026-08-05/06).
+  Before any A/B: `run-as jp.xenia.emulator.github.debug cat files/xenia.config.toml` and diff the cvars under test
+  against their compiled defaults. A silently-disabled lever does not just cost its own win — it moves the baseline.
+- Secondary result: the `UBFM` candidate (the `general` path) is only 2072/19456 = **10.6%** of `rlwinm`s, so that
+  lowering is real but modest; turning the existing fastpaths on was worth far more than building it.
+
 ## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
 ourselves**. The principles are what transfer; their specific patches mostly do not (see the parity track below).
