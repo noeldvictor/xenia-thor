@@ -524,6 +524,14 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   `_mm_pause()` inside an AMD64 guard, so on ARM64 the "16-try brief spin budget" was an **empty loop** that elapsed in
   nanoseconds and fell straight through to the fiber reschedule it existed to avoid. Fixed via the new
   `xe::threading::SpinLoopHint()` (base/threading.h). **Grep for this shape before assuming any lever is live on ARM.**
+  ✅ **SWEEP DONE 2026-08-05 — the spinlock was the ONLY one; do not re-run it.** Scanned every `#if XE_ARCH_AMD64`
+  in `src/xenia` with no `#else`/`#elif`: 7 hits, 6 benign (x64 backend include + `cpu == "x64"` selection in
+  emulator.cc; `<xmmintrin.h>` includes; `XE_CLOCK_RAW_AVAILABLE`, which is fine because ARM64 reads cntvct_el0
+  through the *platform* path already; the `m128_f32/i32/f64/i64` SSE utility templates in math.h, which are x64-only
+  by nature and fail LOUDLY at compile time rather than silently); and `primitive_processor.h:455`, which looks bare
+  but is only a helper *declaration* — the loop below it has a real `#elif XE_ARCH_ARM64` NEON branch.
+  The dangerous shape is specifically **an AMD64-guarded STATEMENT as the entire body of a loop or function**, not a
+  guarded declaration or include. Re-run only if new AMD64 guards land.
 - **Spin counts are WALL-CLOCK budgets, not iteration counts.** x86 `PAUSE` ≈140 cyc (Skylake+) vs ARM `ISB` ≈10-30,
   so an x86-tuned constant under-spins by ~4-8× on ARM (RPCS3 PR 18055 hit exactly this). `kRemoteHolderSpinTries` is
   now arch-split: 96 on ARM64, 16 on x64.
