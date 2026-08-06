@@ -166,6 +166,63 @@ picks `CMP #imm`, `CMP #x,LSL#12`, or `CMN` (compare-against-negative:
 dependency; frees a scratch register in the four `RtlEnterCriticalSection`
 fastpaths. Flag-exact, so safe under `LO`/`GE` and not just `EQ`/`NE`.
 
+## 3b. Guest OFFSET loads/stores: x86 folds base+index+disp, ARM64 cannot ⭐⭐ very hot
+
+PPC `lwz r3, disp(r4)` and its store/byte/half siblings are among the most
+common instructions in compiled PPC. x86 lowers the whole guest access in ONE
+addressing mode - `mov eax, [membase + reg + disp]` - so the x64 backend never
+had to think about the displacement at all. **AArch64 has no base+index+immediate
+form**: you get `[base, Xm]`, `[base, Wm, UXTW]` or `[base, #imm]`, so the
+displacement MUST be folded into a register add first. Which add you emit, and
+whether you copy the guest register on the way, is then a real decision the x64
+backend never faced.
+
+Today `ComputeOffsetMemoryAddress` (`a64_seq_memory.cc:104`) takes the naive
+two-step by default: `ComputeMemoryAddress` copies the guest register into the
+`w0` scratch, then `AddGuestMemoryOffset` adds the displacement to it.
+
+    mov w0, w_r4          <-- pure copy, only needed because the next step
+    add w0, w0, #disp         assumes it is working in the scratch
+    ldr dest, [membase, x0]
+
+`ComputeMemoryAddressOffset` (`a64_seq_util.h:385`) folds it properly, adding
+straight out of the source register:
+
+    add w0, w_r4, #disp
+    ldr dest, [membase, x0]
+
+It also picks the right encoding for the displacement (`#imm12`, `#imm12,LSL#12`,
+or a materialised constant) instead of always materialising.
+
+**⚠️ It is behind `arm64_offset_memory_address_fastpath`, which is compiled
+DEFAULT-OFF.** So the naive form is what actually ships. One instruction per
+offset access does not sound like much until you count how many guest
+loads/stores carry a displacement — this is a per-access cost on one of the
+hottest instruction classes there is. **Needs a gameplay A/B (not attract), then
+default-on if it holds.** Note it only folds 4KB-granularity mappings and falls
+back to the two-step where large-page compensation is required, which is correct.
+
+## 3c. The inline MMIO range check is two full-width compares ⭐ latent
+
+`LOAD_*`/`STORE_*` under `emit_inline_mmio_checks` test the MMIO window with two
+32-bit compares, each needing its constant materialised first:
+
+    mov w0, 0x7FC00000 ; cmp w17, w0 ; b.lo normal
+    mov w0, 0x7FFFFFFF ; cmp w17, w0 ; b.hi normal
+
+That is the x86 shape, where a 32-bit immediate is free inside `cmp`. **The
+window `[0x7FC00000, 0x7FFFFFFF]` is exactly `addr >> 22 == 0x1FF`**, so ARM64
+does the whole test in three instructions with an encodable immediate:
+
+    lsr w0, w17, #22
+    cmp w0, #0x1FF        // 511, fits imm12
+    b.ne normal_access
+
+**Latent, not live:** `emit_inline_mmio_checks` is default-off, so this costs
+nothing today. Worth fixing because the cheap form may be what makes the feature
+viable at all — the alternative for possible-MMIO instructions is a native call
+per access.
+
 ## 4. Constant materialisation: `MOVZ`+`MOVK` chains vs a literal load
 
 `mov(XReg, uint64_t)` is a pseudo-op expanding to `MOVZ` + up to three `MOVK`,
