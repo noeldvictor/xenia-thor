@@ -48,6 +48,7 @@
 #include "xenia/cpu/processor.h"
 
 DECLARE_uint32(a64_max_stackpoints);
+DECLARE_bool(a64_fold_cmp_immediates);
 DECLARE_bool(a64_stackpoint_prolog_fastpath);
 DECLARE_bool(a64_enable_host_guest_stack_synchronization);
 DECLARE_uint32(arm64_compiled_call_trace_interval);
@@ -2619,6 +2620,12 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
 
 void A64Emitter::EmitCmpImm32(const Xbyak_aarch64::WReg& rn, uint32_t imm,
                               const Xbyak_aarch64::WReg& scratch) {
+  if (!cvars::a64_fold_cmp_immediates) {
+    // Isolation path: the original mov+cmp, byte-identical.
+    mov(scratch, imm);
+    cmp(rn, scratch);
+    return;
+  }
   if (imm <= 4095) {
     cmp(rn, imm);
     return;

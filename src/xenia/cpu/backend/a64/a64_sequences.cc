@@ -30,6 +30,7 @@
 
 DECLARE_bool(a64_vmx_fp_no_operand_copy);
 DECLARE_bool(a64_count_eor3_candidates);
+DECLARE_bool(a64_three_operand_shifts);
 DECLARE_bool(arm64_add_sub_imm_audit);
 DECLARE_uint32(arm64_add_sub_imm_audit_function);
 DECLARE_uint32(arm64_add_sub_imm_audit_budget);
@@ -2077,7 +2078,14 @@ struct ADD_CARRY_I8
                 0xFF));
     } else {
       // Load src1 into dest (or w0 if constant).
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsl(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
       } else {
         e.mov(e.w0, i.src1);
@@ -3102,7 +3110,14 @@ struct SHL_I16 : Sequence<SHL_I16, I<OPCODE_SHL, I16Op, I16Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsl(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
         e.lsl(i.dest, e.w0, i.src2);
       } else {
@@ -3126,7 +3141,14 @@ struct SHL_I32 : Sequence<SHL_I32, I<OPCODE_SHL, I32Op, I32Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsl(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
         e.lsl(i.dest, e.w0, i.src2);
       } else {
@@ -3153,7 +3175,16 @@ struct SHL_I64 : Sequence<SHL_I64, I<OPCODE_SHL, I64Op, I64Op, I8Op>> {
       // src2 is an I8 held in a W register, so its upper 32 bits are zero and
       // the X view is a safe shift count (LSLV masks mod 64 either way).
       const XReg shift_amount = XReg(i.src2.reg().getIdx());
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.x0, shift_amount);
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsl(i.dest, i.dest, e.x0);
+      } else if (i.src1.is_constant) {
         e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
         e.lsl(i.dest, e.x0, shift_amount);
       } else {
@@ -3215,7 +3246,14 @@ struct SHR_I8 : Sequence<SHR_I8, I<OPCODE_SHR, I8Op, I8Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsr(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFF));
         e.lsr(i.dest, e.w0, i.src2);
       } else {
@@ -3240,7 +3278,14 @@ struct SHR_I16 : Sequence<SHR_I16, I<OPCODE_SHR, I16Op, I16Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsr(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
         e.lsr(i.dest, e.w0, i.src2);
       } else {
@@ -3265,7 +3310,14 @@ struct SHR_I32 : Sequence<SHR_I32, I<OPCODE_SHR, I32Op, I32Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsr(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
         e.lsr(i.dest, e.w0, i.src2);
       } else {
@@ -3292,7 +3344,16 @@ struct SHR_I64 : Sequence<SHR_I64, I<OPCODE_SHR, I64Op, I64Op, I8Op>> {
       // src2 is an I8 held in a W register, so its upper 32 bits are zero and
       // the X view is a safe shift count (LSLV masks mod 64 either way).
       const XReg shift_amount = XReg(i.src2.reg().getIdx());
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.x0, shift_amount);
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.lsr(i.dest, i.dest, e.x0);
+      } else if (i.src1.is_constant) {
         e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
         e.lsr(i.dest, e.x0, shift_amount);
       } else {
@@ -3384,7 +3445,14 @@ struct SHA_I32 : Sequence<SHA_I32, I<OPCODE_SHA, I32Op, I32Op, I8Op>> {
       // about cannot occur and neither operand needs staging. The previous
       // sequence staged both because x86 shifts are destructive and take their
       // count in cl - an x86 constraint, not an algorithmic one. 3 insns -> 1.
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.w0, i.src2);
+        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.asr(i.dest, i.dest, e.w0);
+      } else if (i.src1.is_constant) {
         e.mov(e.w0,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
         e.asr(i.dest, e.w0, i.src2);
       } else {
@@ -3411,7 +3479,16 @@ struct SHA_I64 : Sequence<SHA_I64, I<OPCODE_SHA, I64Op, I64Op, I8Op>> {
       // src2 is an I8 held in a W register, so its upper 32 bits are zero and
       // the X view is a safe shift count (LSLV masks mod 64 either way).
       const XReg shift_amount = XReg(i.src2.reg().getIdx());
-      if (i.src1.is_constant) {
+      if (!cvars::a64_three_operand_shifts) {
+        // Isolation path: the original x86-shaped staging sequence.
+        e.mov(e.x0, shift_amount);
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant()));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+          e.mov(i.dest, i.src1);
+        }
+        e.asr(i.dest, i.dest, e.x0);
+      } else if (i.src1.is_constant) {
         e.mov(e.x0, static_cast<uint64_t>(i.src1.constant()));
         e.asr(i.dest, e.x0, shift_amount);
       } else {

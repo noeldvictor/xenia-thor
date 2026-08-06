@@ -139,6 +139,34 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
+    a64_three_operand_shifts, true,
+    "Emit ARM64's three-operand variable shifts (LSLV/LSRV/ASRV/RORV) directly "
+    "instead of the x86-shaped staging sequence: mov the count to a scratch, mov "
+    "src1 into dest, then shift dest in place. Both movs are x86 artifacts - x86 "
+    "shifts are destructive and take their count in cl - and AArch64 reads both "
+    "sources before writing the destination, so the aliasing hazard the old code "
+    "guarded against cannot occur here. 3 instructions become 1 at 12 sites "
+    "(SHL/SHR/SHA x I8/I16/I32/I64 plus both ROTATE_LEFTs).\n"
+    "Exists as a cvar ONLY so it can be isolated without an APK rollback if a "
+    "title renders or behaves wrong - shifts are pervasive in PPC, so a defect "
+    "here would be broad and subtle rather than a clean crash. Set false to "
+    "restore the original staging sequence exactly.",
+    "a64");
+
+DEFINE_bool(
+    a64_fold_cmp_immediates, true,
+    "Fold constants into compares instead of materialising them into a scratch "
+    "first: CMP #imm, CMP #imm,LSL#12, or CMN for compare-against-negative "
+    "(0xFFFFFFFF becomes CMN #1). Removes an arithmetic-port instruction AND the "
+    "serial dependency between the mov and the cmp at 8 sites, including the four "
+    "RtlEnterCriticalSection lock fastpaths, where it also frees a scratch "
+    "register. All forms are flag-exact, so it is safe under any condition code "
+    "and not only EQ/NE.\n"
+    "Cvar-gated for the same reason as a64_three_operand_shifts: isolation "
+    "without an APK rollback. Set false to restore mov+cmp.",
+    "a64");
+
+DEFINE_bool(
     a64_count_eor3_candidates, false,
     "Count how many V128 XORs are the outer half of a fusable a^b^c chain, i.e. "
     "how much an ARMv8.2 SHA3 EOR3 lowering would actually get to fold. EOR3 "
