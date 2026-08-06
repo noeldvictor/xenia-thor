@@ -1,122 +1,112 @@
 # xenia-thor
 
-`xenia-thor` is a personal, agentic-AI research fork exploring a native Android
-ARM64 Xenia-derived build on AYN Thor / Thor Max.
+**An AI experiment, not an emulator you should use.**
 
-It is **extremely unstable**.
+`xenia-thor` is a personal fork of Xenia where essentially all of the work is
+done by an agentic AI coding assistant, aimed at one device: the AYN Thor /
+Thor Max (Snapdragon 8 Gen 2, Adreno 740, Android ARM64). The point of the
+repository is the experiment — can an AI agent do sustained, measured, low-level
+emulator engineering — not the resulting binary.
 
-This is not an official Xenia build, not a compatibility fork, not a release
-channel, and not a supportable emulator for normal users. It is a local research
-playground for Android ARM64 bring-up, handheld usability, Vulkan debugging,
-controller UX, and game-specific failure triage.
+It is **extremely unstable**. It breaks from commit to commit, on purpose.
 
-## No Support
+---
 
-There is no support promise here.
+## Read this before doing anything else
 
-- Do not ask the official Xenia project for help with this fork.
-- Do not report `xenia-thor` crashes to upstream Xenia, Xenia Discord, or other
-  emulator communities.
-- Do not treat any result here as a game compatibility claim.
-- Do not expect builds to work from commit to commit.
-- Do not use this as evidence that Xenia supports Android or AYN Thor.
+**There is no support. None. Not from me, and absolutely not from upstream.**
 
-If something breaks here, it probably belongs here.
+- **Do not ask the Xenia project, the Xenia Discord, or any emulator community
+  for help with this fork.** They did not write it, they cannot fix it, and it
+  is not their responsibility.
+- **Do not report anything from this fork upstream.** Crashes here are almost
+  always mine, not theirs.
+- **Do not cite this as evidence that Xenia supports Android or the AYN Thor.**
+  It does not.
+- **Do not treat anything here as a compatibility claim.** A game "working" in
+  one commit means it worked once, on one device, on one scene.
+- **There are no releases, no builds, and no install instructions for users.**
+  If you want to run it: build it yourself, debug it yourself, keep the pieces.
 
-## Thanks
+If it breaks, that is the expected outcome. You are on your own — by design.
 
-Huge thanks to the original Xenia developers and contributors. Their years of
-research, engineering, documentation, and open-source work made this experiment
-possible at all.
+## Thanks to the actual Xenia developers
+
+Everything of value underneath this fork is theirs. Years of research,
+engineering, and open-source work made it possible for an AI agent to have
+something worth experimenting on at all.
 
 - [xenia-project/xenia](https://github.com/xenia-project/xenia)
 - [xenia.jp](https://xenia.jp/)
 
-Please respect their time. This fork is not their responsibility.
+Please respect their time. **This fork is not their problem.**
 
-## Current Focus
+---
 
-Target device:
+## What the experiment is actually about
 
-- AYN Thor / Thor Max
-- Android ARM64, `arm64-v8a`
-- Snapdragon 8 Gen 2-class / Adreno 740
-- Vulkan first
+One device, one architecture, measured changes:
 
-Current product priority:
+- **CPU:** the ARM64 (`a64`) JIT backend and an LLVM whole-function recompiler.
+  Most of the current work is finding places where the backend inherited **x86's
+  two-operand destructive model** from the x64 backend it was derived from, and
+  rethinking them for AArch64's three-operand, non-destructive ISA.
+- **GPU:** Vulkan on Mesa Turnip, targeting the Adreno 740's TBDR behaviour.
+- **Method:** every performance claim has to survive a real measurement, or it
+  gets recorded as unproven and dropped.
 
-- Make the Android APK usable on the real Thor.
-- Validate game launching through the actual Android app picker.
-- Improve controller mapping, OSD, FPS visibility, exit-to-menu, recent-game
-  status, and handheld-friendly settings.
-- Classify crashes with repeatable proof packets instead of one-off guesses.
+The measurement discipline matters more than any individual change, because
+run-to-run drift on this device (~2.8%) is larger than most effects being
+tested. Comparing two builds cannot resolve them. So: one session, both arms
+behind a cvar, equal thermal starts, a drift-control arm, frame cap **off**, and
+guest-throughput as the metric rather than fps — a frame cap hides exactly the
+CPU headroom you are trying to measure.
 
-Blue Dragon full-speed work is paused unless explicitly restarted. The current
-active Android usability state includes launcher/app-picker proof, visual
-controller remapping, Back-as-OSD, FPS badge, Exit to menu, recent game status,
-internal-resolution setting, and the user-confirmed Project Sylpheed title/menu
-geometry fix. Project Sylpheed's remaining known issue is a guest/runtime heap
-and `RtlRaiseException` compatibility class, not the old title positioning bug.
+Negative results are recorded as carefully as wins, in
+`docs/research/experiments.db` (`python tools/exp_ledger.py check "<keyword>"`).
+Several plausible optimisations in this repo are marked DEAD **because they were
+measured**, not because they were untried.
 
-## Remote Debugging And Testing
+## Building
 
-Use the repo-local remote debug stack for AYN Thor work:
+There are no prebuilt APKs. The Android build:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Status
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenshot
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode Screenrecord -Seconds 30
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode UiDump
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_android_remote_debug.ps1 -DeviceSerial c3ca0370 -Mode CrashBundle
+```bash
+# The path must not contain spaces; a junction avoids that.
+cmd /c mklink /J C:\xt "<repo>"
+cmd /c "C:\xt\android\android_studio_project\gradlew.bat -p C:\xt\android\android_studio_project :app:assembleGithubDebug"
 ```
 
-Use USB ADB for installs, screenshots, videos, logcat, and bugreports. scrcpy or
-Android Studio device mirroring is useful for live control, but durable proof
-should still be captured through ADB into `scratch/thor-debug/`.
+Output lands in `android/android_studio_project/app/build/outputs/apk/`.
 
-For a title, menu, input, or crash claim, keep a compact packet:
+Desktop builds (used for GPU structure work, not for the device) go through
+premake + MSBuild; see `CLAUDE.md`.
 
-- branch and commit or dirty-state note,
-- APK hash if device-tested,
-- launch path and settings/cvars,
-- screenshot or short video of the failing or fixed screen,
-- full logcat plus focused fatal/crash filter and `status-report.txt`,
-- UI dump for launcher/settings/OSD focus bugs,
-- bugreport or Perfetto trace only when logcat/screens/video are not enough.
+## Device work
 
-## Common Commands
+Helper scripts for the Thor live in `tools/thor/` and `tools/thor_launch.sh`.
+Two traps worth knowing if you ignore the advice above and try anyway:
 
-```powershell
-git status --short --branch
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode NativeCore
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode ApkShell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode FullDeploy -DeviceSerial c3ca0370
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -DeviceSerial c3ca0370 -Mode LaunchLauncher
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_xenia_debug.ps1 -DeviceSerial c3ca0370 -Mode Capture
-```
+- A bare `adb shell am start` runs the **Qualcomm** driver, not Turnip, and
+  silently invalidates every GPU measurement. `tools/thor_launch.sh` passes the
+  driver extras explicitly and verifies the device prints as
+  `Turnip Adreno (TM) 740`.
+- If the panel is asleep the activity never gets a surface and every frame is
+  dropped, while a screenshot returns pure black and the emulator looks broken.
+  Check `dumpsys power | grep mWakefulness` first.
 
-## Local Notes
+## Layout
 
-Useful current docs:
+- `CLAUDE.md` — the working agreement, device facts, and hard-won gotchas.
+- `AGENTS.md` — agent instructions.
+- `docs/research/` — findings, audits, and post-mortems.
+- `docs/research/experiments.db` — the experiment ledger, including dead ends.
+- `.agents/skills/` — task-specific procedures.
 
-- [Agent Instructions](AGENTS.md)
-- [PowerShell Command Hygiene](.agents/skills/xenia-windows-powershell-command-hygiene/SKILL.md)
-- [Thor Remote Debug Skill](.agents/skills/xenia-thor-remote-debug/SKILL.md)
-- [Android Game Launch and Controller Mapping](docs/research/20260527-144000-android-game-launch-crash-and-controller-mapping.md)
-- [Android In-Game Menu and Overlay Cleanup](docs/research/20260527-151500-android-ingame-menu-overlay-controller-start.md)
-- [Android OSD Exit To Menu](docs/research/20260527-152100-android-osd-exit-to-menu.md)
-- [Android Internal Resolution and Project Sylpheed 480p](docs/research/20260527-164500-android-internal-resolution-and-sylpheed-480p.md)
-- [Android Recent Games Status List](docs/research/20260527-171500-android-recent-games-status-list.md)
-- [Project Sylpheed Title Geometry Fix](docs/research/20260527-184700-project-sylpheed-title-geometry-fix.md)
-- [Android Remote Debug Test Rig](docs/research/20260527-190000-android-remote-debug-test-rig.md)
-- [Android Game Status Classifier](docs/research/20260527-193200-android-game-status-classifier.md)
+## Legal
 
-Worklogs live in `docs/worklogs/` and research notes live in `docs/research/`.
+Emulator research on legally owned content only. Not for piracy, bypassing
+access controls, redistributing game content, or posting copyrighted assets.
 
-## Legal And Content Boundary
-
-This fork is for emulator research and legally owned test content only. Do not
-use it for piracy, bypassing access controls, redistributing game content, or
-posting copyrighted assets.
-
-Again: experimental fork, no support, no promises.
+**Again: an AI experiment. No support, no releases, no promises. Do it
+yourself.**
