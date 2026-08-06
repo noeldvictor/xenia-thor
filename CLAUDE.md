@@ -582,6 +582,19 @@ XeniaOptimizations.** Only `--ez/--ei/--es` beats it.
   against their compiled defaults. A silently-disabled lever does not just cost its own win — it moves the baseline.
 - Secondary result: the `UBFM` candidate (the `general` path) is only 2072/19456 = **10.6%** of `rlwinm`s, so that
   lowering is real but modest; turning the existing fastpaths on was worth far more than building it.
+- **✅ FULL CONFIG AUDIT DONE 2026-08-06 — 13 MORE were compiled-ON but device-OFF**, all now restored:
+  `arm64_use_flat_membase`, `cpu_lockfree_check_global_lock`, `gpu_adpf_performance_hints`,
+  `hir_algebraic_identities`, `hir_fold_and_not`, `ppc_cr_logical_self_fastpath`, `ppc_vand_self_fastpath`,
+  `ppc_vsplt_swizzle_fastpath`, `vulkan_dynamic_constants_arena`, `vulkan_gate_rt_update`,
+  `vulkan_hoist_request_range_lock`, `vulkan_persistent_pipeline_cache` (+`discord`, deliberately left off).
+  Backup at `files/xenia.config.toml.bak-20260806`. Re-run the audit with a script that diffs every
+  `DEFINE_bool` default against the device file — 700 device cvars vs 475 compiled bool defaults.
+  **⚠️ But their perf is FLAT, not a second win:** same-session A/B of the 7 CPU/ARM64 levers as a group gave
+  **-0.04%** with MIXED intervals (5/3/3), versus `rlwinm`'s +2.88% at 11/11 on the identical protocol. So the
+  protocol discriminates; this group genuinely does not move Burnout title/attract. Several target VECTOR idioms
+  (`vand`/`vsplt`) that an attract scene barely exercises, and `ppc_cr_logical_self_fastpath`'s own "~2.6%" claim was
+  measured elsewhere — **retest these in BD 3D or a race, not attract.** They are restored because they are the
+  compiled defaults and individually correctness-validated, NOT because they were measured to win here.
 
 ## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
