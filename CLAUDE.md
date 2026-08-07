@@ -1623,7 +1623,20 @@ upstream commit; take the plain non-suffixed asset = A6xx/A7xx, correct for the 
 ## Device-free testing (prefer over firing)
 - **Host x64 cpu-tests:** `MSBuild build\xenia-cpu-tests.vcxproj /p:Configuration="Debug Windows" /p:Platform=x64`;
   run `build/bin/Windows/Debug/xenia-cpu-tests.exe "FILTER_*"` (Catch2).
-- **qemu-a64** (real ARM64 backend, no device): WSL + aarch64-linux-gnu-g++ + qemu-aarch64. Recipe: `[[a64-qemu-harness]]`.
+- **qemu-a64** (no device): WSL + aarch64-linux-gnu-g++ + qemu-aarch64. Recipe: `[[a64-qemu-harness]]`
+  (that memory was MISSING until 2026-08-07 and is now written). Working examples committed in
+  `tools/qemu/`: `fmax_nan_differential.c`, `vmx_nan_arith_differential.c`, `float_commutativity_check.c`.
+  **⚠️ IT IS NOT A "real ARM64 backend" HARNESS, which is what this line used to claim.** It runs
+  hand-written asm under qemu, so it proves ISA SEMANTICS (exact bit patterns, guest-vs-host agreement
+  against `docs/reference/`) and proves NOTHING about our emitter - not register allocation, not operand
+  staging, not sequence selection. That distinction is exactly why `a64_vmx_fp_no_operand_copy` is still
+  default-off: its change is WHICH REGISTERS hold the sources, which this harness structurally cannot see.
+  **Set FPCR to `DEFAULT_VMX_FPCR` (1<<24: FZ set, DN CLEAR) or the NaN answers are wrong for the right-
+  looking reason.**
+- **⚠️ TWO MEMORY LINKS IN THIS FILE ARE STILL DANGLING** (audited 2026-08-07): `[[bd-llvm-postload-3d-cyan-bug]]`
+  and `[[llvm-jit-backend-build]]` are cited as the authoritative detail/build recipe but **no such memory
+  files exist**. Do not burn time hunting them; the content was lost, not misfiled. Rewrite them from the
+  code when someone next works those areas rather than trusting the pointer.
 - **RE:** Ghidra 12.0.4 at `...\SteamPortableTools\toolchains\ghidra_12.0.4_PUBLIC` (headless in the MAIN loop, long
   timeout, never in a subagent). **page-watch** (`cpu_watch_guest_write_page`) = the RE unblock: host-mprotect a
   guest page + emulate-on-fault at full speed. Skills: `xenia-ghidra-ooda-loop`, `xbox360-d3d-hle-recomp`.
