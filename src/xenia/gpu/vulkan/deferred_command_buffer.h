@@ -497,6 +497,22 @@ class DeferredCommandBuffer {
 
   void CmdVkEndRenderPass() { WriteCommand(Command::kVkEndRenderPass, 0); }
 
+  // Dynamic rendering (Vulkan 1.3 CORE - unsuffixed in our 1.3 headers; the
+  // LOCAL READ extension is 1.4 and must carry KHR, see
+  // device_khr_dynamic_rendering_local_read.inc).
+  //
+  // NO CALLERS YET, deliberately. This is the serializer half of the
+  // dynamic-rendering prerequisite that the XenDroid in-pass resolve chain is
+  // blocked behind; landing it additively keeps that track moving without
+  // touching any of the ~115 traditional render-pass sites.
+  //
+  // VkRenderingInfo is variable-length (pColorAttachments[] plus an optional
+  // depth and stencil attachment), so it is flattened into the command stream
+  // the same way CmdVkPipelineBarrier flattens its three barrier arrays.
+  // pNext chains are NOT serialized - the pointer would dangle by replay time.
+  void CmdVkBeginRendering(const VkRenderingInfo& rendering_info);
+  void CmdVkEndRendering() { WriteCommand(Command::kVkEndRendering, 0); }
+
   // BD input-attachment merge (Inc3): advance to the next subpass of a merged
   // 2-subpass feedback render pass (producer in subpass 0, the same-pixel
   // composite consumer reading it as an input attachment in subpass 1).
@@ -807,6 +823,8 @@ class DeferredCommandBuffer {
   RecordStats record_stats_;
   enum class Command {
     kVkBeginRenderPass,
+    kVkBeginRendering,
+    kVkEndRendering,
     kVkBindDescriptorSets,
     kVkBindIndexBuffer,
     kVkBindPipeline,
@@ -1015,6 +1033,19 @@ class DeferredCommandBuffer {
     VkDeviceSize count_buffer_offset;
     uint32_t max_draw_count;
     uint32_t stride;
+  };
+
+  struct ArgsVkBeginRendering {
+    VkRenderingFlags flags;
+    VkRect2D render_area;
+    uint32_t layer_count;
+    uint32_t view_mask;
+    uint32_t color_attachment_count;
+    uint32_t has_depth_attachment;
+    uint32_t has_stencil_attachment;
+    // Followed by aligned VkRenderingAttachmentInfo[color_attachment_count],
+    // then the optional depth attachment, then the optional stencil attachment.
+    static_assert(alignof(VkRenderingAttachmentInfo) <= alignof(uintmax_t));
   };
 
   struct ArgsVkPipelineBarrier {

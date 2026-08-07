@@ -254,6 +254,56 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
         dfn.vkCmdEndRenderPass(command_buffer);
         break;
 
+      case Command::kVkBeginRendering: {
+        auto& args = *reinterpret_cast<const ArgsVkBeginRendering*>(stream);
+        size_t attachment_offset_bytes = sizeof(ArgsVkBeginRendering);
+        const VkRenderingAttachmentInfo* color_attachments = nullptr;
+        if (args.color_attachment_count) {
+          attachment_offset_bytes = xe::align(
+              attachment_offset_bytes, alignof(VkRenderingAttachmentInfo));
+          color_attachments =
+              reinterpret_cast<const VkRenderingAttachmentInfo*>(
+                  reinterpret_cast<const uint8_t*>(stream) +
+                  attachment_offset_bytes);
+          attachment_offset_bytes += sizeof(VkRenderingAttachmentInfo) *
+                                     args.color_attachment_count;
+        }
+        const VkRenderingAttachmentInfo* depth_attachment = nullptr;
+        if (args.has_depth_attachment) {
+          attachment_offset_bytes = xe::align(
+              attachment_offset_bytes, alignof(VkRenderingAttachmentInfo));
+          depth_attachment = reinterpret_cast<const VkRenderingAttachmentInfo*>(
+              reinterpret_cast<const uint8_t*>(stream) +
+              attachment_offset_bytes);
+          attachment_offset_bytes += sizeof(VkRenderingAttachmentInfo);
+        }
+        const VkRenderingAttachmentInfo* stencil_attachment = nullptr;
+        if (args.has_stencil_attachment) {
+          attachment_offset_bytes = xe::align(
+              attachment_offset_bytes, alignof(VkRenderingAttachmentInfo));
+          stencil_attachment =
+              reinterpret_cast<const VkRenderingAttachmentInfo*>(
+                  reinterpret_cast<const uint8_t*>(stream) +
+                  attachment_offset_bytes);
+        }
+        VkRenderingInfo rendering_info;
+        rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering_info.pNext = nullptr;
+        rendering_info.flags = args.flags;
+        rendering_info.renderArea = args.render_area;
+        rendering_info.layerCount = args.layer_count;
+        rendering_info.viewMask = args.view_mask;
+        rendering_info.colorAttachmentCount = args.color_attachment_count;
+        rendering_info.pColorAttachments = color_attachments;
+        rendering_info.pDepthAttachment = depth_attachment;
+        rendering_info.pStencilAttachment = stencil_attachment;
+        dfn.vkCmdBeginRendering(command_buffer, &rendering_info);
+      } break;
+
+      case Command::kVkEndRendering:
+        dfn.vkCmdEndRendering(command_buffer);
+        break;
+
       case Command::kVkNextSubpass: {
         auto& args = *reinterpret_cast<const ArgsVkNextSubpass*>(stream);
         dfn.vkCmdNextSubpass(command_buffer, args.contents);
@@ -502,6 +552,67 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
 
     stream += header.arguments_size_elements;
     stream_remaining -= header.arguments_size_elements;
+  }
+}
+
+// Flattens VkRenderingInfo into the command stream. Shape deliberately copied
+// from CmdVkPipelineBarrier below - same align/offset/memcpy discipline for a
+// variable-length payload. No callers yet (see the header).
+void DeferredCommandBuffer::CmdVkBeginRendering(
+    const VkRenderingInfo& rendering_info) {
+  // A pNext pointer would dangle by the time the stream is replayed, so the
+  // chain is not serialized. Callers needing one must extend this writer.
+  assert_null(rendering_info.pNext);
+  size_t arguments_size = sizeof(ArgsVkBeginRendering);
+  const uint32_t color_attachment_count = rendering_info.colorAttachmentCount;
+  const bool has_depth = rendering_info.pDepthAttachment != nullptr;
+  const bool has_stencil = rendering_info.pStencilAttachment != nullptr;
+  size_t color_attachments_offset = 0;
+  if (color_attachment_count) {
+    arguments_size =
+        xe::align(arguments_size, alignof(VkRenderingAttachmentInfo));
+    color_attachments_offset = arguments_size;
+    arguments_size +=
+        sizeof(VkRenderingAttachmentInfo) * color_attachment_count;
+  }
+  size_t depth_attachment_offset = 0;
+  if (has_depth) {
+    arguments_size =
+        xe::align(arguments_size, alignof(VkRenderingAttachmentInfo));
+    depth_attachment_offset = arguments_size;
+    arguments_size += sizeof(VkRenderingAttachmentInfo);
+  }
+  size_t stencil_attachment_offset = 0;
+  if (has_stencil) {
+    arguments_size =
+        xe::align(arguments_size, alignof(VkRenderingAttachmentInfo));
+    stencil_attachment_offset = arguments_size;
+    arguments_size += sizeof(VkRenderingAttachmentInfo);
+  }
+  uint8_t* args_ptr = reinterpret_cast<uint8_t*>(
+      WriteCommand(Command::kVkBeginRendering, arguments_size));
+  auto& args = *reinterpret_cast<ArgsVkBeginRendering*>(args_ptr);
+  args.flags = rendering_info.flags;
+  args.render_area = rendering_info.renderArea;
+  args.layer_count = rendering_info.layerCount;
+  args.view_mask = rendering_info.viewMask;
+  args.color_attachment_count = color_attachment_count;
+  args.has_depth_attachment = has_depth ? 1 : 0;
+  args.has_stencil_attachment = has_stencil ? 1 : 0;
+  if (color_attachment_count) {
+    std::memcpy(args_ptr + color_attachments_offset,
+                rendering_info.pColorAttachments,
+                sizeof(VkRenderingAttachmentInfo) * color_attachment_count);
+  }
+  if (has_depth) {
+    std::memcpy(args_ptr + depth_attachment_offset,
+                rendering_info.pDepthAttachment,
+                sizeof(VkRenderingAttachmentInfo));
+  }
+  if (has_stencil) {
+    std::memcpy(args_ptr + stencil_attachment_offset,
+                rendering_info.pStencilAttachment,
+                sizeof(VkRenderingAttachmentInfo));
   }
 }
 
