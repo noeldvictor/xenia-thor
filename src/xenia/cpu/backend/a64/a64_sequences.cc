@@ -2081,7 +2081,9 @@ struct ADD_CARRY_I8
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFF));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsl(i.dest, i.dest, e.w0);
@@ -3113,7 +3115,9 @@ struct SHL_I16 : Sequence<SHL_I16, I<OPCODE_SHL, I16Op, I16Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsl(i.dest, i.dest, e.w0);
@@ -3144,7 +3148,9 @@ struct SHL_I32 : Sequence<SHL_I32, I<OPCODE_SHL, I32Op, I32Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsl(i.dest, i.dest, e.w0);
@@ -3249,7 +3255,9 @@ struct SHR_I8 : Sequence<SHR_I8, I<OPCODE_SHR, I8Op, I8Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFF));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsr(i.dest, i.dest, e.w0);
@@ -3281,7 +3289,9 @@ struct SHR_I16 : Sequence<SHR_I16, I<OPCODE_SHR, I16Op, I16Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest, static_cast<uint64_t>(i.src1.constant() & 0xFFFF));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsr(i.dest, i.dest, e.w0);
@@ -3313,7 +3323,9 @@ struct SHR_I32 : Sequence<SHR_I32, I<OPCODE_SHR, I32Op, I32Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.lsr(i.dest, i.dest, e.w0);
@@ -3448,7 +3460,9 @@ struct SHA_I32 : Sequence<SHA_I32, I<OPCODE_SHA, I32Op, I32Op, I8Op>> {
       if (!cvars::a64_three_operand_shifts) {
         // Isolation path: the original x86-shaped staging sequence.
         e.mov(e.w0, i.src2);
-        if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
+        if (i.src1.is_constant) {
+          e.mov(i.dest,              static_cast<uint64_t>(static_cast<uint32_t>(i.src1.constant())));
+        } else if (i.dest.reg().getIdx() != i.src1.reg().getIdx()) {
           e.mov(i.dest, i.src1);
         }
         e.asr(i.dest, i.dest, e.w0);
